@@ -1074,9 +1074,9 @@ describe('SwarmWebSocketServer', () => {
     await server.stop()
   })
 
-  it('handles /new via websocket by resetting manager session and clearing history', async () => {
+  it('handles /new via websocket by creating a new session while preserving existing history', async () => {
     const port = await getAvailablePort()
-    const config = await makeTempConfig(port)
+    const config = await makeTempConfig(port, true)
 
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -1110,12 +1110,23 @@ describe('SwarmWebSocketServer', () => {
     )
 
     clientA.send(JSON.stringify({ type: 'user_message', text: '/new' }))
-    const resetEvent = await waitForEvent(eventsA, (event) => event.type === 'conversation_reset')
+    const resetEvent = await waitForEvent(
+      eventsA,
+      (event) => event.type === 'conversation_reset' && event.agentId === 'manager',
+    )
     expect(resetEvent.type).toBe('conversation_reset')
     if (resetEvent.type === 'conversation_reset') {
       expect(resetEvent.reason).toBe('user_new_command')
       expect(resetEvent.agentId).toBe('manager')
     }
+
+    const sessionSnapshot = await waitForEvent(
+      eventsA,
+      (event) =>
+        event.type === 'agents_snapshot' &&
+        event.agents.some((agent) => agent.role === 'manager' && agent.agentId === 'manager--s2'),
+    )
+    expect(sessionSnapshot.type).toBe('agents_snapshot')
 
     expect(
       eventsA.some(
@@ -1138,7 +1149,17 @@ describe('SwarmWebSocketServer', () => {
 
     expect(historyEvent.type).toBe('conversation_history')
     if (historyEvent.type === 'conversation_history') {
-      expect(historyEvent.messages).toHaveLength(0)
+      expect(historyEvent.messages.some((message) => message.text === 'keep this')).toBe(true)
+    }
+
+    clientB.send(JSON.stringify({ type: 'subscribe', agentId: 'manager--s2' }))
+    const forkedHistoryEvent = await waitForEvent(
+      eventsB,
+      (event) => event.type === 'conversation_history' && event.agentId === 'manager--s2',
+    )
+    expect(forkedHistoryEvent.type).toBe('conversation_history')
+    if (forkedHistoryEvent.type === 'conversation_history') {
+      expect(forkedHistoryEvent.messages).toHaveLength(0)
     }
 
     clientB.close()

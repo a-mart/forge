@@ -7,6 +7,7 @@ import type {
   DeliveryMode,
   DirectoryItem,
   MessageSourceContext,
+  ManagerProfile,
 } from './shared-types.js'
 
 export interface ConversationMessageEvent {
@@ -176,6 +177,11 @@ export interface AgentsSnapshotEvent {
   agents: AgentDescriptor[]
 }
 
+export interface ProfilesSnapshotEvent {
+  type: 'profiles_snapshot'
+  profiles: ManagerProfile[]
+}
+
 export type ServerEvent =
   | { type: 'ready'; serverTime: string; subscribedAgentId: string }
   | { type: 'conversation_reset'; agentId: string; timestamp: string; reason: 'user_new_command' | 'api_reset' }
@@ -187,6 +193,7 @@ export type ServerEvent =
   | ConversationEntry
   | AgentStatusEvent
   | AgentsSnapshotEvent
+  | ProfilesSnapshotEvent
   | ManagerCreatedEvent
   | ManagerDeletedEvent
   | StopAllAgentsResultEvent

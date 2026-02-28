@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { ServerEvent } from "@middleman/protocol";
 import {
@@ -124,6 +124,8 @@ If they agree, summarize the choices and persist them using the memory workflow.
 // Retain recent non-web activity while preserving the full user-facing web transcript.
 const SWARM_CONTEXT_FILE_NAME = "SWARM.md";
 const SWARM_MANAGER_MAX_EVENT_LISTENERS = 64;
+const SESSION_ID_SUFFIX_SEPARATOR = "--s";
+const ROOT_SESSION_NUMBER = 1;
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -334,6 +336,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     const managerDescriptor = this.getBootLogManagerDescriptor();
     this.emitAgentsSnapshot();
+    this.emitProfilesSnapshot();
 
     this.logDebug("boot:ready", {
       managerId: managerDescriptor?.agentId,
@@ -364,6 +367,160 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return this.conversationProjector.getConversationHistory(resolvedAgentId);
   }
 
+  async createSession(
+    profileId: string,
+    options?: { label?: string }
+  ): Promise<{ profile: ManagerProfile; sessionAgent: AgentDescriptor }> {
+    const prepared = this.prepareSessionCreation(profileId, options);
+    const sessionDescriptor = prepared.sessionDescriptor;
+    this.descriptors.set(sessionDescriptor.agentId, sessionDescriptor);
+
+    try {
+      const runtime = await this.getOrCreateRuntimeForDescriptor(sessionDescriptor);
+      sessionDescriptor.contextUsage = runtime.getContextUsage();
+    } catch (error) {
+      await this.rollbackCreatedSession(sessionDescriptor);
+      throw error;
+    }
+
+    await this.saveStore();
+    this.emitAgentsSnapshot();
+    this.emitProfilesSnapshot();
+
+    return {
+      profile: { ...prepared.profile },
+      sessionAgent: cloneDescriptor(sessionDescriptor)
+    };
+  }
+
+  async stopSession(agentId: string): Promise<{ terminatedWorkerIds: string[] }> {
+    const { terminatedWorkerIds } = await this.stopSessionInternal(agentId, {
+      saveStore: true,
+      emitSnapshots: true
+    });
+
+    return { terminatedWorkerIds };
+  }
+
+  async resumeSession(agentId: string): Promise<void> {
+    const descriptor = this.getRequiredSessionDescriptor(agentId);
+
+    if (this.runtimes.has(agentId)) {
+      throw new Error(`Session is already running: ${agentId}`);
+    }
+
+    const previousStatus = descriptor.status;
+    if (descriptor.status === "error") {
+      throw new Error(`Session is not resumable from error status: ${agentId}`);
+    }
+
+    if (
+      descriptor.status !== "idle" &&
+      descriptor.status !== "terminated" &&
+      descriptor.status !== "stopped"
+    ) {
+      throw new Error(`Session is not resumable from status ${descriptor.status}: ${agentId}`);
+    }
+
+    if (isNonRunningAgentStatus(descriptor.status)) {
+      descriptor.status = transitionAgentStatus(descriptor.status, "idle");
+    }
+
+    descriptor.updatedAt = this.now();
+    this.descriptors.set(agentId, descriptor);
+
+    try {
+      const runtime = await this.getOrCreateRuntimeForDescriptor(descriptor);
+      descriptor.contextUsage = runtime.getContextUsage();
+      this.descriptors.set(agentId, descriptor);
+    } catch (error) {
+      descriptor.status = previousStatus;
+      descriptor.updatedAt = this.now();
+      this.descriptors.set(agentId, descriptor);
+      throw error;
+    }
+
+    await this.saveStore();
+    this.emitAgentsSnapshot();
+    this.emitProfilesSnapshot();
+  }
+
+  async deleteSession(agentId: string): Promise<{ terminatedWorkerIds: string[] }> {
+    const descriptor = this.getRequiredSessionDescriptor(agentId);
+    this.assertSessionIsDeletable(descriptor);
+
+    const { terminatedWorkerIds } = await this.stopSessionInternal(agentId, {
+      saveStore: false,
+      emitSnapshots: false,
+      emitStatus: false
+    });
+
+    this.descriptors.delete(agentId);
+    this.conversationProjector.deleteConversationHistory(agentId);
+
+    await this.deleteManagerSessionFile(descriptor.sessionFile);
+    await rm(this.getAgentMemoryPath(agentId), { force: true });
+
+    await this.saveStore();
+    this.emitAgentsSnapshot();
+    this.emitProfilesSnapshot();
+
+    return { terminatedWorkerIds };
+  }
+
+  async renameSession(agentId: string, label: string): Promise<void> {
+    const descriptor = this.getRequiredSessionDescriptor(agentId);
+    const normalizedLabel = label.trim();
+    if (!normalizedLabel) {
+      throw new Error("Session label must be non-empty");
+    }
+
+    descriptor.sessionLabel = normalizedLabel;
+    descriptor.updatedAt = this.now();
+    this.descriptors.set(agentId, descriptor);
+
+    await this.saveStore();
+    this.emitAgentsSnapshot();
+    this.emitProfilesSnapshot();
+  }
+
+  async forkSession(
+    sourceAgentId: string,
+    options?: { label?: string }
+  ): Promise<{ profile: ManagerProfile; sessionAgent: AgentDescriptor }> {
+    const sourceDescriptor = this.getRequiredSessionDescriptor(sourceAgentId);
+    const profile = this.profiles.get(sourceDescriptor.profileId);
+    if (!profile) {
+      throw new Error(`Unknown profile: ${sourceDescriptor.profileId}`);
+    }
+
+    const prepared = this.prepareSessionCreation(profile.profileId, options);
+    const forkedDescriptor = prepared.sessionDescriptor;
+    this.descriptors.set(forkedDescriptor.agentId, forkedDescriptor);
+
+    try {
+      await this.copySessionHistoryForFork(sourceDescriptor.sessionFile, forkedDescriptor.sessionFile);
+      await this.writeForkedSessionMemoryHeader(sourceDescriptor, forkedDescriptor.agentId);
+
+      const runtime = await this.getOrCreateRuntimeForDescriptor(forkedDescriptor);
+      forkedDescriptor.contextUsage = runtime.getContextUsage();
+      this.descriptors.set(forkedDescriptor.agentId, forkedDescriptor);
+
+      await this.saveStore();
+    } catch (error) {
+      await this.rollbackCreatedSession(forkedDescriptor);
+      throw error;
+    }
+
+    this.emitAgentsSnapshot();
+    this.emitProfilesSnapshot();
+
+    return {
+      profile: { ...profile },
+      sessionAgent: cloneDescriptor(forkedDescriptor)
+    };
+  }
+
   async spawnAgent(callerAgentId: string, input: SpawnAgentInput): Promise<AgentDescriptor> {
     const manager = this.assertManager(callerAgentId, "spawn agents");
 
@@ -383,6 +540,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       displayName: agentId,
       role: "worker",
       managerId: manager.agentId,
+      profileId: manager.profileId ?? manager.agentId,
       archetypeId,
       status: "idle",
       createdAt,
@@ -611,6 +769,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     this.emitStatus(managerId, descriptor.status, runtime.getPendingCount(), contextUsage);
     this.emitAgentsSnapshot();
+    this.emitProfilesSnapshot();
 
     this.logDebug("manager:create", {
       callerAgentId,
@@ -629,34 +788,41 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   ): Promise<{ managerId: string; terminatedWorkerIds: string[] }> {
     this.assertManager(callerAgentId, "delete managers");
 
-    const target = this.descriptors.get(targetManagerId);
-    if (!target || target.role !== "manager") {
-      throw new Error(`Unknown manager: ${targetManagerId}`);
+    const profile = this.profiles.get(targetManagerId);
+    const sessionDescriptors = profile ? this.getSessionsForProfile(profile.profileId) : [];
+
+    if (sessionDescriptors.length === 0) {
+      const target = this.descriptors.get(targetManagerId);
+      if (!target || target.role !== "manager") {
+        throw new Error(`Unknown manager: ${targetManagerId}`);
+      }
+      sessionDescriptors.push(target);
     }
 
     const terminatedWorkerIds: string[] = [];
 
-    for (const descriptor of Array.from(this.descriptors.values())) {
-      if (descriptor.role !== "worker") {
-        continue;
-      }
-      if (descriptor.managerId !== targetManagerId) {
-        continue;
+    for (const sessionDescriptor of sessionDescriptors) {
+      for (const workerDescriptor of this.getWorkersForManager(sessionDescriptor.agentId)) {
+        terminatedWorkerIds.push(workerDescriptor.agentId);
+        await this.terminateDescriptor(workerDescriptor, { abort: true, emitStatus: true });
+        this.descriptors.delete(workerDescriptor.agentId);
+        this.conversationProjector.deleteConversationHistory(workerDescriptor.agentId);
       }
 
-      terminatedWorkerIds.push(descriptor.agentId);
-      await this.terminateDescriptor(descriptor, { abort: true, emitStatus: true });
-      this.descriptors.delete(descriptor.agentId);
-      this.conversationProjector.deleteConversationHistory(descriptor.agentId);
+      await this.terminateDescriptor(sessionDescriptor, { abort: true, emitStatus: true });
+      this.descriptors.delete(sessionDescriptor.agentId);
+      this.conversationProjector.deleteConversationHistory(sessionDescriptor.agentId);
     }
 
-    await this.terminateDescriptor(target, { abort: true, emitStatus: true });
-    this.descriptors.delete(targetManagerId);
-    this.profiles.delete(targetManagerId);
-    this.conversationProjector.deleteConversationHistory(targetManagerId);
+    if (profile) {
+      this.profiles.delete(profile.profileId);
+    } else {
+      this.profiles.delete(targetManagerId);
+    }
 
     await this.saveStore();
     this.emitAgentsSnapshot();
+    this.emitProfilesSnapshot();
 
     this.logDebug("manager:delete", {
       callerAgentId,
@@ -695,6 +861,227 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     return validateDirectoryPath(pickedPath, this.getCwdPolicy());
+  }
+
+  private isSessionAgent(
+    descriptor: AgentDescriptor | undefined
+  ): descriptor is AgentDescriptor & { role: "manager"; profileId: string } {
+    return (
+      !!descriptor &&
+      descriptor.role === "manager" &&
+      typeof descriptor.profileId === "string" &&
+      descriptor.profileId.trim().length > 0
+    );
+  }
+
+  private getRequiredSessionDescriptor(
+    agentId: string
+  ): AgentDescriptor & { role: "manager"; profileId: string } {
+    const descriptor = this.descriptors.get(agentId);
+    if (!this.isSessionAgent(descriptor)) {
+      throw new Error(`Unknown session agent: ${agentId}`);
+    }
+
+    return descriptor;
+  }
+
+  private getSessionsForProfile(profileId: string): AgentDescriptor[] {
+    return Array.from(this.descriptors.values()).filter(
+      (descriptor) => descriptor.role === "manager" && descriptor.profileId === profileId
+    );
+  }
+
+  private getWorkersForManager(managerId: string): AgentDescriptor[] {
+    return Array.from(this.descriptors.values()).filter(
+      (descriptor) => descriptor.role === "worker" && descriptor.managerId === managerId
+    );
+  }
+
+  private generateSessionAgentIdentity(profileId: string): { agentId: string; sessionNumber: number } {
+    const existingSessions = this.getSessionsForProfile(profileId);
+    let highestSessionNumber = existingSessions.some((descriptor) => descriptor.agentId === profileId)
+      ? ROOT_SESSION_NUMBER
+      : 0;
+
+    for (const descriptor of existingSessions) {
+      const parsedSessionNumber = parseSessionNumberFromAgentId(descriptor.agentId, profileId);
+      if (parsedSessionNumber !== undefined) {
+        highestSessionNumber = Math.max(highestSessionNumber, parsedSessionNumber);
+      }
+    }
+
+    let nextSessionNumber = Math.max(ROOT_SESSION_NUMBER + 1, highestSessionNumber + 1);
+    let sessionAgentId = `${profileId}${SESSION_ID_SUFFIX_SEPARATOR}${nextSessionNumber}`;
+
+    while (this.descriptors.has(sessionAgentId)) {
+      nextSessionNumber += 1;
+      sessionAgentId = `${profileId}${SESSION_ID_SUFFIX_SEPARATOR}${nextSessionNumber}`;
+    }
+
+    return {
+      agentId: sessionAgentId,
+      sessionNumber: nextSessionNumber
+    };
+  }
+
+  private prepareSessionCreation(
+    profileId: string,
+    options?: { label?: string }
+  ): { profile: ManagerProfile; sessionDescriptor: AgentDescriptor; sessionNumber: number } {
+    const profile = this.profiles.get(profileId);
+    if (!profile) {
+      throw new Error(`Unknown profile: ${profileId}`);
+    }
+
+    const templateDescriptor = this.descriptors.get(profile.defaultSessionAgentId);
+    if (!templateDescriptor || templateDescriptor.role !== "manager") {
+      throw new Error(`Profile default session is missing: ${profile.defaultSessionAgentId}`);
+    }
+
+    const { agentId: sessionAgentId, sessionNumber } = this.generateSessionAgentIdentity(profileId);
+    const normalizedLabel = options?.label?.trim();
+    const sessionLabel = normalizedLabel && normalizedLabel.length > 0
+      ? normalizedLabel
+      : `Session ${sessionNumber}`;
+    const createdAt = this.now();
+
+    const sessionDescriptor: AgentDescriptor = {
+      agentId: sessionAgentId,
+      displayName: normalizedLabel && normalizedLabel.length > 0 ? normalizedLabel : sessionAgentId,
+      role: "manager",
+      managerId: sessionAgentId,
+      archetypeId: templateDescriptor.archetypeId,
+      profileId: profile.profileId,
+      sessionLabel,
+      status: "idle",
+      createdAt,
+      updatedAt: createdAt,
+      cwd: templateDescriptor.cwd,
+      model: { ...templateDescriptor.model },
+      sessionFile: join(this.config.paths.sessionsDir, `${sessionAgentId}.jsonl`)
+    };
+
+    return {
+      profile,
+      sessionDescriptor,
+      sessionNumber
+    };
+  }
+
+  private assertSessionIsDeletable(descriptor: AgentDescriptor): void {
+    const profileId = descriptor.profileId ?? descriptor.agentId;
+    const profile = this.profiles.get(profileId);
+    const defaultSessionAgentId = profile?.defaultSessionAgentId ?? profileId;
+
+    if (descriptor.agentId === defaultSessionAgentId) {
+      throw new Error(`Cannot delete default session: ${descriptor.agentId}`);
+    }
+  }
+
+  private async stopSessionInternal(
+    agentId: string,
+    options: { saveStore: boolean; emitSnapshots: boolean; emitStatus?: boolean }
+  ): Promise<{ terminatedWorkerIds: string[] }> {
+    const descriptor = this.getRequiredSessionDescriptor(agentId);
+    const terminatedWorkerIds: string[] = [];
+
+    for (const workerDescriptor of this.getWorkersForManager(agentId)) {
+      terminatedWorkerIds.push(workerDescriptor.agentId);
+      await this.terminateDescriptor(workerDescriptor, { abort: true, emitStatus: true });
+      this.descriptors.delete(workerDescriptor.agentId);
+      this.conversationProjector.deleteConversationHistory(workerDescriptor.agentId);
+    }
+
+    const runtime = this.runtimes.get(agentId);
+    if (runtime) {
+      await runtime.terminate({ abort: true });
+      this.runtimes.delete(agentId);
+    }
+
+    descriptor.status = descriptor.status === "error"
+      ? "idle"
+      : transitionAgentStatus(descriptor.status, "idle");
+    descriptor.contextUsage = undefined;
+    descriptor.updatedAt = this.now();
+    this.descriptors.set(agentId, descriptor);
+
+    if (options.emitStatus ?? true) {
+      this.emitStatus(agentId, descriptor.status, 0);
+    }
+
+    if (options.saveStore) {
+      await this.saveStore();
+    }
+
+    if (options.emitSnapshots) {
+      this.emitAgentsSnapshot();
+      this.emitProfilesSnapshot();
+    }
+
+    return { terminatedWorkerIds };
+  }
+
+  private async copySessionHistoryForFork(sourceSessionFile: string, targetSessionFile: string): Promise<void> {
+    try {
+      await copyFile(sourceSessionFile, targetSessionFile);
+    } catch (error) {
+      if (!isEnoentError(error)) {
+        throw error;
+      }
+
+      await writeFile(targetSessionFile, "", "utf8");
+    }
+  }
+
+  private async writeForkedSessionMemoryHeader(
+    sourceDescriptor: AgentDescriptor,
+    forkedSessionAgentId: string
+  ): Promise<void> {
+    const sourceLabel = sourceDescriptor.sessionLabel ?? sourceDescriptor.agentId;
+    const header = [
+      "# Session Memory",
+      `> Forked from session \"${sourceLabel}\" (${sourceDescriptor.agentId}) on ${this.now()}`,
+      "> Parent session conversation history was duplicated at fork time.",
+      ""
+    ].join("\n");
+
+    await writeFile(this.getAgentMemoryPath(forkedSessionAgentId), header, "utf8");
+  }
+
+  private async rollbackCreatedSession(descriptor: AgentDescriptor): Promise<void> {
+    try {
+      const runtime = this.runtimes.get(descriptor.agentId);
+      if (runtime) {
+        await runtime.terminate({ abort: true });
+        this.runtimes.delete(descriptor.agentId);
+      }
+    } catch (error) {
+      this.logDebug("session:rollback:runtime_error", {
+        agentId: descriptor.agentId,
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
+
+    this.descriptors.delete(descriptor.agentId);
+    this.conversationProjector.deleteConversationHistory(descriptor.agentId);
+
+    try {
+      await this.deleteManagerSessionFile(descriptor.sessionFile);
+    } catch (error) {
+      this.logDebug("session:rollback:session_file_error", {
+        agentId: descriptor.agentId,
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
+
+    try {
+      await rm(this.getAgentMemoryPath(descriptor.agentId), { force: true });
+    } catch (error) {
+      this.logDebug("session:rollback:memory_file_error", {
+        agentId: descriptor.agentId,
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
   }
 
   private resolveActivityManagerContextIds(...agents: AgentDescriptor[]): string[] {
@@ -1218,45 +1605,23 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const managerId = parsed.managerId;
     const reason = parsed.reason;
     const managerDescriptor = this.getRequiredManagerDescriptor(managerId);
+    const profileId = managerDescriptor.profileId ?? managerDescriptor.agentId;
 
     this.logDebug("manager:reset:start", {
       managerId,
       reason,
-      sessionFile: managerDescriptor.sessionFile
+      profileId
     });
 
-    const existingRuntime = this.runtimes.get(managerId);
-    if (existingRuntime) {
-      await existingRuntime.terminate({ abort: true });
-      this.runtimes.delete(managerId);
-    }
-
-    this.conversationProjector.resetConversationHistory(managerId);
-    await this.deleteManagerSessionFile(managerDescriptor.sessionFile);
-
-    managerDescriptor.status = transitionAgentStatus(managerDescriptor.status, "idle");
-    managerDescriptor.contextUsage = undefined;
-    managerDescriptor.updatedAt = this.now();
-    this.descriptors.set(managerId, managerDescriptor);
-    await this.saveStore();
-
-    const managerRuntime = await this.createRuntimeForDescriptor(
-      managerDescriptor,
-      this.resolveSystemPromptForDescriptor(managerDescriptor)
-    );
-    this.runtimes.set(managerId, managerRuntime);
-
-    const contextUsage = managerRuntime.getContextUsage();
-    managerDescriptor.contextUsage = contextUsage;
+    const { sessionAgent } = await this.createSession(profileId, { label: "New chat" });
 
     this.emitConversationReset(managerId, reason);
-    this.emitStatus(managerId, managerDescriptor.status, managerRuntime.getPendingCount(), contextUsage);
-    this.emitAgentsSnapshot();
 
     this.logDebug("manager:reset:ready", {
       managerId,
       reason,
-      sessionFile: managerDescriptor.sessionFile
+      profileId,
+      newSessionAgentId: sessionAgent.agentId
     });
   }
 
@@ -1419,29 +1784,59 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   private reconcileProfilesOnBoot(): void {
+    const managerDescriptorsById = new Map<string, AgentDescriptor>();
+
     for (const descriptor of this.descriptors.values()) {
       if (descriptor.role !== "manager") {
         continue;
       }
 
-      if (typeof descriptor.profileId === "string" && descriptor.profileId.trim().length > 0) {
+      const reconciledProfileId = normalizeOptionalAgentId(descriptor.profileId) ?? descriptor.agentId;
+      if (descriptor.profileId !== reconciledProfileId) {
+        descriptor.profileId = reconciledProfileId;
+        this.descriptors.set(descriptor.agentId, descriptor);
+      }
+
+      managerDescriptorsById.set(descriptor.agentId, descriptor);
+
+      if (this.profiles.has(reconciledProfileId)) {
         continue;
       }
 
-      descriptor.profileId = descriptor.agentId;
-      this.descriptors.set(descriptor.agentId, descriptor);
-
-      if (this.profiles.has(descriptor.agentId)) {
-        continue;
-      }
-
-      this.profiles.set(descriptor.agentId, {
-        profileId: descriptor.agentId,
+      this.profiles.set(reconciledProfileId, {
+        profileId: reconciledProfileId,
         displayName: descriptor.displayName,
-        defaultSessionAgentId: descriptor.agentId,
+        defaultSessionAgentId: reconciledProfileId,
         createdAt: descriptor.createdAt,
         updatedAt: descriptor.createdAt
       });
+    }
+
+    for (const [profileId, profile] of Array.from(this.profiles.entries())) {
+      const defaultSessionDescriptor = managerDescriptorsById.get(profile.defaultSessionAgentId);
+      if (!defaultSessionDescriptor || defaultSessionDescriptor.role !== "manager") {
+        const rootSessionDescriptor = managerDescriptorsById.get(profileId);
+        if (!rootSessionDescriptor || rootSessionDescriptor.role !== "manager") {
+          this.profiles.delete(profileId);
+          continue;
+        }
+
+        profile.defaultSessionAgentId = rootSessionDescriptor.agentId;
+      }
+
+      const profileSessions = this.getSessionsForProfile(profileId);
+      if (profileSessions.length === 0) {
+        const rootSessionDescriptor = managerDescriptorsById.get(profileId);
+        if (!rootSessionDescriptor || rootSessionDescriptor.role !== "manager") {
+          this.profiles.delete(profileId);
+          continue;
+        }
+
+        rootSessionDescriptor.profileId = profileId;
+        this.descriptors.set(rootSessionDescriptor.agentId, rootSessionDescriptor);
+      }
+
+      this.profiles.set(profileId, profile);
     }
   }
 
@@ -1623,7 +2018,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   private resolveSystemPromptForDescriptor(descriptor: AgentDescriptor): string {
     if (descriptor.role === "manager") {
-      return this.resolveRequiredArchetypePrompt(MANAGER_ARCHETYPE_ID);
+      const managerArchetypeId = descriptor.archetypeId
+        ? normalizeArchetypeId(descriptor.archetypeId) ?? MANAGER_ARCHETYPE_ID
+        : MANAGER_ARCHETYPE_ID;
+      return this.resolveRequiredArchetypePrompt(managerArchetypeId);
     }
 
     if (descriptor.archetypeId) {
@@ -2051,6 +2449,16 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.emit("agents_snapshot", payload satisfies ServerEvent);
   }
 
+  private emitProfilesSnapshot(): void {
+    this.emit(
+      "profiles_snapshot",
+      {
+        type: "profiles_snapshot",
+        profiles: this.listProfiles()
+      } satisfies ServerEvent
+    );
+  }
+
   private async handleRuntimeAgentEnd(_agentId: string): Promise<void> {
     // No-op: managers now receive all inbound messages with sourceContext metadata
     // and decide whether to respond without pending-reply bookkeeping.
@@ -2200,6 +2608,33 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
+}
+
+function isEnoentError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: string }).code === "ENOENT"
+  );
+}
+
+function parseSessionNumberFromAgentId(agentId: string, profileId: string): number | undefined {
+  if (!agentId.startsWith(`${profileId}${SESSION_ID_SUFFIX_SEPARATOR}`)) {
+    return undefined;
+  }
+
+  const rawSessionNumber = agentId.slice(`${profileId}${SESSION_ID_SUFFIX_SEPARATOR}`.length);
+  if (!/^[0-9]+$/.test(rawSessionNumber)) {
+    return undefined;
+  }
+
+  const sessionNumber = Number.parseInt(rawSessionNumber, 10);
+  if (!Number.isFinite(sessionNumber) || sessionNumber <= ROOT_SESSION_NUMBER) {
+    return undefined;
+  }
+
+  return sessionNumber;
 }
 
 function normalizeAgentId(input: string): string {

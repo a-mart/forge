@@ -1782,7 +1782,7 @@ describe('SwarmManager', () => {
     ).toBe(true)
   })
 
-  it('resetManagerSession recreates manager runtime and clears manager history', async () => {
+  it('resetManagerSession creates a new session and keeps the source session intact', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -1795,13 +1795,22 @@ describe('SwarmManager', () => {
 
     await manager.resetManagerSession('api_reset')
 
-    expect(firstRuntime!.terminateCalls).toEqual([{ abort: true }])
-    expect(manager.createdRuntimeIds.filter((id) => id === 'manager')).toHaveLength(2)
-    expect(manager.getConversationHistory('manager')).toHaveLength(0)
+    const managerSessions = manager.listAgents().filter((agent) => agent.role === 'manager')
+    const forkedSession = managerSessions.find((agent) => agent.agentId !== 'manager')
+
+    expect(firstRuntime!.terminateCalls).toEqual([])
+    expect(manager.createdRuntimeIds.filter((id) => id === 'manager')).toHaveLength(1)
+    expect(forkedSession?.agentId).toBe('manager--s2')
+    expect(forkedSession?.profileId).toBe('manager')
+    expect(forkedSession?.sessionLabel).toBe('New chat')
+    expect(manager.getConversationHistory('manager').some((message) => message.text === 'before reset')).toBe(true)
+    expect(manager.getConversationHistory('manager--s2')).toHaveLength(0)
 
     const rebooted = new TestSwarmManager(config)
     await bootWithDefaultManager(rebooted, config)
-    expect(rebooted.getConversationHistory('manager')).toHaveLength(0)
+
+    expect(rebooted.getConversationHistory('manager').some((message) => message.text === 'before reset')).toBe(true)
+    expect(rebooted.getConversationHistory('manager--s2')).toHaveLength(0)
   })
 
   it('skips invalid persisted descriptors instead of failing boot', async () => {
