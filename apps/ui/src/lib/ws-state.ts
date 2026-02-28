@@ -3,6 +3,7 @@ import type {
   AgentDescriptor,
   AgentStatus,
   ConversationEntry,
+  ManagerProfile,
   SlackStatusEvent,
   TelegramStatusEvent,
 } from '@middleman/protocol'
@@ -23,6 +24,7 @@ export interface ManagerWsState {
   messages: ConversationHistoryEntry[]
   activityMessages: AgentActivityEntry[]
   agents: AgentDescriptor[]
+  profiles: ManagerProfile[]
   statuses: Record<string, { status: AgentStatus; pendingCount: number; contextUsage?: AgentContextUsage }>
   lastError: string | null
   slackStatus: SlackStatusEvent | null
@@ -37,6 +39,7 @@ export function createInitialManagerWsState(targetAgentId: string | null): Manag
     messages: [],
     activityMessages: [],
     agents: [],
+    profiles: [],
     statuses: {},
     lastError: null,
     slackStatus: null,

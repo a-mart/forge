@@ -2,7 +2,7 @@ import { Loader2, Menu, Minimize2, MoreHorizontal, PanelRight, Square, Trash2 } 
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -253,28 +253,30 @@ export function ChatHeader({
         ) : null}
 
         {/* ── Inline: artifacts toggle ── */}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon"
-              className={cn(
-                'size-7 shrink-0 transition-colors',
-                isArtifactsPanelOpen
-                  ? 'bg-accent text-foreground'
-                  : 'text-muted-foreground hover:bg-accent/70 hover:text-foreground',
-              )}
-              onClick={onToggleArtifactsPanel}
-              aria-label={isArtifactsPanelOpen ? 'Close artifacts panel' : 'Open artifacts panel'}
-              aria-pressed={isArtifactsPanelOpen}
-            >
-              <PanelRight className="size-3.5" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom" sideOffset={6}>
-            {isArtifactsPanelOpen ? 'Close artifacts' : 'Artifacts'}
-          </TooltipContent>
-        </Tooltip>
+        <TooltipProvider delayDuration={200}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className={cn(
+                  'size-7 shrink-0 transition-colors',
+                  isArtifactsPanelOpen
+                    ? 'bg-accent text-foreground'
+                    : 'text-muted-foreground hover:bg-accent/70 hover:text-foreground',
+                )}
+                onClick={onToggleArtifactsPanel}
+                aria-label={isArtifactsPanelOpen ? 'Close artifacts panel' : 'Open artifacts panel'}
+                aria-pressed={isArtifactsPanelOpen}
+              >
+                <PanelRight className="size-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" sideOffset={6}>
+              {isArtifactsPanelOpen ? 'Close artifacts' : 'Artifacts'}
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
       </div>
     </header>
   )

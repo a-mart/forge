@@ -90,7 +90,16 @@ export function IndexPage() {
     return state.agents.find((agent) => agent.agentId === activeAgentId) ?? null
   }, [activeAgentId, state.agents])
 
-  const activeAgentLabel = activeAgent?.displayName ?? activeAgentId ?? 'No active agent'
+  const activeAgentLabel = useMemo(() => {
+    if (!activeAgent) return activeAgentId ?? 'No active agent'
+    // For session agents, show profile name + session label
+    if (activeAgent.profileId && activeAgent.sessionLabel) {
+      const profile = state.profiles.find((p) => p.profileId === activeAgent.profileId)
+      const profileName = profile?.displayName ?? activeAgent.profileId
+      return `${profileName} › ${activeAgent.sessionLabel}`
+    }
+    return activeAgent.displayName ?? activeAgentId ?? 'No active agent'
+  }, [activeAgent, activeAgentId, state.profiles])
   const isActiveManager = activeAgent?.role === 'manager'
 
   const activeManagerId = useMemo(() => {
@@ -107,6 +116,20 @@ export function IndexPage() {
       DEFAULT_MANAGER_AGENT_ID
     )
   }, [activeAgent, state.agents])
+
+  // For settings, only show profile-level managers (default sessions or legacy managers without profileId)
+  const settingsManagers = useMemo(() => {
+    const defaultSessionIds = new Set(state.profiles.map((p) => p.defaultSessionAgentId))
+    return state.agents.filter((agent) => {
+      if (agent.role !== 'manager') return false
+      // If profiles exist, only show default sessions
+      if (state.profiles.length > 0) {
+        return defaultSessionIds.has(agent.agentId) || !agent.profileId
+      }
+      // No profiles yet (legacy) — show all managers
+      return true
+    })
+  }, [state.agents, state.profiles])
 
   const activeAgentStatus = useMemo(() => {
     if (!activeAgentId) {
@@ -273,15 +296,150 @@ export function IndexPage() {
   }
 
   const handleNewChat = () => {
-    if (!isActiveManager || !activeAgentId) {
+    if (!isActiveManager || !activeAgentId || !activeAgent) {
       return
     }
 
+    // Multi-session: create a new session under the current profile instead of destructive /new
+    const profileId = activeAgent.profileId
+    if (profileId && clientRef.current) {
+      void (async () => {
+        try {
+          const result = await clientRef.current!.createSession(profileId)
+          navigateToRoute({ view: 'chat', agentId: result.sessionAgent.agentId })
+          clientRef.current?.subscribeToAgent(result.sessionAgent.agentId)
+        } catch (error) {
+          setState((prev) => ({
+            ...prev,
+            lastError: `Failed to create session: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          }))
+        }
+      })()
+      return
+    }
+
+    // Legacy fallback: destructive /new
     clientRef.current?.sendUserMessage('/new', {
       agentId: activeAgentId,
       delivery: 'steer',
     })
   }
+
+  const handleCreateSession = useCallback((profileId: string, label?: string) => {
+    const client = clientRef.current
+    if (!client) return
+
+    void (async () => {
+      try {
+        const result = await client.createSession(profileId, label)
+        navigateToRoute({ view: 'chat', agentId: result.sessionAgent.agentId })
+        client.subscribeToAgent(result.sessionAgent.agentId)
+      } catch (error) {
+        setState((prev) => ({
+          ...prev,
+          lastError: `Failed to create session: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        }))
+      }
+    })()
+  }, [clientRef, navigateToRoute, setState])
+
+  const handleStopSession = useCallback((agentId: string) => {
+    const client = clientRef.current
+    if (!client) return
+
+    void (async () => {
+      try {
+        await client.stopSession(agentId)
+      } catch (error) {
+        setState((prev) => ({
+          ...prev,
+          lastError: `Failed to stop session: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        }))
+      }
+    })()
+  }, [clientRef, setState])
+
+  const handleResumeSession = useCallback((agentId: string) => {
+    const client = clientRef.current
+    if (!client) return
+
+    void (async () => {
+      try {
+        await client.resumeSession(agentId)
+      } catch (error) {
+        setState((prev) => ({
+          ...prev,
+          lastError: `Failed to resume session: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        }))
+      }
+    })()
+  }, [clientRef, setState])
+
+  const handleDeleteSession = useCallback((agentId: string) => {
+    const client = clientRef.current
+    if (!client) return
+
+    void (async () => {
+      try {
+        await client.deleteSession(agentId)
+      } catch (error) {
+        setState((prev) => ({
+          ...prev,
+          lastError: `Failed to delete session: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        }))
+      }
+    })()
+  }, [clientRef, setState])
+
+  const handleRenameSession = useCallback((agentId: string, label: string) => {
+    const client = clientRef.current
+    if (!client) return
+
+    void (async () => {
+      try {
+        await client.renameSession(agentId, label)
+      } catch (error) {
+        setState((prev) => ({
+          ...prev,
+          lastError: `Failed to rename session: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        }))
+      }
+    })()
+  }, [clientRef, setState])
+
+  const handleForkSession = useCallback((sourceAgentId: string) => {
+    const client = clientRef.current
+    if (!client) return
+
+    void (async () => {
+      try {
+        const result = await client.forkSession(sourceAgentId)
+        navigateToRoute({ view: 'chat', agentId: result.newSessionAgent.agentId })
+        client.subscribeToAgent(result.newSessionAgent.agentId)
+      } catch (error) {
+        setState((prev) => ({
+          ...prev,
+          lastError: `Failed to fork session: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        }))
+      }
+    })()
+  }, [clientRef, navigateToRoute, setState])
+
+  const handleMergeSessionMemory = useCallback((agentId: string) => {
+    const client = clientRef.current
+    if (!client) return
+
+    void (async () => {
+      try {
+        await client.mergeSessionMemory(agentId)
+      } catch (error) {
+        setState((prev) => ({
+          ...prev,
+          lastError: `Failed to merge session memory: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        }))
+      }
+    })()
+  }, [clientRef, setState])
 
   const handleSelectAgent = (agentId: string) => {
     navigateToRoute({ view: 'chat', agentId })
@@ -332,6 +490,7 @@ export function IndexPage() {
         <AgentSidebar
           connected={state.connected}
           agents={state.agents}
+          profiles={state.profiles}
           statuses={state.statuses}
           selectedAgentId={activeAgentId}
           isSettingsActive={activeView === 'settings'}
@@ -342,6 +501,13 @@ export function IndexPage() {
           onDeleteAgent={handleDeleteAgent}
           onDeleteManager={handleRequestDeleteManager}
           onOpenSettings={handleOpenSettingsPanel}
+          onCreateSession={handleCreateSession}
+          onStopSession={handleStopSession}
+          onResumeSession={handleResumeSession}
+          onDeleteSession={handleDeleteSession}
+          onRenameSession={handleRenameSession}
+          onForkSession={handleForkSession}
+          onMergeSessionMemory={handleMergeSessionMemory}
         />
 
         <div
@@ -359,7 +525,7 @@ export function IndexPage() {
             {activeView === 'settings' ? (
               <SettingsPanel
                 wsUrl={wsUrl}
-                managers={state.agents.filter((agent) => agent.role === 'manager')}
+                managers={settingsManagers}
                 slackStatus={state.slackStatus}
                 telegramStatus={state.telegramStatus}
                 onBack={() =>

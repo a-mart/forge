@@ -39,10 +39,22 @@ export interface DirectoryValidationResult {
 
 type Listener = (state: ManagerWsState) => void
 
+type SessionCreatedResult = { sessionAgent: AgentDescriptor; profileId: string }
+type SessionActionResult = { agentId: string }
+type SessionForkedResult = { sourceAgentId: string; newSessionAgent: AgentDescriptor }
+type SessionMemoryMergeResult = { agentId: string; mergedAt?: string }
+
 type WsRequestResultMap = {
   create_manager: AgentDescriptor
   delete_manager: { managerId: string }
   stop_all_agents: { managerId: string; stoppedWorkerIds: string[]; managerStopped: boolean }
+  create_session: SessionCreatedResult
+  stop_session: SessionActionResult
+  resume_session: SessionActionResult
+  delete_session: SessionActionResult
+  rename_session: SessionActionResult
+  fork_session: SessionForkedResult
+  merge_session_memory: SessionMemoryMergeResult
   list_directories: DirectoriesListedResult
   validate_directory: DirectoryValidationResult
   pick_directory: string | null
@@ -53,6 +65,13 @@ const WS_REQUEST_TYPES: WsRequestType[] = [
   'create_manager',
   'delete_manager',
   'stop_all_agents',
+  'create_session',
+  'stop_session',
+  'resume_session',
+  'delete_session',
+  'rename_session',
+  'fork_session',
+  'merge_session_memory',
   'list_directories',
   'validate_directory',
   'pick_directory',
@@ -62,6 +81,13 @@ const WS_REQUEST_ERROR_HINTS: Array<{ requestType: WsRequestType; codeFragment: 
   { requestType: 'create_manager', codeFragment: 'create_manager' },
   { requestType: 'delete_manager', codeFragment: 'delete_manager' },
   { requestType: 'stop_all_agents', codeFragment: 'stop_all_agents' },
+  { requestType: 'create_session', codeFragment: 'create_session' },
+  { requestType: 'stop_session', codeFragment: 'stop_session' },
+  { requestType: 'resume_session', codeFragment: 'resume_session' },
+  { requestType: 'delete_session', codeFragment: 'delete_session' },
+  { requestType: 'rename_session', codeFragment: 'rename_session' },
+  { requestType: 'fork_session', codeFragment: 'fork_session' },
+  { requestType: 'merge_session_memory', codeFragment: 'merge_session_memory' },
   { requestType: 'list_directories', codeFragment: 'list_directories' },
   { requestType: 'validate_directory', codeFragment: 'validate_directory' },
   { requestType: 'pick_directory', codeFragment: 'pick_directory' },
@@ -332,6 +358,133 @@ export class ManagerWsClient {
       }))
   }
 
+  async createSession(profileId: string, label?: string): Promise<SessionCreatedResult> {
+    const trimmed = profileId.trim()
+    if (!trimmed) {
+      throw new Error('Profile id is required.')
+    }
+
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+      throw new Error('WebSocket is disconnected. Reconnecting...')
+    }
+
+    return this.enqueueRequest('create_session', (requestId) => ({
+      type: 'create_session',
+      profileId: trimmed,
+      label: label?.trim() || undefined,
+      requestId,
+    }))
+  }
+
+  async stopSession(agentId: string): Promise<SessionActionResult> {
+    const trimmed = agentId.trim()
+    if (!trimmed) {
+      throw new Error('Agent id is required.')
+    }
+
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+      throw new Error('WebSocket is disconnected. Reconnecting...')
+    }
+
+    return this.enqueueRequest('stop_session', (requestId) => ({
+      type: 'stop_session',
+      agentId: trimmed,
+      requestId,
+    }))
+  }
+
+  async resumeSession(agentId: string): Promise<SessionActionResult> {
+    const trimmed = agentId.trim()
+    if (!trimmed) {
+      throw new Error('Agent id is required.')
+    }
+
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+      throw new Error('WebSocket is disconnected. Reconnecting...')
+    }
+
+    return this.enqueueRequest('resume_session', (requestId) => ({
+      type: 'resume_session',
+      agentId: trimmed,
+      requestId,
+    }))
+  }
+
+  async deleteSession(agentId: string): Promise<SessionActionResult> {
+    const trimmed = agentId.trim()
+    if (!trimmed) {
+      throw new Error('Agent id is required.')
+    }
+
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+      throw new Error('WebSocket is disconnected. Reconnecting...')
+    }
+
+    return this.enqueueRequest('delete_session', (requestId) => ({
+      type: 'delete_session',
+      agentId: trimmed,
+      requestId,
+    }))
+  }
+
+  async renameSession(agentId: string, label: string): Promise<SessionActionResult> {
+    const trimmed = agentId.trim()
+    const trimmedLabel = label.trim()
+    if (!trimmed) {
+      throw new Error('Agent id is required.')
+    }
+
+    if (!trimmedLabel) {
+      throw new Error('Session label is required.')
+    }
+
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+      throw new Error('WebSocket is disconnected. Reconnecting...')
+    }
+
+    return this.enqueueRequest('rename_session', (requestId) => ({
+      type: 'rename_session',
+      agentId: trimmed,
+      label: trimmedLabel,
+      requestId,
+    }))
+  }
+
+  async forkSession(sourceAgentId: string, label?: string): Promise<SessionForkedResult> {
+    const trimmed = sourceAgentId.trim()
+    if (!trimmed) {
+      throw new Error('Source agent id is required.')
+    }
+
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+      throw new Error('WebSocket is disconnected. Reconnecting...')
+    }
+
+    return this.enqueueRequest('fork_session', (requestId) => ({
+      type: 'fork_session',
+      sourceAgentId: trimmed,
+      label: label?.trim() || undefined,
+      requestId,
+    }))
+  }
+
+  async mergeSessionMemory(agentId: string): Promise<SessionMemoryMergeResult> {
+    const trimmed = agentId.trim()
+    if (!trimmed) {
+      throw new Error('Agent id is required.')
+    }
+
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+      throw new Error('WebSocket is disconnected. Reconnecting...')
+    }
+
+    return this.enqueueRequest('merge_session_memory', (requestId) => ({
+      type: 'merge_session_memory',
+      agentId: trimmed,
+      requestId,
+    }))
+  }
+
   private connect(): void {
     if (this.destroyed) return
 
@@ -481,6 +634,10 @@ export class ManagerWsClient {
         this.applyAgentsSnapshot(event.agents)
         break
 
+      case 'profiles_snapshot':
+        this.updateState({ profiles: event.profiles })
+        break
+
       case 'manager_created': {
         this.applyManagerCreated(event.manager)
         this.requestTracker.resolve('create_manager', event.requestId, event.manager)
@@ -492,6 +649,68 @@ export class ManagerWsClient {
         this.requestTracker.resolve('delete_manager', event.requestId, {
           managerId: event.managerId,
         })
+        break
+      }
+
+      case 'session_created': {
+        this.requestTracker.resolve('create_session', event.requestId, {
+          sessionAgent: event.sessionAgent,
+          profileId: event.profile.profileId,
+        })
+        break
+      }
+
+      case 'session_stopped': {
+        this.requestTracker.resolve('stop_session', event.requestId, {
+          agentId: event.agentId,
+        })
+        break
+      }
+
+      case 'session_resumed': {
+        this.requestTracker.resolve('resume_session', event.requestId, {
+          agentId: event.agentId,
+        })
+        break
+      }
+
+      case 'session_deleted': {
+        this.applySessionDeleted(event.agentId, event.profileId)
+        this.requestTracker.resolve('delete_session', event.requestId, {
+          agentId: event.agentId,
+        })
+        break
+      }
+
+      case 'session_renamed': {
+        this.requestTracker.resolve('rename_session', event.requestId, {
+          agentId: event.agentId,
+        })
+        break
+      }
+
+      case 'session_forked': {
+        this.requestTracker.resolve('fork_session', event.requestId, {
+          sourceAgentId: event.sourceAgentId,
+          newSessionAgent: event.newSessionAgent,
+        })
+        break
+      }
+
+      case 'session_memory_merge_started': {
+        this.requestTracker.resolve('merge_session_memory', event.requestId, {
+          agentId: event.agentId,
+        })
+        break
+      }
+
+      case 'session_memory_merged': {
+        // Already resolved by merge_started; this is informational.
+        break
+      }
+
+      case 'session_memory_merge_failed': {
+        // Already resolved by merge_started; failure is surfaced via error event.
         break
       }
 
@@ -611,6 +830,36 @@ export class ManagerWsClient {
     const nextAgents = this.state.agents.filter(
       (agent) => agent.agentId !== managerId && agent.managerId !== managerId,
     )
+    this.applyAgentsSnapshot(nextAgents)
+  }
+
+  private applySessionDeleted(agentId: string, profileId: string): void {
+    const wasSelected =
+      this.state.targetAgentId === agentId || this.state.subscribedAgentId === agentId
+
+    const nextAgents = this.state.agents.filter(
+      (agent) => agent.agentId !== agentId && agent.managerId !== agentId,
+    )
+
+    if (wasSelected) {
+      // Navigate to the profile's default session
+      const profile = this.state.profiles.find((p) => p.profileId === profileId)
+      const fallbackId = profile?.defaultSessionAgentId ?? chooseFallbackAgentId(nextAgents)
+
+      if (fallbackId && this.socket?.readyState === WebSocket.OPEN) {
+        this.desiredAgentId = fallbackId
+        this.send({ type: 'subscribe', agentId: fallbackId })
+        this.updateState({
+          agents: nextAgents,
+          targetAgentId: fallbackId,
+          subscribedAgentId: fallbackId,
+          messages: [],
+          activityMessages: [],
+        })
+        return
+      }
+    }
+
     this.applyAgentsSnapshot(nextAgents)
   }
 
