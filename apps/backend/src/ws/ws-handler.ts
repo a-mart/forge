@@ -6,6 +6,7 @@ import { extractRequestId, parseClientCommand } from "./ws-command-parser.js";
 import { handleAgentCommand } from "./routes/agent-routes.js";
 import { handleConversationCommand } from "./routes/conversation-routes.js";
 import { handleManagerCommand } from "./routes/manager-routes.js";
+import { handleSessionCommand } from "./routes/session-routes.js";
 
 const BOOTSTRAP_SUBSCRIPTION_AGENT_ID = "__bootstrap_manager__";
 
@@ -152,6 +153,19 @@ export class WsHandler {
       return;
     }
 
+    const sessionHandled = await handleSessionCommand({
+      command,
+      socket,
+      subscribedAgentId,
+      swarmManager: this.swarmManager,
+      resolveManagerContextAgentId: (agentId) => this.resolveManagerContextAgentId(agentId),
+      send: (targetSocket, event) => this.send(targetSocket, event),
+      handleDeletedAgentSubscriptions: (deletedAgentIds) => this.handleDeletedAgentSubscriptions(deletedAgentIds)
+    });
+    if (sessionHandled) {
+      return;
+    }
+
     const agentHandled = await handleAgentCommand({
       command,
       socket,
@@ -277,6 +291,10 @@ export class WsHandler {
     this.send(socket, {
       type: "agents_snapshot",
       agents: this.swarmManager.listAgents()
+    });
+    this.send(socket, {
+      type: "profiles_snapshot",
+      profiles: this.swarmManager.listProfiles()
     });
     this.send(socket, {
       type: "conversation_history",

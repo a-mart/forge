@@ -124,6 +124,172 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
     };
   }
 
+  if (maybe.type === "create_session") {
+    const profileId = (maybe as { profileId?: unknown }).profileId;
+    const label = (maybe as { label?: unknown }).label;
+    const requestId = (maybe as { requestId?: unknown }).requestId;
+
+    if (typeof profileId !== "string" || profileId.trim().length === 0) {
+      return { ok: false, error: "create_session.profileId must be a non-empty string" };
+    }
+    if (label !== undefined && typeof label !== "string") {
+      return { ok: false, error: "create_session.label must be a string when provided" };
+    }
+    if (requestId !== undefined && typeof requestId !== "string") {
+      return { ok: false, error: "create_session.requestId must be a string when provided" };
+    }
+
+    const normalizedLabel = label?.trim();
+
+    return {
+      ok: true,
+      command: {
+        type: "create_session",
+        profileId: profileId.trim(),
+        label: normalizedLabel ? normalizedLabel : undefined,
+        requestId
+      }
+    };
+  }
+
+  if (maybe.type === "stop_session") {
+    const agentId = (maybe as { agentId?: unknown }).agentId;
+    const requestId = (maybe as { requestId?: unknown }).requestId;
+
+    if (typeof agentId !== "string" || agentId.trim().length === 0) {
+      return { ok: false, error: "stop_session.agentId must be a non-empty string" };
+    }
+    if (requestId !== undefined && typeof requestId !== "string") {
+      return { ok: false, error: "stop_session.requestId must be a string when provided" };
+    }
+
+    return {
+      ok: true,
+      command: {
+        type: "stop_session",
+        agentId: agentId.trim(),
+        requestId
+      }
+    };
+  }
+
+  if (maybe.type === "resume_session") {
+    const agentId = (maybe as { agentId?: unknown }).agentId;
+    const requestId = (maybe as { requestId?: unknown }).requestId;
+
+    if (typeof agentId !== "string" || agentId.trim().length === 0) {
+      return { ok: false, error: "resume_session.agentId must be a non-empty string" };
+    }
+    if (requestId !== undefined && typeof requestId !== "string") {
+      return { ok: false, error: "resume_session.requestId must be a string when provided" };
+    }
+
+    return {
+      ok: true,
+      command: {
+        type: "resume_session",
+        agentId: agentId.trim(),
+        requestId
+      }
+    };
+  }
+
+  if (maybe.type === "delete_session") {
+    const agentId = (maybe as { agentId?: unknown }).agentId;
+    const requestId = (maybe as { requestId?: unknown }).requestId;
+
+    if (typeof agentId !== "string" || agentId.trim().length === 0) {
+      return { ok: false, error: "delete_session.agentId must be a non-empty string" };
+    }
+    if (requestId !== undefined && typeof requestId !== "string") {
+      return { ok: false, error: "delete_session.requestId must be a string when provided" };
+    }
+
+    return {
+      ok: true,
+      command: {
+        type: "delete_session",
+        agentId: agentId.trim(),
+        requestId
+      }
+    };
+  }
+
+  if (maybe.type === "rename_session") {
+    const agentId = (maybe as { agentId?: unknown }).agentId;
+    const label = (maybe as { label?: unknown }).label;
+    const requestId = (maybe as { requestId?: unknown }).requestId;
+
+    if (typeof agentId !== "string" || agentId.trim().length === 0) {
+      return { ok: false, error: "rename_session.agentId must be a non-empty string" };
+    }
+    if (typeof label !== "string" || label.trim().length === 0) {
+      return { ok: false, error: "rename_session.label must be a non-empty string" };
+    }
+    if (requestId !== undefined && typeof requestId !== "string") {
+      return { ok: false, error: "rename_session.requestId must be a string when provided" };
+    }
+
+    return {
+      ok: true,
+      command: {
+        type: "rename_session",
+        agentId: agentId.trim(),
+        label: label.trim(),
+        requestId
+      }
+    };
+  }
+
+  if (maybe.type === "fork_session") {
+    const sourceAgentId = (maybe as { sourceAgentId?: unknown }).sourceAgentId;
+    const label = (maybe as { label?: unknown }).label;
+    const requestId = (maybe as { requestId?: unknown }).requestId;
+
+    if (typeof sourceAgentId !== "string" || sourceAgentId.trim().length === 0) {
+      return { ok: false, error: "fork_session.sourceAgentId must be a non-empty string" };
+    }
+    if (label !== undefined && typeof label !== "string") {
+      return { ok: false, error: "fork_session.label must be a string when provided" };
+    }
+    if (requestId !== undefined && typeof requestId !== "string") {
+      return { ok: false, error: "fork_session.requestId must be a string when provided" };
+    }
+
+    const normalizedLabel = label?.trim();
+
+    return {
+      ok: true,
+      command: {
+        type: "fork_session",
+        sourceAgentId: sourceAgentId.trim(),
+        label: normalizedLabel ? normalizedLabel : undefined,
+        requestId
+      }
+    };
+  }
+
+  if (maybe.type === "merge_session_memory") {
+    const agentId = (maybe as { agentId?: unknown }).agentId;
+    const requestId = (maybe as { requestId?: unknown }).requestId;
+
+    if (typeof agentId !== "string" || agentId.trim().length === 0) {
+      return { ok: false, error: "merge_session_memory.agentId must be a non-empty string" };
+    }
+    if (requestId !== undefined && typeof requestId !== "string") {
+      return { ok: false, error: "merge_session_memory.requestId must be a string when provided" };
+    }
+
+    return {
+      ok: true,
+      command: {
+        type: "merge_session_memory",
+        agentId: agentId.trim(),
+        requestId
+      }
+    };
+  }
+
   if (maybe.type === "list_directories") {
     const path = (maybe as { path?: unknown }).path;
     const requestId = (maybe as { requestId?: unknown }).requestId;
@@ -240,6 +406,13 @@ export function extractRequestId(command: ClientCommand): string | undefined {
   switch (command.type) {
     case "create_manager":
     case "delete_manager":
+    case "create_session":
+    case "stop_session":
+    case "resume_session":
+    case "delete_session":
+    case "rename_session":
+    case "fork_session":
+    case "merge_session_memory":
     case "stop_all_agents":
     case "list_directories":
     case "validate_directory":
