@@ -11,7 +11,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { ContextWindowIndicator } from '@/components/chat/ContextWindowIndicator'
 import { cn } from '@/lib/utils'
-import type { AgentStatus } from '@/lib/ws-types'
+import type { AgentStatus } from '@middleman/protocol'
 
 export type ChannelView = 'web' | 'all'
 
@@ -48,8 +48,10 @@ function formatAgentStatus(status: AgentStatus | null): string {
       return 'Idle'
     case 'terminated':
       return 'Terminated'
-    case 'stopped_on_restart':
+    case 'stopped':
       return 'Stopped'
+    case 'error':
+      return 'Error'
   }
 }
 

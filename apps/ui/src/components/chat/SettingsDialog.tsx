@@ -4,7 +4,7 @@ import { SettingsGeneral } from '@/components/settings/SettingsGeneral'
 import { SettingsAuth } from '@/components/settings/SettingsAuth'
 import { SettingsIntegrations } from '@/components/settings/SettingsIntegrations'
 import { SettingsSkills } from '@/components/settings/SettingsSkills'
-import type { AgentDescriptor, SlackStatusEvent, TelegramStatusEvent } from '@/lib/ws-types'
+import type { AgentDescriptor, SlackStatusEvent, TelegramStatusEvent } from '@middleman/protocol'
 
 interface SettingsPanelProps {
   wsUrl: string

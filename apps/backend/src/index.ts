@@ -2,7 +2,6 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { config as loadDotenv } from "dotenv";
 import { createConfig } from "./config.js";
-import { GsuiteIntegrationService } from "./integrations/gsuite/gsuite-integration.js";
 import { IntegrationRegistryService } from "./integrations/registry.js";
 import { CronSchedulerService } from "./scheduler/cron-scheduler-service.js";
 import { getScheduleFilePath } from "./scheduler/schedule-storage.js";
@@ -88,18 +87,12 @@ async function main(): Promise<void> {
   });
   await integrationRegistry.start();
 
-  const gsuiteIntegration = new GsuiteIntegrationService({
-    dataDir: config.paths.dataDir
-  });
-  await gsuiteIntegration.start();
-
   const wsServer = new SwarmWebSocketServer({
     swarmManager,
     host: config.host,
     port: config.port,
     allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
-    integrationRegistry,
-    gsuiteIntegration
+    integrationRegistry
   });
   await wsServer.start();
 
@@ -111,7 +104,6 @@ async function main(): Promise<void> {
     await Promise.allSettled([
       queueSchedulerSync(new Set<string>()),
       integrationRegistry.stop(),
-      gsuiteIntegration.stop(),
       wsServer.stop()
     ]);
     process.exit(0);

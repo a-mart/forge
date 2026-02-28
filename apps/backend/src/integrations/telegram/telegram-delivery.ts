@@ -1,5 +1,6 @@
-import type { ServerEvent } from "../../protocol/ws-types.js";
+import type { ServerEvent } from "@middleman/protocol";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
+import { normalizeManagerId } from "../../utils/normalize.js";
 import { TelegramBotApiClient } from "./telegram-client.js";
 import { markdownToTelegramHtml } from "./telegram-markdown.js";
 import type { TelegramIntegrationConfig } from "./telegram-types.js";
@@ -192,13 +193,4 @@ function normalizeOptionalString(value: string | undefined): string | undefined 
 
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
-}
-
-function normalizeManagerId(value: string): string {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    throw new Error("managerId is required");
-  }
-
-  return trimmed;
 }

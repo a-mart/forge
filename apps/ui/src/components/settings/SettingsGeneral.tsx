@@ -14,7 +14,7 @@ import {
   readStoredThemePreference,
   type ThemePreference,
 } from '@/lib/theme'
-import { resolveApiEndpoint } from '@/components/settings/settings-api'
+import { resolveApiEndpoint } from '@/lib/api-endpoint'
 
 interface SettingsGeneralProps {
   wsUrl: string

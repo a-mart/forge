@@ -3,6 +3,7 @@ import type {
   ConversationAttachment,
   MessageSourceContext
 } from "../../swarm/types.js";
+import { normalizeManagerId } from "../../utils/normalize.js";
 import { stripBotMention } from "./slack-heuristics.js";
 import { SlackWebApiClient } from "./slack-client.js";
 import type {
@@ -571,15 +572,6 @@ function normalizeOptionalString(value: string | undefined): string | undefined 
 
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
-}
-
-function normalizeManagerId(value: string): string {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    throw new Error("managerId is required");
-  }
-
-  return trimmed;
 }
 
 function isTextMimeType(mimeType: string): boolean {

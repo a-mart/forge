@@ -1,6 +1,15 @@
 import { randomUUID } from "node:crypto";
 import type { AgentSession, AgentSessionEvent } from "@mariozechner/pi-coding-agent";
 import type { ImageContent, TextContent } from "@mariozechner/pi-ai";
+import {
+  buildRuntimeMessageKey,
+  consumePendingDeliveryByMessageKey,
+  extractMessageKeyFromRuntimeContent,
+  normalizeRuntimeError,
+  normalizeRuntimeUserMessage,
+  previewForLog
+} from "./runtime-utils.js";
+import { transitionAgentStatus } from "./agent-state-machine.js";
 import type {
   RuntimeImageAttachment,
   RuntimeErrorEvent,
@@ -120,8 +129,8 @@ export class AgentRuntime implements SwarmAgentRuntime {
     this.promptDispatchPending = false;
     this.ignoreNextAgentStart = false;
     this.inFlightPrompts.clear();
-    this.status = "terminated";
-    this.descriptor.status = "terminated";
+    this.status = transitionAgentStatus(this.status, "terminated");
+    this.descriptor.status = this.status;
     this.descriptor.updatedAt = this.now();
     await this.emitStatus();
   }
@@ -284,7 +293,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
     }
 
     if (event.type === "message_start" && event.message.role === "user") {
-      const key = extractMessageKeyFromContent(event.message.content);
+      const key = extractMessageKeyFromRuntimeContent(event.message.content);
       if (key !== undefined) {
         this.consumePendingMessage(key);
         await this.emitStatus();
@@ -345,18 +354,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
   }
 
   private consumePendingMessage(messageKey: string): void {
-    if (this.pendingDeliveries.length === 0) return;
-
-    const first = this.pendingDeliveries[0];
-    if (first.messageKey === messageKey) {
-      this.pendingDeliveries.shift();
-      return;
-    }
-
-    const index = this.pendingDeliveries.findIndex((item) => item.messageKey === messageKey);
-    if (index >= 0) {
-      this.pendingDeliveries.splice(index, 1);
-    }
+    consumePendingDeliveryByMessageKey(this.pendingDeliveries, messageKey);
   }
 
   private ensureNotTerminated(): void {
@@ -371,10 +369,11 @@ export class AgentRuntime implements SwarmAgentRuntime {
       return;
     }
 
-    this.status = status;
-    this.descriptor.status = status;
+    const nextStatus = transitionAgentStatus(this.status, status);
+    this.status = nextStatus;
+    this.descriptor.status = nextStatus;
     this.descriptor.updatedAt = this.now();
-    this.lastStreamingStatusEmitAtMs = status === "streaming" ? Date.now() : 0;
+    this.lastStreamingStatusEmitAtMs = nextStatus === "streaming" ? Date.now() : 0;
     await this.emitStatus();
   }
 
@@ -432,22 +431,6 @@ export class AgentRuntime implements SwarmAgentRuntime {
   }
 }
 
-function normalizeRuntimeUserMessage(input: RuntimeUserMessageInput): RuntimeUserMessage {
-  if (typeof input === "string") {
-    return {
-      text: input,
-      images: []
-    };
-  }
-
-  const text = typeof input.text === "string" ? input.text : "";
-
-  return {
-    text,
-    images: normalizeRuntimeImageAttachments(input.images)
-  };
-}
-
 function normalizeAgentContextUsage(
   usage:
     | {
@@ -482,36 +465,6 @@ function normalizeAgentContextUsage(
   };
 }
 
-function normalizeRuntimeImageAttachments(
-  images: RuntimeUserMessage["images"]
-): RuntimeImageAttachment[] {
-  if (!images || images.length === 0) {
-    return [];
-  }
-
-  const normalized: RuntimeImageAttachment[] = [];
-
-  for (const image of images) {
-    if (!image || typeof image !== "object") {
-      continue;
-    }
-
-    const mimeType = typeof image.mimeType === "string" ? image.mimeType.trim() : "";
-    const data = typeof image.data === "string" ? image.data.trim() : "";
-
-    if (!mimeType || !mimeType.startsWith("image/") || !data) {
-      continue;
-    }
-
-    normalized.push({
-      mimeType,
-      data
-    });
-  }
-
-  return normalized;
-}
-
 function toImageContent(images: RuntimeImageAttachment[] | undefined): ImageContent[] {
   if (!images || images.length === 0) {
     return [];
@@ -541,79 +494,6 @@ function buildUserMessageContent(text: string, images: ImageContent[]): string |
   return parts;
 }
 
-function buildRuntimeMessageKey(message: RuntimeUserMessage): string {
-  return buildMessageKey(message.text, message.images ?? []) ?? "text=|images=";
-}
-
-function extractMessageKeyFromContent(content: unknown): string | undefined {
-  if (typeof content === "string") {
-    return buildMessageKey(content, []);
-  }
-
-  if (!Array.isArray(content)) {
-    return undefined;
-  }
-
-  const textParts: string[] = [];
-  const images: RuntimeImageAttachment[] = [];
-
-  for (const item of content) {
-    if (!item || typeof item !== "object") {
-      continue;
-    }
-
-    const maybe = item as { type?: unknown; text?: unknown; mimeType?: unknown; data?: unknown };
-    if (maybe.type === "text" && typeof maybe.text === "string") {
-      textParts.push(maybe.text);
-      continue;
-    }
-
-    if (maybe.type === "image") {
-      const mimeType = typeof maybe.mimeType === "string" ? maybe.mimeType : "";
-      const data = typeof maybe.data === "string" ? maybe.data : "";
-      if (mimeType && data) {
-        images.push({ mimeType, data });
-      }
-    }
-  }
-
-  return buildMessageKey(textParts.join("\n"), images);
-}
-
-function previewForLog(text: string, maxLength = 160): string {
-  const normalized = text.replace(/\s+/g, " ").trim();
-  if (normalized.length <= maxLength) return normalized;
-  return `${normalized.slice(0, maxLength)}...`;
-}
-
-function normalizeRuntimeError(error: unknown): { message: string; stack?: string } {
-  if (error instanceof Error) {
-    return {
-      message: error.message,
-      stack: error.stack
-    };
-  }
-
-  return {
-    message: String(error)
-  };
-}
-
 function isLikelyCompactionError(message: string): boolean {
   return /\bcompact(?:ion)?\b/i.test(message);
-}
-
-function buildMessageKey(text: string, images: RuntimeImageAttachment[]): string | undefined {
-  const normalizedText = text.trim();
-  const normalizedImages = normalizeRuntimeImageAttachments(images);
-
-  if (!normalizedText && normalizedImages.length === 0) {
-    return undefined;
-  }
-
-  const imageKey = normalizedImages
-    .map((image) => `${image.mimeType}:${image.data.length}:${image.data.slice(0, 24)}`)
-    .join(",");
-
-  return `text=${normalizedText}|images=${imageKey}`;
 }

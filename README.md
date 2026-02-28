@@ -39,7 +39,7 @@ pnpm dev
 - **Worker dispatch.** The manager spawns workers (Codex, Pi/Opus, etc.) and routes messages between them. You describe work at a high level; it handles the breakdown.
 - **Parallel execution.** Dump a list of tasks and the manager figures out what can run concurrently. Stream-of-thought voice dumps welcome.
 - **Dashboard.** A Conductor-style UI for watching agents work, chatting with your manager, and managing settings.
-- **Skills & integrations.** Built-in skills for web search, image generation, browser automation, cron scheduling, Google Workspace, and more. Extensible via the pi skill system.
+- **Skills & integrations.** Built-in skills for web search, image generation, browser automation, cron scheduling, and more. Extensible via the pi skill system.
 
 ## Architecture
 

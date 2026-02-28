@@ -3,6 +3,7 @@ import { readdir } from "node:fs/promises";
 import type { Dirent } from "node:fs";
 import { resolve } from "node:path";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
+import { normalizeManagerId } from "../utils/normalize.js";
 import { SlackIntegrationService } from "./slack/slack-integration.js";
 import type { SlackStatusEvent } from "./slack/slack-status.js";
 import type { SlackChannelDescriptor, SlackConnectionTestResult, SlackIntegrationConfigPublic } from "./slack/slack-types.js";
@@ -330,15 +331,6 @@ export class IntegrationRegistryService extends EventEmitter {
     );
     return next;
   }
-}
-
-function normalizeManagerId(value: string): string {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    throw new Error("managerId is required");
-  }
-
-  return trimmed;
 }
 
 function normalizeOptionalManagerId(value: string | undefined): string | undefined {

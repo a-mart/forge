@@ -6,6 +6,16 @@ import {
   type CodexDynamicToolCallResponse,
   type CodexToolBridge
 } from "./codex-tool-bridge.js";
+import {
+  buildRuntimeMessageKey,
+  consumePendingDeliveryByMessageKey,
+  extractMessageKeyFromRuntimeContent,
+  normalizeRuntimeError,
+  normalizeRuntimeImageAttachments,
+  normalizeRuntimeUserMessage,
+  previewForLog
+} from "./runtime-utils.js";
+import { transitionAgentStatus } from "./agent-state-machine.js";
 import type {
   RuntimeImageAttachment,
   RuntimeErrorEvent,
@@ -228,8 +238,8 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
     this.activeTurnId = undefined;
     this.startRequestPending = false;
 
-    this.status = "terminated";
-    this.descriptor.status = "terminated";
+    this.status = transitionAgentStatus(this.status, "terminated");
+    this.descriptor.status = this.status;
     this.descriptor.updatedAt = this.now();
 
     await this.emitStatus();
@@ -651,20 +661,7 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
   }
 
   private consumePendingMessage(messageKey: string): void {
-    if (this.pendingDeliveries.length === 0) {
-      return;
-    }
-
-    const first = this.pendingDeliveries[0];
-    if (first.messageKey === messageKey) {
-      this.pendingDeliveries.shift();
-      return;
-    }
-
-    const index = this.pendingDeliveries.findIndex((item) => item.messageKey === messageKey);
-    if (index >= 0) {
-      this.pendingDeliveries.splice(index, 1);
-    }
+    consumePendingDeliveryByMessageKey(this.pendingDeliveries, messageKey);
   }
 
   private async handleServerRequest(request: JsonRpcRequestMessage): Promise<unknown> {
@@ -751,8 +748,8 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
     this.activeTurnId = undefined;
     this.threadId = undefined;
 
-    this.status = "terminated";
-    this.descriptor.status = "terminated";
+    this.status = transitionAgentStatus(this.status, "terminated");
+    this.descriptor.status = this.status;
     this.descriptor.updatedAt = this.now();
 
     await this.emitStatus();
@@ -778,8 +775,9 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
       return;
     }
 
-    this.status = status;
-    this.descriptor.status = status;
+    const nextStatus = transitionAgentStatus(this.status, status);
+    this.status = nextStatus;
+    this.descriptor.status = nextStatus;
     this.descriptor.updatedAt = this.now();
 
     await this.emitStatus();
@@ -1095,50 +1093,6 @@ function toRuntimeMessageFromUserItem(content: unknown[] | undefined): unknown {
   return parts;
 }
 
-function normalizeRuntimeUserMessage(input: RuntimeUserMessageInput): RuntimeUserMessage {
-  if (typeof input === "string") {
-    return {
-      text: input,
-      images: []
-    };
-  }
-
-  return {
-    text: typeof input.text === "string" ? input.text : "",
-    images: normalizeRuntimeImageAttachments(input.images)
-  };
-}
-
-function normalizeRuntimeImageAttachments(
-  images: RuntimeUserMessage["images"]
-): RuntimeImageAttachment[] {
-  if (!images || images.length === 0) {
-    return [];
-  }
-
-  const normalized: RuntimeImageAttachment[] = [];
-
-  for (const image of images) {
-    if (!image || typeof image !== "object") {
-      continue;
-    }
-
-    const mimeType = typeof image.mimeType === "string" ? image.mimeType.trim() : "";
-    const data = typeof image.data === "string" ? image.data.trim() : "";
-
-    if (!mimeType.startsWith("image/") || !data) {
-      continue;
-    }
-
-    normalized.push({
-      mimeType,
-      data
-    });
-  }
-
-  return normalized;
-}
-
 function toDataUrl(image: RuntimeImageAttachment): string {
   return `data:${image.mimeType};base64,${image.data}`;
 }
@@ -1153,86 +1107,4 @@ function parseDataUrl(value: string): RuntimeImageAttachment | undefined {
     mimeType: match[1],
     data: match[2]
   };
-}
-
-function buildRuntimeMessageKey(message: RuntimeUserMessage): string {
-  return buildMessageKey(message.text, message.images ?? []) ?? "text=|images=";
-}
-
-function extractMessageKeyFromRuntimeContent(content: unknown): string | undefined {
-  if (typeof content === "string") {
-    return buildMessageKey(content, []);
-  }
-
-  if (!Array.isArray(content)) {
-    return undefined;
-  }
-
-  const textParts: string[] = [];
-  const images: RuntimeImageAttachment[] = [];
-
-  for (const item of content) {
-    if (!item || typeof item !== "object") {
-      continue;
-    }
-
-    const typed = item as {
-      type?: unknown;
-      text?: unknown;
-      mimeType?: unknown;
-      data?: unknown;
-    };
-
-    if (typed.type === "text" && typeof typed.text === "string") {
-      textParts.push(typed.text);
-      continue;
-    }
-
-    if (
-      typed.type === "image" &&
-      typeof typed.mimeType === "string" &&
-      typeof typed.data === "string"
-    ) {
-      images.push({
-        mimeType: typed.mimeType,
-        data: typed.data
-      });
-    }
-  }
-
-  return buildMessageKey(textParts.join("\n"), images);
-}
-
-function buildMessageKey(text: string, images: RuntimeImageAttachment[]): string | undefined {
-  const normalizedText = text.trim();
-  const normalizedImages = normalizeRuntimeImageAttachments(images);
-
-  if (!normalizedText && normalizedImages.length === 0) {
-    return undefined;
-  }
-
-  const imageKey = normalizedImages
-    .map((image) => `${image.mimeType}:${image.data.length}:${image.data.slice(0, 24)}`)
-    .join(",");
-
-  return `text=${normalizedText}|images=${imageKey}`;
-}
-
-function normalizeRuntimeError(error: unknown): { message: string; stack?: string } {
-  if (error instanceof Error) {
-    return {
-      message: error.message,
-      stack: error.stack
-    };
-  }
-
-  return {
-    message: String(error)
-  };
-}
-
-function previewForLog(text: string, maxLength = 160): string {
-  const normalized = text.replace(/\s+/g, " ").trim();
-  if (normalized.length <= maxLength) return normalized;
-  return `${normalized.slice(0, maxLength)}...`;
 }

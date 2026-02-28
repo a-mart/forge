@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@google/genai": "^1.42.0",
+    "@middleman/protocol": "workspace:*",
     "@mariozechner/pi-ai": "^0.55.0",
     "@mariozechner/pi-coding-agent": "^0.55.0",
     "@mozilla/readability": "^0.6.0",

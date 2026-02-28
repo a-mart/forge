@@ -2,7 +2,6 @@ import { useCallback, useEffect, useId, useMemo, useState } from 'react'
 import {
   AlertTriangle,
   Check,
-  ExternalLink,
   Loader2,
   Plug,
   Save,
@@ -22,7 +21,6 @@ import {
 } from '@/components/ui/select'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Switch } from '@/components/ui/switch'
-import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import { SettingsSection, SettingsWithCTA } from './settings-row'
 import type {
@@ -31,9 +29,6 @@ import type {
   SlackChannelDescriptor,
   TelegramSettingsConfig,
   TelegramDraft,
-  GsuiteSettingsConfig,
-  GsuiteSettingsStatus,
-  GsuiteDraft,
 } from './settings-types'
 import {
   fetchSlackSettings,
@@ -45,16 +40,9 @@ import {
   updateTelegramSettings,
   disableTelegramSettings,
   testTelegramConnection,
-  fetchGsuiteSettings,
-  updateGsuiteSettings,
-  disableGsuiteSettings,
-  submitGsuiteOAuthCredentials,
-  startGsuiteOAuth,
-  completeGsuiteOAuth,
-  testGsuiteConnection,
   toErrorMessage,
 } from './settings-api'
-import type { AgentDescriptor, SlackStatusEvent, TelegramStatusEvent } from '@/lib/ws-types'
+import type { AgentDescriptor, SlackStatusEvent, TelegramStatusEvent } from '@middleman/protocol'
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                           */
@@ -147,16 +135,6 @@ function buildTelegramPatch(draft: TelegramDraft): Record<string, unknown> {
   return patch
 }
 
-function toGsuiteDraft(config: GsuiteSettingsConfig): GsuiteDraft {
-  return {
-    enabled: config.enabled,
-    accountEmail: config.accountEmail,
-    services: [...config.services],
-    oauthClientJson: '',
-    redirectUrl: '',
-  }
-}
-
 function parseCommaSeparated(value: string): string[] {
   return value.split(',').map((e) => e.trim()).filter((e) => e.length > 0)
 }
@@ -188,23 +166,6 @@ function TelegramConnectionBadge({ status }: { status: TelegramStatusEvent | nul
     state === 'connected'
       ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
       : state === 'connecting'
-        ? 'border-blue-500/30 bg-blue-500/10 text-blue-600 dark:text-blue-400'
-        : state === 'error'
-          ? 'border-destructive/30 bg-destructive/10 text-destructive'
-          : 'border-border/50 bg-muted/50 text-muted-foreground'
-  return (
-    <Badge variant="outline" className={cn('capitalize', className)}>
-      {state}
-    </Badge>
-  )
-}
-
-function GsuiteConnectionBadge({ status }: { status: GsuiteSettingsStatus | null }) {
-  const state = status?.state ?? 'disabled'
-  const className =
-    state === 'connected'
-      ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
-      : state === 'ready'
         ? 'border-blue-500/30 bg-blue-500/10 text-blue-600 dark:text-blue-400'
         : state === 'error'
           ? 'border-destructive/30 bg-destructive/10 text-destructive'
@@ -280,10 +241,7 @@ export function SettingsIntegrations({
   const managerOptions = useMemo(
     () =>
       managers.filter(
-        (agent) =>
-          agent.role === 'manager' &&
-          agent.status !== 'terminated' &&
-          agent.status !== 'stopped_on_restart',
+        (agent) => agent.role === 'manager' && (agent.status === 'idle' || agent.status === 'streaming'),
       ),
     [managers],
   )
@@ -320,21 +278,6 @@ export function SettingsIntegrations({
   const [isSavingTelegram, setIsSavingTelegram] = useState(false)
   const [isTestingTelegram, setIsTestingTelegram] = useState(false)
   const [isDisablingTelegram, setIsDisablingTelegram] = useState(false)
-
-  // ---- GSuite state ----
-  const [gsuiteConfig, setGsuiteConfig] = useState<GsuiteSettingsConfig | null>(null)
-  const [gsuiteDraft, setGsuiteDraft] = useState<GsuiteDraft | null>(null)
-  const [gsuiteStatus, setGsuiteStatus] = useState<GsuiteSettingsStatus | null>(null)
-  const [gsuiteAuthUrl, setGsuiteAuthUrl] = useState<string | null>(null)
-  const [gsuiteInstructions, setGsuiteInstructions] = useState<string | null>(null)
-  const [gsuiteError, setGsuiteError] = useState<string | null>(null)
-  const [gsuiteSuccess, setGsuiteSuccess] = useState<string | null>(null)
-  const [isLoadingGsuite, setIsLoadingGsuite] = useState(false)
-  const [isSavingGsuite, setIsSavingGsuite] = useState(false)
-  const [isConnectingGsuite, setIsConnectingGsuite] = useState(false)
-  const [isCompletingGsuite, setIsCompletingGsuite] = useState(false)
-  const [isTestingGsuite, setIsTestingGsuite] = useState(false)
-  const [isDisablingGsuite, setIsDisablingGsuite] = useState(false)
 
   const effectiveSlackStatus =
     slackStatus && (!slackStatus.managerId || slackStatus.managerId === selectedIntegrationManagerId)
@@ -395,28 +338,9 @@ export function SettingsIntegrations({
     }
   }, [hasSelectedIntegrationManager, wsUrl, selectedIntegrationManagerId])
 
-  const loadGsuite = useCallback(async () => {
-    setIsLoadingGsuite(true)
-    setGsuiteError(null)
-    try {
-      const result = await fetchGsuiteSettings(wsUrl)
-      setGsuiteConfig(result.config)
-      setGsuiteDraft(toGsuiteDraft(result.config))
-      setGsuiteStatus(result.status)
-    } catch (err) {
-      setGsuiteError(toErrorMessage(err))
-    } finally {
-      setIsLoadingGsuite(false)
-    }
-  }, [wsUrl])
-
   useEffect(() => {
     void Promise.all([loadSlack(), loadTelegram()])
   }, [loadSlack, loadTelegram])
-
-  useEffect(() => {
-    void loadGsuite()
-  }, [loadGsuite])
 
   // ---- Slack handlers ----
   const handleSaveSlack = async () => {
@@ -498,71 +422,6 @@ export function SettingsIntegrations({
     } catch (error) { setTelegramError(toErrorMessage(error)) } finally { setIsDisablingTelegram(false) }
   }
 
-  // ---- GSuite handlers ----
-  const handleSaveGsuite = async () => {
-    if (!gsuiteDraft) return
-    setGsuiteError(null); setGsuiteSuccess(null); setIsSavingGsuite(true)
-    try {
-      const updated = await updateGsuiteSettings(wsUrl, { enabled: gsuiteDraft.enabled, accountEmail: gsuiteDraft.accountEmail.trim(), services: gsuiteDraft.services })
-      setGsuiteConfig(updated.config)
-      setGsuiteDraft((prev) => (prev ? { ...toGsuiteDraft(updated.config), oauthClientJson: prev.oauthClientJson } : toGsuiteDraft(updated.config)))
-      setGsuiteStatus(updated.status)
-      setGsuiteSuccess('G Suite settings saved.')
-    } catch (error) { setGsuiteError(toErrorMessage(error)) } finally { setIsSavingGsuite(false) }
-  }
-
-  const handleConnectGsuite = async () => {
-    if (!gsuiteDraft) return
-    const email = gsuiteDraft.accountEmail.trim()
-    if (!email) { setGsuiteError('Enter a Google account email before connecting.'); return }
-    setGsuiteError(null); setGsuiteSuccess(null); setIsConnectingGsuite(true)
-    try {
-      if (gsuiteDraft.oauthClientJson.trim()) {
-        const credentials = await submitGsuiteOAuthCredentials(wsUrl, gsuiteDraft.oauthClientJson)
-        setGsuiteConfig(credentials.config); setGsuiteStatus(credentials.status)
-      }
-      const started = await startGsuiteOAuth(wsUrl, { email, services: gsuiteDraft.services })
-      setGsuiteConfig(started.config); setGsuiteStatus(started.status)
-      setGsuiteAuthUrl(started.result.authUrl)
-      setGsuiteInstructions(started.result.instructions ?? null)
-      setGsuiteDraft((prev) => prev ? { ...prev, accountEmail: email } : prev)
-      setGsuiteSuccess('Authorization URL created. Complete auth in Google, then paste the redirect URL below.')
-    } catch (error) { setGsuiteError(toErrorMessage(error)) } finally { setIsConnectingGsuite(false) }
-  }
-
-  const handleCompleteGsuite = async () => {
-    if (!gsuiteDraft) return
-    const authUrl = gsuiteDraft.redirectUrl.trim()
-    if (!authUrl) { setGsuiteError('Paste the full redirect URL before completing connection.'); return }
-    setGsuiteError(null); setGsuiteSuccess(null); setIsCompletingGsuite(true)
-    try {
-      const completed = await completeGsuiteOAuth(wsUrl, { email: gsuiteDraft.accountEmail.trim(), authUrl, services: gsuiteDraft.services })
-      setGsuiteConfig(completed.config); setGsuiteStatus(completed.status)
-      setGsuiteDraft((prev) => (prev ? { ...prev, redirectUrl: '' } : prev))
-      setGsuiteSuccess('Google account connected.')
-    } catch (error) { setGsuiteError(toErrorMessage(error)) } finally { setIsCompletingGsuite(false) }
-  }
-
-  const handleTestGsuite = async () => {
-    if (!gsuiteDraft) return
-    setGsuiteError(null); setGsuiteSuccess(null); setIsTestingGsuite(true)
-    try {
-      const tested = await testGsuiteConnection(wsUrl, { email: gsuiteDraft.accountEmail.trim() || undefined })
-      setGsuiteConfig(tested.config); setGsuiteStatus(tested.status)
-      setGsuiteSuccess(tested.status.connected ? 'Google connection is active.' : tested.status.message)
-    } catch (error) { setGsuiteError(toErrorMessage(error)) } finally { setIsTestingGsuite(false) }
-  }
-
-  const handleDisableGsuite = async () => {
-    setGsuiteError(null); setGsuiteSuccess(null); setIsDisablingGsuite(true)
-    try {
-      const disabled = await disableGsuiteSettings(wsUrl)
-      setGsuiteConfig(disabled.config); setGsuiteDraft(toGsuiteDraft(disabled.config)); setGsuiteStatus(disabled.status)
-      setGsuiteAuthUrl(null); setGsuiteInstructions(null)
-      setGsuiteSuccess('G Suite integration disabled.')
-    } catch (error) { setGsuiteError(toErrorMessage(error)) } finally { setIsDisablingGsuite(false) }
-  }
-
   return (
     <div className="flex flex-col gap-8">
       {/* Manager picker */}
@@ -597,82 +456,6 @@ export function SettingsIntegrations({
             <p className="text-[11px] text-muted-foreground">Create a manager to configure Slack and Telegram.</p>
           ) : null}
         </SettingsWithCTA>
-      </SettingsSection>
-
-      {/* Google Workspace */}
-      <SettingsSection
-        label="Google Workspace"
-        description="Gmail, Calendar, Drive, Docs read+write via gog CLI"
-        cta={<GsuiteConnectionBadge status={gsuiteStatus} />}
-      >
-        {gsuiteStatus ? <p className="text-[11px] text-muted-foreground">{gsuiteStatus.message}</p> : null}
-        {gsuiteConfig ? (
-          <p className="text-[11px] text-muted-foreground">
-            OAuth client credentials {gsuiteConfig.hasOAuthClientCredentials ? 'stored' : 'not stored yet'}.
-            {gsuiteConfig.lastConnectedAt ? ` Last connected at ${gsuiteConfig.lastConnectedAt}.` : ''}
-          </p>
-        ) : null}
-        {!gsuiteStatus?.gogInstalled ? (
-          <p className="rounded-md border border-border/70 bg-muted/30 px-3 py-2 text-[11px] text-muted-foreground">
-            Install `gog` with `brew install steipete/tap/gog` (or build from source).
-          </p>
-        ) : null}
-        {gsuiteStatus?.gogVersion ? (
-          <p className="text-[11px] text-muted-foreground">Detected: {gsuiteStatus.gogVersion}</p>
-        ) : null}
-        <FeedbackBanner error={gsuiteError} success={gsuiteSuccess} />
-        {isLoadingGsuite || !gsuiteDraft ? (
-          <div className="flex items-center justify-center py-8">
-            <Loader2 className="size-5 animate-spin text-muted-foreground" />
-          </div>
-        ) : (
-          <div className="space-y-3">
-            <ToggleRow label="Enable G Suite integration" description="Keeps Google tooling opt-in until enabled." checked={gsuiteDraft.enabled} onChange={(next) => setGsuiteDraft((prev) => (prev ? { ...prev, enabled: next } : prev))} />
-            <div className="space-y-1.5">
-              <Label htmlFor="gsuite-account-email" className="text-xs font-medium text-muted-foreground">Google account email</Label>
-              <Input id="gsuite-account-email" type="email" value={gsuiteDraft.accountEmail} onChange={(e) => setGsuiteDraft((prev) => (prev ? { ...prev, accountEmail: e.target.value } : prev))} placeholder="you@company.com" autoComplete="off" spellCheck={false} />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="gsuite-oauth-client-json" className="text-xs font-medium text-muted-foreground">OAuth client JSON (paste from Google Cloud)</Label>
-              <Textarea id="gsuite-oauth-client-json" value={gsuiteDraft.oauthClientJson} onChange={(e) => setGsuiteDraft((prev) => (prev ? { ...prev, oauthClientJson: e.target.value } : prev))} placeholder='{"installed": { ... }}' className="min-h-[120px] font-mono text-xs" spellCheck={false} />
-              <p className="text-[11px] text-muted-foreground">Paste once, then click Connect Google.</p>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <Button type="button" variant="outline" onClick={() => void handleConnectGsuite()} disabled={isConnectingGsuite || isCompletingGsuite || !gsuiteStatus?.gogInstalled} className="gap-1.5">
-                {isConnectingGsuite ? <Loader2 className="size-3.5 animate-spin" /> : <Plug className="size-3.5" />}
-                {isConnectingGsuite ? 'Connecting...' : 'Connect Google'}
-              </Button>
-              <Button type="button" variant="outline" onClick={() => void handleTestGsuite()} disabled={isTestingGsuite} className="gap-1.5">
-                {isTestingGsuite ? <Loader2 className="size-3.5 animate-spin" /> : <TestTube2 className="size-3.5" />}
-                {isTestingGsuite ? 'Testing...' : 'Test connection'}
-              </Button>
-              <Button type="button" variant="outline" onClick={() => void handleDisableGsuite()} disabled={isDisablingGsuite} className="gap-1.5">
-                {isDisablingGsuite ? <Loader2 className="size-3.5 animate-spin" /> : <Plug className="size-3.5" />}
-                {isDisablingGsuite ? 'Disabling...' : 'Disable'}
-              </Button>
-              <Button type="button" onClick={() => void handleSaveGsuite()} disabled={isSavingGsuite} className="gap-1.5">
-                {isSavingGsuite ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-                {isSavingGsuite ? 'Saving...' : 'Save'}
-              </Button>
-            </div>
-            {gsuiteAuthUrl ? (
-              <a href={gsuiteAuthUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-md border border-border/70 bg-muted/30 px-2 py-1 text-[11px] text-primary hover:bg-muted/50">
-                Open Google authorization URL <ExternalLink className="size-3" />
-              </a>
-            ) : null}
-            <p className="text-[11px] text-muted-foreground">{gsuiteInstructions ?? 'After authorizing in Google, paste the full redirect URL here.'}</p>
-            <div className="space-y-1.5">
-              <Label htmlFor="gsuite-redirect-url" className="text-xs font-medium text-muted-foreground">Redirect URL / auth URL paste-back</Label>
-              <Input id="gsuite-redirect-url" value={gsuiteDraft.redirectUrl} onChange={(e) => setGsuiteDraft((prev) => (prev ? { ...prev, redirectUrl: e.target.value } : prev))} placeholder="http://localhost:.../callback?state=...&code=..." autoComplete="off" spellCheck={false} className="font-mono text-xs" />
-            </div>
-            <div className="flex justify-end">
-              <Button type="button" onClick={() => void handleCompleteGsuite()} disabled={isCompletingGsuite || !gsuiteDraft.redirectUrl.trim()} className="gap-1.5">
-                {isCompletingGsuite ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-                {isCompletingGsuite ? 'Completing...' : 'Complete Connection'}
-              </Button>
-            </div>
-          </div>
-        )}
       </SettingsSection>
 
       {/* Slack */}

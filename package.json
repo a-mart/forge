@@ -7,7 +7,8 @@
   "workspaces": [
     "apps/backend",
     "apps/ui",
-    "apps/site"
+    "apps/site",
+    "packages/protocol"
   ],
   "scripts": {
     "dev": "concurrently --kill-others-on-fail --names backend,ui \"pnpm --filter @middleman/backend dev\" \"pnpm --filter @middleman/ui dev -- --host ${MIDDLEMAN_HOST:-$(node --env-file-if-exists=.env -p 'process.env.MIDDLEMAN_HOST || \"127.0.0.1\"' 2>/dev/null)}\"",
@@ -20,6 +21,14 @@
     "prod:daemon": "node scripts/prod-daemon.mjs",
     "prod:restart": "node scripts/prod-daemon-restart.mjs",
     "test": "pnpm --filter @middleman/backend test && pnpm --filter @middleman/ui test"
+  },
+  "pnpm": {
+    "overrides": {
+      "zod": "^4.3.6",
+      "@tanstack/router-generator>zod": "3.25.76",
+      "@tanstack/router-plugin>zod": "3.25.76",
+      "@tanstack/start-plugin-core>zod": "3.25.76"
+    }
   },
   "devDependencies": {
     "concurrently": "^9.2.1"

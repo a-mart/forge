@@ -1,13 +1,13 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import {
+  BaseConfigPersistence,
+  buildIntegrationProfileId
+} from "../base-config-persistence.js";
 import type {
   TelegramIntegrationConfig,
   TelegramIntegrationConfigPublic,
   TelegramParseMode
 } from "./telegram-types.js";
 
-const INTEGRATIONS_DIR_NAME = "integrations";
-const INTEGRATIONS_MANAGERS_DIR_NAME = "managers";
 const TELEGRAM_CONFIG_FILE_NAME = "telegram.json";
 const DEFAULT_MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MIN_FILE_BYTES = 1024;
@@ -17,20 +17,19 @@ const MAX_POLL_TIMEOUT_SECONDS = 60;
 const MIN_POLL_LIMIT = 1;
 const MAX_POLL_LIMIT = 100;
 
+const TELEGRAM_CONFIG_PERSISTENCE = new BaseConfigPersistence<TelegramIntegrationConfig>({
+  integrationName: "Telegram",
+  fileName: TELEGRAM_CONFIG_FILE_NAME,
+  createDefaultConfig: createDefaultTelegramConfig,
+  parseConfig: parseTelegramConfig
+});
+
 export function getTelegramConfigPath(dataDir: string, managerId: string): string {
-  const normalizedManagerId = normalizeManagerId(managerId);
-  return resolve(
-    dataDir,
-    INTEGRATIONS_DIR_NAME,
-    INTEGRATIONS_MANAGERS_DIR_NAME,
-    normalizedManagerId,
-    TELEGRAM_CONFIG_FILE_NAME
-  );
+  return TELEGRAM_CONFIG_PERSISTENCE.getPath(dataDir, managerId);
 }
 
 export function buildTelegramProfileId(managerId: string): string {
-  const normalizedManagerId = normalizeManagerId(managerId);
-  return `telegram:${normalizedManagerId}`;
+  return buildIntegrationProfileId("telegram", managerId);
 }
 
 export function createDefaultTelegramConfig(managerId: string): TelegramIntegrationConfig {
@@ -63,28 +62,7 @@ export async function loadTelegramConfig(options: {
   dataDir: string;
   managerId: string;
 }): Promise<TelegramIntegrationConfig> {
-  const defaults = createDefaultTelegramConfig(options.managerId);
-  const configPath = getTelegramConfigPath(options.dataDir, options.managerId);
-
-  try {
-    const raw = await readFile(configPath, "utf8");
-    const parsed = JSON.parse(raw) as unknown;
-    return parseTelegramConfig(parsed);
-  } catch (error) {
-    if (isEnoentError(error)) {
-      return defaults;
-    }
-
-    if (isSyntaxError(error)) {
-      throw new Error(`Invalid Telegram config JSON at ${configPath}`);
-    }
-
-    if (error instanceof Error) {
-      throw new Error(`Invalid Telegram config at ${configPath}: ${error.message}`);
-    }
-
-    throw error;
-  }
+  return TELEGRAM_CONFIG_PERSISTENCE.load(options);
 }
 
 export async function saveTelegramConfig(options: {
@@ -92,12 +70,7 @@ export async function saveTelegramConfig(options: {
   managerId: string;
   config: TelegramIntegrationConfig;
 }): Promise<void> {
-  const configPath = getTelegramConfigPath(options.dataDir, options.managerId);
-  const tmpPath = `${configPath}.tmp`;
-
-  await mkdir(dirname(configPath), { recursive: true });
-  await writeFile(tmpPath, `${JSON.stringify(options.config, null, 2)}\n`, "utf8");
-  await rename(tmpPath, configPath);
+  await TELEGRAM_CONFIG_PERSISTENCE.save(options);
 }
 
 export function mergeTelegramConfig(
@@ -338,15 +311,6 @@ function maskToken(value: string): string {
   return `${trimmed.slice(0, 5)}…${trimmed.slice(-3)}`;
 }
 
-function normalizeManagerId(value: string): string {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    throw new Error("managerId is required");
-  }
-
-  return trimmed;
-}
-
 function asRecord(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return {};
@@ -418,17 +382,4 @@ function requireParseMode(value: unknown): TelegramParseMode {
   }
 
   return value;
-}
-
-function isEnoentError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: string }).code === "ENOENT"
-  );
-}
-
-function isSyntaxError(error: unknown): boolean {
-  return error instanceof SyntaxError;
 }

@@ -10,10 +10,9 @@ import type {
   SlackSettingsConfig,
   SlackChannelDescriptor,
   TelegramSettingsConfig,
-  GsuiteSettingsConfig,
-  GsuiteSettingsStatus,
 } from './settings-types'
-import type { SlackStatusEvent, TelegramStatusEvent } from '@/lib/ws-types'
+import type { SlackStatusEvent, TelegramStatusEvent } from '@middleman/protocol'
+import { resolveApiEndpoint } from '@/lib/api-endpoint'
 
 /* ------------------------------------------------------------------ */
 /*  Constants                                                         */
@@ -43,23 +42,6 @@ export const DEFAULT_SETTINGS_AUTH_OAUTH_FLOW_STATE: SettingsAuthOAuthFlowState 
   status: 'idle',
   codeValue: '',
   isSubmittingCode: false,
-}
-
-/* ------------------------------------------------------------------ */
-/*  Utilities                                                         */
-/* ------------------------------------------------------------------ */
-
-export function resolveApiEndpoint(wsUrl: string, path: string): string {
-  try {
-    const parsed = new URL(wsUrl)
-    parsed.protocol = parsed.protocol === 'wss:' ? 'https:' : 'http:'
-    parsed.pathname = path
-    parsed.search = ''
-    parsed.hash = ''
-    return parsed.toString()
-  } catch {
-    return path
-  }
 }
 
 export function toErrorMessage(error: unknown): string {
@@ -150,28 +132,6 @@ function isTelegramSettingsConfig(value: unknown): value is TelegramSettingsConf
     config.mode === 'polling' && typeof config.hasBotToken === 'boolean' &&
     hasValidAllowedUserIds && Boolean(config.polling) &&
     Boolean(config.delivery) && Boolean(config.attachments)
-  )
-}
-
-function isGsuiteSettingsConfig(value: unknown): value is GsuiteSettingsConfig {
-  if (!value || typeof value !== 'object') return false
-  const config = value as Partial<GsuiteSettingsConfig>
-  return (
-    typeof config.enabled === 'boolean' && typeof config.accountEmail === 'string' &&
-    Array.isArray(config.services) && typeof config.hasOAuthClientCredentials === 'boolean' &&
-    (config.lastConnectedAt === null || typeof config.lastConnectedAt === 'string') &&
-    typeof config.updatedAt === 'string'
-  )
-}
-
-function isGsuiteSettingsStatus(value: unknown): value is GsuiteSettingsStatus {
-  if (!value || typeof value !== 'object') return false
-  const status = value as Partial<GsuiteSettingsStatus>
-  return (
-    (status.state === 'disabled' || status.state === 'ready' || status.state === 'connected' || status.state === 'error') &&
-    typeof status.enabled === 'boolean' && typeof status.gogInstalled === 'boolean' &&
-    typeof status.connected === 'boolean' && typeof status.accountEmail === 'string' &&
-    typeof status.message === 'string' && typeof status.updatedAt === 'string'
   )
 }
 
@@ -411,73 +371,4 @@ export async function testTelegramConnection(wsUrl: string, managerId: string, p
   if (!response.ok) throw new Error(await readApiError(response))
   const payload = (await response.json()) as { result?: { botId?: string; botUsername?: string; botDisplayName?: string } }
   return payload.result ?? {}
-}
-
-/* ------------------------------------------------------------------ */
-/*  GSuite API                                                        */
-/* ------------------------------------------------------------------ */
-
-export async function fetchGsuiteSettings(wsUrl: string): Promise<{ config: GsuiteSettingsConfig; status: GsuiteSettingsStatus }> {
-  const endpoint = resolveApiEndpoint(wsUrl, '/api/integrations/gsuite')
-  const response = await fetch(endpoint)
-  if (!response.ok) throw new Error(await readApiError(response))
-  const payload = (await response.json()) as { config?: unknown; status?: unknown }
-  if (!isGsuiteSettingsConfig(payload.config) || !isGsuiteSettingsStatus(payload.status)) throw new Error('Invalid G Suite settings response from backend.')
-  return { config: payload.config, status: payload.status }
-}
-
-export async function updateGsuiteSettings(wsUrl: string, patch: Record<string, unknown>): Promise<{ config: GsuiteSettingsConfig; status: GsuiteSettingsStatus }> {
-  const endpoint = resolveApiEndpoint(wsUrl, '/api/integrations/gsuite')
-  const response = await fetch(endpoint, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(patch) })
-  if (!response.ok) throw new Error(await readApiError(response))
-  const payload = (await response.json()) as { config?: unknown; status?: unknown }
-  if (!isGsuiteSettingsConfig(payload.config) || !isGsuiteSettingsStatus(payload.status)) throw new Error('Invalid G Suite settings response from backend.')
-  return { config: payload.config, status: payload.status }
-}
-
-export async function disableGsuiteSettings(wsUrl: string): Promise<{ config: GsuiteSettingsConfig; status: GsuiteSettingsStatus }> {
-  const endpoint = resolveApiEndpoint(wsUrl, '/api/integrations/gsuite')
-  const response = await fetch(endpoint, { method: 'DELETE' })
-  if (!response.ok) throw new Error(await readApiError(response))
-  const payload = (await response.json()) as { config?: unknown; status?: unknown }
-  if (!isGsuiteSettingsConfig(payload.config) || !isGsuiteSettingsStatus(payload.status)) throw new Error('Invalid G Suite settings response from backend.')
-  return { config: payload.config, status: payload.status }
-}
-
-export async function submitGsuiteOAuthCredentials(wsUrl: string, oauthClientJson: string): Promise<{ config: GsuiteSettingsConfig; status: GsuiteSettingsStatus }> {
-  const endpoint = resolveApiEndpoint(wsUrl, '/api/integrations/gsuite/oauth/credentials')
-  const response = await fetch(endpoint, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ oauthClientJson }) })
-  if (!response.ok) throw new Error(await readApiError(response))
-  const payload = (await response.json()) as { config?: unknown; status?: unknown }
-  if (!isGsuiteSettingsConfig(payload.config) || !isGsuiteSettingsStatus(payload.status)) throw new Error('Invalid G Suite credentials response from backend.')
-  return { config: payload.config, status: payload.status }
-}
-
-export async function startGsuiteOAuth(wsUrl: string, payload: { email?: string; services?: string[] }): Promise<{ config: GsuiteSettingsConfig; status: GsuiteSettingsStatus; result: { authUrl: string; instructions?: string } }> {
-  const endpoint = resolveApiEndpoint(wsUrl, '/api/integrations/gsuite/oauth/start')
-  const response = await fetch(endpoint, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) })
-  if (!response.ok) throw new Error(await readApiError(response))
-  const body = (await response.json()) as { config?: unknown; status?: unknown; result?: { authUrl?: unknown; instructions?: unknown } }
-  if (!isGsuiteSettingsConfig(body.config) || !isGsuiteSettingsStatus(body.status)) throw new Error('Invalid G Suite OAuth start response from backend.')
-  const authUrl = typeof body.result?.authUrl === 'string' ? body.result.authUrl : ''
-  if (!authUrl.trim()) throw new Error('Backend did not return a Google authorization URL.')
-  return { config: body.config, status: body.status, result: { authUrl, instructions: typeof body.result?.instructions === 'string' ? body.result.instructions : undefined } }
-}
-
-export async function completeGsuiteOAuth(wsUrl: string, payload: { email?: string; authUrl: string; services?: string[] }): Promise<{ config: GsuiteSettingsConfig; status: GsuiteSettingsStatus }> {
-  const endpoint = resolveApiEndpoint(wsUrl, '/api/integrations/gsuite/oauth/complete')
-  const response = await fetch(endpoint, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) })
-  if (!response.ok) throw new Error(await readApiError(response))
-  const body = (await response.json()) as { config?: unknown; status?: unknown }
-  if (!isGsuiteSettingsConfig(body.config) || !isGsuiteSettingsStatus(body.status)) throw new Error('Invalid G Suite OAuth complete response from backend.')
-  return { config: body.config, status: body.status }
-}
-
-export async function testGsuiteConnection(wsUrl: string, payload: { email?: string }): Promise<{ config: GsuiteSettingsConfig; status: GsuiteSettingsStatus }> {
-  const endpoint = resolveApiEndpoint(wsUrl, '/api/integrations/gsuite/test')
-  const response = await fetch(endpoint, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) })
-  if (!response.ok) throw new Error(await readApiError(response))
-  const body = (await response.json()) as { config?: unknown; status?: unknown }
-  if (!isGsuiteSettingsConfig(body.config) || !isGsuiteSettingsStatus(body.status)) throw new Error('Invalid G Suite test response from backend.')
-  return { config: body.config, status: body.status }
 }

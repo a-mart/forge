@@ -1,5 +1,9 @@
-import { EventEmitter } from "node:events";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
+import { normalizeManagerId } from "../../utils/normalize.js";
+import {
+  BaseIntegrationService,
+  toIntegrationErrorMessage
+} from "../base-integration-service.js";
 import {
   createDefaultSlackConfig,
   loadSlackConfig,
@@ -11,7 +15,11 @@ import { SlackWebApiClient, testSlackAppToken } from "./slack-client.js";
 import { SlackDeliveryBridge } from "./slack-delivery.js";
 import { SlackInboundRouter } from "./slack-router.js";
 import { SlackSocketModeBridge } from "./slack-socket.js";
-import { SlackStatusTracker, type SlackStatusEvent } from "./slack-status.js";
+import {
+  SlackStatusTracker,
+  type SlackStatusEvent,
+  type SlackStatusUpdate
+} from "./slack-status.js";
 import type {
   SlackChannelDescriptor,
   SlackConnectionTestResult,
@@ -19,42 +27,42 @@ import type {
   SlackIntegrationConfigPublic
 } from "./slack-types.js";
 
-export class SlackIntegrationService extends EventEmitter {
-  private readonly swarmManager: SwarmManager;
-  private readonly dataDir: string;
-  private readonly managerId: string;
-
-  private config: SlackIntegrationConfig;
+export class SlackIntegrationService extends BaseIntegrationService<
+  SlackIntegrationConfig,
+  SlackIntegrationConfigPublic,
+  SlackStatusEvent,
+  SlackStatusUpdate
+> {
   private slackClient: SlackWebApiClient | null = null;
   private inboundRouter: SlackInboundRouter | null = null;
   private socketBridge: SlackSocketModeBridge | null = null;
-  private readonly statusTracker: SlackStatusTracker;
   private readonly deliveryBridge: SlackDeliveryBridge;
-
-  private started = false;
-  private lifecycle: Promise<void> = Promise.resolve();
 
   private botUserId: string | undefined;
   private teamId: string | undefined;
 
   constructor(options: { swarmManager: SwarmManager; dataDir: string; managerId: string }) {
-    super();
-
-    this.swarmManager = options.swarmManager;
-    this.dataDir = options.dataDir;
-    this.managerId = normalizeManagerId(options.managerId);
-    this.config = createDefaultSlackConfig(this.managerId);
-
-    this.statusTracker = new SlackStatusTracker({
-      managerId: this.managerId,
-      integrationProfileId: this.config.profileId,
+    const managerId = normalizeManagerId(options.managerId);
+    const defaultConfig = createDefaultSlackConfig(managerId);
+    const statusTracker = new SlackStatusTracker({
+      managerId,
+      integrationProfileId: defaultConfig.profileId,
       state: "disabled",
       enabled: false,
       message: "Slack integration disabled"
     });
 
-    this.statusTracker.on("status", (event: SlackStatusEvent) => {
-      this.emit("slack_status", event);
+    super({
+      swarmManager: options.swarmManager,
+      dataDir: options.dataDir,
+      managerId,
+      defaultConfig,
+      statusTracker,
+      statusEventName: "slack_status",
+      loadConfig: loadSlackConfig,
+      saveConfig: saveSlackConfig,
+      mergeConfig: mergeSlackConfig,
+      maskConfig: maskSlackConfig
     });
 
     this.deliveryBridge = new SlackDeliveryBridge({
@@ -64,114 +72,17 @@ export class SlackIntegrationService extends EventEmitter {
       getProfileId: () => this.config.profileId,
       getSlackClient: () => this.slackClient,
       onError: (message, error) => {
-        this.statusTracker.update({
+        this.updateStatus({
           managerId: this.managerId,
           integrationProfileId: this.config.profileId,
           state: "error",
           enabled: this.config.enabled,
-          message: `${message}: ${toErrorMessage(error)}`,
+          message: `${message}: ${toIntegrationErrorMessage(error)}`,
           teamId: this.teamId,
           botUserId: this.botUserId
         });
       }
     });
-  }
-
-  async start(): Promise<void> {
-    return this.runExclusive(async () => {
-      if (this.started) {
-        return;
-      }
-
-      this.started = true;
-      this.deliveryBridge.start();
-
-      try {
-        this.config = await loadSlackConfig({
-          dataDir: this.dataDir,
-          managerId: this.managerId
-        });
-      } catch (error) {
-        this.statusTracker.update({
-          managerId: this.managerId,
-          integrationProfileId: this.config.profileId,
-          state: "error",
-          enabled: false,
-          message: `Failed to load Slack config: ${toErrorMessage(error)}`,
-          teamId: undefined,
-          botUserId: undefined
-        });
-        return;
-      }
-
-      await this.applyConfig();
-    });
-  }
-
-  async stop(): Promise<void> {
-    return this.runExclusive(async () => {
-      if (!this.started) {
-        return;
-      }
-
-      await this.stopSocket();
-      this.deliveryBridge.stop();
-      this.started = false;
-
-      this.statusTracker.update({
-        managerId: this.managerId,
-        integrationProfileId: this.config.profileId,
-        state: this.config.enabled ? "disconnected" : "disabled",
-        enabled: this.config.enabled,
-        message: this.config.enabled ? "Slack integration stopped" : "Slack integration disabled",
-        teamId: this.teamId,
-        botUserId: this.botUserId
-      });
-    });
-  }
-
-  getMaskedConfig(): SlackIntegrationConfigPublic {
-    return maskSlackConfig(this.config);
-  }
-
-  getStatus(): SlackStatusEvent {
-    return this.statusTracker.getSnapshot();
-  }
-
-  getManagerId(): string {
-    return this.managerId;
-  }
-
-  getProfileId(): string {
-    return this.config.profileId;
-  }
-
-  isEnabled(): boolean {
-    return this.config.enabled;
-  }
-
-  async updateConfig(
-    patch: unknown
-  ): Promise<{ config: SlackIntegrationConfigPublic; status: SlackStatusEvent }> {
-    return this.runExclusive(async () => {
-      const nextConfig = mergeSlackConfig(this.config, patch);
-
-      await saveSlackConfig({ dataDir: this.dataDir, managerId: this.managerId, config: nextConfig });
-      this.config = nextConfig;
-
-      if (this.started) {
-        await this.applyConfig();
-      }
-
-      return {
-        config: this.getMaskedConfig(),
-        status: this.getStatus()
-      };
-    });
-  }
-
-  async disable(): Promise<{ config: SlackIntegrationConfigPublic; status: SlackStatusEvent }> {
-    return this.updateConfig({ enabled: false });
   }
 
   async testConnection(patch?: unknown): Promise<SlackConnectionTestResult> {
@@ -213,8 +124,8 @@ export class SlackIntegrationService extends EventEmitter {
     return client.listChannels({ includePrivateChannels });
   }
 
-  private async applyConfig(): Promise<void> {
-    await this.stopSocket();
+  protected async applyConfig(): Promise<void> {
+    await this.stopRuntime();
 
     this.slackClient = null;
     this.inboundRouter = null;
@@ -222,7 +133,7 @@ export class SlackIntegrationService extends EventEmitter {
     this.teamId = undefined;
 
     if (!this.config.enabled) {
-      this.statusTracker.update({
+      this.updateStatus({
         managerId: this.managerId,
         integrationProfileId: this.config.profileId,
         state: "disabled",
@@ -238,7 +149,7 @@ export class SlackIntegrationService extends EventEmitter {
     const botToken = this.config.botToken.trim();
 
     if (!appToken || !botToken) {
-      this.statusTracker.update({
+      this.updateStatus({
         managerId: this.managerId,
         integrationProfileId: this.config.profileId,
         state: "error",
@@ -266,12 +177,12 @@ export class SlackIntegrationService extends EventEmitter {
         getConfig: () => this.config,
         getBotUserId: () => this.botUserId,
         onError: (message, error) => {
-          this.statusTracker.update({
+          this.updateStatus({
             managerId: this.managerId,
             integrationProfileId: this.config.profileId,
             state: "error",
             enabled: this.config.enabled,
-            message: `${message}: ${toErrorMessage(error)}`,
+            message: `${message}: ${toIntegrationErrorMessage(error)}`,
             teamId: this.teamId,
             botUserId: this.botUserId
           });
@@ -284,7 +195,7 @@ export class SlackIntegrationService extends EventEmitter {
           await this.inboundRouter?.handleEnvelope(envelope);
         },
         onStateChange: (state, message) => {
-          this.statusTracker.update({
+          this.updateStatus({
             managerId: this.managerId,
             integrationProfileId: this.config.profileId,
             state,
@@ -299,7 +210,7 @@ export class SlackIntegrationService extends EventEmitter {
       this.socketBridge = socketBridge;
       await socketBridge.start();
 
-      this.statusTracker.update({
+      this.updateStatus({
         managerId: this.managerId,
         integrationProfileId: this.config.profileId,
         state: "connected",
@@ -309,17 +220,53 @@ export class SlackIntegrationService extends EventEmitter {
         botUserId: this.botUserId
       });
     } catch (error) {
-      await this.stopSocket();
-      this.statusTracker.update({
+      await this.stopRuntime();
+      this.updateStatus({
         managerId: this.managerId,
         integrationProfileId: this.config.profileId,
         state: "error",
         enabled: true,
-        message: `Slack startup failed: ${toErrorMessage(error)}`,
+        message: `Slack startup failed: ${toIntegrationErrorMessage(error)}`,
         teamId: this.teamId,
         botUserId: this.botUserId
       });
     }
+  }
+
+  protected async stopRuntime(): Promise<void> {
+    await this.stopSocket();
+  }
+
+  protected startDeliveryBridge(): void {
+    this.deliveryBridge.start();
+  }
+
+  protected stopDeliveryBridge(): void {
+    this.deliveryBridge.stop();
+  }
+
+  protected buildLoadConfigErrorStatus(error: unknown): SlackStatusUpdate {
+    return {
+      managerId: this.managerId,
+      integrationProfileId: this.config.profileId,
+      state: "error",
+      enabled: false,
+      message: `Failed to load Slack config: ${toIntegrationErrorMessage(error)}`,
+      teamId: undefined,
+      botUserId: undefined
+    };
+  }
+
+  protected buildStoppedStatus(): SlackStatusUpdate {
+    return {
+      managerId: this.managerId,
+      integrationProfileId: this.config.profileId,
+      state: this.config.enabled ? "disconnected" : "disabled",
+      enabled: this.config.enabled,
+      message: this.config.enabled ? "Slack integration stopped" : "Slack integration disabled",
+      teamId: this.teamId,
+      botUserId: this.botUserId
+    };
   }
 
   private async stopSocket(): Promise<void> {
@@ -336,30 +283,4 @@ export class SlackIntegrationService extends EventEmitter {
       // Ignore socket shutdown errors.
     }
   }
-
-  private async runExclusive<T>(action: () => Promise<T>): Promise<T> {
-    const next = this.lifecycle.then(action, action);
-    this.lifecycle = next.then(
-      () => undefined,
-      () => undefined
-    );
-    return next;
-  }
-}
-
-function toErrorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-
-  return String(error);
-}
-
-function normalizeManagerId(value: string): string {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    throw new Error("managerId is required");
-  }
-
-  return trimmed;
 }

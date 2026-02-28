@@ -1,5 +1,5 @@
 import { parseArtifactReference, type ArtifactReference } from './artifacts'
-import type { ConversationEntry } from './ws-types'
+import type { ConversationEntry } from '@middleman/protocol'
 
 const ARTIFACT_SHORTCODE_PATTERN = /\[artifact:([^\]\n]+)\]/gi
 const SWARM_FILE_PATTERN = /swarm-file:\/\/[^\s)>\]"']+/gi

@@ -19,9 +19,10 @@ import {
   fileToPendingAttachment,
   type PendingAttachment,
 } from '@/lib/file-attachments'
+import { resolveApiEndpoint } from '@/lib/api-endpoint'
 import { transcribeVoice } from '@/lib/voice-transcription-client'
 import { cn } from '@/lib/utils'
-import type { ConversationAttachment } from '@/lib/ws-types'
+import type { ConversationAttachment } from '@middleman/protocol'
 
 const TEXTAREA_MAX_HEIGHT = 186
 const ACTIVE_WAVEFORM_BAR_COUNT = 16
@@ -63,23 +64,6 @@ function stretchWaveformBars(source: number[], targetCount: number): number[] {
     const upperValue = source[upper] ?? lowerValue
     return lowerValue + (upperValue - lowerValue) * ratio
   })
-}
-
-function resolveApiEndpoint(wsUrl: string | undefined, path: string): string {
-  if (!wsUrl) {
-    return path
-  }
-
-  try {
-    const parsed = new URL(wsUrl)
-    parsed.protocol = parsed.protocol === 'wss:' ? 'https:' : 'http:'
-    parsed.pathname = path
-    parsed.search = ''
-    parsed.hash = ''
-    return parsed.toString()
-  } catch {
-    return path
-  }
 }
 
 async function hasConfiguredOpenAiKey(endpoint: string): Promise<boolean> {

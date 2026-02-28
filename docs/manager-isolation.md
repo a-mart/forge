@@ -45,7 +45,6 @@ Conventions used below:
 | Uploads directory (web attachment persistence) | `dataDir/uploads/*` | `persistConversationAttachments(...)` in `ws/server.ts` | Shared flat directory (no manager partition). |
 | Binary attachment spill files (runtime-generated) | `dataDir/attachments/<agentId>/<batchId>/*` | `SwarmManager.createBinaryAttachmentDir/writeBinaryAttachmentToDisk` | Shared root; subscoped by target agent ID, not manager directory. |
 | Pi runtime agent directories | `dataDir/agent` (workers), `dataDir/agent/manager` (all managers) | `SwarmManager.createPiRuntimeForDescriptor` | Shared by role class (all managers share one manager agent dir; all workers share one worker agent dir). |
-| G Suite integration config | `dataDir/integrations/gsuite/config.json` | `GsuiteIntegrationService` / `gsuite-config.ts` | Global integration config (not manager-scoped). |
 | Legacy default-manager API aliases | `/api/schedules`, `/api/integrations/slack`, `/api/integrations/telegram`, `/api/settings/slack`, `/api/settings/telegram` | Route resolvers in `ws/server.ts` map these to configured default manager ID | Shared entrypoints that implicitly target one default manager. |
 
 ## 3) Ambiguous / Could Be Improved

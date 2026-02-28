@@ -32,11 +32,10 @@ jobs:
         run: pnpm build
 
       - name: Backend typecheck
-        run: pnpm --filter @swarm/backend exec tsc -p tsconfig.build.json --noEmit
+        run: pnpm --filter @middleman/backend exec tsc -p tsconfig.build.json --noEmit
 
       - name: UI typecheck
-        run: pnpm --filter @swarm/ui exec tsc --noEmit
+        run: pnpm --filter @middleman/ui exec tsc --noEmit
 
       - name: Backend tests
-        continue-on-error: true
-        run: pnpm --filter @swarm/backend test
+        run: pnpm --filter @middleman/backend test

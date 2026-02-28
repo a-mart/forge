@@ -1,8 +1,10 @@
+import type { AgentStatus } from "./agent-state-machine.js";
+
 export type AgentRole = "manager" | "worker";
 
 export type AgentArchetypeId = string;
 
-export type AgentStatus = "idle" | "streaming" | "terminated" | "stopped_on_restart";
+export type { AgentStatus };
 
 export const SWARM_MODEL_PRESETS = ["pi-codex", "pi-opus", "codex-app"] as const;
 

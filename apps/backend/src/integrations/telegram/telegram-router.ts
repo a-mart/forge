@@ -3,6 +3,7 @@ import type {
   ConversationAttachment,
   MessageSourceContext
 } from "../../swarm/types.js";
+import { normalizeManagerId } from "../../utils/normalize.js";
 import type {
   TelegramIntegrationConfig,
   TelegramMessage,
@@ -194,13 +195,4 @@ function normalizeUpdateId(value: unknown): number | undefined {
   }
 
   return Math.trunc(value);
-}
-
-function normalizeManagerId(value: string): string {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    throw new Error("managerId is required");
-  }
-
-  return trimmed;
 }

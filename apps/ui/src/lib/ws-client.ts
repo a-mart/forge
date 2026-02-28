@@ -1,9 +1,14 @@
 import { chooseFallbackAgentId } from './agent-hierarchy'
+import { WsRequestTracker } from './ws-request-tracker'
+import {
+  createInitialManagerWsState,
+  type AgentActivityEntry,
+  type ConversationHistoryEntry,
+  type ManagerWsState,
+} from './ws-state'
 import {
   MANAGER_MODEL_PRESETS,
-  type AgentContextUsage,
   type AgentDescriptor,
-  type AgentStatus,
   type ClientCommand,
   type ConversationAttachment,
   type ConversationEntry,
@@ -11,31 +16,15 @@ import {
   type DeliveryMode,
   type ManagerModelPreset,
   type ServerEvent,
-  type SlackStatusEvent,
-  type TelegramStatusEvent,
-} from './ws-types'
+} from '@middleman/protocol'
+
+export type { ManagerWsState } from './ws-state'
 
 const INITIAL_CONNECT_DELAY_MS = 50
 const RECONNECT_MS = 1200
 const REQUEST_TIMEOUT_MS = 300_000
 // Keep client-side activity retention aligned with backend history retention.
 const MAX_CLIENT_CONVERSATION_HISTORY = 2000
-
-type ConversationHistoryEntry = Extract<ConversationEntry, { type: 'conversation_message' | 'conversation_log' }>
-type AgentActivityEntry = Extract<ConversationEntry, { type: 'agent_message' | 'agent_tool_call' }>
-
-export interface ManagerWsState {
-  connected: boolean
-  targetAgentId: string | null
-  subscribedAgentId: string | null
-  messages: ConversationHistoryEntry[]
-  activityMessages: AgentActivityEntry[]
-  agents: AgentDescriptor[]
-  statuses: Record<string, { status: AgentStatus; pendingCount: number; contextUsage?: AgentContextUsage }>
-  lastError: string | null
-  slackStatus: SlackStatusEvent | null
-  telegramStatus: TelegramStatusEvent | null
-}
 
 export interface DirectoriesListedResult {
   path: string
@@ -50,24 +39,33 @@ export interface DirectoryValidationResult {
 
 type Listener = (state: ManagerWsState) => void
 
-interface PendingRequest<T> {
-  resolve: (value: T) => void
-  reject: (error: Error) => void
-  timeout: ReturnType<typeof setTimeout>
+type WsRequestResultMap = {
+  create_manager: AgentDescriptor
+  delete_manager: { managerId: string }
+  stop_all_agents: { managerId: string; stoppedWorkerIds: string[]; managerStopped: boolean }
+  list_directories: DirectoriesListedResult
+  validate_directory: DirectoryValidationResult
+  pick_directory: string | null
 }
 
-const initialState: ManagerWsState = {
-  connected: false,
-  targetAgentId: null,
-  subscribedAgentId: null,
-  messages: [],
-  activityMessages: [],
-  agents: [],
-  statuses: {},
-  lastError: null,
-  slackStatus: null,
-  telegramStatus: null,
-}
+type WsRequestType = Extract<keyof WsRequestResultMap, string>
+const WS_REQUEST_TYPES: WsRequestType[] = [
+  'create_manager',
+  'delete_manager',
+  'stop_all_agents',
+  'list_directories',
+  'validate_directory',
+  'pick_directory',
+]
+
+const WS_REQUEST_ERROR_HINTS: Array<{ requestType: WsRequestType; codeFragment: string }> = [
+  { requestType: 'create_manager', codeFragment: 'create_manager' },
+  { requestType: 'delete_manager', codeFragment: 'delete_manager' },
+  { requestType: 'stop_all_agents', codeFragment: 'stop_all_agents' },
+  { requestType: 'list_directories', codeFragment: 'list_directories' },
+  { requestType: 'validate_directory', codeFragment: 'validate_directory' },
+  { requestType: 'pick_directory', codeFragment: 'pick_directory' },
+]
 
 export class ManagerWsClient {
   private readonly url: string
@@ -84,24 +82,16 @@ export class ManagerWsClient {
   private readonly listeners = new Set<Listener>()
 
   private requestCounter = 0
-  private readonly pendingCreateManagerRequests = new Map<string, PendingRequest<AgentDescriptor>>()
-  private readonly pendingDeleteManagerRequests = new Map<string, PendingRequest<{ managerId: string }>>()
-  private readonly pendingStopAllAgentsRequests = new Map<
-    string,
-    PendingRequest<{ managerId: string; stoppedWorkerIds: string[]; managerStopped: boolean }>
-  >()
-  private readonly pendingListDirectoriesRequests = new Map<string, PendingRequest<DirectoriesListedResult>>()
-  private readonly pendingValidateDirectoryRequests = new Map<string, PendingRequest<DirectoryValidationResult>>()
-  private readonly pendingPickDirectoryRequests = new Map<string, PendingRequest<string | null>>()
+  private readonly requestTracker = new WsRequestTracker<WsRequestResultMap>(
+    WS_REQUEST_TYPES,
+    REQUEST_TIMEOUT_MS,
+  )
 
   constructor(url: string, initialAgentId?: string | null) {
     const normalizedInitialAgentId = normalizeAgentId(initialAgentId)
     this.url = url
     this.desiredAgentId = normalizedInitialAgentId
-    this.state = {
-      ...initialState,
-      targetAgentId: normalizedInitialAgentId,
-    }
+    this.state = createInitialManagerWsState(normalizedInitialAgentId)
   }
 
   getState(): ManagerWsState {
@@ -247,27 +237,11 @@ export class ManagerWsClient {
       throw new Error('WebSocket is disconnected. Reconnecting...')
     }
 
-    const requestId = this.nextRequestId('stop_all_agents')
-
-    return new Promise<{ managerId: string; stoppedWorkerIds: string[]; managerStopped: boolean }>(
-      (resolve, reject) => {
-        this.trackPendingRequest(this.pendingStopAllAgentsRequests, requestId, resolve, reject)
-
-        const sent = this.send({
-          type: 'stop_all_agents',
-          managerId: trimmed,
-          requestId,
-        })
-
-        if (!sent) {
-          this.rejectPendingRequest(
-            this.pendingStopAllAgentsRequests,
-            requestId,
-            new Error('WebSocket is disconnected. Reconnecting...'),
-          )
-        }
-      },
-    )
+    return this.enqueueRequest('stop_all_agents', (requestId) => ({
+      type: 'stop_all_agents',
+      managerId: trimmed,
+      requestId,
+    }))
   }
 
   async createManager(input: { name: string; cwd: string; model: ManagerModelPreset }): Promise<AgentDescriptor> {
@@ -291,23 +265,13 @@ export class ManagerWsClient {
       throw new Error('WebSocket is disconnected. Reconnecting...')
     }
 
-    const requestId = this.nextRequestId('create_manager')
-
-    return new Promise<AgentDescriptor>((resolve, reject) => {
-      this.trackPendingRequest(this.pendingCreateManagerRequests, requestId, resolve, reject)
-
-      const sent = this.send({
+    return this.enqueueRequest('create_manager', (requestId) => ({
         type: 'create_manager',
         name,
         cwd,
         model,
         requestId,
-      })
-
-      if (!sent) {
-        this.rejectPendingRequest(this.pendingCreateManagerRequests, requestId, new Error('WebSocket is disconnected. Reconnecting...'))
-      }
-    })
+      }))
   }
 
   async deleteManager(managerId: string): Promise<{ managerId: string }> {
@@ -320,21 +284,11 @@ export class ManagerWsClient {
       throw new Error('WebSocket is disconnected. Reconnecting...')
     }
 
-    const requestId = this.nextRequestId('delete_manager')
-
-    return new Promise<{ managerId: string }>((resolve, reject) => {
-      this.trackPendingRequest(this.pendingDeleteManagerRequests, requestId, resolve, reject)
-
-      const sent = this.send({
+    return this.enqueueRequest('delete_manager', (requestId) => ({
         type: 'delete_manager',
         managerId: trimmed,
         requestId,
-      })
-
-      if (!sent) {
-        this.rejectPendingRequest(this.pendingDeleteManagerRequests, requestId, new Error('WebSocket is disconnected. Reconnecting...'))
-      }
-    })
+      }))
   }
 
   async listDirectories(path?: string): Promise<DirectoriesListedResult> {
@@ -342,21 +296,11 @@ export class ManagerWsClient {
       throw new Error('WebSocket is disconnected. Reconnecting...')
     }
 
-    const requestId = this.nextRequestId('list_directories')
-
-    return new Promise<DirectoriesListedResult>((resolve, reject) => {
-      this.trackPendingRequest(this.pendingListDirectoriesRequests, requestId, resolve, reject)
-
-      const sent = this.send({
+    return this.enqueueRequest('list_directories', (requestId) => ({
         type: 'list_directories',
         path: path?.trim() || undefined,
         requestId,
-      })
-
-      if (!sent) {
-        this.rejectPendingRequest(this.pendingListDirectoriesRequests, requestId, new Error('WebSocket is disconnected. Reconnecting...'))
-      }
-    })
+      }))
   }
 
   async validateDirectory(path: string): Promise<DirectoryValidationResult> {
@@ -369,25 +313,11 @@ export class ManagerWsClient {
       throw new Error('WebSocket is disconnected. Reconnecting...')
     }
 
-    const requestId = this.nextRequestId('validate_directory')
-
-    return new Promise<DirectoryValidationResult>((resolve, reject) => {
-      this.trackPendingRequest(this.pendingValidateDirectoryRequests, requestId, resolve, reject)
-
-      const sent = this.send({
+    return this.enqueueRequest('validate_directory', (requestId) => ({
         type: 'validate_directory',
         path: trimmed,
         requestId,
-      })
-
-      if (!sent) {
-        this.rejectPendingRequest(
-          this.pendingValidateDirectoryRequests,
-          requestId,
-          new Error('WebSocket is disconnected. Reconnecting...'),
-        )
-      }
-    })
+      }))
   }
 
   async pickDirectory(defaultPath?: string): Promise<string | null> {
@@ -395,25 +325,11 @@ export class ManagerWsClient {
       throw new Error('WebSocket is disconnected. Reconnecting...')
     }
 
-    const requestId = this.nextRequestId('pick_directory')
-
-    return new Promise<string | null>((resolve, reject) => {
-      this.trackPendingRequest(this.pendingPickDirectoryRequests, requestId, resolve, reject)
-
-      const sent = this.send({
+    return this.enqueueRequest('pick_directory', (requestId) => ({
         type: 'pick_directory',
         defaultPath: defaultPath?.trim() || undefined,
         requestId,
-      })
-
-      if (!sent) {
-        this.rejectPendingRequest(
-          this.pendingPickDirectoryRequests,
-          requestId,
-          new Error('WebSocket is disconnected. Reconnecting...'),
-        )
-      }
-    })
+      }))
   }
 
   private connect(): void {
@@ -567,21 +483,15 @@ export class ManagerWsClient {
 
       case 'manager_created': {
         this.applyManagerCreated(event.manager)
-        this.resolvePendingRequest(
-          this.pendingCreateManagerRequests,
-          event.requestId,
-          event.manager,
-        )
+        this.requestTracker.resolve('create_manager', event.requestId, event.manager)
         break
       }
 
       case 'manager_deleted': {
         this.applyManagerDeleted(event.managerId)
-        this.resolvePendingRequest(
-          this.pendingDeleteManagerRequests,
-          event.requestId,
-          { managerId: event.managerId },
-        )
+        this.requestTracker.resolve('delete_manager', event.requestId, {
+          managerId: event.managerId,
+        })
         break
       }
 
@@ -589,49 +499,33 @@ export class ManagerWsClient {
         const stoppedWorkerIds = event.stoppedWorkerIds ?? event.terminatedWorkerIds ?? []
         const managerStopped = event.managerStopped ?? event.managerTerminated ?? false
 
-        this.resolvePendingRequest(
-          this.pendingStopAllAgentsRequests,
-          event.requestId,
-          {
-            managerId: event.managerId,
-            stoppedWorkerIds,
-            managerStopped,
-          },
-        )
+        this.requestTracker.resolve('stop_all_agents', event.requestId, {
+          managerId: event.managerId,
+          stoppedWorkerIds,
+          managerStopped,
+        })
         break
       }
 
       case 'directories_listed': {
-        this.resolvePendingRequest(
-          this.pendingListDirectoriesRequests,
-          event.requestId,
-          {
-            path: event.path,
-            directories: event.directories,
-          },
-        )
+        this.requestTracker.resolve('list_directories', event.requestId, {
+          path: event.path,
+          directories: event.directories,
+        })
         break
       }
 
       case 'directory_validated': {
-        this.resolvePendingRequest(
-          this.pendingValidateDirectoryRequests,
-          event.requestId,
-          {
-            path: event.path,
-            valid: event.valid,
-            message: event.message ?? null,
-          },
-        )
+        this.requestTracker.resolve('validate_directory', event.requestId, {
+          path: event.path,
+          valid: event.valid,
+          message: event.message ?? null,
+        })
         break
       }
 
       case 'directory_picked': {
-        this.resolvePendingRequest(
-          this.pendingPickDirectoryRequests,
-          event.requestId,
-          event.path ?? null,
-        )
+        this.requestTracker.resolve('pick_directory', event.requestId, event.path ?? null)
         break
       }
 
@@ -656,11 +550,12 @@ export class ManagerWsClient {
     const statuses = Object.fromEntries(
       agents.map((agent) => {
         const previous = this.state.statuses[agent.agentId]
+        const status = agent.status
         return [
           agent.agentId,
           {
-            status: previous?.status ?? agent.status,
-            pendingCount: previous?.pendingCount ?? 0,
+            status,
+            pendingCount: previous && previous.status === status ? previous.pendingCount : 0,
             contextUsage: agent.contextUsage,
           },
         ]
@@ -751,187 +646,50 @@ export class ManagerWsClient {
     return `${prefix}-${Date.now()}-${this.requestCounter}`
   }
 
-  private trackPendingRequest<T>(
-    pendingMap: Map<string, PendingRequest<T>>,
-    requestId: string,
-    resolve: (value: T) => void,
-    reject: (error: Error) => void,
-  ): void {
-    const timeout = setTimeout(() => {
-      this.rejectPendingRequest(
-        pendingMap,
-        requestId,
-        new Error('Request timed out waiting for backend response.'),
-      )
-    }, REQUEST_TIMEOUT_MS)
+  private enqueueRequest<RequestType extends WsRequestType>(
+    requestType: RequestType,
+    buildCommand: (requestId: string) => ClientCommand,
+  ): Promise<WsRequestResultMap[RequestType]> {
+    const requestId = this.nextRequestId(requestType)
 
-    pendingMap.set(requestId, {
-      resolve,
-      reject,
-      timeout,
+    return new Promise<WsRequestResultMap[RequestType]>((resolve, reject) => {
+      this.requestTracker.track(requestType, requestId, resolve, reject)
+
+      const sent = this.send(buildCommand(requestId))
+      if (!sent) {
+        this.requestTracker.reject(
+          requestType,
+          requestId,
+          new Error('WebSocket is disconnected. Reconnecting...'),
+        )
+      }
     })
-  }
-
-  private resolvePendingRequest<T>(
-    pendingMap: Map<string, PendingRequest<T>>,
-    requestId: string | undefined,
-    value: T,
-  ): void {
-    const resolvedById = requestId ? this.finalizePendingById(pendingMap, requestId, value) : false
-    if (resolvedById) return
-
-    this.resolveOldestPendingRequest(pendingMap, value)
-  }
-
-  private rejectPendingRequest<T>(
-    pendingMap: Map<string, PendingRequest<T>>,
-    requestId: string,
-    error: Error,
-  ): void {
-    const pending = pendingMap.get(requestId)
-    if (!pending) return
-
-    clearTimeout(pending.timeout)
-    pendingMap.delete(requestId)
-    pending.reject(error)
-  }
-
-  private finalizePendingById<T>(
-    pendingMap: Map<string, PendingRequest<T>>,
-    requestId: string,
-    value: T,
-  ): boolean {
-    const pending = pendingMap.get(requestId)
-    if (!pending) return false
-
-    clearTimeout(pending.timeout)
-    pendingMap.delete(requestId)
-    pending.resolve(value)
-    return true
-  }
-
-  private resolveOldestPendingRequest<T>(
-    pendingMap: Map<string, PendingRequest<T>>,
-    value: T,
-  ): boolean {
-    const first = pendingMap.entries().next()
-    if (first.done) return false
-
-    const [requestId, pending] = first.value
-    clearTimeout(pending.timeout)
-    pendingMap.delete(requestId)
-    pending.resolve(value)
-    return true
-  }
-
-  private rejectOldestPendingRequest<T>(
-    pendingMap: Map<string, PendingRequest<T>>,
-    error: Error,
-  ): boolean {
-    const first = pendingMap.entries().next()
-    if (first.done) return false
-
-    const [requestId, pending] = first.value
-    clearTimeout(pending.timeout)
-    pendingMap.delete(requestId)
-    pending.reject(error)
-    return true
   }
 
   private rejectPendingFromError(code: string, message: string, requestId?: string): void {
     const fullError = new Error(`${code}: ${message}`)
 
-    if (requestId) {
-      const resolvedById =
-        this.rejectPendingByRequestId(this.pendingCreateManagerRequests, requestId, fullError) ||
-        this.rejectPendingByRequestId(this.pendingDeleteManagerRequests, requestId, fullError) ||
-        this.rejectPendingByRequestId(this.pendingStopAllAgentsRequests, requestId, fullError) ||
-        this.rejectPendingByRequestId(this.pendingListDirectoriesRequests, requestId, fullError) ||
-        this.rejectPendingByRequestId(this.pendingValidateDirectoryRequests, requestId, fullError) ||
-        this.rejectPendingByRequestId(this.pendingPickDirectoryRequests, requestId, fullError)
-
-      if (resolvedById) {
-        return
-      }
+    if (requestId && this.requestTracker.rejectByRequestId(requestId, fullError)) {
+      return
     }
 
     const loweredCode = code.toLowerCase()
 
-    if (loweredCode.includes('create_manager')) {
-      if (this.rejectOldestPendingRequest(this.pendingCreateManagerRequests, fullError)) return
+    for (const hint of WS_REQUEST_ERROR_HINTS) {
+      if (!loweredCode.includes(hint.codeFragment)) {
+        continue
+      }
+
+      if (this.requestTracker.rejectOldest(hint.requestType, fullError)) {
+        return
+      }
     }
 
-    if (loweredCode.includes('delete_manager')) {
-      if (this.rejectOldestPendingRequest(this.pendingDeleteManagerRequests, fullError)) return
-    }
-
-    if (loweredCode.includes('stop_all_agents')) {
-      if (this.rejectOldestPendingRequest(this.pendingStopAllAgentsRequests, fullError)) return
-    }
-
-    if (loweredCode.includes('list_directories')) {
-      if (this.rejectOldestPendingRequest(this.pendingListDirectoriesRequests, fullError)) return
-    }
-
-    if (loweredCode.includes('validate_directory')) {
-      if (this.rejectOldestPendingRequest(this.pendingValidateDirectoryRequests, fullError)) return
-    }
-
-    if (loweredCode.includes('pick_directory')) {
-      if (this.rejectOldestPendingRequest(this.pendingPickDirectoryRequests, fullError)) return
-    }
-
-    const totalPending =
-      this.pendingCreateManagerRequests.size +
-      this.pendingDeleteManagerRequests.size +
-      this.pendingStopAllAgentsRequests.size +
-      this.pendingListDirectoriesRequests.size +
-      this.pendingValidateDirectoryRequests.size +
-      this.pendingPickDirectoryRequests.size
-
-    if (totalPending !== 1) {
-      return
-    }
-
-    this.rejectOldestPendingRequest(this.pendingCreateManagerRequests, fullError)
-    this.rejectOldestPendingRequest(this.pendingDeleteManagerRequests, fullError)
-    this.rejectOldestPendingRequest(this.pendingStopAllAgentsRequests, fullError)
-    this.rejectOldestPendingRequest(this.pendingListDirectoriesRequests, fullError)
-    this.rejectOldestPendingRequest(this.pendingValidateDirectoryRequests, fullError)
-    this.rejectOldestPendingRequest(this.pendingPickDirectoryRequests, fullError)
-  }
-
-  private rejectPendingByRequestId<T>(
-    pendingMap: Map<string, PendingRequest<T>>,
-    requestId: string,
-    error: Error,
-  ): boolean {
-    const pending = pendingMap.get(requestId)
-    if (!pending) return false
-
-    clearTimeout(pending.timeout)
-    pendingMap.delete(requestId)
-    pending.reject(error)
-    return true
+    this.requestTracker.rejectOnlyPending(fullError)
   }
 
   private rejectAllPendingRequests(reason: string): void {
-    const error = new Error(reason)
-
-    this.rejectPendingMap(this.pendingCreateManagerRequests, error)
-    this.rejectPendingMap(this.pendingDeleteManagerRequests, error)
-    this.rejectPendingMap(this.pendingStopAllAgentsRequests, error)
-    this.rejectPendingMap(this.pendingListDirectoriesRequests, error)
-    this.rejectPendingMap(this.pendingValidateDirectoryRequests, error)
-    this.rejectPendingMap(this.pendingPickDirectoryRequests, error)
-  }
-
-  private rejectPendingMap<T>(pendingMap: Map<string, PendingRequest<T>>, error: Error): void {
-    for (const [requestId, pending] of [...pendingMap.entries()]) {
-      clearTimeout(pending.timeout)
-      pending.reject(error)
-      pendingMap.delete(requestId)
-    }
+    this.requestTracker.rejectAll(new Error(reason))
   }
 }
 

@@ -3,7 +3,7 @@ import type {
   ConversationBinaryAttachment,
   ConversationImageAttachment,
   ConversationTextAttachment,
-} from './ws-types'
+} from '@middleman/protocol'
 
 export interface PendingImageAttachment extends ConversationImageAttachment {
   id: string

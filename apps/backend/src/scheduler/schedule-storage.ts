@@ -1,15 +1,8 @@
 import { resolve } from "node:path";
+import { normalizeManagerId } from "../utils/normalize.js";
 
 const SCHEDULES_DIR_NAME = "schedules";
-
-export function normalizeManagerId(value: string): string {
-  const normalized = value.trim();
-  if (!normalized) {
-    throw new Error("managerId is required");
-  }
-
-  return normalized;
-}
+export { normalizeManagerId };
 
 export function getSchedulesDirectoryPath(dataDir: string): string {
   return resolve(dataDir, SCHEDULES_DIR_NAME);

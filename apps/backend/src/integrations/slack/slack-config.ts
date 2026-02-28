@@ -1,28 +1,27 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import {
+  BaseConfigPersistence,
+  buildIntegrationProfileId
+} from "../base-config-persistence.js";
 import type { SlackIntegrationConfig, SlackIntegrationConfigPublic } from "./slack-types.js";
 
-const INTEGRATIONS_DIR_NAME = "integrations";
-const INTEGRATIONS_MANAGERS_DIR_NAME = "managers";
 const SLACK_CONFIG_FILE_NAME = "slack.json";
 const DEFAULT_MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MIN_FILE_BYTES = 1024;
 const MAX_FILE_BYTES = 100 * 1024 * 1024;
 
+const SLACK_CONFIG_PERSISTENCE = new BaseConfigPersistence<SlackIntegrationConfig>({
+  integrationName: "Slack",
+  fileName: SLACK_CONFIG_FILE_NAME,
+  createDefaultConfig: createDefaultSlackConfig,
+  parseConfig: parseSlackConfig
+});
+
 export function getSlackConfigPath(dataDir: string, managerId: string): string {
-  const normalizedManagerId = normalizeManagerId(managerId);
-  return resolve(
-    dataDir,
-    INTEGRATIONS_DIR_NAME,
-    INTEGRATIONS_MANAGERS_DIR_NAME,
-    normalizedManagerId,
-    SLACK_CONFIG_FILE_NAME
-  );
+  return SLACK_CONFIG_PERSISTENCE.getPath(dataDir, managerId);
 }
 
 export function buildSlackProfileId(managerId: string): string {
-  const normalizedManagerId = normalizeManagerId(managerId);
-  return `slack:${normalizedManagerId}`;
+  return buildIntegrationProfileId("slack", managerId);
 }
 
 export function createDefaultSlackConfig(managerId: string): SlackIntegrationConfig {
@@ -55,28 +54,7 @@ export async function loadSlackConfig(options: {
   dataDir: string;
   managerId: string;
 }): Promise<SlackIntegrationConfig> {
-  const defaults = createDefaultSlackConfig(options.managerId);
-  const configPath = getSlackConfigPath(options.dataDir, options.managerId);
-
-  try {
-    const raw = await readFile(configPath, "utf8");
-    const parsed = JSON.parse(raw) as unknown;
-    return parseSlackConfig(parsed);
-  } catch (error) {
-    if (isEnoentError(error)) {
-      return defaults;
-    }
-
-    if (isSyntaxError(error)) {
-      throw new Error(`Invalid Slack config JSON at ${configPath}`);
-    }
-
-    if (error instanceof Error) {
-      throw new Error(`Invalid Slack config at ${configPath}: ${error.message}`);
-    }
-
-    throw error;
-  }
+  return SLACK_CONFIG_PERSISTENCE.load(options);
 }
 
 export async function saveSlackConfig(options: {
@@ -84,12 +62,7 @@ export async function saveSlackConfig(options: {
   managerId: string;
   config: SlackIntegrationConfig;
 }): Promise<void> {
-  const configPath = getSlackConfigPath(options.dataDir, options.managerId);
-  const tmpPath = `${configPath}.tmp`;
-
-  await mkdir(dirname(configPath), { recursive: true });
-  await writeFile(tmpPath, `${JSON.stringify(options.config, null, 2)}\n`, "utf8");
-  await rename(tmpPath, configPath);
+  await SLACK_CONFIG_PERSISTENCE.save(options);
 }
 
 export function mergeSlackConfig(
@@ -326,15 +299,6 @@ function maskToken(value: string): string {
   return `${trimmed.slice(0, 5)}…${trimmed.slice(-3)}`;
 }
 
-function normalizeManagerId(value: string): string {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    throw new Error("managerId is required");
-  }
-
-  return trimmed;
-}
-
 function asRecord(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return {};
@@ -398,17 +362,4 @@ function requireMode(value: unknown): "socket" {
   }
 
   return value;
-}
-
-function isEnoentError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: string }).code === "ENOENT"
-  );
-}
-
-function isSyntaxError(error: unknown): boolean {
-  return error instanceof SyntaxError;
 }

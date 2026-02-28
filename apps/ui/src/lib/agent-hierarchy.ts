@@ -1,4 +1,4 @@
-import type { AgentDescriptor } from './ws-types'
+import type { AgentDescriptor } from '@middleman/protocol'
 
 const ACTIVE_STATUSES = new Set(['idle', 'streaming'])
 

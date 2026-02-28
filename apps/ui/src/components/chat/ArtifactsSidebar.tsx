@@ -8,6 +8,7 @@ import {
   categorizeArtifact,
   type ArtifactCategory,
 } from '@/lib/collect-artifacts'
+import { resolveApiEndpoint } from '@/lib/api-endpoint'
 import { cn } from '@/lib/utils'
 
 interface ArtifactsSidebarProps {
@@ -110,19 +111,6 @@ function normalizeSchedule(value: unknown): ScheduleRecord | null {
     createdAt,
     nextFireAt,
     lastFiredAt,
-  }
-}
-
-function resolveApiEndpoint(wsUrl: string, path: string): string {
-  try {
-    const parsed = new URL(wsUrl)
-    parsed.protocol = parsed.protocol === 'wss:' ? 'https:' : 'http:'
-    parsed.pathname = path
-    parsed.search = ''
-    parsed.hash = ''
-    return parsed.toString()
-  } catch {
-    return path
   }
 }
 

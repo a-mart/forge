@@ -128,33 +128,3 @@ export interface TelegramDraft {
   allowText: boolean
   allowBinary: boolean
 }
-
-export type GsuiteIntegrationState = 'disabled' | 'ready' | 'connected' | 'error'
-
-export interface GsuiteSettingsConfig {
-  enabled: boolean
-  accountEmail: string
-  services: string[]
-  hasOAuthClientCredentials: boolean
-  lastConnectedAt: string | null
-  updatedAt: string
-}
-
-export interface GsuiteSettingsStatus {
-  state: GsuiteIntegrationState
-  enabled: boolean
-  gogInstalled: boolean
-  gogVersion?: string
-  connected: boolean
-  accountEmail: string
-  message: string
-  updatedAt: string
-}
-
-export interface GsuiteDraft {
-  enabled: boolean
-  accountEmail: string
-  services: string[]
-  oauthClientJson: string
-  redirectUrl: string
-}

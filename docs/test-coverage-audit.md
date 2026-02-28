@@ -40,7 +40,7 @@
 | Module | Coverage status | Notes |
 | --- | --- | --- |
 | `apps/backend/src/swarm/` | **Mixed** | Strong coverage for `swarm-manager` and `agent-runtime`; weak/near-zero for `codex-agent-runtime` behavior and zero direct tests for `codex-jsonrpc-client`, `codex-tool-bridge`, `cwd-policy`, `memory-paths`, `model-presets`. |
-| `apps/backend/src/ws/server.ts` | **Partial** | Many websocket and core HTTP routes tested, but major endpoint families remain untested (transcribe, OAuth SSE auth login, Slack/Telegram/GSuite integration REST routes). |
+| `apps/backend/src/ws/server.ts` | **Partial** | Many websocket and core HTTP routes tested, but major endpoint families remain untested (transcribe, OAuth SSE auth login, Slack/Telegram integration REST routes). |
 | `apps/backend/src/integrations/` | **Low** | Only markdown formatting helpers (`slack-mrkdwn`, `telegram-markdown`) are tested; integration lifecycle, routing, delivery, clients, config merging, and registry migration are largely untested. |
 | `apps/backend/src/scheduler/` | **Low-Medium** | `schedule-storage` partially covered; `cron-scheduler-service` (core firing logic) has no dedicated tests. |
 | `apps/ui/src/lib/` | **Medium** | Good coverage for `ws-client`; no tests for `file-attachments`, `collect-artifacts`, `theme`, `voice-transcription-client`, and no contract guard between backend/ui ws-types. |
@@ -103,7 +103,6 @@ Missing high-risk cases:
   - cleanup on socket close.
 - integration HTTP routes:
   - manager-scoped Slack/Telegram route parsing and method matrix
-  - GSuite credentials/start/complete/test endpoints
   - expected 400/404/405 behavior and payload validation errors.
 - websocket command validation negative cases:
   - invalid payloads for `create_manager`, `user_message.attachments`, `list/validate/pick_directory`, etc.
@@ -171,7 +170,7 @@ Missing cases:
 - extraction precedence for `content[].text` vs JSON stringify fallback.
 - tool execution exception handling + error formatting.
 
-#### `apps/backend/src/integrations/*-config.ts` (Slack/Telegram/GSuite)
+#### `apps/backend/src/integrations/*-config.ts` (Slack/Telegram)
 Current: no direct tests.
 
 Missing cases:

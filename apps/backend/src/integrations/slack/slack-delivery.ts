@@ -1,5 +1,6 @@
-import type { ServerEvent } from "../../protocol/ws-types.js";
+import type { ServerEvent } from "@middleman/protocol";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
+import { normalizeManagerId } from "../../utils/normalize.js";
 import { SlackWebApiClient } from "./slack-client.js";
 import { markdownToSlackMrkdwn } from "./slack-mrkdwn.js";
 import type { SlackIntegrationConfig } from "./slack-types.js";
@@ -167,13 +168,4 @@ function normalizeOptionalString(value: string | undefined): string | undefined 
 
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
-}
-
-function normalizeManagerId(value: string): string {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    throw new Error("managerId is required");
-  }
-
-  return trimmed;
 }

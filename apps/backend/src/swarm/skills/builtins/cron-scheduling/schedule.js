@@ -18,7 +18,7 @@ function resolveSchedulesFilePath(dataDir, managerId) {
   return resolve(dataDir, SCHEDULES_DIR_NAME, `${managerId}.json`);
 }
 
-function normalizeManagerId(rawValue) {
+function normalizeOptionalManagerId(rawValue) {
   if (typeof rawValue !== "string") {
     return null;
   }
@@ -59,7 +59,7 @@ async function loadManagerIdsFromAgentsStore(dataDir) {
       continue;
     }
 
-    const managerId = normalizeManagerId(agent.agentId);
+    const managerId = normalizeOptionalManagerId(agent.agentId);
     if (!managerId) {
       continue;
     }
@@ -71,7 +71,7 @@ async function loadManagerIdsFromAgentsStore(dataDir) {
 }
 
 async function resolveManagerId(flags, dataDir) {
-  const explicitManagerId = normalizeManagerId(flags.get("manager"));
+  const explicitManagerId = normalizeOptionalManagerId(flags.get("manager"));
   if (explicitManagerId) {
     return explicitManagerId;
   }

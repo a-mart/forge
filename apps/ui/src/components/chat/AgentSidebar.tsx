@@ -3,8 +3,9 @@ import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } 
 import { useState } from 'react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { buildManagerTreeRows } from '@/lib/agent-hierarchy'
+import { inferModelPreset } from '@/lib/model-preset'
 import { cn } from '@/lib/utils'
-import type { AgentContextUsage, AgentDescriptor, AgentStatus, ManagerModelPreset } from '@/lib/ws-types'
+import type { AgentContextUsage, AgentDescriptor, AgentStatus, ManagerModelPreset } from '@middleman/protocol'
 
 interface AgentSidebarProps {
   connected: boolean
@@ -35,25 +36,6 @@ function getAgentLiveStatus(
     status: live?.status ?? agent.status,
     pendingCount: live?.pendingCount ?? 0,
   }
-}
-
-function inferModelPreset(agent: AgentDescriptor): ManagerModelPreset | undefined {
-  const provider = agent.model.provider.trim().toLowerCase()
-  const modelId = agent.model.modelId.trim().toLowerCase()
-
-  if (provider === 'openai-codex' && modelId === 'gpt-5.3-codex') {
-    return 'pi-codex'
-  }
-
-  if (provider === 'anthropic' && modelId === 'claude-opus-4-6') {
-    return 'pi-opus'
-  }
-
-  if (provider === 'openai-codex-app-server' && modelId === 'default') {
-    return 'codex-app'
-  }
-
-  return undefined
 }
 
 function RuntimeIcon({ agent, className }: { agent: AgentDescriptor; className?: string }) {

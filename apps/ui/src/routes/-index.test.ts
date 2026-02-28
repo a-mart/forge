@@ -5,8 +5,12 @@ import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { MANAGER_MODEL_PRESETS } from '@/lib/ws-types'
+import { MANAGER_MODEL_PRESETS } from '@middleman/protocol'
 import { IndexPage } from './index'
+
+const CREATE_MANAGER_MODEL_PRESETS = MANAGER_MODEL_PRESETS.filter(
+  (modelPreset) => modelPreset !== 'codex-app',
+)
 
 type ListenerMap = Record<string, Array<(event?: any) => void>>
 
@@ -179,7 +183,7 @@ describe('IndexPage create manager model selection', () => {
     click(modelSelect as HTMLElement)
 
     const optionValues = getAllByRole(document.body, 'option').map((option) => option.textContent?.trim() ?? '')
-    expect(optionValues).toEqual([...MANAGER_MODEL_PRESETS])
+    expect(optionValues).toEqual([...CREATE_MANAGER_MODEL_PRESETS])
   })
 
   it('sends selected model in create_manager payload', async () => {
@@ -229,7 +233,7 @@ describe('IndexPage create manager model selection', () => {
     await vi.advanceTimersByTimeAsync(0)
   })
 
-  it('scopes all-tab activity to the selected manager context', async () => {
+  it('hides worker tool calls in all-tab activity for the selected manager context', async () => {
     const socket = await renderPage()
 
     emitServerEvent(socket, {
@@ -262,6 +266,16 @@ describe('IndexPage create manager model selection', () => {
           fromAgentId: 'worker-owned',
           toAgentId: 'worker-owned',
           text: 'owned worker chatter',
+        },
+        {
+          type: 'agent_tool_call',
+          agentId: 'manager',
+          actorAgentId: 'manager',
+          timestamp: new Date().toISOString(),
+          kind: 'tool_execution_start',
+          toolName: 'speak_to_user',
+          toolCallId: 'manager-call',
+          text: '{"text":"hello"}',
         },
         {
           type: 'agent_tool_call',
@@ -300,7 +314,8 @@ describe('IndexPage create manager model selection', () => {
     click(getByRole(container, 'button', { name: 'All' }))
 
     expect(queryByText(container, 'owned worker chatter')).not.toBeNull()
-    expect(queryByText(container, /owned-call/)).not.toBeNull()
+    expect(queryByText(container, /manager-call/)).not.toBeNull()
+    expect(queryByText(container, /owned-call/)).toBeNull()
     expect(queryByText(container, 'foreign worker chatter')).toBeNull()
     expect(queryByText(container, /foreign-call/)).toBeNull()
   })

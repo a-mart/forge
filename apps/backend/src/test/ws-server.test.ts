@@ -18,7 +18,7 @@ import type {
 import type { SwarmAgentRuntime } from '../swarm/runtime-types.js'
 import { getScheduleFilePath } from '../scheduler/schedule-storage.js'
 import { SwarmWebSocketServer } from '../ws/server.js'
-import type { ServerEvent } from '../protocol/ws-types.js'
+import type { ServerEvent } from '@middleman/protocol'
 
 class FakeRuntime {
   readonly descriptor: AgentDescriptor
@@ -182,6 +182,24 @@ async function makeTempConfig(port: number, allowNonManagerSubscriptions = false
   }
 }
 
+async function bootWithDefaultManager(manager: TestSwarmManager, config: SwarmConfig): Promise<AgentDescriptor> {
+  await manager.boot()
+  const managerId = config.managerId ?? 'manager'
+  const managerName = config.managerDisplayName ?? managerId
+
+  const existingManager = manager.listAgents().find(
+    (descriptor) => descriptor.agentId === managerId && descriptor.role === 'manager',
+  )
+  if (existingManager) {
+    return existingManager
+  }
+
+  return manager.createManager(managerId, {
+    name: managerName,
+    cwd: config.defaultCwd,
+  })
+}
+
 async function waitForEvent(
   events: ServerEvent[],
   predicate: (event: ServerEvent) => boolean,
@@ -205,7 +223,7 @@ describe('SwarmWebSocketServer', () => {
     const config = await makeTempConfig(port)
 
     const manager = new TestSwarmManager(config)
-    await manager.boot()
+    await bootWithDefaultManager(manager, config)
 
     const server = new SwarmWebSocketServer({
       swarmManager: manager,
@@ -256,7 +274,7 @@ describe('SwarmWebSocketServer', () => {
     const config = await makeTempConfig(port)
 
     const manager = new TestSwarmManager(config)
-    await manager.boot()
+    await bootWithDefaultManager(manager, config)
 
     const server = new SwarmWebSocketServer({
       swarmManager: manager,
@@ -296,7 +314,7 @@ describe('SwarmWebSocketServer', () => {
     const config = await makeTempConfig(port)
 
     const manager = new TestSwarmManager(config)
-    await manager.boot()
+    await bootWithDefaultManager(manager, config)
 
     const server = new SwarmWebSocketServer({
       swarmManager: manager,
@@ -362,7 +380,7 @@ describe('SwarmWebSocketServer', () => {
     const config = await makeTempConfig(port)
 
     const manager = new TestSwarmManager(config)
-    await manager.boot()
+    await bootWithDefaultManager(manager, config)
 
     const server = new SwarmWebSocketServer({
       swarmManager: manager,
@@ -403,7 +421,7 @@ describe('SwarmWebSocketServer', () => {
     const config = await makeTempConfig(port)
 
     const manager = new TestSwarmManager(config)
-    await manager.boot()
+    await bootWithDefaultManager(manager, config)
 
     const server = new SwarmWebSocketServer({
       swarmManager: manager,
@@ -442,7 +460,7 @@ describe('SwarmWebSocketServer', () => {
     const config = await makeTempConfig(port)
 
     const manager = new TestSwarmManager(config)
-    await manager.boot()
+    await bootWithDefaultManager(manager, config)
 
     const server = new SwarmWebSocketServer({
       swarmManager: manager,
@@ -520,7 +538,7 @@ describe('SwarmWebSocketServer', () => {
     const config = await makeTempConfig(port)
 
     const manager = new TestSwarmManager(config)
-    await manager.boot()
+    await bootWithDefaultManager(manager, config)
     const secondaryManager = await manager.createManager('manager', {
       name: 'release-manager',
       cwd: config.paths.rootDir,
@@ -601,7 +619,7 @@ describe('SwarmWebSocketServer', () => {
     const config = await makeTempConfig(port)
 
     const manager = new TestSwarmManager(config)
-    await manager.boot()
+    await bootWithDefaultManager(manager, config)
 
     const server = new SwarmWebSocketServer({
       swarmManager: manager,
@@ -627,7 +645,7 @@ describe('SwarmWebSocketServer', () => {
     const config = await makeTempConfig(port)
 
     const manager = new TestSwarmManager(config)
-    await manager.boot()
+    await bootWithDefaultManager(manager, config)
 
     const server = new SwarmWebSocketServer({
       swarmManager: manager,
@@ -657,7 +675,7 @@ describe('SwarmWebSocketServer', () => {
     const config = await makeTempConfig(port)
 
     const manager = new TestSwarmManager(config)
-    await manager.boot()
+    await bootWithDefaultManager(manager, config)
 
     const server = new SwarmWebSocketServer({
       swarmManager: manager,
@@ -749,7 +767,7 @@ describe('SwarmWebSocketServer', () => {
     const config = await makeTempConfig(port)
 
     const manager = new TestSwarmManager(config)
-    await manager.boot()
+    await bootWithDefaultManager(manager, config)
 
     const server = new SwarmWebSocketServer({
       swarmManager: manager,
@@ -834,7 +852,7 @@ describe('SwarmWebSocketServer', () => {
     const config = await makeTempConfig(port)
 
     const manager = new TestSwarmManager(config)
-    await manager.boot()
+    await bootWithDefaultManager(manager, config)
 
     const server = new SwarmWebSocketServer({
       swarmManager: manager,
@@ -905,7 +923,7 @@ describe('SwarmWebSocketServer', () => {
     const config = await makeTempConfig(port)
 
     const manager = new TestSwarmManager(config)
-    await manager.boot()
+    await bootWithDefaultManager(manager, config)
 
     const server = new SwarmWebSocketServer({
       swarmManager: manager,
@@ -1003,7 +1021,7 @@ describe('SwarmWebSocketServer', () => {
     const config = await makeTempConfig(port)
 
     const manager = new TestSwarmManager(config)
-    await manager.boot()
+    await bootWithDefaultManager(manager, config)
 
     const server = new SwarmWebSocketServer({
       swarmManager: manager,
@@ -1061,7 +1079,7 @@ describe('SwarmWebSocketServer', () => {
     const config = await makeTempConfig(port)
 
     const manager = new TestSwarmManager(config)
-    await manager.boot()
+    await bootWithDefaultManager(manager, config)
 
     const server = new SwarmWebSocketServer({
       swarmManager: manager,
@@ -1133,7 +1151,7 @@ describe('SwarmWebSocketServer', () => {
     const config = await makeTempConfig(port)
 
     const manager = new TestSwarmManager(config)
-    await manager.boot()
+    await bootWithDefaultManager(manager, config)
 
     const server = new SwarmWebSocketServer({
       swarmManager: manager,
@@ -1196,7 +1214,7 @@ describe('SwarmWebSocketServer', () => {
     const config = await makeTempConfig(port, true)
 
     const manager = new TestSwarmManager(config)
-    await manager.boot()
+    await bootWithDefaultManager(manager, config)
 
     const worker = await manager.spawnAgent('manager', { agentId: 'Worker Thread' })
 
@@ -1241,7 +1259,7 @@ describe('SwarmWebSocketServer', () => {
 
     expect(workerEvent.type).toBe('conversation_message')
 
-    ;(manager as any).emitConversationLog({
+    ;(manager as any).conversationProjector.emitConversationLog({
       type: 'conversation_log',
       agentId: worker.agentId,
       timestamp: new Date().toISOString(),
@@ -1273,7 +1291,7 @@ describe('SwarmWebSocketServer', () => {
     const config = await makeTempConfig(port, true)
 
     const manager = new TestSwarmManager(config)
-    await manager.boot()
+    await bootWithDefaultManager(manager, config)
 
     const worker = await manager.spawnAgent('manager', { agentId: 'Disposable Worker' })
 
@@ -1328,7 +1346,7 @@ describe('SwarmWebSocketServer', () => {
     const config = await makeTempConfig(port, true)
 
     const manager = new TestSwarmManager(config)
-    await manager.boot()
+    await bootWithDefaultManager(manager, config)
 
     const worker = await manager.spawnAgent('manager', { agentId: 'Stop-All Worker' })
     const managerRuntime = manager.runtimeByAgentId.get('manager')
@@ -1394,7 +1412,7 @@ describe('SwarmWebSocketServer', () => {
     const config = await makeTempConfig(port, true)
 
     const manager = new TestSwarmManager(config)
-    await manager.boot()
+    await bootWithDefaultManager(manager, config)
 
     const server = new SwarmWebSocketServer({
       swarmManager: manager,
@@ -1446,7 +1464,7 @@ describe('SwarmWebSocketServer', () => {
     const config = await makeTempConfig(port, true)
 
     const manager = new TestSwarmManager(config)
-    await manager.boot()
+    await bootWithDefaultManager(manager, config)
 
     const server = new SwarmWebSocketServer({
       swarmManager: manager,
@@ -1496,7 +1514,7 @@ describe('SwarmWebSocketServer', () => {
     const config = await makeTempConfig(port, true)
 
     const manager = new TestSwarmManager(config)
-    await manager.boot()
+    await bootWithDefaultManager(manager, config)
 
     const server = new SwarmWebSocketServer({
       swarmManager: manager,
@@ -1546,7 +1564,7 @@ describe('SwarmWebSocketServer', () => {
     const config = await makeTempConfig(port, true)
 
     const manager = new TestSwarmManager(config)
-    await manager.boot()
+    await bootWithDefaultManager(manager, config)
 
     const secondary = await manager.createManager('manager', {
       name: 'Delete Me Manager',
@@ -1597,7 +1615,7 @@ describe('SwarmWebSocketServer', () => {
     const config = await makeTempConfig(port, true)
 
     const manager = new TestSwarmManager(config)
-    await manager.boot()
+    await bootWithDefaultManager(manager, config)
 
     const server = new SwarmWebSocketServer({
       swarmManager: manager,
@@ -1658,7 +1676,7 @@ describe('SwarmWebSocketServer', () => {
     const config = await makeTempConfig(port, true)
 
     const manager = new TestSwarmManager(config)
-    await manager.boot()
+    await bootWithDefaultManager(manager, config)
 
     const secondary = await manager.createManager('manager', {
       name: 'Owner Manager',
@@ -1717,7 +1735,7 @@ describe('SwarmWebSocketServer', () => {
     const config = await makeTempConfig(port, true)
 
     const manager = new TestSwarmManager(config)
-    await manager.boot()
+    await bootWithDefaultManager(manager, config)
 
     const secondary = await manager.createManager('manager', {
       name: 'Resettable Manager',
@@ -1764,7 +1782,7 @@ describe('SwarmWebSocketServer', () => {
     const config = await makeTempConfig(port, true)
 
     const manager = new TestSwarmManager(config)
-    await manager.boot()
+    await bootWithDefaultManager(manager, config)
 
     const outsideDir = await mkdtemp(join(tmpdir(), 'ws-outside-allowlist-'))
     const rootValidation = await manager.validateDirectory(config.paths.rootDir)
@@ -1834,7 +1852,7 @@ describe('SwarmWebSocketServer', () => {
     const config = await makeTempConfig(port)
 
     const manager = new TestSwarmManager(config)
-    await manager.boot()
+    await bootWithDefaultManager(manager, config)
 
     const server = new SwarmWebSocketServer({
       swarmManager: manager,

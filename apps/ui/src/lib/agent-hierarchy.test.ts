@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { buildManagerTreeRows, chooseFallbackAgentId, getPrimaryManagerId } from './agent-hierarchy'
-import type { AgentDescriptor } from './ws-types'
+import type { AgentDescriptor } from '@middleman/protocol'
 
 function manager(agentId: string, managerId = agentId): AgentDescriptor {
   return {
@@ -79,5 +79,17 @@ describe('agent-hierarchy', () => {
 
     expect(chooseFallbackAgentId(agents, 'worker-a')).toBe('worker-a')
     expect(chooseFallbackAgentId(agents, 'missing-agent')).toBe('manager')
+  })
+
+  it('treats stopped and errored agents as inactive', () => {
+    const stoppedManager = { ...manager('manager-stopped'), status: 'stopped' as const }
+    const erroredWorker = { ...worker('worker-error', 'manager-stopped'), status: 'error' as const }
+
+    const { managerRows, orphanWorkers } = buildManagerTreeRows([stoppedManager, erroredWorker])
+
+    expect(managerRows).toHaveLength(0)
+    expect(orphanWorkers).toHaveLength(0)
+    expect(getPrimaryManagerId([stoppedManager])).toBeNull()
+    expect(chooseFallbackAgentId([stoppedManager, erroredWorker], null)).toBeNull()
   })
 })

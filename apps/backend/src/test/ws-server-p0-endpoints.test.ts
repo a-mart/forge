@@ -167,24 +167,6 @@ function createIntegrationRegistryMock() {
   })
 }
 
-function createGsuiteIntegrationMock() {
-  return {
-    getSnapshot: vi.fn(async () => ({ enabled: false, accountEmail: null, services: [] })),
-    updateConfig: vi.fn(async () => ({ enabled: true, accountEmail: 'ops@example.com', services: ['gmail'] })),
-    disable: vi.fn(async () => ({ enabled: false, accountEmail: null, services: [] })),
-    storeOAuthCredentials: vi.fn(async () => ({ enabled: false, accountEmail: null, services: [] })),
-    startOAuth: vi.fn(async () => ({
-      snapshot: { enabled: true, accountEmail: 'ops@example.com', services: ['gmail'] },
-      result: { authUrl: 'https://accounts.google.com/o/oauth2/auth?mock=1' },
-    })),
-    completeOAuth: vi.fn(async () => ({
-      snapshot: { enabled: true, accountEmail: 'ops@example.com', services: ['gmail'] },
-      result: { ok: true },
-    })),
-    testConnection: vi.fn(async () => ({ ok: true })),
-  }
-}
-
 async function parseJsonResponse(response: Response): Promise<{ status: number; json: Record<string, unknown> }> {
   return {
     status: response.status,
@@ -524,11 +506,10 @@ describe('SwarmWebSocketServer P0 endpoints', () => {
     }
   })
 
-  it('handles manager-scoped Slack/Telegram routes and validates GSuite payloads', async () => {
+  it('handles manager-scoped Slack/Telegram routes and validates methods/payloads', async () => {
     const config = await makeTempConfig({ managerId: 'manager' })
     const manager = new FakeSwarmManager(config, [createManagerDescriptor(config.paths.rootDir, 'manager')])
     const integrationRegistry = createIntegrationRegistryMock()
-    const gsuite = createGsuiteIntegrationMock()
 
     const server = new SwarmWebSocketServer({
       swarmManager: manager as unknown as never,
@@ -536,7 +517,6 @@ describe('SwarmWebSocketServer P0 endpoints', () => {
       port: config.port,
       allowNonManagerSubscriptions: false,
       integrationRegistry: integrationRegistry as unknown as never,
-      gsuiteIntegration: gsuite as unknown as never,
     })
 
     await server.start()
@@ -570,35 +550,6 @@ describe('SwarmWebSocketServer P0 endpoints', () => {
       const telegramWrongMethod = await parseJsonResponse(telegramWrongMethodResponse)
       expect(telegramWrongMethod.status).toBe(405)
       expect(telegramWrongMethod.json.error).toBe('Method Not Allowed')
-
-      const invalidGsuiteBodyResponse = await fetch(
-        `http://${config.host}:${config.port}/api/integrations/gsuite/oauth/credentials`,
-        {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({}),
-        },
-      )
-      const invalidGsuiteBody = await parseJsonResponse(invalidGsuiteBodyResponse)
-      expect(invalidGsuiteBody.status).toBe(400)
-      expect(invalidGsuiteBody.json.error).toBe('oauthClientJson must be a non-empty string')
-
-      const startOAuthResponse = await fetch(`http://${config.host}:${config.port}/api/integrations/gsuite/oauth/start`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          email: '  ops@example.com ',
-          services: ['Gmail', 'calendar', ''],
-          forceConsent: true,
-        }),
-      })
-      const startOAuth = await parseJsonResponse(startOAuthResponse)
-      expect(startOAuth.status).toBe(200)
-      expect(gsuite.startOAuth).toHaveBeenCalledWith({
-        email: 'ops@example.com',
-        services: ['gmail', 'calendar'],
-        forceConsent: true,
-      })
     } finally {
       await server.stop()
     }

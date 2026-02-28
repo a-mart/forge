@@ -26,8 +26,7 @@ For dashboard/chat/settings work, preserve existing behavior and interaction pat
 ### Contracts
 Canonical wire contracts are defined in:
 
-- `apps/backend/src/protocol/ws-types.ts`
-- `apps/ui/src/lib/ws-types.ts`
+- `packages/protocol/`
 
 ## Run and Test
 

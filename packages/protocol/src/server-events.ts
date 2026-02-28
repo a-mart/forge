@@ -1,97 +1,13 @@
-export type AgentStatus = 'idle' | 'streaming' | 'terminated' | 'stopped_on_restart'
-
-export const MANAGER_MODEL_PRESETS = ['pi-codex', 'pi-opus', 'codex-app'] as const
-export type ManagerModelPreset = (typeof MANAGER_MODEL_PRESETS)[number]
-
-export interface AgentDescriptor {
-  agentId: string
-  managerId: string
-  displayName: string
-  role: 'manager' | 'worker'
-  archetypeId?: string
-  status: AgentStatus
-  createdAt: string
-  updatedAt: string
-  cwd: string
-  model: {
-    provider: string
-    modelId: string
-    thinkingLevel: string
-  }
-  sessionFile: string
-  contextUsage?: AgentContextUsage
-}
-
-export interface AgentContextUsage {
-  tokens: number
-  contextWindow: number
-  percent: number
-}
-
-export type DeliveryMode = 'auto' | 'followUp' | 'steer'
-export type AcceptedDeliveryMode = 'prompt' | 'followUp' | 'steer'
-
-export type MessageChannel = 'web' | 'slack' | 'telegram'
-
-export interface MessageSourceContext {
-  channel: MessageChannel
-  channelId?: string
-  userId?: string
-  messageId?: string
-  threadTs?: string
-  integrationProfileId?: string
-  channelType?: 'dm' | 'channel' | 'group' | 'mpim'
-  teamId?: string
-}
-
-export type MessageTargetContext = Pick<
+import type { ConversationAttachment } from './attachments.js'
+import type {
+  AcceptedDeliveryMode,
+  AgentContextUsage,
+  AgentDescriptor,
+  AgentStatus,
+  DeliveryMode,
+  DirectoryItem,
   MessageSourceContext,
-  'channel' | 'channelId' | 'userId' | 'threadTs' | 'integrationProfileId'
->
-
-export interface ConversationImageAttachment {
-  type?: 'image'
-  mimeType: string
-  data: string
-  fileName?: string
-}
-
-export interface ConversationTextAttachment {
-  type: 'text'
-  mimeType: string
-  text: string
-  fileName?: string
-}
-
-export interface ConversationBinaryAttachment {
-  type: 'binary'
-  mimeType: string
-  data: string
-  fileName?: string
-}
-
-export type ConversationAttachment =
-  | ConversationImageAttachment
-  | ConversationTextAttachment
-  | ConversationBinaryAttachment
-
-export type ClientCommand =
-  | { type: 'subscribe'; agentId?: string }
-  | {
-      type: 'user_message'
-      text: string
-      attachments?: ConversationAttachment[]
-      agentId?: string
-      delivery?: DeliveryMode
-    }
-  | { type: 'kill_agent'; agentId: string }
-  | { type: 'stop_all_agents'; managerId: string; requestId?: string }
-  | { type: 'create_manager'; name: string; cwd: string; model: ManagerModelPreset; requestId?: string }
-  | { type: 'delete_manager'; managerId: string; requestId?: string }
-  | { type: 'list_directories'; path?: string; requestId?: string }
-  | { type: 'validate_directory'; path: string; requestId?: string }
-  | { type: 'pick_directory'; defaultPath?: string; requestId?: string }
-  | { type: 'ping' }
+} from './shared-types.js'
 
 export interface ConversationMessageEvent {
   type: 'conversation_message'
@@ -183,6 +99,10 @@ export interface DirectoriesListedEvent {
   path: string
   directories: string[]
   requestId?: string
+  requestedPath?: string
+  resolvedPath?: string
+  roots?: string[]
+  entries?: DirectoryItem[]
 }
 
 export interface DirectoryValidatedEvent {
@@ -191,6 +111,9 @@ export interface DirectoryValidatedEvent {
   valid: boolean
   message?: string
   requestId?: string
+  requestedPath?: string
+  roots?: string[]
+  resolvedPath?: string
 }
 
 export interface DirectoryPickedEvent {
@@ -199,11 +122,13 @@ export interface DirectoryPickedEvent {
   requestId?: string
 }
 
+export type SlackConnectionState = 'disabled' | 'connecting' | 'connected' | 'disconnected' | 'error'
+
 export interface SlackStatusEvent {
   type: 'slack_status'
   managerId?: string
   integrationProfileId?: string
-  state: 'disabled' | 'connecting' | 'connected' | 'disconnected' | 'error'
+  state: SlackConnectionState
   enabled: boolean
   updatedAt: string
   message?: string
@@ -211,11 +136,18 @@ export interface SlackStatusEvent {
   botUserId?: string
 }
 
+export type TelegramConnectionState =
+  | 'disabled'
+  | 'connecting'
+  | 'connected'
+  | 'disconnected'
+  | 'error'
+
 export interface TelegramStatusEvent {
   type: 'telegram_status'
   managerId?: string
   integrationProfileId?: string
-  state: 'disabled' | 'connecting' | 'connected' | 'disconnected' | 'error'
+  state: TelegramConnectionState
   enabled: boolean
   updatedAt: string
   message?: string
@@ -229,6 +161,21 @@ export type ConversationEntry =
   | AgentMessageEvent
   | AgentToolCallEvent
 
+export type ConversationEntryEvent = ConversationEntry
+
+export interface AgentStatusEvent {
+  type: 'agent_status'
+  agentId: string
+  status: AgentStatus
+  pendingCount: number
+  contextUsage?: AgentContextUsage
+}
+
+export interface AgentsSnapshotEvent {
+  type: 'agents_snapshot'
+  agents: AgentDescriptor[]
+}
+
 export type ServerEvent =
   | { type: 'ready'; serverTime: string; subscribedAgentId: string }
   | { type: 'conversation_reset'; agentId: string; timestamp: string; reason: 'user_new_command' | 'api_reset' }
@@ -238,14 +185,8 @@ export type ServerEvent =
       messages: ConversationEntry[]
     }
   | ConversationEntry
-  | {
-      type: 'agent_status'
-      agentId: string
-      status: AgentStatus
-      pendingCount: number
-      contextUsage?: AgentContextUsage
-    }
-  | { type: 'agents_snapshot'; agents: AgentDescriptor[] }
+  | AgentStatusEvent
+  | AgentsSnapshotEvent
   | ManagerCreatedEvent
   | ManagerDeletedEvent
   | StopAllAgentsResultEvent
