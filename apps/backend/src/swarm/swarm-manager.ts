@@ -126,6 +126,17 @@ const SWARM_CONTEXT_FILE_NAME = "SWARM.md";
 const SWARM_MANAGER_MAX_EVENT_LISTENERS = 64;
 const SESSION_ID_SUFFIX_SEPARATOR = "--s";
 const ROOT_SESSION_NUMBER = 1;
+const DEFAULT_MEMORY_TEMPLATE_NORMALIZED_LINES = [
+  "# Swarm Memory",
+  "## User Preferences",
+  "- (none yet)",
+  "## Project Facts",
+  "- (none yet)",
+  "## Decisions",
+  "- (none yet)",
+  "## Open Follow-ups",
+  "- (none yet)"
+];
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -216,6 +227,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   private readonly descriptors = new Map<string, AgentDescriptor>();
   private readonly profiles = new Map<string, ManagerProfile>();
+  private readonly profileMergeMutexes = new Map<string, Promise<void>>();
   private readonly runtimes = new Map<string, SwarmAgentRuntime>();
   private readonly conversationEntriesByAgentId = new Map<string, ConversationEntryEvent[]>();
   private readonly conversationProjector: ConversationProjector;
@@ -482,6 +494,51 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     await this.saveStore();
     this.emitAgentsSnapshot();
     this.emitProfilesSnapshot();
+  }
+
+  async mergeSessionMemory(agentId: string): Promise<void> {
+    const descriptor = this.getRequiredSessionDescriptor(agentId);
+    if (descriptor.agentId === descriptor.profileId) {
+      throw new Error(`Default session memory is already the profile core memory: ${agentId}`);
+    }
+
+    const releaseMergeLock = await this.acquireProfileMergeLock(descriptor.profileId);
+
+    try {
+      await this.ensureAgentMemoryFile(agentId);
+      await this.ensureAgentMemoryFile(descriptor.profileId);
+
+      const sessionMemoryPath = this.getAgentMemoryPath(agentId);
+      const profileMemoryPath = this.getAgentMemoryPath(descriptor.profileId);
+
+      const sessionMemoryContent = await readFile(sessionMemoryPath, "utf8");
+      if (this.isSessionMemoryMergeNoOp(sessionMemoryContent)) {
+        return;
+      }
+
+      const profileMemoryContent = await readFile(profileMemoryPath, "utf8");
+      const mergedAt = this.now();
+      const mergedProfileMemory = appendSessionMemoryToProfileMemory(
+        profileMemoryContent,
+        sessionMemoryContent,
+        {
+          agentId: descriptor.agentId,
+          sessionLabel: descriptor.sessionLabel,
+          mergedAt
+        }
+      );
+
+      await writeFile(profileMemoryPath, mergedProfileMemory, "utf8");
+
+      descriptor.mergedAt = mergedAt;
+      descriptor.updatedAt = mergedAt;
+      this.descriptors.set(descriptor.agentId, descriptor);
+
+      await this.saveStore();
+      this.emitAgentsSnapshot();
+    } finally {
+      releaseMergeLock();
+    }
   }
 
   async forkSession(
@@ -2196,15 +2253,24 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const memoryFilePath = this.getAgentMemoryPath(memoryOwnerAgentId);
     await this.ensureAgentMemoryFile(memoryOwnerAgentId);
 
+    const sessionMemoryContent = await readFile(memoryFilePath, "utf8");
+    let memoryContent = sessionMemoryContent;
+
+    const profileMemoryOwnerId = this.resolveNonDefaultSessionProfileId(memoryOwnerAgentId);
+    if (profileMemoryOwnerId) {
+      const profileMemoryPath = this.getAgentMemoryPath(profileMemoryOwnerId);
+      await this.ensureAgentMemoryFile(profileMemoryOwnerId);
+      const profileMemoryContent = await readFile(profileMemoryPath, "utf8");
+      memoryContent = buildSessionMemoryRuntimeView(profileMemoryContent, sessionMemoryContent);
+    }
+
     await this.skillMetadataService.ensureSkillMetadataLoaded();
 
-    const memoryContextFile = {
-      path: memoryFilePath,
-      content: await readFile(memoryFilePath, "utf8")
-    };
-
     return {
-      memoryContextFile,
+      memoryContextFile: {
+        path: memoryFilePath,
+        content: memoryContent
+      },
       additionalSkillPaths: this.skillMetadataService.getAdditionalSkillPaths()
     };
   }
@@ -2485,6 +2551,52 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return this.resolvePreferredManagerId({ includeStoppedOnRestart: true }) ?? descriptor.agentId;
   }
 
+  private resolveNonDefaultSessionProfileId(memoryOwnerAgentId: string): string | undefined {
+    const memoryOwnerDescriptor = this.descriptors.get(memoryOwnerAgentId);
+    if (!memoryOwnerDescriptor || memoryOwnerDescriptor.role !== "manager") {
+      return undefined;
+    }
+
+    const profileId = normalizeOptionalAgentId(memoryOwnerDescriptor.profileId);
+    if (!profileId || profileId === memoryOwnerDescriptor.agentId) {
+      return undefined;
+    }
+
+    return profileId;
+  }
+
+  private async acquireProfileMergeLock(profileId: string): Promise<() => void> {
+    const previousLock = this.profileMergeMutexes.get(profileId) ?? Promise.resolve();
+    let released = false;
+    let releaseCurrentLock: (() => void) | undefined;
+    const currentLock = new Promise<void>((resolve) => {
+      releaseCurrentLock = resolve;
+    });
+
+    this.profileMergeMutexes.set(profileId, currentLock);
+    await previousLock;
+
+    return () => {
+      if (released) {
+        return;
+      }
+      released = true;
+      releaseCurrentLock?.();
+
+      if (this.profileMergeMutexes.get(profileId) === currentLock) {
+        this.profileMergeMutexes.delete(profileId);
+      }
+    };
+  }
+
+  private isSessionMemoryMergeNoOp(sessionMemoryContent: string): boolean {
+    if (sessionMemoryContent.trim().length === 0) {
+      return true;
+    }
+
+    return isDefaultMemoryTemplateContent(sessionMemoryContent);
+  }
+
   private async ensureMemoryFilesForBoot(): Promise<void> {
     await this.persistenceService.ensureMemoryFilesForBoot();
   }
@@ -2653,6 +2765,67 @@ function normalizeOptionalAgentId(input: string | undefined): string | undefined
 
   const trimmed = input.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function buildSessionMemoryRuntimeView(profileMemoryContent: string, sessionMemoryContent: string): string {
+  const normalizedProfileMemory = profileMemoryContent.trimEnd();
+  const normalizedSessionMemory = sessionMemoryContent.trimEnd();
+
+  return [
+    "# Manager Memory (shared across all sessions — read-only reference)",
+    "",
+    normalizedProfileMemory,
+    "",
+    "---",
+    "",
+    "# Session Memory (this session's working memory — your writes go here)",
+    "",
+    normalizedSessionMemory
+  ].join("\n");
+}
+
+function appendSessionMemoryToProfileMemory(
+  profileMemoryContent: string,
+  sessionMemoryContent: string,
+  options: { agentId: string; sessionLabel?: string; mergedAt: string }
+): string {
+  const normalizedProfileMemory = profileMemoryContent.trimEnd();
+  const normalizedSessionMemory = sessionMemoryContent.trimEnd();
+  const mergedHeader = [
+    "---",
+    "",
+    `## Session Memory Merge — ${options.sessionLabel ?? options.agentId}`,
+    `> Source session: ${options.agentId}`,
+    `> Merged at: ${options.mergedAt}`,
+    "",
+    normalizedSessionMemory
+  ].join("\n");
+
+  if (normalizedProfileMemory.length === 0) {
+    return `${mergedHeader}\n`;
+  }
+
+  return `${normalizedProfileMemory}\n\n${mergedHeader}\n`;
+}
+
+function isDefaultMemoryTemplateContent(content: string): boolean {
+  const normalizedLines = content
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+  if (normalizedLines.length !== DEFAULT_MEMORY_TEMPLATE_NORMALIZED_LINES.length) {
+    return false;
+  }
+
+  for (let index = 0; index < normalizedLines.length; index += 1) {
+    if (normalizedLines[index] !== DEFAULT_MEMORY_TEMPLATE_NORMALIZED_LINES[index]) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 function previewForLog(text: string, maxLength = 160): string {
