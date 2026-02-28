@@ -7,7 +7,7 @@ import type { SwarmConfig } from "./swarm/types.js";
 
 export function createConfig(): SwarmConfig {
   const rootDir = detectRootDir();
-  const dataDir = resolve(homedir(), ".middleman");
+  const dataDir = process.env.MIDDLEMAN_DATA_DIR ?? resolve(homedir(), ".middleman");
   const managerId = undefined;
   const swarmDir = resolve(dataDir, "swarm");
   const sessionsDir = resolve(dataDir, "sessions");

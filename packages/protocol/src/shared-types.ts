@@ -15,6 +15,14 @@ export interface AgentModelDescriptor {
   thinkingLevel: string
 }
 
+export interface ManagerProfile {
+  profileId: string
+  displayName: string
+  defaultSessionAgentId: string
+  createdAt: string
+  updatedAt: string
+}
+
 export interface AgentDescriptor {
   agentId: string
   managerId: string
@@ -28,6 +36,9 @@ export interface AgentDescriptor {
   model: AgentModelDescriptor
   sessionFile: string
   contextUsage?: AgentContextUsage
+  profileId?: string
+  sessionLabel?: string
+  mergedAt?: string
 }
 
 export type DeliveryMode = 'auto' | 'followUp' | 'steer'

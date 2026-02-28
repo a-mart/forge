@@ -67,6 +67,7 @@ import type {
   ConversationEntryEvent,
   ConversationMessageEvent,
   ConversationTextAttachment,
+  ManagerProfile,
   MessageSourceContext,
   MessageTargetContext,
   RequestedDeliveryMode,
@@ -212,6 +213,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly defaultModelPreset: SwarmModelPreset;
 
   private readonly descriptors = new Map<string, AgentDescriptor>();
+  private readonly profiles = new Map<string, ManagerProfile>();
   private readonly runtimes = new Map<string, SwarmAgentRuntime>();
   private readonly conversationEntriesByAgentId = new Map<string, ConversationEntryEvent[]>();
   private readonly conversationProjector: ConversationProjector;
@@ -236,6 +238,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       config: this.config,
       descriptors: this.descriptors,
       sortedDescriptors: () => this.sortedDescriptors(),
+      sortedProfiles: () => this.sortedProfiles(),
       getConfiguredManagerId: () => this.getConfiguredManagerId(),
       resolveMemoryOwnerAgentId: (descriptor) => this.resolveMemoryOwnerAgentId(descriptor),
       validateAgentDescriptor,
@@ -316,6 +319,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     for (const descriptor of loaded.agents) {
       this.descriptors.set(descriptor.agentId, descriptor);
     }
+    for (const profile of loaded.profiles ?? []) {
+      this.profiles.set(profile.profileId, profile);
+    }
+
+    this.reconcileProfilesOnBoot();
     this.normalizeStreamingStatusesForBoot();
 
     await this.ensureMemoryFilesForBoot();
@@ -341,6 +349,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   listAgents(): AgentDescriptor[] {
     return this.sortedDescriptors().map((descriptor) => cloneDescriptor(descriptor));
+  }
+
+  listProfiles(): ManagerProfile[] {
+    return this.sortedProfiles().map((profile) => ({ ...profile }));
   }
 
   getConversationHistory(agentId?: string): ConversationEntryEvent[] {
@@ -556,6 +568,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       displayName: managerId,
       role: "manager",
       managerId,
+      profileId: managerId,
       archetypeId: MANAGER_ARCHETYPE_ID,
       status: "idle",
       createdAt,
@@ -567,7 +580,16 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       sessionFile: join(this.config.paths.sessionsDir, `${managerId}.jsonl`)
     };
 
+    const profile: ManagerProfile = {
+      profileId: descriptor.agentId,
+      displayName: descriptor.displayName,
+      defaultSessionAgentId: descriptor.agentId,
+      createdAt: descriptor.createdAt,
+      updatedAt: descriptor.createdAt
+    };
+
     this.descriptors.set(descriptor.agentId, descriptor);
+    this.profiles.set(profile.profileId, profile);
 
     let runtime: SwarmAgentRuntime;
     try {
@@ -577,6 +599,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       );
     } catch (error) {
       this.descriptors.delete(descriptor.agentId);
+      this.profiles.delete(profile.profileId);
       throw error;
     }
 
@@ -629,6 +652,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     await this.terminateDescriptor(target, { abort: true, emitStatus: true });
     this.descriptors.delete(targetManagerId);
+    this.profiles.delete(targetManagerId);
     this.conversationProjector.deleteConversationHistory(targetManagerId);
 
     await this.saveStore();
@@ -1351,6 +1375,22 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     });
   }
 
+  private sortedProfiles(): ManagerProfile[] {
+    const configuredManagerId = this.getConfiguredManagerId();
+    return Array.from(this.profiles.values()).sort((a, b) => {
+      if (configuredManagerId) {
+        if (a.profileId === configuredManagerId) return -1;
+        if (b.profileId === configuredManagerId) return 1;
+      }
+
+      if (a.createdAt !== b.createdAt) {
+        return a.createdAt.localeCompare(b.createdAt);
+      }
+
+      return a.profileId.localeCompare(b.profileId);
+    });
+  }
+
   private async sendManagerBootstrapMessage(managerId: string): Promise<void> {
     const manager = this.descriptors.get(managerId);
     if (!manager || manager.role !== "manager") {
@@ -1374,6 +1414,33 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       this.logDebug("manager:bootstrap_message:error", {
         managerId,
         message: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  private reconcileProfilesOnBoot(): void {
+    for (const descriptor of this.descriptors.values()) {
+      if (descriptor.role !== "manager") {
+        continue;
+      }
+
+      if (typeof descriptor.profileId === "string" && descriptor.profileId.trim().length > 0) {
+        continue;
+      }
+
+      descriptor.profileId = descriptor.agentId;
+      this.descriptors.set(descriptor.agentId, descriptor);
+
+      if (this.profiles.has(descriptor.agentId)) {
+        continue;
+      }
+
+      this.profiles.set(descriptor.agentId, {
+        profileId: descriptor.agentId,
+        displayName: descriptor.displayName,
+        defaultSessionAgentId: descriptor.agentId,
+        createdAt: descriptor.createdAt,
+        updatedAt: descriptor.createdAt
       });
     }
   }

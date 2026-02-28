@@ -1,3 +1,4 @@
+import type { ManagerProfile } from "@middleman/protocol";
 import type { AgentStatus } from "./agent-state-machine.js";
 
 export type AgentRole = "manager" | "worker";
@@ -5,6 +6,7 @@ export type AgentRole = "manager" | "worker";
 export type AgentArchetypeId = string;
 
 export type { AgentStatus };
+export type { ManagerProfile };
 
 export const SWARM_MODEL_PRESETS = ["pi-codex", "pi-opus", "codex-app"] as const;
 
@@ -35,10 +37,14 @@ export interface AgentDescriptor {
   model: AgentModelDescriptor;
   sessionFile: string;
   contextUsage?: AgentContextUsage;
+  profileId?: string;
+  sessionLabel?: string;
+  mergedAt?: string;
 }
 
 export interface AgentsStoreFile {
   agents: AgentDescriptor[];
+  profiles?: ManagerProfile[];
 }
 
 export type RequestedDeliveryMode = "auto" | "followUp" | "steer";
