@@ -554,8 +554,8 @@ backup_live_data() {
     fail "Backup directory was not created: ${BACKUP_DIR}"
   fi
 
-  if [ ! -f "${BACKUP_DIR}/agents.json" ]; then
-    fail "Backup verification failed: missing agents.json in ${BACKUP_DIR}"
+  if [ ! -f "${BACKUP_DIR}/swarm/agents.json" ]; then
+    fail "Backup verification failed: missing swarm/agents.json in ${BACKUP_DIR}"
   fi
 
   if [ ! -d "${BACKUP_DIR}/sessions" ]; then
