@@ -641,7 +641,8 @@ function ProfileGroup({
           <div className="absolute bottom-1 left-3.5 top-0 w-px bg-sidebar-border/40" />
           <ul className="space-y-0.5">
             {sessions.map((session) => {
-              const sessionCollapsed = collapsedSessionIds.has(session.sessionAgent.agentId)
+              // Default is collapsed; only expanded if user explicitly opened it
+              const sessionCollapsed = !collapsedSessionIds.has(session.sessionAgent.agentId)
 
               return (
                 <SessionRowItem
@@ -787,18 +788,8 @@ export function AgentSidebar({
   const treeRows = buildProfileTreeRows(agents, profiles)
 
   const [collapsedProfileIds, setCollapsedProfileIds] = useState<Set<string>>(() => new Set())
-  // All sessions start collapsed — user expands manually
-  const [collapsedSessionIds, setCollapsedSessionIds] = useState<Set<string>>(() => {
-    const allCollapsed = new Set<string>()
-    for (const row of treeRows) {
-      for (const session of row.sessions) {
-        if (session.workers.length > 0) {
-          allCollapsed.add(session.sessionAgent.agentId)
-        }
-      }
-    }
-    return allCollapsed
-  })
+  // Track explicitly expanded sessions — everything defaults to collapsed
+  const [expandedSessionIds, setExpandedSessionIds] = useState<Set<string>>(() => new Set())
   const [renameTarget, setRenameTarget] = useState<{ agentId: string; label: string } | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<{ agentId: string; label: string } | null>(null)
 
@@ -815,7 +806,7 @@ export function AgentSidebar({
   }, [])
 
   const toggleSessionCollapsed = useCallback((sessionId: string) => {
-    setCollapsedSessionIds((prev) => {
+    setExpandedSessionIds((prev) => {
       const next = new Set(prev)
       if (next.has(sessionId)) {
         next.delete(sessionId)
@@ -929,7 +920,7 @@ export function AgentSidebar({
                 selectedAgentId={selectedAgentId}
                 isSettingsActive={isSettingsActive}
                 isCollapsed={collapsedProfileIds.has(treeRow.profile.profileId)}
-                collapsedSessionIds={collapsedSessionIds}
+                collapsedSessionIds={expandedSessionIds}
                 onToggleProfileCollapsed={() => toggleProfileCollapsed(treeRow.profile.profileId)}
                 onToggleSessionCollapsed={toggleSessionCollapsed}
                 onSelect={handleSelectAgent}
