@@ -1,7 +1,10 @@
 import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
-import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import type { Api, Model } from "@mariozechner/pi-ai";
+import { getModel } from "@mariozechner/pi-ai";
+import { AuthStorage, ModelRegistry } from "@mariozechner/pi-coding-agent";
 import type { ServerEvent } from "@middleman/protocol";
 import {
   loadArchetypePromptRegistry,
@@ -9,6 +12,7 @@ import {
   type ArchetypePromptRegistry
 } from "./archetypes/archetype-prompt-registry.js";
 import { ConversationProjector } from "./conversation-projector.js";
+import { executeLLMMerge } from "./memory-merge.js";
 import { getAgentMemoryPath as getAgentMemoryPathForDataDir } from "./memory-paths.js";
 import { PersistenceService } from "./persistence-service.js";
 import { RuntimeFactory } from "./runtime-factory.js";
@@ -137,6 +141,16 @@ const DEFAULT_MEMORY_TEMPLATE_NORMALIZED_LINES = [
   "## Open Follow-ups",
   "- (none yet)"
 ];
+
+interface SessionMemoryMergeAuditEntry {
+  timestamp: string;
+  sessionAgentId: string;
+  profileId: string;
+  llmMergeSucceeded: boolean;
+  usedFallbackAppend: boolean;
+  model: string;
+  error?: string;
+}
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -518,17 +532,57 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
       const profileMemoryContent = await readFile(profileMemoryPath, "utf8");
       const mergedAt = this.now();
-      const mergedProfileMemory = appendSessionMemoryToProfileMemory(
-        profileMemoryContent,
-        sessionMemoryContent,
-        {
-          agentId: descriptor.agentId,
-          sessionLabel: descriptor.sessionLabel,
-          mergedAt
+
+      let mergedProfileMemory: string;
+      let llmMergeSucceeded = false;
+      let usedFallbackAppend = false;
+      let mergeModel = "fallback";
+      let mergeError: string | undefined;
+
+      if (profileMemoryContent.trim().length === 0) {
+        mergedProfileMemory = sessionMemoryContent;
+      } else {
+        try {
+          const llmMerge = await this.executeSessionMemoryLLMMerge(
+            descriptor,
+            profileMemoryContent,
+            sessionMemoryContent
+          );
+          mergedProfileMemory = llmMerge.mergedContent;
+          llmMergeSucceeded = true;
+          mergeModel = llmMerge.model;
+        } catch (error) {
+          usedFallbackAppend = true;
+          mergeError = error instanceof Error ? error.message : String(error);
+          this.logDebug("session:memory_merge:llm_fallback", {
+            sessionAgentId: descriptor.agentId,
+            profileId: descriptor.profileId,
+            model: descriptor.model,
+            message: mergeError
+          });
+
+          mergedProfileMemory = appendSessionMemoryToProfileMemory(
+            profileMemoryContent,
+            sessionMemoryContent,
+            {
+              agentId: descriptor.agentId,
+              sessionLabel: descriptor.sessionLabel,
+              mergedAt
+            }
+          );
         }
-      );
+      }
 
       await writeFile(profileMemoryPath, mergedProfileMemory, "utf8");
+      await this.appendSessionMemoryMergeAuditEntry({
+        timestamp: mergedAt,
+        sessionAgentId: descriptor.agentId,
+        profileId: descriptor.profileId,
+        llmMergeSucceeded,
+        usedFallbackAppend,
+        model: llmMergeSucceeded ? mergeModel : "fallback",
+        ...(mergeError ? { error: mergeError } : {})
+      });
 
       descriptor.mergedAt = mergedAt;
       descriptor.updatedAt = mergedAt;
@@ -2589,6 +2643,46 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     };
   }
 
+  protected async executeSessionMemoryLLMMerge(
+    descriptor: AgentDescriptor,
+    profileMemoryContent: string,
+    sessionMemoryContent: string
+  ): Promise<{ mergedContent: string; model: string }> {
+    const authStorage = AuthStorage.create(this.config.paths.authFile);
+    const modelRegistry = new ModelRegistry(authStorage);
+    const model = resolveModel(modelRegistry, descriptor.model);
+
+    if (!model) {
+      throw new Error(
+        `Unable to resolve model ${descriptor.model.provider}/${descriptor.model.modelId} for memory merge.`
+      );
+    }
+
+    const apiKey = await modelRegistry.getApiKey(model);
+    const mergedContent = await executeLLMMerge(model, profileMemoryContent, sessionMemoryContent, {
+      apiKey
+    });
+
+    return {
+      mergedContent,
+      model: `${model.provider}/${model.id}`
+    };
+  }
+
+  private async appendSessionMemoryMergeAuditEntry(entry: SessionMemoryMergeAuditEntry): Promise<void> {
+    const auditLogPath = join(this.config.paths.memoryDir, "merge-audit.log");
+
+    try {
+      await appendFile(auditLogPath, `${JSON.stringify(entry)}\n`, "utf8");
+    } catch (error) {
+      this.logDebug("session:memory_merge:audit_log_error", {
+        path: auditLogPath,
+        entry,
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
   private isSessionMemoryMergeNoOp(sessionMemoryContent: string): boolean {
     if (sessionMemoryContent.trim().length === 0) {
       return true;
@@ -2806,6 +2900,23 @@ function appendSessionMemoryToProfileMemory(
   }
 
   return `${normalizedProfileMemory}\n\n${mergedHeader}\n`;
+}
+
+function resolveModel(
+  modelRegistry: ModelRegistry,
+  descriptor: AgentModelDescriptor
+): Model<Api> | undefined {
+  const direct = modelRegistry.find(descriptor.provider, descriptor.modelId);
+  if (direct) {
+    return direct;
+  }
+
+  const fromCatalog = getModel(descriptor.provider as any, descriptor.modelId as any);
+  if (fromCatalog) {
+    return fromCatalog as Model<Api>;
+  }
+
+  return modelRegistry.getAll()[0];
 }
 
 function isDefaultMemoryTemplateContent(content: string): boolean {

@@ -126,6 +126,14 @@ class TestSwarmManager extends SwarmManager {
     this.systemPromptByAgentId.set(descriptor.agentId, systemPrompt)
     return runtime as unknown as SwarmAgentRuntime
   }
+
+  protected override async executeSessionMemoryLLMMerge(
+    _descriptor: AgentDescriptor,
+    _profileMemoryContent: string,
+    _sessionMemoryContent: string,
+  ): Promise<{ mergedContent: string; model: string }> {
+    throw new Error('LLM merge disabled in tests')
+  }
 }
 
 function appendSessionConversationMessage(sessionFile: string, agentId: string, text: string): void {
