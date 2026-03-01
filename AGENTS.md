@@ -7,6 +7,12 @@
 2. A TanStack Start + Vite SPA for dashboard, chat, settings, and artifacts.
 3. Realtime updates over WebSocket.
 
+**Stack:** TypeScript, React 19, TanStack Router, Radix UI/shadcn, Tailwind v4, Vitest, pnpm monorepo
+**Structure:** `apps/backend` (Node.js daemon), `apps/ui` (React SPA), `apps/site` (landing page), `packages/protocol` (shared types)
+**Data:** All state in `~/.middleman` — agents, sessions, memory, schedules, integrations, auth
+
+
+
 ## Scope Expectations
 For dashboard/chat/settings work, preserve existing behavior and interaction patterns unless the task explicitly requests a redesign.
 
