@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { SessionManager, type ToolDefinition } from "@mariozechner/pi-coding-agent";
+import { type SessionManager, type ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { CodexJsonRpcClient, type JsonRpcNotificationMessage, type JsonRpcRequestMessage } from "./codex-jsonrpc-client.js";
+import { openSessionManagerWithSizeGuard } from "./session-file-guard.js";
 import {
   createCodexToolBridge,
   type CodexDynamicToolCallResponse,
@@ -95,7 +96,17 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
     this.systemPrompt = options.systemPrompt;
     this.status = options.descriptor.status;
 
-    this.sessionManager = SessionManager.open(options.descriptor.sessionFile);
+    const sessionManager = openSessionManagerWithSizeGuard(options.descriptor.sessionFile, {
+      context: `runtime:create:codex:${options.descriptor.agentId}`,
+      rotateOversizedFile: true
+    });
+    if (!sessionManager) {
+      throw new Error(
+        `Unable to open session file for agent ${options.descriptor.agentId}: ${options.descriptor.sessionFile}`
+      );
+    }
+
+    this.sessionManager = sessionManager;
     this.toolBridge = createCodexToolBridge(options.tools);
     this.sandboxSettings = buildCodexSandboxSettings();
 

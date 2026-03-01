@@ -1,6 +1,8 @@
-import { SessionManager } from "@mariozechner/pi-coding-agent";
+import { randomUUID } from "node:crypto";
+import { appendFileSync, closeSync, existsSync, openSync, readSync, statSync, writeFileSync } from "node:fs";
 import type { ServerEvent } from "@middleman/protocol";
 import { isConversationEntryEvent } from "./conversation-validators.js";
+import { openSessionManagerWithSizeGuard } from "./session-file-guard.js";
 import {
   extractMessageErrorMessage,
   extractMessageImageAttachments,
@@ -23,6 +25,7 @@ import type {
 
 const MAX_CONVERSATION_HISTORY = 2000;
 const CONVERSATION_ENTRY_TYPE = "swarm_conversation_entry";
+const SESSION_HEADER_VERSION = 3;
 const MANAGER_ERROR_CONTEXT_HINT = "Try compacting the conversation to free up context space.";
 const MANAGER_ERROR_GENERIC_HINT = "Please retry. If this persists, check provider auth and rate limits.";
 
@@ -237,6 +240,13 @@ export class ConversationProjector {
     trimConversationHistory(history);
     this.deps.conversationEntriesByAgentId.set(event.agentId, history);
 
+    // tool_execution_update payloads are high-volume streaming snapshots.
+    // Persisting each snapshot causes runaway JSONL growth and can crash reopening.
+    // Keep updates in-memory/live WS only; terminal *_end events are still persisted.
+    if (!shouldPersistConversationEntry(event)) {
+      return;
+    }
+
     const runtime = this.deps.runtimes.get(event.agentId);
     try {
       if (runtime) {
@@ -249,12 +259,58 @@ export class ConversationProjector {
         return;
       }
 
-      SessionManager.open(descriptor.sessionFile).appendCustomEntry(CONVERSATION_ENTRY_TYPE, event);
+      this.appendConversationEntryToSessionFile(descriptor, event);
     } catch (error) {
       this.deps.logDebug("history:save:error", {
         message: error instanceof Error ? error.message : String(error)
       });
     }
+  }
+
+  private appendConversationEntryToSessionFile(
+    descriptor: AgentDescriptor,
+    event: ConversationEntryEvent
+  ): void {
+    // Avoid SessionManager.open() here: opening re-reads the whole JSONL file,
+    // which is unsafe for very large transcripts. Appending a well-formed JSONL
+    // entry keeps this path O(1) with no full-file reads.
+    this.ensureSessionFileHeader(descriptor);
+
+    appendFileSync(
+      descriptor.sessionFile,
+      `${JSON.stringify({
+        type: "custom",
+        customType: CONVERSATION_ENTRY_TYPE,
+        data: event,
+        id: randomUUID().slice(0, 8),
+        parentId: null,
+        timestamp: this.deps.now()
+      })}\n`,
+      "utf8"
+    );
+  }
+
+  private ensureSessionFileHeader(descriptor: AgentDescriptor): void {
+    if (hasValidSessionHeader(descriptor.sessionFile)) {
+      return;
+    }
+
+    const headerLine = `${JSON.stringify({
+      type: "session",
+      version: SESSION_HEADER_VERSION,
+      id: randomUUID(),
+      timestamp: this.deps.now(),
+      cwd: descriptor.cwd
+    })}\n`;
+
+    if (isMissingOrEmptySessionFile(descriptor.sessionFile)) {
+      appendFileSync(descriptor.sessionFile, headerLine, "utf8");
+      return;
+    }
+
+    // Existing files with invalid headers cannot be reopened by SessionManager.
+    // Replace with a fresh header so subsequent appends stay recoverable.
+    writeFileSync(descriptor.sessionFile, headerLine, "utf8");
   }
 
   private shouldPreloadHistoryForDescriptor(descriptor: AgentDescriptor): boolean {
@@ -265,29 +321,39 @@ export class ConversationProjector {
     const entriesForAgent: ConversationEntryEvent[] = [];
 
     try {
-      const sessionManager = SessionManager.open(descriptor.sessionFile);
-      const entries = sessionManager.getEntries();
-
-      for (const entry of entries) {
-        if (entry.type !== "custom") {
-          continue;
-        }
-
-        if (entry.customType !== CONVERSATION_ENTRY_TYPE) {
-          continue;
-        }
-        if (!isConversationEntryEvent(entry.data)) {
-          continue;
-        }
-        entriesForAgent.push(entry.data);
-      }
-
-      trimConversationHistory(entriesForAgent);
-
-      this.deps.logDebug("history:load:ready", {
-        agentId: descriptor.agentId,
-        messageCount: entriesForAgent.length
+      const sessionManager = openSessionManagerWithSizeGuard(descriptor.sessionFile, {
+        context: `history:load:${descriptor.agentId}`
       });
+
+      if (!sessionManager) {
+        this.deps.logDebug("history:load:skipped", {
+          agentId: descriptor.agentId,
+          sessionFile: descriptor.sessionFile
+        });
+      } else {
+        const entries = sessionManager.getEntries();
+
+        for (const entry of entries) {
+          if (entry.type !== "custom") {
+            continue;
+          }
+
+          if (entry.customType !== CONVERSATION_ENTRY_TYPE) {
+            continue;
+          }
+          if (!isConversationEntryEvent(entry.data)) {
+            continue;
+          }
+          entriesForAgent.push(entry.data);
+        }
+
+        trimConversationHistory(entriesForAgent);
+
+        this.deps.logDebug("history:load:ready", {
+          agentId: descriptor.agentId,
+          messageCount: entriesForAgent.length
+        });
+      }
     } catch (error) {
       this.deps.logDebug("history:load:error", {
         agentId: descriptor.agentId,
@@ -420,6 +486,70 @@ function buildManagerErrorConversationText(options: {
   }
 
   return `⚠️ Manager reply failed. ${MANAGER_ERROR_GENERIC_HINT}`;
+}
+
+function shouldPersistConversationEntry(entry: ConversationEntryEvent): boolean {
+  if (entry.type === "agent_tool_call") {
+    return entry.kind !== "tool_execution_update";
+  }
+
+  if (entry.type === "conversation_log") {
+    return entry.kind !== "tool_execution_update";
+  }
+
+  return true;
+}
+
+function hasValidSessionHeader(sessionFile: string): boolean {
+  if (!existsSync(sessionFile)) {
+    return false;
+  }
+
+  let fileDescriptor: number | undefined;
+
+  try {
+    fileDescriptor = openSync(sessionFile, "r");
+    const buffer = Buffer.alloc(512);
+    const bytesRead = readSync(fileDescriptor, buffer, 0, buffer.length, 0);
+    if (bytesRead <= 0) {
+      return false;
+    }
+
+    const firstLine = buffer.toString("utf8", 0, bytesRead).split("\n")[0]?.trim();
+    if (!firstLine) {
+      return false;
+    }
+
+    const header = JSON.parse(firstLine) as { type?: string; id?: unknown };
+    return header.type === "session" && typeof header.id === "string" && header.id.trim().length > 0;
+  } catch {
+    return false;
+  } finally {
+    if (fileDescriptor !== undefined) {
+      closeSync(fileDescriptor);
+    }
+  }
+}
+
+function isMissingOrEmptySessionFile(sessionFile: string): boolean {
+  try {
+    return statSync(sessionFile).size === 0;
+  } catch (error) {
+    if (isEnoentError(error)) {
+      return true;
+    }
+
+    throw error;
+  }
+}
+
+function isEnoentError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: string }).code === "ENOENT"
+  );
 }
 
 function isPreservedWebTranscriptEntry(entry: ConversationEntryEvent): boolean {
