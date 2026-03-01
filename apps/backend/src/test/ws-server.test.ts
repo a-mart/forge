@@ -1074,9 +1074,9 @@ describe('SwarmWebSocketServer', () => {
     await server.stop()
   })
 
-  it('handles /new via websocket by resetting manager session and clearing history', async () => {
+  it('handles /new via websocket by creating a new session while preserving existing history', async () => {
     const port = await getAvailablePort()
-    const config = await makeTempConfig(port)
+    const config = await makeTempConfig(port, true)
 
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -1110,12 +1110,23 @@ describe('SwarmWebSocketServer', () => {
     )
 
     clientA.send(JSON.stringify({ type: 'user_message', text: '/new' }))
-    const resetEvent = await waitForEvent(eventsA, (event) => event.type === 'conversation_reset')
+    const resetEvent = await waitForEvent(
+      eventsA,
+      (event) => event.type === 'conversation_reset' && event.agentId === 'manager',
+    )
     expect(resetEvent.type).toBe('conversation_reset')
     if (resetEvent.type === 'conversation_reset') {
       expect(resetEvent.reason).toBe('user_new_command')
       expect(resetEvent.agentId).toBe('manager')
     }
+
+    const sessionSnapshot = await waitForEvent(
+      eventsA,
+      (event) =>
+        event.type === 'agents_snapshot' &&
+        event.agents.some((agent) => agent.role === 'manager' && agent.agentId === 'manager--s2'),
+    )
+    expect(sessionSnapshot.type).toBe('agents_snapshot')
 
     expect(
       eventsA.some(
@@ -1138,7 +1149,17 @@ describe('SwarmWebSocketServer', () => {
 
     expect(historyEvent.type).toBe('conversation_history')
     if (historyEvent.type === 'conversation_history') {
-      expect(historyEvent.messages).toHaveLength(0)
+      expect(historyEvent.messages.some((message) => message.text === 'keep this')).toBe(true)
+    }
+
+    clientB.send(JSON.stringify({ type: 'subscribe', agentId: 'manager--s2' }))
+    const forkedHistoryEvent = await waitForEvent(
+      eventsB,
+      (event) => event.type === 'conversation_history' && event.agentId === 'manager--s2',
+    )
+    expect(forkedHistoryEvent.type).toBe('conversation_history')
+    if (forkedHistoryEvent.type === 'conversation_history') {
+      expect(forkedHistoryEvent.messages).toHaveLength(0)
     }
 
     clientB.close()
@@ -1841,6 +1862,283 @@ describe('SwarmWebSocketServer', () => {
       expect(picked.path).toBe(outsideDir)
     }
     expect(manager.lastPickedDirectoryDefaultPath).toBe(expectedRoot)
+
+    client.close()
+    await once(client, 'close')
+    await server.stop()
+  })
+
+  it('includes profiles_snapshot in websocket subscription bootstrap', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    const client = new WebSocket(`ws://${config.host}:${config.port}`)
+    const events: ServerEvent[] = []
+
+    client.on('message', (raw) => {
+      events.push(JSON.parse(raw.toString()) as ServerEvent)
+    })
+
+    await once(client, 'open')
+    client.send(JSON.stringify({ type: 'subscribe' }))
+
+    const profilesEvent = await waitForEvent(events, (event) => event.type === 'profiles_snapshot')
+    expect(profilesEvent.type).toBe('profiles_snapshot')
+    if (profilesEvent.type === 'profiles_snapshot') {
+      expect(profilesEvent.profiles.some((profile) => profile.profileId === 'manager')).toBe(true)
+    }
+
+    client.close()
+    await once(client, 'close')
+    await server.stop()
+  })
+
+  it('handles session lifecycle websocket commands', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const mergeCalls: string[] = []
+    ;(manager as unknown as { mergeSessionMemory: (agentId: string) => Promise<void> }).mergeSessionMemory = async (
+      agentId,
+    ) => {
+      mergeCalls.push(agentId)
+    }
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    const client = new WebSocket(`ws://${config.host}:${config.port}`)
+    const events: ServerEvent[] = []
+
+    client.on('message', (raw) => {
+      events.push(JSON.parse(raw.toString()) as ServerEvent)
+    })
+
+    await once(client, 'open')
+    client.send(JSON.stringify({ type: 'subscribe', agentId: 'manager' }))
+    await waitForEvent(events, (event) => event.type === 'ready' && event.subscribedAgentId === 'manager')
+
+    client.send(
+      JSON.stringify({
+        type: 'create_session',
+        profileId: 'manager',
+        label: 'Refactor track',
+        requestId: 'create-1',
+      }),
+    )
+
+    const created = await waitForEvent(
+      events,
+      (event) => event.type === 'session_created' && event.requestId === 'create-1',
+    )
+    expect(created.type).toBe('session_created')
+
+    let sessionAgentId = 'manager--s2'
+    if (created.type === 'session_created') {
+      sessionAgentId = created.sessionAgent.agentId
+      expect(created.profile.profileId).toBe('manager')
+      expect(created.sessionAgent.sessionLabel).toBe('Refactor track')
+    }
+
+    await waitForEvent(
+      events,
+      (event) =>
+        event.type === 'agents_snapshot' &&
+        event.agents.some((agent) => agent.agentId === sessionAgentId && agent.role === 'manager'),
+    )
+
+    const sessionWorker = await manager.spawnAgent(sessionAgentId, { agentId: 'Session Worker' })
+
+    client.send(
+      JSON.stringify({
+        type: 'stop_session',
+        agentId: sessionAgentId,
+        requestId: 'stop-1',
+      }),
+    )
+
+    const stopped = await waitForEvent(
+      events,
+      (event) => event.type === 'session_stopped' && event.agentId === sessionAgentId && event.requestId === 'stop-1',
+    )
+    expect(stopped.type).toBe('session_stopped')
+    if (stopped.type === 'session_stopped') {
+      expect(stopped.terminatedWorkerIds).toContain(sessionWorker.agentId)
+      expect(stopped.profileId).toBe('manager')
+    }
+
+    client.send(
+      JSON.stringify({
+        type: 'resume_session',
+        agentId: sessionAgentId,
+        requestId: 'resume-1',
+      }),
+    )
+
+    const resumed = await waitForEvent(
+      events,
+      (event) => event.type === 'session_resumed' && event.agentId === sessionAgentId && event.requestId === 'resume-1',
+    )
+    expect(resumed.type).toBe('session_resumed')
+
+    client.send(
+      JSON.stringify({
+        type: 'rename_session',
+        agentId: sessionAgentId,
+        label: 'Renamed session',
+        requestId: 'rename-1',
+      }),
+    )
+
+    const renamed = await waitForEvent(
+      events,
+      (event) => event.type === 'session_renamed' && event.agentId === sessionAgentId && event.requestId === 'rename-1',
+    )
+    expect(renamed.type).toBe('session_renamed')
+    if (renamed.type === 'session_renamed') {
+      expect(renamed.label).toBe('Renamed session')
+    }
+
+    client.send(
+      JSON.stringify({
+        type: 'fork_session',
+        sourceAgentId: sessionAgentId,
+        label: 'Forked session',
+        requestId: 'fork-1',
+      }),
+    )
+
+    const forked = await waitForEvent(events, (event) => event.type === 'session_forked' && event.requestId === 'fork-1')
+    expect(forked.type).toBe('session_forked')
+
+    let forkedAgentId = ''
+    if (forked.type === 'session_forked') {
+      forkedAgentId = forked.newSessionAgent.agentId
+      expect(forked.sourceAgentId).toBe(sessionAgentId)
+      expect(forked.profile.profileId).toBe('manager')
+    }
+    expect(forkedAgentId).not.toBe('')
+
+    client.send(
+      JSON.stringify({
+        type: 'merge_session_memory',
+        agentId: sessionAgentId,
+        requestId: 'merge-1',
+      }),
+    )
+
+    const mergeStarted = await waitForEvent(
+      events,
+      (event) =>
+        event.type === 'session_memory_merge_started' && event.agentId === sessionAgentId && event.requestId === 'merge-1',
+    )
+    expect(mergeStarted.type).toBe('session_memory_merge_started')
+
+    const merged = await waitForEvent(
+      events,
+      (event) => event.type === 'session_memory_merged' && event.agentId === sessionAgentId && event.requestId === 'merge-1',
+    )
+    expect(merged.type).toBe('session_memory_merged')
+    expect(mergeCalls).toEqual([sessionAgentId])
+
+    client.send(
+      JSON.stringify({
+        type: 'delete_session',
+        agentId: forkedAgentId,
+        requestId: 'delete-1',
+      }),
+    )
+
+    const deleted = await waitForEvent(
+      events,
+      (event) => event.type === 'session_deleted' && event.agentId === forkedAgentId && event.requestId === 'delete-1',
+    )
+    expect(deleted.type).toBe('session_deleted')
+
+    await waitForEvent(
+      events,
+      (event) => event.type === 'agents_snapshot' && !event.agents.some((agent) => agent.agentId === forkedAgentId),
+    )
+
+    client.close()
+    await once(client, 'close')
+    await server.stop()
+  })
+
+  it('emits session_memory_merge_failed when merge fails', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    ;(manager as unknown as { mergeSessionMemory: (agentId: string) => Promise<void> }).mergeSessionMemory =
+      async () => {
+        throw new Error('merge exploded')
+      }
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    const client = new WebSocket(`ws://${config.host}:${config.port}`)
+    const events: ServerEvent[] = []
+
+    client.on('message', (raw) => {
+      events.push(JSON.parse(raw.toString()) as ServerEvent)
+    })
+
+    await once(client, 'open')
+    client.send(JSON.stringify({ type: 'subscribe' }))
+    await waitForEvent(events, (event) => event.type === 'ready')
+
+    client.send(
+      JSON.stringify({
+        type: 'merge_session_memory',
+        agentId: 'manager',
+        requestId: 'merge-fail-1',
+      }),
+    )
+
+    await waitForEvent(
+      events,
+      (event) => event.type === 'session_memory_merge_started' && event.requestId === 'merge-fail-1',
+    )
+
+    const mergeFailed = await waitForEvent(
+      events,
+      (event) => event.type === 'session_memory_merge_failed' && event.requestId === 'merge-fail-1',
+    )
+    expect(mergeFailed.type).toBe('session_memory_merge_failed')
+    if (mergeFailed.type === 'session_memory_merge_failed') {
+      expect(mergeFailed.message).toContain('merge exploded')
+    }
 
     client.close()
     await once(client, 'close')

@@ -1,6 +1,8 @@
 import { useCallback, useMemo } from 'react'
 
-export const DEFAULT_MANAGER_AGENT_ID = 'opus-manager'
+// Placeholder used when no agent is specified in the URL.
+// The WS client will resolve this to the actual primary manager on connect.
+export const DEFAULT_MANAGER_AGENT_ID = '__default__'
 
 export type ActiveView = 'chat' | 'settings'
 export type AppRouteState =

@@ -1,5 +1,5 @@
 import { Button } from '@/components/ui/button'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 
 interface ContextWindowIndicatorProps {
   usedTokens: number
@@ -37,6 +37,7 @@ export function ContextWindowIndicator({
         : 'stroke-emerald-500'
 
   return (
+    <TooltipProvider delayDuration={200}>
     <Tooltip>
       <TooltipTrigger asChild>
         <Button
@@ -80,5 +81,6 @@ export function ContextWindowIndicator({
         </p>
       </TooltipContent>
     </Tooltip>
+    </TooltipProvider>
   )
 }

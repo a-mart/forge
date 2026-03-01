@@ -12,6 +12,7 @@ const MANAGED_ENV_KEYS = [
   'SWARM_PORT',
   'MIDDLEMAN_HOST',
   'MIDDLEMAN_PORT',
+  'MIDDLEMAN_DATA_DIR',
   'SWARM_DEBUG',
   'SWARM_ALLOW_NON_MANAGER_SUBSCRIPTIONS',
   'SWARM_MANAGER_ID',
@@ -93,6 +94,16 @@ describe('createConfig', () => {
       const config = createConfig()
       expect(config.host).toBe('0.0.0.0')
       expect(config.port).toBe(9999)
+    })
+  })
+
+  it('respects MIDDLEMAN_DATA_DIR', async () => {
+    await withEnv({ MIDDLEMAN_DATA_DIR: '/tmp/middleman-data' }, () => {
+      const config = createConfig()
+      expect(config.paths.dataDir).toBe('/tmp/middleman-data')
+      expect(config.paths.swarmDir).toBe('/tmp/middleman-data/swarm')
+      expect(config.paths.sessionsDir).toBe('/tmp/middleman-data/sessions')
+      expect(config.paths.authFile).toBe('/tmp/middleman-data/auth/auth.json')
     })
   })
 

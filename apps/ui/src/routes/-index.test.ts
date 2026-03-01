@@ -175,7 +175,7 @@ describe('IndexPage create manager model selection', () => {
   it('shows only allowed model presets and defaults to pi-codex', async () => {
     await renderPage()
 
-    click(getByRole(container, 'button', { name: 'Add manager' }))
+    click(getAllByRole(container, 'button', { name: 'Add manager' })[0])
 
     const modelSelect = getByRole(document.body, 'combobox', { name: 'Model' })
     expect(modelSelect.textContent).toContain('pi-codex')
@@ -189,7 +189,7 @@ describe('IndexPage create manager model selection', () => {
   it('sends selected model in create_manager payload', async () => {
     const socket = await renderPage()
 
-    click(getByRole(container, 'button', { name: 'Add manager' }))
+    click(getAllByRole(container, 'button', { name: 'Add manager' })[0])
 
     changeValue(getByLabelText(document.body, 'Name') as HTMLInputElement, 'release-manager')
     changeValue(getByLabelText(document.body, 'Working directory') as HTMLInputElement, '/tmp/release')

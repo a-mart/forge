@@ -7,6 +7,7 @@ import type {
   DeliveryMode,
   DirectoryItem,
   MessageSourceContext,
+  ManagerProfile,
 } from './shared-types.js'
 
 export interface ConversationMessageEvent {
@@ -81,6 +82,71 @@ export interface ManagerDeletedEvent {
   type: 'manager_deleted'
   managerId: string
   terminatedWorkerIds: string[]
+  requestId?: string
+}
+
+export interface SessionCreatedEvent {
+  type: 'session_created'
+  profile: ManagerProfile
+  sessionAgent: AgentDescriptor
+  requestId?: string
+}
+
+export interface SessionStoppedEvent {
+  type: 'session_stopped'
+  agentId: string
+  profileId: string
+  terminatedWorkerIds: string[]
+  requestId?: string
+}
+
+export interface SessionResumedEvent {
+  type: 'session_resumed'
+  agentId: string
+  profileId: string
+  requestId?: string
+}
+
+export interface SessionDeletedEvent {
+  type: 'session_deleted'
+  agentId: string
+  profileId: string
+  terminatedWorkerIds: string[]
+  requestId?: string
+}
+
+export interface SessionRenamedEvent {
+  type: 'session_renamed'
+  agentId: string
+  label: string
+  requestId?: string
+}
+
+export interface SessionForkedEvent {
+  type: 'session_forked'
+  sourceAgentId: string
+  newSessionAgent: AgentDescriptor
+  profile: ManagerProfile
+  requestId?: string
+}
+
+export interface SessionMemoryMergeStartedEvent {
+  type: 'session_memory_merge_started'
+  agentId: string
+  requestId?: string
+}
+
+export interface SessionMemoryMergedEvent {
+  type: 'session_memory_merged'
+  agentId: string
+  mergedAt: string
+  requestId?: string
+}
+
+export interface SessionMemoryMergeFailedEvent {
+  type: 'session_memory_merge_failed'
+  agentId: string
+  message: string
   requestId?: string
 }
 
@@ -176,6 +242,11 @@ export interface AgentsSnapshotEvent {
   agents: AgentDescriptor[]
 }
 
+export interface ProfilesSnapshotEvent {
+  type: 'profiles_snapshot'
+  profiles: ManagerProfile[]
+}
+
 export type ServerEvent =
   | { type: 'ready'; serverTime: string; subscribedAgentId: string }
   | { type: 'conversation_reset'; agentId: string; timestamp: string; reason: 'user_new_command' | 'api_reset' }
@@ -187,8 +258,18 @@ export type ServerEvent =
   | ConversationEntry
   | AgentStatusEvent
   | AgentsSnapshotEvent
+  | ProfilesSnapshotEvent
   | ManagerCreatedEvent
   | ManagerDeletedEvent
+  | SessionCreatedEvent
+  | SessionStoppedEvent
+  | SessionResumedEvent
+  | SessionDeletedEvent
+  | SessionRenamedEvent
+  | SessionForkedEvent
+  | SessionMemoryMergeStartedEvent
+  | SessionMemoryMergedEvent
+  | SessionMemoryMergeFailedEvent
   | StopAllAgentsResultEvent
   | DirectoriesListedEvent
   | DirectoryValidatedEvent

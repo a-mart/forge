@@ -49,7 +49,11 @@ export class ConversationProjector {
     let history = this.deps.conversationEntriesByAgentId.get(agentId);
     if (!history) {
       const descriptor = this.deps.descriptors.get(agentId);
-      if (descriptor && !this.shouldPreloadHistoryForDescriptor(descriptor)) {
+      if (descriptor) {
+        // Always try to load from the session file on demand.
+        // During boot, idle/streaming agents are preloaded in bulk, but agents
+        // created after boot (e.g., forked sessions) may have a valid session
+        // file that was never preloaded.
         history = this.loadConversationHistoryForDescriptor(descriptor);
       }
     }

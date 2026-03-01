@@ -341,6 +341,138 @@ describe('SwarmManager', () => {
     expect(resources.memoryContextFile.content).not.toContain('worker memory')
   })
 
+  it('loads profile memory as read-only context for non-default sessions', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const { sessionAgent } = await manager.createSession('manager', { label: 'Memory Session' })
+    const profileMemoryPath = config.paths.memoryFile!
+    const sessionMemoryPath = join(config.paths.memoryDir, `${sessionAgent.agentId}.md`)
+
+    await writeFile(profileMemoryPath, '# Swarm Memory\n\n## Decisions\n- shared profile decision\n', 'utf8')
+    await writeFile(sessionMemoryPath, '# Swarm Memory\n\n## Decisions\n- session-only decision\n', 'utf8')
+
+    const resources = await manager.getMemoryRuntimeResourcesForTest(sessionAgent.agentId)
+
+    expect(resources.memoryContextFile.path).toBe(sessionMemoryPath)
+    expect(resources.memoryContextFile.content).toContain(
+      '# Manager Memory (shared across all sessions — read-only reference)',
+    )
+    expect(resources.memoryContextFile.content).toContain('shared profile decision')
+    expect(resources.memoryContextFile.content).toContain(
+      '# Session Memory (this session\'s working memory — your writes go here)',
+    )
+    expect(resources.memoryContextFile.content).toContain('session-only decision')
+  })
+
+  it('workers in non-default sessions receive the same combined memory context', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const { sessionAgent } = await manager.createSession('manager', { label: 'Worker Memory Session' })
+    const worker = await manager.spawnAgent(sessionAgent.agentId, { agentId: 'Session Memory Worker' })
+    const profileMemoryPath = config.paths.memoryFile!
+    const sessionMemoryPath = join(config.paths.memoryDir, `${sessionAgent.agentId}.md`)
+    const workerMemoryPath = join(config.paths.memoryDir, `${worker.agentId}.md`)
+
+    await writeFile(profileMemoryPath, '# Swarm Memory\n\n## Project Facts\n- shared fact\n', 'utf8')
+    await writeFile(sessionMemoryPath, '# Swarm Memory\n\n## Project Facts\n- session fact\n', 'utf8')
+    await writeFile(workerMemoryPath, '# Swarm Memory\n\n## Project Facts\n- worker fact\n', 'utf8')
+
+    const resources = await manager.getMemoryRuntimeResourcesForTest(worker.agentId)
+
+    expect(resources.memoryContextFile.path).toBe(sessionMemoryPath)
+    expect(resources.memoryContextFile.content).toContain('shared fact')
+    expect(resources.memoryContextFile.content).toContain('session fact')
+    expect(resources.memoryContextFile.content).not.toContain('worker fact')
+  })
+
+  it('mergeSessionMemory appends session memory to profile memory and sets mergedAt', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const { sessionAgent } = await manager.createSession('manager', { label: 'Merge Session' })
+    const profileMemoryPath = config.paths.memoryFile!
+    const sessionMemoryPath = join(config.paths.memoryDir, `${sessionAgent.agentId}.md`)
+
+    await writeFile(profileMemoryPath, '# Swarm Memory\n\n## Decisions\n- existing profile decision\n', 'utf8')
+    await writeFile(sessionMemoryPath, '# Swarm Memory\n\n## Decisions\n- session merge detail\n', 'utf8')
+
+    await manager.mergeSessionMemory(sessionAgent.agentId)
+
+    const mergedProfileMemory = await readFile(profileMemoryPath, 'utf8')
+    expect(mergedProfileMemory).toContain('existing profile decision')
+    expect(mergedProfileMemory).toContain('## Session Memory Merge — Merge Session')
+    expect(mergedProfileMemory).toContain(`> Source session: ${sessionAgent.agentId}`)
+    expect(mergedProfileMemory).toContain('session merge detail')
+
+    const mergedSessionDescriptor = manager.listAgents().find((agent) => agent.agentId === sessionAgent.agentId)
+    expect(mergedSessionDescriptor?.mergedAt).toBeDefined()
+  })
+
+  it('mergeSessionMemory skips sessions with only default template memory', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const { sessionAgent } = await manager.createSession('manager', { label: 'Template Session' })
+    const profileMemoryPath = config.paths.memoryFile!
+
+    await writeFile(profileMemoryPath, '# Swarm Memory\n\n## Decisions\n- before merge\n', 'utf8')
+
+    await manager.mergeSessionMemory(sessionAgent.agentId)
+
+    const profileMemory = await readFile(profileMemoryPath, 'utf8')
+    expect(profileMemory).toBe('# Swarm Memory\n\n## Decisions\n- before merge\n')
+
+    const sessionDescriptor = manager.listAgents().find((agent) => agent.agentId === sessionAgent.agentId)
+    expect(sessionDescriptor?.mergedAt).toBeUndefined()
+  })
+
+  it('mergeSessionMemory serializes concurrent merges for the same profile', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const { sessionAgent: firstSession } = await manager.createSession('manager', { label: 'First Merge Session' })
+    const { sessionAgent: secondSession } = await manager.createSession('manager', { label: 'Second Merge Session' })
+    const profileMemoryPath = config.paths.memoryFile!
+
+    await writeFile(profileMemoryPath, '# Swarm Memory\n\n## Project Facts\n- baseline\n', 'utf8')
+    await writeFile(
+      join(config.paths.memoryDir, `${firstSession.agentId}.md`),
+      '# Swarm Memory\n\n## Project Facts\n- first merge payload\n',
+      'utf8',
+    )
+    await writeFile(
+      join(config.paths.memoryDir, `${secondSession.agentId}.md`),
+      '# Swarm Memory\n\n## Project Facts\n- second merge payload\n',
+      'utf8',
+    )
+
+    await Promise.all([
+      manager.mergeSessionMemory(firstSession.agentId),
+      manager.mergeSessionMemory(secondSession.agentId),
+    ])
+
+    const profileMemory = await readFile(profileMemoryPath, 'utf8')
+    expect(profileMemory).toContain('first merge payload')
+    expect(profileMemory).toContain('second merge payload')
+  })
+
+  it('rejects mergeSessionMemory for the default profile session', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await expect(manager.mergeSessionMemory('manager')).rejects.toThrow(
+      'Default session memory is already the profile core memory',
+    )
+  })
+
   it('loads SWARM.md context files from the cwd ancestor chain', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
@@ -1782,7 +1914,7 @@ describe('SwarmManager', () => {
     ).toBe(true)
   })
 
-  it('resetManagerSession recreates manager runtime and clears manager history', async () => {
+  it('resetManagerSession creates a new session and keeps the source session intact', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -1795,13 +1927,22 @@ describe('SwarmManager', () => {
 
     await manager.resetManagerSession('api_reset')
 
-    expect(firstRuntime!.terminateCalls).toEqual([{ abort: true }])
-    expect(manager.createdRuntimeIds.filter((id) => id === 'manager')).toHaveLength(2)
-    expect(manager.getConversationHistory('manager')).toHaveLength(0)
+    const managerSessions = manager.listAgents().filter((agent) => agent.role === 'manager')
+    const forkedSession = managerSessions.find((agent) => agent.agentId !== 'manager')
+
+    expect(firstRuntime!.terminateCalls).toEqual([])
+    expect(manager.createdRuntimeIds.filter((id) => id === 'manager')).toHaveLength(1)
+    expect(forkedSession?.agentId).toBe('manager--s2')
+    expect(forkedSession?.profileId).toBe('manager')
+    expect(forkedSession?.sessionLabel).toBe('New chat')
+    expect(manager.getConversationHistory('manager').some((message) => message.text === 'before reset')).toBe(true)
+    expect(manager.getConversationHistory('manager--s2')).toHaveLength(0)
 
     const rebooted = new TestSwarmManager(config)
     await bootWithDefaultManager(rebooted, config)
-    expect(rebooted.getConversationHistory('manager')).toHaveLength(0)
+
+    expect(rebooted.getConversationHistory('manager').some((message) => message.text === 'before reset')).toBe(true)
+    expect(rebooted.getConversationHistory('manager--s2')).toHaveLength(0)
   })
 
   it('skips invalid persisted descriptors instead of failing boot', async () => {

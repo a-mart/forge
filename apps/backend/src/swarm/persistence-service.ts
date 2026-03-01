@@ -1,7 +1,7 @@
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { getAgentMemoryPath as getAgentMemoryPathForDataDir } from "./memory-paths.js";
-import type { AgentDescriptor, AgentsStoreFile, SwarmConfig } from "./types.js";
+import type { AgentDescriptor, AgentsStoreFile, ManagerProfile, SwarmConfig } from "./types.js";
 
 const DEFAULT_MEMORY_FILE_CONTENT = `# Swarm Memory
 
@@ -22,6 +22,7 @@ interface PersistenceServiceDependencies {
   config: SwarmConfig;
   descriptors: Map<string, AgentDescriptor>;
   sortedDescriptors: () => AgentDescriptor[];
+  sortedProfiles: () => ManagerProfile[];
   getConfiguredManagerId: () => string | undefined;
   resolveMemoryOwnerAgentId: (descriptor: AgentDescriptor) => string;
   validateAgentDescriptor: (value: unknown) => AgentDescriptor | string;
@@ -100,7 +101,7 @@ export class PersistenceService {
       const raw = await readFile(this.deps.config.paths.agentsStoreFile, "utf8");
       const parsed = JSON.parse(raw) as AgentsStoreFile;
       if (!Array.isArray(parsed.agents)) {
-        return { agents: [] };
+        return { agents: [], profiles: [] };
       }
 
       const validAgents: AgentDescriptor[] = [];
@@ -119,16 +120,18 @@ export class PersistenceService {
       }
 
       return {
-        agents: validAgents
+        agents: validAgents,
+        profiles: Array.isArray(parsed.profiles) ? parsed.profiles : []
       };
     } catch {
-      return { agents: [] };
+      return { agents: [], profiles: [] };
     }
   }
 
   async saveStore(): Promise<void> {
     const payload: AgentsStoreFile = {
-      agents: this.deps.sortedDescriptors()
+      agents: this.deps.sortedDescriptors(),
+      profiles: this.deps.sortedProfiles()
     };
 
     const target = this.deps.config.paths.agentsStoreFile;

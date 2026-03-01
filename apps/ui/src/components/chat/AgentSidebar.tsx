@@ -1,15 +1,45 @@
-import { ChevronDown, ChevronRight, CircleDashed, Settings, SquarePen, UserStar, X } from 'lucide-react'
-import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@/components/ui/context-menu'
-import { useState } from 'react'
+import {
+  ChevronDown,
+  ChevronRight,
+  CircleDashed,
+  Edit3,
+  GitFork,
+  Merge,
+  Pause,
+  Play,
+  Plus,
+  Settings,
+  SquarePen,
+  Trash2,
+  UserStar,
+  X,
+} from 'lucide-react'
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from '@/components/ui/context-menu'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { useCallback, useState } from 'react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { buildManagerTreeRows } from '@/lib/agent-hierarchy'
+import {
+  buildProfileTreeRows,
+  isSessionRunning,
+  type ProfileTreeRow,
+  type SessionRow,
+} from '@/lib/agent-hierarchy'
 import { inferModelPreset } from '@/lib/model-preset'
 import { cn } from '@/lib/utils'
-import type { AgentContextUsage, AgentDescriptor, AgentStatus, ManagerModelPreset } from '@middleman/protocol'
+import type {
+  AgentContextUsage,
+  AgentDescriptor,
+  AgentStatus,
+  ManagerModelPreset,
+  ManagerProfile,
+} from '@middleman/protocol'
 
 interface AgentSidebarProps {
   connected: boolean
   agents: AgentDescriptor[]
+  profiles: ManagerProfile[]
   statuses: Record<string, { status: AgentStatus; pendingCount: number; contextUsage?: AgentContextUsage }>
   selectedAgentId: string | null
   isSettingsActive: boolean
@@ -20,6 +50,13 @@ interface AgentSidebarProps {
   onDeleteAgent: (agentId: string) => void
   onDeleteManager: (managerId: string) => void
   onOpenSettings: () => void
+  onCreateSession?: (profileId: string, label?: string) => void
+  onStopSession?: (agentId: string) => void
+  onResumeSession?: (agentId: string) => void
+  onDeleteSession?: (agentId: string) => void
+  onRenameSession?: (agentId: string, label: string) => void
+  onForkSession?: (sourceAgentId: string) => void
+  onMergeSessionMemory?: (agentId: string) => void
 }
 
 type AgentLiveStatus = {
@@ -37,6 +74,8 @@ function getAgentLiveStatus(
     pendingCount: live?.pendingCount ?? 0,
   }
 }
+
+// ── Shared components ──
 
 function RuntimeIcon({ agent, className }: { agent: AgentDescriptor; className?: string }) {
   const provider = agent.model.provider.toLowerCase()
@@ -85,27 +124,13 @@ function RuntimeIcon({ agent, className }: { agent: AgentDescriptor; className?:
 }
 
 function getModelLabel(agent: AgentDescriptor, preset: ManagerModelPreset | undefined): string {
-  if (preset === 'pi-opus') {
-    return 'opus'
-  }
-
-  if (preset === 'pi-codex' || preset === 'codex-app') {
-    return 'codex'
-  }
-
+  if (preset === 'pi-opus') return 'opus'
+  if (preset === 'pi-codex' || preset === 'codex-app') return 'codex'
   const modelId = agent.model.modelId.trim().toLowerCase()
-
-  if (modelId.startsWith('claude-opus')) {
-    return 'opus'
-  }
-
-  if (modelId.includes('codex')) {
-    return 'codex'
-  }
-
+  if (modelId.startsWith('claude-opus')) return 'opus'
+  if (modelId.includes('codex')) return 'codex'
   return agent.model.modelId
 }
-
 
 function AgentActivitySlot({
   isActive,
@@ -116,7 +141,6 @@ function AgentActivitySlot({
   isSelected: boolean
   streamingWorkerCount?: number
 }) {
-  // When collapsed with active workers, show CircleDashed spinner with count inside
   if (streamingWorkerCount && streamingWorkerCount > 0) {
     return (
       <TooltipProvider delayDuration={200}>
@@ -166,41 +190,72 @@ function AgentActivitySlot({
   )
 }
 
-function AgentRow({
+function SessionStatusDot({ running }: { running: boolean }) {
+  return (
+    <span
+      className={cn(
+        'inline-block size-1.5 shrink-0 rounded-full',
+        running ? 'bg-emerald-500' : 'bg-muted-foreground/40',
+      )}
+      aria-label={running ? 'Running' : 'Idle'}
+    />
+  )
+}
+
+function RuntimeBadge({ agent, isSelected }: { agent: AgentDescriptor; isSelected: boolean }) {
+  const preset = inferModelPreset(agent)
+  const modelLabel = getModelLabel(agent, preset)
+  const modelDescription = `${agent.model.provider}/${agent.model.modelId}`
+
+  return (
+    <TooltipProvider delayDuration={200}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            className={cn(
+              'ml-1 inline-flex h-5 min-w-7 shrink-0 items-center justify-center rounded-sm border border-sidebar-border/80 bg-sidebar-accent/40 px-0.5',
+              isSelected ? 'border-sidebar-ring/60 bg-sidebar-accent-foreground/10' : '',
+            )}
+          >
+            <RuntimeIcon agent={agent} className="size-3 shrink-0 object-contain opacity-90" />
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-[10px]">
+          <p className="font-medium">{modelLabel}</p>
+          <p className="opacity-80">{modelDescription}</p>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  )
+}
+
+// ── Worker row (unchanged from original pattern) ──
+
+function WorkerRow({
   agent,
   liveStatus,
   isSelected,
   onSelect,
   onDelete,
-  className,
-  nameClassName,
-  streamingWorkerCount,
 }: {
   agent: AgentDescriptor
   liveStatus: AgentLiveStatus
   isSelected: boolean
   onSelect: () => void
   onDelete: () => void
-  className: string
-  nameClassName?: string
-  streamingWorkerCount?: number
 }) {
   const title = agent.displayName || agent.agentId
   const isActive = liveStatus.status === 'streaming'
-  const preset = inferModelPreset(agent)
-  const modelLabel = getModelLabel(agent, preset)
-  const modelDescription = `${agent.model.provider}/${agent.model.modelId}`
 
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
         <div
           className={cn(
-            'flex w-full items-center gap-1 rounded-md transition-colors',
+            'flex w-full items-center gap-1 rounded-md py-1 pl-12 pr-1.5 transition-colors',
             isSelected
               ? 'bg-sidebar-accent text-sidebar-accent-foreground'
               : 'text-sidebar-foreground/90 hover:bg-sidebar-accent/50',
-            className,
           )}
         >
           <button
@@ -209,32 +264,15 @@ function AgentRow({
             className="flex min-w-0 flex-1 items-center gap-1.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60"
             title={title}
           >
-            <AgentActivitySlot isActive={isActive} isSelected={isSelected} streamingWorkerCount={streamingWorkerCount} />
-            <span className={cn('min-w-0 flex-1 truncate text-sm leading-5', nameClassName)}>{title}</span>
-
-            <TooltipProvider delayDuration={200}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span
-                    className={cn(
-                      'ml-1 inline-flex h-5 min-w-7 shrink-0 items-center justify-center rounded-sm border border-sidebar-border/80 bg-sidebar-accent/40 px-0.5',
-                      isSelected ? 'border-sidebar-ring/60 bg-sidebar-accent-foreground/10' : '',
-                    )}
-                  >
-                    <RuntimeIcon agent={agent} className="size-3 shrink-0 object-contain opacity-90" />
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-[10px]">
-                  <p className="font-medium">{modelLabel}</p>
-                  <p className="opacity-80">{modelDescription}</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
+            <AgentActivitySlot isActive={isActive} isSelected={isSelected} />
+            <span className="min-w-0 flex-1 truncate text-sm leading-5">{title}</span>
+            <RuntimeBadge agent={agent} isSelected={isSelected} />
           </button>
         </div>
       </ContextMenuTrigger>
       <ContextMenuContent>
         <ContextMenuItem variant="destructive" onClick={onDelete}>
+          <Trash2 className="mr-2 size-3.5" />
           Delete
         </ContextMenuItem>
       </ContextMenuContent>
@@ -242,9 +280,493 @@ function AgentRow({
   )
 }
 
+// ── Session row ──
+
+function SessionRowItem({
+  session,
+  statuses,
+  selectedAgentId,
+  isSettingsActive,
+  isCollapsed,
+  onToggleCollapse,
+  onSelect,
+  onDeleteAgent,
+  onStop,
+  onResume,
+  onDelete,
+  onRename,
+  onFork,
+  onMergeMemory,
+}: {
+  session: SessionRow
+  statuses: Record<string, { status: AgentStatus; pendingCount: number; contextUsage?: AgentContextUsage }>
+  selectedAgentId: string | null
+  isSettingsActive: boolean
+  isCollapsed: boolean
+  onToggleCollapse: () => void
+  onSelect: (agentId: string) => void
+  onDeleteAgent: (agentId: string) => void
+  onStop?: () => void
+  onResume?: () => void
+  onDelete?: () => void
+  onRename?: () => void
+  onFork?: () => void
+  onMergeMemory?: () => void
+}) {
+  const { sessionAgent, workers, isDefault } = session
+  const liveStatus = getAgentLiveStatus(sessionAgent, statuses)
+  const running = isSessionRunning(sessionAgent)
+  const isSelected = !isSettingsActive && selectedAgentId === sessionAgent.agentId
+  const isActive = liveStatus.status === 'streaming'
+  const label = sessionAgent.sessionLabel || (isDefault ? 'Main' : sessionAgent.displayName || sessionAgent.agentId)
+  const streamingWorkerCount = isCollapsed
+    ? workers.filter((w) => getAgentLiveStatus(w, statuses).status === 'streaming').length
+    : 0
+
+  return (
+    <li>
+      <ContextMenu>
+        <ContextMenuTrigger asChild>
+          <div
+            className={cn(
+              'relative flex items-center rounded-md transition-colors',
+              isSelected
+                ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+                : 'text-sidebar-foreground/90 hover:bg-sidebar-accent/50',
+            )}
+          >
+            {/* Expand/collapse toggle (only show if has workers) */}
+            {workers.length > 0 ? (
+              <button
+                type="button"
+                onClick={onToggleCollapse}
+                aria-label={`${isCollapsed ? 'Expand' : 'Collapse'} session workers`}
+                aria-expanded={!isCollapsed}
+                className={cn(
+                  'absolute left-2 top-1/2 inline-flex size-4 -translate-y-1/2 items-center justify-center rounded text-muted-foreground/70 transition',
+                  'hover:text-sidebar-foreground',
+                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
+                )}
+              >
+                {isCollapsed ? (
+                  <ChevronRight className="size-3" aria-hidden="true" />
+                ) : (
+                  <ChevronDown className="size-3" aria-hidden="true" />
+                )}
+              </button>
+            ) : null}
+
+            <button
+              type="button"
+              onClick={() => onSelect(sessionAgent.agentId)}
+              className={cn(
+                'flex min-w-0 flex-1 items-center gap-1.5 py-1.5 pr-1.5 text-left',
+                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
+                workers.length > 0 ? 'pl-7' : 'pl-5',
+              )}
+              title={`${label}${running ? ' (running)' : ' (idle)'}`}
+            >
+              <SessionStatusDot running={running} />
+              {isActive || streamingWorkerCount > 0 ? (
+                <AgentActivitySlot
+                  isActive={isActive}
+                  isSelected={isSelected}
+                  streamingWorkerCount={isCollapsed ? streamingWorkerCount : undefined}
+                />
+              ) : null}
+              <span className="min-w-0 flex-1 truncate text-sm leading-5">{label}</span>
+              {isDefault ? (
+                <span className="shrink-0 text-[9px] font-medium uppercase tracking-wider text-muted-foreground/60">
+                  default
+                </span>
+              ) : null}
+            </button>
+          </div>
+        </ContextMenuTrigger>
+
+        <ContextMenuContent>
+          {onRename ? (
+            <ContextMenuItem onClick={onRename}>
+              <Edit3 className="mr-2 size-3.5" />
+              Rename
+            </ContextMenuItem>
+          ) : null}
+          {onFork ? (
+            <ContextMenuItem onClick={onFork}>
+              <GitFork className="mr-2 size-3.5" />
+              Fork
+            </ContextMenuItem>
+          ) : null}
+          {running && onStop ? (
+            <ContextMenuItem onClick={onStop}>
+              <Pause className="mr-2 size-3.5" />
+              Stop
+            </ContextMenuItem>
+          ) : null}
+          {!running && onResume ? (
+            <ContextMenuItem onClick={onResume}>
+              <Play className="mr-2 size-3.5" />
+              Resume
+            </ContextMenuItem>
+          ) : null}
+          {onMergeMemory ? (
+            <ContextMenuItem onClick={onMergeMemory}>
+              <Merge className="mr-2 size-3.5" />
+              Merge Memory
+            </ContextMenuItem>
+          ) : null}
+          {!isDefault && onDelete ? (
+            <>
+              <ContextMenuSeparator />
+              <ContextMenuItem variant="destructive" onClick={onDelete}>
+                <Trash2 className="mr-2 size-3.5" />
+                Delete
+              </ContextMenuItem>
+            </>
+          ) : null}
+        </ContextMenuContent>
+      </ContextMenu>
+
+      {/* Workers nested under session */}
+      {workers.length > 0 && !isCollapsed ? (
+        <div className="relative mt-0.5">
+          <div className="absolute bottom-1 left-6 top-0 w-px bg-sidebar-border/40" />
+          <ul className="space-y-0.5">
+            {workers.map((worker) => {
+              const workerLiveStatus = getAgentLiveStatus(worker, statuses)
+              const workerIsSelected = !isSettingsActive && selectedAgentId === worker.agentId
+
+              return (
+                <li key={worker.agentId}>
+                  <WorkerRow
+                    agent={worker}
+                    liveStatus={workerLiveStatus}
+                    isSelected={workerIsSelected}
+                    onSelect={() => onSelect(worker.agentId)}
+                    onDelete={() => onDeleteAgent(worker.agentId)}
+                  />
+                </li>
+              )
+            })}
+          </ul>
+        </div>
+      ) : null}
+    </li>
+  )
+}
+
+// ── Profile group ──
+
+function ProfileGroup({
+  treeRow,
+  statuses,
+  selectedAgentId,
+  isSettingsActive,
+  isCollapsed,
+  collapsedSessionIds,
+  onToggleProfileCollapsed,
+  onToggleSessionCollapsed,
+  onSelect,
+  onDeleteAgent,
+  onDeleteManager,
+  onOpenSettings,
+  onCreateSession,
+  onStopSession,
+  onResumeSession,
+  onDeleteSession,
+  onRequestRenameSession,
+  onForkSession,
+  onMergeSessionMemory,
+}: {
+  treeRow: ProfileTreeRow
+  statuses: Record<string, { status: AgentStatus; pendingCount: number; contextUsage?: AgentContextUsage }>
+  selectedAgentId: string | null
+  isSettingsActive: boolean
+  isCollapsed: boolean
+  collapsedSessionIds: Set<string>
+  onToggleProfileCollapsed: () => void
+  onToggleSessionCollapsed: (sessionId: string) => void
+  onSelect: (agentId: string) => void
+  onDeleteAgent: (agentId: string) => void
+  onDeleteManager: (managerId: string) => void
+  onOpenSettings: () => void
+  onCreateSession?: (profileId: string) => void
+  onStopSession?: (agentId: string) => void
+  onResumeSession?: (agentId: string) => void
+  onDeleteSession?: (agentId: string) => void
+  onRequestRenameSession?: (agentId: string) => void
+  onForkSession?: (sourceAgentId: string) => void
+  onMergeSessionMemory?: (agentId: string) => void
+}) {
+  const { profile, sessions } = treeRow
+  const hasAnySessions = sessions.length > 0
+  const defaultSession = sessions.find((s) => s.isDefault)
+
+  // Count active sessions for collapsed summary
+  const activeSessionCount = sessions.filter((s) => isSessionRunning(s.sessionAgent)).length
+  const totalStreamingWorkers = sessions.reduce(
+    (count, s) => count + s.workers.filter((w) => getAgentLiveStatus(w, statuses).status === 'streaming').length,
+    0,
+  )
+
+  // Use the default session agent for the runtime badge
+  const representativeAgent = defaultSession?.sessionAgent ?? sessions[0]?.sessionAgent
+
+  return (
+    <li>
+      {/* Profile header */}
+      <ContextMenu>
+        <ContextMenuTrigger asChild>
+          <div className="relative flex items-center">
+            <button
+              type="button"
+              onClick={onToggleProfileCollapsed}
+              aria-label={`${isCollapsed ? 'Expand' : 'Collapse'} ${profile.displayName}`}
+              aria-expanded={!isCollapsed}
+              className={cn(
+                'group absolute left-1 top-1/2 inline-flex size-5 -translate-y-1/2 items-center justify-center rounded text-muted-foreground/70 transition',
+                'hover:text-sidebar-foreground',
+                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
+              )}
+            >
+              <span className="relative flex h-3.5 w-3.5 items-center justify-center">
+                {isCollapsed ? (
+                  <>
+                    <UserStar
+                      aria-hidden="true"
+                      className="size-3.5 opacity-70 transition-opacity group-hover:opacity-0 group-focus-visible:opacity-0"
+                    />
+                    <ChevronRight
+                      aria-hidden="true"
+                      className="absolute size-3 opacity-0 transition-opacity group-hover:opacity-70 group-focus-visible:opacity-70"
+                    />
+                  </>
+                ) : (
+                  <>
+                    <UserStar
+                      aria-hidden="true"
+                      className="size-3.5 opacity-70 transition-opacity group-hover:opacity-0 group-focus-visible:opacity-0"
+                    />
+                    <ChevronDown
+                      aria-hidden="true"
+                      className="absolute size-3 opacity-0 transition-opacity group-hover:opacity-70 group-focus-visible:opacity-70"
+                    />
+                  </>
+                )}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                // Click profile header → select default session
+                const targetId = defaultSession?.sessionAgent.agentId ?? sessions[0]?.sessionAgent.agentId
+                if (targetId) onSelect(targetId)
+              }}
+              className={cn(
+                'flex min-w-0 flex-1 items-center gap-1.5 rounded-md py-1.5 pl-7 pr-1.5 text-left transition-colors',
+                'hover:bg-sidebar-accent/50',
+                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
+              )}
+              title={profile.displayName}
+            >
+              {isCollapsed && totalStreamingWorkers > 0 ? (
+                <AgentActivitySlot isActive={false} isSelected={false} streamingWorkerCount={totalStreamingWorkers} />
+              ) : null}
+              <span className="min-w-0 flex-1 truncate text-sm font-semibold leading-5">
+                {profile.displayName}
+              </span>
+              {isCollapsed && hasAnySessions ? (
+                <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
+                  {activeSessionCount}/{sessions.length}
+                </span>
+              ) : null}
+              {representativeAgent ? (
+                <RuntimeBadge agent={representativeAgent} isSelected={false} />
+              ) : null}
+            </button>
+
+            {/* Inline "new session" button on profile header */}
+            {onCreateSession ? (
+              <TooltipProvider delayDuration={300}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onCreateSession(profile.profileId)
+                      }}
+                      className={cn(
+                        'mr-1 inline-flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground/60 transition',
+                        'hover:bg-sidebar-accent/60 hover:text-sidebar-foreground',
+                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
+                      )}
+                      aria-label={`New session for ${profile.displayName}`}
+                    >
+                      <Plus className="size-3" aria-hidden="true" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-[10px]">
+                    New session
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            ) : null}
+          </div>
+        </ContextMenuTrigger>
+
+        <ContextMenuContent>
+          {onCreateSession ? (
+            <ContextMenuItem onClick={() => onCreateSession(profile.profileId)}>
+              <Plus className="mr-2 size-3.5" />
+              New Session
+            </ContextMenuItem>
+          ) : null}
+          <ContextMenuItem onClick={onOpenSettings}>
+            <Settings className="mr-2 size-3.5" />
+            Settings
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem variant="destructive" onClick={() => onDeleteManager(profile.profileId)}>
+            <Trash2 className="mr-2 size-3.5" />
+            Delete Manager
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
+
+      {/* Sessions list */}
+      {!isCollapsed && hasAnySessions ? (
+        <div className="relative mt-0.5">
+          <div className="absolute bottom-1 left-3.5 top-0 w-px bg-sidebar-border/40" />
+          <ul className="space-y-0.5">
+            {sessions.map((session) => {
+              // Default is collapsed; only expanded if user explicitly opened it
+              const sessionCollapsed = !collapsedSessionIds.has(session.sessionAgent.agentId)
+
+              return (
+                <SessionRowItem
+                  key={session.sessionAgent.agentId}
+                  session={session}
+                  statuses={statuses}
+                  selectedAgentId={selectedAgentId}
+                  isSettingsActive={isSettingsActive}
+                  isCollapsed={sessionCollapsed}
+                  onToggleCollapse={() => onToggleSessionCollapsed(session.sessionAgent.agentId)}
+                  onSelect={onSelect}
+                  onDeleteAgent={onDeleteAgent}
+                  onStop={onStopSession ? () => onStopSession(session.sessionAgent.agentId) : undefined}
+                  onResume={onResumeSession ? () => onResumeSession(session.sessionAgent.agentId) : undefined}
+                  onDelete={onDeleteSession ? () => onDeleteSession(session.sessionAgent.agentId) : undefined}
+                  onRename={onRequestRenameSession ? () => onRequestRenameSession(session.sessionAgent.agentId) : undefined}
+                  onFork={onForkSession ? () => onForkSession(session.sessionAgent.agentId) : undefined}
+                  onMergeMemory={onMergeSessionMemory ? () => onMergeSessionMemory(session.sessionAgent.agentId) : undefined}
+                />
+              )
+            })}
+          </ul>
+        </div>
+      ) : null}
+    </li>
+  )
+}
+
+// ── Rename dialog ──
+
+function RenameSessionDialog({
+  agentId,
+  currentLabel,
+  onConfirm,
+  onClose,
+}: {
+  agentId: string
+  currentLabel: string
+  onConfirm: (agentId: string, label: string) => void
+  onClose: () => void
+}) {
+  const [label, setLabel] = useState(currentLabel)
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    const trimmed = label.trim()
+    if (trimmed) {
+      onConfirm(agentId, trimmed)
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open) onClose() }}>
+      <DialogContent className="max-w-sm p-4">
+        <DialogHeader className="mb-3">
+          <DialogTitle>Rename Session</DialogTitle>
+          <DialogDescription>Enter a new label for this session.</DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <Input
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            placeholder="Session name"
+            autoFocus
+          />
+          <div className="flex items-center justify-end gap-2">
+            <Button type="button" variant="outline" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={!label.trim()}>
+              Rename
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// ── Delete session confirmation dialog ──
+
+function DeleteSessionDialog({
+  agentId,
+  sessionLabel,
+  onConfirm,
+  onClose,
+}: {
+  agentId: string
+  sessionLabel: string
+  onConfirm: (agentId: string) => void
+  onClose: () => void
+}) {
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open) onClose() }}>
+      <DialogContent className="max-w-sm p-4">
+        <DialogHeader className="mb-3">
+          <DialogTitle>Delete Session</DialogTitle>
+          <DialogDescription>
+            Delete &ldquo;{sessionLabel}&rdquo;? This will permanently remove the session history and memory. This cannot be undone.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex items-center justify-end gap-2">
+          <Button type="button" variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            onClick={() => onConfirm(agentId)}
+          >
+            Delete session
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// ── Main sidebar ──
+
 export function AgentSidebar({
   connected,
   agents,
+  profiles,
   statuses,
   selectedAgentId,
   isSettingsActive,
@@ -255,39 +777,88 @@ export function AgentSidebar({
   onDeleteAgent,
   onDeleteManager,
   onOpenSettings,
+  onCreateSession,
+  onStopSession,
+  onResumeSession,
+  onDeleteSession,
+  onRenameSession,
+  onForkSession,
+  onMergeSessionMemory,
 }: AgentSidebarProps) {
-  const { managerRows, orphanWorkers } = buildManagerTreeRows(agents)
-  const [expandedManagerIds, setExpandedManagerIds] = useState<Set<string>>(() => new Set())
+  const treeRows = buildProfileTreeRows(agents, profiles)
 
-  const toggleManagerCollapsed = (managerId: string) => {
-    setExpandedManagerIds((previous) => {
-      const next = new Set(previous)
+  const [collapsedProfileIds, setCollapsedProfileIds] = useState<Set<string>>(() => new Set())
+  // Track explicitly expanded sessions — everything defaults to collapsed
+  const [expandedSessionIds, setExpandedSessionIds] = useState<Set<string>>(() => new Set())
+  const [renameTarget, setRenameTarget] = useState<{ agentId: string; label: string } | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<{ agentId: string; label: string } | null>(null)
 
-      if (next.has(managerId)) {
-        next.delete(managerId)
+  const toggleProfileCollapsed = useCallback((profileId: string) => {
+    setCollapsedProfileIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(profileId)) {
+        next.delete(profileId)
       } else {
-        next.add(managerId)
+        next.add(profileId)
       }
-
       return next
     })
-  }
+  }, [])
 
-  const handleSelectAgent = (agentId: string) => {
+  const toggleSessionCollapsed = useCallback((sessionId: string) => {
+    setExpandedSessionIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(sessionId)) {
+        next.delete(sessionId)
+      } else {
+        next.add(sessionId)
+      }
+      return next
+    })
+  }, [])
+
+  const handleSelectAgent = useCallback((agentId: string) => {
     onSelectAgent(agentId)
     onMobileClose?.()
-  }
+  }, [onSelectAgent, onMobileClose])
 
-  const handleOpenSettings = () => {
+  const handleOpenSettings = useCallback(() => {
     onOpenSettings()
     onMobileClose?.()
-  }
+  }, [onOpenSettings, onMobileClose])
+
+  const handleRequestRename = useCallback((agentId: string) => {
+    const agent = agents.find((a) => a.agentId === agentId)
+    if (!agent) return
+    setRenameTarget({
+      agentId,
+      label: agent.sessionLabel || agent.displayName || agent.agentId,
+    })
+  }, [agents])
+
+  const handleConfirmRename = useCallback((agentId: string, label: string) => {
+    onRenameSession?.(agentId, label)
+    setRenameTarget(null)
+  }, [onRenameSession])
+
+  const handleRequestDelete = useCallback((agentId: string) => {
+    const agent = agents.find((a) => a.agentId === agentId)
+    if (!agent) return
+    setDeleteTarget({
+      agentId,
+      label: agent.sessionLabel || agent.displayName || agent.agentId,
+    })
+  }, [agents])
+
+  const handleConfirmDelete = useCallback((agentId: string) => {
+    onDeleteSession?.(agentId)
+    setDeleteTarget(null)
+  }, [onDeleteSession])
 
   const sidebarContent = (
     <aside
       className={cn(
         'flex h-full flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground',
-        // Desktop: fixed width in flex layout
         'max-md:w-full md:w-[20rem] md:min-w-[20rem] md:shrink-0',
       )}
     >
@@ -312,7 +883,6 @@ export function AgentSidebar({
           />
           <span className="hidden xl:inline">{connected ? 'Live' : 'Retrying'}</span>
         </div>
-        {/* Mobile close button */}
         {onMobileClose ? (
           <button
             type="button"
@@ -336,129 +906,36 @@ export function AgentSidebar({
           scrollbarColor: 'var(--sidebar-border) transparent',
         }}
       >
-        {managerRows.length === 0 ? (
+        {treeRows.length === 0 ? (
           <p className="rounded-md bg-sidebar-accent/50 px-3 py-4 text-center text-xs text-muted-foreground">
             No active agents.
           </p>
         ) : (
           <ul className="space-y-0.5">
-            {managerRows.map(({ manager, workers }) => {
-              const managerLiveStatus = getAgentLiveStatus(manager, statuses)
-              const managerIsSelected = !isSettingsActive && selectedAgentId === manager.agentId
-              const managerIsCollapsed = !expandedManagerIds.has(manager.agentId)
-              const streamingWorkerCount = managerIsCollapsed
-                ? workers.filter((w) => getAgentLiveStatus(w, statuses).status === 'streaming').length
-                : 0
-
-              return (
-                <li key={manager.agentId}>
-                  <div className="relative flex items-center">
-                    <AgentRow
-                      agent={manager}
-                      liveStatus={managerLiveStatus}
-                      isSelected={managerIsSelected}
-                      onSelect={() => handleSelectAgent(manager.agentId)}
-                      onDelete={() => onDeleteManager(manager.agentId)}
-                      nameClassName="font-semibold"
-                      className="min-w-0 flex-1 py-1.5 pl-7 pr-1.5"
-                      streamingWorkerCount={managerIsCollapsed ? streamingWorkerCount : undefined}
-                    />
-
-                    <button
-                      type="button"
-                      onClick={() => toggleManagerCollapsed(manager.agentId)}
-                      aria-label={`${managerIsCollapsed ? 'Expand' : 'Collapse'} manager ${manager.agentId}`}
-                      aria-expanded={!managerIsCollapsed}
-                      className={cn(
-                        'group absolute left-1 top-1/2 inline-flex size-5 -translate-y-1/2 items-center justify-center rounded text-muted-foreground/70 transition',
-                        'hover:text-sidebar-foreground',
-                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
-                      )}
-                    >
-                      <span className="relative flex h-3.5 w-3.5 items-center justify-center">
-                        {managerIsCollapsed ? (
-                          <>
-                            <UserStar
-                              aria-hidden="true"
-                              className="size-3.5 opacity-70 transition-opacity group-hover:opacity-0 group-focus-visible:opacity-0"
-                            />
-                            <ChevronRight
-                              aria-hidden="true"
-                              className="absolute size-3 opacity-0 transition-opacity group-hover:opacity-70 group-focus-visible:opacity-70"
-                            />
-                          </>
-                        ) : (
-                          <>
-                            <UserStar
-                              aria-hidden="true"
-                              className="size-3.5 opacity-70 transition-opacity group-hover:opacity-0 group-focus-visible:opacity-0"
-                            />
-                            <ChevronDown
-                              aria-hidden="true"
-                              className="absolute size-3 opacity-0 transition-opacity group-hover:opacity-70 group-focus-visible:opacity-70"
-                            />
-                          </>
-                        )}
-                      </span>
-                    </button>
-                  </div>
-
-                  {workers.length > 0 && !managerIsCollapsed ? (
-                    <div className="relative mt-0.5">
-                      <div className="absolute bottom-1 left-3.5 top-0 w-px bg-sidebar-border/40" />
-                      <ul className="space-y-0.5">
-                        {workers.map((worker) => {
-                          const workerLiveStatus = getAgentLiveStatus(worker, statuses)
-                          const workerIsSelected = !isSettingsActive && selectedAgentId === worker.agentId
-
-                          return (
-                            <li key={worker.agentId}>
-                              <AgentRow
-                                agent={worker}
-                                liveStatus={workerLiveStatus}
-                                isSelected={workerIsSelected}
-                                onSelect={() => handleSelectAgent(worker.agentId)}
-                                onDelete={() => onDeleteAgent(worker.agentId)}
-                                nameClassName="font-normal"
-                                className="py-1.5 pl-7 pr-1.5"
-                              />
-                            </li>
-                          )
-                        })}
-                      </ul>
-                    </div>
-                  ) : null}
-                </li>
-              )
-            })}
-
-            {orphanWorkers.length > 0 ? (
-              <li className="mt-3">
-                <p className="mb-1 px-2 text-[10px] font-medium uppercase tracking-widest text-muted-foreground/60">
-                  Unassigned
-                </p>
-                <ul className="space-y-0.5">
-                  {orphanWorkers.map((worker) => {
-                    const workerLiveStatus = getAgentLiveStatus(worker, statuses)
-                    const workerIsSelected = !isSettingsActive && selectedAgentId === worker.agentId
-
-                    return (
-                      <li key={worker.agentId}>
-                        <AgentRow
-                          agent={worker}
-                          liveStatus={workerLiveStatus}
-                          isSelected={workerIsSelected}
-                          onSelect={() => handleSelectAgent(worker.agentId)}
-                          onDelete={() => onDeleteAgent(worker.agentId)}
-                          nameClassName="font-normal"
-                          className="py-1.5 pl-7 pr-1.5"
-                        />
-                      </li>
-                    )
-                  })}
-                </ul>
-              </li>
-            ) : null}
+            {treeRows.map((treeRow) => (
+              <ProfileGroup
+                key={treeRow.profile.profileId}
+                treeRow={treeRow}
+                statuses={statuses}
+                selectedAgentId={selectedAgentId}
+                isSettingsActive={isSettingsActive}
+                isCollapsed={collapsedProfileIds.has(treeRow.profile.profileId)}
+                collapsedSessionIds={expandedSessionIds}
+                onToggleProfileCollapsed={() => toggleProfileCollapsed(treeRow.profile.profileId)}
+                onToggleSessionCollapsed={toggleSessionCollapsed}
+                onSelect={handleSelectAgent}
+                onDeleteAgent={onDeleteAgent}
+                onDeleteManager={onDeleteManager}
+                onOpenSettings={handleOpenSettings}
+                onCreateSession={onCreateSession}
+                onStopSession={onStopSession}
+                onResumeSession={onResumeSession}
+                onDeleteSession={handleRequestDelete}
+                onRequestRenameSession={handleRequestRename}
+                onForkSession={onForkSession}
+                onMergeSessionMemory={onMergeSessionMemory}
+              />
+            ))}
           </ul>
         )}
       </div>
@@ -479,8 +956,6 @@ export function AgentSidebar({
             <Settings aria-hidden="true" className="size-4" />
             <span>Settings</span>
           </button>
-
-
         </div>
       </div>
     </aside>
@@ -500,7 +975,6 @@ export function AgentSidebar({
           isMobileOpen ? 'pointer-events-auto' : 'pointer-events-none',
         )}
       >
-        {/* Backdrop */}
         <div
           className={cn(
             'absolute inset-0 bg-black/50 transition-opacity duration-200',
@@ -509,7 +983,6 @@ export function AgentSidebar({
           onClick={onMobileClose}
           aria-hidden="true"
         />
-        {/* Sidebar panel */}
         <div
           className={cn(
             'relative z-10 h-full w-[80vw] max-w-[20rem] transition-transform duration-200 ease-out',
@@ -519,6 +992,26 @@ export function AgentSidebar({
           {sidebarContent}
         </div>
       </div>
+
+      {/* Rename dialog */}
+      {renameTarget ? (
+        <RenameSessionDialog
+          agentId={renameTarget.agentId}
+          currentLabel={renameTarget.label}
+          onConfirm={handleConfirmRename}
+          onClose={() => setRenameTarget(null)}
+        />
+      ) : null}
+
+      {/* Delete session confirmation dialog */}
+      {deleteTarget ? (
+        <DeleteSessionDialog
+          agentId={deleteTarget.agentId}
+          sessionLabel={deleteTarget.label}
+          onConfirm={handleConfirmDelete}
+          onClose={() => setDeleteTarget(null)}
+        />
+      ) : null}
     </>
   )
 }
