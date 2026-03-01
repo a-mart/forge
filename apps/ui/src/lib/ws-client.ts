@@ -781,10 +781,14 @@ export class ManagerWsClient {
       }),
     )
 
-    const fallbackTarget = chooseFallbackAgentId(
-      agents,
-      this.state.targetAgentId ?? this.state.subscribedAgentId ?? this.desiredAgentId ?? undefined,
-    )
+    // Keep the current target stable if the agent still exists in the snapshot
+    // (even if terminated — user may be viewing its conversation history).
+    // Only fall back when the agent has been fully removed from the snapshot.
+    const currentTarget = this.state.targetAgentId ?? this.state.subscribedAgentId ?? this.desiredAgentId ?? undefined
+    const currentTargetStillExists = currentTarget && liveAgentIds.has(currentTarget)
+    const fallbackTarget = currentTargetStillExists
+      ? currentTarget
+      : chooseFallbackAgentId(agents, currentTarget)
     const targetChanged = fallbackTarget !== this.state.targetAgentId
     const nextSubscribedAgentId =
       this.state.subscribedAgentId && liveAgentIds.has(this.state.subscribedAgentId)

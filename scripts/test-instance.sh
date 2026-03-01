@@ -177,7 +177,7 @@ fi
 log "Starting UI preview on ${HOST}:${UI_PORT} ..."
 (
   cd "${REPO_ROOT}"
-  npx --prefix apps/ui vite preview --port "${UI_PORT}" --strictPort --host "${HOST}"
+  cd apps/ui && npx vite preview --port "${UI_PORT}" --strictPort --host "${HOST}"
 ) &
 UI_PID="$!"
 
