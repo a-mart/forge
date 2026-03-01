@@ -178,8 +178,8 @@ export class AgentRuntime implements SwarmAgentRuntime {
     return matches;
   }
 
-  appendCustomEntry(customType: string, data?: unknown): void {
-    this.session.sessionManager.appendCustomEntry(customType, data);
+  appendCustomEntry(customType: string, data?: unknown): string {
+    return this.session.sessionManager.appendCustomEntry(customType, data);
   }
 
   private dispatchPrompt(message: RuntimeUserMessage): void {

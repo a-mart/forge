@@ -1,0 +1,181 @@
+import { mkdtemp } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { describe, expect, it } from 'vitest'
+import { SessionManager } from '@mariozechner/pi-coding-agent'
+import { ConversationProjector } from '../swarm/conversation-projector.js'
+import type { SwarmAgentRuntime } from '../swarm/runtime-types.js'
+import type { AgentDescriptor, ConversationEntryEvent } from '../swarm/types.js'
+
+const FIXED_NOW = '2026-01-01T00:00:00.000Z'
+
+type SessionEntryWithId = {
+  id: string
+  type: string
+  parentId: string | null
+  customType?: string
+  data?: unknown
+}
+
+function makeDescriptor(sessionFile: string, cwd: string): AgentDescriptor {
+  return {
+    agentId: 'manager',
+    displayName: 'Manager',
+    role: 'manager',
+    managerId: 'manager',
+    status: 'idle',
+    createdAt: FIXED_NOW,
+    updatedAt: FIXED_NOW,
+    cwd,
+    model: {
+      provider: 'openai-codex',
+      modelId: 'gpt-5.3-codex',
+      thinkingLevel: 'medium',
+    },
+    sessionFile,
+  }
+}
+
+function makeProjector(options: {
+  descriptor: AgentDescriptor
+  runtimes?: Map<string, SwarmAgentRuntime>
+  conversationEntriesByAgentId?: Map<string, ConversationEntryEvent[]>
+}): ConversationProjector {
+  return new ConversationProjector({
+    descriptors: new Map([[options.descriptor.agentId, options.descriptor]]),
+    runtimes: options.runtimes ?? new Map(),
+    conversationEntriesByAgentId: options.conversationEntriesByAgentId ?? new Map(),
+    now: () => FIXED_NOW,
+    emitServerEvent: () => {},
+    logDebug: () => {},
+  })
+}
+
+function makeRuntimeForSession(descriptor: AgentDescriptor): SwarmAgentRuntime {
+  const sessionManager = SessionManager.open(descriptor.sessionFile)
+
+  return {
+    descriptor,
+    getStatus: () => descriptor.status,
+    getPendingCount: () => 0,
+    getContextUsage: () => undefined,
+    sendMessage: async (_input, _requestedMode = 'auto') => ({
+      targetAgentId: descriptor.agentId,
+      deliveryId: 'runtime-delivery',
+      acceptedMode: 'prompt',
+    }),
+    compact: async () => ({ status: 'ok' }),
+    stopInFlight: async () => {},
+    terminate: async () => {},
+    getCustomEntries: (customType: string) => {
+      const entries = sessionManager.getEntries()
+      return entries
+        .filter((entry) => entry.type === 'custom' && entry.customType === customType)
+        .map((entry) => (entry.type === 'custom' ? entry.data : undefined))
+        .filter((entry) => entry !== undefined)
+    },
+    appendCustomEntry: (customType: string, data?: unknown) => sessionManager.appendCustomEntry(customType, data),
+  }
+}
+
+function findConversationCustomEntry(entries: SessionEntryWithId[], text: string): SessionEntryWithId | undefined {
+  return entries.find(
+    (entry) =>
+      entry.type === 'custom' &&
+      entry.customType === 'swarm_conversation_entry' &&
+      typeof entry.data === 'object' &&
+      entry.data !== null &&
+      'type' in entry.data &&
+      'text' in entry.data &&
+      (entry.data as { type?: unknown }).type === 'conversation_message' &&
+      (entry.data as { text?: unknown }).text === text,
+  )
+}
+
+describe('ConversationProjector session tree continuity', () => {
+  it('chains direct-append conversation entries to the previous persisted entry after history preload', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-projector-'))
+    const sessionFile = join(root, 'manager.jsonl')
+    const descriptor = makeDescriptor(sessionFile, root)
+
+    const seededSession = SessionManager.open(sessionFile)
+    const lastPreRestartEntryId = seededSession.appendMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'persisted before restart' }],
+    } as any)
+
+    const projector = makeProjector({ descriptor })
+    projector.loadConversationHistoriesFromStore()
+
+    projector.emitConversationMessage({
+      type: 'conversation_message',
+      agentId: descriptor.agentId,
+      role: 'system',
+      text: 'appended before runtime restore',
+      timestamp: FIXED_NOW,
+      source: 'system',
+    })
+
+    const reopened = SessionManager.open(sessionFile)
+    const entries = reopened.getEntries() as SessionEntryWithId[]
+    const fallbackEntry = findConversationCustomEntry(entries, 'appended before runtime restore')
+
+    expect(fallbackEntry).toBeDefined()
+    expect(fallbackEntry?.parentId).toBe(lastPreRestartEntryId)
+
+    reopened.appendModelChange('openai-codex', 'gpt-5.3-codex')
+    const branchIds = reopened.getBranch().map((entry) => entry.id)
+
+    expect(branchIds).toContain(lastPreRestartEntryId)
+  })
+
+  it('updates the cached leaf when runtime appendCustomEntry is used so fallback appends stay connected', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-projector-runtime-'))
+    const sessionFile = join(root, 'manager.jsonl')
+    const descriptor = makeDescriptor(sessionFile, root)
+
+    const seededSession = SessionManager.open(sessionFile)
+    const firstEntryId = seededSession.appendMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'seed entry' }],
+    } as any)
+
+    const runtime = makeRuntimeForSession(descriptor)
+    const runtimes = new Map<string, SwarmAgentRuntime>([[descriptor.agentId, runtime]])
+    const projector = makeProjector({ descriptor, runtimes })
+
+    projector.emitConversationMessage({
+      type: 'conversation_message',
+      agentId: descriptor.agentId,
+      role: 'assistant',
+      text: 'runtime persisted entry',
+      timestamp: FIXED_NOW,
+      source: 'system',
+    })
+
+    const afterRuntimeAppend = SessionManager.open(sessionFile)
+    const afterRuntimeEntries = afterRuntimeAppend.getEntries() as SessionEntryWithId[]
+    const runtimeEntry = findConversationCustomEntry(afterRuntimeEntries, 'runtime persisted entry')
+
+    expect(runtimeEntry).toBeDefined()
+    expect(runtimeEntry?.parentId).toBe(firstEntryId)
+
+    runtimes.delete(descriptor.agentId)
+
+    projector.emitConversationMessage({
+      type: 'conversation_message',
+      agentId: descriptor.agentId,
+      role: 'system',
+      text: 'fallback persisted entry',
+      timestamp: FIXED_NOW,
+      source: 'system',
+    })
+
+    const afterFallbackAppend = SessionManager.open(sessionFile)
+    const afterFallbackEntries = afterFallbackAppend.getEntries() as SessionEntryWithId[]
+    const fallbackEntry = findConversationCustomEntry(afterFallbackEntries, 'fallback persisted entry')
+
+    expect(fallbackEntry).toBeDefined()
+    expect(fallbackEntry?.parentId).toBe(runtimeEntry?.id)
+  })
+})

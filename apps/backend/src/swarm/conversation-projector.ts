@@ -46,6 +46,8 @@ interface ConversationProjectorDependencies {
 }
 
 export class ConversationProjector {
+  private readonly lastSessionEntryIdBySessionFile = new Map<string, string>();
+
   constructor(private readonly deps: ConversationProjectorDependencies) {}
 
   getConversationHistory(agentId: string): ConversationEntryEvent[] {
@@ -70,6 +72,11 @@ export class ConversationProjector {
 
   deleteConversationHistory(agentId: string): void {
     this.deps.conversationEntriesByAgentId.delete(agentId);
+
+    const descriptor = this.deps.descriptors.get(agentId);
+    if (descriptor) {
+      this.lastSessionEntryIdBySessionFile.delete(descriptor.sessionFile);
+    }
   }
 
   emitConversationMessage(event: ConversationMessageEvent): void {
@@ -106,6 +113,7 @@ export class ConversationProjector {
 
   loadConversationHistoriesFromStore(): void {
     this.deps.conversationEntriesByAgentId.clear();
+    this.lastSessionEntryIdBySessionFile.clear();
 
     for (const descriptor of this.deps.descriptors.values()) {
       if (!this.shouldPreloadHistoryForDescriptor(descriptor)) {
@@ -247,14 +255,18 @@ export class ConversationProjector {
       return;
     }
 
+    const descriptor = this.deps.descriptors.get(event.agentId);
     const runtime = this.deps.runtimes.get(event.agentId);
+
     try {
       if (runtime) {
-        runtime.appendCustomEntry(CONVERSATION_ENTRY_TYPE, event);
+        const entryId = runtime.appendCustomEntry(CONVERSATION_ENTRY_TYPE, event);
+        if (descriptor) {
+          this.trackLastSessionEntryId(descriptor.sessionFile, entryId);
+        }
         return;
       }
 
-      const descriptor = this.deps.descriptors.get(event.agentId);
       if (!descriptor) {
         return;
       }
@@ -276,18 +288,23 @@ export class ConversationProjector {
     // entry keeps this path O(1) with no full-file reads.
     this.ensureSessionFileHeader(descriptor);
 
+    const parentId = this.lastSessionEntryIdBySessionFile.get(descriptor.sessionFile) ?? null;
+    const entryId = randomUUID().slice(0, 8);
+
     appendFileSync(
       descriptor.sessionFile,
       `${JSON.stringify({
         type: "custom",
         customType: CONVERSATION_ENTRY_TYPE,
         data: event,
-        id: randomUUID().slice(0, 8),
-        parentId: null,
+        id: entryId,
+        parentId,
         timestamp: this.deps.now()
       })}\n`,
       "utf8"
     );
+
+    this.trackLastSessionEntryId(descriptor.sessionFile, entryId);
   }
 
   private ensureSessionFileHeader(descriptor: AgentDescriptor): void {
@@ -305,12 +322,14 @@ export class ConversationProjector {
 
     if (isMissingOrEmptySessionFile(descriptor.sessionFile)) {
       appendFileSync(descriptor.sessionFile, headerLine, "utf8");
+      this.lastSessionEntryIdBySessionFile.delete(descriptor.sessionFile);
       return;
     }
 
     // Existing files with invalid headers cannot be reopened by SessionManager.
     // Replace with a fresh header so subsequent appends stay recoverable.
     writeFileSync(descriptor.sessionFile, headerLine, "utf8");
+    this.lastSessionEntryIdBySessionFile.delete(descriptor.sessionFile);
   }
 
   private shouldPreloadHistoryForDescriptor(descriptor: AgentDescriptor): boolean {
@@ -319,6 +338,7 @@ export class ConversationProjector {
 
   private loadConversationHistoryForDescriptor(descriptor: AgentDescriptor): ConversationEntryEvent[] {
     const entriesForAgent: ConversationEntryEvent[] = [];
+    let lastSessionEntryId: string | undefined;
 
     try {
       const sessionManager = openSessionManagerWithSizeGuard(descriptor.sessionFile, {
@@ -332,6 +352,7 @@ export class ConversationProjector {
         });
       } else {
         const entries = sessionManager.getEntries();
+        lastSessionEntryId = extractSessionEntryId(entries.at(-1));
 
         for (const entry of entries) {
           if (entry.type !== "custom") {
@@ -361,8 +382,18 @@ export class ConversationProjector {
       });
     }
 
+    this.trackLastSessionEntryId(descriptor.sessionFile, lastSessionEntryId);
     this.deps.conversationEntriesByAgentId.set(descriptor.agentId, entriesForAgent);
     return entriesForAgent;
+  }
+
+  private trackLastSessionEntryId(sessionFile: string, entryId: string | undefined): void {
+    if (typeof entryId !== "string" || entryId.trim().length === 0) {
+      this.lastSessionEntryIdBySessionFile.delete(sessionFile);
+      return;
+    }
+
+    this.lastSessionEntryIdBySessionFile.set(sessionFile, entryId);
   }
 
   private captureManagerRuntimeErrorConversationEvent(agentId: string, event: RuntimeSessionEvent): void {
@@ -467,6 +498,19 @@ function safeJson(value: unknown): string {
   } catch {
     return String(value);
   }
+}
+
+function extractSessionEntryId(entry: unknown): string | undefined {
+  if (typeof entry !== "object" || entry === null || !("id" in entry)) {
+    return undefined;
+  }
+
+  const entryId = (entry as { id?: unknown }).id;
+  if (typeof entryId !== "string" || entryId.trim().length === 0) {
+    return undefined;
+  }
+
+  return entryId;
 }
 
 function buildManagerErrorConversationText(options: {

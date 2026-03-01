@@ -101,5 +101,5 @@ export interface SwarmAgentRuntime {
   terminate(options?: { abort?: boolean }): Promise<void>;
 
   getCustomEntries(customType: string): unknown[];
-  appendCustomEntry(customType: string, data?: unknown): void;
+  appendCustomEntry(customType: string, data?: unknown): string;
 }

@@ -82,8 +82,8 @@ class FakeRuntime {
       .filter((entry) => entry !== undefined)
   }
 
-  appendCustomEntry(customType: string, data?: unknown): void {
-    this.sessionManager.appendCustomEntry(customType, data)
+  appendCustomEntry(customType: string, data?: unknown): string {
+    return this.sessionManager.appendCustomEntry(customType, data)
   }
 }
 

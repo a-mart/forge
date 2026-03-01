@@ -302,8 +302,8 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
     return matches;
   }
 
-  appendCustomEntry(customType: string, data?: unknown): void {
-    this.sessionManager.appendCustomEntry(customType, data);
+  appendCustomEntry(customType: string, data?: unknown): string {
+    return this.sessionManager.appendCustomEntry(customType, data);
   }
 
   private async initialize(): Promise<void> {
