@@ -4,10 +4,10 @@ import {
   DefaultResourceLoader,
   createAgentSession,
   ModelRegistry,
-  SessionManager,
   type AgentSession
 } from "@mariozechner/pi-coding-agent";
 import { AgentRuntime } from "./agent-runtime.js";
+import { openSessionManagerWithSizeGuard } from "./session-file-guard.js";
 import { CodexAgentRuntime } from "./codex-agent-runtime.js";
 import type { RuntimeErrorEvent, RuntimeSessionEvent, SwarmAgentRuntime } from "./runtime-types.js";
 import { buildSwarmTools, type SwarmToolHost } from "./swarm-tools.js";
@@ -125,6 +125,14 @@ export class RuntimeFactory {
       );
     }
 
+    const sessionManager = openSessionManagerWithSizeGuard(descriptor.sessionFile, {
+      context: `runtime:create:pi:${descriptor.agentId}`,
+      rotateOversizedFile: true
+    });
+    if (!sessionManager) {
+      throw new Error(`Unable to open session file for agent ${descriptor.agentId}: ${descriptor.sessionFile}`);
+    }
+
     const { session } = await createAgentSession({
       cwd: descriptor.cwd,
       agentDir: runtimeAgentDir,
@@ -132,7 +140,7 @@ export class RuntimeFactory {
       modelRegistry,
       model,
       thinkingLevel: thinkingLevel as any,
-      sessionManager: SessionManager.open(descriptor.sessionFile),
+      sessionManager,
       resourceLoader,
       customTools: swarmTools
     });

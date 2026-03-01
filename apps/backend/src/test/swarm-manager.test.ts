@@ -866,6 +866,65 @@ describe('SwarmManager', () => {
     expect(managerRuntime?.sendCalls.at(-1)?.message).toBe('[sourceContext] {"channel":"web"}\n\ninterrupt current plan')
   })
 
+  it('streams tool_execution_update events live but only persists terminal tool call events', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    seedManagerDescriptorForRuntimeEventTests(manager, config)
+
+    const streamedKinds: string[] = []
+    manager.on('agent_tool_call', (event: any) => {
+      if (event.type === 'agent_tool_call') {
+        streamedKinds.push(event.kind)
+      }
+    })
+
+    await (manager as any).handleRuntimeSessionEvent('manager', {
+      type: 'tool_execution_update',
+      toolName: 'bash',
+      toolCallId: 'tool-call-1',
+      partialResult: {
+        chunk: 'progress',
+      },
+    })
+
+    await (manager as any).handleRuntimeSessionEvent('manager', {
+      type: 'tool_execution_end',
+      toolName: 'bash',
+      toolCallId: 'tool-call-1',
+      result: {
+        ok: true,
+      },
+      isError: false,
+    })
+
+    expect(streamedKinds).toContain('tool_execution_update')
+    expect(streamedKinds).toContain('tool_execution_end')
+
+    const inMemoryHistory = manager.getConversationHistory('manager')
+    expect(
+      inMemoryHistory.some(
+        (entry) => entry.type === 'agent_tool_call' && entry.kind === 'tool_execution_update',
+      ),
+    ).toBe(true)
+
+    const sessionManager = SessionManager.open(join(config.paths.sessionsDir, 'manager.jsonl'))
+    const persistedConversationEntries = sessionManager
+      .getEntries()
+      .filter((entry: any) => entry.type === 'custom' && entry.customType === 'swarm_conversation_entry')
+      .map((entry: any) => entry.data)
+
+    expect(
+      persistedConversationEntries.some(
+        (entry: any) => entry?.type === 'agent_tool_call' && entry.kind === 'tool_execution_update',
+      ),
+    ).toBe(false)
+    expect(
+      persistedConversationEntries.some(
+        (entry: any) => entry?.type === 'agent_tool_call' && entry.kind === 'tool_execution_end',
+      ),
+    ).toBe(true)
+  })
+
   it('surfaces manager assistant overflow turns as system conversation messages', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
