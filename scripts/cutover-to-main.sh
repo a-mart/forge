@@ -513,7 +513,7 @@ preflight_checks() {
 
   local main_branch
   main_branch="$(git -C "${MAIN_REPO}" rev-parse --abbrev-ref HEAD)"
-  if [ "${main_branch}" != "${MAIN_BRANCH}"; then
+  if [ "${main_branch}" != "${MAIN_BRANCH}" ]; then
     fail "Main repo must be on ${MAIN_BRANCH}. Current branch: ${main_branch}"
   fi
 
