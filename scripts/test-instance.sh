@@ -177,7 +177,7 @@ fi
 log "Starting UI preview on ${HOST}:${UI_PORT} ..."
 (
   cd "${REPO_ROOT}"
-  pnpm --filter @middleman/ui preview -- --port "${UI_PORT}" --strictPort --host "${HOST}"
+  npx --prefix apps/ui vite preview --port "${UI_PORT}" --strictPort --host "${HOST}"
 ) &
 UI_PID="$!"
 
