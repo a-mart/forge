@@ -787,7 +787,18 @@ export function AgentSidebar({
   const treeRows = buildProfileTreeRows(agents, profiles)
 
   const [collapsedProfileIds, setCollapsedProfileIds] = useState<Set<string>>(() => new Set())
-  const [collapsedSessionIds, setCollapsedSessionIds] = useState<Set<string>>(() => new Set())
+  // Auto-collapse sessions with many workers to keep the sidebar manageable
+  const [collapsedSessionIds, setCollapsedSessionIds] = useState<Set<string>>(() => {
+    const autoCollapsed = new Set<string>()
+    for (const row of treeRows) {
+      for (const session of row.sessions) {
+        if (session.workers.length > 5) {
+          autoCollapsed.add(session.sessionAgent.agentId)
+        }
+      }
+    }
+    return autoCollapsed
+  })
   const [renameTarget, setRenameTarget] = useState<{ agentId: string; label: string } | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<{ agentId: string; label: string } | null>(null)
 
