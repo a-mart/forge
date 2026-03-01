@@ -237,6 +237,14 @@ export function IndexPage() {
   }, [activeAgentId])
 
   useEffect(() => {
+    if (!state.lastSuccess) return
+    const timer = setTimeout(() => {
+      setState((prev) => ({ ...prev, lastSuccess: null }))
+    }, 4000)
+    return () => clearTimeout(timer)
+  }, [state.lastSuccess, setState])
+
+  useEffect(() => {
     if (routeState.view !== 'chat') {
       return
     }
@@ -432,10 +440,16 @@ export function IndexPage() {
     void (async () => {
       try {
         await client.mergeSessionMemory(agentId)
+        setState((prev) => ({
+          ...prev,
+          lastSuccess: `Session memory merged successfully.`,
+          lastError: null,
+        }))
       } catch (error) {
         setState((prev) => ({
           ...prev,
           lastError: `Failed to merge session memory: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          lastSuccess: null,
         }))
       }
     })()
@@ -565,6 +579,12 @@ export function IndexPage() {
                 {state.lastError ? (
                   <div className="border-b border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive">
                     {state.lastError}
+                  </div>
+                ) : null}
+
+                {state.lastSuccess ? (
+                  <div className="border-b border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-400">
+                    {state.lastSuccess}
                   </div>
                 ) : null}
 

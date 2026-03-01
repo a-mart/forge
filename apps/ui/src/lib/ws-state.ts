@@ -27,6 +27,7 @@ export interface ManagerWsState {
   profiles: ManagerProfile[]
   statuses: Record<string, { status: AgentStatus; pendingCount: number; contextUsage?: AgentContextUsage }>
   lastError: string | null
+  lastSuccess: string | null
   slackStatus: SlackStatusEvent | null
   telegramStatus: TelegramStatusEvent | null
 }
@@ -42,6 +43,7 @@ export function createInitialManagerWsState(targetAgentId: string | null): Manag
     profiles: [],
     statuses: {},
     lastError: null,
+    lastSuccess: null,
     slackStatus: null,
     telegramStatus: null,
   }
