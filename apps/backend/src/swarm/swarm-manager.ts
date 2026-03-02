@@ -77,6 +77,7 @@ import type {
   RequestedDeliveryMode,
   SendMessageReceipt,
   SettingsAuthProvider,
+  SessionLifecycleEvent,
   SkillEnvRequirement,
   SpawnAgentInput,
   SwarmConfig,
@@ -251,6 +252,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly secretsEnvService: SecretsEnvService;
 
   private archetypePromptRegistry: ArchetypePromptRegistry = createEmptyArchetypePromptRegistry();
+  private integrationContextProvider: ((profileId: string) => string) | undefined;
 
   constructor(config: SwarmConfig, options?: { now?: () => string }) {
     super();
@@ -410,6 +412,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     await this.saveStore();
+    this.emitSessionLifecycle({
+      action: "created",
+      sessionAgentId: sessionDescriptor.agentId,
+      profileId: prepared.profile.profileId,
+      label: sessionDescriptor.sessionLabel
+    });
     this.emitAgentsSnapshot();
     this.emitProfilesSnapshot();
 
@@ -488,6 +496,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     await rm(this.getAgentMemoryPath(agentId), { force: true });
 
     await this.saveStore();
+    this.emitSessionLifecycle({
+      action: "deleted",
+      sessionAgentId: descriptor.agentId,
+      profileId: descriptor.profileId
+    });
     this.emitAgentsSnapshot();
     this.emitProfilesSnapshot();
 
@@ -506,6 +519,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.descriptors.set(agentId, descriptor);
 
     await this.saveStore();
+    this.emitSessionLifecycle({
+      action: "renamed",
+      sessionAgentId: descriptor.agentId,
+      profileId: descriptor.profileId,
+      label: normalizedLabel
+    });
     this.emitAgentsSnapshot();
     this.emitProfilesSnapshot();
   }
@@ -623,6 +642,13 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       throw error;
     }
 
+    this.emitSessionLifecycle({
+      action: "forked",
+      sessionAgentId: forkedDescriptor.agentId,
+      sourceAgentId: sourceDescriptor.agentId,
+      profileId: profile.profileId,
+      label: forkedDescriptor.sessionLabel
+    });
     this.emitAgentsSnapshot();
     this.emitProfilesSnapshot();
 
@@ -1740,6 +1766,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return this.config;
   }
 
+  setIntegrationContextProvider(provider?: (profileId: string) => string): void {
+    this.integrationContextProvider = provider;
+  }
+
   async listSettingsEnv(): Promise<SkillEnvRequirement[]> {
     return this.secretsEnvService.listSettingsEnv();
   }
@@ -2132,7 +2162,25 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       const managerArchetypeId = descriptor.archetypeId
         ? normalizeArchetypeId(descriptor.archetypeId) ?? MANAGER_ARCHETYPE_ID
         : MANAGER_ARCHETYPE_ID;
-      return this.resolveRequiredArchetypePrompt(managerArchetypeId);
+      let prompt = this.resolveRequiredArchetypePrompt(managerArchetypeId);
+
+      const profileId = descriptor.profileId ?? descriptor.agentId;
+      if (this.integrationContextProvider) {
+        try {
+          const integrationContext = this.integrationContextProvider(profileId).trim();
+          if (integrationContext) {
+            prompt = `${prompt}\n\n${integrationContext}`;
+          }
+        } catch (error) {
+          this.logDebug("manager:integration_context:error", {
+            agentId: descriptor.agentId,
+            profileId,
+            message: error instanceof Error ? error.message : String(error)
+          });
+        }
+      }
+
+      return prompt;
     }
 
     if (descriptor.archetypeId) {
@@ -2577,6 +2625,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         profiles: this.listProfiles()
       } satisfies ServerEvent
     );
+  }
+
+  private emitSessionLifecycle(event: SessionLifecycleEvent): void {
+    this.emit("session_lifecycle", event);
   }
 
   private async handleRuntimeAgentEnd(_agentId: string): Promise<void> {

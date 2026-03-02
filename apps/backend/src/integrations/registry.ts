@@ -4,6 +4,7 @@ import type { Dirent } from "node:fs";
 import { resolve } from "node:path";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import { normalizeManagerId } from "../utils/normalize.js";
+import type { IntegrationContextInfo } from "./integration-context.js";
 import {
   SHARED_INTEGRATION_MANAGER_ID,
   isSharedIntegrationManagerId
@@ -174,6 +175,34 @@ export class IntegrationRegistryService extends EventEmitter {
       enabled: false,
       updatedAt: new Date().toISOString(),
       message: "Telegram integration disabled"
+    };
+  }
+
+  getIntegrationContext(managerId: string): IntegrationContextInfo {
+    const normalizedManagerId = normalizeManagerId(managerId);
+
+    const telegramProfile = this.telegramProfiles.get(normalizedManagerId);
+    const slackProfile = this.slackProfiles.get(normalizedManagerId);
+
+    const telegramKnownChatIds = telegramProfile?.getKnownChatIds() ?? [];
+    const slackKnownChannelIds = slackProfile?.getKnownChannelIds() ?? [];
+
+    return {
+      telegram:
+        telegramProfile && (telegramProfile.isEnabled() || telegramKnownChatIds.length > 0)
+          ? {
+              connected: telegramProfile.isConnected(),
+              botUsername: telegramProfile.getBotUsername(),
+              knownChatIds: telegramKnownChatIds
+            }
+          : undefined,
+      slack:
+        slackProfile && (slackProfile.isEnabled() || slackKnownChannelIds.length > 0)
+          ? {
+              connected: slackProfile.isConnected(),
+              knownChannelIds: slackKnownChannelIds
+            }
+          : undefined
     };
   }
 

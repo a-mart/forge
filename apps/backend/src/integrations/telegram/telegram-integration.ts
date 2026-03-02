@@ -1,4 +1,5 @@
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
+import type { SessionLifecycleEvent } from "../../swarm/types.js";
 import { normalizeManagerId } from "../../utils/normalize.js";
 import {
   BaseIntegrationService,
@@ -15,6 +16,7 @@ import { TelegramBotApiClient } from "./telegram-client.js";
 import { TelegramDeliveryBridge } from "./telegram-delivery.js";
 import { TelegramPollingBridge } from "./telegram-polling.js";
 import { TelegramInboundRouter } from "./telegram-router.js";
+import { TelegramTopicManager } from "./telegram-topic-manager.js";
 import {
   TelegramStatusTracker,
   type TelegramStatusEvent,
@@ -35,11 +37,24 @@ export class TelegramIntegrationService extends BaseIntegrationService<
   private telegramClient: TelegramBotApiClient | null = null;
   private inboundRouter: TelegramInboundRouter | null = null;
   private pollingBridge: TelegramPollingBridge | null = null;
+  private readonly topicManager: TelegramTopicManager;
   private readonly deliveryBridge: TelegramDeliveryBridge;
 
   private botId: string | undefined;
   private botUsername: string | undefined;
   private nextUpdateOffset: number | undefined;
+
+  private readonly onSessionLifecycle = (event: SessionLifecycleEvent): void => {
+    if (event.profileId !== this.managerId) {
+      return;
+    }
+
+    if (!this.config.enabled || !this.telegramClient) {
+      return;
+    }
+
+    void this.handleSessionLifecycle(event);
+  };
 
   constructor(options: { swarmManager: SwarmManager; dataDir: string; managerId: string }) {
     const managerId = normalizeManagerId(options.managerId);
@@ -65,12 +80,23 @@ export class TelegramIntegrationService extends BaseIntegrationService<
       maskConfig: maskTelegramConfig
     });
 
+    this.topicManager = new TelegramTopicManager({
+      managerId: this.managerId,
+      dataDir: this.dataDir,
+      getTelegramClient: () => this.telegramClient,
+      getSwarmManager: () => this.swarmManager,
+      onError: (message, error) => {
+        console.debug(`[telegram] ${message}: ${toIntegrationErrorMessage(error)}`);
+      }
+    });
+
     this.deliveryBridge = new TelegramDeliveryBridge({
       swarmManager: this.swarmManager,
       managerId: this.managerId,
       getConfig: () => this.config,
       getProfileId: () => this.config.profileId,
       getTelegramClient: () => this.telegramClient,
+      topicManager: this.topicManager,
       onError: (message, error) => {
         this.updateStatus({
           managerId: this.managerId,
@@ -104,6 +130,38 @@ export class TelegramIntegrationService extends BaseIntegrationService<
     };
   }
 
+  getTopicManager(): TelegramTopicManager {
+    return this.topicManager;
+  }
+
+  getKnownChatIds(): string[] {
+    const knownChatIds = new Set<string>();
+
+    for (const mapping of this.topicManager.getStore().mappings) {
+      const normalizedChatId = normalizeOptionalString(mapping.chatId);
+      if (normalizedChatId) {
+        knownChatIds.add(normalizedChatId);
+      }
+    }
+
+    for (const allowedUserId of this.config.allowedUserIds) {
+      const normalizedUserId = normalizeOptionalString(allowedUserId);
+      if (normalizedUserId) {
+        knownChatIds.add(normalizedUserId);
+      }
+    }
+
+    return Array.from(knownChatIds).sort((left, right) => left.localeCompare(right));
+  }
+
+  getBotUsername(): string | undefined {
+    return this.botUsername;
+  }
+
+  isConnected(): boolean {
+    return this.config.enabled && this.telegramClient !== null;
+  }
+
   protected async applyConfig(): Promise<void> {
     await this.stopRuntime();
 
@@ -112,6 +170,8 @@ export class TelegramIntegrationService extends BaseIntegrationService<
     this.botId = undefined;
     this.botUsername = undefined;
     this.nextUpdateOffset = undefined;
+
+    await this.topicManager.initialize();
 
     if (!this.config.enabled) {
       this.updateStatus({
@@ -154,6 +214,7 @@ export class TelegramIntegrationService extends BaseIntegrationService<
         integrationProfileId: this.config.profileId,
         getConfig: () => this.config,
         getBotId: () => this.botId,
+        topicManager: this.topicManager,
         onError: (message, error) => {
           this.updateStatus({
             managerId: this.managerId,
@@ -192,6 +253,7 @@ export class TelegramIntegrationService extends BaseIntegrationService<
 
       this.pollingBridge = pollingBridge;
       await pollingBridge.start();
+      this.swarmManager.on("session_lifecycle", this.onSessionLifecycle);
 
       this.updateStatus({
         managerId: this.managerId,
@@ -217,6 +279,7 @@ export class TelegramIntegrationService extends BaseIntegrationService<
   }
 
   protected async stopRuntime(): Promise<void> {
+    this.swarmManager.off("session_lifecycle", this.onSessionLifecycle);
     await this.stopPolling();
   }
 
@@ -252,6 +315,39 @@ export class TelegramIntegrationService extends BaseIntegrationService<
     };
   }
 
+  private async handleSessionLifecycle(event: SessionLifecycleEvent): Promise<void> {
+    try {
+      switch (event.action) {
+        case "renamed":
+          if (event.label) {
+            await this.topicManager.renameTopicForSession(event.sessionAgentId, event.label);
+          }
+          break;
+
+        case "deleted":
+          await this.topicManager.closeTopicForSession(event.sessionAgentId);
+          break;
+
+        case "forked":
+          if (event.sourceAgentId && event.label) {
+            await this.topicManager.createTopicForFork(
+              event.sourceAgentId,
+              event.sessionAgentId,
+              `🔀 ${event.label}`
+            );
+          }
+          break;
+
+        case "created":
+          break;
+      }
+    } catch (error) {
+      console.debug(
+        `[telegram] Failed to sync topic for session lifecycle action ${event.action}: ${toIntegrationErrorMessage(error)}`
+      );
+    }
+  }
+
   private async stopPolling(): Promise<void> {
     if (!this.pollingBridge) {
       return;
@@ -266,4 +362,13 @@ export class TelegramIntegrationService extends BaseIntegrationService<
       // Ignore polling shutdown errors.
     }
   }
+}
+
+function normalizeOptionalString(value: string | undefined): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }

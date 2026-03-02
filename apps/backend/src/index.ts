@@ -2,6 +2,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { config as loadDotenv } from "dotenv";
 import { createConfig } from "./config.js";
+import { formatIntegrationContext } from "./integrations/integration-context.js";
 import { IntegrationRegistryService } from "./integrations/registry.js";
 import { CronSchedulerService } from "./scheduler/cron-scheduler-service.js";
 import { getScheduleFilePath } from "./scheduler/schedule-storage.js";
@@ -86,6 +87,11 @@ async function main(): Promise<void> {
     defaultManagerId: config.managerId
   });
   await integrationRegistry.start();
+
+  swarmManager.setIntegrationContextProvider((profileId) => {
+    const integrationContext = integrationRegistry.getIntegrationContext(profileId);
+    return formatIntegrationContext(integrationContext);
+  });
 
   const wsServer = new SwarmWebSocketServer({
     swarmManager,

@@ -124,6 +124,23 @@ export class SlackIntegrationService extends BaseIntegrationService<
     return client.listChannels({ includePrivateChannels });
   }
 
+  getKnownChannelIds(): string[] {
+    const knownChannelIds = new Set<string>();
+
+    for (const channelId of this.config.listen.channelIds) {
+      const normalized = normalizeOptionalString(channelId);
+      if (normalized) {
+        knownChannelIds.add(normalized);
+      }
+    }
+
+    return Array.from(knownChannelIds);
+  }
+
+  isConnected(): boolean {
+    return this.getStatus().state === "connected";
+  }
+
   protected async applyConfig(): Promise<void> {
     await this.stopRuntime();
 
@@ -283,4 +300,13 @@ export class SlackIntegrationService extends BaseIntegrationService<
       // Ignore socket shutdown errors.
     }
   }
+}
+
+function normalizeOptionalString(value: string | undefined): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
