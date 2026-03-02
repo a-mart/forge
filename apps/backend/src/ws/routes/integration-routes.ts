@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { isSharedIntegrationManagerId } from "../../integrations/shared-config.js";
 import type { IntegrationRegistryService } from "../../integrations/registry.js";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
 import {
@@ -95,7 +96,7 @@ async function handleSlackIntegrationHttpRequest(
     return;
   }
 
-  if (!isManagerAgent(swarmManager, route.managerId)) {
+  if (!isManagerOrSharedIntegrationTarget(swarmManager, route.managerId)) {
     sendJson(response, 404, { error: `Unknown manager: ${route.managerId}` });
     return;
   }
@@ -173,7 +174,7 @@ async function handleTelegramIntegrationHttpRequest(
     return;
   }
 
-  if (!isManagerAgent(swarmManager, route.managerId)) {
+  if (!isManagerOrSharedIntegrationTarget(swarmManager, route.managerId)) {
     sendJson(response, 404, { error: `Unknown manager: ${route.managerId}` });
     return;
   }
@@ -210,7 +211,14 @@ async function handleTelegramIntegrationHttpRequest(
   sendJson(response, 405, { error: "Method Not Allowed" });
 }
 
-function isManagerAgent(swarmManager: SwarmManager, managerId: string): boolean {
+function isManagerOrSharedIntegrationTarget(
+  swarmManager: SwarmManager,
+  managerId: string
+): boolean {
+  if (isSharedIntegrationManagerId(managerId)) {
+    return true;
+  }
+
   const descriptor = swarmManager.getAgent(managerId);
   return Boolean(descriptor && descriptor.role === "manager");
 }

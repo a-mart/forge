@@ -38,6 +38,8 @@ export const SETTINGS_AUTH_PROVIDER_META: Record<
 
 export const SETTINGS_AUTH_PROVIDER_ORDER: SettingsAuthProviderId[] = ['anthropic', 'openai-codex']
 
+export const SHARED_INTEGRATION_MANAGER_ID = '__shared__'
+
 export const DEFAULT_SETTINGS_AUTH_OAUTH_FLOW_STATE: SettingsAuthOAuthFlowState = {
   status: 'idle',
   codeValue: '',

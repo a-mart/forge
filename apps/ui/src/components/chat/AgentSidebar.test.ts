@@ -159,7 +159,21 @@ describe('AgentSidebar', () => {
 
     // Profile header shows the displayName
     expect(queryByText(sidebar, 'manager-alpha')).toBeTruthy()
-    // Worker visible (sessions with workers are expanded by default via toggle)
+    // Ensure the profile group + session workers are expanded before checking worker visibility.
+    const maybeExpandProfileButton = sidebar.querySelector(
+      'button[aria-label="Expand manager-alpha"]',
+    ) as HTMLButtonElement | null
+    if (maybeExpandProfileButton) {
+      click(maybeExpandProfileButton)
+    }
+
+    const maybeExpandWorkersButton = sidebar.querySelector(
+      'button[aria-label="Expand session workers"]',
+    ) as HTMLButtonElement | null
+    if (maybeExpandWorkersButton) {
+      click(maybeExpandWorkersButton)
+    }
+
     expect(queryByText(sidebar, 'worker-alpha')).toBeTruthy()
 
     // Collapse the profile group

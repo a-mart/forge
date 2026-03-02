@@ -4,6 +4,7 @@ import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { SHARED_INTEGRATION_MANAGER_ID } from '../integrations/shared-config.js'
 import { getScheduleFilePath } from '../scheduler/schedule-storage.js'
 import type { AgentDescriptor, SwarmConfig } from '../swarm/types.js'
 
@@ -528,6 +529,13 @@ describe('SwarmWebSocketServer P0 endpoints', () => {
       const unknownManager = await parseJsonResponse(unknownManagerResponse)
       expect(unknownManager.status).toBe(404)
       expect(unknownManager.json.error).toBe('Unknown manager: ghost')
+
+      const sharedSlackResponse = await fetch(
+        `http://${config.host}:${config.port}/api/managers/${encodeURIComponent(SHARED_INTEGRATION_MANAGER_ID)}/integrations/slack`,
+      )
+      const sharedSlack = await parseJsonResponse(sharedSlackResponse)
+      expect(sharedSlack.status).toBe(200)
+      expect(integrationRegistry.getSlackSnapshot).toHaveBeenCalledWith(SHARED_INTEGRATION_MANAGER_ID)
 
       const slackTestResponse = await fetch(
         `http://${config.host}:${config.port}/api/managers/manager/integrations/slack/test`,

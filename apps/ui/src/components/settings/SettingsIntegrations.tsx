@@ -40,6 +40,7 @@ import {
   updateTelegramSettings,
   disableTelegramSettings,
   testTelegramConnection,
+  SHARED_INTEGRATION_MANAGER_ID,
   toErrorMessage,
 } from './settings-api'
 import type { AgentDescriptor, SlackStatusEvent, TelegramStatusEvent } from '@middleman/protocol'
@@ -245,13 +246,16 @@ export function SettingsIntegrations({
       ),
     [managers],
   )
-  const [selectedIntegrationManagerId, setSelectedIntegrationManagerId] = useState<string>('')
+  const [selectedIntegrationManagerId, setSelectedIntegrationManagerId] = useState<string>(
+    SHARED_INTEGRATION_MANAGER_ID,
+  )
 
   useEffect(() => {
     setSelectedIntegrationManagerId((previous) => {
+      if (previous === SHARED_INTEGRATION_MANAGER_ID) return previous
       const availableIds = managerOptions.map((m) => m.agentId)
       if (availableIds.includes(previous)) return previous
-      return availableIds[0] ?? ''
+      return SHARED_INTEGRATION_MANAGER_ID
     })
   }, [managerOptions])
 
@@ -288,6 +292,8 @@ export function SettingsIntegrations({
       ? telegramStatus
       : telegramStatusFromApi
   const hasSelectedIntegrationManager = selectedIntegrationManagerId.trim().length > 0
+  const isSharedIntegrationSelection =
+    selectedIntegrationManagerId === SHARED_INTEGRATION_MANAGER_ID
 
   // ---- Load functions ----
   const loadSlack = useCallback(async () => {
@@ -427,24 +433,24 @@ export function SettingsIntegrations({
       {/* Manager picker */}
       <SettingsSection
         label="Manager"
-        description="Slack and Telegram settings apply to the selected manager agent."
+        description="Choose the shared integration default or a manager-specific override."
       >
-        <SettingsWithCTA label="Active manager" description="Select which manager handles integrations">
+        <SettingsWithCTA label="Configuration scope" description="Select which integration config to edit">
           <Select
-            value={hasSelectedIntegrationManager ? selectedIntegrationManagerId : undefined}
-            disabled={managerOptions.length === 0}
+            value={selectedIntegrationManagerId}
             onValueChange={(value) => {
               setSelectedIntegrationManagerId(value)
               setSlackError(null); setSlackSuccess(null)
               setTelegramError(null); setTelegramSuccess(null)
             }}
           >
-            <SelectTrigger className="w-full sm:w-56">
-              <SelectValue placeholder="Select manager" />
+            <SelectTrigger className="w-full sm:w-64">
+              <SelectValue placeholder="Select configuration scope" />
             </SelectTrigger>
             <SelectContent>
+              <SelectItem value={SHARED_INTEGRATION_MANAGER_ID}>Shared (all managers)</SelectItem>
               {managerOptions.length === 0 ? (
-                <SelectItem value="__no_manager__" disabled>No managers available</SelectItem>
+                <SelectItem value="__no_manager__" disabled>No manager overrides available</SelectItem>
               ) : (
                 managerOptions.map((m) => (
                   <SelectItem key={m.agentId} value={m.agentId}>{m.agentId}</SelectItem>
@@ -452,9 +458,15 @@ export function SettingsIntegrations({
               )}
             </SelectContent>
           </Select>
-          {!hasSelectedIntegrationManager ? (
-            <p className="text-[11px] text-muted-foreground">Create a manager to configure Slack and Telegram.</p>
-          ) : null}
+          {isSharedIntegrationSelection ? (
+            <p className="text-[11px] text-muted-foreground">
+              Shared settings are used by managers that do not have a custom override.
+            </p>
+          ) : (
+            <p className="text-[11px] text-muted-foreground">
+              This manager override takes priority over the shared integration settings.
+            </p>
+          )}
         </SettingsWithCTA>
       </SettingsSection>
 

@@ -1,10 +1,17 @@
 import { EventEmitter } from 'node:events'
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { getSlackConfigPath } from '../integrations/slack/slack-config.js'
-import { getTelegramConfigPath } from '../integrations/telegram/telegram-config.js'
+import {
+  getSharedSlackConfigPath,
+  getSlackConfigPath,
+} from '../integrations/slack/slack-config.js'
+import {
+  getSharedTelegramConfigPath,
+  getTelegramConfigPath,
+} from '../integrations/telegram/telegram-config.js'
+import { SHARED_INTEGRATION_MANAGER_ID } from '../integrations/shared-config.js'
 
 const mockState = vi.hoisted(() => ({
   slackInstances: [] as any[],
@@ -253,5 +260,53 @@ describe('IntegrationRegistryService', () => {
         state: 'connected',
       }),
     )
+  })
+
+  it('reads and writes shared integration config without creating runtime profiles', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'swarm-registry-test-'))
+
+    const registry = new IntegrationRegistryService({
+      swarmManager: createFakeSwarmManager({
+        configuredManagerId: 'manager',
+      }) as any,
+      dataDir,
+    })
+
+    const slackUpdated = await registry.updateSlackConfig(SHARED_INTEGRATION_MANAGER_ID, {
+      enabled: true,
+      appToken: 'xapp-shared-token',
+      botToken: 'xoxb-shared-token',
+    })
+    const telegramUpdated = await registry.updateTelegramConfig(SHARED_INTEGRATION_MANAGER_ID, {
+      enabled: true,
+      botToken: '123456:shared-token',
+    })
+
+    expect(mockState.slackInstances).toHaveLength(0)
+    expect(mockState.telegramInstances).toHaveLength(0)
+
+    expect(slackUpdated.config.enabled).toBe(true)
+    expect(slackUpdated.status.managerId).toBe(SHARED_INTEGRATION_MANAGER_ID)
+    expect(telegramUpdated.config.enabled).toBe(true)
+    expect(telegramUpdated.status.managerId).toBe(SHARED_INTEGRATION_MANAGER_ID)
+
+    const slackFile = JSON.parse(
+      await readFile(getSharedSlackConfigPath(dataDir), 'utf8'),
+    ) as { enabled?: boolean; appToken?: string; botToken?: string }
+    expect(slackFile.enabled).toBe(true)
+    expect(slackFile.appToken).toBe('xapp-shared-token')
+    expect(slackFile.botToken).toBe('xoxb-shared-token')
+
+    const telegramFile = JSON.parse(
+      await readFile(getSharedTelegramConfigPath(dataDir), 'utf8'),
+    ) as { enabled?: boolean; botToken?: string }
+    expect(telegramFile.enabled).toBe(true)
+    expect(telegramFile.botToken).toBe('123456:shared-token')
+
+    const slackSnapshot = await registry.getSlackSnapshot(SHARED_INTEGRATION_MANAGER_ID)
+    const telegramSnapshot = await registry.getTelegramSnapshot(SHARED_INTEGRATION_MANAGER_ID)
+
+    expect(slackSnapshot.config.enabled).toBe(true)
+    expect(telegramSnapshot.config.enabled).toBe(true)
   })
 })
