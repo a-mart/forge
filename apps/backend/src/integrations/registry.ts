@@ -33,6 +33,7 @@ import {
 } from "./telegram/telegram-config.js";
 import { TelegramBotApiClient } from "./telegram/telegram-client.js";
 import { TelegramIntegrationService } from "./telegram/telegram-integration.js";
+import { TelegramPollingPool } from "./telegram/telegram-polling-pool.js";
 import type { TelegramStatusEvent } from "./telegram/telegram-status.js";
 import type {
   TelegramConnectionTestResult,
@@ -50,6 +51,7 @@ export class IntegrationRegistryService extends EventEmitter {
   private readonly defaultManagerId: string | undefined;
   private readonly slackProfiles = new Map<string, SlackIntegrationService>();
   private readonly telegramProfiles = new Map<string, TelegramIntegrationService>();
+  private readonly telegramPollingPool = new TelegramPollingPool();
   private started = false;
   private lifecycle: Promise<void> = Promise.resolve();
 
@@ -108,6 +110,7 @@ export class IntegrationRegistryService extends EventEmitter {
 
       this.slackProfiles.clear();
       this.telegramProfiles.clear();
+      await this.telegramPollingPool.stop();
       this.started = false;
     });
   }
@@ -626,7 +629,8 @@ export class IntegrationRegistryService extends EventEmitter {
     const profile = new TelegramIntegrationService({
       swarmManager: this.swarmManager,
       dataDir: this.dataDir,
-      managerId: normalizedManagerId
+      managerId: normalizedManagerId,
+      pollingPool: this.telegramPollingPool
     });
     profile.on("telegram_status", this.forwardTelegramStatus);
     this.telegramProfiles.set(normalizedManagerId, profile);

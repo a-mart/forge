@@ -14,7 +14,10 @@ import {
 } from "./telegram-config.js";
 import { TelegramBotApiClient } from "./telegram-client.js";
 import { TelegramDeliveryBridge } from "./telegram-delivery.js";
-import { TelegramPollingBridge } from "./telegram-polling.js";
+import {
+  TelegramPollingPool,
+  type TelegramPollingPoolConsumer
+} from "./telegram-polling-pool.js";
 import { TelegramInboundRouter } from "./telegram-router.js";
 import { TelegramTopicManager } from "./telegram-topic-manager.js";
 import {
@@ -34,15 +37,15 @@ export class TelegramIntegrationService extends BaseIntegrationService<
   TelegramStatusEvent,
   TelegramStatusUpdate
 > {
+  private readonly pollingPool: TelegramPollingPool;
   private telegramClient: TelegramBotApiClient | null = null;
   private inboundRouter: TelegramInboundRouter | null = null;
-  private pollingBridge: TelegramPollingBridge | null = null;
   private readonly topicManager: TelegramTopicManager;
   private readonly deliveryBridge: TelegramDeliveryBridge;
 
   private botId: string | undefined;
   private botUsername: string | undefined;
-  private nextUpdateOffset: number | undefined;
+  private registeredBotToken: string | undefined;
 
   private readonly onSessionLifecycle = (event: SessionLifecycleEvent): void => {
     if (event.profileId !== this.managerId) {
@@ -56,7 +59,12 @@ export class TelegramIntegrationService extends BaseIntegrationService<
     void this.handleSessionLifecycle(event);
   };
 
-  constructor(options: { swarmManager: SwarmManager; dataDir: string; managerId: string }) {
+  constructor(options: {
+    swarmManager: SwarmManager;
+    dataDir: string;
+    managerId: string;
+    pollingPool: TelegramPollingPool;
+  }) {
     const managerId = normalizeManagerId(options.managerId);
     const defaultConfig = createDefaultTelegramConfig(managerId);
     const statusTracker = new TelegramStatusTracker({
@@ -79,6 +87,8 @@ export class TelegramIntegrationService extends BaseIntegrationService<
       mergeConfig: mergeTelegramConfig,
       maskConfig: maskTelegramConfig
     });
+
+    this.pollingPool = options.pollingPool;
 
     this.topicManager = new TelegramTopicManager({
       managerId: this.managerId,
@@ -134,6 +144,18 @@ export class TelegramIntegrationService extends BaseIntegrationService<
     return this.topicManager;
   }
 
+  getRouter(): TelegramInboundRouter | null {
+    return this.inboundRouter;
+  }
+
+  getBotId(): string | undefined {
+    return this.botId;
+  }
+
+  getConfig(): TelegramIntegrationConfig {
+    return this.config;
+  }
+
   getKnownChatIds(): string[] {
     const knownChatIds = new Set<string>();
 
@@ -169,7 +191,7 @@ export class TelegramIntegrationService extends BaseIntegrationService<
     this.inboundRouter = null;
     this.botId = undefined;
     this.botUsername = undefined;
-    this.nextUpdateOffset = undefined;
+    this.registeredBotToken = undefined;
 
     await this.topicManager.initialize();
 
@@ -208,7 +230,7 @@ export class TelegramIntegrationService extends BaseIntegrationService<
       this.botId = auth.botId;
       this.botUsername = auth.botUsername;
 
-      this.inboundRouter = new TelegramInboundRouter({
+      const inboundRouter = new TelegramInboundRouter({
         swarmManager: this.swarmManager,
         managerId: this.managerId,
         integrationProfileId: this.config.profileId,
@@ -228,16 +250,14 @@ export class TelegramIntegrationService extends BaseIntegrationService<
         }
       });
 
-      const pollingBridge = new TelegramPollingBridge({
-        telegramClient,
-        getPollingConfig: () => this.config.polling,
-        getOffset: () => this.nextUpdateOffset,
-        setOffset: (offset) => {
-          this.nextUpdateOffset = offset;
-        },
-        onUpdate: async (update) => {
-          await this.inboundRouter?.handleUpdate(update);
-        },
+      this.inboundRouter = inboundRouter;
+
+      const consumer: TelegramPollingPoolConsumer = {
+        managerId: this.managerId,
+        topicManager: this.topicManager,
+        router: inboundRouter,
+        getBotId: () => this.botId,
+        getConfig: () => this.config,
         onStateChange: (state, message) => {
           this.updateStatus({
             managerId: this.managerId,
@@ -249,10 +269,11 @@ export class TelegramIntegrationService extends BaseIntegrationService<
             botUsername: this.botUsername
           });
         }
-      });
+      };
 
-      this.pollingBridge = pollingBridge;
-      await pollingBridge.start();
+      await this.pollingPool.register(botToken, consumer);
+      this.registeredBotToken = botToken;
+
       this.swarmManager.on("session_lifecycle", this.onSessionLifecycle);
 
       this.updateStatus({
@@ -266,6 +287,9 @@ export class TelegramIntegrationService extends BaseIntegrationService<
       });
     } catch (error) {
       await this.stopRuntime();
+      this.telegramClient = null;
+      this.inboundRouter = null;
+
       this.updateStatus({
         managerId: this.managerId,
         integrationProfileId: this.config.profileId,
@@ -280,7 +304,7 @@ export class TelegramIntegrationService extends BaseIntegrationService<
 
   protected async stopRuntime(): Promise<void> {
     this.swarmManager.off("session_lifecycle", this.onSessionLifecycle);
-    await this.stopPolling();
+    await this.unregisterPollingConsumer();
   }
 
   protected startDeliveryBridge(): void {
@@ -348,18 +372,18 @@ export class TelegramIntegrationService extends BaseIntegrationService<
     }
   }
 
-  private async stopPolling(): Promise<void> {
-    if (!this.pollingBridge) {
+  private async unregisterPollingConsumer(): Promise<void> {
+    if (!this.registeredBotToken) {
       return;
     }
 
-    const existing = this.pollingBridge;
-    this.pollingBridge = null;
+    const botToken = this.registeredBotToken;
+    this.registeredBotToken = undefined;
 
     try {
-      await existing.stop();
+      await this.pollingPool.unregister(botToken, this.managerId);
     } catch {
-      // Ignore polling shutdown errors.
+      // Ignore shared polling pool shutdown errors.
     }
   }
 }
