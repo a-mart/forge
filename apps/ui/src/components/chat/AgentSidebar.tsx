@@ -286,6 +286,7 @@ function WorkerRow({
 function SessionRowItem({
   session,
   statuses,
+  unreadCount,
   selectedAgentId,
   isSettingsActive,
   isCollapsed,
@@ -301,6 +302,7 @@ function SessionRowItem({
 }: {
   session: SessionRow
   statuses: Record<string, { status: AgentStatus; pendingCount: number; contextUsage?: AgentContextUsage }>
+  unreadCount: number
   selectedAgentId: string | null
   isSettingsActive: boolean
   isCollapsed: boolean
@@ -323,6 +325,7 @@ function SessionRowItem({
   const streamingWorkerCount = isCollapsed
     ? workers.filter((w) => getAgentLiveStatus(w, statuses).status === 'streaming').length
     : 0
+  const showUnread = unreadCount > 0 && !isSelected
 
   return (
     <li>
@@ -376,6 +379,11 @@ function SessionRowItem({
                 />
               ) : null}
               <span className="min-w-0 flex-1 truncate text-sm leading-5">{label}</span>
+              {showUnread ? (
+                <span className="inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-medium tabular-nums leading-none text-white">
+                  {unreadCount > 99 ? '99+' : unreadCount}
+                </span>
+              ) : null}
               {isDefault ? (
                 <span className="shrink-0 text-[9px] font-medium uppercase tracking-wider text-muted-foreground/60">
                   default
@@ -461,7 +469,7 @@ function SessionRowItem({
 function ProfileGroup({
   treeRow,
   statuses,
-  unreadCount,
+  unreadCounts,
   selectedAgentId,
   isSettingsActive,
   isCollapsed,
@@ -482,7 +490,7 @@ function ProfileGroup({
 }: {
   treeRow: ProfileTreeRow
   statuses: Record<string, { status: AgentStatus; pendingCount: number; contextUsage?: AgentContextUsage }>
-  unreadCount: number
+  unreadCounts: Record<string, number>
   selectedAgentId: string | null
   isSettingsActive: boolean
   isCollapsed: boolean
@@ -579,11 +587,6 @@ function ProfileGroup({
               <span className="min-w-0 flex-1 truncate text-sm font-semibold leading-5">
                 {profile.displayName}
               </span>
-              {unreadCount > 0 ? (
-                <span className="inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-muted-foreground/20 px-1 text-[10px] font-medium tabular-nums leading-none text-muted-foreground">
-                  {unreadCount > 99 ? '99+' : unreadCount}
-                </span>
-              ) : null}
               {isCollapsed && hasAnySessions ? (
                 <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
                   {activeSessionCount}/{sessions.length}
@@ -657,6 +660,7 @@ function ProfileGroup({
                   key={session.sessionAgent.agentId}
                   session={session}
                   statuses={statuses}
+                  unreadCount={unreadCounts[session.sessionAgent.agentId] ?? 0}
                   selectedAgentId={selectedAgentId}
                   isSettingsActive={isSettingsActive}
                   isCollapsed={sessionCollapsed}
@@ -921,17 +925,12 @@ export function AgentSidebar({
           </p>
         ) : (
           <ul className="space-y-0.5">
-            {treeRows.map((treeRow) => {
-              const profileUnread = treeRow.sessions.reduce(
-                (sum, s) => sum + (unreadCounts[s.sessionAgent.agentId] ?? 0),
-                0,
-              )
-              return (
+            {treeRows.map((treeRow) => (
               <ProfileGroup
                 key={treeRow.profile.profileId}
                 treeRow={treeRow}
                 statuses={statuses}
-                unreadCount={profileUnread}
+                unreadCounts={unreadCounts}
                 selectedAgentId={selectedAgentId}
                 isSettingsActive={isSettingsActive}
                 isCollapsed={collapsedProfileIds.has(treeRow.profile.profileId)}
@@ -950,8 +949,7 @@ export function AgentSidebar({
                 onForkSession={onForkSession}
                 onMergeSessionMemory={onMergeSessionMemory}
               />
-              )
-            })}
+            ))}
           </ul>
         )}
       </div>
