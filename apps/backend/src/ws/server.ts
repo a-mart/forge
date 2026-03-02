@@ -30,6 +30,13 @@ export class SwarmWebSocketServer {
   private readonly onConversationMessage = (event: ServerEvent): void => {
     if (event.type !== "conversation_message") return;
     this.wsHandler.broadcastToSubscribed(event);
+
+    if (event.role === "assistant" && event.source === "speak_to_user") {
+      this.wsHandler.broadcastToSubscribed({
+        type: "unread_notification",
+        agentId: event.agentId,
+      });
+    }
   };
 
   private readonly onConversationLog = (event: ServerEvent): void => {

@@ -247,6 +247,11 @@ export interface ProfilesSnapshotEvent {
   profiles: ManagerProfile[]
 }
 
+export interface UnreadNotificationEvent {
+  type: 'unread_notification'
+  agentId: string
+}
+
 export type ServerEvent =
   | { type: 'ready'; serverTime: string; subscribedAgentId: string }
   | { type: 'conversation_reset'; agentId: string; timestamp: string; reason: 'user_new_command' | 'api_reset' }
@@ -259,6 +264,7 @@ export type ServerEvent =
   | AgentStatusEvent
   | AgentsSnapshotEvent
   | ProfilesSnapshotEvent
+  | UnreadNotificationEvent
   | ManagerCreatedEvent
   | ManagerDeletedEvent
   | SessionCreatedEvent

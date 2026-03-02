@@ -396,6 +396,45 @@ describe('ManagerWsClient', () => {
     client.destroy()
   })
 
+  it('tracks unread counts from unread_notification events for non-selected agents', () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    emitServerEvent(socket, {
+      type: 'unread_notification',
+      agentId: 'worker-1',
+    })
+
+    emitServerEvent(socket, {
+      type: 'unread_notification',
+      agentId: 'worker-1',
+    })
+
+    emitServerEvent(socket, {
+      type: 'unread_notification',
+      agentId: 'manager',
+    })
+
+    expect(client.getState().unreadCounts['worker-1']).toBe(2)
+    expect(client.getState().unreadCounts['manager']).toBeUndefined()
+
+    client.subscribeToAgent('worker-1')
+    expect(client.getState().unreadCounts['worker-1']).toBeUndefined()
+
+    client.destroy()
+  })
+
   it('preserves conversation messages when history includes many tool-call events', () => {
     const client = new ManagerWsClient('ws://127.0.0.1:8787', 'voice')
 

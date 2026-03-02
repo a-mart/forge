@@ -574,24 +574,22 @@ export class ManagerWsClient {
 
       case 'conversation_message':
       case 'conversation_log': {
-        // Track unread assistant messages for agents the user is NOT viewing
-        if (
-          event.type === 'conversation_message' &&
-          event.role === 'assistant' &&
-          event.agentId !== this.state.targetAgentId
-        ) {
-          const prev = this.state.unreadCounts[event.agentId] ?? 0
-          this.updateState({
-            unreadCounts: { ...this.state.unreadCounts, [event.agentId]: prev + 1 },
-          })
-        }
-
         if (event.agentId !== this.state.targetAgentId) {
           break
         }
 
         const messages = [...this.state.messages, event]
         this.updateState({ messages })
+        break
+      }
+
+      case 'unread_notification': {
+        if (event.agentId !== this.state.targetAgentId) {
+          const prev = this.state.unreadCounts[event.agentId] ?? 0
+          this.updateState({
+            unreadCounts: { ...this.state.unreadCounts, [event.agentId]: prev + 1 },
+          })
+        }
         break
       }
 

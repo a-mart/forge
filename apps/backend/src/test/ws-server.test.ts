@@ -269,6 +269,118 @@ describe('SwarmWebSocketServer', () => {
     await server.stop()
   })
 
+  it('broadcasts unread_notification for assistant speak_to_user messages to all subscriptions', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const worker = await manager.spawnAgent('manager', { agentId: 'Unread Worker' })
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    const managerClient = new WebSocket(`ws://${config.host}:${config.port}`)
+    const managerEvents: ServerEvent[] = []
+    managerClient.on('message', (raw) => {
+      managerEvents.push(JSON.parse(raw.toString()) as ServerEvent)
+    })
+
+    await once(managerClient, 'open')
+    managerClient.send(JSON.stringify({ type: 'subscribe', agentId: 'manager' }))
+    await waitForEvent(
+      managerEvents,
+      (event) => event.type === 'ready' && event.subscribedAgentId === 'manager',
+    )
+    await waitForEvent(
+      managerEvents,
+      (event) => event.type === 'conversation_history' && event.agentId === 'manager',
+    )
+
+    const workerClient = new WebSocket(`ws://${config.host}:${config.port}`)
+    const workerEvents: ServerEvent[] = []
+    workerClient.on('message', (raw) => {
+      workerEvents.push(JSON.parse(raw.toString()) as ServerEvent)
+    })
+
+    await once(workerClient, 'open')
+    workerClient.send(JSON.stringify({ type: 'subscribe', agentId: worker.agentId }))
+    await waitForEvent(
+      workerEvents,
+      (event) => event.type === 'ready' && event.subscribedAgentId === worker.agentId,
+    )
+    await waitForEvent(
+      workerEvents,
+      (event) => event.type === 'conversation_history' && event.agentId === worker.agentId,
+    )
+
+    manager.emit(
+      'conversation_message',
+      {
+        type: 'conversation_message',
+        agentId: 'manager',
+        role: 'assistant',
+        text: 'assistant update',
+        timestamp: new Date().toISOString(),
+        source: 'speak_to_user',
+      } satisfies ServerEvent,
+    )
+
+    await waitForEvent(
+      managerEvents,
+      (event) => event.type === 'conversation_message' && event.agentId === 'manager' && event.text === 'assistant update',
+    )
+    await waitForEvent(
+      managerEvents,
+      (event) => event.type === 'unread_notification' && event.agentId === 'manager',
+    )
+    await waitForEvent(
+      workerEvents,
+      (event) => event.type === 'unread_notification' && event.agentId === 'manager',
+    )
+
+    expect(
+      workerEvents.some(
+        (event) => event.type === 'conversation_message' && event.agentId === 'manager' && event.text === 'assistant update',
+      ),
+    ).toBe(false)
+
+    const unreadBefore = workerEvents.filter((event) => event.type === 'unread_notification').length
+
+    manager.emit(
+      'conversation_message',
+      {
+        type: 'conversation_message',
+        agentId: 'manager',
+        role: 'assistant',
+        text: 'system note',
+        timestamp: new Date().toISOString(),
+        source: 'system',
+      } satisfies ServerEvent,
+    )
+
+    await waitForEvent(
+      managerEvents,
+      (event) => event.type === 'conversation_message' && event.agentId === 'manager' && event.text === 'system note',
+    )
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    const unreadAfter = workerEvents.filter((event) => event.type === 'unread_notification').length
+    expect(unreadAfter).toBe(unreadBefore)
+
+    managerClient.close()
+    await once(managerClient, 'close')
+    workerClient.close()
+    await once(workerClient, 'close')
+    await server.stop()
+  })
+
   it('accepts POST /api/reboot and signals the daemon pid asynchronously', async () => {
     const port = await getAvailablePort()
     const config = await makeTempConfig(port)
