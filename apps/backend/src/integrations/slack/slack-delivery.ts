@@ -61,7 +61,11 @@ export class SlackDeliveryBridge {
       return;
     }
 
-    if (event.agentId !== this.managerId) {
+    const descriptor = this.swarmManager.getAgent(event.agentId);
+    const agentProfileId = descriptor
+      ? normalizeOptionalString(descriptor.profileId) ?? descriptor.agentId
+      : undefined;
+    if (agentProfileId !== this.managerId) {
       return;
     }
 
