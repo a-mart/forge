@@ -41,6 +41,7 @@ interface AgentSidebarProps {
   agents: AgentDescriptor[]
   profiles: ManagerProfile[]
   statuses: Record<string, { status: AgentStatus; pendingCount: number; contextUsage?: AgentContextUsage }>
+  unreadCounts: Record<string, number>
   selectedAgentId: string | null
   isSettingsActive: boolean
   isMobileOpen?: boolean
@@ -460,6 +461,7 @@ function SessionRowItem({
 function ProfileGroup({
   treeRow,
   statuses,
+  unreadCount,
   selectedAgentId,
   isSettingsActive,
   isCollapsed,
@@ -480,6 +482,7 @@ function ProfileGroup({
 }: {
   treeRow: ProfileTreeRow
   statuses: Record<string, { status: AgentStatus; pendingCount: number; contextUsage?: AgentContextUsage }>
+  unreadCount: number
   selectedAgentId: string | null
   isSettingsActive: boolean
   isCollapsed: boolean
@@ -576,6 +579,11 @@ function ProfileGroup({
               <span className="min-w-0 flex-1 truncate text-sm font-semibold leading-5">
                 {profile.displayName}
               </span>
+              {unreadCount > 0 ? (
+                <span className="inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-muted-foreground/20 px-1 text-[10px] font-medium tabular-nums leading-none text-muted-foreground">
+                  {unreadCount > 99 ? '99+' : unreadCount}
+                </span>
+              ) : null}
               {isCollapsed && hasAnySessions ? (
                 <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
                   {activeSessionCount}/{sessions.length}
@@ -768,6 +776,7 @@ export function AgentSidebar({
   agents,
   profiles,
   statuses,
+  unreadCounts,
   selectedAgentId,
   isSettingsActive,
   isMobileOpen = false,
@@ -912,11 +921,17 @@ export function AgentSidebar({
           </p>
         ) : (
           <ul className="space-y-0.5">
-            {treeRows.map((treeRow) => (
+            {treeRows.map((treeRow) => {
+              const profileUnread = treeRow.sessions.reduce(
+                (sum, s) => sum + (unreadCounts[s.sessionAgent.agentId] ?? 0),
+                0,
+              )
+              return (
               <ProfileGroup
                 key={treeRow.profile.profileId}
                 treeRow={treeRow}
                 statuses={statuses}
+                unreadCount={profileUnread}
                 selectedAgentId={selectedAgentId}
                 isSettingsActive={isSettingsActive}
                 isCollapsed={collapsedProfileIds.has(treeRow.profile.profileId)}
@@ -935,7 +950,8 @@ export function AgentSidebar({
                 onForkSession={onForkSession}
                 onMergeSessionMemory={onMergeSessionMemory}
               />
-            ))}
+              )
+            })}
           </ul>
         )}
       </div>

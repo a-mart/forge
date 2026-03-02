@@ -506,6 +506,7 @@ export function IndexPage() {
           agents={state.agents}
           profiles={state.profiles}
           statuses={state.statuses}
+          unreadCounts={state.unreadCounts}
           selectedAgentId={activeAgentId}
           isSettingsActive={activeView === 'settings'}
           isMobileOpen={isMobileSidebarOpen}

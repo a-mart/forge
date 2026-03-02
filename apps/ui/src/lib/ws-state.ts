@@ -30,6 +30,7 @@ export interface ManagerWsState {
   lastSuccess: string | null
   slackStatus: SlackStatusEvent | null
   telegramStatus: TelegramStatusEvent | null
+  unreadCounts: Record<string, number>
 }
 
 export function createInitialManagerWsState(targetAgentId: string | null): ManagerWsState {
@@ -46,5 +47,6 @@ export function createInitialManagerWsState(targetAgentId: string | null): Manag
     lastSuccess: null,
     slackStatus: null,
     telegramStatus: null,
+    unreadCounts: {},
   }
 }

@@ -125,6 +125,7 @@ function renderSidebar({
         agents,
         profiles: resolvedProfiles,
         statuses,
+        unreadCounts: {},
         selectedAgentId,
         onAddManager: vi.fn(),
         onSelectAgent,
