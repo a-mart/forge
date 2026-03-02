@@ -244,3 +244,11 @@ export interface AgentsSnapshotEvent {
   type: "agents_snapshot";
   agents: AgentDescriptor[];
 }
+
+export interface SessionLifecycleEvent {
+  action: "created" | "deleted" | "renamed" | "forked";
+  sessionAgentId: string;
+  profileId: string;
+  label?: string;
+  sourceAgentId?: string;
+}

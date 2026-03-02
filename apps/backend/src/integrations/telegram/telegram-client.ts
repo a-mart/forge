@@ -27,6 +27,14 @@ export interface TelegramSendMessageInput {
   parseMode?: "HTML";
   disableWebPagePreview?: boolean;
   replyToMessageId?: number;
+  messageThreadId?: number;
+}
+
+export interface TelegramForumTopic {
+  message_thread_id: number;
+  name: string;
+  icon_color: number;
+  icon_custom_emoji_id?: string;
 }
 
 export interface TelegramDownloadedFile {
@@ -126,6 +134,10 @@ export class TelegramBotApiClient {
               reply_to_message_id:
                 typeof input.replyToMessageId === "number" && Number.isFinite(input.replyToMessageId)
                   ? Math.trunc(input.replyToMessageId)
+                  : undefined,
+              message_thread_id:
+                typeof input.messageThreadId === "number" && Number.isFinite(input.messageThreadId)
+                  ? Math.trunc(input.messageThreadId)
                   : undefined
             }
           }
@@ -149,6 +161,102 @@ export class TelegramBotApiClient {
     }
 
     throw new Error("Telegram sendMessage failed after retries");
+  }
+
+  async createForumTopic(input: {
+    chatId: string;
+    name: string;
+    iconColor?: number;
+  }): Promise<TelegramForumTopic> {
+    const chatId = input.chatId.trim();
+    const topicName = normalizeForumTopicName(input.name);
+
+    if (!chatId) {
+      throw new Error("Telegram chat id is required for createForumTopic");
+    }
+
+    return this.request<TelegramForumTopic>("createForumTopic", {
+      method: "POST",
+      body: {
+        chat_id: chatId,
+        name: topicName,
+        icon_color:
+          typeof input.iconColor === "number" && Number.isFinite(input.iconColor)
+            ? Math.trunc(input.iconColor)
+            : undefined
+      }
+    });
+  }
+
+  async editForumTopic(input: {
+    chatId: string;
+    messageThreadId: number;
+    name?: string;
+  }): Promise<true> {
+    const chatId = input.chatId.trim();
+
+    if (!chatId) {
+      throw new Error("Telegram chat id is required for editForumTopic");
+    }
+
+    if (!Number.isFinite(input.messageThreadId)) {
+      throw new Error("Telegram messageThreadId is required for editForumTopic");
+    }
+
+    return this.request<true>("editForumTopic", {
+      method: "POST",
+      body: {
+        chat_id: chatId,
+        message_thread_id: Math.trunc(input.messageThreadId),
+        name: input.name ? normalizeForumTopicName(input.name) : undefined
+      }
+    });
+  }
+
+  async closeForumTopic(input: {
+    chatId: string;
+    messageThreadId: number;
+  }): Promise<true> {
+    const chatId = input.chatId.trim();
+
+    if (!chatId) {
+      throw new Error("Telegram chat id is required for closeForumTopic");
+    }
+
+    if (!Number.isFinite(input.messageThreadId)) {
+      throw new Error("Telegram messageThreadId is required for closeForumTopic");
+    }
+
+    return this.request<true>("closeForumTopic", {
+      method: "POST",
+      body: {
+        chat_id: chatId,
+        message_thread_id: Math.trunc(input.messageThreadId)
+      }
+    });
+  }
+
+  async deleteForumTopic(input: {
+    chatId: string;
+    messageThreadId: number;
+  }): Promise<true> {
+    const chatId = input.chatId.trim();
+
+    if (!chatId) {
+      throw new Error("Telegram chat id is required for deleteForumTopic");
+    }
+
+    if (!Number.isFinite(input.messageThreadId)) {
+      throw new Error("Telegram messageThreadId is required for deleteForumTopic");
+    }
+
+    return this.request<true>("deleteForumTopic", {
+      method: "POST",
+      body: {
+        chat_id: chatId,
+        message_thread_id: Math.trunc(input.messageThreadId)
+      }
+    });
   }
 
   async getFile(fileId: string): Promise<TelegramFile> {
@@ -299,6 +407,15 @@ function normalizeOptionalString(value: string | undefined): string | undefined 
 
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function normalizeForumTopicName(value: string): string {
+  const normalized = value.trim().slice(0, 128);
+  if (!normalized) {
+    throw new Error("Telegram forum topic name is required");
+  }
+
+  return normalized;
 }
 
 function clamp(value: number, min: number, max: number): number {

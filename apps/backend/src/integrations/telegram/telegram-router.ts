@@ -9,6 +9,7 @@ import type {
   TelegramMessage,
   TelegramUpdate
 } from "./telegram-types.js";
+import type { TelegramTopicManager } from "./telegram-topic-manager.js";
 
 const DEDUPE_TTL_MS = 30 * 60 * 1000;
 
@@ -18,6 +19,7 @@ export class TelegramInboundRouter {
   private readonly integrationProfileId: string;
   private readonly getConfig: () => TelegramIntegrationConfig;
   private readonly getBotId: () => string | undefined;
+  private readonly topicManager: TelegramTopicManager;
   private readonly onError?: (message: string, error?: unknown) => void;
   private readonly seenUpdateIds = new Map<number, number>();
 
@@ -27,6 +29,7 @@ export class TelegramInboundRouter {
     integrationProfileId: string;
     getConfig: () => TelegramIntegrationConfig;
     getBotId: () => string | undefined;
+    topicManager: TelegramTopicManager;
     onError?: (message: string, error?: unknown) => void;
   }) {
     this.swarmManager = options.swarmManager;
@@ -34,6 +37,7 @@ export class TelegramInboundRouter {
     this.integrationProfileId = options.integrationProfileId.trim();
     this.getConfig = options.getConfig;
     this.getBotId = options.getBotId;
+    this.topicManager = options.topicManager;
     this.onError = options.onError;
   }
 
@@ -77,9 +81,13 @@ export class TelegramInboundRouter {
       channelType: resolveChannelType(message.chat.type)
     };
 
+    const targetAgentId =
+      this.topicManager.resolveSessionForTopic(String(message.chat.id), message.message_thread_id) ??
+      this.managerId;
+
     try {
       await this.swarmManager.handleUserMessage(text, {
-        targetAgentId: this.managerId,
+        targetAgentId,
         attachments,
         sourceContext
       });

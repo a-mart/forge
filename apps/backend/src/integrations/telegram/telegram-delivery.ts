@@ -4,6 +4,7 @@ import { normalizeManagerId } from "../../utils/normalize.js";
 import { TelegramBotApiClient } from "./telegram-client.js";
 import { markdownToTelegramHtml } from "./telegram-markdown.js";
 import type { TelegramIntegrationConfig } from "./telegram-types.js";
+import type { TelegramTopicManager } from "./telegram-topic-manager.js";
 
 const TELEGRAM_MESSAGE_LIMIT = 4096;
 
@@ -13,6 +14,7 @@ export class TelegramDeliveryBridge {
   private readonly getConfig: () => TelegramIntegrationConfig;
   private readonly getProfileId: () => string;
   private readonly getTelegramClient: () => TelegramBotApiClient | null;
+  private readonly topicManager: TelegramTopicManager;
   private readonly onError?: (message: string, error?: unknown) => void;
 
   private readonly onConversationMessage = (event: ServerEvent): void => {
@@ -29,6 +31,7 @@ export class TelegramDeliveryBridge {
     getConfig: () => TelegramIntegrationConfig;
     getProfileId: () => string;
     getTelegramClient: () => TelegramBotApiClient | null;
+    topicManager: TelegramTopicManager;
     onError?: (message: string, error?: unknown) => void;
   }) {
     this.swarmManager = options.swarmManager;
@@ -36,6 +39,7 @@ export class TelegramDeliveryBridge {
     this.getConfig = options.getConfig;
     this.getProfileId = options.getProfileId;
     this.getTelegramClient = options.getTelegramClient;
+    this.topicManager = options.topicManager;
     this.onError = options.onError;
   }
 
@@ -87,6 +91,14 @@ export class TelegramDeliveryBridge {
       return;
     }
 
+    let messageThreadId: number | undefined;
+    try {
+      messageThreadId = await this.topicManager.resolveTopicForSession(event.agentId, channelId);
+    } catch (error) {
+      this.onError?.("Failed to resolve Telegram topic for outbound message", error);
+      messageThreadId = undefined;
+    }
+
     const chunks = toTelegramHtmlChunks(event.text, TELEGRAM_MESSAGE_LIMIT);
     if (chunks.length === 0) {
       return;
@@ -104,7 +116,8 @@ export class TelegramDeliveryBridge {
           text: chunk,
           parseMode: config.delivery.parseMode,
           disableWebPagePreview: config.delivery.disableLinkPreview,
-          replyToMessageId
+          replyToMessageId,
+          messageThreadId
         });
 
         replyToMessageId = undefined;
