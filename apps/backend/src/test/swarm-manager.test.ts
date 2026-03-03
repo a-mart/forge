@@ -2204,12 +2204,78 @@ describe('SwarmManager', () => {
     expect(opusWorker.model).toEqual({
       provider: 'anthropic',
       modelId: 'claude-opus-4-6',
-      thinkingLevel: 'xhigh',
+      thinkingLevel: 'high',
     })
     expect(codexAppWorker.model).toEqual({
       provider: 'openai-codex-app-server',
       modelId: 'default',
       thinkingLevel: 'xhigh',
+    })
+  })
+
+  it('applies spawn_agent modelId and reasoningLevel overrides over preset defaults', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const overridden = await manager.spawnAgent('manager', {
+      agentId: 'Override Worker',
+      model: 'pi-codex',
+      modelId: 'gpt-5.3-codex-spark',
+      reasoningLevel: 'medium',
+    })
+
+    expect(overridden.model).toEqual({
+      provider: 'openai-codex',
+      modelId: 'gpt-5.3-codex-spark',
+      thinkingLevel: 'medium',
+    })
+  })
+
+  it('maps anthropic reasoning none/xhigh to low/high for spawn_agent', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const lowMapped = await manager.spawnAgent('manager', {
+      agentId: 'Opus None Worker',
+      model: 'pi-opus',
+      reasoningLevel: 'none',
+    })
+
+    const highMapped = await manager.spawnAgent('manager', {
+      agentId: 'Opus Xhigh Worker',
+      model: 'pi-opus',
+      reasoningLevel: 'xhigh',
+    })
+
+    expect(lowMapped.model).toEqual({
+      provider: 'anthropic',
+      modelId: 'claude-opus-4-6',
+      thinkingLevel: 'low',
+    })
+    expect(highMapped.model).toEqual({
+      provider: 'anthropic',
+      modelId: 'claude-opus-4-6',
+      thinkingLevel: 'high',
+    })
+  })
+
+  it('applies spawn_agent overrides when inheriting manager model fallback', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const overridden = await manager.spawnAgent('manager', {
+      agentId: 'Fallback Override Worker',
+      modelId: 'gpt-5.3-codex-spark',
+      reasoningLevel: 'low',
+    })
+
+    expect(overridden.model).toEqual({
+      provider: 'openai-codex',
+      modelId: 'gpt-5.3-codex-spark',
+      thinkingLevel: 'low',
     })
   })
 
@@ -2224,6 +2290,19 @@ describe('SwarmManager', () => {
         model: 'invalid-model' as any,
       }),
     ).rejects.toThrow('spawn_agent.model must be one of pi-codex|pi-opus|codex-app')
+  })
+
+  it('rejects invalid spawn_agent reasoning levels with a clear error', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await expect(
+      manager.spawnAgent('manager', {
+        agentId: 'Invalid Reasoning Worker',
+        reasoningLevel: 'ultra' as any,
+      }),
+    ).rejects.toThrow('spawn_agent.reasoningLevel must be one of none|low|medium|high|xhigh')
   })
 
   it('allows deleting the default manager when requested', async () => {

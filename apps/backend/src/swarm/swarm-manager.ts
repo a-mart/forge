@@ -59,6 +59,7 @@ import {
   inferSwarmModelPresetFromDescriptor,
   normalizeSwarmModelDescriptor,
   parseSwarmModelPreset,
+  parseSwarmReasoningLevel,
   resolveModelDescriptorFromPreset
 } from "./model-presets.js";
 import {
@@ -741,7 +742,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const agentId = this.generateUniqueAgentId(requestedAgentId);
     const createdAt = this.now();
 
-    const model = this.resolveSpawnModel(input.model, manager.model);
+    const model = this.resolveSpawnModel(input, manager.model);
     const archetypeId = this.resolveSpawnWorkerArchetypeId(input, agentId);
 
     const descriptor: AgentDescriptor = {
@@ -2241,16 +2242,32 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return normalizeSwarmModelDescriptor(descriptor, this.defaultModelPreset);
   }
 
-  private resolveSpawnModel(
-    requested: SpawnAgentInput["model"] | undefined,
-    fallback: AgentModelDescriptor
-  ): AgentModelDescriptor {
-    const requestedPreset = parseSwarmModelPreset(requested, "spawn_agent.model");
-    if (requestedPreset) {
-      return resolveModelDescriptorFromPreset(requestedPreset);
+  private resolveSpawnModel(input: SpawnAgentInput, fallback: AgentModelDescriptor): AgentModelDescriptor {
+    const requestedPreset = parseSwarmModelPreset(input.model, "spawn_agent.model");
+    const requestedReasoningLevel = parseSwarmReasoningLevel(
+      input.reasoningLevel,
+      "spawn_agent.reasoningLevel"
+    );
+
+    const descriptor = requestedPreset
+      ? resolveModelDescriptorFromPreset(requestedPreset)
+      : this.normalizePersistedModelDescriptor(fallback);
+
+    const requestedModelId = normalizeOptionalModelId(input.modelId);
+    if (requestedModelId) {
+      descriptor.modelId = requestedModelId;
     }
 
-    return this.normalizePersistedModelDescriptor(fallback);
+    if (requestedReasoningLevel) {
+      descriptor.thinkingLevel = requestedReasoningLevel;
+    }
+
+    descriptor.thinkingLevel = normalizeThinkingLevelForProvider(
+      descriptor.provider,
+      descriptor.thinkingLevel
+    );
+
+    return descriptor;
   }
 
   private resolveSpawnWorkerArchetypeId(
@@ -3356,6 +3373,32 @@ function normalizeOptionalAgentId(input: string | undefined): string | undefined
 
   const trimmed = input.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function normalizeOptionalModelId(input: string | undefined): string | undefined {
+  if (typeof input !== "string") {
+    return undefined;
+  }
+
+  const trimmed = input.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function normalizeThinkingLevelForProvider(provider: string, thinkingLevel: string): string {
+  if (provider.trim().toLowerCase() !== "anthropic") {
+    return thinkingLevel;
+  }
+
+  const normalized = thinkingLevel.trim().toLowerCase();
+  if (normalized === "none") {
+    return "low";
+  }
+
+  if (normalized === "xhigh" || normalized === "x-high") {
+    return "high";
+  }
+
+  return thinkingLevel;
 }
 
 function buildSessionMemoryRuntimeView(profileMemoryContent: string, sessionMemoryContent: string): string {
