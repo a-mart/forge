@@ -25,7 +25,8 @@ Session Start
     │
     ▼
 Memory file loaded from disk
-(~/.middleman/.swarm/memory/<managerId>/<agentId>.md)
+(~/.middleman/profiles/<profileId>/memory.md for root sessions,
+ ~/.middleman/profiles/<profileId>/sessions/<sessionId>/memory.md for non-root sessions)
     │
     ▼
 Injected into agent context
@@ -85,8 +86,8 @@ Next session/compaction → memory reloaded fresh
 
 ### Key Properties
 
-- **Shared with workers**: All workers under a manager read the manager's memory file
-- **Workers can write to it**: Workers can update manager memory (enables delegation of learning)
+- **Shared with workers**: All workers under a session read the session/profile memory file (via `resolveMemoryOwnerAgentId()`)
+- **Workers can write to it**: Workers can update session/profile memory (enables delegation of learning)
 - **Survives everything**: Not affected by compaction, `/new`, or agent restart
 - **No versioning**: Overwrites are permanent — no undo history
 - **No size limit enforcement**: Large memory files consume context budget silently
@@ -442,9 +443,9 @@ After completing a significant task:
 
 **Workaround**: A meta-worker in Manager A could read Manager B's memory file (they're adjacent on disk) and cross-pollinate. But this isn't a built-in feature.
 
-### 8. Workers Share Manager Memory (Contention)
+### 8. Workers Share Session/Profile Memory (Contention)
 
-**Problem**: All workers read and can write the same manager memory file.
+**Problem**: All workers under a session read and can write the same session/profile memory file (resolved via `resolveMemoryOwnerAgentId()`).
 
 **Impact**: Two workers editing memory simultaneously could overwrite each other's changes.
 
@@ -529,7 +530,9 @@ Effect: After backend restart, agents have new tools
 | File | Role in Self-Improvement |
 |------|------------------------|
 | `apps/backend/src/swarm/skills/builtins/memory/SKILL.md` | Memory skill definition |
+| `apps/backend/src/swarm/data-paths.ts` | Unified path resolution (~30 helpers) |
 | `apps/backend/src/swarm/persistence-service.ts` | Memory file creation and paths |
+| `apps/backend/src/swarm/session-manifest.ts` | Session meta.json lifecycle management |
 | `apps/backend/src/swarm/runtime-factory.ts` | Memory + SWARM.md injection into context |
 | `apps/backend/src/swarm/swarm-manager.ts` | Agent spawn, memory resolution, bootstrap |
 | `apps/backend/src/swarm/skill-metadata-service.ts` | Skill discovery and loading |

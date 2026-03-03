@@ -2,6 +2,8 @@
 
 Date: 2026-02-25
 
+> **Note (2026-03-03):** The data directory restructure has been merged. A one-time boot migration (`apps/backend/src/swarm/data-migration.ts`) now transforms the old flat layout to a hierarchical profile-scoped layout, gated by a `.migration-v1-done` sentinel. This supersedes the individual file-presence migrations described in items 3, 4, and 7 below — those migration paths still exist in the codebase as fallbacks but the v1 migration handles the bulk transformation.
+
 ## Scope and method
 - Searched `apps/backend/src/` and `apps/ui/src/` for migration/compatibility patterns (`migrate`, `legacy`, `compat`, `deprecated`, `alias`, `fallback`, `old`).
 - Reviewed all high-signal hits in scheduler, integrations, swarm manager/store/session handling, and WS HTTP routes.

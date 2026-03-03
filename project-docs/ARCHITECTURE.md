@@ -28,7 +28,8 @@ Middleman is a local-first multi-agent orchestration platform with three runtime
 │                                                                     │
 │  ┌──────────────────────────────────────────────────────────────┐   │
 │  │                    ~/.middleman (data)                        │   │
-│  │  agents.json │ sessions/ │ memory/ │ schedules/ │ secrets    │   │
+│  │  swarm/agents.json │ profiles/<id>/{sessions,memory,         │   │
+│  │  integrations,schedules} │ shared/{auth,secrets} │ uploads   │   │
 │  └──────────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────┘
 ```

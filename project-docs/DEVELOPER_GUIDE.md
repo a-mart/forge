@@ -31,6 +31,9 @@ middleman/
 │   │   │   ├── agent-runtime.ts        # Pi agent runtime wrapper
 │   │   │   ├── codex-agent-runtime.ts  # Codex agent runtime (subprocess)
 │   │   │   ├── agent-state-machine.ts  # Status transitions
+│   │   │   ├── data-paths.ts           # Unified path resolution (~30 helpers)
+│   │   │   ├── data-migration.ts       # One-time boot migration (flat → hierarchical)
+│   │   │   ├── session-manifest.ts     # meta.json lifecycle management
 │   │   │   ├── runtime-factory.ts      # Creates appropriate runtime per model
 │   │   │   ├── runtime-utils.ts        # Runtime helper functions
 │   │   │   ├── conversation-projector.ts # Events → conversation entries → broadcast
@@ -257,8 +260,8 @@ In the browser devtools, filter WebSocket messages to see the full command/event
 
 ### Memory Files
 
-Check `~/.middleman/.swarm/memory/<managerId>/<agentId>.md` to see what an agent "remembers" across sessions.
+Profile-level memory is at `~/.middleman/profiles/<profileId>/memory.md`. Non-root session memory is at `~/.middleman/profiles/<profileId>/sessions/<sessionId>/memory.md`. Workers no longer get their own memory files — they read their parent session/profile memory via `resolveMemoryOwnerAgentId()`. Agents access their memory exclusively through the `SWARM_MEMORY_FILE` env var.
 
 ### Session Files
 
-Raw session history is in `~/.middleman/.swarm/sessions/<agentId>.jsonl` — useful for debugging conversation replay issues.
+Session history is at `~/.middleman/profiles/<profileId>/sessions/<sessionAgentId>/session.jsonl`. Worker history is at `.../workers/<workerId>.jsonl` within the same session directory. Each session also has a `meta.json` manifest tracking metadata and file sizes.

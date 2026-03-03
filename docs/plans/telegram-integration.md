@@ -43,7 +43,7 @@ This plan intentionally mirrors what worked in Slack:
      - test/save/disable actions.
 
 7. **Secrets handling**
-   - Telegram bot token is stored in `secrets.json` (same pattern used for integration secrets), not exposed in plaintext API responses.
+   - Telegram bot token is stored in `shared/secrets.json` (same pattern used for integration secrets), not exposed in plaintext API responses.
 
 ---
 
@@ -135,7 +135,7 @@ Update `apps/backend/src/swarm/archetypes/builtins/manager.md` so non-web channe
 ## Configuration & Secrets
 
 ### Telegram config file
-`$SWARM_DATA_DIR/integrations/telegram.json`
+`~/.middleman/profiles/<profileId>/integrations/telegram.json`
 
 Recommended non-secret shape:
 ```json
@@ -163,7 +163,7 @@ Recommended non-secret shape:
 ```
 
 ### Secret storage
-- `TELEGRAM_BOT_TOKEN` stored in `$SWARM_DATA_DIR/secrets.json`.
+- `TELEGRAM_BOT_TOKEN` stored in `~/.middleman/shared/secrets.json`.
 - API responses expose `hasBotToken` + masked value only.
 
 ---

@@ -59,7 +59,7 @@ Branch: `oss-readiness-audit`
 - [ ] Define and document a root typecheck command. `pnpm exec tsc --noEmit` at repo root currently has no project config and exits with help text.
 
 - **Configuration**
-- [ ] Remove repo-committed operational state and rely on `SWARM_DATA_DIR` runtime storage only (current tracked `data/*` conflicts with local-first runtime boundaries).
+- [ ] Remove repo-committed operational state and rely on `SWARM_DATA_DIR` runtime storage only (current tracked `data/*` conflicts with local-first runtime boundaries). Note: the data directory has been restructured to a hierarchical profile-scoped layout under `~/.middleman/profiles/` with shared resources under `~/.middleman/shared/`.
 - [ ] Revisit default UI manager ID for neutral OSS defaults:
   - [apps/ui/src/routes/index.tsx:48](../apps/ui/src/routes/index.tsx#L48) hardcodes `opus-manager`
   - backend default manager ID is `manager` ([apps/backend/src/config.ts:57](../apps/backend/src/config.ts#L57))

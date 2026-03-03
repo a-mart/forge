@@ -1,5 +1,7 @@
 # Stuck Agent Analysis (voice manager)
 
+> **Note (2026-03-03):** Session file paths referenced below (e.g. `~/.middleman/sessions/voice.jsonl`) reflect the pre-restructure flat layout. The data directory has since been restructured to a hierarchical profile-scoped layout. Session files now live at `~/.middleman/profiles/<profileId>/sessions/<sessionAgentId>/session.jsonl`.
+
 ## Scope
 Investigated the requested paths:
 

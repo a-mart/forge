@@ -36,50 +36,54 @@ All variables can be set in a `.env` file at the repo root (loaded via dotenv) o
 
 ## Data Directory
 
-All persistent data lives under `~/.middleman` (hardcoded, not configurable).
+All persistent data lives under `~/.middleman` (hardcoded, not configurable). The layout is hierarchical and profile-scoped.
 
 ```
 ~/.middleman/
-├── .swarm/
-│   ├── agents.json                     # Agent registry (all managers + workers)
-│   ├── sessions/
-│   │   ├── <managerId>.jsonl           # Manager session history
-│   │   └── <workerId>.jsonl            # Worker session history
-│   ├── memory/
-│   │   └── <managerId>/
-│   │       └── <agentId>.md            # Per-agent persistent memory
-│   ├── uploads/                        # Web attachment files
-│   ├── attachments/
-│   │   └── <agentId>/<batchId>/*       # Binary attachment spill files
-│   └── secrets.json                    # Environment variable secrets
-├── auth.json                           # Provider credentials (API keys, OAuth tokens)
-├── integrations/
-│   └── managers/
-│       └── <managerId>/
-│           ├── slack.json              # Slack integration config
-│           └── telegram.json           # Telegram integration config
-└── schedules/
-    └── <managerId>.json                # Cron schedule definitions
+├── profiles/<profileId>/
+│   ├── memory.md                       # Profile-level persistent memory
+│   ├── sessions/<sessionAgentId>/
+│   │   ├── session.jsonl               # Session conversation history
+│   │   ├── memory.md                   # Session-scoped memory (non-root sessions only)
+│   │   ├── meta.json                   # Session manifest (metadata, worker list, file sizes)
+│   │   └── workers/<workerId>.jsonl    # Worker session history
+│   ├── integrations/                   # Per-profile integration configs
+│   │   ├── slack.json
+│   │   └── telegram.json
+│   └── schedules/
+│       └── schedules.json              # Profile-scoped cron schedules
+├── shared/
+│   ├── auth/auth.json                  # Provider credentials (API keys, OAuth tokens)
+│   ├── secrets.json                    # Environment variable secrets
+│   └── integrations/                   # Shared integration configs
+├── swarm/agents.json                   # Agent registry (all managers + workers)
+├── uploads/                            # Web attachment files
+├── agent/                              # Pi runtime agent directories
+└── .migration-v1-done                  # Sentinel — present after one-time boot migration
 ```
+
+Path resolution is centralized in `apps/backend/src/swarm/data-paths.ts` (~30 helpers). Session manifests are managed by `apps/backend/src/swarm/session-manifest.ts`. A one-time boot migration (`apps/backend/src/swarm/data-migration.ts`) transforms the old flat layout to hierarchical on first start; the `.migration-v1-done` sentinel prevents re-run.
 
 ## Data Isolation
 
-### Per-Manager (Isolated)
+### Per-Profile (Isolated)
 
-Each manager has its own independent:
+Each manager profile has its own independent:
 - Worker agents (ownership enforced via `managerId`)
-- Session history file
-- Persistent memory
-- Cron schedules
-- Slack integration profile
-- Telegram integration profile
+- Session history files (per session, under `profiles/<profileId>/sessions/`)
+- Profile-level persistent memory (`profiles/<profileId>/memory.md`)
+- Session-scoped memory (non-root sessions get `sessions/<sessionId>/memory.md`)
+- Cron schedules (`profiles/<profileId>/schedules/schedules.json`)
+- Slack/Telegram integration profiles (`profiles/<profileId>/integrations/`)
+
+Workers no longer get their own memory files — they read their parent session/profile memory via `resolveMemoryOwnerAgentId()`. Root sessions (where agentId === profileId) read/write the profile memory directly.
 
 ### Global (Shared)
 
 These resources are shared across all managers:
-- Agent registry (`agents.json`)
-- Auth credentials (`auth.json`)
-- Environment secrets (`secrets.json`)
+- Agent registry (`swarm/agents.json`)
+- Auth credentials (`shared/auth/auth.json`)
+- Environment secrets (`shared/secrets.json`)
 - Built-in skills and archetypes
 - Upload directory (flat, not partitioned)
 
@@ -122,7 +126,7 @@ Archetypes define the system prompts for manager and worker roles. Like skills, 
 
 ## Auth Storage
 
-Provider credentials are stored in `~/.middleman/auth.json` and managed through the UI settings or OAuth login flows. Supported providers:
+Provider credentials are stored in `~/.middleman/shared/auth/auth.json` and managed through the UI settings or OAuth login flows. Supported providers:
 
 - `anthropic` — Claude API key
 - `openai-codex` — OpenAI/Codex access

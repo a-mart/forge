@@ -1,5 +1,7 @@
 # Stuck Manager Diagnosis (Accepted Messages, No Reply Until Manual Compact)
 
+> **Note (2026-03-03):** Session file paths referenced below (e.g. `~/.middleman/sessions/opus-manager.jsonl`) reflect the pre-restructure flat layout. The data directory has since been restructured to a hierarchical profile-scoped layout. Session files now live at `~/.middleman/profiles/<profileId>/sessions/<sessionAgentId>/session.jsonl`.
+
 ## Executive Summary
 The highest-likelihood failure mode is **context overflow in the Pi runtime that does not throw at `session.prompt()`**, combined with **manager-specific response visibility rules**.
 

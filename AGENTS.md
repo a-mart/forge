@@ -9,7 +9,7 @@
 
 **Stack:** TypeScript, React 19, TanStack Router, Radix UI/shadcn, Tailwind v4, Vitest, pnpm monorepo
 **Structure:** `apps/backend` (Node.js daemon), `apps/ui` (React SPA), `apps/site` (landing page), `packages/protocol` (shared types)
-**Data:** All state in `~/.middleman` — agents, sessions, memory, schedules, integrations, auth
+**Data:** All state in `~/.middleman` — hierarchical profile-scoped layout under `profiles/<profileId>/` (sessions, memory, integrations, schedules), shared auth/secrets under `shared/`, agent registry at `swarm/agents.json`. See `apps/backend/src/swarm/data-paths.ts` for path resolution.
 
 
 

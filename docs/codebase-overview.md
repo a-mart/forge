@@ -133,16 +133,22 @@ In production preview mode, UI runs on `47289` and targets backend on `47287`.
 
 ### Persistent Data
 
-Middleman backend state is stored under `~/.middleman` (fixed path):
+Middleman backend state is stored under `~/.middleman` (fixed path) in a hierarchical profile-scoped layout:
 
-- `swarm/agents.json`
-- `sessions/*.jsonl`
-- `uploads/*`
-- `auth/auth.json`
-- `memory/*.md`
-- `secrets.json`
-- `integrations/managers/<manager-id>/slack.json`
-- `integrations/managers/<manager-id>/telegram.json`
+- `swarm/agents.json` — agent registry (all managers + workers)
+- `profiles/<profileId>/memory.md` — profile-level persistent memory
+- `profiles/<profileId>/sessions/<sessionAgentId>/session.jsonl` — session conversation history
+- `profiles/<profileId>/sessions/<sessionAgentId>/memory.md` — session-scoped memory (non-root sessions only)
+- `profiles/<profileId>/sessions/<sessionAgentId>/meta.json` — session manifest (metadata, worker list, file sizes)
+- `profiles/<profileId>/sessions/<sessionAgentId>/workers/<workerId>.jsonl` — worker session history
+- `profiles/<profileId>/integrations/` — per-profile integration configs (Slack, Telegram)
+- `profiles/<profileId>/schedules/schedules.json` — profile-scoped cron schedules
+- `shared/auth/auth.json` — provider credentials
+- `shared/secrets.json` — environment variable secrets
+- `shared/integrations/` — shared integration configs
+- `uploads/*` — web attachment files
+
+Path resolution is centralized in `apps/backend/src/swarm/data-paths.ts`. A one-time boot migration (`data-migration.ts`) transforms the old flat layout to hierarchical on first start, gated by a `.migration-v1-done` sentinel.
 
 ### Skills and Archetypes
 

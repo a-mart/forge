@@ -93,7 +93,7 @@ Workers receive:
 
 ## Memory Files
 
-Each agent has a persistent memory file at `~/.middleman/.swarm/memory/<managerId>/<agentId>.md`.
+Profile-level memory lives at `~/.middleman/profiles/<profileId>/memory.md`. Non-root sessions have their own memory at `~/.middleman/profiles/<profileId>/sessions/<sessionId>/memory.md`. Workers no longer get their own memory files — they read their parent session/profile memory via `resolveMemoryOwnerAgentId()`. Agents access memory exclusively through the `SWARM_MEMORY_FILE` env var.
 
 ### Default Template
 

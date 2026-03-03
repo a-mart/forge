@@ -1,5 +1,7 @@
 # Manager Isolation Map
 
+> **Note (2026-03-03):** The data directory has been restructured from a flat layout to a hierarchical profile-scoped layout. Path references below reflect the **pre-restructure** layout. The new layout places data under `profiles/<profileId>/` (sessions, memory, integrations, schedules) and `shared/` (auth, secrets). See `apps/backend/src/swarm/data-paths.ts` for current path resolution. Workers no longer get their own memory files — they read parent session/profile memory via `resolveMemoryOwnerAgentId()`.
+
 This document maps current storage/runtime boundaries in the swarm backend, based on:
 
 - `apps/backend/src/config.ts`

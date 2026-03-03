@@ -4,6 +4,8 @@
 > **Date:** 2026-02-28
 > **Supersedes:** `MULTI_SESSION_DESIGN.md` (v1), `MULTI_SESSION_TRACK_A.md`, `MULTI_SESSION_TRACK_B.md`
 > **Architecture:** Sessions-as-agents (Track A), with cherry-picked enhancements from Track B
+>
+> **⚠️ Data paths note (2026-03-03):** The data directory restructure has been merged. Memory/session path formulas in §4.4, §5.1, and the conceptual model (§3.1) reference the **pre-restructure flat layout** (e.g. `~/.middleman/sessions/<agentId>.jsonl`, `~/.middleman/memory/<agentId>.md`). The actual layout is now hierarchical and profile-scoped — see `apps/backend/src/swarm/data-paths.ts` for canonical paths. The architectural concepts and session-as-agent design remain valid; only the filesystem paths have changed.
 
 ---
 

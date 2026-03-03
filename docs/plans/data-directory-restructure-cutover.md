@@ -1,5 +1,9 @@
 # Data Directory Restructure — Cutover Plan
 
+> **Status: ✅ COMPLETED** — Merged to main and live as of 2026-03-03.
+> Migration ran successfully against live data. One issue encountered during cutover: auth file path needed adjustment in the migration (shared/auth/auth.json). Resolved and verified.
+> Legacy flat directories (`sessions/`, `memory/`, `schedules/`, `auth/`, `integrations/`, root `secrets.json`) have been removed. The `.migration-v1-done` sentinel is present.
+
 **Branch:** `feat/data-directory-restructure` (11 commits, ~4,500 lines)  
 **Worktree:** `/Users/adam/repos/middleman-data-restructure`  
 **Live data:** `~/.middleman` (~3.8GB, ~330 agents, ~335 session files)
