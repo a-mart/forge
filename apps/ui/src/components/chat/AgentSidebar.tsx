@@ -384,11 +384,7 @@ function SessionRowItem({
                   {unreadCount > 99 ? '99+' : unreadCount}
                 </span>
               ) : null}
-              {isDefault ? (
-                <span className="shrink-0 text-[9px] font-medium uppercase tracking-wider text-muted-foreground/60">
-                  default
-                </span>
-              ) : null}
+
             </button>
           </div>
         </ContextMenuTrigger>
