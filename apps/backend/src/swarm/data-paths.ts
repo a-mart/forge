@@ -1,0 +1,223 @@
+import { join } from "node:path";
+
+export interface MemoryPathDescriptor {
+  agentId: string;
+  role: "manager" | "worker";
+  profileId?: string;
+  managerId: string;
+}
+
+export interface MemoryPathParentDescriptor {
+  profileId?: string;
+}
+
+// ── Directory roots ────────────────────────────────────────────────────────────
+
+export function getProfilesDir(dataDir: string): string {
+  return join(dataDir, "profiles");
+}
+
+export function getProfileDir(dataDir: string, profileId: string): string {
+  return join(getProfilesDir(dataDir), sanitizePathSegment(profileId));
+}
+
+export function getSharedDir(dataDir: string): string {
+  return join(dataDir, "shared");
+}
+
+// ── Profile-level paths ────────────────────────────────────────────────────────
+
+export function getProfileMemoryPath(dataDir: string, profileId: string): string {
+  return join(getProfileDir(dataDir, profileId), "memory.md");
+}
+
+export function getProfileMergeAuditLogPath(dataDir: string, profileId: string): string {
+  return join(getProfileDir(dataDir, profileId), "merge-audit.log");
+}
+
+// ── Session-level paths ────────────────────────────────────────────────────────
+
+export function getSessionsDir(dataDir: string, profileId: string): string {
+  return join(getProfileDir(dataDir, profileId), "sessions");
+}
+
+export function getSessionDir(dataDir: string, profileId: string, sessionAgentId: string): string {
+  return join(getSessionsDir(dataDir, profileId), sanitizePathSegment(sessionAgentId));
+}
+
+export function getSessionMemoryPath(dataDir: string, profileId: string, sessionAgentId: string): string {
+  return join(getSessionDir(dataDir, profileId, sessionAgentId), "memory.md");
+}
+
+export function getSessionFilePath(dataDir: string, profileId: string, sessionAgentId: string): string {
+  return join(getSessionDir(dataDir, profileId, sessionAgentId), "session.jsonl");
+}
+
+export function getSessionMetaPath(dataDir: string, profileId: string, sessionAgentId: string): string {
+  return join(getSessionDir(dataDir, profileId, sessionAgentId), "meta.json");
+}
+
+// ── Worker-level paths ─────────────────────────────────────────────────────────
+
+export function getWorkersDir(dataDir: string, profileId: string, sessionAgentId: string): string {
+  return join(getSessionDir(dataDir, profileId, sessionAgentId), "workers");
+}
+
+export function getWorkerSessionFilePath(
+  dataDir: string,
+  profileId: string,
+  sessionAgentId: string,
+  workerId: string
+): string {
+  return join(getWorkersDir(dataDir, profileId, sessionAgentId), `${sanitizePathSegment(workerId)}.jsonl`);
+}
+
+// ── Profile-scoped config paths ────────────────────────────────────────────────
+
+export function getProfileIntegrationsDir(dataDir: string, profileId: string): string {
+  return join(getProfileDir(dataDir, profileId), "integrations");
+}
+
+export function getProfileSchedulesDir(dataDir: string, profileId: string): string {
+  return join(getProfileDir(dataDir, profileId), "schedules");
+}
+
+export function getProfileScheduleFilePath(dataDir: string, profileId: string): string {
+  return join(getProfileSchedulesDir(dataDir, profileId), "schedules.json");
+}
+
+// ── Shared paths ────────────────────────────────────────────────────────────────
+
+export function getSharedIntegrationsDir(dataDir: string): string {
+  return join(getSharedDir(dataDir), "integrations");
+}
+
+export function getSharedAuthDir(dataDir: string): string {
+  return join(getSharedDir(dataDir), "auth");
+}
+
+export function getSharedAuthFilePath(dataDir: string): string {
+  return join(getSharedAuthDir(dataDir), "auth.json");
+}
+
+export function getSharedSecretsFilePath(dataDir: string): string {
+  return join(getSharedDir(dataDir), "secrets.json");
+}
+
+// ── Unchanged global paths ─────────────────────────────────────────────────────
+
+export function getUploadsDir(dataDir: string): string {
+  return join(dataDir, "uploads");
+}
+
+export function getSwarmDir(dataDir: string): string {
+  return join(dataDir, "swarm");
+}
+
+export function getAgentsStoreFilePath(dataDir: string): string {
+  return join(getSwarmDir(dataDir), "agents.json");
+}
+
+// ── Unified memory path resolver ───────────────────────────────────────────────
+
+/**
+ * Resolves the correct memory file path for any agent based on role and
+ * ownership. This is the single entry point that replaces the old
+ * `getAgentMemoryPath(dataDir, agentId)` function.
+ */
+export function resolveMemoryFilePath(
+  dataDir: string,
+  descriptor: MemoryPathDescriptor,
+  parentDescriptor?: MemoryPathParentDescriptor
+): string {
+  if (descriptor.role === "manager") {
+    const profileId = descriptor.profileId ?? descriptor.agentId;
+    const isRootSession = descriptor.agentId === profileId;
+
+    if (isRootSession) {
+      // Root session reads/writes profile core memory directly.
+      return getProfileMemoryPath(dataDir, profileId);
+    }
+
+    // Non-root session has its own session memory.
+    return getSessionMemoryPath(dataDir, profileId, descriptor.agentId);
+  }
+
+  // Workers: resolve to their owning session's memory.
+  // Workers do NOT get their own memory file.
+  // The memory owner is the managerId (which is the session agent).
+  // We need the parent's profileId to build the path.
+  const parentProfileId = parentDescriptor?.profileId ?? descriptor.managerId;
+  const isParentRootSession = descriptor.managerId === parentProfileId;
+
+  if (isParentRootSession) {
+    return getProfileMemoryPath(dataDir, parentProfileId);
+  }
+
+  return getSessionMemoryPath(dataDir, parentProfileId, descriptor.managerId);
+}
+
+// ── Path segment sanitization ───────────────────────────────────────────────────
+
+/**
+ * Sanitize a string for safe use as a single filesystem path segment.
+ * Rejects path separators, traversal sequences, null bytes, and control chars.
+ */
+export function sanitizePathSegment(segment: string): string {
+  const trimmed = segment.trim();
+
+  if (trimmed.length === 0) {
+    throw new Error(`Invalid path segment: "${segment}"`);
+  }
+
+  if (/[\x00-\x1f\x7f]/.test(trimmed)) {
+    throw new Error(`Invalid path segment: "${segment}"`);
+  }
+
+  if (/[\\/]/.test(trimmed)) {
+    throw new Error(`Invalid path segment: "${segment}"`);
+  }
+
+  if (trimmed === "." || trimmed === ".." || trimmed.includes("..")) {
+    throw new Error(`Invalid path segment: "${segment}"`);
+  }
+
+  return trimmed;
+}
+
+// ── Legacy compatibility (to be removed after migration) ───────────────────────
+
+/** @deprecated Use profile/session hierarchy helpers instead. */
+export function getLegacyMemoryDirPath(dataDir: string): string {
+  return join(dataDir, "memory");
+}
+
+/** @deprecated Use resolveMemoryFilePath() instead. */
+export function getLegacyAgentMemoryPath(dataDir: string, agentId: string): string {
+  return join(getLegacyMemoryDirPath(dataDir), `${sanitizePathSegment(agentId)}.md`);
+}
+
+/** @deprecated Use profile/session hierarchy helpers instead. */
+export function getLegacySessionsDirPath(dataDir: string): string {
+  return join(dataDir, "sessions");
+}
+
+/** @deprecated Use getSessionFilePath() or getWorkerSessionFilePath() instead. */
+export function getLegacySessionFilePath(dataDir: string, agentId: string): string {
+  return join(getLegacySessionsDirPath(dataDir), `${sanitizePathSegment(agentId)}.jsonl`);
+}
+
+/** @deprecated Use shared auth helpers instead. */
+export function getLegacyAuthDirPath(dataDir: string): string {
+  return join(dataDir, "auth");
+}
+
+/** @deprecated Use getSharedAuthFilePath() instead. */
+export function getLegacyAuthFilePath(dataDir: string): string {
+  return join(getLegacyAuthDirPath(dataDir), "auth.json");
+}
+
+/** @deprecated Use getSharedSecretsFilePath() instead. */
+export function getLegacySecretsFilePath(dataDir: string): string {
+  return join(dataDir, "secrets.json");
+}

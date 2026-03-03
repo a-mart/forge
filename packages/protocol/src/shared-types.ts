@@ -41,6 +41,55 @@ export interface AgentDescriptor {
   mergedAt?: string
 }
 
+export interface SessionWorkerMeta {
+  id: string
+  model: string | null
+  status: 'running' | 'idle' | 'streaming' | 'terminated'
+  createdAt: string
+  terminatedAt: string | null
+  tokens: {
+    input: number | null
+    output: number | null
+  }
+}
+
+export interface SessionMeta {
+  sessionId: string
+  profileId: string
+  label: string | null
+  model: {
+    provider: string | null
+    modelId: string | null
+  }
+  createdAt: string
+  updatedAt: string
+  cwd: string | null
+
+  promptFingerprint: string | null
+  promptComponents:
+    | {
+        archetype: string | null
+        agentsFile: string | null
+        skills: string[]
+        memoryFile: string | null
+        profileMemoryFile: string | null
+      }
+    | null
+
+  workers: SessionWorkerMeta[]
+
+  stats: {
+    totalWorkers: number
+    activeWorkers: number
+    totalTokens: {
+      input: number | null
+      output: number | null
+    }
+    sessionFileSize: string | null
+    memoryFileSize: string | null
+  }
+}
+
 export type DeliveryMode = 'auto' | 'followUp' | 'steer'
 export type AcceptedDeliveryMode = 'prompt' | 'followUp' | 'steer'
 

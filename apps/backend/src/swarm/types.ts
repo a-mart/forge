@@ -88,18 +88,34 @@ export interface SwarmPaths {
   rootDir: string;
   dataDir: string;
   swarmDir: string;
-  sessionsDir: string;
   uploadsDir: string;
+  agentsStoreFile: string;
+
+  // New hierarchical layout fields
+  profilesDir: string;
+  sharedDir: string;
+  sharedAuthDir: string;
+  sharedAuthFile: string;
+  sharedSecretsFile: string;
+  sharedIntegrationsDir: string;
+
+  // Legacy compatibility fields (flat layout)
+  /** @deprecated Use profilesDir-based paths instead. */
+  sessionsDir: string;
+  /** @deprecated Use profilesDir-based paths instead. */
+  memoryDir: string;
+  /** @deprecated Use sharedAuthDir/sharedAuthFile instead. */
   authDir: string;
+  /** @deprecated Use sharedAuthFile instead. */
   authFile: string;
+  /** @deprecated Use sharedSecretsFile instead. */
+  secretsFile: string;
+
   agentDir: string;
   managerAgentDir: string;
   repoArchetypesDir: string;
-  memoryDir: string;
   memoryFile?: string;
   repoMemorySkillFile: string;
-  agentsStoreFile: string;
-  secretsFile: string;
   schedulesFile?: string;
 }
 

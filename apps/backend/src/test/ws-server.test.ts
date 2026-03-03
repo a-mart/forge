@@ -130,6 +130,12 @@ async function makeTempConfig(port: number, allowNonManagerSubscriptions = false
   const swarmDir = join(dataDir, 'swarm')
   const sessionsDir = join(dataDir, 'sessions')
   const uploadsDir = join(dataDir, 'uploads')
+  const profilesDir = join(dataDir, 'profiles')
+  const sharedDir = join(dataDir, 'shared')
+  const sharedAuthDir = join(sharedDir, 'auth')
+  const sharedAuthFile = join(sharedAuthDir, 'auth.json')
+  const sharedSecretsFile = join(sharedDir, 'secrets.json')
+  const sharedIntegrationsDir = join(sharedDir, 'integrations')
   const authDir = join(dataDir, 'auth')
   const agentDir = join(dataDir, 'agent')
   const managerAgentDir = join(agentDir, 'manager')
@@ -141,6 +147,9 @@ async function makeTempConfig(port: number, allowNonManagerSubscriptions = false
   await mkdir(swarmDir, { recursive: true })
   await mkdir(sessionsDir, { recursive: true })
   await mkdir(uploadsDir, { recursive: true })
+  await mkdir(profilesDir, { recursive: true })
+  await mkdir(sharedAuthDir, { recursive: true })
+  await mkdir(sharedIntegrationsDir, { recursive: true })
   await mkdir(authDir, { recursive: true })
   await mkdir(memoryDir, { recursive: true })
   await mkdir(agentDir, { recursive: true })
@@ -165,18 +174,24 @@ async function makeTempConfig(port: number, allowNonManagerSubscriptions = false
       rootDir: root,
       dataDir,
       swarmDir,
-      sessionsDir,
       uploadsDir,
+      agentsStoreFile: join(swarmDir, 'agents.json'),
+      profilesDir,
+      sharedDir,
+      sharedAuthDir,
+      sharedAuthFile,
+      sharedSecretsFile,
+      sharedIntegrationsDir,
+      sessionsDir,
+      memoryDir,
       authDir,
       authFile: join(authDir, 'auth.json'),
+      secretsFile: join(dataDir, 'secrets.json'),
       agentDir,
       managerAgentDir,
       repoArchetypesDir,
-      memoryDir,
       memoryFile,
       repoMemorySkillFile,
-      agentsStoreFile: join(swarmDir, 'agents.json'),
-      secretsFile: join(dataDir, 'secrets.json'),
       schedulesFile: getScheduleFilePath(dataDir, 'manager'),
     },
   }

@@ -1,11 +1,14 @@
-import { join } from "node:path";
+import {
+  getLegacyAgentMemoryPath,
+  getLegacyMemoryDirPath
+} from "./data-paths.js";
 
-const MEMORY_DIR_NAME = "memory";
-
+/** @deprecated Use data-paths.ts helpers instead. */
 export function getMemoryDirPath(dataDir: string): string {
-  return join(dataDir, MEMORY_DIR_NAME);
+  return getLegacyMemoryDirPath(dataDir);
 }
 
+/** @deprecated Use resolveMemoryFilePath() in data-paths.ts instead. */
 export function getAgentMemoryPath(dataDir: string, agentId: string): string {
-  return join(getMemoryDirPath(dataDir), `${agentId}.md`);
+  return getLegacyAgentMemoryPath(dataDir, agentId);
 }
