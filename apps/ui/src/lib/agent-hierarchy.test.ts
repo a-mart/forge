@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { buildManagerTreeRows, chooseFallbackAgentId, getPrimaryManagerId } from './agent-hierarchy'
-import type { AgentDescriptor } from '@middleman/protocol'
+import {
+  buildManagerTreeRows,
+  buildProfileTreeRows,
+  chooseFallbackAgentId,
+  getPrimaryManagerId,
+} from './agent-hierarchy'
+import type { AgentDescriptor, ManagerProfile } from '@middleman/protocol'
 
 function manager(agentId: string, managerId = agentId): AgentDescriptor {
   return {
@@ -37,6 +42,16 @@ function worker(agentId: string, managerId: string): AgentDescriptor {
       thinkingLevel: 'medium',
     },
     sessionFile: `/tmp/${agentId}.jsonl`,
+  }
+}
+
+function profile(profileId: string): ManagerProfile {
+  return {
+    profileId,
+    displayName: profileId,
+    defaultSessionAgentId: profileId,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
   }
 }
 
@@ -91,5 +106,38 @@ describe('agent-hierarchy', () => {
     expect(orphanWorkers).toHaveLength(0)
     expect(getPrimaryManagerId([stoppedManager])).toBeNull()
     expect(chooseFallbackAgentId([stoppedManager, erroredWorker], null)).toBeNull()
+  })
+
+  it('sorts sessions by updatedAt descending within a profile', () => {
+    const profileId = 'manager'
+    const root = {
+      ...manager(profileId),
+      profileId,
+      sessionLabel: 'Main',
+      updatedAt: '2026-01-01T00:00:05.000Z',
+    }
+    const older = {
+      ...manager('manager--s2', 'manager--s2'),
+      profileId,
+      sessionLabel: 'Session 2',
+      createdAt: '2026-01-01T00:00:10.000Z',
+      updatedAt: '2026-01-01T00:00:06.000Z',
+    }
+    const newest = {
+      ...manager('manager--s3', 'manager--s3'),
+      profileId,
+      sessionLabel: 'Session 3',
+      createdAt: '2026-01-01T00:00:11.000Z',
+      updatedAt: '2026-01-01T00:00:09.000Z',
+    }
+
+    const rows = buildProfileTreeRows([root, older, newest], [profile(profileId)])
+
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.sessions.map((entry) => entry.sessionAgent.agentId)).toEqual([
+      'manager--s3',
+      'manager--s2',
+      'manager',
+    ])
   })
 })

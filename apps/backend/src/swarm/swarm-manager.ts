@@ -1725,11 +1725,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     };
     this.emitConversationMessage(userEvent);
 
-    // Bump updatedAt so session sorts by most-recent activity in the UI.
-    target.updatedAt = receivedAt;
-    this.descriptors.set(targetAgentId, target);
-    this.emitAgentsSnapshot();
-
     if (target.role !== "manager") {
       const requestedDelivery = options?.delivery ?? "auto";
       let receipt: SendMessageReceipt;
@@ -1911,6 +1906,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   private emitConversationMessage(event: ConversationMessageEvent): void {
     this.conversationProjector.emitConversationMessage(event);
+    this.markSessionActivity(event.agentId, event.timestamp);
   }
 
   private emitAgentMessage(event: AgentMessageEvent): void {
@@ -1919,6 +1915,45 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   private emitConversationReset(agentId: string, reason: "user_new_command" | "api_reset"): void {
     this.conversationProjector.emitConversationReset(agentId, reason);
+  }
+
+  private markSessionActivity(agentId: string, timestamp?: string): void {
+    const sessionAgentId = this.resolveSessionActivityAgentId(agentId);
+    if (!sessionAgentId) {
+      return;
+    }
+
+    const descriptor = this.descriptors.get(sessionAgentId);
+    if (!descriptor || descriptor.role !== "manager") {
+      return;
+    }
+
+    const normalizedTimestamp = normalizeOptionalAgentId(timestamp) ?? this.now();
+    if (descriptor.updatedAt.localeCompare(normalizedTimestamp) >= 0) {
+      return;
+    }
+
+    descriptor.updatedAt = normalizedTimestamp;
+    this.descriptors.set(sessionAgentId, descriptor);
+    this.emitAgentsSnapshot();
+  }
+
+  private resolveSessionActivityAgentId(agentId: string): string | undefined {
+    const descriptor = this.descriptors.get(agentId);
+    if (!descriptor) {
+      return undefined;
+    }
+
+    if (descriptor.role === "manager") {
+      return descriptor.agentId;
+    }
+
+    const managerDescriptor = this.descriptors.get(descriptor.managerId);
+    if (!managerDescriptor || managerDescriptor.role !== "manager") {
+      return undefined;
+    }
+
+    return managerDescriptor.agentId;
   }
 
   private logDebug(message: string, details?: unknown): void {
@@ -2738,6 +2773,20 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   private captureConversationEventFromRuntime(agentId: string, event: RuntimeSessionEvent): void {
     this.conversationProjector.captureConversationEventFromRuntime(agentId, event);
+    this.captureSessionActivityFromRuntimeEvent(agentId, event);
+  }
+
+  private captureSessionActivityFromRuntimeEvent(agentId: string, event: RuntimeSessionEvent): void {
+    if (event.type !== "message_start" && event.type !== "message_end") {
+      return;
+    }
+
+    const role = extractRole(event.message);
+    if (role !== "assistant" && role !== "system") {
+      return;
+    }
+
+    this.markSessionActivity(agentId);
   }
 
   private emitStatus(

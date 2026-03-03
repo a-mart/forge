@@ -951,6 +951,42 @@ describe('SwarmManager', () => {
     ).toBe(true)
   })
 
+  it('bumps session updatedAt and emits agents_snapshot when a worker runtime starts an assistant reply', async () => {
+    const config = await makeTempConfig()
+    let tick = 0
+    const now = () => new Date(Date.parse('2026-01-01T00:00:00.000Z') + tick++).toISOString()
+    const manager = new TestSwarmManager(config, { now })
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', { agentId: 'Runtime Activity Worker' })
+    const previousUpdatedAt = manager.getAgent('manager')?.updatedAt
+
+    const snapshots: Array<{ type: string; agents: AgentDescriptor[] }> = []
+    manager.on('agents_snapshot', (event) => {
+      if (event.type === 'agents_snapshot') {
+        snapshots.push(event)
+      }
+    })
+
+    await (manager as any).handleRuntimeSessionEvent(worker.agentId, {
+      type: 'message_start',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'working on it' }],
+      },
+    })
+
+    const nextUpdatedAt = manager.getAgent('manager')?.updatedAt
+    expect(previousUpdatedAt).toBeDefined()
+    expect(nextUpdatedAt).toBeDefined()
+    expect(nextUpdatedAt!.localeCompare(previousUpdatedAt!)).toBeGreaterThan(0)
+    expect(
+      snapshots.some((snapshot) =>
+        snapshot.agents.some((agent) => agent.agentId === 'manager' && agent.updatedAt === nextUpdatedAt),
+      ),
+    ).toBe(true)
+  })
+
   it('surfaces manager assistant overflow turns as system conversation messages', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
@@ -1283,6 +1319,36 @@ describe('SwarmManager', () => {
     const workerRuntime = manager.runtimeByAgentId.get(worker.agentId)
     expect(workerRuntime).toBeDefined()
     expect(workerRuntime?.sendCalls.at(-1)?.message).toBe('hello worker')
+  })
+
+  it('bumps the owning session updatedAt and emits agents_snapshot on worker-targeted user messages', async () => {
+    const config = await makeTempConfig()
+    let tick = 0
+    const now = () => new Date(Date.parse('2026-01-01T00:00:00.000Z') + tick++).toISOString()
+    const manager = new TestSwarmManager(config, { now })
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', { agentId: 'Activity Worker' })
+    const previousUpdatedAt = manager.getAgent('manager')?.updatedAt
+
+    const snapshots: Array<{ type: string; agents: AgentDescriptor[] }> = []
+    manager.on('agents_snapshot', (event) => {
+      if (event.type === 'agents_snapshot') {
+        snapshots.push(event)
+      }
+    })
+
+    await manager.handleUserMessage('hello worker', { targetAgentId: worker.agentId })
+
+    const nextUpdatedAt = manager.getAgent('manager')?.updatedAt
+    expect(previousUpdatedAt).toBeDefined()
+    expect(nextUpdatedAt).toBeDefined()
+    expect(nextUpdatedAt!.localeCompare(previousUpdatedAt!)).toBeGreaterThan(0)
+    expect(
+      snapshots.some((snapshot) =>
+        snapshot.agents.some((agent) => agent.agentId === 'manager' && agent.updatedAt === nextUpdatedAt),
+      ),
+    ).toBe(true)
   })
 
   it('routes user image attachments to worker runtimes and conversation events', async () => {
