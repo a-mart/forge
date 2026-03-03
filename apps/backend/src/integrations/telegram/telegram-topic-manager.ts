@@ -58,10 +58,6 @@ export class TelegramTopicManager {
       return undefined;
     }
 
-    if (normalizedSessionAgentId === this.managerId) {
-      return undefined;
-    }
-
     const existing = findTopicForSession(this.store, normalizedSessionAgentId, normalizedChatId);
     if (existing) {
       return existing.messageThreadId;
