@@ -224,6 +224,9 @@ function RuntimeBadge({ agent, isSelected }: { agent: AgentDescriptor; isSelecte
         <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-[10px]">
           <p className="font-medium">{modelLabel}</p>
           <p className="opacity-80">{modelDescription}</p>
+          {agent.model.thinkingLevel && (
+            <p className="opacity-60">reasoning: {agent.model.thinkingLevel}</p>
+          )}
         </TooltipContent>
       </Tooltip>
     </TooltipProvider>
