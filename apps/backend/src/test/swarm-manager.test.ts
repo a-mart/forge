@@ -951,7 +951,7 @@ describe('SwarmManager', () => {
     ).toBe(true)
   })
 
-  it('bumps session updatedAt and emits agents_snapshot when a worker runtime starts an assistant reply', async () => {
+  it('does not bump session updatedAt for worker runtime assistant message_start events', async () => {
     const config = await makeTempConfig()
     let tick = 0
     const now = () => new Date(Date.parse('2026-01-01T00:00:00.000Z') + tick++).toISOString()
@@ -978,13 +978,8 @@ describe('SwarmManager', () => {
 
     const nextUpdatedAt = manager.getAgent('manager')?.updatedAt
     expect(previousUpdatedAt).toBeDefined()
-    expect(nextUpdatedAt).toBeDefined()
-    expect(nextUpdatedAt!.localeCompare(previousUpdatedAt!)).toBeGreaterThan(0)
-    expect(
-      snapshots.some((snapshot) =>
-        snapshot.agents.some((agent) => agent.agentId === 'manager' && agent.updatedAt === nextUpdatedAt),
-      ),
-    ).toBe(true)
+    expect(nextUpdatedAt).toBe(previousUpdatedAt)
+    expect(snapshots).toHaveLength(0)
   })
 
   it('surfaces manager assistant overflow turns as system conversation messages', async () => {
@@ -1305,6 +1300,59 @@ describe('SwarmManager', () => {
     if (assistantEvent?.type === 'conversation_message') {
       expect(assistantEvent.sourceContext).toEqual({ channel: 'web' })
     }
+  })
+
+  it('bumps session updatedAt and emits agents_snapshot for speak_to_user messages', async () => {
+    const config = await makeTempConfig()
+    let tick = 0
+    const now = () => new Date(Date.parse('2026-01-01T00:00:00.000Z') + tick++).toISOString()
+    const manager = new TestSwarmManager(config, { now })
+    await bootWithDefaultManager(manager, config)
+
+    const previousUpdatedAt = manager.getAgent('manager')?.updatedAt
+
+    const snapshots: Array<{ type: string; agents: AgentDescriptor[] }> = []
+    manager.on('agents_snapshot', (event) => {
+      if (event.type === 'agents_snapshot') {
+        snapshots.push(event)
+      }
+    })
+
+    await manager.publishToUser('manager', 'ack from manager', 'speak_to_user')
+
+    const nextUpdatedAt = manager.getAgent('manager')?.updatedAt
+    expect(previousUpdatedAt).toBeDefined()
+    expect(nextUpdatedAt).toBeDefined()
+    expect(nextUpdatedAt!.localeCompare(previousUpdatedAt!)).toBeGreaterThan(0)
+    expect(
+      snapshots.some((snapshot) =>
+        snapshot.agents.some((agent) => agent.agentId === 'manager' && agent.updatedAt === nextUpdatedAt),
+      ),
+    ).toBe(true)
+  })
+
+  it('does not bump session updatedAt for system publish_to_user messages', async () => {
+    const config = await makeTempConfig()
+    let tick = 0
+    const now = () => new Date(Date.parse('2026-01-01T00:00:00.000Z') + tick++).toISOString()
+    const manager = new TestSwarmManager(config, { now })
+    await bootWithDefaultManager(manager, config)
+
+    const previousUpdatedAt = manager.getAgent('manager')?.updatedAt
+
+    const snapshots: Array<{ type: string; agents: AgentDescriptor[] }> = []
+    manager.on('agents_snapshot', (event) => {
+      if (event.type === 'agents_snapshot') {
+        snapshots.push(event)
+      }
+    })
+
+    await manager.publishToUser('manager', 'system-only note', 'system')
+
+    const nextUpdatedAt = manager.getAgent('manager')?.updatedAt
+    expect(previousUpdatedAt).toBeDefined()
+    expect(nextUpdatedAt).toBe(previousUpdatedAt)
+    expect(snapshots).toHaveLength(0)
   })
 
   it('does not SYSTEM-prefix direct user messages routed to a worker', async () => {

@@ -1571,6 +1571,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     };
 
     this.emitConversationMessage(payload);
+    if (source === "speak_to_user") {
+      this.markSessionActivity(agentId, payload.timestamp);
+    }
+
     this.logDebug("manager:publish_to_user", {
       source,
       agentId,
@@ -1695,9 +1699,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       throw new Error(`Target agent is not running: ${targetAgentId}`);
     }
 
+    const receivedAt = this.now();
     const compactCommand =
       target.role === "manager" && attachments.length === 0 ? parseCompactSlashCommand(trimmed) : undefined;
     if (compactCommand) {
+      this.markSessionActivity(targetAgentId, receivedAt);
       this.logDebug("manager:user_message_compact_command", {
         targetAgentId: target.agentId,
         sourceContext,
@@ -1712,7 +1718,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     const managerContextId = target.role === "manager" ? target.agentId : target.managerId;
-    const receivedAt = this.now();
 
     this.logDebug("manager:user_message_received", {
       targetAgentId,
@@ -1733,6 +1738,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       sourceContext
     };
     this.emitConversationMessage(userEvent);
+    this.markSessionActivity(targetAgentId, receivedAt);
 
     if (target.role !== "manager") {
       const requestedDelivery = options?.delivery ?? "auto";
@@ -1915,7 +1921,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   private emitConversationMessage(event: ConversationMessageEvent): void {
     this.conversationProjector.emitConversationMessage(event);
-    this.markSessionActivity(event.agentId, event.timestamp);
   }
 
   private emitAgentMessage(event: AgentMessageEvent): void {
@@ -2815,20 +2820,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   private captureConversationEventFromRuntime(agentId: string, event: RuntimeSessionEvent): void {
     this.conversationProjector.captureConversationEventFromRuntime(agentId, event);
-    this.captureSessionActivityFromRuntimeEvent(agentId, event);
-  }
-
-  private captureSessionActivityFromRuntimeEvent(agentId: string, event: RuntimeSessionEvent): void {
-    if (event.type !== "message_start" && event.type !== "message_end") {
-      return;
-    }
-
-    const role = extractRole(event.message);
-    if (role !== "assistant" && role !== "system") {
-      return;
-    }
-
-    this.markSessionActivity(agentId);
   }
 
   private emitStatus(
