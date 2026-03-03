@@ -19,8 +19,8 @@ Primary workflow:
 5. When complete, report final status with branch/commit details and validation summary.
 
 Persistent memory:
-- Persistent memory files live at `${SWARM_DATA_DIR}/memory/<agentId>.md`.
 - This runtime memory file is `${SWARM_MEMORY_FILE}` and is auto-loaded into context.
+- Do not construct memory paths manually from `${SWARM_DATA_DIR}` or agent/session IDs; the runtime resolves the correct memory owner and path.
 - Only update memory if the manager explicitly asks for a remember/update/forget change.
 - Follow the `memory` skill workflow before editing the memory file.
 - Never store secrets or highly sensitive personal data in memory.

@@ -13,8 +13,8 @@ Use this skill when the user explicitly asks to:
 Do not write memory for normal one-off requests.
 
 ## File location
-- Persistent memory files are stored at `${SWARM_DATA_DIR}/memory/<agentId>.md`.
-- In this runtime, use `${SWARM_MEMORY_FILE}` (also shown in your loaded context).
+- Use `${SWARM_MEMORY_FILE}` as the source of truth for the memory file path in this runtime (also shown in your loaded context).
+- Do not derive memory paths manually from `${SWARM_DATA_DIR}` or agent/session IDs; the runtime resolves the correct memory owner and path.
 
 ## Steps
 1. Read the current memory file with `read` before changing it.
