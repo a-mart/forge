@@ -333,13 +333,13 @@ export function IndexPage() {
     })
   }
 
-  const handleCreateSession = useCallback((profileId: string, label?: string) => {
+  const handleCreateSession = useCallback((profileId: string, name?: string) => {
     const client = clientRef.current
     if (!client) return
 
     void (async () => {
       try {
-        const result = await client.createSession(profileId, label)
+        const result = await client.createSession(profileId, name)
         navigateToRoute({ view: 'chat', agentId: result.sessionAgent.agentId })
         client.subscribeToAgent(result.sessionAgent.agentId)
       } catch (error) {

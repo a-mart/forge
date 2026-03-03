@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { SessionManager } from '@mariozechner/pi-coding-agent'
 import { getScheduleFilePath } from '../scheduler/schedule-storage.js'
-import { getProfileMemoryPath, getSessionMemoryPath } from '../swarm/data-paths.js'
+import { getProfileMemoryPath, getSessionDir, getSessionMemoryPath } from '../swarm/data-paths.js'
 import { SwarmManager } from '../swarm/swarm-manager.js'
 import type {
   AgentContextUsage,
@@ -413,6 +413,56 @@ describe('SwarmManager', () => {
     expect(resources.memoryContextFile.content).toContain('shared fact')
     expect(resources.memoryContextFile.content).toContain('session fact')
     expect(resources.memoryContextFile.content).not.toContain('worker fact')
+  })
+
+  it('createSession uses slugified names for session agent ids and suffixes duplicates', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const first = await manager.createSession('manager', { name: 'My Cool Session' })
+    const second = await manager.createSession('manager', { name: 'My Cool Session' })
+    const fallback = await manager.createSession('manager', { name: '   ' })
+
+    expect(first.sessionAgent.agentId).toBe('my-cool-session')
+    expect(first.sessionAgent.sessionLabel).toBe('My Cool Session')
+    expect(second.sessionAgent.agentId).toBe('my-cool-session-2')
+    expect(second.sessionAgent.sessionLabel).toBe('My Cool Session')
+    expect(fallback.sessionAgent.agentId).toBe('manager--s2')
+  })
+
+  it('renameSession appends rename-history.json entries in the session directory', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const created = await manager.createSession('manager', { label: 'Initial Session Label' })
+
+    await manager.renameSession(created.sessionAgent.agentId, 'Renamed Once')
+    await manager.renameSession(created.sessionAgent.agentId, 'Renamed Twice')
+
+    const renameHistoryPath = join(
+      getSessionDir(config.paths.dataDir, 'manager', created.sessionAgent.agentId),
+      'rename-history.json',
+    )
+
+    const history = JSON.parse(await readFile(renameHistoryPath, 'utf8')) as Array<{
+      from: string
+      to: string
+      renamedAt: string
+    }>
+
+    expect(history).toHaveLength(2)
+    expect(history[0]).toMatchObject({
+      from: 'Initial Session Label',
+      to: 'Renamed Once',
+    })
+    expect(history[1]).toMatchObject({
+      from: 'Renamed Once',
+      to: 'Renamed Twice',
+    })
+    expect(typeof history[0]?.renamedAt).toBe('string')
+    expect(typeof history[1]?.renamedAt).toBe('string')
   })
 
   it('mergeSessionMemory appends session memory to profile memory and sets mergedAt', async () => {

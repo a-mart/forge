@@ -172,6 +172,12 @@ interface SessionMemoryMergeAuditEntry {
   error?: string;
 }
 
+interface SessionRenameHistoryEntry {
+  from: string;
+  to: string;
+  renamedAt: string;
+}
+
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -443,7 +449,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   async createSession(
     profileId: string,
-    options?: { label?: string }
+    options?: { label?: string; name?: string }
   ): Promise<{ profile: ManagerProfile; sessionAgent: AgentDescriptor }> {
     const prepared = this.prepareSessionCreation(profileId, options);
     const sessionDescriptor = prepared.sessionDescriptor;
@@ -582,11 +588,19 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       throw new Error("Session label must be non-empty");
     }
 
+    const previousLabel = descriptor.sessionLabel ?? descriptor.displayName ?? descriptor.agentId;
+    const renamedAt = this.now();
+
     descriptor.sessionLabel = normalizedLabel;
-    descriptor.updatedAt = this.now();
+    descriptor.updatedAt = renamedAt;
     this.descriptors.set(agentId, descriptor);
 
     await this.writeInitialSessionMeta(descriptor);
+    await this.appendSessionRenameHistoryEntry(descriptor, {
+      from: previousLabel,
+      to: normalizedLabel,
+      renamedAt
+    });
     await this.saveStore();
     this.emitSessionLifecycle({
       action: "renamed",
@@ -1156,9 +1170,21 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     };
   }
 
+  private generateUniqueSessionAgentId(baseAgentId: string): string {
+    let candidate = baseAgentId;
+    let suffix = 2;
+
+    while (this.descriptors.has(candidate)) {
+      candidate = `${baseAgentId}-${suffix}`;
+      suffix += 1;
+    }
+
+    return candidate;
+  }
+
   private prepareSessionCreation(
     profileId: string,
-    options?: { label?: string }
+    options?: { label?: string; name?: string }
   ): { profile: ManagerProfile; sessionDescriptor: AgentDescriptor; sessionNumber: number } {
     const profile = this.profiles.get(profileId);
     if (!profile) {
@@ -1170,16 +1196,32 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       throw new Error(`Profile default session is missing: ${profile.defaultSessionAgentId}`);
     }
 
-    const { agentId: sessionAgentId, sessionNumber } = this.generateSessionAgentIdentity(profileId);
+    const { agentId: autoSessionAgentId, sessionNumber } = this.generateSessionAgentIdentity(profileId);
+    const normalizedName = options?.name?.trim();
     const normalizedLabel = options?.label?.trim();
-    const sessionLabel = normalizedLabel && normalizedLabel.length > 0
+
+    let sessionAgentId = autoSessionAgentId;
+    let sessionLabel = normalizedLabel && normalizedLabel.length > 0
       ? normalizedLabel
       : `Session ${sessionNumber}`;
+    let displayName = normalizedLabel && normalizedLabel.length > 0 ? normalizedLabel : sessionAgentId;
+
+    if (normalizedName && normalizedName.length > 0) {
+      const slug = slugifySessionName(normalizedName);
+      if (!slug) {
+        throw new Error("Session name must include at least one letter, number, or dash");
+      }
+
+      sessionAgentId = this.generateUniqueSessionAgentId(slug);
+      sessionLabel = normalizedName;
+      displayName = normalizedName;
+    }
+
     const createdAt = this.now();
 
     const sessionDescriptor: AgentDescriptor = {
       agentId: sessionAgentId,
-      displayName: normalizedLabel && normalizedLabel.length > 0 ? normalizedLabel : sessionAgentId,
+      displayName,
       role: "manager",
       managerId: sessionAgentId,
       archetypeId: templateDescriptor.archetypeId,
@@ -1198,6 +1240,39 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       sessionDescriptor,
       sessionNumber
     };
+  }
+
+  private async appendSessionRenameHistoryEntry(
+    descriptor: AgentDescriptor & { role: "manager"; profileId: string },
+    entry: SessionRenameHistoryEntry
+  ): Promise<void> {
+    const sessionDir = getSessionDir(this.config.paths.dataDir, descriptor.profileId, descriptor.agentId);
+    const historyPath = join(sessionDir, "rename-history.json");
+    const entries: SessionRenameHistoryEntry[] = [];
+
+    try {
+      const existing = await readFile(historyPath, "utf8");
+      const parsed = JSON.parse(existing) as unknown;
+
+      if (Array.isArray(parsed)) {
+        for (const item of parsed) {
+          if (isSessionRenameHistoryEntry(item)) {
+            entries.push(item);
+          }
+        }
+      } else if (existing.trim().length > 0) {
+        throw new Error(`Invalid rename history format for session ${descriptor.agentId}`);
+      }
+    } catch (error) {
+      if (!isEnoentError(error)) {
+        throw error;
+      }
+    }
+
+    entries.push(entry);
+
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(historyPath, `${JSON.stringify(entries, null, 2)}\n`, "utf8");
   }
 
   private assertSessionIsDeletable(descriptor: AgentDescriptor): void {
@@ -3396,6 +3471,18 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
 
+function isSessionRenameHistoryEntry(value: unknown): value is SessionRenameHistoryEntry {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  return (
+    typeof value.from === "string" &&
+    typeof value.to === "string" &&
+    typeof value.renamedAt === "string"
+  );
+}
+
 function isEnoentError(error: unknown): boolean {
   return (
     typeof error === "object" &&
@@ -3421,6 +3508,16 @@ function parseSessionNumberFromAgentId(agentId: string, profileId: string): numb
   }
 
   return sessionNumber;
+}
+
+function slugifySessionName(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9-]/g, "")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 function normalizeAgentId(input: string): string {

@@ -127,6 +127,7 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
   if (maybe.type === "create_session") {
     const profileId = (maybe as { profileId?: unknown }).profileId;
     const label = (maybe as { label?: unknown }).label;
+    const name = (maybe as { name?: unknown }).name;
     const requestId = (maybe as { requestId?: unknown }).requestId;
 
     if (typeof profileId !== "string" || profileId.trim().length === 0) {
@@ -135,11 +136,15 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
     if (label !== undefined && typeof label !== "string") {
       return { ok: false, error: "create_session.label must be a string when provided" };
     }
+    if (name !== undefined && typeof name !== "string") {
+      return { ok: false, error: "create_session.name must be a string when provided" };
+    }
     if (requestId !== undefined && typeof requestId !== "string") {
       return { ok: false, error: "create_session.requestId must be a string when provided" };
     }
 
     const normalizedLabel = label?.trim();
+    const normalizedName = name?.trim();
 
     return {
       ok: true,
@@ -147,6 +152,7 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
         type: "create_session",
         profileId: profileId.trim(),
         label: normalizedLabel ? normalizedLabel : undefined,
+        name: normalizedName ? normalizedName : undefined,
         requestId
       }
     };

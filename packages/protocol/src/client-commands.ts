@@ -14,7 +14,7 @@ export type ClientCommand =
   | { type: 'stop_all_agents'; managerId: string; requestId?: string }
   | { type: 'create_manager'; name: string; cwd: string; model?: ManagerModelPreset; requestId?: string }
   | { type: 'delete_manager'; managerId: string; requestId?: string }
-  | { type: 'create_session'; profileId: string; label?: string; requestId?: string }
+  | { type: 'create_session'; profileId: string; label?: string; name?: string; requestId?: string }
   | { type: 'stop_session'; agentId: string; requestId?: string }
   | { type: 'resume_session'; agentId: string; requestId?: string }
   | { type: 'delete_session'; agentId: string; requestId?: string }

@@ -53,7 +53,8 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
   if (command.type === "create_session") {
     try {
       const created = await swarmManager.createSession(command.profileId, {
-        label: command.label
+        label: command.label,
+        name: command.name
       });
 
       send(socket, {

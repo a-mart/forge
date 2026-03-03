@@ -361,7 +361,7 @@ export class ManagerWsClient {
       }))
   }
 
-  async createSession(profileId: string, label?: string): Promise<SessionCreatedResult> {
+  async createSession(profileId: string, name?: string): Promise<SessionCreatedResult> {
     const trimmed = profileId.trim()
     if (!trimmed) {
       throw new Error('Profile id is required.')
@@ -374,7 +374,7 @@ export class ManagerWsClient {
     return this.enqueueRequest('create_session', (requestId) => ({
       type: 'create_session',
       profileId: trimmed,
-      label: label?.trim() || undefined,
+      name: name?.trim() || undefined,
       requestId,
     }))
   }

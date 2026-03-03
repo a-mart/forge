@@ -6,11 +6,12 @@ function parseJsonCommand(payload: unknown) {
 }
 
 describe('ws command parser session commands', () => {
-  it('parses create_session and normalizes optional label', () => {
+  it('parses create_session and normalizes optional label + name', () => {
     const parsed = parseJsonCommand({
       type: 'create_session',
       profileId: ' manager ',
       label: '  Focus work  ',
+      name: '  My Cool Session  ',
       requestId: 'req-1',
     })
 
@@ -20,6 +21,7 @@ describe('ws command parser session commands', () => {
         type: 'create_session',
         profileId: 'manager',
         label: 'Focus work',
+        name: 'My Cool Session',
         requestId: 'req-1',
       },
     })
@@ -46,6 +48,10 @@ describe('ws command parser session commands', () => {
       {
         payload: { type: 'create_session', profileId: '' },
         message: 'create_session.profileId must be a non-empty string',
+      },
+      {
+        payload: { type: 'create_session', profileId: 'manager', name: 42 },
+        message: 'create_session.name must be a string when provided',
       },
       {
         payload: { type: 'stop_session', agentId: 42 },
