@@ -44,7 +44,7 @@ describe("data-migration", () => {
 
     const agents: AgentDescriptor[] = [
       createManagerDescriptor(rootSessionId, profileId),
-      createManagerDescriptor(nonRootSessionId, profileId),
+      createManagerDescriptor(nonRootSessionId),
       createWorkerDescriptor(workerId, nonRootSessionId)
     ];
     const profiles: ManagerProfile[] = [createProfile(profileId)];
@@ -124,6 +124,7 @@ describe("data-migration", () => {
 
     expect(rootSessionDescriptor?.sessionFile).toBe(getSessionFilePath(dataDir, profileId, rootSessionId));
     expect(nonRootSessionDescriptor?.sessionFile).toBe(getSessionFilePath(dataDir, profileId, nonRootSessionId));
+    expect(nonRootSessionDescriptor?.profileId).toBe(profileId);
     expect(workerDescriptor?.sessionFile).toBe(
       getWorkerSessionFilePath(dataDir, profileId, nonRootSessionId, workerId)
     );
@@ -138,6 +139,15 @@ describe("data-migration", () => {
 
     expect(rootMeta.sessionId).toBe(rootSessionId);
     expect(nonRootMeta.sessionId).toBe(nonRootSessionId);
+
+    await expect(stat(join(dataDir, "profiles", nonRootSessionId))).rejects.toMatchObject({ code: "ENOENT" });
+
+    await expect(stat(join(dataDir, "sessions"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(join(dataDir, "memory"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(join(dataDir, "schedules"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(join(dataDir, "auth"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(join(dataDir, "integrations"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(join(dataDir, "secrets.json"))).rejects.toMatchObject({ code: "ENOENT" });
 
     const sentinel = await readFile(join(dataDir, ".migration-v1-done"), "utf8");
     expect(sentinel.trim().length).toBeGreaterThan(0);
@@ -156,6 +166,7 @@ describe("data-migration", () => {
 
     await writeJson(agentsStoreFile, { agents, profiles });
     await writeText(getLegacySessionFilePath(dataDir, rootSessionId), "root-session\n");
+    const sourceStatsBeforeMigration = await stat(getLegacySessionFilePath(dataDir, rootSessionId));
 
     const failingLinkError = Object.assign(new Error("cross-device"), { code: "EXDEV" });
     const linkMock = vi.fn(async () => {
@@ -183,9 +194,9 @@ describe("data-migration", () => {
     const migratedPath = getSessionFilePath(dataDir, profileId, rootSessionId);
     await expect(readFile(migratedPath, "utf8")).resolves.toBe("root-session\n");
 
-    const sourceStats = await stat(getLegacySessionFilePath(dataDir, rootSessionId));
     const targetStats = await stat(migratedPath);
-    expect(targetStats.ino).not.toBe(sourceStats.ino);
+    expect(targetStats.ino).not.toBe(sourceStatsBeforeMigration.ino);
+    await expect(stat(getLegacySessionFilePath(dataDir, rootSessionId))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("skips migration when sentinel exists", async () => {
@@ -222,8 +233,8 @@ describe("data-migration", () => {
   });
 });
 
-function createManagerDescriptor(agentId: string, profileId: string): AgentDescriptor {
-  return {
+function createManagerDescriptor(agentId: string, profileId?: string): AgentDescriptor {
+  const descriptor: AgentDescriptor = {
     agentId,
     displayName: agentId,
     role: "manager",
@@ -233,9 +244,14 @@ function createManagerDescriptor(agentId: string, profileId: string): AgentDescr
     updatedAt: FIXED_TIMESTAMP,
     cwd: "/tmp/project",
     model: { ...DEFAULT_MODEL },
-    profileId,
     sessionFile: `/Users/adam/.middleman/sessions/${agentId}.jsonl`
   };
+
+  if (profileId) {
+    descriptor.profileId = profileId;
+  }
+
+  return descriptor;
 }
 
 function createWorkerDescriptor(workerId: string, managerId: string): AgentDescriptor {

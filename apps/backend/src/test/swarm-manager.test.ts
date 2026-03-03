@@ -357,6 +357,7 @@ describe('SwarmManager', () => {
     const workerMemoryFile = join(config.paths.memoryDir, `${worker.agentId}.md`)
 
     await writeFile(config.paths.memoryFile!, '# Swarm Memory\n\n## Decisions\n- manager memory\n', 'utf8')
+    await mkdir(config.paths.memoryDir, { recursive: true })
     await writeFile(workerMemoryFile, '# Swarm Memory\n\n## Decisions\n- worker memory\n', 'utf8')
 
     const resources = await manager.getMemoryRuntimeResourcesForTest(worker.agentId)
@@ -403,6 +404,7 @@ describe('SwarmManager', () => {
 
     await writeFile(profileMemoryPath, '# Swarm Memory\n\n## Project Facts\n- shared fact\n', 'utf8')
     await writeFile(sessionMemoryPath, '# Swarm Memory\n\n## Project Facts\n- session fact\n', 'utf8')
+    await mkdir(config.paths.memoryDir, { recursive: true })
     await writeFile(workerMemoryPath, '# Swarm Memory\n\n## Project Facts\n- worker fact\n', 'utf8')
 
     const resources = await manager.getMemoryRuntimeResourcesForTest(worker.agentId)

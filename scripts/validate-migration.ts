@@ -272,6 +272,19 @@ async function runPostMigrationChecks(input: {
     ])
   );
 
+  const profileEntries = await fs.readdir(join(dataDir, "profiles"), { withFileTypes: true });
+  const bogusSessionProfileDirs = profileEntries
+    .filter((entry) => entry.isDirectory() && isSessionScopedId(entry.name))
+    .map((entry) => entry.name)
+    .sort();
+
+  addCheck(
+    checks,
+    "Directory structure: no session-scoped profile directories exist",
+    bogusSessionProfileDirs.length === 0,
+    bogusSessionProfileDirs.length > 0 ? bogusSessionProfileDirs.join(", ") : undefined
+  );
+
   addCheck(
     checks,
     "Directory structure: shared/auth/auth.json exists",
@@ -283,6 +296,17 @@ async function runPostMigrationChecks(input: {
     "Directory structure: shared/integrations exists",
     await pathExists(join(dataDir, "shared", "integrations"))
   );
+
+  const removedLegacyDirectories = ["sessions", "memory", "schedules", "auth", "integrations"];
+  for (const legacyDirectory of removedLegacyDirectories) {
+    addCheck(
+      checks,
+      `Cleanup: legacy ${legacyDirectory}/ directory removed`,
+      !(await pathExists(join(dataDir, legacyDirectory)))
+    );
+  }
+
+  addCheck(checks, "Cleanup: legacy secrets.json removed", !(await pathExists(join(dataDir, "secrets.json"))));
 
   const featureManagerRootMemory = join(dataDir, "profiles", "feature-manager", "memory.md");
   const featureManagerS2Memory = join(
@@ -719,6 +743,10 @@ function printSummary(input: {
 
   console.log(`\nResult: ${failed === 0 && !fatalError ? "PASS" : "FAIL"} (${passed}/${checks.length} checks passed)`);
   console.log(`Duration: ${durationMs}ms`);
+}
+
+function isSessionScopedId(value: string): boolean {
+  return /--s\d+/.test(value);
 }
 
 function normalize(value: unknown): string | undefined {

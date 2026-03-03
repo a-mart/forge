@@ -27,6 +27,11 @@ const LEGACY_INTEGRATIONS_DIR_NAME = "integrations";
 const LEGACY_SHARED_INTEGRATIONS_DIR_NAME = "shared";
 const LEGACY_MANAGER_INTEGRATIONS_DIR_NAME = "managers";
 const LEGACY_SCHEDULES_DIR_NAME = "schedules";
+const LEGACY_SESSIONS_DIR_NAME = "sessions";
+const LEGACY_MEMORY_DIR_NAME = "memory";
+const LEGACY_AUTH_DIR_NAME = "auth";
+const LEGACY_SECRETS_FILE_NAME = "secrets.json";
+const SESSION_AGENT_ID_PATTERN = /^(.*?)--s\d+.*$/;
 
 const DEFAULT_FILE_OPS: DataMigrationFileOps = {
   link: (existingPath, newPath) => fs.link(existingPath, newPath),
@@ -81,26 +86,18 @@ export async function migrateDataDirectory(
     };
   }
 
+  log(
+    logger,
+    "warn",
+    `[migration] Starting data directory migration. Ensure you have a backup of ${config.dataDir} before proceeding.`
+  );
+
   const managerDescriptors = agents.filter(isManagerDescriptor);
   const workerDescriptors = agents.filter((descriptor): descriptor is AgentDescriptor & { role: "worker" } => {
     return descriptor.role === "worker";
   });
 
-  const managerProfileBySessionId = new Map<string, string>();
-  const profileIds = new Set<string>();
-
-  for (const profile of profiles) {
-    const normalizedProfileId = normalizeOptionalString(profile.profileId);
-    if (normalizedProfileId) {
-      profileIds.add(normalizedProfileId);
-    }
-  }
-
-  for (const managerDescriptor of managerDescriptors) {
-    const profileId = resolveManagerProfileId(managerDescriptor);
-    managerProfileBySessionId.set(managerDescriptor.agentId, profileId);
-    profileIds.add(profileId);
-  }
+  const { managerProfileBySessionId, profileIds } = buildManagerProfileLookup(managerDescriptors, profiles);
 
   for (const workerDescriptor of workerDescriptors) {
     const profileId = resolveWorkerProfileId(workerDescriptor, managerProfileBySessionId, profileIds);
@@ -122,7 +119,7 @@ export async function migrateDataDirectory(
     fileOps
   );
 
-  await migrateSchedules(config.dataDir, profileIds, managerDescriptors, managerProfileBySessionId, logger);
+  await migrateSchedules(config.dataDir, profileIds, managerProfileBySessionId, logger);
   await migrateAuthAndSecrets(config.dataDir, logger);
   await migrateIntegrationConfigs(config.dataDir, profileIds, logger);
 
@@ -145,6 +142,8 @@ export async function migrateDataDirectory(
     descriptors: updatedAgents
   });
 
+  await cleanupLegacyFlatPaths(config.dataDir, logger);
+
   await writeTextAtomic(sentinelPath, `${new Date().toISOString()}\n`);
 
   log(logger, "info", "migration:complete", {
@@ -166,6 +165,64 @@ async function ensureProfileDirectories(dataDir: string, profileId: string): Pro
   await fs.mkdir(getSessionsDir(dataDir, profileId), { recursive: true });
   await fs.mkdir(dirname(getProfileScheduleFilePath(dataDir, profileId)), { recursive: true });
   await fs.mkdir(getProfileIntegrationsDir(dataDir, profileId), { recursive: true });
+}
+
+function buildManagerProfileLookup(
+  managerDescriptors: Array<AgentDescriptor & { role: "manager" }>,
+  profiles: ManagerProfile[]
+): {
+  managerProfileBySessionId: Map<string, string>;
+  profileIds: Set<string>;
+} {
+  const managerProfileBySessionId = new Map<string, string>();
+  const profileIds = new Set<string>();
+
+  for (const profile of profiles) {
+    const normalizedProfileId = normalizeOptionalString(profile.profileId);
+    if (normalizedProfileId) {
+      profileIds.add(normalizedProfileId);
+    }
+  }
+
+  for (const managerDescriptor of managerDescriptors) {
+    const explicitProfileId = normalizeOptionalString(managerDescriptor.profileId);
+    if (!explicitProfileId) {
+      continue;
+    }
+
+    const derivedProfileId = deriveProfileIdFromSessionAgentId(managerDescriptor.agentId);
+    const normalizedProfileId =
+      explicitProfileId === managerDescriptor.agentId && derivedProfileId ? derivedProfileId : explicitProfileId;
+
+    managerProfileBySessionId.set(managerDescriptor.agentId, normalizedProfileId);
+    profileIds.add(normalizedProfileId);
+  }
+
+  for (const managerDescriptor of managerDescriptors) {
+    if (managerProfileBySessionId.has(managerDescriptor.agentId)) {
+      continue;
+    }
+
+    if (profileIds.has(managerDescriptor.agentId)) {
+      managerProfileBySessionId.set(managerDescriptor.agentId, managerDescriptor.agentId);
+      continue;
+    }
+
+    const derivedProfileId = deriveProfileIdFromSessionAgentId(managerDescriptor.agentId);
+    if (derivedProfileId) {
+      managerProfileBySessionId.set(managerDescriptor.agentId, derivedProfileId);
+      profileIds.add(derivedProfileId);
+      continue;
+    }
+
+    managerProfileBySessionId.set(managerDescriptor.agentId, managerDescriptor.agentId);
+    profileIds.add(managerDescriptor.agentId);
+  }
+
+  return {
+    managerProfileBySessionId,
+    profileIds
+  };
 }
 
 async function migrateManagerMemoryFiles(
@@ -260,7 +317,6 @@ async function migrateWorkerSessionFiles(
 async function migrateSchedules(
   dataDir: string,
   profileIds: Set<string>,
-  managerDescriptors: Array<AgentDescriptor & { role: "manager" }>,
   managerProfileBySessionId: Map<string, string>,
   logger: DataMigrationLogger
 ): Promise<void> {
@@ -272,16 +328,36 @@ async function migrateSchedules(
     await copyFileIfMissing(sourcePath, targetPath);
   }
 
-  for (const managerDescriptor of managerDescriptors) {
-    const profileId = managerProfileBySessionId.get(managerDescriptor.agentId) ?? resolveManagerProfileId(managerDescriptor);
-    if (managerDescriptor.agentId === profileId) {
+  if (!(await pathExists(legacySchedulesDir))) {
+    return;
+  }
+
+  const entries = await fs.readdir(legacySchedulesDir, { withFileTypes: true });
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith(".json")) {
       continue;
     }
 
-    const sourcePath = join(legacySchedulesDir, `${managerDescriptor.agentId}.json`);
+    const managerId = entry.name.slice(0, -5);
+    const profileId = resolveScheduleProfileId(managerId, managerProfileBySessionId);
+
+    if (!profileId || profileId === managerId) {
+      continue;
+    }
+
+    const sourcePath = join(legacySchedulesDir, entry.name);
     const targetPath = getProfileScheduleFilePath(dataDir, profileId);
     await mergeScheduleFileIntoProfileSchedule(sourcePath, targetPath, logger);
   }
+}
+
+function resolveScheduleProfileId(managerId: string, managerProfileBySessionId: Map<string, string>): string {
+  const mappedProfileId = managerProfileBySessionId.get(managerId);
+  if (mappedProfileId) {
+    return mappedProfileId;
+  }
+
+  return deriveProfileIdFromSessionAgentId(managerId) ?? managerId;
 }
 
 async function mergeScheduleFileIntoProfileSchedule(
@@ -410,6 +486,48 @@ async function migrateIntegrationConfigs(
   }
 }
 
+async function cleanupLegacyFlatPaths(dataDir: string, logger: DataMigrationLogger): Promise<void> {
+  const legacyDirectories = [
+    join(dataDir, LEGACY_SESSIONS_DIR_NAME),
+    join(dataDir, LEGACY_MEMORY_DIR_NAME),
+    join(dataDir, LEGACY_SCHEDULES_DIR_NAME),
+    join(dataDir, LEGACY_AUTH_DIR_NAME),
+    join(dataDir, LEGACY_INTEGRATIONS_DIR_NAME)
+  ];
+
+  for (const directoryPath of legacyDirectories) {
+    try {
+      await fs.rm(directoryPath, { recursive: true, force: true });
+      log(logger, "info", "migration:legacy_path_removed", {
+        path: directoryPath,
+        type: "directory"
+      });
+    } catch (error) {
+      log(logger, "warn", "migration:legacy_path_remove_error", {
+        path: directoryPath,
+        type: "directory",
+        message: errorToMessage(error)
+      });
+    }
+  }
+
+  const legacySecretsPath = join(dataDir, LEGACY_SECRETS_FILE_NAME);
+
+  try {
+    await fs.rm(legacySecretsPath, { force: true });
+    log(logger, "info", "migration:legacy_path_removed", {
+      path: legacySecretsPath,
+      type: "file"
+    });
+  } catch (error) {
+    log(logger, "warn", "migration:legacy_path_remove_error", {
+      path: legacySecretsPath,
+      type: "file",
+      message: errorToMessage(error)
+    });
+  }
+}
+
 function rewriteAgentSessionPaths(
   dataDir: string,
   agents: AgentDescriptor[],
@@ -419,7 +537,7 @@ function rewriteAgentSessionPaths(
 ): AgentDescriptor[] {
   return agents.map((descriptor) => {
     if (descriptor.role === "manager") {
-      const profileId = resolveManagerProfileId(descriptor);
+      const profileId = managerProfileBySessionId.get(descriptor.agentId) ?? resolveManagerProfileId(descriptor);
 
       try {
         return {
@@ -468,7 +586,21 @@ function rewriteAgentSessionPaths(
 }
 
 function resolveManagerProfileId(descriptor: AgentDescriptor): string {
-  return normalizeOptionalString(descriptor.profileId) ?? descriptor.agentId;
+  const explicitProfileId = normalizeOptionalString(descriptor.profileId);
+  if (explicitProfileId) {
+    return explicitProfileId;
+  }
+
+  return deriveProfileIdFromSessionAgentId(descriptor.agentId) ?? descriptor.agentId;
+}
+
+function deriveProfileIdFromSessionAgentId(agentId: string): string | undefined {
+  const match = SESSION_AGENT_ID_PATTERN.exec(agentId);
+  if (!match) {
+    return undefined;
+  }
+
+  return normalizeOptionalString(match[1]);
 }
 
 function resolveWorkerProfileId(
