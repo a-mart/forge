@@ -42,11 +42,6 @@ export class PersistenceService {
       this.deps.config.paths.sharedAuthDir,
       this.deps.config.paths.sharedIntegrationsDir,
 
-      // Legacy flat-layout directories retained during migration.
-      this.deps.config.paths.sessionsDir,
-      this.deps.config.paths.authDir,
-      this.deps.config.paths.memoryDir,
-
       this.deps.config.paths.uploadsDir,
       this.deps.config.paths.agentDir,
       this.deps.config.paths.managerAgentDir
