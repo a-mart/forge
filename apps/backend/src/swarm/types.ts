@@ -12,6 +12,10 @@ export const SWARM_MODEL_PRESETS = ["pi-codex", "pi-opus", "codex-app"] as const
 
 export type SwarmModelPreset = (typeof SWARM_MODEL_PRESETS)[number];
 
+export const SWARM_REASONING_LEVELS = ["none", "low", "medium", "high", "xhigh"] as const;
+
+export type SwarmReasoningLevel = (typeof SWARM_REASONING_LEVELS)[number];
+
 export interface AgentModelDescriptor {
   provider: string;
   modelId: string;
@@ -80,6 +84,8 @@ export interface SpawnAgentInput {
   archetypeId?: AgentArchetypeId;
   systemPrompt?: string;
   model?: SwarmModelPreset;
+  modelId?: string;
+  reasoningLevel?: SwarmReasoningLevel;
   cwd?: string;
   initialMessage?: string;
 }

@@ -1,6 +1,6 @@
 import { Type } from "@sinclair/typebox";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
-import { parseSwarmModelPreset } from "./model-presets.js";
+import { parseSwarmModelPreset, parseSwarmReasoningLevel } from "./model-presets.js";
 import {
   type AgentDescriptor,
   type MessageChannel,
@@ -40,6 +40,20 @@ const spawnModelPresetSchema = Type.Union([
   Type.Literal("pi-opus"),
   Type.Literal("codex-app")
 ]);
+
+const spawnReasoningLevelSchema = Type.Union(
+  [
+    Type.Literal("none"),
+    Type.Literal("low"),
+    Type.Literal("medium"),
+    Type.Literal("high"),
+    Type.Literal("xhigh")
+  ],
+  {
+    description:
+      "Reasoning effort level. 'none'/'low' for simple tasks, 'medium' for balanced, 'high'/'xhigh' for complex analysis. Note: Claude Code supports low/medium/high only; 'none' maps to 'low' and 'xhigh' maps to 'high' for Claude models."
+  }
+);
 
 const messageChannelSchema = Type.Union([
   Type.Literal("web"),
@@ -125,7 +139,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
       name: "spawn_agent",
       label: "Spawn Agent",
       description:
-        "Create and start a new worker agent. agentId is required and normalized to lowercase kebab-case; if taken, a numeric suffix (-2, -3, …) is appended. archetypeId, systemPrompt, model, cwd, and initialMessage are optional. model accepts pi-codex|pi-opus|codex-app.",
+        "Create and start a new worker agent. agentId is required and normalized to lowercase kebab-case; if taken, a numeric suffix (-2, -3, …) is appended. archetypeId, systemPrompt, model, modelId, reasoningLevel, cwd, and initialMessage are optional. model accepts pi-codex|pi-opus|codex-app.",
       parameters: Type.Object({
         agentId: Type.String({
           description:
@@ -136,6 +150,13 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
         ),
         systemPrompt: Type.Optional(Type.String({ description: "Optional system prompt override." })),
         model: Type.Optional(spawnModelPresetSchema),
+        modelId: Type.Optional(
+          Type.String({
+            description:
+              "Override model ID within the selected provider. For pi-codex: 'gpt-5.3-codex' (default), 'gpt-5.3-codex-spark' (fast/cheap), etc. For pi-opus: 'claude-opus-4-6' (default), 'claude-sonnet-4-5-20250929' (balanced), 'claude-haiku-4-5-20251001' (fast/cheap). Leave empty for preset default."
+          })
+        ),
+        reasoningLevel: Type.Optional(spawnReasoningLevelSchema),
         cwd: Type.Optional(Type.String({ description: "Optional working directory override." })),
         initialMessage: Type.Optional(Type.String({ description: "Optional first message to send after spawn." }))
       }),
@@ -145,6 +166,8 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
           archetypeId?: string;
           systemPrompt?: string;
           model?: unknown;
+          modelId?: string;
+          reasoningLevel?: unknown;
           cwd?: string;
           initialMessage?: string;
         };
@@ -154,6 +177,8 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
           archetypeId: parsed.archetypeId,
           systemPrompt: parsed.systemPrompt,
           model: parseSwarmModelPreset(parsed.model, "spawn_agent.model"),
+          modelId: parsed.modelId,
+          reasoningLevel: parseSwarmReasoningLevel(parsed.reasoningLevel, "spawn_agent.reasoningLevel"),
           cwd: parsed.cwd,
           initialMessage: parsed.initialMessage
         });

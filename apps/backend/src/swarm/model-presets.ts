@@ -1,5 +1,5 @@
-import type { AgentModelDescriptor, SwarmModelPreset } from "./types.js";
-import { SWARM_MODEL_PRESETS } from "./types.js";
+import type { AgentModelDescriptor, SwarmModelPreset, SwarmReasoningLevel } from "./types.js";
+import { SWARM_MODEL_PRESETS, SWARM_REASONING_LEVELS } from "./types.js";
 
 export const DEFAULT_SWARM_MODEL_PRESET: SwarmModelPreset = "pi-codex";
 
@@ -24,13 +24,22 @@ const MODEL_PRESET_DESCRIPTORS: Record<SwarmModelPreset, AgentModelDescriptor> =
 };
 
 const VALID_SWARM_MODEL_PRESET_VALUES = new Set<string>(SWARM_MODEL_PRESETS);
+const VALID_SWARM_REASONING_LEVEL_VALUES = new Set<string>(SWARM_REASONING_LEVELS);
 
 export function describeSwarmModelPresets(): string {
   return SWARM_MODEL_PRESETS.join("|");
 }
 
+export function describeSwarmReasoningLevels(): string {
+  return SWARM_REASONING_LEVELS.join("|");
+}
+
 export function isSwarmModelPreset(value: unknown): value is SwarmModelPreset {
   return typeof value === "string" && VALID_SWARM_MODEL_PRESET_VALUES.has(value);
+}
+
+export function isSwarmReasoningLevel(value: unknown): value is SwarmReasoningLevel {
+  return typeof value === "string" && VALID_SWARM_REASONING_LEVEL_VALUES.has(value);
 }
 
 export function parseSwarmModelPreset(value: unknown, fieldName: string): SwarmModelPreset | undefined {
@@ -40,6 +49,21 @@ export function parseSwarmModelPreset(value: unknown, fieldName: string): SwarmM
 
   if (!isSwarmModelPreset(value)) {
     throw new Error(`${fieldName} must be one of ${describeSwarmModelPresets()}`);
+  }
+
+  return value;
+}
+
+export function parseSwarmReasoningLevel(
+  value: unknown,
+  fieldName: string
+): SwarmReasoningLevel | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!isSwarmReasoningLevel(value)) {
+    throw new Error(`${fieldName} must be one of ${describeSwarmReasoningLevels()}`);
   }
 
   return value;

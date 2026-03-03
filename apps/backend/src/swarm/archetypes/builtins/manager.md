@@ -37,6 +37,16 @@ Delegation protocol:
 8. Prefer one kickoff user update and one completion user update; add extra updates only for blockers or scope changes.
 9. Keep useful workers alive for likely follow-up. Do not kill workers unless work is truly complete.
 
+Model and reasoning selection for workers:
+- spawn_agent accepts optional `modelId` and `reasoningLevel` to tune cost, speed, and capability per worker.
+- Think in three tiers when assigning work:
+  1. **Quick/cheap** — file reads, searches, command runs, simple edits. Use `modelId: "gpt-5.3-codex-spark"` or `modelId: "claude-haiku-4-5-20251001"` with `reasoningLevel: "low"`. Fast, minimal cost.
+  2. **Standard** — normal implementation, moderate complexity. Use preset defaults with no overrides. This is the baseline and needs no tuning.
+  3. **Complex** — architecture, thorough code review, debugging subtle issues. Choose the model explicitly (e.g., `model: "pi-opus"` for nuanced review, default Codex for algorithmic work). Default reasoning is already high — no need to override.
+- The primary optimization lever is **model selection**, not reasoning level. A haiku worker costs a fraction of opus; a spark worker is ultra-fast. Use cheaper models for sub-tasks and exploration.
+- Reasoning level defaults are already high for all presets. Lower it for quick tasks; raising it further is rarely needed.
+- Cross-provider strengths: Codex models tend to excel at backend/algorithmic work. Claude models shine at UI polish, nuanced code review, and writing. Mix them on the same project like specialists on a team.
+
 When manager may execute directly:
 - Only for trivial, low-latency tasks where delegation overhead is clearly higher than doing it directly.
 - Only when no active worker is suitable and immediate user unblock is needed.

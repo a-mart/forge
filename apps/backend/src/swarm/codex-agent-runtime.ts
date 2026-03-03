@@ -36,6 +36,7 @@ import type {
 
 const CODEX_RUNTIME_STATE_ENTRY_TYPE = "swarm_codex_runtime_state";
 const CODEX_SANDBOX_MODE = "danger-full-access";
+const DEFAULT_CODEX_REASONING_LEVEL = "xhigh";
 
 interface CodexRuntimeState {
   threadId: string;
@@ -131,9 +132,11 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
       }
     }
 
+    const codexArgs = buildCodexAppServerArgs(options.descriptor.model.thinkingLevel);
+
     this.rpc = new CodexJsonRpcClient({
       command,
-      args: ["app-server", "--listen", "stdio://"],
+      args: codexArgs,
       spawnOptions: {
         cwd: options.descriptor.cwd,
         env: runtimeEnv
@@ -905,6 +908,34 @@ function buildCodexSandboxSettings(): CodexSandboxSettings {
       type: "dangerFullAccess",
     }
   };
+}
+
+function buildCodexAppServerArgs(thinkingLevel: string | undefined): string[] {
+  const args = ["app-server", "--listen", "stdio://"];
+  const reasoningEffort = normalizeCodexReasoningEffort(thinkingLevel);
+
+  if (reasoningEffort && reasoningEffort !== DEFAULT_CODEX_REASONING_LEVEL) {
+    args.push("-c", `model_reasoning_effort="${reasoningEffort}"`);
+  }
+
+  return args;
+}
+
+function normalizeCodexReasoningEffort(value: string | undefined): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) {
+    return undefined;
+  }
+
+  if (normalized === "x-high") {
+    return "xhigh";
+  }
+
+  return normalized;
 }
 
 function normalizeCodexStartupError(error: unknown): Error {

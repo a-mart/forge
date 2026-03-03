@@ -13,21 +13,29 @@ const rpcMockState = vi.hoisted(() => ({
 vi.mock('../swarm/codex-jsonrpc-client.js', () => ({
   CodexJsonRpcClient: class MockCodexJsonRpcClient {
     readonly options: {
+      command?: string
+      args?: string[]
       onNotification?: (notification: unknown) => Promise<void> | void
       onRequest?: (request: unknown) => Promise<unknown>
       onExit?: (error: Error) => void
     }
 
+    readonly command: string | undefined
+    readonly args: string[]
     readonly requestCalls: Array<{ method: string; params: unknown }> = []
     readonly notifyCalls: Array<{ method: string; params: unknown }> = []
     disposed = false
 
     constructor(options: {
+      command?: string
+      args?: string[]
       onNotification?: (notification: unknown) => Promise<void> | void
       onRequest?: (request: unknown) => Promise<unknown>
       onExit?: (error: Error) => void
     }) {
       this.options = options
+      this.command = options.command
+      this.args = [...(options.args ?? [])]
       rpcMockState.instances.push(this)
     }
 
@@ -91,6 +99,49 @@ beforeEach(() => {
 })
 
 describe('CodexAgentRuntime behavior', () => {
+  it('passes non-default reasoning overrides to codex app-server args', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'swarm-codex-runtime-'))
+    const descriptor = makeDescriptor(tempDir)
+    descriptor.model.thinkingLevel = 'medium'
+    await mkdir(dirname(descriptor.sessionFile), { recursive: true })
+
+    rpcMockState.requestImpl.mockImplementation(async (_client: any, method: string) => {
+      if (method === 'initialize') {
+        return {}
+      }
+
+      if (method === 'account/read') {
+        return { requiresOpenaiAuth: false, account: { id: 'acct-1' } }
+      }
+
+      if (method === 'thread/start') {
+        return { thread: { id: 'thread-1' } }
+      }
+
+      return {}
+    })
+
+    const runtime = await CodexAgentRuntime.create({
+      descriptor,
+      callbacks: {
+        onStatusChange: async () => {},
+      },
+      systemPrompt: 'You are a test codex runtime.',
+      tools: [],
+    })
+
+    const instance = rpcMockState.instances[0]
+    expect(instance.args).toEqual([
+      'app-server',
+      '--listen',
+      'stdio://',
+      '-c',
+      'model_reasoning_effort="medium"',
+    ])
+
+    await runtime.terminate({ abort: false })
+  })
+
   it('authenticates with CODEX_API_KEY and resumes a persisted thread', async () => {
     const tempDir = await mkdtemp(join(tmpdir(), 'swarm-codex-runtime-'))
     const descriptor = makeDescriptor(tempDir)

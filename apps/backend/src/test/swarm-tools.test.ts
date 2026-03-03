@@ -98,6 +98,36 @@ describe('buildSwarmTools', () => {
     })
   })
 
+  it('propagates spawn_agent modelId and reasoningLevel overrides to host.spawnAgent', async () => {
+    let receivedInput: SpawnAgentInput | undefined
+
+    const host = makeHost(async (_callerAgentId, input) => {
+      receivedInput = input
+      return makeWorkerDescriptor('worker-opus')
+    })
+
+    const tools = buildSwarmTools(host, makeManagerDescriptor())
+    const spawnTool = tools.find((tool) => tool.name === 'spawn_agent')
+    expect(spawnTool).toBeDefined()
+
+    await spawnTool!.execute(
+      'tool-call',
+      {
+        agentId: 'Worker Opus Override',
+        model: 'pi-opus',
+        modelId: 'claude-haiku-4-5-20251001',
+        reasoningLevel: 'low',
+      },
+      undefined,
+      undefined,
+      undefined as any,
+    )
+
+    expect(receivedInput?.model).toBe('pi-opus')
+    expect(receivedInput?.modelId).toBe('claude-haiku-4-5-20251001')
+    expect(receivedInput?.reasoningLevel).toBe('low')
+  })
+
   it('rejects invalid spawn_agent model presets with a clear error', async () => {
     const host = makeHost(async () => makeWorkerDescriptor('worker'))
 
@@ -117,6 +147,27 @@ describe('buildSwarmTools', () => {
         undefined as any,
       ),
     ).rejects.toThrow('spawn_agent.model must be one of pi-codex|pi-opus|codex-app')
+  })
+
+  it('rejects invalid spawn_agent reasoning levels with a clear error', async () => {
+    const host = makeHost(async () => makeWorkerDescriptor('worker'))
+
+    const tools = buildSwarmTools(host, makeManagerDescriptor())
+    const spawnTool = tools.find((tool) => tool.name === 'spawn_agent')
+    expect(spawnTool).toBeDefined()
+
+    await expect(
+      spawnTool!.execute(
+        'tool-call',
+        {
+          agentId: 'Worker Invalid Reasoning',
+          reasoningLevel: 'ultra',
+        } as any,
+        undefined,
+        undefined,
+        undefined as any,
+      ),
+    ).rejects.toThrow('spawn_agent.reasoningLevel must be one of none|low|medium|high|xhigh')
   })
 
   it('forwards speak_to_user target metadata and returns resolved target context', async () => {
