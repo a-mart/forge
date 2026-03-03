@@ -20,6 +20,7 @@ import {
   getWorkerSessionFilePath,
   resolveMemoryFilePath
 } from "./data-paths.js";
+import { migrateDataDirectory } from "./data-migration.js";
 import { executeLLMMerge } from "./memory-merge.js";
 import { PersistenceService } from "./persistence-service.js";
 import { RuntimeFactory } from "./runtime-factory.js";
@@ -368,7 +369,25 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       repoOverridesDir: this.config.paths.repoArchetypesDir
     });
 
-    const loaded = await this.loadStore();
+    let loaded = await this.loadStore();
+    const migrationResult = await migrateDataDirectory(
+      {
+        dataDir: this.config.paths.dataDir,
+        agentsStoreFile: this.config.paths.agentsStoreFile
+      },
+      loaded.agents,
+      loaded.profiles ?? [],
+      {
+        debug: (message, details) => this.logDebug(message, details),
+        info: (message, details) => this.logDebug(message, details),
+        warn: (message, details) => this.logDebug(message, details)
+      }
+    );
+    loaded = {
+      ...loaded,
+      agents: migrationResult.updatedAgents
+    };
+
     for (const descriptor of loaded.agents) {
       this.descriptors.set(descriptor.agentId, descriptor);
     }

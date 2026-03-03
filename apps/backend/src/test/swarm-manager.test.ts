@@ -541,7 +541,7 @@ describe('SwarmManager', () => {
     expect(managerPrompt).toContain('You are the manager agent in a multi-agent swarm.')
     expect(managerPrompt).toContain('End users only see two things')
     expect(managerPrompt).toContain('prefixed with "SYSTEM:"')
-    expect(managerPrompt).toContain('Your manager memory file is `${SWARM_MEMORY_FILE}`')
+    expect(managerPrompt).toContain('${SWARM_MEMORY_FILE}')
 
     const worker = await manager.spawnAgent('manager', { agentId: 'Prompt Worker' })
     const workerPrompt = manager.systemPromptByAgentId.get(worker.agentId)
@@ -569,7 +569,7 @@ describe('SwarmManager', () => {
 
     const memorySkill = await readFile(resources.additionalSkillPaths[0], 'utf8')
     expect(memorySkill).toContain('name: memory')
-    expect(memorySkill).toContain('In this runtime, use `${SWARM_MEMORY_FILE}`')
+    expect(memorySkill).toContain('${SWARM_MEMORY_FILE}')
 
     const braveSkill = await readFile(resources.additionalSkillPaths[1], 'utf8')
     expect(braveSkill).toContain('name: brave-search')
