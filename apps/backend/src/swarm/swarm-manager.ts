@@ -1725,6 +1725,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     };
     this.emitConversationMessage(userEvent);
 
+    // Bump updatedAt so session sorts by most-recent activity in the UI.
+    target.updatedAt = receivedAt;
+    this.descriptors.set(targetAgentId, target);
+    this.emitAgentsSnapshot();
+
     if (target.role !== "manager") {
       const requestedDelivery = options?.delivery ?? "auto";
       let receipt: SendMessageReceipt;
