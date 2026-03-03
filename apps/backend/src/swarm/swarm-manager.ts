@@ -15,9 +15,11 @@ import { ConversationProjector } from "./conversation-projector.js";
 import {
   getProfileMemoryPath,
   getProfileMergeAuditLogPath,
+  getSessionDir,
   getSessionFilePath,
   getSessionMetaPath,
   getWorkerSessionFilePath,
+  getWorkersDir,
   resolveMemoryFilePath
 } from "./data-paths.js";
 import { migrateDataDirectory } from "./data-migration.js";
@@ -536,6 +538,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     });
 
     const profileId = descriptor.profileId ?? descriptor.agentId;
+    const sessionDir = getSessionDir(this.config.paths.dataDir, profileId, descriptor.agentId);
+    const workersDir = getWorkersDir(this.config.paths.dataDir, profileId, descriptor.agentId);
     const canonicalSessionFile = getSessionFilePath(this.config.paths.dataDir, profileId, descriptor.agentId);
     const sessionMetaPath = getSessionMetaPath(this.config.paths.dataDir, profileId, descriptor.agentId);
     const sessionMemoryPath = resolveMemoryFilePath(this.config.paths.dataDir, {
@@ -549,11 +553,13 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.conversationProjector.deleteConversationHistory(agentId);
 
     if (descriptor.sessionFile === canonicalSessionFile) {
-      await rm(dirname(canonicalSessionFile), { recursive: true, force: true });
+      await rm(sessionDir, { recursive: true, force: true });
     } else {
       await this.deleteManagerSessionFile(descriptor.sessionFile);
       await rm(sessionMetaPath, { force: true });
       await rm(sessionMemoryPath, { force: true });
+      await rm(workersDir, { recursive: true, force: true });
+      await rm(sessionDir, { recursive: true, force: true });
     }
 
     await this.saveStore();
@@ -1293,6 +1299,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     const profileId = descriptor.profileId ?? descriptor.agentId;
+    const sessionDir = getSessionDir(this.config.paths.dataDir, profileId, descriptor.agentId);
+    const workersDir = getWorkersDir(this.config.paths.dataDir, profileId, descriptor.agentId);
     const canonicalSessionFile = getSessionFilePath(this.config.paths.dataDir, profileId, descriptor.agentId);
     const sessionMetaPath = getSessionMetaPath(this.config.paths.dataDir, profileId, descriptor.agentId);
     const sessionMemoryPath = resolveMemoryFilePath(this.config.paths.dataDir, {
@@ -1307,11 +1315,13 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     try {
       if (descriptor.sessionFile === canonicalSessionFile) {
-        await rm(dirname(canonicalSessionFile), { recursive: true, force: true });
+        await rm(sessionDir, { recursive: true, force: true });
       } else {
         await this.deleteManagerSessionFile(descriptor.sessionFile);
         await rm(sessionMemoryPath, { force: true });
         await rm(sessionMetaPath, { force: true });
+        await rm(workersDir, { recursive: true, force: true });
+        await rm(sessionDir, { recursive: true, force: true });
       }
     } catch (error) {
       this.logDebug("session:rollback:cleanup_error", {
@@ -2907,7 +2917,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     return {
       totalWorkers: workers.length,
-      activeWorkers: workers.filter((worker) => worker.status === "running" || worker.status === "streaming").length,
+      activeWorkers: workers.filter((worker) => worker.status === "streaming").length,
       totalTokens: {
         input: inputTokens.length > 0 ? inputTokens.reduce((sum, value) => sum + value, 0) : null,
         output: outputTokens.length > 0 ? outputTokens.reduce((sum, value) => sum + value, 0) : null

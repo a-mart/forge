@@ -340,7 +340,7 @@ function buildWorkerStats(
 
   return {
     totalWorkers: workers.length,
-    activeWorkers: workers.filter((worker) => worker.status === "running" || worker.status === "streaming").length,
+    activeWorkers: workers.filter((worker) => worker.status === "streaming").length,
     totalTokens: {
       input: totalInput,
       output: totalOutput
@@ -442,7 +442,7 @@ function coerceAgentDescriptor(value: unknown): AgentDescriptor | undefined {
   const thinkingLevel = normalizeOptionalString(model?.thinkingLevel);
   const status = normalizeOptionalString(value.status);
 
-  if (!agentId || !managerId || !createdAt || !updatedAt || !cwd || !sessionFile || !provider || !modelId || !thinkingLevel || !status) {
+  if (!agentId || !managerId || !createdAt || !updatedAt || !cwd || !sessionFile || !provider || !modelId || !status) {
     return undefined;
   }
 
@@ -459,7 +459,7 @@ function coerceAgentDescriptor(value: unknown): AgentDescriptor | undefined {
     model: {
       provider,
       modelId,
-      thinkingLevel
+      thinkingLevel: thinkingLevel ?? "default"
     },
     sessionFile,
     contextUsage: undefined,
@@ -531,7 +531,7 @@ function coerceSessionMeta(value: unknown): SessionMeta | undefined {
       activeWorkers:
         typeof statsRecord.activeWorkers === "number" && Number.isFinite(statsRecord.activeWorkers)
           ? Math.max(0, Math.round(statsRecord.activeWorkers))
-          : workers.filter((worker) => worker.status === "running" || worker.status === "streaming").length,
+          : workers.filter((worker) => worker.status === "streaming").length,
       totalTokens: {
         input: coerceNullableTokenValue(
           isRecord(statsRecord.totalTokens) ? statsRecord.totalTokens.input : undefined
@@ -560,9 +560,11 @@ function coerceSessionWorkerMeta(value: unknown): SessionWorkerMeta | undefined 
   }
 
   const normalizedStatus: SessionWorkerMeta["status"] =
-    status === "running" || status === "idle" || status === "streaming" || status === "terminated"
-      ? status
-      : "idle";
+    status === "running" || status === "streaming"
+      ? "streaming"
+      : status === "terminated"
+        ? "terminated"
+        : "idle";
 
   const tokensRecord = isRecord(value.tokens) ? value.tokens : {};
 

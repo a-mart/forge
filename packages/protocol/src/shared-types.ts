@@ -44,7 +44,7 @@ export interface AgentDescriptor {
 export interface SessionWorkerMeta {
   id: string
   model: string | null
-  status: 'running' | 'idle' | 'streaming' | 'terminated'
+  status: 'idle' | 'streaming' | 'terminated'
   createdAt: string
   terminatedAt: string | null
   tokens: {
