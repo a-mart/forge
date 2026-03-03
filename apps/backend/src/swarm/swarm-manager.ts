@@ -781,10 +781,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     });
 
     const explicitSystemPrompt = input.systemPrompt?.trim();
-    const runtimeSystemPrompt =
+    const baseSystemPrompt =
       explicitSystemPrompt && explicitSystemPrompt.length > 0
         ? explicitSystemPrompt
         : this.resolveSystemPromptForDescriptor(descriptor);
+
+    const runtimeSystemPrompt = this.injectWorkerIdentityContext(descriptor, baseSystemPrompt);
 
     const runtime = await this.createRuntimeForDescriptor(descriptor, runtimeSystemPrompt);
     this.runtimes.set(agentId, runtime);
@@ -1372,6 +1374,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     if (sender.role === "manager" && target.role === "worker" && target.managerId !== sender.agentId) {
       throw new Error(`Manager ${sender.agentId} does not own worker ${targetAgentId}`);
+    }
+
+    if (sender.role === "worker" && target.role === "manager" && sender.managerId !== target.agentId) {
+      throw new Error(
+        `Worker ${sender.agentId} cannot message manager ${targetAgentId} (own manager is ${sender.managerId})`
+      );
     }
 
     const managerContextIds = this.resolveActivityManagerContextIds(sender, target);
@@ -2369,6 +2377,23 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     return DEFAULT_WORKER_SYSTEM_PROMPT;
+  }
+
+  private injectWorkerIdentityContext(descriptor: AgentDescriptor, systemPrompt: string): string {
+    if (descriptor.role !== "worker") {
+      return systemPrompt;
+    }
+
+    const identityBlock = [
+      "",
+      "# Agent Identity",
+      `- Your agent ID: \`${descriptor.agentId}\``,
+      `- Your manager ID: \`${descriptor.managerId}\``,
+      "- Always use your manager ID above when sending messages back via send_message_to_agent.",
+      "- Do NOT guess the manager ID from list_agents — use the ID provided here."
+    ].join("\n");
+
+    return systemPrompt + identityBlock;
   }
 
   private resolveRequiredArchetypePrompt(archetypeId: string): string {

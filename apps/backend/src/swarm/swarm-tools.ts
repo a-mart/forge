@@ -81,7 +81,17 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
       description: "List swarm agents with ids, roles, status, model, and workspace.",
       parameters: Type.Object({}),
       async execute() {
-        const agents = host.listAgents();
+        let agents = host.listAgents();
+
+        // Workers only see their own manager and sibling workers (same managerId)
+        if (descriptor.role === "worker" && descriptor.managerId) {
+          agents = agents.filter(
+            (a) =>
+              a.agentId === descriptor.managerId ||
+              (a.role === "worker" && a.managerId === descriptor.managerId)
+          );
+        }
+
         return {
           content: [
             {
