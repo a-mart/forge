@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import { readdir } from "node:fs/promises";
 import type { Dirent } from "node:fs";
 import { resolve } from "node:path";
+import { getProfileIntegrationsDir, getProfilesDir } from "../swarm/data-paths.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import { normalizeManagerId } from "../utils/normalize.js";
 import type { IntegrationContextInfo } from "./integration-context.js";
@@ -41,8 +42,8 @@ import type {
 
 type IntegrationProvider = "slack" | "telegram";
 
-const INTEGRATIONS_DIR_NAME = "integrations";
-const INTEGRATIONS_MANAGERS_DIR_NAME = "managers";
+const LEGACY_INTEGRATIONS_DIR_NAME = "integrations";
+const LEGACY_INTEGRATIONS_MANAGERS_DIR_NAME = "managers";
 
 export class IntegrationRegistryService extends EventEmitter {
   private readonly swarmManager: SwarmManager;
@@ -656,7 +657,51 @@ export class IntegrationRegistryService extends EventEmitter {
   }
 
   private async loadManagerIdsFromDisk(): Promise<string[]> {
-    const managersRoot = resolve(this.dataDir, INTEGRATIONS_DIR_NAME, INTEGRATIONS_MANAGERS_DIR_NAME);
+    const profilesRoot = getProfilesDir(this.dataDir);
+
+    let profileEntries: Dirent[];
+    try {
+      profileEntries = await readdir(profilesRoot, { withFileTypes: true });
+    } catch (error) {
+      if (isEnoentError(error)) {
+        return this.loadLegacyManagerIdsFromDisk();
+      }
+
+      throw error;
+    }
+
+    const managerIds: string[] = [];
+
+    for (const entry of profileEntries) {
+      if (!entry.isDirectory()) {
+        continue;
+      }
+
+      const managerId = normalizeManagerId(entry.name);
+      const integrationsDir = getProfileIntegrationsDir(this.dataDir, managerId);
+
+      try {
+        await readdir(integrationsDir, { withFileTypes: true });
+      } catch (error) {
+        if (isEnoentError(error)) {
+          continue;
+        }
+
+        throw error;
+      }
+
+      managerIds.push(managerId);
+    }
+
+    return managerIds;
+  }
+
+  private async loadLegacyManagerIdsFromDisk(): Promise<string[]> {
+    const managersRoot = resolve(
+      this.dataDir,
+      LEGACY_INTEGRATIONS_DIR_NAME,
+      LEGACY_INTEGRATIONS_MANAGERS_DIR_NAME
+    );
 
     let entries: Dirent[];
     try {

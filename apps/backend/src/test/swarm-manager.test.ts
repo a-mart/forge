@@ -621,7 +621,7 @@ describe('SwarmManager', () => {
 
       await manager.updateSettingsEnv({ BRAVE_API_KEY: 'bsal-test-value' })
 
-      const secretsRaw = await readFile(config.paths.secretsFile, 'utf8')
+      const secretsRaw = await readFile(config.paths.sharedSecretsFile, 'utf8')
       expect(JSON.parse(secretsRaw)).toEqual({ BRAVE_API_KEY: 'bsal-test-value' })
       expect(process.env.BRAVE_API_KEY).toBe('bsal-test-value')
 

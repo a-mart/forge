@@ -210,6 +210,27 @@ describe('IntegrationRegistryService', () => {
     }
   })
 
+  it('falls back to legacy manager integration directories when profiles are missing', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'swarm-registry-test-'))
+    await writeJsonFile(
+      join(dataDir, 'integrations', 'managers', 'legacy-manager', 'slack.json'),
+      {},
+    )
+
+    const registry = new IntegrationRegistryService({
+      swarmManager: createFakeSwarmManager() as any,
+      dataDir,
+    })
+
+    await registry.start()
+
+    const slackManagers = new Set(mockState.slackInstances.map((instance) => instance.managerId))
+    const telegramManagers = new Set(mockState.telegramInstances.map((instance) => instance.managerId))
+
+    expect(slackManagers).toEqual(new Set(['legacy-manager']))
+    expect(telegramManagers).toEqual(new Set(['legacy-manager']))
+  })
+
   it('forwards status events from started profiles', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'swarm-registry-test-'))
 

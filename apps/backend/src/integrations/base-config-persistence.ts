@@ -1,9 +1,10 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import { getProfileIntegrationsDir } from "../swarm/data-paths.js";
 import { normalizeManagerId } from "../utils/normalize.js";
 
-const INTEGRATIONS_DIR_NAME = "integrations";
-const INTEGRATIONS_MANAGERS_DIR_NAME = "managers";
+const LEGACY_INTEGRATIONS_DIR_NAME = "integrations";
+const LEGACY_INTEGRATIONS_MANAGERS_DIR_NAME = "managers";
 
 export class BaseConfigPersistence<TConfig> {
   private readonly integrationName: string;
@@ -25,10 +26,15 @@ export class BaseConfigPersistence<TConfig> {
 
   getPath(dataDir: string, managerId: string): string {
     const normalizedManagerId = normalizeManagerId(managerId);
+    return resolve(getProfileIntegrationsDir(dataDir, normalizedManagerId), this.fileName);
+  }
+
+  private getLegacyPath(dataDir: string, managerId: string): string {
+    const normalizedManagerId = normalizeManagerId(managerId);
     return resolve(
       dataDir,
-      INTEGRATIONS_DIR_NAME,
-      INTEGRATIONS_MANAGERS_DIR_NAME,
+      LEGACY_INTEGRATIONS_DIR_NAME,
+      LEGACY_INTEGRATIONS_MANAGERS_DIR_NAME,
       normalizedManagerId,
       this.fileName
     );
@@ -36,27 +42,34 @@ export class BaseConfigPersistence<TConfig> {
 
   async load(options: { dataDir: string; managerId: string }): Promise<TConfig> {
     const defaults = this.createDefaultConfig(options.managerId);
-    const configPath = this.getPath(options.dataDir, options.managerId);
+    const normalizedManagerId = normalizeManagerId(options.managerId);
+    const configPath = this.getPath(options.dataDir, normalizedManagerId);
+    const legacyConfigPath = this.getLegacyPath(options.dataDir, normalizedManagerId);
+    const candidatePaths = legacyConfigPath === configPath ? [configPath] : [configPath, legacyConfigPath];
 
-    try {
-      const raw = await readFile(configPath, "utf8");
-      const parsed = JSON.parse(raw) as unknown;
-      return this.parseConfig(parsed);
-    } catch (error) {
-      if (isEnoentError(error)) {
-        return defaults;
+    for (const candidatePath of candidatePaths) {
+      try {
+        const raw = await readFile(candidatePath, "utf8");
+        const parsed = JSON.parse(raw) as unknown;
+        return this.parseConfig(parsed);
+      } catch (error) {
+        if (isEnoentError(error)) {
+          continue;
+        }
+
+        if (isSyntaxError(error)) {
+          throw new Error(`Invalid ${this.integrationName} config JSON at ${candidatePath}`);
+        }
+
+        if (error instanceof Error) {
+          throw new Error(`Invalid ${this.integrationName} config at ${candidatePath}: ${error.message}`);
+        }
+
+        throw error;
       }
-
-      if (isSyntaxError(error)) {
-        throw new Error(`Invalid ${this.integrationName} config JSON at ${configPath}`);
-      }
-
-      if (error instanceof Error) {
-        throw new Error(`Invalid ${this.integrationName} config at ${configPath}: ${error.message}`);
-      }
-
-      throw error;
     }
+
+    return defaults;
   }
 
   async save(options: { dataDir: string; managerId: string; config: TConfig }): Promise<void> {

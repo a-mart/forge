@@ -856,7 +856,7 @@ describe('SwarmWebSocketServer', () => {
 
       expect(process.env.BRAVE_API_KEY).toBe('bsal-rest-value')
 
-      const storedSecrets = JSON.parse(await readFile(config.paths.secretsFile, 'utf8')) as Record<string, string>
+      const storedSecrets = JSON.parse(await readFile(config.paths.sharedSecretsFile, 'utf8')) as Record<string, string>
       expect(storedSecrets.BRAVE_API_KEY).toBe('bsal-rest-value')
 
       const deleteResponse = await fetch(`http://${config.host}:${config.port}/api/settings/env/BRAVE_API_KEY`, {
@@ -943,7 +943,7 @@ describe('SwarmWebSocketServer', () => {
       expect(openai?.configured).toBe(true)
       expect(openai?.maskedValue).toBe('********5678')
 
-      const storedAuth = JSON.parse(await readFile(config.paths.authFile, 'utf8')) as Record<
+      const storedAuth = JSON.parse(await readFile(config.paths.sharedAuthFile, 'utf8')) as Record<
         string,
         { type: string; key?: string; access?: string }
       >
@@ -967,7 +967,7 @@ describe('SwarmWebSocketServer', () => {
       }
       expect(afterDeletePayload.providers.find((entry) => entry.provider === 'openai-codex')?.configured).toBe(false)
 
-      const afterDeleteAuth = JSON.parse(await readFile(config.paths.authFile, 'utf8')) as Record<string, unknown>
+      const afterDeleteAuth = JSON.parse(await readFile(config.paths.sharedAuthFile, 'utf8')) as Record<string, unknown>
       expect(afterDeleteAuth['openai-codex']).toBeUndefined()
     } finally {
       await server.stop()
