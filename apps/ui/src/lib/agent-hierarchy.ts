@@ -144,12 +144,12 @@ export function buildProfileTreeRows(
   for (const profile of profiles) {
     const sessions = sessionsByProfile.get(profile.profileId) ?? []
 
-    // Sort: default session first, then by createdAt
+    // Sort: default session first, then newest-first
     const sortedSessions = [...sessions].sort((a, b) => {
       const aIsDefault = a.agentId === profile.defaultSessionAgentId ? 0 : 1
       const bIsDefault = b.agentId === profile.defaultSessionAgentId ? 0 : 1
       if (aIsDefault !== bIsDefault) return aIsDefault - bIsDefault
-      return a.createdAt.localeCompare(b.createdAt) || a.agentId.localeCompare(b.agentId)
+      return b.createdAt.localeCompare(a.createdAt) || a.agentId.localeCompare(b.agentId)
     })
 
     const sessionRows: SessionRow[] = sortedSessions.map((session) => ({
