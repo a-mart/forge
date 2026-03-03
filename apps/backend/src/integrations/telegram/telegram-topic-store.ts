@@ -1,9 +1,10 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import { getProfileIntegrationsDir } from "../../swarm/data-paths.js";
 import { normalizeManagerId } from "../../utils/normalize.js";
 
-const INTEGRATIONS_DIR_NAME = "integrations";
-const INTEGRATIONS_MANAGERS_DIR_NAME = "managers";
+const LEGACY_INTEGRATIONS_DIR_NAME = "integrations";
+const LEGACY_INTEGRATIONS_MANAGERS_DIR_NAME = "managers";
 const TELEGRAM_TOPICS_FILE_NAME = "telegram-topics.json";
 
 export interface TelegramTopicMapping {
@@ -20,10 +21,15 @@ export interface TelegramTopicStore {
 
 export function getTopicStorePath(dataDir: string, managerId: string): string {
   const normalizedManagerId = normalizeManagerId(managerId);
+  return resolve(getProfileIntegrationsDir(dataDir, normalizedManagerId), TELEGRAM_TOPICS_FILE_NAME);
+}
+
+function getLegacyTopicStorePath(dataDir: string, managerId: string): string {
+  const normalizedManagerId = normalizeManagerId(managerId);
   return resolve(
     dataDir,
-    INTEGRATIONS_DIR_NAME,
-    INTEGRATIONS_MANAGERS_DIR_NAME,
+    LEGACY_INTEGRATIONS_DIR_NAME,
+    LEGACY_INTEGRATIONS_MANAGERS_DIR_NAME,
     normalizedManagerId,
     TELEGRAM_TOPICS_FILE_NAME
   );
@@ -31,16 +37,25 @@ export function getTopicStorePath(dataDir: string, managerId: string): string {
 
 export async function loadTopicStore(dataDir: string, managerId: string): Promise<TelegramTopicStore> {
   const storePath = getTopicStorePath(dataDir, managerId);
+  const legacyPath = getLegacyTopicStorePath(dataDir, managerId);
+  const candidatePaths = legacyPath === storePath ? [storePath] : [storePath, legacyPath];
 
-  let raw: string;
-  try {
-    raw = await readFile(storePath, "utf8");
-  } catch (error) {
-    if (isEnoentError(error)) {
-      return { mappings: [] };
+  let raw: string | undefined;
+  for (const candidatePath of candidatePaths) {
+    try {
+      raw = await readFile(candidatePath, "utf8");
+      break;
+    } catch (error) {
+      if (isEnoentError(error)) {
+        continue;
+      }
+
+      throw error;
     }
+  }
 
-    throw error;
+  if (raw === undefined) {
+    return { mappings: [] };
   }
 
   const trimmed = raw.trim();
