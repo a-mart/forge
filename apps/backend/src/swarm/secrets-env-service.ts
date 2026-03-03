@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { access, copyFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { AuthStorage, type AuthCredential } from "@mariozechner/pi-coding-agent";
 import { normalizeEnvVarName, type ParsedSkillEnvDeclaration } from "./skill-frontmatter.js";
@@ -126,7 +126,8 @@ export class SecretsEnvService {
   }
 
   async listSettingsAuth(): Promise<SettingsAuthProvider[]> {
-    const authStorage = AuthStorage.create(this.deps.config.paths.authFile);
+    const authFile = await this.resolveAuthFileForRead();
+    const authStorage = AuthStorage.create(authFile);
 
     return SETTINGS_AUTH_PROVIDER_DEFINITIONS.map((definition) => {
       const credential = authStorage.get(definition.storageProvider);
@@ -147,7 +148,8 @@ export class SecretsEnvService {
       return;
     }
 
-    const authStorage = AuthStorage.create(this.deps.config.paths.authFile);
+    const authFile = await this.resolveAuthFileForWrite();
+    const authStorage = AuthStorage.create(authFile);
 
     for (const [rawProvider, rawValue] of entries) {
       const resolvedProvider = resolveSettingsAuthProvider(rawProvider);
@@ -178,7 +180,8 @@ export class SecretsEnvService {
       throw new Error(`Invalid auth provider: ${provider}`);
     }
 
-    const authStorage = AuthStorage.create(this.deps.config.paths.authFile);
+    const authFile = await this.resolveAuthFileForWrite();
+    const authStorage = AuthStorage.create(authFile);
     authStorage.remove(resolvedProvider.storageProvider);
   }
 
@@ -205,58 +208,79 @@ export class SecretsEnvService {
   }
 
   private async readSecretsStore(): Promise<Record<string, string>> {
-    let raw: string;
+    const preferredPath = this.deps.config.paths.sharedSecretsFile;
+    const legacyPath = this.deps.config.paths.secretsFile;
+    const candidatePaths = legacyPath === preferredPath ? [preferredPath] : [preferredPath, legacyPath];
 
-    try {
-      raw = await readFile(this.deps.config.paths.secretsFile, "utf8");
-    } catch (error) {
-      if (isEnoentError(error)) {
-        return {};
-      }
-      throw error;
-    }
+    for (const candidatePath of candidatePaths) {
+      let raw: string;
 
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      return {};
-    }
+      try {
+        raw = await readFile(candidatePath, "utf8");
+      } catch (error) {
+        if (isEnoentError(error)) {
+          continue;
+        }
 
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return {};
-    }
-
-    const normalized: Record<string, string> = {};
-
-    for (const [rawName, rawValue] of Object.entries(parsed)) {
-      const normalizedName = normalizeEnvVarName(rawName);
-      if (!normalizedName) {
-        continue;
+        throw error;
       }
 
-      if (typeof rawValue !== "string") {
-        continue;
-      }
-
-      const normalizedValue = rawValue.trim();
-      if (!normalizedValue) {
-        continue;
-      }
-
-      normalized[normalizedName] = normalizedValue;
+      return parseSecretsStoreRaw(raw);
     }
 
-    return normalized;
+    return {};
   }
 
   private async saveSecretsStore(): Promise<void> {
-    const target = this.deps.config.paths.secretsFile;
+    const target = this.deps.config.paths.sharedSecretsFile;
     const tmp = `${target}.tmp`;
 
     await mkdir(dirname(target), { recursive: true });
     await writeFile(tmp, `${JSON.stringify(this.secrets, null, 2)}\n`, "utf8");
     await rename(tmp, target);
+  }
+
+  private async resolveAuthFileForRead(): Promise<string> {
+    const preferredPath = this.deps.config.paths.sharedAuthFile;
+    if (await this.pathExists(preferredPath)) {
+      return preferredPath;
+    }
+
+    const legacyPath = this.deps.config.paths.authFile;
+    if (legacyPath !== preferredPath && (await this.pathExists(legacyPath))) {
+      return legacyPath;
+    }
+
+    return preferredPath;
+  }
+
+  private async resolveAuthFileForWrite(): Promise<string> {
+    const preferredPath = this.deps.config.paths.sharedAuthFile;
+    await mkdir(dirname(preferredPath), { recursive: true });
+
+    if (await this.pathExists(preferredPath)) {
+      return preferredPath;
+    }
+
+    const legacyPath = this.deps.config.paths.authFile;
+    if (legacyPath !== preferredPath && (await this.pathExists(legacyPath))) {
+      await copyFile(legacyPath, preferredPath);
+    }
+
+    return preferredPath;
+  }
+
+  private async pathExists(path: string): Promise<boolean> {
+    try {
+      await access(path);
+      return true;
+    } catch (error) {
+      if (isEnoentError(error)) {
+        return false;
+      }
+
+      throw error;
+    }
   }
 
   private applySecretToProcessEnv(name: string, value: string): void {
@@ -277,6 +301,41 @@ export class SecretsEnvService {
 
     process.env[name] = original;
   }
+}
+
+function parseSecretsStoreRaw(raw: string): Record<string, string> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return {};
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return {};
+  }
+
+  const normalized: Record<string, string> = {};
+
+  for (const [rawName, rawValue] of Object.entries(parsed)) {
+    const normalizedName = normalizeEnvVarName(rawName);
+    if (!normalizedName) {
+      continue;
+    }
+
+    if (typeof rawValue !== "string") {
+      continue;
+    }
+
+    const normalizedValue = rawValue.trim();
+    if (!normalizedValue) {
+      continue;
+    }
+
+    normalized[normalizedName] = normalizedValue;
+  }
+
+  return normalized;
 }
 
 function resolveSettingsAuthProvider(

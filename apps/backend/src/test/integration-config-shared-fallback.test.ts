@@ -125,4 +125,54 @@ describe('shared integration config fallback', () => {
     const loadedOverride = await loadTelegramConfig({ dataDir, managerId: 'manager-a' })
     expect(loadedOverride.botToken).toBe('123456:manager-token')
   })
+
+  it('reads legacy Slack manager and shared configs when profile-scoped files are missing', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'shared-slack-config-legacy-test-'))
+
+    const legacySharedSlack = createDefaultSlackConfig(SHARED_INTEGRATION_MANAGER_ID)
+    legacySharedSlack.enabled = true
+    legacySharedSlack.appToken = 'xapp-legacy-shared'
+    legacySharedSlack.botToken = 'xoxb-legacy-shared'
+    await writeJson(join(dataDir, 'integrations', 'shared', 'slack.json'), legacySharedSlack)
+
+    const legacyManagerSlack = createDefaultSlackConfig('legacy-manager')
+    legacyManagerSlack.enabled = true
+    legacyManagerSlack.appToken = 'xapp-legacy-manager'
+    legacyManagerSlack.botToken = 'xoxb-legacy-manager'
+    await writeJson(
+      join(dataDir, 'integrations', 'managers', 'legacy-manager', 'slack.json'),
+      legacyManagerSlack,
+    )
+
+    const inherited = await loadSlackConfig({ dataDir, managerId: 'shared-only-manager' })
+    expect(inherited.appToken).toBe('xapp-legacy-shared')
+
+    const managerOverride = await loadSlackConfig({ dataDir, managerId: 'legacy-manager' })
+    expect(managerOverride.appToken).toBe('xapp-legacy-manager')
+    expect(await hasSlackOverrideConfig({ dataDir, managerId: 'legacy-manager' })).toBe(true)
+  })
+
+  it('reads legacy Telegram manager and shared configs when profile-scoped files are missing', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'shared-telegram-config-legacy-test-'))
+
+    const legacySharedTelegram = createDefaultTelegramConfig(SHARED_INTEGRATION_MANAGER_ID)
+    legacySharedTelegram.enabled = true
+    legacySharedTelegram.botToken = '123456:legacy-shared'
+    await writeJson(join(dataDir, 'integrations', 'shared', 'telegram.json'), legacySharedTelegram)
+
+    const legacyManagerTelegram = createDefaultTelegramConfig('legacy-manager')
+    legacyManagerTelegram.enabled = true
+    legacyManagerTelegram.botToken = '123456:legacy-manager'
+    await writeJson(
+      join(dataDir, 'integrations', 'managers', 'legacy-manager', 'telegram.json'),
+      legacyManagerTelegram,
+    )
+
+    const inherited = await loadTelegramConfig({ dataDir, managerId: 'shared-only-manager' })
+    expect(inherited.botToken).toBe('123456:legacy-shared')
+
+    const managerOverride = await loadTelegramConfig({ dataDir, managerId: 'legacy-manager' })
+    expect(managerOverride.botToken).toBe('123456:legacy-manager')
+    expect(await hasTelegramOverrideConfig({ dataDir, managerId: 'legacy-manager' })).toBe(true)
+  })
 })

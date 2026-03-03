@@ -1,13 +1,20 @@
 import { resolve } from "node:path";
+import { getProfileScheduleFilePath, getProfileSchedulesDir } from "../swarm/data-paths.js";
 import { normalizeManagerId } from "../utils/normalize.js";
 
-const SCHEDULES_DIR_NAME = "schedules";
+const LEGACY_SCHEDULES_DIR_NAME = "schedules";
 export { normalizeManagerId };
 
-export function getSchedulesDirectoryPath(dataDir: string): string {
-  return resolve(dataDir, SCHEDULES_DIR_NAME);
+export function getSchedulesDirectoryPath(dataDir: string, managerId: string): string {
+  const normalizedManagerId = normalizeManagerId(managerId);
+  return getProfileSchedulesDir(dataDir, normalizedManagerId);
 }
 
 export function getScheduleFilePath(dataDir: string, managerId: string): string {
-  return resolve(getSchedulesDirectoryPath(dataDir), `${normalizeManagerId(managerId)}.json`);
+  const normalizedManagerId = normalizeManagerId(managerId);
+  return getProfileScheduleFilePath(dataDir, normalizedManagerId);
+}
+
+export function getLegacyScheduleFilePath(dataDir: string, managerId: string): string {
+  return resolve(dataDir, LEGACY_SCHEDULES_DIR_NAME, `${normalizeManagerId(managerId)}.json`);
 }

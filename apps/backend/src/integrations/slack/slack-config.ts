@@ -1,10 +1,11 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 import {
   BaseConfigPersistence,
   buildIntegrationProfileId
 } from "../base-config-persistence.js";
 import {
+  getLegacySharedIntegrationConfigPath,
   getSharedIntegrationConfigPath,
   isSharedIntegrationManagerId
 } from "../shared-config.js";
@@ -12,6 +13,8 @@ import { normalizeManagerId } from "../../utils/normalize.js";
 import type { SlackIntegrationConfig, SlackIntegrationConfigPublic } from "./slack-types.js";
 
 const SLACK_CONFIG_FILE_NAME = "slack.json";
+const LEGACY_INTEGRATIONS_DIR_NAME = "integrations";
+const LEGACY_INTEGRATIONS_MANAGERS_DIR_NAME = "managers";
 const DEFAULT_MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MIN_FILE_BYTES = 1024;
 const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -27,8 +30,22 @@ export function getSlackConfigPath(dataDir: string, managerId: string): string {
   return SLACK_CONFIG_PERSISTENCE.getPath(dataDir, managerId);
 }
 
+function getLegacySlackConfigPath(dataDir: string, managerId: string): string {
+  return resolve(
+    dataDir,
+    LEGACY_INTEGRATIONS_DIR_NAME,
+    LEGACY_INTEGRATIONS_MANAGERS_DIR_NAME,
+    normalizeManagerId(managerId),
+    SLACK_CONFIG_FILE_NAME
+  );
+}
+
 export function getSharedSlackConfigPath(dataDir: string): string {
   return getSharedIntegrationConfigPath(dataDir, SLACK_CONFIG_FILE_NAME);
+}
+
+function getLegacySharedSlackConfigPath(dataDir: string): string {
+  return getLegacySharedIntegrationConfigPath(dataDir, SLACK_CONFIG_FILE_NAME);
 }
 
 export function buildSlackProfileId(managerId: string): string {
@@ -68,16 +85,25 @@ export async function loadSlackConfig(options: {
   const managerId = normalizeManagerId(options.managerId);
 
   if (isSharedIntegrationManagerId(managerId)) {
-    const sharedConfig = await loadSlackConfigFromPath(getSharedSlackConfigPath(options.dataDir));
+    const sharedConfig = await loadSlackConfigWithLegacyFallback({
+      primaryPath: getSharedSlackConfigPath(options.dataDir),
+      legacyPath: getLegacySharedSlackConfigPath(options.dataDir)
+    });
     return sharedConfig ?? createDefaultSlackConfig(managerId);
   }
 
-  const managerConfig = await loadSlackConfigFromPath(getSlackConfigPath(options.dataDir, managerId));
+  const managerConfig = await loadSlackConfigWithLegacyFallback({
+    primaryPath: getSlackConfigPath(options.dataDir, managerId),
+    legacyPath: getLegacySlackConfigPath(options.dataDir, managerId)
+  });
   if (managerConfig) {
     return managerConfig;
   }
 
-  const sharedConfig = await loadSlackConfigFromPath(getSharedSlackConfigPath(options.dataDir));
+  const sharedConfig = await loadSlackConfigWithLegacyFallback({
+    primaryPath: getSharedSlackConfigPath(options.dataDir),
+    legacyPath: getLegacySharedSlackConfigPath(options.dataDir)
+  });
   if (sharedConfig) {
     return {
       ...sharedConfig,
@@ -116,8 +142,19 @@ export async function hasSlackOverrideConfig(options: {
     return false;
   }
 
-  const raw = await readConfigText(getSlackConfigPath(options.dataDir, managerId));
-  return isConfigTextMeaningful(raw);
+  const primaryPath = getSlackConfigPath(options.dataDir, managerId);
+  const primaryRaw = await readConfigText(primaryPath);
+  if (isConfigTextMeaningful(primaryRaw)) {
+    return true;
+  }
+
+  const legacyPath = getLegacySlackConfigPath(options.dataDir, managerId);
+  if (legacyPath === primaryPath) {
+    return false;
+  }
+
+  const legacyRaw = await readConfigText(legacyPath);
+  return isConfigTextMeaningful(legacyRaw);
 }
 
 export function mergeSlackConfig(
@@ -183,6 +220,25 @@ export function maskSlackConfig(config: SlackIntegrationConfig): SlackIntegratio
       allowBinary: config.attachments.allowBinary
     }
   };
+}
+
+async function loadSlackConfigWithLegacyFallback(options: {
+  primaryPath: string;
+  legacyPath: string;
+}): Promise<SlackIntegrationConfig | undefined> {
+  const candidatePaths =
+    options.primaryPath === options.legacyPath
+      ? [options.primaryPath]
+      : [options.primaryPath, options.legacyPath];
+
+  for (const candidatePath of candidatePaths) {
+    const loaded = await loadSlackConfigFromPath(candidatePath);
+    if (loaded) {
+      return loaded;
+    }
+  }
+
+  return undefined;
 }
 
 async function loadSlackConfigFromPath(configPath: string): Promise<SlackIntegrationConfig | undefined> {

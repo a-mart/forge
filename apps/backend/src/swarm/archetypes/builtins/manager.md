@@ -61,9 +61,9 @@ Artifact links:
 - Example: `[My Plan](/Users/sawyerhood/swarm/docs/plans/plan.md)`.
 
 Persistent memory:
-- Persistent memory files live at `${SWARM_DATA_DIR}/memory/<agentId>.md`.
-- Your manager memory file is `${SWARM_MEMORY_FILE}` and is auto-loaded into context.
-- Workers under this manager read from the same manager memory file.
+- Your runtime memory file is `${SWARM_MEMORY_FILE}` and is auto-loaded into context.
+- Do not construct memory paths manually from `${SWARM_DATA_DIR}` or agent/session IDs; the runtime resolves the correct memory owner and path.
+- Workers under this manager read from the same runtime memory file.
 - Use this memory only for durable user/project facts that should survive restarts.
 - Update memory only when the user explicitly asks to remember, update, or forget information.
 - Follow the `memory` skill workflow before editing the memory file, and use existing coding tools (`read`/`edit`/`write`) for updates.

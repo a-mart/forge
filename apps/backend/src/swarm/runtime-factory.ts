@@ -24,6 +24,7 @@ interface RuntimeFactoryDependencies {
   config: SwarmConfig;
   now: () => string;
   logDebug: (message: string, details?: unknown) => void;
+  onSessionFileRotated?: (descriptor: AgentDescriptor, sessionFile: string) => Promise<void>;
   getMemoryRuntimeResources: (descriptor: AgentDescriptor) => Promise<{
     memoryContextFile: { path: string; content: string };
     additionalSkillPaths: string[];
@@ -127,7 +128,22 @@ export class RuntimeFactory {
 
     const sessionManager = openSessionManagerWithSizeGuard(descriptor.sessionFile, {
       context: `runtime:create:pi:${descriptor.agentId}`,
-      rotateOversizedFile: true
+      rotateOversizedFile: true,
+      logWarning: (message, details) => {
+        this.deps.logDebug(message, details);
+
+        if (message === "session:file:oversized:rotated") {
+          Promise.resolve(this.deps.onSessionFileRotated?.(descriptor, descriptor.sessionFile)).catch(
+            (error) => {
+              this.deps.logDebug("session:meta:rotation_hook_error", {
+                agentId: descriptor.agentId,
+                sessionFile: descriptor.sessionFile,
+                message: error instanceof Error ? error.message : String(error)
+              });
+            }
+          );
+        }
+      }
     });
     if (!sessionManager) {
       throw new Error(`Unable to open session file for agent ${descriptor.agentId}: ${descriptor.sessionFile}`);
@@ -225,6 +241,9 @@ export class RuntimeFactory {
       runtimeEnv: {
         SWARM_DATA_DIR: this.deps.config.paths.dataDir,
         SWARM_MEMORY_FILE: memoryResources.memoryContextFile.path
+      },
+      onSessionFileRotated: async (sessionFile) => {
+        await this.deps.onSessionFileRotated?.(descriptor, sessionFile);
       }
     });
 

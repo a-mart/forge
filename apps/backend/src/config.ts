@@ -2,26 +2,52 @@ import { dirname, resolve } from "node:path";
 import { homedir } from "node:os";
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { normalizeAllowlistRoots } from "./swarm/cwd-policy.js";
-import { getMemoryDirPath } from "./swarm/memory-paths.js";
+import {
+  getAgentsStoreFilePath,
+  getLegacyAuthDirPath,
+  getLegacyAuthFilePath,
+  getLegacyMemoryDirPath,
+  getLegacySecretsFilePath,
+  getLegacySessionsDirPath,
+  getProfilesDir,
+  getSharedAuthDir,
+  getSharedAuthFilePath,
+  getSharedDir,
+  getSharedIntegrationsDir,
+  getSharedSecretsFilePath,
+  getSwarmDir,
+  getUploadsDir
+} from "./swarm/data-paths.js";
 import type { SwarmConfig } from "./swarm/types.js";
 
 export function createConfig(): SwarmConfig {
   const rootDir = detectRootDir();
   const dataDir = process.env.MIDDLEMAN_DATA_DIR ?? resolve(homedir(), ".middleman");
   const managerId = undefined;
-  const swarmDir = resolve(dataDir, "swarm");
-  const sessionsDir = resolve(dataDir, "sessions");
-  const uploadsDir = resolve(dataDir, "uploads");
-  const authDir = resolve(dataDir, "auth");
-  const authFile = resolve(authDir, "auth.json");
+
+  const swarmDir = getSwarmDir(dataDir);
+  const uploadsDir = getUploadsDir(dataDir);
+  const profilesDir = getProfilesDir(dataDir);
+  const sharedDir = getSharedDir(dataDir);
+  const sharedAuthDir = getSharedAuthDir(dataDir);
+  const sharedAuthFile = getSharedAuthFilePath(dataDir);
+  const sharedSecretsFile = getSharedSecretsFilePath(dataDir);
+  const sharedIntegrationsDir = getSharedIntegrationsDir(dataDir);
+
+  // Legacy flat-layout paths retained for backward compatibility.
+  const sessionsDir = getLegacySessionsDirPath(dataDir);
+  const authDir = getLegacyAuthDirPath(dataDir);
+  const authFile = getLegacyAuthFilePath(dataDir);
+  const memoryDir = getLegacyMemoryDirPath(dataDir);
+  const secretsFile = getLegacySecretsFilePath(dataDir);
+
   migrateLegacyPiAuthFileIfNeeded(authFile);
+
   const agentDir = resolve(dataDir, "agent");
   const managerAgentDir = resolve(agentDir, "manager");
   const repoArchetypesDir = resolve(rootDir, ".swarm", "archetypes");
-  const memoryDir = getMemoryDirPath(dataDir);
   const memoryFile = undefined;
   const repoMemorySkillFile = resolve(rootDir, ".swarm", "skills", "memory", "SKILL.md");
-  const secretsFile = resolve(dataDir, "secrets.json");
   const defaultCwd = rootDir;
 
   const cwdAllowlistRoots = normalizeAllowlistRoots([
@@ -47,18 +73,24 @@ export function createConfig(): SwarmConfig {
       rootDir,
       dataDir,
       swarmDir,
-      sessionsDir,
       uploadsDir,
+      agentsStoreFile: getAgentsStoreFilePath(dataDir),
+      profilesDir,
+      sharedDir,
+      sharedAuthDir,
+      sharedAuthFile,
+      sharedSecretsFile,
+      sharedIntegrationsDir,
+      sessionsDir,
+      memoryDir,
       authDir,
       authFile,
+      secretsFile,
       agentDir,
       managerAgentDir,
       repoArchetypesDir,
-      memoryDir,
       memoryFile,
       repoMemorySkillFile,
-      agentsStoreFile: resolve(swarmDir, "agents.json"),
-      secretsFile,
       schedulesFile: undefined
     }
   };

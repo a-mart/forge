@@ -16,8 +16,8 @@ If the request is ambiguous, ask a follow-up question before adding a schedule.
 
 ## Storage
 
-Schedules are stored at:
-- `${SWARM_DATA_DIR}/schedules/<managerId>.json`
+- Schedule data is stored under `${SWARM_DATA_DIR}`.
+- Do not hardcode schedule file paths; the scheduler CLI resolves the correct storage location for the selected manager.
 
 ## Commands
 

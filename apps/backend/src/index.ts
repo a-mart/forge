@@ -124,8 +124,12 @@ async function main(): Promise<void> {
   });
 }
 
+/**
+ * Collect unique profile IDs from manager agents for scheduler instantiation.
+ * Schedules are profile-scoped, so we create one scheduler per profile, not per session.
+ */
 function collectManagerIds(agents: unknown[], fallbackManagerId?: string): Set<string> {
-  const managerIds = new Set<string>();
+  const profileIds = new Set<string>();
 
   for (const agent of agents) {
     if (!agent || typeof agent !== "object" || Array.isArray(agent)) {
@@ -141,16 +145,20 @@ function collectManagerIds(agents: unknown[], fallbackManagerId?: string): Set<s
       continue;
     }
 
-    managerIds.add(descriptor.agentId.trim());
+    // Use profileId when available; fall back to agentId for legacy agents.
+    const id = (typeof descriptor.profileId === "string" && descriptor.profileId.trim().length > 0)
+      ? descriptor.profileId.trim()
+      : descriptor.agentId.trim();
+    profileIds.add(id);
   }
 
   const normalizedFallbackManagerId =
     typeof fallbackManagerId === "string" ? fallbackManagerId.trim() : "";
-  if (managerIds.size === 0 && normalizedFallbackManagerId.length > 0) {
-    managerIds.add(normalizedFallbackManagerId);
+  if (profileIds.size === 0 && normalizedFallbackManagerId.length > 0) {
+    profileIds.add(normalizedFallbackManagerId);
   }
 
-  return managerIds;
+  return profileIds;
 }
 
 void main().catch((error) => {

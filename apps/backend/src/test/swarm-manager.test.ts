@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { SessionManager } from '@mariozechner/pi-coding-agent'
 import { getScheduleFilePath } from '../scheduler/schedule-storage.js'
+import { getProfileMemoryPath, getSessionMemoryPath } from '../swarm/data-paths.js'
 import { SwarmManager } from '../swarm/swarm-manager.js'
 import type {
   AgentContextUsage,
@@ -180,17 +181,26 @@ async function makeTempConfig(port = 8790): Promise<SwarmConfig> {
   const swarmDir = join(dataDir, 'swarm')
   const sessionsDir = join(dataDir, 'sessions')
   const uploadsDir = join(dataDir, 'uploads')
+  const profilesDir = join(dataDir, 'profiles')
+  const sharedDir = join(dataDir, 'shared')
+  const sharedAuthDir = join(sharedDir, 'auth')
+  const sharedAuthFile = join(sharedAuthDir, 'auth.json')
+  const sharedSecretsFile = join(sharedDir, 'secrets.json')
+  const sharedIntegrationsDir = join(sharedDir, 'integrations')
   const authDir = join(dataDir, 'auth')
   const agentDir = join(dataDir, 'agent')
   const managerAgentDir = join(agentDir, 'manager')
   const repoArchetypesDir = join(root, '.swarm', 'archetypes')
   const memoryDir = join(dataDir, 'memory')
-  const memoryFile = join(memoryDir, 'manager.md')
+  const memoryFile = getProfileMemoryPath(dataDir, 'manager')
   const repoMemorySkillFile = join(root, '.swarm', 'skills', 'memory', 'SKILL.md')
 
   await mkdir(swarmDir, { recursive: true })
   await mkdir(sessionsDir, { recursive: true })
   await mkdir(uploadsDir, { recursive: true })
+  await mkdir(profilesDir, { recursive: true })
+  await mkdir(sharedAuthDir, { recursive: true })
+  await mkdir(sharedIntegrationsDir, { recursive: true })
   await mkdir(authDir, { recursive: true })
   await mkdir(memoryDir, { recursive: true })
   await mkdir(agentDir, { recursive: true })
@@ -215,18 +225,24 @@ async function makeTempConfig(port = 8790): Promise<SwarmConfig> {
       rootDir: root,
       dataDir,
       swarmDir,
-      sessionsDir,
       uploadsDir,
+      agentsStoreFile: join(swarmDir, 'agents.json'),
+      profilesDir,
+      sharedDir,
+      sharedAuthDir,
+      sharedAuthFile,
+      sharedSecretsFile,
+      sharedIntegrationsDir,
+      sessionsDir,
+      memoryDir,
       authDir,
       authFile: join(authDir, 'auth.json'),
+      secretsFile: join(dataDir, 'secrets.json'),
       agentDir,
       managerAgentDir,
       repoArchetypesDir,
-      memoryDir,
       memoryFile,
       repoMemorySkillFile,
-      agentsStoreFile: join(swarmDir, 'agents.json'),
-      secretsFile: join(dataDir, 'secrets.json'),
       schedulesFile: getScheduleFilePath(dataDir, 'manager'),
     },
   }
@@ -341,6 +357,7 @@ describe('SwarmManager', () => {
     const workerMemoryFile = join(config.paths.memoryDir, `${worker.agentId}.md`)
 
     await writeFile(config.paths.memoryFile!, '# Swarm Memory\n\n## Decisions\n- manager memory\n', 'utf8')
+    await mkdir(config.paths.memoryDir, { recursive: true })
     await writeFile(workerMemoryFile, '# Swarm Memory\n\n## Decisions\n- worker memory\n', 'utf8')
 
     const resources = await manager.getMemoryRuntimeResourcesForTest(worker.agentId)
@@ -356,7 +373,7 @@ describe('SwarmManager', () => {
 
     const { sessionAgent } = await manager.createSession('manager', { label: 'Memory Session' })
     const profileMemoryPath = config.paths.memoryFile!
-    const sessionMemoryPath = join(config.paths.memoryDir, `${sessionAgent.agentId}.md`)
+    const sessionMemoryPath = getSessionMemoryPath(config.paths.dataDir, 'manager', sessionAgent.agentId)
 
     await writeFile(profileMemoryPath, '# Swarm Memory\n\n## Decisions\n- shared profile decision\n', 'utf8')
     await writeFile(sessionMemoryPath, '# Swarm Memory\n\n## Decisions\n- session-only decision\n', 'utf8')
@@ -382,11 +399,12 @@ describe('SwarmManager', () => {
     const { sessionAgent } = await manager.createSession('manager', { label: 'Worker Memory Session' })
     const worker = await manager.spawnAgent(sessionAgent.agentId, { agentId: 'Session Memory Worker' })
     const profileMemoryPath = config.paths.memoryFile!
-    const sessionMemoryPath = join(config.paths.memoryDir, `${sessionAgent.agentId}.md`)
+    const sessionMemoryPath = getSessionMemoryPath(config.paths.dataDir, 'manager', sessionAgent.agentId)
     const workerMemoryPath = join(config.paths.memoryDir, `${worker.agentId}.md`)
 
     await writeFile(profileMemoryPath, '# Swarm Memory\n\n## Project Facts\n- shared fact\n', 'utf8')
     await writeFile(sessionMemoryPath, '# Swarm Memory\n\n## Project Facts\n- session fact\n', 'utf8')
+    await mkdir(config.paths.memoryDir, { recursive: true })
     await writeFile(workerMemoryPath, '# Swarm Memory\n\n## Project Facts\n- worker fact\n', 'utf8')
 
     const resources = await manager.getMemoryRuntimeResourcesForTest(worker.agentId)
@@ -404,7 +422,7 @@ describe('SwarmManager', () => {
 
     const { sessionAgent } = await manager.createSession('manager', { label: 'Merge Session' })
     const profileMemoryPath = config.paths.memoryFile!
-    const sessionMemoryPath = join(config.paths.memoryDir, `${sessionAgent.agentId}.md`)
+    const sessionMemoryPath = getSessionMemoryPath(config.paths.dataDir, 'manager', sessionAgent.agentId)
 
     await writeFile(profileMemoryPath, '# Swarm Memory\n\n## Decisions\n- existing profile decision\n', 'utf8')
     await writeFile(sessionMemoryPath, '# Swarm Memory\n\n## Decisions\n- session merge detail\n', 'utf8')
@@ -451,12 +469,12 @@ describe('SwarmManager', () => {
 
     await writeFile(profileMemoryPath, '# Swarm Memory\n\n## Project Facts\n- baseline\n', 'utf8')
     await writeFile(
-      join(config.paths.memoryDir, `${firstSession.agentId}.md`),
+      getSessionMemoryPath(config.paths.dataDir, 'manager', firstSession.agentId),
       '# Swarm Memory\n\n## Project Facts\n- first merge payload\n',
       'utf8',
     )
     await writeFile(
-      join(config.paths.memoryDir, `${secondSession.agentId}.md`),
+      getSessionMemoryPath(config.paths.dataDir, 'manager', secondSession.agentId),
       '# Swarm Memory\n\n## Project Facts\n- second merge payload\n',
       'utf8',
     )
@@ -525,7 +543,7 @@ describe('SwarmManager', () => {
     expect(managerPrompt).toContain('You are the manager agent in a multi-agent swarm.')
     expect(managerPrompt).toContain('End users only see two things')
     expect(managerPrompt).toContain('prefixed with "SYSTEM:"')
-    expect(managerPrompt).toContain('Your manager memory file is `${SWARM_MEMORY_FILE}`')
+    expect(managerPrompt).toContain('${SWARM_MEMORY_FILE}')
 
     const worker = await manager.spawnAgent('manager', { agentId: 'Prompt Worker' })
     const workerPrompt = manager.systemPromptByAgentId.get(worker.agentId)
@@ -553,7 +571,7 @@ describe('SwarmManager', () => {
 
     const memorySkill = await readFile(resources.additionalSkillPaths[0], 'utf8')
     expect(memorySkill).toContain('name: memory')
-    expect(memorySkill).toContain('In this runtime, use `${SWARM_MEMORY_FILE}`')
+    expect(memorySkill).toContain('${SWARM_MEMORY_FILE}')
 
     const braveSkill = await readFile(resources.additionalSkillPaths[1], 'utf8')
     expect(braveSkill).toContain('name: brave-search')
@@ -606,7 +624,7 @@ describe('SwarmManager', () => {
 
       await manager.updateSettingsEnv({ BRAVE_API_KEY: 'bsal-test-value' })
 
-      const secretsRaw = await readFile(config.paths.secretsFile, 'utf8')
+      const secretsRaw = await readFile(config.paths.sharedSecretsFile, 'utf8')
       expect(JSON.parse(secretsRaw)).toEqual({ BRAVE_API_KEY: 'bsal-test-value' })
       expect(process.env.BRAVE_API_KEY).toBe('bsal-test-value')
 

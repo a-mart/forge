@@ -62,7 +62,11 @@ export function createSchedulerRoutes(options: { swarmManager: SwarmManager }): 
         }
 
         try {
-          const schedulesFile = getScheduleFilePath(swarmManager.getConfig().paths.dataDir, route.managerId);
+          // Resolve to profileId so schedule reads go to the profile-scoped path,
+          // not a bogus profiles/<sessionId>/ directory.
+          const descriptor = swarmManager.getAgent(route.managerId);
+          const profileId = descriptor?.profileId ?? route.managerId;
+          const schedulesFile = getScheduleFilePath(swarmManager.getConfig().paths.dataDir, profileId);
           const raw = await readFile(schedulesFile, "utf8");
           const parsed = JSON.parse(raw) as { schedules?: unknown };
 

@@ -6,16 +6,20 @@ import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { CronExpressionParser } from "cron-parser";
 
-const SCHEDULES_DIR_NAME = "schedules";
+const LEGACY_SCHEDULES_DIR_NAME = "schedules";
 const AGENTS_STORE_RELATIVE_PATH = "swarm/agents.json";
 const DEFAULT_MANAGER_CANDIDATES = ["manager", "opus-manager"];
 
 function resolveDataDir() {
-  return resolve(homedir(), ".swarm");
+  return process.env.SWARM_DATA_DIR || resolve(homedir(), ".middleman");
 }
 
 function resolveSchedulesFilePath(dataDir, managerId) {
-  return resolve(dataDir, SCHEDULES_DIR_NAME, `${managerId}.json`);
+  return resolve(dataDir, "profiles", managerId, "schedules", "schedules.json");
+}
+
+function resolveLegacySchedulesFilePath(dataDir, managerId) {
+  return resolve(dataDir, LEGACY_SCHEDULES_DIR_NAME, `${managerId}.json`);
 }
 
 function normalizeOptionalManagerId(rawValue) {
@@ -172,10 +176,31 @@ async function ensureSchedulesFile(filePath) {
   await writeSchedulesFile(filePath, { schedules: [] });
 }
 
-async function readSchedulesFile(filePath) {
-  await ensureSchedulesFile(filePath);
+async function readSchedulesFile(filePath, legacyFilePath = null) {
+  let raw;
+  try {
+    raw = await readFile(filePath, "utf8");
+  } catch (error) {
+    if (!isEnoentError(error)) {
+      throw error;
+    }
 
-  const raw = await readFile(filePath, "utf8");
+    if (legacyFilePath) {
+      try {
+        raw = await readFile(legacyFilePath, "utf8");
+      } catch (legacyError) {
+        if (!isEnoentError(legacyError)) {
+          throw legacyError;
+        }
+      }
+    }
+
+    if (typeof raw !== "string") {
+      await ensureSchedulesFile(filePath);
+      raw = await readFile(filePath, "utf8");
+    }
+  }
+
   let parsed;
   try {
     parsed = JSON.parse(raw);
@@ -250,7 +275,7 @@ function printUsage() {
   });
 }
 
-async function handleAdd(flags, filePath, managerId) {
+async function handleAdd(flags, filePath, legacyFilePath, managerId) {
   const name = getRequiredFlag(flags, "name");
   const cron = getRequiredFlag(flags, "cron");
   const message = getRequiredFlag(flags, "message");
@@ -276,7 +301,7 @@ async function handleAdd(flags, filePath, managerId) {
     nextFireAt
   };
 
-  const store = await readSchedulesFile(filePath);
+  const store = await readSchedulesFile(filePath, legacyFilePath);
   store.schedules.push(schedule);
   await writeSchedulesFile(filePath, store);
 
@@ -289,9 +314,9 @@ async function handleAdd(flags, filePath, managerId) {
   });
 }
 
-async function handleRemove(flags, filePath, managerId) {
+async function handleRemove(flags, filePath, legacyFilePath, managerId) {
   const id = getRequiredFlag(flags, "id");
-  const store = await readSchedulesFile(filePath);
+  const store = await readSchedulesFile(filePath, legacyFilePath);
 
   const beforeCount = store.schedules.length;
   const schedules = store.schedules.filter((schedule) => schedule.id !== id);
@@ -312,8 +337,8 @@ async function handleRemove(flags, filePath, managerId) {
   });
 }
 
-async function handleList(filePath, managerId) {
-  const store = await readSchedulesFile(filePath);
+async function handleList(filePath, legacyFilePath, managerId) {
+  const store = await readSchedulesFile(filePath, legacyFilePath);
 
   const schedules = [...store.schedules].sort((left, right) => {
     const leftTimestamp = Date.parse(left.nextFireAt);
@@ -352,16 +377,17 @@ async function main() {
   const dataDir = resolveDataDir();
   const managerId = await resolveManagerId(flags, dataDir);
   const schedulesFilePath = resolveSchedulesFilePath(dataDir, managerId);
+  const legacySchedulesFilePath = resolveLegacySchedulesFilePath(dataDir, managerId);
 
   switch (command) {
     case "add":
-      await handleAdd(flags, schedulesFilePath, managerId);
+      await handleAdd(flags, schedulesFilePath, legacySchedulesFilePath, managerId);
       return;
     case "remove":
-      await handleRemove(flags, schedulesFilePath, managerId);
+      await handleRemove(flags, schedulesFilePath, legacySchedulesFilePath, managerId);
       return;
     case "list":
-      await handleList(schedulesFilePath, managerId);
+      await handleList(schedulesFilePath, legacySchedulesFilePath, managerId);
       return;
     default:
       throw new Error(`Unknown command: ${command}`);

@@ -1,10 +1,11 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 import {
   BaseConfigPersistence,
   buildIntegrationProfileId
 } from "../base-config-persistence.js";
 import {
+  getLegacySharedIntegrationConfigPath,
   getSharedIntegrationConfigPath,
   isSharedIntegrationManagerId
 } from "../shared-config.js";
@@ -16,6 +17,8 @@ import type {
 } from "./telegram-types.js";
 
 const TELEGRAM_CONFIG_FILE_NAME = "telegram.json";
+const LEGACY_INTEGRATIONS_DIR_NAME = "integrations";
+const LEGACY_INTEGRATIONS_MANAGERS_DIR_NAME = "managers";
 const DEFAULT_MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MIN_FILE_BYTES = 1024;
 const MAX_FILE_BYTES = 100 * 1024 * 1024;
@@ -35,8 +38,22 @@ export function getTelegramConfigPath(dataDir: string, managerId: string): strin
   return TELEGRAM_CONFIG_PERSISTENCE.getPath(dataDir, managerId);
 }
 
+function getLegacyTelegramConfigPath(dataDir: string, managerId: string): string {
+  return resolve(
+    dataDir,
+    LEGACY_INTEGRATIONS_DIR_NAME,
+    LEGACY_INTEGRATIONS_MANAGERS_DIR_NAME,
+    normalizeManagerId(managerId),
+    TELEGRAM_CONFIG_FILE_NAME
+  );
+}
+
 export function getSharedTelegramConfigPath(dataDir: string): string {
   return getSharedIntegrationConfigPath(dataDir, TELEGRAM_CONFIG_FILE_NAME);
+}
+
+function getLegacySharedTelegramConfigPath(dataDir: string): string {
+  return getLegacySharedIntegrationConfigPath(dataDir, TELEGRAM_CONFIG_FILE_NAME);
 }
 
 export function buildTelegramProfileId(managerId: string): string {
@@ -76,18 +93,25 @@ export async function loadTelegramConfig(options: {
   const managerId = normalizeManagerId(options.managerId);
 
   if (isSharedIntegrationManagerId(managerId)) {
-    const sharedConfig = await loadTelegramConfigFromPath(getSharedTelegramConfigPath(options.dataDir));
+    const sharedConfig = await loadTelegramConfigWithLegacyFallback({
+      primaryPath: getSharedTelegramConfigPath(options.dataDir),
+      legacyPath: getLegacySharedTelegramConfigPath(options.dataDir)
+    });
     return sharedConfig ?? createDefaultTelegramConfig(managerId);
   }
 
-  const managerConfig = await loadTelegramConfigFromPath(
-    getTelegramConfigPath(options.dataDir, managerId)
-  );
+  const managerConfig = await loadTelegramConfigWithLegacyFallback({
+    primaryPath: getTelegramConfigPath(options.dataDir, managerId),
+    legacyPath: getLegacyTelegramConfigPath(options.dataDir, managerId)
+  });
   if (managerConfig) {
     return managerConfig;
   }
 
-  const sharedConfig = await loadTelegramConfigFromPath(getSharedTelegramConfigPath(options.dataDir));
+  const sharedConfig = await loadTelegramConfigWithLegacyFallback({
+    primaryPath: getSharedTelegramConfigPath(options.dataDir),
+    legacyPath: getLegacySharedTelegramConfigPath(options.dataDir)
+  });
   if (sharedConfig) {
     return {
       ...sharedConfig,
@@ -126,8 +150,19 @@ export async function hasTelegramOverrideConfig(options: {
     return false;
   }
 
-  const raw = await readConfigText(getTelegramConfigPath(options.dataDir, managerId));
-  return isConfigTextMeaningful(raw);
+  const primaryPath = getTelegramConfigPath(options.dataDir, managerId);
+  const primaryRaw = await readConfigText(primaryPath);
+  if (isConfigTextMeaningful(primaryRaw)) {
+    return true;
+  }
+
+  const legacyPath = getLegacyTelegramConfigPath(options.dataDir, managerId);
+  if (legacyPath === primaryPath) {
+    return false;
+  }
+
+  const legacyRaw = await readConfigText(legacyPath);
+  return isConfigTextMeaningful(legacyRaw);
 }
 
 export function mergeTelegramConfig(
@@ -203,6 +238,25 @@ export function maskTelegramConfig(config: TelegramIntegrationConfig): TelegramI
       allowBinary: config.attachments.allowBinary
     }
   };
+}
+
+async function loadTelegramConfigWithLegacyFallback(options: {
+  primaryPath: string;
+  legacyPath: string;
+}): Promise<TelegramIntegrationConfig | undefined> {
+  const candidatePaths =
+    options.primaryPath === options.legacyPath
+      ? [options.primaryPath]
+      : [options.primaryPath, options.legacyPath];
+
+  for (const candidatePath of candidatePaths) {
+    const loaded = await loadTelegramConfigFromPath(candidatePath);
+    if (loaded) {
+      return loaded;
+    }
+  }
+
+  return undefined;
 }
 
 async function loadTelegramConfigFromPath(
