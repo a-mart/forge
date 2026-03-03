@@ -1,21 +1,36 @@
 import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
 import { appendFile, copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import type { Api, Model } from "@mariozechner/pi-ai";
 import { getModel } from "@mariozechner/pi-ai";
 import { AuthStorage, ModelRegistry } from "@mariozechner/pi-coding-agent";
-import type { ServerEvent } from "@middleman/protocol";
+import type { ServerEvent, SessionMeta } from "@middleman/protocol";
 import {
   loadArchetypePromptRegistry,
   normalizeArchetypeId,
   type ArchetypePromptRegistry
 } from "./archetypes/archetype-prompt-registry.js";
 import { ConversationProjector } from "./conversation-projector.js";
+import {
+  getProfileMemoryPath,
+  getProfileMergeAuditLogPath,
+  getSessionFilePath,
+  getSessionMetaPath,
+  getWorkerSessionFilePath,
+  resolveMemoryFilePath
+} from "./data-paths.js";
 import { executeLLMMerge } from "./memory-merge.js";
-import { getAgentMemoryPath as getAgentMemoryPathForDataDir } from "./memory-paths.js";
 import { PersistenceService } from "./persistence-service.js";
 import { RuntimeFactory } from "./runtime-factory.js";
+import {
+  computePromptFingerprint,
+  readSessionMeta,
+  rebuildSessionMeta,
+  updateSessionMetaStats,
+  updateSessionMetaWorker,
+  writeSessionMeta
+} from "./session-manifest.js";
 import { SecretsEnvService } from "./secrets-env-service.js";
 import { SkillMetadataService } from "./skill-metadata-service.js";
 import {
@@ -298,6 +313,14 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       config: this.config,
       now: this.now,
       logDebug: (message, details) => this.logDebug(message, details),
+      onSessionFileRotated: async (descriptor, sessionFile) => {
+        if (descriptor.role !== "manager") {
+          await this.refreshSessionMetaStatsBySessionId(descriptor.managerId);
+          return;
+        }
+
+        await this.refreshSessionMetaStats(descriptor, sessionFile);
+      },
       getMemoryRuntimeResources: async (descriptor) => this.getMemoryRuntimeResources(descriptor),
       getSwarmContextFiles: async (cwd) => this.getSwarmContextFiles(cwd),
       mergeRuntimeContextFiles: (baseAgentsFiles, options) =>
@@ -358,6 +381,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     await this.ensureMemoryFilesForBoot();
     await this.saveStore();
+    await this.rebuildSessionManifestForBoot();
 
     this.loadConversationHistoriesFromStore();
     await this.restoreRuntimesForBoot();
@@ -402,6 +426,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const prepared = this.prepareSessionCreation(profileId, options);
     const sessionDescriptor = prepared.sessionDescriptor;
     this.descriptors.set(sessionDescriptor.agentId, sessionDescriptor);
+
+    await this.ensureSessionFileParentDirectory(sessionDescriptor.sessionFile);
+    await this.writeInitialSessionMeta(sessionDescriptor);
 
     try {
       const runtime = await this.getOrCreateRuntimeForDescriptor(sessionDescriptor);
@@ -489,11 +516,26 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       emitStatus: false
     });
 
+    const profileId = descriptor.profileId ?? descriptor.agentId;
+    const canonicalSessionFile = getSessionFilePath(this.config.paths.dataDir, profileId, descriptor.agentId);
+    const sessionMetaPath = getSessionMetaPath(this.config.paths.dataDir, profileId, descriptor.agentId);
+    const sessionMemoryPath = resolveMemoryFilePath(this.config.paths.dataDir, {
+      agentId: descriptor.agentId,
+      role: "manager",
+      profileId,
+      managerId: descriptor.managerId
+    });
+
     this.descriptors.delete(agentId);
     this.conversationProjector.deleteConversationHistory(agentId);
 
-    await this.deleteManagerSessionFile(descriptor.sessionFile);
-    await rm(this.getAgentMemoryPath(agentId), { force: true });
+    if (descriptor.sessionFile === canonicalSessionFile) {
+      await rm(dirname(canonicalSessionFile), { recursive: true, force: true });
+    } else {
+      await this.deleteManagerSessionFile(descriptor.sessionFile);
+      await rm(sessionMetaPath, { force: true });
+      await rm(sessionMemoryPath, { force: true });
+    }
 
     await this.saveStore();
     this.emitSessionLifecycle({
@@ -518,6 +560,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     descriptor.updatedAt = this.now();
     this.descriptors.set(agentId, descriptor);
 
+    await this.writeInitialSessionMeta(descriptor);
     await this.saveStore();
     this.emitSessionLifecycle({
       action: "renamed",
@@ -538,11 +581,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const releaseMergeLock = await this.acquireProfileMergeLock(descriptor.profileId);
 
     try {
-      await this.ensureAgentMemoryFile(agentId);
-      await this.ensureAgentMemoryFile(descriptor.profileId);
-
       const sessionMemoryPath = this.getAgentMemoryPath(agentId);
-      const profileMemoryPath = this.getAgentMemoryPath(descriptor.profileId);
+      const profileMemoryPath = getProfileMemoryPath(this.config.paths.dataDir, descriptor.profileId);
+
+      await this.ensureAgentMemoryFile(sessionMemoryPath);
+      await this.ensureAgentMemoryFile(profileMemoryPath);
 
       const sessionMemoryContent = await readFile(sessionMemoryPath, "utf8");
       if (this.isSessionMemoryMergeNoOp(sessionMemoryContent)) {
@@ -593,6 +636,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       }
 
       await writeFile(profileMemoryPath, mergedProfileMemory, "utf8");
+      await this.refreshSessionMetaStatsBySessionId(descriptor.profileId);
       await this.appendSessionMemoryMergeAuditEntry({
         timestamp: mergedAt,
         sessionAgentId: descriptor.agentId,
@@ -627,6 +671,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const prepared = this.prepareSessionCreation(profile.profileId, options);
     const forkedDescriptor = prepared.sessionDescriptor;
     this.descriptors.set(forkedDescriptor.agentId, forkedDescriptor);
+
+    await this.ensureSessionFileParentDirectory(forkedDescriptor.sessionFile);
+    await this.writeInitialSessionMeta(forkedDescriptor);
 
     try {
       await this.copySessionHistoryForFork(sourceDescriptor.sessionFile, forkedDescriptor.sessionFile);
@@ -684,10 +731,17 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       updatedAt: createdAt,
       cwd: input.cwd ? await this.resolveAndValidateCwd(input.cwd) : manager.cwd,
       model,
-      sessionFile: join(this.config.paths.sessionsDir, `${agentId}.jsonl`)
+      sessionFile: getWorkerSessionFilePath(
+        this.config.paths.dataDir,
+        manager.profileId ?? manager.agentId,
+        manager.agentId,
+        agentId
+      )
     };
 
     this.descriptors.set(agentId, descriptor);
+    await this.ensureSessionFileParentDirectory(descriptor.sessionFile);
+    await this.updateSessionMetaForWorkerDescriptor(descriptor);
     await this.saveStore();
 
     this.logDebug("agent:spawn", {
@@ -711,6 +765,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     const contextUsage = runtime.getContextUsage();
     descriptor.contextUsage = contextUsage;
+    this.descriptors.set(agentId, descriptor);
+    await this.updateSessionMetaForWorkerDescriptor(descriptor);
+    await this.refreshSessionMetaStatsBySessionId(descriptor.managerId);
 
     this.emitStatus(agentId, descriptor.status, runtime.getPendingCount(), contextUsage);
     this.emitAgentsSnapshot();
@@ -793,6 +850,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         descriptor.status = transitionAgentStatus(descriptor.status, "idle");
         descriptor.updatedAt = this.now();
         this.descriptors.set(descriptor.agentId, descriptor);
+        await this.updateSessionMetaForWorkerDescriptor(descriptor);
         this.emitStatus(descriptor.agentId, descriptor.status, 0, descriptor.contextUsage);
       }
 
@@ -814,6 +872,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       managerStopped = true;
     }
 
+    await this.refreshSessionMetaStatsBySessionId(targetManagerId);
     await this.saveStore();
     this.emitAgentsSnapshot();
 
@@ -872,7 +931,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       model: requestedModelPreset
         ? resolveModelDescriptorFromPreset(requestedModelPreset)
         : this.resolveDefaultModelDescriptor(),
-      sessionFile: join(this.config.paths.sessionsDir, `${managerId}.jsonl`)
+      sessionFile: getSessionFilePath(this.config.paths.dataDir, managerId, managerId)
     };
 
     const profile: ManagerProfile = {
@@ -886,6 +945,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.descriptors.set(descriptor.agentId, descriptor);
     this.profiles.set(profile.profileId, profile);
 
+    await this.ensureSessionFileParentDirectory(descriptor.sessionFile);
+    await this.writeInitialSessionMeta(descriptor);
+
     let runtime: SwarmAgentRuntime;
     try {
       runtime = await this.createRuntimeForDescriptor(
@@ -895,14 +957,19 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     } catch (error) {
       this.descriptors.delete(descriptor.agentId);
       this.profiles.delete(profile.profileId);
+      await rm(getSessionMetaPath(this.config.paths.dataDir, profile.profileId, descriptor.agentId), { force: true });
       throw error;
     }
 
     this.runtimes.set(managerId, runtime);
-    await this.saveStore();
 
     const contextUsage = runtime.getContextUsage();
     descriptor.contextUsage = contextUsage;
+    this.descriptors.set(managerId, descriptor);
+
+    await this.captureSessionRuntimePromptMeta(descriptor);
+    await this.refreshSessionMetaStats(descriptor);
+    await this.saveStore();
 
     this.emitStatus(managerId, descriptor.status, runtime.getPendingCount(), contextUsage);
     this.emitAgentsSnapshot();
@@ -1095,7 +1162,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       updatedAt: createdAt,
       cwd: templateDescriptor.cwd,
       model: { ...templateDescriptor.model },
-      sessionFile: join(this.config.paths.sessionsDir, `${sessionAgentId}.jsonl`)
+      sessionFile: getSessionFilePath(this.config.paths.dataDir, profile.profileId, sessionAgentId)
     };
 
     return {
@@ -1146,6 +1213,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       this.emitStatus(agentId, descriptor.status, 0);
     }
 
+    await this.refreshSessionMetaStatsBySessionId(agentId);
+
     if (options.saveStore) {
       await this.saveStore();
     }
@@ -1159,6 +1228,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   private async copySessionHistoryForFork(sourceSessionFile: string, targetSessionFile: string): Promise<void> {
+    await mkdir(dirname(targetSessionFile), { recursive: true });
+
     try {
       await copyFile(sourceSessionFile, targetSessionFile);
     } catch (error) {
@@ -1182,7 +1253,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       ""
     ].join("\n");
 
-    await writeFile(this.getAgentMemoryPath(forkedSessionAgentId), header, "utf8");
+    const forkedMemoryPath = this.getAgentMemoryPath(forkedSessionAgentId);
+    await mkdir(dirname(forkedMemoryPath), { recursive: true });
+    await writeFile(forkedMemoryPath, header, "utf8");
+    await this.refreshSessionMetaStatsBySessionId(forkedSessionAgentId);
   }
 
   private async rollbackCreatedSession(descriptor: AgentDescriptor): Promise<void> {
@@ -1199,22 +1273,29 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       });
     }
 
+    const profileId = descriptor.profileId ?? descriptor.agentId;
+    const canonicalSessionFile = getSessionFilePath(this.config.paths.dataDir, profileId, descriptor.agentId);
+    const sessionMetaPath = getSessionMetaPath(this.config.paths.dataDir, profileId, descriptor.agentId);
+    const sessionMemoryPath = resolveMemoryFilePath(this.config.paths.dataDir, {
+      agentId: descriptor.agentId,
+      role: "manager",
+      profileId,
+      managerId: descriptor.managerId
+    });
+
     this.descriptors.delete(descriptor.agentId);
     this.conversationProjector.deleteConversationHistory(descriptor.agentId);
 
     try {
-      await this.deleteManagerSessionFile(descriptor.sessionFile);
+      if (descriptor.sessionFile === canonicalSessionFile) {
+        await rm(dirname(canonicalSessionFile), { recursive: true, force: true });
+      } else {
+        await this.deleteManagerSessionFile(descriptor.sessionFile);
+        await rm(sessionMemoryPath, { force: true });
+        await rm(sessionMetaPath, { force: true });
+      }
     } catch (error) {
-      this.logDebug("session:rollback:session_file_error", {
-        agentId: descriptor.agentId,
-        message: error instanceof Error ? error.message : String(error)
-      });
-    }
-
-    try {
-      await rm(this.getAgentMemoryPath(descriptor.agentId), { force: true });
-    } catch (error) {
-      this.logDebug("session:rollback:memory_file_error", {
+      this.logDebug("session:rollback:cleanup_error", {
         agentId: descriptor.agentId,
         message: error instanceof Error ? error.message : String(error)
       });
@@ -2065,6 +2146,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return existingRuntime;
     }
 
+    await this.ensureSessionFileParentDirectory(descriptor.sessionFile);
+
     const runtime = await this.createRuntimeForDescriptor(descriptor, this.resolveSystemPromptForDescriptor(descriptor));
 
     const latestDescriptor = this.descriptors.get(descriptor.agentId);
@@ -2083,6 +2166,15 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const contextUsage = runtime.getContextUsage();
     latestDescriptor.contextUsage = contextUsage;
     this.descriptors.set(descriptor.agentId, latestDescriptor);
+
+    if (latestDescriptor.role === "manager") {
+      await this.captureSessionRuntimePromptMeta(latestDescriptor);
+      await this.refreshSessionMetaStats(latestDescriptor);
+    } else {
+      await this.updateSessionMetaForWorkerDescriptor(latestDescriptor);
+      await this.refreshSessionMetaStatsBySessionId(latestDescriptor.managerId);
+    }
+
     this.emitStatus(descriptor.agentId, latestDescriptor.status, runtime.getPendingCount(), contextUsage);
     return runtime;
   }
@@ -2340,6 +2432,13 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     descriptor.updatedAt = this.now();
     this.descriptors.set(descriptor.agentId, descriptor);
 
+    if (descriptor.role === "worker") {
+      await this.updateSessionMetaForWorkerDescriptor(descriptor);
+      await this.refreshSessionMetaStatsBySessionId(descriptor.managerId);
+    } else {
+      await this.refreshSessionMetaStats(descriptor);
+    }
+
     if (options.emitStatus) {
       this.emitStatus(descriptor.agentId, descriptor.status, 0);
     }
@@ -2349,24 +2448,32 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     memoryContextFile: { path: string; content: string };
     additionalSkillPaths: string[];
   }> {
-    await this.ensureAgentMemoryFile(descriptor.agentId);
-
     const memoryOwnerAgentId = this.resolveMemoryOwnerAgentId(descriptor);
     const memoryFilePath = this.getAgentMemoryPath(memoryOwnerAgentId);
-    await this.ensureAgentMemoryFile(memoryOwnerAgentId);
+
+    const memoryOwnerDescriptor = this.descriptors.get(memoryOwnerAgentId);
+    if (memoryOwnerDescriptor?.role === "manager") {
+      await this.ensureAgentMemoryFile(memoryFilePath);
+    }
 
     const sessionMemoryContent = await readFile(memoryFilePath, "utf8");
     let memoryContent = sessionMemoryContent;
 
     const profileMemoryOwnerId = this.resolveNonDefaultSessionProfileId(memoryOwnerAgentId);
     if (profileMemoryOwnerId) {
-      const profileMemoryPath = this.getAgentMemoryPath(profileMemoryOwnerId);
-      await this.ensureAgentMemoryFile(profileMemoryOwnerId);
+      const profileMemoryPath = getProfileMemoryPath(this.config.paths.dataDir, profileMemoryOwnerId);
+      await this.ensureAgentMemoryFile(profileMemoryPath);
       const profileMemoryContent = await readFile(profileMemoryPath, "utf8");
       memoryContent = buildSessionMemoryRuntimeView(profileMemoryContent, sessionMemoryContent);
     }
 
     await this.skillMetadataService.ensureSkillMetadataLoaded();
+
+    if (descriptor.role === "manager") {
+      await this.refreshSessionMetaStats(descriptor);
+    } else {
+      await this.refreshSessionMetaStatsBySessionId(descriptor.managerId);
+    }
 
     return {
       memoryContextFile: {
@@ -2455,14 +2562,16 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     if (!descriptor) return;
 
     const normalizedContextUsage = normalizeContextUsage(contextUsage);
+    const contextUsageChanged = !areContextUsagesEqual(descriptor.contextUsage, normalizedContextUsage);
     let shouldPersist = false;
 
-    if (!areContextUsagesEqual(descriptor.contextUsage, normalizedContextUsage)) {
+    if (contextUsageChanged) {
       descriptor.contextUsage = normalizedContextUsage;
     }
 
     const nextStatus = transitionAgentStatus(descriptor.status, status);
-    if (descriptor.status !== nextStatus) {
+    const statusChanged = descriptor.status !== nextStatus;
+    if (statusChanged) {
       descriptor.status = nextStatus;
       descriptor.updatedAt = this.now();
       shouldPersist = true;
@@ -2474,6 +2583,13 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     this.descriptors.set(agentId, descriptor);
+
+    if (descriptor.role === "worker" && (statusChanged || contextUsageChanged || nextStatus === "terminated")) {
+      await this.updateSessionMetaForWorkerDescriptor(descriptor);
+      await this.refreshSessionMetaStatsBySessionId(descriptor.managerId);
+    } else if (descriptor.role === "manager" && statusChanged) {
+      await this.refreshSessionMetaStats(descriptor);
+    }
 
     if (shouldPersist) {
       await this.saveStore();
@@ -2631,6 +2747,268 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.emit("session_lifecycle", event);
   }
 
+  private async rebuildSessionManifestForBoot(): Promise<void> {
+    try {
+      await rebuildSessionMeta({
+        dataDir: this.config.paths.dataDir,
+        agentsStoreFile: this.config.paths.agentsStoreFile,
+        descriptors: this.sortedDescriptors(),
+        now: this.now
+      });
+    } catch (error) {
+      this.logDebug("session:meta:rebuild_error", {
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  private async writeInitialSessionMeta(descriptor: AgentDescriptor): Promise<void> {
+    if (descriptor.role !== "manager") {
+      return;
+    }
+
+    const profileId = descriptor.profileId ?? descriptor.agentId;
+    const existingMeta = await readSessionMeta(this.config.paths.dataDir, profileId, descriptor.agentId);
+    const base = existingMeta ?? this.createSessionMetaSkeleton(descriptor);
+
+    const next: SessionMeta = {
+      ...base,
+      sessionId: descriptor.agentId,
+      profileId,
+      label: normalizeOptionalAgentId(descriptor.sessionLabel) ?? base.label,
+      model: {
+        provider: descriptor.model.provider,
+        modelId: descriptor.model.modelId
+      },
+      createdAt: descriptor.createdAt,
+      updatedAt: this.now(),
+      cwd: descriptor.cwd,
+      stats: this.buildSessionMetaStats(base.workers, {
+        sessionFileSize: base.stats.sessionFileSize,
+        memoryFileSize: base.stats.memoryFileSize
+      })
+    };
+
+    await writeSessionMeta(this.config.paths.dataDir, next);
+  }
+
+  private async captureSessionRuntimePromptMeta(descriptor: AgentDescriptor): Promise<void> {
+    if (descriptor.role !== "manager") {
+      return;
+    }
+
+    const profileId = descriptor.profileId ?? descriptor.agentId;
+
+    try {
+      await this.skillMetadataService.ensureSkillMetadataLoaded();
+
+      const memoryFilePath = this.getAgentMemoryPath(descriptor.agentId);
+      const profileMemoryPath =
+        descriptor.agentId === profileId
+          ? null
+          : getProfileMemoryPath(this.config.paths.dataDir, profileId);
+
+      const agentsFileCandidate = join(descriptor.cwd, "AGENTS.md");
+      const promptComponents: NonNullable<SessionMeta["promptComponents"]> = {
+        archetype: descriptor.archetypeId ?? MANAGER_ARCHETYPE_ID,
+        agentsFile: existsSync(agentsFileCandidate) ? agentsFileCandidate : null,
+        skills: this.skillMetadataService.getAdditionalSkillPaths(),
+        memoryFile: memoryFilePath,
+        profileMemoryFile: profileMemoryPath
+      };
+
+      const existingMeta = await readSessionMeta(this.config.paths.dataDir, profileId, descriptor.agentId);
+      const base = existingMeta ?? this.createSessionMetaSkeleton(descriptor);
+
+      const next: SessionMeta = {
+        ...base,
+        sessionId: descriptor.agentId,
+        profileId,
+        label: normalizeOptionalAgentId(descriptor.sessionLabel) ?? base.label,
+        model: {
+          provider: descriptor.model.provider,
+          modelId: descriptor.model.modelId
+        },
+        cwd: descriptor.cwd,
+        promptComponents,
+        promptFingerprint: computePromptFingerprint(promptComponents),
+        updatedAt: this.now()
+      };
+
+      await writeSessionMeta(this.config.paths.dataDir, next);
+    } catch (error) {
+      this.logDebug("session:meta:prompt_capture_error", {
+        sessionAgentId: descriptor.agentId,
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  private createSessionMetaSkeleton(descriptor: AgentDescriptor): SessionMeta {
+    const profileId = descriptor.profileId ?? descriptor.agentId;
+    const timestamp = this.now();
+
+    return {
+      sessionId: descriptor.agentId,
+      profileId,
+      label: normalizeOptionalAgentId(descriptor.sessionLabel) ?? null,
+      model: {
+        provider: descriptor.model.provider,
+        modelId: descriptor.model.modelId
+      },
+      createdAt: descriptor.createdAt,
+      updatedAt: timestamp,
+      cwd: descriptor.cwd,
+      promptFingerprint: null,
+      promptComponents: null,
+      workers: [],
+      stats: {
+        totalWorkers: 0,
+        activeWorkers: 0,
+        totalTokens: {
+          input: null,
+          output: null
+        },
+        sessionFileSize: null,
+        memoryFileSize: null
+      }
+    };
+  }
+
+  private buildSessionMetaStats(
+    workers: SessionMeta["workers"],
+    fileSizes: { sessionFileSize: string | null; memoryFileSize: string | null }
+  ): SessionMeta["stats"] {
+    const inputTokens = workers
+      .map((worker) => worker.tokens.input)
+      .filter((value): value is number => typeof value === "number");
+    const outputTokens = workers
+      .map((worker) => worker.tokens.output)
+      .filter((value): value is number => typeof value === "number");
+
+    return {
+      totalWorkers: workers.length,
+      activeWorkers: workers.filter((worker) => worker.status === "running" || worker.status === "streaming").length,
+      totalTokens: {
+        input: inputTokens.length > 0 ? inputTokens.reduce((sum, value) => sum + value, 0) : null,
+        output: outputTokens.length > 0 ? outputTokens.reduce((sum, value) => sum + value, 0) : null
+      },
+      sessionFileSize: fileSizes.sessionFileSize,
+      memoryFileSize: fileSizes.memoryFileSize
+    };
+  }
+
+  private async updateSessionMetaForWorkerDescriptor(descriptor: AgentDescriptor): Promise<void> {
+    if (descriptor.role !== "worker") {
+      return;
+    }
+
+    const managerDescriptor = this.descriptors.get(descriptor.managerId);
+    if (!managerDescriptor || managerDescriptor.role !== "manager") {
+      return;
+    }
+
+    const profileId = managerDescriptor.profileId ?? managerDescriptor.agentId;
+
+    try {
+      await updateSessionMetaWorker(
+        this.config.paths.dataDir,
+        profileId,
+        managerDescriptor.agentId,
+        {
+          id: descriptor.agentId,
+          model: this.buildWorkerModelIdentifier(descriptor),
+          status: this.mapWorkerStatusForMeta(descriptor.status),
+          createdAt: descriptor.createdAt,
+          terminatedAt: descriptor.status === "terminated" ? descriptor.updatedAt : null,
+          tokens: {
+            input:
+              typeof descriptor.contextUsage?.tokens === "number"
+                ? Math.max(0, Math.round(descriptor.contextUsage.tokens))
+                : null,
+            output: null
+          }
+        },
+        this.now
+      );
+    } catch (error) {
+      this.logDebug("session:meta:worker_update_error", {
+        workerId: descriptor.agentId,
+        managerId: descriptor.managerId,
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  private mapWorkerStatusForMeta(status: AgentStatus): SessionMeta["workers"][number]["status"] {
+    if (status === "terminated") {
+      return "terminated";
+    }
+
+    if (status === "streaming") {
+      return "streaming";
+    }
+
+    return "idle";
+  }
+
+  private buildWorkerModelIdentifier(descriptor: AgentDescriptor): string | null {
+    const provider = normalizeOptionalAgentId(descriptor.model.provider);
+    const modelId = normalizeOptionalAgentId(descriptor.model.modelId);
+
+    if (!provider || !modelId) {
+      return null;
+    }
+
+    return `${provider}/${modelId}`;
+  }
+
+  private async refreshSessionMetaStats(
+    descriptor: AgentDescriptor,
+    sessionFileOverride?: string
+  ): Promise<void> {
+    if (descriptor.role !== "manager") {
+      return;
+    }
+
+    const profileId = descriptor.profileId ?? descriptor.agentId;
+    const memoryFilePath = this.getAgentMemoryPath(descriptor.agentId);
+
+    try {
+      const updated = await updateSessionMetaStats(this.config.paths.dataDir, profileId, descriptor.agentId, {
+        sessionFilePath: sessionFileOverride ?? descriptor.sessionFile,
+        memoryFilePath,
+        now: this.now
+      });
+
+      if (!updated) {
+        await this.writeInitialSessionMeta(descriptor);
+        await updateSessionMetaStats(this.config.paths.dataDir, profileId, descriptor.agentId, {
+          sessionFilePath: sessionFileOverride ?? descriptor.sessionFile,
+          memoryFilePath,
+          now: this.now
+        });
+      }
+    } catch (error) {
+      this.logDebug("session:meta:stats_update_error", {
+        sessionAgentId: descriptor.agentId,
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  private async refreshSessionMetaStatsBySessionId(
+    sessionAgentId: string,
+    sessionFileOverride?: string
+  ): Promise<void> {
+    const descriptor = this.descriptors.get(sessionAgentId);
+    if (!descriptor || descriptor.role !== "manager") {
+      return;
+    }
+
+    await this.refreshSessionMetaStats(descriptor, sessionFileOverride);
+  }
+
   private async handleRuntimeAgentEnd(_agentId: string): Promise<void> {
     // No-op: managers now receive all inbound messages with sourceContext metadata
     // and decide whether to respond without pending-reply bookkeeping.
@@ -2640,8 +3018,42 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     await this.persistenceService.ensureDirectories();
   }
 
+  private async ensureSessionFileParentDirectory(sessionFile: string): Promise<void> {
+    await mkdir(dirname(sessionFile), { recursive: true });
+  }
+
   private getAgentMemoryPath(agentId: string): string {
-    return getAgentMemoryPathForDataDir(this.config.paths.dataDir, agentId);
+    const descriptor = this.descriptors.get(agentId);
+
+    if (!descriptor) {
+      const fallbackAgentId = normalizeOptionalAgentId(agentId) ?? agentId;
+      return resolveMemoryFilePath(this.config.paths.dataDir, {
+        agentId: fallbackAgentId,
+        role: "manager",
+        profileId: fallbackAgentId,
+        managerId: fallbackAgentId
+      });
+    }
+
+    const parentDescriptor = descriptor.role === "worker"
+      ? this.descriptors.get(descriptor.managerId)
+      : undefined;
+
+    const parentProfileId =
+      descriptor.role === "worker"
+        ? normalizeOptionalAgentId(parentDescriptor?.profileId ?? descriptor.profileId)
+        : undefined;
+
+    return resolveMemoryFilePath(
+      this.config.paths.dataDir,
+      {
+        agentId: descriptor.agentId,
+        role: descriptor.role,
+        profileId: descriptor.profileId,
+        managerId: descriptor.managerId
+      },
+      parentProfileId ? { profileId: parentProfileId } : undefined
+    );
   }
 
   private resolveMemoryOwnerAgentId(descriptor: AgentDescriptor): string {
@@ -2722,7 +3134,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   private async appendSessionMemoryMergeAuditEntry(entry: SessionMemoryMergeAuditEntry): Promise<void> {
-    const auditLogPath = join(this.config.paths.memoryDir, "merge-audit.log");
+    const auditLogPath = getProfileMergeAuditLogPath(this.config.paths.dataDir, entry.profileId);
 
     try {
       await appendFile(auditLogPath, `${JSON.stringify(entry)}\n`, "utf8");
@@ -2747,8 +3159,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     await this.persistenceService.ensureMemoryFilesForBoot();
   }
 
-  private async ensureAgentMemoryFile(agentId: string): Promise<void> {
-    await this.persistenceService.ensureAgentMemoryFile(agentId);
+  private async ensureAgentMemoryFile(memoryFilePath: string): Promise<void> {
+    await this.persistenceService.ensureAgentMemoryFile(memoryFilePath);
   }
 
   private async deleteManagerSessionFile(sessionFile: string): Promise<void> {
@@ -2896,8 +3308,12 @@ function parseSessionNumberFromAgentId(agentId: string, profileId: string): numb
 }
 
 function normalizeAgentId(input: string): string {
-  return input
-    .trim()
+  const trimmed = input.trim();
+  if (/[/\\\x00]/.test(trimmed)) {
+    throw new Error(`agentId contains invalid characters: "${trimmed}"`);
+  }
+
+  return trimmed
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")

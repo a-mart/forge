@@ -89,6 +89,7 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
     systemPrompt: string;
     tools: ToolDefinition[];
     runtimeEnv?: Record<string, string | undefined>;
+    onSessionFileRotated?: (sessionFile: string) => Promise<void> | void;
   }) {
     this.descriptor = options.descriptor;
     this.callbacks = options.callbacks;
@@ -98,7 +99,14 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
 
     const sessionManager = openSessionManagerWithSizeGuard(options.descriptor.sessionFile, {
       context: `runtime:create:codex:${options.descriptor.agentId}`,
-      rotateOversizedFile: true
+      rotateOversizedFile: true,
+      logWarning: (message) => {
+        if (message === "session:file:oversized:rotated") {
+          Promise.resolve(options.onSessionFileRotated?.(options.descriptor.sessionFile)).catch(() => {
+            // Best-effort hook only.
+          });
+        }
+      }
     });
     if (!sessionManager) {
       throw new Error(
@@ -152,6 +160,7 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
     systemPrompt: string;
     tools: ToolDefinition[];
     runtimeEnv?: Record<string, string | undefined>;
+    onSessionFileRotated?: (sessionFile: string) => Promise<void> | void;
   }): Promise<CodexAgentRuntime> {
     const runtime = new CodexAgentRuntime(options);
 

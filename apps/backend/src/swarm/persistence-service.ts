@@ -1,6 +1,6 @@
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { getAgentMemoryPath as getAgentMemoryPathForDataDir } from "./memory-paths.js";
+import { resolveMemoryFilePath } from "./data-paths.js";
 import type { AgentDescriptor, AgentsStoreFile, ManagerProfile, SwarmConfig } from "./types.js";
 
 const DEFAULT_MEMORY_FILE_CONTENT = `# Swarm Memory
@@ -37,10 +37,17 @@ export class PersistenceService {
     const dirs = [
       this.deps.config.paths.dataDir,
       this.deps.config.paths.swarmDir,
+      this.deps.config.paths.profilesDir,
+      this.deps.config.paths.sharedDir,
+      this.deps.config.paths.sharedAuthDir,
+      this.deps.config.paths.sharedIntegrationsDir,
+
+      // Legacy flat-layout directories retained during migration.
       this.deps.config.paths.sessionsDir,
-      this.deps.config.paths.uploadsDir,
       this.deps.config.paths.authDir,
       this.deps.config.paths.memoryDir,
+
+      this.deps.config.paths.uploadsDir,
       this.deps.config.paths.agentDir,
       this.deps.config.paths.managerAgentDir
     ];
@@ -51,27 +58,38 @@ export class PersistenceService {
   }
 
   async ensureMemoryFilesForBoot(): Promise<void> {
-    const memoryAgentIds = new Set<string>();
+    const memoryFilePaths = new Set<string>();
     const configuredManagerId = this.deps.getConfiguredManagerId();
     if (configuredManagerId) {
-      memoryAgentIds.add(configuredManagerId);
-    }
-
-    for (const descriptor of this.deps.descriptors.values()) {
-      memoryAgentIds.add(descriptor.agentId);
-      if (descriptor.role === "worker") {
-        memoryAgentIds.add(this.deps.resolveMemoryOwnerAgentId(descriptor));
+      const configuredDescriptor = this.deps.descriptors.get(configuredManagerId);
+      if (configuredDescriptor?.role === "manager") {
+        memoryFilePaths.add(this.getAgentMemoryPath(configuredDescriptor));
+      } else {
+        memoryFilePaths.add(
+          this.getAgentMemoryPath({
+            agentId: configuredManagerId,
+            role: "manager",
+            profileId: configuredManagerId,
+            managerId: configuredManagerId
+          })
+        );
       }
     }
 
-    for (const agentId of memoryAgentIds) {
-      await this.ensureAgentMemoryFile(agentId);
+    for (const descriptor of this.deps.descriptors.values()) {
+      if (descriptor.role !== "manager") {
+        continue;
+      }
+
+      memoryFilePaths.add(this.getAgentMemoryPath(descriptor));
+    }
+
+    for (const memoryFilePath of memoryFilePaths) {
+      await this.ensureAgentMemoryFile(memoryFilePath);
     }
   }
 
-  async ensureAgentMemoryFile(agentId: string): Promise<void> {
-    const memoryFilePath = this.getAgentMemoryPath(agentId);
-
+  async ensureAgentMemoryFile(memoryFilePath: string): Promise<void> {
     try {
       await readFile(memoryFilePath, "utf8");
       return;
@@ -141,8 +159,15 @@ export class PersistenceService {
     await rename(tmp, target);
   }
 
-  private getAgentMemoryPath(agentId: string): string {
-    return getAgentMemoryPathForDataDir(this.deps.config.paths.dataDir, agentId);
+  private getAgentMemoryPath(
+    descriptor: Pick<AgentDescriptor, "agentId" | "role" | "profileId" | "managerId">
+  ): string {
+    return resolveMemoryFilePath(this.deps.config.paths.dataDir, {
+      agentId: descriptor.agentId,
+      role: descriptor.role,
+      profileId: descriptor.profileId,
+      managerId: descriptor.managerId
+    });
   }
 }
 

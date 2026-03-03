@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { SessionManager } from '@mariozechner/pi-coding-agent'
 import { getScheduleFilePath } from '../scheduler/schedule-storage.js'
+import { getProfileMemoryPath, getSessionMemoryPath } from '../swarm/data-paths.js'
 import { SwarmManager } from '../swarm/swarm-manager.js'
 import type {
   AgentContextUsage,
@@ -191,7 +192,7 @@ async function makeTempConfig(port = 8790): Promise<SwarmConfig> {
   const managerAgentDir = join(agentDir, 'manager')
   const repoArchetypesDir = join(root, '.swarm', 'archetypes')
   const memoryDir = join(dataDir, 'memory')
-  const memoryFile = join(memoryDir, 'manager.md')
+  const memoryFile = getProfileMemoryPath(dataDir, 'manager')
   const repoMemorySkillFile = join(root, '.swarm', 'skills', 'memory', 'SKILL.md')
 
   await mkdir(swarmDir, { recursive: true })
@@ -371,7 +372,7 @@ describe('SwarmManager', () => {
 
     const { sessionAgent } = await manager.createSession('manager', { label: 'Memory Session' })
     const profileMemoryPath = config.paths.memoryFile!
-    const sessionMemoryPath = join(config.paths.memoryDir, `${sessionAgent.agentId}.md`)
+    const sessionMemoryPath = getSessionMemoryPath(config.paths.dataDir, 'manager', sessionAgent.agentId)
 
     await writeFile(profileMemoryPath, '# Swarm Memory\n\n## Decisions\n- shared profile decision\n', 'utf8')
     await writeFile(sessionMemoryPath, '# Swarm Memory\n\n## Decisions\n- session-only decision\n', 'utf8')
@@ -397,7 +398,7 @@ describe('SwarmManager', () => {
     const { sessionAgent } = await manager.createSession('manager', { label: 'Worker Memory Session' })
     const worker = await manager.spawnAgent(sessionAgent.agentId, { agentId: 'Session Memory Worker' })
     const profileMemoryPath = config.paths.memoryFile!
-    const sessionMemoryPath = join(config.paths.memoryDir, `${sessionAgent.agentId}.md`)
+    const sessionMemoryPath = getSessionMemoryPath(config.paths.dataDir, 'manager', sessionAgent.agentId)
     const workerMemoryPath = join(config.paths.memoryDir, `${worker.agentId}.md`)
 
     await writeFile(profileMemoryPath, '# Swarm Memory\n\n## Project Facts\n- shared fact\n', 'utf8')
@@ -419,7 +420,7 @@ describe('SwarmManager', () => {
 
     const { sessionAgent } = await manager.createSession('manager', { label: 'Merge Session' })
     const profileMemoryPath = config.paths.memoryFile!
-    const sessionMemoryPath = join(config.paths.memoryDir, `${sessionAgent.agentId}.md`)
+    const sessionMemoryPath = getSessionMemoryPath(config.paths.dataDir, 'manager', sessionAgent.agentId)
 
     await writeFile(profileMemoryPath, '# Swarm Memory\n\n## Decisions\n- existing profile decision\n', 'utf8')
     await writeFile(sessionMemoryPath, '# Swarm Memory\n\n## Decisions\n- session merge detail\n', 'utf8')
@@ -466,12 +467,12 @@ describe('SwarmManager', () => {
 
     await writeFile(profileMemoryPath, '# Swarm Memory\n\n## Project Facts\n- baseline\n', 'utf8')
     await writeFile(
-      join(config.paths.memoryDir, `${firstSession.agentId}.md`),
+      getSessionMemoryPath(config.paths.dataDir, 'manager', firstSession.agentId),
       '# Swarm Memory\n\n## Project Facts\n- first merge payload\n',
       'utf8',
     )
     await writeFile(
-      join(config.paths.memoryDir, `${secondSession.agentId}.md`),
+      getSessionMemoryPath(config.paths.dataDir, 'manager', secondSession.agentId),
       '# Swarm Memory\n\n## Project Facts\n- second merge payload\n',
       'utf8',
     )
