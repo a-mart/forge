@@ -11,6 +11,7 @@ import { openSessionManagerWithSizeGuard } from "./session-file-guard.js";
 import { CodexAgentRuntime } from "./codex-agent-runtime.js";
 import type { RuntimeErrorEvent, RuntimeSessionEvent, SwarmAgentRuntime } from "./runtime-types.js";
 import { buildSwarmTools, type SwarmToolHost } from "./swarm-tools.js";
+import { normalizeArchetypeId } from "./archetypes/archetype-prompt-registry.js";
 import type {
   AgentContextUsage,
   AgentDescriptor,
@@ -68,7 +69,7 @@ export class RuntimeFactory {
     descriptor: AgentDescriptor,
     systemPrompt: string
   ): Promise<SwarmAgentRuntime> {
-    const swarmTools = buildSwarmTools(this.deps.host, descriptor);
+    const swarmTools = this.buildRuntimeTools(descriptor);
     const thinkingLevel = normalizeThinkingLevel(descriptor.model.thinkingLevel);
     const runtimeAgentDir =
       descriptor.role === "manager" ? this.deps.config.paths.managerAgentDir : this.deps.config.paths.agentDir;
@@ -201,7 +202,7 @@ export class RuntimeFactory {
     descriptor: AgentDescriptor,
     systemPrompt: string
   ): Promise<SwarmAgentRuntime> {
-    const swarmTools = buildSwarmTools(this.deps.host, descriptor);
+    const swarmTools = this.buildRuntimeTools(descriptor);
     const memoryResources = await this.deps.getMemoryRuntimeResources(descriptor);
     const swarmContextFiles = await this.deps.getSwarmContextFiles(descriptor.cwd);
 
@@ -255,6 +256,20 @@ export class RuntimeFactory {
     });
 
     return runtime;
+  }
+
+  private buildRuntimeTools(descriptor: AgentDescriptor) {
+    const swarmTools = buildSwarmTools(this.deps.host, descriptor);
+
+    if (descriptor.role !== "manager") {
+      return swarmTools;
+    }
+
+    if (normalizeArchetypeId(descriptor.archetypeId ?? "") !== CORTEX_ARCHETYPE_ID) {
+      return swarmTools;
+    }
+
+    return swarmTools.filter((tool) => !CORTEX_DISABLED_TOOL_NAMES.has(tool.name));
   }
 
   private buildCodexRuntimeSystemPrompt(
@@ -312,6 +327,9 @@ export class RuntimeFactory {
     return modelRegistry.getAll()[0];
   }
 }
+
+const CORTEX_ARCHETYPE_ID = "cortex";
+const CORTEX_DISABLED_TOOL_NAMES = new Set(["list_agents", "kill_agent"]);
 
 function isCodexAppServerModelDescriptor(descriptor: Pick<AgentModelDescriptor, "provider">): boolean {
   return descriptor.provider.trim().toLowerCase() === "openai-codex-app-server";

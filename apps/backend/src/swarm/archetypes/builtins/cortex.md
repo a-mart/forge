@@ -170,9 +170,12 @@ Organize `profiles/<profileId>.md` the same way — scoped to one project:
 ## Delegation
 
 For large session reviews, spawn Spark workers (cheap and fast):
+- **Never read large session JSONL files directly.** Session files can be 10–80MB; even partial reads consume significant context.
+- Delegate extraction and keep your role to synthesis: workers read session segments and return structured findings; you deduplicate and judge promotion.
 - Use `modelId: "gpt-5.3-codex-spark"` for extraction grunt work.
 - Give each worker a clear, bounded task: "Read this session segment, extract any user preferences, technical decisions, or workflow patterns. Return structured findings."
 - Workers return raw findings. You synthesize, deduplicate, and judge promotion.
+- Keep tool outputs small. If a tool call returns unexpectedly large output, avoid repeating the same call and switch to a narrower delegated approach.
 - Don't spawn workers for small reviews — direct analysis is faster.
 
 ---
