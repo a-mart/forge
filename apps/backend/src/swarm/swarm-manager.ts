@@ -2863,6 +2863,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const attempt = readPositiveIntegerDetail(error.details, "attempt");
     const maxAttempts = readPositiveIntegerDetail(error.details, "maxAttempts");
     const droppedPendingCount = readPositiveIntegerDetail(error.details, "droppedPendingCount");
+    const recoveryStage = readStringDetail(error.details, "recoveryStage");
 
     this.logDebug("runtime:error", {
       agentId,
@@ -2878,7 +2879,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     const text =
       error.phase === "compaction"
-        ? `⚠️ Compaction error${retryLabel}: ${message}. Continuing without compaction.`
+        ? recoveryStage === "recovery_failed"
+          ? `🚨 Context recovery failed: ${message}. Start a new session or manually trim history/compact before continuing.`
+          : `⚠️ Compaction error${retryLabel}: ${message}. Attempting fallback recovery.`
         : droppedPendingCount && droppedPendingCount > 0
           ? `⚠️ Agent error${retryLabel}: ${message}. ${droppedPendingCount} queued message${droppedPendingCount === 1 ? "" : "s"} could not be delivered and were dropped. Please resend.`
           : `⚠️ Agent error${retryLabel}: ${message}. Message may need to be resent.`;
@@ -3671,6 +3674,20 @@ function readPositiveIntegerDetail(details: Record<string, unknown> | undefined,
   }
 
   return value;
+}
+
+function readStringDetail(details: Record<string, unknown> | undefined, key: string): string | undefined {
+  if (!details) {
+    return undefined;
+  }
+
+  const value = details[key];
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : undefined;
 }
 
 function normalizeConversationAttachments(

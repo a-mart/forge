@@ -50,10 +50,30 @@ export type RuntimeSessionEvent =
       result: unknown;
       isError: boolean;
     }
-  | { type: "auto_compaction_start" }
-  | { type: "auto_compaction_end" }
-  | { type: "auto_retry_start" }
-  | { type: "auto_retry_end" };
+  | {
+      type: "auto_compaction_start";
+      reason: "threshold" | "overflow";
+    }
+  | {
+      type: "auto_compaction_end";
+      result: unknown;
+      aborted: boolean;
+      willRetry: boolean;
+      errorMessage?: string;
+    }
+  | {
+      type: "auto_retry_start";
+      attempt: number;
+      maxAttempts: number;
+      delayMs: number;
+      errorMessage: string;
+    }
+  | {
+      type: "auto_retry_end";
+      success: boolean;
+      attempt: number;
+      finalError?: string;
+    };
 
 export interface RuntimeErrorEvent {
   phase:
