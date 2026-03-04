@@ -13,6 +13,7 @@ class FakeSession {
   abortCalls = 0
   disposeCalls = 0
   listener: ((event: any) => void) | undefined
+  contextUsage: { tokens: number | null; contextWindow: number; percent: number | null } | undefined
 
   async prompt(message: string, options?: { images?: Array<{ type: string }> }): Promise<void> {
     this.promptCalls.push(message)
@@ -34,6 +35,14 @@ class FakeSession {
 
   async abort(): Promise<void> {
     this.abortCalls += 1
+  }
+
+  async compact(): Promise<{ ok: true }> {
+    return { ok: true }
+  }
+
+  getContextUsage(): { tokens: number | null; contextWindow: number; percent: number | null } | undefined {
+    return this.contextUsage
   }
 
   dispose(): void {
@@ -386,6 +395,42 @@ describe('AgentRuntime', () => {
 
     expect(phases.at(-1)).toBe('compaction')
     expect(runtime.getStatus()).toBe('idle')
+  })
+
+  it('emits a status update after manual compaction with refreshed context usage', async () => {
+    const session = new FakeSession()
+    session.contextUsage = {
+      tokens: 920,
+      contextWindow: 1000,
+      percent: 92,
+    }
+
+    const contextTokensByStatus: number[] = []
+
+    session.compact = async (): Promise<{ ok: true }> => {
+      session.contextUsage = {
+        tokens: 220,
+        contextWindow: 1000,
+        percent: 22,
+      }
+      return { ok: true }
+    }
+
+    const runtime = new AgentRuntime({
+      descriptor: makeDescriptor(),
+      session: session as any,
+      callbacks: {
+        onStatusChange: (_agentId, _status, _pendingCount, contextUsage) => {
+          if (contextUsage) {
+            contextTokensByStatus.push(contextUsage.tokens)
+          }
+        },
+      },
+    })
+
+    await runtime.compact('trim older turns')
+
+    expect(contextTokensByStatus.at(-1)).toBe(220)
   })
 
   it('terminates by aborting active session and marking status terminated', async () => {

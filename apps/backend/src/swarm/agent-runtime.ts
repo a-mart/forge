@@ -156,7 +156,9 @@ export class AgentRuntime implements SwarmAgentRuntime {
   async compact(customInstructions?: string): Promise<unknown> {
     this.ensureNotTerminated();
     try {
-      return await this.session.compact(customInstructions);
+      const result = await this.session.compact(customInstructions);
+      await this.emitStatus();
+      return result;
     } catch (error) {
       this.logRuntimeError("compaction", error, {
         customInstructionsPreview: previewForLog(customInstructions ?? "")
