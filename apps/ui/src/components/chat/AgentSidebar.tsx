@@ -56,7 +56,7 @@ interface AgentSidebarProps {
   onResumeSession?: (agentId: string) => void
   onDeleteSession?: (agentId: string) => void
   onRenameSession?: (agentId: string, label: string) => void
-  onForkSession?: (sourceAgentId: string) => void
+  onForkSession?: (sourceAgentId: string, name?: string) => void
   onMergeSessionMemory?: (agentId: string) => void
 }
 
@@ -759,6 +759,69 @@ function CreateSessionDialog({
   )
 }
 
+// ── Fork session dialog ──
+
+function ForkSessionDialog({
+  onConfirm,
+  onClose,
+}: {
+  onConfirm: (name?: string) => void
+  onClose: () => void
+}) {
+  const [name, setName] = useState('')
+
+  const trimmedName = name.trim()
+  const slugPreview = slugifySessionName(trimmedName)
+  const showInvalidSlugWarning = trimmedName.length > 0 && slugPreview.length === 0
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    onConfirm(trimmedName.length > 0 ? trimmedName : undefined)
+  }
+
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open) onClose() }}>
+      <DialogContent className="max-w-sm p-4">
+        <DialogHeader className="mb-3">
+          <DialogTitle>Fork Session</DialogTitle>
+          <DialogDescription>Create a fork of this session.</DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <Input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Session name (optional)"
+            autoFocus
+          />
+
+          <div className="space-y-1">
+            <p className="text-xs text-muted-foreground">
+              Agent id preview:{' '}
+              <span className="font-mono">
+                {trimmedName.length === 0 ? '(auto-generated)' : (slugPreview || '(invalid)')}
+              </span>
+            </p>
+            {showInvalidSlugWarning ? (
+              <p className="text-xs text-amber-600 dark:text-amber-500">
+                This name has no usable characters for an agent id after slugifying.
+              </p>
+            ) : null}
+          </div>
+
+          <div className="flex items-center justify-end gap-2">
+            <Button type="button" variant="outline" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit">
+              Fork
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 // ── Rename dialog ──
 
 function RenameSessionDialog({
@@ -882,6 +945,7 @@ export function AgentSidebar({
   const [createTarget, setCreateTarget] = useState<{ profileId: string; profileLabel: string } | null>(null)
   const [renameTarget, setRenameTarget] = useState<{ agentId: string; label: string } | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<{ agentId: string; label: string } | null>(null)
+  const [forkTarget, setForkTarget] = useState<{ sourceAgentId: string } | null>(null)
 
   const toggleProfileCollapsed = useCallback((profileId: string) => {
     setCollapsedProfileIds((prev) => {
@@ -1036,7 +1100,7 @@ export function AgentSidebar({
                 onResumeSession={onResumeSession}
                 onDeleteSession={handleRequestDelete}
                 onRequestRenameSession={handleRequestRename}
-                onForkSession={onForkSession}
+                onForkSession={onForkSession ? (sourceAgentId: string) => setForkTarget({ sourceAgentId }) : undefined}
                 onMergeSessionMemory={onMergeSessionMemory}
               />
             ))}
@@ -1124,6 +1188,17 @@ export function AgentSidebar({
           sessionLabel={deleteTarget.label}
           onConfirm={handleConfirmDelete}
           onClose={() => setDeleteTarget(null)}
+        />
+      ) : null}
+
+      {/* Fork session dialog */}
+      {forkTarget && onForkSession ? (
+        <ForkSessionDialog
+          onConfirm={(name) => {
+            onForkSession(forkTarget.sourceAgentId, name)
+            setForkTarget(null)
+          }}
+          onClose={() => setForkTarget(null)}
         />
       ) : null}
     </>
