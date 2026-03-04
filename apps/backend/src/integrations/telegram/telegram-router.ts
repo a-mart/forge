@@ -77,13 +77,24 @@ export class TelegramInboundRouter {
       this.topicManager.resolveSessionForTopic(String(message.chat.id), message.message_thread_id) ??
       this.managerId;
 
+    console.debug(
+      `[telegram-router] inbound messageId=${message.message_id} chatId=${message.chat.id} threadId=${message.message_thread_id ?? "n/a"} targetAgentId=${targetAgentId}`
+    );
+
     try {
       await this.swarmManager.handleUserMessage(text, {
         targetAgentId,
         attachments,
         sourceContext
       });
+
+      console.debug(
+        `[telegram-router] routed messageId=${message.message_id} to targetAgentId=${targetAgentId}`
+      );
     } catch (error) {
+      console.debug(
+        `[telegram-router] failed messageId=${message.message_id} targetAgentId=${targetAgentId}`
+      );
       this.onError?.("Failed to route Telegram message to swarm manager", error);
     }
   }

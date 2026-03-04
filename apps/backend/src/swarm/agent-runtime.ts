@@ -9,6 +9,10 @@ import {
   normalizeRuntimeUserMessage,
   previewForLog
 } from "./runtime-utils.js";
+import {
+  trimConversationForEmergencyRecovery,
+  type EmergencyContextTrimMessage
+} from "./emergency-context-trim.js";
 import { transitionAgentStatus } from "./agent-state-machine.js";
 import type {
   RuntimeImageAttachment,
@@ -51,6 +55,8 @@ export class AgentRuntime implements SwarmAgentRuntime {
   private promptDispatchPending = false;
   private ignoreNextAgentStart = false;
   private lastStreamingStatusEmitAtMs = 0;
+  private autoCompactionRecoveryInProgress = false;
+  private latestAutoCompactionReason: "threshold" | "overflow" | undefined;
 
   constructor(options: {
     descriptor: AgentDescriptor;
@@ -128,6 +134,8 @@ export class AgentRuntime implements SwarmAgentRuntime {
     this.pendingDeliveries = [];
     this.promptDispatchPending = false;
     this.ignoreNextAgentStart = false;
+    this.autoCompactionRecoveryInProgress = false;
+    this.latestAutoCompactionReason = undefined;
     this.inFlightPrompts.clear();
     this.status = transitionAgentStatus(this.status, "terminated");
     this.descriptor.status = this.status;
@@ -148,6 +156,8 @@ export class AgentRuntime implements SwarmAgentRuntime {
     this.pendingDeliveries = [];
     this.promptDispatchPending = false;
     this.ignoreNextAgentStart = false;
+    this.autoCompactionRecoveryInProgress = false;
+    this.latestAutoCompactionReason = undefined;
     this.inFlightPrompts.clear();
 
     await this.updateStatus("idle");
@@ -289,6 +299,16 @@ export class AgentRuntime implements SwarmAgentRuntime {
       return;
     }
 
+    if (event.type === "auto_compaction_start") {
+      this.latestAutoCompactionReason = event.reason;
+      return;
+    }
+
+    if (event.type === "auto_compaction_end") {
+      await this.handleAutoCompactionEndEvent(event);
+      return;
+    }
+
     if (event.type === "message_update" && event.message.role !== "user") {
       await this.emitStreamingStatusUpdateThrottled();
       return;
@@ -353,6 +373,188 @@ export class AgentRuntime implements SwarmAgentRuntime {
         });
       }
     }
+  }
+
+  private async handleAutoCompactionEndEvent(
+    event: Extract<AgentSessionEvent, { type: "auto_compaction_end" }>
+  ): Promise<void> {
+    const compactionReason = this.latestAutoCompactionReason;
+    this.latestAutoCompactionReason = undefined;
+
+    const autoCompactionError = typeof event.errorMessage === "string" ? event.errorMessage.trim() : "";
+    if (!autoCompactionError || this.status === "terminated") {
+      return;
+    }
+
+    if (this.autoCompactionRecoveryInProgress) {
+      this.logRuntimeError("compaction", new Error(autoCompactionError), {
+        recoveryStage: "auto_compaction_skipped",
+        reason: "recovery_already_in_progress"
+      });
+      return;
+    }
+
+    this.autoCompactionRecoveryInProgress = true;
+
+    try {
+      const baseDetails = {
+        source: "auto_compaction_end",
+        compactionReason,
+        autoCompactionAborted: event.aborted,
+        autoCompactionWillRetry: event.willRetry
+      };
+
+      this.logRuntimeError("compaction", new Error(autoCompactionError), {
+        ...baseDetails,
+        recoveryStage: "auto_compaction_failed"
+      });
+
+      await this.reportRuntimeError({
+        phase: "compaction",
+        message: autoCompactionError,
+        details: {
+          ...baseDetails,
+          recoveryStage: "auto_compaction_failed"
+        }
+      });
+
+      const manualRetry = await this.retryCompactionOnceAfterAutoFailure(autoCompactionError, baseDetails);
+      if (manualRetry.recovered) {
+        this.continueAfterCompactionRecoveryIfNeeded(compactionReason);
+        return;
+      }
+
+      const emergencyTrim = await this.runEmergencyContextTrim({
+        autoCompactionError,
+        manualRetryError: manualRetry.errorMessage
+      });
+      if (emergencyTrim.recovered) {
+        this.continueAfterCompactionRecoveryIfNeeded(compactionReason);
+        return;
+      }
+
+      await this.reportRuntimeError({
+        phase: "compaction",
+        message:
+          "Context recovery failed after auto-compaction retry and emergency trim. Start a new session or manually trim conversation history.",
+        details: {
+          ...baseDetails,
+          recoveryStage: "recovery_failed",
+          autoCompactionError,
+          manualRetryError: manualRetry.errorMessage,
+          emergencyTrimError: emergencyTrim.errorMessage
+        }
+      });
+    } finally {
+      this.autoCompactionRecoveryInProgress = false;
+    }
+  }
+
+  private async retryCompactionOnceAfterAutoFailure(
+    autoCompactionError: string,
+    details: Record<string, unknown>
+  ): Promise<{ recovered: boolean; errorMessage?: string }> {
+    try {
+      await this.compact();
+      return { recovered: true };
+    } catch (error) {
+      const normalized = normalizeRuntimeError(error);
+      this.logRuntimeError("compaction", error, {
+        ...details,
+        recoveryStage: "manual_retry_failed",
+        autoCompactionError
+      });
+      return {
+        recovered: false,
+        errorMessage: normalized.message
+      };
+    }
+  }
+
+  private async runEmergencyContextTrim(options: {
+    autoCompactionError: string;
+    manualRetryError?: string;
+  }): Promise<{ recovered: boolean; errorMessage?: string }> {
+    try {
+      const sessionContext = this.session.sessionManager.buildSessionContext();
+      const trimResult = trimConversationForEmergencyRecovery(
+        sessionContext.messages as EmergencyContextTrimMessage[]
+      );
+
+      if (!trimResult.wasTrimmed) {
+        return {
+          recovered: false,
+          errorMessage: "Emergency trim had no removable middle messages"
+        };
+      }
+
+      this.rebuildSessionContextFromTrimmedMessages(trimResult.trimmedMessages);
+      await this.emitStatus();
+
+      this.logRuntimeError("compaction", new Error("Emergency context trim applied"), {
+        recoveryStage: "emergency_trim_applied",
+        autoCompactionError: options.autoCompactionError,
+        manualRetryError: options.manualRetryError,
+        originalMessageCount: trimResult.originalCount,
+        removedMiddleCount: trimResult.removedMiddleCount,
+        removedToolLikeCount: trimResult.removedToolLikeCount,
+        keptHeadCount: trimResult.keptHeadCount,
+        keptTailCount: trimResult.keptTailCount
+      });
+
+      return { recovered: true };
+    } catch (error) {
+      const normalized = normalizeRuntimeError(error);
+      this.logRuntimeError("compaction", error, {
+        recoveryStage: "emergency_trim_failed",
+        autoCompactionError: options.autoCompactionError,
+        manualRetryError: options.manualRetryError
+      });
+      return {
+        recovered: false,
+        errorMessage: normalized.message
+      };
+    }
+  }
+
+  private rebuildSessionContextFromTrimmedMessages(messages: EmergencyContextTrimMessage[]): void {
+    this.session.sessionManager.resetLeaf();
+
+    const currentModel = this.session.model;
+    if (currentModel) {
+      this.session.sessionManager.appendModelChange(currentModel.provider, currentModel.id);
+    }
+    this.session.sessionManager.appendThinkingLevelChange(this.session.thinkingLevel);
+
+    for (const message of messages) {
+      this.session.sessionManager.appendMessage(structuredClone(message) as any);
+    }
+
+    const rebuiltContext = this.session.sessionManager.buildSessionContext();
+    this.session.agent.replaceMessages(rebuiltContext.messages);
+  }
+
+  private continueAfterCompactionRecoveryIfNeeded(
+    compactionReason: "threshold" | "overflow" | undefined
+  ): void {
+    if (compactionReason !== "overflow") {
+      return;
+    }
+
+    const messages = this.session.state.messages;
+    const lastMessage = messages[messages.length - 1];
+    if (lastMessage?.role === "assistant" && lastMessage.stopReason === "error") {
+      this.session.agent.replaceMessages(messages.slice(0, -1));
+    }
+
+    setTimeout(() => {
+      this.session.agent.continue().catch((error) => {
+        this.logRuntimeError("compaction", error, {
+          recoveryStage: "recovery_continue_failed",
+          compactionReason
+        });
+      });
+    }, 100);
   }
 
   private consumePendingMessage(messageKey: string): void {

@@ -5,6 +5,7 @@ import {
   addTopicMapping,
   findSessionForTopic,
   findTopicForSession,
+  getTopicStorePath,
   loadTopicStore,
   removeTopicMapping,
   saveTopicStore,
@@ -38,9 +39,16 @@ export class TelegramTopicManager {
   async initialize(): Promise<void> {
     try {
       this.store = await loadTopicStore(this.dataDir, this.managerId);
+      const storePath = getTopicStorePath(this.dataDir, this.managerId);
+      console.debug(
+        `[telegram-topic-manager] initialized manager=${this.managerId} mappings=${this.store.mappings.length} path=${storePath}`
+      );
     } catch (error) {
       this.onError?.("Failed to load Telegram topic store", error);
       this.store = { mappings: [] };
+      console.debug(
+        `[telegram-topic-manager] initialized manager=${this.managerId} mappings=0 (fallback after load error)`
+      );
     }
   }
 

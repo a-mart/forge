@@ -175,28 +175,51 @@ export class TelegramPollingPool {
     const chatId = getMessageChatId(message);
     const messageThreadId = getMessageThreadId(message);
 
+    console.debug(
+      `[telegram-pool] dispatch update=${update.update_id} chatId=${chatId ?? "n/a"} threadId=${messageThreadId ?? "n/a"} consumers=${entry.consumers.size}`
+    );
+
     let consumer: TelegramPollingPoolConsumer | undefined;
 
     if (messageThreadId !== undefined) {
       if (!chatId) {
+        console.debug(
+          `[telegram-pool] drop update=${update.update_id}: thread_id present but chat id missing`
+        );
         return;
       }
 
       for (const candidate of entry.consumers.values()) {
         const resolvedSession = candidate.topicManager.resolveSessionForTopic(chatId, messageThreadId);
+        console.debug(
+          `[telegram-pool] candidate manager=${candidate.managerId} topicMatch=${resolvedSession ?? "none"}`
+        );
+
         if (resolvedSession) {
           consumer = candidate;
           break;
         }
       }
+
+      if (!consumer) {
+        consumer = this.getDefaultConsumer(entry);
+        console.debug(
+          `[telegram-pool] no topic mapping for chatId=${chatId} threadId=${messageThreadId}; falling back to default manager=${consumer?.managerId ?? "none"}`
+        );
+      }
     } else {
       consumer = this.getDefaultConsumer(entry);
+      console.debug(
+        `[telegram-pool] non-thread message; selected default manager=${consumer?.managerId ?? "none"}`
+      );
     }
 
     if (!consumer) {
+      console.debug(`[telegram-pool] drop update=${update.update_id}: no consumer available`);
       return;
     }
 
+    console.debug(`[telegram-pool] routing update=${update.update_id} to manager=${consumer.managerId}`);
     await consumer.router.handleUpdate(update);
   }
 

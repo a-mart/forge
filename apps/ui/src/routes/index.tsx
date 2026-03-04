@@ -415,13 +415,13 @@ export function IndexPage() {
     })()
   }, [clientRef, setState])
 
-  const handleForkSession = useCallback((sourceAgentId: string) => {
+  const handleForkSession = useCallback((sourceAgentId: string, name?: string) => {
     const client = clientRef.current
     if (!client) return
 
     void (async () => {
       try {
-        const result = await client.forkSession(sourceAgentId)
+        const result = await client.forkSession(sourceAgentId, name)
         navigateToRoute({ view: 'chat', agentId: result.newSessionAgent.agentId })
         client.subscribeToAgent(result.newSessionAgent.agentId)
       } catch (error) {
