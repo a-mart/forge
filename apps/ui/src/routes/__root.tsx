@@ -49,7 +49,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
         <HeadContent />
       </head>
-      <body className="overflow-x-hidden">
+      <body className="overflow-hidden">
         <TooltipProvider>
           {children}
           <TanStackDevtools

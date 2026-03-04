@@ -14,6 +14,52 @@ const DEFAULT_COMMAND = "pnpm prod";
 const DEFAULT_INSTALL_COMMAND = "pnpm i";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+function log(message) {
+  console.log(`[prod-daemon] ${message}`);
+}
+
+function parseEnvFile(filePath) {
+  if (!fs.existsSync(filePath)) {
+    return;
+  }
+
+  try {
+    const raw = fs.readFileSync(filePath, "utf8");
+    for (const line of raw.split(/\r?\n/)) {
+      const trimmedLine = line.trim();
+      if (!trimmedLine || trimmedLine.startsWith("#")) {
+        continue;
+      }
+
+      const firstEqualsIndex = trimmedLine.indexOf("=");
+      if (firstEqualsIndex === -1) {
+        continue;
+      }
+
+      const key = trimmedLine.slice(0, firstEqualsIndex).trim();
+      if (!key) {
+        continue;
+      }
+
+      let value = trimmedLine.slice(firstEqualsIndex + 1).trim();
+      if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+        value = value.slice(1, -1);
+      }
+
+      if (!(key in process.env)) {
+        process.env[key] = value;
+      }
+    }
+
+    log(`Loaded .env from ${filePath}`);
+  } catch (error) {
+    console.error(`[prod-daemon] Failed to load .env file: ${error.message}`);
+  }
+}
+
+parseEnvFile(path.join(repoRoot, ".env"));
+
 const repoHash = createHash("sha1").update(repoRoot).digest("hex").slice(0, 10);
 const pidFile = path.join(os.tmpdir(), `swarm-prod-daemon-${repoHash}.pid`);
 const lockFilePath = path.join(repoRoot, "pnpm-lock.yaml");
@@ -25,10 +71,6 @@ let child = null;
 let restarting = false;
 let shuttingDown = false;
 let forceKillTimer = null;
-
-function log(message) {
-  console.log(`[prod-daemon] ${message}`);
-}
 
 function readFileHash(filePath) {
   try {

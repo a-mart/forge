@@ -13,7 +13,6 @@ import {
 import { AgentSidebar } from '@/components/chat/AgentSidebar'
 import { ArtifactPanel } from '@/components/chat/ArtifactPanel'
 import { ArtifactsSidebar } from '@/components/chat/ArtifactsSidebar'
-import { CortexDashboardPanel } from '@/components/chat/cortex/CortexDashboardPanel'
 import { ChatHeader, type ChannelView } from '@/components/chat/ChatHeader'
 import { CreateManagerDialog } from '@/components/chat/CreateManagerDialog'
 import { DeleteManagerDialog } from '@/components/chat/DeleteManagerDialog'
@@ -500,8 +499,8 @@ export function IndexPage() {
   }, [])
 
   return (
-    <main className="h-screen bg-background text-foreground">
-      <div className="flex h-screen w-full min-w-0 overflow-hidden bg-background">
+    <main className="h-dvh bg-background text-foreground">
+      <div className="flex h-dvh w-full min-w-0 overflow-hidden bg-background">
         <AgentSidebar
           connected={state.connected}
           agents={state.agents}
@@ -612,24 +611,14 @@ export function IndexPage() {
           </div>
 
           {activeView === 'chat' ? (
-            activeAgent?.archetypeId === 'cortex' ? (
-              <CortexDashboardPanel
-                wsUrl={wsUrl}
-                isOpen={isArtifactsPanelOpen}
-                onClose={() => setIsArtifactsPanelOpen(false)}
-                onArtifactClick={handleOpenArtifact}
-                onSendMessage={(text) => handleSend(text)}
-              />
-            ) : (
-              <ArtifactsSidebar
-                wsUrl={wsUrl}
-                managerId={activeManagerId}
-                artifacts={collectedArtifacts}
-                isOpen={isArtifactsPanelOpen}
-                onClose={() => setIsArtifactsPanelOpen(false)}
-                onArtifactClick={handleOpenArtifact}
-              />
-            )
+            <ArtifactsSidebar
+              wsUrl={wsUrl}
+              managerId={activeManagerId}
+              artifacts={collectedArtifacts}
+              isOpen={isArtifactsPanelOpen}
+              onClose={() => setIsArtifactsPanelOpen(false)}
+              onArtifactClick={handleOpenArtifact}
+            />
           ) : null}
         </div>
       </div>
