@@ -18,6 +18,13 @@ export function isActiveAgent(agent: AgentDescriptor): boolean {
   return ACTIVE_STATUSES.has(agent.status)
 }
 
+export function isCortexProfile(row: ProfileTreeRow): boolean {
+  // Check if the default session (or any session) has archetypeId === 'cortex'
+  const defaultSession = row.sessions.find((s) => s.isDefault)
+  const representativeSession = defaultSession ?? row.sessions[0]
+  return representativeSession?.sessionAgent.archetypeId === 'cortex'
+}
+
 export function getPrimaryManagerId(agents: AgentDescriptor[]): string | null {
   const managers = agents.filter((agent) => agent.role === 'manager' && isActiveAgent(agent))
   if (managers.length === 0) return null

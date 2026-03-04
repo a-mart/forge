@@ -1,6 +1,6 @@
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { resolveMemoryFilePath } from "./data-paths.js";
+import { getSharedKnowledgeDir, resolveMemoryFilePath } from "./data-paths.js";
 import type { AgentDescriptor, AgentsStoreFile, ManagerProfile, SwarmConfig } from "./types.js";
 
 const DEFAULT_MEMORY_FILE_CONTENT = `# Swarm Memory
@@ -41,6 +41,7 @@ export class PersistenceService {
       this.deps.config.paths.sharedDir,
       this.deps.config.paths.sharedAuthDir,
       this.deps.config.paths.sharedIntegrationsDir,
+      getSharedKnowledgeDir(this.deps.config.paths.dataDir),
 
       this.deps.config.paths.uploadsDir,
       this.deps.config.paths.agentDir,

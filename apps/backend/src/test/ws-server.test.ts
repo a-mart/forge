@@ -209,7 +209,13 @@ async function bootWithDefaultManager(manager: TestSwarmManager, config: SwarmCo
     return existingManager
   }
 
-  return manager.createManager(managerId, {
+  const callerAgentId =
+    manager
+      .listAgents()
+      .find((descriptor) => descriptor.role === 'manager')
+      ?.agentId ?? managerId
+
+  return manager.createManager(callerAgentId, {
     name: managerName,
     cwd: config.defaultCwd,
   })
@@ -1792,11 +1798,14 @@ describe('SwarmWebSocketServer', () => {
     )
     expect(deletedEvent.type).toBe('manager_deleted')
 
-    const emptySnapshot = await waitForEvent(
+    const postDeleteSnapshot = await waitForEvent(
       events,
-      (event) => event.type === 'agents_snapshot' && event.agents.length === 0,
+      (event) =>
+        event.type === 'agents_snapshot' &&
+        event.agents.length === 1 &&
+        event.agents[0]?.agentId === 'cortex',
     )
-    expect(emptySnapshot.type).toBe('agents_snapshot')
+    expect(postDeleteSnapshot.type).toBe('agents_snapshot')
 
     client.send(
       JSON.stringify({

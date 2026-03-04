@@ -13,6 +13,7 @@ import {
 } from "./archetypes/archetype-prompt-registry.js";
 import { ConversationProjector } from "./conversation-projector.js";
 import {
+  getCommonKnowledgePath,
   getProfileMemoryPath,
   getProfileMergeAuditLogPath,
   getSessionDir,
@@ -117,6 +118,9 @@ const DEFAULT_WORKER_SYSTEM_PROMPT = `You are a worker agent in a swarm.
 - Follow the memory skill workflow before editing the memory file, and never store secrets in memory.`;
 const MANAGER_ARCHETYPE_ID = "manager";
 const MERGER_ARCHETYPE_ID = "merger";
+const CORTEX_ARCHETYPE_ID = "cortex";
+const CORTEX_PROFILE_ID = "cortex";
+const CORTEX_DISPLAY_NAME = "Cortex";
 const INTERNAL_MODEL_MESSAGE_PREFIX = "SYSTEM: ";
 const MANAGER_BOOTSTRAP_INTERVIEW_MESSAGE = `You are a newly created manager agent for this user.
 
@@ -145,6 +149,18 @@ This is just one example — ask the user how they'd like to work and adapt to t
 
 Close by asking if they want you to save their preferences to memory for future sessions.
 If they agree, summarize the choices and persist them using the memory workflow.`;
+const COMMON_KNOWLEDGE_MEMORY_HEADER =
+  "# Common Knowledge (maintained by Cortex — read-only reference)";
+const COMMON_KNOWLEDGE_INITIAL_TEMPLATE = `# Common Knowledge
+
+> Maintained by Cortex. Injected into all agents.
+
+## User Profile
+
+## Working Patterns
+
+## Quality Standards
+`;
 // Retain recent non-web activity while preserving the full user-facing web transcript.
 const SWARM_CONTEXT_FILE_NAME = "SWARM.md";
 const SWARM_MANAGER_MAX_EVENT_LISTENERS = 64;
@@ -405,6 +421,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     this.reconcileProfilesOnBoot();
+    await this.ensureCortexProfile();
     this.normalizeStreamingStatusesForBoot();
 
     await this.ensureMemoryFilesForBoot();
@@ -941,7 +958,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   ): Promise<AgentDescriptor> {
     const callerDescriptor = this.descriptors.get(callerAgentId);
     if (!callerDescriptor || callerDescriptor.role !== "manager") {
-      const canBootstrap = !this.hasRunningManagers();
+      const canBootstrap = !this.hasRunningManagers({ excludeCortex: true });
       if (!canBootstrap) {
         throw new Error("Only manager can create managers");
       }
@@ -952,6 +969,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const requestedName = input.name?.trim();
     if (!requestedName) {
       throw new Error("create_manager requires a non-empty name");
+    }
+
+    const normalizedRequestedName = normalizeAgentId(requestedName);
+    if (normalizedRequestedName === CORTEX_PROFILE_ID && this.hasCortexDescriptor()) {
+      throw new Error("Cortex manager already exists");
     }
 
     const requestedModelPreset = parseSwarmModelPreset(input.model, "create_manager.model");
@@ -1043,6 +1065,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         throw new Error(`Unknown manager: ${targetManagerId}`);
       }
       sessionDescriptors.push(target);
+    }
+
+    if (sessionDescriptors.some((descriptor) => normalizeArchetypeId(descriptor.archetypeId ?? "") === CORTEX_ARCHETYPE_ID)) {
+      throw new Error("Cortex manager cannot be deleted");
     }
 
     const terminatedWorkerIds: string[] = [];
@@ -2220,6 +2246,83 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
   }
 
+  private async ensureCortexProfile(): Promise<void> {
+    if (this.hasCortexDescriptor()) {
+      await this.ensureCommonKnowledgeFile();
+      return;
+    }
+
+    if (this.descriptors.has(CORTEX_PROFILE_ID)) {
+      throw new Error(
+        `Cannot auto-create Cortex profile because agentId "${CORTEX_PROFILE_ID}" is already in use`
+      );
+    }
+
+    const createdAt = this.now();
+
+    const descriptor: AgentDescriptor = {
+      agentId: CORTEX_PROFILE_ID,
+      displayName: CORTEX_DISPLAY_NAME,
+      role: "manager",
+      managerId: CORTEX_PROFILE_ID,
+      profileId: CORTEX_PROFILE_ID,
+      archetypeId: CORTEX_ARCHETYPE_ID,
+      status: "idle",
+      createdAt,
+      updatedAt: createdAt,
+      cwd: this.config.defaultCwd,
+      model: this.resolveDefaultModelDescriptor(),
+      sessionFile: getSessionFilePath(this.config.paths.dataDir, CORTEX_PROFILE_ID, CORTEX_PROFILE_ID)
+    };
+
+    const profile: ManagerProfile = {
+      profileId: CORTEX_PROFILE_ID,
+      displayName: CORTEX_DISPLAY_NAME,
+      defaultSessionAgentId: CORTEX_PROFILE_ID,
+      createdAt,
+      updatedAt: createdAt
+    };
+
+    this.descriptors.set(descriptor.agentId, descriptor);
+    this.profiles.set(profile.profileId, profile);
+
+    await this.ensureSessionFileParentDirectory(descriptor.sessionFile);
+    await this.writeInitialSessionMeta(descriptor);
+    await this.refreshSessionMetaStats(descriptor);
+    await this.ensureCommonKnowledgeFile();
+
+    this.logDebug("cortex:profile:auto_created", {
+      profileId: CORTEX_PROFILE_ID,
+      archetypeId: CORTEX_ARCHETYPE_ID
+    });
+  }
+
+  private hasCortexDescriptor(): boolean {
+    for (const descriptor of this.descriptors.values()) {
+      if (normalizeArchetypeId(descriptor.archetypeId ?? "") === CORTEX_ARCHETYPE_ID) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  private async ensureCommonKnowledgeFile(): Promise<void> {
+    const commonKnowledgePath = getCommonKnowledgePath(this.config.paths.dataDir);
+
+    try {
+      await readFile(commonKnowledgePath, "utf8");
+      return;
+    } catch (error) {
+      if (!isEnoentError(error)) {
+        throw error;
+      }
+    }
+
+    await mkdir(dirname(commonKnowledgePath), { recursive: true });
+    await writeFile(commonKnowledgePath, COMMON_KNOWLEDGE_INITIAL_TEMPLATE, "utf8");
+  }
+
   private normalizeStreamingStatusesForBoot(): void {
     const normalizedAgentIds: string[] = [];
 
@@ -2550,9 +2653,13 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return descriptor;
   }
 
-  private hasRunningManagers(): boolean {
+  private hasRunningManagers(options?: { excludeCortex?: boolean }): boolean {
     for (const descriptor of this.descriptors.values()) {
       if (descriptor.role !== "manager") {
+        continue;
+      }
+
+      if (options?.excludeCortex && normalizeArchetypeId(descriptor.archetypeId ?? "") === CORTEX_ARCHETYPE_ID) {
         continue;
       }
 
@@ -2656,6 +2763,27 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       await this.ensureAgentMemoryFile(profileMemoryPath);
       const profileMemoryContent = await readFile(profileMemoryPath, "utf8");
       memoryContent = buildSessionMemoryRuntimeView(profileMemoryContent, sessionMemoryContent);
+    }
+
+    const commonKnowledgePath = getCommonKnowledgePath(this.config.paths.dataDir);
+    try {
+      const commonKnowledgeContent = (await readFile(commonKnowledgePath, "utf8")).trim();
+      if (commonKnowledgeContent.length > 0) {
+        const baseMemoryContent = memoryContent.trimEnd();
+        memoryContent = [
+          baseMemoryContent,
+          "",
+          "---",
+          "",
+          COMMON_KNOWLEDGE_MEMORY_HEADER,
+          "",
+          commonKnowledgeContent
+        ].join("\n");
+      }
+    } catch (error) {
+      if (!isEnoentError(error)) {
+        throw error;
+      }
     }
 
     await this.skillMetadataService.ensureSkillMetadataLoaded();

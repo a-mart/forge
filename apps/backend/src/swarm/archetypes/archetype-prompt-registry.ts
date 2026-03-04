@@ -4,7 +4,7 @@ import { extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AgentArchetypeId } from "../types.js";
 
-export const BUILTIN_ARCHETYPE_IDS = ["manager", "merger"] as const;
+export const BUILTIN_ARCHETYPE_IDS = ["manager", "merger", "cortex"] as const;
 export type BuiltInArchetypeId = (typeof BUILTIN_ARCHETYPE_IDS)[number];
 
 interface BuiltInArchetypeDefinition {
@@ -14,7 +14,8 @@ interface BuiltInArchetypeDefinition {
 
 const BUILTIN_ARCHETYPE_DEFINITIONS: readonly BuiltInArchetypeDefinition[] = [
   { id: "manager", fileName: "manager.md" },
-  { id: "merger", fileName: "merger.md" }
+  { id: "merger", fileName: "merger.md" },
+  { id: "cortex", fileName: "cortex.md" }
 ] as const;
 
 const REGISTRY_DIR = fileURLToPath(new URL(".", import.meta.url));

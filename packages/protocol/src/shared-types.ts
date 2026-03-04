@@ -78,6 +78,9 @@ export interface SessionMeta {
 
   workers: SessionWorkerMeta[]
 
+  cortexReviewedAt?: string
+  cortexReviewedBytes?: number
+
   stats: {
     totalWorkers: number
     activeWorkers: number

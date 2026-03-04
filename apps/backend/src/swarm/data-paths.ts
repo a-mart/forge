@@ -92,6 +92,14 @@ export function getSharedIntegrationsDir(dataDir: string): string {
   return join(getSharedDir(dataDir), "integrations");
 }
 
+export function getSharedKnowledgeDir(dataDir: string): string {
+  return join(getSharedDir(dataDir), "knowledge");
+}
+
+export function getCommonKnowledgePath(dataDir: string): string {
+  return join(getSharedKnowledgeDir(dataDir), "common.md");
+}
+
 export function getSharedAuthDir(dataDir: string): string {
   return join(getSharedDir(dataDir), "auth");
 }

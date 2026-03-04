@@ -130,6 +130,8 @@ export async function rebuildSessionMeta(options: RebuildSessionMetaOptions): Pr
       cwd: normalizeOptionalString(sessionDescriptor.cwd) ?? null,
       promptFingerprint: existingMeta?.promptFingerprint ?? null,
       promptComponents: existingMeta?.promptComponents ?? null,
+      cortexReviewedAt: existingMeta?.cortexReviewedAt,
+      cortexReviewedBytes: existingMeta?.cortexReviewedBytes,
       workers,
       stats: buildWorkerStats(workers, {
         sessionFileSize,
@@ -522,6 +524,8 @@ function coerceSessionMeta(value: unknown): SessionMeta | undefined {
           profileMemoryFile: normalizeOptionalString(promptComponentsRecord.profileMemoryFile) ?? null
         }
       : null,
+    cortexReviewedAt: normalizeOptionalString(value.cortexReviewedAt),
+    cortexReviewedBytes: coerceOptionalNonNegativeInteger(value.cortexReviewedBytes),
     workers,
     stats: {
       totalWorkers:
@@ -584,6 +588,14 @@ function coerceSessionWorkerMeta(value: unknown): SessionWorkerMeta | undefined 
 function coerceNullableTokenValue(value: unknown): number | null {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return null;
+  }
+
+  return Math.max(0, Math.round(value));
+}
+
+function coerceOptionalNonNegativeInteger(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return undefined;
   }
 
   return Math.max(0, Math.round(value));

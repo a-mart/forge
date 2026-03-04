@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { SessionManager } from '@mariozechner/pi-coding-agent'
 import { getScheduleFilePath } from '../scheduler/schedule-storage.js'
-import { getProfileMemoryPath, getSessionDir, getSessionMemoryPath } from '../swarm/data-paths.js'
+import { getCommonKnowledgePath, getProfileMemoryPath, getSessionDir, getSessionMemoryPath } from '../swarm/data-paths.js'
 import { SwarmManager } from '../swarm/swarm-manager.js'
 import type {
   AgentContextUsage,
@@ -260,7 +260,13 @@ async function bootWithDefaultManager(manager: TestSwarmManager, config: SwarmCo
     return existingManager
   }
 
-  const createdManager = await manager.createManager(managerId, {
+  const callerAgentId =
+    manager
+      .listAgents()
+      .find((descriptor) => descriptor.role === 'manager')
+      ?.agentId ?? managerId
+
+  const createdManager = await manager.createManager(callerAgentId, {
     name: managerName,
     cwd: config.defaultCwd,
   })
@@ -276,14 +282,20 @@ async function bootWithDefaultManager(manager: TestSwarmManager, config: SwarmCo
 }
 
 describe('SwarmManager', () => {
-  it('does not auto-create a manager on boot when the store is empty', async () => {
+  it('auto-creates a singleton cortex manager on boot when the store is empty', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
 
     await manager.boot()
 
     const agents = manager.listAgents()
-    expect(agents).toEqual([])
+    expect(agents).toHaveLength(1)
+    expect(agents[0]).toMatchObject({
+      agentId: 'cortex',
+      role: 'manager',
+      archetypeId: 'cortex',
+      profileId: 'cortex',
+    })
     expect(manager.createdRuntimeIds).toEqual([])
     expect(manager.runtimeByAgentId.size).toBe(0)
   })
@@ -297,6 +309,17 @@ describe('SwarmManager', () => {
     await expect(readFile(join(config.paths.managerAgentDir, 'SYSTEM.md'), 'utf8')).rejects.toMatchObject({
       code: 'ENOENT',
     })
+  })
+
+  it('bootstraps common Cortex knowledge file when missing', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+
+    await manager.boot()
+
+    const commonKnowledge = await readFile(getCommonKnowledgePath(config.paths.dataDir), 'utf8')
+    expect(commonKnowledge).toContain('# Common Knowledge')
+    expect(commonKnowledge).toContain('Maintained by Cortex')
   })
 
   it('bootstraps manager memory file in dataDir/memory when missing', async () => {
@@ -326,7 +349,24 @@ describe('SwarmManager', () => {
     expect(memory).toBe(persistedMemory)
 
     const resources = await secondBoot.getMemoryRuntimeResourcesForTest()
-    expect(resources.memoryContextFile.content).toBe(persistedMemory)
+    expect(resources.memoryContextFile.content).toContain(persistedMemory.trim())
+    expect(resources.memoryContextFile.content).toContain('# Common Knowledge (maintained by Cortex — read-only reference)')
+  })
+
+  it('injects shared common knowledge into runtime memory resources', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await writeFile(config.paths.memoryFile!, '# Swarm Memory\n\n## Decisions\n- manager-only\n', 'utf8')
+    await writeFile(getCommonKnowledgePath(config.paths.dataDir), '# Common Knowledge\n\n## Working Patterns\n- keep PRs small\n', 'utf8')
+
+    const resources = await manager.getMemoryRuntimeResourcesForTest('manager')
+    expect(resources.memoryContextFile.content).toContain('manager-only')
+    expect(resources.memoryContextFile.content).toContain(
+      '# Common Knowledge (maintained by Cortex — read-only reference)',
+    )
+    expect(resources.memoryContextFile.content).toContain('keep PRs small')
   })
 
   it('does not migrate legacy global MEMORY.md into manager memory on boot', async () => {
@@ -616,7 +656,8 @@ describe('SwarmManager', () => {
 
     const resources = await manager.getMemoryRuntimeResourcesForTest()
     expect(resources.memoryContextFile.path).toBe(config.paths.memoryFile!)
-    expect(resources.memoryContextFile.content).toBe(persistedMemory)
+    expect(resources.memoryContextFile.content).toContain(persistedMemory.trim())
+    expect(resources.memoryContextFile.content).toContain('# Common Knowledge (maintained by Cortex — read-only reference)')
     expect(resources.additionalSkillPaths).toHaveLength(5)
 
     const memorySkill = await readFile(resources.additionalSkillPaths[0], 'utf8')
@@ -1921,11 +1962,16 @@ describe('SwarmManager', () => {
     await manager.boot()
 
     expect(manager.createdRuntimeIds).toEqual([])
-    expect(manager.getLoadedConversationAgentIdsForTest()).toEqual(['manager', 'worker-active'])
+    expect(manager.getLoadedConversationAgentIdsForTest()).toEqual(['cortex', 'manager', 'worker-active'])
 
     const terminatedHistory = manager.getConversationHistory('worker-terminated')
     expect(terminatedHistory.some((entry) => entry.text === 'terminated-worker-history')).toBe(true)
-    expect(manager.getLoadedConversationAgentIdsForTest()).toEqual(['manager', 'worker-active', 'worker-terminated'])
+    expect(manager.getLoadedConversationAgentIdsForTest()).toEqual([
+      'cortex',
+      'manager',
+      'worker-active',
+      'worker-terminated',
+    ])
   })
 
   it('does not implicitly recreate the configured manager when other agents already exist', async () => {
@@ -2177,7 +2223,9 @@ describe('SwarmManager', () => {
     await manager.resetManagerSession('api_reset')
 
     const managerSessions = manager.listAgents().filter((agent) => agent.role === 'manager')
-    const forkedSession = managerSessions.find((agent) => agent.agentId !== 'manager')
+    const forkedSession = managerSessions.find(
+      (agent) => agent.profileId === 'manager' && agent.agentId !== 'manager',
+    )
 
     expect(firstRuntime!.terminateCalls).toEqual([])
     expect(manager.createdRuntimeIds.filter((id) => id === 'manager')).toHaveLength(1)
@@ -2238,11 +2286,34 @@ describe('SwarmManager', () => {
       await bootWithDefaultManager(manager, config)
 
       const agentIds = manager.listAgents().map((agent) => agent.agentId)
-      expect(agentIds).toEqual(['manager'])
+      expect(agentIds).toContain('manager')
+      expect(agentIds).toContain('cortex')
+      expect(agentIds).toHaveLength(2)
       expect(warnings.some((entry) => entry.includes('Skipping invalid descriptor'))).toBe(true)
     } finally {
       console.warn = originalWarn
     }
+  })
+
+  it('prevents creating a second cortex manager', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await expect(
+      manager.createManager('manager', {
+        name: 'Cortex',
+        cwd: config.defaultCwd,
+      }),
+    ).rejects.toThrow('Cortex manager already exists')
+  })
+
+  it('prevents deleting the cortex manager', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await expect(manager.deleteManager('manager', 'cortex')).rejects.toThrow('Cortex manager cannot be deleted')
   })
 
   it('creates secondary managers and deletes them with owned worker cascade', async () => {
@@ -2478,17 +2549,18 @@ describe('SwarmManager', () => {
 
     expect(deleted.managerId).toBe('manager')
     expect(deleted.terminatedWorkerIds).toEqual([])
-    expect(manager.listAgents()).toHaveLength(0)
+    expect(manager.listAgents()).toHaveLength(1)
+    expect(manager.listAgents()[0]?.agentId).toBe('cortex')
   })
 
-  it('allows bootstrapping a new manager after deleting the last running manager', async () => {
+  it('allows creating a new manager after deleting the default manager', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
 
     await manager.deleteManager('manager', 'manager')
 
-    const recreated = await manager.createManager('manager', {
+    const recreated = await manager.createManager('cortex', {
       name: 'Recreated Manager',
       cwd: config.defaultCwd,
     })

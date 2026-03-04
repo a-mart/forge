@@ -21,10 +21,12 @@ import {
   getSessionMemoryPath,
   getSessionMetaPath,
   getSessionsDir,
+  getCommonKnowledgePath,
   getSharedAuthDir,
   getSharedAuthFilePath,
   getSharedDir,
   getSharedIntegrationsDir,
+  getSharedKnowledgeDir,
   getSharedSecretsFilePath,
   getSwarmDir,
   getUploadsDir,
@@ -81,6 +83,8 @@ describe("data-paths", () => {
     );
 
     expect(getSharedIntegrationsDir(DATA_DIR)).toBe(join(DATA_DIR, "shared", "integrations"));
+    expect(getSharedKnowledgeDir(DATA_DIR)).toBe(join(DATA_DIR, "shared", "knowledge"));
+    expect(getCommonKnowledgePath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "knowledge", "common.md"));
     expect(getSharedAuthDir(DATA_DIR)).toBe(join(DATA_DIR, "shared", "auth"));
     expect(getSharedAuthFilePath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "auth", "auth.json"));
     expect(getSharedSecretsFilePath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "secrets.json"));

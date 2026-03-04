@@ -1,4 +1,5 @@
 import {
+  Brain,
   ChevronDown,
   ChevronRight,
   CircleDashed,
@@ -22,6 +23,7 @@ import { useCallback, useState } from 'react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import {
   buildProfileTreeRows,
+  isCortexProfile,
   isSessionRunning,
   type ProfileTreeRow,
   type SessionRow,
@@ -647,11 +649,15 @@ function ProfileGroup({
             <Settings className="mr-2 size-3.5" />
             Settings
           </ContextMenuItem>
-          <ContextMenuSeparator />
-          <ContextMenuItem variant="destructive" onClick={() => onDeleteManager(profile.profileId)}>
-            <Trash2 className="mr-2 size-3.5" />
-            Delete Manager
-          </ContextMenuItem>
+          {!isCortexProfile(treeRow) ? (
+            <>
+              <ContextMenuSeparator />
+              <ContextMenuItem variant="destructive" onClick={() => onDeleteManager(profile.profileId)}>
+                <Trash2 className="mr-2 size-3.5" />
+                Delete Manager
+              </ContextMenuItem>
+            </>
+          ) : null}
         </ContextMenuContent>
       </ContextMenu>
 
@@ -998,7 +1004,46 @@ export function AgentSidebar({
         ) : null}
       </div>
 
-      <div className="px-3 pb-1">
+      {/* Pinned Cortex entry (if exists) */}
+      {(() => {
+        const cortexRow = treeRows.find((row) => isCortexProfile(row))
+        if (!cortexRow) return null
+
+        const defaultSession = cortexRow.sessions.find((s) => s.isDefault)
+        const targetId = defaultSession?.sessionAgent.agentId ?? cortexRow.sessions[0]?.sessionAgent.agentId
+        const unreadCount = targetId ? (unreadCounts[targetId] ?? 0) : 0
+        const isSelected = !isSettingsActive && selectedAgentId === targetId
+        const showUnread = unreadCount > 0 && !isSelected
+
+        return (
+          <div className="border-b border-sidebar-border px-2 pb-2">
+            <button
+              type="button"
+              onClick={() => targetId && handleSelectAgent(targetId)}
+              className={cn(
+                'flex w-full items-center gap-2 rounded-md px-2 py-2 text-left transition-colors',
+                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
+                isSelected
+                  ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+                  : 'text-sidebar-foreground/90 hover:bg-sidebar-accent/50',
+              )}
+              title="Cortex — Knowledge Intelligence"
+            >
+              <Brain className={cn('size-4 shrink-0', isSelected ? 'text-blue-500' : 'text-blue-400')} aria-hidden="true" />
+              <span className="min-w-0 flex-1 truncate text-sm font-semibold leading-5">
+                {cortexRow.profile.displayName}
+              </span>
+              {showUnread ? (
+                <span className="inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-medium tabular-nums leading-none text-white">
+                  {unreadCount > 99 ? '99+' : unreadCount}
+                </span>
+              ) : null}
+            </button>
+          </div>
+        )
+      })()}
+
+      <div className="px-3 pb-1 pt-2">
         <h2 className="text-xs font-semibold text-muted-foreground">Agents</h2>
       </div>
 
@@ -1009,39 +1054,47 @@ export function AgentSidebar({
           scrollbarColor: 'var(--sidebar-border) transparent',
         }}
       >
-        {treeRows.length === 0 ? (
-          <p className="rounded-md bg-sidebar-accent/50 px-3 py-4 text-center text-xs text-muted-foreground">
-            No active agents.
-          </p>
-        ) : (
-          <ul className="space-y-0.5">
-            {treeRows.map((treeRow) => (
-              <ProfileGroup
-                key={treeRow.profile.profileId}
-                treeRow={treeRow}
-                statuses={statuses}
-                unreadCounts={unreadCounts}
-                selectedAgentId={selectedAgentId}
-                isSettingsActive={isSettingsActive}
-                isCollapsed={collapsedProfileIds.has(treeRow.profile.profileId)}
-                collapsedSessionIds={expandedSessionIds}
-                onToggleProfileCollapsed={() => toggleProfileCollapsed(treeRow.profile.profileId)}
-                onToggleSessionCollapsed={toggleSessionCollapsed}
-                onSelect={handleSelectAgent}
-                onDeleteAgent={onDeleteAgent}
-                onDeleteManager={onDeleteManager}
-                onOpenSettings={handleOpenSettings}
-                onCreateSession={onCreateSession ? handleRequestCreateSession : undefined}
-                onStopSession={onStopSession}
-                onResumeSession={onResumeSession}
-                onDeleteSession={handleRequestDelete}
-                onRequestRenameSession={handleRequestRename}
-                onForkSession={onForkSession}
-                onMergeSessionMemory={onMergeSessionMemory}
-              />
-            ))}
-          </ul>
-        )}
+        {(() => {
+          const regularRows = treeRows.filter((row) => !isCortexProfile(row))
+          
+          if (regularRows.length === 0) {
+            return (
+              <p className="rounded-md bg-sidebar-accent/50 px-3 py-4 text-center text-xs text-muted-foreground">
+                No active agents.
+              </p>
+            )
+          }
+
+          return (
+            <ul className="space-y-0.5">
+              {regularRows.map((treeRow) => (
+                <ProfileGroup
+                  key={treeRow.profile.profileId}
+                  treeRow={treeRow}
+                  statuses={statuses}
+                  unreadCounts={unreadCounts}
+                  selectedAgentId={selectedAgentId}
+                  isSettingsActive={isSettingsActive}
+                  isCollapsed={collapsedProfileIds.has(treeRow.profile.profileId)}
+                  collapsedSessionIds={expandedSessionIds}
+                  onToggleProfileCollapsed={() => toggleProfileCollapsed(treeRow.profile.profileId)}
+                  onToggleSessionCollapsed={toggleSessionCollapsed}
+                  onSelect={handleSelectAgent}
+                  onDeleteAgent={onDeleteAgent}
+                  onDeleteManager={onDeleteManager}
+                  onOpenSettings={handleOpenSettings}
+                  onCreateSession={onCreateSession ? handleRequestCreateSession : undefined}
+                  onStopSession={onStopSession}
+                  onResumeSession={onResumeSession}
+                  onDeleteSession={handleRequestDelete}
+                  onRequestRenameSession={handleRequestRename}
+                  onForkSession={onForkSession}
+                  onMergeSessionMemory={onMergeSessionMemory}
+                />
+              ))}
+            </ul>
+          )
+        })()}
       </div>
 
       <div className="shrink-0 border-t border-sidebar-border p-2">
