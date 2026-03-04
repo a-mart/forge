@@ -1074,10 +1074,13 @@ export function AgentSidebar({
         if (!cortexRow) return null
 
         const defaultSession = cortexRow.sessions.find((s) => s.isDefault)
-        const targetId = defaultSession?.sessionAgent.agentId ?? cortexRow.sessions[0]?.sessionAgent.agentId
+        const cortexSession = defaultSession?.sessionAgent ?? cortexRow.sessions[0]?.sessionAgent
+        const targetId = cortexSession?.agentId
         const unreadCount = targetId ? (unreadCounts[targetId] ?? 0) : 0
         const isSelected = !isSettingsActive && selectedAgentId === targetId
         const showUnread = unreadCount > 0 && !isSelected
+        const cortexSessionStatus = cortexSession ? getAgentLiveStatus(cortexSession, statuses).status : null
+        const cortexSessionRunning = cortexSessionStatus === 'idle' || cortexSessionStatus === 'streaming'
 
         // Collect all workers across all cortex sessions
         const cortexWorkers = cortexRow.sessions.flatMap((s) => s.workers)
@@ -1090,55 +1093,72 @@ export function AgentSidebar({
 
         return (
           <div className="border-b border-sidebar-border px-2 pb-2">
-            <div className="relative flex items-center">
-              {/* Expand/collapse toggle for workers */}
-              {hasWorkers ? (
-                <button
-                  type="button"
-                  onClick={() => toggleSessionCollapsed(cortexExpandKey)}
-                  aria-label={`${cortexWorkersExpanded ? 'Collapse' : 'Expand'} Cortex workers`}
-                  aria-expanded={cortexWorkersExpanded}
-                  className={cn(
-                    'absolute left-1 top-1/2 inline-flex size-5 -translate-y-1/2 items-center justify-center rounded text-muted-foreground/70 transition',
-                    'hover:text-sidebar-foreground',
-                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
-                  )}
-                >
-                  {cortexWorkersExpanded ? (
-                    <ChevronDown className="size-3" aria-hidden="true" />
-                  ) : (
-                    <ChevronRight className="size-3" aria-hidden="true" />
-                  )}
-                </button>
-              ) : null}
+            <ContextMenu>
+              <ContextMenuTrigger asChild>
+                <div className="relative flex items-center">
+                  {/* Expand/collapse toggle for workers */}
+                  {hasWorkers ? (
+                    <button
+                      type="button"
+                      onClick={() => toggleSessionCollapsed(cortexExpandKey)}
+                      aria-label={`${cortexWorkersExpanded ? 'Collapse' : 'Expand'} Cortex workers`}
+                      aria-expanded={cortexWorkersExpanded}
+                      className={cn(
+                        'absolute left-1 top-1/2 inline-flex size-5 -translate-y-1/2 items-center justify-center rounded text-muted-foreground/70 transition',
+                        'hover:text-sidebar-foreground',
+                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
+                      )}
+                    >
+                      {cortexWorkersExpanded ? (
+                        <ChevronDown className="size-3" aria-hidden="true" />
+                      ) : (
+                        <ChevronRight className="size-3" aria-hidden="true" />
+                      )}
+                    </button>
+                  ) : null}
 
-              <button
-                type="button"
-                onClick={() => targetId && handleSelectAgent(targetId)}
-                className={cn(
-                  'flex min-w-0 flex-1 items-center gap-2 rounded-md py-2 pr-2 text-left transition-colors',
-                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
-                  hasWorkers ? 'pl-7' : 'px-2',
-                  isSelected
-                    ? 'bg-sidebar-accent text-sidebar-accent-foreground'
-                    : 'text-sidebar-foreground/90 hover:bg-sidebar-accent/50',
-                )}
-                title="Cortex — Knowledge Intelligence"
-              >
-                <Brain className={cn('size-4 shrink-0', isSelected ? 'text-blue-500' : 'text-blue-400')} aria-hidden="true" />
-                {!cortexWorkersExpanded && cortexStreamingWorkers > 0 ? (
-                  <AgentActivitySlot isActive={false} isSelected={false} streamingWorkerCount={cortexStreamingWorkers} />
+                  <button
+                    type="button"
+                    onClick={() => targetId && handleSelectAgent(targetId)}
+                    className={cn(
+                      'flex min-w-0 flex-1 items-center gap-2 rounded-md py-2 pr-2 text-left transition-colors',
+                      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
+                      hasWorkers ? 'pl-7' : 'px-2',
+                      isSelected
+                        ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+                        : 'text-sidebar-foreground/90 hover:bg-sidebar-accent/50',
+                    )}
+                    title="Cortex — Knowledge Intelligence"
+                  >
+                    <Brain className={cn('size-4 shrink-0', isSelected ? 'text-blue-500' : 'text-blue-400')} aria-hidden="true" />
+                    {!cortexWorkersExpanded && cortexStreamingWorkers > 0 ? (
+                      <AgentActivitySlot isActive={false} isSelected={false} streamingWorkerCount={cortexStreamingWorkers} />
+                    ) : null}
+                    <span className="min-w-0 flex-1 truncate text-sm font-semibold leading-5">
+                      {cortexRow.profile.displayName}
+                    </span>
+                    {showUnread ? (
+                      <span className="inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-medium tabular-nums leading-none text-white">
+                        {unreadCount > 99 ? '99+' : unreadCount}
+                      </span>
+                    ) : null}
+                  </button>
+                </div>
+              </ContextMenuTrigger>
+
+              <ContextMenuContent>
+                <ContextMenuItem onClick={handleOpenSettings}>
+                  <Settings className="mr-2 size-3.5" />
+                  Settings
+                </ContextMenuItem>
+                {cortexSessionRunning && onStopSession && targetId ? (
+                  <ContextMenuItem onClick={() => onStopSession(targetId)}>
+                    <Pause className="mr-2 size-3.5" />
+                    Stop Session
+                  </ContextMenuItem>
                 ) : null}
-                <span className="min-w-0 flex-1 truncate text-sm font-semibold leading-5">
-                  {cortexRow.profile.displayName}
-                </span>
-                {showUnread ? (
-                  <span className="inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-medium tabular-nums leading-none text-white">
-                    {unreadCount > 99 ? '99+' : unreadCount}
-                  </span>
-                ) : null}
-              </button>
-            </div>
+              </ContextMenuContent>
+            </ContextMenu>
 
             {/* Cortex workers */}
             {hasWorkers && cortexWorkersExpanded ? (
