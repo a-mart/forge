@@ -13,6 +13,7 @@ interface KnowledgeFileViewerProps {
   filePath: string | null
   label: string
   description?: string
+  refreshKey?: number
   editable?: boolean
   onArtifactClick?: (artifact: ArtifactReference) => void
 }
@@ -78,6 +79,7 @@ export function KnowledgeFileViewer({
   filePath,
   label,
   description,
+  refreshKey = 0,
   editable = false,
   onArtifactClick,
 }: KnowledgeFileViewerProps) {
@@ -132,7 +134,7 @@ export function KnowledgeFileViewer({
     return () => {
       abortController.abort()
     }
-  }, [fetchFile])
+  }, [fetchFile, refreshKey])
 
   const handleRefresh = useCallback(() => {
     const abortController = new AbortController()

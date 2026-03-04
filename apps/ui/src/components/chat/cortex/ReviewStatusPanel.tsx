@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils'
 
 interface ReviewStatusPanelProps {
   wsUrl: string
+  refreshKey?: number
   onTriggerReview: (message: string) => void
 }
 
@@ -116,7 +117,7 @@ async function fetchScanData(wsUrl: string, signal: AbortSignal): Promise<Cortex
   return (await response.json()) as CortexScanResponse
 }
 
-export function ReviewStatusPanel({ wsUrl, onTriggerReview }: ReviewStatusPanelProps) {
+export function ReviewStatusPanel({ wsUrl, refreshKey = 0, onTriggerReview }: ReviewStatusPanelProps) {
   const [scanState, setScanState] = useState<ScanState>('idle')
   const [scanData, setScanData] = useState<CortexScanResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -149,7 +150,7 @@ export function ReviewStatusPanel({ wsUrl, onTriggerReview }: ReviewStatusPanelP
     return () => {
       abortRef.current?.abort()
     }
-  }, [doScan])
+  }, [doScan, refreshKey])
 
   const handleReviewSession = useCallback(
     (profileId: string, sessionId: string) => {
