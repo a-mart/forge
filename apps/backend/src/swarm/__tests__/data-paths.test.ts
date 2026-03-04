@@ -13,6 +13,8 @@ import {
   getProfileIntegrationsDir,
   getProfileMemoryPath,
   getProfileMergeAuditLogPath,
+  getProfileKnowledgeDir,
+  getProfileKnowledgePath,
   getProfileScheduleFilePath,
   getProfileSchedulesDir,
   getProfilesDir,
@@ -85,6 +87,10 @@ describe("data-paths", () => {
 
     expect(getSharedIntegrationsDir(DATA_DIR)).toBe(join(DATA_DIR, "shared", "integrations"));
     expect(getSharedKnowledgeDir(DATA_DIR)).toBe(join(DATA_DIR, "shared", "knowledge"));
+    expect(getProfileKnowledgeDir(DATA_DIR)).toBe(join(DATA_DIR, "shared", "knowledge", "profiles"));
+    expect(getProfileKnowledgePath(DATA_DIR, PROFILE_ID)).toBe(
+      join(DATA_DIR, "shared", "knowledge", "profiles", `${PROFILE_ID}.md`)
+    );
     expect(getCommonKnowledgePath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "knowledge", "common.md"));
     expect(getCortexNotesPath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "knowledge", ".cortex-notes.md"));
     expect(getSharedAuthDir(DATA_DIR)).toBe(join(DATA_DIR, "shared", "auth"));

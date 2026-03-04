@@ -2,6 +2,13 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { BookOpen, ClipboardList, StickyNote, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
 import type { ArtifactReference } from '@/lib/artifacts'
 import { cn } from '@/lib/utils'
@@ -46,9 +53,16 @@ function persistWidth(width: number): void {
   }
 }
 
+interface ProfileKnowledgeEntry {
+  path: string
+  exists: boolean
+  sizeBytes: number
+}
+
 interface CortexPaths {
   commonKnowledge: string | null
   cortexNotes: string | null
+  profileKnowledge: Record<string, ProfileKnowledgeEntry>
 }
 
 function isDashboardTab(value: string): value is DashboardTab {
@@ -64,9 +78,14 @@ export function CortexDashboardPanel({
 }: CortexDashboardPanelProps) {
   const [activeTab, setActiveTab] = useState<DashboardTab>('knowledge')
   const [panelWidth, setPanelWidth] = useState(loadPersistedWidth)
-  const [paths, setPaths] = useState<CortexPaths>({ commonKnowledge: null, cortexNotes: null })
+  const [paths, setPaths] = useState<CortexPaths>({ 
+    commonKnowledge: null, 
+    cortexNotes: null,
+    profileKnowledge: {}
+  })
   const [pathsLoaded, setPathsLoaded] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
+  const [selectedKnowledgeScope, setSelectedKnowledgeScope] = useState<string>('common')
   const isDraggingRef = useRef(false)
   const panelRef = useRef<HTMLDivElement>(null)
 
@@ -85,13 +104,20 @@ export function CortexDashboardPanel({
       .then((data: unknown) => {
         if (abortController.signal.aborted) return
         const payload = data as {
-          files?: { commonKnowledge?: string; cortexNotes?: string }
+          files?: {
+            commonKnowledge?: string
+            cortexNotes?: string
+            profileKnowledge?: Record<string, ProfileKnowledgeEntry>
+          }
           paths?: { commonKnowledge?: string; cortexNotes?: string }
+          profileKnowledge?: Record<string, ProfileKnowledgeEntry>
         }
         const files = payload.files ?? payload.paths
+        const profileKnowledge = payload.files?.profileKnowledge ?? payload.profileKnowledge ?? {}
         setPaths({
           commonKnowledge: typeof files?.commonKnowledge === 'string' ? files.commonKnowledge : null,
           cortexNotes: typeof files?.cortexNotes === 'string' ? files.cortexNotes : null,
+          profileKnowledge,
         })
         setPathsLoaded(true)
       })
@@ -230,15 +256,59 @@ export function CortexDashboardPanel({
 
         <TabsContent value="knowledge" className="mt-0 min-h-0 flex-1">
           {pathsLoaded ? (
-            <KnowledgeFileViewer
-              key={`knowledge-${refreshKey}`}
-              wsUrl={wsUrl}
-              filePath={paths.commonKnowledge}
-              label="Common Knowledge"
-              description="Shared knowledge base across all profiles"
-              editable
-              onArtifactClick={onArtifactClick}
-            />
+            <div className="flex h-full flex-col">
+              {/* Knowledge scope selector */}
+              <div className="shrink-0 border-b border-border/60 px-3 py-2">
+                <Select value={selectedKnowledgeScope} onValueChange={setSelectedKnowledgeScope}>
+                  <SelectTrigger className="h-7 text-[11px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="common">Common Knowledge</SelectItem>
+                    {Object.entries(paths.profileKnowledge)
+                      .sort(([a], [b]) => a.localeCompare(b))
+                      .map(([profileId, entry]) => (
+                        <SelectItem key={profileId} value={profileId}>
+                          <div className="flex items-center gap-1.5">
+                            <span>{profileId}</span>
+                            {entry.exists && entry.sizeBytes > 0 ? (
+                              <span className="text-[9px] text-muted-foreground">
+                                ({(entry.sizeBytes / 1024).toFixed(1)}KB)
+                              </span>
+                            ) : (
+                              <span className="text-[9px] text-muted-foreground/60">(empty)</span>
+                            )}
+                          </div>
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              {/* Viewer */}
+              <div className="min-h-0 flex-1">
+                <KnowledgeFileViewer
+                  key={`knowledge-${selectedKnowledgeScope}-${refreshKey}`}
+                  wsUrl={wsUrl}
+                  filePath={
+                    selectedKnowledgeScope === 'common'
+                      ? paths.commonKnowledge
+                      : paths.profileKnowledge[selectedKnowledgeScope]?.path ?? null
+                  }
+                  label={
+                    selectedKnowledgeScope === 'common'
+                      ? 'Common Knowledge'
+                      : `Project Knowledge: ${selectedKnowledgeScope}`
+                  }
+                  description={
+                    selectedKnowledgeScope === 'common'
+                      ? 'Shared knowledge base across all profiles'
+                      : `Knowledge specific to ${selectedKnowledgeScope}`
+                  }
+                  editable
+                  onArtifactClick={onArtifactClick}
+                />
+              </div>
+            </div>
           ) : null}
         </TabsContent>
 

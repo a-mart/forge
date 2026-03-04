@@ -17,7 +17,7 @@ import type {
 } from '../swarm/types.js'
 import type { SwarmAgentRuntime } from '../swarm/runtime-types.js'
 import { getScheduleFilePath } from '../scheduler/schedule-storage.js'
-import { getCommonKnowledgePath, getCortexNotesPath } from '../swarm/data-paths.js'
+import { getCommonKnowledgePath, getCortexNotesPath, getProfileKnowledgePath } from '../swarm/data-paths.js'
 import { scanCortexReviewStatus } from '../swarm/scripts/cortex-scan.js'
 import { SwarmWebSocketServer } from '../ws/server.js'
 import type { ServerEvent } from '@middleman/protocol'
@@ -691,10 +691,10 @@ describe('SwarmWebSocketServer', () => {
 
     await server.start()
 
-    const sessionDir = join(config.paths.dataDir, 'profiles', 'alpha', 'sessions', 'alpha--s1')
-    await mkdir(sessionDir, { recursive: true })
+    const alphaSessionDir = join(config.paths.dataDir, 'profiles', 'alpha', 'sessions', 'alpha--s1')
+    await mkdir(alphaSessionDir, { recursive: true })
     await writeFile(
-      join(sessionDir, 'meta.json'),
+      join(alphaSessionDir, 'meta.json'),
       `${JSON.stringify(
         {
           profileId: 'alpha',
@@ -709,9 +709,31 @@ describe('SwarmWebSocketServer', () => {
       'utf8',
     )
 
+    const betaSessionDir = join(config.paths.dataDir, 'profiles', 'beta', 'sessions', 'beta--s1')
+    await mkdir(betaSessionDir, { recursive: true })
+    await writeFile(
+      join(betaSessionDir, 'meta.json'),
+      `${JSON.stringify(
+        {
+          profileId: 'beta',
+          sessionId: 'beta--s1',
+          stats: { sessionFileSize: '400' },
+          cortexReviewedBytes: 0,
+          cortexReviewedAt: null,
+        },
+        null,
+        2,
+      )}\n`,
+      'utf8',
+    )
+
     const commonKnowledgePath = getCommonKnowledgePath(config.paths.dataDir)
     await mkdir(dirname(commonKnowledgePath), { recursive: true })
     await writeFile(commonKnowledgePath, '# Common knowledge\n', 'utf8')
+
+    const alphaProfileKnowledgePath = getProfileKnowledgePath(config.paths.dataDir, 'alpha')
+    const alphaProfileKnowledgeContent = '# Alpha knowledge\n\n- scoped fact\n'
+    await writeFile(alphaProfileKnowledgePath, alphaProfileKnowledgeContent, 'utf8')
 
     const expectedScan = await scanCortexReviewStatus(config.paths.dataDir)
 
@@ -740,6 +762,14 @@ describe('SwarmWebSocketServer', () => {
         files: {
           commonKnowledge: string
           cortexNotes: string
+          profileKnowledge: Record<
+            string,
+            {
+              path: string
+              exists: boolean
+              sizeBytes: number
+            }
+          >
         }
       }
 
@@ -747,6 +777,18 @@ describe('SwarmWebSocketServer', () => {
       expect(payload.files).toEqual({
         commonKnowledge: commonKnowledgePath,
         cortexNotes: getCortexNotesPath(config.paths.dataDir),
+        profileKnowledge: {
+          alpha: {
+            path: alphaProfileKnowledgePath,
+            exists: true,
+            sizeBytes: Buffer.byteLength(alphaProfileKnowledgeContent, 'utf8'),
+          },
+          beta: {
+            path: getProfileKnowledgePath(config.paths.dataDir, 'beta'),
+            exists: false,
+            sizeBytes: 0,
+          },
+        },
       })
     } finally {
       await server.stop()

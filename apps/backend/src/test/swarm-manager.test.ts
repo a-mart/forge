@@ -4,7 +4,13 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { SessionManager } from '@mariozechner/pi-coding-agent'
 import { getScheduleFilePath } from '../scheduler/schedule-storage.js'
-import { getCommonKnowledgePath, getProfileMemoryPath, getSessionDir, getSessionMemoryPath } from '../swarm/data-paths.js'
+import {
+  getCommonKnowledgePath,
+  getProfileKnowledgePath,
+  getProfileMemoryPath,
+  getSessionDir,
+  getSessionMemoryPath,
+} from '../swarm/data-paths.js'
 import { SwarmManager } from '../swarm/swarm-manager.js'
 import type {
   AgentContextUsage,
@@ -367,6 +373,32 @@ describe('SwarmManager', () => {
       '# Common Knowledge (maintained by Cortex — read-only reference)',
     )
     expect(resources.memoryContextFile.content).toContain('keep PRs small')
+  })
+
+  it('injects profile-specific knowledge into runtime memory resources', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await writeFile(config.paths.memoryFile!, '# Swarm Memory\n\n## Decisions\n- manager-only\n', 'utf8')
+    await writeFile(getCommonKnowledgePath(config.paths.dataDir), '# Common Knowledge\n\n## Working Patterns\n- shared\n', 'utf8')
+    await writeFile(
+      getProfileKnowledgePath(config.paths.dataDir, 'manager'),
+      '# Project Knowledge\n\n## Architecture\n- profile-specific\n',
+      'utf8',
+    )
+
+    const resources = await manager.getMemoryRuntimeResourcesForTest('manager')
+    const content = resources.memoryContextFile.content
+
+    expect(content).toContain('# Common Knowledge (maintained by Cortex — read-only reference)')
+    expect(content).toContain('# Project Knowledge for manager (maintained by Cortex — read-only reference)')
+    expect(content).toContain('profile-specific')
+
+    const commonIndex = content.indexOf('# Common Knowledge (maintained by Cortex — read-only reference)')
+    const profileIndex = content.indexOf('# Project Knowledge for manager (maintained by Cortex — read-only reference)')
+    expect(commonIndex).toBeGreaterThanOrEqual(0)
+    expect(profileIndex).toBeGreaterThan(commonIndex)
   })
 
   it('does not migrate legacy global MEMORY.md into manager memory on boot', async () => {

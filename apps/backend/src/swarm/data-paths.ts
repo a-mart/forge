@@ -96,6 +96,14 @@ export function getSharedKnowledgeDir(dataDir: string): string {
   return join(getSharedDir(dataDir), "knowledge");
 }
 
+export function getProfileKnowledgeDir(dataDir: string): string {
+  return join(getSharedKnowledgeDir(dataDir), "profiles");
+}
+
+export function getProfileKnowledgePath(dataDir: string, profileId: string): string {
+  return join(getProfileKnowledgeDir(dataDir), `${sanitizePathSegment(profileId)}.md`);
+}
+
 export function getCommonKnowledgePath(dataDir: string): string {
   return join(getSharedKnowledgeDir(dataDir), "common.md");
 }
