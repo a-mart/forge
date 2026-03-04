@@ -106,6 +106,8 @@ export function ChatHeader({
   const isStreaming = connected && activeAgentStatus === 'streaming'
   const statusLabel = connected ? formatAgentStatus(activeAgentStatus) : 'Reconnecting'
   const archetypeLabel = activeAgentArchetypeId?.trim()
+  const isCortex = activeAgentArchetypeId === 'cortex'
+  const panelLabel = isCortex ? 'Dashboard' : 'Artifacts'
 
   return (
     <header className="sticky top-0 z-10 flex h-[62px] w-full shrink-0 items-center justify-between gap-2 overflow-hidden border-b border-border/80 bg-card/80 px-2 backdrop-blur md:px-4">
@@ -266,14 +268,14 @@ export function ChatHeader({
                     : 'text-muted-foreground hover:bg-accent/70 hover:text-foreground',
                 )}
                 onClick={onToggleArtifactsPanel}
-                aria-label={isArtifactsPanelOpen ? 'Close artifacts panel' : 'Open artifacts panel'}
+                aria-label={isArtifactsPanelOpen ? `Close ${panelLabel.toLowerCase()}` : panelLabel}
                 aria-pressed={isArtifactsPanelOpen}
               >
                 <PanelRight className="size-3.5" />
               </Button>
             </TooltipTrigger>
             <TooltipContent side="bottom" sideOffset={6}>
-              {isArtifactsPanelOpen ? 'Close artifacts' : 'Artifacts'}
+              {isArtifactsPanelOpen ? `Close ${panelLabel.toLowerCase()}` : panelLabel}
             </TooltipContent>
           </Tooltip>
         </TooltipProvider>

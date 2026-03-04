@@ -2,18 +2,28 @@ import { readdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-interface ScanResult {
+export interface ScanSession {
   profileId: string;
   sessionId: string;
-  delta: number;
-  sessionFileSize: number;
+  deltaBytes: number;
+  totalBytes: number;
   reviewedBytes: number;
   reviewedAt: string | null;
+  status: "never-reviewed" | "needs-review" | "up-to-date";
 }
 
-export async function runCortexScan(dataDir: string): Promise<string> {
-  const sessionsNeedingReview: ScanResult[] = [];
-  const unchangedSessions: ScanResult[] = [];
+export interface ScanResult {
+  sessions: ScanSession[];
+  summary: {
+    needsReview: number;
+    upToDate: number;
+    totalBytes: number;
+    reviewedBytes: number;
+  };
+}
+
+export async function scanCortexReviewStatus(dataDir: string): Promise<ScanResult> {
+  const sessions: ScanSession[] = [];
 
   const profilesDir = join(resolve(dataDir), "profiles");
   let profileEntries: Array<{ name: string; isDirectory: () => boolean }> = [];
@@ -21,15 +31,15 @@ export async function runCortexScan(dataDir: string): Promise<string> {
   try {
     profileEntries = await readdir(profilesDir, { withFileTypes: true });
   } catch {
-    return [
-      "Sessions with new content since last review:",
-      "  (none)",
-      "",
-      "Sessions unchanged:",
-      "  (none)",
-      "",
-      "Summary: 0 sessions need review, 0 up to date"
-    ].join("\n");
+    return {
+      sessions,
+      summary: {
+        needsReview: 0,
+        upToDate: 0,
+        totalBytes: 0,
+        reviewedBytes: 0
+      }
+    };
   }
 
   for (const profileEntry of profileEntries) {
@@ -72,9 +82,8 @@ export async function runCortexScan(dataDir: string): Promise<string> {
       }
 
       const sessionId = typeof parsed?.sessionId === "string" ? parsed.sessionId : sessionEntry.name;
-      const sessionFileSizeRaw = parsed?.stats?.sessionFileSize;
-      const sessionFileSize = typeof sessionFileSizeRaw === "string" ? Number.parseInt(sessionFileSizeRaw, 10) : NaN;
-      if (!Number.isFinite(sessionFileSize)) {
+      const totalBytes = parseSessionTotalBytes(parsed?.stats?.sessionFileSize);
+      if (!Number.isFinite(totalBytes)) {
         continue;
       }
 
@@ -83,27 +92,71 @@ export async function runCortexScan(dataDir: string): Promise<string> {
           ? parsed.cortexReviewedBytes
           : 0;
       const reviewedAt = typeof parsed?.cortexReviewedAt === "string" ? parsed.cortexReviewedAt : null;
-      const delta = sessionFileSize - reviewedBytes;
+      const deltaBytes = totalBytes - reviewedBytes;
 
-      const result: ScanResult = {
+      const status: ScanSession["status"] =
+        deltaBytes === 0 ? "up-to-date" : reviewedAt === null ? "never-reviewed" : "needs-review";
+
+      sessions.push({
         profileId,
         sessionId,
-        delta,
-        sessionFileSize,
+        deltaBytes,
+        totalBytes,
         reviewedBytes,
-        reviewedAt
-      };
-
-      if (delta === 0) {
-        unchangedSessions.push(result);
-      } else {
-        sessionsNeedingReview.push(result);
-      }
+        reviewedAt,
+        status
+      });
     }
   }
 
-  sessionsNeedingReview.sort((left, right) => right.delta - left.delta);
-  unchangedSessions.sort((left, right) => `${left.profileId}/${left.sessionId}`.localeCompare(`${right.profileId}/${right.sessionId}`));
+  sessions.sort((left, right) => {
+    const leftNeedsReview = left.status === "up-to-date" ? 1 : 0;
+    const rightNeedsReview = right.status === "up-to-date" ? 1 : 0;
+
+    if (leftNeedsReview !== rightNeedsReview) {
+      return leftNeedsReview - rightNeedsReview;
+    }
+
+    if (left.status !== "up-to-date" && right.status !== "up-to-date") {
+      const deltaDifference = right.deltaBytes - left.deltaBytes;
+      if (deltaDifference !== 0) {
+        return deltaDifference;
+      }
+    }
+
+    return `${left.profileId}/${left.sessionId}`.localeCompare(`${right.profileId}/${right.sessionId}`);
+  });
+
+  const summary = sessions.reduce(
+    (accumulator, session) => {
+      if (session.status === "up-to-date") {
+        accumulator.upToDate += 1;
+      } else {
+        accumulator.needsReview += 1;
+      }
+
+      accumulator.totalBytes += session.totalBytes;
+      accumulator.reviewedBytes += session.reviewedBytes;
+      return accumulator;
+    },
+    {
+      needsReview: 0,
+      upToDate: 0,
+      totalBytes: 0,
+      reviewedBytes: 0
+    }
+  );
+
+  return {
+    sessions,
+    summary
+  };
+}
+
+export async function runCortexScan(dataDir: string): Promise<string> {
+  const scanResult = await scanCortexReviewStatus(dataDir);
+  const sessionsNeedingReview = scanResult.sessions.filter((result) => result.status !== "up-to-date");
+  const unchangedSessions = scanResult.sessions.filter((result) => result.status === "up-to-date");
 
   const needsReviewLines =
     sessionsNeedingReview.length > 0
@@ -121,18 +174,33 @@ export async function runCortexScan(dataDir: string): Promise<string> {
     "Sessions unchanged:",
     ...unchangedLines,
     "",
-    `Summary: ${sessionsNeedingReview.length} sessions need review, ${unchangedSessions.length} up to date`
+    `Summary: ${scanResult.summary.needsReview} sessions need review, ${scanResult.summary.upToDate} up to date`
   ].join("\n");
 }
 
-function formatNeedsReviewLine(result: ScanResult): string {
+function formatNeedsReviewLine(result: ScanSession): string {
   const reviewedLabel = result.reviewedAt ? `last reviewed: ${result.reviewedAt.slice(0, 10)}` : "never reviewed";
 
-  if (result.delta < 0) {
-    return `  ${result.profileId}/${result.sessionId}: needs re-review (compacted: reviewed ${result.reviewedBytes.toLocaleString()} > current ${result.sessionFileSize.toLocaleString()}; ${reviewedLabel})`;
+  if (result.deltaBytes < 0) {
+    return `  ${result.profileId}/${result.sessionId}: needs re-review (compacted: reviewed ${result.reviewedBytes.toLocaleString()} > current ${result.totalBytes.toLocaleString()}; ${reviewedLabel})`;
   }
 
-  return `  ${result.profileId}/${result.sessionId}: ${result.delta.toLocaleString()} new bytes (${reviewedLabel})`;
+  return `  ${result.profileId}/${result.sessionId}: ${result.deltaBytes.toLocaleString()} new bytes (${reviewedLabel})`;
+}
+
+function parseSessionTotalBytes(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const parsed = Number.parseInt(value, 10);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+
+  return Number.NaN;
 }
 
 async function main(): Promise<void> {

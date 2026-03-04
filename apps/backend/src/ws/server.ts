@@ -5,6 +5,7 @@ import type { ServerEvent } from "@middleman/protocol";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import { applyCorsHeaders, resolveRequestUrl, sendJson } from "./http-utils.js";
 import { createAgentHttpRoutes } from "./routes/agent-routes.js";
+import { createCortexRoutes } from "./routes/cortex-routes.js";
 import { createFileRoutes } from "./routes/file-routes.js";
 import { createHealthRoutes } from "./routes/health-routes.js";
 import type { HttpRoute } from "./routes/http-route.js";
@@ -108,6 +109,7 @@ export class SwarmWebSocketServer {
         resolveRepoRoot: () => this.swarmManager.getConfig().paths.rootDir
       }),
       ...createFileRoutes({ swarmManager: this.swarmManager }),
+      ...createCortexRoutes({ swarmManager: this.swarmManager }),
       ...createTranscriptionRoutes({ swarmManager: this.swarmManager }),
       ...createSchedulerRoutes({ swarmManager: this.swarmManager }),
       ...createAgentHttpRoutes({ swarmManager: this.swarmManager }),

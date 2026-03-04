@@ -17,6 +17,8 @@ import type {
 } from '../swarm/types.js'
 import type { SwarmAgentRuntime } from '../swarm/runtime-types.js'
 import { getScheduleFilePath } from '../scheduler/schedule-storage.js'
+import { getCommonKnowledgePath, getCortexNotesPath } from '../swarm/data-paths.js'
+import { scanCortexReviewStatus } from '../swarm/scripts/cortex-scan.js'
 import { SwarmWebSocketServer } from '../ws/server.js'
 import type { ServerEvent } from '@middleman/protocol'
 
@@ -583,6 +585,169 @@ describe('SwarmWebSocketServer', () => {
 
       const payload = (await response.json()) as { error: string }
       expect(payload.error).toContain('outside allowed roots')
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('writes files through POST /api/write-file and creates parent directories', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    const targetPath = join(config.paths.rootDir, 'knowledge', 'notes.md')
+    const content = '# Notes\n\nSaved from dashboard.\n'
+
+    try {
+      const response = await fetch(`http://${config.host}:${config.port}/api/write-file`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          path: targetPath,
+          content,
+        }),
+      })
+
+      expect(response.status).toBe(200)
+      const payload = (await response.json()) as { success: boolean; bytesWritten: number }
+
+      expect(payload).toEqual({
+        success: true,
+        bytesWritten: Buffer.byteLength(content, 'utf8'),
+      })
+
+      const savedContent = await readFile(targetPath, 'utf8')
+      expect(savedContent).toBe(content)
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('rejects disallowed files through POST /api/write-file', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    const outsideFile =
+      process.platform === 'win32' ? 'C:\\Windows\\System32\\drivers\\etc\\hosts' : '/etc/hosts'
+
+    try {
+      const response = await fetch(`http://${config.host}:${config.port}/api/write-file`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          path: outsideFile,
+          content: 'blocked',
+        }),
+      })
+
+      expect(response.status).toBe(403)
+      const payload = (await response.json()) as { error: string }
+      expect(payload.error).toContain('outside allowed roots')
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('returns scan data and knowledge file paths through GET /api/cortex/scan', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    const sessionDir = join(config.paths.dataDir, 'profiles', 'alpha', 'sessions', 'alpha--s1')
+    await mkdir(sessionDir, { recursive: true })
+    await writeFile(
+      join(sessionDir, 'meta.json'),
+      `${JSON.stringify(
+        {
+          profileId: 'alpha',
+          sessionId: 'alpha--s1',
+          stats: { sessionFileSize: '1000' },
+          cortexReviewedBytes: 250,
+          cortexReviewedAt: '2026-03-01T10:00:00.000Z',
+        },
+        null,
+        2,
+      )}\n`,
+      'utf8',
+    )
+
+    const commonKnowledgePath = getCommonKnowledgePath(config.paths.dataDir)
+    await mkdir(dirname(commonKnowledgePath), { recursive: true })
+    await writeFile(commonKnowledgePath, '# Common knowledge\n', 'utf8')
+
+    const expectedScan = await scanCortexReviewStatus(config.paths.dataDir)
+
+    try {
+      const response = await fetch(`http://${config.host}:${config.port}/api/cortex/scan`)
+      expect(response.status).toBe(200)
+
+      const payload = (await response.json()) as {
+        scan: {
+          sessions: Array<{
+            profileId: string
+            sessionId: string
+            deltaBytes: number
+            totalBytes: number
+            reviewedBytes: number
+            reviewedAt: string | null
+            status: string
+          }>
+          summary: {
+            needsReview: number
+            upToDate: number
+            totalBytes: number
+            reviewedBytes: number
+          }
+        }
+        files: {
+          commonKnowledge: string
+          cortexNotes: string
+        }
+      }
+
+      expect(payload.scan).toEqual(expectedScan)
+      expect(payload.files).toEqual({
+        commonKnowledge: commonKnowledgePath,
+        cortexNotes: getCortexNotesPath(config.paths.dataDir),
+      })
     } finally {
       await server.stop()
     }

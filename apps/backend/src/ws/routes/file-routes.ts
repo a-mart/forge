@@ -1,4 +1,5 @@
-import { readFile, stat } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 import { homedir } from "node:os";
 import {
   isPathWithinRoots,
@@ -19,8 +20,48 @@ const READ_FILE_METHODS = "GET, POST, OPTIONS";
 const MAX_READ_FILE_BODY_BYTES = 64 * 1024;
 const MAX_READ_FILE_CONTENT_BYTES = 2 * 1024 * 1024;
 
+const WRITE_FILE_ENDPOINT_PATH = "/api/write-file";
+const WRITE_FILE_METHODS = "POST, OPTIONS";
+const MAX_WRITE_FILE_BODY_BYTES = 2 * 1024 * 1024;
+
 export function createFileRoutes(options: { swarmManager: SwarmManager }): HttpRoute[] {
   const { swarmManager } = options;
+
+  const resolveAllowedPath = async (requestedPath: string): Promise<string> => {
+    const config = swarmManager.getConfig();
+    const resolvedPath = resolveDirectoryPath(requestedPath, config.paths.rootDir);
+    const allowedRoots = normalizeAllowlistRoots([
+      ...config.cwdAllowlistRoots,
+      config.paths.rootDir,
+      homedir(),
+      "/tmp"
+    ]);
+
+    if (isPathWithinRoots(resolvedPath, allowedRoots)) {
+      return resolvedPath;
+    }
+
+    let existingAncestor = resolvedPath;
+    while (true) {
+      try {
+        await stat(existingAncestor);
+        break;
+      } catch {
+        const parentPath = dirname(existingAncestor);
+        if (parentPath === existingAncestor) {
+          break;
+        }
+
+        existingAncestor = parentPath;
+      }
+    }
+
+    if (!isPathWithinRoots(existingAncestor, allowedRoots)) {
+      throw new Error("Path is outside allowed roots.");
+    }
+
+    return resolvedPath;
+  };
 
   return [
     {
@@ -74,19 +115,7 @@ export function createFileRoutes(options: { swarmManager: SwarmManager }): HttpR
             return;
           }
 
-          const config = swarmManager.getConfig();
-          const resolvedPath = resolveDirectoryPath(requestedPath, config.paths.rootDir);
-          const allowedRoots = normalizeAllowlistRoots([
-            ...config.cwdAllowlistRoots,
-            config.paths.rootDir,
-            homedir(),
-            "/tmp"
-          ]);
-
-          if (!isPathWithinRoots(resolvedPath, allowedRoots)) {
-            sendJson(response, 403, { error: "Path is outside allowed roots." });
-            return;
-          }
+          const resolvedPath = await resolveAllowedPath(requestedPath);
 
           let fileStats;
           try {
@@ -125,6 +154,80 @@ export function createFileRoutes(options: { swarmManager: SwarmManager }): HttpR
           });
         } catch (error) {
           const message = error instanceof Error ? error.message : "Unable to read file.";
+
+          if (message.includes("Path is outside allowed roots")) {
+            sendJson(response, 403, { error: message });
+            return;
+          }
+
+          if (message.includes("Request body exceeds")) {
+            sendJson(response, 413, { error: message });
+            return;
+          }
+
+          if (message.includes("valid JSON")) {
+            sendJson(response, 400, { error: message });
+            return;
+          }
+
+          sendJson(response, 500, { error: message });
+        }
+      }
+    },
+    {
+      methods: WRITE_FILE_METHODS,
+      matches: (pathname) => pathname === WRITE_FILE_ENDPOINT_PATH,
+      handle: async (request, response) => {
+        if (request.method === "OPTIONS") {
+          applyCorsHeaders(request, response, WRITE_FILE_METHODS);
+          response.statusCode = 204;
+          response.end();
+          return;
+        }
+
+        if (request.method !== "POST") {
+          applyCorsHeaders(request, response, WRITE_FILE_METHODS);
+          response.setHeader("Allow", WRITE_FILE_METHODS);
+          sendJson(response, 405, { error: "Method Not Allowed" });
+          return;
+        }
+
+        applyCorsHeaders(request, response, WRITE_FILE_METHODS);
+
+        try {
+          const payload = await parseJsonBody(request, MAX_WRITE_FILE_BODY_BYTES);
+          if (!payload || typeof payload !== "object") {
+            sendJson(response, 400, { error: "Request body must be a JSON object." });
+            return;
+          }
+
+          const pathFromBody = (payload as { path?: unknown }).path;
+          if (typeof pathFromBody !== "string" || pathFromBody.trim().length === 0) {
+            sendJson(response, 400, { error: "path must be a non-empty string." });
+            return;
+          }
+
+          const contentFromBody = (payload as { content?: unknown }).content;
+          if (typeof contentFromBody !== "string") {
+            sendJson(response, 400, { error: "content must be a string." });
+            return;
+          }
+
+          const resolvedPath = await resolveAllowedPath(pathFromBody);
+          await mkdir(dirname(resolvedPath), { recursive: true });
+          await writeFile(resolvedPath, contentFromBody, "utf8");
+
+          sendJson(response, 200, {
+            success: true,
+            bytesWritten: Buffer.byteLength(contentFromBody, "utf8")
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Unable to write file.";
+
+          if (message.includes("Path is outside allowed roots")) {
+            sendJson(response, 403, { error: message });
+            return;
+          }
 
           if (message.includes("Request body exceeds")) {
             sendJson(response, 413, { error: message });

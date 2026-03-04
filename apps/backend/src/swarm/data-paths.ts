@@ -100,6 +100,10 @@ export function getCommonKnowledgePath(dataDir: string): string {
   return join(getSharedKnowledgeDir(dataDir), "common.md");
 }
 
+export function getCortexNotesPath(dataDir: string): string {
+  return join(getSharedKnowledgeDir(dataDir), ".cortex-notes.md");
+}
+
 export function getSharedAuthDir(dataDir: string): string {
   return join(getSharedDir(dataDir), "auth");
 }
