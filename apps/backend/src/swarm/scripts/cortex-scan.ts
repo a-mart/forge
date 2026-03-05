@@ -9,6 +9,11 @@ export interface ScanSession {
   totalBytes: number;
   reviewedBytes: number;
   reviewedAt: string | null;
+  feedbackDeltaBytes: number;
+  feedbackTotalBytes: number;
+  feedbackReviewedBytes: number;
+  feedbackReviewedAt: string | null;
+  lastFeedbackAt: string | null;
   status: "never-reviewed" | "needs-review" | "up-to-date";
 }
 
@@ -94,8 +99,23 @@ export async function scanCortexReviewStatus(dataDir: string): Promise<ScanResul
       const reviewedAt = typeof parsed?.cortexReviewedAt === "string" ? parsed.cortexReviewedAt : null;
       const deltaBytes = totalBytes - reviewedBytes;
 
+      const feedbackTotalBytesRaw = parseSessionTotalBytes(parsed?.feedbackFileSize);
+      const feedbackTotalBytes = Number.isFinite(feedbackTotalBytesRaw) ? feedbackTotalBytesRaw : 0;
+      const feedbackReviewedBytes =
+        typeof parsed?.cortexReviewedFeedbackBytes === "number" && Number.isFinite(parsed.cortexReviewedFeedbackBytes)
+          ? parsed.cortexReviewedFeedbackBytes
+          : 0;
+      const feedbackReviewedAt =
+        typeof parsed?.cortexReviewedFeedbackAt === "string" ? parsed.cortexReviewedFeedbackAt : null;
+      const lastFeedbackAt = typeof parsed?.lastFeedbackAt === "string" ? parsed.lastFeedbackAt : null;
+      const feedbackDeltaBytes = feedbackTotalBytes - feedbackReviewedBytes;
+
       const status: ScanSession["status"] =
-        deltaBytes === 0 ? "up-to-date" : reviewedAt === null ? "never-reviewed" : "needs-review";
+        deltaBytes === 0 && feedbackDeltaBytes === 0
+          ? "up-to-date"
+          : reviewedAt === null && feedbackReviewedAt === null
+            ? "never-reviewed"
+            : "needs-review";
 
       sessions.push({
         profileId,
@@ -104,6 +124,11 @@ export async function scanCortexReviewStatus(dataDir: string): Promise<ScanResul
         totalBytes,
         reviewedBytes,
         reviewedAt,
+        feedbackDeltaBytes,
+        feedbackTotalBytes,
+        feedbackReviewedBytes,
+        feedbackReviewedAt,
+        lastFeedbackAt,
         status
       });
     }
@@ -118,7 +143,9 @@ export async function scanCortexReviewStatus(dataDir: string): Promise<ScanResul
     }
 
     if (left.status !== "up-to-date" && right.status !== "up-to-date") {
-      const deltaDifference = right.deltaBytes - left.deltaBytes;
+      const leftCombinedDelta = left.deltaBytes + left.feedbackDeltaBytes;
+      const rightCombinedDelta = right.deltaBytes + right.feedbackDeltaBytes;
+      const deltaDifference = rightCombinedDelta - leftCombinedDelta;
       if (deltaDifference !== 0) {
         return deltaDifference;
       }
@@ -181,11 +208,39 @@ export async function runCortexScan(dataDir: string): Promise<string> {
 function formatNeedsReviewLine(result: ScanSession): string {
   const reviewedLabel = result.reviewedAt ? `last reviewed: ${result.reviewedAt.slice(0, 10)}` : "never reviewed";
 
-  if (result.deltaBytes < 0) {
-    return `  ${result.profileId}/${result.sessionId}: needs re-review (compacted: reviewed ${result.reviewedBytes.toLocaleString()} > current ${result.totalBytes.toLocaleString()}; ${reviewedLabel})`;
+  if (result.feedbackDeltaBytes === 0) {
+    if (result.deltaBytes < 0) {
+      return `  ${result.profileId}/${result.sessionId}: needs re-review (compacted: reviewed ${result.reviewedBytes.toLocaleString()} > current ${result.totalBytes.toLocaleString()}; ${reviewedLabel})`;
+    }
+
+    return `  ${result.profileId}/${result.sessionId}: ${result.deltaBytes.toLocaleString()} new bytes (${reviewedLabel})`;
   }
 
-  return `  ${result.profileId}/${result.sessionId}: ${result.deltaBytes.toLocaleString()} new bytes (${reviewedLabel})`;
+  const parts: string[] = [];
+
+  if (result.deltaBytes < 0) {
+    parts.push(
+      `session compacted (reviewed ${result.reviewedBytes.toLocaleString()} > current ${result.totalBytes.toLocaleString()})`
+    );
+  } else if (result.deltaBytes > 0) {
+    parts.push(`${result.deltaBytes.toLocaleString()} new bytes`);
+  }
+
+  if (result.feedbackDeltaBytes < 0) {
+    parts.push(
+      `feedback compacted (reviewed ${result.feedbackReviewedBytes.toLocaleString()} > current ${result.feedbackTotalBytes.toLocaleString()})`
+    );
+  } else {
+    parts.push(`${result.feedbackDeltaBytes.toLocaleString()} new feedback bytes`);
+  }
+
+  const feedbackReviewedLabel = result.feedbackReviewedAt
+    ? `feedback reviewed: ${result.feedbackReviewedAt.slice(0, 10)}`
+    : result.lastFeedbackAt
+      ? "feedback never reviewed"
+      : "no feedback review watermark";
+
+  return `  ${result.profileId}/${result.sessionId}: ${parts.join(", ")} (${reviewedLabel}; ${feedbackReviewedLabel})`;
 }
 
 function parseSessionTotalBytes(value: unknown): number {

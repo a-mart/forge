@@ -132,6 +132,10 @@ export async function rebuildSessionMeta(options: RebuildSessionMetaOptions): Pr
       promptComponents: existingMeta?.promptComponents ?? null,
       cortexReviewedAt: existingMeta?.cortexReviewedAt,
       cortexReviewedBytes: existingMeta?.cortexReviewedBytes,
+      feedbackFileSize: existingMeta?.feedbackFileSize,
+      lastFeedbackAt: existingMeta?.lastFeedbackAt,
+      cortexReviewedFeedbackBytes: existingMeta?.cortexReviewedFeedbackBytes,
+      cortexReviewedFeedbackAt: existingMeta?.cortexReviewedFeedbackAt,
       workers,
       stats: buildWorkerStats(workers, {
         sessionFileSize,
@@ -276,6 +280,10 @@ function createEmptySessionMeta(profileId: string, sessionId: string, timestamp:
     cwd: null,
     promptFingerprint: null,
     promptComponents: null,
+    feedbackFileSize: null,
+    lastFeedbackAt: null,
+    cortexReviewedFeedbackBytes: 0,
+    cortexReviewedFeedbackAt: null,
     workers: [],
     stats: {
       totalWorkers: 0,
@@ -526,6 +534,10 @@ function coerceSessionMeta(value: unknown): SessionMeta | undefined {
       : null,
     cortexReviewedAt: normalizeOptionalString(value.cortexReviewedAt),
     cortexReviewedBytes: coerceOptionalNonNegativeInteger(value.cortexReviewedBytes),
+    feedbackFileSize: coerceOptionalFileSizeString(value.feedbackFileSize),
+    lastFeedbackAt: normalizeOptionalNullableString(value.lastFeedbackAt),
+    cortexReviewedFeedbackBytes: coerceOptionalNonNegativeInteger(value.cortexReviewedFeedbackBytes),
+    cortexReviewedFeedbackAt: normalizeOptionalNullableString(value.cortexReviewedFeedbackAt),
     workers,
     stats: {
       totalWorkers:
@@ -599,6 +611,40 @@ function coerceOptionalNonNegativeInteger(value: unknown): number | undefined {
   }
 
   return Math.max(0, Math.round(value));
+}
+
+function coerceOptionalFileSizeString(value: unknown): string | null | undefined {
+  if (value === null) {
+    return null;
+  }
+
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(Math.max(0, Math.round(value)));
+  }
+
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return undefined;
+  }
+
+  const parsed = Number.parseInt(trimmed, 10);
+  if (!Number.isFinite(parsed)) {
+    return undefined;
+  }
+
+  return String(Math.max(0, parsed));
+}
+
+function normalizeOptionalNullableString(value: unknown): string | null | undefined {
+  if (value === null) {
+    return null;
+  }
+
+  return normalizeOptionalString(value);
 }
 
 function normalizeOptionalString(value: unknown): string | undefined {

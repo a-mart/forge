@@ -3363,6 +3363,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       cwd: descriptor.cwd,
       promptFingerprint: null,
       promptComponents: null,
+      feedbackFileSize: null,
+      lastFeedbackAt: null,
+      cortexReviewedFeedbackBytes: 0,
+      cortexReviewedFeedbackAt: null,
       workers: [],
       stats: {
         totalWorkers: 0,
