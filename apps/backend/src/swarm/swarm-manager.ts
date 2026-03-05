@@ -358,6 +358,7 @@ Do NOT rewrite knowledge files directly. Do NOT do unbounded manual transcript r
 // Retain recent non-web activity while preserving the full user-facing web transcript.
 const SWARM_CONTEXT_FILE_NAME = "SWARM.md";
 const SWARM_MANAGER_MAX_EVENT_LISTENERS = 64;
+const IDLE_WORKER_WATCHDOG_GRACE_MS = 3_000;
 const SESSION_ID_SUFFIX_SEPARATOR = "--s";
 const ROOT_SESSION_NUMBER = 1;
 const DEFAULT_MEMORY_TEMPLATE_NORMALIZED_LINES = [
@@ -386,6 +387,11 @@ interface SessionRenameHistoryEntry {
   from: string;
   to: string;
   renamedAt: string;
+}
+
+interface WorkerWatchdogState {
+  turnSeq: number;
+  reportedThisTurn: boolean;
 }
 
 function nowIso(): string {
@@ -480,6 +486,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly profileMergeMutexes = new Map<string, Promise<void>>();
   private readonly runtimes = new Map<string, SwarmAgentRuntime>();
   private readonly conversationEntriesByAgentId = new Map<string, ConversationEntryEvent[]>();
+  private readonly workerWatchdogState = new Map<string, WorkerWatchdogState>();
+  private readonly watchdogTimers = new Map<string, NodeJS.Timeout>();
+  private readonly watchdogTimerTokens = new Map<string, number>();
   private readonly conversationProjector: ConversationProjector;
   private readonly persistenceService: PersistenceService;
   private readonly runtimeFactory: RuntimeFactory;
@@ -1091,6 +1100,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         continue;
       }
 
+      this.clearWatchdogState(descriptor.agentId);
+
       if (isNonRunningAgentStatus(descriptor.status)) {
         continue;
       }
@@ -1679,6 +1690,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const managerContextIds = this.resolveActivityManagerContextIds(sender, target);
     const runtime = await this.getOrCreateRuntimeForDescriptor(target);
 
+    const isWorkerReportToManager =
+      sender.role === "worker" && target.role === "manager" && sender.managerId === target.agentId;
+    const watchdogTurnSeqAtDispatch = isWorkerReportToManager
+      ? this.getOrCreateWorkerWatchdogState(sender.agentId).turnSeq
+      : undefined;
+
     const origin = options?.origin ?? "internal";
     const attachments = normalizeConversationAttachments(options?.attachments);
     const modelMessage = await this.prepareModelInboundMessage(
@@ -1690,6 +1707,14 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       origin
     );
     const receipt = await runtime.sendMessage(modelMessage, delivery);
+
+    if (isWorkerReportToManager && watchdogTurnSeqAtDispatch !== undefined) {
+      const watchdogState = this.getOrCreateWorkerWatchdogState(sender.agentId);
+      if (watchdogState.turnSeq === watchdogTurnSeqAtDispatch) {
+        watchdogState.reportedThisTurn = true;
+        this.workerWatchdogState.set(sender.agentId, watchdogState);
+      }
+    }
 
     this.logDebug("agent:send_message", {
       fromAgentId,
@@ -2930,6 +2955,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     descriptor: AgentDescriptor,
     options: { abort: boolean; emitStatus: boolean }
   ): Promise<void> {
+    if (descriptor.role === "worker") {
+      this.clearWatchdogState(descriptor.agentId);
+    }
+
     const runtime = this.runtimes.get(descriptor.agentId);
     if (runtime) {
       await runtime.terminate({ abort: options.abort });
@@ -3148,9 +3177,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private async handleRuntimeSessionEvent(agentId: string, event: RuntimeSessionEvent): Promise<void> {
     this.captureConversationEventFromRuntime(agentId, event);
 
+    const descriptor = this.descriptors.get(agentId);
+
     if (!this.config.debug) return;
 
-    const descriptor = this.descriptors.get(agentId);
     if (!descriptor || descriptor.role !== "manager") {
       return;
     }
@@ -3563,9 +3593,120 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     await this.refreshSessionMetaStats(descriptor, sessionFileOverride);
   }
 
-  private async handleRuntimeAgentEnd(_agentId: string): Promise<void> {
-    // No-op: managers now receive all inbound messages with sourceContext metadata
-    // and decide whether to respond without pending-reply bookkeeping.
+  private async handleRuntimeAgentEnd(agentId: string): Promise<void> {
+    const descriptor = this.descriptors.get(agentId);
+    if (!descriptor || descriptor.role !== "worker") {
+      return;
+    }
+
+    const watchdogState = this.getOrCreateWorkerWatchdogState(agentId);
+    const reportedThisTurn = watchdogState.reportedThisTurn;
+
+    // Reset watchdog state for the next agentic loop.
+    watchdogState.turnSeq += 1;
+    watchdogState.reportedThisTurn = false;
+    const turnSeq = watchdogState.turnSeq;
+    this.workerWatchdogState.set(agentId, watchdogState);
+
+    if (reportedThisTurn) {
+      this.watchdogTimerTokens.set(agentId, (this.watchdogTimerTokens.get(agentId) ?? 0) + 1);
+      this.clearWatchdogTimer(agentId);
+      return;
+    }
+
+    const nextToken = (this.watchdogTimerTokens.get(agentId) ?? 0) + 1;
+    this.watchdogTimerTokens.set(agentId, nextToken);
+    this.clearWatchdogTimer(agentId);
+
+    const timer = setTimeout(() => {
+      this.handleIdleWorkerWatchdogTimer(agentId, turnSeq, nextToken).catch((error) => {
+        this.logDebug("watchdog:error", { agentId, error: String(error) });
+      });
+    }, IDLE_WORKER_WATCHDOG_GRACE_MS);
+
+    this.watchdogTimers.set(agentId, timer);
+  }
+
+  private async handleIdleWorkerWatchdogTimer(
+    agentId: string,
+    turnSeq: number,
+    token: number
+  ): Promise<void> {
+    if (this.watchdogTimerTokens.get(agentId) !== token) {
+      return;
+    }
+
+    this.watchdogTimers.delete(agentId);
+
+    const descriptor = this.descriptors.get(agentId);
+    if (!descriptor || descriptor.role !== "worker") {
+      this.clearWatchdogState(agentId);
+      return;
+    }
+
+    const watchdogState = this.workerWatchdogState.get(agentId);
+    if (!watchdogState || watchdogState.turnSeq !== turnSeq || watchdogState.reportedThisTurn) {
+      return;
+    }
+
+    if (descriptor.status !== "idle") {
+      return;
+    }
+
+    const parentDescriptor = this.descriptors.get(descriptor.managerId);
+    if (!parentDescriptor || isNonRunningAgentStatus(parentDescriptor.status)) {
+      return;
+    }
+
+    const watchdogMessage = `⚠️ [IDLE WORKER WATCHDOG — AUTOMATED SYSTEM CHECK]
+
+Worker \`${descriptor.agentId}\` completed its turn and went idle without sending a message back to you.
+
+This is an automated notification. The worker may have produced useful output in its session log.
+
+Worker session file: ${descriptor.sessionFile}
+
+Suggested actions:
+• Read the worker's session file to check its output
+• Send a follow-up message to the worker if you need more information`;
+
+    try {
+      await this.sendMessage(agentId, descriptor.managerId, watchdogMessage, "auto", { origin: "internal" });
+    } catch (error) {
+      this.logDebug("watchdog:notify:error", {
+        workerAgentId: agentId,
+        managerId: descriptor.managerId,
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  private getOrCreateWorkerWatchdogState(agentId: string): WorkerWatchdogState {
+    const existing = this.workerWatchdogState.get(agentId);
+    if (existing) {
+      return existing;
+    }
+
+    const initialized: WorkerWatchdogState = {
+      turnSeq: 0,
+      reportedThisTurn: false
+    };
+    this.workerWatchdogState.set(agentId, initialized);
+    return initialized;
+  }
+
+  private clearWatchdogTimer(agentId: string): void {
+    const timer = this.watchdogTimers.get(agentId);
+    if (timer) {
+      clearTimeout(timer);
+      this.watchdogTimers.delete(agentId);
+    }
+  }
+
+  private clearWatchdogState(agentId: string): void {
+    this.clearWatchdogTimer(agentId);
+    this.workerWatchdogState.delete(agentId);
+    this.watchdogTimerTokens.delete(agentId);
   }
 
   private async ensureDirectories(): Promise<void> {
