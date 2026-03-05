@@ -760,7 +760,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const renamedAt = this.now();
 
     descriptor.sessionLabel = normalizedLabel;
-    descriptor.updatedAt = renamedAt;
     this.descriptors.set(agentId, descriptor);
 
     await this.writeInitialSessionMeta(descriptor);
