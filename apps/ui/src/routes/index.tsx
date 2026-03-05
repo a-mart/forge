@@ -641,6 +641,7 @@ export function IndexPage() {
                   allowWhileLoading
                   agentLabel={activeAgentLabel}
                   wsUrl={wsUrl}
+                  agentId={activeAgentId ?? undefined}
                 />
               </>
             )}

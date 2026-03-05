@@ -27,6 +27,29 @@ import type { ConversationAttachment } from '@middleman/protocol'
 const TEXTAREA_MAX_HEIGHT = 186
 const ACTIVE_WAVEFORM_BAR_COUNT = 16
 const OPENAI_KEY_REQUIRED_MESSAGE = 'OpenAI API key required \u2014 add it in Settings.'
+const DRAFTS_STORAGE_KEY = 'middleman-chat-drafts'
+
+function loadDrafts(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(DRAFTS_STORAGE_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw) as unknown
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+      return parsed as Record<string, string>
+    }
+    return {}
+  } catch {
+    return {}
+  }
+}
+
+function persistDrafts(drafts: Record<string, string>): void {
+  try {
+    localStorage.setItem(DRAFTS_STORAGE_KEY, JSON.stringify(drafts))
+  } catch {
+    // localStorage full or unavailable — silently ignore
+  }
+}
 
 interface MessageInputProps {
   onSend: (message: string, attachments?: ConversationAttachment[]) => void
@@ -35,6 +58,7 @@ interface MessageInputProps {
   agentLabel?: string
   allowWhileLoading?: boolean
   wsUrl?: string
+  agentId?: string
 }
 
 export interface MessageInputHandle {
@@ -108,6 +132,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
     agentLabel = 'agent',
     allowWhileLoading = false,
     wsUrl,
+    agentId,
   },
   ref,
 ) {
@@ -118,6 +143,67 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
 
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+
+  // --- Per-session draft persistence ---
+  const draftsRef = useRef<Record<string, string>>(loadDrafts())
+  const prevAgentIdRef = useRef<string | undefined>(undefined)
+  const inputRef = useRef(input)
+  inputRef.current = input
+
+  // Save current draft and restore new agent's draft on agent/session switch
+  useEffect(() => {
+    const prevId = prevAgentIdRef.current
+    if (prevId === agentId) return
+
+    // Save draft for previous agent
+    if (prevId) {
+      if (inputRef.current.trim()) {
+        draftsRef.current[prevId] = inputRef.current
+      } else {
+        delete draftsRef.current[prevId]
+      }
+    }
+
+    // Restore draft for new agent
+    const restoredDraft = agentId ? (draftsRef.current[agentId] ?? '') : ''
+    setInput(restoredDraft)
+    inputRef.current = restoredDraft
+
+    persistDrafts(draftsRef.current)
+    prevAgentIdRef.current = agentId
+  }, [agentId])
+
+  // Flush current draft on page unload so it survives refresh
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (agentId) {
+        if (inputRef.current.trim()) {
+          draftsRef.current[agentId] = inputRef.current
+        } else {
+          delete draftsRef.current[agentId]
+        }
+        persistDrafts(draftsRef.current)
+      }
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [agentId])
+
+  // Helper: update input state and sync draft to localStorage
+  const setInputWithDraft = useCallback(
+    (value: string) => {
+      setInput(value)
+      if (agentId) {
+        if (value.trim()) {
+          draftsRef.current[agentId] = value
+        } else {
+          delete draftsRef.current[agentId]
+        }
+        persistDrafts(draftsRef.current)
+      }
+    },
+    [agentId],
+  )
 
   const {
     isRecording,
@@ -174,7 +260,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
     ref,
     () => ({
       setInput: (value: string) => {
-        setInput(value)
+        setInputWithDraft(value)
         requestAnimationFrame(() => textareaRef.current?.focus())
       },
       focus: () => {
@@ -182,7 +268,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
       },
       addFiles,
     }),
-    [addFiles],
+    [addFiles, setInputWithDraft],
   )
 
   const handleFileSelect = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -214,17 +300,26 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
     }
 
     setInput((previousInput) => {
+      let next: string
       if (!previousInput.trim()) {
-        return trimmedText
+        next = trimmedText
+      } else {
+        const separator = previousInput.endsWith('\n') || previousInput.endsWith(' ') ? '' : '\n'
+        next = `${previousInput}${separator}${trimmedText}`
       }
 
-      const separator = previousInput.endsWith('\n') || previousInput.endsWith(' ') ? '' : '\n'
-      return `${previousInput}${separator}${trimmedText}`
+      // Sync draft for the current agent
+      if (agentId) {
+        draftsRef.current[agentId] = next
+        persistDrafts(draftsRef.current)
+      }
+
+      return next
     })
 
     requestAnimationFrame(() => textareaRef.current?.focus())
     return true
-  }, [])
+  }, [agentId])
 
   const stopAndTranscribeRecording = useCallback(async () => {
     const recording = await stopRecording()
@@ -332,9 +427,9 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
         : undefined,
     )
 
-    setInput('')
+    setInputWithDraft('')
     setAttachedFiles([])
-  }, [attachedFiles, blockedByLoading, disabled, input, isRecording, isTranscribingVoice, onSend])
+  }, [attachedFiles, blockedByLoading, disabled, input, isRecording, isTranscribingVoice, onSend, setInputWithDraft])
 
   const handleSubmit = useCallback(
     (event: FormEvent<HTMLFormElement>) => {
@@ -405,7 +500,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
             <textarea
               ref={textareaRef}
               value={input}
-              onChange={(event) => setInput(event.target.value)}
+              onChange={(event) => setInputWithDraft(event.target.value)}
               onKeyDown={handleKeyDown}
               onPaste={handlePaste}
               placeholder={placeholder}
