@@ -1,5 +1,5 @@
 // Feedback event stored per target (current state)
-export type FeedbackValue = "up" | "down";
+export type FeedbackValue = "up" | "down" | "comment";
 
 // Input values accepted by the feedback submit endpoint.
 export type FeedbackSubmitValue = FeedbackValue | "clear";
@@ -21,6 +21,8 @@ export interface FeedbackEvent {
 
 export interface FeedbackSubmitEvent extends Omit<FeedbackEvent, "value"> {
   value: FeedbackSubmitValue;
+  /** When value is "clear", specifies whether to clear the vote or comment entry. Defaults to "vote". */
+  clearKind?: "vote" | "comment";
 }
 
 export const FEEDBACK_REASON_CODES = [
@@ -30,7 +32,8 @@ export const FEEDBACK_REASON_CODES = [
   "speed",
   "verbosity",
   "formatting",
-  "ux_decision",
+  "product_ux_direction",
+  "needs_clarification",
   "over_engineered",
   "great_outcome",
   "poor_outcome"
@@ -42,7 +45,9 @@ export type FeedbackReasonCode = (typeof FEEDBACK_REASON_CODES)[number];
 export interface FeedbackState {
   targetId: string;
   scope: "message" | "session";
-  value: "up" | "down" | null;
+  /** "vote" for up/down, "comment" for standalone comments */
+  kind: "vote" | "comment";
+  value: "up" | "down" | "comment" | null;
   latestEventId: string;
   latestAt: string;
 }

@@ -35,6 +35,7 @@ export async function submitFeedback(params: {
   reasonCodes?: string[]
   comment?: string
   channel?: FeedbackEvent['channel']
+  clearKind?: 'vote' | 'comment'
 }): Promise<FeedbackEvent> {
   const { profileId, sessionId, ...body } = params
   const endpoint = apiUrl(
@@ -51,6 +52,7 @@ export async function submitFeedback(params: {
       reasonCodes: body.reasonCodes ?? [],
       comment: body.comment ?? '',
       channel: body.channel ?? 'web',
+      ...(body.clearKind ? { clearKind: body.clearKind } : {}),
     }),
   })
 

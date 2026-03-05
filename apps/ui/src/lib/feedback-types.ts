@@ -7,7 +7,7 @@ export interface FeedbackEvent {
   sessionId: string
   scope: 'message' | 'session'
   targetId: string
-  value: 'up' | 'down' | 'clear'
+  value: 'up' | 'down' | 'comment' | 'clear'
   reasonCodes: string[]
   comment: string
   channel: 'web' | 'telegram' | 'slack'
@@ -21,7 +21,8 @@ export const FEEDBACK_REASON_CODES = [
   'speed',
   'verbosity',
   'formatting',
-  'ux_decision',
+  'product_ux_direction',
+  'needs_clarification',
   'over_engineered',
   'great_outcome',
   'poor_outcome',
@@ -32,7 +33,8 @@ export type FeedbackReasonCode = (typeof FEEDBACK_REASON_CODES)[number]
 export interface FeedbackState {
   targetId: string
   scope: 'message' | 'session'
-  value: 'up' | 'down' | null
+  kind: 'vote' | 'comment'
+  value: 'up' | 'down' | 'comment' | null
   latestEventId: string
   latestAt: string
 }

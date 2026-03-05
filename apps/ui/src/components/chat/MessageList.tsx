@@ -22,6 +22,7 @@ interface MessageListProps {
   onSuggestionClick?: (suggestion: string) => void
   onArtifactClick?: (artifact: ArtifactReference) => void
   getVote?: (targetId: string) => 'up' | 'down' | null
+  hasComment?: (targetId: string) => boolean
   onFeedbackVote?: (
     scope: 'message' | 'session',
     targetId: string,
@@ -29,6 +30,12 @@ interface MessageListProps {
     reasonCodes?: string[],
     comment?: string,
   ) => Promise<void>
+  onFeedbackComment?: (
+    scope: 'message' | 'session',
+    targetId: string,
+    comment: string,
+  ) => Promise<void>
+  onFeedbackClearComment?: (scope: 'message' | 'session', targetId: string) => Promise<void>
   isFeedbackSubmitting?: boolean
 }
 
@@ -219,7 +226,10 @@ export function MessageList({
   onSuggestionClick,
   onArtifactClick,
   getVote,
+  hasComment,
   onFeedbackVote,
+  onFeedbackComment,
+  onFeedbackClearComment,
   isFeedbackSubmitting,
 }: MessageListProps) {
   const scrollContainerRef = useRef<HTMLDivElement | null>(null)
@@ -325,7 +335,10 @@ export function MessageList({
                   message={entry.message}
                   onArtifactClick={onArtifactClick}
                   feedbackVote={isAssistant && getVote ? getVote(entry.message.timestamp) : undefined}
+                  feedbackHasComment={isAssistant && hasComment ? hasComment(entry.message.timestamp) : undefined}
                   onFeedbackVote={isAssistant ? onFeedbackVote : undefined}
+                  onFeedbackComment={isAssistant ? onFeedbackComment : undefined}
+                  onFeedbackClearComment={isAssistant ? onFeedbackClearComment : undefined}
                   isFeedbackSubmitting={isFeedbackSubmitting}
                 />
               )

@@ -202,7 +202,7 @@ export function IndexPage() {
   }, [feedbackSessionId, state.agents])
 
   const feedbackProfileId = feedbackSessionAgent?.profileId ?? null
-  const { getVote, submitVote, isSubmitting: isFeedbackSubmitting } = useFeedback(
+  const { getVote, hasComment, submitVote, submitComment, clearComment, isSubmitting: isFeedbackSubmitting } = useFeedback(
     feedbackProfileId,
     feedbackSessionId,
   )
@@ -604,8 +604,15 @@ export function IndexPage() {
                     setIsMobileSidebarOpen((previous) => !previous)
                   }
                   sessionFeedbackVote={isActiveManager && activeAgentId ? getVote(activeAgentId) : null}
+                  sessionFeedbackHasComment={isActiveManager && activeAgentId ? hasComment(activeAgentId) : false}
                   onSessionFeedbackVote={
                     isActiveManager && feedbackProfileId ? submitVote : undefined
+                  }
+                  onSessionFeedbackComment={
+                    isActiveManager && feedbackProfileId ? submitComment : undefined
+                  }
+                  onSessionFeedbackClearComment={
+                    isActiveManager && feedbackProfileId ? clearComment : undefined
                   }
                   isFeedbackSubmitting={isFeedbackSubmitting}
                 />
@@ -629,7 +636,10 @@ export function IndexPage() {
                   onSuggestionClick={handleSuggestionClick}
                   onArtifactClick={handleOpenArtifact}
                   getVote={feedbackProfileId ? getVote : undefined}
+                  hasComment={feedbackProfileId ? hasComment : undefined}
                   onFeedbackVote={feedbackProfileId ? submitVote : undefined}
+                  onFeedbackComment={feedbackProfileId ? submitComment : undefined}
+                  onFeedbackClearComment={feedbackProfileId ? clearComment : undefined}
                   isFeedbackSubmitting={isFeedbackSubmitting}
                 />
 

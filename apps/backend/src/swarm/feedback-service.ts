@@ -108,6 +108,7 @@ export class FeedbackService {
     const states = events.map((event) => ({
       targetId: event.targetId,
       scope: event.scope,
+      kind: feedbackValueKind(event.value),
       value: event.value,
       latestEventId: event.id,
       latestAt: event.createdAt
@@ -160,7 +161,7 @@ function applyFeedbackSubmission(
   events: FeedbackEvent[],
   submitted: FeedbackSubmitEvent
 ): FeedbackEvent[] {
-  const key = feedbackEventKey(submitted);
+  const key = feedbackSubmitEventKey(submitted);
 
   if (submitted.value === "clear") {
     return events.filter((event) => feedbackEventKey(event) !== key);
@@ -254,6 +255,8 @@ function normalizeSubmitFeedbackInput(
 
   const comment = typeof event.comment === "string" ? event.comment : "";
 
+  const clearKind = value === "clear" && event.clearKind === "comment" ? "comment" as const : undefined;
+
   return {
     profileId,
     sessionId,
@@ -263,7 +266,8 @@ function normalizeSubmitFeedbackInput(
     reasonCodes: normalizeReasonCodes(event.reasonCodes),
     comment,
     channel,
-    actor: "user"
+    actor: "user",
+    ...(clearKind ? { clearKind } : {})
   };
 }
 
@@ -316,8 +320,23 @@ function coerceFeedbackEvent(value: unknown): FeedbackEvent | undefined {
   };
 }
 
-function feedbackEventKey(event: Pick<FeedbackEvent, "actor" | "scope" | "targetId">): string {
-  return `${event.actor}:${event.scope}:${event.targetId}`;
+function feedbackValueKind(value: string): "vote" | "comment" {
+  return value === "comment" ? "comment" : "vote";
+}
+
+function feedbackEventKey(event: Pick<FeedbackEvent, "actor" | "scope" | "targetId" | "value">): string {
+  const kind = feedbackValueKind(event.value);
+  return `${event.actor}:${event.scope}:${event.targetId}:${kind}`;
+}
+
+function feedbackSubmitEventKey(event: Pick<FeedbackSubmitEvent, "actor" | "scope" | "targetId" | "value" | "clearKind">): string {
+  let kind: "vote" | "comment";
+  if (event.value === "clear") {
+    kind = event.clearKind ?? "vote";
+  } else {
+    kind = event.value === "comment" ? "comment" : "vote";
+  }
+  return `${event.actor}:${event.scope}:${event.targetId}:${kind}`;
 }
 
 async function listDirectoryNames(dirPath: string): Promise<string[]> {
@@ -381,7 +400,7 @@ function requireFeedbackScope(value: unknown, fieldName: string): FeedbackEvent[
 
 function requireFeedbackSubmitValue(value: unknown, fieldName: string): FeedbackSubmitEvent["value"] {
   if (!isFeedbackSubmitValue(value)) {
-    throw new Error(`${fieldName} must be one of: up, down, clear.`);
+    throw new Error(`${fieldName} must be one of: up, down, comment, clear.`);
   }
 
   return value;
@@ -409,11 +428,11 @@ function isFeedbackScope(value: unknown): value is FeedbackEvent["scope"] {
 }
 
 function isFeedbackValue(value: unknown): value is FeedbackEvent["value"] {
-  return value === "up" || value === "down";
+  return value === "up" || value === "down" || value === "comment";
 }
 
 function isFeedbackSubmitValue(value: unknown): value is FeedbackSubmitValue {
-  return value === "up" || value === "down" || value === "clear";
+  return value === "up" || value === "down" || value === "comment" || value === "clear";
 }
 
 function isFeedbackChannel(value: unknown): value is FeedbackEvent["channel"] {

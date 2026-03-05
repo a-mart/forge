@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ThumbsUp, ThumbsDown } from 'lucide-react'
+import { ThumbsUp, ThumbsDown, MessageSquare } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
@@ -19,7 +19,8 @@ const REASON_LABELS: Record<FeedbackReasonCode, string> = {
   speed: 'Speed',
   verbosity: 'Verbosity',
   formatting: 'Formatting',
-  ux_decision: 'UX Decision',
+  product_ux_direction: 'Product/UX Direction',
+  needs_clarification: 'Needs Clarification',
   over_engineered: 'Over-Engineered',
   great_outcome: 'Great Outcome',
   poor_outcome: 'Poor Outcome',
@@ -29,7 +30,8 @@ const UP_REASON_CODES: FeedbackReasonCode[] = [
   'accuracy',
   'instruction_following',
   'formatting',
-  'ux_decision',
+  'product_ux_direction',
+  'needs_clarification',
   'great_outcome',
 ]
 
@@ -39,13 +41,15 @@ const DOWN_REASON_CODES: FeedbackReasonCode[] = [
   'speed',
   'verbosity',
   'formatting',
-  'ux_decision',
+  'product_ux_direction',
+  'needs_clarification',
   'over_engineered',
 ]
 
 interface MessageFeedbackProps {
   targetId: string
   currentVote: 'up' | 'down' | null
+  hasComment?: boolean
   onVote: (
     scope: 'message' | 'session',
     targetId: string,
@@ -53,6 +57,12 @@ interface MessageFeedbackProps {
     reasonCodes?: string[],
     comment?: string,
   ) => Promise<void>
+  onComment?: (
+    scope: 'message' | 'session',
+    targetId: string,
+    comment: string,
+  ) => Promise<void>
+  onClearComment?: (scope: 'message' | 'session', targetId: string) => Promise<void>
   isSubmitting?: boolean
   scope?: 'message' | 'session'
   /** Slightly larger for header-level usage */
@@ -62,12 +72,15 @@ interface MessageFeedbackProps {
 export function MessageFeedback({
   targetId,
   currentVote,
+  hasComment = false,
   onVote,
+  onComment,
+  onClearComment,
   isSubmitting = false,
   scope = 'message',
   size = 'sm',
 }: MessageFeedbackProps) {
-  const [activePopover, setActivePopover] = useState<'up' | 'down' | null>(null)
+  const [activePopover, setActivePopover] = useState<'up' | 'down' | 'comment' | null>(null)
   const [selectedReasons, setSelectedReasons] = useState<FeedbackReasonCode[]>([])
   const [comment, setComment] = useState('')
 
@@ -100,6 +113,12 @@ export function MessageFeedback({
     setActivePopover('down')
   }
 
+  const handleCommentClick = () => {
+    if (isSubmitting) return
+    setComment('')
+    setActivePopover('comment')
+  }
+
   const handleReasonToggle = (code: FeedbackReasonCode) => {
     setSelectedReasons((prev) =>
       prev.includes(code) ? prev.filter((c) => c !== code) : [...prev, code],
@@ -108,7 +127,13 @@ export function MessageFeedback({
 
   const handleSubmit = () => {
     if (!activePopover) return
-    void onVote(scope, targetId, activePopover, selectedReasons, comment.trim() || undefined)
+    if (activePopover === 'comment') {
+      if (onComment && comment.trim()) {
+        void onComment(scope, targetId, comment.trim())
+      }
+    } else {
+      void onVote(scope, targetId, activePopover, selectedReasons, comment.trim() || undefined)
+    }
     setActivePopover(null)
     setSelectedReasons([])
     setComment('')
@@ -117,13 +142,21 @@ export function MessageFeedback({
   const handleClearVote = () => {
     if (!activePopover) return
     // Send bare vote (no reasons) — hook treats same-value + no reasons as toggle-off
-    void onVote(scope, targetId, activePopover)
+    void onVote(scope, targetId, activePopover as 'up' | 'down')
     setActivePopover(null)
     setSelectedReasons([])
     setComment('')
   }
 
-  const renderPopoverContent = (direction: 'up' | 'down') => (
+  const handleClearComment = () => {
+    if (onClearComment) {
+      void onClearComment(scope, targetId)
+    }
+    setActivePopover(null)
+    setComment('')
+  }
+
+  const renderVotePopoverContent = (direction: 'up' | 'down') => (
     <PopoverContent
       side="bottom"
       align="start"
@@ -186,6 +219,50 @@ export function MessageFeedback({
     </PopoverContent>
   )
 
+  const renderCommentPopoverContent = () => (
+    <PopoverContent
+      side="bottom"
+      align="start"
+      sideOffset={6}
+      className="w-64 p-3"
+      onOpenAutoFocus={(e) => e.preventDefault()}
+    >
+      <div className="space-y-3">
+        <p className="text-xs font-medium text-foreground">Add a comment</p>
+        <Textarea
+          placeholder="Your comment…"
+          value={comment}
+          onChange={(e) => setComment(e.target.value)}
+          className="min-h-[60px] resize-none text-xs"
+          rows={3}
+          maxLength={2000}
+          autoFocus
+        />
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            className="h-7 flex-1 text-xs"
+            onClick={handleSubmit}
+            disabled={isSubmitting || !comment.trim()}
+          >
+            Submit
+          </Button>
+          {hasComment && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs text-muted-foreground"
+              onClick={handleClearComment}
+              disabled={isSubmitting}
+            >
+              Remove
+            </Button>
+          )}
+        </div>
+      </div>
+    </PopoverContent>
+  )
+
   return (
     <span className="inline-flex items-center gap-0.5">
       {/* Thumbs Up — with reason picker popover on re-click */}
@@ -214,7 +291,7 @@ export function MessageFeedback({
             />
           </button>
         </PopoverAnchor>
-        {renderPopoverContent('up')}
+        {renderVotePopoverContent('up')}
       </Popover>
 
       {/* Thumbs Down — with reason picker popover */}
@@ -243,8 +320,39 @@ export function MessageFeedback({
             />
           </button>
         </PopoverAnchor>
-        {renderPopoverContent('down')}
+        {renderVotePopoverContent('down')}
       </Popover>
+
+      {/* Comment — standalone comment button */}
+      {onComment && (
+        <Popover
+          open={activePopover === 'comment'}
+          onOpenChange={(open) => { if (!open) setActivePopover(null) }}
+        >
+          <PopoverAnchor asChild>
+            <button
+              type="button"
+              disabled={isSubmitting}
+              onClick={handleCommentClick}
+              className={cn(
+                'inline-flex items-center justify-center rounded-sm transition-colors',
+                buttonSize,
+                hasComment
+                  ? 'text-blue-500 dark:text-blue-400'
+                  : 'text-muted-foreground/50 hover:text-muted-foreground',
+                isSubmitting && 'pointer-events-none opacity-50',
+              )}
+              aria-label="Add comment"
+              aria-pressed={hasComment}
+            >
+              <MessageSquare
+                className={cn(iconSize, hasComment && 'fill-current')}
+              />
+            </button>
+          </PopoverAnchor>
+          {renderCommentPopoverContent()}
+        </Popover>
+      )}
     </span>
   )
 }

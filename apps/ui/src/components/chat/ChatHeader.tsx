@@ -38,6 +38,7 @@ interface ChatHeaderProps {
   onToggleArtifactsPanel: () => void
   onToggleMobileSidebar?: () => void
   sessionFeedbackVote?: 'up' | 'down' | null
+  sessionFeedbackHasComment?: boolean
   onSessionFeedbackVote?: (
     scope: 'message' | 'session',
     targetId: string,
@@ -45,6 +46,12 @@ interface ChatHeaderProps {
     reasonCodes?: string[],
     comment?: string,
   ) => Promise<void>
+  onSessionFeedbackComment?: (
+    scope: 'message' | 'session',
+    targetId: string,
+    comment: string,
+  ) => Promise<void>
+  onSessionFeedbackClearComment?: (scope: 'message' | 'session', targetId: string) => Promise<void>
   isFeedbackSubmitting?: boolean
 }
 
@@ -113,7 +120,10 @@ export function ChatHeader({
   onToggleArtifactsPanel,
   onToggleMobileSidebar,
   sessionFeedbackVote,
+  sessionFeedbackHasComment,
   onSessionFeedbackVote,
+  onSessionFeedbackComment,
+  onSessionFeedbackClearComment,
   isFeedbackSubmitting,
 }: ChatHeaderProps) {
   const isStreaming = connected && activeAgentStatus === 'streaming'
@@ -188,7 +198,10 @@ export function ChatHeader({
               <MessageFeedback
                 targetId={activeAgentId}
                 currentVote={sessionFeedbackVote ?? null}
+                hasComment={sessionFeedbackHasComment}
                 onVote={onSessionFeedbackVote}
+                onComment={onSessionFeedbackComment}
+                onClearComment={onSessionFeedbackClearComment}
                 isSubmitting={isFeedbackSubmitting}
                 scope="session"
                 size="md"

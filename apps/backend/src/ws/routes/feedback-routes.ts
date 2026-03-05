@@ -60,7 +60,8 @@ export function createFeedbackRoutes(options: { swarmManager: SwarmManager }): H
               reasonCodes: parsed.reasonCodes,
               comment: parsed.comment,
               channel: parsed.channel,
-              actor: "user"
+              actor: "user",
+              ...(parsed.clearKind ? { clearKind: parsed.clearKind } : {})
             });
 
             sendJson(response, 201, { feedback: submitted });
@@ -190,6 +191,7 @@ function parseSubmitFeedbackBody(
   reasonCodes: string[];
   comment: string;
   channel: FeedbackEvent["channel"];
+  clearKind?: "vote" | "comment";
 } {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("Request body must be a JSON object.");
@@ -202,6 +204,7 @@ function parseSubmitFeedbackBody(
     reasonCodes?: unknown;
     comment?: unknown;
     channel?: unknown;
+    clearKind?: unknown;
   };
 
   const scope = parseScopeValue(maybe.scope, "scope");
@@ -232,13 +235,16 @@ function parseSubmitFeedbackBody(
 
   const channel = parseChannelValue(maybe.channel ?? "web", "channel");
 
+  const clearKind = feedbackValue === "clear" && maybe.clearKind === "comment" ? "comment" as const : undefined;
+
   return {
     scope,
     targetId,
     value: feedbackValue,
     reasonCodes,
     comment: typeof maybe.comment === "string" ? maybe.comment : "",
-    channel
+    channel,
+    ...(clearKind ? { clearKind } : {})
   };
 }
 
@@ -315,8 +321,8 @@ function parseVoteValue(
     throw new Error(`${fieldName} is required.`);
   }
 
-  if (value !== "up" && value !== "down" && value !== "clear") {
-    throw new Error(`${fieldName} must be one of: up, down, clear.`);
+  if (value !== "up" && value !== "down" && value !== "comment" && value !== "clear") {
+    throw new Error(`${fieldName} must be one of: up, down, comment, clear.`);
   }
 
   return value;

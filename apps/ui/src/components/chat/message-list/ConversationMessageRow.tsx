@@ -1,14 +1,45 @@
+import { useState, useCallback } from 'react'
+import { Copy, Check } from 'lucide-react'
 import { MarkdownMessage } from '@/components/chat/MarkdownMessage'
 import type { ArtifactReference } from '@/lib/artifacts'
+import { cn } from '@/lib/utils'
 import { MessageAttachments } from './MessageAttachments'
 import { MessageFeedback } from './MessageFeedback'
 import { SourceBadge, formatTimestamp } from './message-row-utils'
 import type { ConversationMessageEntry } from './types'
 
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false)
+
+  const handleCopy = useCallback(() => {
+    void navigator.clipboard.writeText(text).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    })
+  }, [text])
+
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      className={cn(
+        'inline-flex size-5 items-center justify-center rounded-sm transition-colors',
+        copied
+          ? 'text-emerald-600 dark:text-emerald-400'
+          : 'text-muted-foreground/50 hover:text-muted-foreground',
+      )}
+      aria-label="Copy message"
+    >
+      {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
+    </button>
+  )
+}
+
 interface ConversationMessageRowProps {
   message: ConversationMessageEntry
   onArtifactClick?: (artifact: ArtifactReference) => void
   feedbackVote?: 'up' | 'down' | null
+  feedbackHasComment?: boolean
   onFeedbackVote?: (
     scope: 'message' | 'session',
     targetId: string,
@@ -16,6 +47,12 @@ interface ConversationMessageRowProps {
     reasonCodes?: string[],
     comment?: string,
   ) => Promise<void>
+  onFeedbackComment?: (
+    scope: 'message' | 'session',
+    targetId: string,
+    comment: string,
+  ) => Promise<void>
+  onFeedbackClearComment?: (scope: 'message' | 'session', targetId: string) => Promise<void>
   isFeedbackSubmitting?: boolean
 }
 
@@ -23,7 +60,10 @@ export function ConversationMessageRow({
   message,
   onArtifactClick,
   feedbackVote,
+  feedbackHasComment,
   onFeedbackVote,
+  onFeedbackComment,
+  onFeedbackClearComment,
   isFeedbackSubmitting,
 }: ConversationMessageRowProps) {
   const normalizedText = message.text.trim()
@@ -100,11 +140,15 @@ export function ConversationMessageRow({
         <div className="flex items-center gap-1.5 text-[11px] leading-none text-muted-foreground/70">
           <SourceBadge sourceContext={sourceContext} />
           {timestampLabel ? <span>{timestampLabel}</span> : null}
+          {hasText ? <CopyButton text={normalizedText} /> : null}
           {showFeedback ? (
             <MessageFeedback
               targetId={message.timestamp}
               currentVote={feedbackVote ?? null}
+              hasComment={feedbackHasComment}
               onVote={onFeedbackVote}
+              onComment={onFeedbackComment}
+              onClearComment={onFeedbackClearComment}
               isSubmitting={isFeedbackSubmitting}
               scope="message"
             />
