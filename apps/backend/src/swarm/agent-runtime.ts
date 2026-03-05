@@ -420,6 +420,17 @@ export class AgentRuntime implements SwarmAgentRuntime {
       handoffFilePath
     });
 
+    await this.reportRuntimeError({
+      phase: "context_guard",
+      message: "Context limit approaching — running intelligent handoff before compaction",
+      details: {
+        recoveryStage: "guard_started",
+        contextTokens: triggeringUsage.tokens,
+        contextWindow: triggeringUsage.contextWindow,
+        contextPercent: triggeringUsage.percent
+      }
+    });
+
     let handoffContent: string | undefined;
     let completed = false;
 
@@ -637,10 +648,22 @@ export class AgentRuntime implements SwarmAgentRuntime {
     event: Extract<AgentSessionEvent, { type: "auto_compaction_end" }>
   ): Promise<void> {
     const compactionReason = this.latestAutoCompactionReason;
-    this.latestAutoCompactionReason = undefined;
 
     const autoCompactionError = typeof event.errorMessage === "string" ? event.errorMessage.trim() : "";
-    if (!autoCompactionError || this.status === "terminated") {
+    if (this.status === "terminated") {
+      return;
+    }
+
+    if (!autoCompactionError) {
+      await this.reportRuntimeError({
+        phase: "compaction",
+        message: "Context automatically compacted",
+        details: {
+          recoveryStage: "auto_compaction_succeeded",
+          compactionReason
+        }
+      });
+      this.latestAutoCompactionReason = undefined;
       return;
     }
 
@@ -649,6 +672,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
         recoveryStage: "auto_compaction_skipped",
         reason: "recovery_already_in_progress"
       });
+      this.latestAutoCompactionReason = undefined;
       return;
     }
 
