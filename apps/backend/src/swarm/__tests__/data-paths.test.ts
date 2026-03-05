@@ -20,6 +20,7 @@ import {
   getProfilesDir,
   getSessionDir,
   getSessionFilePath,
+  getSessionFeedbackPath,
   getSessionMemoryPath,
   getSessionMetaPath,
   getSessionsDir,
@@ -65,6 +66,9 @@ describe("data-paths", () => {
     );
     expect(getSessionFilePath(DATA_DIR, PROFILE_ID, NON_ROOT_SESSION_ID)).toBe(
       join(DATA_DIR, "profiles", PROFILE_ID, "sessions", NON_ROOT_SESSION_ID, "session.jsonl")
+    );
+    expect(getSessionFeedbackPath(DATA_DIR, PROFILE_ID, NON_ROOT_SESSION_ID)).toBe(
+      join(DATA_DIR, "profiles", PROFILE_ID, "sessions", NON_ROOT_SESSION_ID, "feedback.jsonl")
     );
     expect(getSessionMetaPath(DATA_DIR, PROFILE_ID, NON_ROOT_SESSION_ID)).toBe(
       join(DATA_DIR, "profiles", PROFILE_ID, "sessions", NON_ROOT_SESSION_ID, "meta.json")

@@ -52,6 +52,11 @@ describe('cortex-scan script', () => {
         totalBytes: 1000,
         reviewedBytes: 200,
         reviewedAt: '2026-03-01T10:00:00.000Z',
+        feedbackDeltaBytes: 0,
+        feedbackTotalBytes: 0,
+        feedbackReviewedBytes: 0,
+        feedbackReviewedAt: null,
+        lastFeedbackAt: null,
         status: 'needs-review',
       },
       {
@@ -61,6 +66,11 @@ describe('cortex-scan script', () => {
         totalBytes: 500,
         reviewedBytes: 500,
         reviewedAt: '2026-03-01T11:00:00.000Z',
+        feedbackDeltaBytes: 0,
+        feedbackTotalBytes: 0,
+        feedbackReviewedBytes: 0,
+        feedbackReviewedAt: null,
+        lastFeedbackAt: null,
         status: 'up-to-date',
       },
     ])
@@ -101,5 +111,40 @@ describe('cortex-scan script', () => {
     expect(compactedIndex).toBeGreaterThanOrEqual(0)
     expect(neverReviewedIndex).toBeLessThan(compactedIndex)
     expect(output).toContain('Summary: 2 sessions need review, 0 up to date')
+  })
+
+  it('includes feedback review watermarks and feedback delta bytes', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'cortex-scan-test-'))
+
+    await writeMeta(dataDir, 'alpha', 'alpha--s1', {
+      profileId: 'alpha',
+      sessionId: 'alpha--s1',
+      stats: { sessionFileSize: '100' },
+      cortexReviewedBytes: 100,
+      cortexReviewedAt: '2026-03-01T12:00:00.000Z',
+      feedbackFileSize: '55',
+      cortexReviewedFeedbackBytes: 20,
+      cortexReviewedFeedbackAt: '2026-03-01T12:30:00.000Z',
+      lastFeedbackAt: '2026-03-02T00:00:00.000Z',
+    })
+
+    const result = await scanCortexReviewStatus(dataDir)
+
+    expect(result.sessions).toEqual([
+      {
+        profileId: 'alpha',
+        sessionId: 'alpha--s1',
+        deltaBytes: 0,
+        totalBytes: 100,
+        reviewedBytes: 100,
+        reviewedAt: '2026-03-01T12:00:00.000Z',
+        feedbackDeltaBytes: 35,
+        feedbackTotalBytes: 55,
+        feedbackReviewedBytes: 20,
+        feedbackReviewedAt: '2026-03-01T12:30:00.000Z',
+        lastFeedbackAt: '2026-03-02T00:00:00.000Z',
+        status: 'needs-review',
+      },
+    ])
   })
 })

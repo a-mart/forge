@@ -750,6 +750,11 @@ describe('SwarmWebSocketServer', () => {
             totalBytes: number
             reviewedBytes: number
             reviewedAt: string | null
+            feedbackDeltaBytes: number
+            feedbackTotalBytes: number
+            feedbackReviewedBytes: number
+            feedbackReviewedAt: string | null
+            lastFeedbackAt: string | null
             status: string
           }>
           summary: {

@@ -21,6 +21,15 @@ interface MessageListProps {
   activeAgentId?: string | null
   onSuggestionClick?: (suggestion: string) => void
   onArtifactClick?: (artifact: ArtifactReference) => void
+  getVote?: (targetId: string) => 'up' | 'down' | null
+  onFeedbackVote?: (
+    scope: 'message' | 'session',
+    targetId: string,
+    value: 'up' | 'down',
+    reasonCodes?: string[],
+    comment?: string,
+  ) => Promise<void>
+  isFeedbackSubmitting?: boolean
 }
 
 const AUTO_SCROLL_THRESHOLD_PX = 100
@@ -209,6 +218,9 @@ export function MessageList({
   activeAgentId,
   onSuggestionClick,
   onArtifactClick,
+  getVote,
+  onFeedbackVote,
+  isFeedbackSubmitting,
 }: MessageListProps) {
   const scrollContainerRef = useRef<HTMLDivElement | null>(null)
   const bottomRef = useRef<HTMLDivElement | null>(null)
@@ -306,11 +318,15 @@ export function MessageList({
         <div className="space-y-2 p-2 md:p-3">
           {displayEntries.map((entry) => {
             if (entry.type === 'conversation_message') {
+              const isAssistant = entry.message.role === 'assistant'
               return (
                 <ConversationMessageRow
                   key={entry.id}
                   message={entry.message}
                   onArtifactClick={onArtifactClick}
+                  feedbackVote={isAssistant && getVote ? getVote(entry.message.timestamp) : undefined}
+                  onFeedbackVote={isAssistant ? onFeedbackVote : undefined}
+                  isFeedbackSubmitting={isFeedbackSubmitting}
                 />
               )
             }

@@ -23,6 +23,7 @@ import { SettingsPanel } from '@/components/chat/SettingsDialog'
 import { chooseFallbackAgentId } from '@/lib/agent-hierarchy'
 import type { ArtifactReference } from '@/lib/artifacts'
 import { collectArtifactsFromMessages } from '@/lib/collect-artifacts'
+import { useFeedback } from '@/lib/use-feedback'
 import {
   DEFAULT_MANAGER_AGENT_ID,
   useRouteState,
@@ -178,6 +179,32 @@ export function IndexPage() {
   const collectedArtifacts = useMemo(
     () => collectArtifactsFromMessages(allMessages),
     [allMessages],
+  )
+
+  const feedbackSessionId = useMemo(() => {
+    if (!activeAgent) {
+      return null
+    }
+
+    return activeAgent.role === 'worker' ? activeAgent.managerId : activeAgent.agentId
+  }, [activeAgent])
+
+  const feedbackSessionAgent = useMemo(() => {
+    if (!feedbackSessionId) {
+      return null
+    }
+
+    return (
+      state.agents.find(
+        (agent) => agent.agentId === feedbackSessionId && agent.role === 'manager',
+      ) ?? null
+    )
+  }, [feedbackSessionId, state.agents])
+
+  const feedbackProfileId = feedbackSessionAgent?.profileId ?? null
+  const { getVote, submitVote, isSubmitting: isFeedbackSubmitting } = useFeedback(
+    feedbackProfileId,
+    feedbackSessionId,
   )
 
   const {
@@ -576,6 +603,11 @@ export function IndexPage() {
                   onToggleMobileSidebar={() =>
                     setIsMobileSidebarOpen((previous) => !previous)
                   }
+                  sessionFeedbackVote={isActiveManager && activeAgentId ? getVote(activeAgentId) : null}
+                  onSessionFeedbackVote={
+                    isActiveManager && feedbackProfileId ? submitVote : undefined
+                  }
+                  isFeedbackSubmitting={isFeedbackSubmitting}
                 />
 
                 {state.lastError ? (
@@ -596,6 +628,9 @@ export function IndexPage() {
                   activeAgentId={activeAgentId}
                   onSuggestionClick={handleSuggestionClick}
                   onArtifactClick={handleOpenArtifact}
+                  getVote={feedbackProfileId ? getVote : undefined}
+                  onFeedbackVote={feedbackProfileId ? submitVote : undefined}
+                  isFeedbackSubmitting={isFeedbackSubmitting}
                 />
 
                 <MessageInput

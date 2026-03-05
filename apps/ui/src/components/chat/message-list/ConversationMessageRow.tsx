@@ -1,17 +1,30 @@
 import { MarkdownMessage } from '@/components/chat/MarkdownMessage'
 import type { ArtifactReference } from '@/lib/artifacts'
 import { MessageAttachments } from './MessageAttachments'
+import { MessageFeedback } from './MessageFeedback'
 import { SourceBadge, formatTimestamp } from './message-row-utils'
 import type { ConversationMessageEntry } from './types'
 
 interface ConversationMessageRowProps {
   message: ConversationMessageEntry
   onArtifactClick?: (artifact: ArtifactReference) => void
+  feedbackVote?: 'up' | 'down' | null
+  onFeedbackVote?: (
+    scope: 'message' | 'session',
+    targetId: string,
+    value: 'up' | 'down',
+    reasonCodes?: string[],
+    comment?: string,
+  ) => Promise<void>
+  isFeedbackSubmitting?: boolean
 }
 
 export function ConversationMessageRow({
   message,
   onArtifactClick,
+  feedbackVote,
+  onFeedbackVote,
+  isFeedbackSubmitting,
 }: ConversationMessageRowProps) {
   const normalizedText = message.text.trim()
   const hasText = normalizedText.length > 0 && normalizedText !== '.'
@@ -75,16 +88,27 @@ export function ConversationMessageRow({
     )
   }
 
+  const showFeedback = message.role === 'assistant' && onFeedbackVote
+
   return (
     <div className="min-w-0 space-y-2 text-foreground">
       {hasText ? (
         <MarkdownMessage content={normalizedText} onArtifactClick={onArtifactClick} />
       ) : null}
       <MessageAttachments attachments={attachments} isUser={false} />
-      {timestampLabel || sourceContext ? (
+      {timestampLabel || sourceContext || showFeedback ? (
         <div className="flex items-center gap-1.5 text-[11px] leading-none text-muted-foreground/70">
           <SourceBadge sourceContext={sourceContext} />
           {timestampLabel ? <span>{timestampLabel}</span> : null}
+          {showFeedback ? (
+            <MessageFeedback
+              targetId={message.timestamp}
+              currentVote={feedbackVote ?? null}
+              onVote={onFeedbackVote}
+              isSubmitting={isFeedbackSubmitting}
+              scope="message"
+            />
+          ) : null}
         </div>
       ) : null}
     </div>

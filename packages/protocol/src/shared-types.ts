@@ -80,6 +80,10 @@ export interface SessionMeta {
 
   cortexReviewedAt?: string
   cortexReviewedBytes?: number
+  feedbackFileSize?: string | null
+  lastFeedbackAt?: string | null
+  cortexReviewedFeedbackBytes?: number
+  cortexReviewedFeedbackAt?: string | null
 
   stats: {
     totalWorkers: number

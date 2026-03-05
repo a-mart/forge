@@ -7,6 +7,7 @@ import { applyCorsHeaders, resolveRequestUrl, sendJson } from "./http-utils.js";
 import { createAgentHttpRoutes } from "./routes/agent-routes.js";
 import { createCortexRoutes } from "./routes/cortex-routes.js";
 import { createFileRoutes } from "./routes/file-routes.js";
+import { createFeedbackRoutes } from "./routes/feedback-routes.js";
 import { createHealthRoutes } from "./routes/health-routes.js";
 import type { HttpRoute } from "./routes/http-route.js";
 import { createIntegrationRoutes } from "./routes/integration-routes.js";
@@ -109,6 +110,7 @@ export class SwarmWebSocketServer {
         resolveRepoRoot: () => this.swarmManager.getConfig().paths.rootDir
       }),
       ...createFileRoutes({ swarmManager: this.swarmManager }),
+      ...createFeedbackRoutes({ swarmManager: this.swarmManager }),
       ...createCortexRoutes({ swarmManager: this.swarmManager }),
       ...createTranscriptionRoutes({ swarmManager: this.swarmManager }),
       ...createSchedulerRoutes({ swarmManager: this.swarmManager }),
