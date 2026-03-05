@@ -357,6 +357,9 @@ Do NOT rewrite knowledge files directly. Do NOT do unbounded manual transcript r
 
 // Retain recent non-web activity while preserving the full user-facing web transcript.
 const SWARM_CONTEXT_FILE_NAME = "SWARM.md";
+// Integration services add ~3 event listeners per profile (Telegram conversation_message,
+// Slack conversation_message, Telegram session_lifecycle). Keep this limit above
+// base listeners + (3 × expected maximum profiles).
 const SWARM_MANAGER_MAX_EVENT_LISTENERS = 64;
 const IDLE_WORKER_WATCHDOG_GRACE_MS = 3_000;
 const SESSION_ID_SUFFIX_SEPARATOR = "--s";
