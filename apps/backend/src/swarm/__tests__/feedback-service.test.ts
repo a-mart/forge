@@ -33,6 +33,242 @@ describe("feedback-service", () => {
     expect(feedback).toEqual([submitted]);
   });
 
+  it("stores vote and comment entries independently for the same target", async () => {
+    const dataDir = await createTempDataDir();
+    const profileId = "alpha";
+    const sessionId = "alpha--s1";
+
+    const service = new FeedbackService(dataDir);
+
+    await service.submitFeedback({
+      profileId,
+      sessionId,
+      scope: "message",
+      targetId: "msg-1",
+      value: "up",
+      reasonCodes: ["accuracy"],
+      comment: "Nice answer",
+      channel: "web",
+      actor: "user"
+    });
+
+    await service.submitFeedback({
+      profileId,
+      sessionId,
+      scope: "message",
+      targetId: "msg-1",
+      value: "comment",
+      reasonCodes: ["accuracy"],
+      comment: "I like this answer",
+      channel: "web",
+      actor: "user"
+    });
+
+    const both = await service.listFeedback(profileId, sessionId);
+    expect(both).toHaveLength(2);
+    expect(both.map((event) => event.value).sort()).toEqual(["comment", "up"]);
+  });
+
+  it("clearKind comment removes only the comment entry", async () => {
+    const dataDir = await createTempDataDir();
+    const profileId = "alpha";
+    const sessionId = "alpha--s1";
+
+    const service = new FeedbackService(dataDir);
+
+    await service.submitFeedback({
+      profileId,
+      sessionId,
+      scope: "message",
+      targetId: "msg-1",
+      value: "up",
+      reasonCodes: ["accuracy"],
+      comment: "Nice answer",
+      channel: "web",
+      actor: "user"
+    });
+
+    await service.submitFeedback({
+      profileId,
+      sessionId,
+      scope: "message",
+      targetId: "msg-1",
+      value: "comment",
+      reasonCodes: ["accuracy"],
+      comment: "I like this answer",
+      channel: "web",
+      actor: "user"
+    });
+
+    await service.submitFeedback({
+      profileId,
+      sessionId,
+      scope: "message",
+      targetId: "msg-1",
+      value: "clear",
+      reasonCodes: [],
+      comment: "",
+      channel: "web",
+      actor: "user",
+      clearKind: "comment"
+    });
+
+    const remaining = await service.listFeedback(profileId, sessionId);
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0]?.value).toBe("up");
+  });
+
+  it("clearKind vote (or default clear) removes only the vote entry", async () => {
+    const dataDir = await createTempDataDir();
+    const profileId = "alpha";
+    const sessionId = "alpha--s1";
+
+    const service = new FeedbackService(dataDir);
+
+    await service.submitFeedback({
+      profileId,
+      sessionId,
+      scope: "message",
+      targetId: "msg-1",
+      value: "up",
+      reasonCodes: ["accuracy"],
+      comment: "Nice answer",
+      channel: "web",
+      actor: "user"
+    });
+
+    await service.submitFeedback({
+      profileId,
+      sessionId,
+      scope: "message",
+      targetId: "msg-1",
+      value: "comment",
+      reasonCodes: ["accuracy"],
+      comment: "I like this answer",
+      channel: "web",
+      actor: "user"
+    });
+
+    // Explicit vote-clear
+    await service.submitFeedback({
+      profileId,
+      sessionId,
+      scope: "message",
+      targetId: "msg-1",
+      value: "clear",
+      reasonCodes: [],
+      comment: "",
+      channel: "web",
+      actor: "user",
+      clearKind: "vote"
+    });
+
+    const remainingAfterVoteClear = await service.listFeedback(profileId, sessionId);
+    expect(remainingAfterVoteClear).toHaveLength(1);
+    expect(remainingAfterVoteClear[0]?.value).toBe("comment");
+
+    await service.submitFeedback({
+      profileId,
+      sessionId,
+      scope: "message",
+      targetId: "msg-2",
+      value: "up",
+      reasonCodes: ["accuracy"],
+      comment: "Nice answer",
+      channel: "web",
+      actor: "user"
+    });
+
+    await service.submitFeedback({
+      profileId,
+      sessionId,
+      scope: "message",
+      targetId: "msg-2",
+      value: "comment",
+      reasonCodes: ["accuracy"],
+      comment: "I like this answer",
+      channel: "web",
+      actor: "user"
+    });
+
+    // Default clear (defaults to vote)
+    await service.submitFeedback({
+      profileId,
+      sessionId,
+      scope: "message",
+      targetId: "msg-2",
+      value: "clear",
+      reasonCodes: [],
+      comment: "",
+      channel: "web",
+      actor: "user"
+    });
+
+    const remainingAfterDefaultClear = await service.listFeedback(profileId, sessionId);
+    expect(remainingAfterDefaultClear).toHaveLength(2);
+    expect(remainingAfterDefaultClear.every((event) => event.value === "comment")).toBe(true);
+    expect(remainingAfterDefaultClear.map((event) => event.targetId)).toContain("msg-1");
+    expect(remainingAfterDefaultClear.map((event) => event.targetId)).toContain("msg-2");
+  });
+
+  it("accepts needs_clarification for both up and down feedback", async () => {
+    const dataDir = await createTempDataDir();
+    const profileId = "alpha";
+    const sessionId = "alpha--s1";
+
+    const service = new FeedbackService(dataDir);
+
+    const up = await service.submitFeedback({
+      profileId,
+      sessionId,
+      scope: "message",
+      targetId: "msg-1",
+      value: "up",
+      reasonCodes: ["needs_clarification"],
+      comment: "",
+      channel: "web",
+      actor: "user"
+    });
+
+    await delayMs(5);
+
+    const down = await service.submitFeedback({
+      profileId,
+      sessionId,
+      scope: "message",
+      targetId: "msg-2",
+      value: "down",
+      reasonCodes: ["needs_clarification"],
+      comment: "",
+      channel: "web",
+      actor: "user"
+    });
+
+    const feedback = await service.listFeedback(profileId, sessionId);
+    expect(feedback).toHaveLength(2);
+    expect(feedback.find((event) => event.id === up.id)?.reasonCodes).toContain("needs_clarification");
+    expect(feedback.find((event) => event.id === down.id)?.reasonCodes).toContain("needs_clarification");
+  });
+
+  it("rejects empty comments for comment feedback", async () => {
+    const dataDir = await createTempDataDir();
+    const service = new FeedbackService(dataDir);
+
+    await expect(
+      service.submitFeedback({
+        profileId: "alpha",
+        sessionId: "alpha--s1",
+        scope: "message",
+        targetId: "msg-1",
+        value: "comment",
+        reasonCodes: ["accuracy"],
+        comment: "   \n\t",
+        channel: "web",
+        actor: "user"
+      })
+    ).rejects.toThrow("comment must be a non-empty string.");
+  });
+
   it("upserts existing feedback entries and removes entries on clear", async () => {
     const dataDir = await createTempDataDir();
     const profileId = "alpha";
@@ -398,6 +634,7 @@ function createSessionMeta(profileId: string, sessionId: string): SessionMeta {
     cwd: "/tmp/project",
     promptFingerprint: null,
     promptComponents: null,
+
     workers: [],
     stats: {
       totalWorkers: 0,

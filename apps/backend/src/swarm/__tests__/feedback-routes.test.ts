@@ -128,6 +128,49 @@ describe("feedback-routes", () => {
     expect(errorPayload.error).toContain("comment must not exceed 2000 characters");
   });
 
+  it("returns 400 for invalid clearKind values", async () => {
+    const server = await createFeedbackTestServer([createManagerSession("alpha", "alpha--s1")]);
+
+    const response = await fetch(`${server.baseUrl}/api/v1/profiles/alpha/sessions/alpha--s1/feedback`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        scope: "message",
+        targetId: "msg-1",
+        value: "clear",
+        reasonCodes: [],
+        comment: "",
+        channel: "web",
+        clearKind: "banana"
+      })
+    });
+
+    expect(response.status).toBe(400);
+    const payload = (await response.json()) as { error?: string };
+    expect(payload.error).toContain("clearKind must be one of: vote, comment.");
+  });
+
+  it("returns 400 for empty comments", async () => {
+    const server = await createFeedbackTestServer([createManagerSession("alpha", "alpha--s1")]);
+
+    const response = await fetch(`${server.baseUrl}/api/v1/profiles/alpha/sessions/alpha--s1/feedback`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        scope: "message",
+        targetId: "msg-1",
+        value: "comment",
+        reasonCodes: [],
+        comment: " \t\n",
+        channel: "web"
+      })
+    });
+
+    expect(response.status).toBe(400);
+    const payload = (await response.json()) as { error?: string };
+    expect(payload.error).toContain("comment must be a non-empty string.");
+  });
+
   it("returns 404 for non-existent sessions", async () => {
     const server = await createFeedbackTestServer([createManagerSession("alpha", "alpha--s1")]);
 

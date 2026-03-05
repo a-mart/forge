@@ -255,7 +255,11 @@ function normalizeSubmitFeedbackInput(
 
   const comment = typeof event.comment === "string" ? event.comment : "";
 
-  const clearKind = value === "clear" && event.clearKind === "comment" ? "comment" as const : undefined;
+  const clearKind = normalizeClearKind(event.clearKind);
+
+  if (value === "comment" && comment.trim().length === 0) {
+    throw new Error("comment must be a non-empty string.");
+  }
 
   return {
     profileId,
@@ -267,7 +271,7 @@ function normalizeSubmitFeedbackInput(
     comment,
     channel,
     actor: "user",
-    ...(clearKind ? { clearKind } : {})
+    ...(value === "clear" && clearKind ? { clearKind } : {})
   };
 }
 
@@ -360,6 +364,19 @@ function normalizeReasonCodes(value: unknown): string[] {
 
   return reasonCodes;
 }
+
+function normalizeClearKind(value: unknown): "vote" | "comment" | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  if (value !== "vote" && value !== "comment") {
+    throw new Error("clearKind must be one of: vote, comment.");
+  }
+
+  return value;
+}
+
 
 function normalizeReasonCodesMaybe(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) {

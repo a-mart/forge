@@ -229,22 +229,27 @@ function parseSubmitFeedbackBody(
     throw new Error("comment must be a string.");
   }
 
-  if (typeof maybe.comment === "string" && maybe.comment.length > 2000) {
+  const comment = typeof maybe.comment === "string" ? maybe.comment : "";
+  if (comment.length > 2000) {
     throw new Error("comment must not exceed 2000 characters.");
   }
 
-  const channel = parseChannelValue(maybe.channel ?? "web", "channel");
+  if (feedbackValue === "comment" && comment.trim().length === 0) {
+    throw new Error("comment must be a non-empty string.");
+  }
 
-  const clearKind = feedbackValue === "clear" && maybe.clearKind === "comment" ? "comment" as const : undefined;
+  const clearKind = parseClearKindValue(maybe.clearKind, "clearKind");
+
+  const channel = parseChannelValue(maybe.channel ?? "web", "channel");
 
   return {
     scope,
     targetId,
     value: feedbackValue,
     reasonCodes,
-    comment: typeof maybe.comment === "string" ? maybe.comment : "",
+    comment,
     channel,
-    ...(clearKind ? { clearKind } : {})
+    ...(feedbackValue === "clear" && clearKind ? { clearKind } : {})
   };
 }
 
@@ -323,6 +328,18 @@ function parseVoteValue(
 
   if (value !== "up" && value !== "down" && value !== "comment" && value !== "clear") {
     throw new Error(`${fieldName} must be one of: up, down, comment, clear.`);
+  }
+
+  return value;
+}
+
+function parseClearKindValue(value: unknown, fieldName: string): "vote" | "comment" | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  if (value !== "vote" && value !== "comment") {
+    throw new Error(`${fieldName} must be one of: vote, comment.`);
   }
 
   return value;
