@@ -104,7 +104,7 @@ export class FeedbackService {
     const states = Array.from(latestEventsByTarget.values()).map((event) => ({
       targetId: event.targetId,
       scope: event.scope,
-      value: event.value,
+      value: event.value === "clear" ? null : event.value,
       latestEventId: event.id,
       latestAt: event.createdAt
     } satisfies FeedbackState));
@@ -329,7 +329,7 @@ function requireFeedbackScope(value: unknown, fieldName: string): FeedbackEvent[
 
 function requireFeedbackValue(value: unknown, fieldName: string): FeedbackEvent["value"] {
   if (!isFeedbackValue(value)) {
-    throw new Error(`${fieldName} must be one of: up, down.`);
+    throw new Error(`${fieldName} must be one of: up, down, clear.`);
   }
 
   return value;
@@ -357,7 +357,7 @@ function isFeedbackScope(value: unknown): value is FeedbackEvent["scope"] {
 }
 
 function isFeedbackValue(value: unknown): value is FeedbackEvent["value"] {
-  return value === "up" || value === "down";
+  return value === "up" || value === "down" || value === "clear";
 }
 
 function isFeedbackChannel(value: unknown): value is FeedbackEvent["channel"] {

@@ -6,6 +6,8 @@ export function useFeedback(profileId: string | null, sessionId: string | null) 
   const [feedbackStates, setFeedbackStates] = useState<Map<string, FeedbackState>>(new Map())
   const [isSubmitting, setIsSubmitting] = useState(false)
   const fetchedKeyRef = useRef<string | null>(null)
+  const feedbackStatesRef = useRef(feedbackStates)
+  feedbackStatesRef.current = feedbackStates
 
   // Fetch initial states when profileId/sessionId become available
   useEffect(() => {
@@ -57,12 +59,13 @@ export function useFeedback(profileId: string | null, sessionId: string | null) 
     ) => {
       if (!profileId || !sessionId) return
 
-      const currentVote = feedbackStates.get(targetId)?.value ?? null
+      const currentVote = feedbackStatesRef.current.get(targetId)?.value ?? null
 
-      // Toggle: clicking the same value again clears it
-      // For "clear", we still send the value but the backend handles the toggle.
-      // If the user clicks the same value, we optimistically clear locally.
+      // Toggle: clicking the same value again clears it.
       const isToggleOff = currentVote === value
+      const submittedValue = isToggleOff ? 'clear' : value
+      const submittedReasonCodes = isToggleOff ? [] : reasonCodes
+      const submittedComment = isToggleOff ? '' : comment
 
       // Optimistic update
       setFeedbackStates((prev) => {
@@ -95,18 +98,15 @@ export function useFeedback(profileId: string | null, sessionId: string | null) 
           sessionId,
           scope,
           targetId,
-          value,
-          reasonCodes,
-          comment,
+          value: submittedValue,
+          reasonCodes: submittedReasonCodes,
+          comment: submittedComment,
         })
 
         // Update with server response
         setFeedbackStates((prev) => {
           const next = new Map(prev)
-          // The backend handles toggle logic and returns the resulting state.
-          // If it was a toggle-off, the backend may still return the event but
-          // the state endpoint will reflect null. For now, trust our optimistic state
-          // but update the eventId.
+          // Preserve the optimistic value and hydrate server event metadata.
           const current = next.get(targetId)
           if (current) {
             next.set(targetId, {
@@ -135,7 +135,7 @@ export function useFeedback(profileId: string | null, sessionId: string | null) 
         setIsSubmitting(false)
       }
     },
-    [profileId, sessionId, feedbackStates],
+    [profileId, sessionId],
   )
 
   return {

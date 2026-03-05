@@ -166,6 +166,7 @@ export function MessageFeedback({
               onChange={(e) => setComment(e.target.value)}
               className="min-h-[52px] resize-none text-xs"
               rows={2}
+              maxLength={2000}
             />
             <Button
               size="sm"

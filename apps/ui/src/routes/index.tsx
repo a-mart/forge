@@ -181,8 +181,27 @@ export function IndexPage() {
     [allMessages],
   )
 
-  const feedbackProfileId = activeAgent?.profileId ?? null
-  const feedbackSessionId = activeAgentId ?? null
+  const feedbackSessionId = useMemo(() => {
+    if (!activeAgent) {
+      return null
+    }
+
+    return activeAgent.role === 'worker' ? activeAgent.managerId : activeAgent.agentId
+  }, [activeAgent])
+
+  const feedbackSessionAgent = useMemo(() => {
+    if (!feedbackSessionId) {
+      return null
+    }
+
+    return (
+      state.agents.find(
+        (agent) => agent.agentId === feedbackSessionId && agent.role === 'manager',
+      ) ?? null
+    )
+  }, [feedbackSessionId, state.agents])
+
+  const feedbackProfileId = feedbackSessionAgent?.profileId ?? null
   const { getVote, submitVote, isSubmitting: isFeedbackSubmitting } = useFeedback(
     feedbackProfileId,
     feedbackSessionId,
@@ -584,8 +603,10 @@ export function IndexPage() {
                   onToggleMobileSidebar={() =>
                     setIsMobileSidebarOpen((previous) => !previous)
                   }
-                  sessionFeedbackVote={activeAgentId ? getVote(activeAgentId) : null}
-                  onSessionFeedbackVote={feedbackProfileId ? submitVote : undefined}
+                  sessionFeedbackVote={isActiveManager && activeAgentId ? getVote(activeAgentId) : null}
+                  onSessionFeedbackVote={
+                    isActiveManager && feedbackProfileId ? submitVote : undefined
+                  }
                   isFeedbackSubmitting={isFeedbackSubmitting}
                 />
 

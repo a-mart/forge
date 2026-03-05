@@ -226,6 +226,10 @@ function parseSubmitFeedbackBody(
     throw new Error("comment must be a string.");
   }
 
+  if (typeof maybe.comment === "string" && maybe.comment.length > 2000) {
+    throw new Error("comment must not exceed 2000 characters.");
+  }
+
   const channel = parseChannelValue(maybe.channel ?? "web", "channel");
 
   return {
@@ -311,8 +315,8 @@ function parseVoteValue(
     throw new Error(`${fieldName} is required.`);
   }
 
-  if (value !== "up" && value !== "down") {
-    throw new Error(`${fieldName} must be one of: up, down.`);
+  if (value !== "up" && value !== "down" && value !== "clear") {
+    throw new Error(`${fieldName} must be one of: up, down, clear.`);
   }
 
   return value;
@@ -360,6 +364,7 @@ function isInvalidRequestError(message: string): boolean {
     message.includes("must") ||
     message.includes("required") ||
     message.includes("Unknown feedback reason code") ||
+    message.includes("Invalid path segment") ||
     message.includes("Request body")
   );
 }

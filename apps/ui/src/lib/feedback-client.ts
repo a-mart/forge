@@ -31,10 +31,10 @@ export async function submitFeedback(params: {
   sessionId: string
   scope: 'message' | 'session'
   targetId: string
-  value: 'up' | 'down'
+  value: FeedbackEvent['value']
   reasonCodes?: string[]
   comment?: string
-  channel?: string
+  channel?: FeedbackEvent['channel']
 }): Promise<FeedbackEvent> {
   const { profileId, sessionId, ...body } = params
   const endpoint = apiUrl(
@@ -58,7 +58,8 @@ export async function submitFeedback(params: {
     throw new Error(await readApiError(response))
   }
 
-  return (await response.json()) as FeedbackEvent
+  const payload = (await response.json()) as { feedback: FeedbackEvent }
+  return payload.feedback
 }
 
 export async function fetchFeedbackStates(

@@ -6,7 +6,7 @@ export interface FeedbackEvent {
   sessionId: string
   scope: 'message' | 'session'
   targetId: string
-  value: 'up' | 'down'
+  value: 'up' | 'down' | 'clear'
   reasonCodes: string[]
   comment: string
   channel: 'web' | 'telegram' | 'slack'
