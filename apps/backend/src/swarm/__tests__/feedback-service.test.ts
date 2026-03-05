@@ -1,7 +1,7 @@
-import { mkdir, mkdtemp, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { FeedbackEvent, SessionMeta } from "@middleman/protocol";
+import type { FeedbackEvent, FeedbackSubmitEvent, SessionMeta } from "@middleman/protocol";
 import { describe, expect, it } from "vitest";
 import { getSessionFeedbackPath } from "../data-paths.js";
 import { FeedbackService } from "../feedback-service.js";
@@ -33,7 +33,7 @@ describe("feedback-service", () => {
     expect(feedback).toEqual([submitted]);
   });
 
-  it("resolves latest feedback state per target using last event wins", async () => {
+  it("upserts existing feedback entries and removes entries on clear", async () => {
     const dataDir = await createTempDataDir();
     const profileId = "alpha";
     const sessionId = "alpha--s1";
@@ -47,14 +47,79 @@ describe("feedback-service", () => {
       targetId: "msg-1",
       value: "up",
       reasonCodes: ["accuracy"],
+      comment: "Original",
+      channel: "web",
+      actor: "user"
+    });
+
+    const updated = await service.submitFeedback({
+      profileId,
+      sessionId,
+      scope: "message",
+      targetId: "msg-1",
+      value: "down",
+      reasonCodes: ["instruction_following"],
+      comment: "Updated",
+      channel: "web",
+      actor: "user"
+    });
+
+    const afterUpdate = await service.listFeedback(profileId, sessionId);
+    expect(afterUpdate).toEqual([updated]);
+    expect(afterUpdate[0]?.id).toBe(updated.id);
+    expect(afterUpdate[0]?.id).not.toBe(first.id);
+
+    const feedbackPath = getSessionFeedbackPath(dataDir, profileId, sessionId);
+    const rawAfterUpdate = (await readFile(feedbackPath, "utf8")).trim();
+    expect(rawAfterUpdate.split("\n").length).toBe(1);
+    expect(rawAfterUpdate).toContain(updated.id);
+
+    const cleared = await service.submitFeedback({
+      profileId,
+      sessionId,
+      scope: "message",
+      targetId: "msg-1",
+      value: "clear",
+      reasonCodes: [],
       comment: "",
       channel: "web",
       actor: "user"
     });
 
-    await delayMs(5);
+    expect(cleared.value).toBe("clear");
 
-    const second = await service.submitFeedback({
+    const afterClear = await service.listFeedback(profileId, sessionId);
+    expect(afterClear).toEqual([]);
+
+    const states = await service.getLatestStates(profileId, sessionId);
+    expect(states).toEqual([]);
+
+    const sizeFromStat = (await stat(feedbackPath)).size;
+    expect(sizeFromStat).toBe(0);
+
+    expect(await readFile(feedbackPath, "utf8")).toBe("");
+  });
+
+  it("resolves latest feedback state per target from current stored entries", async () => {
+    const dataDir = await createTempDataDir();
+    const profileId = "alpha";
+    const sessionId = "alpha--s1";
+
+    const service = new FeedbackService(dataDir);
+
+    await service.submitFeedback({
+      profileId,
+      sessionId,
+      scope: "message",
+      targetId: "msg-1",
+      value: "up",
+      reasonCodes: ["accuracy"],
+      comment: "",
+      channel: "web",
+      actor: "user"
+    });
+
+    await service.submitFeedback({
       profileId,
       sessionId,
       scope: "message",
@@ -66,9 +131,7 @@ describe("feedback-service", () => {
       actor: "user"
     });
 
-    await delayMs(5);
-
-    const third = await service.submitFeedback({
+    await service.submitFeedback({
       profileId,
       sessionId,
       scope: "message",
@@ -80,9 +143,7 @@ describe("feedback-service", () => {
       actor: "user"
     });
 
-    await delayMs(5);
-
-    const fourth = await service.submitFeedback({
+    await service.submitFeedback({
       profileId,
       sessionId,
       scope: "session",
@@ -96,32 +157,10 @@ describe("feedback-service", () => {
 
     const states = await service.getLatestStates(profileId, sessionId);
 
-    expect(states).toEqual([
-      {
-        targetId: "msg-1",
-        scope: "message",
-        value: "down",
-        latestEventId: third.id,
-        latestAt: third.createdAt
-      },
-      {
-        targetId: "msg-2",
-        scope: "message",
-        value: "down",
-        latestEventId: second.id,
-        latestAt: second.createdAt
-      },
-      {
-        targetId: sessionId,
-        scope: "session",
-        value: "up",
-        latestEventId: fourth.id,
-        latestAt: fourth.createdAt
-      }
-    ]);
+    const msgOne = states.find((state) => state.targetId === "msg-1");
+    expect(msgOne?.value).toBe("down");
 
-    expect(states.find((state) => state.targetId === "msg-1")?.latestEventId).toBe(third.id);
-    expect(states.find((state) => state.targetId === "msg-1")?.latestEventId).not.toBe(first.id);
+    expect(states.map((state) => state.targetId)).toEqual(["msg-1", "msg-2", sessionId]);
   });
 
   it("filters feedback by scope, value, and since", async () => {
@@ -313,15 +352,25 @@ describe("feedback-service", () => {
       actor: "user"
     };
 
+    const legacyClear: FeedbackSubmitEvent = {
+      id: "event-3",
+      createdAt: "2026-03-04T00:00:02.000Z",
+      profileId,
+      sessionId,
+      scope: "message",
+      targetId: "msg-1",
+      value: "clear",
+      reasonCodes: ["poor_outcome"],
+      comment: "",
+      channel: "web",
+      actor: "user"
+    };
+
     await writeFile(
       feedbackPath,
-      [
-        JSON.stringify(validOne),
-        "not-json",
-        JSON.stringify({ bad: true }),
-        JSON.stringify({ ...validTwo, reasonCodes: ["unknown_reason"] }),
-        JSON.stringify(validTwo)
-      ].join("\n") + "\n",
+      [JSON.stringify(validOne), "not-json", JSON.stringify({ bad: true }), JSON.stringify(validTwo), JSON.stringify(legacyClear)].join(
+        "\n"
+      ) + "\n",
       "utf8"
     );
 

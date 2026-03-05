@@ -1,7 +1,13 @@
 import { randomUUID } from "node:crypto";
-import { appendFile, mkdir, readdir, readFile, stat } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { FEEDBACK_REASON_CODES, type FeedbackEvent, type FeedbackState } from "@middleman/protocol";
+import {
+  FEEDBACK_REASON_CODES,
+  type FeedbackEvent,
+  type FeedbackState,
+  type FeedbackSubmitEvent,
+  type FeedbackSubmitValue
+} from "@middleman/protocol";
 import { getProfilesDir, getSessionFeedbackPath, getSessionsDir } from "./data-paths.js";
 import { readSessionMeta, writeSessionMeta } from "./session-manifest.js";
 
@@ -18,10 +24,12 @@ export interface FeedbackAcrossSessionsOptions extends FeedbackListOptions {
 export class FeedbackService {
   constructor(private readonly dataDir: string) {}
 
-  async submitFeedback(event: Omit<FeedbackEvent, "id" | "createdAt">): Promise<FeedbackEvent> {
+  async submitFeedback(
+    event: Omit<FeedbackSubmitEvent, "id" | "createdAt">
+  ): Promise<FeedbackSubmitEvent> {
     const normalized = normalizeSubmitFeedbackInput(event);
 
-    const submitted: FeedbackEvent = {
+    const submitted: FeedbackSubmitEvent = {
       ...normalized,
       id: randomUUID(),
       createdAt: new Date().toISOString()
@@ -29,7 +37,10 @@ export class FeedbackService {
 
     const feedbackPath = getSessionFeedbackPath(this.dataDir, submitted.profileId, submitted.sessionId);
     await mkdir(dirname(feedbackPath), { recursive: true });
-    await appendFile(feedbackPath, `${JSON.stringify(submitted)}\n`, "utf8");
+
+    const existingEvents = await readFeedbackEventsFile(feedbackPath);
+    const nextEvents = applyFeedbackSubmission(existingEvents, submitted);
+    await writeFeedbackEventsFile(feedbackPath, nextEvents);
 
     await this.updateSessionFeedbackMeta(submitted.profileId, submitted.sessionId, submitted.createdAt);
 
@@ -94,17 +105,10 @@ export class FeedbackService {
 
   async getLatestStates(profileId: string, sessionId: string): Promise<FeedbackState[]> {
     const events = await this.listFeedback(profileId, sessionId);
-    const latestEventsByTarget = new Map<string, FeedbackEvent>();
-
-    for (const event of events) {
-      const key = `${event.actor}:${event.scope}:${event.targetId}`;
-      latestEventsByTarget.set(key, event);
-    }
-
-    const states = Array.from(latestEventsByTarget.values()).map((event) => ({
+    const states = events.map((event) => ({
       targetId: event.targetId,
       scope: event.scope,
-      value: event.value === "clear" ? null : event.value,
+      value: event.value,
       latestEventId: event.id,
       latestAt: event.createdAt
     } satisfies FeedbackState));
@@ -152,6 +156,40 @@ export class FeedbackService {
   }
 }
 
+function applyFeedbackSubmission(
+  events: FeedbackEvent[],
+  submitted: FeedbackSubmitEvent
+): FeedbackEvent[] {
+  const key = feedbackEventKey(submitted);
+
+  if (submitted.value === "clear") {
+    return events.filter((event) => feedbackEventKey(event) !== key);
+  }
+
+  const nextEvent: FeedbackEvent = {
+    id: submitted.id,
+    createdAt: submitted.createdAt,
+    profileId: submitted.profileId,
+    sessionId: submitted.sessionId,
+    scope: submitted.scope,
+    targetId: submitted.targetId,
+    value: submitted.value,
+    reasonCodes: submitted.reasonCodes,
+    comment: submitted.comment,
+    channel: submitted.channel,
+    actor: submitted.actor
+  };
+
+  const existingIndex = events.findIndex((event) => feedbackEventKey(event) === key);
+  if (existingIndex >= 0) {
+    const next = [...events];
+    next[existingIndex] = nextEvent;
+    return next;
+  }
+
+  return [...events, nextEvent];
+}
+
 async function readFeedbackEventsFile(path: string): Promise<FeedbackEvent[]> {
   let raw: string;
   try {
@@ -188,12 +226,22 @@ async function readFeedbackEventsFile(path: string): Promise<FeedbackEvent[]> {
   return events;
 }
 
-function normalizeSubmitFeedbackInput(event: Omit<FeedbackEvent, "id" | "createdAt">): Omit<FeedbackEvent, "id" | "createdAt"> {
+async function writeFeedbackEventsFile(path: string, events: FeedbackEvent[]): Promise<void> {
+  const tmp = `${path}.tmp-${randomUUID()}`;
+  const payload = events.length > 0 ? `${events.map((event) => JSON.stringify(event)).join("\n")}\n` : "";
+
+  await writeFile(tmp, payload, "utf8");
+  await rename(tmp, path);
+}
+
+function normalizeSubmitFeedbackInput(
+  event: Omit<FeedbackSubmitEvent, "id" | "createdAt">
+): Omit<FeedbackSubmitEvent, "id" | "createdAt"> {
   const profileId = requireNonEmptyString(event.profileId, "profileId");
   const sessionId = requireNonEmptyString(event.sessionId, "sessionId");
   const targetId = requireNonEmptyString(event.targetId, "targetId");
   const scope = requireFeedbackScope(event.scope, "scope");
-  const value = requireFeedbackValue(event.value, "value");
+  const value = requireFeedbackSubmitValue(event.value, "value");
   const channel = requireFeedbackChannel(event.channel, "channel");
 
   if (scope === "session" && targetId !== sessionId) {
@@ -238,7 +286,7 @@ function coerceFeedbackEvent(value: unknown): FeedbackEvent | undefined {
     return undefined;
   }
 
-  if (!isFeedbackScope(scope) || !isFeedbackValue(feedbackValue) || !isFeedbackChannel(channel) || actor !== "user") {
+  if (!isFeedbackValue(feedbackValue) || !isFeedbackScope(scope) || !isFeedbackChannel(channel) || actor !== "user") {
     return undefined;
   }
 
@@ -266,6 +314,10 @@ function coerceFeedbackEvent(value: unknown): FeedbackEvent | undefined {
     channel,
     actor: "user"
   };
+}
+
+function feedbackEventKey(event: Pick<FeedbackEvent, "actor" | "scope" | "targetId">): string {
+  return `${event.actor}:${event.scope}:${event.targetId}`;
 }
 
 async function listDirectoryNames(dirPath: string): Promise<string[]> {
@@ -327,8 +379,8 @@ function requireFeedbackScope(value: unknown, fieldName: string): FeedbackEvent[
   return value;
 }
 
-function requireFeedbackValue(value: unknown, fieldName: string): FeedbackEvent["value"] {
-  if (!isFeedbackValue(value)) {
+function requireFeedbackSubmitValue(value: unknown, fieldName: string): FeedbackSubmitEvent["value"] {
+  if (!isFeedbackSubmitValue(value)) {
     throw new Error(`${fieldName} must be one of: up, down, clear.`);
   }
 
@@ -357,6 +409,10 @@ function isFeedbackScope(value: unknown): value is FeedbackEvent["scope"] {
 }
 
 function isFeedbackValue(value: unknown): value is FeedbackEvent["value"] {
+  return value === "up" || value === "down";
+}
+
+function isFeedbackSubmitValue(value: unknown): value is FeedbackSubmitValue {
   return value === "up" || value === "down" || value === "clear";
 }
 

@@ -49,7 +49,7 @@ describe("feedback-routes", () => {
     expect(typeof payload.feedback?.createdAt).toBe("string");
   });
 
-  it("returns GET state responses in the states envelope and resolves clear to null", async () => {
+  it("returns GET state responses in the states envelope and omits target after clear", async () => {
     const server = await createFeedbackTestServer([createManagerSession("alpha", "alpha--s1")]);
 
     const submit = async (value: "up" | "down" | "clear") => {
@@ -81,12 +81,7 @@ describe("feedback-routes", () => {
     };
 
     expect(payload.feedback).toBeUndefined();
-    expect(payload.states).toHaveLength(1);
-    expect(payload.states?.[0]).toMatchObject({
-      targetId: "msg-1",
-      scope: "message",
-      value: null
-    });
+    expect(payload.states).toEqual([]);
   });
 
   it("returns 400 for invalid bodies (missing fields, bad enums, and oversized comments)", async () => {

@@ -1,4 +1,4 @@
-import { FEEDBACK_REASON_CODES, type FeedbackEvent } from "@middleman/protocol";
+import { FEEDBACK_REASON_CODES, type FeedbackEvent, type FeedbackSubmitValue } from "@middleman/protocol";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
 import { FeedbackService, type FeedbackAcrossSessionsOptions, type FeedbackListOptions } from "../../swarm/feedback-service.js";
 import { applyCorsHeaders, decodePathSegment, matchPathPattern, readJsonBody, sendJson } from "../http-utils.js";
@@ -186,7 +186,7 @@ function parseSubmitFeedbackBody(
 ): {
   scope: FeedbackEvent["scope"];
   targetId: string;
-  value: FeedbackEvent["value"];
+  value: FeedbackSubmitValue;
   reasonCodes: string[];
   comment: string;
   channel: FeedbackEvent["channel"];
@@ -306,7 +306,7 @@ function parseVoteValue(
   value: unknown,
   fieldName: string,
   allowMissing = false
-): FeedbackEvent["value"] | undefined {
+): FeedbackSubmitValue | undefined {
   if (value === undefined || value === null) {
     if (allowMissing) {
       return undefined;
