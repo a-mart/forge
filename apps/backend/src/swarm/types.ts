@@ -189,6 +189,7 @@ export type ConversationAttachment =
 export interface ConversationMessageEvent {
   type: "conversation_message";
   agentId: string;
+  id?: string;
   role: "user" | "assistant" | "system";
   text: string;
   attachments?: ConversationAttachment[];

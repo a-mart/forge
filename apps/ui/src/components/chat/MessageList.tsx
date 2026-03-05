@@ -89,6 +89,13 @@ function resolveToolExecutionEventActorAgentId(event: ToolExecutionEvent): strin
   return event.type === 'agent_tool_call' ? event.actorAgentId : event.agentId
 }
 
+function resolveConversationMessageTargetId(
+  message: Extract<ConversationEntry, { type: 'conversation_message' }>,
+): string {
+  const id = message.id?.trim()
+  return id && id.length > 0 ? id : message.timestamp
+}
+
 function hydrateToolDisplayEntry(
   displayEntry: ToolExecutionDisplayEntry,
   event: ToolExecutionEvent,
@@ -123,9 +130,10 @@ function buildDisplayEntries(messages: ConversationEntry[]): DisplayEntry[] {
 
   for (const [index, message] of messages.entries()) {
     if (message.type === 'conversation_message') {
+      const targetId = resolveConversationMessageTargetId(message)
       displayEntries.push({
         type: 'conversation_message',
-        id: `message-${message.timestamp}-${index}`,
+        id: `message-${targetId}-${index}`,
         message,
       })
       continue
@@ -329,13 +337,16 @@ export function MessageList({
           {displayEntries.map((entry) => {
             if (entry.type === 'conversation_message') {
               const isAssistant = entry.message.role === 'assistant'
+              const feedbackTargetId = resolveConversationMessageTargetId(entry.message)
+
               return (
                 <ConversationMessageRow
                   key={entry.id}
                   message={entry.message}
+                  feedbackTargetId={feedbackTargetId}
                   onArtifactClick={onArtifactClick}
-                  feedbackVote={isAssistant && getVote ? getVote(entry.message.timestamp) : undefined}
-                  feedbackHasComment={isAssistant && hasComment ? hasComment(entry.message.timestamp) : undefined}
+                  feedbackVote={isAssistant && getVote ? getVote(feedbackTargetId) : undefined}
+                  feedbackHasComment={isAssistant && hasComment ? hasComment(feedbackTargetId) : undefined}
                   onFeedbackVote={isAssistant ? onFeedbackVote : undefined}
                   onFeedbackComment={isAssistant ? onFeedbackComment : undefined}
                   onFeedbackClearComment={isAssistant ? onFeedbackClearComment : undefined}

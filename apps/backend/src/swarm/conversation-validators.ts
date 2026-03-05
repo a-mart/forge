@@ -27,6 +27,9 @@ export function isConversationMessageEvent(value: unknown): value is Conversatio
   if (maybe.type !== "conversation_message") return false;
   if (typeof maybe.agentId !== "string" || maybe.agentId.length === 0) return false;
   if (maybe.role !== "user" && maybe.role !== "assistant" && maybe.role !== "system") return false;
+  if (typeof maybe.id !== "undefined" && (typeof maybe.id !== "string" || maybe.id.trim().length === 0)) {
+    return false;
+  }
   if (typeof maybe.text !== "string") return false;
   if (typeof maybe.timestamp !== "string") return false;
   if (maybe.source !== "user_input" && maybe.source !== "speak_to_user" && maybe.source !== "system") return false;

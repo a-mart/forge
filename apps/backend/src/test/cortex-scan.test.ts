@@ -57,6 +57,7 @@ describe('cortex-scan script', () => {
         feedbackReviewedBytes: 0,
         feedbackReviewedAt: null,
         lastFeedbackAt: null,
+        feedbackTimestampDrift: false,
         status: 'needs-review',
       },
       {
@@ -71,6 +72,7 @@ describe('cortex-scan script', () => {
         feedbackReviewedBytes: 0,
         feedbackReviewedAt: null,
         lastFeedbackAt: null,
+        feedbackTimestampDrift: false,
         status: 'up-to-date',
       },
     ])
@@ -143,8 +145,55 @@ describe('cortex-scan script', () => {
         feedbackReviewedBytes: 20,
         feedbackReviewedAt: '2026-03-01T12:30:00.000Z',
         lastFeedbackAt: '2026-03-02T00:00:00.000Z',
+        feedbackTimestampDrift: true,
         status: 'needs-review',
       },
     ])
+  })
+
+  it('marks feedback timestamp drift as needs-review even when feedback bytes are unchanged', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'cortex-scan-test-'))
+
+    await writeMeta(dataDir, 'gamma', 'gamma--s1', {
+      profileId: 'gamma',
+      sessionId: 'gamma--s1',
+      stats: { sessionFileSize: '100' },
+      cortexReviewedBytes: 100,
+      cortexReviewedAt: '2026-03-02T12:00:00.000Z',
+      feedbackFileSize: '42',
+      cortexReviewedFeedbackBytes: 42,
+      cortexReviewedFeedbackAt: '2026-03-01T12:00:00.000Z',
+      lastFeedbackAt: '2026-03-03T12:00:00.000Z',
+    })
+
+    const result = await scanCortexReviewStatus(dataDir)
+
+    expect(result.sessions[0]?.status).toBe('needs-review')
+    expect(result.sessions[0]?.feedbackDeltaBytes).toBe(0)
+    expect(result.sessions[0]?.feedbackTimestampDrift).toBe(true)
+
+    const output = await runCortexScan(dataDir)
+    expect(output).toContain('feedback updated since last feedback review')
+  })
+
+  it('does not treat invalid feedback timestamps as drift when byte deltas are zero', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'cortex-scan-test-'))
+
+    await writeMeta(dataDir, 'delta', 'delta--s1', {
+      profileId: 'delta',
+      sessionId: 'delta--s1',
+      stats: { sessionFileSize: '10' },
+      cortexReviewedBytes: 10,
+      cortexReviewedAt: '2026-03-01T00:00:00.000Z',
+      feedbackFileSize: '3',
+      cortexReviewedFeedbackBytes: 3,
+      cortexReviewedFeedbackAt: 'not-an-iso-timestamp',
+      lastFeedbackAt: '2026-03-03T00:00:00.000Z',
+    })
+
+    const result = await scanCortexReviewStatus(dataDir)
+
+    expect(result.sessions[0]?.feedbackTimestampDrift).toBe(false)
+    expect(result.sessions[0]?.status).toBe('up-to-date')
   })
 })

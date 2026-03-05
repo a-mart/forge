@@ -252,6 +252,7 @@ export class ConversationProjector {
     // Persisting each snapshot causes runaway JSONL growth and can crash reopening.
     // Keep updates in-memory/live WS only; terminal *_end events are still persisted.
     if (!shouldPersistConversationEntry(event)) {
+      this.assignConversationMessageIdIfMissing(event);
       return;
     }
 
@@ -261,6 +262,7 @@ export class ConversationProjector {
     try {
       if (runtime) {
         const entryId = runtime.appendCustomEntry(CONVERSATION_ENTRY_TYPE, event);
+        this.assignConversationMessageIdIfMissing(event, entryId);
         if (descriptor) {
           this.trackLastSessionEntryId(descriptor.sessionFile, entryId);
         }
@@ -268,21 +270,24 @@ export class ConversationProjector {
       }
 
       if (!descriptor) {
+        this.assignConversationMessageIdIfMissing(event);
         return;
       }
 
-      this.appendConversationEntryToSessionFile(descriptor, event);
+      const entryId = this.appendConversationEntryToSessionFile(descriptor, event);
+      this.assignConversationMessageIdIfMissing(event, entryId);
     } catch (error) {
       this.deps.logDebug("history:save:error", {
         message: error instanceof Error ? error.message : String(error)
       });
+      this.assignConversationMessageIdIfMissing(event);
     }
   }
 
   private appendConversationEntryToSessionFile(
     descriptor: AgentDescriptor,
     event: ConversationEntryEvent
-  ): void {
+  ): string {
     // Avoid SessionManager.open() here: opening re-reads the whole JSONL file,
     // which is unsafe for very large transcripts. Appending a well-formed JSONL
     // entry keeps this path O(1) with no full-file reads.
@@ -290,6 +295,8 @@ export class ConversationProjector {
 
     const parentId = this.lastSessionEntryIdBySessionFile.get(descriptor.sessionFile) ?? null;
     const entryId = randomUUID().slice(0, 8);
+
+    this.assignConversationMessageIdIfMissing(event, entryId);
 
     appendFileSync(
       descriptor.sessionFile,
@@ -305,6 +312,7 @@ export class ConversationProjector {
     );
 
     this.trackLastSessionEntryId(descriptor.sessionFile, entryId);
+    return entryId;
   }
 
   private ensureSessionFileHeader(descriptor: AgentDescriptor): void {
@@ -365,7 +373,8 @@ export class ConversationProjector {
           if (!isConversationEntryEvent(entry.data)) {
             continue;
           }
-          entriesForAgent.push(entry.data);
+
+          entriesForAgent.push(this.backfillConversationMessageEntryId(entry.data, extractSessionEntryId(entry)));
         }
 
         trimConversationHistory(entriesForAgent);
@@ -385,6 +394,40 @@ export class ConversationProjector {
     this.trackLastSessionEntryId(descriptor.sessionFile, lastSessionEntryId);
     this.deps.conversationEntriesByAgentId.set(descriptor.agentId, entriesForAgent);
     return entriesForAgent;
+  }
+
+  private assignConversationMessageIdIfMissing(event: ConversationEntryEvent, preferredId?: string): void {
+    if (event.type !== "conversation_message") {
+      return;
+    }
+
+    if (typeof event.id === "string" && event.id.trim().length > 0) {
+      return;
+    }
+
+    event.id = preferredId && preferredId.trim().length > 0 ? preferredId : randomUUID().slice(0, 8);
+  }
+
+  private backfillConversationMessageEntryId(
+    entry: ConversationEntryEvent,
+    wrapperEntryId: string | undefined
+  ): ConversationEntryEvent {
+    if (entry.type !== "conversation_message") {
+      return entry;
+    }
+
+    if (typeof entry.id === "string" && entry.id.trim().length > 0) {
+      return entry;
+    }
+
+    if (typeof wrapperEntryId !== "string" || wrapperEntryId.trim().length === 0) {
+      return entry;
+    }
+
+    return {
+      ...entry,
+      id: wrapperEntryId
+    };
   }
 
   private trackLastSessionEntryId(sessionFile: string, entryId: string | undefined): void {

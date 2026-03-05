@@ -14,6 +14,7 @@ export interface ScanSession {
   feedbackReviewedBytes: number;
   feedbackReviewedAt: string | null;
   lastFeedbackAt: string | null;
+  feedbackTimestampDrift: boolean;
   status: "never-reviewed" | "needs-review" | "up-to-date";
 }
 
@@ -109,9 +110,10 @@ export async function scanCortexReviewStatus(dataDir: string): Promise<ScanResul
         typeof parsed?.cortexReviewedFeedbackAt === "string" ? parsed.cortexReviewedFeedbackAt : null;
       const lastFeedbackAt = typeof parsed?.lastFeedbackAt === "string" ? parsed.lastFeedbackAt : null;
       const feedbackDeltaBytes = feedbackTotalBytes - feedbackReviewedBytes;
+      const feedbackTimestampDrift = hasFeedbackTimestampDrift(lastFeedbackAt, feedbackReviewedAt);
 
       const status: ScanSession["status"] =
-        deltaBytes === 0 && feedbackDeltaBytes === 0
+        deltaBytes === 0 && feedbackDeltaBytes === 0 && !feedbackTimestampDrift
           ? "up-to-date"
           : reviewedAt === null && feedbackReviewedAt === null
             ? "never-reviewed"
@@ -129,6 +131,7 @@ export async function scanCortexReviewStatus(dataDir: string): Promise<ScanResul
         feedbackReviewedBytes,
         feedbackReviewedAt,
         lastFeedbackAt,
+        feedbackTimestampDrift,
         status
       });
     }
@@ -208,7 +211,7 @@ export async function runCortexScan(dataDir: string): Promise<string> {
 function formatNeedsReviewLine(result: ScanSession): string {
   const reviewedLabel = result.reviewedAt ? `last reviewed: ${result.reviewedAt.slice(0, 10)}` : "never reviewed";
 
-  if (result.feedbackDeltaBytes === 0) {
+  if (result.feedbackDeltaBytes === 0 && !result.feedbackTimestampDrift) {
     if (result.deltaBytes < 0) {
       return `  ${result.profileId}/${result.sessionId}: needs re-review (compacted: reviewed ${result.reviewedBytes.toLocaleString()} > current ${result.totalBytes.toLocaleString()}; ${reviewedLabel})`;
     }
@@ -230,8 +233,10 @@ function formatNeedsReviewLine(result: ScanSession): string {
     parts.push(
       `feedback compacted (reviewed ${result.feedbackReviewedBytes.toLocaleString()} > current ${result.feedbackTotalBytes.toLocaleString()})`
     );
-  } else {
+  } else if (result.feedbackDeltaBytes > 0) {
     parts.push(`${result.feedbackDeltaBytes.toLocaleString()} new feedback bytes`);
+  } else if (result.feedbackTimestampDrift) {
+    parts.push("feedback updated since last feedback review");
   }
 
   const feedbackReviewedLabel = result.feedbackReviewedAt
@@ -241,6 +246,34 @@ function formatNeedsReviewLine(result: ScanSession): string {
       : "no feedback review watermark";
 
   return `  ${result.profileId}/${result.sessionId}: ${parts.join(", ")} (${reviewedLabel}; ${feedbackReviewedLabel})`;
+}
+
+function hasFeedbackTimestampDrift(lastFeedbackAt: string | null, feedbackReviewedAt: string | null): boolean {
+  if (!lastFeedbackAt) {
+    return false;
+  }
+
+  if (!feedbackReviewedAt) {
+    return true;
+  }
+
+  const lastFeedbackTime = parseIsoTimestamp(lastFeedbackAt);
+  const feedbackReviewedTime = parseIsoTimestamp(feedbackReviewedAt);
+
+  if (lastFeedbackTime === null || feedbackReviewedTime === null) {
+    return false;
+  }
+
+  return lastFeedbackTime > feedbackReviewedTime;
+}
+
+function parseIsoTimestamp(value: string): number | null {
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+
+  return parsed;
 }
 
 function parseSessionTotalBytes(value: unknown): number {

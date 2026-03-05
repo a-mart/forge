@@ -38,6 +38,7 @@ function CopyButton({ text }: { text: string }) {
 
 interface ConversationMessageRowProps {
   message: ConversationMessageEntry
+  feedbackTargetId?: string
   onArtifactClick?: (artifact: ArtifactReference) => void
   feedbackVote?: 'up' | 'down' | null
   feedbackHasComment?: boolean
@@ -59,6 +60,7 @@ interface ConversationMessageRowProps {
 
 export function ConversationMessageRow({
   message,
+  feedbackTargetId,
   onArtifactClick,
   feedbackVote,
   feedbackHasComment,
@@ -130,6 +132,8 @@ export function ConversationMessageRow({
   }
 
   const showFeedback = message.role === 'assistant' && onFeedbackVote
+  const resolvedFeedbackTargetId =
+    feedbackTargetId?.trim() || message.id?.trim() || message.timestamp
 
   return (
     <div className="min-w-0 space-y-2 text-foreground">
@@ -144,7 +148,7 @@ export function ConversationMessageRow({
           {hasText ? <CopyButton text={normalizedText} /> : null}
           {showFeedback ? (
             <MessageFeedback
-              targetId={message.timestamp}
+              targetId={resolvedFeedbackTargetId}
               currentVote={feedbackVote ?? null}
               hasComment={feedbackHasComment}
               onVote={onFeedbackVote}
