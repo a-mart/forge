@@ -194,14 +194,14 @@ export async function runCortexScan(dataDir: string): Promise<string> {
       : ["  (none)"];
   const unchangedLines =
     unchangedSessions.length > 0
-      ? unchangedSessions.map((result) => `  ${result.profileId}/${result.sessionId}: no new content`)
+      ? unchangedSessions.map((result) => `  ${result.profileId}/${result.sessionId}: up to date`)
       : ["  (none)"];
 
   return [
-    "Sessions with new content since last review:",
+    "Sessions needing attention:",
     ...needsReviewLines,
     "",
-    "Sessions unchanged:",
+    "Sessions up to date:",
     ...unchangedLines,
     "",
     `Summary: ${scanResult.summary.needsReview} sessions need review, ${scanResult.summary.upToDate} up to date`
@@ -253,15 +253,18 @@ function hasFeedbackTimestampDrift(lastFeedbackAt: string | null, feedbackReview
     return false;
   }
 
+  const lastFeedbackTime = parseIsoTimestamp(lastFeedbackAt);
+  if (lastFeedbackTime === null) {
+    return true;
+  }
+
   if (!feedbackReviewedAt) {
     return true;
   }
 
-  const lastFeedbackTime = parseIsoTimestamp(lastFeedbackAt);
   const feedbackReviewedTime = parseIsoTimestamp(feedbackReviewedAt);
-
-  if (lastFeedbackTime === null || feedbackReviewedTime === null) {
-    return false;
+  if (feedbackReviewedTime === null) {
+    return true;
   }
 
   return lastFeedbackTime > feedbackReviewedTime;

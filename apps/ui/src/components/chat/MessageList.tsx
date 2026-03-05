@@ -21,21 +21,27 @@ interface MessageListProps {
   activeAgentId?: string | null
   onSuggestionClick?: (suggestion: string) => void
   onArtifactClick?: (artifact: ArtifactReference) => void
-  getVote?: (targetId: string) => 'up' | 'down' | null
-  hasComment?: (targetId: string) => boolean
+  getVote?: (targetId: string, fallbackTargetId?: string) => 'up' | 'down' | null
+  hasComment?: (targetId: string, fallbackTargetId?: string) => boolean
   onFeedbackVote?: (
     scope: 'message' | 'session',
     targetId: string,
     value: 'up' | 'down',
     reasonCodes?: string[],
     comment?: string,
+    fallbackTargetId?: string,
   ) => Promise<void>
   onFeedbackComment?: (
     scope: 'message' | 'session',
     targetId: string,
     comment: string,
+    fallbackTargetId?: string,
   ) => Promise<void>
-  onFeedbackClearComment?: (scope: 'message' | 'session', targetId: string) => Promise<void>
+  onFeedbackClearComment?: (
+    scope: 'message' | 'session',
+    targetId: string,
+    fallbackTargetId?: string,
+  ) => Promise<void>
   isFeedbackSubmitting?: boolean
 }
 
@@ -94,6 +100,22 @@ function resolveConversationMessageTargetId(
 ): string {
   const id = message.id?.trim()
   return id && id.length > 0 ? id : message.timestamp
+}
+
+function resolveConversationMessageLegacyTargetId(
+  message: Extract<ConversationEntry, { type: 'conversation_message' }>,
+): string | undefined {
+  const id = message.id?.trim()
+  if (!id || id.length === 0) {
+    return undefined
+  }
+
+  const timestampTargetId = message.timestamp.trim()
+  if (!timestampTargetId || timestampTargetId === id) {
+    return undefined
+  }
+
+  return timestampTargetId
 }
 
 function hydrateToolDisplayEntry(
@@ -338,15 +360,25 @@ export function MessageList({
             if (entry.type === 'conversation_message') {
               const isAssistant = entry.message.role === 'assistant'
               const feedbackTargetId = resolveConversationMessageTargetId(entry.message)
+              const feedbackLegacyTargetId = resolveConversationMessageLegacyTargetId(entry.message)
 
               return (
                 <ConversationMessageRow
                   key={entry.id}
                   message={entry.message}
                   feedbackTargetId={feedbackTargetId}
+                  feedbackLegacyTargetId={feedbackLegacyTargetId}
                   onArtifactClick={onArtifactClick}
-                  feedbackVote={isAssistant && getVote ? getVote(feedbackTargetId) : undefined}
-                  feedbackHasComment={isAssistant && hasComment ? hasComment(feedbackTargetId) : undefined}
+                  feedbackVote={
+                    isAssistant && getVote
+                      ? getVote(feedbackTargetId, feedbackLegacyTargetId)
+                      : undefined
+                  }
+                  feedbackHasComment={
+                    isAssistant && hasComment
+                      ? hasComment(feedbackTargetId, feedbackLegacyTargetId)
+                      : undefined
+                  }
                   onFeedbackVote={isAssistant ? onFeedbackVote : undefined}
                   onFeedbackComment={isAssistant ? onFeedbackComment : undefined}
                   onFeedbackClearComment={isAssistant ? onFeedbackClearComment : undefined}

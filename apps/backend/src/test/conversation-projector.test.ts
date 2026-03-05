@@ -178,4 +178,53 @@ describe('ConversationProjector session tree continuity', () => {
     expect(fallbackEntry).toBeDefined()
     expect(fallbackEntry?.parentId).toBe(runtimeEntry?.id)
   })
+
+  it('backfills missing message ids from wrapper entry ids when loading persisted history', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-projector-backfill-'))
+    const sessionFile = join(root, 'manager.jsonl')
+    const descriptor = makeDescriptor(sessionFile, root)
+
+    const seededSession = SessionManager.open(sessionFile)
+    seededSession.appendMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'seed message' }],
+    } as any)
+
+    const legacyTimestamp = '2025-12-31T23:59:59.000Z'
+    const wrappedEntryId = seededSession.appendCustomEntry('swarm_conversation_entry', {
+      type: 'conversation_message',
+      agentId: descriptor.agentId,
+      role: 'assistant',
+      text: 'legacy message without explicit id',
+      timestamp: legacyTimestamp,
+      source: 'system',
+    })
+
+    seededSession.appendCustomEntry('swarm_conversation_entry', {
+      type: 'conversation_log',
+      agentId: descriptor.agentId,
+      timestamp: FIXED_NOW,
+      source: 'runtime_log',
+      kind: 'message_end',
+      role: 'assistant',
+      text: 'runtime event',
+    })
+
+    const projector = makeProjector({ descriptor })
+    const loaded = projector.getConversationHistory(descriptor.agentId)
+
+    const legacyMessage = loaded.find(
+      (entry) =>
+        entry.type === 'conversation_message' &&
+        entry.timestamp === legacyTimestamp &&
+        entry.text === 'legacy message without explicit id',
+    )
+
+    expect(legacyMessage).toBeDefined()
+    expect(legacyMessage?.type).toBe('conversation_message')
+    if (legacyMessage?.type === 'conversation_message') {
+      expect(legacyMessage.id).toBe(wrappedEntryId)
+      expect(legacyMessage.timestamp).toBe(legacyTimestamp)
+    }
+  })
 })

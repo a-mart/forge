@@ -48,6 +48,7 @@ const DOWN_REASON_CODES: FeedbackReasonCode[] = [
 
 interface MessageFeedbackProps {
   targetId: string
+  legacyTargetId?: string
   currentVote: 'up' | 'down' | null
   hasComment?: boolean
   onVote: (
@@ -56,13 +57,19 @@ interface MessageFeedbackProps {
     value: 'up' | 'down',
     reasonCodes?: string[],
     comment?: string,
+    fallbackTargetId?: string,
   ) => Promise<void>
   onComment?: (
     scope: 'message' | 'session',
     targetId: string,
     comment: string,
+    fallbackTargetId?: string,
   ) => Promise<void>
-  onClearComment?: (scope: 'message' | 'session', targetId: string) => Promise<void>
+  onClearComment?: (
+    scope: 'message' | 'session',
+    targetId: string,
+    fallbackTargetId?: string,
+  ) => Promise<void>
   isSubmitting?: boolean
   scope?: 'message' | 'session'
   /** Slightly larger for header-level usage */
@@ -71,6 +78,7 @@ interface MessageFeedbackProps {
 
 export function MessageFeedback({
   targetId,
+  legacyTargetId,
   currentVote,
   hasComment = false,
   onVote,
@@ -96,7 +104,7 @@ export function MessageFeedback({
       setActivePopover('up')
     } else {
       // Instant upvote
-      void onVote(scope, targetId, 'up')
+      void onVote(scope, targetId, 'up', undefined, undefined, legacyTargetId)
     }
   }
 
@@ -104,7 +112,7 @@ export function MessageFeedback({
     if (isSubmitting) return
     if (currentVote === 'down') {
       // Toggle off
-      void onVote(scope, targetId, 'down')
+      void onVote(scope, targetId, 'down', undefined, undefined, legacyTargetId)
       return
     }
     // Open reason picker for new downvote
@@ -129,10 +137,17 @@ export function MessageFeedback({
     if (!activePopover) return
     if (activePopover === 'comment') {
       if (onComment && comment.trim()) {
-        void onComment(scope, targetId, comment.trim())
+        void onComment(scope, targetId, comment.trim(), legacyTargetId)
       }
     } else {
-      void onVote(scope, targetId, activePopover, selectedReasons, comment.trim() || undefined)
+      void onVote(
+        scope,
+        targetId,
+        activePopover,
+        selectedReasons,
+        comment.trim() || undefined,
+        legacyTargetId,
+      )
     }
     setActivePopover(null)
     setSelectedReasons([])
@@ -142,7 +157,14 @@ export function MessageFeedback({
   const handleClearVote = () => {
     if (!activePopover) return
     // Send bare vote (no reasons) — hook treats same-value + no reasons as toggle-off
-    void onVote(scope, targetId, activePopover as 'up' | 'down')
+    void onVote(
+      scope,
+      targetId,
+      activePopover as 'up' | 'down',
+      undefined,
+      undefined,
+      legacyTargetId,
+    )
     setActivePopover(null)
     setSelectedReasons([])
     setComment('')
@@ -150,7 +172,7 @@ export function MessageFeedback({
 
   const handleClearComment = () => {
     if (onClearComment) {
-      void onClearComment(scope, targetId)
+      void onClearComment(scope, targetId, legacyTargetId)
     }
     setActivePopover(null)
     setComment('')

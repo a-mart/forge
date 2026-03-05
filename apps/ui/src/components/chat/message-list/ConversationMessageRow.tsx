@@ -39,6 +39,7 @@ function CopyButton({ text }: { text: string }) {
 interface ConversationMessageRowProps {
   message: ConversationMessageEntry
   feedbackTargetId?: string
+  feedbackLegacyTargetId?: string
   onArtifactClick?: (artifact: ArtifactReference) => void
   feedbackVote?: 'up' | 'down' | null
   feedbackHasComment?: boolean
@@ -48,19 +49,26 @@ interface ConversationMessageRowProps {
     value: 'up' | 'down',
     reasonCodes?: string[],
     comment?: string,
+    fallbackTargetId?: string,
   ) => Promise<void>
   onFeedbackComment?: (
     scope: 'message' | 'session',
     targetId: string,
     comment: string,
+    fallbackTargetId?: string,
   ) => Promise<void>
-  onFeedbackClearComment?: (scope: 'message' | 'session', targetId: string) => Promise<void>
+  onFeedbackClearComment?: (
+    scope: 'message' | 'session',
+    targetId: string,
+    fallbackTargetId?: string,
+  ) => Promise<void>
   isFeedbackSubmitting?: boolean
 }
 
 export function ConversationMessageRow({
   message,
   feedbackTargetId,
+  feedbackLegacyTargetId,
   onArtifactClick,
   feedbackVote,
   feedbackHasComment,
@@ -134,6 +142,7 @@ export function ConversationMessageRow({
   const showFeedback = message.role === 'assistant' && onFeedbackVote
   const resolvedFeedbackTargetId =
     feedbackTargetId?.trim() || message.id?.trim() || message.timestamp
+  const resolvedFeedbackLegacyTargetId = feedbackLegacyTargetId?.trim()
 
   return (
     <div className="min-w-0 space-y-2 text-foreground">
@@ -149,6 +158,12 @@ export function ConversationMessageRow({
           {showFeedback ? (
             <MessageFeedback
               targetId={resolvedFeedbackTargetId}
+              legacyTargetId={
+                resolvedFeedbackLegacyTargetId &&
+                resolvedFeedbackLegacyTargetId !== resolvedFeedbackTargetId
+                  ? resolvedFeedbackLegacyTargetId
+                  : undefined
+              }
               currentVote={feedbackVote ?? null}
               hasComment={feedbackHasComment}
               onVote={onFeedbackVote}

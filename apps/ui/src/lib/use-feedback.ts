@@ -2,12 +2,70 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { FeedbackState } from '@/lib/feedback-types'
 import { fetchFeedbackStates, submitFeedback } from '@/lib/feedback-client'
 
+type FeedbackKind = 'vote' | 'comment'
+
 /** Key for vote states: targetId, key for comment states: targetId:comment */
 function voteKey(targetId: string): string {
   return targetId
 }
 function commentKey(targetId: string): string {
   return `${targetId}:comment`
+}
+
+function normalizeTargetId(targetId: string | undefined): string | null {
+  if (typeof targetId !== 'string') {
+    return null
+  }
+
+  const normalized = targetId.trim()
+  return normalized.length > 0 ? normalized : null
+}
+
+function resolveDistinctFallbackTargetId(
+  targetId: string,
+  fallbackTargetId: string | undefined,
+): string | null {
+  const normalizedFallback = normalizeTargetId(fallbackTargetId)
+  if (!normalizedFallback || normalizedFallback === targetId) {
+    return null
+  }
+
+  return normalizedFallback
+}
+
+function feedbackStateKey(kind: FeedbackKind, targetId: string): string {
+  return kind === 'comment' ? commentKey(targetId) : voteKey(targetId)
+}
+
+export function resolveFeedbackTargetIdForKind(
+  feedbackStates: Map<string, FeedbackState>,
+  kind: FeedbackKind,
+  targetId: string,
+  fallbackTargetId?: string,
+): string {
+  const normalizedTargetId = normalizeTargetId(targetId)
+  if (!normalizedTargetId) {
+    return targetId
+  }
+
+  const normalizedFallbackTargetId = resolveDistinctFallbackTargetId(
+    normalizedTargetId,
+    fallbackTargetId,
+  )
+
+  const primaryKey = feedbackStateKey(kind, normalizedTargetId)
+  if (feedbackStates.has(primaryKey)) {
+    return normalizedTargetId
+  }
+
+  if (normalizedFallbackTargetId) {
+    const fallbackKey = feedbackStateKey(kind, normalizedFallbackTargetId)
+    if (feedbackStates.has(fallbackKey)) {
+      return normalizedFallbackTargetId
+    }
+  }
+
+  return normalizedTargetId
 }
 
 export function useFeedback(profileId: string | null, sessionId: string | null) {
@@ -52,8 +110,14 @@ export function useFeedback(profileId: string | null, sessionId: string | null) 
   }, [profileId, sessionId])
 
   const getVote = useCallback(
-    (targetId: string): 'up' | 'down' | null => {
-      const state = feedbackStates.get(voteKey(targetId))
+    (targetId: string, fallbackTargetId?: string): 'up' | 'down' | null => {
+      const resolvedTargetId = resolveFeedbackTargetIdForKind(
+        feedbackStates,
+        'vote',
+        targetId,
+        fallbackTargetId,
+      )
+      const state = feedbackStates.get(voteKey(resolvedTargetId))
       if (!state) return null
       return state.value === 'up' || state.value === 'down' ? state.value : null
     },
@@ -61,8 +125,14 @@ export function useFeedback(profileId: string | null, sessionId: string | null) 
   )
 
   const hasComment = useCallback(
-    (targetId: string): boolean => {
-      return feedbackStates.has(commentKey(targetId))
+    (targetId: string, fallbackTargetId?: string): boolean => {
+      const resolvedTargetId = resolveFeedbackTargetIdForKind(
+        feedbackStates,
+        'comment',
+        targetId,
+        fallbackTargetId,
+      )
+      return feedbackStates.has(commentKey(resolvedTargetId))
     },
     [feedbackStates],
   )
@@ -74,10 +144,18 @@ export function useFeedback(profileId: string | null, sessionId: string | null) 
       value: 'up' | 'down',
       reasonCodes?: string[],
       comment?: string,
+      fallbackTargetId?: string,
     ) => {
       if (!profileId || !sessionId) return
 
-      const k = voteKey(targetId)
+      const resolvedTargetId = resolveFeedbackTargetIdForKind(
+        feedbackStatesRef.current,
+        'vote',
+        targetId,
+        fallbackTargetId,
+      )
+
+      const k = voteKey(resolvedTargetId)
       const currentVote = feedbackStatesRef.current.get(k)?.value ?? null
 
       // Toggle: clicking the same value again clears it,
@@ -92,7 +170,7 @@ export function useFeedback(profileId: string | null, sessionId: string | null) 
         const next = new Map(prev)
         if (isToggleOff) {
           next.set(k, {
-            targetId,
+            targetId: resolvedTargetId,
             scope,
             kind: 'vote',
             value: null,
@@ -101,7 +179,7 @@ export function useFeedback(profileId: string | null, sessionId: string | null) 
           })
         } else {
           next.set(k, {
-            targetId,
+            targetId: resolvedTargetId,
             scope,
             kind: 'vote',
             value,
@@ -118,7 +196,7 @@ export function useFeedback(profileId: string | null, sessionId: string | null) 
           profileId,
           sessionId,
           scope,
-          targetId,
+          targetId: resolvedTargetId,
           value: submittedValue,
           reasonCodes: submittedReasonCodes,
           comment: submittedComment,
@@ -162,17 +240,25 @@ export function useFeedback(profileId: string | null, sessionId: string | null) 
       scope: 'message' | 'session',
       targetId: string,
       commentText: string,
+      fallbackTargetId?: string,
     ) => {
       if (!profileId || !sessionId) return
 
-      const k = commentKey(targetId)
+      const resolvedTargetId = resolveFeedbackTargetIdForKind(
+        feedbackStatesRef.current,
+        'comment',
+        targetId,
+        fallbackTargetId,
+      )
+
+      const k = commentKey(resolvedTargetId)
       const hadComment = feedbackStatesRef.current.has(k)
 
       // Optimistic update
       setFeedbackStates((prev) => {
         const next = new Map(prev)
         next.set(k, {
-          targetId,
+          targetId: resolvedTargetId,
           scope,
           kind: 'comment',
           value: 'comment',
@@ -188,7 +274,7 @@ export function useFeedback(profileId: string | null, sessionId: string | null) 
           profileId,
           sessionId,
           scope,
-          targetId,
+          targetId: resolvedTargetId,
           value: 'comment',
           reasonCodes: [],
           comment: commentText,
@@ -223,10 +309,17 @@ export function useFeedback(profileId: string | null, sessionId: string | null) 
   )
 
   const clearComment = useCallback(
-    async (scope: 'message' | 'session', targetId: string) => {
+    async (scope: 'message' | 'session', targetId: string, fallbackTargetId?: string) => {
       if (!profileId || !sessionId) return
 
-      const k = commentKey(targetId)
+      const resolvedTargetId = resolveFeedbackTargetIdForKind(
+        feedbackStatesRef.current,
+        'comment',
+        targetId,
+        fallbackTargetId,
+      )
+
+      const k = commentKey(resolvedTargetId)
       const prev = feedbackStatesRef.current.get(k)
 
       // Optimistic
@@ -242,7 +335,7 @@ export function useFeedback(profileId: string | null, sessionId: string | null) 
           profileId,
           sessionId,
           scope,
-          targetId,
+          targetId: resolvedTargetId,
           value: 'clear',
           reasonCodes: [],
           comment: '',

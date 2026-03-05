@@ -104,6 +104,8 @@ describe('cortex-scan script', () => {
 
     const output = await runCortexScan(dataDir)
 
+    expect(output).toContain('Sessions needing attention:')
+
     const neverReviewedIndex = output.indexOf('project-a/project-a--s1: 1,200 new bytes (never reviewed)')
     const compactedIndex = output.indexOf(
       'project-b/project-b--s1: needs re-review (compacted: reviewed 500 > current 300; last reviewed: 2026-03-02)',
@@ -176,7 +178,7 @@ describe('cortex-scan script', () => {
     expect(output).toContain('feedback updated since last feedback review')
   })
 
-  it('does not treat invalid feedback timestamps as drift when byte deltas are zero', async () => {
+  it('treats malformed feedbackReviewedAt timestamps as review-needed when byte deltas are zero', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'cortex-scan-test-'))
 
     await writeMeta(dataDir, 'delta', 'delta--s1', {
@@ -193,7 +195,28 @@ describe('cortex-scan script', () => {
 
     const result = await scanCortexReviewStatus(dataDir)
 
-    expect(result.sessions[0]?.feedbackTimestampDrift).toBe(false)
-    expect(result.sessions[0]?.status).toBe('up-to-date')
+    expect(result.sessions[0]?.feedbackTimestampDrift).toBe(true)
+    expect(result.sessions[0]?.status).toBe('needs-review')
+  })
+
+  it('treats malformed lastFeedbackAt timestamps as review-needed', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'cortex-scan-test-'))
+
+    await writeMeta(dataDir, 'epsilon', 'epsilon--s1', {
+      profileId: 'epsilon',
+      sessionId: 'epsilon--s1',
+      stats: { sessionFileSize: '10' },
+      cortexReviewedBytes: 10,
+      cortexReviewedAt: '2026-03-01T00:00:00.000Z',
+      feedbackFileSize: '3',
+      cortexReviewedFeedbackBytes: 3,
+      cortexReviewedFeedbackAt: '2026-03-02T00:00:00.000Z',
+      lastFeedbackAt: 'not-an-iso-timestamp',
+    })
+
+    const result = await scanCortexReviewStatus(dataDir)
+
+    expect(result.sessions[0]?.feedbackTimestampDrift).toBe(true)
+    expect(result.sessions[0]?.status).toBe('needs-review')
   })
 })
