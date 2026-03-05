@@ -10,7 +10,7 @@ import {
   PopoverContent,
 } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
-import { FEEDBACK_REASON_CODES, type FeedbackReasonCode } from '@/lib/feedback-types'
+import { type FeedbackReasonCode } from '@/lib/feedback-types'
 
 const REASON_LABELS: Record<FeedbackReasonCode, string> = {
   accuracy: 'Accuracy',
@@ -24,6 +24,24 @@ const REASON_LABELS: Record<FeedbackReasonCode, string> = {
   great_outcome: 'Great Outcome',
   poor_outcome: 'Poor Outcome',
 }
+
+const UP_REASON_CODES: FeedbackReasonCode[] = [
+  'accuracy',
+  'instruction_following',
+  'formatting',
+  'ux_decision',
+  'great_outcome',
+]
+
+const DOWN_REASON_CODES: FeedbackReasonCode[] = [
+  'accuracy',
+  'instruction_following',
+  'speed',
+  'verbosity',
+  'formatting',
+  'ux_decision',
+  'over_engineered',
+]
 
 interface MessageFeedbackProps {
   targetId: string
@@ -118,7 +136,7 @@ export function MessageFeedback({
           {direction === 'up' ? 'What was good?' : 'What went wrong?'}
         </p>
         <div className="space-y-1.5">
-          {FEEDBACK_REASON_CODES.map((code) => (
+          {(direction === 'up' ? UP_REASON_CODES : DOWN_REASON_CODES).map((code) => (
             <div key={code} className="flex items-center gap-2">
               <Checkbox
                 id={`reason-${targetId}-${direction}-${code}`}
