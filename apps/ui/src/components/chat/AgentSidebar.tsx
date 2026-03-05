@@ -2,6 +2,7 @@ import {
   Brain,
   ChevronDown,
   ChevronRight,
+  ChevronUp,
   CircleDashed,
   Copy,
   Edit3,
@@ -487,6 +488,8 @@ function SessionRowItem({
 
 // ── Profile group ──
 
+const MAX_VISIBLE_SESSIONS = 8
+
 function ProfileGroup({
   treeRow,
   statuses,
@@ -495,8 +498,10 @@ function ProfileGroup({
   isSettingsActive,
   isCollapsed,
   collapsedSessionIds,
+  isSessionListExpanded,
   onToggleProfileCollapsed,
   onToggleSessionCollapsed,
+  onToggleSessionListExpanded,
   onSelect,
   onDeleteAgent,
   onDeleteManager,
@@ -516,8 +521,10 @@ function ProfileGroup({
   isSettingsActive: boolean
   isCollapsed: boolean
   collapsedSessionIds: Set<string>
+  isSessionListExpanded: boolean
   onToggleProfileCollapsed: () => void
   onToggleSessionCollapsed: (sessionId: string) => void
+  onToggleSessionListExpanded: () => void
   onSelect: (agentId: string) => void
   onDeleteAgent: (agentId: string) => void
   onDeleteManager: (managerId: string) => void
@@ -675,33 +682,95 @@ function ProfileGroup({
       {!isCollapsed && hasAnySessions ? (
         <div className="relative mt-0.5">
           <div className="absolute bottom-1 left-3.5 top-0 w-px bg-sidebar-border/40" />
-          <ul className="space-y-0.5">
-            {sessions.map((session) => {
-              // Default is collapsed; only expanded if user explicitly opened it
-              const sessionCollapsed = !collapsedSessionIds.has(session.sessionAgent.agentId)
+          {(() => {
+            const needsTruncation = sessions.length > MAX_VISIBLE_SESSIONS
+            let visibleSessions: SessionRow[]
+            let hiddenCount = 0
 
-              return (
-                <SessionRowItem
-                  key={session.sessionAgent.agentId}
-                  session={session}
-                  statuses={statuses}
-                  unreadCount={unreadCounts[session.sessionAgent.agentId] ?? 0}
-                  selectedAgentId={selectedAgentId}
-                  isSettingsActive={isSettingsActive}
-                  isCollapsed={sessionCollapsed}
-                  onToggleCollapse={() => onToggleSessionCollapsed(session.sessionAgent.agentId)}
-                  onSelect={onSelect}
-                  onDeleteAgent={onDeleteAgent}
-                  onStop={onStopSession ? () => onStopSession(session.sessionAgent.agentId) : undefined}
-                  onResume={onResumeSession ? () => onResumeSession(session.sessionAgent.agentId) : undefined}
-                  onDelete={onDeleteSession ? () => onDeleteSession(session.sessionAgent.agentId) : undefined}
-                  onRename={onRequestRenameSession ? () => onRequestRenameSession(session.sessionAgent.agentId) : undefined}
-                  onFork={onForkSession ? () => onForkSession(session.sessionAgent.agentId) : undefined}
-                  onMergeMemory={onMergeSessionMemory ? () => onMergeSessionMemory(session.sessionAgent.agentId) : undefined}
-                />
+            if (isSessionListExpanded || !needsTruncation) {
+              visibleSessions = sessions
+            } else {
+              // Take the top MAX_VISIBLE_SESSIONS, but guarantee the selected session is visible
+              const topSessions = sessions.slice(0, MAX_VISIBLE_SESSIONS)
+              const selectedSessionInTop = !selectedAgentId || isSettingsActive || topSessions.some(
+                (s) =>
+                  s.sessionAgent.agentId === selectedAgentId ||
+                  s.workers.some((w) => w.agentId === selectedAgentId),
               )
-            })}
-          </ul>
+
+              if (selectedSessionInTop) {
+                visibleSessions = topSessions
+              } else {
+                // Find the selected session from the full list and swap it in
+                const selectedSession = sessions.find(
+                  (s) =>
+                    s.sessionAgent.agentId === selectedAgentId ||
+                    s.workers.some((w) => w.agentId === selectedAgentId),
+                )
+                if (selectedSession) {
+                  visibleSessions = [...topSessions.slice(0, MAX_VISIBLE_SESSIONS - 1), selectedSession]
+                } else {
+                  visibleSessions = topSessions
+                }
+              }
+              hiddenCount = sessions.length - visibleSessions.length
+            }
+
+            return (
+              <>
+                <ul className="space-y-0.5">
+                  {visibleSessions.map((session) => {
+                    // Default is collapsed; only expanded if user explicitly opened it
+                    const sessionCollapsed = !collapsedSessionIds.has(session.sessionAgent.agentId)
+
+                    return (
+                      <SessionRowItem
+                        key={session.sessionAgent.agentId}
+                        session={session}
+                        statuses={statuses}
+                        unreadCount={unreadCounts[session.sessionAgent.agentId] ?? 0}
+                        selectedAgentId={selectedAgentId}
+                        isSettingsActive={isSettingsActive}
+                        isCollapsed={sessionCollapsed}
+                        onToggleCollapse={() => onToggleSessionCollapsed(session.sessionAgent.agentId)}
+                        onSelect={onSelect}
+                        onDeleteAgent={onDeleteAgent}
+                        onStop={onStopSession ? () => onStopSession(session.sessionAgent.agentId) : undefined}
+                        onResume={onResumeSession ? () => onResumeSession(session.sessionAgent.agentId) : undefined}
+                        onDelete={onDeleteSession ? () => onDeleteSession(session.sessionAgent.agentId) : undefined}
+                        onRename={onRequestRenameSession ? () => onRequestRenameSession(session.sessionAgent.agentId) : undefined}
+                        onFork={onForkSession ? () => onForkSession(session.sessionAgent.agentId) : undefined}
+                        onMergeMemory={onMergeSessionMemory ? () => onMergeSessionMemory(session.sessionAgent.agentId) : undefined}
+                      />
+                    )
+                  })}
+                </ul>
+                {needsTruncation ? (
+                  <button
+                    type="button"
+                    onClick={onToggleSessionListExpanded}
+                    className={cn(
+                      'relative z-10 mt-0.5 flex w-full items-center gap-1 rounded-md py-1 pl-5 pr-1.5 text-left text-[11px] text-muted-foreground/70 transition-colors',
+                      'hover:text-muted-foreground hover:bg-sidebar-accent/30',
+                      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
+                    )}
+                  >
+                    {isSessionListExpanded ? (
+                      <>
+                        <ChevronUp className="size-3 shrink-0" aria-hidden="true" />
+                        <span>Show less</span>
+                      </>
+                    ) : (
+                      <>
+                        <ChevronDown className="size-3 shrink-0" aria-hidden="true" />
+                        <span>Show {hiddenCount} more</span>
+                      </>
+                    )}
+                  </button>
+                ) : null}
+              </>
+            )
+          })()}
         </div>
       ) : null}
     </li>
@@ -958,6 +1027,8 @@ export function AgentSidebar({
   const [collapsedProfileIds, setCollapsedProfileIds] = useState<Set<string>>(() => new Set())
   // Track explicitly expanded sessions — everything defaults to collapsed
   const [expandedSessionIds, setExpandedSessionIds] = useState<Set<string>>(() => new Set())
+  // Track which profiles have their full session list expanded (default: collapsed to MAX_VISIBLE)
+  const [expandedSessionListProfileIds, setExpandedSessionListProfileIds] = useState<Set<string>>(() => new Set())
   const [createTarget, setCreateTarget] = useState<{ profileId: string; profileLabel: string } | null>(null)
   const [renameTarget, setRenameTarget] = useState<{ agentId: string; label: string } | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<{ agentId: string; label: string } | null>(null)
@@ -982,6 +1053,18 @@ export function AgentSidebar({
         next.delete(sessionId)
       } else {
         next.add(sessionId)
+      }
+      return next
+    })
+  }, [])
+
+  const toggleSessionListExpanded = useCallback((profileId: string) => {
+    setExpandedSessionListProfileIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(profileId)) {
+        next.delete(profileId)
+      } else {
+        next.add(profileId)
       }
       return next
     })
@@ -1232,8 +1315,10 @@ export function AgentSidebar({
                   isSettingsActive={isSettingsActive}
                   isCollapsed={collapsedProfileIds.has(treeRow.profile.profileId)}
                   collapsedSessionIds={expandedSessionIds}
+                  isSessionListExpanded={expandedSessionListProfileIds.has(treeRow.profile.profileId)}
                   onToggleProfileCollapsed={() => toggleProfileCollapsed(treeRow.profile.profileId)}
                   onToggleSessionCollapsed={toggleSessionCollapsed}
+                  onToggleSessionListExpanded={() => toggleSessionListExpanded(treeRow.profile.profileId)}
                   onSelect={handleSelectAgent}
                   onDeleteAgent={onDeleteAgent}
                   onDeleteManager={onDeleteManager}
