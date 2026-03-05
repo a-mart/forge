@@ -23,6 +23,7 @@ import { SettingsPanel } from '@/components/chat/SettingsDialog'
 import { chooseFallbackAgentId } from '@/lib/agent-hierarchy'
 import type { ArtifactReference } from '@/lib/artifacts'
 import { collectArtifactsFromMessages } from '@/lib/collect-artifacts'
+import { useFeedback } from '@/lib/use-feedback'
 import {
   DEFAULT_MANAGER_AGENT_ID,
   useRouteState,
@@ -178,6 +179,13 @@ export function IndexPage() {
   const collectedArtifacts = useMemo(
     () => collectArtifactsFromMessages(allMessages),
     [allMessages],
+  )
+
+  const feedbackProfileId = activeAgent?.profileId ?? null
+  const feedbackSessionId = activeAgentId ?? null
+  const { getVote, submitVote, isSubmitting: isFeedbackSubmitting } = useFeedback(
+    feedbackProfileId,
+    feedbackSessionId,
   )
 
   const {
@@ -576,6 +584,9 @@ export function IndexPage() {
                   onToggleMobileSidebar={() =>
                     setIsMobileSidebarOpen((previous) => !previous)
                   }
+                  sessionFeedbackVote={activeAgentId ? getVote(activeAgentId) : null}
+                  onSessionFeedbackVote={feedbackProfileId ? submitVote : undefined}
+                  isFeedbackSubmitting={isFeedbackSubmitting}
                 />
 
                 {state.lastError ? (
@@ -596,6 +607,9 @@ export function IndexPage() {
                   activeAgentId={activeAgentId}
                   onSuggestionClick={handleSuggestionClick}
                   onArtifactClick={handleOpenArtifact}
+                  getVote={feedbackProfileId ? getVote : undefined}
+                  onFeedbackVote={feedbackProfileId ? submitVote : undefined}
+                  isFeedbackSubmitting={isFeedbackSubmitting}
                 />
 
                 <MessageInput

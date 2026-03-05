@@ -10,6 +10,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { ContextWindowIndicator } from '@/components/chat/ContextWindowIndicator'
+import { MessageFeedback } from '@/components/chat/message-list/MessageFeedback'
 import { cn } from '@/lib/utils'
 import type { AgentStatus } from '@middleman/protocol'
 
@@ -36,6 +37,15 @@ interface ChatHeaderProps {
   isArtifactsPanelOpen: boolean
   onToggleArtifactsPanel: () => void
   onToggleMobileSidebar?: () => void
+  sessionFeedbackVote?: 'up' | 'down' | null
+  onSessionFeedbackVote?: (
+    scope: 'message' | 'session',
+    targetId: string,
+    value: 'up' | 'down',
+    reasonCodes?: string[],
+    comment?: string,
+  ) => Promise<void>
+  isFeedbackSubmitting?: boolean
 }
 
 function formatAgentStatus(status: AgentStatus | null): string {
@@ -102,6 +112,9 @@ export function ChatHeader({
   isArtifactsPanelOpen,
   onToggleArtifactsPanel,
   onToggleMobileSidebar,
+  sessionFeedbackVote,
+  onSessionFeedbackVote,
+  isFeedbackSubmitting,
 }: ChatHeaderProps) {
   const isStreaming = connected && activeAgentStatus === 'streaming'
   const statusLabel = connected ? formatAgentStatus(activeAgentStatus) : 'Reconnecting'
@@ -167,6 +180,21 @@ export function ChatHeader({
           <span className="shrink-0 whitespace-nowrap text-xs font-mono text-muted-foreground">
             {statusLabel}
           </span>
+          {activeAgentId && onSessionFeedbackVote ? (
+            <>
+              <span aria-hidden="true" className="shrink-0 text-muted-foreground">
+                ·
+              </span>
+              <MessageFeedback
+                targetId={activeAgentId}
+                currentVote={sessionFeedbackVote ?? null}
+                onVote={onSessionFeedbackVote}
+                isSubmitting={isFeedbackSubmitting}
+                scope="session"
+                size="md"
+              />
+            </>
+          ) : null}
         </div>
       </div>
 
