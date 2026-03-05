@@ -28,7 +28,8 @@ function CopyButton({ text }: { text: string }) {
           ? 'text-emerald-600 dark:text-emerald-400'
           : 'text-muted-foreground/50 hover:text-muted-foreground',
       )}
-      aria-label="Copy message"
+      aria-label={copied ? 'Copied' : 'Copy message'}
+      title={copied ? 'Copied' : 'Copy message'}
     >
       {copied ? <Check className="size-3" /> : <Copy className="size-3" />}
     </button>
