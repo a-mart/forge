@@ -3190,9 +3190,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         ? recoveryStage === "recovery_failed"
           ? `🚨 Context recovery failed: ${message}. Start a new session or manually trim history/compact before continuing.`
           : `⚠️ Compaction error${retryLabel}: ${message}. Attempting fallback recovery.`
-        : droppedPendingCount && droppedPendingCount > 0
-          ? `⚠️ Agent error${retryLabel}: ${message}. ${droppedPendingCount} queued message${droppedPendingCount === 1 ? "" : "s"} could not be delivered and were dropped. Please resend.`
-          : `⚠️ Agent error${retryLabel}: ${message}. Message may need to be resent.`;
+        : error.phase === "context_guard"
+          ? `⚠️ Context guard error${retryLabel}: ${message}.`
+          : droppedPendingCount && droppedPendingCount > 0
+            ? `⚠️ Agent error${retryLabel}: ${message}. ${droppedPendingCount} queued message${droppedPendingCount === 1 ? "" : "s"} could not be delivered and were dropped. Please resend.`
+            : `⚠️ Agent error${retryLabel}: ${message}. Message may need to be resent.`;
 
     this.emitConversationMessage({
       type: "conversation_message",

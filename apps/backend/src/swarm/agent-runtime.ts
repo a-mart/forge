@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { readFile, rm } from "node:fs/promises";
+import { join } from "node:path";
 import type { AgentSession, AgentSessionEvent } from "@mariozechner/pi-coding-agent";
 import type { ImageContent, TextContent } from "@mariozechner/pi-ai";
 import {
@@ -39,6 +41,16 @@ interface PendingDelivery {
 
 const MAX_PROMPT_DISPATCH_ATTEMPTS = 2;
 const STREAMING_STATUS_EMIT_THROTTLE_MS = 1_000;
+const MID_TURN_CONTEXT_GUARD_ENABLED = true;
+const HANDOFF_TURN_TOKEN_BUDGET = 2_048;
+const ESTIMATION_ERROR_MARGIN_PERCENT = 0.05;
+const ESTIMATION_ERROR_MARGIN_MIN_TOKENS = 4_096;
+const COMPACTION_RESERVE_TOKENS = 16_384;
+const CONTEXT_BUDGET_CHECK_THROTTLE_MS = 3_000;
+const CONTEXT_GUARD_ABORT_TIMEOUT_MS = 15_000;
+const CONTEXT_GUARD_COMPACT_TIMEOUT_MS = 60_000;
+const HANDOFF_TURN_TIMEOUT_MS = 45_000;
+const MAX_HANDOFF_CONTENT_CHARS = 3_000;
 
 export type { RuntimeImageAttachment, RuntimeUserMessage, RuntimeUserMessageInput } from "./runtime-types.js";
 
@@ -55,7 +67,9 @@ export class AgentRuntime implements SwarmAgentRuntime {
   private promptDispatchPending = false;
   private ignoreNextAgentStart = false;
   private lastStreamingStatusEmitAtMs = 0;
-  private autoCompactionRecoveryInProgress = false;
+  private contextRecoveryInProgress = false;
+  private guardAbortController: AbortController | undefined;
+  private lastContextBudgetCheckAtMs = 0;
   private latestAutoCompactionReason: "threshold" | "overflow" | undefined;
 
   constructor(options: {
@@ -100,7 +114,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
     const deliveryId = randomUUID();
     const message = normalizeRuntimeUserMessage(input);
 
-    if (this.session.isStreaming || this.promptDispatchPending) {
+    if (this.session.isStreaming || this.promptDispatchPending || this.contextRecoveryInProgress) {
       const resolvedQueueMode = "steer";
       await this.enqueueMessage(deliveryId, message);
       await this.emitStatus();
@@ -123,9 +137,20 @@ export class AgentRuntime implements SwarmAgentRuntime {
   async terminate(options?: { abort?: boolean }): Promise<void> {
     if (this.status === "terminated") return;
 
+    this.contextRecoveryInProgress = false;
+    this.guardAbortController?.abort();
+    this.guardAbortController = undefined;
+    this.lastContextBudgetCheckAtMs = 0;
+
     const shouldAbort = options?.abort ?? true;
     if (shouldAbort) {
-      await this.session.abort();
+      try {
+        await this.session.abort();
+      } catch (error) {
+        this.logRuntimeError("interrupt", error, {
+          stage: "terminate_abort_failed"
+        });
+      }
     }
 
     this.unsubscribe?.();
@@ -134,7 +159,6 @@ export class AgentRuntime implements SwarmAgentRuntime {
     this.pendingDeliveries = [];
     this.promptDispatchPending = false;
     this.ignoreNextAgentStart = false;
-    this.autoCompactionRecoveryInProgress = false;
     this.latestAutoCompactionReason = undefined;
     this.inFlightPrompts.clear();
     this.status = transitionAgentStatus(this.status, "terminated");
@@ -148,15 +172,25 @@ export class AgentRuntime implements SwarmAgentRuntime {
       return;
     }
 
+    this.contextRecoveryInProgress = false;
+    this.guardAbortController?.abort();
+    this.guardAbortController = undefined;
+    this.lastContextBudgetCheckAtMs = 0;
+
     const shouldAbort = options?.abort ?? true;
     if (shouldAbort) {
-      await this.session.abort();
+      try {
+        await this.session.abort();
+      } catch (error) {
+        this.logRuntimeError("interrupt", error, {
+          stage: "stop_in_flight_abort_failed"
+        });
+      }
     }
 
     this.pendingDeliveries = [];
     this.promptDispatchPending = false;
     this.ignoreNextAgentStart = false;
-    this.autoCompactionRecoveryInProgress = false;
     this.latestAutoCompactionReason = undefined;
     this.inFlightPrompts.clear();
 
@@ -314,6 +348,11 @@ export class AgentRuntime implements SwarmAgentRuntime {
       return;
     }
 
+    if (event.type === "message_end") {
+      this.checkContextBudget();
+      return;
+    }
+
     if (event.type === "message_start" && event.message.role === "user") {
       const key = extractMessageKeyFromRuntimeContent(event.message.content);
       if (key !== undefined) {
@@ -321,6 +360,225 @@ export class AgentRuntime implements SwarmAgentRuntime {
         await this.emitStatus();
       }
     }
+  }
+
+  private checkContextBudget(): void {
+    if (!MID_TURN_CONTEXT_GUARD_ENABLED) {
+      return;
+    }
+
+    if (this.contextRecoveryInProgress || this.status === "terminated" || !this.session.isStreaming) {
+      return;
+    }
+
+    const nowMs = Date.now();
+    if (nowMs - this.lastContextBudgetCheckAtMs < CONTEXT_BUDGET_CHECK_THROTTLE_MS) {
+      return;
+    }
+
+    this.lastContextBudgetCheckAtMs = nowMs;
+
+    const usage = this.getContextUsage();
+    if (!usage) {
+      return;
+    }
+
+    const { softThresholdTokens } = computeGuardThresholds(usage.contextWindow);
+    if (usage.tokens < softThresholdTokens) {
+      return;
+    }
+
+    void this.runContextGuard(usage).catch(async (error) => {
+      await this.reportContextGuardError(error, {
+        stage: "guard_top_level_catch",
+        contextTokens: usage.tokens,
+        contextWindow: usage.contextWindow
+      });
+      this.contextRecoveryInProgress = false;
+      this.guardAbortController = undefined;
+    });
+  }
+
+  private async runContextGuard(triggeringUsage: AgentContextUsage): Promise<void> {
+    if (this.status === "terminated" || this.contextRecoveryInProgress) {
+      return;
+    }
+
+    this.contextRecoveryInProgress = true;
+    this.guardAbortController = new AbortController();
+    const signal = this.guardAbortController.signal;
+
+    const { softThresholdTokens, hardThresholdTokens } = computeGuardThresholds(triggeringUsage.contextWindow);
+    const handoffFilePath = buildHandoffFilePath(this.descriptor);
+
+    this.logContextGuard("triggered", {
+      contextTokens: triggeringUsage.tokens,
+      contextWindow: triggeringUsage.contextWindow,
+      contextPercent: triggeringUsage.percent,
+      softThresholdTokens,
+      hardThresholdTokens,
+      handoffFilePath
+    });
+
+    let handoffContent: string | undefined;
+    let completed = false;
+
+    try {
+      try {
+        await withTimeout(this.session.abort(), CONTEXT_GUARD_ABORT_TIMEOUT_MS, "context_guard_abort");
+      } catch (error) {
+        await this.reportContextGuardError(error, { stage: "abort_failed" });
+        return;
+      }
+
+      if (signal.aborted) {
+        return;
+      }
+
+      if (triggeringUsage.tokens < hardThresholdTokens) {
+        handoffContent = await this.runHandoffTurn(handoffFilePath, signal);
+      } else {
+        this.logContextGuard("handoff_skipped_hard_threshold", {
+          contextTokens: triggeringUsage.tokens,
+          hardThresholdTokens
+        });
+      }
+
+      if (signal.aborted) {
+        return;
+      }
+
+      const postHandoffUsage = this.getContextUsage();
+      const needsCompaction =
+        postHandoffUsage &&
+        postHandoffUsage.tokens !== null &&
+        postHandoffUsage.tokens !== undefined &&
+        postHandoffUsage.tokens >= softThresholdTokens;
+
+      if (needsCompaction) {
+        try {
+          await withTimeout(this.compact(), CONTEXT_GUARD_COMPACT_TIMEOUT_MS, "context_guard_compact");
+        } catch (error) {
+          const normalized = normalizeRuntimeError(error);
+          if (!isAlreadyCompactedError(normalized.message)) {
+            await this.reportContextGuardError(error, {
+              stage: "compaction_failed",
+              handoffWritten: handoffContent !== undefined
+            });
+          }
+        }
+      } else {
+        this.logContextGuard("compaction_skipped", {
+          reason: postHandoffUsage ? "below_threshold" : "usage_unknown_post_compaction",
+          postHandoffTokens: postHandoffUsage?.tokens
+        });
+      }
+
+      if (signal.aborted) {
+        return;
+      }
+
+      try {
+        const resumePrompt = buildResumePrompt(handoffContent);
+        await this.session.prompt(resumePrompt);
+      } catch (error) {
+        await this.reportContextGuardError(error, { stage: "resume_prompt_failed" });
+      }
+
+      completed = true;
+    } finally {
+      await this.cleanupGuard(handoffFilePath);
+      if (completed) {
+        this.logContextGuard("completed", {
+          handoffWritten: handoffContent !== undefined,
+          handoffContentLength: handoffContent?.length ?? 0
+        });
+      }
+    }
+  }
+
+  private async runHandoffTurn(handoffFilePath: string, signal: AbortSignal): Promise<string | undefined> {
+    let timeoutHandle: NodeJS.Timeout | undefined;
+
+    try {
+      const handoffPrompt = buildHandoffPrompt(handoffFilePath);
+      const turnPromise = this.session.prompt(handoffPrompt);
+
+      const timeoutPromise = new Promise<"timeout">((resolve) => {
+        timeoutHandle = setTimeout(() => resolve("timeout"), HANDOFF_TURN_TIMEOUT_MS);
+      });
+
+      const result = await Promise.race([turnPromise, timeoutPromise]);
+
+      if (result === "timeout") {
+        this.logContextGuard("handoff_timeout", { timeoutMs: HANDOFF_TURN_TIMEOUT_MS });
+        try {
+          await withTimeout(this.session.abort(), CONTEXT_GUARD_ABORT_TIMEOUT_MS, "context_guard_handoff_abort");
+        } catch (error) {
+          await this.reportContextGuardError(error, { stage: "handoff_timeout_abort_failed" });
+        }
+      }
+    } catch (error) {
+      await this.reportContextGuardError(error, { stage: "handoff_prompt_failed" });
+    } finally {
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
+    }
+
+    if (signal.aborted) {
+      return undefined;
+    }
+
+    try {
+      const content = await readFile(handoffFilePath, "utf8");
+      const trimmed = content.trim();
+      if (trimmed.length === 0) {
+        return undefined;
+      }
+
+      if (trimmed.length > MAX_HANDOFF_CONTENT_CHARS) {
+        this.logContextGuard("handoff_truncated", {
+          originalLength: trimmed.length,
+          truncatedTo: MAX_HANDOFF_CONTENT_CHARS
+        });
+        return `${trimmed.slice(0, MAX_HANDOFF_CONTENT_CHARS)}\n\n[... truncated for context budget ...]`;
+      }
+
+      return trimmed;
+    } catch {
+      this.logContextGuard("handoff_file_not_found", { handoffFilePath });
+      return undefined;
+    }
+  }
+
+  private async cleanupGuard(handoffFilePath?: string): Promise<void> {
+    this.contextRecoveryInProgress = false;
+    this.guardAbortController = undefined;
+
+    if (!handoffFilePath) {
+      return;
+    }
+
+    await rm(handoffFilePath, { force: true }).catch(() => {});
+  }
+
+  private logContextGuard(stage: string, details?: Record<string, unknown>): void {
+    console.log(`[swarm][${this.now()}] context_guard:${stage}`, {
+      agentId: this.descriptor.agentId,
+      ...details
+    });
+  }
+
+  private async reportContextGuardError(error: unknown, details?: Record<string, unknown>): Promise<void> {
+    const normalized = normalizeRuntimeError(error);
+    this.logRuntimeError("context_guard", error, details);
+    await this.reportRuntimeError({
+      phase: "context_guard",
+      message: normalized.message,
+      stack: normalized.stack,
+      details
+    });
   }
 
   private async handlePromptDispatchError(
@@ -386,7 +644,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
       return;
     }
 
-    if (this.autoCompactionRecoveryInProgress) {
+    if (this.contextRecoveryInProgress) {
       this.logRuntimeError("compaction", new Error(autoCompactionError), {
         recoveryStage: "auto_compaction_skipped",
         reason: "recovery_already_in_progress"
@@ -394,7 +652,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
       return;
     }
 
-    this.autoCompactionRecoveryInProgress = true;
+    this.contextRecoveryInProgress = true;
 
     try {
       const baseDetails = {
@@ -446,7 +704,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
         }
       });
     } finally {
-      this.autoCompactionRecoveryInProgress = false;
+      this.contextRecoveryInProgress = false;
     }
   }
 
@@ -455,7 +713,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
     details: Record<string, unknown>
   ): Promise<{ recovered: boolean; errorMessage?: string }> {
     try {
-      await this.compact();
+      await withTimeout(this.compact(), CONTEXT_GUARD_COMPACT_TIMEOUT_MS, "reactive_compaction_retry");
       return { recovered: true };
     } catch (error) {
       const normalized = normalizeRuntimeError(error);
@@ -635,6 +893,22 @@ export class AgentRuntime implements SwarmAgentRuntime {
   }
 }
 
+async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timeoutHandle: NodeJS.Timeout | undefined;
+
+  try {
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutHandle = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    });
+
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+    }
+  }
+}
+
 function normalizeAgentContextUsage(
   usage:
     | {
@@ -652,6 +926,10 @@ function normalizeAgentContextUsage(
     return undefined;
   }
 
+  // pi can report `{ tokens: null, contextWindow, percent: null }` immediately after compaction
+  // (before the next assistant response is generated). We normalize that to `undefined` so callers
+  // treat usage as unknown. `runContextGuard()` handles this explicitly by skipping manual compaction
+  // when usage is unknown and proceeding to the resume prompt.
   if (typeof usage.tokens !== "number" || !Number.isFinite(usage.tokens) || usage.tokens < 0) {
     return undefined;
   }
@@ -667,6 +945,104 @@ function normalizeAgentContextUsage(
     contextWindow,
     percent
   };
+}
+
+export function computeGuardThresholds(contextWindow: number): {
+  softThresholdTokens: number;
+  hardThresholdTokens: number;
+} {
+  const estimationMargin = Math.max(
+    ESTIMATION_ERROR_MARGIN_MIN_TOKENS,
+    Math.floor(contextWindow * ESTIMATION_ERROR_MARGIN_PERCENT)
+  );
+
+  let hardThresholdTokens = contextWindow - COMPACTION_RESERVE_TOKENS;
+  let softThresholdTokens =
+    contextWindow - COMPACTION_RESERVE_TOKENS - HANDOFF_TURN_TOKEN_BUDGET - estimationMargin;
+
+  if (hardThresholdTokens <= 0) {
+    hardThresholdTokens = Math.max(1, Math.floor(contextWindow * 0.85));
+    softThresholdTokens = Math.max(0, Math.min(Math.floor(contextWindow * 0.75), hardThresholdTokens - 1));
+  } else if (softThresholdTokens <= 0) {
+    softThresholdTokens = Math.max(0, Math.min(Math.floor(contextWindow * 0.75), hardThresholdTokens - 1));
+  }
+
+  if (softThresholdTokens >= hardThresholdTokens) {
+    softThresholdTokens = Math.max(0, hardThresholdTokens - 1);
+  }
+
+  return {
+    softThresholdTokens,
+    hardThresholdTokens
+  };
+}
+
+export function buildHandoffPrompt(handoffFilePath: string): string {
+  return `URGENT — CONTEXT LIMIT: Your context window is nearly full. A compaction will run after this message. You must write a handoff document NOW so you can resume seamlessly.
+
+INSTRUCTIONS:
+1. Use the write tool to create this file: \`${handoffFilePath}\`
+2. Do NOT use any other tool. Do NOT read files. Do NOT run commands. Do not use bash, read, or edit tools — ONLY the write tool.
+3. Do NOT continue your previous task. ONLY write this handoff file.
+
+FILE CONTENTS — use these exact headings:
+
+## Current Task
+What is the specific task/objective you're working on? (1-2 sentences)
+
+## Progress
+What concrete actions have you completed? (bullet list, max 5 items)
+
+## Active Files
+Which files are you working in? Include paths and line numbers if relevant. (bullet list)
+
+## Next Steps
+What were you about to do next? Be precise — name the file, function, and action. (bullet list, max 3 items)
+
+## Open Issues
+Any blockers, uncertainties, or things to verify? (bullet list, or "None")
+
+CONSTRAINTS:
+- Maximum 300 words total
+- Focus on specifics that would be lost in a summary: file paths, function names, line numbers, variable names
+- Write the file immediately with a single write tool call`;
+}
+
+export function buildResumePrompt(handoffContent: string | undefined): string {
+  if (!handoffContent) {
+    return `Your context was compacted to free up space. Some earlier conversation details have been summarized.
+
+Before continuing:
+1. Review the compaction summary above to orient yourself.
+2. Check your working directory for recent file modifications (\`ls -lt\` or \`git status\`) to verify the current state of any work in progress.
+3. If you're unsure what you were doing, look for recently modified files.
+
+Then continue where you left off.`;
+  }
+
+  return `Your context was compacted to free up space. Before compaction, you wrote a handoff document with your working state:
+
+---
+${handoffContent}
+---
+
+Before continuing:
+1. Review the compaction summary above for broad context.
+2. Use the handoff document above for your specific working state.
+3. Verify the workspace is consistent — run \`git status\` or check the files listed in "Active Files" to confirm your edits are intact.
+4. Follow the "Next Steps" to continue where you left off.
+5. Note any "Open Issues" that need attention.
+
+Continue your work now.`;
+}
+
+export function buildHandoffFilePath(descriptor: Pick<AgentDescriptor, "agentId"> & { cwd?: string }): string {
+  const safeId = descriptor.agentId.replace(/[^a-zA-Z0-9_-]/g, "_");
+  return join(descriptor.cwd ?? ".", `.middleman-handoff-${safeId}.md`);
+}
+
+export function isAlreadyCompactedError(message: string): boolean {
+  return /already\s+compact(?:ed)?/i.test(message) || /nothing\s+to\s+compact/i.test(message);
 }
 
 function toImageContent(images: RuntimeImageAttachment[] | undefined): ImageContent[] {
