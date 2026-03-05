@@ -61,8 +61,9 @@ export function useFeedback(profileId: string | null, sessionId: string | null) 
 
       const currentVote = feedbackStatesRef.current.get(targetId)?.value ?? null
 
-      // Toggle: clicking the same value again clears it.
-      const isToggleOff = currentVote === value
+      // Toggle: clicking the same value again clears it,
+      // unless reasons/comment are provided (that's an update, not a toggle-off).
+      const isToggleOff = currentVote === value && reasonCodes === undefined
       const submittedValue = isToggleOff ? 'clear' : value
       const submittedReasonCodes = isToggleOff ? [] : reasonCodes
       const submittedComment = isToggleOff ? '' : comment
