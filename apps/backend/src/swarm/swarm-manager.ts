@@ -313,16 +313,16 @@ You are a feedback telemetry worker for Cortex.
 Use scripts and structured outputs first. Avoid broad manual reads unless specifically requested.
 
 1. Run one or more telemetry scripts:
-   - \\\`node {{SWARM_SCRIPTS_DIR}}/feedback-review-queue.mjs {{SWARM_DATA_DIR}}\\\`
-   - \\\`node {{SWARM_SCRIPTS_DIR}}/feedback-session-digest.mjs {{SWARM_DATA_DIR}} --profile {{PROFILE_ID}} --session {{SESSION_ID}}\\\`
-   - \\\`node {{SWARM_SCRIPTS_DIR}}/feedback-global-summary.mjs {{SWARM_DATA_DIR}}\\\`
+   - \\\`node {{SWARM_SCRIPTS_DIR}}/feedback-review-queue.js {{SWARM_DATA_DIR}}\\\`
+   - \\\`node {{SWARM_SCRIPTS_DIR}}/feedback-session-digest.js {{SWARM_DATA_DIR}} --profile {{PROFILE_ID}} --session {{SESSION_ID}}\\\`
+   - \\\`node {{SWARM_SCRIPTS_DIR}}/feedback-global-summary.js {{SWARM_DATA_DIR}}\\\`
 2. Identify high-signal anomalies:
    - stale watermarks
    - missing files / metadata mismatches
    - sessions with large feedback deltas
    - unusual spikes in downvotes or clarification signals
 3. Only if needed, run targeted context extraction for top anomalies:
-   - \\\`node {{SWARM_SCRIPTS_DIR}}/feedback-target-context.mjs {{SWARM_DATA_DIR}} --profile {{PROFILE_ID}} --session {{SESSION_ID}} --target {{TARGET_ID}}\\\`
+   - \\\`node {{SWARM_SCRIPTS_DIR}}/feedback-target-context.js {{SWARM_DATA_DIR}} --profile {{PROFILE_ID}} --session {{SESSION_ID}} --target {{TARGET_ID}}\\\`
 
 ## Output format
 Return a concise structured report:
