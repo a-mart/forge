@@ -672,7 +672,7 @@ export class IntegrationRegistryService extends EventEmitter {
 
     const managerIdsOnDisk = await this.loadManagerIdsFromDisk();
     for (const managerId of managerIdsOnDisk) {
-      managerIds.add(managerId);
+      managerIds.add(this.resolveProfileId(managerId));
     }
 
     return managerIds;

@@ -468,6 +468,8 @@ export class ConversationProjector {
     }
 
     const inMemoryEntryIdCounts = new Map<string, number>();
+    // Non-message entries can be missing stable ids, so we dedupe with a serialized fingerprint.
+    // This assumes those entry fields stay stable between in-memory capture and disk round-trip.
     const inMemoryEntryFingerprintCounts = new Map<string, number>();
 
     for (const inMemoryEntry of inMemoryEntries) {
