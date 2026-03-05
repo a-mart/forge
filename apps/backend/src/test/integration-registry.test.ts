@@ -133,19 +133,21 @@ interface FakeManagerOptions {
 
 function createFakeSwarmManager(options: FakeManagerOptions = {}): {
   getConfig: () => { managerId?: string }
+  getAgent: (agentId: string) => { agentId: string; role: 'manager' } | undefined
   listAgents: () => Array<{ agentId: string; role: 'manager' }>
 } {
   const listedManagerIds = options.listedManagerIds ?? []
+  const listedDescriptors = listedManagerIds.map((managerId) => ({
+    agentId: managerId,
+    role: 'manager' as const,
+  }))
 
   return {
     getConfig: () => ({
       managerId: options.configuredManagerId,
     }),
-    listAgents: () =>
-      listedManagerIds.map((managerId) => ({
-        agentId: managerId,
-        role: 'manager',
-      })),
+    getAgent: (agentId) => listedDescriptors.find((descriptor) => descriptor.agentId === agentId),
+    listAgents: () => listedDescriptors,
   }
 }
 

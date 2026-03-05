@@ -80,8 +80,8 @@ export class WsHandler {
 
       if (event.type === "slack_status" || event.type === "telegram_status") {
         if (event.managerId) {
-          const subscribedManagerId = this.resolveManagerContextAgentId(subscribedAgent);
-          if (subscribedManagerId !== event.managerId) {
+          const subscribedProfileId = this.resolveProfileIdForAgent(subscribedAgent);
+          if (subscribedProfileId !== event.managerId) {
             continue;
           }
         }
@@ -263,6 +263,33 @@ export class WsHandler {
     }
 
     return descriptor.role === "manager" ? descriptor.agentId : descriptor.managerId;
+  }
+
+  private resolveProfileIdForAgent(agentId: string): string | undefined {
+    const descriptor = this.swarmManager.getAgent(agentId);
+    if (!descriptor) {
+      return this.resolveConfiguredManagerId() ?? agentId;
+    }
+
+    if (descriptor.role === "manager") {
+      return this.resolveProfileIdFromDescriptor(descriptor);
+    }
+
+    const managerDescriptor = this.swarmManager.getAgent(descriptor.managerId);
+    if (managerDescriptor?.role === "manager") {
+      return this.resolveProfileIdFromDescriptor(managerDescriptor);
+    }
+
+    return descriptor.managerId;
+  }
+
+  private resolveProfileIdFromDescriptor(descriptor: {
+    agentId: string;
+    profileId?: string;
+  }): string {
+    return typeof descriptor.profileId === "string" && descriptor.profileId.trim().length > 0
+      ? descriptor.profileId.trim()
+      : descriptor.agentId;
   }
 
   private handleDeletedAgentSubscriptions(deletedAgentIds: Set<string>): void {

@@ -140,6 +140,11 @@ function parseCommaSeparated(value: string): string[] {
   return value.split(',').map((e) => e.trim()).filter((e) => e.length > 0)
 }
 
+function resolveManagerProfileId(agent: AgentDescriptor): string {
+  const profileId = agent.profileId?.trim()
+  return profileId && profileId.length > 0 ? profileId : agent.agentId
+}
+
 /* ------------------------------------------------------------------ */
 /*  Badge components                                                  */
 /* ------------------------------------------------------------------ */
@@ -239,13 +244,23 @@ export function SettingsIntegrations({
   slackStatus,
   telegramStatus,
 }: SettingsIntegrationsProps) {
-  const managerOptions = useMemo(
-    () =>
-      managers.filter(
-        (agent) => agent.role === 'manager' && (agent.status === 'idle' || agent.status === 'streaming'),
-      ),
-    [managers],
-  )
+  const managerOptions = useMemo(() => {
+    const seenProfileIds = new Set<string>()
+    const options: AgentDescriptor[] = []
+
+    for (const agent of managers) {
+      if (agent.role !== 'manager') continue
+      if (agent.status !== 'idle' && agent.status !== 'streaming') continue
+
+      const profileId = resolveManagerProfileId(agent)
+      if (seenProfileIds.has(profileId)) continue
+
+      seenProfileIds.add(profileId)
+      options.push(agent)
+    }
+
+    return options
+  }, [managers])
   const [selectedIntegrationManagerId, setSelectedIntegrationManagerId] = useState<string>(
     SHARED_INTEGRATION_MANAGER_ID,
   )
@@ -253,7 +268,7 @@ export function SettingsIntegrations({
   useEffect(() => {
     setSelectedIntegrationManagerId((previous) => {
       if (previous === SHARED_INTEGRATION_MANAGER_ID) return previous
-      const availableIds = managerOptions.map((m) => m.agentId)
+      const availableIds = managerOptions.map((m) => resolveManagerProfileId(m))
       if (availableIds.includes(previous)) return previous
       return SHARED_INTEGRATION_MANAGER_ID
     })
@@ -452,9 +467,14 @@ export function SettingsIntegrations({
               {managerOptions.length === 0 ? (
                 <SelectItem value="__no_manager__" disabled>No manager overrides available</SelectItem>
               ) : (
-                managerOptions.map((m) => (
-                  <SelectItem key={m.agentId} value={m.agentId}>{m.agentId}</SelectItem>
-                ))
+                managerOptions.map((m) => {
+                  const profileId = resolveManagerProfileId(m)
+                  return (
+                    <SelectItem key={profileId} value={profileId}>
+                      {profileId}
+                    </SelectItem>
+                  )
+                })
               )}
             </SelectContent>
           </Select>

@@ -118,7 +118,7 @@ export class IntegrationRegistryService extends EventEmitter {
 
   async startProfile(managerId: string, provider: IntegrationProvider): Promise<void> {
     return this.runExclusive(async () => {
-      const normalizedManagerId = normalizeManagerId(managerId);
+      const normalizedManagerId = this.resolveProfileId(managerId);
       if (isSharedIntegrationManagerId(normalizedManagerId)) {
         return;
       }
@@ -130,7 +130,7 @@ export class IntegrationRegistryService extends EventEmitter {
 
   async stopProfile(managerId: string, provider: IntegrationProvider): Promise<void> {
     return this.runExclusive(async () => {
-      const normalizedManagerId = normalizeManagerId(managerId);
+      const normalizedManagerId = this.resolveProfileId(managerId);
       if (isSharedIntegrationManagerId(normalizedManagerId)) {
         return;
       }
@@ -147,7 +147,7 @@ export class IntegrationRegistryService extends EventEmitter {
   getStatus(managerId: string, provider: "slack"): SlackStatusEvent;
   getStatus(managerId: string, provider: "telegram"): TelegramStatusEvent;
   getStatus(managerId: string, provider: IntegrationProvider): SlackStatusEvent | TelegramStatusEvent {
-    const normalizedManagerId = normalizeManagerId(managerId);
+    const normalizedManagerId = this.resolveProfileId(managerId);
 
     if (provider === "slack") {
       const profile = this.slackProfiles.get(normalizedManagerId);
@@ -183,7 +183,7 @@ export class IntegrationRegistryService extends EventEmitter {
   }
 
   getIntegrationContext(managerId: string): IntegrationContextInfo {
-    const normalizedManagerId = normalizeManagerId(managerId);
+    const normalizedManagerId = this.resolveProfileId(managerId);
 
     const telegramProfile = this.telegramProfiles.get(normalizedManagerId);
     const slackProfile = this.slackProfiles.get(normalizedManagerId);
@@ -213,7 +213,7 @@ export class IntegrationRegistryService extends EventEmitter {
   async getSlackSnapshot(
     managerId: string
   ): Promise<{ config: SlackIntegrationConfigPublic; status: SlackStatusEvent }> {
-    const normalizedManagerId = normalizeManagerId(managerId);
+    const normalizedManagerId = this.resolveProfileId(managerId);
     if (isSharedIntegrationManagerId(normalizedManagerId)) {
       return this.getSharedSlackSnapshot();
     }
@@ -229,7 +229,7 @@ export class IntegrationRegistryService extends EventEmitter {
     managerId: string,
     patch: unknown
   ): Promise<{ config: SlackIntegrationConfigPublic; status: SlackStatusEvent }> {
-    const normalizedManagerId = normalizeManagerId(managerId);
+    const normalizedManagerId = this.resolveProfileId(managerId);
     if (isSharedIntegrationManagerId(normalizedManagerId)) {
       return this.updateSharedSlackConfig(patch);
     }
@@ -241,7 +241,7 @@ export class IntegrationRegistryService extends EventEmitter {
   async disableSlack(
     managerId: string
   ): Promise<{ config: SlackIntegrationConfigPublic; status: SlackStatusEvent }> {
-    const normalizedManagerId = normalizeManagerId(managerId);
+    const normalizedManagerId = this.resolveProfileId(managerId);
     if (isSharedIntegrationManagerId(normalizedManagerId)) {
       return this.updateSharedSlackConfig({ enabled: false });
     }
@@ -251,7 +251,7 @@ export class IntegrationRegistryService extends EventEmitter {
   }
 
   async testSlackConnection(managerId: string, patch?: unknown): Promise<SlackConnectionTestResult> {
-    const normalizedManagerId = normalizeManagerId(managerId);
+    const normalizedManagerId = this.resolveProfileId(managerId);
     if (isSharedIntegrationManagerId(normalizedManagerId)) {
       return this.testSharedSlackConnection(patch);
     }
@@ -264,7 +264,7 @@ export class IntegrationRegistryService extends EventEmitter {
     managerId: string,
     options?: { includePrivateChannels?: boolean }
   ): Promise<SlackChannelDescriptor[]> {
-    const normalizedManagerId = normalizeManagerId(managerId);
+    const normalizedManagerId = this.resolveProfileId(managerId);
     if (isSharedIntegrationManagerId(normalizedManagerId)) {
       return this.listSharedSlackChannels(options);
     }
@@ -276,7 +276,7 @@ export class IntegrationRegistryService extends EventEmitter {
   async getTelegramSnapshot(
     managerId: string
   ): Promise<{ config: TelegramIntegrationConfigPublic; status: TelegramStatusEvent }> {
-    const normalizedManagerId = normalizeManagerId(managerId);
+    const normalizedManagerId = this.resolveProfileId(managerId);
     if (isSharedIntegrationManagerId(normalizedManagerId)) {
       return this.getSharedTelegramSnapshot();
     }
@@ -292,7 +292,7 @@ export class IntegrationRegistryService extends EventEmitter {
     managerId: string,
     patch: unknown
   ): Promise<{ config: TelegramIntegrationConfigPublic; status: TelegramStatusEvent }> {
-    const normalizedManagerId = normalizeManagerId(managerId);
+    const normalizedManagerId = this.resolveProfileId(managerId);
     if (isSharedIntegrationManagerId(normalizedManagerId)) {
       return this.updateSharedTelegramConfig(patch);
     }
@@ -304,7 +304,7 @@ export class IntegrationRegistryService extends EventEmitter {
   async disableTelegram(
     managerId: string
   ): Promise<{ config: TelegramIntegrationConfigPublic; status: TelegramStatusEvent }> {
-    const normalizedManagerId = normalizeManagerId(managerId);
+    const normalizedManagerId = this.resolveProfileId(managerId);
     if (isSharedIntegrationManagerId(normalizedManagerId)) {
       return this.updateSharedTelegramConfig({ enabled: false });
     }
@@ -317,7 +317,7 @@ export class IntegrationRegistryService extends EventEmitter {
     managerId: string,
     patch?: unknown
   ): Promise<TelegramConnectionTestResult> {
-    const normalizedManagerId = normalizeManagerId(managerId);
+    const normalizedManagerId = this.resolveProfileId(managerId);
     if (isSharedIntegrationManagerId(normalizedManagerId)) {
       return this.testSharedTelegramConnection(patch);
     }
@@ -568,7 +568,7 @@ export class IntegrationRegistryService extends EventEmitter {
   }
 
   private async ensureSlackProfileStarted(managerId: string): Promise<SlackIntegrationService> {
-    const normalizedManagerId = normalizeManagerId(managerId);
+    const normalizedManagerId = this.resolveProfileId(managerId);
     if (isSharedIntegrationManagerId(normalizedManagerId)) {
       throw new Error("Shared Slack config does not have a runtime profile");
     }
@@ -578,7 +578,7 @@ export class IntegrationRegistryService extends EventEmitter {
   }
 
   private async ensureTelegramProfileStarted(managerId: string): Promise<TelegramIntegrationService> {
-    const normalizedManagerId = normalizeManagerId(managerId);
+    const normalizedManagerId = this.resolveProfileId(managerId);
     if (isSharedIntegrationManagerId(normalizedManagerId)) {
       throw new Error("Shared Telegram config does not have a runtime profile");
     }
@@ -638,10 +638,24 @@ export class IntegrationRegistryService extends EventEmitter {
     return profile;
   }
 
+  private resolveProfileId(managerId: string): string {
+    const normalizedManagerId = normalizeManagerId(managerId);
+    const descriptor = this.swarmManager.getAgent(normalizedManagerId);
+    if (descriptor?.role === "manager") {
+      const profileId =
+        typeof descriptor.profileId === "string" && descriptor.profileId.trim().length > 0
+          ? descriptor.profileId.trim()
+          : descriptor.agentId;
+      return normalizeManagerId(profileId);
+    }
+
+    return normalizedManagerId;
+  }
+
   private async discoverKnownManagerIds(): Promise<Set<string>> {
     const managerIds = new Set<string>();
     if (this.defaultManagerId) {
-      managerIds.add(this.defaultManagerId);
+      managerIds.add(this.resolveProfileId(this.defaultManagerId));
     }
 
     for (const descriptor of this.swarmManager.listAgents()) {
@@ -649,12 +663,16 @@ export class IntegrationRegistryService extends EventEmitter {
         continue;
       }
 
-      managerIds.add(descriptor.agentId);
+      const profileId =
+        typeof descriptor.profileId === "string" && descriptor.profileId.trim().length > 0
+          ? descriptor.profileId.trim()
+          : descriptor.agentId;
+      managerIds.add(normalizeManagerId(profileId));
     }
 
     const managerIdsOnDisk = await this.loadManagerIdsFromDisk();
     for (const managerId of managerIdsOnDisk) {
-      managerIds.add(managerId);
+      managerIds.add(this.resolveProfileId(managerId));
     }
 
     return managerIds;

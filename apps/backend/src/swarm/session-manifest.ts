@@ -34,6 +34,8 @@ export interface SessionMetaStatsUpdateOptions {
   now?: () => string;
 }
 
+const SESSION_META_REBUILD_BATCH_SIZE = 10;
+
 export async function writeSessionMeta(dataDir: string, meta: SessionMeta): Promise<void> {
   const target = getSessionMetaPath(dataDir, meta.profileId, meta.sessionId);
   const tmp = `${target}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
@@ -95,56 +97,72 @@ export async function rebuildSessionMeta(options: RebuildSessionMetaOptions): Pr
 
   const metas: SessionMeta[] = [];
 
-  for (const sessionDescriptor of managerDescriptors) {
-    const profileId = normalizeProfileId(sessionDescriptor);
-    const workers = (workerDescriptorsByManager.get(sessionDescriptor.agentId) ?? []).map((worker) =>
-      buildWorkerMeta(worker)
+  for (let i = 0; i < managerDescriptors.length; i += SESSION_META_REBUILD_BATCH_SIZE) {
+    const batch = managerDescriptors.slice(i, i + SESSION_META_REBUILD_BATCH_SIZE);
+    const batchResults = await Promise.all(
+      batch.map(async (sessionDescriptor): Promise<SessionMeta | null> => {
+        try {
+          const profileId = normalizeProfileId(sessionDescriptor);
+          const workers = (workerDescriptorsByManager.get(sessionDescriptor.agentId) ?? []).map((worker) =>
+            buildWorkerMeta(worker)
+          );
+
+          const existingMeta = await readSessionMeta(options.dataDir, profileId, sessionDescriptor.agentId);
+
+          const sessionFilePath =
+            normalizeOptionalString(sessionDescriptor.sessionFile) ??
+            getSessionFilePath(options.dataDir, profileId, sessionDescriptor.agentId);
+
+          const memoryFilePath = resolveMemoryFilePath(options.dataDir, {
+            agentId: sessionDescriptor.agentId,
+            role: "manager",
+            profileId,
+            managerId: sessionDescriptor.managerId
+          });
+
+          const [sessionFileSize, memoryFileSize] = await Promise.all([
+            readFileSize(sessionFilePath),
+            readFileSize(memoryFilePath)
+          ]);
+
+          const meta: SessionMeta = {
+            sessionId: sessionDescriptor.agentId,
+            profileId,
+            label: normalizeOptionalString(sessionDescriptor.sessionLabel) ?? null,
+            model: {
+              provider: normalizeOptionalString(sessionDescriptor.model.provider) ?? null,
+              modelId: normalizeOptionalString(sessionDescriptor.model.modelId) ?? null
+            },
+            createdAt: sessionDescriptor.createdAt,
+            updatedAt: sessionDescriptor.updatedAt ?? now(),
+            cwd: normalizeOptionalString(sessionDescriptor.cwd) ?? null,
+            promptFingerprint: existingMeta?.promptFingerprint ?? null,
+            promptComponents: existingMeta?.promptComponents ?? null,
+            cortexReviewedAt: existingMeta?.cortexReviewedAt,
+            cortexReviewedBytes: existingMeta?.cortexReviewedBytes,
+            feedbackFileSize: existingMeta?.feedbackFileSize,
+            lastFeedbackAt: existingMeta?.lastFeedbackAt,
+            cortexReviewedFeedbackBytes: existingMeta?.cortexReviewedFeedbackBytes,
+            cortexReviewedFeedbackAt: existingMeta?.cortexReviewedFeedbackAt,
+            workers,
+            stats: buildWorkerStats(workers, {
+              sessionFileSize,
+              memoryFileSize
+            })
+          };
+
+          await writeSessionMeta(options.dataDir, meta);
+          return meta;
+        } catch (error) {
+          console.warn(
+            `[swarm] Failed to rebuild session meta for ${sessionDescriptor.agentId}: ${errorToMessage(error)}`
+          );
+          return null;
+        }
+      })
     );
 
-    const existingMeta = await readSessionMeta(options.dataDir, profileId, sessionDescriptor.agentId);
-
-    const sessionFilePath =
-      normalizeOptionalString(sessionDescriptor.sessionFile) ??
-      getSessionFilePath(options.dataDir, profileId, sessionDescriptor.agentId);
-
-    const memoryFilePath = resolveMemoryFilePath(options.dataDir, {
-      agentId: sessionDescriptor.agentId,
-      role: "manager",
-      profileId,
-      managerId: sessionDescriptor.managerId
-    });
-
-    const sessionFileSize = await readFileSize(sessionFilePath);
-    const memoryFileSize = await readFileSize(memoryFilePath);
-
-    const meta: SessionMeta = {
-      sessionId: sessionDescriptor.agentId,
-      profileId,
-      label: normalizeOptionalString(sessionDescriptor.sessionLabel) ?? null,
-      model: {
-        provider: normalizeOptionalString(sessionDescriptor.model.provider) ?? null,
-        modelId: normalizeOptionalString(sessionDescriptor.model.modelId) ?? null
-      },
-      createdAt: sessionDescriptor.createdAt,
-      updatedAt: sessionDescriptor.updatedAt ?? now(),
-      cwd: normalizeOptionalString(sessionDescriptor.cwd) ?? null,
-      promptFingerprint: existingMeta?.promptFingerprint ?? null,
-      promptComponents: existingMeta?.promptComponents ?? null,
-      cortexReviewedAt: existingMeta?.cortexReviewedAt,
-      cortexReviewedBytes: existingMeta?.cortexReviewedBytes,
-      feedbackFileSize: existingMeta?.feedbackFileSize,
-      lastFeedbackAt: existingMeta?.lastFeedbackAt,
-      cortexReviewedFeedbackBytes: existingMeta?.cortexReviewedFeedbackBytes,
-      cortexReviewedFeedbackAt: existingMeta?.cortexReviewedFeedbackAt,
-      workers,
-      stats: buildWorkerStats(workers, {
-        sessionFileSize,
-        memoryFileSize
-      })
-    };
-
-    await writeSessionMeta(options.dataDir, meta);
-    metas.push(meta);
+    metas.push(...batchResults.filter((meta): meta is SessionMeta => meta !== null));
   }
 
   return metas;

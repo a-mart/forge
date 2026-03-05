@@ -1994,16 +1994,11 @@ describe('SwarmManager', () => {
     await manager.boot()
 
     expect(manager.createdRuntimeIds).toEqual([])
-    expect(manager.getLoadedConversationAgentIdsForTest()).toEqual(['cortex', 'manager', 'worker-active'])
+    expect(manager.getLoadedConversationAgentIdsForTest()).toEqual([])
 
     const terminatedHistory = manager.getConversationHistory('worker-terminated')
     expect(terminatedHistory.some((entry) => entry.text === 'terminated-worker-history')).toBe(true)
-    expect(manager.getLoadedConversationAgentIdsForTest()).toEqual([
-      'cortex',
-      'manager',
-      'worker-active',
-      'worker-terminated',
-    ])
+    expect(manager.getLoadedConversationAgentIdsForTest()).toEqual(['worker-terminated'])
   })
 
   it('does not implicitly recreate the configured manager when other agents already exist', async () => {

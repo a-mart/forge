@@ -47,31 +47,30 @@ interface ConversationProjectorDependencies {
 
 export class ConversationProjector {
   private readonly lastSessionEntryIdBySessionFile = new Map<string, string>();
+  private readonly loadedFromDisk = new Set<string>();
 
   constructor(private readonly deps: ConversationProjectorDependencies) {}
 
   getConversationHistory(agentId: string): ConversationEntryEvent[] {
-    let history = this.deps.conversationEntriesByAgentId.get(agentId);
-    if (!history) {
+    if (!this.loadedFromDisk.has(agentId)) {
       const descriptor = this.deps.descriptors.get(agentId);
       if (descriptor) {
-        // Always try to load from the session file on demand.
-        // During boot, idle/streaming agents are preloaded in bulk, but agents
-        // created after boot (e.g., forked sessions) may have a valid session
-        // file that was never preloaded.
-        history = this.loadConversationHistoryForDescriptor(descriptor);
+        this.loadConversationHistoryForDescriptor(descriptor);
       }
     }
 
-    return (history ?? []).map((entry) => ({ ...entry }));
+    const history = this.deps.conversationEntriesByAgentId.get(agentId) ?? [];
+    return history.map((entry) => ({ ...entry }));
   }
 
   resetConversationHistory(agentId: string): void {
     this.deps.conversationEntriesByAgentId.set(agentId, []);
+    this.loadedFromDisk.add(agentId);
   }
 
   deleteConversationHistory(agentId: string): void {
     this.deps.conversationEntriesByAgentId.delete(agentId);
+    this.loadedFromDisk.delete(agentId);
 
     const descriptor = this.deps.descriptors.get(agentId);
     if (descriptor) {
@@ -112,14 +111,19 @@ export class ConversationProjector {
   }
 
   loadConversationHistoriesFromStore(): void {
+    // Histories are lazy-loaded on first access per agent.
     this.deps.conversationEntriesByAgentId.clear();
     this.lastSessionEntryIdBySessionFile.clear();
+    this.loadedFromDisk.clear();
 
+    // Seed leaf ids so fallback appends preserve parentId chains even before
+    // the first full history load.
     for (const descriptor of this.deps.descriptors.values()) {
-      if (!this.shouldPreloadHistoryForDescriptor(descriptor)) {
+      if (descriptor.status !== "idle" && descriptor.status !== "streaming") {
         continue;
       }
-      this.loadConversationHistoryForDescriptor(descriptor);
+
+      this.hydrateLeafEntryId(descriptor);
     }
   }
 
@@ -340,13 +344,70 @@ export class ConversationProjector {
     this.lastSessionEntryIdBySessionFile.delete(descriptor.sessionFile);
   }
 
-  private shouldPreloadHistoryForDescriptor(descriptor: AgentDescriptor): boolean {
-    return descriptor.status === "idle" || descriptor.status === "streaming";
+  private hydrateLeafEntryId(descriptor: AgentDescriptor): void {
+    const sessionFile = descriptor.sessionFile;
+    let fileDescriptor: number | undefined;
+
+    try {
+      const fileSize = statSync(sessionFile).size;
+      if (fileSize <= 0) {
+        this.lastSessionEntryIdBySessionFile.delete(sessionFile);
+        return;
+      }
+
+      const tailBytes = 8192;
+      const readLength = Math.min(fileSize, tailBytes);
+      const readOffset = Math.max(0, fileSize - readLength);
+
+      fileDescriptor = openSync(sessionFile, "r");
+      const buffer = Buffer.alloc(readLength);
+      const bytesRead = readSync(fileDescriptor, buffer, 0, readLength, readOffset);
+      if (bytesRead <= 0) {
+        this.lastSessionEntryIdBySessionFile.delete(sessionFile);
+        return;
+      }
+
+      const tail = buffer.toString("utf8", 0, bytesRead);
+      const lines = tail.split("\n");
+      for (let index = lines.length - 1; index >= 0; index -= 1) {
+        const line = lines[index]?.trim();
+        if (!line) {
+          continue;
+        }
+
+        try {
+          const entryId = extractSessionEntryId(JSON.parse(line));
+          if (entryId) {
+            this.trackLastSessionEntryId(sessionFile, entryId);
+            return;
+          }
+        } catch {
+          // read window may start/end mid-line; skip parse failures
+        }
+      }
+
+      this.trackLastSessionEntryId(sessionFile, undefined);
+    } catch (error) {
+      if (isEnoentError(error)) {
+        this.lastSessionEntryIdBySessionFile.delete(sessionFile);
+        return;
+      }
+
+      this.deps.logDebug("history:hydrate_leaf:error", {
+        agentId: descriptor.agentId,
+        message: error instanceof Error ? error.message : String(error)
+      });
+    } finally {
+      if (fileDescriptor !== undefined) {
+        closeSync(fileDescriptor);
+      }
+    }
   }
 
   private loadConversationHistoryForDescriptor(descriptor: AgentDescriptor): ConversationEntryEvent[] {
+    const existingInMemoryEntries = this.deps.conversationEntriesByAgentId.get(descriptor.agentId) ?? [];
     const entriesForAgent: ConversationEntryEvent[] = [];
-    let lastSessionEntryId: string | undefined;
+    let lastSessionEntryId: string | undefined = this.lastSessionEntryIdBySessionFile.get(descriptor.sessionFile);
 
     try {
       const sessionManager = openSessionManagerWithSizeGuard(descriptor.sessionFile, {
@@ -391,9 +452,60 @@ export class ConversationProjector {
       });
     }
 
+    const mergedEntries = this.mergeDiskAndInMemoryEntries(entriesForAgent, existingInMemoryEntries);
     this.trackLastSessionEntryId(descriptor.sessionFile, lastSessionEntryId);
-    this.deps.conversationEntriesByAgentId.set(descriptor.agentId, entriesForAgent);
-    return entriesForAgent;
+    this.loadedFromDisk.add(descriptor.agentId);
+    this.deps.conversationEntriesByAgentId.set(descriptor.agentId, mergedEntries);
+    return mergedEntries;
+  }
+
+  private mergeDiskAndInMemoryEntries(
+    diskEntries: ConversationEntryEvent[],
+    inMemoryEntries: ConversationEntryEvent[]
+  ): ConversationEntryEvent[] {
+    if (inMemoryEntries.length === 0) {
+      return diskEntries;
+    }
+
+    const inMemoryEntryIdCounts = new Map<string, number>();
+    // Non-message entries can be missing stable ids, so we dedupe with a serialized fingerprint.
+    // This assumes those entry fields stay stable between in-memory capture and disk round-trip.
+    const inMemoryEntryFingerprintCounts = new Map<string, number>();
+
+    for (const inMemoryEntry of inMemoryEntries) {
+      const entryId = extractConversationEntryEventId(inMemoryEntry);
+      if (entryId) {
+        inMemoryEntryIdCounts.set(entryId, (inMemoryEntryIdCounts.get(entryId) ?? 0) + 1);
+        continue;
+      }
+
+      const fingerprint = safeJson(inMemoryEntry);
+      inMemoryEntryFingerprintCounts.set(fingerprint, (inMemoryEntryFingerprintCounts.get(fingerprint) ?? 0) + 1);
+    }
+
+    const mergedEntries: ConversationEntryEvent[] = [];
+    for (const diskEntry of diskEntries) {
+      const entryId = extractConversationEntryEventId(diskEntry);
+      if (entryId) {
+        if (decrementCounter(inMemoryEntryIdCounts, entryId)) {
+          continue;
+        }
+
+        mergedEntries.push(diskEntry);
+        continue;
+      }
+
+      const fingerprint = safeJson(diskEntry);
+      if (decrementCounter(inMemoryEntryFingerprintCounts, fingerprint)) {
+        continue;
+      }
+
+      mergedEntries.push(diskEntry);
+    }
+
+    mergedEntries.push(...inMemoryEntries);
+    trimConversationHistory(mergedEntries);
+    return mergedEntries;
   }
 
   private assignConversationMessageIdIfMissing(event: ConversationEntryEvent, preferredId?: string): void {
@@ -554,6 +666,33 @@ function extractSessionEntryId(entry: unknown): string | undefined {
   }
 
   return entryId;
+}
+
+function extractConversationEntryEventId(entry: ConversationEntryEvent): string | undefined {
+  if (entry.type !== "conversation_message") {
+    return undefined;
+  }
+
+  if (typeof entry.id !== "string" || entry.id.trim().length === 0) {
+    return undefined;
+  }
+
+  return entry.id;
+}
+
+function decrementCounter(counter: Map<string, number>, key: string): boolean {
+  const current = counter.get(key);
+  if (!current) {
+    return false;
+  }
+
+  if (current <= 1) {
+    counter.delete(key);
+  } else {
+    counter.set(key, current - 1);
+  }
+
+  return true;
 }
 
 function buildManagerErrorConversationText(options: {
