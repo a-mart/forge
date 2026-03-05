@@ -3,6 +3,7 @@ import {
   ChevronDown,
   ChevronRight,
   CircleDashed,
+  Copy,
   Edit3,
   GitFork,
   Merge,
@@ -405,6 +406,15 @@ function SessionRowItem({
         </ContextMenuTrigger>
 
         <ContextMenuContent>
+          <ContextMenuItem
+            onClick={() => {
+              const sessionDir = sessionAgent.sessionFile.replace(/\/[^/]+$/, '')
+              navigator.clipboard.writeText(sessionDir)
+            }}
+          >
+            <Copy className="mr-2 size-3.5" />
+            Copy path
+          </ContextMenuItem>
           {onRename ? (
             <ContextMenuItem onClick={onRename}>
               <Edit3 className="mr-2 size-3.5" />
