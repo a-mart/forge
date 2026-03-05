@@ -179,6 +179,66 @@ describe('ConversationProjector session tree continuity', () => {
     expect(fallbackEntry?.parentId).toBe(runtimeEntry?.id)
   })
 
+  it('merges runtime-captured in-memory entries with lazy disk history on first access', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-projector-lazy-merge-'))
+    const sessionFile = join(root, 'manager.jsonl')
+    const descriptor = makeDescriptor(sessionFile, root)
+
+    const seededSession = SessionManager.open(sessionFile)
+    seededSession.appendMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'seed entry to create header' }],
+    } as any)
+
+    seededSession.appendCustomEntry('swarm_conversation_entry', {
+      type: 'conversation_message',
+      agentId: descriptor.agentId,
+      role: 'assistant',
+      text: 'persisted history before restart',
+      timestamp: '2025-12-31T23:58:00.000Z',
+      source: 'system',
+    })
+
+    const projector = makeProjector({ descriptor })
+    projector.loadConversationHistoriesFromStore()
+
+    projector.emitConversationMessage({
+      type: 'conversation_message',
+      agentId: descriptor.agentId,
+      role: 'assistant',
+      text: 'runtime persisted after boot',
+      timestamp: FIXED_NOW,
+      source: 'system',
+    })
+
+    projector.emitConversationLog({
+      type: 'conversation_log',
+      agentId: descriptor.agentId,
+      timestamp: FIXED_NOW,
+      source: 'runtime_log',
+      kind: 'tool_execution_update',
+      toolName: 'read',
+      toolCallId: 'tool-1',
+      text: '{"progress":0.5}',
+    })
+
+    const history = projector.getConversationHistory(descriptor.agentId)
+
+    const persistedBeforeRestart = history.filter(
+      (entry) => entry.type === 'conversation_message' && entry.text === 'persisted history before restart',
+    )
+    const persistedAfterBoot = history.filter(
+      (entry) => entry.type === 'conversation_message' && entry.text === 'runtime persisted after boot',
+    )
+    const inMemoryOnlyUpdate = history.filter(
+      (entry) => entry.type === 'conversation_log' && entry.kind === 'tool_execution_update',
+    )
+
+    expect(persistedBeforeRestart).toHaveLength(1)
+    expect(persistedAfterBoot).toHaveLength(1)
+    expect(inMemoryOnlyUpdate).toHaveLength(1)
+  })
+
   it('backfills missing message ids from wrapper entry ids when loading persisted history', async () => {
     const root = await mkdtemp(join(tmpdir(), 'conversation-projector-backfill-'))
     const sessionFile = join(root, 'manager.jsonl')
