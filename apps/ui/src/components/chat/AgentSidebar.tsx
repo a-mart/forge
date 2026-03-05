@@ -307,7 +307,9 @@ function SessionRowItem({
   selectedAgentId,
   isSettingsActive,
   isCollapsed,
+  isWorkerListExpanded,
   onToggleCollapse,
+  onToggleWorkerListExpanded,
   onSelect,
   onDeleteAgent,
   onStop,
@@ -323,7 +325,9 @@ function SessionRowItem({
   selectedAgentId: string | null
   isSettingsActive: boolean
   isCollapsed: boolean
+  isWorkerListExpanded: boolean
   onToggleCollapse: () => void
+  onToggleWorkerListExpanded: () => void
   onSelect: (agentId: string) => void
   onDeleteAgent: (agentId: string) => void
   onStop?: () => void
@@ -462,24 +466,78 @@ function SessionRowItem({
       {workers.length > 0 && !isCollapsed ? (
         <div className="relative mt-0.5">
           <div className="absolute bottom-1 left-6 top-0 w-px bg-sidebar-border/40" />
-          <ul className="space-y-0.5">
-            {workers.map((worker) => {
-              const workerLiveStatus = getAgentLiveStatus(worker, statuses)
-              const workerIsSelected = !isSettingsActive && selectedAgentId === worker.agentId
+          {(() => {
+            const needsWorkerTruncation = workers.length > MAX_VISIBLE_WORKERS
+            let visibleWorkers: AgentDescriptor[]
+            let hiddenWorkerCount = 0
 
-              return (
-                <li key={worker.agentId}>
-                  <WorkerRow
-                    agent={worker}
-                    liveStatus={workerLiveStatus}
-                    isSelected={workerIsSelected}
-                    onSelect={() => onSelect(worker.agentId)}
-                    onDelete={() => onDeleteAgent(worker.agentId)}
-                  />
-                </li>
+            if (isWorkerListExpanded || !needsWorkerTruncation) {
+              visibleWorkers = workers
+            } else {
+              const topWorkers = workers.slice(0, MAX_VISIBLE_WORKERS)
+              const selectedWorkerInTop = !selectedAgentId || isSettingsActive || topWorkers.some(
+                (w) => w.agentId === selectedAgentId,
               )
-            })}
-          </ul>
+
+              if (selectedWorkerInTop) {
+                visibleWorkers = topWorkers
+              } else {
+                const selectedWorker = workers.find((w) => w.agentId === selectedAgentId)
+                if (selectedWorker) {
+                  visibleWorkers = [...topWorkers.slice(0, MAX_VISIBLE_WORKERS - 1), selectedWorker]
+                } else {
+                  visibleWorkers = topWorkers
+                }
+              }
+              hiddenWorkerCount = workers.length - visibleWorkers.length
+            }
+
+            return (
+              <>
+                <ul className="space-y-0.5">
+                  {visibleWorkers.map((worker) => {
+                    const workerLiveStatus = getAgentLiveStatus(worker, statuses)
+                    const workerIsSelected = !isSettingsActive && selectedAgentId === worker.agentId
+
+                    return (
+                      <li key={worker.agentId}>
+                        <WorkerRow
+                          agent={worker}
+                          liveStatus={workerLiveStatus}
+                          isSelected={workerIsSelected}
+                          onSelect={() => onSelect(worker.agentId)}
+                          onDelete={() => onDeleteAgent(worker.agentId)}
+                        />
+                      </li>
+                    )
+                  })}
+                </ul>
+                {needsWorkerTruncation ? (
+                  <button
+                    type="button"
+                    onClick={onToggleWorkerListExpanded}
+                    className={cn(
+                      'relative z-10 mt-0.5 flex w-full items-center gap-1 rounded-md py-1 pl-12 pr-1.5 text-left text-[11px] text-muted-foreground/70 transition-colors',
+                      'hover:text-muted-foreground hover:bg-sidebar-accent/30',
+                      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
+                    )}
+                  >
+                    {isWorkerListExpanded ? (
+                      <>
+                        <ChevronUp className="size-3 shrink-0" aria-hidden="true" />
+                        <span>Show less</span>
+                      </>
+                    ) : (
+                      <>
+                        <ChevronDown className="size-3 shrink-0" aria-hidden="true" />
+                        <span>Show {hiddenWorkerCount} more</span>
+                      </>
+                    )}
+                  </button>
+                ) : null}
+              </>
+            )
+          })()}
         </div>
       ) : null}
     </li>
@@ -489,6 +547,7 @@ function SessionRowItem({
 // ── Profile group ──
 
 const MAX_VISIBLE_SESSIONS = 8
+const MAX_VISIBLE_WORKERS = 15
 
 function ProfileGroup({
   treeRow,
@@ -499,9 +558,11 @@ function ProfileGroup({
   isCollapsed,
   collapsedSessionIds,
   isSessionListExpanded,
+  expandedWorkerListSessionIds,
   onToggleProfileCollapsed,
   onToggleSessionCollapsed,
   onToggleSessionListExpanded,
+  onToggleWorkerListExpanded,
   onSelect,
   onDeleteAgent,
   onDeleteManager,
@@ -522,9 +583,11 @@ function ProfileGroup({
   isCollapsed: boolean
   collapsedSessionIds: Set<string>
   isSessionListExpanded: boolean
+  expandedWorkerListSessionIds: Set<string>
   onToggleProfileCollapsed: () => void
   onToggleSessionCollapsed: (sessionId: string) => void
   onToggleSessionListExpanded: () => void
+  onToggleWorkerListExpanded: (sessionId: string) => void
   onSelect: (agentId: string) => void
   onDeleteAgent: (agentId: string) => void
   onDeleteManager: (managerId: string) => void
@@ -732,7 +795,9 @@ function ProfileGroup({
                         selectedAgentId={selectedAgentId}
                         isSettingsActive={isSettingsActive}
                         isCollapsed={sessionCollapsed}
+                        isWorkerListExpanded={expandedWorkerListSessionIds.has(session.sessionAgent.agentId)}
                         onToggleCollapse={() => onToggleSessionCollapsed(session.sessionAgent.agentId)}
+                        onToggleWorkerListExpanded={() => onToggleWorkerListExpanded(session.sessionAgent.agentId)}
                         onSelect={onSelect}
                         onDeleteAgent={onDeleteAgent}
                         onStop={onStopSession ? () => onStopSession(session.sessionAgent.agentId) : undefined}
@@ -1029,6 +1094,8 @@ export function AgentSidebar({
   const [expandedSessionIds, setExpandedSessionIds] = useState<Set<string>>(() => new Set())
   // Track which profiles have their full session list expanded (default: collapsed to MAX_VISIBLE)
   const [expandedSessionListProfileIds, setExpandedSessionListProfileIds] = useState<Set<string>>(() => new Set())
+  // Track which sessions have their full worker list expanded (default: collapsed to MAX_VISIBLE_WORKERS)
+  const [expandedWorkerListSessionIds, setExpandedWorkerListSessionIds] = useState<Set<string>>(() => new Set())
   const [createTarget, setCreateTarget] = useState<{ profileId: string; profileLabel: string } | null>(null)
   const [renameTarget, setRenameTarget] = useState<{ agentId: string; label: string } | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<{ agentId: string; label: string } | null>(null)
@@ -1065,6 +1132,18 @@ export function AgentSidebar({
         next.delete(profileId)
       } else {
         next.add(profileId)
+      }
+      return next
+    })
+  }, [])
+
+  const toggleWorkerListExpanded = useCallback((sessionId: string) => {
+    setExpandedWorkerListSessionIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(sessionId)) {
+        next.delete(sessionId)
+      } else {
+        next.add(sessionId)
       }
       return next
     })
@@ -1257,24 +1336,80 @@ export function AgentSidebar({
             {hasWorkers && cortexWorkersExpanded ? (
               <div className="relative mt-0.5">
                 <div className="absolute bottom-1 left-3.5 top-0 w-px bg-sidebar-border/40" />
-                <ul className="space-y-0.5">
-                  {cortexWorkers.map((worker) => {
-                    const workerLiveStatus = getAgentLiveStatus(worker, statuses)
-                    const workerIsSelected = !isSettingsActive && selectedAgentId === worker.agentId
+                {(() => {
+                  const cortexWorkerListExpandKey = `__cortex_workers_list__`
+                  const isCortexWorkerListExpanded = expandedWorkerListSessionIds.has(cortexWorkerListExpandKey)
+                  const needsCortexWorkerTruncation = cortexWorkers.length > MAX_VISIBLE_WORKERS
+                  let visibleCortexWorkers: AgentDescriptor[]
+                  let hiddenCortexWorkerCount = 0
 
-                    return (
-                      <li key={worker.agentId}>
-                        <WorkerRow
-                          agent={worker}
-                          liveStatus={workerLiveStatus}
-                          isSelected={workerIsSelected}
-                          onSelect={() => handleSelectAgent(worker.agentId)}
-                          onDelete={() => onDeleteAgent(worker.agentId)}
-                        />
-                      </li>
+                  if (isCortexWorkerListExpanded || !needsCortexWorkerTruncation) {
+                    visibleCortexWorkers = cortexWorkers
+                  } else {
+                    const topWorkers = cortexWorkers.slice(0, MAX_VISIBLE_WORKERS)
+                    const selectedInTop = !selectedAgentId || isSettingsActive || topWorkers.some(
+                      (w) => w.agentId === selectedAgentId,
                     )
-                  })}
-                </ul>
+
+                    if (selectedInTop) {
+                      visibleCortexWorkers = topWorkers
+                    } else {
+                      const selectedWorker = cortexWorkers.find((w) => w.agentId === selectedAgentId)
+                      if (selectedWorker) {
+                        visibleCortexWorkers = [...topWorkers.slice(0, MAX_VISIBLE_WORKERS - 1), selectedWorker]
+                      } else {
+                        visibleCortexWorkers = topWorkers
+                      }
+                    }
+                    hiddenCortexWorkerCount = cortexWorkers.length - visibleCortexWorkers.length
+                  }
+
+                  return (
+                    <>
+                      <ul className="space-y-0.5">
+                        {visibleCortexWorkers.map((worker) => {
+                          const workerLiveStatus = getAgentLiveStatus(worker, statuses)
+                          const workerIsSelected = !isSettingsActive && selectedAgentId === worker.agentId
+
+                          return (
+                            <li key={worker.agentId}>
+                              <WorkerRow
+                                agent={worker}
+                                liveStatus={workerLiveStatus}
+                                isSelected={workerIsSelected}
+                                onSelect={() => handleSelectAgent(worker.agentId)}
+                                onDelete={() => onDeleteAgent(worker.agentId)}
+                              />
+                            </li>
+                          )
+                        })}
+                      </ul>
+                      {needsCortexWorkerTruncation ? (
+                        <button
+                          type="button"
+                          onClick={() => toggleWorkerListExpanded(cortexWorkerListExpandKey)}
+                          className={cn(
+                            'relative z-10 mt-0.5 flex w-full items-center gap-1 rounded-md py-1 pl-12 pr-1.5 text-left text-[11px] text-muted-foreground/70 transition-colors',
+                            'hover:text-muted-foreground hover:bg-sidebar-accent/30',
+                            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
+                          )}
+                        >
+                          {isCortexWorkerListExpanded ? (
+                            <>
+                              <ChevronUp className="size-3 shrink-0" aria-hidden="true" />
+                              <span>Show less</span>
+                            </>
+                          ) : (
+                            <>
+                              <ChevronDown className="size-3 shrink-0" aria-hidden="true" />
+                              <span>Show {hiddenCortexWorkerCount} more</span>
+                            </>
+                          )}
+                        </button>
+                      ) : null}
+                    </>
+                  )
+                })()}
               </div>
             ) : null}
           </div>
@@ -1316,9 +1451,11 @@ export function AgentSidebar({
                   isCollapsed={collapsedProfileIds.has(treeRow.profile.profileId)}
                   collapsedSessionIds={expandedSessionIds}
                   isSessionListExpanded={expandedSessionListProfileIds.has(treeRow.profile.profileId)}
+                  expandedWorkerListSessionIds={expandedWorkerListSessionIds}
                   onToggleProfileCollapsed={() => toggleProfileCollapsed(treeRow.profile.profileId)}
                   onToggleSessionCollapsed={toggleSessionCollapsed}
                   onToggleSessionListExpanded={() => toggleSessionListExpanded(treeRow.profile.profileId)}
+                  onToggleWorkerListExpanded={toggleWorkerListExpanded}
                   onSelect={handleSelectAgent}
                   onDeleteAgent={onDeleteAgent}
                   onDeleteManager={onDeleteManager}
