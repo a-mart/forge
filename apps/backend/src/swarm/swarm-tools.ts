@@ -83,8 +83,8 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
       async execute() {
         let agents = host.listAgents();
 
-        // Workers only see their own manager and sibling workers (same managerId)
-        if (descriptor.role === "worker" && descriptor.managerId) {
+        // Agents only see their own manager/session and sibling workers (same managerId)
+        if (descriptor.managerId) {
           agents = agents.filter(
             (a) =>
               a.agentId === descriptor.managerId ||
