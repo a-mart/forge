@@ -3890,10 +3890,32 @@ Suggested actions:
 • Read the worker's session file to check its output
 • Send a follow-up message to the worker if you need more information`;
 
+    let managerNotified = false;
+
     try {
       await this.sendMessage(agentId, descriptor.managerId, watchdogMessage, "auto", { origin: "internal" });
+      managerNotified = true;
+
+      const postSendState = this.workerWatchdogState.get(agentId);
+      if (postSendState) {
+        postSendState.reportedThisTurn = false;
+      }
     } catch (error) {
       this.logDebug("watchdog:notify:error", {
+        workerAgentId: agentId,
+        managerId: descriptor.managerId,
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
+
+    const userVisibleMessage = managerNotified
+      ? `⚠️ Idle worker detected — \`${agentId}\` completed its turn without reporting back to its manager. The manager has been notified.`
+      : `⚠️ Idle worker detected — \`${agentId}\` completed its turn without reporting back to its manager. An automated manager notification was attempted.`;
+
+    try {
+      await this.publishToUser(descriptor.managerId, userVisibleMessage, "system");
+    } catch (error) {
+      this.logDebug("watchdog:publish_to_user:error", {
         workerAgentId: agentId,
         managerId: descriptor.managerId,
         message: error instanceof Error ? error.message : String(error)

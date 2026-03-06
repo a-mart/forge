@@ -8,6 +8,8 @@ import { SwarmManager } from '../swarm/swarm-manager.js'
 import type {
   AgentContextUsage,
   AgentDescriptor,
+  MessageSourceContext,
+  MessageTargetContext,
   RequestedDeliveryMode,
   SendMessageReceipt,
   SwarmConfig,
@@ -73,6 +75,22 @@ class FakeRuntime {
 
 class TestSwarmManager extends SwarmManager {
   readonly runtimeByAgentId = new Map<string, FakeRuntime>()
+  readonly publishedToUserCalls: Array<{
+    agentId: string
+    text: string
+    source: 'speak_to_user' | 'system'
+    targetContext?: MessageTargetContext
+  }> = []
+
+  override async publishToUser(
+    agentId: string,
+    text: string,
+    source: 'speak_to_user' | 'system' = 'speak_to_user',
+    targetContext?: MessageTargetContext,
+  ): Promise<{ targetContext: MessageSourceContext }> {
+    this.publishedToUserCalls.push({ agentId, text, source, targetContext })
+    return super.publishToUser(agentId, text, source, targetContext)
+  }
 
   protected override async createRuntimeForDescriptor(
     descriptor: AgentDescriptor,
@@ -210,6 +228,10 @@ function buildExpectedModelWatchdogMessage(worker: AgentDescriptor): string {
   return `SYSTEM: ${buildWatchdogBody(worker)}`
 }
 
+function buildExpectedUserWatchdogMessage(worker: AgentDescriptor): string {
+  return `⚠️ Idle worker detected — \`${worker.agentId}\` completed its turn without reporting back to its manager. The manager has been notified.`
+}
+
 afterEach(() => {
   vi.useRealTimers()
 })
@@ -237,6 +259,60 @@ describe('idle worker watchdog', () => {
     const watchdogCall = managerRuntime?.sendCalls[0]
     expect(watchdogCall?.delivery).toBe('auto')
     expect(watchdogCall?.message).toBe(buildExpectedModelWatchdogMessage(worker))
+
+    expect(manager.publishedToUserCalls).toHaveLength(1)
+    expect(manager.publishedToUserCalls[0]).toMatchObject({
+      agentId: 'manager',
+      source: 'system',
+      text: buildExpectedUserWatchdogMessage(worker),
+    })
+  })
+
+  it('re-arms watchdog state after a synthetic nudge so a later silent turn triggers again', async () => {
+    vi.useFakeTimers()
+
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', { agentId: 'Rearm Worker' })
+    const managerRuntime = manager.runtimeByAgentId.get('manager')
+    const workerRuntime = manager.runtimeByAgentId.get(worker.agentId)
+    expect(managerRuntime).toBeDefined()
+    expect(workerRuntime).toBeDefined()
+
+    await (manager as any).handleRuntimeAgentEnd(worker.agentId)
+    await vi.advanceTimersByTimeAsync(3_000)
+
+    const firstWatchdogMessages = managerRuntime?.sendCalls.filter(
+      (call) => call.message === buildExpectedModelWatchdogMessage(worker),
+    )
+    expect(firstWatchdogMessages).toHaveLength(1)
+    expect(manager.publishedToUserCalls).toHaveLength(1)
+
+    await manager.sendMessage('manager', worker.agentId, 'Please confirm completion.', 'auto', { origin: 'internal' })
+    expect(workerRuntime?.sendCalls).toHaveLength(1)
+    expect(workerRuntime?.sendCalls[0]?.message).toBe('SYSTEM: Please confirm completion.')
+
+    await (manager as any).handleRuntimeAgentEnd(worker.agentId)
+
+    await vi.advanceTimersByTimeAsync(2_999)
+    const stillOneWatchdogMessage = managerRuntime?.sendCalls.filter(
+      (call) => call.message === buildExpectedModelWatchdogMessage(worker),
+    )
+    expect(stillOneWatchdogMessage).toHaveLength(1)
+
+    await vi.advanceTimersByTimeAsync(1)
+
+    const secondWatchdogMessages = managerRuntime?.sendCalls.filter(
+      (call) => call.message === buildExpectedModelWatchdogMessage(worker),
+    )
+    expect(secondWatchdogMessages).toHaveLength(2)
+
+    const publishedWatchdogMessages = manager.publishedToUserCalls.filter(
+      (call) => call.agentId === 'manager' && call.source === 'system' && call.text === buildExpectedUserWatchdogMessage(worker),
+    )
+    expect(publishedWatchdogMessages).toHaveLength(2)
   })
 
   it('does not emit a watchdog notification when the worker reports to its manager during the turn', async () => {
