@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
-import { appendFile, copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, copyFile, mkdir, open, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import type { Api, Model } from "@mariozechner/pi-ai";
 import { getModel } from "@mariozechner/pi-ai";
@@ -629,6 +629,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.reconcileProfilesOnBoot();
     await this.ensureCortexProfile();
     this.normalizeStreamingStatusesForBoot();
+    await this.recoverMissingWorkerDescriptorsForBoot();
 
     await this.ensureMemoryFilesForBoot();
     await this.saveStore();
@@ -764,7 +765,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const { terminatedWorkerIds } = await this.stopSessionInternal(agentId, {
       saveStore: false,
       emitSnapshots: false,
-      emitStatus: false
+      emitStatus: false,
+      deleteWorkers: true
     });
 
     const profileId = descriptor.profileId ?? descriptor.agentId;
@@ -1594,7 +1596,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   private async stopSessionInternal(
     agentId: string,
-    options: { saveStore: boolean; emitSnapshots: boolean; emitStatus?: boolean }
+    options: { saveStore: boolean; emitSnapshots: boolean; emitStatus?: boolean; deleteWorkers?: boolean }
   ): Promise<{ terminatedWorkerIds: string[] }> {
     const descriptor = this.getRequiredSessionDescriptor(agentId);
     const terminatedWorkerIds: string[] = [];
@@ -1602,7 +1604,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     for (const workerDescriptor of this.getWorkersForManager(agentId)) {
       terminatedWorkerIds.push(workerDescriptor.agentId);
       await this.terminateDescriptor(workerDescriptor, { abort: true, emitStatus: true });
-      this.descriptors.delete(workerDescriptor.agentId);
+      if (options.deleteWorkers) {
+        this.descriptors.delete(workerDescriptor.agentId);
+      }
       this.conversationProjector.deleteConversationHistory(workerDescriptor.agentId);
     }
 
@@ -2653,6 +2657,145 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     if (normalizedAgentIds.length > 0) {
       this.logDebug("boot:normalize_streaming_statuses", { normalizedAgentIds });
     }
+  }
+
+  /**
+   * Recover worker descriptors from on-disk worker JSONL files for sessions
+   * whose workers are missing from agents.json.
+   *
+   * This handles the case where workers were previously deleted from agents.json
+   * on session stop. We scan each session's workers/ directory and recreate
+   * terminated descriptors for any worker files that have no matching descriptor.
+   */
+  private async recoverMissingWorkerDescriptorsForBoot(): Promise<void> {
+    const recoveredIds: string[] = [];
+
+    // Build set of known worker agentIds
+    const knownWorkerIds = new Set<string>();
+    for (const descriptor of this.descriptors.values()) {
+      if (descriptor.role === "worker") {
+        knownWorkerIds.add(descriptor.agentId);
+      }
+    }
+
+    // Scan each session's workers directory
+    for (const descriptor of this.descriptors.values()) {
+      if (descriptor.role !== "manager" || !descriptor.profileId) {
+        continue;
+      }
+
+      const profileId = descriptor.profileId;
+      const workersDir = getWorkersDir(this.config.paths.dataDir, profileId, descriptor.agentId);
+
+      let workerFiles: string[];
+      try {
+        workerFiles = await readdir(workersDir);
+      } catch {
+        continue; // No workers directory
+      }
+
+      for (const filename of workerFiles) {
+        if (!filename.endsWith(".jsonl")) {
+          continue;
+        }
+
+        const workerId = filename.slice(0, -".jsonl".length);
+        if (knownWorkerIds.has(workerId)) {
+          continue;
+        }
+
+        // Parse minimal metadata from the worker JSONL header
+        const workerFilePath = getWorkerSessionFilePath(
+          this.config.paths.dataDir, profileId, descriptor.agentId, workerId
+        );
+
+        try {
+          const header = await this.readWorkerJSONLHeader(workerFilePath);
+
+          const workerDescriptor: AgentDescriptor = {
+            agentId: workerId,
+            displayName: workerId,
+            role: "worker",
+            managerId: descriptor.agentId,
+            profileId,
+            status: "terminated",
+            createdAt: header.createdAt ?? descriptor.createdAt,
+            updatedAt: header.updatedAt ?? descriptor.updatedAt,
+            cwd: header.cwd ?? descriptor.cwd,
+            model: header.model ?? descriptor.model,
+            sessionFile: workerFilePath
+          };
+
+          this.descriptors.set(workerId, workerDescriptor);
+          knownWorkerIds.add(workerId);
+          recoveredIds.push(workerId);
+        } catch {
+          // Skip unreadable worker files
+        }
+      }
+    }
+
+    if (recoveredIds.length > 0) {
+      this.logDebug("boot:recover_missing_workers", {
+        recoveredCount: recoveredIds.length,
+        recoveredIds: recoveredIds.slice(0, 20),
+        truncated: recoveredIds.length > 20
+      });
+    }
+  }
+
+  /**
+   * Read the first few lines of a worker JSONL file to extract metadata.
+   */
+  private async readWorkerJSONLHeader(
+    filePath: string
+  ): Promise<{
+    createdAt: string | null;
+    updatedAt: string | null;
+    cwd: string | null;
+    model: AgentDescriptor["model"] | null;
+  }> {
+    // Only read first 4KB to parse header lines
+    const headerChunk = await readFileHead(filePath, 4096);
+    const lines = headerChunk.split("\n").filter((l) => l.trim());
+
+    let createdAt: string | null = null;
+    let updatedAt: string | null = null;
+    let cwd: string | null = null;
+    let model: AgentDescriptor["model"] | null = null;
+
+    for (const line of lines.slice(0, 10)) {
+      try {
+        const entry = JSON.parse(line) as Record<string, unknown>;
+
+        if (entry.type === "session") {
+          createdAt = typeof entry.timestamp === "string" ? entry.timestamp : null;
+          cwd = typeof entry.cwd === "string" ? entry.cwd : null;
+        }
+
+        if (entry.type === "model_change") {
+          const provider = typeof entry.provider === "string" ? entry.provider : null;
+          const modelId = typeof entry.modelId === "string" ? entry.modelId : null;
+          if (provider && modelId) {
+            model = { provider, modelId, thinkingLevel: "none" };
+          }
+          if (!updatedAt && typeof entry.timestamp === "string") {
+            updatedAt = entry.timestamp;
+          }
+        }
+
+        if (entry.type === "thinking_level_change" && model) {
+          const thinkingLevel = typeof entry.thinkingLevel === "string" ? entry.thinkingLevel : undefined;
+          if (thinkingLevel) {
+            model = { ...model, thinkingLevel };
+          }
+        }
+      } catch {
+        // Skip unparseable lines
+      }
+    }
+
+    return { createdAt, updatedAt: updatedAt ?? createdAt, cwd, model };
   }
 
   private async restoreRuntimesForBoot(): Promise<void> {
@@ -4496,4 +4639,15 @@ function normalizeOptionalMetadataValue(value: string | undefined): string | und
 
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+async function readFileHead(filePath: string, bytes: number): Promise<string> {
+  const handle = await open(filePath, "r");
+  try {
+    const buf = Buffer.alloc(bytes);
+    const { bytesRead } = await handle.read(buf, 0, bytes, 0);
+    return buf.subarray(0, bytesRead).toString("utf8");
+  } finally {
+    await handle.close();
+  }
 }
