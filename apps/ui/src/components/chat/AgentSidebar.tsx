@@ -6,6 +6,7 @@ import {
   CircleDashed,
   Copy,
   Edit3,
+  EyeOff,
   GitFork,
   Merge,
   Pause,
@@ -62,6 +63,7 @@ interface AgentSidebarProps {
   onRenameSession?: (agentId: string, label: string) => void
   onForkSession?: (sourceAgentId: string, name?: string) => void
   onMergeSessionMemory?: (agentId: string) => void
+  onMarkUnread?: (agentId: string) => void
 }
 
 type AgentLiveStatus = {
@@ -337,6 +339,7 @@ function SessionRowItem({
   onRename,
   onFork,
   onMergeMemory,
+  onMarkUnread,
   onStopWorker,
   onResumeWorker,
 }: {
@@ -357,6 +360,7 @@ function SessionRowItem({
   onRename?: () => void
   onFork?: () => void
   onMergeMemory?: () => void
+  onMarkUnread?: () => void
   onStopWorker?: (agentId: string) => void
   onResumeWorker?: (agentId: string) => void
 }) {
@@ -471,6 +475,12 @@ function SessionRowItem({
             <ContextMenuItem onClick={onMergeMemory}>
               <Merge className="mr-2 size-3.5" />
               Merge Memory
+            </ContextMenuItem>
+          ) : null}
+          {onMarkUnread ? (
+            <ContextMenuItem onClick={onMarkUnread}>
+              <EyeOff className="mr-2 size-3.5" />
+              Mark as unread
             </ContextMenuItem>
           ) : null}
           {!isDefault && onDelete ? (
@@ -599,6 +609,7 @@ function ProfileGroup({
   onRequestRenameSession,
   onForkSession,
   onMergeSessionMemory,
+  onMarkUnread,
 }: {
   treeRow: ProfileTreeRow
   statuses: Record<string, { status: AgentStatus; pendingCount: number; contextUsage?: AgentContextUsage }>
@@ -624,6 +635,7 @@ function ProfileGroup({
   onRequestRenameSession?: (agentId: string) => void
   onForkSession?: (sourceAgentId: string) => void
   onMergeSessionMemory?: (agentId: string) => void
+  onMarkUnread?: (agentId: string) => void
 }) {
   const { profile, sessions } = treeRow
   const hasAnySessions = sessions.length > 0
@@ -831,6 +843,7 @@ function ProfileGroup({
                         onRename={onRequestRenameSession ? () => onRequestRenameSession(session.sessionAgent.agentId) : undefined}
                         onFork={onForkSession ? () => onForkSession(session.sessionAgent.agentId) : undefined}
                         onMergeMemory={onMergeSessionMemory ? () => onMergeSessionMemory(session.sessionAgent.agentId) : undefined}
+                        onMarkUnread={onMarkUnread ? () => onMarkUnread(session.sessionAgent.agentId) : undefined}
                         onStopWorker={onStopSession}
                         onResumeWorker={onResumeSession}
                       />
@@ -1115,6 +1128,7 @@ function CortexSection({
   onRequestRenameSession,
   onForkSession,
   onMergeSessionMemory,
+  onMarkUnread,
 }: {
   cortexRow: ProfileTreeRow
   statuses: Record<string, { status: AgentStatus; pendingCount: number; contextUsage?: AgentContextUsage }>
@@ -1139,6 +1153,7 @@ function CortexSection({
   onRequestRenameSession?: (agentId: string) => void
   onForkSession?: (sourceAgentId: string) => void
   onMergeSessionMemory?: (agentId: string) => void
+  onMarkUnread?: (agentId: string) => void
 }) {
   const { profile, sessions } = cortexRow
   const defaultSession = sessions.find((s) => s.isDefault)
@@ -1353,6 +1368,7 @@ function CortexSection({
                         onRename={onRequestRenameSession ? () => onRequestRenameSession(session.sessionAgent.agentId) : undefined}
                         onFork={onForkSession ? () => onForkSession(session.sessionAgent.agentId) : undefined}
                         onMergeMemory={onMergeSessionMemory ? () => onMergeSessionMemory(session.sessionAgent.agentId) : undefined}
+                        onMarkUnread={onMarkUnread ? () => onMarkUnread(session.sessionAgent.agentId) : undefined}
                         onStopWorker={onStopSession}
                         onResumeWorker={onResumeSession}
                       />
@@ -1415,6 +1431,7 @@ export function AgentSidebar({
   onRenameSession,
   onForkSession,
   onMergeSessionMemory,
+  onMarkUnread,
 }: AgentSidebarProps) {
   const treeRows = buildProfileTreeRows(agents, profiles)
 
@@ -1599,6 +1616,7 @@ export function AgentSidebar({
             onRequestRenameSession={handleRequestRename}
             onForkSession={onForkSession ? (sourceAgentId: string) => setForkTarget({ sourceAgentId }) : undefined}
             onMergeSessionMemory={onMergeSessionMemory}
+            onMarkUnread={onMarkUnread}
           />
         )
       })()}
@@ -1654,6 +1672,7 @@ export function AgentSidebar({
                   onRequestRenameSession={handleRequestRename}
                   onForkSession={onForkSession ? (sourceAgentId: string) => setForkTarget({ sourceAgentId }) : undefined}
                   onMergeSessionMemory={onMergeSessionMemory}
+                  onMarkUnread={onMarkUnread}
                 />
               ))}
             </ul>

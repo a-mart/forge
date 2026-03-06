@@ -483,6 +483,10 @@ export function IndexPage() {
     })()
   }, [clientRef, setState])
 
+  const handleMarkUnread = useCallback((agentId: string) => {
+    clientRef.current?.markUnread(agentId)
+  }, [clientRef])
+
   const handleSelectAgent = (agentId: string) => {
     navigateToRoute({ view: 'chat', agentId })
     clientRef.current?.subscribeToAgent(agentId)
@@ -551,6 +555,7 @@ export function IndexPage() {
           onRenameSession={handleRenameSession}
           onForkSession={handleForkSession}
           onMergeSessionMemory={handleMergeSessionMemory}
+          onMarkUnread={handleMarkUnread}
         />
 
         <div

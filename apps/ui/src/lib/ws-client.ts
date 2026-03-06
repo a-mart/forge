@@ -124,6 +124,19 @@ export class ManagerWsClient {
     return this.state
   }
 
+  /**
+   * Manually mark a session as having unread messages.
+   * Sets the unread count to at least 1 so the badge appears.
+   */
+  markUnread(agentId: string): void {
+    const current = this.state.unreadCounts[agentId] ?? 0
+    if (current === 0) {
+      this.updateState({
+        unreadCounts: { ...this.state.unreadCounts, [agentId]: 1 },
+      })
+    }
+  }
+
   subscribe(listener: Listener): () => void {
     this.listeners.add(listener)
     listener(this.state)
