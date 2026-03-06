@@ -21,7 +21,7 @@ import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator,
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useState } from 'react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import {
   buildProfileTreeRows,
@@ -1142,13 +1142,9 @@ function CortexSection({
 }) {
   const { profile, sessions } = cortexRow
   const defaultSession = sessions.find((s) => s.isDefault)
-  const nonDefaultSessions = sessions.filter((s) => !s.isDefault)
-  const rootWorkers = defaultSession?.workers ?? []
   const targetId = defaultSession?.sessionAgent.agentId ?? sessions[0]?.sessionAgent.agentId
   const isHeaderSelected = !isSettingsActive && selectedAgentId === targetId
-  const hasNonDefaultSessions = nonDefaultSessions.length > 0
-  const hasRootWorkers = rootWorkers.length > 0
-  const hasExpandableContent = hasNonDefaultSessions || hasRootWorkers
+  const hasAnySessions = sessions.length > 0
 
   // Unread: aggregate when collapsed, root-only when expanded
   const totalUnread = sessions.reduce(
@@ -1176,7 +1172,7 @@ function CortexSection({
       <ContextMenu>
         <ContextMenuTrigger asChild>
           <div className="relative flex items-center">
-            {hasExpandableContent ? (
+            {hasAnySessions ? (
               <button
                 type="button"
                 onClick={onToggleCollapsed}
@@ -1217,14 +1213,14 @@ function CortexSection({
               className={cn(
                 'flex min-w-0 flex-1 items-center gap-2 rounded-md py-2 pr-2 text-left transition-colors',
                 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
-                hasExpandableContent ? 'pl-7' : 'px-2',
+                hasAnySessions ? 'pl-7' : 'px-2',
                 isHeaderSelected
                   ? 'bg-sidebar-accent text-sidebar-accent-foreground'
                   : 'text-sidebar-foreground/90 hover:bg-sidebar-accent/50',
               )}
               title="Cortex — Knowledge Intelligence"
             >
-              {!hasExpandableContent ? (
+              {!hasAnySessions ? (
                 <Brain className={cn('size-4 shrink-0', isHeaderSelected ? 'text-blue-500' : 'text-blue-400')} aria-hidden="true" />
               ) : null}
               {isCollapsed && totalStreamingWorkers > 0 ? (
@@ -1233,7 +1229,7 @@ function CortexSection({
               <span className="min-w-0 flex-1 truncate text-sm font-semibold leading-5">
                 {profile.displayName}
               </span>
-              {isCollapsed && hasNonDefaultSessions ? (
+              {isCollapsed && sessions.length > 1 ? (
                 <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
                   {activeSessionCount}/{sessions.length}
                 </span>
@@ -1295,99 +1291,19 @@ function CortexSection({
         </ContextMenuContent>
       </ContextMenu>
 
-      {/* Expanded content: root workers + non-default sessions */}
-      {!isCollapsed && hasExpandableContent ? (
+      {/* Sessions list (same pattern as ProfileGroup) */}
+      {!isCollapsed && hasAnySessions ? (
         <div className="relative mt-0.5">
           <div className="absolute bottom-1 left-3.5 top-0 w-px bg-sidebar-border/40" />
-
-          {/* Root session workers (shown directly under header) */}
-          {hasRootWorkers ? (() => {
-            const rootSessionId = defaultSession!.sessionAgent.agentId
-            const isRootWorkerListExpanded = expandedWorkerListSessionIds.has(rootSessionId)
-            const needsRootWorkerTruncation = rootWorkers.length > MAX_VISIBLE_WORKERS
-            let visibleRootWorkers: AgentDescriptor[]
-            let hiddenRootWorkerCount = 0
-
-            if (isRootWorkerListExpanded || !needsRootWorkerTruncation) {
-              visibleRootWorkers = rootWorkers
-            } else {
-              const topWorkers = rootWorkers.slice(0, MAX_VISIBLE_WORKERS)
-              const selectedInTop = !selectedAgentId || isSettingsActive || topWorkers.some(
-                (w) => w.agentId === selectedAgentId,
-              )
-
-              if (selectedInTop) {
-                visibleRootWorkers = topWorkers
-              } else {
-                const selectedWorker = rootWorkers.find((w) => w.agentId === selectedAgentId)
-                if (selectedWorker) {
-                  visibleRootWorkers = [...topWorkers.slice(0, MAX_VISIBLE_WORKERS - 1), selectedWorker]
-                } else {
-                  visibleRootWorkers = topWorkers
-                }
-              }
-              hiddenRootWorkerCount = rootWorkers.length - visibleRootWorkers.length
-            }
-
-            return (
-              <>
-                <ul className="space-y-0.5">
-                  {visibleRootWorkers.map((worker) => {
-                    const workerLiveStatus = getAgentLiveStatus(worker, statuses)
-                    const workerIsSelected = !isSettingsActive && selectedAgentId === worker.agentId
-
-                    return (
-                      <li key={worker.agentId}>
-                        <WorkerRow
-                          agent={worker}
-                          liveStatus={workerLiveStatus}
-                          isSelected={workerIsSelected}
-                          onSelect={() => onSelect(worker.agentId)}
-                          onDelete={() => onDeleteAgent(worker.agentId)}
-                          onStop={onStopSession ? () => onStopSession(worker.agentId) : undefined}
-                          onResume={onResumeSession ? () => onResumeSession(worker.agentId) : undefined}
-                        />
-                      </li>
-                    )
-                  })}
-                </ul>
-                {needsRootWorkerTruncation ? (
-                  <button
-                    type="button"
-                    onClick={() => onToggleWorkerListExpanded(rootSessionId)}
-                    className={cn(
-                      'relative z-10 mt-0.5 flex w-full items-center gap-1 rounded-md py-1 pl-12 pr-1.5 text-left text-[11px] text-muted-foreground/70 transition-colors',
-                      'hover:text-muted-foreground hover:bg-sidebar-accent/30',
-                      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
-                    )}
-                  >
-                    {isRootWorkerListExpanded ? (
-                      <>
-                        <ChevronUp className="size-3 shrink-0" aria-hidden="true" />
-                        <span>Show less</span>
-                      </>
-                    ) : (
-                      <>
-                        <ChevronDown className="size-3 shrink-0" aria-hidden="true" />
-                        <span>Show {hiddenRootWorkerCount} more</span>
-                      </>
-                    )}
-                  </button>
-                ) : null}
-              </>
-            )
-          })() : null}
-
-          {/* Non-default session rows */}
-          {hasNonDefaultSessions ? (() => {
-            const needsTruncation = nonDefaultSessions.length > MAX_VISIBLE_SESSIONS
+          {(() => {
+            const needsTruncation = sessions.length > MAX_VISIBLE_SESSIONS
             let visibleSessions: SessionRow[]
             let hiddenCount = 0
 
             if (isSessionListExpanded || !needsTruncation) {
-              visibleSessions = nonDefaultSessions
+              visibleSessions = sessions
             } else {
-              const topSessions = nonDefaultSessions.slice(0, MAX_VISIBLE_SESSIONS)
+              const topSessions = sessions.slice(0, MAX_VISIBLE_SESSIONS)
               const selectedSessionInTop = !selectedAgentId || isSettingsActive || topSessions.some(
                 (s) =>
                   s.sessionAgent.agentId === selectedAgentId ||
@@ -1397,7 +1313,7 @@ function CortexSection({
               if (selectedSessionInTop) {
                 visibleSessions = topSessions
               } else {
-                const selectedSession = nonDefaultSessions.find(
+                const selectedSession = sessions.find(
                   (s) =>
                     s.sessionAgent.agentId === selectedAgentId ||
                     s.workers.some((w) => w.agentId === selectedAgentId),
@@ -1408,7 +1324,7 @@ function CortexSection({
                   visibleSessions = topSessions
                 }
               }
-              hiddenCount = nonDefaultSessions.length - visibleSessions.length
+              hiddenCount = sessions.length - visibleSessions.length
             }
 
             return (
@@ -1433,7 +1349,7 @@ function CortexSection({
                         onDeleteAgent={onDeleteAgent}
                         onStop={onStopSession ? () => onStopSession(session.sessionAgent.agentId) : undefined}
                         onResume={onResumeSession ? () => onResumeSession(session.sessionAgent.agentId) : undefined}
-                        onDelete={onDeleteSession ? () => onDeleteSession(session.sessionAgent.agentId) : undefined}
+                        onDelete={!session.isDefault && onDeleteSession ? () => onDeleteSession(session.sessionAgent.agentId) : undefined}
                         onRename={onRequestRenameSession ? () => onRequestRenameSession(session.sessionAgent.agentId) : undefined}
                         onFork={onForkSession ? () => onForkSession(session.sessionAgent.agentId) : undefined}
                         onMergeMemory={onMergeSessionMemory ? () => onMergeSessionMemory(session.sessionAgent.agentId) : undefined}
@@ -1468,7 +1384,7 @@ function CortexSection({
                 ) : null}
               </>
             )
-          })() : null}
+          })()}
         </div>
       ) : null}
     </div>
@@ -1502,7 +1418,7 @@ export function AgentSidebar({
 }: AgentSidebarProps) {
   const treeRows = buildProfileTreeRows(agents, profiles)
 
-  const [collapsedProfileIds, setCollapsedProfileIds] = useState<Set<string>>(() => new Set(['cortex']))
+  const [collapsedProfileIds, setCollapsedProfileIds] = useState<Set<string>>(() => new Set())
   // Track explicitly expanded sessions — everything defaults to collapsed
   const [expandedSessionIds, setExpandedSessionIds] = useState<Set<string>>(() => new Set())
   // Track which profiles have their full session list expanded (default: collapsed to MAX_VISIBLE)
@@ -1612,27 +1528,6 @@ export function AgentSidebar({
     onDeleteSession?.(agentId)
     setDeleteTarget(null)
   }, [onDeleteSession])
-
-  // Auto-expand Cortex section when a non-default Cortex session is selected
-  useEffect(() => {
-    if (!selectedAgentId || isSettingsActive) return
-    const cortexRow = treeRows.find((row) => isCortexProfile(row))
-    if (!cortexRow) return
-    const isNonDefaultCortexAgent = cortexRow.sessions.some(
-      (s) => !s.isDefault && (
-        s.sessionAgent.agentId === selectedAgentId ||
-        s.workers.some((w) => w.agentId === selectedAgentId)
-      ),
-    )
-    if (isNonDefaultCortexAgent) {
-      setCollapsedProfileIds((prev) => {
-        if (!prev.has('cortex')) return prev
-        const next = new Set(prev)
-        next.delete('cortex')
-        return next
-      })
-    }
-  }, [selectedAgentId, isSettingsActive, treeRows])
 
   const sidebarContent = (
     <aside
