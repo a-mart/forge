@@ -11,7 +11,7 @@
     "packages/protocol"
   ],
   "scripts": {
-    "dev": "concurrently --kill-others-on-fail --names backend,ui \"pnpm --filter @middleman/backend dev\" \"pnpm --filter @middleman/ui dev -- --host ${MIDDLEMAN_HOST:-$(node --env-file-if-exists=.env -p 'process.env.MIDDLEMAN_HOST || \"127.0.0.1\"' 2>/dev/null)}\"",
+    "dev": "set -a; source .env 2>/dev/null; set +a; concurrently --kill-others-on-fail --names backend,ui \"pnpm --filter @middleman/backend dev\" \"pnpm --filter @middleman/ui dev\"",
     "dev:backend": "pnpm --filter @middleman/backend dev",
     "dev:ui": "pnpm --filter @middleman/ui dev -- --host ${MIDDLEMAN_HOST:-$(node --env-file-if-exists=.env -p 'process.env.MIDDLEMAN_HOST || \"127.0.0.1\"' 2>/dev/null)}",
     "dev:site": "pnpm --filter @middleman/site dev",

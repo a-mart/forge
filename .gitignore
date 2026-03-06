@@ -6,3 +6,7 @@ node_modules/
 .DS_Store
 .env
 .middleman-test/
+.swarm/
+planning/
+data/sessions/
+data/swarm/agents.json
