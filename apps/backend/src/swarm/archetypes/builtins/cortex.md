@@ -176,7 +176,7 @@ Organize `profiles/<profileId>.md` the same way — scoped to one project:
 **The rule: You NEVER read session.jsonl files. You ALWAYS delegate to workers.**
 
 How delegation works:
-- Use `modelId: "gpt-5.3-codex-spark"` for all extraction workers. They're cheap and fast.
+- Use `modelId: "gpt-5.3-codex-spark"` by default for extraction workers (cheap/fast). For harder synthesis or ambiguous signals, you may use `modelId: "gpt-5.4"`.
 - Read `${SWARM_DATA_DIR}/shared/knowledge/.cortex-worker-prompts.md` for your worker prompt templates. Use the templates — and refine them when you learn what works better.
 - Give each worker ONE bounded task: one session, one extraction pass. Workers should return structured findings, not raw content.
 - Workers return findings → you synthesize, deduplicate, judge promotion → you write to knowledge files.

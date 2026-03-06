@@ -1,10 +1,10 @@
-import { anthropicOAuthProvider } from "@mariozechner/pi-ai/dist/utils/oauth/anthropic.js";
-import { openaiCodexOAuthProvider } from "@mariozechner/pi-ai/dist/utils/oauth/openai-codex.js";
-import type {
-  OAuthCredentials,
-  OAuthLoginCallbacks,
-  OAuthProviderInterface
-} from "@mariozechner/pi-ai/dist/utils/oauth/types.js";
+import {
+  anthropicOAuthProvider,
+  openaiCodexOAuthProvider,
+  type OAuthCredentials,
+  type OAuthLoginCallbacks,
+  type OAuthProviderInterface
+} from "@mariozechner/pi-ai/oauth";
 import { AuthStorage } from "@mariozechner/pi-coding-agent";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";

@@ -1825,6 +1825,56 @@ describe('SwarmWebSocketServer', () => {
     await server.stop()
   })
 
+  it('creates pi-5.4 managers over websocket', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    const client = new WebSocket(`ws://${config.host}:${config.port}`)
+    const events: ServerEvent[] = []
+    client.on('message', (raw) => {
+      events.push(JSON.parse(raw.toString()) as ServerEvent)
+    })
+
+    await once(client, 'open')
+    client.send(JSON.stringify({ type: 'subscribe' }))
+    await waitForEvent(events, (event) => event.type === 'ready')
+
+    client.send(
+      JSON.stringify({
+        type: 'create_manager',
+        name: 'GPT 5.4 Manager',
+        cwd: config.defaultCwd,
+        model: 'pi-5.4',
+      }),
+    )
+
+    const createdEvent = await waitForEvent(events, (event) => event.type === 'manager_created')
+    expect(createdEvent.type).toBe('manager_created')
+    if (createdEvent.type === 'manager_created') {
+      expect(createdEvent.manager.model).toEqual({
+        provider: 'openai-codex',
+        modelId: 'gpt-5.4',
+        thinkingLevel: 'xhigh',
+      })
+    }
+
+    client.close()
+    await once(client, 'close')
+    await server.stop()
+  })
+
   it('creates codex-app managers over websocket', async () => {
     const port = await getAvailablePort()
     const config = await makeTempConfig(port, true)
@@ -1915,7 +1965,7 @@ describe('SwarmWebSocketServer', () => {
       (event) =>
         event.type === 'error' &&
         event.code === 'INVALID_COMMAND' &&
-        event.message.includes('create_manager.model must be one of pi-codex|pi-opus|codex-app'),
+        event.message.includes('create_manager.model must be one of pi-codex|pi-5.4|pi-opus|codex-app'),
     )
 
     expect(errorEvent.type).toBe('error')

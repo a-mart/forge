@@ -169,7 +169,7 @@ const CORTEX_WORKER_PROMPTS_INITIAL_TEMPLATE = `# Cortex Worker Prompt Templates
 
 > Owned by Cortex. Refine these templates over time based on what produces good vs bad results from workers.
 
-Use these templates when spawning Spark workers. Copy the relevant template, fill in the placeholders (marked with \`{{...}}\`), and send as the worker's task message. Use \`modelId: "gpt-5.3-codex-spark"\` for all extraction workers.
+Use these templates when spawning Spark workers. Copy the relevant template, fill in the placeholders (marked with \`{{...}}\`), and send as the worker's task message. Use \`modelId: "gpt-5.3-codex-spark"\` by default for extraction workers, and escalate to \`modelId: "gpt-5.4"\` for harder synthesis passes.
 
 ---
 

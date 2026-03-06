@@ -9,6 +9,11 @@ const MODEL_PRESET_DESCRIPTORS: Record<SwarmModelPreset, AgentModelDescriptor> =
     modelId: "gpt-5.3-codex",
     thinkingLevel: "xhigh"
   },
+  "pi-5.4": {
+    provider: "openai-codex",
+    modelId: "gpt-5.4",
+    thinkingLevel: "xhigh"
+  },
   "pi-opus": {
     // Anthropic OAuth tokens trigger Claude Code auth headers in pi-ai,
     // matching the existing Claude Code integration path.
@@ -90,6 +95,10 @@ export function inferSwarmModelPresetFromDescriptor(
 
   if (provider === "openai-codex" && modelId === "gpt-5.3-codex") {
     return "pi-codex";
+  }
+
+  if (provider === "openai-codex" && modelId === "gpt-5.4") {
+    return "pi-5.4";
   }
 
   if (provider === "anthropic" && modelId === "claude-opus-4-6") {

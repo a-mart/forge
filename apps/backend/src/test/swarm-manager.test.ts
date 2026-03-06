@@ -2378,6 +2378,12 @@ describe('SwarmManager', () => {
       model: 'pi-codex',
     })
 
+    const pi54Manager = await manager.createManager('manager', {
+      name: 'GPT 5.4 Manager',
+      cwd: config.defaultCwd,
+      model: 'pi-5.4',
+    })
+
     const opusManager = await manager.createManager('manager', {
       name: 'Opus Manager',
       cwd: config.defaultCwd,
@@ -2393,6 +2399,11 @@ describe('SwarmManager', () => {
     expect(codexManager.model).toEqual({
       provider: 'openai-codex',
       modelId: 'gpt-5.3-codex',
+      thinkingLevel: 'xhigh',
+    })
+    expect(pi54Manager.model).toEqual({
+      provider: 'openai-codex',
+      modelId: 'gpt-5.4',
       thinkingLevel: 'xhigh',
     })
     expect(opusManager.model).toEqual({
@@ -2435,7 +2446,7 @@ describe('SwarmManager', () => {
         cwd: config.defaultCwd,
         model: 'invalid-model' as any,
       }),
-    ).rejects.toThrow('create_manager.model must be one of pi-codex|pi-opus|codex-app')
+    ).rejects.toThrow('create_manager.model must be one of pi-codex|pi-5.4|pi-opus|codex-app')
   })
 
   it('maps spawn_agent model presets to canonical runtime models with highest reasoning', async () => {
@@ -2446,6 +2457,11 @@ describe('SwarmManager', () => {
     const codexWorker = await manager.spawnAgent('manager', {
       agentId: 'Codex Worker',
       model: 'pi-codex',
+    })
+
+    const pi54Worker = await manager.spawnAgent('manager', {
+      agentId: 'GPT 5.4 Worker',
+      model: 'pi-5.4',
     })
 
     const opusWorker = await manager.spawnAgent('manager', {
@@ -2461,6 +2477,11 @@ describe('SwarmManager', () => {
     expect(codexWorker.model).toEqual({
       provider: 'openai-codex',
       modelId: 'gpt-5.3-codex',
+      thinkingLevel: 'xhigh',
+    })
+    expect(pi54Worker.model).toEqual({
+      provider: 'openai-codex',
+      modelId: 'gpt-5.4',
       thinkingLevel: 'xhigh',
     })
     expect(opusWorker.model).toEqual({
@@ -2551,7 +2572,7 @@ describe('SwarmManager', () => {
         agentId: 'Invalid Worker',
         model: 'invalid-model' as any,
       }),
-    ).rejects.toThrow('spawn_agent.model must be one of pi-codex|pi-opus|codex-app')
+    ).rejects.toThrow('spawn_agent.model must be one of pi-codex|pi-5.4|pi-opus|codex-app')
   })
 
   it('rejects invalid spawn_agent reasoning levels with a clear error', async () => {
