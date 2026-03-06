@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { BookOpen, ClipboardList, StickyNote, X } from 'lucide-react'
+import { BookOpen, ClipboardList, Clock3, StickyNote, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
@@ -12,18 +12,20 @@ import {
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
 import type { ArtifactReference } from '@/lib/artifacts'
 import { cn } from '@/lib/utils'
+import { SchedulesPanel } from '../SchedulesPanel'
 import { KnowledgeFileViewer } from './KnowledgeFileViewer'
 import { ReviewStatusPanel } from './ReviewStatusPanel'
 
 interface CortexDashboardPanelProps {
   wsUrl: string
+  managerId: string
   isOpen: boolean
   onClose: () => void
   onArtifactClick: (artifact: ArtifactReference) => void
   onSendMessage: (text: string) => void
 }
 
-type DashboardTab = 'knowledge' | 'notes' | 'review'
+type DashboardTab = 'knowledge' | 'notes' | 'review' | 'schedules'
 
 const PANEL_WIDTH_KEY = 'cortex-panel-width'
 const DEFAULT_WIDTH = 420
@@ -66,11 +68,12 @@ interface CortexPaths {
 }
 
 function isDashboardTab(value: string): value is DashboardTab {
-  return value === 'knowledge' || value === 'notes' || value === 'review'
+  return value === 'knowledge' || value === 'notes' || value === 'review' || value === 'schedules'
 }
 
 export function CortexDashboardPanel({
   wsUrl,
+  managerId,
   isOpen,
   onClose,
   onArtifactClick,
@@ -241,6 +244,13 @@ export function CortexDashboardPanel({
               <ClipboardList className="size-3" />
               Review
             </TabsTrigger>
+            <TabsTrigger
+              value="schedules"
+              className="h-6 gap-1 rounded-sm px-2 text-[11px] font-medium data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm"
+            >
+              <Clock3 className="size-3" />
+              Cron
+            </TabsTrigger>
           </TabsList>
 
           <Button
@@ -331,6 +341,15 @@ export function CortexDashboardPanel({
             key={`review-${refreshKey}`}
             wsUrl={wsUrl}
             onTriggerReview={handleTriggerReview}
+          />
+        </TabsContent>
+
+        <TabsContent value="schedules" className="mt-0 min-h-0 flex-1">
+          <SchedulesPanel
+            key={`schedules-${refreshKey}`}
+            wsUrl={wsUrl}
+            managerId={managerId}
+            isActive={isOpen && activeTab === 'schedules'}
           />
         </TabsContent>
       </Tabs>

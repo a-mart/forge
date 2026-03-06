@@ -661,6 +661,7 @@ export function IndexPage() {
             activeAgent?.archetypeId === 'cortex' ? (
               <CortexDashboardPanel
                 wsUrl={wsUrl}
+                managerId={activeManagerId}
                 isOpen={isArtifactsPanelOpen}
                 onClose={() => setIsArtifactsPanelOpen(false)}
                 onArtifactClick={handleOpenArtifact}
