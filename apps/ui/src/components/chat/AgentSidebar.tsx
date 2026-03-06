@@ -95,7 +95,7 @@ function RuntimeIcon({ agent, className }: { agent: AgentDescriptor; className?:
     )
   }
 
-  if (preset === 'pi-codex') {
+  if (preset === 'pi-codex' || preset === 'pi-5.4') {
     return (
       <span className="inline-flex items-center gap-0.5" aria-hidden="true">
         <img src="/pi-logo.svg" alt="" className={cn('size-3 shrink-0 object-contain dark:invert', className)} />
@@ -130,7 +130,7 @@ function RuntimeIcon({ agent, className }: { agent: AgentDescriptor; className?:
 
 function getModelLabel(agent: AgentDescriptor, preset: ManagerModelPreset | undefined): string {
   if (preset === 'pi-opus') return 'opus'
-  if (preset === 'pi-codex' || preset === 'codex-app') return 'codex'
+  if (preset === 'pi-codex' || preset === 'pi-5.4' || preset === 'codex-app') return 'codex'
   const modelId = agent.model.modelId.trim().toLowerCase()
   if (modelId.startsWith('claude-opus')) return 'opus'
   if (modelId.includes('codex')) return 'codex'

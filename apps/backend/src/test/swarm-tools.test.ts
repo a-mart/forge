@@ -69,7 +69,14 @@ describe('buildSwarmTools', () => {
 
     const host = makeHost(async (_callerAgentId, input) => {
       receivedInput = input
-      return makeWorkerDescriptor('worker-opus')
+      return {
+        ...makeWorkerDescriptor('worker-gpt54'),
+        model: {
+          provider: 'openai-codex',
+          modelId: 'gpt-5.4',
+          thinkingLevel: 'xhigh',
+        },
+      }
     })
 
     const tools = buildSwarmTools(host, makeManagerDescriptor())
@@ -79,20 +86,20 @@ describe('buildSwarmTools', () => {
     const result = await spawnTool!.execute(
       'tool-call',
       {
-        agentId: 'Worker Opus',
-        model: 'pi-opus',
+        agentId: 'Worker GPT 5.4',
+        model: 'pi-5.4',
       },
       undefined,
       undefined,
       undefined as any,
     )
 
-    expect(receivedInput?.model).toBe('pi-opus')
+    expect(receivedInput?.model).toBe('pi-5.4')
     expect(result.details).toMatchObject({
-      agentId: 'worker-opus',
+      agentId: 'worker-gpt54',
       model: {
-        provider: 'anthropic',
-        modelId: 'claude-opus-4-6',
+        provider: 'openai-codex',
+        modelId: 'gpt-5.4',
         thinkingLevel: 'xhigh',
       },
     })
@@ -146,7 +153,7 @@ describe('buildSwarmTools', () => {
         undefined,
         undefined as any,
       ),
-    ).rejects.toThrow('spawn_agent.model must be one of pi-codex|pi-opus|codex-app')
+    ).rejects.toThrow('spawn_agent.model must be one of pi-codex|pi-5.4|pi-opus|codex-app')
   })
 
   it('rejects invalid spawn_agent reasoning levels with a clear error', async () => {

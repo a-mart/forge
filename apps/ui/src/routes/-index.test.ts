@@ -183,6 +183,8 @@ describe('IndexPage create manager model selection', () => {
     click(modelSelect as HTMLElement)
 
     const optionValues = getAllByRole(document.body, 'option').map((option) => option.textContent?.trim() ?? '')
+    expect(optionValues).toContain('pi-5.4')
+    expect(optionValues).not.toContain('codex-app')
     expect(optionValues).toEqual([...CREATE_MANAGER_MODEL_PRESETS])
   })
 

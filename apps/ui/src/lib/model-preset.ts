@@ -8,6 +8,10 @@ export function inferModelPreset(agent: AgentDescriptor): ManagerModelPreset | u
     return 'pi-codex'
   }
 
+  if (provider === 'openai-codex' && modelId === 'gpt-5.4') {
+    return 'pi-5.4'
+  }
+
   if (provider === 'anthropic' && modelId === 'claude-opus-4-6') {
     return 'pi-opus'
   }
