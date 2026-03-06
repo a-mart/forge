@@ -1071,6 +1071,80 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.emitAgentsSnapshot();
   }
 
+  async stopWorker(agentId: string): Promise<void> {
+    const descriptor = this.descriptors.get(agentId);
+    if (!descriptor || descriptor.role !== "worker") {
+      throw new Error(`Unknown worker agent: ${agentId}`);
+    }
+
+    const runtime = this.runtimes.get(agentId);
+    if (runtime) {
+      await runtime.terminate({ abort: true });
+      this.runtimes.delete(agentId);
+    }
+
+    if (descriptor.role === "worker") {
+      this.clearWatchdogState(agentId);
+    }
+
+    descriptor.status = transitionAgentStatus(descriptor.status, "idle");
+    descriptor.contextUsage = undefined;
+    descriptor.updatedAt = this.now();
+    this.descriptors.set(agentId, descriptor);
+
+    await this.updateSessionMetaForWorkerDescriptor(descriptor);
+    await this.refreshSessionMetaStatsBySessionId(descriptor.managerId);
+    await this.saveStore();
+
+    this.emitStatus(agentId, descriptor.status, 0);
+    this.emitAgentsSnapshot();
+  }
+
+  async resumeWorker(agentId: string): Promise<void> {
+    const descriptor = this.descriptors.get(agentId);
+    if (!descriptor || descriptor.role !== "worker") {
+      throw new Error(`Unknown worker agent: ${agentId}`);
+    }
+
+    if (this.runtimes.has(agentId)) {
+      throw new Error(`Worker is already running: ${agentId}`);
+    }
+
+    const previousStatus = descriptor.status;
+    if (descriptor.status === "error") {
+      throw new Error(`Worker is not resumable from error status: ${agentId}`);
+    }
+
+    if (
+      descriptor.status !== "idle" &&
+      descriptor.status !== "terminated" &&
+      descriptor.status !== "stopped"
+    ) {
+      throw new Error(`Worker is not resumable from status ${descriptor.status}: ${agentId}`);
+    }
+
+    if (isNonRunningAgentStatus(descriptor.status)) {
+      descriptor.status = transitionAgentStatus(descriptor.status, "idle");
+    }
+
+    descriptor.updatedAt = this.now();
+    this.descriptors.set(agentId, descriptor);
+
+    try {
+      const runtime = await this.getOrCreateRuntimeForDescriptor(descriptor);
+      descriptor.contextUsage = runtime.getContextUsage();
+      this.descriptors.set(agentId, descriptor);
+    } catch (error) {
+      descriptor.status = previousStatus;
+      descriptor.updatedAt = this.now();
+      this.descriptors.set(agentId, descriptor);
+      throw error;
+    }
+
+    await this.saveStore();
+    this.emitAgentsSnapshot();
+  }
+
   async stopAllAgents(
     callerAgentId: string,
     targetManagerId: string
