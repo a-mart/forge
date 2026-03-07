@@ -362,6 +362,11 @@ const SWARM_CONTEXT_FILE_NAME = "SWARM.md";
 // base listeners + (3 × expected maximum profiles).
 const SWARM_MANAGER_MAX_EVENT_LISTENERS = 64;
 const IDLE_WORKER_WATCHDOG_GRACE_MS = 3_000;
+const WATCHDOG_BATCH_WINDOW_MS = 750;
+const WATCHDOG_BATCH_PREVIEW_LIMIT = 10;
+const WATCHDOG_BACKOFF_BASE_MS = 15_000;
+const WATCHDOG_BACKOFF_MAX_MS = 5 * 60_000;
+const WATCHDOG_MAX_CONSECUTIVE_NOTIFICATIONS = 3;
 const SESSION_ID_SUFFIX_SEPARATOR = "--s";
 const ROOT_SESSION_NUMBER = 1;
 const DEFAULT_MEMORY_TEMPLATE_NORMALIZED_LINES = [
@@ -395,6 +400,9 @@ interface SessionRenameHistoryEntry {
 interface WorkerWatchdogState {
   turnSeq: number;
   reportedThisTurn: boolean;
+  consecutiveNotifications: number;
+  suppressedUntilMs: number;
+  circuitOpen: boolean;
 }
 
 function nowIso(): string {
@@ -492,6 +500,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly workerWatchdogState = new Map<string, WorkerWatchdogState>();
   private readonly watchdogTimers = new Map<string, NodeJS.Timeout>();
   private readonly watchdogTimerTokens = new Map<string, number>();
+  private readonly watchdogBatchQueueByManager = new Map<string, Set<string>>();
+  private readonly watchdogBatchTimersByManager = new Map<string, NodeJS.Timeout>();
   private readonly conversationProjector: ConversationProjector;
   private readonly persistenceService: PersistenceService;
   private readonly runtimeFactory: RuntimeFactory;
@@ -1793,6 +1803,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       const watchdogState = this.getOrCreateWorkerWatchdogState(sender.agentId);
       if (watchdogState.turnSeq === watchdogTurnSeqAtDispatch) {
         watchdogState.reportedThisTurn = true;
+        watchdogState.consecutiveNotifications = 0;
+        watchdogState.suppressedUntilMs = 0;
+        watchdogState.circuitOpen = false;
         this.workerWatchdogState.set(sender.agentId, watchdogState);
       }
     }
@@ -3813,9 +3826,25 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     await this.refreshSessionMetaStats(descriptor, sessionFileOverride);
   }
 
+  private isRuntimeInContextRecovery(agentId: string): boolean {
+    const runtime = this.runtimes.get(agentId);
+    return Boolean(runtime?.isContextRecoveryInProgress?.());
+  }
+
   private async handleRuntimeAgentEnd(agentId: string): Promise<void> {
     const descriptor = this.descriptors.get(agentId);
     if (!descriptor || descriptor.role !== "worker") {
+      return;
+    }
+
+    if (this.isRuntimeInContextRecovery(agentId)) {
+      const watchdogState = this.getOrCreateWorkerWatchdogState(agentId);
+      watchdogState.turnSeq += 1;
+      watchdogState.reportedThisTurn = false;
+      this.workerWatchdogState.set(agentId, watchdogState);
+
+      this.watchdogTimerTokens.set(agentId, (this.watchdogTimerTokens.get(agentId) ?? 0) + 1);
+      this.clearWatchdogTimer(agentId);
       return;
     }
 
@@ -3869,7 +3898,19 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return;
     }
 
+    if (watchdogState.circuitOpen) {
+      return;
+    }
+
+    if (Date.now() < watchdogState.suppressedUntilMs) {
+      return;
+    }
+
     if (descriptor.status !== "idle") {
+      return;
+    }
+
+    if (this.isRuntimeInContextRecovery(descriptor.agentId)) {
       return;
     }
 
@@ -3878,48 +3919,165 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return;
     }
 
-    const watchdogMessage = `⚠️ [IDLE WORKER WATCHDOG — AUTOMATED SYSTEM CHECK]
+    if (this.isRuntimeInContextRecovery(parentDescriptor.agentId)) {
+      return;
+    }
 
-Worker \`${descriptor.agentId}\` completed its turn and went idle without sending a message back to you.
+    this.enqueueWatchdogForBatch(descriptor.managerId, descriptor.agentId);
+  }
 
-This is an automated notification. The worker may have produced useful output in its session log.
+  private enqueueWatchdogForBatch(managerId: string, workerId: string): void {
+    let queue = this.watchdogBatchQueueByManager.get(managerId);
+    if (!queue) {
+      queue = new Set<string>();
+      this.watchdogBatchQueueByManager.set(managerId, queue);
+    }
+    queue.add(workerId);
 
-Worker session file: ${descriptor.sessionFile}
+    if (this.watchdogBatchTimersByManager.has(managerId)) {
+      return;
+    }
 
-Suggested actions:
-• Read the worker's session file to check its output
-• Send a follow-up message to the worker if you need more information`;
+    const timer = setTimeout(() => {
+      this.flushWatchdogBatch(managerId).catch((error) => {
+        this.logDebug("watchdog:batch_flush:error", {
+          managerId,
+          message: error instanceof Error ? error.message : String(error)
+        });
+      });
+    }, WATCHDOG_BATCH_WINDOW_MS);
+
+    this.watchdogBatchTimersByManager.set(managerId, timer);
+  }
+
+  private async flushWatchdogBatch(managerId: string): Promise<void> {
+    const batchTimer = this.watchdogBatchTimersByManager.get(managerId);
+    if (batchTimer) {
+      clearTimeout(batchTimer);
+      this.watchdogBatchTimersByManager.delete(managerId);
+    }
+
+    const queuedWorkerIds = this.watchdogBatchQueueByManager.get(managerId);
+    this.watchdogBatchQueueByManager.delete(managerId);
+
+    if (!queuedWorkerIds || queuedWorkerIds.size === 0) {
+      return;
+    }
+
+    const managerDescriptor = this.descriptors.get(managerId);
+    if (!managerDescriptor || managerDescriptor.role !== "manager" || isNonRunningAgentStatus(managerDescriptor.status)) {
+      return;
+    }
+
+    if (this.isRuntimeInContextRecovery(managerId)) {
+      return;
+    }
+
+    const nowMs = Date.now();
+    const eligibleWorkerIds: string[] = [];
+
+    for (const workerId of queuedWorkerIds) {
+      const workerDescriptor = this.descriptors.get(workerId);
+      if (!workerDescriptor || workerDescriptor.role !== "worker" || workerDescriptor.managerId !== managerId) {
+        continue;
+      }
+
+      if (workerDescriptor.status !== "idle") {
+        continue;
+      }
+
+      if (this.isRuntimeInContextRecovery(workerId)) {
+        continue;
+      }
+
+      const watchdogState = this.workerWatchdogState.get(workerId);
+      if (!watchdogState || watchdogState.reportedThisTurn || watchdogState.circuitOpen) {
+        continue;
+      }
+
+      if (nowMs < watchdogState.suppressedUntilMs) {
+        continue;
+      }
+
+      eligibleWorkerIds.push(workerId);
+    }
+
+    if (eligibleWorkerIds.length === 0) {
+      return;
+    }
+
+    const previewWorkerIds = eligibleWorkerIds.slice(0, WATCHDOG_BATCH_PREVIEW_LIMIT);
+    const omittedCount = eligibleWorkerIds.length - previewWorkerIds.length;
+    const workersPreview =
+      previewWorkerIds.map((workerId) => `\`${workerId}\``).join(", ") +
+      (omittedCount > 0 ? ` (+${omittedCount} more)` : "");
+
+    const workerWord = eligibleWorkerIds.length === 1 ? "worker" : "workers";
+
+    const watchdogMessage = `⚠️ [IDLE WORKER WATCHDOG — BATCHED]
+
+${eligibleWorkerIds.length} ${workerWord} went idle without reporting this turn.
+Workers: ${workersPreview}
+
+Use list_agents({"verbose":true,"limit":50,"offset":0}) for a paged full list.`;
+
+    if (this.isRuntimeInContextRecovery(managerId)) {
+      return;
+    }
 
     let managerNotified = false;
-
     try {
-      await this.sendMessage(agentId, descriptor.managerId, watchdogMessage, "auto", { origin: "internal" });
+      await this.sendMessage(managerId, managerId, watchdogMessage, "auto", { origin: "internal" });
       managerNotified = true;
-
-      const postSendState = this.workerWatchdogState.get(agentId);
-      if (postSendState) {
-        postSendState.reportedThisTurn = false;
-      }
     } catch (error) {
       this.logDebug("watchdog:notify:error", {
-        workerAgentId: agentId,
-        managerId: descriptor.managerId,
+        managerId,
+        workerCount: eligibleWorkerIds.length,
         message: error instanceof Error ? error.message : String(error)
       });
     }
 
     const userVisibleMessage = managerNotified
-      ? `⚠️ Idle worker detected — \`${agentId}\` completed its turn without reporting back to its manager. The manager has been notified.`
-      : `⚠️ Idle worker detected — \`${agentId}\` completed its turn without reporting back to its manager. An automated manager notification was attempted.`;
+      ? `⚠️ Idle worker watchdog detected ${eligibleWorkerIds.length} ${workerWord} without a report this turn. Workers: ${workersPreview}.`
+      : `⚠️ Idle worker watchdog detected ${eligibleWorkerIds.length} ${workerWord} without a report this turn. An automated manager notification was attempted.`;
 
     try {
-      await this.publishToUser(descriptor.managerId, userVisibleMessage, "system");
+      await this.publishToUser(managerId, userVisibleMessage, "system");
     } catch (error) {
       this.logDebug("watchdog:publish_to_user:error", {
-        workerAgentId: agentId,
-        managerId: descriptor.managerId,
+        managerId,
+        workerCount: eligibleWorkerIds.length,
         message: error instanceof Error ? error.message : String(error)
       });
+    }
+
+    const suppressionAppliedAtMs = Date.now();
+
+    for (const workerId of eligibleWorkerIds) {
+      const watchdogState = this.workerWatchdogState.get(workerId);
+      if (!watchdogState) {
+        continue;
+      }
+
+      watchdogState.consecutiveNotifications += 1;
+
+      if (watchdogState.consecutiveNotifications >= WATCHDOG_MAX_CONSECUTIVE_NOTIFICATIONS) {
+        watchdogState.circuitOpen = true;
+        watchdogState.suppressedUntilMs = Number.MAX_SAFE_INTEGER;
+        this.logDebug("watchdog:circuit_open", {
+          workerAgentId: workerId,
+          managerId,
+          consecutiveNotifications: watchdogState.consecutiveNotifications
+        });
+      } else {
+        const backoffMs = Math.min(
+          WATCHDOG_BACKOFF_BASE_MS * 2 ** (watchdogState.consecutiveNotifications - 1),
+          WATCHDOG_BACKOFF_MAX_MS
+        );
+        watchdogState.suppressedUntilMs = suppressionAppliedAtMs + backoffMs;
+      }
+
+      this.workerWatchdogState.set(workerId, watchdogState);
     }
   }
 
@@ -3931,7 +4089,10 @@ Suggested actions:
 
     const initialized: WorkerWatchdogState = {
       turnSeq: 0,
-      reportedThisTurn: false
+      reportedThisTurn: false,
+      consecutiveNotifications: 0,
+      suppressedUntilMs: 0,
+      circuitOpen: false
     };
     this.workerWatchdogState.set(agentId, initialized);
     return initialized;
@@ -3949,6 +4110,24 @@ Suggested actions:
     this.clearWatchdogTimer(agentId);
     this.workerWatchdogState.delete(agentId);
     this.watchdogTimerTokens.delete(agentId);
+
+    for (const [managerId, queue] of this.watchdogBatchQueueByManager.entries()) {
+      if (!queue.delete(agentId)) {
+        continue;
+      }
+
+      if (queue.size > 0) {
+        continue;
+      }
+
+      this.watchdogBatchQueueByManager.delete(managerId);
+
+      const batchTimer = this.watchdogBatchTimersByManager.get(managerId);
+      if (batchTimer) {
+        clearTimeout(batchTimer);
+        this.watchdogBatchTimersByManager.delete(managerId);
+      }
+    }
   }
 
   private async ensureDirectories(): Promise<void> {

@@ -36,7 +36,7 @@ import type {
 interface PendingDelivery {
   deliveryId: string;
   messageKey: string;
-  mode: "steer";
+  mode: "steer" | "recovery_buffer";
 }
 
 const MAX_PROMPT_DISPATCH_ATTEMPTS = 2;
@@ -49,8 +49,10 @@ const COMPACTION_RESERVE_TOKENS = 16_384;
 const CONTEXT_BUDGET_CHECK_THROTTLE_MS = 3_000;
 const CONTEXT_GUARD_ABORT_TIMEOUT_MS = 15_000;
 const CONTEXT_GUARD_COMPACT_TIMEOUT_MS = 60_000;
+const CONTEXT_RECOVERY_GRACE_MS = 2_000;
 const HANDOFF_TURN_TIMEOUT_MS = 45_000;
 const MAX_HANDOFF_CONTENT_CHARS = 3_000;
+const MAX_RECOVERY_BUFFERED_MESSAGES = 25;
 
 export type { RuntimeImageAttachment, RuntimeUserMessage, RuntimeUserMessageInput } from "./runtime-types.js";
 
@@ -61,6 +63,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
   private readonly callbacks: SwarmRuntimeCallbacks;
   private readonly now: () => string;
   private pendingDeliveries: PendingDelivery[] = [];
+  private readonly recoveryBufferedMessages: Array<{ deliveryId: string; message: RuntimeUserMessage }> = [];
   private status: AgentStatus;
   private unsubscribe: (() => void) | undefined;
   private readonly inFlightPrompts = new Set<Promise<void>>();
@@ -68,6 +71,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
   private ignoreNextAgentStart = false;
   private lastStreamingStatusEmitAtMs = 0;
   private contextRecoveryInProgress = false;
+  private contextRecoveryGraceUntilMs = 0;
   private guardAbortController: AbortController | undefined;
   private lastContextBudgetCheckAtMs = 0;
   private latestAutoCompactionReason: "threshold" | "overflow" | undefined;
@@ -105,6 +109,10 @@ export class AgentRuntime implements SwarmAgentRuntime {
     return this.session.isStreaming;
   }
 
+  isContextRecoveryInProgress(): boolean {
+    return this.contextRecoveryInProgress;
+  }
+
   async sendMessage(
     input: RuntimeUserMessageInput,
     _requestedMode: RequestedDeliveryMode = "auto"
@@ -114,14 +122,28 @@ export class AgentRuntime implements SwarmAgentRuntime {
     const deliveryId = randomUUID();
     const message = normalizeRuntimeUserMessage(input);
 
-    if (this.session.isStreaming || this.promptDispatchPending || this.contextRecoveryInProgress) {
-      const resolvedQueueMode = "steer";
+    if (this.isContextRecoveryActive()) {
+      if (this.isContextRecoveryInProgress()) {
+        this.bufferMessageDuringRecovery(deliveryId, message);
+      } else {
+        await this.enqueueMessage(deliveryId, message);
+      }
+
+      await this.emitStatus();
+      return {
+        targetAgentId: this.descriptor.agentId,
+        deliveryId,
+        acceptedMode: "steer"
+      };
+    }
+
+    if (this.session.isStreaming || this.promptDispatchPending) {
       await this.enqueueMessage(deliveryId, message);
       await this.emitStatus();
       return {
         targetAgentId: this.descriptor.agentId,
         deliveryId,
-        acceptedMode: resolvedQueueMode
+        acceptedMode: "steer"
       };
     }
 
@@ -137,7 +159,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
   async terminate(options?: { abort?: boolean }): Promise<void> {
     if (this.status === "terminated") return;
 
-    this.contextRecoveryInProgress = false;
+    this.endContextRecovery();
     this.guardAbortController?.abort();
     this.guardAbortController = undefined;
     this.lastContextBudgetCheckAtMs = 0;
@@ -157,6 +179,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
     this.unsubscribe = undefined;
     this.session.dispose();
     this.pendingDeliveries = [];
+    this.recoveryBufferedMessages.length = 0;
     this.promptDispatchPending = false;
     this.ignoreNextAgentStart = false;
     this.latestAutoCompactionReason = undefined;
@@ -172,7 +195,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
       return;
     }
 
-    this.contextRecoveryInProgress = false;
+    this.endContextRecovery();
     this.guardAbortController?.abort();
     this.guardAbortController = undefined;
     this.lastContextBudgetCheckAtMs = 0;
@@ -189,6 +212,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
     }
 
     this.pendingDeliveries = [];
+    this.recoveryBufferedMessages.length = 0;
     this.promptDispatchPending = false;
     this.ignoreNextAgentStart = false;
     this.latestAutoCompactionReason = undefined;
@@ -209,6 +233,28 @@ export class AgentRuntime implements SwarmAgentRuntime {
       });
       throw error;
     }
+  }
+
+  private abortCompactionSafely(stage: string): void {
+    try {
+      this.session.abortCompaction?.();
+    } catch (error) {
+      this.logRuntimeError("compaction", error, { stage });
+    }
+  }
+
+  private isContextRecoveryActive(): boolean {
+    return this.contextRecoveryInProgress || Date.now() < this.contextRecoveryGraceUntilMs;
+  }
+
+  private beginContextRecovery(): void {
+    this.contextRecoveryInProgress = true;
+    this.contextRecoveryGraceUntilMs = 0;
+  }
+
+  private endContextRecovery(graceMs = 0): void {
+    this.contextRecoveryInProgress = false;
+    this.contextRecoveryGraceUntilMs = graceMs > 0 ? Date.now() + graceMs : 0;
   }
 
   getCustomEntries(customType: string): unknown[] {
@@ -305,6 +351,50 @@ export class AgentRuntime implements SwarmAgentRuntime {
     });
   }
 
+  private bufferMessageDuringRecovery(deliveryId: string, message: RuntimeUserMessage): void {
+    if (this.recoveryBufferedMessages.length >= MAX_RECOVERY_BUFFERED_MESSAGES) {
+      const dropped = this.recoveryBufferedMessages.shift();
+      if (dropped) {
+        this.removePendingDeliveryById(dropped.deliveryId);
+        this.logRuntimeError("steer_delivery", new Error("Dropped oldest recovery-buffered message"), {
+          stage: "recovery_buffer_overflow",
+          droppedDeliveryId: dropped.deliveryId,
+          maxBufferedMessages: MAX_RECOVERY_BUFFERED_MESSAGES
+        });
+      }
+    }
+
+    this.recoveryBufferedMessages.push({ deliveryId, message });
+    this.pendingDeliveries.push({
+      deliveryId,
+      messageKey: buildRuntimeMessageKey(message),
+      mode: "recovery_buffer"
+    });
+  }
+
+  private async flushRecoveryBufferedMessages(): Promise<void> {
+    if (this.status === "terminated" || this.contextRecoveryInProgress || this.recoveryBufferedMessages.length === 0) {
+      return;
+    }
+
+    const buffered = this.recoveryBufferedMessages.splice(0, this.recoveryBufferedMessages.length);
+
+    for (const entry of buffered) {
+      try {
+        const images = toImageContent(entry.message.images);
+        await this.session.steer(entry.message.text, images.length > 0 ? images : undefined);
+      } catch (error) {
+        this.removePendingDeliveryById(entry.deliveryId);
+        this.logRuntimeError("steer_delivery", error, {
+          stage: "flush_recovery_buffer",
+          deliveryId: entry.deliveryId
+        });
+      }
+    }
+
+    await this.emitStatus();
+  }
+
   private async handleEvent(event: AgentSessionEvent): Promise<void> {
     if (this.callbacks.onSessionEvent) {
       await this.callbacks.onSessionEvent(this.descriptor.agentId, event as unknown as RuntimeSessionEvent);
@@ -367,7 +457,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
       return;
     }
 
-    if (this.contextRecoveryInProgress || this.status === "terminated" || !this.session.isStreaming) {
+    if (this.isContextRecoveryActive() || this.status === "terminated" || !this.session.isStreaming) {
       return;
     }
 
@@ -394,17 +484,17 @@ export class AgentRuntime implements SwarmAgentRuntime {
         contextTokens: usage.tokens,
         contextWindow: usage.contextWindow
       });
-      this.contextRecoveryInProgress = false;
+      this.endContextRecovery();
       this.guardAbortController = undefined;
     });
   }
 
   private async runContextGuard(triggeringUsage: AgentContextUsage): Promise<void> {
-    if (this.status === "terminated" || this.contextRecoveryInProgress) {
+    if (this.status === "terminated" || this.isContextRecoveryActive()) {
       return;
     }
 
-    this.contextRecoveryInProgress = true;
+    this.beginContextRecovery();
     this.guardAbortController = new AbortController();
     const signal = this.guardAbortController.signal;
 
@@ -468,7 +558,9 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
       if (needsCompaction) {
         try {
-          await withTimeout(this.compact(), CONTEXT_GUARD_COMPACT_TIMEOUT_MS, "context_guard_compact");
+          await withTimeout(this.compact(), CONTEXT_GUARD_COMPACT_TIMEOUT_MS, "context_guard_compact", {
+            onTimeout: () => this.abortCompactionSafely("context_guard_compact_timeout_abort")
+          });
         } catch (error) {
           const normalized = normalizeRuntimeError(error);
           if (!isAlreadyCompactedError(normalized.message)) {
@@ -564,14 +656,14 @@ export class AgentRuntime implements SwarmAgentRuntime {
   }
 
   private async cleanupGuard(handoffFilePath?: string): Promise<void> {
-    this.contextRecoveryInProgress = false;
+    this.endContextRecovery(CONTEXT_RECOVERY_GRACE_MS);
     this.guardAbortController = undefined;
 
-    if (!handoffFilePath) {
-      return;
+    if (handoffFilePath) {
+      await rm(handoffFilePath, { force: true }).catch(() => {});
     }
 
-    await rm(handoffFilePath, { force: true }).catch(() => {});
+    await this.flushRecoveryBufferedMessages();
   }
 
   private logContextGuard(stage: string, details?: Record<string, unknown>): void {
@@ -667,16 +759,16 @@ export class AgentRuntime implements SwarmAgentRuntime {
       return;
     }
 
-    if (this.contextRecoveryInProgress) {
+    if (this.isContextRecoveryActive()) {
       this.logRuntimeError("compaction", new Error(autoCompactionError), {
         recoveryStage: "auto_compaction_skipped",
-        reason: "recovery_already_in_progress"
+        reason: this.contextRecoveryInProgress ? "recovery_already_in_progress" : "recovery_grace_period"
       });
       this.latestAutoCompactionReason = undefined;
       return;
     }
 
-    this.contextRecoveryInProgress = true;
+    this.beginContextRecovery();
 
     try {
       const baseDetails = {
@@ -702,7 +794,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
       const manualRetry = await this.retryCompactionOnceAfterAutoFailure(autoCompactionError, baseDetails);
       if (manualRetry.recovered) {
-        this.continueAfterCompactionRecoveryIfNeeded(compactionReason);
+        this.dropTrailingOverflowErrorIfPresent(compactionReason);
         return;
       }
 
@@ -711,7 +803,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
         manualRetryError: manualRetry.errorMessage
       });
       if (emergencyTrim.recovered) {
-        this.continueAfterCompactionRecoveryIfNeeded(compactionReason);
+        this.dropTrailingOverflowErrorIfPresent(compactionReason);
         return;
       }
 
@@ -728,7 +820,8 @@ export class AgentRuntime implements SwarmAgentRuntime {
         }
       });
     } finally {
-      this.contextRecoveryInProgress = false;
+      this.endContextRecovery(CONTEXT_RECOVERY_GRACE_MS);
+      await this.flushRecoveryBufferedMessages();
     }
   }
 
@@ -737,7 +830,9 @@ export class AgentRuntime implements SwarmAgentRuntime {
     details: Record<string, unknown>
   ): Promise<{ recovered: boolean; errorMessage?: string }> {
     try {
-      await withTimeout(this.compact(), CONTEXT_GUARD_COMPACT_TIMEOUT_MS, "reactive_compaction_retry");
+      await withTimeout(this.compact(), CONTEXT_GUARD_COMPACT_TIMEOUT_MS, "reactive_compaction_retry", {
+        onTimeout: () => this.abortCompactionSafely("reactive_compaction_retry_timeout_abort")
+      });
       return { recovered: true };
     } catch (error) {
       const normalized = normalizeRuntimeError(error);
@@ -816,7 +911,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
     this.session.agent.replaceMessages(rebuiltContext.messages);
   }
 
-  private continueAfterCompactionRecoveryIfNeeded(
+  private dropTrailingOverflowErrorIfPresent(
     compactionReason: "threshold" | "overflow" | undefined
   ): void {
     if (compactionReason !== "overflow") {
@@ -828,19 +923,17 @@ export class AgentRuntime implements SwarmAgentRuntime {
     if (lastMessage?.role === "assistant" && lastMessage.stopReason === "error") {
       this.session.agent.replaceMessages(messages.slice(0, -1));
     }
-
-    setTimeout(() => {
-      this.session.agent.continue().catch((error) => {
-        this.logRuntimeError("compaction", error, {
-          recoveryStage: "recovery_continue_failed",
-          compactionReason
-        });
-      });
-    }, 100);
   }
 
   private consumePendingMessage(messageKey: string): void {
     consumePendingDeliveryByMessageKey(this.pendingDeliveries, messageKey);
+  }
+
+  private removePendingDeliveryById(deliveryId: string): void {
+    const index = this.pendingDeliveries.findIndex((delivery) => delivery.deliveryId === deliveryId);
+    if (index >= 0) {
+      this.pendingDeliveries.splice(index, 1);
+    }
   }
 
   private ensureNotTerminated(): void {
@@ -917,15 +1010,33 @@ export class AgentRuntime implements SwarmAgentRuntime {
   }
 }
 
-async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+type TimeoutOptions = {
+  onTimeout?: () => void | Promise<void>;
+};
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  label: string,
+  options?: TimeoutOptions
+): Promise<T> {
   let timeoutHandle: NodeJS.Timeout | undefined;
+  let didTimeout = false;
 
   try {
     const timeoutPromise = new Promise<never>((_, reject) => {
-      timeoutHandle = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+      timeoutHandle = setTimeout(() => {
+        didTimeout = true;
+        reject(new Error(`${label} timed out after ${ms}ms`));
+      }, ms);
     });
 
     return await Promise.race([promise, timeoutPromise]);
+  } catch (error) {
+    if (didTimeout && options?.onTimeout) {
+      await options.onTimeout();
+    }
+    throw error;
   } finally {
     if (timeoutHandle) {
       clearTimeout(timeoutHandle);

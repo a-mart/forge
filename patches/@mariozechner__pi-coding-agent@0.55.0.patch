@@ -1,0 +1,59 @@
+diff --git a/dist/core/agent-session.js b/dist/core/agent-session.js
+index e2a102d55acd9bcb51a44be89d98175f4963ac6a..5fe0d6dc333ab356faecb6a0e2f245c814b7dbdd 100644
+--- a/dist/core/agent-session.js
++++ b/dist/core/agent-session.js
+@@ -1268,9 +1268,16 @@ export class AgentSession {
+      * Internal: Run auto-compaction with events.
+      */
+     async _runAutoCompaction(reason, willRetry) {
++        // Reentrancy guard: if compaction is already in progress, bail out.
++        // This prevents a race where two concurrent calls (from agent_end handler
++        // and prompt's pre-check) corrupt the shared _autoCompactionAbortController.
++        if (this._autoCompactionAbortController) {
++            return;
++        }
+         const settings = this.settingsManager.getCompactionSettings();
+         this._emit({ type: "auto_compaction_start", reason });
+-        this._autoCompactionAbortController = new AbortController();
++        const localAbortController = new AbortController();
++        this._autoCompactionAbortController = localAbortController;
+         try {
+             if (!this.model) {
+                 this._emit({ type: "auto_compaction_end", result: undefined, aborted: false, willRetry: false });
+@@ -1295,7 +1302,7 @@ export class AgentSession {
+                     preparation,
+                     branchEntries: pathEntries,
+                     customInstructions: undefined,
+-                    signal: this._autoCompactionAbortController.signal,
++                    signal: localAbortController.signal,
+                 }));
+                 if (extensionResult?.cancel) {
+                     this._emit({ type: "auto_compaction_end", result: undefined, aborted: true, willRetry: false });
+@@ -1319,13 +1326,13 @@ export class AgentSession {
+             }
+             else {
+                 // Generate compaction result
+-                const compactResult = await compact(preparation, this.model, apiKey, undefined, this._autoCompactionAbortController.signal);
++                const compactResult = await compact(preparation, this.model, apiKey, undefined, localAbortController.signal);
+                 summary = compactResult.summary;
+                 firstKeptEntryId = compactResult.firstKeptEntryId;
+                 tokensBefore = compactResult.tokensBefore;
+                 details = compactResult.details;
+             }
+-            if (this._autoCompactionAbortController.signal.aborted) {
++            if (localAbortController.signal.aborted) {
+                 this._emit({ type: "auto_compaction_end", result: undefined, aborted: true, willRetry: false });
+                 return;
+             }
+@@ -1380,7 +1387,10 @@ export class AgentSession {
+             });
+         }
+         finally {
+-            this._autoCompactionAbortController = undefined;
++            // Only clear if we still own the field (another call may have taken over)
++            if (this._autoCompactionAbortController === localAbortController) {
++                this._autoCompactionAbortController = undefined;
++            }
+         }
+     }
+     /**

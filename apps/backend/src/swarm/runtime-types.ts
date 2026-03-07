@@ -109,6 +109,7 @@ export interface SwarmAgentRuntime {
   getStatus(): AgentStatus;
   getPendingCount(): number;
   getContextUsage(): AgentContextUsage | undefined;
+  isContextRecoveryInProgress?(): boolean;
 
   sendMessage(
     input: RuntimeUserMessageInput,

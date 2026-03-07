@@ -18,7 +18,6 @@
     "build": "pnpm --filter @middleman/protocol build && pnpm --filter @middleman/backend build && pnpm --filter @middleman/ui build && pnpm --filter @middleman/site build",
     "prod": "pnpm build && pnpm prod:start",
     "prod:start": "concurrently --kill-others-on-fail --names backend,ui \"NODE_ENV=production MIDDLEMAN_PORT=47287 pnpm --filter @middleman/backend start\" \"pnpm --filter @middleman/ui preview\"",
-
     "prod:daemon": "node scripts/prod-daemon.mjs",
     "prod:restart": "node scripts/prod-daemon-restart.mjs",
     "test": "pnpm --filter @middleman/backend test && pnpm --filter @middleman/ui test"
@@ -29,6 +28,9 @@
       "@tanstack/router-generator>zod": "3.25.76",
       "@tanstack/router-plugin>zod": "3.25.76",
       "@tanstack/start-plugin-core>zod": "3.25.76"
+    },
+    "patchedDependencies": {
+      "@mariozechner/pi-coding-agent@0.55.0": "patches/@mariozechner__pi-coding-agent@0.55.0.patch"
     }
   },
   "devDependencies": {

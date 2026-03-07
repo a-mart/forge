@@ -80,27 +80,161 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
       name: "list_agents",
       label: "List Agents",
       description: "List swarm agents with ids, roles, status, model, and workspace.",
-      parameters: Type.Object({}),
-      async execute() {
+      parameters: Type.Object({
+        verbose: Type.Optional(
+          Type.Boolean({ description: "Include full descriptor fields (still paginated)." })
+        ),
+        limit: Type.Optional(
+          Type.Integer({
+            minimum: 1,
+            maximum: 100,
+            description: "Page size (default: 20)."
+          })
+        ),
+        offset: Type.Optional(
+          Type.Integer({
+            minimum: 0,
+            description: "Page offset (default: 0)."
+          })
+        ),
+        includeTerminated: Type.Optional(
+          Type.Boolean({
+            description: "Include terminated/stopped workers in results."
+          })
+        )
+      }),
+      async execute(_toolCallId, params) {
+        const parsed = params as {
+          verbose?: boolean;
+          limit?: number;
+          offset?: number;
+          includeTerminated?: boolean;
+        };
+
+        const verbose = parsed.verbose === true;
+        const limit = Math.max(1, Math.min(parsed.limit ?? 20, 100));
+        const offset = Math.max(0, parsed.offset ?? 0);
+        const includeTerminated = parsed.includeTerminated === true;
+
         let agents = host.listAgents();
 
         // Agents only see their own manager/session and sibling workers (same managerId)
         if (descriptor.managerId) {
           agents = agents.filter(
-            (a) =>
-              a.agentId === descriptor.managerId ||
-              (a.role === "worker" && a.managerId === descriptor.managerId)
+            (agent) =>
+              agent.agentId === descriptor.managerId ||
+              (agent.role === "worker" && agent.managerId === descriptor.managerId)
           );
         }
+
+        const managerDescriptor =
+          agents.find((agent) => agent.role === "manager" && agent.agentId === descriptor.managerId) ??
+          agents.find((agent) => agent.role === "manager");
+
+        const workers = agents
+          .filter((agent) => agent.role === "worker")
+          .filter((agent) => {
+            if (includeTerminated) {
+              return true;
+            }
+            return agent.status !== "terminated" && agent.status !== "stopped";
+          })
+          .sort((left, right) => {
+            const rank = (status: AgentDescriptor["status"]): number => {
+              switch (status) {
+                case "streaming":
+                  return 0;
+                case "error":
+                  return 1;
+                case "idle":
+                  return 2;
+                case "stopped":
+                  return 3;
+                case "terminated":
+                  return 4;
+                default:
+                  return 5;
+              }
+            };
+
+            const rankDiff = rank(left.status) - rank(right.status);
+            if (rankDiff !== 0) {
+              return rankDiff;
+            }
+
+            const updatedAtDiff = Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
+            if (Number.isFinite(updatedAtDiff) && updatedAtDiff !== 0) {
+              return updatedAtDiff;
+            }
+
+            return left.agentId.localeCompare(right.agentId);
+          });
+
+        const pagedWorkers = workers.slice(offset, offset + limit);
+        const hasMore = offset + limit < workers.length;
+        const selectedAgents = managerDescriptor ? [managerDescriptor, ...pagedWorkers] : pagedWorkers;
+        const summaryAgents = managerDescriptor ? [managerDescriptor, ...workers] : workers;
+
+        const statusCounts: Record<string, number> = {
+          streaming: 0,
+          idle: 0,
+          error: 0,
+          stopped: 0,
+          terminated: 0
+        };
+
+        for (const agent of summaryAgents) {
+          statusCounts[agent.status] = (statusCounts[agent.status] ?? 0) + 1;
+        }
+
+        const compactPath = (value: string): string => {
+          const normalized = value.replace(/\\/g, "/").replace(/\/+$/, "");
+          if (normalized.length === 0 || normalized === "/") {
+            return value;
+          }
+
+          const segments = normalized.split("/").filter(Boolean);
+          return segments.length > 0 ? segments[segments.length - 1] : normalized;
+        };
+
+        const compactAgents = selectedAgents.map((agent) => ({
+          agentId: agent.agentId,
+          role: agent.role,
+          status: agent.status,
+          managerId: agent.managerId,
+          model: `${agent.model.provider}/${agent.model.modelId}`,
+          cwd: compactPath(agent.cwd),
+          updatedAt: agent.updatedAt
+        }));
+
+        const payload = {
+          summary: {
+            totalVisible: summaryAgents.length,
+            managers: summaryAgents.filter((agent) => agent.role === "manager").length,
+            workers: summaryAgents.filter((agent) => agent.role === "worker").length,
+            statusCounts
+          },
+          page: {
+            offset,
+            limit,
+            returned: pagedWorkers.length,
+            hasMore,
+            mode: verbose ? "verbose" : "default"
+          },
+          agents: verbose ? selectedAgents : compactAgents,
+          hint: hasMore
+            ? `More agents available. Use list_agents({"verbose":${verbose ? "true" : "false"},"limit":${limit},"offset":${offset + limit}${includeTerminated ? ',"includeTerminated":true' : ""}}) for the next page.`
+            : "Use list_agents({\"verbose\":true,\"limit\":50,\"offset\":0}) for paged full descriptors."
+        };
 
         return {
           content: [
             {
               type: "text",
-              text: JSON.stringify({ agents }, null, 2)
+              text: JSON.stringify(payload, null, 2)
             }
           ],
-          details: { agents }
+          details: payload
         };
       }
     },
