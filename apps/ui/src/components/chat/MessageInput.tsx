@@ -51,6 +51,45 @@ function persistDrafts(drafts: Record<string, string>): void {
   }
 }
 
+const ATTACHMENT_DRAFTS_STORAGE_KEY = 'middleman-chat-attachment-drafts'
+/** Max serialized size (bytes) we'll commit to localStorage for attachment drafts. */
+const ATTACHMENT_DRAFTS_MAX_BYTES = 4 * 1024 * 1024
+
+function loadAttachmentDrafts(): Record<string, PendingAttachment[]> {
+  try {
+    const raw = localStorage.getItem(ATTACHMENT_DRAFTS_STORAGE_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw) as unknown
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+      return parsed as Record<string, PendingAttachment[]>
+    }
+    return {}
+  } catch {
+    return {}
+  }
+}
+
+function persistAttachmentDrafts(drafts: Record<string, PendingAttachment[]>): void {
+  try {
+    const cleaned: Record<string, PendingAttachment[]> = {}
+    for (const [key, value] of Object.entries(drafts)) {
+      if (value.length > 0) cleaned[key] = value
+    }
+    if (Object.keys(cleaned).length === 0) {
+      localStorage.removeItem(ATTACHMENT_DRAFTS_STORAGE_KEY)
+      return
+    }
+    const serialized = JSON.stringify(cleaned)
+    if (serialized.length > ATTACHMENT_DRAFTS_MAX_BYTES) {
+      // Too large for localStorage — keep in-memory only, don't persist
+      return
+    }
+    localStorage.setItem(ATTACHMENT_DRAFTS_STORAGE_KEY, serialized)
+  } catch {
+    // localStorage full or unavailable — silently ignore
+  }
+}
+
 interface MessageInputProps {
   onSend: (message: string, attachments?: ConversationAttachment[]) => void
   isLoading: boolean
@@ -150,6 +189,11 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
   const inputRef = useRef(input)
   inputRef.current = input
 
+  // --- Per-session attachment draft persistence ---
+  const attachedFilesRef = useRef(attachedFiles)
+  attachedFilesRef.current = attachedFiles
+  const attachmentDraftsRef = useRef<Record<string, PendingAttachment[]>>(loadAttachmentDrafts())
+
   // Save current draft and restore new agent's draft on agent/session switch
   useEffect(() => {
     const prevId = prevAgentIdRef.current
@@ -162,6 +206,11 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
       } else {
         delete draftsRef.current[prevId]
       }
+      if (attachedFilesRef.current.length > 0) {
+        attachmentDraftsRef.current[prevId] = attachedFilesRef.current
+      } else {
+        delete attachmentDraftsRef.current[prevId]
+      }
     }
 
     // Restore draft for new agent
@@ -169,7 +218,12 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
     setInput(restoredDraft)
     inputRef.current = restoredDraft
 
+    // Restore attachments for new agent
+    const restoredAttachments = agentId ? (attachmentDraftsRef.current[agentId] ?? []) : []
+    setAttachedFiles(restoredAttachments)
+
     persistDrafts(draftsRef.current)
+    persistAttachmentDrafts(attachmentDraftsRef.current)
     prevAgentIdRef.current = agentId
   }, [agentId])
 
@@ -183,6 +237,13 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
           delete draftsRef.current[agentId]
         }
         persistDrafts(draftsRef.current)
+
+        if (attachedFilesRef.current.length > 0) {
+          attachmentDraftsRef.current[agentId] = attachedFilesRef.current
+        } else {
+          delete attachmentDraftsRef.current[agentId]
+        }
+        persistAttachmentDrafts(attachmentDraftsRef.current)
       }
     }
     window.addEventListener('beforeunload', handleBeforeUnload)
@@ -200,6 +261,23 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
           delete draftsRef.current[agentId]
         }
         persistDrafts(draftsRef.current)
+      }
+    },
+    [agentId],
+  )
+
+  // Helper: update attached files state and sync attachment draft to localStorage
+  const setAttachedFilesWithDraft = useCallback(
+    (files: PendingAttachment[]) => {
+      setAttachedFiles(files)
+      attachedFilesRef.current = files
+      if (agentId) {
+        if (files.length > 0) {
+          attachmentDraftsRef.current[agentId] = files
+        } else {
+          delete attachmentDraftsRef.current[agentId]
+        }
+        persistAttachmentDrafts(attachmentDraftsRef.current)
       }
     },
     [agentId],
@@ -251,9 +329,9 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
         return
       }
 
-      setAttachedFiles((previous) => [...previous, ...nextAttachments])
+      setAttachedFilesWithDraft([...attachedFilesRef.current, ...nextAttachments])
     },
-    [disabled, isRecording],
+    [disabled, isRecording, setAttachedFilesWithDraft],
   )
 
   useImperativeHandle(
@@ -290,7 +368,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
   }
 
   const removeAttachment = (attachmentId: string) => {
-    setAttachedFiles((previous) => previous.filter((attachment) => attachment.id !== attachmentId))
+    setAttachedFilesWithDraft(attachedFilesRef.current.filter((attachment) => attachment.id !== attachmentId))
   }
 
   const appendTranscriptionToInput = useCallback((transcribedText: string): boolean => {
@@ -428,8 +506,8 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
     )
 
     setInputWithDraft('')
-    setAttachedFiles([])
-  }, [attachedFiles, blockedByLoading, disabled, input, isRecording, isTranscribingVoice, onSend, setInputWithDraft])
+    setAttachedFilesWithDraft([])
+  }, [attachedFiles, blockedByLoading, disabled, input, isRecording, isTranscribingVoice, onSend, setInputWithDraft, setAttachedFilesWithDraft])
 
   const handleSubmit = useCallback(
     (event: FormEvent<HTMLFormElement>) => {
