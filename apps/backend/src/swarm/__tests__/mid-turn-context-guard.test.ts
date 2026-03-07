@@ -20,6 +20,7 @@ class FakeSession {
   promptCalls: string[] = [];
   steerCalls: string[] = [];
   abortCalls = 0;
+  abortCompactionCalls = 0;
   compactCalls = 0;
   disposeCalls = 0;
   listener: ((event: any) => void) | undefined;
@@ -27,6 +28,7 @@ class FakeSession {
   promptImpl: ((message: string) => Promise<void>) | undefined;
   abortImpl: (() => Promise<void>) | undefined;
   compactImpl: (() => Promise<unknown>) | undefined;
+  abortCompactionImpl: (() => void) | undefined;
 
   readonly sessionManager = {
     getEntries: () => [],
@@ -64,6 +66,11 @@ class FakeSession {
     if (this.abortImpl) {
       await this.abortImpl();
     }
+  }
+
+  abortCompaction(): void {
+    this.abortCompactionCalls += 1;
+    this.abortCompactionImpl?.();
   }
 
   async compact(): Promise<unknown> {
@@ -234,13 +241,15 @@ describe("mid-turn context guard", () => {
     };
 
     const nowSpy = vi.spyOn(Date, "now");
-    nowSpy.mockReturnValueOnce(10_000);
+    nowSpy
+      .mockReturnValueOnce(10_000)
+      .mockReturnValueOnce(10_000)
+      .mockReturnValueOnce(11_000)
+      .mockReturnValueOnce(11_000)
+      .mockReturnValueOnce(14_100)
+      .mockReturnValueOnce(14_100);
     (runtime as any).checkContextBudget();
-
-    nowSpy.mockReturnValueOnce(11_000);
     (runtime as any).checkContextBudget();
-
-    nowSpy.mockReturnValueOnce(14_100);
     (runtime as any).checkContextBudget();
 
     expect(runGuardSpy).toHaveBeenCalledTimes(2);
@@ -262,7 +271,7 @@ describe("mid-turn context guard", () => {
     expect(checkSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("sendMessage queues steering deliveries while context recovery is in progress", async () => {
+  it("sendMessage buffers deliveries while context recovery is actively in progress", async () => {
     const { runtime, session } = createRuntime();
     (runtime as any).contextRecoveryInProgress = true;
     session.isStreaming = false;
@@ -271,8 +280,85 @@ describe("mid-turn context guard", () => {
 
     expect(receipt.acceptedMode).toBe("steer");
     expect(session.promptCalls).toEqual([]);
-    expect(session.steerCalls).toEqual(["hold until recovery completes"]);
+    expect(session.steerCalls).toEqual([]);
     expect(runtime.getPendingCount()).toBe(1);
+    expect((runtime as any).recoveryBufferedMessages).toHaveLength(1);
+    expect((runtime as any).pendingDeliveries[0]?.mode).toBe("recovery_buffer");
+  });
+
+  it("flushRecoveryBufferedMessages replays buffered deliveries after recovery ends", async () => {
+    const { runtime, session } = createRuntime();
+    session.isStreaming = false;
+    (runtime as any).contextRecoveryInProgress = true;
+
+    await runtime.sendMessage("buffer-1");
+    await runtime.sendMessage("buffer-2");
+
+    expect(session.steerCalls).toEqual([]);
+    expect((runtime as any).recoveryBufferedMessages).toHaveLength(2);
+
+    (runtime as any).contextRecoveryInProgress = false;
+    await (runtime as any).flushRecoveryBufferedMessages();
+
+    expect(session.steerCalls).toEqual(["buffer-1", "buffer-2"]);
+    expect((runtime as any).recoveryBufferedMessages).toHaveLength(0);
+    expect(runtime.getPendingCount()).toBe(2);
+  });
+
+  it("recovery buffer applies a hard cap and drops oldest buffered deliveries", async () => {
+    const { runtime, session } = createRuntime();
+    session.isStreaming = false;
+    (runtime as any).contextRecoveryInProgress = true;
+
+    for (let index = 1; index <= 30; index += 1) {
+      await runtime.sendMessage(`buffer-${index}`);
+    }
+
+    expect((runtime as any).recoveryBufferedMessages).toHaveLength(25);
+    expect((runtime as any).recoveryBufferedMessages[0]?.message.text).toBe("buffer-6");
+    expect(runtime.getPendingCount()).toBe(25);
+
+    (runtime as any).contextRecoveryInProgress = false;
+    await (runtime as any).flushRecoveryBufferedMessages();
+
+    expect(session.steerCalls).toHaveLength(25);
+    expect(session.steerCalls[0]).toBe("buffer-6");
+    expect(session.steerCalls[24]).toBe("buffer-30");
+  });
+
+  it("flushRecoveryBufferedMessages preserves new deliveries that arrive during flush", async () => {
+    const { runtime, session } = createRuntime();
+    session.isStreaming = false;
+    (runtime as any).contextRecoveryInProgress = true;
+
+    await runtime.sendMessage("buffer-1");
+    await runtime.sendMessage("buffer-2");
+
+    (runtime as any).contextRecoveryInProgress = false;
+    (runtime as any).contextRecoveryGraceUntilMs = Date.now() + 5_000;
+
+    const firstSteerDeferred = createDeferred<void>();
+    let blockedFirstFlushSteer = false;
+    vi.spyOn(session, "steer").mockImplementation(async (message: string) => {
+      session.steerCalls.push(message);
+      if (message === "buffer-1" && !blockedFirstFlushSteer) {
+        blockedFirstFlushSteer = true;
+        await firstSteerDeferred.promise;
+      }
+    });
+
+    const flushPromise = (runtime as any).flushRecoveryBufferedMessages();
+    await Promise.resolve();
+
+    const receipt = await runtime.sendMessage("during-flush");
+    expect(receipt.acceptedMode).toBe("steer");
+
+    firstSteerDeferred.resolve(undefined);
+    await flushPromise;
+
+    expect(session.steerCalls).toEqual(["buffer-1", "during-flush", "buffer-2"]);
+    expect((runtime as any).recoveryBufferedMessages).toHaveLength(0);
+    expect(runtime.getPendingCount()).toBe(3);
   });
 
   it("runContextGuard happy path runs abort -> handoff -> compact -> resume -> cleanup", async () => {
@@ -413,9 +499,42 @@ describe("mid-turn context guard", () => {
     await guardPromise;
 
     expect(session.compactCalls).toBe(1);
+    expect(session.abortCompactionCalls).toBe(1);
     expect(session.promptCalls).toHaveLength(2);
     expect(runtimeErrors.some((entry) => entry.details?.stage === "compaction_failed")).toBe(true);
     expect(runtimeErrors.some((entry) => entry.message.includes("context_guard_compact timed out"))).toBe(true);
+  });
+
+  it("runContextGuard does not abort compaction when compact resolves just before timeout", async () => {
+    vi.useFakeTimers();
+    const { runtime, session } = createRuntime();
+    session.contextUsage = {
+      tokens: 176_000,
+      contextWindow: 200_000,
+      percent: 88
+    };
+    session.compactImpl = async () => {
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 59_999);
+      });
+      return { ok: true };
+    };
+
+    const guardPromise = (runtime as any).runContextGuard({
+      tokens: 172_000,
+      contextWindow: 200_000,
+      percent: 86
+    });
+
+    await vi.advanceTimersByTimeAsync(59_999);
+    await guardPromise;
+
+    // Ensure the timeout callback never fires after compaction has already completed.
+    await vi.advanceTimersByTimeAsync(5);
+
+    expect(session.compactCalls).toBe(1);
+    expect(session.abortCompactionCalls).toBe(0);
+    expect(session.promptCalls).toHaveLength(2);
   });
 
   it("runContextGuard handoff timeout aborts handoff turn and still compacts", async () => {
@@ -565,6 +684,7 @@ describe("mid-turn context guard", () => {
 
     expect(result.recovered).toBe(false);
     expect(result.errorMessage).toContain("reactive_compaction_retry timed out");
+    expect(session.abortCompactionCalls).toBe(1);
   });
 
   it("runContextGuard cancellation returns early when aborted immediately after session abort", async () => {
@@ -640,30 +760,151 @@ describe("mid-turn context guard", () => {
     expect(guardSpy).not.toHaveBeenCalled();
   });
 
+  it("handleAutoCompactionEndEvent skips late errors during recovery grace period", async () => {
+    const { runtime } = createRuntime();
+    const retrySpy = vi.spyOn(runtime as any, "retryCompactionOnceAfterAutoFailure");
+
+    (runtime as any).contextRecoveryInProgress = false;
+    (runtime as any).contextRecoveryGraceUntilMs = Date.now() + 1_500;
+    (runtime as any).latestAutoCompactionReason = "overflow";
+
+    await (runtime as any).handleAutoCompactionEndEvent({
+      type: "auto_compaction_end",
+      result: undefined,
+      aborted: false,
+      willRetry: false,
+      errorMessage: "compact failed"
+    });
+
+    expect(retrySpy).not.toHaveBeenCalled();
+    expect((runtime as any).latestAutoCompactionReason).toBeUndefined();
+    expect(console.error).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        recoveryStage: "auto_compaction_skipped",
+        reason: "recovery_grace_period"
+      })
+    );
+  });
+
+  it("handleAutoCompactionEndEvent processes errors normally after grace expires", async () => {
+    const { runtime } = createRuntime();
+    const retrySpy = vi
+      .spyOn(runtime as any, "retryCompactionOnceAfterAutoFailure")
+      .mockResolvedValue({ recovered: true });
+
+    (runtime as any).contextRecoveryInProgress = false;
+    (runtime as any).contextRecoveryGraceUntilMs = Date.now() - 1;
+    (runtime as any).latestAutoCompactionReason = "overflow";
+
+    await (runtime as any).handleAutoCompactionEndEvent({
+      type: "auto_compaction_end",
+      result: undefined,
+      aborted: false,
+      willRetry: false,
+      errorMessage: "compact failed"
+    });
+
+    expect(retrySpy).toHaveBeenCalledTimes(1);
+    expect((runtime as any).contextRecoveryInProgress).toBe(false);
+    expect((runtime as any).contextRecoveryGraceUntilMs).toBeGreaterThan(Date.now());
+  });
+
+  it("allows a new guard cycle after late auto-compaction events are suppressed", async () => {
+    const { runtime, session } = createRuntime();
+    session.contextUsage = {
+      tokens: 176_000,
+      contextWindow: 200_000,
+      percent: 88
+    };
+
+    await (runtime as any).runContextGuard({
+      tokens: 172_000,
+      contextWindow: 200_000,
+      percent: 86
+    });
+
+    (runtime as any).latestAutoCompactionReason = "overflow";
+    const retrySpy = vi.spyOn(runtime as any, "retryCompactionOnceAfterAutoFailure");
+
+    await (runtime as any).handleAutoCompactionEndEvent({
+      type: "auto_compaction_end",
+      result: undefined,
+      aborted: false,
+      willRetry: false,
+      errorMessage: "late compact failed"
+    });
+
+    expect(retrySpy).not.toHaveBeenCalled();
+
+    (runtime as any).contextRecoveryGraceUntilMs = Date.now() - 1;
+    const guardSpy = vi.spyOn(runtime as any, "runContextGuard").mockResolvedValue(undefined);
+    session.contextUsage = {
+      tokens: 180_000,
+      contextWindow: 200_000,
+      percent: 90
+    };
+
+    (runtime as any).checkContextBudget();
+
+    expect(guardSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("overflow recovery cleanup does not schedule duplicate agent.continue", async () => {
+    vi.useFakeTimers();
+    const { runtime, session } = createRuntime();
+    const retrySpy = vi
+      .spyOn(runtime as any, "retryCompactionOnceAfterAutoFailure")
+      .mockResolvedValue({ recovered: true });
+    const continueSpy = vi.spyOn(session.agent, "continue");
+    const replaceSpy = vi.spyOn(session.agent, "replaceMessages");
+
+    session.state.messages.push({ role: "assistant", stopReason: "error" });
+    (runtime as any).latestAutoCompactionReason = "overflow";
+
+    await (runtime as any).handleAutoCompactionEndEvent({
+      type: "auto_compaction_end",
+      result: undefined,
+      aborted: false,
+      willRetry: false,
+      errorMessage: "compact failed"
+    });
+
+    await vi.runAllTimersAsync();
+
+    expect(retrySpy).toHaveBeenCalledTimes(1);
+    expect(replaceSpy).toHaveBeenCalledTimes(1);
+    expect(continueSpy).not.toHaveBeenCalled();
+  });
+
   it("stopInFlight and terminate abort active guard controller and clear guard state", async () => {
     const { runtime, session } = createRuntime();
 
     const stopController = new AbortController();
     (runtime as any).guardAbortController = stopController;
     (runtime as any).contextRecoveryInProgress = true;
+    (runtime as any).contextRecoveryGraceUntilMs = Date.now() + 5_000;
     (runtime as any).lastContextBudgetCheckAtMs = 123;
 
     await runtime.stopInFlight({ abort: false });
 
     expect(stopController.signal.aborted).toBe(true);
     expect((runtime as any).contextRecoveryInProgress).toBe(false);
+    expect((runtime as any).contextRecoveryGraceUntilMs).toBe(0);
     expect((runtime as any).guardAbortController).toBeUndefined();
     expect((runtime as any).lastContextBudgetCheckAtMs).toBe(0);
 
     const terminateController = new AbortController();
     (runtime as any).guardAbortController = terminateController;
     (runtime as any).contextRecoveryInProgress = true;
+    (runtime as any).contextRecoveryGraceUntilMs = Date.now() + 5_000;
     (runtime as any).lastContextBudgetCheckAtMs = 456;
 
     await runtime.terminate({ abort: false });
 
     expect(terminateController.signal.aborted).toBe(true);
     expect((runtime as any).contextRecoveryInProgress).toBe(false);
+    expect((runtime as any).contextRecoveryGraceUntilMs).toBe(0);
     expect((runtime as any).guardAbortController).toBeUndefined();
     expect((runtime as any).lastContextBudgetCheckAtMs).toBe(0);
     expect(session.disposeCalls).toBe(1);
@@ -679,22 +920,26 @@ describe("mid-turn context guard", () => {
     const stopController = new AbortController();
     (runtime as any).guardAbortController = stopController;
     (runtime as any).contextRecoveryInProgress = true;
+    (runtime as any).contextRecoveryGraceUntilMs = Date.now() + 5_000;
     (runtime as any).lastContextBudgetCheckAtMs = 999;
 
     await expect(runtime.stopInFlight({ abort: true })).resolves.toBeUndefined();
     expect(stopController.signal.aborted).toBe(true);
     expect((runtime as any).contextRecoveryInProgress).toBe(false);
+    expect((runtime as any).contextRecoveryGraceUntilMs).toBe(0);
     expect((runtime as any).guardAbortController).toBeUndefined();
     expect((runtime as any).lastContextBudgetCheckAtMs).toBe(0);
 
     const terminateController = new AbortController();
     (runtime as any).guardAbortController = terminateController;
     (runtime as any).contextRecoveryInProgress = true;
+    (runtime as any).contextRecoveryGraceUntilMs = Date.now() + 5_000;
     (runtime as any).lastContextBudgetCheckAtMs = 1000;
 
     await expect(runtime.terminate({ abort: true })).resolves.toBeUndefined();
     expect(terminateController.signal.aborted).toBe(true);
     expect((runtime as any).contextRecoveryInProgress).toBe(false);
+    expect((runtime as any).contextRecoveryGraceUntilMs).toBe(0);
     expect((runtime as any).guardAbortController).toBeUndefined();
     expect((runtime as any).lastContextBudgetCheckAtMs).toBe(0);
     expect(runtime.getStatus()).toBe("terminated");
