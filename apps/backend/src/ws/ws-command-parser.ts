@@ -124,6 +124,35 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
     };
   }
 
+  if (maybe.type === "update_manager_model") {
+    const managerId = (maybe as { managerId?: unknown }).managerId;
+    const model = (maybe as { model?: unknown }).model;
+    const requestId = (maybe as { requestId?: unknown }).requestId;
+
+    if (typeof managerId !== "string" || managerId.trim().length === 0) {
+      return { ok: false, error: "update_manager_model.managerId must be a non-empty string" };
+    }
+    if (!isSwarmModelPreset(model)) {
+      return {
+        ok: false,
+        error: `update_manager_model.model must be one of ${describeSwarmModelPresets()}`
+      };
+    }
+    if (requestId !== undefined && typeof requestId !== "string") {
+      return { ok: false, error: "update_manager_model.requestId must be a string when provided" };
+    }
+
+    return {
+      ok: true,
+      command: {
+        type: "update_manager_model",
+        managerId: managerId.trim(),
+        model,
+        requestId
+      }
+    };
+  }
+
   if (maybe.type === "create_session") {
     const profileId = (maybe as { profileId?: unknown }).profileId;
     const label = (maybe as { label?: unknown }).label;
@@ -412,6 +441,7 @@ export function extractRequestId(command: ClientCommand): string | undefined {
   switch (command.type) {
     case "create_manager":
     case "delete_manager":
+    case "update_manager_model":
     case "create_session":
     case "stop_session":
     case "resume_session":

@@ -6,6 +6,7 @@ import type {
   AgentStatus,
   DeliveryMode,
   DirectoryItem,
+  ManagerModelPreset,
   MessageSourceContext,
   ManagerProfile,
 } from './shared-types.js'
@@ -83,6 +84,13 @@ export interface ManagerDeletedEvent {
   type: 'manager_deleted'
   managerId: string
   terminatedWorkerIds: string[]
+  requestId?: string
+}
+
+export interface ManagerModelUpdatedEvent {
+  type: 'manager_model_updated'
+  managerId: string
+  model: ManagerModelPreset
   requestId?: string
 }
 
@@ -268,6 +276,7 @@ export type ServerEvent =
   | UnreadNotificationEvent
   | ManagerCreatedEvent
   | ManagerDeletedEvent
+  | ManagerModelUpdatedEvent
   | SessionCreatedEvent
   | SessionStoppedEvent
   | SessionResumedEvent

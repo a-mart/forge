@@ -487,6 +487,20 @@ export function IndexPage() {
     clientRef.current?.markUnread(agentId)
   }, [clientRef])
 
+  const handleUpdateManagerModel = useCallback(async (managerId: string, model: ManagerModelPreset) => {
+    const client = clientRef.current
+    if (!client) return
+
+    try {
+      await client.updateManagerModel(managerId, model)
+    } catch (error) {
+      setState((previous) => ({
+        ...previous,
+        lastError: `Failed to update model: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      }))
+    }
+  }, [clientRef, setState])
+
   const handleSelectAgent = (agentId: string) => {
     navigateToRoute({ view: 'chat', agentId })
     clientRef.current?.subscribeToAgent(agentId)
@@ -556,6 +570,7 @@ export function IndexPage() {
           onForkSession={handleForkSession}
           onMergeSessionMemory={handleMergeSessionMemory}
           onMarkUnread={handleMarkUnread}
+          onUpdateManagerModel={handleUpdateManagerModel}
         />
 
         <div

@@ -12,6 +12,7 @@ import {
   Pause,
   Play,
   Plus,
+  RefreshCw,
   Settings,
   SquarePen,
   Trash2,
@@ -25,6 +26,13 @@ import { Input } from '@/components/ui/input'
 import { useCallback, useState } from 'react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
   buildProfileTreeRows,
   isCortexProfile,
   isSessionRunning,
@@ -33,12 +41,13 @@ import {
 } from '@/lib/agent-hierarchy'
 import { inferModelPreset } from '@/lib/model-preset'
 import { cn } from '@/lib/utils'
-import type {
-  AgentContextUsage,
-  AgentDescriptor,
-  AgentStatus,
-  ManagerModelPreset,
-  ManagerProfile,
+import {
+  MANAGER_MODEL_PRESETS,
+  type AgentContextUsage,
+  type AgentDescriptor,
+  type AgentStatus,
+  type ManagerModelPreset,
+  type ManagerProfile,
 } from '@middleman/protocol'
 
 interface AgentSidebarProps {
@@ -64,6 +73,7 @@ interface AgentSidebarProps {
   onForkSession?: (sourceAgentId: string, name?: string) => void
   onMergeSessionMemory?: (agentId: string) => void
   onMarkUnread?: (agentId: string) => void
+  onUpdateManagerModel?: (managerId: string, model: ManagerModelPreset) => void
 }
 
 type AgentLiveStatus = {
@@ -610,6 +620,7 @@ function ProfileGroup({
   onForkSession,
   onMergeSessionMemory,
   onMarkUnread,
+  onChangeModel,
 }: {
   treeRow: ProfileTreeRow
   statuses: Record<string, { status: AgentStatus; pendingCount: number; contextUsage?: AgentContextUsage }>
@@ -636,6 +647,7 @@ function ProfileGroup({
   onForkSession?: (sourceAgentId: string) => void
   onMergeSessionMemory?: (agentId: string) => void
   onMarkUnread?: (agentId: string) => void
+  onChangeModel?: (profileId: string) => void
 }) {
   const { profile, sessions } = treeRow
   const hasAnySessions = sessions.length > 0
@@ -760,6 +772,12 @@ function ProfileGroup({
             <ContextMenuItem onClick={() => onCreateSession(profile.profileId)}>
               <Plus className="mr-2 size-3.5" />
               New Session
+            </ContextMenuItem>
+          ) : null}
+          {onChangeModel ? (
+            <ContextMenuItem onClick={() => onChangeModel(profile.profileId)}>
+              <RefreshCw className="mr-2 size-3.5" />
+              Change Model
             </ContextMenuItem>
           ) : null}
           <ContextMenuItem onClick={onOpenSettings}>
@@ -1102,6 +1120,72 @@ function DeleteSessionDialog({
   )
 }
 
+// ── Change model dialog ──
+
+const CHANGE_MODEL_PRESETS = MANAGER_MODEL_PRESETS.filter(
+  (preset) => preset !== 'codex-app',
+)
+
+function ChangeModelDialog({
+  profileId,
+  profileLabel,
+  currentPreset,
+  onConfirm,
+  onClose,
+}: {
+  profileId: string
+  profileLabel: string
+  currentPreset: ManagerModelPreset | undefined
+  onConfirm: (profileId: string, model: ManagerModelPreset) => void
+  onClose: () => void
+}) {
+  const [model, setModel] = useState<ManagerModelPreset>(currentPreset ?? 'pi-codex')
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    onConfirm(profileId, model)
+  }
+
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open) onClose() }}>
+      <DialogContent className="max-w-sm p-4">
+        <DialogHeader className="mb-3">
+          <DialogTitle>Change Model</DialogTitle>
+          <DialogDescription>
+            Choose a new base model for {profileLabel}. The change takes effect on the next session resume or new message.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <Select
+            value={model}
+            onValueChange={(value) => setModel(value as ManagerModelPreset)}
+          >
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder="Select model preset" />
+            </SelectTrigger>
+            <SelectContent>
+              {CHANGE_MODEL_PRESETS.map((preset) => (
+                <SelectItem key={preset} value={preset}>
+                  {preset}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <div className="flex items-center justify-end gap-2">
+            <Button type="button" variant="outline" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={model === currentPreset}>
+              Update Model
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 // ── Cortex section ──
 
 function CortexSection({
@@ -1432,6 +1516,7 @@ export function AgentSidebar({
   onForkSession,
   onMergeSessionMemory,
   onMarkUnread,
+  onUpdateManagerModel,
 }: AgentSidebarProps) {
   const treeRows = buildProfileTreeRows(agents, profiles)
 
@@ -1446,6 +1531,11 @@ export function AgentSidebar({
   const [renameTarget, setRenameTarget] = useState<{ agentId: string; label: string } | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<{ agentId: string; label: string } | null>(null)
   const [forkTarget, setForkTarget] = useState<{ sourceAgentId: string } | null>(null)
+  const [changeModelTarget, setChangeModelTarget] = useState<{
+    profileId: string
+    profileLabel: string
+    currentPreset: ManagerModelPreset | undefined
+  } | null>(null)
 
   const toggleProfileCollapsed = useCallback((profileId: string) => {
     setCollapsedProfileIds((prev) => {
@@ -1545,6 +1635,24 @@ export function AgentSidebar({
     onDeleteSession?.(agentId)
     setDeleteTarget(null)
   }, [onDeleteSession])
+
+  const handleRequestChangeModel = useCallback((profileId: string) => {
+    const profile = profiles.find((p) => p.profileId === profileId)
+    const defaultSession = agents.find(
+      (a) => a.role === 'manager' && (a.profileId === profileId || a.agentId === profileId),
+    )
+    const currentPreset = defaultSession ? inferModelPreset(defaultSession) : undefined
+    setChangeModelTarget({
+      profileId,
+      profileLabel: profile?.displayName || profileId,
+      currentPreset,
+    })
+  }, [agents, profiles])
+
+  const handleConfirmChangeModel = useCallback((profileId: string, model: ManagerModelPreset) => {
+    onUpdateManagerModel?.(profileId, model)
+    setChangeModelTarget(null)
+  }, [onUpdateManagerModel])
 
   const sidebarContent = (
     <aside
@@ -1673,6 +1781,7 @@ export function AgentSidebar({
                   onForkSession={onForkSession ? (sourceAgentId: string) => setForkTarget({ sourceAgentId }) : undefined}
                   onMergeSessionMemory={onMergeSessionMemory}
                   onMarkUnread={onMarkUnread}
+                  onChangeModel={onUpdateManagerModel ? handleRequestChangeModel : undefined}
                 />
               ))}
             </ul>
@@ -1771,6 +1880,17 @@ export function AgentSidebar({
             setForkTarget(null)
           }}
           onClose={() => setForkTarget(null)}
+        />
+      ) : null}
+
+      {/* Change model dialog */}
+      {changeModelTarget && onUpdateManagerModel ? (
+        <ChangeModelDialog
+          profileId={changeModelTarget.profileId}
+          profileLabel={changeModelTarget.profileLabel}
+          currentPreset={changeModelTarget.currentPreset}
+          onConfirm={handleConfirmChangeModel}
+          onClose={() => setChangeModelTarget(null)}
         />
       ) : null}
     </>

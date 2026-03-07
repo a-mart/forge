@@ -47,6 +47,7 @@ type SessionMemoryMergeResult = { agentId: string; mergedAt?: string }
 type WsRequestResultMap = {
   create_manager: AgentDescriptor
   delete_manager: { managerId: string }
+  update_manager_model: { managerId: string }
   stop_all_agents: { managerId: string; stoppedWorkerIds: string[]; managerStopped: boolean }
   create_session: SessionCreatedResult
   stop_session: SessionActionResult
@@ -64,6 +65,7 @@ type WsRequestType = Extract<keyof WsRequestResultMap, string>
 const WS_REQUEST_TYPES: WsRequestType[] = [
   'create_manager',
   'delete_manager',
+  'update_manager_model',
   'stop_all_agents',
   'create_session',
   'stop_session',
@@ -80,6 +82,7 @@ const WS_REQUEST_TYPES: WsRequestType[] = [
 const WS_REQUEST_ERROR_HINTS: Array<{ requestType: WsRequestType; codeFragment: string }> = [
   { requestType: 'create_manager', codeFragment: 'create_manager' },
   { requestType: 'delete_manager', codeFragment: 'delete_manager' },
+  { requestType: 'update_manager_model', codeFragment: 'update_manager_model' },
   { requestType: 'stop_all_agents', codeFragment: 'stop_all_agents' },
   { requestType: 'create_session', codeFragment: 'create_session' },
   { requestType: 'stop_session', codeFragment: 'stop_session' },
@@ -329,6 +332,28 @@ export class ManagerWsClient {
     return this.enqueueRequest('delete_manager', (requestId) => ({
         type: 'delete_manager',
         managerId: trimmed,
+        requestId,
+      }))
+  }
+
+  async updateManagerModel(managerId: string, model: ManagerModelPreset): Promise<{ managerId: string }> {
+    const trimmed = managerId.trim()
+    if (!trimmed) {
+      throw new Error('Manager id is required.')
+    }
+
+    if (!MANAGER_MODEL_PRESETS.includes(model)) {
+      throw new Error('Invalid model preset.')
+    }
+
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+      throw new Error('WebSocket is disconnected. Reconnecting...')
+    }
+
+    return this.enqueueRequest('update_manager_model', (requestId) => ({
+        type: 'update_manager_model',
+        managerId: trimmed,
+        model,
         requestId,
       }))
   }
@@ -673,6 +698,13 @@ export class ManagerWsClient {
       case 'manager_deleted': {
         this.applyManagerDeleted(event.managerId)
         this.requestTracker.resolve('delete_manager', event.requestId, {
+          managerId: event.managerId,
+        })
+        break
+      }
+
+      case 'manager_model_updated': {
+        this.requestTracker.resolve('update_manager_model', event.requestId, {
           managerId: event.managerId,
         })
         break

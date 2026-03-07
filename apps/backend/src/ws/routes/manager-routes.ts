@@ -1,6 +1,7 @@
-import type { ClientCommand, ServerEvent } from "@middleman/protocol";
+import { MANAGER_MODEL_PRESETS, type ClientCommand, type ManagerModelPreset, type ServerEvent } from "@middleman/protocol";
 import type { WebSocket } from "ws";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
+import type { SwarmModelPreset } from "../../swarm/types.js";
 
 export interface ManagerCommandRouteContext {
   command: ClientCommand;
@@ -87,6 +88,43 @@ export async function handleManagerCommand(context: ManagerCommandRouteContext):
       send(socket, {
         type: "error",
         code: "DELETE_MANAGER_FAILED",
+        message: error instanceof Error ? error.message : String(error),
+        requestId: command.requestId
+      });
+    }
+
+    return true;
+  }
+
+  if (command.type === "update_manager_model") {
+    const managerContextId = resolveManagerContextAgentId(subscribedAgentId);
+    if (!managerContextId) {
+      send(socket, {
+        type: "error",
+        code: "UNKNOWN_AGENT",
+        message: `Agent ${subscribedAgentId} does not exist.`,
+        requestId: command.requestId
+      });
+      return true;
+    }
+
+    try {
+      if (!MANAGER_MODEL_PRESETS.includes(command.model)) {
+        throw new Error(`Invalid model preset: ${command.model}`);
+      }
+
+      await swarmManager.updateManagerModel(command.managerId, command.model as SwarmModelPreset);
+
+      broadcastToSubscribed({
+        type: "manager_model_updated",
+        managerId: command.managerId,
+        model: command.model,
+        requestId: command.requestId
+      });
+    } catch (error) {
+      send(socket, {
+        type: "error",
+        code: "UPDATE_MANAGER_MODEL_FAILED",
         message: error instanceof Error ? error.message : String(error),
         requestId: command.requestId
       });

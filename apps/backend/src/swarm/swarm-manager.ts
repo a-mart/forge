@@ -1398,6 +1398,34 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return { managerId: targetManagerId, terminatedWorkerIds };
   }
 
+  async updateManagerModel(
+    managerId: string,
+    modelPreset: SwarmModelPreset
+  ): Promise<void> {
+    const profile = this.profiles.get(managerId);
+    if (!profile) {
+      throw new Error(`Unknown manager profile: ${managerId}`);
+    }
+
+    const modelDescriptor = resolveModelDescriptorFromPreset(modelPreset);
+    const sessions = this.getSessionsForProfile(profile.profileId);
+
+    for (const session of sessions) {
+      session.model = { ...modelDescriptor };
+      session.updatedAt = this.now();
+      this.descriptors.set(session.agentId, session);
+    }
+
+    await this.saveStore();
+    this.emitAgentsSnapshot();
+
+    this.logDebug("manager:update_model", {
+      managerId,
+      modelPreset,
+      updatedSessions: sessions.map((s) => s.agentId)
+    });
+  }
+
   getAgent(agentId: string): AgentDescriptor | undefined {
     const descriptor = this.descriptors.get(agentId);
     if (!descriptor) {
