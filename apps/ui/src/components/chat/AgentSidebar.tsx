@@ -1253,6 +1253,7 @@ function CortexSection({
   onForkSession,
   onMergeSessionMemory,
   onMarkUnread,
+  onChangeModel,
 }: {
   cortexRow: ProfileTreeRow
   statuses: Record<string, { status: AgentStatus; pendingCount: number; contextUsage?: AgentContextUsage }>
@@ -1278,6 +1279,7 @@ function CortexSection({
   onForkSession?: (sourceAgentId: string) => void
   onMergeSessionMemory?: (agentId: string) => void
   onMarkUnread?: (agentId: string) => void
+  onChangeModel?: (profileId: string) => void
 }) {
   const { profile, sessions } = cortexRow
   const defaultSession = sessions.find((s) => s.isDefault)
@@ -1415,6 +1417,12 @@ function CortexSection({
             <ContextMenuItem onClick={() => onCreateSession(profile.profileId)}>
               <Plus className="mr-2 size-3.5" />
               New Session
+            </ContextMenuItem>
+          ) : null}
+          {onChangeModel ? (
+            <ContextMenuItem onClick={() => onChangeModel(profile.profileId)}>
+              <RefreshCw className="mr-2 size-3.5" />
+              Change Model
             </ContextMenuItem>
           ) : null}
           <ContextMenuItem onClick={onOpenSettings}>
@@ -1768,6 +1776,7 @@ export function AgentSidebar({
             onForkSession={onForkSession ? (sourceAgentId: string) => setForkTarget({ sourceAgentId }) : undefined}
             onMergeSessionMemory={onMergeSessionMemory}
             onMarkUnread={onMarkUnread}
+            onChangeModel={onUpdateManagerModel ? handleRequestChangeModel : undefined}
           />
         )
       })()}
