@@ -2587,6 +2587,36 @@ describe('SwarmManager', () => {
     expect(rerouted.model.modelId).toBe('gpt-5.3-codex')
   })
 
+  it('reroutes spawn_agent model from spark to codex when worker message_end stopReason is error', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const sparkWorker = await manager.spawnAgent('manager', {
+      agentId: 'Spark Message End Source',
+      model: 'pi-codex',
+      modelId: 'gpt-5.3-codex-spark',
+    })
+
+    await (manager as any).handleRuntimeSessionEvent(sparkWorker.agentId, {
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        content: [],
+        stopReason: 'error',
+        errorMessage: 'You have hit your ChatGPT usage limit ... in 20 min.',
+      },
+    })
+
+    const rerouted = await manager.spawnAgent('manager', {
+      agentId: 'Spark Message End Fallback Worker',
+      model: 'pi-codex',
+      modelId: 'gpt-5.3-codex-spark',
+    })
+
+    expect(rerouted.model.modelId).toBe('gpt-5.3-codex')
+  })
+
   it('reroutes spawn_agent model from spark to gpt-5.4 when spark and codex are blocked', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)

@@ -54,6 +54,8 @@ import {
   isConversationTextAttachment
 } from "./conversation-validators.js";
 import {
+  extractMessageErrorMessage,
+  extractMessageStopReason,
   extractMessageText,
   extractRole,
 } from "./message-utils.js";
@@ -3674,6 +3676,20 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.captureConversationEventFromRuntime(agentId, event);
 
     const descriptor = this.descriptors.get(agentId);
+    if (
+      descriptor?.role === "worker" &&
+      event.type === "message_end" &&
+      extractMessageStopReason(event.message) === "error"
+    ) {
+      const errorText =
+        extractMessageErrorMessage(event.message) ??
+        extractMessageText(event.message) ??
+        "Unknown runtime error";
+      this.maybeRecordModelCapacityBlock(agentId, descriptor, {
+        phase: "prompt_start",
+        message: errorText
+      });
+    }
 
     if (!this.config.debug) return;
 
