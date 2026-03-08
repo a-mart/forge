@@ -834,6 +834,27 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return { terminatedWorkerIds };
   }
 
+  async clearSessionConversation(agentId: string): Promise<void> {
+    const descriptor = this.getRequiredSessionDescriptor(agentId);
+
+    // Truncate the session JSONL file on disk
+    if (descriptor.sessionFile) {
+      try {
+        await writeFile(descriptor.sessionFile, "");
+      } catch {
+        // File may not exist yet — that's fine
+      }
+    }
+
+    // Clear in-memory conversation history
+    this.conversationProjector.resetConversationHistory(agentId);
+
+    // Notify connected clients to clear their message lists
+    this.emitConversationReset(agentId, "api_reset");
+
+    this.logDebug("session:clear", { agentId });
+  }
+
   async renameSession(agentId: string, label: string): Promise<void> {
     const descriptor = this.getRequiredSessionDescriptor(agentId);
     const normalizedLabel = label.trim();

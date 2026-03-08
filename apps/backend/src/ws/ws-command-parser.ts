@@ -258,6 +258,27 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
     };
   }
 
+  if (maybe.type === "clear_session") {
+    const agentId = (maybe as { agentId?: unknown }).agentId;
+    const requestId = (maybe as { requestId?: unknown }).requestId;
+
+    if (typeof agentId !== "string" || agentId.trim().length === 0) {
+      return { ok: false, error: "clear_session.agentId must be a non-empty string" };
+    }
+    if (requestId !== undefined && typeof requestId !== "string") {
+      return { ok: false, error: "clear_session.requestId must be a string when provided" };
+    }
+
+    return {
+      ok: true,
+      command: {
+        type: "clear_session",
+        agentId: agentId.trim(),
+        requestId
+      }
+    };
+  }
+
   if (maybe.type === "rename_session") {
     const agentId = (maybe as { agentId?: unknown }).agentId;
     const label = (maybe as { label?: unknown }).label;
@@ -454,6 +475,7 @@ export function extractRequestId(command: ClientCommand): string | undefined {
     case "stop_session":
     case "resume_session":
     case "delete_session":
+    case "clear_session":
     case "rename_session":
     case "fork_session":
     case "merge_session_memory":

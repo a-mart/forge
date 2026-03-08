@@ -126,6 +126,12 @@ export interface SessionDeletedEvent {
   requestId?: string
 }
 
+export interface SessionClearedEvent {
+  type: 'session_cleared'
+  agentId: string
+  requestId?: string
+}
+
 export interface SessionRenamedEvent {
   type: 'session_renamed'
   agentId: string
@@ -283,6 +289,7 @@ export type ServerEvent =
   | SessionStoppedEvent
   | SessionResumedEvent
   | SessionDeletedEvent
+  | SessionClearedEvent
   | SessionRenamedEvent
   | SessionForkedEvent
   | SessionMemoryMergeStartedEvent

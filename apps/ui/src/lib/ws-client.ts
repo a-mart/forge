@@ -55,6 +55,7 @@ type WsRequestResultMap = {
   stop_session: SessionActionResult
   resume_session: SessionActionResult
   delete_session: SessionActionResult
+  clear_session: SessionActionResult
   rename_session: SessionActionResult
   fork_session: SessionForkedResult
   merge_session_memory: SessionMemoryMergeResult
@@ -73,6 +74,7 @@ const WS_REQUEST_TYPES: WsRequestType[] = [
   'stop_session',
   'resume_session',
   'delete_session',
+  'clear_session',
   'rename_session',
   'fork_session',
   'merge_session_memory',
@@ -90,6 +92,7 @@ const WS_REQUEST_ERROR_HINTS: Array<{ requestType: WsRequestType; codeFragment: 
   { requestType: 'stop_session', codeFragment: 'stop_session' },
   { requestType: 'resume_session', codeFragment: 'resume_session' },
   { requestType: 'delete_session', codeFragment: 'delete_session' },
+  { requestType: 'clear_session', codeFragment: 'clear_session' },
   { requestType: 'rename_session', codeFragment: 'rename_session' },
   { requestType: 'fork_session', codeFragment: 'fork_session' },
   { requestType: 'merge_session_memory', codeFragment: 'merge_session_memory' },
@@ -475,6 +478,23 @@ export class ManagerWsClient {
     }))
   }
 
+  async clearSession(agentId: string): Promise<SessionActionResult> {
+    const trimmed = agentId.trim()
+    if (!trimmed) {
+      throw new Error('Agent id is required.')
+    }
+
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+      throw new Error('WebSocket is disconnected. Reconnecting...')
+    }
+
+    return this.enqueueRequest('clear_session', (requestId) => ({
+      type: 'clear_session',
+      agentId: trimmed,
+      requestId,
+    }))
+  }
+
   async renameSession(agentId: string, label: string): Promise<SessionActionResult> {
     const trimmed = agentId.trim()
     const trimmedLabel = label.trim()
@@ -744,6 +764,14 @@ export class ManagerWsClient {
         this.requestTracker.resolve('delete_session', event.requestId, {
           agentId: event.agentId,
         })
+        break
+      }
+
+      case 'session_cleared': {
+        this.requestTracker.resolve('clear_session', event.requestId, {
+          agentId: event.agentId,
+        })
+        // conversation_reset event handles clearing the message list
         break
       }
 

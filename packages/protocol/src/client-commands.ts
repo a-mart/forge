@@ -21,6 +21,7 @@ export type ClientCommand =
   | { type: 'delete_session'; agentId: string; requestId?: string }
   | { type: 'rename_session'; agentId: string; label: string; requestId?: string }
   | { type: 'fork_session'; sourceAgentId: string; label?: string; requestId?: string }
+  | { type: 'clear_session'; agentId: string; requestId?: string }
   | { type: 'merge_session_memory'; agentId: string; requestId?: string }
   | { type: 'list_directories'; path?: string; requestId?: string }
   | { type: 'validate_directory'; path: string; requestId?: string }

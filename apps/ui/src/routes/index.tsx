@@ -339,18 +339,16 @@ export function IndexPage() {
       return
     }
 
-    // Multi-session: create a new session under the current profile instead of destructive /new
+    // Multi-session: clear current session conversation
     const profileId = activeAgent.profileId
     if (profileId && clientRef.current) {
       void (async () => {
         try {
-          const result = await clientRef.current!.createSession(profileId)
-          navigateToRoute({ view: 'chat', agentId: result.sessionAgent.agentId })
-          clientRef.current?.subscribeToAgent(result.sessionAgent.agentId)
+          await clientRef.current!.clearSession(activeAgentId)
         } catch (error) {
           setState((prev) => ({
             ...prev,
-            lastError: `Failed to create session: ${error instanceof Error ? error.message : 'Unknown error'}`,
+            lastError: `Failed to clear conversation: ${error instanceof Error ? error.message : 'Unknown error'}`,
           }))
         }
       })()

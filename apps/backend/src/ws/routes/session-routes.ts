@@ -32,6 +32,7 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
     command.type !== "stop_session" &&
     command.type !== "resume_session" &&
     command.type !== "delete_session" &&
+    command.type !== "clear_session" &&
     command.type !== "rename_session" &&
     command.type !== "fork_session" &&
     command.type !== "merge_session_memory"
@@ -172,6 +173,27 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
       send(socket, {
         type: "error",
         code: "DELETE_SESSION_FAILED",
+        message: error instanceof Error ? error.message : String(error),
+        requestId: command.requestId
+      });
+    }
+
+    return true;
+  }
+
+  if (command.type === "clear_session") {
+    try {
+      await swarmManager.clearSessionConversation(command.agentId);
+
+      send(socket, {
+        type: "session_cleared",
+        agentId: command.agentId,
+        requestId: command.requestId
+      });
+    } catch (error) {
+      send(socket, {
+        type: "error",
+        code: "CLEAR_SESSION_FAILED",
         message: error instanceof Error ? error.message : String(error),
         requestId: command.requestId
       });
