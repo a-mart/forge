@@ -37,6 +37,7 @@ import { useFileDrop } from '@/hooks/index-page/use-file-drop'
 import type {
   ConversationAttachment,
   ManagerModelPreset,
+  ManagerReasoningLevel,
 } from '@middleman/protocol'
 
 export const Route = createFileRoute('/')({
@@ -489,12 +490,12 @@ export function IndexPage() {
     clientRef.current?.markUnread(agentId)
   }, [clientRef])
 
-  const handleUpdateManagerModel = useCallback(async (managerId: string, model: ManagerModelPreset) => {
+  const handleUpdateManagerModel = useCallback(async (managerId: string, model: ManagerModelPreset, reasoningLevel?: ManagerReasoningLevel) => {
     const client = clientRef.current
     if (!client) return
 
     try {
-      await client.updateManagerModel(managerId, model)
+      await client.updateManagerModel(managerId, model, reasoningLevel)
     } catch (error) {
       setState((previous) => ({
         ...previous,

@@ -1,7 +1,7 @@
 import { MANAGER_MODEL_PRESETS, type ClientCommand, type ManagerModelPreset, type ServerEvent } from "@middleman/protocol";
 import type { WebSocket } from "ws";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
-import type { SwarmModelPreset } from "../../swarm/types.js";
+import type { SwarmModelPreset, SwarmReasoningLevel } from "../../swarm/types.js";
 
 export interface ManagerCommandRouteContext {
   command: ClientCommand;
@@ -113,12 +113,17 @@ export async function handleManagerCommand(context: ManagerCommandRouteContext):
         throw new Error(`Invalid model preset: ${command.model}`);
       }
 
-      await swarmManager.updateManagerModel(command.managerId, command.model as SwarmModelPreset);
+      await swarmManager.updateManagerModel(
+        command.managerId,
+        command.model as SwarmModelPreset,
+        command.reasoningLevel as SwarmReasoningLevel | undefined
+      );
 
       broadcastToSubscribed({
         type: "manager_model_updated",
         managerId: command.managerId,
         model: command.model,
+        reasoningLevel: command.reasoningLevel,
         requestId: command.requestId
       });
     } catch (error) {

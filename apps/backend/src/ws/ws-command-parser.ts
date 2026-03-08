@@ -1,7 +1,7 @@
 import type { ClientCommand } from "@middleman/protocol";
 import { type RawData } from "ws";
 import { parseConversationAttachments } from "./attachment-parser.js";
-import { describeSwarmModelPresets, isSwarmModelPreset } from "../swarm/model-presets.js";
+import { describeSwarmModelPresets, describeSwarmReasoningLevels, isSwarmModelPreset, isSwarmReasoningLevel } from "../swarm/model-presets.js";
 
 export type ParsedClientCommand =
   | { ok: true; command: ClientCommand }
@@ -127,6 +127,7 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
   if (maybe.type === "update_manager_model") {
     const managerId = (maybe as { managerId?: unknown }).managerId;
     const model = (maybe as { model?: unknown }).model;
+    const reasoningLevel = (maybe as { reasoningLevel?: unknown }).reasoningLevel;
     const requestId = (maybe as { requestId?: unknown }).requestId;
 
     if (typeof managerId !== "string" || managerId.trim().length === 0) {
@@ -136,6 +137,12 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
       return {
         ok: false,
         error: `update_manager_model.model must be one of ${describeSwarmModelPresets()}`
+      };
+    }
+    if (reasoningLevel !== undefined && !isSwarmReasoningLevel(reasoningLevel)) {
+      return {
+        ok: false,
+        error: `update_manager_model.reasoningLevel must be one of ${describeSwarmReasoningLevels()}`
       };
     }
     if (requestId !== undefined && typeof requestId !== "string") {
@@ -148,6 +155,7 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
         type: "update_manager_model",
         managerId: managerId.trim(),
         model,
+        reasoningLevel,
         requestId
       }
     };

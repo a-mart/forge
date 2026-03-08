@@ -8,6 +8,7 @@ import {
 } from './ws-state'
 import {
   MANAGER_MODEL_PRESETS,
+  MANAGER_REASONING_LEVELS,
   type AgentDescriptor,
   type ClientCommand,
   type ConversationAttachment,
@@ -15,6 +16,7 @@ import {
   type ConversationMessageEvent,
   type DeliveryMode,
   type ManagerModelPreset,
+  type ManagerReasoningLevel,
   type ServerEvent,
 } from '@middleman/protocol'
 
@@ -336,7 +338,7 @@ export class ManagerWsClient {
       }))
   }
 
-  async updateManagerModel(managerId: string, model: ManagerModelPreset): Promise<{ managerId: string }> {
+  async updateManagerModel(managerId: string, model: ManagerModelPreset, reasoningLevel?: ManagerReasoningLevel): Promise<{ managerId: string }> {
     const trimmed = managerId.trim()
     if (!trimmed) {
       throw new Error('Manager id is required.')
@@ -344,6 +346,10 @@ export class ManagerWsClient {
 
     if (!MANAGER_MODEL_PRESETS.includes(model)) {
       throw new Error('Invalid model preset.')
+    }
+
+    if (reasoningLevel && !MANAGER_REASONING_LEVELS.includes(reasoningLevel)) {
+      throw new Error('Invalid reasoning level.')
     }
 
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
@@ -354,6 +360,7 @@ export class ManagerWsClient {
         type: 'update_manager_model',
         managerId: trimmed,
         model,
+        reasoningLevel,
         requestId,
       }))
   }

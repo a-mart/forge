@@ -7,6 +7,7 @@ import type {
   DeliveryMode,
   DirectoryItem,
   ManagerModelPreset,
+  ManagerReasoningLevel,
   MessageSourceContext,
   ManagerProfile,
 } from './shared-types.js'
@@ -91,6 +92,7 @@ export interface ManagerModelUpdatedEvent {
   type: 'manager_model_updated'
   managerId: string
   model: ManagerModelPreset
+  reasoningLevel?: ManagerReasoningLevel
   requestId?: string
 }
 

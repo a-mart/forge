@@ -104,7 +104,8 @@ import type {
   SkillEnvRequirement,
   SpawnAgentInput,
   SwarmConfig,
-  SwarmModelPreset
+  SwarmModelPreset,
+  SwarmReasoningLevel
 } from "./types.js";
 
 const DEFAULT_WORKER_SYSTEM_PROMPT = `You are a worker agent in a swarm.
@@ -1416,7 +1417,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   async updateManagerModel(
     managerId: string,
-    modelPreset: SwarmModelPreset
+    modelPreset: SwarmModelPreset,
+    reasoningLevel?: SwarmReasoningLevel
   ): Promise<void> {
     const profile = this.profiles.get(managerId);
     if (!profile) {
@@ -1424,6 +1426,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     const modelDescriptor = resolveModelDescriptorFromPreset(modelPreset);
+    if (reasoningLevel) {
+      modelDescriptor.thinkingLevel = reasoningLevel;
+    }
     const sessions = this.getSessionsForProfile(profile.profileId);
 
     for (const session of sessions) {
@@ -1438,6 +1443,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.logDebug("manager:update_model", {
       managerId,
       modelPreset,
+      reasoningLevel,
       updatedSessions: sessions.map((s) => s.agentId)
     });
   }

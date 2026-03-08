@@ -43,10 +43,12 @@ import { inferModelPreset } from '@/lib/model-preset'
 import { cn } from '@/lib/utils'
 import {
   MANAGER_MODEL_PRESETS,
+  MANAGER_REASONING_LEVELS,
   type AgentContextUsage,
   type AgentDescriptor,
   type AgentStatus,
   type ManagerModelPreset,
+  type ManagerReasoningLevel,
   type ManagerProfile,
 } from '@middleman/protocol'
 
@@ -73,7 +75,7 @@ interface AgentSidebarProps {
   onForkSession?: (sourceAgentId: string, name?: string) => void
   onMergeSessionMemory?: (agentId: string) => void
   onMarkUnread?: (agentId: string) => void
-  onUpdateManagerModel?: (managerId: string, model: ManagerModelPreset) => void
+  onUpdateManagerModel?: (managerId: string, model: ManagerModelPreset, reasoningLevel?: ManagerReasoningLevel) => void
 }
 
 type AgentLiveStatus = {
@@ -1126,24 +1128,37 @@ const CHANGE_MODEL_PRESETS = MANAGER_MODEL_PRESETS.filter(
   (preset) => preset !== 'codex-app',
 )
 
+const REASONING_LEVEL_LABELS: Record<ManagerReasoningLevel, string> = {
+  none: 'None',
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  xhigh: 'Max',
+}
+
 function ChangeModelDialog({
   profileId,
   profileLabel,
   currentPreset,
+  currentReasoningLevel,
   onConfirm,
   onClose,
 }: {
   profileId: string
   profileLabel: string
   currentPreset: ManagerModelPreset | undefined
-  onConfirm: (profileId: string, model: ManagerModelPreset) => void
+  currentReasoningLevel: ManagerReasoningLevel | undefined
+  onConfirm: (profileId: string, model: ManagerModelPreset, reasoningLevel?: ManagerReasoningLevel) => void
   onClose: () => void
 }) {
   const [model, setModel] = useState<ManagerModelPreset>(currentPreset ?? 'pi-codex')
+  const [reasoning, setReasoning] = useState<ManagerReasoningLevel>(currentReasoningLevel ?? 'xhigh')
+
+  const hasChanges = model !== currentPreset || reasoning !== (currentReasoningLevel ?? 'xhigh')
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    onConfirm(profileId, model)
+    onConfirm(profileId, model, reasoning)
   }
 
   return (
@@ -1152,32 +1167,57 @@ function ChangeModelDialog({
         <DialogHeader className="mb-3">
           <DialogTitle>Change Model</DialogTitle>
           <DialogDescription>
-            Choose a new base model for {profileLabel}. The change takes effect on the next session resume or new message.
+            Update the model and reasoning level for {profileLabel}. Changes take effect on the next session resume or new message.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
-          <Select
-            value={model}
-            onValueChange={(value) => setModel(value as ManagerModelPreset)}
-          >
-            <SelectTrigger className="w-full">
-              <SelectValue placeholder="Select model preset" />
-            </SelectTrigger>
-            <SelectContent>
-              {CHANGE_MODEL_PRESETS.map((preset) => (
-                <SelectItem key={preset} value={preset}>
-                  {preset}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Model</label>
+            <Select
+              value={model}
+              onValueChange={(value) => setModel(value as ManagerModelPreset)}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Select model preset" />
+              </SelectTrigger>
+              <SelectContent>
+                {CHANGE_MODEL_PRESETS.map((preset) => (
+                  <SelectItem key={preset} value={preset}>
+                    {preset}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Reasoning Level</label>
+            <Select
+              value={reasoning}
+              onValueChange={(value) => setReasoning(value as ManagerReasoningLevel)}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Select reasoning level" />
+              </SelectTrigger>
+              <SelectContent>
+                {MANAGER_REASONING_LEVELS.map((level) => (
+                  <SelectItem key={level} value={level}>
+                    {REASONING_LEVEL_LABELS[level]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Higher reasoning uses more tokens but improves complex task performance.
+            </p>
+          </div>
 
           <div className="flex items-center justify-end gap-2">
             <Button type="button" variant="outline" onClick={onClose}>
               Cancel
             </Button>
-            <Button type="submit" disabled={model === currentPreset}>
-              Update Model
+            <Button type="submit" disabled={!hasChanges}>
+              Update
             </Button>
           </div>
         </form>
@@ -1535,6 +1575,7 @@ export function AgentSidebar({
     profileId: string
     profileLabel: string
     currentPreset: ManagerModelPreset | undefined
+    currentReasoningLevel: ManagerReasoningLevel | undefined
   } | null>(null)
 
   const toggleProfileCollapsed = useCallback((profileId: string) => {
@@ -1642,15 +1683,17 @@ export function AgentSidebar({
       (a) => a.role === 'manager' && (a.profileId === profileId || a.agentId === profileId),
     )
     const currentPreset = defaultSession ? inferModelPreset(defaultSession) : undefined
+    const currentReasoningLevel = defaultSession?.model.thinkingLevel as ManagerReasoningLevel | undefined
     setChangeModelTarget({
       profileId,
       profileLabel: profile?.displayName || profileId,
       currentPreset,
+      currentReasoningLevel,
     })
   }, [agents, profiles])
 
-  const handleConfirmChangeModel = useCallback((profileId: string, model: ManagerModelPreset) => {
-    onUpdateManagerModel?.(profileId, model)
+  const handleConfirmChangeModel = useCallback((profileId: string, model: ManagerModelPreset, reasoningLevel?: ManagerReasoningLevel) => {
+    onUpdateManagerModel?.(profileId, model, reasoningLevel)
     setChangeModelTarget(null)
   }, [onUpdateManagerModel])
 
@@ -1889,6 +1932,7 @@ export function AgentSidebar({
           profileId={changeModelTarget.profileId}
           profileLabel={changeModelTarget.profileLabel}
           currentPreset={changeModelTarget.currentPreset}
+          currentReasoningLevel={changeModelTarget.currentReasoningLevel}
           onConfirm={handleConfirmChangeModel}
           onClose={() => setChangeModelTarget(null)}
         />
