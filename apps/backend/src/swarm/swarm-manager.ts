@@ -958,7 +958,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       throw new Error(`Unknown profile: ${sourceDescriptor.profileId}`);
     }
 
-    const prepared = this.prepareSessionCreation(profile.profileId, options);
+    const prepared = this.prepareSessionCreation(profile.profileId, {
+      ...options,
+      name: options?.label
+    });
     const forkedDescriptor = prepared.sessionDescriptor;
     this.descriptors.set(forkedDescriptor.agentId, forkedDescriptor);
 
