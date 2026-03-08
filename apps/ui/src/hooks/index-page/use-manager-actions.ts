@@ -65,6 +65,8 @@ export function useManagerActions({
   handleCloseDeleteManagerDialog: () => void
   isCompactingManager: boolean
   handleCompactManager: (customInstructions?: string) => Promise<void>
+  isSmartCompactingManager: boolean
+  handleSmartCompactManager: () => Promise<void>
   isStoppingAllAgents: boolean
   handleStopAllAgents: () => Promise<void>
 } {
@@ -84,6 +86,7 @@ export function useManagerActions({
   const [isDeletingManager, setIsDeletingManager] = useState(false)
 
   const [isCompactingManager, setIsCompactingManager] = useState(false)
+  const [isSmartCompactingManager, setIsSmartCompactingManager] = useState(false)
   const [isStoppingAllAgents, setIsStoppingAllAgents] = useState(false)
 
   const handleNewManagerNameChange = useCallback((value: string) => {
@@ -120,6 +123,29 @@ export function useManagerActions({
       }))
     } finally {
       setIsCompactingManager(false)
+    }
+  }, [activeAgentId, isActiveManager, setState, wsUrl])
+
+  const handleSmartCompactManager = useCallback(async () => {
+    if (!isActiveManager || !activeAgentId) {
+      return
+    }
+
+    setIsSmartCompactingManager(true)
+
+    try {
+      await requestManagerSmartCompaction(wsUrl, activeAgentId)
+      setState((previous) => ({
+        ...previous,
+        lastError: null,
+      }))
+    } catch (error) {
+      setState((previous) => ({
+        ...previous,
+        lastError: `Failed to smart compact manager context: ${toErrorMessage(error)}`,
+      }))
+    } finally {
+      setIsSmartCompactingManager(false)
     }
   }, [activeAgentId, isActiveManager, setState, wsUrl])
 
@@ -339,6 +365,8 @@ export function useManagerActions({
     handleCloseDeleteManagerDialog,
     isCompactingManager,
     handleCompactManager,
+    isSmartCompactingManager,
+    handleSmartCompactManager,
     isStoppingAllAgents,
     handleStopAllAgents,
   }
@@ -381,6 +409,40 @@ async function requestManagerCompaction(
   }
 
   throw new Error(errorMessage ?? `Compaction request failed with status ${response.status}`)
+}
+
+async function requestManagerSmartCompaction(
+  wsUrl: string,
+  agentId: string,
+): Promise<void> {
+  const endpoint = resolveApiEndpoint(
+    wsUrl,
+    `/api/agents/${encodeURIComponent(agentId)}/smart-compact`,
+  )
+
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({}),
+  })
+
+  if (response.ok) {
+    return
+  }
+
+  let errorMessage: string | undefined
+  try {
+    const payload = (await response.json()) as { error?: unknown }
+    if (typeof payload.error === 'string' && payload.error.trim().length > 0) {
+      errorMessage = payload.error.trim()
+    }
+  } catch {
+    // Ignore JSON parsing errors and fall back to status-based error text.
+  }
+
+  throw new Error(errorMessage ?? `Smart compaction request failed with status ${response.status}`)
 }
 
 function toErrorMessage(error: unknown): string {

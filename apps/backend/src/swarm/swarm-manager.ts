@@ -57,6 +57,7 @@ import {
   extractMessageText,
   extractRole,
 } from "./message-utils.js";
+import { classifyRuntimeCapacityError } from "./runtime-utils.js";
 import {
   DEFAULT_SWARM_MODEL_PRESET,
   inferSwarmModelPresetFromDescriptor,
@@ -367,6 +368,10 @@ const WATCHDOG_BATCH_PREVIEW_LIMIT = 10;
 const WATCHDOG_BACKOFF_BASE_MS = 15_000;
 const WATCHDOG_BACKOFF_MAX_MS = 5 * 60_000;
 const WATCHDOG_MAX_CONSECUTIVE_NOTIFICATIONS = 3;
+const MODEL_CAPACITY_BLOCK_DEFAULT_MS = 10 * 60_000;
+const MODEL_CAPACITY_BLOCK_MIN_MS = 5_000;
+const MODEL_CAPACITY_BLOCK_MAX_MS = 7 * 24 * 60 * 60 * 1_000;
+const OPENAI_CODEX_CAPACITY_FALLBACK_CHAIN = ["gpt-5.3-codex-spark", "gpt-5.3-codex", "gpt-5.4"];
 const SESSION_ID_SUFFIX_SEPARATOR = "--s";
 const ROOT_SESSION_NUMBER = 1;
 const DEFAULT_MEMORY_TEMPLATE_NORMALIZED_LINES = [
@@ -403,6 +408,15 @@ interface WorkerWatchdogState {
   consecutiveNotifications: number;
   suppressedUntilMs: number;
   circuitOpen: boolean;
+}
+
+interface ModelCapacityBlock {
+  provider: string;
+  modelId: string;
+  blockedUntilMs: number;
+  blockSetAt: string;
+  sourcePhase: RuntimeErrorEvent["phase"];
+  reason: string;
 }
 
 function nowIso(): string {
@@ -502,6 +516,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly watchdogTimerTokens = new Map<string, number>();
   private readonly watchdogBatchQueueByManager = new Map<string, Set<string>>();
   private readonly watchdogBatchTimersByManager = new Map<string, NodeJS.Timeout>();
+  private readonly modelCapacityBlocks = new Map<string, ModelCapacityBlock>();
   private readonly conversationProjector: ConversationProjector;
   private readonly persistenceService: PersistenceService;
   private readonly runtimeFactory: RuntimeFactory;
@@ -990,7 +1005,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const agentId = this.generateUniqueAgentId(requestedAgentId);
     const createdAt = this.now();
 
-    const model = this.resolveSpawnModel(input, manager.model);
+    const requestedModel = this.resolveSpawnModel(input, manager.model);
+    const model = this.resolveSpawnModelWithCapacityFallback(requestedModel);
     const archetypeId = this.resolveSpawnWorkerArchetypeId(input, agentId);
 
     const descriptor: AgentDescriptor = {
@@ -2113,6 +2129,86 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
   }
 
+  async smartCompactAgentContext(
+    agentId: string,
+    options?: {
+      sourceContext?: MessageSourceContext;
+      trigger?: "api" | "slash_command";
+    }
+  ): Promise<void> {
+    const descriptor = this.descriptors.get(agentId);
+    if (!descriptor) {
+      throw new Error(`Unknown target agent: ${agentId}`);
+    }
+
+    if (isNonRunningAgentStatus(descriptor.status)) {
+      throw new Error(`Target agent is not running: ${agentId}`);
+    }
+
+    if (descriptor.role !== "manager") {
+      throw new Error(`Smart compaction is only supported for manager agents: ${agentId}`);
+    }
+
+    const runtime = await this.getOrCreateRuntimeForDescriptor(descriptor);
+
+    const sourceContext = normalizeMessageSourceContext(options?.sourceContext ?? { channel: "web" });
+
+    this.logDebug("manager:smart_compact:start", {
+      agentId,
+      trigger: options?.trigger ?? "api",
+      sourceContext
+    });
+
+    this.emitConversationMessage({
+      type: "conversation_message",
+      agentId,
+      role: "system",
+      text: "Running smart compaction (handoff → compact → resume)…",
+      timestamp: this.now(),
+      source: "system",
+      sourceContext
+    });
+
+    try {
+      await runtime.smartCompact();
+
+      this.emitConversationMessage({
+        type: "conversation_message",
+        agentId,
+        role: "system",
+        text: "Smart compaction complete.",
+        timestamp: this.now(),
+        source: "system",
+        sourceContext
+      });
+
+      this.logDebug("manager:smart_compact:complete", {
+        agentId,
+        trigger: options?.trigger ?? "api"
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+
+      this.emitConversationMessage({
+        type: "conversation_message",
+        agentId,
+        role: "system",
+        text: `Smart compaction failed: ${message}`,
+        timestamp: this.now(),
+        source: "system",
+        sourceContext
+      });
+
+      this.logDebug("manager:smart_compact:error", {
+        agentId,
+        trigger: options?.trigger ?? "api",
+        message
+      });
+
+      throw error;
+    }
+  }
+
   async handleUserMessage(
     text: string,
     options?: {
@@ -2998,6 +3094,136 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return descriptor;
   }
 
+  private resolveSpawnModelWithCapacityFallback(model: AgentModelDescriptor): AgentModelDescriptor {
+    const provider = normalizeOptionalAgentId(model.provider)?.toLowerCase();
+    const requestedModelId = normalizeOptionalModelId(model.modelId)?.toLowerCase();
+    if (!provider || !requestedModelId) {
+      return model;
+    }
+
+    const requestedBlock = this.getActiveModelCapacityBlock(provider, requestedModelId);
+    if (!requestedBlock) {
+      return model;
+    }
+
+    const attemptedModelIds: string[] = [requestedModelId];
+    let candidateModelId = requestedModelId;
+
+    while (true) {
+      const nextModelId = resolveNextCapacityFallbackModelId(provider, candidateModelId);
+      if (!nextModelId) {
+        this.logDebug("agent:spawn:model_blocked_no_fallback", {
+          provider,
+          requestedModelId,
+          blockedUntil: new Date(requestedBlock.blockedUntilMs).toISOString(),
+          attemptedModelIds
+        });
+        return model;
+      }
+
+      attemptedModelIds.push(nextModelId);
+
+      const nextBlock = this.getActiveModelCapacityBlock(provider, nextModelId);
+      if (!nextBlock) {
+        this.logDebug("agent:spawn:model_reroute", {
+          provider,
+          requestedModelId,
+          selectedModelId: nextModelId,
+          attemptedModelIds
+        });
+        return {
+          ...model,
+          modelId: nextModelId
+        };
+      }
+
+      candidateModelId = nextModelId;
+    }
+  }
+
+  private getActiveModelCapacityBlock(provider: string, modelId: string): ModelCapacityBlock | undefined {
+    const key = buildModelCapacityBlockKey(provider, modelId);
+    if (!key) {
+      return undefined;
+    }
+
+    const block = this.modelCapacityBlocks.get(key);
+    if (!block) {
+      return undefined;
+    }
+
+    if (Date.now() >= block.blockedUntilMs) {
+      this.modelCapacityBlocks.delete(key);
+      this.logDebug("model_capacity:block_expired", {
+        provider: block.provider,
+        modelId: block.modelId,
+        blockedUntil: new Date(block.blockedUntilMs).toISOString()
+      });
+      return undefined;
+    }
+
+    return block;
+  }
+
+  private maybeRecordModelCapacityBlock(agentId: string, descriptor: AgentDescriptor, error: RuntimeErrorEvent): void {
+    if (descriptor.role !== "worker") {
+      return;
+    }
+
+    if (error.phase !== "prompt_dispatch" && error.phase !== "prompt_start") {
+      return;
+    }
+
+    const classification = classifyRuntimeCapacityError(error.message);
+    if (!classification.isQuotaOrRateLimit) {
+      return;
+    }
+
+    const blockDurationMs = clampModelCapacityBlockDurationMs(
+      classification.retryAfterMs ?? MODEL_CAPACITY_BLOCK_DEFAULT_MS
+    );
+    if (!blockDurationMs) {
+      return;
+    }
+
+    const provider = normalizeOptionalAgentId(descriptor.model.provider)?.toLowerCase();
+    const modelId = normalizeOptionalModelId(descriptor.model.modelId)?.toLowerCase();
+    if (!provider || !modelId) {
+      return;
+    }
+
+    const key = buildModelCapacityBlockKey(provider, modelId);
+    if (!key) {
+      return;
+    }
+
+    const blockedUntilMs = Date.now() + blockDurationMs;
+    const existing = this.modelCapacityBlocks.get(key);
+    if (existing && existing.blockedUntilMs >= blockedUntilMs) {
+      return;
+    }
+
+    this.modelCapacityBlocks.set(key, {
+      provider,
+      modelId,
+      blockedUntilMs,
+      blockSetAt: this.now(),
+      sourcePhase: error.phase,
+      reason: error.message
+    });
+
+    this.logDebug("model_capacity:block_set", {
+      agentId,
+      provider,
+      modelId,
+      phase: error.phase,
+      retryAfterMs: classification.retryAfterMs,
+      blockDurationMs,
+      blockedUntil: new Date(blockedUntilMs).toISOString(),
+      messagePreview: previewForLog(error.message, 240)
+    });
+  }
+
   private resolveSpawnWorkerArchetypeId(
     input: SpawnAgentInput,
     normalizedAgentId: string
@@ -3501,6 +3727,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     const message = error.message.trim().length > 0 ? error.message.trim() : "Unknown runtime error";
+    this.maybeRecordModelCapacityBlock(agentId, descriptor, {
+      ...error,
+      message
+    });
+
     const attempt = readPositiveIntegerDetail(error.details, "attempt");
     const maxAttempts = readPositiveIntegerDetail(error.details, "maxAttempts");
     const droppedPendingCount = readPositiveIntegerDetail(error.details, "droppedPendingCount");
@@ -4502,6 +4733,52 @@ function normalizeOptionalModelId(input: string | undefined): string | undefined
 
   const trimmed = input.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function buildModelCapacityBlockKey(provider: string, modelId: string): string | undefined {
+  const normalizedProvider = normalizeOptionalAgentId(provider)?.toLowerCase();
+  const normalizedModelId = normalizeOptionalModelId(modelId)?.toLowerCase();
+  if (!normalizedProvider || !normalizedModelId) {
+    return undefined;
+  }
+
+  return `${normalizedProvider}/${normalizedModelId}`;
+}
+
+function resolveNextCapacityFallbackModelId(provider: string, modelId: string): string | undefined {
+  const normalizedProvider = normalizeOptionalAgentId(provider)?.toLowerCase();
+  const normalizedModelId = normalizeOptionalModelId(modelId)?.toLowerCase();
+  if (!normalizedProvider || !normalizedModelId) {
+    return undefined;
+  }
+
+  if (normalizedProvider !== "openai-codex") {
+    return undefined;
+  }
+
+  const index = OPENAI_CODEX_CAPACITY_FALLBACK_CHAIN.indexOf(normalizedModelId);
+  if (index < 0 || index + 1 >= OPENAI_CODEX_CAPACITY_FALLBACK_CHAIN.length) {
+    return undefined;
+  }
+
+  return OPENAI_CODEX_CAPACITY_FALLBACK_CHAIN[index + 1];
+}
+
+function clampModelCapacityBlockDurationMs(durationMs: number): number | undefined {
+  if (!Number.isFinite(durationMs) || durationMs <= 0) {
+    return undefined;
+  }
+
+  const rounded = Math.round(durationMs);
+  if (rounded < MODEL_CAPACITY_BLOCK_MIN_MS) {
+    return MODEL_CAPACITY_BLOCK_MIN_MS;
+  }
+
+  if (rounded > MODEL_CAPACITY_BLOCK_MAX_MS) {
+    return MODEL_CAPACITY_BLOCK_MAX_MS;
+  }
+
+  return rounded;
 }
 
 function normalizeThinkingLevelForProvider(provider: string, thinkingLevel: string): string {

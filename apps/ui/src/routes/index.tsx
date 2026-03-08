@@ -232,6 +232,8 @@ export function IndexPage() {
     handleCloseDeleteManagerDialog,
     isCompactingManager,
     handleCompactManager,
+    isSmartCompactingManager,
+    handleSmartCompactManager,
     isStoppingAllAgents,
     handleStopAllAgents,
   } = useManagerActions({
@@ -612,6 +614,9 @@ export function IndexPage() {
                   showCompact={isActiveManager}
                   compactInProgress={isCompactingManager}
                   onCompact={() => void handleCompactManager()}
+                  showSmartCompact={isActiveManager}
+                  smartCompactInProgress={isSmartCompactingManager}
+                  onSmartCompact={() => void handleSmartCompactManager()}
                   showStopAll={isActiveManager}
                   stopAllInProgress={isStoppingAllAgents}
                   stopAllDisabled={!state.connected || !canStopAllAgents}

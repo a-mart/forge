@@ -1,4 +1,4 @@
-import { Loader2, Menu, Minimize2, MoreHorizontal, PanelRight, Square, Trash2 } from 'lucide-react'
+import { Loader2, Menu, Minimize2, MoreHorizontal, PanelRight, Sparkles, Square, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
@@ -28,6 +28,9 @@ interface ChatHeaderProps {
   showCompact: boolean
   compactInProgress: boolean
   onCompact: () => void
+  showSmartCompact: boolean
+  smartCompactInProgress: boolean
+  onSmartCompact: () => void
   showStopAll: boolean
   stopAllInProgress: boolean
   stopAllDisabled: boolean
@@ -110,6 +113,9 @@ export function ChatHeader({
   showCompact,
   compactInProgress,
   onCompact,
+  showSmartCompact,
+  smartCompactInProgress,
+  onSmartCompact,
   showStopAll,
   stopAllInProgress,
   stopAllDisabled,
@@ -236,7 +242,7 @@ export function ChatHeader({
         </div>
 
         {/* ── Three-dots dropdown: secondary actions ── */}
-        {(showCompact || showNewChat || showStopAll) ? (
+        {(showCompact || showSmartCompact || showNewChat || showStopAll) ? (
           <>
             <Separator orientation="vertical" className="hidden sm:block mx-0.5 h-4 bg-border/60" />
             <DropdownMenu>
@@ -254,7 +260,7 @@ export function ChatHeader({
                 {showCompact ? (
                   <DropdownMenuItem
                     onClick={onCompact}
-                    disabled={compactInProgress}
+                    disabled={compactInProgress || smartCompactInProgress}
                     className="gap-2 text-xs"
                   >
                     {compactInProgress ? (
@@ -263,6 +269,21 @@ export function ChatHeader({
                       <Minimize2 className="size-3.5" />
                     )}
                     {compactInProgress ? 'Compacting…' : 'Compact context'}
+                  </DropdownMenuItem>
+                ) : null}
+
+                {showSmartCompact ? (
+                  <DropdownMenuItem
+                    onClick={onSmartCompact}
+                    disabled={smartCompactInProgress || compactInProgress}
+                    className="gap-2 text-xs"
+                  >
+                    {smartCompactInProgress ? (
+                      <Loader2 className="size-3.5 animate-spin" />
+                    ) : (
+                      <Sparkles className="size-3.5" />
+                    )}
+                    {smartCompactInProgress ? 'Smart compacting…' : 'Smart compact'}
                   </DropdownMenuItem>
                 ) : null}
 

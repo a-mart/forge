@@ -146,6 +146,182 @@ export function normalizeRuntimeError(error: unknown): { message: string; stack?
   };
 }
 
+const QUOTA_OR_RATE_LIMIT_PATTERNS = [
+  /\busage limit\b/i,
+  /\bquota\b/i,
+  /\brate[\s-]?limit\b/i,
+  /\btoo many requests\b/i,
+  /\brequests per (minute|second|hour|day)\b/i,
+  /\bresource exhausted\b/i,
+  /^\s*429\b/i,
+  /\b429\s+too many requests\b/i,
+  /\b(?:status|http|code|error)\s*[:=]?\s*429\b/i
+];
+
+const DURATION_RETRY_AFTER_PATTERN =
+  /\b(?:in|after)\s*~?\s*(\d+(?:\.\d+)?)\s*(ms|msec|msecs|millisecond|milliseconds|s|sec|secs|second|seconds|m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days)\b/i;
+const RETRY_AT_TIMESTAMP_PATTERN = /\b(?:at|until)\s*<?([^>\n]+)>?/gi;
+const RETRY_AFTER_SECONDS_HEADER_PATTERN =
+  /(?:^|[\s,;])retry[-\s]?after\s*[:=]\s*(\d+(?:\.\d+)?)\b/i;
+
+export interface RuntimeCapacityErrorClassification {
+  isQuotaOrRateLimit: boolean;
+  retryAfterMs?: number;
+}
+
+export function classifyRuntimeCapacityError(
+  errorMessage: string | undefined,
+  options?: { nowMs?: number }
+): RuntimeCapacityErrorClassification {
+  const normalized = normalizeRuntimeErrorMessage(errorMessage);
+  if (!normalized) {
+    return { isQuotaOrRateLimit: false };
+  }
+
+  const isQuotaOrRateLimit = QUOTA_OR_RATE_LIMIT_PATTERNS.some((pattern) => pattern.test(normalized));
+  if (!isQuotaOrRateLimit) {
+    return { isQuotaOrRateLimit: false };
+  }
+
+  const retryAfterMs = parseRetryAfterMsFromErrorMessage(normalized, options?.nowMs);
+  return retryAfterMs === undefined
+    ? { isQuotaOrRateLimit }
+    : {
+        isQuotaOrRateLimit,
+        retryAfterMs
+      };
+}
+
+export function parseRetryAfterMsFromErrorMessage(
+  errorMessage: string | undefined,
+  nowMs = Date.now()
+): number | undefined {
+  const normalized = normalizeRuntimeErrorMessage(errorMessage);
+  if (!normalized) {
+    return undefined;
+  }
+
+  const durationMatch = DURATION_RETRY_AFTER_PATTERN.exec(normalized);
+  if (durationMatch) {
+    const amount = Number.parseFloat(durationMatch[1]);
+    const unit = durationMatch[2]?.toLowerCase();
+    const unitMs = unit ? toDurationUnitMs(unit) : undefined;
+    if (Number.isFinite(amount) && amount > 0 && unitMs !== undefined) {
+      return Math.round(amount * unitMs);
+    }
+  }
+
+  const retryAtMs = parseRetryAtTimestampMs(normalized, nowMs);
+  if (retryAtMs !== undefined) {
+    return retryAtMs;
+  }
+
+  const retryAfterSecondsHeader = RETRY_AFTER_SECONDS_HEADER_PATTERN.exec(normalized);
+  if (retryAfterSecondsHeader) {
+    const seconds = Number.parseFloat(retryAfterSecondsHeader[1]);
+    if (Number.isFinite(seconds) && seconds > 0) {
+      return Math.round(seconds * 1_000);
+    }
+  }
+
+  return undefined;
+}
+
+function parseRetryAtTimestampMs(message: string, nowMs: number): number | undefined {
+  RETRY_AT_TIMESTAMP_PATTERN.lastIndex = 0;
+
+  let match: RegExpExecArray | null = RETRY_AT_TIMESTAMP_PATTERN.exec(message);
+  while (match) {
+    const rawCandidate = match[1] ?? "";
+    const normalizedCandidate = normalizeTimestampCandidate(rawCandidate);
+    const parsedTimestampMs = parseTimestampCandidate(normalizedCandidate);
+
+    if (parsedTimestampMs !== undefined && parsedTimestampMs > nowMs) {
+      return parsedTimestampMs - nowMs;
+    }
+
+    match = RETRY_AT_TIMESTAMP_PATTERN.exec(message);
+  }
+
+  return undefined;
+}
+
+function normalizeTimestampCandidate(rawCandidate: string): string {
+  return rawCandidate
+    .split(/[,;\n]/, 1)[0]
+    .replace(/^[`'"\s<]+/, "")
+    .replace(/[`'"\s>.!?)]+$/, "")
+    .trim();
+}
+
+function parseTimestampCandidate(candidate: string): number | undefined {
+  if (!candidate) {
+    return undefined;
+  }
+
+  if (/^\d{13}$/.test(candidate)) {
+    const epochMs = Number.parseInt(candidate, 10);
+    return Number.isFinite(epochMs) ? epochMs : undefined;
+  }
+
+  if (/^\d{10}$/.test(candidate)) {
+    const epochSeconds = Number.parseInt(candidate, 10);
+    return Number.isFinite(epochSeconds) ? epochSeconds * 1_000 : undefined;
+  }
+
+  const parsed = Date.parse(candidate);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function toDurationUnitMs(unit: string): number | undefined {
+  switch (unit) {
+    case "ms":
+    case "msec":
+    case "msecs":
+    case "millisecond":
+    case "milliseconds":
+      return 1;
+
+    case "s":
+    case "sec":
+    case "secs":
+    case "second":
+    case "seconds":
+      return 1_000;
+
+    case "m":
+    case "min":
+    case "mins":
+    case "minute":
+    case "minutes":
+      return 60_000;
+
+    case "h":
+    case "hr":
+    case "hrs":
+    case "hour":
+    case "hours":
+      return 3_600_000;
+
+    case "d":
+    case "day":
+    case "days":
+      return 86_400_000;
+
+    default:
+      return undefined;
+  }
+}
+
+function normalizeRuntimeErrorMessage(errorMessage: string | undefined): string | undefined {
+  if (typeof errorMessage !== "string") {
+    return undefined;
+  }
+
+  const normalized = errorMessage.trim();
+  return normalized.length > 0 ? normalized : undefined;
+}
+
 export function previewForLog(text: string, maxLength = 160): string {
   const normalized = text.replace(/\s+/g, " ").trim();
   if (normalized.length <= maxLength) return normalized;

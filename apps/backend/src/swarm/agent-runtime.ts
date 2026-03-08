@@ -221,6 +221,83 @@ export class AgentRuntime implements SwarmAgentRuntime {
     await this.updateStatus("idle");
   }
 
+  async smartCompact(): Promise<void> {
+    this.ensureNotTerminated();
+
+    if (this.isContextRecoveryActive()) {
+      throw new Error("Context recovery is already in progress");
+    }
+
+    this.beginContextRecovery();
+    this.guardAbortController = new AbortController();
+    const signal = this.guardAbortController.signal;
+
+    const handoffFilePath = buildHandoffFilePath(this.descriptor);
+
+    this.logContextGuard("smart_compact_started", {
+      handoffFilePath,
+      wasStreaming: this.session.isStreaming
+    });
+
+    let handoffContent: string | undefined;
+    let completed = false;
+
+    try {
+      // If streaming, abort current turn first
+      if (this.session.isStreaming) {
+        try {
+          await withTimeout(this.session.abort(), CONTEXT_GUARD_ABORT_TIMEOUT_MS, "smart_compact_abort");
+        } catch (error) {
+          await this.reportContextGuardError(error, { stage: "smart_compact_abort_failed" });
+          return;
+        }
+      }
+
+      if (signal.aborted) return;
+
+      // Run handoff turn
+      handoffContent = await this.runHandoffTurn(handoffFilePath, signal);
+
+      if (signal.aborted) return;
+
+      // Compact
+      try {
+        await withTimeout(this.compact(), CONTEXT_GUARD_COMPACT_TIMEOUT_MS, "smart_compact_compact", {
+          onTimeout: () => this.abortCompactionSafely("smart_compact_compact_timeout_abort")
+        });
+      } catch (error) {
+        const normalized = normalizeRuntimeError(error);
+        if (!isAlreadyCompactedError(normalized.message)) {
+          await this.reportContextGuardError(error, {
+            stage: "smart_compact_compaction_failed",
+            handoffWritten: handoffContent !== undefined
+          });
+        }
+        // Continue to resume prompt even if compaction failed/skipped
+      }
+
+      if (signal.aborted) return;
+
+      // Resume prompt
+      try {
+        const resumePrompt = buildResumePrompt(handoffContent);
+        await this.session.prompt(resumePrompt);
+      } catch (error) {
+        await this.reportContextGuardError(error, { stage: "smart_compact_resume_failed" });
+      }
+
+      completed = true;
+    } finally {
+      await this.cleanupGuard(handoffFilePath);
+      if (completed) {
+        this.logContextGuard("smart_compact_completed", {
+          handoffWritten: handoffContent !== undefined,
+          handoffContentLength: handoffContent?.length ?? 0
+        });
+      }
+    }
+  }
+
   async compact(customInstructions?: string): Promise<unknown> {
     this.ensureNotTerminated();
     try {

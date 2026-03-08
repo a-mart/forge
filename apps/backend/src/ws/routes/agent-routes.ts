@@ -10,6 +10,7 @@ import type { SwarmManager } from "../../swarm/swarm-manager.js";
 import type { HttpRoute } from "./http-route.js";
 
 const AGENT_COMPACT_ENDPOINT_PATTERN = /^\/api\/agents\/([^/]+)\/compact$/;
+const AGENT_SMART_COMPACT_ENDPOINT_PATTERN = /^\/api\/agents\/([^/]+)\/smart-compact$/;
 
 export function createAgentHttpRoutes(options: { swarmManager: SwarmManager }): HttpRoute[] {
   return [
@@ -18,6 +19,13 @@ export function createAgentHttpRoutes(options: { swarmManager: SwarmManager }): 
       matches: (pathname) => AGENT_COMPACT_ENDPOINT_PATTERN.test(pathname),
       handle: async (request, response, requestUrl) => {
         await handleCompactAgentHttpRequest(options.swarmManager, request, response, requestUrl);
+      }
+    },
+    {
+      methods: "POST, OPTIONS",
+      matches: (pathname) => AGENT_SMART_COMPACT_ENDPOINT_PATTERN.test(pathname),
+      handle: async (request, response, requestUrl) => {
+        await handleSmartCompactAgentHttpRequest(options.swarmManager, request, response, requestUrl);
       }
     }
   ];
@@ -223,6 +231,66 @@ async function handleCompactAgentHttpRequest(
         : message.includes("not running") ||
             message.includes("does not support") ||
             message.includes("only supported")
+          ? 409
+          : message.includes("Invalid") || message.includes("Missing")
+            ? 400
+            : 500;
+
+    sendJson(response, statusCode, { error: message });
+  }
+}
+
+async function handleSmartCompactAgentHttpRequest(
+  swarmManager: SwarmManager,
+  request: IncomingMessage,
+  response: ServerResponse,
+  requestUrl: URL
+): Promise<void> {
+  const methods = "POST, OPTIONS";
+  const matched = requestUrl.pathname.match(AGENT_SMART_COMPACT_ENDPOINT_PATTERN);
+  const rawAgentId = matched?.[1] ?? "";
+
+  if (request.method === "OPTIONS") {
+    applyCorsHeaders(request, response, methods);
+    response.statusCode = 204;
+    response.end();
+    return;
+  }
+
+  if (request.method !== "POST") {
+    applyCorsHeaders(request, response, methods);
+    response.setHeader("Allow", methods);
+    sendJson(response, 405, { error: "Method Not Allowed" });
+    return;
+  }
+
+  applyCorsHeaders(request, response, methods);
+
+  const agentId = decodeURIComponent(rawAgentId).trim();
+  if (!agentId) {
+    sendJson(response, 400, { error: "Missing agent id" });
+    return;
+  }
+
+  try {
+    await swarmManager.smartCompactAgentContext(agentId, {
+      sourceContext: { channel: "web" },
+      trigger: "api"
+    });
+
+    sendJson(response, 200, {
+      ok: true,
+      agentId
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const statusCode =
+      message.includes("Unknown target agent")
+        ? 404
+        : message.includes("not running") ||
+            message.includes("does not support") ||
+            message.includes("only supported") ||
+            message.includes("already in progress")
           ? 409
           : message.includes("Invalid") || message.includes("Missing")
             ? 400

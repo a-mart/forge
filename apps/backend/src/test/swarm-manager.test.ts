@@ -2562,6 +2562,115 @@ describe('SwarmManager', () => {
     })
   })
 
+  it('reroutes spawn_agent model from spark to codex when spark is temporarily quota-blocked', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const sparkWorker = await manager.spawnAgent('manager', {
+      agentId: 'Spark Block Source',
+      model: 'pi-codex',
+      modelId: 'gpt-5.3-codex-spark',
+    })
+
+    await (manager as any).handleRuntimeError(sparkWorker.agentId, {
+      phase: 'prompt_dispatch',
+      message: 'You have hit your ChatGPT usage limit (pro plan). Try again in ~4307 min.',
+    })
+
+    const rerouted = await manager.spawnAgent('manager', {
+      agentId: 'Spark Fallback Worker',
+      model: 'pi-codex',
+      modelId: 'gpt-5.3-codex-spark',
+    })
+
+    expect(rerouted.model.modelId).toBe('gpt-5.3-codex')
+  })
+
+  it('reroutes spawn_agent model from spark to gpt-5.4 when spark and codex are blocked', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const sparkWorker = await manager.spawnAgent('manager', {
+      agentId: 'Spark Block Source',
+      model: 'pi-codex',
+      modelId: 'gpt-5.3-codex-spark',
+    })
+    const codexWorker = await manager.spawnAgent('manager', {
+      agentId: 'Codex Block Source',
+      model: 'pi-codex',
+      modelId: 'gpt-5.3-codex',
+    })
+
+    await (manager as any).handleRuntimeError(sparkWorker.agentId, {
+      phase: 'prompt_start',
+      message: 'You have hit your ChatGPT usage limit (pro plan). Try again in 120 min.',
+    })
+    await (manager as any).handleRuntimeError(codexWorker.agentId, {
+      phase: 'prompt_dispatch',
+      message: 'Rate limit exceeded for requests per minute. Try again in 30 min.',
+    })
+
+    const rerouted = await manager.spawnAgent('manager', {
+      agentId: 'Spark Escalation Worker',
+      model: 'pi-codex',
+      modelId: 'gpt-5.3-codex-spark',
+    })
+
+    expect(rerouted.model.modelId).toBe('gpt-5.4')
+  })
+
+  it('does not reroute spawn_agent model for non-quota runtime errors', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const sparkWorker = await manager.spawnAgent('manager', {
+      agentId: 'Spark Non Quota Source',
+      model: 'pi-codex',
+      modelId: 'gpt-5.3-codex-spark',
+    })
+
+    await (manager as any).handleRuntimeError(sparkWorker.agentId, {
+      phase: 'prompt_dispatch',
+      message: 'Network socket disconnected before secure TLS connection was established.',
+    })
+
+    const followup = await manager.spawnAgent('manager', {
+      agentId: 'Spark Non Quota Followup',
+      model: 'pi-codex',
+      modelId: 'gpt-5.3-codex-spark',
+    })
+
+    expect(followup.model.modelId).toBe('gpt-5.3-codex-spark')
+  })
+
+  it('does not apply quota rerouting outside prompt_dispatch/prompt_start phases', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const sparkWorker = await manager.spawnAgent('manager', {
+      agentId: 'Spark Steer Delivery Source',
+      model: 'pi-codex',
+      modelId: 'gpt-5.3-codex-spark',
+    })
+
+    await (manager as any).handleRuntimeError(sparkWorker.agentId, {
+      phase: 'steer_delivery',
+      message: 'You have hit your ChatGPT usage limit (pro plan). Try again in 30 min.',
+    })
+
+    const followup = await manager.spawnAgent('manager', {
+      agentId: 'Spark Steer Delivery Followup',
+      model: 'pi-codex',
+      modelId: 'gpt-5.3-codex-spark',
+    })
+
+    expect(followup.model.modelId).toBe('gpt-5.3-codex-spark')
+  })
+
   it('rejects invalid spawn_agent model presets with a clear error', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
