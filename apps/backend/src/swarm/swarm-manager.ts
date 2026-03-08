@@ -1438,7 +1438,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     for (const session of sessions) {
       session.model = { ...modelDescriptor };
-      session.updatedAt = this.now();
+      // Intentionally do NOT bump updatedAt — model changes are config updates,
+      // not user-visible activity, and bumping would scramble session sort order.
       this.descriptors.set(session.agentId, session);
     }
 
