@@ -1,0 +1,298 @@
+import type { ManagerWsState } from './ws-state'
+
+// ── Types ──
+
+export interface SoundOption {
+  id: string
+  name: string
+  /** URL path (for built-in) or data-URL (for custom uploads) */
+  url: string
+  builtIn: boolean
+}
+
+export interface AgentNotificationPrefs {
+  unreadSound: { enabled: boolean; soundId: string }
+  allDoneSound: { enabled: boolean; soundId: string }
+  volume: number // 0–1
+}
+
+export interface CustomSound {
+  id: string
+  name: string
+  dataUrl: string
+}
+
+export interface NotificationStore {
+  agents: Record<string, AgentNotificationPrefs>
+  customSounds: CustomSound[]
+  globalEnabled: boolean
+}
+
+// ── Constants ──
+
+const STORAGE_KEY = 'swarm-notifications'
+
+const DEBOUNCE_MS = 2_000
+
+export const BUILT_IN_SOUNDS: SoundOption[] = [
+  { id: 'notification', name: 'Default Notification', url: '/sounds/notification.mp3', builtIn: true },
+  { id: 'complete', name: 'Default Complete', url: '/sounds/complete.mp3', builtIn: true },
+]
+
+const DEFAULT_AGENT_PREFS: AgentNotificationPrefs = {
+  unreadSound: { enabled: false, soundId: 'notification' },
+  allDoneSound: { enabled: false, soundId: 'complete' },
+  volume: 0.7,
+}
+
+const DEFAULT_STORE: NotificationStore = {
+  agents: {},
+  customSounds: [],
+  globalEnabled: true,
+}
+
+// ── Storage ──
+
+export function readNotificationStore(): NotificationStore {
+  if (typeof window === 'undefined') return { ...DEFAULT_STORE }
+
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY)
+    if (!raw) return { ...DEFAULT_STORE }
+    const parsed = JSON.parse(raw)
+    return {
+      agents: parsed.agents && typeof parsed.agents === 'object' ? parsed.agents : {},
+      customSounds: Array.isArray(parsed.customSounds) ? parsed.customSounds : [],
+      globalEnabled: typeof parsed.globalEnabled === 'boolean' ? parsed.globalEnabled : true,
+    }
+  } catch {
+    return { ...DEFAULT_STORE }
+  }
+}
+
+export function writeNotificationStore(store: NotificationStore): void {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(store))
+  } catch {
+    // Ignore write failures (storage full, restricted env, etc.)
+  }
+}
+
+export function getAgentPrefs(store: NotificationStore, agentId: string): AgentNotificationPrefs {
+  return store.agents[agentId] ?? { ...DEFAULT_AGENT_PREFS }
+}
+
+export function setAgentPrefs(
+  store: NotificationStore,
+  agentId: string,
+  prefs: AgentNotificationPrefs,
+): NotificationStore {
+  return {
+    ...store,
+    agents: { ...store.agents, [agentId]: prefs },
+  }
+}
+
+// ── Sound resolution ──
+
+export function getAllSoundOptions(store: NotificationStore): SoundOption[] {
+  const custom: SoundOption[] = store.customSounds.map((s) => ({
+    id: s.id,
+    name: s.name,
+    url: s.dataUrl,
+    builtIn: false,
+  }))
+  return [...BUILT_IN_SOUNDS, ...custom]
+}
+
+function resolveSoundUrl(soundId: string, store: NotificationStore): string | null {
+  const builtIn = BUILT_IN_SOUNDS.find((s) => s.id === soundId)
+  if (builtIn) return builtIn.url
+  const custom = store.customSounds.find((s) => s.id === soundId)
+  if (custom) return custom.dataUrl
+  return null
+}
+
+// ── Audio playback ──
+
+const audioCache = new Map<string, HTMLAudioElement>()
+
+function getOrCreateAudio(url: string): HTMLAudioElement {
+  let audio = audioCache.get(url)
+  if (!audio) {
+    audio = new Audio(url)
+    audio.preload = 'auto'
+    audioCache.set(url, audio)
+  }
+  return audio
+}
+
+/**
+ * Pre-load built-in sounds so they're ready to play instantly.
+ * Call once on app startup.
+ */
+export function preloadBuiltInSounds(): void {
+  for (const sound of BUILT_IN_SOUNDS) {
+    getOrCreateAudio(sound.url)
+  }
+}
+
+function playSound(url: string, volume: number): void {
+  try {
+    const audio = getOrCreateAudio(url)
+    audio.volume = Math.max(0, Math.min(1, volume))
+    audio.currentTime = 0
+    audio.play().catch(() => {
+      // Swallow autoplay / user-gesture errors gracefully.
+    })
+  } catch {
+    // Non-blocking: never let audio errors disrupt app flow.
+  }
+}
+
+/**
+ * Play a sound by its id for a preview/test.
+ */
+export function previewSound(soundId: string, store: NotificationStore, volume?: number): void {
+  const url = resolveSoundUrl(soundId, store)
+  if (!url) return
+  playSound(url, volume ?? 0.7)
+}
+
+// ── Debounce tracking ──
+
+const lastPlayedAt: Record<string, number> = {}
+
+function canPlay(key: string): boolean {
+  const now = Date.now()
+  const last = lastPlayedAt[key]
+  if (last && now - last < DEBOUNCE_MS) return false
+  lastPlayedAt[key] = now
+  return true
+}
+
+// ── Multi-tab guard ──
+
+function shouldPlayInThisTab(): boolean {
+  if (typeof document === 'undefined') return false
+  // Play in focused tab. If no tab has focus, play anyway (user is away from browser).
+  // We use document.hasFocus() — returns true when the tab+window are focused.
+  // If the tab is hidden but no tab has focus, we still want sound.
+  // There's no cross-tab coordination, so we use a simple heuristic:
+  // play if tab is visible OR if the document doesn't have focus (background scenario).
+  return document.visibilityState === 'visible' || !document.hasFocus()
+}
+
+// ── Trigger checks ──
+
+function hasStreamingWorkers(managerAgentId: string, state: ManagerWsState): boolean {
+  return state.agents.some((agent) => {
+    if (agent.role !== 'worker' || agent.managerId !== managerAgentId) return false
+    const liveStatus = state.statuses[agent.agentId]?.status ?? agent.status
+    return liveStatus === 'streaming'
+  })
+}
+
+export function shouldPlayUnread(
+  agentId: string,
+  state: ManagerWsState,
+  store: NotificationStore,
+): boolean {
+  if (!store.globalEnabled) return false
+  if (agentId === state.targetAgentId) return false
+  const prefs = getAgentPrefs(store, agentId)
+  return prefs.unreadSound.enabled
+}
+
+export function shouldPlayAllDone(
+  agentId: string,
+  state: ManagerWsState,
+  store: NotificationStore,
+): boolean {
+  if (!store.globalEnabled) return false
+  if (agentId === state.targetAgentId) return false
+  const prefs = getAgentPrefs(store, agentId)
+  if (!prefs.allDoneSound.enabled) return false
+  return !hasStreamingWorkers(agentId, state)
+}
+
+// ── Public API: play notification sounds ──
+
+export function playUnread(agentId: string, store: NotificationStore): void {
+  if (!shouldPlayInThisTab()) return
+  if (!canPlay(`unread:${agentId}`)) return
+  const prefs = getAgentPrefs(store, agentId)
+  const url = resolveSoundUrl(prefs.unreadSound.soundId, store)
+  if (!url) return
+  playSound(url, prefs.volume)
+}
+
+export function playAllDone(agentId: string, store: NotificationStore): void {
+  if (!shouldPlayInThisTab()) return
+  if (!canPlay(`allDone:${agentId}`)) return
+  const prefs = getAgentPrefs(store, agentId)
+  const url = resolveSoundUrl(prefs.allDoneSound.soundId, store)
+  if (!url) return
+  playSound(url, prefs.volume)
+}
+
+/**
+ * Main entry point — called from ws-client on `unread_notification`.
+ * Decides which sound(s) to play based on agent prefs and worker status.
+ */
+export function handleUnreadNotification(
+  agentId: string,
+  state: ManagerWsState,
+): void {
+  const store = readNotificationStore()
+  if (!store.globalEnabled) return
+
+  // "All done" takes priority — it's the higher-importance sound
+  if (shouldPlayAllDone(agentId, state, store)) {
+    playAllDone(agentId, store)
+    return
+  }
+
+  // Fall back to the generic unread sound
+  if (shouldPlayUnread(agentId, state, store)) {
+    playUnread(agentId, store)
+  }
+}
+
+// ── Custom sound management ──
+
+export function addCustomSound(
+  store: NotificationStore,
+  name: string,
+  dataUrl: string,
+): NotificationStore {
+  const id = `custom-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  return {
+    ...store,
+    customSounds: [...store.customSounds, { id, name, dataUrl }],
+  }
+}
+
+export function removeCustomSound(
+  store: NotificationStore,
+  soundId: string,
+): NotificationStore {
+  return {
+    ...store,
+    customSounds: store.customSounds.filter((s) => s.id !== soundId),
+    // Also clear any agent prefs that reference this sound
+    agents: Object.fromEntries(
+      Object.entries(store.agents).map(([agentId, prefs]) => {
+        let updated = prefs
+        if (prefs.unreadSound.soundId === soundId) {
+          updated = { ...updated, unreadSound: { ...updated.unreadSound, soundId: 'notification' } }
+        }
+        if (prefs.allDoneSound.soundId === soundId) {
+          updated = { ...updated, allDoneSound: { ...updated.allDoneSound, soundId: 'complete' } }
+        }
+        return [agentId, updated]
+      }),
+    ),
+  }
+}

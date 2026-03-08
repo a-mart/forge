@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { SettingsLayout, type SettingsTab } from '@/components/settings/SettingsLayout'
 import { SettingsGeneral } from '@/components/settings/SettingsGeneral'
+import { SettingsNotifications } from '@/components/settings/SettingsNotifications'
 import { SettingsAuth } from '@/components/settings/SettingsAuth'
 import { SettingsIntegrations } from '@/components/settings/SettingsIntegrations'
 import { SettingsSkills } from '@/components/settings/SettingsSkills'
@@ -26,6 +27,7 @@ export function SettingsPanel({
   return (
     <SettingsLayout activeTab={activeTab} onTabChange={setActiveTab} onBack={onBack}>
       {activeTab === 'general' && <SettingsGeneral wsUrl={wsUrl} />}
+      {activeTab === 'notifications' && <SettingsNotifications managers={managers} />}
       {activeTab === 'auth' && <SettingsAuth wsUrl={wsUrl} />}
       {activeTab === 'integrations' && (
         <SettingsIntegrations

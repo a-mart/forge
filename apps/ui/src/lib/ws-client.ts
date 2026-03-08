@@ -1,4 +1,5 @@
 import { chooseFallbackAgentId } from './agent-hierarchy'
+import { handleUnreadNotification } from './notification-service'
 import { WsRequestTracker } from './ws-request-tracker'
 import {
   createInitialManagerWsState,
@@ -655,6 +656,8 @@ export class ManagerWsClient {
             unreadCounts: { ...this.state.unreadCounts, [event.agentId]: prev + 1 },
           })
         }
+        // Trigger notification sounds (respects per-agent prefs, debounce, tab-focus)
+        handleUnreadNotification(event.agentId, this.state)
         break
       }
 

@@ -3,6 +3,7 @@ import { HeadContent, Scripts, createRootRoute } from '@tanstack/react-router'
 import { TanStackRouterDevtoolsPanel } from '@tanstack/react-router-devtools'
 import { TanStackDevtools } from '@tanstack/react-devtools'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { preloadBuiltInSounds } from '@/lib/notification-service'
 import { THEME_INIT_SCRIPT, initializeThemePreference } from '@/lib/theme'
 import { IndexPage } from './index'
 
@@ -41,6 +42,7 @@ export const Route = createRootRoute({
 function RootDocument({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     initializeThemePreference()
+    preloadBuiltInSounds()
   }, [])
 
   return (
