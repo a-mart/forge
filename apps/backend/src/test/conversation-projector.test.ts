@@ -65,7 +65,7 @@ function makeRuntimeForSession(descriptor: AgentDescriptor): SwarmAgentRuntime {
       acceptedMode: 'prompt',
     }),
     compact: async () => ({ status: 'ok' }),
-    smartCompact: async () => {},
+    smartCompact: async () => ({ compactionSucceeded: true }),
     stopInFlight: async () => {},
     terminate: async () => {},
     getCustomEntries: (customType: string) => {

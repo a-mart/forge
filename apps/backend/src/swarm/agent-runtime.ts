@@ -22,6 +22,7 @@ import type {
   RuntimeSessionEvent,
   RuntimeUserMessage,
   RuntimeUserMessageInput,
+  SmartCompactResult,
   SwarmAgentRuntime,
   SwarmRuntimeCallbacks
 } from "./runtime-types.js";
@@ -48,7 +49,7 @@ const ESTIMATION_ERROR_MARGIN_MIN_TOKENS = 4_096;
 const COMPACTION_RESERVE_TOKENS = 16_384;
 const CONTEXT_BUDGET_CHECK_THROTTLE_MS = 3_000;
 const CONTEXT_GUARD_ABORT_TIMEOUT_MS = 15_000;
-const CONTEXT_GUARD_COMPACT_TIMEOUT_MS = 60_000;
+const CONTEXT_GUARD_COMPACT_TIMEOUT_MS = 180_000;
 const CONTEXT_RECOVERY_GRACE_MS = 2_000;
 const HANDOFF_TURN_TIMEOUT_MS = 45_000;
 const MAX_HANDOFF_CONTENT_CHARS = 3_000;
@@ -221,7 +222,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
     await this.updateStatus("idle");
   }
 
-  async smartCompact(): Promise<void> {
+  async smartCompact(): Promise<SmartCompactResult> {
     this.ensureNotTerminated();
 
     if (this.isContextRecoveryActive()) {
@@ -241,6 +242,8 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
     let handoffContent: string | undefined;
     let completed = false;
+    let compactionSucceeded = false;
+    let compactionFailureReason: string | undefined;
 
     try {
       // If streaming, abort current turn first
@@ -249,25 +252,29 @@ export class AgentRuntime implements SwarmAgentRuntime {
           await withTimeout(this.session.abort(), CONTEXT_GUARD_ABORT_TIMEOUT_MS, "smart_compact_abort");
         } catch (error) {
           await this.reportContextGuardError(error, { stage: "smart_compact_abort_failed" });
-          return;
+          return { compactionSucceeded: false, compactionFailureReason: "Failed to abort current turn" };
         }
       }
 
-      if (signal.aborted) return;
+      if (signal.aborted) return { compactionSucceeded: false, compactionFailureReason: "Aborted" };
 
       // Run handoff turn
       handoffContent = await this.runHandoffTurn(handoffFilePath, signal);
 
-      if (signal.aborted) return;
+      if (signal.aborted) return { compactionSucceeded: false, compactionFailureReason: "Aborted" };
 
       // Compact
       try {
         await withTimeout(this.compact(), CONTEXT_GUARD_COMPACT_TIMEOUT_MS, "smart_compact_compact", {
           onTimeout: () => this.abortCompactionSafely("smart_compact_compact_timeout_abort")
         });
+        compactionSucceeded = true;
       } catch (error) {
         const normalized = normalizeRuntimeError(error);
-        if (!isAlreadyCompactedError(normalized.message)) {
+        if (isAlreadyCompactedError(normalized.message)) {
+          compactionSucceeded = true;
+        } else {
+          compactionFailureReason = normalized.message;
           await this.reportContextGuardError(error, {
             stage: "smart_compact_compaction_failed",
             handoffWritten: handoffContent !== undefined
@@ -276,7 +283,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
         // Continue to resume prompt even if compaction failed/skipped
       }
 
-      if (signal.aborted) return;
+      if (signal.aborted) return { compactionSucceeded: false, compactionFailureReason: "Aborted" };
 
       // Resume prompt
       try {
@@ -291,11 +298,14 @@ export class AgentRuntime implements SwarmAgentRuntime {
       await this.cleanupGuard(handoffFilePath);
       if (completed) {
         this.logContextGuard("smart_compact_completed", {
+          compactionSucceeded,
           handoffWritten: handoffContent !== undefined,
           handoffContentLength: handoffContent?.length ?? 0
         });
       }
     }
+
+    return { compactionSucceeded, compactionFailureReason };
   }
 
   async compact(customInstructions?: string): Promise<unknown> {

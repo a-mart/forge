@@ -495,7 +495,7 @@ describe("mid-turn context guard", () => {
       percent: 86
     });
 
-    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.advanceTimersByTimeAsync(180_000);
     await guardPromise;
 
     expect(session.compactCalls).toBe(1);
@@ -515,7 +515,7 @@ describe("mid-turn context guard", () => {
     };
     session.compactImpl = async () => {
       await new Promise<void>((resolve) => {
-        setTimeout(resolve, 59_999);
+        setTimeout(resolve, 179_999);
       });
       return { ok: true };
     };
@@ -526,7 +526,7 @@ describe("mid-turn context guard", () => {
       percent: 86
     });
 
-    await vi.advanceTimersByTimeAsync(59_999);
+    await vi.advanceTimersByTimeAsync(179_999);
     await guardPromise;
 
     // Ensure the timeout callback never fires after compaction has already completed.
@@ -679,7 +679,7 @@ describe("mid-turn context guard", () => {
       source: "test"
     });
 
-    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.advanceTimersByTimeAsync(180_000);
     const result = await retryPromise;
 
     expect(result.recovered).toBe(false);

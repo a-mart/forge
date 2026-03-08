@@ -23,6 +23,7 @@ import type {
   RuntimeSessionEvent,
   RuntimeUserMessage,
   RuntimeUserMessageInput,
+  SmartCompactResult,
   SwarmAgentRuntime,
   SwarmRuntimeCallbacks
 } from "./runtime-types.js";
@@ -301,7 +302,7 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
     throw new Error(`Agent ${this.descriptor.agentId} does not support manual compaction`);
   }
 
-  async smartCompact(): Promise<void> {
+  async smartCompact(): Promise<SmartCompactResult> {
     this.ensureNotTerminated();
     throw new Error(`Agent ${this.descriptor.agentId} does not support smart compaction`);
   }

@@ -103,6 +103,13 @@ export interface SwarmRuntimeCallbacks {
   onRuntimeError?: (agentId: string, error: RuntimeErrorEvent) => void | Promise<void>;
 }
 
+export interface SmartCompactResult {
+  /** Whether the compaction step itself succeeded (context was actually reduced). */
+  compactionSucceeded: boolean;
+  /** If compaction failed, a human-readable reason. */
+  compactionFailureReason?: string;
+}
+
 export interface SwarmAgentRuntime {
   readonly descriptor: AgentDescriptor;
 
@@ -118,7 +125,7 @@ export interface SwarmAgentRuntime {
 
   compact(customInstructions?: string): Promise<unknown>;
 
-  smartCompact(): Promise<void>;
+  smartCompact(): Promise<SmartCompactResult>;
 
   stopInFlight(options?: { abort?: boolean }): Promise<void>;
 

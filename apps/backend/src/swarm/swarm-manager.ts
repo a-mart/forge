@@ -2181,21 +2181,38 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     });
 
     try {
-      await runtime.smartCompact();
+      const result = await runtime.smartCompact();
 
-      this.emitConversationMessage({
-        type: "conversation_message",
-        agentId,
-        role: "system",
-        text: "Smart compaction complete.",
-        timestamp: this.now(),
-        source: "system",
-        sourceContext
-      });
+      if (result.compactionSucceeded) {
+        const usage = runtime.getContextUsage();
+        const usageSuffix = usage ? ` Context now at ${Math.round(usage.percent)}%.` : "";
+        this.emitConversationMessage({
+          type: "conversation_message",
+          agentId,
+          role: "system",
+          text: `Smart compaction complete.${usageSuffix}`,
+          timestamp: this.now(),
+          source: "system",
+          sourceContext
+        });
+      } else {
+        const reason = result.compactionFailureReason ?? "unknown error";
+        this.emitConversationMessage({
+          type: "conversation_message",
+          agentId,
+          role: "system",
+          text: `Smart compaction finished but context was not reduced (${reason}). The handoff note was written and a resume prompt was sent, but compaction did not succeed.`,
+          timestamp: this.now(),
+          source: "system",
+          sourceContext
+        });
+      }
 
       this.logDebug("manager:smart_compact:complete", {
         agentId,
-        trigger: options?.trigger ?? "api"
+        trigger: options?.trigger ?? "api",
+        compactionSucceeded: result.compactionSucceeded,
+        compactionFailureReason: result.compactionFailureReason
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
