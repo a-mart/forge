@@ -492,6 +492,13 @@ export class PlaywrightDiscoveryService extends EventEmitter {
       const liveness = determineLiveness(candidate, probe, this.currentSettings.staleSessionThresholdMs, this.now())
       const correlation = correlateSession(candidate, liveness.liveness, agents, this.swarmManager)
 
+      const previewability = determineSessionPreviewability({
+        liveness: liveness.liveness,
+        socketPath: candidate.socketPath,
+        socketExists: probe.socketExists,
+        socketResponsive: probe.socketResponsive,
+      }, candidate.sessionName)
+
       sessions.push({
         id: createHash('sha1').update(candidate.sessionFileRealPath).digest('hex'),
         sessionName: candidate.sessionName,
@@ -529,6 +536,7 @@ export class PlaywrightDiscoveryService extends EventEmitter {
         preferredInDuplicateGroup: candidate.preferredInDuplicateGroup,
         correlation,
         warnings: dedupeStrings(candidate.warnings),
+        previewability,
       })
     }
 
@@ -610,6 +618,35 @@ function createEmptySnapshot(
 
 function cloneSnapshot(snapshot: PlaywrightDiscoverySnapshot): PlaywrightDiscoverySnapshot {
   return JSON.parse(JSON.stringify(snapshot)) as PlaywrightDiscoverySnapshot
+}
+
+function determineSessionPreviewability(
+  session: {
+    liveness: PlaywrightDiscoveredSession['liveness']
+    socketPath: string | null
+    socketExists: boolean
+    socketResponsive: boolean | null
+  },
+  sessionName: string,
+): { previewable: boolean; unavailableReason: string | null } {
+  if (session.liveness !== 'active') {
+    return {
+      previewable: false,
+      unavailableReason: `Session ${sessionName} is ${session.liveness}`,
+    }
+  }
+
+  if (!session.socketPath || !session.socketExists || session.socketResponsive !== true) {
+    return {
+      previewable: false,
+      unavailableReason: `Session ${sessionName} does not have a responsive Playwright socket`,
+    }
+  }
+
+  return {
+    previewable: true,
+    unavailableReason: null,
+  }
 }
 
 function snapshotsEqual(left: PlaywrightDiscoverySnapshot, right: PlaywrightDiscoverySnapshot): boolean {

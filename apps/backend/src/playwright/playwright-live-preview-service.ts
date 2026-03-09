@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { EventEmitter } from 'node:events'
 import type {
   GetPlaywrightLivePreviewSessionsResponse,
   PlaywrightControllerBootstrap,
@@ -51,7 +52,7 @@ export class PlaywrightLivePreviewError extends Error {
   }
 }
 
-export class PlaywrightLivePreviewService {
+export class PlaywrightLivePreviewService extends EventEmitter {
   private readonly discoveryService: PlaywrightDiscoveryService | null
   private readonly devtoolsBridge: PlaywrightDevtoolsBridgeLike
   private readonly now: () => Date
@@ -61,6 +62,7 @@ export class PlaywrightLivePreviewService {
 
   private readonly previews = new Map<string, PlaywrightPreviewLeaseRecord>()
   private readonly previewIdBySessionId = new Map<string, string>()
+  private readonly previewCleanupHandlers = new Map<string, Set<() => void>>()
   private cleanupTimer: NodeJS.Timeout | null = null
 
   constructor(options: {
@@ -71,6 +73,7 @@ export class PlaywrightLivePreviewService {
     cleanupIntervalMs?: number
     generatePreviewId?: () => string
   }) {
+    super()
     this.discoveryService = options.discoveryService
     this.devtoolsBridge = options.devtoolsBridge ?? new PlaywrightDevtoolsBridge()
     this.now = options.now ?? (() => new Date())
@@ -96,8 +99,12 @@ export class PlaywrightLivePreviewService {
       this.cleanupTimer = null
     }
 
+    for (const previewId of Array.from(this.previews.keys())) {
+      this.deletePreview(previewId, 'shutdown')
+    }
     this.previews.clear()
     this.previewIdBySessionId.clear()
+    this.previewCleanupHandlers.clear()
   }
 
   isAvailable(): boolean {
@@ -110,6 +117,11 @@ export class PlaywrightLivePreviewService {
       sessions: snapshot.sessions.map((session) => this.buildPreviewCandidate(session)),
       updatedAt: snapshot.updatedAt,
     }
+  }
+
+  getPreviewCandidate(sessionId: string): PlaywrightLivePreviewCandidate {
+    const session = this.getDiscoveredSession(sessionId)
+    return this.buildPreviewCandidate(session)
   }
 
   async startPreview(
@@ -194,6 +206,27 @@ export class PlaywrightLivePreviewService {
     return preview?.upstreamControllerUrl ?? null
   }
 
+  registerPreviewCleanup(previewId: string, cleanup: () => void): () => void {
+    const normalizedPreviewId = previewId.trim()
+    const existing = this.previewCleanupHandlers.get(normalizedPreviewId)
+    if (existing) {
+      existing.add(cleanup)
+    } else {
+      this.previewCleanupHandlers.set(normalizedPreviewId, new Set([cleanup]))
+    }
+
+    return () => {
+      const handlers = this.previewCleanupHandlers.get(normalizedPreviewId)
+      if (!handlers) {
+        return
+      }
+      handlers.delete(cleanup)
+      if (handlers.size === 0) {
+        this.previewCleanupHandlers.delete(normalizedPreviewId)
+      }
+    }
+  }
+
   touchPreview(previewId: string, nextMode?: PlaywrightLivePreviewMode): PlaywrightPreviewLeaseRecord | null {
     const preview = this.requireActivePreview(previewId, { suppressThrow: true })
     if (!preview) {
@@ -223,7 +256,7 @@ export class PlaywrightLivePreviewService {
     const nowMs = this.now().getTime()
     for (const preview of this.previews.values()) {
       if (preview.expiresAtMs <= nowMs) {
-        this.deletePreview(preview.previewId)
+        this.deletePreview(preview.previewId, 'expired')
       }
     }
   }
@@ -279,7 +312,7 @@ export class PlaywrightLivePreviewService {
     throw new PlaywrightLivePreviewError(`Unknown or expired preview ${normalizedPreviewId}`, 410)
   }
 
-  private deletePreview(previewId: string): boolean {
+  private deletePreview(previewId: string, reason: 'released' | 'expired' | 'shutdown' = 'released'): boolean {
     const preview = this.previews.get(previewId)
     if (!preview) {
       return false
@@ -290,26 +323,36 @@ export class PlaywrightLivePreviewService {
       this.previewIdBySessionId.delete(preview.sessionId)
     }
 
+    const cleanupHandlers = this.previewCleanupHandlers.get(previewId)
+    this.previewCleanupHandlers.delete(previewId)
+    if (cleanupHandlers) {
+      for (const cleanup of cleanupHandlers) {
+        try {
+          cleanup()
+        } catch {
+          // ignore cleanup handler failures while tearing down preview leases
+        }
+      }
+    }
+
+    this.emit('preview_closed', {
+      previewId,
+      sessionId: preview.sessionId,
+      reason,
+    })
     return true
   }
 
   private buildPreviewCandidate(session: PlaywrightDiscoveredSession): PlaywrightLivePreviewCandidate {
-    let previewable = true
-    let unavailableReason: string | null = null
-
-    if (session.liveness !== 'active') {
-      previewable = false
-      unavailableReason = `Session ${session.sessionName} is ${session.liveness}`
-    } else if (!session.socketPath || !session.socketExists || session.socketResponsive === false) {
-      previewable = false
-      unavailableReason = `Session ${session.sessionName} does not have a responsive Playwright socket`
-    }
+    const previewability =
+      session.previewability ??
+      inferPreviewabilityFromSession(session)
 
     const activePreviewId = this.previewIdBySessionId.get(session.id) ?? null
     return {
       session,
-      previewable,
-      unavailableReason,
+      previewable: previewability.previewable,
+      unavailableReason: previewability.unavailableReason,
       activePreviewId,
     }
   }
@@ -334,6 +377,30 @@ export class PlaywrightLivePreviewService {
       bootstrapUrl: `${backendOrigin}/playwright-live/api/previews/${encodeURIComponent(preview.previewId)}/bootstrap`,
       controllerWsUrl: controllerProxyUrl,
     }
+  }
+}
+
+function inferPreviewabilityFromSession(session: PlaywrightDiscoveredSession): {
+  previewable: boolean
+  unavailableReason: string | null
+} {
+  if (session.liveness !== 'active') {
+    return {
+      previewable: false,
+      unavailableReason: `Session ${session.sessionName} is ${session.liveness}`,
+    }
+  }
+
+  if (!session.socketPath || !session.socketExists || session.socketResponsive !== true) {
+    return {
+      previewable: false,
+      unavailableReason: `Session ${session.sessionName} does not have a responsive Playwright socket`,
+    }
+  }
+
+  return {
+    previewable: true,
+    unavailableReason: null,
   }
 }
 

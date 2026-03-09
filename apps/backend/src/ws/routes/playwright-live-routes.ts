@@ -1,20 +1,27 @@
 import type {
   GetPlaywrightLivePreviewBootstrapResponse,
-  GetPlaywrightLivePreviewSessionsResponse,
   ReleasePlaywrightLivePreviewResponse,
   StartPlaywrightLivePreviewRequest,
   StartPlaywrightLivePreviewResponse,
+  PlaywrightControllerBootstrap,
+  PlaywrightDiscoveredSession,
+  PlaywrightLivePreviewCandidate,
 } from '@middleman/protocol'
-import { readFile, rm } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { dirname, extname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import {
+  applyLivePreviewCorsHeaders,
+  validateLivePreviewHttpOrigin,
+  type PlaywrightLivePreviewHttpAccessPolicy,
+} from '../../playwright/playwright-live-preview-access.js'
 import {
   PlaywrightLivePreviewError,
   PlaywrightLivePreviewService,
   asPlaywrightLivePreviewError,
 } from '../../playwright/playwright-live-preview-service.js'
-import { applyCorsHeaders, matchPathPattern, readJsonBody, sendJson } from '../http-utils.js'
+import { matchPathPattern, readJsonBody, sendJson } from '../http-utils.js'
 import type { HttpRoute } from './http-route.js'
 
 const PLAYWRIGHT_LIVE_PREFIX = '/playwright-live'
@@ -52,7 +59,7 @@ interface CliLikeSessionConfig {
   name: string
   version: string
   timestamp: number
-  socketPath: string | null
+  socketPath: string
   workspaceDir: string
   cli: {
     persistent: boolean
@@ -67,15 +74,10 @@ interface CliLikeSessionConfig {
         headless?: boolean
       }
       isolated?: boolean
-      userDataDir?: string
     }
   }
   __middleman: {
     sessionId: string
-    sessionFilePath: string
-    sessionFileRealPath: string
-    worktreePath: string | null
-    rootPath: string
   }
 }
 
@@ -105,24 +107,16 @@ export function createPlaywrightLiveRoutes(options: {
     {
       methods: 'POST, OPTIONS',
       matches: (pathname) =>
-        PLAYWRIGHT_LIVE_DEVTOOLS_START_PATHS.has(pathname) ||
-        pathname === PLAYWRIGHT_LIVE_PARENT_START_ENDPOINT,
+        PLAYWRIGHT_LIVE_DEVTOOLS_START_PATHS.has(pathname) || pathname === PLAYWRIGHT_LIVE_PARENT_START_ENDPOINT,
       handle: async (request, response, requestUrl) => {
         await handleStartPreviewRequest(request, response, requestUrl, livePreviewService)
       },
     },
     {
       methods: 'POST, OPTIONS',
-      matches: (pathname) => PLAYWRIGHT_LIVE_CLOSE_PATHS.has(pathname),
+      matches: (pathname) => PLAYWRIGHT_LIVE_CLOSE_PATHS.has(pathname) || PLAYWRIGHT_LIVE_DELETE_DATA_PATHS.has(pathname),
       handle: async (request, response, requestUrl) => {
-        await handleCloseSessionRequest(request, response, requestUrl, livePreviewService)
-      },
-    },
-    {
-      methods: 'POST, OPTIONS',
-      matches: (pathname) => PLAYWRIGHT_LIVE_DELETE_DATA_PATHS.has(pathname),
-      handle: async (request, response, requestUrl) => {
-        await handleDeleteDataRequest(request, response, requestUrl, livePreviewService)
+        await handleDisabledDestructiveRequest(request, response, requestUrl)
       },
     },
     {
@@ -156,19 +150,12 @@ async function handleAppHtmlRequest(
   requestUrl: URL,
   livePreviewService: PlaywrightLivePreviewService,
 ): Promise<void> {
-  const methods = 'GET, OPTIONS'
-
-  if (request.method === 'OPTIONS') {
-    applyCorsHeaders(request, response, methods)
-    response.statusCode = 204
-    response.end()
+  if (!beginLivePreviewRequest(request, response, requestUrl, 'GET, OPTIONS', 'embedded-only')) {
     return
   }
 
-  applyCorsHeaders(request, response, methods)
-
   if (request.method !== 'GET') {
-    response.setHeader('Allow', methods)
+    response.setHeader('Allow', 'GET, OPTIONS')
     sendJson(response, 405, { error: 'Method Not Allowed' })
     return
   }
@@ -176,14 +163,15 @@ async function handleAppHtmlRequest(
   try {
     const previewId = normalizePreviewId(requestUrl.searchParams.get('previewId'))
     const bootstrap = previewId ? livePreviewService.getBootstrap(previewId, requestUrl.origin) : null
+    const publicSessionKey = bootstrap ? createPublicSessionKey(bootstrap.sessionId) : null
 
     response.statusCode = 200
     response.setHeader('Cache-Control', 'no-store')
     response.setHeader('Content-Type', 'text/html; charset=utf-8')
     response.end(buildAppHtml({
       previewId,
-      sessionSocketPath: bootstrap?.session.socketPath ?? null,
-      sessionName: bootstrap?.session.sessionName ?? null,
+      publicSessionKey,
+      sessionName: bootstrap?.sessionName ?? null,
     }))
   } catch (error) {
     const normalized = asPlaywrightLivePreviewError(error)
@@ -197,19 +185,12 @@ async function handleSessionsListRequest(
   requestUrl: URL,
   livePreviewService: PlaywrightLivePreviewService,
 ): Promise<void> {
-  const methods = 'GET, OPTIONS'
-
-  if (request.method === 'OPTIONS') {
-    applyCorsHeaders(request, response, methods)
-    response.statusCode = 204
-    response.end()
+  if (!beginLivePreviewRequest(request, response, requestUrl, 'GET, OPTIONS', 'embedded-only')) {
     return
   }
 
-  applyCorsHeaders(request, response, methods)
-
   if (request.method !== 'GET') {
-    response.setHeader('Allow', methods)
+    response.setHeader('Allow', 'GET, OPTIONS')
     sendJson(response, 405, { error: 'Method Not Allowed' })
     return
   }
@@ -223,27 +204,18 @@ async function handleSessionsListRequest(
 
     const sessions = filteredCandidates.map((candidate) => ({
       config: toCliLikeSessionConfig(candidate.session),
-      canConnect: candidate.session.liveness === 'active',
+      canConnect: candidate.previewable,
+      previewable: candidate.previewable,
+      unavailableReason: candidate.unavailableReason,
     }))
-
-    const payload: GetPlaywrightLivePreviewSessionsResponse & {
-      clientInfo: { workspaceDir: string; version: string | null }
-    } = {
-      sessions: filteredCandidates,
-      updatedAt: livePreviewService.getPreviewableSessions().updatedAt,
-      clientInfo: {
-        workspaceDir:
-          filteredCandidates[0]?.session.worktreePath ??
-          filteredCandidates[0]?.session.rootPath ??
-          process.cwd(),
-        version: filteredCandidates[0]?.session.sessionVersion ?? null,
-      },
-    }
 
     sendJson(response, 200, {
       sessions,
-      clientInfo: payload.clientInfo,
-      updatedAt: payload.updatedAt,
+      clientInfo: {
+        workspaceDir: filteredCandidates[0] ? getWorkspaceLabel(filteredCandidates[0].session) : 'Playwright preview',
+        version: filteredCandidates[0]?.session.sessionVersion ?? null,
+      },
+      updatedAt: livePreviewService.getPreviewableSessions().updatedAt,
     })
   } catch (error) {
     const normalized = asPlaywrightLivePreviewError(error)
@@ -257,19 +229,15 @@ async function handleStartPreviewRequest(
   requestUrl: URL,
   livePreviewService: PlaywrightLivePreviewService,
 ): Promise<void> {
-  const methods = 'POST, OPTIONS'
+  const policy: PlaywrightLivePreviewHttpAccessPolicy =
+    requestUrl.pathname === PLAYWRIGHT_LIVE_PARENT_START_ENDPOINT ? 'parent-shell' : 'embedded-only'
 
-  if (request.method === 'OPTIONS') {
-    applyCorsHeaders(request, response, methods)
-    response.statusCode = 204
-    response.end()
+  if (!beginLivePreviewRequest(request, response, requestUrl, 'POST, OPTIONS', policy)) {
     return
   }
 
-  applyCorsHeaders(request, response, methods)
-
   if (request.method !== 'POST') {
-    response.setHeader('Allow', methods)
+    response.setHeader('Allow', 'POST, OPTIONS')
     sendJson(response, 405, { error: 'Method Not Allowed' })
     return
   }
@@ -293,102 +261,34 @@ async function handleStartPreviewRequest(
       requestUrl.origin,
     )
 
-    sendJson(response, 200, { url: preview.controllerWsUrl })
+    sendJson(response, 200, {
+      url: preview.controllerWsUrl,
+      inspectorUrl: null,
+    })
   } catch (error) {
     const normalized = asPlaywrightLivePreviewError(error)
     sendJson(response, normalized.statusCode, { error: normalized.message })
   }
 }
 
-async function handleCloseSessionRequest(
+async function handleDisabledDestructiveRequest(
   request: IncomingMessage,
   response: ServerResponse,
   requestUrl: URL,
-  livePreviewService: PlaywrightLivePreviewService,
 ): Promise<void> {
-  const methods = 'POST, OPTIONS'
-
-  if (request.method === 'OPTIONS') {
-    applyCorsHeaders(request, response, methods)
-    response.statusCode = 204
-    response.end()
+  if (!beginLivePreviewRequest(request, response, requestUrl, 'POST, OPTIONS', 'embedded-only')) {
     return
   }
 
-  applyCorsHeaders(request, response, methods)
-
   if (request.method !== 'POST') {
-    response.setHeader('Allow', methods)
+    response.setHeader('Allow', 'POST, OPTIONS')
     sendJson(response, 405, { error: 'Method Not Allowed' })
     return
   }
 
-  try {
-    const body = await readJsonBody(request)
-    const previewId = normalizePreviewId(requestUrl.searchParams.get('previewId'))
-    const sessionId = resolveSessionIdFromCliPayload(body, livePreviewService, previewId, requestUrl.origin)
-    const session = findSessionCandidate(livePreviewService, sessionId).session
-
-    await sendStopRpc(session)
-
-    const activePreviewId = findSessionCandidate(livePreviewService, sessionId).activePreviewId
-    if (activePreviewId) {
-      livePreviewService.releasePreview(activePreviewId)
-    }
-
-    sendJson(response, 200, { success: true })
-  } catch (error) {
-    const normalized = asPlaywrightLivePreviewError(error)
-    sendJson(response, normalized.statusCode, { error: normalized.message })
-  }
-}
-
-async function handleDeleteDataRequest(
-  request: IncomingMessage,
-  response: ServerResponse,
-  requestUrl: URL,
-  livePreviewService: PlaywrightLivePreviewService,
-): Promise<void> {
-  const methods = 'POST, OPTIONS'
-
-  if (request.method === 'OPTIONS') {
-    applyCorsHeaders(request, response, methods)
-    response.statusCode = 204
-    response.end()
-    return
-  }
-
-  applyCorsHeaders(request, response, methods)
-
-  if (request.method !== 'POST') {
-    response.setHeader('Allow', methods)
-    sendJson(response, 405, { error: 'Method Not Allowed' })
-    return
-  }
-
-  try {
-    const body = await readJsonBody(request)
-    const previewId = normalizePreviewId(requestUrl.searchParams.get('previewId'))
-    const sessionId = resolveSessionIdFromCliPayload(body, livePreviewService, previewId, requestUrl.origin)
-    const candidate = findSessionCandidate(livePreviewService, sessionId)
-    const session = candidate.session
-
-    await sendStopRpc(session).catch(() => {})
-    if (candidate.activePreviewId) {
-      livePreviewService.releasePreview(candidate.activePreviewId)
-    }
-
-    await Promise.allSettled([
-      session.userDataDirPath ? rm(session.userDataDirPath, { recursive: true, force: true }) : Promise.resolve(),
-      rm(session.sessionFilePath, { force: true }),
-      rm(session.sessionFileRealPath, { force: true }),
-    ])
-
-    sendJson(response, 200, { success: true })
-  } catch (error) {
-    const normalized = asPlaywrightLivePreviewError(error)
-    sendJson(response, normalized.statusCode, { error: normalized.message })
-  }
+  sendJson(response, 403, {
+    error: 'Destructive Playwright session actions are disabled in embedded live preview mode',
+  })
 }
 
 async function handleBootstrapRequest(
@@ -397,19 +297,12 @@ async function handleBootstrapRequest(
   requestUrl: URL,
   livePreviewService: PlaywrightLivePreviewService,
 ): Promise<void> {
-  const methods = 'GET, OPTIONS'
-
-  if (request.method === 'OPTIONS') {
-    applyCorsHeaders(request, response, methods)
-    response.statusCode = 204
-    response.end()
+  if (!beginLivePreviewRequest(request, response, requestUrl, 'GET, OPTIONS', 'embedded-only')) {
     return
   }
 
-  applyCorsHeaders(request, response, methods)
-
   if (request.method !== 'GET') {
-    response.setHeader('Allow', methods)
+    response.setHeader('Allow', 'GET, OPTIONS')
     sendJson(response, 405, { error: 'Method Not Allowed' })
     return
   }
@@ -422,8 +315,9 @@ async function handleBootstrapRequest(
 
   try {
     const previewId = decodeURIComponent(match[1] ?? '')
+    const bootstrap = livePreviewService.getBootstrap(previewId, requestUrl.origin)
     const payload: GetPlaywrightLivePreviewBootstrapResponse = {
-      bootstrap: livePreviewService.getBootstrap(previewId, requestUrl.origin),
+      bootstrap: sanitizeBootstrapForBrowser(bootstrap),
     }
     sendJson(response, 200, payload as unknown as Record<string, unknown>)
   } catch (error) {
@@ -438,19 +332,12 @@ async function handleReleasePreviewRequest(
   requestUrl: URL,
   livePreviewService: PlaywrightLivePreviewService,
 ): Promise<void> {
-  const methods = 'DELETE, OPTIONS'
-
-  if (request.method === 'OPTIONS') {
-    applyCorsHeaders(request, response, methods)
-    response.statusCode = 204
-    response.end()
+  if (!beginLivePreviewRequest(request, response, requestUrl, 'DELETE, OPTIONS', 'parent-shell')) {
     return
   }
 
-  applyCorsHeaders(request, response, methods)
-
   if (request.method !== 'DELETE') {
-    response.setHeader('Allow', methods)
+    response.setHeader('Allow', 'DELETE, OPTIONS')
     sendJson(response, 405, { error: 'Method Not Allowed' })
     return
   }
@@ -473,19 +360,12 @@ async function handleAssetRequest(
   response: ServerResponse,
   requestUrl: URL,
 ): Promise<void> {
-  const methods = 'GET, OPTIONS'
-
-  if (request.method === 'OPTIONS') {
-    applyCorsHeaders(request, response, methods)
-    response.statusCode = 204
-    response.end()
+  if (!beginLivePreviewRequest(request, response, requestUrl, 'GET, OPTIONS', 'embedded-only')) {
     return
   }
 
-  applyCorsHeaders(request, response, methods)
-
   if (request.method !== 'GET') {
-    response.setHeader('Allow', methods)
+    response.setHeader('Allow', 'GET, OPTIONS')
     sendJson(response, 405, { error: 'Method Not Allowed' })
     return
   }
@@ -514,6 +394,31 @@ async function handleAssetRequest(
   }
 }
 
+function beginLivePreviewRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  requestUrl: URL,
+  methods: string,
+  policy: PlaywrightLivePreviewHttpAccessPolicy,
+): boolean {
+  const validation = validateLivePreviewHttpOrigin(request, requestUrl, policy)
+  if (!validation.ok) {
+    response.statusCode = 403
+    sendJson(response, 403, { error: validation.errorMessage ?? 'Forbidden' })
+    return false
+  }
+
+  applyLivePreviewCorsHeaders(request, response, methods, validation.allowedOrigin)
+
+  if (request.method === 'OPTIONS') {
+    response.statusCode = 204
+    response.end()
+    return false
+  }
+
+  return true
+}
+
 function parseStartPreviewRequest(value: unknown): StartPlaywrightLivePreviewRequest {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new PlaywrightLivePreviewError('Request body must be a JSON object', 400)
@@ -525,13 +430,10 @@ function parseStartPreviewRequest(value: unknown): StartPlaywrightLivePreviewReq
     throw new PlaywrightLivePreviewError('sessionId is required', 400)
   }
 
-  const mode = maybe.mode === 'focus' ? 'focus' : 'embedded'
-  const reuseIfActive = typeof maybe.reuseIfActive === 'boolean' ? maybe.reuseIfActive : true
-
   return {
     sessionId,
-    mode,
-    reuseIfActive,
+    mode: maybe.mode === 'focus' ? 'focus' : 'embedded',
+    reuseIfActive: typeof maybe.reuseIfActive === 'boolean' ? maybe.reuseIfActive : true,
   }
 }
 
@@ -541,11 +443,11 @@ function normalizePreviewId(value: string | null): string | null {
 }
 
 function filterCandidatesForPreview(
-  candidates: ReturnType<PlaywrightLivePreviewService['getPreviewableSessions']>['sessions'],
+  candidates: PlaywrightLivePreviewCandidate[],
   livePreviewService: PlaywrightLivePreviewService,
   previewId: string,
   backendOrigin: string,
-) {
+): PlaywrightLivePreviewCandidate[] {
   const bootstrap = livePreviewService.getBootstrap(previewId, backendOrigin)
   return candidates.filter((candidate) => candidate.session.id === bootstrap.session.id)
 }
@@ -569,65 +471,50 @@ function resolveSessionIdFromCliPayload(
     throw new PlaywrightLivePreviewError('config is required', 400)
   }
 
-  const maybeConfig = config as Partial<CliLikeSessionConfig> & {
-    __middleman?: { sessionId?: unknown; sessionFileRealPath?: unknown }
-  }
-
-  const sessionId =
-    typeof maybeConfig.__middleman?.sessionId === 'string'
-      ? maybeConfig.__middleman.sessionId.trim()
-      : ''
+  const maybeConfig = config as Partial<CliLikeSessionConfig>
+  const sessionId = typeof maybeConfig.__middleman?.sessionId === 'string' ? maybeConfig.__middleman.sessionId.trim() : ''
   if (sessionId) {
     return sessionId
   }
 
-  const candidates = livePreviewService.getPreviewableSessions().sessions
-  const matched = candidates.find((candidate) => {
-    if (maybeConfig.socketPath && candidate.session.socketPath !== maybeConfig.socketPath) {
-      return false
-    }
-
-    if (maybeConfig.__middleman?.sessionFileRealPath && candidate.session.sessionFileRealPath !== maybeConfig.__middleman.sessionFileRealPath) {
-      return false
-    }
-
-    if (maybeConfig.workspaceDir) {
-      const workspaceDir = candidate.session.worktreePath ?? candidate.session.rootPath
-      return workspaceDir === maybeConfig.workspaceDir
-    }
-
-    return Boolean(maybeConfig.socketPath)
-  })
-
-  if (!matched) {
-    throw new PlaywrightLivePreviewError('Unknown Playwright session config', 404)
+  const publicSessionKey = typeof maybeConfig.socketPath === 'string' ? maybeConfig.socketPath.trim() : ''
+  if (publicSessionKey.startsWith('mm-session:')) {
+    return publicSessionKey.slice('mm-session:'.length)
   }
 
-  return matched.session.id
+  throw new PlaywrightLivePreviewError('Unknown Playwright session config', 404)
 }
 
-function findSessionCandidate(
-  livePreviewService: PlaywrightLivePreviewService,
-  sessionId: string,
-) {
-  const candidate = livePreviewService
-    .getPreviewableSessions()
-    .sessions.find((entry) => entry.session.id === sessionId)
-
-  if (!candidate) {
-    throw new PlaywrightLivePreviewError(`Unknown Playwright session ${sessionId}`, 404)
+function sanitizeBootstrapForBrowser(bootstrap: PlaywrightControllerBootstrap): PlaywrightControllerBootstrap {
+  return {
+    ...bootstrap,
+    inspectorWsUrl: null,
+    inspectorProxyUrl: null,
+    session: toBrowserSafeSession(bootstrap.session),
   }
-
-  return candidate
 }
 
-function toCliLikeSessionConfig(session: ReturnType<typeof findSessionCandidate>['session']): CliLikeSessionConfig {
+function toBrowserSafeSession(session: PlaywrightDiscoveredSession): PlaywrightDiscoveredSession {
+  return {
+    ...session,
+    sessionFilePath: '',
+    sessionFileRealPath: '',
+    rootPath: getWorkspaceLabel(session),
+    repoRootPath: null,
+    backendRootPath: null,
+    worktreePath: null,
+    socketPath: createPublicSessionKey(session.id),
+    userDataDirPath: null,
+  }
+}
+
+function toCliLikeSessionConfig(session: PlaywrightDiscoveredSession): CliLikeSessionConfig {
   return {
     name: session.sessionName,
     version: session.sessionVersion ?? '0.0.0',
     timestamp: Date.parse(session.sessionTimestamp ?? session.sessionFileUpdatedAt) || Date.now(),
-    socketPath: session.socketPath,
-    workspaceDir: session.worktreePath ?? session.rootPath,
+    socketPath: createPublicSessionKey(session.id),
+    workspaceDir: getWorkspaceLabel(session),
     cli: {
       persistent: session.persistent === true,
       headed: session.headless === null ? undefined : !session.headless,
@@ -641,56 +528,28 @@ function toCliLikeSessionConfig(session: ReturnType<typeof findSessionCandidate>
           headless: session.headless ?? undefined,
         },
         isolated: session.isolated ?? undefined,
-        userDataDir: session.userDataDirPath ?? undefined,
       },
     },
     __middleman: {
       sessionId: session.id,
-      sessionFilePath: session.sessionFilePath,
-      sessionFileRealPath: session.sessionFileRealPath,
-      worktreePath: session.worktreePath,
-      rootPath: session.rootPath,
     },
   }
 }
 
-async function sendStopRpc(session: ReturnType<typeof findSessionCandidate>['session']): Promise<void> {
-  if (!session.socketPath || !session.sessionVersion) {
-    return
+function getWorkspaceLabel(session: PlaywrightDiscoveredSession): string {
+  if (session.worktreeName) {
+    return `worktree:${session.worktreeName}`
   }
 
-  const { createConnection } = await import('node:net')
-  const socketPath = session.socketPath
-  if (!socketPath) {
-    return
+  if (session.repoRootPath) {
+    return session.rootKind === 'backend-root' ? 'repo:backend' : 'repo:root'
   }
 
-  await new Promise<void>((resolve, reject) => {
-    const socket = createConnection(socketPath)
-    const timeout = setTimeout(() => {
-      socket.destroy()
-      resolve()
-    }, 2_000)
+  return session.rootKind
+}
 
-    const cleanup = (): void => {
-      clearTimeout(timeout)
-      socket.removeAllListeners()
-    }
-
-    socket.once('connect', () => {
-      const payload = JSON.stringify({ id: 1, method: 'stop', params: {}, version: session.sessionVersion })
-      socket.write(`${payload}\n`, () => {
-        cleanup()
-        socket.destroy()
-        resolve()
-      })
-    })
-
-    socket.once('error', (error) => {
-      cleanup()
-      reject(error)
-    })
-  })
+function createPublicSessionKey(sessionId: string): string {
+  return `mm-session:${sessionId}`
 }
 
 function resolveAssetContentType(pathValue: string): string {
@@ -712,12 +571,12 @@ function resolveAssetContentType(pathValue: string): string {
 
 function buildAppHtml(options: {
   previewId: string | null
-  sessionSocketPath: string | null
+  publicSessionKey: string | null
   sessionName: string | null
 }): string {
   const embedConfig = {
     previewId: options.previewId,
-    sessionSocketPath: options.sessionSocketPath,
+    publicSessionKey: options.publicSessionKey,
     sessionName: options.sessionName,
   }
 
@@ -731,8 +590,8 @@ function buildAppHtml(options: {
       window.__MM_PLAYWRIGHT_EMBED__ = ${JSON.stringify(embedConfig)};
       (() => {
         const config = window.__MM_PLAYWRIGHT_EMBED__;
-        if (config?.sessionSocketPath) {
-          window.location.hash = '#session=' + encodeURIComponent(config.sessionSocketPath);
+        if (config?.publicSessionKey) {
+          window.location.hash = '#session=' + encodeURIComponent(config.publicSessionKey);
         }
         const originalFetch = window.fetch.bind(window);
         window.fetch = (input, init) => {
@@ -755,17 +614,18 @@ function buildAppHtml(options: {
       html, body, #root { height: 100%; }
       body { margin: 0; }
       body[data-mm-playwright-embed='true'] .tabbar-back { display: none !important; }
+      body[data-mm-playwright-embed='true'] .session-chip-action { display: none !important; }
     </style>
-    <script>
-      if (window.__MM_PLAYWRIGHT_EMBED__?.previewId) {
-        document.body.dataset.mmPlaywrightEmbed = 'true';
-      }
-    </script>
     <script type="module" crossorigin src="${PLAYWRIGHT_LIVE_PREFIX}/${DEVTOOLS_BUNDLE_JS}"></script>
     <link rel="stylesheet" crossorigin href="${PLAYWRIGHT_LIVE_PREFIX}/${DEVTOOLS_BUNDLE_CSS}" />
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      if (window.__MM_PLAYWRIGHT_EMBED__?.previewId) {
+        document.body.dataset.mmPlaywrightEmbed = 'true';
+      }
+    </script>
   </body>
 </html>`
 }
