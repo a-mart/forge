@@ -6,21 +6,45 @@ import { PlaywrightLivePreviewService } from './playwright-live-preview-service.
 
 const CONTROLLER_PATH_PATTERN = /^\/playwright-live\/ws\/controller\/([^/]+)$/
 
-interface ProxyConnectionPair {
-  client: WebSocket
+interface ReplayMessage {
+  data: RawData
+  isBinary: boolean
+}
+
+interface PreviewUpstreamChannel {
+  previewId: string
   upstream: WebSocket
+  clients: Set<WebSocket>
+  pendingClientMessages: Array<{ data: RawData; isBinary: boolean }>
   unregisterCleanup: () => void
   closed: boolean
+  lastTabsMessage: ReplayMessage | null
+  lastFrameMessage: ReplayMessage | null
+}
+
+interface SanitizedUpstreamMessage {
+  data: RawData
+  isBinary: boolean
+  messageType: string | null
 }
 
 export class PlaywrightLivePreviewProxy {
   private readonly livePreviewService: PlaywrightLivePreviewService
   private readonly wss: WebSocketServer
-  private readonly connectionsByPreviewId = new Map<string, Set<ProxyConnectionPair>>()
+  private readonly channelsByPreviewId = new Map<string, PreviewUpstreamChannel>()
 
   constructor(options: { livePreviewService: PlaywrightLivePreviewService }) {
     this.livePreviewService = options.livePreviewService
     this.wss = new WebSocketServer({ noServer: true })
+
+    this.livePreviewService.on('preview_started', (event) => {
+      const previewId = typeof event?.previewId === 'string' ? event.previewId.trim() : ''
+      if (!previewId) {
+        return
+      }
+
+      void this.ensurePreviewChannel(previewId)
+    })
   }
 
   canHandleUpgrade(pathname: string): boolean {
@@ -57,8 +81,8 @@ export class PlaywrightLivePreviewProxy {
   }
 
   async stop(): Promise<void> {
-    for (const previewId of Array.from(this.connectionsByPreviewId.keys())) {
-      this.closePreviewConnections(previewId, 1012, 'Preview proxy shutting down')
+    for (const previewId of Array.from(this.channelsByPreviewId.keys())) {
+      this.disposePreviewChannel(previewId, 1012, 'Preview proxy shutting down')
     }
 
     await new Promise<void>((resolve, reject) => {
@@ -74,128 +98,197 @@ export class PlaywrightLivePreviewProxy {
   }
 
   private async handleProxyConnection(client: WebSocket, previewId: string): Promise<void> {
-    const upstreamControllerUrl = this.livePreviewService.getUpstreamControllerUrl(previewId)
-    if (!upstreamControllerUrl) {
+    const channel = await this.ensurePreviewChannel(previewId)
+    if (!channel) {
       client.close(1011, 'Preview expired')
       return
     }
 
-    const upstream = new WebSocket(upstreamControllerUrl)
-    const pendingClientMessages: Array<{ data: RawData; isBinary: boolean }> = []
-
-    const pair: ProxyConnectionPair = {
-      client,
-      upstream,
-      unregisterCleanup: () => {},
-      closed: false,
-    }
-
-    pair.unregisterCleanup = this.livePreviewService.registerPreviewCleanup(previewId, () => {
-      this.closeConnectionPair(pair, 1000, 'Preview released')
-    })
-    this.trackConnection(previewId, pair)
+    channel.clients.add(client)
+    this.livePreviewService.touchPreview(previewId)
+    this.replayBufferedMessages(channel, client)
 
     client.on('message', (data, isBinary) => {
       this.livePreviewService.touchPreview(previewId)
-      if (upstream.readyState === WebSocket.OPEN) {
-        upstream.send(data, { binary: isBinary })
+      if (channel.upstream.readyState === WebSocket.OPEN) {
+        channel.upstream.send(data, { binary: isBinary })
         return
       }
 
-      pendingClientMessages.push({ data, isBinary })
+      channel.pendingClientMessages.push({ data, isBinary })
     })
 
     client.on('close', () => {
-      this.closeConnectionPair(pair)
+      this.detachClient(channel, client)
     })
 
     client.on('error', () => {
-      this.closeConnectionPair(pair)
+      this.detachClient(channel, client)
     })
+  }
+
+  private async ensurePreviewChannel(previewId: string): Promise<PreviewUpstreamChannel | null> {
+    const existing = this.channelsByPreviewId.get(previewId)
+    if (existing && !existing.closed) {
+      return existing
+    }
+
+    const upstreamControllerUrl = this.livePreviewService.getUpstreamControllerUrl(previewId)
+    if (!upstreamControllerUrl) {
+      return null
+    }
+
+    const upstream = new WebSocket(upstreamControllerUrl)
+    const channel: PreviewUpstreamChannel = {
+      previewId,
+      upstream,
+      clients: new Set(),
+      pendingClientMessages: [],
+      unregisterCleanup: () => {},
+      closed: false,
+      lastTabsMessage: null,
+      lastFrameMessage: null,
+    }
+
+    channel.unregisterCleanup = this.livePreviewService.registerPreviewCleanup(previewId, () => {
+      this.disposePreviewChannel(previewId, 1000, 'Preview released')
+    })
+    this.channelsByPreviewId.set(previewId, channel)
 
     upstream.on('open', () => {
-      this.livePreviewService.touchPreview(previewId)
-      for (const message of pendingClientMessages.splice(0)) {
+      if (channel.closed) {
+        return
+      }
+
+      if (channel.clients.size > 0) {
+        this.livePreviewService.touchPreview(previewId)
+      }
+
+      for (const message of channel.pendingClientMessages.splice(0)) {
         upstream.send(message.data, { binary: message.isBinary })
       }
     })
 
     upstream.on('message', (data, isBinary) => {
-      this.livePreviewService.touchPreview(previewId)
-      if (client.readyState !== WebSocket.OPEN) {
+      if (channel.closed) {
         return
       }
 
+      if (channel.clients.size > 0) {
+        this.livePreviewService.touchPreview(previewId)
+      }
+
       const sanitized = sanitizeUpstreamMessage(data, isBinary)
-      client.send(sanitized.data, { binary: sanitized.isBinary })
+      this.captureReplayMessage(channel, sanitized)
+      this.broadcastToClients(channel, sanitized)
     })
 
     upstream.on('close', (code, reason) => {
-      if (client.readyState === WebSocket.OPEN || client.readyState === WebSocket.CONNECTING) {
-        client.close(code, reason.toString())
+      if (channel.closed) {
+        return
       }
-      this.closeConnectionPair(pair)
+
+      const closeCode = normalizeCloseCode(code, 1011)
+      const closeReason = toCloseReason(reason.toString(), closeCode === 1000 ? 'Upstream controller closed' : 'Upstream controller error')
+
+      for (const client of Array.from(channel.clients)) {
+        if (client.readyState === WebSocket.OPEN || client.readyState === WebSocket.CONNECTING) {
+          client.close(closeCode, closeReason)
+        }
+      }
+
+      this.disposePreviewChannel(previewId, closeCode, closeReason, { closeUpstream: false })
     })
 
     upstream.on('error', () => {
-      if (client.readyState === WebSocket.OPEN || client.readyState === WebSocket.CONNECTING) {
-        client.close(1011, 'Upstream controller error')
+      if (channel.closed) {
+        return
       }
-      this.closeConnectionPair(pair)
+
+      for (const client of Array.from(channel.clients)) {
+        if (client.readyState === WebSocket.OPEN || client.readyState === WebSocket.CONNECTING) {
+          client.close(1011, 'Upstream controller error')
+        }
+      }
+
+      this.disposePreviewChannel(previewId, 1011, 'Upstream controller error', { closeUpstream: false })
     })
+
+    return channel
   }
 
-  private trackConnection(previewId: string, pair: ProxyConnectionPair): void {
-    const existing = this.connectionsByPreviewId.get(previewId)
-    if (existing) {
-      existing.add(pair)
+  private detachClient(channel: PreviewUpstreamChannel, client: WebSocket): void {
+    channel.clients.delete(client)
+  }
+
+  private replayBufferedMessages(channel: PreviewUpstreamChannel, client: WebSocket): void {
+    if (client.readyState !== WebSocket.OPEN) {
       return
     }
 
-    this.connectionsByPreviewId.set(previewId, new Set([pair]))
-  }
-
-  private closePreviewConnections(previewId: string, code = 1000, reason = 'Preview released'): void {
-    const pairs = this.connectionsByPreviewId.get(previewId)
-    if (!pairs) {
-      return
-    }
-
-    for (const pair of Array.from(pairs)) {
-      this.closeConnectionPair(pair, code, reason)
-    }
-  }
-
-  private closeConnectionPair(pair: ProxyConnectionPair, code = 1000, reason = 'Closing'): void {
-    if (pair.closed) {
-      return
-    }
-    pair.closed = true
-
-    pair.unregisterCleanup()
-    this.removeConnectionPair(pair)
-
-    closeSocket(pair.client, code, reason)
-    closeSocket(pair.upstream, code, reason)
-  }
-
-  private removeConnectionPair(pair: ProxyConnectionPair): void {
-    for (const [previewId, pairs] of this.connectionsByPreviewId.entries()) {
-      if (!pairs.delete(pair)) {
+    for (const message of [channel.lastTabsMessage, channel.lastFrameMessage]) {
+      if (!message) {
         continue
       }
 
-      if (pairs.size === 0) {
-        this.connectionsByPreviewId.delete(previewId)
-      }
+      client.send(cloneRawData(message.data), { binary: message.isBinary })
+    }
+  }
+
+  private captureReplayMessage(channel: PreviewUpstreamChannel, message: SanitizedUpstreamMessage): void {
+    if (message.messageType === 'tabs') {
+      channel.lastTabsMessage = cloneReplayMessage(message)
       return
+    }
+
+    if (message.messageType === 'frame') {
+      channel.lastFrameMessage = cloneReplayMessage(message)
+    }
+  }
+
+  private broadcastToClients(channel: PreviewUpstreamChannel, message: SanitizedUpstreamMessage): void {
+    for (const client of Array.from(channel.clients)) {
+      if (client.readyState !== WebSocket.OPEN) {
+        channel.clients.delete(client)
+        continue
+      }
+
+      client.send(cloneRawData(message.data), { binary: message.isBinary })
+    }
+  }
+
+  private disposePreviewChannel(
+    previewId: string,
+    code = 1000,
+    reason = 'Closing',
+    options: { closeUpstream?: boolean } = {},
+  ): void {
+    const channel = this.channelsByPreviewId.get(previewId)
+    if (!channel || channel.closed) {
+      return
+    }
+    channel.closed = true
+
+    this.channelsByPreviewId.delete(previewId)
+    channel.unregisterCleanup()
+    channel.pendingClientMessages.length = 0
+    channel.lastTabsMessage = null
+    channel.lastFrameMessage = null
+
+    for (const client of Array.from(channel.clients)) {
+      closeSocket(client, code, reason)
+    }
+    channel.clients.clear()
+
+    if (options.closeUpstream !== false) {
+      closeSocket(channel.upstream, code, reason)
     }
   }
 }
 
-function sanitizeUpstreamMessage(data: RawData, isBinary: boolean): { data: RawData; isBinary: boolean } {
+function sanitizeUpstreamMessage(data: RawData, isBinary: boolean): SanitizedUpstreamMessage {
   if (isBinary) {
-    return { data, isBinary }
+    return { data, isBinary, messageType: null }
   }
 
   const text = typeof data === 'string' ? data : data.toString()
@@ -206,10 +299,19 @@ function sanitizeUpstreamMessage(data: RawData, isBinary: boolean): { data: RawD
     return {
       data: Buffer.from(JSON.stringify(sanitized)),
       isBinary: false,
+      messageType: getControllerMessageType(payload),
     }
   } catch {
-    return { data, isBinary: false }
+    return { data, isBinary: false, messageType: null }
   }
+}
+
+function getControllerMessageType(value: unknown): string | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null
+  }
+
+  return typeof (value as { type?: unknown }).type === 'string' ? (value as { type: string }).type : null
 }
 
 function sanitizeInspectorUrls(value: unknown): unknown {
@@ -233,12 +335,56 @@ function sanitizeInspectorUrls(value: unknown): unknown {
   return sanitized
 }
 
+function cloneReplayMessage(message: ReplayMessage): ReplayMessage {
+  return {
+    data: cloneRawData(message.data),
+    isBinary: message.isBinary,
+  }
+}
+
+function cloneRawData(data: RawData): RawData {
+  if (typeof data === 'string') {
+    return data
+  }
+
+  if (Buffer.isBuffer(data)) {
+    return Buffer.from(data)
+  }
+
+  if (Array.isArray(data)) {
+    return data.map((chunk) => Buffer.from(chunk))
+  }
+
+  if (data instanceof ArrayBuffer) {
+    return data.slice(0)
+  }
+
+  return Buffer.from(data as ArrayBuffer)
+}
+
 function closeSocket(socket: WebSocket, code?: number, reason?: string): void {
   if (socket.readyState === WebSocket.CLOSED || socket.readyState === WebSocket.CLOSING) {
     return
   }
 
-  socket.close(code, reason)
+  socket.close(normalizeCloseCode(code, 1000), toCloseReason(reason, 'Closing'))
+}
+
+function normalizeCloseCode(code: number | undefined, fallback: number): number {
+  if (typeof code !== 'number') {
+    return fallback
+  }
+
+  if (code < 1000 || code > 4999 || code === 1004 || code === 1005 || code === 1006 || code === 1015) {
+    return fallback
+  }
+
+  return code
+}
+
+function toCloseReason(reason: string | undefined, fallback: string): string {
+  const trimmed = reason?.trim() || fallback
+  return trimmed.length > 123 ? trimmed.slice(0, 123) : trimmed
 }
 
 function writeUpgradeError(socket: Duplex, statusCode: number, message: string): void {

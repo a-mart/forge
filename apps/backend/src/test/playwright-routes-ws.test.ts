@@ -585,7 +585,7 @@ describe('Playwright routes and WS bootstrap', () => {
     }
   })
 
-  it('starts preview leases and proxies controller websocket traffic through backend origin', async () => {
+  it('starts preview leases, prewarms controller state, and replays buffered tabs/frame to late clients', async () => {
     const config = await makeTempConfig()
     const swarmManager = new FakeSwarmManager(config, [createManagerDescriptor(config.paths.rootDir)])
     const settingsService = new PlaywrightSettingsService({ dataDir: config.paths.dataDir })
@@ -598,24 +598,33 @@ describe('Playwright routes and WS bootstrap', () => {
     const discovery = new FakePlaywrightDiscovery(snapshot, settings)
     const upstreamPort = await getAvailablePort()
     const upstreamMessages: string[] = []
+    let upstreamConnectionCount = 0
+    let resolveFirstUpstreamPrimed: (() => void) | null = null
+    const firstUpstreamPrimed = new Promise<void>((resolve) => {
+      resolveFirstUpstreamPrimed = resolve
+    })
     const upstreamServer = new WebSocketServer({ host: '127.0.0.1', port: upstreamPort })
     await once(upstreamServer, 'listening')
     upstreamServer.on('connection', (socket) => {
-      socket.send(
-        JSON.stringify({
-          type: 'tabs',
-          tabs: [
-            {
-              pageId: 'page-1',
-              selected: true,
-              title: 'Example',
-              url: 'https://example.com',
-              inspectorUrl: 'http://127.0.0.1:9222/devtools/inspector.html',
-            },
-          ],
-        }),
-      )
-      socket.send(JSON.stringify({ type: 'frame', data: 'ZmFrZQ==' }))
+      upstreamConnectionCount += 1
+      if (upstreamConnectionCount === 1) {
+        socket.send(
+          JSON.stringify({
+            type: 'tabs',
+            tabs: [
+              {
+                pageId: 'page-1',
+                selected: true,
+                title: 'Example',
+                url: 'https://example.com',
+                inspectorUrl: 'http://127.0.0.1:9222/devtools/inspector.html',
+              },
+            ],
+          }),
+        )
+        socket.send(JSON.stringify({ type: 'frame', data: 'ZmFrZQ==' }))
+        resolveFirstUpstreamPrimed?.()
+      }
       socket.on('message', (data) => {
         const raw = data.toString()
         upstreamMessages.push(raw)
@@ -649,6 +658,31 @@ describe('Playwright routes and WS bootstrap', () => {
     await server.start()
 
     try {
+      const waitForTabsAndFrame = async (socket: WebSocket, timeoutMessage: string): Promise<string[]> => {
+        return await new Promise<string[]>((resolve, reject) => {
+          const messages: string[] = []
+          const timeout = setTimeout(() => {
+            socket.off('message', onMessage)
+            reject(new Error(timeoutMessage))
+          }, 5_000)
+
+          const onMessage = (data: WebSocket.RawData) => {
+            const raw = data.toString()
+            messages.push(raw)
+            if (
+              messages.some((message) => message.includes('"type":"tabs"')) &&
+              messages.some((message) => message.includes('"type":"frame"'))
+            ) {
+              clearTimeout(timeout)
+              socket.off('message', onMessage)
+              resolve(messages)
+            }
+          }
+
+          socket.on('message', onMessage)
+        })
+      }
+
       const startResponse = await fetch(`http://${config.host}:${config.port}/api/playwright/live-preview/start`, {
         method: 'POST',
         headers: {
@@ -674,6 +708,9 @@ describe('Playwright routes and WS bootstrap', () => {
       expect(startPayload.preview?.controllerProxyUrl).toContain('/playwright-live/ws/controller/')
 
       const previewId = startPayload.preview?.previewId ?? ''
+      await firstUpstreamPrimed
+      expect(upstreamConnectionCount).toBe(1)
+
       const bootstrapResponse = await fetch(
         `http://${config.host}:${config.port}/playwright-live/api/previews/${encodeURIComponent(previewId)}/bootstrap`,
       )
@@ -709,28 +746,33 @@ describe('Playwright routes and WS bootstrap', () => {
           origin: `http://${config.host}:${config.port}`,
         },
       )
+      const proxiedMessagesPromise = waitForTabsAndFrame(
+        proxySocket,
+        'Timed out waiting for proxied controller replay events',
+      )
       await once(proxySocket, 'open')
-
-      const proxiedMessages: string[] = []
-      await new Promise<void>((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error('Timed out waiting for proxied controller events')), 5_000)
-        proxySocket.on('message', (data) => {
-          const raw = data.toString()
-          proxiedMessages.push(raw)
-          if (
-            proxiedMessages.some((message) => message.includes('"type":"tabs"')) &&
-            proxiedMessages.some((message) => message.includes('"type":"frame"'))
-          ) {
-            clearTimeout(timeout)
-            resolve()
-          }
-        })
-      })
+      const proxiedMessages = await proxiedMessagesPromise
+      expect(upstreamConnectionCount).toBe(1)
 
       const tabsMessage = proxiedMessages.find((message) => message.includes('"type":"tabs"')) ?? ''
       expect(tabsMessage).toContain('"type":"tabs"')
       expect(tabsMessage).not.toContain('127.0.0.1:9222')
       expect(tabsMessage).toContain('"inspectorUrl":null')
+
+      const secondProxySocket = new WebSocket(
+        `ws://${config.host}:${config.port}/playwright-live/ws/controller/${encodeURIComponent(previewId)}`,
+        {
+          origin: `http://${config.host}:${config.port}`,
+        },
+      )
+      const secondProxiedMessagesPromise = waitForTabsAndFrame(
+        secondProxySocket,
+        'Timed out waiting for buffered controller replay events for second client',
+      )
+      await once(secondProxySocket, 'open')
+      const secondProxiedMessages = await secondProxiedMessagesPromise
+      expect(upstreamConnectionCount).toBe(1)
+      expect(secondProxiedMessages.some((message) => message.includes('"type":"frame"'))).toBe(true)
 
       proxySocket.send(JSON.stringify({ type: 'ping', source: 'test' }))
       await new Promise<void>((resolve, reject) => {
@@ -749,6 +791,7 @@ describe('Playwright routes and WS bootstrap', () => {
         poll()
       })
       const closePromise = once(proxySocket, 'close')
+      const secondClosePromise = once(secondProxySocket, 'close')
       const releaseResponse = await fetch(
         `http://${config.host}:${config.port}/api/playwright/live-preview/${encodeURIComponent(previewId)}`,
         {
@@ -763,7 +806,7 @@ describe('Playwright routes and WS bootstrap', () => {
       expect(releasePayload.ok).toBe(true)
       expect(releasePayload.previewId).toBe(previewId)
       expect(releasePayload.released).toBe(true)
-      await closePromise
+      await Promise.all([closePromise, secondClosePromise])
 
       const expiredBootstrapResponse = await fetch(
         `http://${config.host}:${config.port}/playwright-live/api/previews/${encodeURIComponent(previewId)}/bootstrap`,

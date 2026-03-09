@@ -173,6 +173,12 @@ export class PlaywrightLivePreviewService extends EventEmitter {
 
     this.previews.set(previewId, record)
     this.previewIdBySessionId.set(session.id, previewId)
+    this.emit('preview_started', {
+      previewId: record.previewId,
+      sessionId: record.sessionId,
+      mode: record.mode,
+      upstreamControllerUrl: record.upstreamControllerUrl,
+    })
     return this.toPublicHandle(record, backendOrigin)
   }
 
