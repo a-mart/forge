@@ -1,7 +1,10 @@
 import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
+import type { Duplex } from "node:stream";
 import { WebSocketServer } from "ws";
 import type { IntegrationRegistryService } from "../integrations/registry.js";
 import type { PlaywrightDiscoveryService } from "../playwright/playwright-discovery-service.js";
+import { PlaywrightLivePreviewProxy } from "../playwright/playwright-live-preview-proxy.js";
+import { PlaywrightLivePreviewService } from "../playwright/playwright-live-preview-service.js";
 import { PlaywrightSettingsService } from "../playwright/playwright-settings-service.js";
 import type { ServerEvent } from "@middleman/protocol";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
@@ -13,6 +16,7 @@ import { createFeedbackRoutes } from "./routes/feedback-routes.js";
 import { createHealthRoutes } from "./routes/health-routes.js";
 import type { HttpRoute } from "./routes/http-route.js";
 import { createIntegrationRoutes } from "./routes/integration-routes.js";
+import { createPlaywrightLiveRoutes } from "./routes/playwright-live-routes.js";
 import { createPlaywrightRoutes } from "./routes/playwright-routes.js";
 import { createSchedulerRoutes } from "./routes/scheduler-routes.js";
 import { createSettingsRoutes, type SettingsRouteBundle } from "./routes/settings-routes.js";
@@ -25,6 +29,8 @@ export class SwarmWebSocketServer {
   private readonly port: number;
   private readonly integrationRegistry: IntegrationRegistryService | null;
   private readonly playwrightDiscovery: PlaywrightDiscoveryService | null;
+  private readonly playwrightLivePreviewService: PlaywrightLivePreviewService;
+  private readonly playwrightLivePreviewProxy: PlaywrightLivePreviewProxy;
   private readonly playwrightSettingsService: PlaywrightSettingsService;
   private readonly playwrightEnvEnabledOverride: boolean | undefined;
 
@@ -114,6 +120,7 @@ export class SwarmWebSocketServer {
     allowNonManagerSubscriptions: boolean;
     integrationRegistry?: IntegrationRegistryService;
     playwrightDiscovery?: PlaywrightDiscoveryService | null;
+    playwrightLivePreviewService?: PlaywrightLivePreviewService;
     playwrightSettingsService?: PlaywrightSettingsService;
     playwrightEnvEnabledOverride?: boolean;
   }) {
@@ -122,6 +129,12 @@ export class SwarmWebSocketServer {
     this.port = options.port;
     this.integrationRegistry = options.integrationRegistry ?? null;
     this.playwrightDiscovery = options.playwrightDiscovery ?? null;
+    this.playwrightLivePreviewService =
+      options.playwrightLivePreviewService ??
+      new PlaywrightLivePreviewService({ discoveryService: this.playwrightDiscovery });
+    this.playwrightLivePreviewProxy = new PlaywrightLivePreviewProxy({
+      livePreviewService: this.playwrightLivePreviewService,
+    });
     this.playwrightSettingsService =
       options.playwrightSettingsService ??
       new PlaywrightSettingsService({ dataDir: this.swarmManager.getConfig().paths.dataDir });
@@ -151,6 +164,9 @@ export class SwarmWebSocketServer {
         settingsService: this.playwrightSettingsService,
         envEnabledOverride: this.playwrightEnvEnabledOverride,
       }),
+      ...createPlaywrightLiveRoutes({
+        livePreviewService: this.playwrightLivePreviewService,
+      }),
       ...createIntegrationRoutes({
         swarmManager: this.swarmManager,
         integrationRegistry: this.integrationRegistry
@@ -166,14 +182,15 @@ export class SwarmWebSocketServer {
     const httpServer = createServer((request, response) => {
       void this.handleHttpRequest(request, response);
     });
-    const wss = new WebSocketServer({
-      server: httpServer
-    });
+    const wss = new WebSocketServer({ noServer: true });
 
     this.httpServer = httpServer;
     this.wss = wss;
 
     this.wsHandler.attach(wss);
+    httpServer.on("upgrade", (request, socket, head) => {
+      this.handleUpgrade(request, socket, head);
+    });
 
     await new Promise<void>((resolve, reject) => {
       const onListening = (): void => {
@@ -235,13 +252,30 @@ export class SwarmWebSocketServer {
     this.wsHandler.reset();
     this.settingsRoutes.cancelActiveSettingsAuthLoginFlows();
 
-    if (currentWss) {
-      await closeWebSocketServer(currentWss);
+    await Promise.allSettled([
+      this.playwrightLivePreviewProxy.stop(),
+      currentWss ? closeWebSocketServer(currentWss) : Promise.resolve(),
+      currentHttpServer ? closeHttpServer(currentHttpServer) : Promise.resolve(),
+    ]);
+  }
+
+  private handleUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer): void {
+    if (!this.httpServer || !this.wss) {
+      socket.destroy();
+      return;
     }
 
-    if (currentHttpServer) {
-      await closeHttpServer(currentHttpServer);
+    const requestUrl = resolveRequestUrl(request, `${this.host}:${this.port}`);
+    if (this.playwrightLivePreviewProxy.canHandleUpgrade(requestUrl.pathname)) {
+      const handled = this.playwrightLivePreviewProxy.handleUpgrade(request, socket, head, requestUrl.pathname);
+      if (handled) {
+        return;
+      }
     }
+
+    this.wss.handleUpgrade(request, socket, head, (client) => {
+      this.wss?.emit("connection", client, request);
+    });
   }
 
   private async handleHttpRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {

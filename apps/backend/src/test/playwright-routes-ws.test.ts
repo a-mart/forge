@@ -2,16 +2,18 @@ import { EventEmitter, once } from 'node:events'
 import { mkdir, mkdtemp, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import WebSocket from 'ws'
+import WebSocket, { WebSocketServer } from 'ws'
 import { describe, expect, it } from 'vitest'
 import type {
   AgentDescriptor,
   ManagerProfile,
+  PlaywrightDiscoveredSession,
   PlaywrightDiscoverySettings,
   PlaywrightDiscoverySnapshot,
 } from '@middleman/protocol'
 import type { SwarmConfig } from '../swarm/types.js'
 import { getScheduleFilePath } from '../scheduler/schedule-storage.js'
+import { PlaywrightLivePreviewService } from '../playwright/playwright-live-preview-service.js'
 import { PlaywrightSettingsService } from '../playwright/playwright-settings-service.js'
 import { getSharedPlaywrightDashboardSettingsPath } from '../swarm/data-paths.js'
 import { SwarmWebSocketServer } from '../ws/server.js'
@@ -60,6 +62,10 @@ class FakePlaywrightDiscovery extends EventEmitter {
 
   getSettings(): PlaywrightDiscoverySettings {
     return this.settings
+  }
+
+  getSessionById(sessionId: string) {
+    return this.snapshot.sessions.find((session) => session.id === sessionId) ?? null
   }
 }
 
@@ -165,6 +171,68 @@ function createManagerDescriptor(rootDir: string): AgentDescriptor {
       thinkingLevel: 'medium',
     },
     sessionFile: join(rootDir, 'sessions', 'manager.jsonl'),
+  }
+}
+
+function createActiveSession(rootDir: string): PlaywrightDiscoveredSession {
+  return {
+    id: 'session-active',
+    sessionName: 'default',
+    sessionVersion: '1.0.0',
+    schemaVersion: 'v2',
+    sessionFilePath: join(rootDir, '.playwright-cli', 'sessions', 'default.session'),
+    sessionFileRealPath: join(rootDir, '.playwright-cli', 'sessions', 'default.session'),
+    sessionFileUpdatedAt: '2026-03-09T18:00:00.000Z',
+    sessionTimestamp: '2026-03-09T18:00:00.000Z',
+    rootPath: rootDir,
+    rootKind: 'repo-root',
+    repoRootPath: rootDir,
+    backendRootPath: null,
+    worktreePath: null,
+    worktreeName: null,
+    daemonId: 'daemon-1',
+    socketPath: '/tmp/playwright-cli-sockets/daemon-1/default.sock',
+    socketExists: true,
+    socketResponsive: true,
+    cdpResponsive: null,
+    liveness: 'active',
+    stale: false,
+    staleReason: null,
+    browserName: 'chromium',
+    browserChannel: 'chrome',
+    headless: false,
+    persistent: true,
+    isolated: false,
+    userDataDirPath: join(rootDir, '.playwright-cli', 'sessions', 'ud-default-chrome'),
+    userDataDirExists: true,
+    ports: {
+      frontend: 41001,
+      backendApi: 41002,
+      sandbox: null,
+      liteLlm: null,
+      cdp: null,
+    },
+    artifactCounts: {
+      pageSnapshots: 0,
+      screenshots: 0,
+      consoleLogs: 0,
+      networkLogs: 0,
+      total: 0,
+      lastArtifactAt: null,
+    },
+    duplicateGroupKey: 'session-active',
+    duplicateRank: 0,
+    preferredInDuplicateGroup: true,
+    correlation: {
+      matchedAgentId: null,
+      matchedAgentDisplayName: null,
+      matchedManagerId: null,
+      matchedManagerDisplayName: null,
+      matchedProfileId: null,
+      confidence: 'none',
+      reasons: [],
+    },
+    warnings: [],
   }
 }
 
@@ -300,6 +368,183 @@ describe('Playwright routes and WS bootstrap', () => {
     } finally {
       socket.close()
       await server.stop()
+    }
+  })
+
+  it('starts preview leases and proxies controller websocket traffic through backend origin', async () => {
+    const config = await makeTempConfig()
+    const swarmManager = new FakeSwarmManager(config, [createManagerDescriptor(config.paths.rootDir)])
+    const settingsService = new PlaywrightSettingsService({ dataDir: config.paths.dataDir })
+    await settingsService.load()
+
+    const settings: PlaywrightDiscoverySettings = {
+      enabled: true,
+      effectiveEnabled: true,
+      source: 'settings',
+      envOverride: null,
+      scanRoots: [],
+      pollIntervalMs: 10_000,
+      socketProbeTimeoutMs: 750,
+      staleSessionThresholdMs: 3_600_000,
+      updatedAt: '2026-03-09T18:00:00.000Z',
+    }
+
+    const activeSession = createActiveSession(config.paths.rootDir)
+    const snapshot: PlaywrightDiscoverySnapshot = {
+      updatedAt: '2026-03-09T18:00:01.000Z',
+      lastScanStartedAt: '2026-03-09T18:00:00.500Z',
+      lastScanCompletedAt: '2026-03-09T18:00:01.000Z',
+      scanDurationMs: 500,
+      sequence: 2,
+      serviceStatus: 'ready',
+      settings,
+      rootsScanned: [config.paths.rootDir],
+      summary: {
+        totalSessions: 1,
+        activeSessions: 1,
+        inactiveSessions: 0,
+        staleSessions: 0,
+        legacySessions: 0,
+        duplicateSessions: 0,
+        correlatedSessions: 0,
+        unmatchedSessions: 1,
+        worktreeCount: 0,
+      },
+      sessions: [activeSession],
+      warnings: [],
+      lastError: null,
+    }
+
+    const discovery = new FakePlaywrightDiscovery(snapshot, settings)
+    const upstreamPort = await getAvailablePort()
+    const upstreamMessages: string[] = []
+    const upstreamServer = new WebSocketServer({ host: '127.0.0.1', port: upstreamPort })
+    await once(upstreamServer, 'listening')
+    upstreamServer.on('connection', (socket) => {
+      socket.send(JSON.stringify({ type: 'frame', data: 'ZmFrZQ==' }))
+      socket.on('message', (data) => {
+        const raw = data.toString()
+        upstreamMessages.push(raw)
+        socket.send(raw)
+      })
+    })
+
+    const livePreviewService = new PlaywrightLivePreviewService({
+      discoveryService: discovery as unknown as never,
+      devtoolsBridge: {
+        async startPreviewController() {
+          return {
+            upstreamControllerUrl: `ws://127.0.0.1:${upstreamPort}/controller`,
+            source: 'playwright-cli-daemon' as const,
+          }
+        },
+      },
+    })
+    await livePreviewService.start()
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: swarmManager as unknown as never,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: false,
+      playwrightDiscovery: discovery as unknown as never,
+      playwrightLivePreviewService: livePreviewService,
+      playwrightSettingsService: settingsService,
+    })
+
+    await server.start()
+
+    try {
+      const startResponse = await fetch(`http://${config.host}:${config.port}/api/playwright/live-preview/start`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sessionId: activeSession.id, mode: 'focus' }),
+      })
+      const startPayload = (await startResponse.json()) as {
+        ok?: boolean
+        preview?: {
+          previewId: string
+          iframeSrc: string
+          controllerProxyUrl: string
+          mode: string
+        }
+      }
+
+      expect(startResponse.status).toBe(200)
+      expect(startPayload.preview?.previewId).toBeTruthy()
+      expect(startPayload.preview?.mode).toBe('focus')
+      expect(startPayload.preview?.iframeSrc).toContain('/playwright-live/embed?previewId=')
+      expect(startPayload.preview?.controllerProxyUrl).toContain('/playwright-live/ws/controller/')
+
+      const previewId = startPayload.preview?.previewId ?? ''
+      const bootstrapResponse = await fetch(
+        `http://${config.host}:${config.port}/playwright-live/api/previews/${encodeURIComponent(previewId)}/bootstrap`,
+      )
+      const bootstrapPayload = (await bootstrapResponse.json()) as {
+        bootstrap?: { previewId?: string; sessionId?: string; controllerWsUrl?: string }
+      }
+
+      expect(bootstrapResponse.status).toBe(200)
+      expect(bootstrapPayload.bootstrap?.previewId).toBe(previewId)
+      expect(bootstrapPayload.bootstrap?.sessionId).toBe(activeSession.id)
+      expect(bootstrapPayload.bootstrap?.controllerWsUrl).toContain(`/playwright-live/ws/controller/${previewId}`)
+
+      const embedResponse = await fetch(`http://${config.host}:${config.port}/playwright-live/embed?previewId=${encodeURIComponent(previewId)}`)
+      const embedHtml = await embedResponse.text()
+      expect(embedResponse.status).toBe(200)
+      expect(embedHtml).toContain(previewId)
+
+      const proxySocket = new WebSocket(`ws://${config.host}:${config.port}/playwright-live/ws/controller/${encodeURIComponent(previewId)}`)
+      await once(proxySocket, 'open')
+
+      const firstMessage = await new Promise<string>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('Timed out waiting for proxied frame')), 5_000)
+        proxySocket.once('message', (data) => {
+          clearTimeout(timeout)
+          resolve(data.toString())
+        })
+      })
+      expect(firstMessage).toContain('"type":"frame"')
+
+      proxySocket.send(JSON.stringify({ type: 'ping', source: 'test' }))
+      await new Promise<void>((resolve, reject) => {
+        const startedAt = Date.now()
+        const poll = () => {
+          if (upstreamMessages.some((message) => message.includes('"type":"ping"'))) {
+            resolve()
+            return
+          }
+          if (Date.now() - startedAt > 5_000) {
+            reject(new Error('Timed out waiting for proxied upstream message'))
+            return
+          }
+          setTimeout(poll, 25)
+        }
+        poll()
+      })
+      proxySocket.close()
+
+      const releaseResponse = await fetch(
+        `http://${config.host}:${config.port}/api/playwright/live-preview/${encodeURIComponent(previewId)}`,
+        { method: 'DELETE' },
+      )
+      const releasePayload = (await releaseResponse.json()) as { ok?: boolean; previewId?: string; released?: boolean }
+      expect(releaseResponse.status).toBe(200)
+      expect(releasePayload.ok).toBe(true)
+      expect(releasePayload.previewId).toBe(previewId)
+      expect(releasePayload.released).toBe(true)
+    } finally {
+      await server.stop()
+      await livePreviewService.stop()
+      await new Promise<void>((resolve, reject) => {
+        upstreamServer.close((error) => {
+          if (error) {
+            reject(error)
+            return
+          }
+          resolve()
+        })
+      })
     }
   })
 })

@@ -161,6 +161,14 @@ export interface UpdatePlaywrightSettingsResponse {
 
 export type PlaywrightLivePreviewMode = 'embedded' | 'focus'
 
+export type PlaywrightPreviewStatus =
+  | 'idle'
+  | 'starting'
+  | 'active'
+  | 'unavailable'
+  | 'error'
+  | 'expired'
+
 export type PlaywrightLivePreviewLeaseStatus = 'active' | 'expired'
 
 export interface PlaywrightLivePreviewHandle {
@@ -173,6 +181,8 @@ export interface PlaywrightLivePreviewHandle {
   lastUsedAt: string
   expiresAt: string
   inspectorAvailable: boolean
+  iframeSrc: string
+  controllerProxyUrl: string
   embedUrl: string
   bootstrapUrl: string
   controllerWsUrl: string
@@ -201,55 +211,6 @@ export interface StartPlaywrightLivePreviewResponse {
   preview: PlaywrightLivePreviewHandle
 }
 
-export interface PlaywrightControllerBootstrap {
-  preview: PlaywrightLivePreviewHandle
-  session: PlaywrightDiscoveredSession
-  backendOrigin: string
-  controllerWsUrl: string
-  inspectorAvailable: boolean
-  inspectorProxyUrl: string | null
-}
-
-export interface GetPlaywrightLivePreviewBootstrapResponse {
-  bootstrap: PlaywrightControllerBootstrap
-}
-
-export interface ReleasePlaywrightLivePreviewResponse {
-  ok: true
-  previewId: string
-  released: boolean
-}
-
-// --- Live Preview types ---
-
-export type PlaywrightPreviewStatus =
-  | 'idle'
-  | 'starting'
-  | 'active'
-  | 'unavailable'
-  | 'error'
-  | 'expired'
-
-export interface PlaywrightLivePreviewHandle {
-  previewId: string
-  sessionId: string
-  iframeSrc: string
-  controllerProxyUrl: string
-  inspectorAvailable: boolean
-  createdAt: string
-  expiresAt: string
-}
-
-export interface StartPlaywrightLivePreviewRequest {
-  sessionId: string
-  mode?: 'embedded' | 'focus'
-}
-
-export interface StartPlaywrightLivePreviewResponse {
-  ok: true
-  preview: PlaywrightLivePreviewHandle
-}
-
 export interface ReleasePlaywrightLivePreviewRequest {
   previewId: string
 }
@@ -257,16 +218,26 @@ export interface ReleasePlaywrightLivePreviewRequest {
 export interface ReleasePlaywrightLivePreviewResponse {
   ok: true
   previewId: string
+  released?: boolean
 }
 
 export interface PlaywrightControllerBootstrap {
+  preview: PlaywrightLivePreviewHandle
   previewId: string
   sessionId: string
   controllerWsUrl: string
+  controllerProxyUrl: string
   inspectorWsUrl: string | null
+  inspectorProxyUrl: string | null
   sessionName: string
   browserName: string | null
   initialUrl: string | null
+  backendOrigin: string
+  session: PlaywrightDiscoveredSession
+}
+
+export interface GetPlaywrightLivePreviewBootstrapResponse {
+  bootstrap: PlaywrightControllerBootstrap
 }
 
 export interface PlaywrightLivePreviewStatusEvent {

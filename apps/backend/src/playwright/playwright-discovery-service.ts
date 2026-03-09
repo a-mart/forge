@@ -217,6 +217,16 @@ export class PlaywrightDiscoveryService extends EventEmitter {
     }
   }
 
+  getSessionById(sessionId: string): PlaywrightDiscoveredSession | null {
+    const normalizedSessionId = sessionId.trim()
+    if (!normalizedSessionId) {
+      return null
+    }
+
+    const session = this.currentSnapshot.sessions.find((candidate) => candidate.id === normalizedSessionId)
+    return session ? JSON.parse(JSON.stringify(session)) as PlaywrightDiscoveredSession : null
+  }
+
   isEffectivelyEnabled(): boolean {
     return this.currentSettings.effectiveEnabled
   }

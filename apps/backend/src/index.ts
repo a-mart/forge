@@ -5,6 +5,7 @@ import { createConfig, readPlaywrightDashboardEnvOverride } from "./config.js";
 import { formatIntegrationContext } from "./integrations/integration-context.js";
 import { IntegrationRegistryService } from "./integrations/registry.js";
 import { PlaywrightDiscoveryService } from "./playwright/playwright-discovery-service.js";
+import { PlaywrightLivePreviewService } from "./playwright/playwright-live-preview-service.js";
 import { PlaywrightSettingsService } from "./playwright/playwright-settings-service.js";
 import { CronSchedulerService } from "./scheduler/cron-scheduler-service.js";
 import { getScheduleFilePath } from "./scheduler/schedule-storage.js";
@@ -116,6 +117,11 @@ async function main(): Promise<void> {
     playwrightDiscovery = null;
   }
 
+  const playwrightLivePreviewService = new PlaywrightLivePreviewService({
+    discoveryService: playwrightDiscovery,
+  });
+  await playwrightLivePreviewService.start();
+
   const wsServer = new SwarmWebSocketServer({
     swarmManager,
     host: config.host,
@@ -123,6 +129,7 @@ async function main(): Promise<void> {
     allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
     integrationRegistry,
     playwrightDiscovery,
+    playwrightLivePreviewService,
     playwrightSettingsService,
     playwrightEnvEnabledOverride,
   });
@@ -137,6 +144,7 @@ async function main(): Promise<void> {
       queueSchedulerSync(new Set<string>()),
       integrationRegistry.stop(),
       playwrightDiscovery?.stop(),
+      playwrightLivePreviewService.stop(),
       wsServer.stop()
     ]);
     process.exit(0);
