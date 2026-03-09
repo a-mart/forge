@@ -20,6 +20,9 @@ interface ChatHeaderProps {
   connected: boolean
   activeAgentId: string | null
   activeAgentLabel: string
+  activeAgentProfileName?: string
+  activeAgentSessionLabel?: string
+  totalUnreadCount?: number
   activeAgentArchetypeId?: string | null
   activeAgentStatus: AgentStatus | null
   channelView: ChannelView
@@ -105,6 +108,9 @@ export function ChatHeader({
   connected,
   activeAgentId,
   activeAgentLabel,
+  activeAgentProfileName,
+  activeAgentSessionLabel,
+  totalUnreadCount = 0,
   activeAgentArchetypeId,
   activeAgentStatus,
   channelView,
@@ -146,11 +152,16 @@ export function ChatHeader({
           <Button
             variant="ghost"
             size="icon"
-            className="size-11 shrink-0 text-muted-foreground hover:bg-accent/70 hover:text-foreground md:hidden"
+            className="relative size-11 shrink-0 text-muted-foreground hover:bg-accent/70 hover:text-foreground md:hidden"
             onClick={onToggleMobileSidebar}
             aria-label="Open sidebar"
           >
             <Menu className="size-5" />
+            {totalUnreadCount > 0 && (
+              <span className="absolute -top-0.5 -right-0.5 flex size-5 items-center justify-center rounded-full bg-emerald-600 text-[10px] font-bold text-white">
+                {totalUnreadCount > 99 ? '99+' : totalUnreadCount}
+              </span>
+            )}
           </Button>
         ) : null}
 
@@ -179,12 +190,20 @@ export function ChatHeader({
             className="min-w-0 truncate text-sm font-bold text-foreground"
             title={activeAgentId ?? activeAgentLabel}
           >
-            {activeAgentLabel}
+            {/* Mobile: show only session label if available, Desktop: full breadcrumb */}
+            {activeAgentProfileName && activeAgentSessionLabel ? (
+              <>
+                <span className="md:hidden">{activeAgentSessionLabel}</span>
+                <span className="hidden md:inline">{activeAgentLabel}</span>
+              </>
+            ) : (
+              activeAgentLabel
+            )}
           </h1>
           {archetypeLabel ? (
             <Badge
               variant="outline"
-              className="h-5 max-w-32 shrink-0 border-border/60 bg-muted/40 px-1.5 text-[10px] font-medium text-muted-foreground"
+              className="hidden h-5 max-w-32 shrink-0 border-border/60 bg-muted/40 px-1.5 text-[10px] font-medium text-muted-foreground md:inline-flex"
               title={archetypeLabel}
             >
               <span className="truncate">{archetypeLabel}</span>

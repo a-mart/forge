@@ -93,16 +93,34 @@ export function IndexPage() {
     return state.agents.find((agent) => agent.agentId === activeAgentId) ?? null
   }, [activeAgentId, state.agents])
 
+  const activeAgentProfileName = useMemo(() => {
+    if (!activeAgent?.profileId || !activeAgent.sessionLabel) return undefined
+    const profile = state.profiles.find((p) => p.profileId === activeAgent.profileId)
+    return profile?.displayName ?? activeAgent.profileId
+  }, [activeAgent, state.profiles])
+
+  const activeAgentSessionLabel = useMemo(() => {
+    if (!activeAgent?.profileId || !activeAgent.sessionLabel) return undefined
+    return activeAgent.sessionLabel
+  }, [activeAgent])
+
   const activeAgentLabel = useMemo(() => {
     if (!activeAgent) return activeAgentId ?? 'No active agent'
     // For session agents, show profile name + session label
-    if (activeAgent.profileId && activeAgent.sessionLabel) {
-      const profile = state.profiles.find((p) => p.profileId === activeAgent.profileId)
-      const profileName = profile?.displayName ?? activeAgent.profileId
-      return `${profileName} › ${activeAgent.sessionLabel}`
+    if (activeAgentProfileName && activeAgentSessionLabel) {
+      return `${activeAgentProfileName} › ${activeAgentSessionLabel}`
     }
     return activeAgent.displayName ?? activeAgentId ?? 'No active agent'
-  }, [activeAgent, activeAgentId, state.profiles])
+  }, [activeAgent, activeAgentId, activeAgentProfileName, activeAgentSessionLabel])
+
+  const totalUnreadCount = useMemo(() => {
+    if (!state.unreadCounts) return 0
+    return Object.entries(state.unreadCounts).reduce((sum, [agentId, count]) => {
+      if (agentId === activeAgentId) return sum
+      return sum + count
+    }, 0)
+  }, [state.unreadCounts, activeAgentId])
+
   const isActiveManager = activeAgent?.role === 'manager'
 
   const activeManagerId = useMemo(() => {
@@ -605,6 +623,9 @@ export function IndexPage() {
                   connected={state.connected}
                   activeAgentId={activeAgentId}
                   activeAgentLabel={activeAgentLabel}
+                  activeAgentProfileName={activeAgentProfileName}
+                  activeAgentSessionLabel={activeAgentSessionLabel}
+                  totalUnreadCount={totalUnreadCount}
                   activeAgentArchetypeId={activeAgent?.archetypeId}
                   activeAgentStatus={activeAgentStatus}
                   channelView={channelView}
