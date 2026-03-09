@@ -172,18 +172,6 @@ function canPlay(key: string): boolean {
   return true
 }
 
-// ── Multi-tab guard ──
-
-function shouldPlayInThisTab(): boolean {
-  if (typeof document === 'undefined') return false
-  // Play in focused tab. If no tab has focus, play anyway (user is away from browser).
-  // We use document.hasFocus() — returns true when the tab+window are focused.
-  // If the tab is hidden but no tab has focus, we still want sound.
-  // There's no cross-tab coordination, so we use a simple heuristic:
-  // play if tab is visible OR if the document doesn't have focus (background scenario).
-  return document.visibilityState === 'visible' || !document.hasFocus()
-}
-
 // ── Trigger checks ──
 
 function hasStreamingWorkers(managerAgentId: string, state: ManagerWsState): boolean {
@@ -195,43 +183,45 @@ function hasStreamingWorkers(managerAgentId: string, state: ManagerWsState): boo
 }
 
 export function shouldPlayUnread(
+  prefsKey: string,
   agentId: string,
   state: ManagerWsState,
   store: NotificationStore,
 ): boolean {
   if (!store.globalEnabled) return false
-  if (agentId === state.targetAgentId) return false
-  const prefs = getAgentPrefs(store, agentId)
+  // Don't play for the currently viewed agent if the user is actively looking at it
+  if (agentId === state.targetAgentId && document.hasFocus()) return false
+  const prefs = getAgentPrefs(store, prefsKey)
   return prefs.unreadSound.enabled
 }
 
 export function shouldPlayAllDone(
+  prefsKey: string,
   agentId: string,
   state: ManagerWsState,
   store: NotificationStore,
 ): boolean {
   if (!store.globalEnabled) return false
-  if (agentId === state.targetAgentId) return false
-  const prefs = getAgentPrefs(store, agentId)
+  // Don't play for the currently viewed agent if the user is actively looking at it
+  if (agentId === state.targetAgentId && document.hasFocus()) return false
+  const prefs = getAgentPrefs(store, prefsKey)
   if (!prefs.allDoneSound.enabled) return false
   return !hasStreamingWorkers(agentId, state)
 }
 
 // ── Public API: play notification sounds ──
 
-export function playUnread(agentId: string, store: NotificationStore): void {
-  if (!shouldPlayInThisTab()) return
-  if (!canPlay(`unread:${agentId}`)) return
-  const prefs = getAgentPrefs(store, agentId)
+export function playUnread(prefsKey: string, store: NotificationStore): void {
+  if (!canPlay(`unread:${prefsKey}`)) return
+  const prefs = getAgentPrefs(store, prefsKey)
   const url = resolveSoundUrl(prefs.unreadSound.soundId, store)
   if (!url) return
   playSound(url, prefs.volume)
 }
 
-export function playAllDone(agentId: string, store: NotificationStore): void {
-  if (!shouldPlayInThisTab()) return
-  if (!canPlay(`allDone:${agentId}`)) return
-  const prefs = getAgentPrefs(store, agentId)
+export function playAllDone(prefsKey: string, store: NotificationStore): void {
+  if (!canPlay(`allDone:${prefsKey}`)) return
+  const prefs = getAgentPrefs(store, prefsKey)
   const url = resolveSoundUrl(prefs.allDoneSound.soundId, store)
   if (!url) return
   playSound(url, prefs.volume)
@@ -248,15 +238,19 @@ export function handleUnreadNotification(
   const store = readNotificationStore()
   if (!store.globalEnabled) return
 
+  // Resolve profileId-based prefs key (settings UI saves prefs keyed by profileId)
+  const agent = state.agents.find((a) => a.agentId === agentId)
+  const prefsKey = agent?.profileId ?? agentId
+
   // "All done" takes priority — it's the higher-importance sound
-  if (shouldPlayAllDone(agentId, state, store)) {
-    playAllDone(agentId, store)
+  if (shouldPlayAllDone(prefsKey, agentId, state, store)) {
+    playAllDone(prefsKey, store)
     return
   }
 
   // Fall back to the generic unread sound
-  if (shouldPlayUnread(agentId, state, store)) {
-    playUnread(agentId, store)
+  if (shouldPlayUnread(prefsKey, agentId, state, store)) {
+    playUnread(prefsKey, store)
   }
 }
 
