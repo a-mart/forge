@@ -641,7 +641,7 @@ describe('Playwright routes and WS bootstrap', () => {
     }
   })
 
-  it('starts preview leases, prewarms controller state, and replays buffered tabs/frame to late clients', async () => {
+  it('starts preview leases, prewarms controller state, and replays buffered method-style tabs/frame to late clients', async () => {
     const config = await makeTempConfig()
     const swarmManager = new FakeSwarmManager(config, [createManagerDescriptor(config.paths.rootDir)])
     const settingsService = new PlaywrightSettingsService({ dataDir: config.paths.dataDir })
@@ -666,19 +666,21 @@ describe('Playwright routes and WS bootstrap', () => {
       if (upstreamConnectionCount === 1) {
         socket.send(
           JSON.stringify({
-            type: 'tabs',
-            tabs: [
-              {
-                pageId: 'page-1',
-                selected: true,
-                title: 'Example',
-                url: 'https://example.com',
-                inspectorUrl: 'http://127.0.0.1:9222/devtools/inspector.html',
-              },
-            ],
+            method: 'tabs',
+            params: {
+              tabs: [
+                {
+                  pageId: 'page-1',
+                  selected: true,
+                  title: 'Example',
+                  url: 'https://example.com',
+                  inspectorUrl: 'http://127.0.0.1:9222/devtools/inspector.html',
+                },
+              ],
+            },
           }),
         )
-        socket.send(JSON.stringify({ type: 'frame', data: 'ZmFrZQ==' }))
+        socket.send(JSON.stringify({ method: 'frame', params: { data: 'ZmFrZQ==' } }))
         resolveFirstUpstreamPrimed?.()
       }
       socket.on('message', (data) => {
@@ -714,6 +716,11 @@ describe('Playwright routes and WS bootstrap', () => {
     await server.start()
 
     try {
+      const isTabsMessage = (message: string): boolean =>
+        message.includes('"type":"tabs"') || message.includes('"method":"tabs"')
+      const isFrameMessage = (message: string): boolean =>
+        message.includes('"type":"frame"') || message.includes('"method":"frame"')
+
       const waitForTabsAndFrame = async (socket: WebSocket, timeoutMessage: string): Promise<string[]> => {
         return await new Promise<string[]>((resolve, reject) => {
           const messages: string[] = []
@@ -725,10 +732,7 @@ describe('Playwright routes and WS bootstrap', () => {
           const onMessage = (data: WebSocket.RawData) => {
             const raw = data.toString()
             messages.push(raw)
-            if (
-              messages.some((message) => message.includes('"type":"tabs"')) &&
-              messages.some((message) => message.includes('"type":"frame"'))
-            ) {
+            if (messages.some(isTabsMessage) && messages.some(isFrameMessage)) {
               clearTimeout(timeout)
               socket.off('message', onMessage)
               resolve(messages)
@@ -810,8 +814,8 @@ describe('Playwright routes and WS bootstrap', () => {
       const proxiedMessages = await proxiedMessagesPromise
       expect(upstreamConnectionCount).toBe(1)
 
-      const tabsMessage = proxiedMessages.find((message) => message.includes('"type":"tabs"')) ?? ''
-      expect(tabsMessage).toContain('"type":"tabs"')
+      const tabsMessage = proxiedMessages.find(isTabsMessage) ?? ''
+      expect(tabsMessage).toContain('"method":"tabs"')
       expect(tabsMessage).not.toContain('127.0.0.1:9222')
       expect(tabsMessage).toContain('"inspectorUrl":null')
 
@@ -828,7 +832,8 @@ describe('Playwright routes and WS bootstrap', () => {
       await once(secondProxySocket, 'open')
       const secondProxiedMessages = await secondProxiedMessagesPromise
       expect(upstreamConnectionCount).toBe(1)
-      expect(secondProxiedMessages.some((message) => message.includes('"type":"frame"'))).toBe(true)
+      expect(secondProxiedMessages.some(isFrameMessage)).toBe(true)
+      expect(secondProxiedMessages.some((message) => message.includes('"method":"frame"'))).toBe(true)
 
       proxySocket.send(JSON.stringify({ type: 'ping', source: 'test' }))
       await new Promise<void>((resolve, reject) => {

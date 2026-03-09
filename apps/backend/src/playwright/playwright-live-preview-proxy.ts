@@ -311,7 +311,12 @@ function getControllerMessageType(value: unknown): string | null {
     return null
   }
 
-  return typeof (value as { type?: unknown }).type === 'string' ? (value as { type: string }).type : null
+  const message = value as { type?: unknown; method?: unknown }
+  if (typeof message.type === 'string') {
+    return message.type
+  }
+
+  return typeof message.method === 'string' ? message.method : null
 }
 
 function sanitizeInspectorUrls(value: unknown): unknown {
