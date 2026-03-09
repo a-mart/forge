@@ -12,6 +12,12 @@ interface PlaywrightLivePreviewFrameProps {
   onStatusMessage?: (message: PlaywrightLivePreviewEmbedStatusMessage) => void
 }
 
+/**
+ * How long after iframe HTML loads to wait for the embed's controller
+ * WebSocket to connect (signalled via postMessage) before timing out.
+ */
+const EMBED_READY_TIMEOUT_MS = 30_000
+
 export function PlaywrightLivePreviewFrame({
   iframeSrc,
   interactionEnabled,
@@ -21,7 +27,14 @@ export function PlaywrightLivePreviewFrame({
   onStatusMessage,
 }: PlaywrightLivePreviewFrameProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null)
-  const [isLoading, setIsLoading] = useState(true)
+  /** Whether the iframe document itself has loaded (HTML served). */
+  const [iframeLoaded, setIframeLoaded] = useState(false)
+  /**
+   * Whether the embedded Playwright DevTools app has reported an `active`
+   * status via postMessage — meaning its controller WebSocket connected
+   * and the preview is genuinely live.
+   */
+  const [embedActive, setEmbedActive] = useState(false)
   const [hasError, setHasError] = useState(false)
   const iframeOrigin = useMemo(() => {
     try {
@@ -32,22 +45,36 @@ export function PlaywrightLivePreviewFrame({
   }, [iframeSrc])
 
   const handleLoad = useCallback(() => {
-    setIsLoading(false)
+    setIframeLoaded(true)
     setHasError(false)
     onLoad?.()
   }, [onLoad])
 
   const handleError = useCallback(() => {
-    setIsLoading(false)
+    setIframeLoaded(false)
     setHasError(true)
     onError?.('Failed to load preview frame')
   }, [onError])
 
-  // Reset loading state when src changes
+  // Reset all readiness state when the iframe src changes (new preview)
   useEffect(() => {
-    setIsLoading(true)
+    setIframeLoaded(false)
+    setEmbedActive(false)
     setHasError(false)
   }, [iframeSrc])
+
+  // Timeout: if the iframe HTML loaded but the embedded app never reports
+  // active status (controller WS never connected), surface an error so the
+  // user can retry instead of staring at a spinner forever.
+  useEffect(() => {
+    if (!iframeLoaded || embedActive || hasError) return
+
+    const timer = setTimeout(() => {
+      onError?.('Preview connection timed out — the embedded preview did not become active')
+    }, EMBED_READY_TIMEOUT_MS)
+
+    return () => clearTimeout(timer)
+  }, [iframeLoaded, embedActive, hasError, onError])
 
   useEffect(() => {
     if (!onStatusMessage) {
@@ -67,6 +94,12 @@ export function PlaywrightLivePreviewFrame({
         return
       }
 
+      // Track embed readiness: dismiss the loading overlay once the
+      // controller WebSocket connects (status === 'active').
+      if (event.data.status === 'active') {
+        setEmbedActive(true)
+      }
+
       onStatusMessage(event.data)
     }
 
@@ -76,14 +109,19 @@ export function PlaywrightLivePreviewFrame({
     }
   }, [iframeOrigin, onStatusMessage])
 
+  // Show loading overlay until the embed reports active (WS connected),
+  // not just until the iframe HTML loads.
+  const showLoading = !embedActive && !hasError
+  const loadingText = iframeLoaded ? 'Connecting to preview…' : 'Loading preview…'
+
   return (
     <div className="relative flex-1 min-h-0 bg-black/5 dark:bg-white/5">
-      {/* Loading overlay */}
-      {isLoading ? (
+      {/* Loading overlay — kept visible until embed reports active via postMessage */}
+      {showLoading ? (
         <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/80">
           <div className="flex flex-col items-center gap-2">
             <Loader2 className="size-6 text-muted-foreground animate-spin" />
-            <span className="text-xs text-muted-foreground">Loading preview…</span>
+            <span className="text-xs text-muted-foreground">{loadingText}</span>
           </div>
         </div>
       ) : null}
@@ -98,8 +136,8 @@ export function PlaywrightLivePreviewFrame({
         </div>
       ) : null}
 
-      {/* Click-to-control overlay (when interaction is not enabled) */}
-      {!interactionEnabled && !isLoading && !hasError ? (
+      {/* Click-to-control overlay (only when embed is active and interaction not yet enabled) */}
+      {!interactionEnabled && embedActive && !hasError ? (
         <div
           className={cn(
             'absolute inset-0 z-20 cursor-pointer',
