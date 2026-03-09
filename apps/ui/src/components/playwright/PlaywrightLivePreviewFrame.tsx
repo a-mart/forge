@@ -66,7 +66,7 @@ export function PlaywrightLivePreviewFrame({
         <div
           className={cn(
             'absolute inset-0 z-20 cursor-pointer',
-            'flex items-center justify-center',
+            'flex items-end justify-center pb-6',
             'bg-transparent hover:bg-black/5 dark:hover:bg-white/5',
             'transition-colors duration-150',
           )}
@@ -75,11 +75,11 @@ export function PlaywrightLivePreviewFrame({
         >
           <div className={cn(
             'flex items-center gap-2 rounded-full px-4 py-2',
-            'bg-background/90 border shadow-sm',
-            'opacity-0 hover:opacity-100 transition-opacity duration-200',
+            'bg-background/90 border shadow-md',
+            'animate-in fade-in-0 slide-in-from-bottom-2 duration-300',
           )}>
-            <MousePointer className="size-3.5" />
-            <span className="text-xs font-medium">Click to control</span>
+            <MousePointer className="size-3.5 text-muted-foreground" />
+            <span className="text-xs font-medium">Click anywhere to interact</span>
           </div>
         </div>
       ) : null}

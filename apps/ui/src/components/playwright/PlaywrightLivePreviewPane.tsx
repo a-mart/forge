@@ -26,6 +26,7 @@ interface PreviewState {
   previewId: string | null
   iframeSrc: string | null
   errorMessage: string | null
+  unavailableReason: string | null
   interactionEnabled: boolean
 }
 
@@ -34,7 +35,25 @@ const INITIAL_PREVIEW_STATE: PreviewState = {
   previewId: null,
   iframeSrc: null,
   errorMessage: null,
+  unavailableReason: null,
   interactionEnabled: false,
+}
+
+/** Parse backend error responses for structured unavailable/expired signals */
+function classifyStartError(err: unknown): { status: PlaywrightPreviewStatus; message: string } {
+  const message = err instanceof Error ? err.message : 'Failed to start preview'
+  const lower = message.toLowerCase()
+
+  // Backend may return specific reasons the session is not previewable
+  if (lower.includes('not previewable') || lower.includes('unavailable') ||
+      lower.includes('inactive') || lower.includes('stale') ||
+      lower.includes('no active browser') || lower.includes('socket not responsive')) {
+    return { status: 'unavailable', message }
+  }
+  if (lower.includes('expired') || lower.includes('lease expired')) {
+    return { status: 'expired', message }
+  }
+  return { status: 'error', message }
 }
 
 export function PlaywrightLivePreviewPane({
@@ -58,29 +77,21 @@ export function PlaywrightLivePreviewPane({
     }
   }, [wsUrl])
 
-  // Start a preview for a session
+  // Start a preview for a session.
+  // Previewability is determined by the backend, not client-side liveness checks.
+  // isFocusMode is intentionally NOT a dependency — changing layout mode must not
+  // trigger a new lease. The backend lease works for both embedded and focus display.
   const startPreview = useCallback(
     async (targetSession: PlaywrightDiscoveredSession) => {
       // Release any existing preview first
       releaseCurrentPreview()
-
-      // Check if session is previewable
-      if (targetSession.liveness !== 'active') {
-        setPreview({
-          status: 'unavailable',
-          previewId: null,
-          iframeSrc: null,
-          errorMessage: null,
-          interactionEnabled: false,
-        })
-        return
-      }
 
       setPreview({
         status: 'starting',
         previewId: null,
         iframeSrc: null,
         errorMessage: null,
+        unavailableReason: null,
         interactionEnabled: false,
       })
 
@@ -88,7 +99,7 @@ export function PlaywrightLivePreviewPane({
         const handle = await startPlaywrightLivePreview(
           wsUrl,
           targetSession.id,
-          isFocusMode ? 'focus' : 'embedded',
+          'embedded',
         )
 
         // Check if the session has changed while we were starting
@@ -106,22 +117,25 @@ export function PlaywrightLivePreviewPane({
           previewId: handle.previewId,
           iframeSrc,
           errorMessage: null,
+          unavailableReason: null,
           interactionEnabled: false,
         })
       } catch (err) {
         // Check if the session has changed while we were starting
         if (activeSessionIdRef.current !== targetSession.id) return
 
+        const classified = classifyStartError(err)
         setPreview({
-          status: 'error',
+          status: classified.status,
           previewId: null,
           iframeSrc: null,
-          errorMessage: err instanceof Error ? err.message : 'Failed to start preview',
+          errorMessage: classified.status === 'error' ? classified.message : null,
+          unavailableReason: classified.status === 'unavailable' ? classified.message : null,
           interactionEnabled: false,
         })
       }
     },
-    [wsUrl, isFocusMode, releaseCurrentPreview],
+    [wsUrl, releaseCurrentPreview],
   )
 
   // When session selection changes, start/stop preview
@@ -166,14 +180,21 @@ export function PlaywrightLivePreviewPane({
     // Frame loaded successfully; status remains active
   }, [])
 
-  // Handle iframe error
+  // Handle iframe error — distinguish disconnected from generic error
   const handleFrameError = useCallback((message: string) => {
-    setPreview((prev) => ({
-      ...prev,
-      status: 'error',
-      errorMessage: message,
-    }))
+    setPreview((prev) => {
+      // If we had an active preview and the frame failed, it's a disconnect
+      const newStatus: PlaywrightPreviewStatus =
+        prev.status === 'active' ? 'disconnected' : 'error'
+      return {
+        ...prev,
+        status: newStatus,
+        errorMessage: message,
+      }
+    })
   }, [])
+
+  const canRetry = preview.status === 'error' || preview.status === 'expired' || preview.status === 'disconnected'
 
   // Show empty state if no session or non-active preview
   if (!session || preview.status !== 'active' || !preview.iframeSrc) {
@@ -193,7 +214,8 @@ export function PlaywrightLivePreviewPane({
           status={preview.status}
           sessionSelected={session !== null}
           errorMessage={preview.errorMessage}
-          onRetry={preview.status === 'error' || preview.status === 'expired' ? handleRetry : undefined}
+          unavailableReason={preview.unavailableReason}
+          onRetry={canRetry ? handleRetry : undefined}
         />
       </div>
     )

@@ -46,6 +46,11 @@ export interface PlaywrightSessionCorrelation {
   reasons: string[]
 }
 
+export interface PlaywrightSessionPreviewability {
+  previewable: boolean
+  unavailableReason: string | null
+}
+
 export interface PlaywrightDiscoveredSession {
   id: string
   sessionName: string
@@ -91,6 +96,7 @@ export interface PlaywrightDiscoveredSession {
 
   correlation: PlaywrightSessionCorrelation
   warnings: string[]
+  previewability?: PlaywrightSessionPreviewability
 }
 
 export interface PlaywrightDiscoverySettings {
@@ -166,6 +172,7 @@ export type PlaywrightPreviewStatus =
   | 'starting'
   | 'active'
   | 'unavailable'
+  | 'disconnected'
   | 'error'
   | 'expired'
 

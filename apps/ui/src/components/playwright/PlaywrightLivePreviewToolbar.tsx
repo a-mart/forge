@@ -1,6 +1,5 @@
 import {
   ArrowLeft,
-  ExternalLink,
   Maximize2,
   Minimize2,
   MonitorPlay,
@@ -26,6 +25,7 @@ const STATUS_INDICATOR: Record<PlaywrightPreviewStatus, { color: string; label: 
   starting: { color: 'bg-amber-500 animate-pulse', label: 'Connecting…' },
   active: { color: 'bg-emerald-500', label: 'Live' },
   unavailable: { color: 'bg-muted-foreground/40', label: 'Unavailable' },
+  disconnected: { color: 'bg-amber-500', label: 'Disconnected' },
   error: { color: 'bg-destructive', label: 'Error' },
   expired: { color: 'bg-amber-500', label: 'Expired' },
 }
@@ -105,29 +105,6 @@ export function PlaywrightLivePreviewToolbar({
             {isFocusMode ? 'Exit focus mode' : 'Focus mode'}
           </TooltipContent>
         </Tooltip>
-
-        {/* Open standalone (dev escape hatch) */}
-        {session.ports.cdp ? (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 w-7 p-0 text-muted-foreground/60"
-                onClick={() => {
-                  // Escape hatch: open the standalone Playwright devtools window
-                  // This is intentionally low-visibility and for debugging only
-                  window.open(`http://127.0.0.1:${session.ports.cdp}`, '_blank')
-                }}
-              >
-                <ExternalLink className="size-3.5" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom" className="text-xs">
-              Open standalone (debug)
-            </TooltipContent>
-          </Tooltip>
-        ) : null}
 
         {/* Close preview */}
         <Tooltip>

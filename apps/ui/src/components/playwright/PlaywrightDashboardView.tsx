@@ -25,12 +25,11 @@ import {
   triggerPlaywrightRescan,
 } from './playwright-api'
 import { cn } from '@/lib/utils'
+import type { PlaywrightViewMode } from '@/hooks/index-page/use-route-state'
 import type {
   PlaywrightDiscoveredSession,
   PlaywrightDiscoverySnapshot,
 } from '@middleman/protocol'
-
-export type PlaywrightViewMode = 'split' | 'focus' | 'tiles'
 
 export interface PlaywrightDashboardViewProps {
   wsUrl: string
@@ -165,10 +164,18 @@ export function PlaywrightDashboardView({
     return snapshot.sessions.find((s) => s.id === selectedSessionId) ?? null
   }, [selectedSessionId, snapshot?.sessions])
 
-  // Auto-select: if exactly one active session exists and none is selected, auto-select it
+  // Auto-select: if exactly one active session exists and none is selected, auto-select it.
+  // Only fires once per dashboard mount (not after deliberate deselection).
   const autoSelectAttemptedRef = useRef(false)
+  const hadSelectionRef = useRef(!!selectedSessionId)
+
+  // Track whether user has ever had a selection (deliberate deselection should not re-trigger)
   useEffect(() => {
-    if (autoSelectAttemptedRef.current || selectedSessionId || !snapshot?.sessions) return
+    if (selectedSessionId) hadSelectionRef.current = true
+  }, [selectedSessionId])
+
+  useEffect(() => {
+    if (autoSelectAttemptedRef.current || selectedSessionId || hadSelectionRef.current || !snapshot?.sessions) return
     autoSelectAttemptedRef.current = true
 
     const activeSessions = snapshot.sessions.filter((s) => s.liveness === 'active')
@@ -349,127 +356,120 @@ export function PlaywrightDashboardView({
 
   // Empty state
   const isEmpty = snapshot.sessions.length === 0
+  const isFocusMode = viewMode === 'focus' && !!selectedSession
+  const showDiscovery = !isFocusMode
 
-  // Focus mode: show only the preview pane
-  if (viewMode === 'focus' && selectedSession) {
-    return (
-      <div className="flex h-full flex-col min-h-0">
-        <PlaywrightLivePreviewPane
-          wsUrl={wsUrl}
-          session={selectedSession}
-          isFocusMode
-          onToggleFocusMode={handleExitFocusMode}
-          onClose={handleDeselectSession}
-          onBack={handleExitFocusMode}
-        />
-      </div>
-    )
-  }
-
-  // Split view or tiles
+  // Single stable layout: header + body. Preview pane is always in the same
+  // DOM position to avoid unmount/remount when toggling split↔focus.
   return (
     <div className="flex h-full flex-col min-h-0">
-      <DashboardHeader
-        onBack={onBack}
-        onOpenSettings={onOpenSettings}
-        serviceStatus={snapshot.serviceStatus}
-        viewMode={viewMode}
-        onViewModeChange={(mode) => onViewStateChange?.(selectedSessionId ?? null, mode)}
-      />
+      {/* Dashboard header — hidden in focus mode */}
+      {showDiscovery ? (
+        <DashboardHeader
+          onBack={onBack}
+          onOpenSettings={onOpenSettings}
+          serviceStatus={snapshot.serviceStatus}
+          viewMode={viewMode}
+          onViewModeChange={(mode) => onViewStateChange?.(selectedSessionId ?? null, mode)}
+        />
+      ) : null}
 
       <div className={cn(
         'flex flex-1 min-h-0',
-        selectedSession ? 'divide-x' : '',
+        showDiscovery && selectedSession ? 'divide-x' : '',
       )}>
-        {/* Left: Discovery pane */}
-        <div className={cn(
-          'flex flex-col min-h-0',
-          selectedSession ? 'w-[400px] min-w-[320px] shrink-0' : 'flex-1',
-        )}>
-          <ScrollArea className="flex-1">
-            <div className="p-4 space-y-4">
-              {/* Rescan error banner */}
-              {rescanError ? (
-                <div className="rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-                  Rescan failed: {rescanError}
-                </div>
-              ) : null}
+        {/* Left: Discovery pane — hidden in focus mode */}
+        {showDiscovery ? (
+          <div className={cn(
+            'flex flex-col min-h-0',
+            selectedSession ? 'w-[400px] min-w-[320px] shrink-0' : 'flex-1',
+          )}>
+            <ScrollArea className="flex-1">
+              <div className="p-4 space-y-4">
+                {/* Rescan error banner */}
+                {rescanError ? (
+                  <div className="rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                    Rescan failed: {rescanError}
+                  </div>
+                ) : null}
 
-              {/* Snapshot-level warnings */}
-              {snapshot.warnings.length > 0 ? (
-                <div className="rounded-md border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-600 dark:text-amber-400 space-y-1">
-                  {snapshot.warnings.map((w, i) => (
-                    <p key={i} className="flex items-start gap-1.5">
-                      <AlertTriangle className="size-3 shrink-0 mt-0.5" />
-                      {w}
-                    </p>
-                  ))}
-                </div>
-              ) : null}
+                {/* Snapshot-level warnings */}
+                {snapshot.warnings.length > 0 ? (
+                  <div className="rounded-md border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-600 dark:text-amber-400 space-y-1">
+                    {snapshot.warnings.map((w, i) => (
+                      <p key={i} className="flex items-start gap-1.5">
+                        <AlertTriangle className="size-3 shrink-0 mt-0.5" />
+                        {w}
+                      </p>
+                    ))}
+                  </div>
+                ) : null}
 
-              {/* Summary bar - compact when split view has preview */}
-              {!selectedSession ? (
-                <PlaywrightSummaryBar
-                  summary={snapshot.summary}
-                  lastScanCompletedAt={snapshot.lastScanCompletedAt}
+                {/* Summary bar - compact when split view has preview */}
+                {!selectedSession ? (
+                  <PlaywrightSummaryBar
+                    summary={snapshot.summary}
+                    lastScanCompletedAt={snapshot.lastScanCompletedAt}
+                  />
+                ) : null}
+
+                {/* Filters */}
+                <PlaywrightFilters
+                  filters={filters}
+                  worktreeOptions={worktreeOptions}
+                  onFiltersChange={setFilters}
+                  onRescan={handleRescan}
+                  isRescanning={isRescanning}
                 />
-              ) : null}
 
-              {/* Filters */}
-              <PlaywrightFilters
-                filters={filters}
-                worktreeOptions={worktreeOptions}
-                onFiltersChange={setFilters}
-                onRescan={handleRescan}
-                isRescanning={isRescanning}
-              />
+                {/* Hidden sessions hint */}
+                {hiddenCounts.total > 0 && filteredSessions.length > 0 ? (
+                  <HiddenSessionsHint
+                    inactiveCount={hiddenCounts.inactive}
+                    staleCount={hiddenCounts.stale}
+                    onShowInactive={() => setFilters((f) => ({ ...f, showInactive: true }))}
+                    onShowStale={() => setFilters((f) => ({ ...f, showStale: true }))}
+                  />
+                ) : null}
 
-              {/* Hidden sessions hint */}
-              {hiddenCounts.total > 0 && filteredSessions.length > 0 ? (
-                <HiddenSessionsHint
-                  inactiveCount={hiddenCounts.inactive}
-                  staleCount={hiddenCounts.stale}
-                  onShowInactive={() => setFilters((f) => ({ ...f, showInactive: true }))}
-                  onShowStale={() => setFilters((f) => ({ ...f, showStale: true }))}
-                />
-              ) : null}
+                {/* Content */}
+                {isEmpty ? (
+                  <EmptyState
+                    rootsScanned={snapshot.rootsScanned}
+                    onOpenSettings={onOpenSettings}
+                  />
+                ) : filteredSessions.length === 0 ? (
+                  <FilteredEmptyState
+                    onClearFilters={() => setFilters(INITIAL_FILTERS)}
+                    hiddenInactive={hiddenCounts.inactive}
+                    hiddenStale={hiddenCounts.stale}
+                    onShowInactive={() => setFilters((f) => ({ ...f, showInactive: true }))}
+                    onShowStale={() => setFilters((f) => ({ ...f, showStale: true }))}
+                  />
+                ) : (
+                  <SessionList
+                    sessions={filteredSessions}
+                    selectedSessionId={selectedSessionId}
+                    compact={!!selectedSession}
+                    onSelectSession={handleSelectSession}
+                    onFocusSession={handleEnterFocusMode}
+                  />
+                )}
+              </div>
+            </ScrollArea>
+          </div>
+        ) : null}
 
-              {/* Content */}
-              {isEmpty ? (
-                <EmptyState
-                  rootsScanned={snapshot.rootsScanned}
-                  onOpenSettings={onOpenSettings}
-                />
-              ) : filteredSessions.length === 0 ? (
-                <FilteredEmptyState
-                  onClearFilters={() => setFilters(INITIAL_FILTERS)}
-                  hiddenInactive={hiddenCounts.inactive}
-                  hiddenStale={hiddenCounts.stale}
-                  onShowInactive={() => setFilters((f) => ({ ...f, showInactive: true }))}
-                  onShowStale={() => setFilters((f) => ({ ...f, showStale: true }))}
-                />
-              ) : (
-                <SessionList
-                  sessions={filteredSessions}
-                  selectedSessionId={selectedSessionId}
-                  compact={!!selectedSession}
-                  onSelectSession={handleSelectSession}
-                  onFocusSession={handleEnterFocusMode}
-                />
-              )}
-            </div>
-          </ScrollArea>
-        </div>
-
-        {/* Right: Preview pane (split view) */}
+        {/* Right: Preview pane — stable single instance, expands to fill in focus mode */}
         {selectedSession ? (
           <div className="flex-1 min-w-0 min-h-0">
             <PlaywrightLivePreviewPane
               wsUrl={wsUrl}
               session={selectedSession}
-              isFocusMode={false}
+              isFocusMode={isFocusMode}
               onToggleFocusMode={handleToggleFocusMode}
               onClose={handleDeselectSession}
+              onBack={isFocusMode ? handleExitFocusMode : undefined}
             />
           </div>
         ) : null}
