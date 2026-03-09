@@ -762,8 +762,6 @@ async function enumerateWorktrees(repoRoot: string, warnings: string[]): Promise
         const normalized = normalizePath(worktreePath)
         if (await pathExists(normalized)) {
           worktrees.add(normalized)
-        } else {
-          warnings.push(`Ignoring missing worktree from registry: ${worktreePath}`)
         }
       }
     } catch (error) {
