@@ -1003,3 +1003,273 @@ function shouldPlaySound(
 ```
 
 This integrates cleanly into the existing `handleServerEvent()` in `ws-client.ts` — the `unread_notification` case already exists and just needs the sound trigger added.
+
+---
+
+## v1.1 Follow-up: False-Positive "All Done" Sound Classification
+
+> **Date:** 2026-03-09
+> **Status:** Root cause identified, fix recommended
+> **Scope:** Bug where the "all done" completion sound plays for interim manager messages before worker orchestration begins
+
+### Problem Statement
+
+When a user sends a message to a manager session:
+1. Manager starts its agentic turn (status → `streaming`)
+2. Manager calls `speak_to_user` tool with an early planning/acknowledgement message
+3. WS server emits `conversation_message` + `unread_notification`
+4. Frontend receives `unread_notification` and evaluates `shouldPlayAllDone()`
+5. `shouldPlayAllDone` checks `!hasStreamingWorkers()` → **true** (no workers spawned yet)
+6. **"All done" completion sound plays incorrectly**
+7. Manager then calls `spawn_agent` to launch workers (too late — sound already fired)
+
+The user expects the lower-priority "unread" sound for interim messages, and the "all done" sound only when the entire orchestration workflow is truly complete.
+
+### Root Cause Analysis
+
+**`speak_to_user` is a tool call that executes mid-turn while the manager is `streaming`.** The `unread_notification` is emitted synchronously from the tool execution path:
+
+```
+publishToUser()                                    (swarm-manager.ts:2041)
+  → emitConversationMessage(payload)               (swarm-manager.ts:2064)
+    → emit("conversation_message", payload)
+      → WS server onConversationMessage()          (server.ts:37)
+        → broadcastToSubscribed(conversation_message)
+        → broadcastToSubscribed(unread_notification)   ← notification fires HERE
+```
+
+At this point in time:
+- **Manager status:** `streaming` (entered at `agent_start`, exits only at `agent_end`)
+- **Workers:** none exist yet (the `spawn_agent` tool call hasn't executed)
+- **Frontend `state.statuses[managerId]`:** shows `streaming`
+
+The current `shouldPlayAllDone` check:
+```typescript
+function hasStreamingWorkers(managerAgentId: string, state: ManagerWsState): boolean {
+  return state.agents.some((agent) => {
+    if (agent.role !== 'worker' || agent.managerId !== managerAgentId) return false
+    const liveStatus = state.statuses[agent.agentId]?.status ?? agent.status
+    return liveStatus === 'streaming'
+  })
+}
+```
+
+This only checks worker status. **It completely ignores the manager's own status.** When there are no workers (not-yet-spawned, or a simple Q&A), this always returns `false`, making `shouldPlayAllDone` return `true`.
+
+The fundamental issue: **the sound classification decision is made at `unread_notification` time, but the correct "all done" determination can only be made after the manager finishes its turn (goes idle).**
+
+### Event Timing Trace
+
+For the false-positive case (manager plans, then spawns workers):
+
+```
+T0: user_message received → manager pendingCount=1
+T1: agent_start           → manager status: streaming
+T2: speak_to_user tool    → unread_notification emitted
+    └─ Frontend: hasStreamingWorkers=false → plays ALL DONE ✗
+T3: spawn_agent tool      → worker created, worker status: streaming
+T4: agent_end (manager)   → manager status: idle
+    └─ Workers still streaming
+T5: workers finish, report back
+T6: agent_start (manager) → manager status: streaming
+T7: speak_to_user (final) → unread_notification emitted
+T8: agent_end (manager)   → manager status: idle, no streaming workers
+    └─ THIS is the real "all done" moment
+```
+
+### Existing Signals Available to the Frontend
+
+| Signal | Available at `unread_notification` time? | Useful? |
+|--------|------------------------------------------|---------|
+| `state.statuses[managerId].status` | ✅ Yes | ✅ Manager `streaming` = mid-turn = interim message |
+| `state.statuses[managerId].pendingCount` | ✅ Yes | ⚠️ Reflects queued messages, not orchestration intent |
+| Worker descriptors in `state.agents` | ✅ Yes | ❌ Workers don't exist yet at T2 |
+| `agent_tool_call` events (spawn imminent) | ❌ Arrives after notification | ❌ Race condition |
+| `agent_status` idle transition | ❌ Arrives later (T4/T8) | ✅ Correct completion signal |
+
+**Key insight:** The manager's own `streaming` status is available in the frontend state store at notification time and perfectly distinguishes "mid-turn interim" from "post-turn completion." `speak_to_user` is a tool call, so the manager is *always* `streaming` when the notification fires.
+
+### Evaluated Options
+
+#### Option A: Add `isManagerStreaming` check to `shouldPlayAllDone` (frontend-only, partial fix)
+
+```typescript
+export function shouldPlayAllDone(...): boolean {
+  // ... existing checks ...
+  const managerStatus = state.statuses[agentId]?.status
+    ?? state.agents.find(a => a.agentId === agentId)?.status
+  if (managerStatus === 'streaming') return false     // ← NEW
+  return !hasStreamingWorkers(agentId, state)
+}
+```
+
+**Problem:** Since `speak_to_user` always fires during `streaming`, this effectively disables the "all done" sound entirely from `unread_notification`. The all-done sound would never play — we need a supplementary trigger.
+
+**Verdict:** Necessary but insufficient alone.
+
+#### Option B: Trigger all-done from `agent_status` idle transition (frontend, supplementary)
+
+When `agent_status` shows a manager transitioning to `idle`:
+- Check: no streaming workers
+- Check: there are unread messages for this agent (or a recent speak_to_user)
+- If both: play the "all done" sound
+
+```typescript
+// In ws-client.ts, agent_status handler:
+case 'agent_status': {
+  const prevStatus = this.state.statuses[event.agentId]?.status
+  const statuses = { ...this.state.statuses, [event.agentId]: { ... } }
+  this.updateState({ statuses })
+
+  // Manager went idle — evaluate deferred completion sound
+  if (event.status === 'idle' && prevStatus === 'streaming') {
+    const agent = this.state.agents.find(a => a.agentId === event.agentId)
+    if (agent?.role === 'manager') {
+      handleManagerIdleTransition(event.agentId, this.state)
+    }
+  }
+  break
+}
+```
+
+**Pros:** Correctly fires at the real completion moment. Handles all cases (simple Q&A, multi-worker orchestration).
+**Cons:** Adds a second notification trigger path. Needs coordination with Option A to avoid double sounds.
+
+**Verdict:** Correct completion signal. Needed to complement Option A.
+
+#### Option C: Deferred classification (frontend, combined A+B with coordination)
+
+Full approach that defers the sound decision:
+
+1. On `unread_notification`: if manager is `streaming`, mark a **pending notification** (no sound yet). If manager is idle, classify immediately.
+2. On `agent_status(idle)` for a manager: if there's a pending notification, classify and play the appropriate sound, then clear the pending flag.
+
+```typescript
+// notification-service.ts additions
+const pendingCompletionCheck = new Map<string, number>() // agentId → timestamp
+
+export function handleUnreadNotification(agentId: string, state: ManagerWsState): void {
+  const store = readNotificationStore()
+  if (!store.globalEnabled) return
+
+  const agent = state.agents.find(a => a.agentId === agentId)
+  const managerStatus = state.statuses[agentId]?.status ?? agent?.status
+
+  if (managerStatus === 'streaming') {
+    // Manager mid-turn — defer sound decision until idle
+    pendingCompletionCheck.set(agentId, Date.now())
+    // Still play the unread sound immediately for interim awareness
+    const prefsKey = agent?.profileId ?? agentId
+    if (shouldPlayUnread(prefsKey, agentId, state, store)) {
+      playUnread(prefsKey, store)
+    }
+    return
+  }
+
+  // Manager already idle — classify normally
+  classifyAndPlay(agentId, state, store)
+}
+
+export function handleManagerIdleTransition(agentId: string, state: ManagerWsState): void {
+  if (!pendingCompletionCheck.has(agentId)) return
+  pendingCompletionCheck.delete(agentId)
+
+  const store = readNotificationStore()
+  if (!store.globalEnabled) return
+
+  const agent = state.agents.find(a => a.agentId === agentId)
+  const prefsKey = agent?.profileId ?? agentId
+
+  if (shouldPlayAllDone(prefsKey, agentId, state, store)) {
+    playAllDone(prefsKey, store)
+  }
+  // No else — unread already played at notification time
+}
+```
+
+**Pros:**
+- ✅ Fixes false positive: interim messages play unread, not all-done
+- ✅ Completion sound fires at the right time (manager idle + no streaming workers)
+- ✅ Simple Q&A: unread plays immediately, all-done plays on idle transition (~100–500ms later)
+- ✅ No backend changes required
+- ✅ No race conditions — all events arrive in order on single WebSocket
+
+**Cons:**
+- ⚠️ Simple Q&A gets two sounds (unread at speak_to_user, then all-done at idle). Mitigated by the 2s debounce on each sound key, and the all-done fires quickly after.
+- ⚠️ Small state to manage (pending map), but trivially simple
+
+**Verdict:** ⭐ Best overall approach.
+
+#### Option D: Pure delay/debounce heuristic (frontend-only)
+
+On `unread_notification`, set a 1–2 second timer. When it fires, check worker status and play the appropriate sound.
+
+**Pros:** Simple concept.
+**Cons:**
+- ❌ Arbitrary delay adds latency to all notifications
+- ❌ Spawn can take >2s (model resolution, capacity fallback, runtime boot)
+- ❌ Doesn't use available signals (manager status) — pure guesswork
+
+**Verdict:** Fragile; rejected.
+
+#### Option E: Backend-enriched `unread_notification` event
+
+Add `managerStreaming: boolean` (or `orchestrationActive: boolean`) to the `unread_notification` event payload.
+
+```typescript
+// server.ts
+this.wsHandler.broadcastToSubscribed({
+  type: "unread_notification",
+  agentId: event.agentId,
+  managerStreaming: descriptor?.status === "streaming"
+})
+```
+
+**Pros:** Explicit signal, no frontend state cross-referencing needed.
+**Cons:**
+- Protocol change (requires `packages/protocol` type update)
+- Redundant — frontend already has this info in `state.statuses`
+- Still doesn't solve the "when to play all-done" problem (needs idle trigger too)
+
+**Verdict:** Unnecessary; frontend already has the data. Still needs Option B/C supplement.
+
+#### Option F: Only treat last `speak_to_user` in a turn as completion
+
+Track tool call events and only classify the final speak_to_user before turn-end as a completion candidate.
+
+**Cons:**
+- ❌ Impossible to know at notification time whether it's the "last" speak_to_user
+- ❌ Would require post-hoc reclassification
+- ❌ Essentially equivalent to Option C but more complex
+
+**Verdict:** Rejected.
+
+### Recommendation: Option C — Deferred Classification
+
+**Option C** is the recommended fix for v1.1:
+
+1. **In `handleUnreadNotification`:** Check `state.statuses[agentId].status`. If `streaming`, record a pending notification and play only the unread sound immediately.
+2. **In ws-client's `agent_status` handler:** When a manager transitions from `streaming` → `idle`, call a new `handleManagerIdleTransition()` that checks for a pending notification, evaluates `shouldPlayAllDone` (checking `!hasStreamingWorkers`), and plays the all-done sound if appropriate.
+3. **In `shouldPlayAllDone`:** Add `isManagerStreaming` guard as a safety net (Option A), so even if the deferred path is bypassed, the false positive cannot occur.
+
+This approach:
+- **Eliminates the false positive** — interim messages always play unread
+- **Correctly detects completion** — all-done fires when manager is idle + no streaming workers
+- **Is frontend-only** — no protocol or backend changes
+- **Has no race conditions** — WebSocket message ordering guarantees `agent_status(idle)` arrives after `unread_notification`
+- **Handles all scenarios:**
+  - Simple Q&A (no workers): unread → all-done on idle (~100–500ms gap)
+  - Planning + workers: unread → no all-done until workers finish
+  - Multi-turn orchestration: unread for each interim → all-done only at final quiescence
+
+### Implementation Complexity
+
+| Component | Changes |
+|-----------|---------|
+| `notification-service.ts` | Add `pendingCompletionCheck` map, `handleManagerIdleTransition()`, `isManagerStreaming()` helper, guard in `shouldPlayAllDone` |
+| `ws-client.ts` | Track previous status in `agent_status` handler, call `handleManagerIdleTransition` on `streaming→idle` |
+| `ws-state.ts` | No changes |
+| `packages/protocol` | No changes |
+| Backend | No changes |
+
+**Estimated effort:** ~1–2 hours. Small, surgical change. Low risk of regressions — only affects sound playback logic, not message routing or state management.
