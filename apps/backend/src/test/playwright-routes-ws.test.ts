@@ -499,6 +499,62 @@ describe('Playwright routes and WS bootstrap', () => {
     }
   })
 
+  it('serves vendored live preview JS and CSS assets from /playwright-live/assets', async () => {
+    const config = await makeTempConfig()
+    const swarmManager = new FakeSwarmManager(config, [createManagerDescriptor(config.paths.rootDir)])
+    const settingsService = new PlaywrightSettingsService({ dataDir: config.paths.dataDir })
+    await settingsService.load()
+
+    const settings = createSettings()
+    const activeSession = createActiveSession(config.paths.rootDir)
+    const snapshot = createSnapshot(settings, [activeSession])
+    const discovery = new FakePlaywrightDiscovery(snapshot, settings)
+
+    const livePreviewService = new PlaywrightLivePreviewService({
+      discoveryService: discovery as unknown as never,
+      devtoolsBridge: {
+        async startPreviewController() {
+          return {
+            upstreamControllerUrl: 'ws://127.0.0.1:49000/controller',
+            source: 'playwright-cli-daemon' as const,
+          }
+        },
+      },
+    })
+    await livePreviewService.start()
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: swarmManager as unknown as never,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: false,
+      playwrightDiscovery: discovery as unknown as never,
+      playwrightLivePreviewService: livePreviewService,
+      playwrightSettingsService: settingsService,
+    })
+
+    await server.start()
+    try {
+      const jsResponse = await fetch(`http://${config.host}:${config.port}/playwright-live/assets/index-BlUdtOgD.js`)
+      const jsBody = await jsResponse.text()
+      expect(jsResponse.status).toBe(200)
+      expect(jsResponse.headers.get('content-type')).toBe('text/javascript; charset=utf-8')
+      expect(jsBody.length).toBeGreaterThan(0)
+
+      const cssResponse = await fetch(`http://${config.host}:${config.port}/playwright-live/assets/index-CcsbAkl3.css`)
+      const cssBody = await cssResponse.text()
+      expect(cssResponse.status).toBe(200)
+      expect(cssResponse.headers.get('content-type')).toBe('text/css; charset=utf-8')
+      expect(cssBody.length).toBeGreaterThan(0)
+
+      const traversalResponse = await fetch(`http://${config.host}:${config.port}/playwright-live/assets/%2E%2E%2Fembed.js`)
+      expect(traversalResponse.status).toBe(403)
+    } finally {
+      await server.stop()
+      await livePreviewService.stop()
+    }
+  })
+
   it('rejects inactive and unresponsive sessions with explicit previewability errors', async () => {
     const config = await makeTempConfig()
     const swarmManager = new FakeSwarmManager(config, [createManagerDescriptor(config.paths.rootDir)])

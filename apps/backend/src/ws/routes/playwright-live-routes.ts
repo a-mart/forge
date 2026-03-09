@@ -52,6 +52,7 @@ const PLAYWRIGHT_LIVE_RELEASE_PATH = /^\/playwright-live\/api\/previews\/([^/]+)
 const PLAYWRIGHT_LIVE_PARENT_RELEASE_PATH = /^\/api\/playwright\/live-preview\/([^/]+)$/
 
 const STATIC_ASSET_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../../static/playwright-live')
+const STATIC_ASSET_VENDORED_ROOT = resolve(STATIC_ASSET_ROOT, 'assets')
 const DEVTOOLS_BUNDLE_JS = 'assets/index-BlUdtOgD.js'
 const DEVTOOLS_BUNDLE_CSS = 'assets/index-CcsbAkl3.css'
 
@@ -387,8 +388,8 @@ async function handleAssetRequest(
   }
 
   const relativePath = decodeURIComponent(match[1] ?? '')
-  const assetPath = resolve(STATIC_ASSET_ROOT, relativePath)
-  if (!assetPath.startsWith(`${STATIC_ASSET_ROOT}/`) && assetPath !== STATIC_ASSET_ROOT) {
+  const assetPath = resolve(STATIC_ASSET_VENDORED_ROOT, relativePath)
+  if (!assetPath.startsWith(`${STATIC_ASSET_VENDORED_ROOT}/`) && assetPath !== STATIC_ASSET_VENDORED_ROOT) {
     sendJson(response, 403, { error: 'Forbidden' })
     return
   }
