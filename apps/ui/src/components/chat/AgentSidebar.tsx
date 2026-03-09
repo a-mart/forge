@@ -290,7 +290,7 @@ function WorkerRow({
       <ContextMenuTrigger asChild>
         <div
           className={cn(
-            'flex w-full items-center gap-1 rounded-md py-1 pl-12 pr-1.5 transition-colors',
+            'flex w-full items-center gap-1 rounded-md py-2.5 pl-12 pr-1.5 transition-colors md:py-1',
             isSelected
               ? 'bg-sidebar-accent text-sidebar-accent-foreground'
               : 'text-sidebar-foreground/90 hover:bg-sidebar-accent/50',
@@ -424,7 +424,7 @@ function SessionRowItem({
               type="button"
               onClick={() => onSelect(sessionAgent.agentId)}
               className={cn(
-                'flex min-w-0 flex-1 items-center gap-1.5 py-1.5 pr-1.5 text-left',
+                'flex min-w-0 flex-1 items-center gap-1.5 py-2.5 pr-1.5 text-left md:py-1.5',
                 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
                 workers.length > 0 ? 'pl-7' : 'pl-5',
               )}
@@ -717,7 +717,7 @@ function ProfileGroup({
                 if (targetId) onSelect(targetId)
               }}
               className={cn(
-                'flex min-w-0 flex-1 items-center gap-1.5 rounded-md py-1.5 pl-7 pr-1.5 text-left transition-colors',
+                'flex min-w-0 flex-1 items-center gap-1.5 rounded-md py-2.5 pl-7 pr-1.5 text-left transition-colors md:py-1.5',
                 'hover:bg-sidebar-accent/50',
                 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
               )}
@@ -1737,10 +1737,10 @@ export function AgentSidebar({
           <button
             type="button"
             onClick={onMobileClose}
-            className="inline-flex size-9 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground md:hidden"
+            className="inline-flex size-11 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground md:hidden"
             aria-label="Close sidebar"
           >
-            <X className="size-4" />
+            <X className="size-5" />
           </button>
         ) : null}
       </div>
@@ -1886,7 +1886,7 @@ export function AgentSidebar({
         />
         <div
           className={cn(
-            'relative z-10 h-full w-[80vw] max-w-[20rem] transition-transform duration-200 ease-out',
+            'relative z-10 h-full w-full transition-transform duration-200 ease-out',
             isMobileOpen ? 'translate-x-0' : '-translate-x-full',
           )}
         >

@@ -146,11 +146,11 @@ export function ChatHeader({
           <Button
             variant="ghost"
             size="icon"
-            className="size-9 shrink-0 text-muted-foreground hover:bg-accent/70 hover:text-foreground md:hidden"
+            className="size-11 shrink-0 text-muted-foreground hover:bg-accent/70 hover:text-foreground md:hidden"
             onClick={onToggleMobileSidebar}
             aria-label="Open sidebar"
           >
-            <Menu className="size-4" />
+            <Menu className="size-5" />
           </Button>
         ) : null}
 
@@ -190,14 +190,14 @@ export function ChatHeader({
               <span className="truncate">{archetypeLabel}</span>
             </Badge>
           ) : null}
-          <span aria-hidden="true" className="shrink-0 text-muted-foreground">
+          <span aria-hidden="true" className="hidden shrink-0 text-muted-foreground md:inline">
             ·
           </span>
-          <span className="shrink-0 whitespace-nowrap text-xs font-mono text-muted-foreground">
+          <span className="hidden shrink-0 whitespace-nowrap text-xs font-mono text-muted-foreground md:inline">
             {statusLabel}
           </span>
           {activeAgentId && onSessionFeedbackVote ? (
-            <>
+            <div className="hidden shrink-0 items-center gap-1.5 md:flex">
               <span aria-hidden="true" className="shrink-0 text-muted-foreground">
                 ·
               </span>
@@ -212,7 +212,7 @@ export function ChatHeader({
                 scope="session"
                 size="md"
               />
-            </>
+            </div>
           ) : null}
         </div>
       </div>
@@ -250,7 +250,7 @@ export function ChatHeader({
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="size-7 shrink-0 text-muted-foreground hover:bg-accent/70 hover:text-foreground"
+                  className="size-9 shrink-0 text-muted-foreground hover:bg-accent/70 hover:text-foreground md:size-7"
                   aria-label="More actions"
                 >
                   <MoreHorizontal className="size-4" />
@@ -316,31 +316,33 @@ export function ChatHeader({
           </>
         ) : null}
 
-        {/* ── Inline: artifacts toggle ── */}
-        <TooltipProvider delayDuration={200}>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className={cn(
-                  'size-7 shrink-0 transition-colors',
-                  isArtifactsPanelOpen
-                    ? 'bg-accent text-foreground'
-                    : 'text-muted-foreground hover:bg-accent/70 hover:text-foreground',
-                )}
-                onClick={onToggleArtifactsPanel}
-                aria-label={isArtifactsPanelOpen ? `Close ${panelLabel.toLowerCase()}` : panelLabel}
-                aria-pressed={isArtifactsPanelOpen}
-              >
-                <PanelRight className="size-3.5" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom" sideOffset={6}>
-              {isArtifactsPanelOpen ? `Close ${panelLabel.toLowerCase()}` : panelLabel}
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
+        {/* ── Inline: artifacts toggle (hidden on mobile) ── */}
+        <div className="hidden md:inline-flex">
+          <TooltipProvider delayDuration={200}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className={cn(
+                    'size-7 shrink-0 transition-colors',
+                    isArtifactsPanelOpen
+                      ? 'bg-accent text-foreground'
+                      : 'text-muted-foreground hover:bg-accent/70 hover:text-foreground',
+                  )}
+                  onClick={onToggleArtifactsPanel}
+                  aria-label={isArtifactsPanelOpen ? `Close ${panelLabel.toLowerCase()}` : panelLabel}
+                  aria-pressed={isArtifactsPanelOpen}
+                >
+                  <PanelRight className="size-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" sideOffset={6}>
+                {isArtifactsPanelOpen ? `Close ${panelLabel.toLowerCase()}` : panelLabel}
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        </div>
       </div>
     </header>
   )
