@@ -141,6 +141,18 @@ export function PlaywrightDashboardView({
     return sessions
   }, [snapshot?.sessions, filters])
 
+  // Compute hidden counts for the "all" status view (inactive/stale hidden by toggles)
+  const hiddenCounts = useMemo(() => {
+    if (!snapshot?.sessions || filters.status !== 'all') return { inactive: 0, stale: 0, total: 0 }
+    let inactive = 0
+    let stale = 0
+    for (const s of snapshot.sessions) {
+      if (s.liveness === 'inactive' && !filters.showInactive) inactive++
+      if (s.liveness === 'stale' && !filters.showStale) stale++
+    }
+    return { inactive, stale, total: inactive + stale }
+  }, [snapshot?.sessions, filters.status, filters.showInactive, filters.showStale])
+
   // Handle rescan — consume returned snapshot immediately
   const handleRescan = useCallback(() => {
     if (isRescanning) return
@@ -286,18 +298,6 @@ export function PlaywrightDashboardView({
 
   // Empty state (ready but no sessions)
   const isEmpty = snapshot.sessions.length === 0
-
-  // Compute hidden counts for the "all" status view (inactive/stale hidden by toggles)
-  const hiddenCounts = useMemo(() => {
-    if (!snapshot?.sessions || filters.status !== 'all') return { inactive: 0, stale: 0, total: 0 }
-    let inactive = 0
-    let stale = 0
-    for (const s of snapshot.sessions) {
-      if (s.liveness === 'inactive' && !filters.showInactive) inactive++
-      if (s.liveness === 'stale' && !filters.showStale) stale++
-    }
-    return { inactive, stale, total: inactive + stale }
-  }, [snapshot?.sessions, filters.status, filters.showInactive, filters.showStale])
 
   return (
     <div className="flex h-full flex-col min-h-0">
