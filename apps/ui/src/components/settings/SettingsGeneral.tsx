@@ -25,9 +25,10 @@ import type { PlaywrightDiscoverySettings } from '@middleman/protocol'
 interface SettingsGeneralProps {
   wsUrl: string
   onPlaywrightSnapshotUpdate?: (snapshot: import('@middleman/protocol').PlaywrightDiscoverySnapshot) => void
+  onPlaywrightSettingsLoaded?: (settings: PlaywrightDiscoverySettings) => void
 }
 
-export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate }: SettingsGeneralProps) {
+export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrightSettingsLoaded }: SettingsGeneralProps) {
   const [themePreference, setThemePreference] = useState<ThemePreference>(() =>
     readStoredThemePreference(),
   )
@@ -48,12 +49,13 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate }: SettingsG
       .then((settings) => {
         setPlaywrightSettings(settings)
         setPlaywrightLoadFailed(false)
+        onPlaywrightSettingsLoaded?.(settings)
       })
       .catch((err) => {
         setPlaywrightLoadFailed(true)
         setPlaywrightError(err instanceof Error ? err.message : 'Could not load Playwright settings')
       })
-  }, [wsUrl])
+  }, [wsUrl, onPlaywrightSettingsLoaded])
 
   const handlePlaywrightToggle = useCallback(
     (enabled: boolean) => {
@@ -170,6 +172,7 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate }: SettingsG
                         .then((s) => {
                           setPlaywrightSettings(s)
                           setPlaywrightLoadFailed(false)
+                          onPlaywrightSettingsLoaded?.(s)
                         })
                         .catch((err) => {
                           setPlaywrightLoadFailed(true)

@@ -5,7 +5,7 @@ import { SettingsNotifications } from '@/components/settings/SettingsNotificatio
 import { SettingsAuth } from '@/components/settings/SettingsAuth'
 import { SettingsIntegrations } from '@/components/settings/SettingsIntegrations'
 import { SettingsSkills } from '@/components/settings/SettingsSkills'
-import type { AgentDescriptor, PlaywrightDiscoverySnapshot, SlackStatusEvent, TelegramStatusEvent } from '@middleman/protocol'
+import type { AgentDescriptor, PlaywrightDiscoverySettings, PlaywrightDiscoverySnapshot, SlackStatusEvent, TelegramStatusEvent } from '@middleman/protocol'
 
 interface SettingsPanelProps {
   wsUrl: string
@@ -14,6 +14,7 @@ interface SettingsPanelProps {
   telegramStatus?: TelegramStatusEvent | null
   onBack?: () => void
   onPlaywrightSnapshotUpdate?: (snapshot: PlaywrightDiscoverySnapshot) => void
+  onPlaywrightSettingsLoaded?: (settings: PlaywrightDiscoverySettings) => void
 }
 
 export function SettingsPanel({
@@ -23,12 +24,13 @@ export function SettingsPanel({
   telegramStatus,
   onBack,
   onPlaywrightSnapshotUpdate,
+  onPlaywrightSettingsLoaded,
 }: SettingsPanelProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>('general')
 
   return (
     <SettingsLayout activeTab={activeTab} onTabChange={setActiveTab} onBack={onBack}>
-      {activeTab === 'general' && <SettingsGeneral wsUrl={wsUrl} onPlaywrightSnapshotUpdate={onPlaywrightSnapshotUpdate} />}
+      {activeTab === 'general' && <SettingsGeneral wsUrl={wsUrl} onPlaywrightSnapshotUpdate={onPlaywrightSnapshotUpdate} onPlaywrightSettingsLoaded={onPlaywrightSettingsLoaded} />}
       {activeTab === 'notifications' && <SettingsNotifications managers={managers} />}
       {activeTab === 'auth' && <SettingsAuth wsUrl={wsUrl} />}
       {activeTab === 'integrations' && (

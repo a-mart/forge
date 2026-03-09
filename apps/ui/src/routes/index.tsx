@@ -563,6 +563,16 @@ export function IndexPage() {
     [setState],
   )
 
+  const handlePlaywrightSettingsLoaded = useCallback(
+    (settings: import('@middleman/protocol').PlaywrightDiscoverySettings) => {
+      setState((prev) => ({
+        ...prev,
+        playwrightSettings: settings,
+      }))
+    },
+    [setState],
+  )
+
   const showPlaywrightNav = state.playwrightSettings?.effectiveEnabled === true
 
   const handleSuggestionClick = (prompt: string) => {
@@ -638,6 +648,7 @@ export function IndexPage() {
                   })
                 }
                 onPlaywrightSnapshotUpdate={handlePlaywrightSnapshotUpdate}
+                onPlaywrightSettingsLoaded={handlePlaywrightSettingsLoaded}
               />
             ) : activeView === 'playwright' ? (
               <PlaywrightDashboardView
