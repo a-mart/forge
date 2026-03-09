@@ -907,6 +907,153 @@ describe('Playwright routes and WS bootstrap', () => {
     }
   })
 
+  it('bootstraps the first controller client when no buffered tabs state exists', async () => {
+    const config = await makeTempConfig()
+    const swarmManager = new FakeSwarmManager(config, [createManagerDescriptor(config.paths.rootDir)])
+    const settingsService = new PlaywrightSettingsService({ dataDir: config.paths.dataDir })
+    await settingsService.load()
+
+    const settings = createSettings()
+    const activeSession = createActiveSession(config.paths.rootDir)
+    const snapshot = createSnapshot(settings, [activeSession])
+    const discovery = new FakePlaywrightDiscovery(snapshot, settings)
+
+    let selectedPageId: string | null = null
+    const upstreamRequests: Array<{ id: number; method: string; params?: Record<string, unknown> }> = []
+    const upstreamPort = await getAvailablePort()
+    const upstreamServer = new WebSocketServer({ host: '127.0.0.1', port: upstreamPort })
+    await once(upstreamServer, 'listening')
+    upstreamServer.on('connection', (socket) => {
+      socket.on('message', (data) => {
+        const request = JSON.parse(data.toString()) as { id: number; method: string; params?: Record<string, unknown> }
+        upstreamRequests.push(request)
+
+        if (request.method === 'tabs') {
+          socket.send(
+            JSON.stringify({
+              id: request.id,
+              result: {
+                tabs: [
+                  {
+                    pageId: 'page-1',
+                    selected: selectedPageId === 'page-1',
+                    title: 'Example',
+                    url: 'https://example.com',
+                    inspectorUrl: 'http://127.0.0.1:9222/devtools/inspector.html',
+                  },
+                ],
+              },
+            }),
+          )
+          return
+        }
+
+        if (request.method === 'selectTab') {
+          selectedPageId = typeof request.params?.pageId === 'string' ? request.params.pageId : null
+          socket.send(JSON.stringify({ id: request.id, result: { ok: true } }))
+        }
+      })
+    })
+
+    const livePreviewService = new PlaywrightLivePreviewService({
+      discoveryService: discovery as unknown as never,
+      devtoolsBridge: {
+        async startPreviewController() {
+          return {
+            upstreamControllerUrl: `ws://127.0.0.1:${upstreamPort}/controller`,
+            source: 'playwright-cli-daemon' as const,
+          }
+        },
+      },
+    })
+    await livePreviewService.start()
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: swarmManager as unknown as never,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: false,
+      playwrightDiscovery: discovery as unknown as never,
+      playwrightLivePreviewService: livePreviewService,
+      playwrightSettingsService: settingsService,
+    })
+    await server.start()
+
+    try {
+      const startResponse = await fetch(`http://${config.host}:${config.port}/api/playwright/live-preview/start`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          origin: 'http://127.0.0.1:47188',
+        },
+        body: JSON.stringify({ sessionId: activeSession.id, mode: 'focus' }),
+      })
+      const startPayload = (await startResponse.json()) as { preview?: { previewId?: string } }
+      expect(startResponse.status).toBe(200)
+
+      const previewId = startPayload.preview?.previewId ?? ''
+      expect(previewId).toBeTruthy()
+
+      const proxySocket = new WebSocket(
+        `ws://${config.host}:${config.port}/playwright-live/ws/controller/${encodeURIComponent(previewId)}`,
+        {
+          origin: `http://${config.host}:${config.port}`,
+        },
+      )
+      const tabsMessagePromise = new Promise<string>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('Timed out waiting for synthetic tabs bootstrap event')), 5_000)
+        proxySocket.on('message', (data) => {
+          const raw = data.toString()
+          if (raw.includes('"method":"tabs"')) {
+            clearTimeout(timeout)
+            resolve(raw)
+          }
+        })
+      })
+
+      await once(proxySocket, 'open')
+      const tabsMessage = await tabsMessagePromise
+      expect(tabsMessage).toContain('"selected":true')
+      expect(tabsMessage).toContain('"inspectorUrl":null')
+
+      await new Promise<void>((resolve, reject) => {
+        const startedAt = Date.now()
+        const poll = () => {
+          const tabsRequests = upstreamRequests.filter((request) => request.method === 'tabs')
+          const selectTabRequest = upstreamRequests.find((request) => request.method === 'selectTab')
+          if (tabsRequests.length >= 2 && selectTabRequest) {
+            resolve()
+            return
+          }
+          if (Date.now() - startedAt > 5_000) {
+            reject(new Error('Timed out waiting for upstream bootstrap requests'))
+            return
+          }
+          setTimeout(poll, 25)
+        }
+        poll()
+      })
+
+      expect(upstreamRequests.filter((request) => request.method === 'tabs')).toHaveLength(2)
+      expect(upstreamRequests.find((request) => request.method === 'selectTab')?.params?.pageId).toBe('page-1')
+
+      proxySocket.close()
+      await once(proxySocket, 'close')
+    } finally {
+      await server.stop()
+      await livePreviewService.stop()
+      await new Promise<void>((resolve, reject) => {
+        upstreamServer.close((error) => {
+          if (error) {
+            reject(error)
+            return
+          }
+          resolve()
+        })
+      })
+    }
+  })
+
   it('expires preview leases, closes active sockets, and returns 410 after expiry', async () => {
     const config = await makeTempConfig()
     const swarmManager = new FakeSwarmManager(config, [createManagerDescriptor(config.paths.rootDir)])

@@ -390,6 +390,13 @@ function inferPreviewabilityFromSession(session: PlaywrightDiscoveredSession): {
   previewable: boolean
   unavailableReason: string | null
 } {
+  if (!session.preferredInDuplicateGroup) {
+    return {
+      previewable: false,
+      unavailableReason: `Session ${session.sessionName} shares a Playwright daemon with a preferred duplicate`,
+    }
+  }
+
   if (session.liveness !== 'active') {
     return {
       previewable: false,

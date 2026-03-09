@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events'
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -133,6 +133,53 @@ function createManagerDescriptor(rootDir: string): AgentDescriptor {
   }
 }
 
+async function createSocketServer(socketPath: string): Promise<() => Promise<void>> {
+  const { createServer } = await import('node:net')
+  await rm(socketPath, { force: true })
+  const server = createServer((socket) => {
+    socket.end()
+  })
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(socketPath, () => resolve())
+  })
+
+  return async () => {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => {
+        if (error) {
+          reject(error)
+          return
+        }
+        resolve()
+      })
+    })
+    await rm(socketPath, { force: true })
+  }
+}
+
+function createTempSocketPath(prefix: string): string {
+  return join(tmpdir(), `${prefix}-${process.pid}-${Math.random().toString(16).slice(2, 8)}.sock`)
+}
+
+async function writeSessionFile(
+  rootDir: string,
+  fileName: string,
+  options: { socketPath: string; timestamp?: number; name?: string },
+): Promise<void> {
+  const sessionsDir = join(rootDir, '.playwright-cli', 'sessions')
+  await mkdir(sessionsDir, { recursive: true })
+  await writeFile(
+    join(sessionsDir, fileName),
+    JSON.stringify({
+      name: options.name ?? fileName.replace(/\.session$/, ''),
+      timestamp: options.timestamp ?? Date.parse('2026-03-09T18:00:00.000Z'),
+      socketPath: options.socketPath,
+    }),
+    'utf8',
+  )
+}
+
 describe('PlaywrightDiscoveryService', () => {
   it('serializes startup, manual rescans, and settings-update scans through one queue', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'playwright-discovery-queue-'))
@@ -228,6 +275,96 @@ describe('PlaywrightDiscoveryService', () => {
       )
     } finally {
       await service.stop()
+    }
+  })
+
+  it('limits agent-derived scan roots to the current manager scope', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'playwright-discovery-scope-'))
+    const foreignRoot = await mkdtemp(join(tmpdir(), 'playwright-discovery-foreign-'))
+    const currentSocketPath = createTempSocketPath('pw-current')
+    const foreignSocketPath = createTempSocketPath('pw-foreign')
+    const closeCurrentSocket = await createSocketServer(currentSocketPath)
+    const closeForeignSocket = await createSocketServer(foreignSocketPath)
+
+    const foreignWorker: AgentDescriptor = {
+      ...createManagerDescriptor(rootDir),
+      agentId: 'foreign-worker',
+      displayName: 'Foreign Worker',
+      role: 'worker',
+      managerId: 'foreign-manager',
+      cwd: foreignRoot,
+      sessionFile: join(foreignRoot, 'sessions', 'foreign-worker.jsonl'),
+    }
+
+    const config = await makeTempConfig(rootDir)
+    const swarmManager = new FakeSwarmManager(config, [createManagerDescriptor(rootDir), foreignWorker])
+    const settingsService = new PlaywrightSettingsService({ dataDir: config.paths.dataDir })
+    await settingsService.load()
+    await settingsService.update({ enabled: true })
+    await writeSessionFile(rootDir, 'current.session', { socketPath: currentSocketPath, name: 'current' })
+    await writeSessionFile(foreignRoot, 'foreign.session', { socketPath: foreignSocketPath, name: 'foreign' })
+
+    const service = new PlaywrightDiscoveryService({
+      swarmManager: swarmManager as unknown as never,
+      settingsService,
+      now: () => new Date('2026-03-09T18:00:00.000Z'),
+    })
+
+    await service.start()
+
+    try {
+      const snapshot = service.getSnapshot()
+      expect(snapshot.sessions.map((session) => session.sessionName)).toEqual(['current'])
+      expect(snapshot.rootsScanned).toHaveLength(1)
+      expect(snapshot.rootsScanned).not.toContain(foreignRoot)
+    } finally {
+      await service.stop()
+      await Promise.all([closeCurrentSocket(), closeForeignSocket()])
+    }
+  })
+
+  it('marks non-preferred duplicate sessions as not previewable', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'playwright-discovery-duplicates-'))
+    const sharedSocketPath = createTempSocketPath('pw-shared')
+    const closeSocket = await createSocketServer(sharedSocketPath)
+
+    const config = await makeTempConfig(rootDir)
+    const swarmManager = new FakeSwarmManager(config, [createManagerDescriptor(rootDir)])
+    const settingsService = new PlaywrightSettingsService({ dataDir: config.paths.dataDir })
+    await settingsService.load()
+    await settingsService.update({ enabled: true })
+    await writeSessionFile(rootDir, 'preferred.session', {
+      socketPath: sharedSocketPath,
+      name: 'preferred',
+      timestamp: Date.parse('2026-03-09T18:00:01.000Z'),
+    })
+    await writeSessionFile(rootDir, 'shadow.session', {
+      socketPath: sharedSocketPath,
+      name: 'shadow',
+      timestamp: Date.parse('2026-03-09T18:00:00.000Z'),
+    })
+
+    const service = new PlaywrightDiscoveryService({
+      swarmManager: swarmManager as unknown as never,
+      settingsService,
+      now: () => new Date('2026-03-09T18:00:02.000Z'),
+    })
+
+    await service.start()
+
+    try {
+      const snapshot = service.getSnapshot()
+      expect(snapshot.summary.duplicateSessions).toBe(1)
+      const preferred = snapshot.sessions.find((session) => session.sessionName === 'preferred')
+      const shadow = snapshot.sessions.find((session) => session.sessionName === 'shadow')
+      expect(preferred?.preferredInDuplicateGroup).toBe(true)
+      expect(preferred?.previewability?.previewable).toBe(true)
+      expect(shadow?.preferredInDuplicateGroup).toBe(false)
+      expect(shadow?.previewability?.previewable).toBe(false)
+      expect(shadow?.previewability?.unavailableReason).toContain('preferred duplicate')
+    } finally {
+      await service.stop()
+      await closeSocket()
     }
   })
 })

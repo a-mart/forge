@@ -303,6 +303,25 @@ export class PlaywrightDiscoveryService extends EventEmitter {
     this.pollTimer.unref?.()
   }
 
+  private getScopedAgents(): AgentDescriptor[] {
+    const currentManagerId = this.swarmManager.getConfig().managerId?.trim()
+    if (!currentManagerId) {
+      return []
+    }
+
+    return this.swarmManager.listAgents().filter((agent) => {
+      if (agent.agentId === currentManagerId) {
+        return true
+      }
+
+      if (agent.managerId !== currentManagerId) {
+        return false
+      }
+
+      return agent.status !== 'terminated' && agent.status !== 'stopped'
+    })
+  }
+
   private stopPolling(): void {
     if (this.pollTimer) {
       clearInterval(this.pollTimer)
@@ -437,7 +456,7 @@ export class PlaywrightDiscoveryService extends EventEmitter {
     for (const root of settings.scanRoots) {
       baseRoots.add(normalizePath(root))
     }
-    for (const agent of this.swarmManager.listAgents()) {
+    for (const agent of this.getScopedAgents()) {
       for (const discoveredRoot of discoverLikelyProjectRoots(agent.cwd)) {
         baseRoots.add(discoveredRoot)
       }
@@ -464,7 +483,7 @@ export class PlaywrightDiscoveryService extends EventEmitter {
     sessions: PlaywrightDiscoveredSession[]
     warnings: string[]
   }> {
-    const agents = this.swarmManager.listAgents()
+    const agents = this.getScopedAgents()
     const candidates: PlaywrightSessionCandidate[] = []
     const warnings: string[] = []
 
@@ -497,6 +516,7 @@ export class PlaywrightDiscoveryService extends EventEmitter {
         socketPath: candidate.socketPath,
         socketExists: probe.socketExists,
         socketResponsive: probe.socketResponsive,
+        preferredInDuplicateGroup: candidate.preferredInDuplicateGroup,
       }, candidate.sessionName)
 
       sessions.push({
@@ -626,9 +646,17 @@ function determineSessionPreviewability(
     socketPath: string | null
     socketExists: boolean
     socketResponsive: boolean | null
+    preferredInDuplicateGroup: boolean
   },
   sessionName: string,
 ): { previewable: boolean; unavailableReason: string | null } {
+  if (!session.preferredInDuplicateGroup) {
+    return {
+      previewable: false,
+      unavailableReason: `Session ${sessionName} shares a Playwright daemon with a preferred duplicate`,
+    }
+  }
+
   if (session.liveness !== 'active') {
     return {
       previewable: false,

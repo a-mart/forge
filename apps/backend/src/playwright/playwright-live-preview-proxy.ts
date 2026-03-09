@@ -5,6 +5,7 @@ import { validateLivePreviewWebSocketOrigin } from './playwright-live-preview-ac
 import { PlaywrightLivePreviewService } from './playwright-live-preview-service.js'
 
 const CONTROLLER_PATH_PATTERN = /^\/playwright-live\/ws\/controller\/([^/]+)$/
+const UPSTREAM_BOOTSTRAP_TIMEOUT_MS = 2_000
 
 interface ReplayMessage {
   data: RawData
@@ -20,6 +21,18 @@ interface PreviewUpstreamChannel {
   closed: boolean
   lastTabsMessage: ReplayMessage | null
   lastFrameMessage: ReplayMessage | null
+  bootstrapPromise: Promise<void> | null
+  nextInternalRpcId: number
+  pendingInternalRpcCalls: Map<number, PendingUpstreamRpcCall>
+  upstreamOpenPromise: Promise<void>
+  resolveUpstreamOpen: () => void
+  rejectUpstreamOpen: (error: Error) => void
+}
+
+interface PendingUpstreamRpcCall {
+  resolve: (result: unknown) => void
+  reject: (error: Error) => void
+  timeout: NodeJS.Timeout
 }
 
 interface SanitizedUpstreamMessage {
@@ -107,6 +120,7 @@ export class PlaywrightLivePreviewProxy {
     channel.clients.add(client)
     this.livePreviewService.touchPreview(previewId)
     this.replayBufferedMessages(channel, client)
+    void this.ensureInitialTabsState(channel)
 
     client.on('message', (data, isBinary) => {
       this.livePreviewService.touchPreview(previewId)
@@ -139,6 +153,13 @@ export class PlaywrightLivePreviewProxy {
     }
 
     const upstream = new WebSocket(upstreamControllerUrl)
+    let resolveUpstreamOpen!: () => void
+    let rejectUpstreamOpen!: (error: Error) => void
+    const upstreamOpenPromise = new Promise<void>((resolve, reject) => {
+      resolveUpstreamOpen = resolve
+      rejectUpstreamOpen = reject
+    })
+    upstreamOpenPromise.catch(() => {})
     const channel: PreviewUpstreamChannel = {
       previewId,
       upstream,
@@ -148,6 +169,12 @@ export class PlaywrightLivePreviewProxy {
       closed: false,
       lastTabsMessage: null,
       lastFrameMessage: null,
+      bootstrapPromise: null,
+      nextInternalRpcId: -1,
+      pendingInternalRpcCalls: new Map(),
+      upstreamOpenPromise,
+      resolveUpstreamOpen,
+      rejectUpstreamOpen,
     }
 
     channel.unregisterCleanup = this.livePreviewService.registerPreviewCleanup(previewId, () => {
@@ -160,6 +187,8 @@ export class PlaywrightLivePreviewProxy {
         return
       }
 
+      channel.resolveUpstreamOpen()
+
       if (channel.clients.size > 0) {
         this.livePreviewService.touchPreview(previewId)
       }
@@ -167,10 +196,16 @@ export class PlaywrightLivePreviewProxy {
       for (const message of channel.pendingClientMessages.splice(0)) {
         upstream.send(message.data, { binary: message.isBinary })
       }
+
+      void this.ensureInitialTabsState(channel)
     })
 
     upstream.on('message', (data, isBinary) => {
       if (channel.closed) {
+        return
+      }
+
+      if (this.tryResolveInternalRpcCall(channel, data, isBinary)) {
         return
       }
 
@@ -190,6 +225,8 @@ export class PlaywrightLivePreviewProxy {
 
       const closeCode = normalizeCloseCode(code, 1011)
       const closeReason = toCloseReason(reason.toString(), closeCode === 1000 ? 'Upstream controller closed' : 'Upstream controller error')
+      channel.rejectUpstreamOpen(new Error(closeReason))
+      this.rejectPendingInternalRpcCalls(channel, closeReason)
 
       for (const client of Array.from(channel.clients)) {
         if (client.readyState === WebSocket.OPEN || client.readyState === WebSocket.CONNECTING) {
@@ -205,13 +242,17 @@ export class PlaywrightLivePreviewProxy {
         return
       }
 
+      const error = new Error('Upstream controller error')
+      channel.rejectUpstreamOpen(error)
+      this.rejectPendingInternalRpcCalls(channel, error.message)
+
       for (const client of Array.from(channel.clients)) {
         if (client.readyState === WebSocket.OPEN || client.readyState === WebSocket.CONNECTING) {
-          client.close(1011, 'Upstream controller error')
+          client.close(1011, error.message)
         }
       }
 
-      this.disposePreviewChannel(previewId, 1011, 'Upstream controller error', { closeUpstream: false })
+      this.disposePreviewChannel(previewId, 1011, error.message, { closeUpstream: false })
     })
 
     return channel
@@ -232,6 +273,150 @@ export class PlaywrightLivePreviewProxy {
       }
 
       client.send(cloneRawData(message.data), { binary: message.isBinary })
+    }
+  }
+
+  private async ensureInitialTabsState(channel: PreviewUpstreamChannel): Promise<void> {
+    if (channel.closed || channel.lastTabsMessage || channel.clients.size === 0) {
+      return
+    }
+
+    if (channel.bootstrapPromise) {
+      await channel.bootstrapPromise.catch(() => {})
+      return
+    }
+
+    channel.bootstrapPromise = this.bootstrapTabsState(channel).finally(() => {
+      channel.bootstrapPromise = null
+    })
+    await channel.bootstrapPromise.catch(() => {})
+  }
+
+  private async bootstrapTabsState(channel: PreviewUpstreamChannel): Promise<void> {
+    try {
+      await channel.upstreamOpenPromise
+    } catch {
+      return
+    }
+
+    if (channel.closed || channel.lastTabsMessage || channel.clients.size === 0) {
+      return
+    }
+
+    const initialTabsResult = normalizeTabsResult(await this.callUpstream(channel, 'tabs'))
+    if (!initialTabsResult || channel.closed || channel.lastTabsMessage) {
+      return
+    }
+
+    let finalTabsResult = initialTabsResult
+    const selectedTab = finalTabsResult.tabs.find((tab) => tab.selected)
+    const firstTab = finalTabsResult.tabs[0]
+    if (!selectedTab && firstTab?.pageId) {
+      try {
+        await this.callUpstream(channel, 'selectTab', { pageId: firstTab.pageId })
+        const refreshedTabsResult = normalizeTabsResult(await this.callUpstream(channel, 'tabs'))
+        finalTabsResult = refreshedTabsResult ?? forceSelectedTab(finalTabsResult, firstTab.pageId)
+      } catch {
+        finalTabsResult = forceSelectedTab(finalTabsResult, firstTab.pageId)
+      }
+    }
+
+    if (channel.closed || channel.lastTabsMessage) {
+      return
+    }
+
+    const syntheticTabsMessage = sanitizeUpstreamMessage(
+      Buffer.from(JSON.stringify({ method: 'tabs', params: finalTabsResult })),
+      false,
+    )
+    this.captureReplayMessage(channel, syntheticTabsMessage)
+    this.broadcastToClients(channel, syntheticTabsMessage)
+  }
+
+  private async callUpstream(
+    channel: PreviewUpstreamChannel,
+    method: string,
+    params: unknown = undefined,
+  ): Promise<unknown> {
+    if (channel.closed) {
+      throw new Error('Preview channel closed')
+    }
+
+    await channel.upstreamOpenPromise
+
+    if (channel.closed || channel.upstream.readyState !== WebSocket.OPEN) {
+      throw new Error('Upstream controller is not open')
+    }
+
+    const id = channel.nextInternalRpcId
+    channel.nextInternalRpcId -= 1
+    const payload = JSON.stringify({ id, method, params })
+
+    return await new Promise<unknown>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        channel.pendingInternalRpcCalls.delete(id)
+        reject(new Error(`Timed out waiting for upstream ${method} response`))
+      }, UPSTREAM_BOOTSTRAP_TIMEOUT_MS)
+      timeout.unref?.()
+
+      channel.pendingInternalRpcCalls.set(id, {
+        resolve: (result) => {
+          clearTimeout(timeout)
+          resolve(result)
+        },
+        reject: (error) => {
+          clearTimeout(timeout)
+          reject(error)
+        },
+        timeout,
+      })
+
+      try {
+        channel.upstream.send(payload)
+      } catch (error) {
+        channel.pendingInternalRpcCalls.delete(id)
+        clearTimeout(timeout)
+        reject(error instanceof Error ? error : new Error(String(error)))
+      }
+    })
+  }
+
+  private tryResolveInternalRpcCall(channel: PreviewUpstreamChannel, data: RawData, isBinary: boolean): boolean {
+    if (isBinary) {
+      return false
+    }
+
+    const payload = parseJsonMessage(data)
+    if (!payload || typeof payload.id !== 'number') {
+      return false
+    }
+
+    const pending = channel.pendingInternalRpcCalls.get(payload.id)
+    if (!pending) {
+      return false
+    }
+
+    channel.pendingInternalRpcCalls.delete(payload.id)
+    if ('error' in payload && payload.error !== undefined && payload.error !== null) {
+      const errorMessage =
+        typeof payload.error === 'string'
+          ? payload.error
+          : typeof payload.error === 'object' && payload.error && 'message' in payload.error && typeof payload.error.message === 'string'
+            ? payload.error.message
+            : `Upstream ${'method' in payload && typeof payload.method === 'string' ? payload.method : 'controller'} request failed`
+      pending.reject(new Error(errorMessage))
+      return true
+    }
+
+    pending.resolve(payload.result)
+    return true
+  }
+
+  private rejectPendingInternalRpcCalls(channel: PreviewUpstreamChannel, reason: string): void {
+    for (const [id, pending] of channel.pendingInternalRpcCalls.entries()) {
+      channel.pendingInternalRpcCalls.delete(id)
+      clearTimeout(pending.timeout)
+      pending.reject(new Error(reason))
     }
   }
 
@@ -274,6 +459,7 @@ export class PlaywrightLivePreviewProxy {
     channel.pendingClientMessages.length = 0
     channel.lastTabsMessage = null
     channel.lastFrameMessage = null
+    this.rejectPendingInternalRpcCalls(channel, reason)
 
     for (const client of Array.from(channel.clients)) {
       closeSocket(client, code, reason)
@@ -283,6 +469,50 @@ export class PlaywrightLivePreviewProxy {
     if (options.closeUpstream !== false) {
       closeSocket(channel.upstream, code, reason)
     }
+  }
+}
+
+function parseJsonMessage(data: RawData): Record<string, unknown> | null {
+  const text = typeof data === 'string' ? data : data.toString()
+  try {
+    const parsed = JSON.parse(text) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return null
+    }
+    return parsed as Record<string, unknown>
+  } catch {
+    return null
+  }
+}
+
+function normalizeTabsResult(result: unknown): { tabs: Array<Record<string, unknown> & { pageId?: string; selected?: boolean }> } | null {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) {
+    return null
+  }
+
+  const tabs = (result as { tabs?: unknown }).tabs
+  if (!Array.isArray(tabs)) {
+    return null
+  }
+
+  return {
+    ...(result as Record<string, unknown>),
+    tabs: tabs
+      .filter((tab): tab is Record<string, unknown> => Boolean(tab) && typeof tab === 'object' && !Array.isArray(tab))
+      .map((tab) => ({ ...tab })),
+  }
+}
+
+function forceSelectedTab(
+  result: { tabs: Array<Record<string, unknown> & { pageId?: string; selected?: boolean }> },
+  pageId: string,
+): { tabs: Array<Record<string, unknown> & { pageId?: string; selected?: boolean }> } {
+  return {
+    ...result,
+    tabs: result.tabs.map((tab) => ({
+      ...tab,
+      selected: tab.pageId === pageId,
+    })),
   }
 }
 
