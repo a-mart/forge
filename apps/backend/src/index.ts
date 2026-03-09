@@ -1,9 +1,11 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { config as loadDotenv } from "dotenv";
-import { createConfig } from "./config.js";
+import { createConfig, readPlaywrightDashboardEnvOverride } from "./config.js";
 import { formatIntegrationContext } from "./integrations/integration-context.js";
 import { IntegrationRegistryService } from "./integrations/registry.js";
+import { PlaywrightDiscoveryService } from "./playwright/playwright-discovery-service.js";
+import { PlaywrightSettingsService } from "./playwright/playwright-settings-service.js";
 import { CronSchedulerService } from "./scheduler/cron-scheduler-service.js";
 import { getScheduleFilePath } from "./scheduler/schedule-storage.js";
 import { SwarmManager } from "./swarm/swarm-manager.js";
@@ -93,12 +95,32 @@ async function main(): Promise<void> {
     return formatIntegrationContext(integrationContext);
   });
 
+  const playwrightSettingsService = new PlaywrightSettingsService({
+    dataDir: config.paths.dataDir,
+  });
+  await playwrightSettingsService.load();
+
+  let playwrightDiscovery: PlaywrightDiscoveryService | null = null;
+  try {
+    playwrightDiscovery = new PlaywrightDiscoveryService({
+      swarmManager,
+      settingsService: playwrightSettingsService,
+      envEnabledOverride: readPlaywrightDashboardEnvOverride(),
+    });
+    await playwrightDiscovery.start();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[playwright] Failed to start discovery service: ${message}`);
+    playwrightDiscovery = null;
+  }
+
   const wsServer = new SwarmWebSocketServer({
     swarmManager,
     host: config.host,
     port: config.port,
     allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
-    integrationRegistry
+    integrationRegistry,
+    playwrightDiscovery,
   });
   await wsServer.start();
 
@@ -110,6 +132,7 @@ async function main(): Promise<void> {
     await Promise.allSettled([
       queueSchedulerSync(new Set<string>()),
       integrationRegistry.stop(),
+      playwrightDiscovery?.stop(),
       wsServer.stop()
     ]);
     process.exit(0);

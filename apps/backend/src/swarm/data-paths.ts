@@ -132,6 +132,10 @@ export function getSharedSecretsFilePath(dataDir: string): string {
   return join(getSharedDir(dataDir), "secrets.json");
 }
 
+export function getSharedPlaywrightDashboardSettingsPath(dataDir: string): string {
+  return join(getSharedDir(dataDir), "playwright-dashboard.json");
+}
+
 // ── Unchanged global paths ─────────────────────────────────────────────────────
 
 export function getUploadsDir(dataDir: string): string {
