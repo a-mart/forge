@@ -552,6 +552,17 @@ export function IndexPage() {
     navigateToRoute({ view: 'playwright' })
   }
 
+  const handlePlaywrightSnapshotUpdate = useCallback(
+    (snapshot: import('@middleman/protocol').PlaywrightDiscoverySnapshot) => {
+      setState((prev) => ({
+        ...prev,
+        playwrightSnapshot: snapshot,
+        playwrightSettings: snapshot.settings,
+      }))
+    },
+    [setState],
+  )
+
   const showPlaywrightNav = state.playwrightSettings?.effectiveEnabled === true
 
   const handleSuggestionClick = (prompt: string) => {
@@ -626,12 +637,13 @@ export function IndexPage() {
                     agentId: activeAgentId ?? DEFAULT_MANAGER_AGENT_ID,
                   })
                 }
+                onPlaywrightSnapshotUpdate={handlePlaywrightSnapshotUpdate}
               />
             ) : activeView === 'playwright' ? (
               <PlaywrightDashboardView
                 wsUrl={wsUrl}
-                connected={state.connected}
                 snapshot={state.playwrightSnapshot}
+                onSnapshotUpdate={handlePlaywrightSnapshotUpdate}
                 onOpenSettings={handleOpenSettingsPanel}
                 onBack={() =>
                   navigateToRoute({

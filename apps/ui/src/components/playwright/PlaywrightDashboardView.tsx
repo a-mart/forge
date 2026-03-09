@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertTriangle,
   ArrowLeft,
   MonitorPlay,
   Settings,
+  WifiOff,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -15,7 +16,10 @@ import {
   type PlaywrightDashboardFiltersState,
 } from './PlaywrightFilters'
 import { PlaywrightSessionCard } from './PlaywrightSessionCard'
-import { triggerPlaywrightRescan } from './playwright-api'
+import {
+  fetchPlaywrightSnapshot,
+  triggerPlaywrightRescan,
+} from './playwright-api'
 import type {
   PlaywrightDiscoveredSession,
   PlaywrightDiscoverySnapshot,
@@ -23,8 +27,8 @@ import type {
 
 export interface PlaywrightDashboardViewProps {
   wsUrl: string
-  connected: boolean // kept for future use (disconnected banners etc.)
   snapshot: PlaywrightDiscoverySnapshot | null
+  onSnapshotUpdate: (snapshot: PlaywrightDiscoverySnapshot) => void
   onOpenSettings: () => void
   onBack: () => void
 }
@@ -39,14 +43,40 @@ const INITIAL_FILTERS: PlaywrightDashboardFiltersState = {
 
 export function PlaywrightDashboardView({
   wsUrl,
-  connected: _connected,
   snapshot,
+  onSnapshotUpdate,
   onOpenSettings,
   onBack,
 }: PlaywrightDashboardViewProps) {
   const [filters, setFilters] = useState<PlaywrightDashboardFiltersState>(INITIAL_FILTERS)
   const [isRescanning, setIsRescanning] = useState(false)
   const [rescanError, setRescanError] = useState<string | null>(null)
+
+  // --- HTTP bootstrap fallback ---
+  // When the WS snapshot is absent (e.g. WS hasn't delivered one yet, or page
+  // was loaded while backend was mid-scan), fetch via REST so we don't sit in
+  // perpetual loading skeletons.
+  const [httpFetchState, setHttpFetchState] = useState<'idle' | 'fetching' | 'failed'>('idle')
+  const [httpFetchError, setHttpFetchError] = useState<string | null>(null)
+  const bootstrapAttemptedRef = useRef(false)
+
+  useEffect(() => {
+    // Only attempt bootstrap fetch once, and only if we have no snapshot
+    if (snapshot || bootstrapAttemptedRef.current) return
+    bootstrapAttemptedRef.current = true
+    setHttpFetchState('fetching')
+    setHttpFetchError(null)
+
+    void fetchPlaywrightSnapshot(wsUrl)
+      .then((fetched) => {
+        setHttpFetchState('idle')
+        onSnapshotUpdate(fetched)
+      })
+      .catch((err) => {
+        setHttpFetchState('failed')
+        setHttpFetchError(err instanceof Error ? err.message : 'Failed to load dashboard data')
+      })
+  }, [snapshot, wsUrl, onSnapshotUpdate])
 
   // Derive worktree options from snapshot
   const worktreeOptions = useMemo(() => {
@@ -102,20 +132,39 @@ export function PlaywrightDashboardView({
     return sessions
   }, [snapshot?.sessions, filters])
 
-  // Handle rescan
+  // Handle rescan — consume returned snapshot immediately
   const handleRescan = useCallback(() => {
     if (isRescanning) return
     setIsRescanning(true)
     setRescanError(null)
 
     void triggerPlaywrightRescan(wsUrl)
+      .then((rescanSnapshot) => {
+        onSnapshotUpdate(rescanSnapshot)
+      })
       .catch((err) => {
         setRescanError(err instanceof Error ? err.message : 'Rescan failed')
       })
       .finally(() => {
         setIsRescanning(false)
       })
-  }, [wsUrl, isRescanning])
+  }, [wsUrl, isRescanning, onSnapshotUpdate])
+
+  // Handle retry after bootstrap failure
+  const handleRetryBootstrap = useCallback(() => {
+    setHttpFetchState('fetching')
+    setHttpFetchError(null)
+
+    void fetchPlaywrightSnapshot(wsUrl)
+      .then((fetched) => {
+        setHttpFetchState('idle')
+        onSnapshotUpdate(fetched)
+      })
+      .catch((err) => {
+        setHttpFetchState('failed')
+        setHttpFetchError(err instanceof Error ? err.message : 'Failed to load dashboard data')
+      })
+  }, [wsUrl, onSnapshotUpdate])
 
   // Clear rescan error after some time
   useEffect(() => {
@@ -126,7 +175,32 @@ export function PlaywrightDashboardView({
 
   // --- Render states ---
 
-  // Loading / no snapshot yet
+  // Service unavailable / HTTP bootstrap failed with no WS snapshot
+  if (!snapshot && httpFetchState === 'failed') {
+    return (
+      <div className="flex h-full flex-col">
+        <DashboardHeader onBack={onBack} onOpenSettings={onOpenSettings} />
+        <div className="flex flex-1 items-center justify-center p-8">
+          <Card className="max-w-md w-full border-destructive/30">
+            <CardContent className="flex flex-col items-center gap-4 p-6 text-center">
+              <WifiOff className="size-12 text-destructive/50" />
+              <div className="space-y-2">
+                <h3 className="text-lg font-semibold">Dashboard Unavailable</h3>
+                <p className="text-sm text-muted-foreground">
+                  {httpFetchError ?? 'Could not load Playwright dashboard data from the backend.'}
+                </p>
+              </div>
+              <Button onClick={handleRetryBootstrap} variant="outline" size="sm">
+                Retry
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    )
+  }
+
+  // Loading / no snapshot yet (HTTP fetch in progress or waiting for WS)
   if (!snapshot) {
     return (
       <div className="flex h-full flex-col">

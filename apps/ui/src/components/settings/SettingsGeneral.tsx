@@ -24,9 +24,10 @@ import type { PlaywrightDiscoverySettings } from '@middleman/protocol'
 
 interface SettingsGeneralProps {
   wsUrl: string
+  onPlaywrightSnapshotUpdate?: (snapshot: import('@middleman/protocol').PlaywrightDiscoverySnapshot) => void
 }
 
-export function SettingsGeneral({ wsUrl }: SettingsGeneralProps) {
+export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate }: SettingsGeneralProps) {
   const [themePreference, setThemePreference] = useState<ThemePreference>(() =>
     readStoredThemePreference(),
   )
@@ -38,12 +39,19 @@ export function SettingsGeneral({ wsUrl }: SettingsGeneralProps) {
     setThemePreference(readStoredThemePreference())
   }, [])
 
+  const [playwrightLoadFailed, setPlaywrightLoadFailed] = useState(false)
+
   // Fetch Playwright settings on mount
   useEffect(() => {
+    setPlaywrightLoadFailed(false)
     void fetchPlaywrightSettings(wsUrl)
-      .then(setPlaywrightSettings)
-      .catch(() => {
-        // Backend may not have this endpoint yet; silently ignore
+      .then((settings) => {
+        setPlaywrightSettings(settings)
+        setPlaywrightLoadFailed(false)
+      })
+      .catch((err) => {
+        setPlaywrightLoadFailed(true)
+        setPlaywrightError(err instanceof Error ? err.message : 'Could not load Playwright settings')
       })
   }, [wsUrl])
 
@@ -54,8 +62,9 @@ export function SettingsGeneral({ wsUrl }: SettingsGeneralProps) {
       setPlaywrightError(null)
 
       void updatePlaywrightSettings(wsUrl, { enabled })
-        .then(({ settings }) => {
+        .then(({ settings, snapshot }) => {
           setPlaywrightSettings(settings)
+          onPlaywrightSnapshotUpdate?.(snapshot)
         })
         .catch((err) => {
           setPlaywrightError(err instanceof Error ? err.message : 'Failed to update setting')
@@ -64,7 +73,7 @@ export function SettingsGeneral({ wsUrl }: SettingsGeneralProps) {
           setPlaywrightUpdating(false)
         })
     },
-    [wsUrl, playwrightUpdating],
+    [wsUrl, playwrightUpdating, onPlaywrightSnapshotUpdate],
   )
 
   const handleThemePreferenceChange = useCallback((nextPreference: ThemePreference) => {
@@ -149,7 +158,30 @@ export function SettingsGeneral({ wsUrl }: SettingsGeneralProps) {
               }
             />
             {playwrightError ? (
-              <span className="text-[10px] text-destructive">{playwrightError}</span>
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] text-destructive">{playwrightError}</span>
+                {playwrightLoadFailed ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPlaywrightError(null)
+                      setPlaywrightLoadFailed(false)
+                      void fetchPlaywrightSettings(wsUrl)
+                        .then((s) => {
+                          setPlaywrightSettings(s)
+                          setPlaywrightLoadFailed(false)
+                        })
+                        .catch((err) => {
+                          setPlaywrightLoadFailed(true)
+                          setPlaywrightError(err instanceof Error ? err.message : 'Could not load Playwright settings')
+                        })
+                    }}
+                    className="text-[10px] text-primary underline hover:no-underline"
+                  >
+                    Retry
+                  </button>
+                ) : null}
+              </div>
             ) : null}
           </div>
         </SettingsWithCTA>
