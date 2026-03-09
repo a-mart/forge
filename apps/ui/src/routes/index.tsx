@@ -552,6 +552,17 @@ export function IndexPage() {
     navigateToRoute({ view: 'playwright' })
   }
 
+  const handlePlaywrightViewStateChange = useCallback(
+    (sessionId: string | null, mode: import('@/hooks/index-page/use-route-state').PlaywrightViewMode) => {
+      navigateToRoute({
+        view: 'playwright',
+        playwrightSession: sessionId ?? undefined,
+        playwrightMode: mode,
+      })
+    },
+    [navigateToRoute],
+  )
+
   const handlePlaywrightSnapshotUpdate = useCallback(
     (snapshot: import('@middleman/protocol').PlaywrightDiscoverySnapshot) => {
       setState((prev) => ({
@@ -656,6 +667,9 @@ export function IndexPage() {
                 snapshot={state.playwrightSnapshot}
                 onSnapshotUpdate={handlePlaywrightSnapshotUpdate}
                 onOpenSettings={handleOpenSettingsPanel}
+                selectedSessionId={routeState.view === 'playwright' ? routeState.playwrightSession ?? null : null}
+                viewMode={routeState.view === 'playwright' ? routeState.playwrightMode ?? 'split' : 'split'}
+                onViewStateChange={handlePlaywrightViewStateChange}
                 onBack={() =>
                   navigateToRoute({
                     view: 'chat',

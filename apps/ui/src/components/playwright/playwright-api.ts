@@ -1,6 +1,7 @@
 import type {
   PlaywrightDiscoverySettings,
   PlaywrightDiscoverySnapshot,
+  PlaywrightLivePreviewHandle,
   UpdatePlaywrightSettingsRequest,
 } from '@middleman/protocol'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
@@ -50,6 +51,43 @@ export async function fetchPlaywrightSettings(
   if (!payload?.settings) throw new Error('Invalid Playwright settings response from backend.')
   return payload.settings
 }
+
+// --- Live Preview APIs ---
+
+export async function startPlaywrightLivePreview(
+  wsUrl: string,
+  sessionId: string,
+  mode: 'embedded' | 'focus' = 'embedded',
+): Promise<PlaywrightLivePreviewHandle> {
+  const endpoint = resolveApiEndpoint(wsUrl, '/api/playwright/live-preview/start')
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ sessionId, mode }),
+  })
+  if (!response.ok) throw new Error(await readApiError(response))
+  const payload = (await response.json()) as { ok?: boolean; preview?: PlaywrightLivePreviewHandle }
+  if (!payload?.preview) throw new Error('Invalid live preview start response from backend.')
+  return payload.preview
+}
+
+export async function releasePlaywrightLivePreview(
+  wsUrl: string,
+  previewId: string,
+): Promise<void> {
+  const endpoint = resolveApiEndpoint(wsUrl, `/api/playwright/live-preview/${encodeURIComponent(previewId)}`)
+  const response = await fetch(endpoint, { method: 'DELETE' })
+  if (!response.ok) {
+    // Best-effort release; don't throw on cleanup failures
+    console.warn('Failed to release preview lease:', response.status)
+  }
+}
+
+export function resolvePreviewIframeSrc(wsUrl: string, previewId: string): string {
+  return resolveApiEndpoint(wsUrl, `/playwright-live/embed?previewId=${encodeURIComponent(previewId)}`)
+}
+
+// --- Settings APIs ---
 
 export async function updatePlaywrightSettings(
   wsUrl: string,

@@ -158,3 +158,121 @@ export interface UpdatePlaywrightSettingsResponse {
   settings: PlaywrightDiscoverySettings
   snapshot: PlaywrightDiscoverySnapshot
 }
+
+export type PlaywrightLivePreviewMode = 'embedded' | 'focus'
+
+export type PlaywrightLivePreviewLeaseStatus = 'active' | 'expired'
+
+export interface PlaywrightLivePreviewHandle {
+  previewId: string
+  sessionId: string
+  sessionName: string
+  mode: PlaywrightLivePreviewMode
+  status: PlaywrightLivePreviewLeaseStatus
+  createdAt: string
+  lastUsedAt: string
+  expiresAt: string
+  inspectorAvailable: boolean
+  embedUrl: string
+  bootstrapUrl: string
+  controllerWsUrl: string
+}
+
+export interface PlaywrightLivePreviewCandidate {
+  session: PlaywrightDiscoveredSession
+  previewable: boolean
+  unavailableReason: string | null
+  activePreviewId: string | null
+}
+
+export interface GetPlaywrightLivePreviewSessionsResponse {
+  sessions: PlaywrightLivePreviewCandidate[]
+  updatedAt: string | null
+}
+
+export interface StartPlaywrightLivePreviewRequest {
+  sessionId: string
+  mode?: PlaywrightLivePreviewMode
+  reuseIfActive?: boolean
+}
+
+export interface StartPlaywrightLivePreviewResponse {
+  ok: true
+  preview: PlaywrightLivePreviewHandle
+}
+
+export interface PlaywrightControllerBootstrap {
+  preview: PlaywrightLivePreviewHandle
+  session: PlaywrightDiscoveredSession
+  backendOrigin: string
+  controllerWsUrl: string
+  inspectorAvailable: boolean
+  inspectorProxyUrl: string | null
+}
+
+export interface GetPlaywrightLivePreviewBootstrapResponse {
+  bootstrap: PlaywrightControllerBootstrap
+}
+
+export interface ReleasePlaywrightLivePreviewResponse {
+  ok: true
+  previewId: string
+  released: boolean
+}
+
+// --- Live Preview types ---
+
+export type PlaywrightPreviewStatus =
+  | 'idle'
+  | 'starting'
+  | 'active'
+  | 'unavailable'
+  | 'error'
+  | 'expired'
+
+export interface PlaywrightLivePreviewHandle {
+  previewId: string
+  sessionId: string
+  iframeSrc: string
+  controllerProxyUrl: string
+  inspectorAvailable: boolean
+  createdAt: string
+  expiresAt: string
+}
+
+export interface StartPlaywrightLivePreviewRequest {
+  sessionId: string
+  mode?: 'embedded' | 'focus'
+}
+
+export interface StartPlaywrightLivePreviewResponse {
+  ok: true
+  preview: PlaywrightLivePreviewHandle
+}
+
+export interface ReleasePlaywrightLivePreviewRequest {
+  previewId: string
+}
+
+export interface ReleasePlaywrightLivePreviewResponse {
+  ok: true
+  previewId: string
+}
+
+export interface PlaywrightControllerBootstrap {
+  previewId: string
+  sessionId: string
+  controllerWsUrl: string
+  inspectorWsUrl: string | null
+  sessionName: string
+  browserName: string | null
+  initialUrl: string | null
+}
+
+export interface PlaywrightLivePreviewStatusEvent {
+  type: 'playwright:preview-status'
+  previewId: string
+  sessionId: string
+  status: PlaywrightPreviewStatus
+  message?: string
+}

@@ -5,14 +5,17 @@ import { useCallback, useMemo } from 'react'
 export const DEFAULT_MANAGER_AGENT_ID = '__default__'
 
 export type ActiveView = 'chat' | 'settings' | 'playwright'
+export type PlaywrightViewMode = 'split' | 'focus' | 'tiles'
 export type AppRouteState =
   | { view: 'chat'; agentId: string }
   | { view: 'settings' }
-  | { view: 'playwright' }
+  | { view: 'playwright'; playwrightSession?: string; playwrightMode?: PlaywrightViewMode }
 
 type AppRouteSearch = {
   view?: string
   agent?: string
+  playwrightSession?: string
+  playwrightMode?: string
 }
 
 function normalizeAgentId(agentId?: string): string {
@@ -59,7 +62,11 @@ function parseRouteStateFromLocation(pathname: string, search: unknown): AppRout
   }
 
   if (view === 'playwright') {
-    return { view: 'playwright' }
+    const playwrightSession = typeof routeSearch.playwrightSession === 'string' ? routeSearch.playwrightSession : undefined
+    const playwrightMode = typeof routeSearch.playwrightMode === 'string' && ['split', 'focus', 'tiles'].includes(routeSearch.playwrightMode)
+      ? (routeSearch.playwrightMode as PlaywrightViewMode)
+      : undefined
+    return { view: 'playwright', playwrightSession, playwrightMode }
   }
 
   if (view === 'chat' || agentId !== undefined) {
@@ -78,7 +85,7 @@ function normalizeRouteState(routeState: AppRouteState): AppRouteState {
   }
 
   if (routeState.view === 'playwright') {
-    return { view: 'playwright' }
+    return { view: 'playwright', playwrightSession: routeState.playwrightSession, playwrightMode: routeState.playwrightMode }
   }
 
   return {
@@ -93,7 +100,10 @@ function toRouteSearch(routeState: AppRouteState): AppRouteSearch {
   }
 
   if (routeState.view === 'playwright') {
-    return { view: 'playwright' }
+    const search: AppRouteSearch = { view: 'playwright' }
+    if (routeState.playwrightSession) search.playwrightSession = routeState.playwrightSession
+    if (routeState.playwrightMode && routeState.playwrightMode !== 'split') search.playwrightMode = routeState.playwrightMode
+    return search
   }
 
   const agentId = normalizeAgentId(routeState.agentId)
@@ -110,7 +120,7 @@ function routeStatesEqual(left: AppRouteState, right: AppRouteState): boolean {
   }
 
   if (left.view === 'playwright' && right.view === 'playwright') {
-    return true
+    return left.playwrightSession === right.playwrightSession && left.playwrightMode === right.playwrightMode
   }
 
   if (left.view === 'chat' && right.view === 'chat') {

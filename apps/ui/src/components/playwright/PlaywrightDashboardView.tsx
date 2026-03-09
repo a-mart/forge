@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertTriangle,
   ArrowLeft,
+  Columns2,
+  LayoutGrid,
   MonitorPlay,
   Settings,
   WifiOff,
@@ -10,20 +12,25 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { PlaywrightSummaryBar } from './PlaywrightSummaryBar'
 import {
   PlaywrightFilters,
   type PlaywrightDashboardFiltersState,
 } from './PlaywrightFilters'
 import { PlaywrightSessionCard } from './PlaywrightSessionCard'
+import { PlaywrightLivePreviewPane } from './PlaywrightLivePreviewPane'
 import {
   fetchPlaywrightSnapshot,
   triggerPlaywrightRescan,
 } from './playwright-api'
+import { cn } from '@/lib/utils'
 import type {
   PlaywrightDiscoveredSession,
   PlaywrightDiscoverySnapshot,
 } from '@middleman/protocol'
+
+export type PlaywrightViewMode = 'split' | 'focus' | 'tiles'
 
 export interface PlaywrightDashboardViewProps {
   wsUrl: string
@@ -31,6 +38,12 @@ export interface PlaywrightDashboardViewProps {
   onSnapshotUpdate: (snapshot: PlaywrightDiscoverySnapshot) => void
   onOpenSettings: () => void
   onBack: () => void
+  /** Currently selected session from route state */
+  selectedSessionId?: string | null
+  /** Current view mode from route state */
+  viewMode?: PlaywrightViewMode
+  /** Callback when session selection or view mode changes (updates route state) */
+  onViewStateChange?: (sessionId: string | null, mode: PlaywrightViewMode) => void
 }
 
 const INITIAL_FILTERS: PlaywrightDashboardFiltersState = {
@@ -49,21 +62,20 @@ export function PlaywrightDashboardView({
   onSnapshotUpdate,
   onOpenSettings,
   onBack,
+  selectedSessionId = null,
+  viewMode = 'split',
+  onViewStateChange,
 }: PlaywrightDashboardViewProps) {
   const [filters, setFilters] = useState<PlaywrightDashboardFiltersState>(INITIAL_FILTERS)
   const [isRescanning, setIsRescanning] = useState(false)
   const [rescanError, setRescanError] = useState<string | null>(null)
 
   // --- HTTP bootstrap fallback ---
-  // When the WS snapshot is absent (e.g. WS hasn't delivered one yet, or page
-  // was loaded while backend was mid-scan), fetch via REST so we don't sit in
-  // perpetual loading skeletons.
   const [httpFetchState, setHttpFetchState] = useState<'idle' | 'fetching' | 'failed'>('idle')
   const [httpFetchError, setHttpFetchError] = useState<string | null>(null)
   const bootstrapAttemptedRef = useRef(false)
 
   useEffect(() => {
-    // Only attempt bootstrap fetch once, and only if we have no snapshot
     if (snapshot || bootstrapAttemptedRef.current) return
     bootstrapAttemptedRef.current = true
     setHttpFetchState('fetching')
@@ -98,11 +110,9 @@ export function PlaywrightDashboardView({
 
     let sessions = snapshot.sessions
 
-    // Status filter
     if (filters.status !== 'all') {
       sessions = sessions.filter((s) => s.liveness === filters.status)
     } else {
-      // When showing "all", respect the show/hide toggles for inactive and stale
       sessions = sessions.filter((s) => {
         if (s.liveness === 'inactive' && !filters.showInactive) return false
         if (s.liveness === 'stale' && !filters.showStale) return false
@@ -110,22 +120,18 @@ export function PlaywrightDashboardView({
       })
     }
 
-    // Worktree filter
     if (filters.worktree !== 'all') {
       sessions = sessions.filter((s) => s.worktreeName === filters.worktree)
     }
 
-    // Correlated only
     if (filters.onlyCorrelated) {
       sessions = sessions.filter((s) => s.correlation.confidence !== 'none')
     }
 
-    // Preferred only
     if (filters.onlyPreferred) {
       sessions = sessions.filter((s) => s.preferredInDuplicateGroup)
     }
 
-    // Search
     if (filters.search.trim()) {
       const term = filters.search.trim().toLowerCase()
       sessions = sessions.filter((s) =>
@@ -141,7 +147,7 @@ export function PlaywrightDashboardView({
     return sessions
   }, [snapshot?.sessions, filters])
 
-  // Compute hidden counts for the "all" status view (inactive/stale hidden by toggles)
+  // Compute hidden counts
   const hiddenCounts = useMemo(() => {
     if (!snapshot?.sessions || filters.status !== 'all') return { inactive: 0, stale: 0, total: 0 }
     let inactive = 0
@@ -153,7 +159,53 @@ export function PlaywrightDashboardView({
     return { inactive, stale, total: inactive + stale }
   }, [snapshot?.sessions, filters.status, filters.showInactive, filters.showStale])
 
-  // Handle rescan — consume returned snapshot immediately
+  // Resolve the selected session object
+  const selectedSession: PlaywrightDiscoveredSession | null = useMemo(() => {
+    if (!selectedSessionId || !snapshot?.sessions) return null
+    return snapshot.sessions.find((s) => s.id === selectedSessionId) ?? null
+  }, [selectedSessionId, snapshot?.sessions])
+
+  // Auto-select: if exactly one active session exists and none is selected, auto-select it
+  const autoSelectAttemptedRef = useRef(false)
+  useEffect(() => {
+    if (autoSelectAttemptedRef.current || selectedSessionId || !snapshot?.sessions) return
+    autoSelectAttemptedRef.current = true
+
+    const activeSessions = snapshot.sessions.filter((s) => s.liveness === 'active')
+    if (activeSessions.length === 1) {
+      onViewStateChange?.(activeSessions[0].id, viewMode)
+    }
+  }, [snapshot?.sessions, selectedSessionId, viewMode, onViewStateChange])
+
+  // --- Callbacks ---
+
+  const handleSelectSession = useCallback(
+    (sessionId: string) => {
+      onViewStateChange?.(sessionId, viewMode)
+    },
+    [viewMode, onViewStateChange],
+  )
+
+  const handleDeselectSession = useCallback(() => {
+    onViewStateChange?.(null, viewMode === 'focus' ? 'split' : viewMode)
+  }, [viewMode, onViewStateChange])
+
+  const handleToggleFocusMode = useCallback(() => {
+    const newMode: PlaywrightViewMode = viewMode === 'focus' ? 'split' : 'focus'
+    onViewStateChange?.(selectedSessionId ?? null, newMode)
+  }, [viewMode, selectedSessionId, onViewStateChange])
+
+  const handleEnterFocusMode = useCallback(
+    (sessionId: string) => {
+      onViewStateChange?.(sessionId, 'focus')
+    },
+    [onViewStateChange],
+  )
+
+  const handleExitFocusMode = useCallback(() => {
+    onViewStateChange?.(selectedSessionId ?? null, 'split')
+  }, [selectedSessionId, onViewStateChange])
+
   const handleRescan = useCallback(() => {
     if (isRescanning) return
     setIsRescanning(true)
@@ -171,7 +223,6 @@ export function PlaywrightDashboardView({
       })
   }, [wsUrl, isRescanning, onSnapshotUpdate])
 
-  // Handle retry after bootstrap failure
   const handleRetryBootstrap = useCallback(() => {
     setHttpFetchState('fetching')
     setHttpFetchError(null)
@@ -196,11 +247,11 @@ export function PlaywrightDashboardView({
 
   // --- Render states ---
 
-  // Service unavailable / HTTP bootstrap failed with no WS snapshot
+  // Service unavailable / HTTP bootstrap failed
   if (!snapshot && httpFetchState === 'failed') {
     return (
       <div className="flex h-full flex-col">
-        <DashboardHeader onBack={onBack} onOpenSettings={onOpenSettings} />
+        <DashboardHeader onBack={onBack} onOpenSettings={onOpenSettings} viewMode={viewMode} />
         <div className="flex flex-1 items-center justify-center p-8">
           <Card className="max-w-md w-full border-destructive/30">
             <CardContent className="flex flex-col items-center gap-4 p-6 text-center">
@@ -221,11 +272,11 @@ export function PlaywrightDashboardView({
     )
   }
 
-  // Loading / no snapshot yet (HTTP fetch in progress or waiting for WS)
+  // Loading / no snapshot yet
   if (!snapshot) {
     return (
       <div className="flex h-full flex-col">
-        <DashboardHeader onBack={onBack} onOpenSettings={onOpenSettings} />
+        <DashboardHeader onBack={onBack} onOpenSettings={onOpenSettings} viewMode={viewMode} />
         <div className="flex-1 p-4 space-y-4">
           <div className="flex flex-wrap gap-2">
             {Array.from({ length: 6 }).map((_, i) => (
@@ -247,7 +298,7 @@ export function PlaywrightDashboardView({
   if (snapshot.serviceStatus === 'disabled') {
     return (
       <div className="flex h-full flex-col">
-        <DashboardHeader onBack={onBack} onOpenSettings={onOpenSettings} />
+        <DashboardHeader onBack={onBack} onOpenSettings={onOpenSettings} viewMode={viewMode} />
         <div className="flex flex-1 items-center justify-center p-8">
           <Card className="max-w-md w-full">
             <CardContent className="flex flex-col items-center gap-4 p-6 text-center">
@@ -277,7 +328,7 @@ export function PlaywrightDashboardView({
   if (snapshot.serviceStatus === 'error' && snapshot.lastError) {
     return (
       <div className="flex h-full flex-col">
-        <DashboardHeader onBack={onBack} onOpenSettings={onOpenSettings} />
+        <DashboardHeader onBack={onBack} onOpenSettings={onOpenSettings} viewMode={viewMode} />
         <div className="flex flex-1 items-center justify-center p-8">
           <Card className="max-w-md w-full border-destructive/30">
             <CardContent className="flex flex-col items-center gap-4 p-6 text-center">
@@ -296,82 +347,133 @@ export function PlaywrightDashboardView({
     )
   }
 
-  // Empty state (ready but no sessions)
+  // Empty state
   const isEmpty = snapshot.sessions.length === 0
 
+  // Focus mode: show only the preview pane
+  if (viewMode === 'focus' && selectedSession) {
+    return (
+      <div className="flex h-full flex-col min-h-0">
+        <PlaywrightLivePreviewPane
+          wsUrl={wsUrl}
+          session={selectedSession}
+          isFocusMode
+          onToggleFocusMode={handleExitFocusMode}
+          onClose={handleDeselectSession}
+          onBack={handleExitFocusMode}
+        />
+      </div>
+    )
+  }
+
+  // Split view or tiles
   return (
     <div className="flex h-full flex-col min-h-0">
       <DashboardHeader
         onBack={onBack}
         onOpenSettings={onOpenSettings}
         serviceStatus={snapshot.serviceStatus}
+        viewMode={viewMode}
+        onViewModeChange={(mode) => onViewStateChange?.(selectedSessionId ?? null, mode)}
       />
 
-      <ScrollArea className="flex-1">
-        <div className="p-4 space-y-4">
-          {/* Rescan error banner */}
-          {rescanError ? (
-            <div className="rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-              Rescan failed: {rescanError}
+      <div className={cn(
+        'flex flex-1 min-h-0',
+        selectedSession ? 'divide-x' : '',
+      )}>
+        {/* Left: Discovery pane */}
+        <div className={cn(
+          'flex flex-col min-h-0',
+          selectedSession ? 'w-[400px] min-w-[320px] shrink-0' : 'flex-1',
+        )}>
+          <ScrollArea className="flex-1">
+            <div className="p-4 space-y-4">
+              {/* Rescan error banner */}
+              {rescanError ? (
+                <div className="rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                  Rescan failed: {rescanError}
+                </div>
+              ) : null}
+
+              {/* Snapshot-level warnings */}
+              {snapshot.warnings.length > 0 ? (
+                <div className="rounded-md border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-600 dark:text-amber-400 space-y-1">
+                  {snapshot.warnings.map((w, i) => (
+                    <p key={i} className="flex items-start gap-1.5">
+                      <AlertTriangle className="size-3 shrink-0 mt-0.5" />
+                      {w}
+                    </p>
+                  ))}
+                </div>
+              ) : null}
+
+              {/* Summary bar - compact when split view has preview */}
+              {!selectedSession ? (
+                <PlaywrightSummaryBar
+                  summary={snapshot.summary}
+                  lastScanCompletedAt={snapshot.lastScanCompletedAt}
+                />
+              ) : null}
+
+              {/* Filters */}
+              <PlaywrightFilters
+                filters={filters}
+                worktreeOptions={worktreeOptions}
+                onFiltersChange={setFilters}
+                onRescan={handleRescan}
+                isRescanning={isRescanning}
+              />
+
+              {/* Hidden sessions hint */}
+              {hiddenCounts.total > 0 && filteredSessions.length > 0 ? (
+                <HiddenSessionsHint
+                  inactiveCount={hiddenCounts.inactive}
+                  staleCount={hiddenCounts.stale}
+                  onShowInactive={() => setFilters((f) => ({ ...f, showInactive: true }))}
+                  onShowStale={() => setFilters((f) => ({ ...f, showStale: true }))}
+                />
+              ) : null}
+
+              {/* Content */}
+              {isEmpty ? (
+                <EmptyState
+                  rootsScanned={snapshot.rootsScanned}
+                  onOpenSettings={onOpenSettings}
+                />
+              ) : filteredSessions.length === 0 ? (
+                <FilteredEmptyState
+                  onClearFilters={() => setFilters(INITIAL_FILTERS)}
+                  hiddenInactive={hiddenCounts.inactive}
+                  hiddenStale={hiddenCounts.stale}
+                  onShowInactive={() => setFilters((f) => ({ ...f, showInactive: true }))}
+                  onShowStale={() => setFilters((f) => ({ ...f, showStale: true }))}
+                />
+              ) : (
+                <SessionList
+                  sessions={filteredSessions}
+                  selectedSessionId={selectedSessionId}
+                  compact={!!selectedSession}
+                  onSelectSession={handleSelectSession}
+                  onFocusSession={handleEnterFocusMode}
+                />
+              )}
             </div>
-          ) : null}
-
-          {/* Snapshot-level warnings */}
-          {snapshot.warnings.length > 0 ? (
-            <div className="rounded-md border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-600 dark:text-amber-400 space-y-1">
-              {snapshot.warnings.map((w, i) => (
-                <p key={i} className="flex items-start gap-1.5">
-                  <AlertTriangle className="size-3 shrink-0 mt-0.5" />
-                  {w}
-                </p>
-              ))}
-            </div>
-          ) : null}
-
-          {/* Summary bar */}
-          <PlaywrightSummaryBar
-            summary={snapshot.summary}
-            lastScanCompletedAt={snapshot.lastScanCompletedAt}
-          />
-
-          {/* Filters */}
-          <PlaywrightFilters
-            filters={filters}
-            worktreeOptions={worktreeOptions}
-            onFiltersChange={setFilters}
-            onRescan={handleRescan}
-            isRescanning={isRescanning}
-          />
-
-          {/* Hidden sessions hint */}
-          {hiddenCounts.total > 0 && filteredSessions.length > 0 ? (
-            <HiddenSessionsHint
-              inactiveCount={hiddenCounts.inactive}
-              staleCount={hiddenCounts.stale}
-              onShowInactive={() => setFilters((f) => ({ ...f, showInactive: true }))}
-              onShowStale={() => setFilters((f) => ({ ...f, showStale: true }))}
-            />
-          ) : null}
-
-          {/* Content */}
-          {isEmpty ? (
-            <EmptyState
-              rootsScanned={snapshot.rootsScanned}
-              onOpenSettings={onOpenSettings}
-            />
-          ) : filteredSessions.length === 0 ? (
-            <FilteredEmptyState
-              onClearFilters={() => setFilters(INITIAL_FILTERS)}
-              hiddenInactive={hiddenCounts.inactive}
-              hiddenStale={hiddenCounts.stale}
-              onShowInactive={() => setFilters((f) => ({ ...f, showInactive: true }))}
-              onShowStale={() => setFilters((f) => ({ ...f, showStale: true }))}
-            />
-          ) : (
-            <SessionGrid sessions={filteredSessions} />
-          )}
+          </ScrollArea>
         </div>
-      </ScrollArea>
+
+        {/* Right: Preview pane (split view) */}
+        {selectedSession ? (
+          <div className="flex-1 min-w-0 min-h-0">
+            <PlaywrightLivePreviewPane
+              wsUrl={wsUrl}
+              session={selectedSession}
+              isFocusMode={false}
+              onToggleFocusMode={handleToggleFocusMode}
+              onClose={handleDeselectSession}
+            />
+          </div>
+        ) : null}
+      </div>
     </div>
   )
 }
@@ -382,26 +484,63 @@ function DashboardHeader({
   onBack,
   onOpenSettings,
   serviceStatus,
+  viewMode,
+  onViewModeChange,
 }: {
   onBack: () => void
   onOpenSettings: () => void
   serviceStatus?: string
+  viewMode?: PlaywrightViewMode
+  onViewModeChange?: (mode: PlaywrightViewMode) => void
 }) {
   return (
-    <div className="flex h-[62px] shrink-0 items-center gap-3 border-b px-4">
+    <div className="flex h-[52px] shrink-0 items-center gap-3 border-b px-4">
       <Button variant="ghost" size="sm" onClick={onBack} className="h-8 w-8 p-0" title="Back to chat">
         <ArrowLeft className="size-4" />
       </Button>
       <MonitorPlay className="size-5 text-muted-foreground" />
       <div className="flex-1 min-w-0">
         <h1 className="text-sm font-semibold">Playwright Dashboard</h1>
-        <p className="text-[11px] text-muted-foreground truncate">
-          Discover browser sessions across repo roots and worktrees
-        </p>
       </div>
+
       {serviceStatus === 'scanning' ? (
         <span className="text-[11px] text-muted-foreground animate-pulse">Scanning…</span>
       ) : null}
+
+      {/* View mode toggle buttons */}
+      {onViewModeChange ? (
+        <TooltipProvider delayDuration={300}>
+          <div className="flex items-center gap-0.5 rounded-md border p-0.5">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant={viewMode === 'split' || (viewMode !== 'tiles') ? 'secondary' : 'ghost'}
+                  size="sm"
+                  className="h-6 w-6 p-0"
+                  onClick={() => onViewModeChange('split')}
+                >
+                  <Columns2 className="size-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="text-xs">Split view</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant={viewMode === 'tiles' ? 'secondary' : 'ghost'}
+                  size="sm"
+                  className="h-6 w-6 p-0"
+                  onClick={() => onViewModeChange('tiles')}
+                >
+                  <LayoutGrid className="size-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="text-xs">Grid view</TooltipContent>
+            </Tooltip>
+          </div>
+        </TooltipProvider>
+      ) : null}
+
       <Button variant="ghost" size="sm" onClick={onOpenSettings} className="h-8 w-8 p-0" title="Settings">
         <Settings className="size-4" />
       </Button>
@@ -534,11 +673,48 @@ function HiddenSessionsHint({
   )
 }
 
-function SessionGrid({ sessions }: { sessions: PlaywrightDiscoveredSession[] }) {
+function SessionList({
+  sessions,
+  selectedSessionId,
+  compact,
+  onSelectSession,
+  onFocusSession,
+}: {
+  sessions: PlaywrightDiscoveredSession[]
+  selectedSessionId: string | null
+  compact: boolean
+  onSelectSession: (sessionId: string) => void
+  onFocusSession: (sessionId: string) => void
+}) {
+  if (compact) {
+    // Compact list view for split mode left pane
+    return (
+      <div className="space-y-1.5">
+        {sessions.map((session) => (
+          <PlaywrightSessionCard
+            key={session.id}
+            session={session}
+            selected={session.id === selectedSessionId}
+            compact
+            onSelect={() => onSelectSession(session.id)}
+            onFocus={() => onFocusSession(session.id)}
+          />
+        ))}
+      </div>
+    )
+  }
+
+  // Full grid view
   return (
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
       {sessions.map((session) => (
-        <PlaywrightSessionCard key={session.id} session={session} />
+        <PlaywrightSessionCard
+          key={session.id}
+          session={session}
+          selected={session.id === selectedSessionId}
+          onSelect={() => onSelectSession(session.id)}
+          onFocus={() => onFocusSession(session.id)}
+        />
       ))}
     </div>
   )

@@ -2,15 +2,18 @@ import {
   AlertCircle,
   Clock,
   Copy,
+  Eye,
   FileText,
   Globe,
   Image,
   Link2,
+  Maximize2,
   MonitorPlay,
   Network,
   Terminal,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -18,6 +21,10 @@ import type { PlaywrightDiscoveredSession } from '@middleman/protocol'
 
 interface PlaywrightSessionCardProps {
   session: PlaywrightDiscoveredSession
+  selected?: boolean
+  compact?: boolean
+  onSelect?: () => void
+  onFocus?: () => void
 }
 
 const LIVENESS_BADGE: Record<
@@ -90,21 +97,104 @@ function TruncatedPath({ path, maxLength = 50 }: { path: string; maxLength?: num
   )
 }
 
-export function PlaywrightSessionCard({ session }: PlaywrightSessionCardProps) {
+export function PlaywrightSessionCard({
+  session,
+  selected = false,
+  compact = false,
+  onSelect,
+  onFocus,
+}: PlaywrightSessionCardProps) {
   const { artifactCounts, ports, correlation } = session
+  const isClickable = !!onSelect
 
-  const handleCopyPath = () => {
+  const handleCopyPath = (e: React.MouseEvent) => {
+    e.stopPropagation()
     void navigator.clipboard.writeText(session.sessionFilePath)
   }
 
+  const handleFocus = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    onFocus?.()
+  }
+
+  // Compact card for split-view left pane
+  if (compact) {
+    return (
+      <Card
+        className={cn(
+          'transition-colors cursor-pointer',
+          selected && 'border-primary bg-primary/5 ring-1 ring-primary/20',
+          !selected && 'hover:border-muted-foreground/30',
+          session.liveness === 'active' && !selected && 'border-emerald-500/20',
+          !session.preferredInDuplicateGroup && 'opacity-60',
+        )}
+        onClick={onSelect}
+      >
+        <CardContent className="p-2.5 space-y-1.5">
+          {/* Header row */}
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5 min-w-0 flex-1">
+              <MonitorPlay className="size-3.5 shrink-0 text-muted-foreground" />
+              <span className="text-xs font-medium truncate">{session.sessionName}</span>
+            </div>
+            <div className="flex items-center gap-1 shrink-0">
+              <LivenessBadge liveness={session.liveness} />
+              {session.liveness === 'active' ? (
+                <TooltipProvider delayDuration={200}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-5 w-5 p-0"
+                        onClick={handleFocus}
+                      >
+                        <Maximize2 className="size-3" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="left" className="text-xs">Focus mode</TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              ) : null}
+            </div>
+          </div>
+
+          {/* Location + correlation */}
+          <div className="flex items-center gap-2 text-muted-foreground">
+            {session.worktreeName ? (
+              <Badge variant="secondary" className="text-[10px] px-1.5 py-0 shrink-0">
+                {session.worktreeName}
+              </Badge>
+            ) : null}
+            {correlation.matchedAgentDisplayName ? (
+              <span className="text-[10px] truncate">
+                {correlation.matchedAgentDisplayName}
+              </span>
+            ) : null}
+            <span className="ml-auto text-[10px] shrink-0">
+              {formatShortTime(session.sessionFileUpdatedAt)}
+            </span>
+          </div>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  // Full card (grid view)
   return (
-    <Card className={cn(
-      'transition-colors',
-      session.liveness === 'active' && 'border-emerald-500/30',
-      session.liveness === 'stale' && 'border-amber-500/20',
-      session.liveness === 'error' && 'border-destructive/30',
-      !session.preferredInDuplicateGroup && 'opacity-60',
-    )}>
+    <Card
+      className={cn(
+        'transition-colors',
+        isClickable && 'cursor-pointer',
+        selected && 'border-primary bg-primary/5 ring-1 ring-primary/20',
+        !selected && isClickable && 'hover:border-muted-foreground/30',
+        session.liveness === 'active' && !selected && 'border-emerald-500/30',
+        session.liveness === 'stale' && 'border-amber-500/20',
+        session.liveness === 'error' && 'border-destructive/30',
+        !session.preferredInDuplicateGroup && 'opacity-60',
+      )}
+      onClick={onSelect}
+    >
       <CardContent className="p-3 space-y-2.5">
         {/* Header row */}
         <div className="flex items-start justify-between gap-2">
@@ -199,6 +289,33 @@ export function PlaywrightSessionCard({ session }: PlaywrightSessionCardProps) {
             <span>{formatShortTime(session.sessionFileUpdatedAt)}</span>
           </div>
         </div>
+
+        {/* Action buttons row */}
+        {session.liveness === 'active' ? (
+          <div className="flex items-center gap-1.5 pt-0.5">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-6 text-xs px-2"
+              onClick={(e) => {
+                e.stopPropagation()
+                onSelect?.()
+              }}
+            >
+              <Eye className="size-3 mr-1" />
+              Live view
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 text-xs px-2"
+              onClick={handleFocus}
+            >
+              <Maximize2 className="size-3 mr-1" />
+              Focus
+            </Button>
+          </div>
+        ) : null}
 
         {/* Warnings */}
         {session.warnings.length > 0 ? (
