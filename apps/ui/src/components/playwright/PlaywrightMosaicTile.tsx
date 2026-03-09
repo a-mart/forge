@@ -93,6 +93,16 @@ export function PlaywrightMosaicTile({
     return () => window.removeEventListener('message', handleMessage)
   }, [])
 
+  // Timeout: if iframe is mounted but embed-ready never arrives, mark as failed
+  useEffect(() => {
+    if (!iframeSrc || embedActive || status !== 'active') return
+    const timer = setTimeout(() => {
+      if (!mountedRef.current) return
+      if (!embedActive) setStatus('failed')
+    }, 10_000) // 10s timeout for embed handshake
+    return () => clearTimeout(timer)
+  }, [iframeSrc, embedActive, status])
+
   const handleFocusClick = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation()
@@ -101,8 +111,8 @@ export function PlaywrightMosaicTile({
     [onFocus],
   )
 
-  const isLive = status === 'active' && !!iframeSrc && embedActive
-  const isLoading = status === 'starting' || (status === 'active' && !embedActive)
+  const hasIframe = status === 'active' && !!iframeSrc
+  const isLoading = status === 'starting' || (hasIframe && !embedActive)
 
   return (
     <div
@@ -118,15 +128,24 @@ export function PlaywrightMosaicTile({
     >
       {/* Preview area — 16:10 aspect ratio */}
       <div className="relative aspect-[16/10] bg-muted/30 overflow-hidden">
-        {isLive && iframeSrc ? (
+        {/* Always mount iframe when src is available — avoids deadlock where
+            embed-ready postMessage can never arrive because the iframe was
+            conditionally unmounted waiting for that very message. */}
+        {hasIframe && iframeSrc ? (
           <iframe
             ref={iframeRef}
             src={iframeSrc}
-            className="absolute inset-0 w-[200%] h-[200%] origin-top-left scale-50 pointer-events-none border-0"
+            className={cn(
+              'absolute inset-0 w-[200%] h-[200%] origin-top-left scale-50 pointer-events-none border-0',
+              !embedActive && 'invisible',
+            )}
             sandbox="allow-scripts allow-same-origin"
             title={`Preview: ${session.sessionName}`}
           />
-        ) : isLoading ? (
+        ) : null}
+
+        {/* Loading overlay — shown while iframe exists but embed handshake pending */}
+        {isLoading ? (
           <div className="absolute inset-0 flex items-center justify-center">
             <Loader2 className="size-5 text-muted-foreground/40 animate-spin" />
           </div>
@@ -134,11 +153,11 @@ export function PlaywrightMosaicTile({
           <div className="absolute inset-0 flex items-center justify-center">
             <EyeOff className="size-5 text-muted-foreground/30" />
           </div>
-        ) : (
+        ) : !hasIframe ? (
           <div className="absolute inset-0 flex items-center justify-center">
             <MonitorPlay className="size-8 text-muted-foreground/20" />
           </div>
-        )}
+        ) : null}
 
         {/* Hover overlay with focus action */}
         <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 dark:group-hover:bg-white/5 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">
