@@ -862,6 +862,23 @@ export class ManagerWsClient {
         this.updateState({ telegramStatus: event })
         break
 
+      case 'playwright_discovery_snapshot':
+      case 'playwright_discovery_updated':
+        this.updateState({
+          playwrightSnapshot: event.snapshot,
+          playwrightSettings: event.snapshot.settings,
+        })
+        break
+
+      case 'playwright_discovery_settings_updated':
+        this.updateState({
+          playwrightSettings: event.settings,
+          playwrightSnapshot: this.state.playwrightSnapshot
+            ? { ...this.state.playwrightSnapshot, settings: event.settings }
+            : this.state.playwrightSnapshot,
+        })
+        break
+
       case 'error':
         this.updateState({ lastError: event.message })
         this.pushSystemMessage(`${event.code}: ${event.message}`)

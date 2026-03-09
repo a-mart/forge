@@ -4,10 +4,11 @@ import { useCallback, useMemo } from 'react'
 // The WS client will resolve this to the actual primary manager on connect.
 export const DEFAULT_MANAGER_AGENT_ID = '__default__'
 
-export type ActiveView = 'chat' | 'settings'
+export type ActiveView = 'chat' | 'settings' | 'playwright'
 export type AppRouteState =
   | { view: 'chat'; agentId: string }
   | { view: 'settings' }
+  | { view: 'playwright' }
 
 type AppRouteSearch = {
   view?: string
@@ -57,6 +58,10 @@ function parseRouteStateFromLocation(pathname: string, search: unknown): AppRout
     return { view: 'settings' }
   }
 
+  if (view === 'playwright') {
+    return { view: 'playwright' }
+  }
+
   if (view === 'chat' || agentId !== undefined) {
     return {
       view: 'chat',
@@ -72,6 +77,10 @@ function normalizeRouteState(routeState: AppRouteState): AppRouteState {
     return { view: 'settings' }
   }
 
+  if (routeState.view === 'playwright') {
+    return { view: 'playwright' }
+  }
+
   return {
     view: 'chat',
     agentId: normalizeAgentId(routeState.agentId),
@@ -81,6 +90,10 @@ function normalizeRouteState(routeState: AppRouteState): AppRouteState {
 function toRouteSearch(routeState: AppRouteState): AppRouteSearch {
   if (routeState.view === 'settings') {
     return { view: 'settings' }
+  }
+
+  if (routeState.view === 'playwright') {
+    return { view: 'playwright' }
   }
 
   const agentId = normalizeAgentId(routeState.agentId)
@@ -93,6 +106,10 @@ function toRouteSearch(routeState: AppRouteState): AppRouteSearch {
 
 function routeStatesEqual(left: AppRouteState, right: AppRouteState): boolean {
   if (left.view === 'settings' && right.view === 'settings') {
+    return true
+  }
+
+  if (left.view === 'playwright' && right.view === 'playwright') {
     return true
   }
 

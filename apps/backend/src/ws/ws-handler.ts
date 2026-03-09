@@ -1,5 +1,6 @@
 import type { ClientCommand, ServerEvent } from "@middleman/protocol";
 import type { IntegrationRegistryService } from "../integrations/registry.js";
+import type { PlaywrightDiscoveryService } from "../playwright/playwright-discovery-service.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import { WebSocketServer, type RawData, WebSocket } from "ws";
 import { extractRequestId, parseClientCommand } from "./ws-command-parser.js";
@@ -13,6 +14,7 @@ const BOOTSTRAP_SUBSCRIPTION_AGENT_ID = "__bootstrap_manager__";
 export class WsHandler {
   private readonly swarmManager: SwarmManager;
   private readonly integrationRegistry: IntegrationRegistryService | null;
+  private readonly playwrightDiscovery: PlaywrightDiscoveryService | null;
   private readonly allowNonManagerSubscriptions: boolean;
 
   private wss: WebSocketServer | null = null;
@@ -21,10 +23,12 @@ export class WsHandler {
   constructor(options: {
     swarmManager: SwarmManager;
     integrationRegistry: IntegrationRegistryService | null;
+    playwrightDiscovery: PlaywrightDiscoveryService | null;
     allowNonManagerSubscriptions: boolean;
   }) {
     this.swarmManager = options.swarmManager;
     this.integrationRegistry = options.integrationRegistry;
+    this.playwrightDiscovery = options.playwrightDiscovery;
     this.allowNonManagerSubscriptions = options.allowNonManagerSubscriptions;
   }
 
@@ -323,6 +327,16 @@ export class WsHandler {
       type: "profiles_snapshot",
       profiles: this.swarmManager.listProfiles()
     });
+    if (this.playwrightDiscovery) {
+      this.send(socket, {
+        type: "playwright_discovery_snapshot",
+        snapshot: this.playwrightDiscovery.getSnapshot()
+      });
+      this.send(socket, {
+        type: "playwright_discovery_settings_updated",
+        settings: this.playwrightDiscovery.getSettings()
+      });
+    }
     this.send(socket, {
       type: "conversation_history",
       agentId: targetAgentId,

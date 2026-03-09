@@ -1,7 +1,7 @@
 import { homedir } from 'node:os'
 import { resolve } from 'node:path'
-import { describe, expect, it } from 'vitest'
-import { createConfig } from '../config.js'
+import { describe, expect, it, vi } from 'vitest'
+import { createConfig, readPlaywrightDashboardEnvOverride } from '../config.js'
 
 const MANAGED_ENV_KEYS = [
   'NODE_ENV',
@@ -13,6 +13,7 @@ const MANAGED_ENV_KEYS = [
   'MIDDLEMAN_HOST',
   'MIDDLEMAN_PORT',
   'MIDDLEMAN_DATA_DIR',
+  'MIDDLEMAN_PLAYWRIGHT_DASHBOARD_ENABLED',
   'SWARM_DEBUG',
   'SWARM_ALLOW_NON_MANAGER_SUBSCRIPTIONS',
   'SWARM_MANAGER_ID',
@@ -150,5 +151,25 @@ describe('createConfig', () => {
         expect(config.cwdAllowlistRoots).not.toContain('/tmp/swarm-allowlist')
       }
     )
+  })
+
+  it('parses Playwright Dashboard env override values', async () => {
+    await withEnv({ MIDDLEMAN_PLAYWRIGHT_DASHBOARD_ENABLED: 'yes' }, () => {
+      expect(readPlaywrightDashboardEnvOverride()).toBe(true)
+    })
+
+    await withEnv({ MIDDLEMAN_PLAYWRIGHT_DASHBOARD_ENABLED: 'off' }, () => {
+      expect(readPlaywrightDashboardEnvOverride()).toBe(false)
+    })
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      await withEnv({ MIDDLEMAN_PLAYWRIGHT_DASHBOARD_ENABLED: 'maybe' }, () => {
+        expect(readPlaywrightDashboardEnvOverride()).toBeUndefined()
+      })
+      expect(warnSpy).toHaveBeenCalled()
+    } finally {
+      warnSpy.mockRestore()
+    }
   })
 })

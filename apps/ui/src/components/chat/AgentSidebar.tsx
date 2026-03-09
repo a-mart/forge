@@ -9,6 +9,7 @@ import {
   EyeOff,
   GitFork,
   Merge,
+  MonitorPlay,
   Pause,
   Play,
   Plus,
@@ -61,6 +62,8 @@ interface AgentSidebarProps {
   unreadCounts: Record<string, number>
   selectedAgentId: string | null
   isSettingsActive: boolean
+  isPlaywrightActive?: boolean
+  showPlaywrightNav?: boolean
   isMobileOpen?: boolean
   onMobileClose?: () => void
   onAddManager: () => void
@@ -68,6 +71,7 @@ interface AgentSidebarProps {
   onDeleteAgent: (agentId: string) => void
   onDeleteManager: (managerId: string) => void
   onOpenSettings: () => void
+  onOpenPlaywright?: () => void
   onCreateSession?: (profileId: string, name?: string) => void
   onStopSession?: (agentId: string) => void
   onResumeSession?: (agentId: string) => void
@@ -1650,6 +1654,8 @@ export function AgentSidebar({
   unreadCounts,
   selectedAgentId,
   isSettingsActive,
+  isPlaywrightActive = false,
+  showPlaywrightNav = false,
   isMobileOpen = false,
   onMobileClose,
   onAddManager,
@@ -1657,6 +1663,7 @@ export function AgentSidebar({
   onDeleteAgent,
   onDeleteManager,
   onOpenSettings,
+  onOpenPlaywright,
   onCreateSession,
   onStopSession,
   onResumeSession,
@@ -1769,6 +1776,11 @@ export function AgentSidebar({
     onOpenSettings()
     onMobileClose?.()
   }, [onOpenSettings, onMobileClose])
+
+  const handleOpenPlaywright = useCallback(() => {
+    onOpenPlaywright?.()
+    onMobileClose?.()
+  }, [onOpenPlaywright, onMobileClose])
 
   const handleRequestCreateSession = useCallback((profileId: string) => {
     const profile = profiles.find((entry) => entry.profileId === profileId)
@@ -2010,6 +2022,22 @@ export function AgentSidebar({
 
       <div className="shrink-0 border-t border-sidebar-border p-2">
         <div className="space-y-1">
+          {showPlaywrightNav ? (
+            <button
+              type="button"
+              onClick={handleOpenPlaywright}
+              className={cn(
+                'flex min-h-[44px] w-full items-center gap-2 rounded-md px-2 py-2 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
+                isPlaywrightActive
+                  ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+                  : 'text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground',
+              )}
+              aria-pressed={isPlaywrightActive}
+            >
+              <MonitorPlay aria-hidden="true" className="size-4" />
+              <span>Playwright</span>
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={handleOpenSettings}

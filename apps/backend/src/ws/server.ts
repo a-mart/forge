@@ -1,6 +1,8 @@
 import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
 import { WebSocketServer } from "ws";
 import type { IntegrationRegistryService } from "../integrations/registry.js";
+import type { PlaywrightDiscoveryService } from "../playwright/playwright-discovery-service.js";
+import { PlaywrightSettingsService } from "../playwright/playwright-settings-service.js";
 import type { ServerEvent } from "@middleman/protocol";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import { applyCorsHeaders, resolveRequestUrl, sendJson } from "./http-utils.js";
@@ -11,6 +13,7 @@ import { createFeedbackRoutes } from "./routes/feedback-routes.js";
 import { createHealthRoutes } from "./routes/health-routes.js";
 import type { HttpRoute } from "./routes/http-route.js";
 import { createIntegrationRoutes } from "./routes/integration-routes.js";
+import { createPlaywrightRoutes } from "./routes/playwright-routes.js";
 import { createSchedulerRoutes } from "./routes/scheduler-routes.js";
 import { createSettingsRoutes, type SettingsRouteBundle } from "./routes/settings-routes.js";
 import { createTranscriptionRoutes } from "./routes/transcription-routes.js";
@@ -21,6 +24,9 @@ export class SwarmWebSocketServer {
   private readonly host: string;
   private readonly port: number;
   private readonly integrationRegistry: IntegrationRegistryService | null;
+  private readonly playwrightDiscovery: PlaywrightDiscoveryService | null;
+  private readonly playwrightSettingsService: PlaywrightSettingsService;
+  private readonly playwrightEnvEnabledOverride: boolean | undefined;
 
   private httpServer: HttpServer | null = null;
   private wss: WebSocketServer | null = null;
@@ -86,21 +92,45 @@ export class SwarmWebSocketServer {
     this.wsHandler.broadcastToSubscribed(event);
   };
 
+  private readonly onPlaywrightDiscoverySnapshot = (event: ServerEvent): void => {
+    if (event.type !== "playwright_discovery_snapshot") return;
+    this.wsHandler.broadcastToSubscribed(event);
+  };
+
+  private readonly onPlaywrightDiscoveryUpdated = (event: ServerEvent): void => {
+    if (event.type !== "playwright_discovery_updated") return;
+    this.wsHandler.broadcastToSubscribed(event);
+  };
+
+  private readonly onPlaywrightDiscoverySettingsUpdated = (event: ServerEvent): void => {
+    if (event.type !== "playwright_discovery_settings_updated") return;
+    this.wsHandler.broadcastToSubscribed(event);
+  };
+
   constructor(options: {
     swarmManager: SwarmManager;
     host: string;
     port: number;
     allowNonManagerSubscriptions: boolean;
     integrationRegistry?: IntegrationRegistryService;
+    playwrightDiscovery?: PlaywrightDiscoveryService | null;
+    playwrightSettingsService?: PlaywrightSettingsService;
+    playwrightEnvEnabledOverride?: boolean;
   }) {
     this.swarmManager = options.swarmManager;
     this.host = options.host;
     this.port = options.port;
     this.integrationRegistry = options.integrationRegistry ?? null;
+    this.playwrightDiscovery = options.playwrightDiscovery ?? null;
+    this.playwrightSettingsService =
+      options.playwrightSettingsService ??
+      new PlaywrightSettingsService({ dataDir: this.swarmManager.getConfig().paths.dataDir });
+    this.playwrightEnvEnabledOverride = options.playwrightEnvEnabledOverride;
 
     this.wsHandler = new WsHandler({
       swarmManager: this.swarmManager,
       integrationRegistry: this.integrationRegistry,
+      playwrightDiscovery: this.playwrightDiscovery,
       allowNonManagerSubscriptions: options.allowNonManagerSubscriptions
     });
 
@@ -116,6 +146,11 @@ export class SwarmWebSocketServer {
       ...createSchedulerRoutes({ swarmManager: this.swarmManager }),
       ...createAgentHttpRoutes({ swarmManager: this.swarmManager }),
       ...this.settingsRoutes.routes,
+      ...createPlaywrightRoutes({
+        discoveryService: this.playwrightDiscovery,
+        settingsService: this.playwrightSettingsService,
+        envEnabledOverride: this.playwrightEnvEnabledOverride,
+      }),
       ...createIntegrationRoutes({
         swarmManager: this.swarmManager,
         integrationRegistry: this.integrationRegistry
@@ -171,6 +206,9 @@ export class SwarmWebSocketServer {
     this.swarmManager.on("profiles_snapshot", this.onProfilesSnapshot);
     this.integrationRegistry?.on("slack_status", this.onSlackStatus);
     this.integrationRegistry?.on("telegram_status", this.onTelegramStatus);
+    this.playwrightDiscovery?.on("playwright_discovery_snapshot", this.onPlaywrightDiscoverySnapshot);
+    this.playwrightDiscovery?.on("playwright_discovery_updated", this.onPlaywrightDiscoveryUpdated);
+    this.playwrightDiscovery?.on("playwright_discovery_settings_updated", this.onPlaywrightDiscoverySettingsUpdated);
   }
 
   async stop(): Promise<void> {
@@ -184,6 +222,9 @@ export class SwarmWebSocketServer {
     this.swarmManager.off("profiles_snapshot", this.onProfilesSnapshot);
     this.integrationRegistry?.off("slack_status", this.onSlackStatus);
     this.integrationRegistry?.off("telegram_status", this.onTelegramStatus);
+    this.playwrightDiscovery?.off("playwright_discovery_snapshot", this.onPlaywrightDiscoverySnapshot);
+    this.playwrightDiscovery?.off("playwright_discovery_updated", this.onPlaywrightDiscoveryUpdated);
+    this.playwrightDiscovery?.off("playwright_discovery_settings_updated", this.onPlaywrightDiscoverySettingsUpdated);
 
     const currentWss = this.wss;
     const currentHttpServer = this.httpServer;

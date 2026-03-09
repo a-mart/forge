@@ -20,6 +20,10 @@ import {
 } from "./swarm/data-paths.js";
 import type { SwarmConfig } from "./swarm/types.js";
 
+export function readPlaywrightDashboardEnvOverride(): boolean | undefined {
+  return parseOptionalBooleanEnv(process.env.MIDDLEMAN_PLAYWRIGHT_DASHBOARD_ENABLED);
+}
+
 export function createConfig(): SwarmConfig {
   const rootDir = detectRootDir();
   const dataDir = process.env.MIDDLEMAN_DATA_DIR ?? resolve(homedir(), ".middleman");
@@ -117,6 +121,26 @@ function detectRootDir(): string {
 
 function isSwarmRepoRoot(path: string): boolean {
   return existsSync(resolve(path, "pnpm-workspace.yaml")) && existsSync(resolve(path, "apps"));
+}
+
+function parseOptionalBooleanEnv(value: string | undefined): boolean | undefined {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized) {
+    return undefined;
+  }
+
+  if (["1", "true", "yes", "on"].includes(normalized)) {
+    return true;
+  }
+
+  if (["0", "false", "no", "off"].includes(normalized)) {
+    return false;
+  }
+
+  console.warn(
+    `[config] Ignoring invalid MIDDLEMAN_PLAYWRIGHT_DASHBOARD_ENABLED value: ${value}`,
+  );
+  return undefined;
 }
 
 function migrateLegacyPiAuthFileIfNeeded(targetAuthFile: string): void {
