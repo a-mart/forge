@@ -254,3 +254,17 @@ export interface PlaywrightLivePreviewStatusEvent {
   status: PlaywrightPreviewStatus
   message?: string
 }
+
+export interface PlaywrightLivePreviewEmbedStatusMessage {
+  type: 'playwright:embed-status'
+  previewId: string | null
+  publicSessionKey: string | null
+  sessionName: string | null
+  status: PlaywrightPreviewStatus
+  message?: string
+  source?: 'shell' | 'fetch' | 'websocket' | 'window-error'
+  httpStatus?: number
+  code?: number
+  reason?: string
+  wasClean?: boolean
+}

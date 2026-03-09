@@ -9,6 +9,7 @@ import {
 } from './playwright-api'
 import type {
   PlaywrightDiscoveredSession,
+  PlaywrightLivePreviewEmbedStatusMessage,
   PlaywrightPreviewStatus,
 } from '@middleman/protocol'
 
@@ -299,6 +300,62 @@ export function PlaywrightLivePreviewPane({
     // Frame loaded successfully; status remains active
   }, [])
 
+  const handleFrameStatusMessage = useCallback((message: PlaywrightLivePreviewEmbedStatusMessage) => {
+    if (message.previewId && activePreviewIdRef.current && message.previewId !== activePreviewIdRef.current) {
+      return
+    }
+
+    if (message.status === 'expired') {
+      activePreviewIdRef.current = null
+    }
+
+    setPreview((prev) => {
+      switch (message.status) {
+        case 'active':
+          return {
+            ...prev,
+            status: 'active',
+            errorMessage: null,
+            unavailableReason: null,
+          }
+        case 'unavailable':
+          return {
+            ...prev,
+            status: 'unavailable',
+            errorMessage: null,
+            unavailableReason: message.message ?? prev.unavailableReason ?? 'Live preview is unavailable',
+            interactionEnabled: false,
+          }
+        case 'expired':
+          return {
+            ...prev,
+            status: 'expired',
+            errorMessage: null,
+            unavailableReason: null,
+            interactionEnabled: false,
+          }
+        case 'disconnected':
+          return {
+            ...prev,
+            status: 'disconnected',
+            errorMessage: message.message ?? 'Live preview disconnected',
+            unavailableReason: null,
+            interactionEnabled: false,
+          }
+        case 'error':
+          return {
+            ...prev,
+            status: 'error',
+            errorMessage: message.message ?? 'Live preview error',
+            unavailableReason: null,
+            interactionEnabled: false,
+          }
+        default:
+          return prev
+      }
+    })
+  }, [])
+
   // Handle iframe error — distinguish disconnected from generic error
   const handleFrameError = useCallback((message: string) => {
     setPreview((prev) => {
@@ -357,6 +414,7 @@ export function PlaywrightLivePreviewPane({
         onInteractionRequest={handleInteractionRequest}
         onLoad={handleFrameLoad}
         onError={handleFrameError}
+        onStatusMessage={handleFrameStatusMessage}
       />
     </div>
   )

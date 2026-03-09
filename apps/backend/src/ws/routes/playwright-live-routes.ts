@@ -160,8 +160,9 @@ async function handleAppHtmlRequest(
     return
   }
 
+  const previewId = normalizePreviewId(requestUrl.searchParams.get('previewId'))
+
   try {
-    const previewId = normalizePreviewId(requestUrl.searchParams.get('previewId'))
     const bootstrap = previewId ? livePreviewService.getBootstrap(previewId, requestUrl.origin) : null
     const publicSessionKey = bootstrap ? createPublicSessionKey(bootstrap.sessionId) : null
 
@@ -175,7 +176,16 @@ async function handleAppHtmlRequest(
     }))
   } catch (error) {
     const normalized = asPlaywrightLivePreviewError(error)
-    sendJson(response, normalized.statusCode, { error: normalized.message })
+    response.statusCode = normalized.statusCode
+    response.setHeader('Cache-Control', 'no-store')
+    response.setHeader('Content-Type', 'text/html; charset=utf-8')
+    response.end(buildAppErrorHtml({
+      previewId,
+      publicSessionKey: null,
+      sessionName: null,
+      status: normalized.statusCode === 410 ? 'expired' : normalized.statusCode === 409 ? 'unavailable' : 'error',
+      message: normalized.message,
+    }))
   }
 }
 
@@ -574,40 +584,257 @@ function buildAppHtml(options: {
   publicSessionKey: string | null
   sessionName: string | null
 }): string {
-  const embedConfig = {
-    previewId: options.previewId,
-    publicSessionKey: options.publicSessionKey,
-    sessionName: options.sessionName,
+  return renderEmbedDocument({
+    title: 'Playwright Remote Control',
+    embedConfig: {
+      previewId: options.previewId,
+      publicSessionKey: options.publicSessionKey,
+      sessionName: options.sessionName,
+    },
+    bodyContent: '<div id="root"></div>',
+    loadAppBundle: true,
+    initialStatus: null,
+  })
+}
+
+function buildAppErrorHtml(options: {
+  previewId: string | null
+  publicSessionKey: string | null
+  sessionName: string | null
+  status: 'unavailable' | 'expired' | 'error'
+  message: string
+}): string {
+  const escapedMessage = escapeHtml(options.message)
+
+  return renderEmbedDocument({
+    title: 'Playwright Live Preview',
+    embedConfig: {
+      previewId: options.previewId,
+      publicSessionKey: options.publicSessionKey,
+      sessionName: options.sessionName,
+    },
+    bodyContent: `<div class="mm-playwright-status-shell"><div class="mm-playwright-status-card"><h1>Playwright Live Preview</h1><p>${escapedMessage}</p></div></div>`,
+    loadAppBundle: false,
+    initialStatus: {
+      status: options.status,
+      message: options.message,
+    },
+  })
+}
+
+function renderEmbedDocument(options: {
+  title: string
+  embedConfig: {
+    previewId: string | null
+    publicSessionKey: string | null
+    sessionName: string | null
   }
+  bodyContent: string
+  loadAppBundle: boolean
+  initialStatus: { status: 'unavailable' | 'expired' | 'error'; message: string } | null
+}): string {
+  const embedConfigJson = serializeInlineScriptValue(options.embedConfig)
+  const initialStatusJson = serializeInlineScriptValue(options.initialStatus)
+  const bundleMarkup = options.loadAppBundle
+    ? `<script type="module" crossorigin src="${PLAYWRIGHT_LIVE_PREFIX}/${DEVTOOLS_BUNDLE_JS}"></script>
+    <link rel="stylesheet" crossorigin href="${PLAYWRIGHT_LIVE_PREFIX}/${DEVTOOLS_BUNDLE_CSS}" />`
+    : ''
 
   return `<!DOCTYPE html>
 <html lang="en" translate="no">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Playwright Remote Control</title>
+    <title>${escapeHtml(options.title)}</title>
     <script>
-      window.__MM_PLAYWRIGHT_EMBED__ = ${JSON.stringify(embedConfig)};
+      window.__MM_PLAYWRIGHT_EMBED__ = ${embedConfigJson};
+      window.__MM_PLAYWRIGHT_EMBED_INITIAL_STATUS__ = ${initialStatusJson};
       (() => {
+        const MESSAGE_TYPE = 'playwright:embed-status';
         const config = window.__MM_PLAYWRIGHT_EMBED__;
+        const initialStatus = window.__MM_PLAYWRIGHT_EMBED_INITIAL_STATUS__;
+        const targetOrigin = (() => {
+          try {
+            return document.referrer ? new URL(document.referrer).origin : '*';
+          } catch {
+            return '*';
+          }
+        })();
+        let lastStatusKey = null;
+
+        const postStatus = (status, message, extra = {}) => {
+          if (window.parent === window) {
+            return;
+          }
+          const payload = {
+            type: MESSAGE_TYPE,
+            previewId: config?.previewId ?? null,
+            publicSessionKey: config?.publicSessionKey ?? null,
+            sessionName: config?.sessionName ?? null,
+            status,
+            message: typeof message === 'string' && message ? message : undefined,
+            ...extra,
+          };
+          const dedupeKey = JSON.stringify({
+            status: payload.status,
+            message: payload.message ?? null,
+            source: payload.source ?? null,
+            httpStatus: payload.httpStatus ?? null,
+            code: payload.code ?? null,
+            reason: payload.reason ?? null,
+          });
+          if (dedupeKey === lastStatusKey) {
+            return;
+          }
+          lastStatusKey = dedupeKey;
+          window.parent.postMessage(payload, targetOrigin);
+        };
+
+        const classifyHttpFailure = (status, message) => {
+          const detail = typeof message === 'string' ? message.toLowerCase() : '';
+          if (status === 410 || detail.includes('expired')) {
+            return 'expired';
+          }
+          if (status === 409 || detail.includes('unavailable') || detail.includes('not previewable')) {
+            return 'unavailable';
+          }
+          return 'error';
+        };
+
+        const isManagedRoute = (pathname) => pathname === '/api/sessions/list'
+          || pathname === '/api/sessions/devtools-start'
+          || pathname === '/api/sessions/close'
+          || pathname === '/api/sessions/delete-data';
+
+        const readErrorMessage = async (response) => {
+          try {
+            const data = await response.clone().json();
+            if (data && typeof data.error === 'string' && data.error.trim()) {
+              return data.error.trim();
+            }
+          } catch {}
+          try {
+            const text = await response.clone().text();
+            if (text.trim()) {
+              return text.trim();
+            }
+          } catch {}
+          return response.statusText || 'Request failed';
+        };
+
         if (config?.publicSessionKey) {
           window.location.hash = '#session=' + encodeURIComponent(config.publicSessionKey);
         }
+
+        const NativeWebSocket = window.WebSocket;
+        const controllerPathSegment = '/playwright-live/ws/controller/';
+        const isControllerSocket = (urlLike) => {
+          try {
+            const url = new URL(typeof urlLike === 'string' ? urlLike : String(urlLike), window.location.origin);
+            return url.pathname.includes(controllerPathSegment);
+          } catch {
+            return false;
+          }
+        };
+
+        class MiddlemanPlaywrightWebSocket extends NativeWebSocket {
+          constructor(url, protocols) {
+            if (protocols === undefined) {
+              super(url);
+            } else {
+              super(url, protocols);
+            }
+
+            if (!isControllerSocket(url)) {
+              return;
+            }
+
+            let opened = false;
+
+            this.addEventListener('open', () => {
+              opened = true;
+              postStatus('active', 'Live preview connected', { source: 'websocket' });
+            });
+
+            this.addEventListener('error', () => {
+              postStatus(opened ? 'disconnected' : 'error', opened ? 'Live preview controller error' : 'Failed to connect live preview controller', {
+                source: 'websocket',
+              });
+            });
+
+            this.addEventListener('close', (event) => {
+              const reason = typeof event.reason === 'string' ? event.reason : '';
+              const lowerReason = reason.toLowerCase();
+              const status = lowerReason.includes('expired') || lowerReason.includes('released')
+                ? 'expired'
+                : opened
+                  ? 'disconnected'
+                  : 'error';
+              postStatus(status, reason || (status === 'disconnected' ? 'Live preview disconnected' : 'Live preview connection closed'), {
+                source: 'websocket',
+                code: event.code,
+                reason: reason || undefined,
+                wasClean: event.wasClean,
+              });
+            });
+          }
+        }
+
+        MiddlemanPlaywrightWebSocket.prototype = NativeWebSocket.prototype;
+        Object.defineProperty(MiddlemanPlaywrightWebSocket, 'CONNECTING', { value: NativeWebSocket.CONNECTING });
+        Object.defineProperty(MiddlemanPlaywrightWebSocket, 'OPEN', { value: NativeWebSocket.OPEN });
+        Object.defineProperty(MiddlemanPlaywrightWebSocket, 'CLOSING', { value: NativeWebSocket.CLOSING });
+        Object.defineProperty(MiddlemanPlaywrightWebSocket, 'CLOSED', { value: NativeWebSocket.CLOSED });
+        window.WebSocket = MiddlemanPlaywrightWebSocket;
+
         const originalFetch = window.fetch.bind(window);
-        window.fetch = (input, init) => {
+        window.fetch = async (input, init) => {
           const rawUrl = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
           const url = new URL(rawUrl, window.location.origin);
-          if (config?.previewId && (url.pathname === '/api/sessions/list' || url.pathname === '/api/sessions/devtools-start' || url.pathname === '/api/sessions/close' || url.pathname === '/api/sessions/delete-data')) {
+          const managedRoute = isManagedRoute(url.pathname);
+          if (config?.previewId && managedRoute) {
             url.searchParams.set('previewId', config.previewId);
           }
-          if (typeof input === 'string') {
-            return originalFetch(url.toString(), init);
+
+          const requestInput = typeof input === 'string'
+            ? url.toString()
+            : input instanceof Request
+              ? new Request(url.toString(), input)
+              : url.toString();
+
+          try {
+            const response = await originalFetch(requestInput, init);
+            if (managedRoute && !response.ok) {
+              const message = await readErrorMessage(response);
+              postStatus(classifyHttpFailure(response.status, message), message, {
+                source: 'fetch',
+                httpStatus: response.status,
+              });
+            }
+            return response;
+          } catch (error) {
+            if (managedRoute) {
+              postStatus('error', error instanceof Error ? error.message : 'Live preview request failed', {
+                source: 'fetch',
+              });
+            }
+            throw error;
           }
-          if (input instanceof Request) {
-            return originalFetch(new Request(url.toString(), input), init);
-          }
-          return originalFetch(url.toString(), init);
         };
+
+        window.addEventListener('error', (event) => {
+          postStatus('error', event.message || 'Live preview runtime error', { source: 'window-error' });
+        });
+
+        window.addEventListener('unhandledrejection', (event) => {
+          const reason = event.reason;
+          const message = reason instanceof Error ? reason.message : typeof reason === 'string' ? reason : 'Unhandled live preview rejection';
+          postStatus('error', message, { source: 'window-error' });
+        });
+
+        if (initialStatus) {
+          postStatus(initialStatus.status, initialStatus.message, { source: 'shell' });
+        }
       })();
     </script>
     <style>
@@ -615,12 +842,40 @@ function buildAppHtml(options: {
       body { margin: 0; }
       body[data-mm-playwright-embed='true'] .tabbar-back { display: none !important; }
       body[data-mm-playwright-embed='true'] .session-chip-action { display: none !important; }
+      .mm-playwright-status-shell {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 100%;
+        padding: 24px;
+        background: #0b1020;
+        color: rgba(255, 255, 255, 0.92);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      .mm-playwright-status-card {
+        max-width: 480px;
+        padding: 20px 24px;
+        border-radius: 16px;
+        background: rgba(15, 23, 42, 0.92);
+        border: 1px solid rgba(148, 163, 184, 0.28);
+        box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
+      }
+      .mm-playwright-status-card h1 {
+        margin: 0 0 8px;
+        font-size: 16px;
+        font-weight: 600;
+      }
+      .mm-playwright-status-card p {
+        margin: 0;
+        font-size: 13px;
+        line-height: 1.5;
+        color: rgba(226, 232, 240, 0.9);
+      }
     </style>
-    <script type="module" crossorigin src="${PLAYWRIGHT_LIVE_PREFIX}/${DEVTOOLS_BUNDLE_JS}"></script>
-    <link rel="stylesheet" crossorigin href="${PLAYWRIGHT_LIVE_PREFIX}/${DEVTOOLS_BUNDLE_CSS}" />
+    ${bundleMarkup}
   </head>
   <body>
-    <div id="root"></div>
+    ${options.bodyContent}
     <script>
       if (window.__MM_PLAYWRIGHT_EMBED__?.previewId) {
         document.body.dataset.mmPlaywrightEmbed = 'true';
@@ -628,4 +883,22 @@ function buildAppHtml(options: {
     </script>
   </body>
 </html>`
+}
+
+function serializeInlineScriptValue(value: unknown): string {
+  return JSON.stringify(value)
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/&/g, '\\u0026')
+    .replace(/\\u2028/g, '\\u2028')
+    .replace(/\\u2029/g, '\\u2029')
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\"/g, '&quot;')
+    .replace(/'/g, '&#39;')
 }

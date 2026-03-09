@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2, MousePointer } from 'lucide-react'
+import type { PlaywrightLivePreviewEmbedStatusMessage } from '@middleman/protocol'
 import { cn } from '@/lib/utils'
 
 interface PlaywrightLivePreviewFrameProps {
@@ -8,6 +9,7 @@ interface PlaywrightLivePreviewFrameProps {
   onInteractionRequest: () => void
   onLoad?: () => void
   onError?: (message: string) => void
+  onStatusMessage?: (message: PlaywrightLivePreviewEmbedStatusMessage) => void
 }
 
 export function PlaywrightLivePreviewFrame({
@@ -16,10 +18,18 @@ export function PlaywrightLivePreviewFrame({
   onInteractionRequest,
   onLoad,
   onError,
+  onStatusMessage,
 }: PlaywrightLivePreviewFrameProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [hasError, setHasError] = useState(false)
+  const iframeOrigin = useMemo(() => {
+    try {
+      return new URL(iframeSrc, window.location.href).origin
+    } catch {
+      return null
+    }
+  }, [iframeSrc])
 
   const handleLoad = useCallback(() => {
     setIsLoading(false)
@@ -38,6 +48,33 @@ export function PlaywrightLivePreviewFrame({
     setIsLoading(true)
     setHasError(false)
   }, [iframeSrc])
+
+  useEffect(() => {
+    if (!onStatusMessage) {
+      return
+    }
+
+    const handleMessage = (event: MessageEvent) => {
+      if (iframeOrigin && event.origin !== iframeOrigin) {
+        return
+      }
+
+      if (iframeRef.current?.contentWindow && event.source !== iframeRef.current.contentWindow) {
+        return
+      }
+
+      if (!isEmbedStatusMessage(event.data)) {
+        return
+      }
+
+      onStatusMessage(event.data)
+    }
+
+    window.addEventListener('message', handleMessage)
+    return () => {
+      window.removeEventListener('message', handleMessage)
+    }
+  }, [iframeOrigin, onStatusMessage])
 
   return (
     <div className="relative flex-1 min-h-0 bg-black/5 dark:bg-white/5">
@@ -100,4 +137,13 @@ export function PlaywrightLivePreviewFrame({
       />
     </div>
   )
+}
+
+function isEmbedStatusMessage(value: unknown): value is PlaywrightLivePreviewEmbedStatusMessage {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false
+  }
+
+  const maybe = value as Record<string, unknown>
+  return maybe.type === 'playwright:embed-status' && typeof maybe.status === 'string'
 }
