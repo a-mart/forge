@@ -148,11 +148,7 @@ export class PlaywrightDiscoveryService extends EventEmitter {
   private readonly now: () => Date
 
   private running = false
-  private scanInFlight = false
-  private pendingScan = false
-  private pendingScanReason = 'pending'
-  private scanWaiters: Array<(snapshot: PlaywrightDiscoverySnapshot) => void> = []
-  private activeScanPromise: Promise<void> | null = null
+  private lifecycle: Promise<void> = Promise.resolve()
   private pollTimer: NodeJS.Timeout | null = null
   private readonly watchers = new Map<string, FSWatcher>()
 
@@ -194,7 +190,9 @@ export class PlaywrightDiscoveryService extends EventEmitter {
     }
 
     this.startPolling()
-    await this.runScan('startup', 'playwright_discovery_snapshot')
+    await this.enqueueOperation(async () => {
+      await this.runScan('startup', 'playwright_discovery_snapshot')
+    })
   }
 
   async stop(): Promise<void> {
@@ -205,7 +203,7 @@ export class PlaywrightDiscoveryService extends EventEmitter {
     this.running = false
     this.stopPolling()
     this.clearWatchers()
-    await this.activeScanPromise
+    await this.lifecycle
   }
 
   getSnapshot(): PlaywrightDiscoverySnapshot {
@@ -228,9 +226,13 @@ export class PlaywrightDiscoveryService extends EventEmitter {
       return this.getSnapshot()
     }
 
-    return await new Promise<PlaywrightDiscoverySnapshot>((resolve) => {
-      this.scanWaiters.push(resolve)
-      this.requestScan(reason)
+    return await this.enqueueOperation(async () => {
+      if (!this.running || !this.currentSettings.effectiveEnabled) {
+        return this.getSnapshot()
+      }
+
+      await this.runScan(reason, 'playwright_discovery_updated')
+      return this.getSnapshot()
     })
   }
 
@@ -241,27 +243,37 @@ export class PlaywrightDiscoveryService extends EventEmitter {
     socketProbeTimeoutMs?: number
     staleSessionThresholdMs?: number
   }): Promise<{ settings: PlaywrightDiscoverySettings; snapshot: PlaywrightDiscoverySnapshot }> {
-    if (this.envEnabledOverride !== undefined) {
-      throw new PlaywrightSettingsConflictError()
-    }
+    return await this.enqueueOperation(async () => {
+      if (this.envEnabledOverride !== undefined) {
+        throw new PlaywrightSettingsConflictError()
+      }
 
-    await this.settingsService.update(patch)
-    this.currentSettings = this.computeEffectiveSettings()
-    this.emitSettingsUpdated()
+      await this.settingsService.update(patch)
+      this.currentSettings = this.computeEffectiveSettings()
+      this.emitSettingsUpdated()
 
-    this.stopPolling()
-    this.clearWatchers()
+      this.stopPolling()
+      this.clearWatchers()
 
-    if (!this.currentSettings.effectiveEnabled) {
-      this.currentSnapshot = createEmptySnapshot(this.currentSettings, 'disabled')
-      this.emitSnapshot(this.currentSnapshot, 'playwright_discovery_updated')
-      this.resolveWaiters(this.currentSnapshot)
+      if (!this.currentSettings.effectiveEnabled) {
+        this.currentSnapshot = createEmptySnapshot(this.currentSettings, 'disabled')
+        this.emitSnapshot(this.currentSnapshot, 'playwright_discovery_updated')
+        return { settings: this.getSettings(), snapshot: this.getSnapshot() }
+      }
+
+      this.startPolling()
+      await this.runScan('settings_update', 'playwright_discovery_updated')
       return { settings: this.getSettings(), snapshot: this.getSnapshot() }
-    }
+    })
+  }
 
-    this.startPolling()
-    await this.runScan('settings_update', 'playwright_discovery_updated')
-    return { settings: this.getSettings(), snapshot: this.getSnapshot() }
+  private enqueueOperation<T>(operation: () => Promise<T>): Promise<T> {
+    const next = this.lifecycle.then(operation, operation)
+    this.lifecycle = next.then(
+      () => undefined,
+      () => undefined,
+    )
+    return next
   }
 
   private computeEffectiveSettings(): PlaywrightDiscoverySettings {
@@ -333,32 +345,13 @@ export class PlaywrightDiscoveryService extends EventEmitter {
       return
     }
 
-    this.pendingScan = true
-    this.pendingScanReason = reason
-    if (this.scanInFlight) {
-      return
-    }
-
-    const run = this.drainPendingScans().finally(() => {
-      if (this.activeScanPromise === run) {
-        this.activeScanPromise = null
+    void this.enqueueOperation(async () => {
+      if (!this.running || !this.currentSettings.effectiveEnabled) {
+        return
       }
+
+      await this.runScan(reason, 'playwright_discovery_updated')
     })
-    this.activeScanPromise = run
-  }
-
-  private async drainPendingScans(): Promise<void> {
-    this.scanInFlight = true
-
-    try {
-      while (this.running && this.currentSettings.effectiveEnabled && this.pendingScan) {
-        this.pendingScan = false
-        const reason = this.pendingScanReason
-        await this.runScan(reason, 'playwright_discovery_updated')
-      }
-    } finally {
-      this.scanInFlight = false
-    }
   }
 
   private async runScan(
@@ -370,7 +363,7 @@ export class PlaywrightDiscoveryService extends EventEmitter {
 
     try {
       const resolution = await this.resolveScanRoots(this.currentSettings)
-      const sessions = await this.scanSessions(resolution.roots)
+      const sessionScan = await this.scanSessions(resolution.roots)
       const completedAt = this.now().toISOString()
 
       const nextSnapshot: PlaywrightDiscoverySnapshot = {
@@ -382,9 +375,9 @@ export class PlaywrightDiscoveryService extends EventEmitter {
         serviceStatus: 'ready',
         settings: this.getSettings(),
         rootsScanned: resolution.roots.map((root) => root.rootPath),
-        summary: buildSummary(sessions),
-        sessions,
-        warnings: dedupeStrings(resolution.warnings),
+        summary: buildSummary(sessionScan.sessions),
+        sessions: sessionScan.sessions,
+        warnings: dedupeStrings([...resolution.warnings, ...sessionScan.warnings]),
         lastError: null,
       }
 
@@ -400,8 +393,6 @@ export class PlaywrightDiscoveryService extends EventEmitter {
       if (changed || eventType === 'playwright_discovery_snapshot') {
         this.emitSnapshot(this.currentSnapshot, eventType)
       }
-
-      this.resolveWaiters(this.currentSnapshot)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       const completedAt = this.now().toISOString()
@@ -417,7 +408,6 @@ export class PlaywrightDiscoveryService extends EventEmitter {
 
       this.currentSnapshot = failedSnapshot
       this.emitSnapshot(this.currentSnapshot, eventType)
-      this.resolveWaiters(this.currentSnapshot)
     }
   }
 
@@ -460,9 +450,13 @@ export class PlaywrightDiscoveryService extends EventEmitter {
     }
   }
 
-  private async scanSessions(roots: PlaywrightScanRoot[]): Promise<PlaywrightDiscoveredSession[]> {
+  private async scanSessions(roots: PlaywrightScanRoot[]): Promise<{
+    sessions: PlaywrightDiscoveredSession[]
+    warnings: string[]
+  }> {
     const agents = this.swarmManager.listAgents()
     const candidates: PlaywrightSessionCandidate[] = []
+    const warnings: string[] = []
 
     for (const root of roots) {
       const runtimeEnv = await readRuntimeEnv(root.runtimeEnvPath)
@@ -471,9 +465,12 @@ export class PlaywrightDiscoveryService extends EventEmitter {
 
       for (const sessionFilePath of sessionFiles) {
         const parsed = await parseSessionFile(root, runtimeEnv, artifactCounts, sessionFilePath)
-        if (parsed) {
-          candidates.push(parsed)
+        if ('warning' in parsed) {
+          warnings.push(parsed.warning)
+          continue
         }
+
+        candidates.push(parsed.candidate)
       }
     }
 
@@ -526,7 +523,10 @@ export class PlaywrightDiscoveryService extends EventEmitter {
     }
 
     sessions.sort(compareSessions)
-    return sessions
+    return {
+      sessions,
+      warnings: dedupeStrings(warnings),
+    }
   }
 
   private emitSnapshot(
@@ -546,12 +546,6 @@ export class PlaywrightDiscoveryService extends EventEmitter {
     })
   }
 
-  private resolveWaiters(snapshot: PlaywrightDiscoverySnapshot): void {
-    const waiters = this.scanWaiters.splice(0)
-    for (const waiter of waiters) {
-      waiter(cloneSnapshot(snapshot))
-    }
-  }
 }
 
 function createEffectiveSettings(
@@ -916,14 +910,28 @@ async function parseSessionFile(
   runtimeEnv: PlaywrightRuntimeEnvInfo | null,
   artifactCounts: PlaywrightSessionArtifactCounts,
   sessionFilePath: string,
-): Promise<PlaywrightSessionCandidate | null> {
+): Promise<{ candidate: PlaywrightSessionCandidate } | { warning: string }> {
+  let rawText: string
   try {
-    const rawText = await readFile(sessionFilePath, 'utf8')
-    const rawJson = JSON.parse(rawText) as unknown
-    if (!rawJson || typeof rawJson !== 'object' || Array.isArray(rawJson)) {
-      return null
-    }
+    rawText = await readFile(sessionFilePath, 'utf8')
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return { warning: `Unable to read Playwright session file ${sessionFilePath}: ${message}` }
+  }
 
+  let rawJson: unknown
+  try {
+    rawJson = JSON.parse(rawText) as unknown
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return { warning: `Invalid Playwright session JSON ${sessionFilePath}: ${message}` }
+  }
+
+  if (!rawJson || typeof rawJson !== 'object' || Array.isArray(rawJson)) {
+    return { warning: `Invalid Playwright session payload ${sessionFilePath}: expected JSON object` }
+  }
+
+  try {
     const raw = rawJson as PlaywrightSessionFile
     const realPath = await realpathOrResolve(sessionFilePath)
     const fileStats = await stat(sessionFilePath)
@@ -937,9 +945,10 @@ async function parseSessionFile(
         : 'v1'
 
     const socketPath = normalizeOptionalPath(raw.socketPath)
+    const userDataDirPrefix = normalizeOptionalPath(raw.userDataDirPrefix)
     const userDataDirPath =
       normalizeOptionalPath((raw as PlaywrightSessionFileV2).resolvedConfig?.browser?.userDataDir) ??
-      (normalizeOptionalPath(raw.userDataDirPrefix) ? `${normalizePath(raw.userDataDirPrefix as string)}-chrome` : null)
+      (userDataDirPrefix ? `${userDataDirPrefix}-chrome` : null)
     const warnings: string[] = []
 
     if (!socketPath) {
@@ -953,40 +962,43 @@ async function parseSessionFile(
     }
 
     return {
-      raw,
-      schemaVersion,
-      sessionFilePath: normalizePath(sessionFilePath),
-      sessionFileRealPath: realPath,
-      sessionFileUpdatedAt: fileStats.mtime.toISOString(),
-      sessionTimestampMs,
-      sessionName,
-      sessionVersion: getNonEmptyString(raw.version),
-      root,
-      runtimeEnv,
-      artifactCounts,
-      warnings,
-      daemonId: inferDaemonId(root.sessionDirPath, sessionFilePath),
-      socketPath,
-      browserName: getNonEmptyString((raw as PlaywrightSessionFileV2).resolvedConfig?.browser?.browserName),
-      browserChannel: getNonEmptyString((raw as PlaywrightSessionFileV2).resolvedConfig?.browser?.launchOptions?.channel),
-      headless: getOptionalBoolean((raw as PlaywrightSessionFileV2).resolvedConfig?.browser?.launchOptions?.headless),
-      persistent: getOptionalBoolean(raw.cli?.persistent),
-      isolated: getOptionalBoolean((raw as PlaywrightSessionFileV2).resolvedConfig?.browser?.isolated),
-      userDataDirPath,
-      userDataDirExists: userDataDirPath ? await pathExists(userDataDirPath) : false,
-      ports: {
-        frontend: runtimeEnv?.frontendPort ?? null,
-        backendApi: runtimeEnv?.backendApiPort ?? null,
-        sandbox: runtimeEnv?.sandboxPort ?? null,
-        liteLlm: runtimeEnv?.liteLlmPort ?? null,
-        cdp: getFiniteNumber((raw as PlaywrightSessionFileV2).resolvedConfig?.browser?.launchOptions?.cdpPort),
+      candidate: {
+        raw,
+        schemaVersion,
+        sessionFilePath: normalizePath(sessionFilePath),
+        sessionFileRealPath: realPath,
+        sessionFileUpdatedAt: fileStats.mtime.toISOString(),
+        sessionTimestampMs,
+        sessionName,
+        sessionVersion: getNonEmptyString(raw.version),
+        root,
+        runtimeEnv,
+        artifactCounts,
+        warnings,
+        daemonId: inferDaemonId(root.sessionDirPath, sessionFilePath),
+        socketPath,
+        browserName: getNonEmptyString((raw as PlaywrightSessionFileV2).resolvedConfig?.browser?.browserName),
+        browserChannel: getNonEmptyString((raw as PlaywrightSessionFileV2).resolvedConfig?.browser?.launchOptions?.channel),
+        headless: getOptionalBoolean((raw as PlaywrightSessionFileV2).resolvedConfig?.browser?.launchOptions?.headless),
+        persistent: getOptionalBoolean(raw.cli?.persistent),
+        isolated: getOptionalBoolean((raw as PlaywrightSessionFileV2).resolvedConfig?.browser?.isolated),
+        userDataDirPath,
+        userDataDirExists: userDataDirPath ? await pathExists(userDataDirPath) : false,
+        ports: {
+          frontend: runtimeEnv?.frontendPort ?? null,
+          backendApi: runtimeEnv?.backendApiPort ?? null,
+          sandbox: runtimeEnv?.sandboxPort ?? null,
+          liteLlm: runtimeEnv?.liteLlmPort ?? null,
+          cdp: getFiniteNumber((raw as PlaywrightSessionFileV2).resolvedConfig?.browser?.launchOptions?.cdpPort),
+        },
+        duplicateGroupKey: socketPath ?? realPath,
+        duplicateRank: 0,
+        preferredInDuplicateGroup: true,
       },
-      duplicateGroupKey: socketPath ?? realPath,
-      duplicateRank: 0,
-      preferredInDuplicateGroup: true,
     }
-  } catch {
-    return null
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return { warning: `Unable to process Playwright session file ${sessionFilePath}: ${message}` }
   }
 }
 

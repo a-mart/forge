@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type Server as HttpServer, type Ser
 import { WebSocketServer } from "ws";
 import type { IntegrationRegistryService } from "../integrations/registry.js";
 import type { PlaywrightDiscoveryService } from "../playwright/playwright-discovery-service.js";
+import { PlaywrightSettingsService } from "../playwright/playwright-settings-service.js";
 import type { ServerEvent } from "@middleman/protocol";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import { applyCorsHeaders, resolveRequestUrl, sendJson } from "./http-utils.js";
@@ -24,6 +25,8 @@ export class SwarmWebSocketServer {
   private readonly port: number;
   private readonly integrationRegistry: IntegrationRegistryService | null;
   private readonly playwrightDiscovery: PlaywrightDiscoveryService | null;
+  private readonly playwrightSettingsService: PlaywrightSettingsService;
+  private readonly playwrightEnvEnabledOverride: boolean | undefined;
 
   private httpServer: HttpServer | null = null;
   private wss: WebSocketServer | null = null;
@@ -111,12 +114,18 @@ export class SwarmWebSocketServer {
     allowNonManagerSubscriptions: boolean;
     integrationRegistry?: IntegrationRegistryService;
     playwrightDiscovery?: PlaywrightDiscoveryService | null;
+    playwrightSettingsService?: PlaywrightSettingsService;
+    playwrightEnvEnabledOverride?: boolean;
   }) {
     this.swarmManager = options.swarmManager;
     this.host = options.host;
     this.port = options.port;
     this.integrationRegistry = options.integrationRegistry ?? null;
     this.playwrightDiscovery = options.playwrightDiscovery ?? null;
+    this.playwrightSettingsService =
+      options.playwrightSettingsService ??
+      new PlaywrightSettingsService({ dataDir: this.swarmManager.getConfig().paths.dataDir });
+    this.playwrightEnvEnabledOverride = options.playwrightEnvEnabledOverride;
 
     this.wsHandler = new WsHandler({
       swarmManager: this.swarmManager,
@@ -137,7 +146,11 @@ export class SwarmWebSocketServer {
       ...createSchedulerRoutes({ swarmManager: this.swarmManager }),
       ...createAgentHttpRoutes({ swarmManager: this.swarmManager }),
       ...this.settingsRoutes.routes,
-      ...createPlaywrightRoutes({ discoveryService: this.playwrightDiscovery }),
+      ...createPlaywrightRoutes({
+        discoveryService: this.playwrightDiscovery,
+        settingsService: this.playwrightSettingsService,
+        envEnabledOverride: this.playwrightEnvEnabledOverride,
+      }),
       ...createIntegrationRoutes({
         swarmManager: this.swarmManager,
         integrationRegistry: this.integrationRegistry

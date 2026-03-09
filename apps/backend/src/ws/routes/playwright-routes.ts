@@ -1,6 +1,8 @@
 import type {
   GetPlaywrightSessionsResponse,
   GetPlaywrightSettingsResponse,
+  PlaywrightDiscoverySettings,
+  PlaywrightDiscoverySnapshot,
   TriggerPlaywrightRescanResponse,
   UpdatePlaywrightSettingsRequest,
   UpdatePlaywrightSettingsResponse,
@@ -10,7 +12,9 @@ import {
   PlaywrightSettingsConflictError,
 } from '../../playwright/playwright-discovery-service.js'
 import {
+  PlaywrightSettingsService,
   PlaywrightSettingsValidationError,
+  type PlaywrightPersistedSettings,
 } from '../../playwright/playwright-settings-service.js'
 import type { PlaywrightDiscoveryService } from '../../playwright/playwright-discovery-service.js'
 import { applyCorsHeaders, readJsonBody, sendJson } from '../http-utils.js'
@@ -22,8 +26,10 @@ const PLAYWRIGHT_SETTINGS_ENDPOINT = '/api/settings/playwright'
 
 export function createPlaywrightRoutes(options: {
   discoveryService: PlaywrightDiscoveryService | null
+  settingsService: PlaywrightSettingsService
+  envEnabledOverride?: boolean
 }): HttpRoute[] {
-  const { discoveryService } = options
+  const { discoveryService, settingsService, envEnabledOverride } = options
 
   return [
     {
@@ -44,7 +50,7 @@ export function createPlaywrightRoutes(options: {
       methods: 'GET, PUT, OPTIONS',
       matches: (pathname) => pathname === PLAYWRIGHT_SETTINGS_ENDPOINT,
       handle: async (request, response) => {
-        await handleSettingsRequest(request, response, discoveryService)
+        await handleSettingsRequest(request, response, discoveryService, settingsService, envEnabledOverride)
       },
     },
   ]
@@ -121,6 +127,8 @@ async function handleSettingsRequest(
   request: IncomingMessage,
   response: ServerResponse,
   discoveryService: PlaywrightDiscoveryService | null,
+  settingsService: PlaywrightSettingsService,
+  envEnabledOverride: boolean | undefined,
 ): Promise<void> {
   const methods = 'GET, PUT, OPTIONS'
 
@@ -133,14 +141,9 @@ async function handleSettingsRequest(
 
   applyCorsHeaders(request, response, methods)
 
-  if (!discoveryService) {
-    sendJson(response, 503, { error: 'Playwright discovery service is unavailable' })
-    return
-  }
-
   if (request.method === 'GET') {
     const payload: GetPlaywrightSettingsResponse = {
-      settings: discoveryService.getSettings(),
+      settings: discoveryService?.getSettings() ?? buildEffectiveSettings(settingsService.getPersisted(), envEnabledOverride),
     }
     sendJson(response, 200, payload as unknown as Record<string, unknown>)
     return
@@ -154,11 +157,28 @@ async function handleSettingsRequest(
 
   try {
     const patch = parseSettingsPatch(await readJsonBody(request))
-    const updated = await discoveryService.updateSettings(patch)
+
+    if (discoveryService) {
+      const updated = await discoveryService.updateSettings(patch)
+      const payload: UpdatePlaywrightSettingsResponse = {
+        ok: true,
+        settings: updated.settings,
+        snapshot: updated.snapshot,
+      }
+      sendJson(response, 200, payload as unknown as Record<string, unknown>)
+      return
+    }
+
+    if (envEnabledOverride !== undefined) {
+      throw new PlaywrightSettingsConflictError()
+    }
+
+    await settingsService.update(patch)
+    const settings = buildEffectiveSettings(settingsService.getPersisted(), envEnabledOverride)
     const payload: UpdatePlaywrightSettingsResponse = {
       ok: true,
-      settings: updated.settings,
-      snapshot: updated.snapshot,
+      settings,
+      snapshot: createUnavailableSnapshot(settings),
     }
     sendJson(response, 200, payload as unknown as Record<string, unknown>)
   } catch (error) {
@@ -173,6 +193,50 @@ async function handleSettingsRequest(
     }
 
     throw error
+  }
+}
+
+function buildEffectiveSettings(
+  persisted: PlaywrightPersistedSettings,
+  envEnabledOverride: boolean | undefined,
+): PlaywrightDiscoverySettings {
+  return {
+    enabled: persisted.enabled,
+    effectiveEnabled: envEnabledOverride ?? persisted.enabled,
+    source: envEnabledOverride !== undefined ? 'env' : persisted.updatedAt ? 'settings' : 'default',
+    envOverride: envEnabledOverride ?? null,
+    scanRoots: [...persisted.scanRoots],
+    pollIntervalMs: persisted.pollIntervalMs,
+    socketProbeTimeoutMs: persisted.socketProbeTimeoutMs,
+    staleSessionThresholdMs: persisted.staleSessionThresholdMs,
+    updatedAt: persisted.updatedAt,
+  }
+}
+
+function createUnavailableSnapshot(settings: PlaywrightDiscoverySettings): PlaywrightDiscoverySnapshot {
+  return {
+    updatedAt: null,
+    lastScanStartedAt: null,
+    lastScanCompletedAt: null,
+    scanDurationMs: null,
+    sequence: 0,
+    serviceStatus: 'error',
+    settings,
+    rootsScanned: [],
+    summary: {
+      totalSessions: 0,
+      activeSessions: 0,
+      inactiveSessions: 0,
+      staleSessions: 0,
+      legacySessions: 0,
+      duplicateSessions: 0,
+      correlatedSessions: 0,
+      unmatchedSessions: 0,
+      worktreeCount: 0,
+    },
+    sessions: [],
+    warnings: [],
+    lastError: 'Playwright discovery service is unavailable',
   }
 }
 

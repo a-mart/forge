@@ -100,12 +100,14 @@ async function main(): Promise<void> {
   });
   await playwrightSettingsService.load();
 
+  const playwrightEnvEnabledOverride = readPlaywrightDashboardEnvOverride();
+
   let playwrightDiscovery: PlaywrightDiscoveryService | null = null;
   try {
     playwrightDiscovery = new PlaywrightDiscoveryService({
       swarmManager,
       settingsService: playwrightSettingsService,
-      envEnabledOverride: readPlaywrightDashboardEnvOverride(),
+      envEnabledOverride: playwrightEnvEnabledOverride,
     });
     await playwrightDiscovery.start();
   } catch (error) {
@@ -121,6 +123,8 @@ async function main(): Promise<void> {
     allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
     integrationRegistry,
     playwrightDiscovery,
+    playwrightSettingsService,
+    playwrightEnvEnabledOverride,
   });
   await wsServer.start();
 
