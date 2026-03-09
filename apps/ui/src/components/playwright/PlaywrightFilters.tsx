@@ -14,9 +14,18 @@ import { Label } from '@/components/ui/label'
 export type PlaywrightStatusFilter = 'all' | 'active' | 'inactive' | 'stale' | 'error'
 export type PlaywrightSortKey = 'updatedAt' | 'worktree' | 'sessionName' | 'confidence'
 
+/** Stable worktree option with path-based key and user-facing label. */
+export interface WorktreeOption {
+  /** Unique key — worktree path, or `REPO_ROOT_WORKTREE_KEY` sentinel. */
+  key: string
+  /** User-facing label (worktree name or "Main repo"). */
+  label: string
+}
+
 export interface PlaywrightDashboardFiltersState {
   search: string
   status: PlaywrightStatusFilter
+  /** Worktree filter value — `'all'` or a `WorktreeOption.key`. */
   worktree: string
   onlyCorrelated: boolean
   onlyPreferred: boolean
@@ -26,10 +35,12 @@ export interface PlaywrightDashboardFiltersState {
 
 interface PlaywrightFiltersProps {
   filters: PlaywrightDashboardFiltersState
-  worktreeOptions: string[]
+  worktreeOptions: WorktreeOption[]
   onFiltersChange: (filters: PlaywrightDashboardFiltersState) => void
   onRescan: () => void
   isRescanning: boolean
+  /** Compact mode hides less-used toggles behind the search bar */
+  compact?: boolean
 }
 
 export function PlaywrightFilters({
@@ -38,11 +49,79 @@ export function PlaywrightFilters({
   onFiltersChange,
   onRescan,
   isRescanning,
+  compact = false,
 }: PlaywrightFiltersProps) {
   const update = (patch: Partial<PlaywrightDashboardFiltersState>) => {
     onFiltersChange({ ...filters, ...patch })
   }
 
+  // In compact mode, show only search + status + worktree inline.
+  // The toggle switches are omitted (the parent handles sensible defaults).
+  if (compact) {
+    return (
+      <div className="flex flex-wrap items-center gap-2">
+        {/* Search */}
+        <div className="relative flex-1 min-w-[160px]">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground/60" />
+          <Input
+            value={filters.search}
+            onChange={(e) => update({ search: e.target.value })}
+            placeholder="Search…"
+            className="h-7 pl-8 pr-8 text-xs"
+          />
+          {filters.search.length > 0 ? (
+            <button
+              type="button"
+              onClick={() => update({ search: '' })}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground/60 hover:text-muted-foreground"
+              aria-label="Clear search"
+            >
+              <X className="size-3" />
+            </button>
+          ) : null}
+        </div>
+
+        {/* Status filter */}
+        <Select
+          value={filters.status}
+          onValueChange={(value) => update({ status: value as PlaywrightStatusFilter })}
+        >
+          <SelectTrigger className="h-7 w-[110px] text-xs">
+            <SelectValue placeholder="Status" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All statuses</SelectItem>
+            <SelectItem value="active">Active</SelectItem>
+            <SelectItem value="inactive">Inactive</SelectItem>
+            <SelectItem value="stale">Stale</SelectItem>
+            <SelectItem value="error">Error</SelectItem>
+          </SelectContent>
+        </Select>
+
+        {/* Worktree filter */}
+        {worktreeOptions.length > 0 ? (
+          <Select
+            value={filters.worktree}
+            onValueChange={(value) => update({ worktree: value })}
+          >
+            <SelectTrigger className="h-7 w-[140px] text-xs">
+              <SelectValue placeholder="Workspace" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All workspaces</SelectItem>
+              {worktreeOptions.map((wt) => (
+                <SelectItem key={wt.key} value={wt.key}>
+                  {wt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : null}
+      </div>
+    )
+  }
+
+  // Full filter bar (split/grid modes)
   return (
     <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
       {/* Search */}
@@ -90,13 +169,13 @@ export function PlaywrightFilters({
           onValueChange={(value) => update({ worktree: value })}
         >
           <SelectTrigger className="h-8 w-full text-sm sm:w-[180px]">
-            <SelectValue placeholder="Worktree" />
+            <SelectValue placeholder="Workspace" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All worktrees</SelectItem>
+            <SelectItem value="all">All workspaces</SelectItem>
             {worktreeOptions.map((wt) => (
-              <SelectItem key={wt} value={wt}>
-                {wt}
+              <SelectItem key={wt.key} value={wt.key}>
+                {wt.label}
               </SelectItem>
             ))}
           </SelectContent>

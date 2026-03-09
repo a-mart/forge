@@ -102,7 +102,7 @@ function toRouteSearch(routeState: AppRouteState): AppRouteSearch {
   if (routeState.view === 'playwright') {
     const search: AppRouteSearch = { view: 'playwright' }
     if (routeState.playwrightSession) search.playwrightSession = routeState.playwrightSession
-    if (routeState.playwrightMode && routeState.playwrightMode !== 'split') search.playwrightMode = routeState.playwrightMode
+    if (routeState.playwrightMode && routeState.playwrightMode !== 'tiles') search.playwrightMode = routeState.playwrightMode
     return search
   }
 

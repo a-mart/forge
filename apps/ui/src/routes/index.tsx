@@ -668,7 +668,7 @@ export function IndexPage() {
                 onSnapshotUpdate={handlePlaywrightSnapshotUpdate}
                 onOpenSettings={handleOpenSettingsPanel}
                 selectedSessionId={routeState.view === 'playwright' ? routeState.playwrightSession ?? null : null}
-                viewMode={routeState.view === 'playwright' ? routeState.playwrightMode ?? 'split' : 'split'}
+                viewMode={routeState.view === 'playwright' ? routeState.playwrightMode ?? 'tiles' : 'tiles'}
                 onViewStateChange={handlePlaywrightViewStateChange}
                 onBack={() =>
                   navigateToRoute({

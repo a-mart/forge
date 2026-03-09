@@ -5,6 +5,7 @@ import {
   Columns2,
   LayoutGrid,
   MonitorPlay,
+  RefreshCw,
   Settings,
   WifiOff,
 } from 'lucide-react'
@@ -19,15 +20,19 @@ import {
   type PlaywrightDashboardFiltersState,
 } from './PlaywrightFilters'
 import { PlaywrightSessionCard } from './PlaywrightSessionCard'
+import { PlaywrightMosaicTile } from './PlaywrightMosaicTile'
 import { PlaywrightLivePreviewPane } from './PlaywrightLivePreviewPane'
 import {
   fetchPlaywrightSnapshot,
   triggerPlaywrightRescan,
 } from './playwright-api'
 import { cn } from '@/lib/utils'
+import { REPO_ROOT_WORKTREE_KEY, REPO_ROOT_WORKTREE_LABEL } from './playwright-constants'
 import type { PlaywrightViewMode } from '@/hooks/index-page/use-route-state'
+import type { WorktreeOption } from './PlaywrightFilters'
 import type {
   PlaywrightDiscoveredSession,
+  PlaywrightDiscoverySummary,
   PlaywrightDiscoverySnapshot,
 } from '@middleman/protocol'
 
@@ -62,7 +67,7 @@ export function PlaywrightDashboardView({
   onOpenSettings,
   onBack,
   selectedSessionId = null,
-  viewMode = 'split',
+  viewMode = 'tiles',
   onViewStateChange,
 }: PlaywrightDashboardViewProps) {
   const [filters, setFilters] = useState<PlaywrightDashboardFiltersState>(INITIAL_FILTERS)
@@ -91,19 +96,43 @@ export function PlaywrightDashboardView({
       })
   }, [snapshot, wsUrl, onSnapshotUpdate])
 
-  // Derive worktree options from snapshot
-  const worktreeOptions = useMemo(() => {
+  // ────────────────────────────────────────────────────────────────────────
+  // Data derivation (worktree options, filtered sessions, hidden counts)
+  //
+  // NOTE: If another worker is modifying data-derivation logic (duplicate
+  // filtering, worktree option generation), coordinate merges carefully.
+  // The rendering code below consumes these without coupling to internals.
+  // ────────────────────────────────────────────────────────────────────────
+
+  // Derive worktree options from snapshot.
+  // Uses path-based keys for stability (avoids same-name collisions across
+  // repos) and includes a REPO_ROOT sentinel for sessions without a worktree.
+  const worktreeOptions = useMemo((): WorktreeOption[] => {
     if (!snapshot?.sessions) return []
-    const unique = new Set<string>()
+    const seen = new Map<string, WorktreeOption>()
+    let hasRepoRoot = false
     for (const session of snapshot.sessions) {
       if (session.worktreeName) {
-        unique.add(session.worktreeName)
+        // Key on the worktree path for stability; fall back to name if path is null
+        const key = session.worktreePath ?? session.worktreeName
+        if (!seen.has(key)) {
+          seen.set(key, { key, label: session.worktreeName })
+        }
+      } else {
+        hasRepoRoot = true
       }
     }
-    return Array.from(unique).sort()
+    const opts = Array.from(seen.values()).sort((a, b) => a.label.localeCompare(b.label))
+    if (hasRepoRoot) {
+      opts.unshift({ key: REPO_ROOT_WORKTREE_KEY, label: REPO_ROOT_WORKTREE_LABEL })
+    }
+    return opts
   }, [snapshot?.sessions])
 
-  // Apply filters to sessions
+  // Apply filters to sessions.
+  // In tiles mode we also hide non-preferred duplicates by default (unless
+  // the user has explicitly toggled onlyPreferred off after turning it on,
+  // or has an active search that might want to match a dup).
   const filteredSessions = useMemo(() => {
     if (!snapshot?.sessions) return []
 
@@ -120,7 +149,14 @@ export function PlaywrightDashboardView({
     }
 
     if (filters.worktree !== 'all') {
-      sessions = sessions.filter((s) => s.worktreeName === filters.worktree)
+      if (filters.worktree === REPO_ROOT_WORKTREE_KEY) {
+        sessions = sessions.filter((s) => !s.worktreeName)
+      } else {
+        // Match on worktree path (stable key) OR name (fallback)
+        sessions = sessions.filter(
+          (s) => s.worktreePath === filters.worktree || s.worktreeName === filters.worktree,
+        )
+      }
     }
 
     if (filters.onlyCorrelated) {
@@ -145,6 +181,17 @@ export function PlaywrightDashboardView({
 
     return sessions
   }, [snapshot?.sessions, filters])
+
+  // In tiles mode, hide non-preferred duplicates automatically (in addition
+  // to whatever the explicit filters produce).  This keeps the mosaic clean
+  // without requiring the user to toggle a filter.
+  const displaySessions = useMemo(() => {
+    if (viewMode !== 'tiles') return filteredSessions
+    // If user has explicitly enabled onlyPreferred, it's already applied
+    if (filters.onlyPreferred) return filteredSessions
+    // Auto-dedup for tiles: keep only preferred in each duplicate group
+    return filteredSessions.filter((s) => s.preferredInDuplicateGroup)
+  }, [filteredSessions, viewMode, filters.onlyPreferred])
 
   // Compute hidden counts
   const hiddenCounts = useMemo(() => {
@@ -188,13 +235,18 @@ export function PlaywrightDashboardView({
 
   const handleSelectSession = useCallback(
     (sessionId: string) => {
-      onViewStateChange?.(sessionId, viewMode)
+      // In tiles mode, clicking a session drills into split view
+      if (viewMode === 'tiles') {
+        onViewStateChange?.(sessionId, 'split')
+      } else {
+        onViewStateChange?.(sessionId, viewMode)
+      }
     },
     [viewMode, onViewStateChange],
   )
 
   const handleDeselectSession = useCallback(() => {
-    onViewStateChange?.(null, viewMode === 'focus' ? 'split' : viewMode)
+    onViewStateChange?.(null, viewMode === 'focus' ? 'tiles' : viewMode)
   }, [viewMode, onViewStateChange])
 
   const handleToggleFocusMode = useCallback(() => {
@@ -285,15 +337,10 @@ export function PlaywrightDashboardView({
       <div className="flex h-full flex-col">
         <DashboardHeader onBack={onBack} onOpenSettings={onOpenSettings} viewMode={viewMode} />
         <div className="flex-1 p-4 space-y-4">
-          <div className="flex flex-wrap gap-2">
-            {Array.from({ length: 6 }).map((_, i) => (
-              <Skeleton key={i} className="h-16 flex-1 min-w-[120px]" />
-            ))}
-          </div>
           <Skeleton className="h-8 w-full" />
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {Array.from({ length: 6 }).map((_, i) => (
-              <Skeleton key={i} className="h-40" />
+            {Array.from({ length: 4 }).map((_, i) => (
+              <Skeleton key={i} className="aspect-[16/10]" />
             ))}
           </div>
         </div>
@@ -357,10 +404,100 @@ export function PlaywrightDashboardView({
   // Empty state
   const isEmpty = snapshot.sessions.length === 0
   const isFocusMode = viewMode === 'focus' && !!selectedSession
+  const isTilesMode = viewMode === 'tiles'
   const showDiscovery = !isFocusMode
 
-  // Single stable layout: header + body. Preview pane is always in the same
-  // DOM position to avoid unmount/remount when toggling split↔focus.
+  // ────────────────────────────────────────────────────────────────────────
+  // Tiles mode — mosaic of live-preview tiles
+  // ────────────────────────────────────────────────────────────────────────
+  if (isTilesMode && showDiscovery) {
+    return (
+      <div className="flex h-full flex-col min-h-0">
+        <DashboardHeader
+          onBack={onBack}
+          onOpenSettings={onOpenSettings}
+          serviceStatus={snapshot.serviceStatus}
+          viewMode={viewMode}
+          onViewModeChange={(mode) => onViewStateChange?.(selectedSessionId ?? null, mode)}
+          summary={snapshot.summary}
+          lastScanCompletedAt={snapshot.lastScanCompletedAt}
+          onRescan={handleRescan}
+          isRescanning={isRescanning}
+        />
+
+        <ScrollArea className="flex-1">
+          <div className="p-4 space-y-3">
+            {/* Rescan error banner */}
+            {rescanError ? (
+              <div className="rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                Rescan failed: {rescanError}
+              </div>
+            ) : null}
+
+            {/* Snapshot-level warnings */}
+            {snapshot.warnings.length > 0 ? (
+              <div className="rounded-md border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-600 dark:text-amber-400 space-y-1">
+                {snapshot.warnings.map((w, i) => (
+                  <p key={i} className="flex items-start gap-1.5">
+                    <AlertTriangle className="size-3 shrink-0 mt-0.5" />
+                    {w}
+                  </p>
+                ))}
+              </div>
+            ) : null}
+
+            {/* Filters */}
+            <PlaywrightFilters
+              filters={filters}
+              worktreeOptions={worktreeOptions}
+              onFiltersChange={setFilters}
+              onRescan={handleRescan}
+              isRescanning={isRescanning}
+              compact
+            />
+
+            {/* Hidden sessions hint */}
+            {hiddenCounts.total > 0 && displaySessions.length > 0 ? (
+              <HiddenSessionsHint
+                inactiveCount={hiddenCounts.inactive}
+                staleCount={hiddenCounts.stale}
+                onShowInactive={() => setFilters((f) => ({ ...f, showInactive: true }))}
+                onShowStale={() => setFilters((f) => ({ ...f, showStale: true }))}
+              />
+            ) : null}
+
+            {/* Content */}
+            {isEmpty ? (
+              <EmptyState
+                rootsScanned={snapshot.rootsScanned}
+                onOpenSettings={onOpenSettings}
+              />
+            ) : displaySessions.length === 0 ? (
+              <FilteredEmptyState
+                onClearFilters={() => setFilters(INITIAL_FILTERS)}
+                hiddenInactive={hiddenCounts.inactive}
+                hiddenStale={hiddenCounts.stale}
+                onShowInactive={() => setFilters((f) => ({ ...f, showInactive: true }))}
+                onShowStale={() => setFilters((f) => ({ ...f, showStale: true }))}
+              />
+            ) : (
+              <MosaicGrid
+                wsUrl={wsUrl}
+                sessions={displaySessions}
+                selectedSessionId={selectedSessionId}
+                onSelectSession={handleSelectSession}
+                onFocusSession={handleEnterFocusMode}
+              />
+            )}
+          </div>
+        </ScrollArea>
+      </div>
+    )
+  }
+
+  // ────────────────────────────────────────────────────────────────────────
+  // Split / Focus modes — existing layout
+  // ────────────────────────────────────────────────────────────────────────
   return (
     <div className="flex h-full flex-col min-h-0">
       {/* Dashboard header — hidden in focus mode */}
@@ -371,6 +508,10 @@ export function PlaywrightDashboardView({
           serviceStatus={snapshot.serviceStatus}
           viewMode={viewMode}
           onViewModeChange={(mode) => onViewStateChange?.(selectedSessionId ?? null, mode)}
+          summary={snapshot.summary}
+          lastScanCompletedAt={snapshot.lastScanCompletedAt}
+          onRescan={handleRescan}
+          isRescanning={isRescanning}
         />
       ) : null}
 
@@ -478,7 +619,9 @@ export function PlaywrightDashboardView({
   )
 }
 
-// --- Sub-components ---
+// ────────────────────────────────────────────────────────────────────────
+// Sub-components
+// ────────────────────────────────────────────────────────────────────────
 
 function DashboardHeader({
   onBack,
@@ -486,44 +629,68 @@ function DashboardHeader({
   serviceStatus,
   viewMode,
   onViewModeChange,
+  summary,
+  lastScanCompletedAt,
+  onRescan,
+  isRescanning,
 }: {
   onBack: () => void
   onOpenSettings: () => void
   serviceStatus?: string
   viewMode?: PlaywrightViewMode
   onViewModeChange?: (mode: PlaywrightViewMode) => void
+  summary?: PlaywrightDiscoverySummary
+  lastScanCompletedAt?: string | null
+  onRescan?: () => void
+  isRescanning?: boolean
 }) {
   return (
-    <div className="flex h-[52px] shrink-0 items-center gap-3 border-b px-4">
-      <Button variant="ghost" size="sm" onClick={onBack} className="h-8 w-8 p-0" title="Back to chat">
-        <ArrowLeft className="size-4" />
+    <div className="flex h-[44px] shrink-0 items-center gap-2 border-b px-3">
+      <Button variant="ghost" size="sm" onClick={onBack} className="h-7 w-7 p-0" title="Back to chat">
+        <ArrowLeft className="size-3.5" />
       </Button>
-      <MonitorPlay className="size-5 text-muted-foreground" />
-      <div className="flex-1 min-w-0">
-        <h1 className="text-sm font-semibold">Playwright Dashboard</h1>
-      </div>
+      <MonitorPlay className="size-4 text-muted-foreground" />
+      <span className="text-sm font-semibold mr-1">Browsers</span>
 
       {serviceStatus === 'scanning' ? (
         <span className="text-[11px] text-muted-foreground animate-pulse">Scanning…</span>
+      ) : null}
+
+      {/* Inline compact summary */}
+      {summary ? (
+        <PlaywrightSummaryBar
+          summary={summary}
+          lastScanCompletedAt={lastScanCompletedAt ?? null}
+          inline
+        />
+      ) : null}
+
+      <div className="flex-1" />
+
+      {/* Rescan button */}
+      {onRescan ? (
+        <TooltipProvider delayDuration={300}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 w-7 p-0"
+                onClick={onRescan}
+                disabled={isRescanning}
+              >
+                <RefreshCw className={cn('size-3.5', isRescanning && 'animate-spin')} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="text-xs">Rescan</TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
       ) : null}
 
       {/* View mode toggle buttons */}
       {onViewModeChange ? (
         <TooltipProvider delayDuration={300}>
           <div className="flex items-center gap-0.5 rounded-md border p-0.5">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant={viewMode === 'split' || (viewMode !== 'tiles') ? 'secondary' : 'ghost'}
-                  size="sm"
-                  className="h-6 w-6 p-0"
-                  onClick={() => onViewModeChange('split')}
-                >
-                  <Columns2 className="size-3.5" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom" className="text-xs">Split view</TooltipContent>
-            </Tooltip>
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
@@ -537,12 +704,25 @@ function DashboardHeader({
               </TooltipTrigger>
               <TooltipContent side="bottom" className="text-xs">Grid view</TooltipContent>
             </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant={viewMode === 'split' || viewMode === 'focus' ? 'secondary' : 'ghost'}
+                  size="sm"
+                  className="h-6 w-6 p-0"
+                  onClick={() => onViewModeChange('split')}
+                >
+                  <Columns2 className="size-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="text-xs">Split view</TooltipContent>
+            </Tooltip>
           </div>
         </TooltipProvider>
       ) : null}
 
-      <Button variant="ghost" size="sm" onClick={onOpenSettings} className="h-8 w-8 p-0" title="Settings">
-        <Settings className="size-4" />
+      <Button variant="ghost" size="sm" onClick={onOpenSettings} className="h-7 w-7 p-0" title="Settings">
+        <Settings className="size-3.5" />
       </Button>
     </div>
   )
@@ -669,6 +849,35 @@ function HiddenSessionsHint({
           Show stale
         </button>
       ) : null}
+    </div>
+  )
+}
+
+function MosaicGrid({
+  wsUrl,
+  sessions,
+  selectedSessionId,
+  onSelectSession,
+  onFocusSession,
+}: {
+  wsUrl: string
+  sessions: PlaywrightDiscoveredSession[]
+  selectedSessionId: string | null
+  onSelectSession: (sessionId: string) => void
+  onFocusSession: (sessionId: string) => void
+}) {
+  return (
+    <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 xl:grid-cols-3">
+      {sessions.map((session) => (
+        <PlaywrightMosaicTile
+          key={session.id}
+          wsUrl={wsUrl}
+          session={session}
+          selected={session.id === selectedSessionId}
+          onSelect={() => onSelectSession(session.id)}
+          onFocus={() => onFocusSession(session.id)}
+        />
+      ))}
     </div>
   )
 }

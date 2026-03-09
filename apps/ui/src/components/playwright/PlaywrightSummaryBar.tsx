@@ -1,94 +1,62 @@
 import {
   Activity,
-  AlertTriangle,
   Clock,
-  Globe,
-  Link2,
-  Monitor,
 } from 'lucide-react'
-import { Card, CardContent } from '@/components/ui/card'
 import type { PlaywrightDiscoverySummary } from '@middleman/protocol'
 
 interface PlaywrightSummaryBarProps {
   summary: PlaywrightDiscoverySummary
   lastScanCompletedAt: string | null
+  /** Render as a minimal inline fragment (no wrapper div, for embedding in header) */
+  inline?: boolean
 }
 
-function StatCard({
-  icon: Icon,
-  label,
-  value,
-  variant,
-}: {
-  icon: React.ElementType
-  label: string
-  value: number | string
-  variant?: 'default' | 'success' | 'warning' | 'muted'
-}) {
-  const iconClasses = {
-    default: 'text-muted-foreground',
-    success: 'text-emerald-500',
-    warning: 'text-amber-500',
-    muted: 'text-muted-foreground/60',
-  }
-
-  return (
-    <Card className="flex-1 min-w-[120px]">
-      <CardContent className="flex items-center gap-3 p-3">
-        <Icon className={`size-4 shrink-0 ${iconClasses[variant ?? 'default']}`} />
-        <div className="min-w-0">
-          <p className="text-lg font-semibold leading-tight tabular-nums">{value}</p>
-          <p className="text-[11px] text-muted-foreground truncate">{label}</p>
-        </div>
-      </CardContent>
-    </Card>
-  )
-}
-
+/**
+ * Compact summary strip — replaces the old 6-card stat grid.
+ *
+ * Two modes:
+ * - `inline` (default false): wraps in a subtle bar suitable for standalone display
+ * - `inline={true}`: renders as bare inline spans for embedding inside the header row
+ */
 export function PlaywrightSummaryBar({
   summary,
   lastScanCompletedAt,
+  inline = false,
 }: PlaywrightSummaryBarProps) {
   const lastScanLabel = lastScanCompletedAt
     ? formatRelativeTime(lastScanCompletedAt)
     : 'Never'
 
+  const content = (
+    <>
+      {/* Active / total */}
+      <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+        <Activity className="size-3 text-emerald-500" />
+        <span className="font-medium tabular-nums text-foreground">{summary.activeSessions}</span>
+        <span>active</span>
+        <span className="text-muted-foreground/50">·</span>
+        <span className="tabular-nums">{summary.totalSessions}</span>
+        <span>total</span>
+      </span>
+
+      {/* Separator */}
+      <span className="text-muted-foreground/30">|</span>
+
+      {/* Last scan */}
+      <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+        <Clock className="size-3" />
+        <span>{lastScanLabel}</span>
+      </span>
+    </>
+  )
+
+  if (inline) {
+    return <>{content}</>
+  }
+
   return (
-    <div className="flex flex-wrap gap-2">
-      <StatCard
-        icon={Monitor}
-        label="Total Sessions"
-        value={summary.totalSessions}
-      />
-      <StatCard
-        icon={Activity}
-        label="Active"
-        value={summary.activeSessions}
-        variant={summary.activeSessions > 0 ? 'success' : 'muted'}
-      />
-      <StatCard
-        icon={Clock}
-        label="Stale"
-        value={summary.staleSessions}
-        variant={summary.staleSessions > 0 ? 'warning' : 'muted'}
-      />
-      <StatCard
-        icon={Link2}
-        label="Correlated"
-        value={summary.correlatedSessions}
-        variant={summary.correlatedSessions > 0 ? 'success' : 'muted'}
-      />
-      <StatCard
-        icon={Globe}
-        label="Worktrees"
-        value={summary.worktreeCount}
-      />
-      <StatCard
-        icon={AlertTriangle}
-        label="Last Scan"
-        value={lastScanLabel}
-        variant="muted"
-      />
+    <div className="flex flex-wrap items-center gap-3 rounded-md border bg-muted/30 px-3 py-1.5">
+      {content}
     </div>
   )
 }
