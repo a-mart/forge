@@ -3,6 +3,7 @@ import {
   Clock,
   Copy,
   Eye,
+  EyeOff,
   FileText,
   Globe,
   Image,
@@ -25,6 +26,16 @@ interface PlaywrightSessionCardProps {
   compact?: boolean
   onSelect?: () => void
   onFocus?: () => void
+}
+
+/** Determine if a session is previewable using backend-provided truth */
+function isSessionPreviewable(session: PlaywrightDiscoveredSession): boolean {
+  // Use backend previewability when available
+  if (session.previewability) {
+    return session.previewability.previewable
+  }
+  // Fallback: liveness heuristic only if backend hasn't enriched the session
+  return session.liveness === 'active'
 }
 
 const LIVENESS_BADGE: Record<
@@ -106,6 +117,7 @@ export function PlaywrightSessionCard({
 }: PlaywrightSessionCardProps) {
   const { artifactCounts, ports, correlation } = session
   const isClickable = !!onSelect
+  const previewable = isSessionPreviewable(session)
 
   const handleCopyPath = (e: React.MouseEvent) => {
     e.stopPropagation()
@@ -114,7 +126,7 @@ export function PlaywrightSessionCard({
 
   const handleFocus = (e: React.MouseEvent) => {
     e.stopPropagation()
-    onFocus?.()
+    if (previewable) onFocus?.()
   }
 
   // Compact card for split-view left pane
@@ -125,7 +137,8 @@ export function PlaywrightSessionCard({
           'transition-colors cursor-pointer',
           selected && 'border-primary bg-primary/5 ring-1 ring-primary/20',
           !selected && 'hover:border-muted-foreground/30',
-          session.liveness === 'active' && !selected && 'border-emerald-500/20',
+          session.liveness === 'active' && previewable && !selected && 'border-emerald-500/20',
+          session.liveness === 'active' && !previewable && !selected && 'border-amber-500/20',
           !session.preferredInDuplicateGroup && 'opacity-60',
         )}
         onClick={onSelect}
@@ -139,7 +152,7 @@ export function PlaywrightSessionCard({
             </div>
             <div className="flex items-center gap-1 shrink-0">
               <LivenessBadge liveness={session.liveness} />
-              {session.liveness === 'active' ? (
+              {previewable ? (
                 <TooltipProvider delayDuration={200}>
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -171,6 +184,22 @@ export function PlaywrightSessionCard({
                 {correlation.matchedAgentDisplayName}
               </span>
             ) : null}
+            {/* Not-previewable hint for active sessions */}
+            {session.liveness === 'active' && !previewable ? (
+              <TooltipProvider delayDuration={200}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="inline-flex items-center gap-0.5 text-[10px] text-amber-600 dark:text-amber-400">
+                      <EyeOff className="size-2.5" />
+                      <span>No preview</span>
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" className="text-xs max-w-xs">
+                    {session.previewability?.unavailableReason ?? 'Socket not responsive'}
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            ) : null}
             <span className="ml-auto text-[10px] shrink-0">
               {formatShortTime(session.sessionFileUpdatedAt)}
             </span>
@@ -188,7 +217,8 @@ export function PlaywrightSessionCard({
         isClickable && 'cursor-pointer',
         selected && 'border-primary bg-primary/5 ring-1 ring-primary/20',
         !selected && isClickable && 'hover:border-muted-foreground/30',
-        session.liveness === 'active' && !selected && 'border-emerald-500/30',
+        session.liveness === 'active' && previewable && !selected && 'border-emerald-500/30',
+        session.liveness === 'active' && !previewable && !selected && 'border-amber-500/20',
         session.liveness === 'stale' && 'border-amber-500/20',
         session.liveness === 'error' && 'border-destructive/30',
         !session.preferredInDuplicateGroup && 'opacity-60',
@@ -290,30 +320,48 @@ export function PlaywrightSessionCard({
           </div>
         </div>
 
-        {/* Action buttons row */}
+        {/* Action buttons row — previewability-aware */}
         {session.liveness === 'active' ? (
           <div className="flex items-center gap-1.5 pt-0.5">
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-6 text-xs px-2"
-              onClick={(e) => {
-                e.stopPropagation()
-                onSelect?.()
-              }}
-            >
-              <Eye className="size-3 mr-1" />
-              Live view
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-6 text-xs px-2"
-              onClick={handleFocus}
-            >
-              <Maximize2 className="size-3 mr-1" />
-              Focus
-            </Button>
+            {previewable ? (
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-6 text-xs px-2"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onSelect?.()
+                  }}
+                >
+                  <Eye className="size-3 mr-1" />
+                  Live view
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 text-xs px-2"
+                  onClick={handleFocus}
+                >
+                  <Maximize2 className="size-3 mr-1" />
+                  Focus
+                </Button>
+              </>
+            ) : (
+              <TooltipProvider delayDuration={200}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="inline-flex items-center gap-1 text-[11px] text-amber-600 dark:text-amber-400">
+                      <EyeOff className="size-3" />
+                      Preview unavailable
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" className="text-xs max-w-xs">
+                    {session.previewability?.unavailableReason ?? 'Browser socket is not responsive'}
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
           </div>
         ) : null}
 
