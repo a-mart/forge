@@ -13,6 +13,7 @@ import {
   Play,
   Plus,
   RefreshCw,
+  Search,
   Settings,
   SquarePen,
   Trash2,
@@ -23,7 +24,7 @@ import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator,
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import {
   Select,
@@ -261,6 +262,91 @@ function RuntimeBadge({ agent, isSelected }: { agent: AgentDescriptor; isSelecte
   )
 }
 
+// ── Search helpers ──
+
+function parseSearchQuery(raw: string): { mode: 'both' | 'session' | 'worker'; term: string } {
+  const trimmed = raw.trim()
+  if (trimmed.startsWith('s:')) return { mode: 'session', term: trimmed.slice(2).trim() }
+  if (trimmed.startsWith('w:')) return { mode: 'worker', term: trimmed.slice(2).trim() }
+  return { mode: 'both', term: trimmed }
+}
+
+function getSessionLabel(session: SessionRow): string {
+  return session.sessionAgent.sessionLabel || (session.isDefault ? 'Main' : session.sessionAgent.displayName || session.sessionAgent.agentId)
+}
+
+function filterTreeRows(
+  rows: ProfileTreeRow[],
+  rawQuery: string,
+): { filtered: ProfileTreeRow[]; matchCount: number } {
+  const { mode, term } = parseSearchQuery(rawQuery)
+  if (!term) return { filtered: rows, matchCount: 0 }
+
+  const lowerTerm = term.toLowerCase()
+  let matchCount = 0
+  const filtered: ProfileTreeRow[] = []
+
+  for (const row of rows) {
+    const matchingSessions: SessionRow[] = []
+
+    for (const session of row.sessions) {
+      const sessionLabel = getSessionLabel(session).toLowerCase()
+      const sessionAgentId = session.sessionAgent.agentId.toLowerCase()
+      const sessionDisplayName = (session.sessionAgent.displayName || '').toLowerCase()
+      const sessionMatches = (mode === 'both' || mode === 'session') &&
+        (sessionLabel.includes(lowerTerm) || sessionAgentId.includes(lowerTerm) || sessionDisplayName.includes(lowerTerm))
+
+      const workerMatches = (mode === 'both' || mode === 'worker') &&
+        session.workers.some(
+          (w) => (w.displayName || w.agentId).toLowerCase().includes(lowerTerm),
+        )
+
+      if (sessionMatches || workerMatches) {
+        matchingSessions.push(session)
+        matchCount++
+      }
+    }
+
+    if (matchingSessions.length > 0) {
+      filtered.push({ ...row, sessions: matchingSessions })
+    }
+  }
+
+  return { filtered, matchCount }
+}
+
+function HighlightedText({ text, query }: { text: string; query: string }) {
+  if (!query) return <>{text}</>
+
+  const lowerText = text.toLowerCase()
+  const lowerQuery = query.toLowerCase()
+  const parts: React.ReactNode[] = []
+  let lastIndex = 0
+
+  let searchFrom = 0
+  while (searchFrom < lowerText.length) {
+    const index = lowerText.indexOf(lowerQuery, searchFrom)
+    if (index === -1) break
+
+    if (index > lastIndex) {
+      parts.push(text.slice(lastIndex, index))
+    }
+    parts.push(
+      <span key={index} className="rounded-sm bg-yellow-500/20">
+        {text.slice(index, index + query.length)}
+      </span>,
+    )
+    lastIndex = index + query.length
+    searchFrom = lastIndex
+  }
+
+  if (lastIndex < text.length) {
+    parts.push(text.slice(lastIndex))
+  }
+
+  return <>{parts}</>
+}
+
 // ── Worker row (unchanged from original pattern) ──
 
 function WorkerRow({
@@ -271,6 +357,7 @@ function WorkerRow({
   onDelete,
   onStop,
   onResume,
+  highlightQuery,
 }: {
   agent: AgentDescriptor
   liveStatus: AgentLiveStatus
@@ -279,6 +366,7 @@ function WorkerRow({
   onDelete: () => void
   onStop?: () => void
   onResume?: () => void
+  highlightQuery?: string
 }) {
   const title = agent.displayName || agent.agentId
   const isActive = liveStatus.status === 'streaming'
@@ -303,7 +391,9 @@ function WorkerRow({
             title={title}
           >
             <AgentActivitySlot isActive={isActive} isSelected={isSelected} />
-            <span className="min-w-0 flex-1 truncate text-sm leading-5">{title}</span>
+            <span className="min-w-0 flex-1 truncate text-sm leading-5">
+              {highlightQuery ? <HighlightedText text={title} query={highlightQuery} /> : title}
+            </span>
             <RuntimeBadge agent={agent} isSelected={isSelected} />
           </button>
         </div>
@@ -354,6 +444,7 @@ function SessionRowItem({
   onMarkUnread,
   onStopWorker,
   onResumeWorker,
+  highlightQuery,
 }: {
   session: SessionRow
   statuses: Record<string, { status: AgentStatus; pendingCount: number; contextUsage?: AgentContextUsage }>
@@ -375,6 +466,7 @@ function SessionRowItem({
   onMarkUnread?: () => void
   onStopWorker?: (agentId: string) => void
   onResumeWorker?: (agentId: string) => void
+  highlightQuery?: string
 }) {
   const { sessionAgent, workers, isDefault } = session
   const liveStatus = getAgentLiveStatus(sessionAgent, statuses)
@@ -438,7 +530,9 @@ function SessionRowItem({
                   streamingWorkerCount={isCollapsed ? streamingWorkerCount : undefined}
                 />
               ) : null}
-              <span className="min-w-0 flex-1 truncate text-sm leading-5">{label}</span>
+              <span className="min-w-0 flex-1 truncate text-sm leading-5">
+                {highlightQuery ? <HighlightedText text={label} query={highlightQuery} /> : label}
+              </span>
               {showUnread ? (
                 <span className="inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-medium tabular-nums leading-none text-white">
                   {unreadCount > 99 ? '99+' : unreadCount}
@@ -554,6 +648,7 @@ function SessionRowItem({
                           onDelete={() => onDeleteAgent(worker.agentId)}
                           onStop={onStopWorker ? () => onStopWorker(worker.agentId) : undefined}
                           onResume={onResumeWorker ? () => onResumeWorker(worker.agentId) : undefined}
+                          highlightQuery={highlightQuery}
                         />
                       </li>
                     )
@@ -623,6 +718,7 @@ function ProfileGroup({
   onMergeSessionMemory,
   onMarkUnread,
   onChangeModel,
+  highlightQuery,
 }: {
   treeRow: ProfileTreeRow
   statuses: Record<string, { status: AgentStatus; pendingCount: number; contextUsage?: AgentContextUsage }>
@@ -650,6 +746,7 @@ function ProfileGroup({
   onMergeSessionMemory?: (agentId: string) => void
   onMarkUnread?: (agentId: string) => void
   onChangeModel?: (profileId: string) => void
+  highlightQuery?: string
 }) {
   const { profile, sessions } = treeRow
   const hasAnySessions = sessions.length > 0
@@ -866,6 +963,7 @@ function ProfileGroup({
                         onMarkUnread={onMarkUnread ? () => onMarkUnread(session.sessionAgent.agentId) : undefined}
                         onStopWorker={onStopSession}
                         onResumeWorker={onResumeSession}
+                        highlightQuery={highlightQuery}
                       />
                     )
                   })}
@@ -1254,6 +1352,7 @@ function CortexSection({
   onMergeSessionMemory,
   onMarkUnread,
   onChangeModel,
+  highlightQuery,
 }: {
   cortexRow: ProfileTreeRow
   statuses: Record<string, { status: AgentStatus; pendingCount: number; contextUsage?: AgentContextUsage }>
@@ -1280,6 +1379,7 @@ function CortexSection({
   onMergeSessionMemory?: (agentId: string) => void
   onMarkUnread?: (agentId: string) => void
   onChangeModel?: (profileId: string) => void
+  highlightQuery?: string
 }) {
   const { profile, sessions } = cortexRow
   const defaultSession = sessions.find((s) => s.isDefault)
@@ -1503,6 +1603,7 @@ function CortexSection({
                         onMarkUnread={onMarkUnread ? () => onMarkUnread(session.sessionAgent.agentId) : undefined}
                         onStopWorker={onStopSession}
                         onResumeWorker={onResumeSession}
+                        highlightQuery={highlightQuery}
                       />
                     )
                   })}
@@ -1567,6 +1668,31 @@ export function AgentSidebar({
   onUpdateManagerModel,
 }: AgentSidebarProps) {
   const treeRows = buildProfileTreeRows(agents, profiles)
+
+  const [searchQuery, setSearchQuery] = useState('')
+  const searchInputRef = useRef<HTMLInputElement>(null)
+
+  // Cmd+K / Ctrl+K to focus search
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault()
+        searchInputRef.current?.focus()
+      }
+    }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [])
+
+  // Parse the search query for the highlight term (strip prefix)
+  const parsedSearch = useMemo(() => parseSearchQuery(searchQuery), [searchQuery])
+  const isSearchActive = parsedSearch.term.length > 0
+
+  // Filter tree rows when search is active
+  const { filtered: filteredTreeRows, matchCount } = useMemo(
+    () => filterTreeRows(treeRows, searchQuery),
+    [treeRows, searchQuery],
+  )
 
   const [collapsedProfileIds, setCollapsedProfileIds] = useState<Set<string>>(() => new Set())
   // Track explicitly expanded sessions — everything defaults to collapsed
@@ -1745,9 +1871,37 @@ export function AgentSidebar({
         ) : null}
       </div>
 
+      {/* Search bar */}
+      <div className="px-2 py-1.5">
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground/60" aria-hidden="true" />
+          <Input
+            ref={searchInputRef}
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search sessions… ⌘K"
+            className="h-7 pl-7 pr-7 text-xs placeholder:text-muted-foreground/50"
+          />
+          {searchQuery.length > 0 ? (
+            <button
+              type="button"
+              onClick={() => {
+                setSearchQuery('')
+                searchInputRef.current?.focus()
+              }}
+              className="absolute right-1.5 top-1/2 inline-flex size-4 -translate-y-1/2 items-center justify-center rounded-sm text-muted-foreground/60 transition-colors hover:text-muted-foreground"
+              aria-label="Clear search"
+            >
+              <X className="size-3" />
+            </button>
+          ) : null}
+        </div>
+      </div>
+
       {/* Pinned Cortex entry */}
       {(() => {
-        const cortexRow = treeRows.find((row) => isCortexProfile(row))
+        const sourceRows = isSearchActive ? filteredTreeRows : treeRows
+        const cortexRow = sourceRows.find((row) => isCortexProfile(row))
         if (!cortexRow) return null
 
         return (
@@ -1757,9 +1911,9 @@ export function AgentSidebar({
             unreadCounts={unreadCounts}
             selectedAgentId={selectedAgentId}
             isSettingsActive={isSettingsActive}
-            isCollapsed={collapsedProfileIds.has('cortex')}
+            isCollapsed={isSearchActive ? false : collapsedProfileIds.has('cortex')}
             collapsedSessionIds={expandedSessionIds}
-            isSessionListExpanded={expandedSessionListProfileIds.has('cortex')}
+            isSessionListExpanded={isSearchActive || expandedSessionListProfileIds.has('cortex')}
             expandedWorkerListSessionIds={expandedWorkerListSessionIds}
             onToggleCollapsed={() => toggleProfileCollapsed('cortex')}
             onToggleSessionCollapsed={toggleSessionCollapsed}
@@ -1777,12 +1931,15 @@ export function AgentSidebar({
             onMergeSessionMemory={onMergeSessionMemory}
             onMarkUnread={onMarkUnread}
             onChangeModel={onUpdateManagerModel ? handleRequestChangeModel : undefined}
+            highlightQuery={isSearchActive ? parsedSearch.term : undefined}
           />
         )
       })()}
 
-      <div className="px-3 pb-1 pt-2">
-        <h2 className="text-xs font-semibold text-muted-foreground">Agents</h2>
+      <div className="px-3 pb-1">
+        <h2 className="text-xs font-semibold text-muted-foreground">
+          {isSearchActive ? `${matchCount} match${matchCount !== 1 ? 'es' : ''}` : 'Agents'}
+        </h2>
       </div>
 
       <div
@@ -1793,9 +1950,18 @@ export function AgentSidebar({
         }}
       >
         {(() => {
-          const regularRows = treeRows.filter((row) => !isCortexProfile(row))
+          const sourceRows = isSearchActive ? filteredTreeRows : treeRows
+          const regularRows = sourceRows.filter((row) => !isCortexProfile(row))
 
-          if (regularRows.length === 0) {
+          if (isSearchActive && regularRows.length === 0 && !sourceRows.some((r) => isCortexProfile(r))) {
+            return (
+              <p className="rounded-md px-3 py-4 text-center text-xs text-muted-foreground">
+                No matches found.
+              </p>
+            )
+          }
+
+          if (regularRows.length === 0 && !isSearchActive) {
             return (
               <p className="rounded-md bg-sidebar-accent/50 px-3 py-4 text-center text-xs text-muted-foreground">
                 No active agents.
@@ -1813,9 +1979,9 @@ export function AgentSidebar({
                   unreadCounts={unreadCounts}
                   selectedAgentId={selectedAgentId}
                   isSettingsActive={isSettingsActive}
-                  isCollapsed={collapsedProfileIds.has(treeRow.profile.profileId)}
+                  isCollapsed={isSearchActive ? false : collapsedProfileIds.has(treeRow.profile.profileId)}
                   collapsedSessionIds={expandedSessionIds}
-                  isSessionListExpanded={expandedSessionListProfileIds.has(treeRow.profile.profileId)}
+                  isSessionListExpanded={isSearchActive || expandedSessionListProfileIds.has(treeRow.profile.profileId)}
                   expandedWorkerListSessionIds={expandedWorkerListSessionIds}
                   onToggleProfileCollapsed={() => toggleProfileCollapsed(treeRow.profile.profileId)}
                   onToggleSessionCollapsed={toggleSessionCollapsed}
@@ -1834,6 +2000,7 @@ export function AgentSidebar({
                   onMergeSessionMemory={onMergeSessionMemory}
                   onMarkUnread={onMarkUnread}
                   onChangeModel={onUpdateManagerModel ? handleRequestChangeModel : undefined}
+                  highlightQuery={isSearchActive ? parsedSearch.term : undefined}
                 />
               ))}
             </ul>
