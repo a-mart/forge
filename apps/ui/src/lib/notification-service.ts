@@ -172,6 +172,16 @@ function canPlay(key: string): boolean {
   return true
 }
 
+// ── Deferred completion tracking ──
+
+/**
+ * Tracks agents that have a pending all-done evaluation.
+ * When a `speak_to_user` fires while the manager is still streaming,
+ * we record the agent here and defer the all-done decision until the
+ * manager transitions to idle.
+ */
+const pendingCompletionCheck = new Map<string, number>() // agentId → timestamp
+
 // ── Trigger checks ──
 
 function hasStreamingWorkers(managerAgentId: string, state: ManagerWsState): boolean {
@@ -180,6 +190,13 @@ function hasStreamingWorkers(managerAgentId: string, state: ManagerWsState): boo
     const liveStatus = state.statuses[agent.agentId]?.status ?? agent.status
     return liveStatus === 'streaming'
   })
+}
+
+function isManagerStreaming(agentId: string, state: ManagerWsState): boolean {
+  const liveStatus = state.statuses[agentId]?.status
+  if (liveStatus) return liveStatus === 'streaming'
+  const agent = state.agents.find((a) => a.agentId === agentId)
+  return agent?.status === 'streaming'
 }
 
 export function shouldPlayUnread(
@@ -206,6 +223,9 @@ export function shouldPlayAllDone(
   if (agentId === state.targetAgentId && document.hasFocus()) return false
   const prefs = getAgentPrefs(store, prefsKey)
   if (!prefs.allDoneSound.enabled) return false
+  // Hard safety guard: never classify as all-done while the manager itself is streaming.
+  // speak_to_user is a tool call that fires mid-turn; workers may not be spawned yet.
+  if (isManagerStreaming(agentId, state)) return false
   return !hasStreamingWorkers(agentId, state)
 }
 
@@ -229,7 +249,11 @@ export function playAllDone(prefsKey: string, store: NotificationStore): void {
 
 /**
  * Main entry point — called from ws-client on `unread_notification`.
- * Decides which sound(s) to play based on agent prefs and worker status.
+ *
+ * Uses deferred classification to avoid false-positive "all done" sounds:
+ * - If the manager is still streaming (mid-turn), the all-done decision is
+ *   deferred until the manager goes idle. Only the unread sound plays now.
+ * - If the manager is already idle (e.g. replayed history), classify immediately.
  */
 export function handleUnreadNotification(
   agentId: string,
@@ -242,7 +266,20 @@ export function handleUnreadNotification(
   const agent = state.agents.find((a) => a.agentId === agentId)
   const prefsKey = agent?.profileId ?? agentId
 
-  // "All done" takes priority — it's the higher-importance sound
+  if (isManagerStreaming(agentId, state)) {
+    // Manager is mid-turn — defer the all-done decision until idle transition.
+    // Record this agent as having a pending completion candidate.
+    pendingCompletionCheck.set(agentId, Date.now())
+
+    // Still play the lower-priority unread sound immediately for awareness.
+    if (shouldPlayUnread(prefsKey, agentId, state, store)) {
+      playUnread(prefsKey, store)
+    }
+    return
+  }
+
+  // Manager is already idle — classify immediately.
+  // "All done" takes priority — it's the higher-importance sound.
   if (shouldPlayAllDone(prefsKey, agentId, state, store)) {
     playAllDone(prefsKey, store)
     return
@@ -252,6 +289,32 @@ export function handleUnreadNotification(
   if (shouldPlayUnread(prefsKey, agentId, state, store)) {
     playUnread(prefsKey, store)
   }
+}
+
+/**
+ * Called from ws-client when a manager transitions from `streaming` → `idle`.
+ * Evaluates whether a deferred all-done sound should play now.
+ */
+export function handleManagerIdleTransition(
+  agentId: string,
+  state: ManagerWsState,
+): void {
+  // Only process if there's a pending completion candidate for this agent.
+  if (!pendingCompletionCheck.has(agentId)) return
+  pendingCompletionCheck.delete(agentId)
+
+  const store = readNotificationStore()
+  if (!store.globalEnabled) return
+
+  const agent = state.agents.find((a) => a.agentId === agentId)
+  const prefsKey = agent?.profileId ?? agentId
+
+  // Now that the manager is idle, evaluate the deferred all-done check.
+  // shouldPlayAllDone will verify no streaming workers remain.
+  if (shouldPlayAllDone(prefsKey, agentId, state, store)) {
+    playAllDone(prefsKey, store)
+  }
+  // No else — the unread sound already played at notification time.
 }
 
 // ── Custom sound management ──

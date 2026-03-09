@@ -1,5 +1,5 @@
 import { chooseFallbackAgentId } from './agent-hierarchy'
-import { handleUnreadNotification } from './notification-service'
+import { handleManagerIdleTransition, handleUnreadNotification } from './notification-service'
 import { WsRequestTracker } from './ws-request-tracker'
 import {
   createInitialManagerWsState,
@@ -699,6 +699,7 @@ export class ManagerWsClient {
         break
 
       case 'agent_status': {
+        const prevStatus = this.state.statuses[event.agentId]?.status
         const statuses = {
           ...this.state.statuses,
           [event.agentId]: {
@@ -708,6 +709,15 @@ export class ManagerWsClient {
           },
         }
         this.updateState({ statuses })
+
+        // Detect manager streaming → idle transition for deferred notification evaluation.
+        // When a manager goes idle, check if a pending all-done sound should play now.
+        if (prevStatus === 'streaming' && event.status === 'idle') {
+          const agent = this.state.agents.find((a) => a.agentId === event.agentId)
+          if (agent?.role === 'manager') {
+            handleManagerIdleTransition(event.agentId, this.state)
+          }
+        }
         break
       }
 
