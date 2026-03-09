@@ -19,6 +19,7 @@ import { CreateManagerDialog } from '@/components/chat/CreateManagerDialog'
 import { DeleteManagerDialog } from '@/components/chat/DeleteManagerDialog'
 import { MessageInput, type MessageInputHandle } from '@/components/chat/MessageInput'
 import { MessageList } from '@/components/chat/MessageList'
+import { PlaywrightDashboardView } from '@/components/playwright/PlaywrightDashboardView'
 import { SettingsPanel } from '@/components/chat/SettingsDialog'
 import { chooseFallbackAgentId } from '@/lib/agent-hierarchy'
 import type { ArtifactReference } from '@/lib/artifacts'
@@ -547,6 +548,12 @@ export function IndexPage() {
     navigateToRoute({ view: 'settings' })
   }
 
+  const handleOpenPlaywright = () => {
+    navigateToRoute({ view: 'playwright' })
+  }
+
+  const showPlaywrightNav = state.playwrightSettings?.effectiveEnabled === true
+
   const handleSuggestionClick = (prompt: string) => {
     messageInputRef.current?.setInput(prompt)
   }
@@ -574,6 +581,8 @@ export function IndexPage() {
           unreadCounts={state.unreadCounts}
           selectedAgentId={activeAgentId}
           isSettingsActive={activeView === 'settings'}
+          isPlaywrightActive={activeView === 'playwright'}
+          showPlaywrightNav={showPlaywrightNav}
           isMobileOpen={isMobileSidebarOpen}
           onMobileClose={() => setIsMobileSidebarOpen(false)}
           onAddManager={handleOpenCreateManagerDialog}
@@ -581,6 +590,7 @@ export function IndexPage() {
           onDeleteAgent={handleDeleteAgent}
           onDeleteManager={handleRequestDeleteManager}
           onOpenSettings={handleOpenSettingsPanel}
+          onOpenPlaywright={handleOpenPlaywright}
           onCreateSession={handleCreateSession}
           onStopSession={handleStopSession}
           onResumeSession={handleResumeSession}
@@ -610,6 +620,19 @@ export function IndexPage() {
                 managers={settingsManagers}
                 slackStatus={state.slackStatus}
                 telegramStatus={state.telegramStatus}
+                onBack={() =>
+                  navigateToRoute({
+                    view: 'chat',
+                    agentId: activeAgentId ?? DEFAULT_MANAGER_AGENT_ID,
+                  })
+                }
+              />
+            ) : activeView === 'playwright' ? (
+              <PlaywrightDashboardView
+                wsUrl={wsUrl}
+                connected={state.connected}
+                snapshot={state.playwrightSnapshot}
+                onOpenSettings={handleOpenSettingsPanel}
                 onBack={() =>
                   navigateToRoute({
                     view: 'chat',

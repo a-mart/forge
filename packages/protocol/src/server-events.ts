@@ -1,5 +1,9 @@
 import type { ConversationAttachment } from './attachments.js'
 import type {
+  PlaywrightDiscoverySettings,
+  PlaywrightDiscoverySnapshot,
+} from './playwright.js'
+import type {
   AcceptedDeliveryMode,
   AgentContextUsage,
   AgentDescriptor,
@@ -269,6 +273,21 @@ export interface UnreadNotificationEvent {
   agentId: string
 }
 
+export interface PlaywrightDiscoverySnapshotEvent {
+  type: 'playwright_discovery_snapshot'
+  snapshot: PlaywrightDiscoverySnapshot
+}
+
+export interface PlaywrightDiscoveryUpdatedEvent {
+  type: 'playwright_discovery_updated'
+  snapshot: PlaywrightDiscoverySnapshot
+}
+
+export interface PlaywrightDiscoverySettingsUpdatedEvent {
+  type: 'playwright_discovery_settings_updated'
+  settings: PlaywrightDiscoverySettings
+}
+
 export type ServerEvent =
   | { type: 'ready'; serverTime: string; subscribedAgentId: string }
   | { type: 'conversation_reset'; agentId: string; timestamp: string; reason: 'user_new_command' | 'api_reset' }
@@ -301,4 +320,7 @@ export type ServerEvent =
   | DirectoryPickedEvent
   | SlackStatusEvent
   | TelegramStatusEvent
+  | PlaywrightDiscoverySnapshotEvent
+  | PlaywrightDiscoveryUpdatedEvent
+  | PlaywrightDiscoverySettingsUpdatedEvent
   | { type: 'error'; code: string; message: string; requestId?: string }

@@ -8,6 +8,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Button } from '@/components/ui/button'
+import { Switch } from '@/components/ui/switch'
 import { SettingsSection, SettingsWithCTA } from './settings-row'
 import {
   applyThemePreference,
@@ -15,6 +16,11 @@ import {
   type ThemePreference,
 } from '@/lib/theme'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
+import {
+  fetchPlaywrightSettings,
+  updatePlaywrightSettings,
+} from '@/components/playwright/playwright-api'
+import type { PlaywrightDiscoverySettings } from '@middleman/protocol'
 
 interface SettingsGeneralProps {
   wsUrl: string
@@ -24,10 +30,42 @@ export function SettingsGeneral({ wsUrl }: SettingsGeneralProps) {
   const [themePreference, setThemePreference] = useState<ThemePreference>(() =>
     readStoredThemePreference(),
   )
+  const [playwrightSettings, setPlaywrightSettings] = useState<PlaywrightDiscoverySettings | null>(null)
+  const [playwrightError, setPlaywrightError] = useState<string | null>(null)
+  const [playwrightUpdating, setPlaywrightUpdating] = useState(false)
 
   useEffect(() => {
     setThemePreference(readStoredThemePreference())
   }, [])
+
+  // Fetch Playwright settings on mount
+  useEffect(() => {
+    void fetchPlaywrightSettings(wsUrl)
+      .then(setPlaywrightSettings)
+      .catch(() => {
+        // Backend may not have this endpoint yet; silently ignore
+      })
+  }, [wsUrl])
+
+  const handlePlaywrightToggle = useCallback(
+    (enabled: boolean) => {
+      if (playwrightUpdating) return
+      setPlaywrightUpdating(true)
+      setPlaywrightError(null)
+
+      void updatePlaywrightSettings(wsUrl, { enabled })
+        .then(({ settings }) => {
+          setPlaywrightSettings(settings)
+        })
+        .catch((err) => {
+          setPlaywrightError(err instanceof Error ? err.message : 'Failed to update setting')
+        })
+        .finally(() => {
+          setPlaywrightUpdating(false)
+        })
+    },
+    [wsUrl, playwrightUpdating],
+  )
 
   const handleThemePreferenceChange = useCallback((nextPreference: ThemePreference) => {
     setThemePreference(nextPreference)
@@ -76,6 +114,44 @@ export function SettingsGeneral({ wsUrl }: SettingsGeneralProps) {
               </SelectItem>
             </SelectContent>
           </Select>
+        </SettingsWithCTA>
+      </SettingsSection>
+
+      <SettingsSection
+        label="Experimental Features"
+        description="Enable or disable experimental features"
+      >
+        <SettingsWithCTA
+          label="Playwright Dashboard"
+          description={
+            playwrightSettings?.source === 'env' ? (
+              <>
+                <span>Discover Playwright CLI sessions across repo roots and worktrees.</span>
+                <br />
+                <span className="text-amber-600 dark:text-amber-400">
+                  This feature is {playwrightSettings.effectiveEnabled ? 'forced on' : 'forced off'} by the{' '}
+                  <code className="text-[10px]">MIDDLEMAN_PLAYWRIGHT_DASHBOARD_ENABLED</code> environment variable.
+                </span>
+              </>
+            ) : (
+              'Discover Playwright CLI sessions across repo roots and worktrees, and correlate them with Middleman agents.'
+            )
+          }
+        >
+          <div className="flex flex-col items-end gap-1.5">
+            <Switch
+              checked={playwrightSettings?.effectiveEnabled ?? false}
+              onCheckedChange={handlePlaywrightToggle}
+              disabled={
+                !playwrightSettings ||
+                playwrightSettings.source === 'env' ||
+                playwrightUpdating
+              }
+            />
+            {playwrightError ? (
+              <span className="text-[10px] text-destructive">{playwrightError}</span>
+            ) : null}
+          </div>
         </SettingsWithCTA>
       </SettingsSection>
 
