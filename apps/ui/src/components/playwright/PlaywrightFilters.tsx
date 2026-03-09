@@ -20,6 +20,8 @@ export interface PlaywrightDashboardFiltersState {
   worktree: string
   onlyCorrelated: boolean
   onlyPreferred: boolean
+  showInactive: boolean
+  showStale: boolean
 }
 
 interface PlaywrightFiltersProps {
@@ -124,6 +126,32 @@ export function PlaywrightFilters({
         />
         <Label htmlFor="only-preferred" className="text-xs text-muted-foreground cursor-pointer">
           Preferred only
+        </Label>
+      </div>
+
+      {/* Toggle: show inactive */}
+      <div className="flex items-center gap-1.5">
+        <Switch
+          id="show-inactive"
+          checked={filters.showInactive}
+          onCheckedChange={(checked) => update({ showInactive: checked === true })}
+          className="scale-75"
+        />
+        <Label htmlFor="show-inactive" className="text-xs text-muted-foreground cursor-pointer">
+          Show inactive
+        </Label>
+      </div>
+
+      {/* Toggle: show stale */}
+      <div className="flex items-center gap-1.5">
+        <Switch
+          id="show-stale"
+          checked={filters.showStale}
+          onCheckedChange={(checked) => update({ showStale: checked === true })}
+          className="scale-75"
+        />
+        <Label htmlFor="show-stale" className="text-xs text-muted-foreground cursor-pointer">
+          Show stale
         </Label>
       </div>
 

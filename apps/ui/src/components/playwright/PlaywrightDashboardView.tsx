@@ -39,6 +39,8 @@ const INITIAL_FILTERS: PlaywrightDashboardFiltersState = {
   worktree: 'all',
   onlyCorrelated: false,
   onlyPreferred: false,
+  showInactive: false,
+  showStale: false,
 }
 
 export function PlaywrightDashboardView({
@@ -99,6 +101,13 @@ export function PlaywrightDashboardView({
     // Status filter
     if (filters.status !== 'all') {
       sessions = sessions.filter((s) => s.liveness === filters.status)
+    } else {
+      // When showing "all", respect the show/hide toggles for inactive and stale
+      sessions = sessions.filter((s) => {
+        if (s.liveness === 'inactive' && !filters.showInactive) return false
+        if (s.liveness === 'stale' && !filters.showStale) return false
+        return true
+      })
     }
 
     // Worktree filter
@@ -278,6 +287,18 @@ export function PlaywrightDashboardView({
   // Empty state (ready but no sessions)
   const isEmpty = snapshot.sessions.length === 0
 
+  // Compute hidden counts for the "all" status view (inactive/stale hidden by toggles)
+  const hiddenCounts = useMemo(() => {
+    if (!snapshot?.sessions || filters.status !== 'all') return { inactive: 0, stale: 0, total: 0 }
+    let inactive = 0
+    let stale = 0
+    for (const s of snapshot.sessions) {
+      if (s.liveness === 'inactive' && !filters.showInactive) inactive++
+      if (s.liveness === 'stale' && !filters.showStale) stale++
+    }
+    return { inactive, stale, total: inactive + stale }
+  }, [snapshot?.sessions, filters.status, filters.showInactive, filters.showStale])
+
   return (
     <div className="flex h-full flex-col min-h-0">
       <DashboardHeader
@@ -322,6 +343,16 @@ export function PlaywrightDashboardView({
             isRescanning={isRescanning}
           />
 
+          {/* Hidden sessions hint */}
+          {hiddenCounts.total > 0 && filteredSessions.length > 0 ? (
+            <HiddenSessionsHint
+              inactiveCount={hiddenCounts.inactive}
+              staleCount={hiddenCounts.stale}
+              onShowInactive={() => setFilters((f) => ({ ...f, showInactive: true }))}
+              onShowStale={() => setFilters((f) => ({ ...f, showStale: true }))}
+            />
+          ) : null}
+
           {/* Content */}
           {isEmpty ? (
             <EmptyState
@@ -329,7 +360,13 @@ export function PlaywrightDashboardView({
               onOpenSettings={onOpenSettings}
             />
           ) : filteredSessions.length === 0 ? (
-            <FilteredEmptyState onClearFilters={() => setFilters(INITIAL_FILTERS)} />
+            <FilteredEmptyState
+              onClearFilters={() => setFilters(INITIAL_FILTERS)}
+              hiddenInactive={hiddenCounts.inactive}
+              hiddenStale={hiddenCounts.stale}
+              onShowInactive={() => setFilters((f) => ({ ...f, showInactive: true }))}
+              onShowStale={() => setFilters((f) => ({ ...f, showStale: true }))}
+            />
           ) : (
             <SessionGrid sessions={filteredSessions} />
           )}
@@ -400,18 +437,100 @@ function EmptyState({
   )
 }
 
-function FilteredEmptyState({ onClearFilters }: { onClearFilters: () => void }) {
+function FilteredEmptyState({
+  onClearFilters,
+  hiddenInactive,
+  hiddenStale,
+  onShowInactive,
+  onShowStale,
+}: {
+  onClearFilters: () => void
+  hiddenInactive: number
+  hiddenStale: number
+  onShowInactive: () => void
+  onShowStale: () => void
+}) {
+  const hiddenTotal = hiddenInactive + hiddenStale
+  const hiddenParts: string[] = []
+  if (hiddenInactive > 0) hiddenParts.push(`${hiddenInactive} inactive`)
+  if (hiddenStale > 0) hiddenParts.push(`${hiddenStale} stale`)
+
   return (
     <Card className="mx-auto max-w-md">
       <CardContent className="flex flex-col items-center gap-3 p-6 text-center">
         <p className="text-sm text-muted-foreground">
           No sessions match the current filters.
         </p>
+        {hiddenTotal > 0 ? (
+          <p className="text-xs text-muted-foreground/80">
+            {hiddenParts.join(' and ')} session{hiddenTotal !== 1 ? 's are' : ' is'} hidden by default.{' '}
+            {hiddenInactive > 0 ? (
+              <button
+                type="button"
+                onClick={onShowInactive}
+                className="text-primary hover:underline"
+              >
+                Show inactive
+              </button>
+            ) : null}
+            {hiddenInactive > 0 && hiddenStale > 0 ? ' · ' : null}
+            {hiddenStale > 0 ? (
+              <button
+                type="button"
+                onClick={onShowStale}
+                className="text-primary hover:underline"
+              >
+                Show stale
+              </button>
+            ) : null}
+          </p>
+        ) : null}
         <Button onClick={onClearFilters} variant="outline" size="sm">
           Clear Filters
         </Button>
       </CardContent>
     </Card>
+  )
+}
+
+function HiddenSessionsHint({
+  inactiveCount,
+  staleCount,
+  onShowInactive,
+  onShowStale,
+}: {
+  inactiveCount: number
+  staleCount: number
+  onShowInactive: () => void
+  onShowStale: () => void
+}) {
+  const parts: string[] = []
+  if (inactiveCount > 0) parts.push(`${inactiveCount} inactive`)
+  if (staleCount > 0) parts.push(`${staleCount} stale`)
+
+  return (
+    <div className="text-center text-xs text-muted-foreground/70">
+      {parts.join(' and ')} session{inactiveCount + staleCount !== 1 ? 's' : ''} hidden.{' '}
+      {inactiveCount > 0 ? (
+        <button
+          type="button"
+          onClick={onShowInactive}
+          className="text-primary/70 hover:text-primary hover:underline"
+        >
+          Show inactive
+        </button>
+      ) : null}
+      {inactiveCount > 0 && staleCount > 0 ? ' · ' : null}
+      {staleCount > 0 ? (
+        <button
+          type="button"
+          onClick={onShowStale}
+          className="text-primary/70 hover:text-primary hover:underline"
+        >
+          Show stale
+        </button>
+      ) : null}
+    </div>
   )
 }
 
