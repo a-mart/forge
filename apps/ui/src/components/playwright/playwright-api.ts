@@ -83,10 +83,6 @@ export async function releasePlaywrightLivePreview(
   }
 }
 
-export function resolvePreviewIframeSrc(wsUrl: string, previewId: string): string {
-  return resolveApiEndpoint(wsUrl, `/playwright-live/embed?previewId=${encodeURIComponent(previewId)}`)
-}
-
 // --- Settings APIs ---
 
 export async function updatePlaywrightSettings(

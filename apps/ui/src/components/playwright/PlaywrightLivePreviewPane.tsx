@@ -5,7 +5,6 @@ import { PlaywrightLivePreviewEmptyState } from './PlaywrightLivePreviewEmptySta
 import {
   startPlaywrightLivePreview,
   releasePlaywrightLivePreview,
-  resolvePreviewIframeSrc,
 } from './playwright-api'
 import type {
   PlaywrightDiscoveredSession,
@@ -70,36 +69,6 @@ function classifyStartError(err: unknown): { status: PlaywrightPreviewStatus; me
     return { status: 'expired', message }
   }
   return { status: 'error', message }
-}
-
-/** Resolve the backend origin from the wsUrl for postMessage origin validation */
-function resolveBackendOrigin(wsUrl: string): string | null {
-  try {
-    const parsed = new URL(wsUrl)
-    parsed.protocol = parsed.protocol === 'wss:' ? 'https:' : 'http:'
-    return parsed.origin
-  } catch {
-    return null
-  }
-}
-
-/**
- * Recognized postMessage event types from the embedded preview app.
- * The adapter injects a script that posts these status messages to the parent window.
- */
-interface EmbedStatusMessage {
-  type: 'mm-playwright-preview-status'
-  previewId: string
-  status: 'ready' | 'disconnected' | 'error' | 'expired'
-  message?: string
-}
-
-function isEmbedStatusMessage(data: unknown): data is EmbedStatusMessage {
-  if (!data || typeof data !== 'object') return false
-  const msg = data as Record<string, unknown>
-  return msg.type === 'mm-playwright-preview-status' &&
-    typeof msg.previewId === 'string' &&
-    typeof msg.status === 'string'
 }
 
 export function PlaywrightLivePreviewPane({
@@ -169,12 +138,11 @@ export function PlaywrightLivePreviewPane({
         }
 
         activePreviewIdRef.current = handle.previewId
-        const iframeSrc = resolvePreviewIframeSrc(wsUrl, handle.previewId)
 
         setPreview({
           status: 'active',
           previewId: handle.previewId,
-          iframeSrc,
+          iframeSrc: handle.iframeSrc,
           errorMessage: null,
           unavailableReason: null,
           interactionEnabled: false,
@@ -214,67 +182,6 @@ export function PlaywrightLivePreviewPane({
 
     void startPreview(session)
   }, [session, startPreview, releaseCurrentPreview])
-
-  // --- PostMessage status bridge from embedded iframe ---
-  // The embedded preview app (served from backend origin) can post status
-  // events to the parent shell for disconnect/expired/error conditions that
-  // occur after the initial iframe load succeeds.
-  useEffect(() => {
-    const backendOrigin = resolveBackendOrigin(wsUrl)
-    if (!backendOrigin) return
-
-    function handleMessage(event: MessageEvent) {
-      // Validate origin — only accept messages from the backend
-      if (event.origin !== backendOrigin) return
-
-      let data: unknown
-      if (typeof event.data === 'string') {
-        try { data = JSON.parse(event.data) } catch { return }
-      } else {
-        data = event.data
-      }
-
-      if (!isEmbedStatusMessage(data)) return
-
-      // Only process messages for the currently active preview
-      const currentPreviewId = activePreviewIdRef.current
-      if (!currentPreviewId || data.previewId !== currentPreviewId) return
-
-      setPreview((prev) => {
-        // Don't overwrite with a less-specific state
-        if (prev.status !== 'active' && data.status === 'ready') return prev
-
-        switch (data.status) {
-          case 'ready':
-            // Embedded app successfully connected to controller
-            return { ...prev, status: 'active' }
-          case 'disconnected':
-            return {
-              ...prev,
-              status: 'disconnected',
-              errorMessage: data.message ?? 'Controller connection lost',
-            }
-          case 'expired':
-            return {
-              ...prev,
-              status: 'expired',
-              errorMessage: data.message ?? 'Preview lease expired',
-            }
-          case 'error':
-            return {
-              ...prev,
-              status: 'error',
-              errorMessage: data.message ?? 'Preview error',
-            }
-          default:
-            return prev
-        }
-      })
-    }
-
-    window.addEventListener('message', handleMessage)
-    return () => window.removeEventListener('message', handleMessage)
-  }, [wsUrl])
 
   // Cleanup on unmount
   useEffect(() => {

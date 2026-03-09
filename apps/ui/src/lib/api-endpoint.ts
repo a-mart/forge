@@ -6,10 +6,10 @@ export function resolveApiEndpoint(wsUrl: string | undefined, path: string): str
   try {
     const parsed = new URL(wsUrl)
     parsed.protocol = parsed.protocol === 'wss:' ? 'https:' : 'http:'
-    parsed.pathname = path
-    parsed.search = ''
-    parsed.hash = ''
-    return parsed.toString()
+    // Use URL constructor to properly parse path + query string,
+    // instead of assigning to pathname (which encodes `?` into `%3F`).
+    const resolved = new URL(path, parsed.origin)
+    return resolved.toString()
   } catch {
     return path
   }
