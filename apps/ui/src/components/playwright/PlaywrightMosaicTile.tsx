@@ -1,6 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Loader2, Maximize2, MonitorPlay, EyeOff } from 'lucide-react'
+import { Loader2, Maximize2, MonitorPlay, EyeOff, Power } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import {
   startPlaywrightLivePreview,
@@ -17,6 +27,7 @@ interface PlaywrightMosaicTileProps {
   selected?: boolean
   onSelect: () => void
   onFocus: () => void
+  onClose?: () => Promise<void>
 }
 
 function isSessionPreviewable(session: PlaywrightDiscoveredSession): boolean {
@@ -37,14 +48,20 @@ export function PlaywrightMosaicTile({
   selected = false,
   onSelect,
   onFocus,
+  onClose,
 }: PlaywrightMosaicTileProps) {
   const previewable = isSessionPreviewable(session)
   const [iframeSrc, setIframeSrc] = useState<string | null>(null)
   const [status, setStatus] = useState<'idle' | 'starting' | 'active' | 'failed'>('idle')
   const [embedActive, setEmbedActive] = useState(false)
+  const [showCloseDialog, setShowCloseDialog] = useState(false)
+  const [isClosing, setIsClosing] = useState(false)
+  const [closeError, setCloseError] = useState<string | null>(null)
   const previewIdRef = useRef<string | null>(null)
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const mountedRef = useRef(true)
+
+  const canClose = onClose && (session.liveness === 'active' || session.liveness === 'error') && session.socketExists
 
   // Start preview on mount for previewable sessions
   useEffect(() => {
@@ -111,6 +128,28 @@ export function PlaywrightMosaicTile({
     [onFocus],
   )
 
+  const handleCloseClick = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation()
+      setCloseError(null)
+      setShowCloseDialog(true)
+    },
+    [],
+  )
+
+  const handleConfirmClose = useCallback(async () => {
+    setIsClosing(true)
+    setCloseError(null)
+    try {
+      await onClose?.()
+      setShowCloseDialog(false)
+    } catch (err) {
+      setCloseError(err instanceof Error ? err.message : 'Failed to close session')
+    } finally {
+      setIsClosing(false)
+    }
+  }, [onClose])
+
   const hasIframe = status === 'active' && !!iframeSrc
   const isLoading = status === 'starting' || (hasIframe && !embedActive)
 
@@ -159,8 +198,8 @@ export function PlaywrightMosaicTile({
           </div>
         ) : null}
 
-        {/* Hover overlay with focus action */}
-        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 dark:group-hover:bg-white/5 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">
+        {/* Hover overlay with focus/close actions */}
+        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 dark:group-hover:bg-white/5 transition-colors flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100">
           {previewable ? (
             <button
               type="button"
@@ -171,7 +210,35 @@ export function PlaywrightMosaicTile({
               Focus
             </button>
           ) : null}
+          {canClose ? (
+            <button
+              type="button"
+              onClick={handleCloseClick}
+              className="flex items-center gap-1.5 rounded-full bg-background/90 px-3 py-1.5 text-xs font-medium shadow-md border text-destructive hover:bg-destructive/10"
+            >
+              <Power className="size-3" />
+              Close
+            </button>
+          ) : null}
         </div>
+
+        {/* Top-right close button (always visible for closeable sessions) */}
+        {canClose ? (
+          <TooltipProvider delayDuration={200}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={handleCloseClick}
+                  className="absolute top-1.5 right-1.5 z-10 flex items-center justify-center size-6 rounded-full bg-background/80 border border-border/50 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors opacity-0 group-hover:opacity-100"
+                >
+                  <Power className="size-3" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="left" className="text-xs">Close session</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        ) : null}
       </div>
 
       {/* Compact info bar */}
@@ -198,6 +265,47 @@ export function PlaywrightMosaicTile({
           </span>
         ) : null}
       </div>
+
+      {/* Close session confirmation dialog */}
+      <Dialog open={showCloseDialog} onOpenChange={(v) => { if (!v && !isClosing) setShowCloseDialog(false) }}>
+        <DialogContent className="sm:max-w-md" onClick={(e) => e.stopPropagation()}>
+          <DialogHeader>
+            <DialogTitle>Close browser session</DialogTitle>
+            <DialogDescription>
+              This will shut down the Playwright daemon for <strong>{session.sessionName}</strong>.
+              The browser will be closed and the session will become inactive.
+            </DialogDescription>
+          </DialogHeader>
+          {closeError ? (
+            <div className="rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+              {closeError}
+            </div>
+          ) : null}
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" size="sm" onClick={() => setShowCloseDialog(false)} disabled={isClosing}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={handleConfirmClose}
+              disabled={isClosing}
+            >
+              {isClosing ? (
+                <>
+                  <Loader2 className="size-3 mr-1.5 animate-spin" />
+                  Closing…
+                </>
+              ) : (
+                <>
+                  <Power className="size-3 mr-1.5" />
+                  Close Session
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

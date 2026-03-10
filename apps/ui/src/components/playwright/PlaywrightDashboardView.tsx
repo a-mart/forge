@@ -23,6 +23,7 @@ import { PlaywrightSessionCard } from './PlaywrightSessionCard'
 import { PlaywrightMosaicTile } from './PlaywrightMosaicTile'
 import { PlaywrightLivePreviewPane } from './PlaywrightLivePreviewPane'
 import {
+  closePlaywrightSession,
   fetchPlaywrightSnapshot,
   triggerPlaywrightRescan,
 } from './playwright-api'
@@ -275,6 +276,18 @@ export function PlaywrightDashboardView({
     onViewStateChange?.(selectedSessionId ?? null, 'split')
   }, [selectedSessionId, onViewStateChange])
 
+  const handleCloseSession = useCallback(
+    async (sessionId: string) => {
+      const result = await closePlaywrightSession(wsUrl, sessionId)
+      onSnapshotUpdate(result.snapshot)
+      // If the closed session was selected, deselect it
+      if (selectedSessionId === sessionId) {
+        onViewStateChange?.(null, 'tiles')
+      }
+    },
+    [wsUrl, onSnapshotUpdate, selectedSessionId, onViewStateChange],
+  )
+
   const handleRescan = useCallback(() => {
     if (isRescanning) return
     setIsRescanning(true)
@@ -497,6 +510,7 @@ export function PlaywrightDashboardView({
                 selectedSessionId={selectedSessionId}
                 onSelectSession={handleSelectSession}
                 onFocusSession={handleEnterFocusMode}
+                onCloseSession={handleCloseSession}
               />
             )}
           </div>
@@ -604,6 +618,7 @@ export function PlaywrightDashboardView({
                     compact={!!selectedSession}
                     onSelectSession={handleSelectSession}
                     onFocusSession={handleEnterFocusMode}
+                    onCloseSession={handleCloseSession}
                   />
                 )}
               </div>
@@ -869,12 +884,14 @@ function MosaicGrid({
   selectedSessionId,
   onSelectSession,
   onFocusSession,
+  onCloseSession,
 }: {
   wsUrl: string
   sessions: PlaywrightDiscoveredSession[]
   selectedSessionId: string | null
   onSelectSession: (sessionId: string) => void
   onFocusSession: (sessionId: string) => void
+  onCloseSession: (sessionId: string) => Promise<void>
 }) {
   return (
     <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 xl:grid-cols-3">
@@ -886,6 +903,7 @@ function MosaicGrid({
           selected={session.id === selectedSessionId}
           onSelect={() => onSelectSession(session.id)}
           onFocus={() => onFocusSession(session.id)}
+          onClose={() => onCloseSession(session.id)}
         />
       ))}
     </div>
@@ -898,12 +916,14 @@ function SessionList({
   compact,
   onSelectSession,
   onFocusSession,
+  onCloseSession,
 }: {
   sessions: PlaywrightDiscoveredSession[]
   selectedSessionId: string | null
   compact: boolean
   onSelectSession: (sessionId: string) => void
   onFocusSession: (sessionId: string) => void
+  onCloseSession: (sessionId: string) => Promise<void>
 }) {
   if (compact) {
     // Compact list view for split mode left pane
@@ -917,6 +937,7 @@ function SessionList({
             compact
             onSelect={() => onSelectSession(session.id)}
             onFocus={() => onFocusSession(session.id)}
+            onClose={() => onCloseSession(session.id)}
           />
         ))}
       </div>
@@ -933,6 +954,7 @@ function SessionList({
           selected={session.id === selectedSessionId}
           onSelect={() => onSelectSession(session.id)}
           onFocus={() => onFocusSession(session.id)}
+          onClose={() => onCloseSession(session.id)}
         />
       ))}
     </div>

@@ -1,4 +1,5 @@
 import type {
+  ClosePlaywrightSessionResponse,
   GetPlaywrightSessionsResponse,
   GetPlaywrightSettingsResponse,
   PlaywrightDiscoverySettings,
@@ -10,6 +11,8 @@ import type {
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import {
   PlaywrightSettingsConflictError,
+  PlaywrightSessionNotFoundError,
+  PlaywrightSessionCloseError,
 } from '../../playwright/playwright-discovery-service.js'
 import {
   PlaywrightSettingsService,
@@ -22,6 +25,7 @@ import type { HttpRoute } from './http-route.js'
 
 const PLAYWRIGHT_SESSIONS_ENDPOINT = '/api/playwright/sessions'
 const PLAYWRIGHT_RESCAN_ENDPOINT = '/api/playwright/rescan'
+const PLAYWRIGHT_CLOSE_SESSION_ENDPOINT = '/api/playwright/sessions/close'
 const PLAYWRIGHT_SETTINGS_ENDPOINT = '/api/settings/playwright'
 
 export function createPlaywrightRoutes(options: {
@@ -44,6 +48,13 @@ export function createPlaywrightRoutes(options: {
       matches: (pathname) => pathname === PLAYWRIGHT_RESCAN_ENDPOINT,
       handle: async (request, response) => {
         await handlePostRescan(request, response, discoveryService)
+      },
+    },
+    {
+      methods: 'POST, OPTIONS',
+      matches: (pathname) => pathname === PLAYWRIGHT_CLOSE_SESSION_ENDPOINT,
+      handle: async (request, response) => {
+        await handleCloseSession(request, response, discoveryService)
       },
     },
     {
@@ -121,6 +132,62 @@ async function handlePostRescan(
     snapshot: await discoveryService.triggerRescan('http_rescan'),
   }
   sendJson(response, 200, payload as unknown as Record<string, unknown>)
+}
+
+async function handleCloseSession(
+  request: IncomingMessage,
+  response: ServerResponse,
+  discoveryService: PlaywrightDiscoveryService | null,
+): Promise<void> {
+  const methods = 'POST, OPTIONS'
+
+  if (request.method === 'OPTIONS') {
+    applyCorsHeaders(request, response, methods)
+    response.statusCode = 204
+    response.end()
+    return
+  }
+
+  applyCorsHeaders(request, response, methods)
+
+  if (request.method !== 'POST') {
+    response.setHeader('Allow', methods)
+    sendJson(response, 405, { error: 'Method Not Allowed' })
+    return
+  }
+
+  if (!discoveryService) {
+    sendJson(response, 503, { error: 'Playwright discovery service is unavailable' })
+    return
+  }
+
+  try {
+    const body = await readJsonBody(request)
+    const sessionId = (body as Record<string, unknown>)?.sessionId
+    if (typeof sessionId !== 'string' || !sessionId.trim()) {
+      sendJson(response, 400, { error: 'Missing or invalid sessionId' })
+      return
+    }
+
+    const result = await discoveryService.closeSession(sessionId.trim())
+    const payload: ClosePlaywrightSessionResponse = {
+      ok: true,
+      sessionId: sessionId.trim(),
+      sessionName: result.sessionName,
+      snapshot: result.snapshot,
+    }
+    sendJson(response, 200, payload as unknown as Record<string, unknown>)
+  } catch (error) {
+    if (error instanceof PlaywrightSessionNotFoundError) {
+      sendJson(response, 404, { error: error.message })
+      return
+    }
+    if (error instanceof PlaywrightSessionCloseError) {
+      sendJson(response, 422, { error: error.message })
+      return
+    }
+    throw error
+  }
 }
 
 async function handleSettingsRequest(

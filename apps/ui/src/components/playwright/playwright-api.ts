@@ -1,4 +1,5 @@
 import type {
+  ClosePlaywrightSessionResponse,
   PlaywrightDiscoverySettings,
   PlaywrightDiscoverySnapshot,
   PlaywrightLivePreviewHandle,
@@ -39,6 +40,22 @@ export async function triggerPlaywrightRescan(
   const payload = (await response.json()) as { ok?: boolean; snapshot?: PlaywrightDiscoverySnapshot }
   if (!payload?.snapshot) throw new Error('Invalid rescan response from backend.')
   return payload.snapshot
+}
+
+export async function closePlaywrightSession(
+  wsUrl: string,
+  sessionId: string,
+): Promise<ClosePlaywrightSessionResponse> {
+  const endpoint = resolveApiEndpoint(wsUrl, '/api/playwright/sessions/close')
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ sessionId }),
+  })
+  if (!response.ok) throw new Error(await readApiError(response))
+  const payload = (await response.json()) as ClosePlaywrightSessionResponse
+  if (!payload?.ok) throw new Error('Invalid close session response from backend.')
+  return payload
 }
 
 export async function fetchPlaywrightSettings(

@@ -141,6 +141,20 @@ export class PlaywrightSettingsConflictError extends Error {
   }
 }
 
+export class PlaywrightSessionNotFoundError extends Error {
+  constructor(sessionId: string) {
+    super(`Playwright session not found: ${sessionId}`)
+    this.name = 'PlaywrightSessionNotFoundError'
+  }
+}
+
+export class PlaywrightSessionCloseError extends Error {
+  constructor(sessionName: string, reason: string) {
+    super(`Cannot close session "${sessionName}": ${reason}`)
+    this.name = 'PlaywrightSessionCloseError'
+  }
+}
+
 export class PlaywrightDiscoveryService extends EventEmitter {
   private readonly swarmManager: SwarmManager
   private readonly settingsService: PlaywrightSettingsService
@@ -275,6 +289,30 @@ export class PlaywrightDiscoveryService extends EventEmitter {
       await this.runScan('settings_update', 'playwright_discovery_updated')
       return { settings: this.getSettings(), snapshot: this.getSnapshot() }
     })
+  }
+
+  async closeSession(sessionId: string): Promise<{ sessionName: string; snapshot: PlaywrightDiscoverySnapshot }> {
+    const session = this.getSessionById(sessionId)
+    if (!session) {
+      throw new PlaywrightSessionNotFoundError(sessionId)
+    }
+
+    if (!session.socketPath) {
+      throw new PlaywrightSessionCloseError(session.sessionName, 'Session has no socket path')
+    }
+
+    if (!session.socketExists) {
+      throw new PlaywrightSessionCloseError(session.sessionName, 'Session socket does not exist')
+    }
+
+    // Send the "stop" command over the daemon's Unix socket.
+    // The wire protocol is newline-delimited JSON: { id, method, params, version }
+    await sendDaemonStopCommand(session.socketPath, session.sessionVersion, this.currentSettings.socketProbeTimeoutMs)
+
+    // Wait briefly for the daemon to shut down, then rescan
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    const snapshot = await this.triggerRescan('session_closed')
+    return { sessionName: session.sessionName, snapshot }
   }
 
   private enqueueOperation<T>(operation: () => Promise<T>): Promise<T> {
@@ -1509,4 +1547,75 @@ function dedupeStrings(values: string[]): string[] {
   return Array.from(new Set(values.filter((value) => value.trim().length > 0))).sort((left, right) =>
     left.localeCompare(right),
   )
+}
+
+/**
+ * Sends a "stop" command to a Playwright daemon over its Unix socket.
+ *
+ * Wire protocol: newline-delimited JSON frames.
+ * Request: { id: number, method: "stop", params: {}, version?: string }
+ * Response: { id: number, result: "ok", version?: string }
+ */
+async function sendDaemonStopCommand(
+  socketPath: string,
+  sessionVersion: string | null,
+  timeoutMs: number,
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const connection = createConnection(socketPath)
+    let responded = false
+
+    const timeout = setTimeout(() => {
+      if (!responded) {
+        responded = true
+        connection.destroy()
+        // Treat timeout as success — the daemon may have already exited
+        // before sending the response
+        resolve()
+      }
+    }, Math.max(timeoutMs, 3000))
+
+    let buffer = ''
+
+    connection.on('connect', () => {
+      const message: Record<string, unknown> = {
+        id: 1,
+        method: 'stop',
+        params: {},
+      }
+      if (sessionVersion) {
+        message.version = sessionVersion
+      }
+      connection.write(`${JSON.stringify(message)}\n`)
+    })
+
+    connection.on('data', (data: Buffer) => {
+      buffer += data.toString()
+      const newlineIndex = buffer.indexOf('\n')
+      if (newlineIndex !== -1) {
+        if (!responded) {
+          responded = true
+          clearTimeout(timeout)
+          connection.destroy()
+          resolve()
+        }
+      }
+    })
+
+    connection.on('close', () => {
+      if (!responded) {
+        responded = true
+        clearTimeout(timeout)
+        resolve()
+      }
+    })
+
+    connection.on('error', (error) => {
+      if (!responded) {
+        responded = true
+        clearTimeout(timeout)
+        reject(new PlaywrightSessionCloseError('unknown', `Socket error: ${error.message}`))
+      }
+    })
+  })
 }

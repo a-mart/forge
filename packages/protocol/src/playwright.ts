@@ -165,6 +165,17 @@ export interface UpdatePlaywrightSettingsResponse {
   snapshot: PlaywrightDiscoverySnapshot
 }
 
+export interface ClosePlaywrightSessionRequest {
+  sessionId: string
+}
+
+export interface ClosePlaywrightSessionResponse {
+  ok: true
+  sessionId: string
+  sessionName: string
+  snapshot: PlaywrightDiscoverySnapshot
+}
+
 export type PlaywrightLivePreviewMode = 'embedded' | 'focus'
 
 export type PlaywrightPreviewStatus =

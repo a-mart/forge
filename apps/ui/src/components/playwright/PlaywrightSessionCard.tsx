@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import {
   AlertCircle,
   Clock,
@@ -8,15 +9,25 @@ import {
   Globe,
   Image,
   Link2,
+  Loader2,
   Maximize2,
   MonitorPlay,
   Network,
+  Power,
   Terminal,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
 import type { PlaywrightDiscoveredSession } from '@middleman/protocol'
 
@@ -26,6 +37,7 @@ interface PlaywrightSessionCardProps {
   compact?: boolean
   onSelect?: () => void
   onFocus?: () => void
+  onClose?: () => Promise<void>
 }
 
 /** Determine if a session is previewable using backend-provided truth */
@@ -114,10 +126,14 @@ export function PlaywrightSessionCard({
   compact = false,
   onSelect,
   onFocus,
+  onClose,
 }: PlaywrightSessionCardProps) {
   const { artifactCounts, ports, correlation } = session
   const isClickable = !!onSelect
   const previewable = isSessionPreviewable(session)
+  const [showCloseDialog, setShowCloseDialog] = useState(false)
+  const [isClosing, setIsClosing] = useState(false)
+  const [closeError, setCloseError] = useState<string | null>(null)
 
   const handleCopyPath = (e: React.MouseEvent) => {
     e.stopPropagation()
@@ -129,9 +145,31 @@ export function PlaywrightSessionCard({
     if (previewable) onFocus?.()
   }
 
+  const handleCloseClick = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    setCloseError(null)
+    setShowCloseDialog(true)
+  }
+
+  const handleConfirmClose = async () => {
+    setIsClosing(true)
+    setCloseError(null)
+    try {
+      await onClose?.()
+      setShowCloseDialog(false)
+    } catch (err) {
+      setCloseError(err instanceof Error ? err.message : 'Failed to close session')
+    } finally {
+      setIsClosing(false)
+    }
+  }
+
+  const canClose = onClose && (session.liveness === 'active' || session.liveness === 'error') && session.socketExists
+
   // Compact card for split-view left pane
   if (compact) {
     return (
+    <>
       <Card
         className={cn(
           'transition-colors cursor-pointer',
@@ -166,6 +204,23 @@ export function PlaywrightSessionCard({
                       </Button>
                     </TooltipTrigger>
                     <TooltipContent side="left" className="text-xs">Focus mode</TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              ) : null}
+              {canClose ? (
+                <TooltipProvider delayDuration={200}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-5 w-5 p-0 text-muted-foreground hover:text-destructive"
+                        onClick={handleCloseClick}
+                      >
+                        <Power className="size-3" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="left" className="text-xs">Close session</TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
               ) : null}
@@ -206,11 +261,21 @@ export function PlaywrightSessionCard({
           </div>
         </CardContent>
       </Card>
+      <CloseSessionDialog
+        open={showCloseDialog}
+        sessionName={session.sessionName}
+        isClosing={isClosing}
+        closeError={closeError}
+        onConfirm={handleConfirmClose}
+        onCancel={() => setShowCloseDialog(false)}
+      />
+    </>
     )
   }
 
   // Full card (grid view)
   return (
+    <>
     <Card
       className={cn(
         'transition-colors',
@@ -321,9 +386,9 @@ export function PlaywrightSessionCard({
         </div>
 
         {/* Action buttons row — previewability-aware */}
-        {session.liveness === 'active' ? (
+        {(session.liveness === 'active' || canClose) ? (
           <div className="flex items-center gap-1.5 pt-0.5">
-            {previewable ? (
+            {session.liveness === 'active' && previewable ? (
               <>
                 <Button
                   variant="outline"
@@ -347,7 +412,7 @@ export function PlaywrightSessionCard({
                   Focus
                 </Button>
               </>
-            ) : (
+            ) : session.liveness === 'active' ? (
               <TooltipProvider delayDuration={200}>
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -361,7 +426,18 @@ export function PlaywrightSessionCard({
                   </TooltipContent>
                 </Tooltip>
               </TooltipProvider>
-            )}
+            ) : null}
+            {canClose ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 text-xs px-2 ml-auto text-muted-foreground hover:text-destructive"
+                onClick={handleCloseClick}
+              >
+                <Power className="size-3 mr-1" />
+                Close
+              </Button>
+            ) : null}
           </div>
         ) : null}
 
@@ -378,6 +454,73 @@ export function PlaywrightSessionCard({
         ) : null}
       </CardContent>
     </Card>
+    <CloseSessionDialog
+      open={showCloseDialog}
+      sessionName={session.sessionName}
+      isClosing={isClosing}
+      closeError={closeError}
+      onConfirm={handleConfirmClose}
+      onCancel={() => setShowCloseDialog(false)}
+    />
+    </>
+  )
+}
+
+function CloseSessionDialog({
+  open,
+  sessionName,
+  isClosing,
+  closeError,
+  onConfirm,
+  onCancel,
+}: {
+  open: boolean
+  sessionName: string
+  isClosing: boolean
+  closeError: string | null
+  onConfirm: () => void
+  onCancel: () => void
+}) {
+  return (
+    <Dialog open={open} onOpenChange={(v) => { if (!v && !isClosing) onCancel() }}>
+      <DialogContent className="sm:max-w-md" onClick={(e) => e.stopPropagation()}>
+        <DialogHeader>
+          <DialogTitle>Close browser session</DialogTitle>
+          <DialogDescription>
+            This will shut down the Playwright daemon for <strong>{sessionName}</strong>.
+            The browser will be closed and the session will become inactive.
+          </DialogDescription>
+        </DialogHeader>
+        {closeError ? (
+          <div className="rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+            {closeError}
+          </div>
+        ) : null}
+        <DialogFooter className="gap-2 sm:gap-0">
+          <Button variant="outline" size="sm" onClick={onCancel} disabled={isClosing}>
+            Cancel
+          </Button>
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={onConfirm}
+            disabled={isClosing}
+          >
+            {isClosing ? (
+              <>
+                <Loader2 className="size-3 mr-1.5 animate-spin" />
+                Closing…
+              </>
+            ) : (
+              <>
+                <Power className="size-3 mr-1.5" />
+                Close Session
+              </>
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
