@@ -246,8 +246,18 @@ export function PlaywrightDashboardView({
   )
 
   const handleDeselectSession = useCallback(() => {
-    onViewStateChange?.(null, viewMode === 'focus' ? 'tiles' : viewMode)
-  }, [viewMode, onViewStateChange])
+    onViewStateChange?.(null, 'tiles')
+  }, [onViewStateChange])
+
+  // Context-aware back: in split/focus mode, return to tiles first.
+  // Only from tiles mode does back navigate out of the dashboard entirely.
+  const handleBack = useCallback(() => {
+    if (viewMode === 'split' || viewMode === 'focus') {
+      onViewStateChange?.(null, 'tiles')
+    } else {
+      onBack()
+    }
+  }, [viewMode, onViewStateChange, onBack])
 
   const handleToggleFocusMode = useCallback(() => {
     const newMode: PlaywrightViewMode = viewMode === 'focus' ? 'split' : 'focus'
@@ -414,7 +424,7 @@ export function PlaywrightDashboardView({
     return (
       <div className="flex h-full flex-col min-h-0">
         <DashboardHeader
-          onBack={onBack}
+          onBack={handleBack}
           onOpenSettings={onOpenSettings}
           serviceStatus={snapshot.serviceStatus}
           viewMode={viewMode}
@@ -503,7 +513,7 @@ export function PlaywrightDashboardView({
       {/* Dashboard header — hidden in focus mode */}
       {showDiscovery ? (
         <DashboardHeader
-          onBack={onBack}
+          onBack={handleBack}
           onOpenSettings={onOpenSettings}
           serviceStatus={snapshot.serviceStatus}
           viewMode={viewMode}
