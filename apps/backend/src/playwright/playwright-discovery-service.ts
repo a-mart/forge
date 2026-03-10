@@ -306,7 +306,9 @@ export class PlaywrightDiscoveryService extends EventEmitter {
   private getScopedAgents(options?: { includeInactiveChildren?: boolean }): AgentDescriptor[] {
     const currentManagerId = this.swarmManager.getConfig().managerId?.trim()
     if (!currentManagerId) {
-      return []
+      // Standalone/shared backend mode — no single owner manager.
+      // Fall back to all agents so discovery still finds session roots.
+      return this.swarmManager.listAgents()
     }
 
     const includeInactiveChildren = options?.includeInactiveChildren ?? false
