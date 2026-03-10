@@ -396,14 +396,16 @@ describe('PlaywrightDiscoveryService', () => {
 
     try {
       const snapshot = service.getSnapshot()
+      // Summary still reports the duplicate was detected (computed pre-filter)
       expect(snapshot.summary.duplicateSessions).toBe(1)
+      // Only the preferred session survives into the sessions array
+      expect(snapshot.sessions).toHaveLength(1)
       const preferred = snapshot.sessions.find((session) => session.sessionName === 'preferred')
-      const shadow = snapshot.sessions.find((session) => session.sessionName === 'shadow')
       expect(preferred?.preferredInDuplicateGroup).toBe(true)
       expect(preferred?.previewability?.previewable).toBe(true)
-      expect(shadow?.preferredInDuplicateGroup).toBe(false)
-      expect(shadow?.previewability?.previewable).toBe(false)
-      expect(shadow?.previewability?.unavailableReason).toContain('preferred duplicate')
+      // Non-preferred duplicate is filtered out — it must not appear
+      const shadow = snapshot.sessions.find((session) => session.sessionName === 'shadow')
+      expect(shadow).toBeUndefined()
     } finally {
       await service.stop()
       await closeSocket()

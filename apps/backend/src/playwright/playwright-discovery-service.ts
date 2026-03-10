@@ -449,7 +449,7 @@ export class PlaywrightDiscoveryService extends EventEmitter {
         serviceStatus: 'ready',
         settings: this.getSettings(),
         rootsScanned: resolution.roots.map((root) => root.rootPath),
-        summary: buildSummary(sessionScan.sessions),
+        summary: sessionScan.summary,
         sessions: sessionScan.sessions,
         warnings: dedupeStrings([...resolution.warnings, ...sessionScan.warnings]),
         lastError: null,
@@ -526,6 +526,7 @@ export class PlaywrightDiscoveryService extends EventEmitter {
 
   private async scanSessions(roots: PlaywrightScanRoot[]): Promise<{
     sessions: PlaywrightDiscoveredSession[]
+    summary: PlaywrightDiscoverySnapshot['summary']
     warnings: string[]
   }> {
     const agents = this.getScopedAgents()
@@ -605,9 +606,18 @@ export class PlaywrightDiscoveryService extends EventEmitter {
       })
     }
 
-    sessions.sort(compareSessions)
+    // Build summary from ALL sessions (including non-preferred duplicates)
+    // so diagnostic counters like duplicateSessions remain accurate.
+    const summary = buildSummary(sessions)
+
+    // Filter out non-preferred duplicates — only the best representative
+    // of each duplicate group reaches consumers (UI, API).
+    const deduped = sessions.filter((s) => s.preferredInDuplicateGroup)
+    deduped.sort(compareSessions)
+
     return {
-      sessions,
+      sessions: deduped,
+      summary,
       warnings: dedupeStrings(warnings),
     }
   }
