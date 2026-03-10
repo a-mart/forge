@@ -7,6 +7,7 @@ import type { AgentDescriptor, SwarmConfig } from '../swarm/types.js'
 import { getScheduleFilePath } from '../scheduler/schedule-storage.js'
 import { PlaywrightDiscoveryService } from '../playwright/playwright-discovery-service.js'
 import { PlaywrightSettingsService } from '../playwright/playwright-settings-service.js'
+import { withPlatform } from './test-helpers.js'
 
 class FakeSwarmManager extends EventEmitter {
   constructor(
@@ -160,19 +161,6 @@ async function createSocketServer(socketPath: string): Promise<() => Promise<voi
 
 function createTempSocketPath(prefix: string): string {
   return join(tmpdir(), `${prefix}-${process.pid}-${Math.random().toString(16).slice(2, 8)}.sock`)
-}
-
-async function withPlatform<T>(platform: NodeJS.Platform, run: () => Promise<T> | T): Promise<T> {
-  const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')
-  Object.defineProperty(process, 'platform', { value: platform })
-
-  try {
-    return await run()
-  } finally {
-    if (descriptor) {
-      Object.defineProperty(process, 'platform', descriptor)
-    }
-  }
 }
 
 async function writeSessionFile(

@@ -50,13 +50,16 @@ export function createHealthRoutes(options: { resolveRepoRoot: () => string }): 
 function triggerRebootSignal(repoRoot: string): void {
   try {
     const daemonPid = resolveProdDaemonPid(repoRoot);
-    const targetPid = daemonPid ?? process.pid;
 
     if (process.platform === "win32") {
+      if (!daemonPid) {
+        console.warn("[reboot] No prod-daemon found; restart file written but may not be consumed.");
+      }
       void writeFile(getProdDaemonRestartFile(repoRoot), `${Date.now()}\n`, "utf8");
       return;
     }
 
+    const targetPid = daemonPid ?? process.pid;
     process.kill(targetPid, RESTART_SIGNAL);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

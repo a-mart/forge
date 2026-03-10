@@ -179,14 +179,14 @@ function writePidFile() {
 }
 
 function removePidFile() {
-  if (!fs.existsSync(pidFile)) {
-    return;
+  if (fs.existsSync(pidFile)) {
+    const filePid = Number.parseInt(fs.readFileSync(pidFile, "utf8").trim(), 10);
+    if (filePid === process.pid) {
+      fs.rmSync(pidFile, { force: true });
+    }
   }
 
-  const filePid = Number.parseInt(fs.readFileSync(pidFile, "utf8").trim(), 10);
-  if (filePid === process.pid) {
-    fs.rmSync(pidFile, { force: true });
-  }
+  fs.rmSync(restartFile, { force: true });
 }
 
 function consumeRestartFileIfPresent() {

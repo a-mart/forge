@@ -4,6 +4,7 @@ import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { createConfig, readPlaywrightDashboardEnvOverride } from '../config.js'
+import { withPlatform } from './test-helpers.js'
 
 const MANAGED_ENV_KEYS = [
   'NODE_ENV',
@@ -52,19 +53,6 @@ async function withEnv(overrides: Partial<Record<(typeof MANAGED_ENV_KEYS)[numbe
       } else {
         process.env[key] = value
       }
-    }
-  }
-}
-
-async function withPlatform<T>(platform: NodeJS.Platform, run: () => Promise<T> | T): Promise<T> {
-  const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')
-  Object.defineProperty(process, 'platform', { value: platform })
-
-  try {
-    return await run()
-  } finally {
-    if (descriptor) {
-      Object.defineProperty(process, 'platform', descriptor)
     }
   }
 }
@@ -168,6 +156,47 @@ describe('createConfig', () => {
         })
       })
     } finally {
+      await rm(localAppData, { recursive: true, force: true })
+    }
+  })
+
+  it('falls back to legacy ~/.middleman on win32 when LOCALAPPDATA/middleman is absent', async () => {
+    const fakeHome = await mkdtemp(join(tmpdir(), 'middleman-home-'))
+    const legacyPath = resolve(fakeHome, '.middleman')
+    const localAppData = await mkdtemp(join(tmpdir(), 'middleman-localappdata-'))
+    const windowsDefault = resolve(localAppData, 'middleman')
+    await mkdir(legacyPath, { recursive: true })
+
+    try {
+      await withPlatform('win32', async () => {
+        await withEnv({ LOCALAPPDATA: localAppData }, async () => {
+          const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+          vi.resetModules()
+          vi.doMock('node:os', async (importOriginal) => {
+            const actual = await importOriginal<typeof import('node:os')>()
+            return {
+              ...actual,
+              homedir: () => fakeHome,
+            }
+          })
+
+          try {
+            const { createConfig: createConfigWithMockedHome } = await import('../config.js')
+            const config = createConfigWithMockedHome()
+            expect(config.paths.dataDir).toBe(legacyPath)
+            expect(windowsDefault).not.toBe(legacyPath)
+            expect(warnSpy).toHaveBeenCalledWith(
+              `[config] Using legacy data dir ${legacyPath} on Windows. Set MIDDLEMAN_DATA_DIR or migrate to ${windowsDefault}.`
+            )
+          } finally {
+            warnSpy.mockRestore()
+            vi.doUnmock('node:os')
+            vi.resetModules()
+          }
+        })
+      })
+    } finally {
+      await rm(fakeHome, { recursive: true, force: true })
       await rm(localAppData, { recursive: true, force: true })
     }
   })

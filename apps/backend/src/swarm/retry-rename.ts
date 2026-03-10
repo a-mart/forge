@@ -46,6 +46,8 @@ export function renameSyncWithRetry(
 ): void {
   const retries = normalizeRetries(opts.retries, 5);
 
+  // Immediate retries without delay — sufficient for extremely transient locks.
+  // For longer-held locks (antivirus scans), callers should prefer renameWithRetry (async).
   for (let attempt = 0; ; attempt += 1) {
     try {
       renameSync(from, to);
@@ -79,7 +81,7 @@ function isRetryableRenameError(error: unknown): boolean {
     typeof error === "object" &&
     error !== null &&
     "code" in error &&
-    ["EPERM", "EBUSY"].includes((error as { code?: string }).code ?? "")
+    ["EPERM", "EBUSY", "EACCES"].includes((error as { code?: string }).code ?? "")
   );
 }
 

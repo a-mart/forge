@@ -1,9 +1,3 @@
-export const IS_WINDOWS = process.platform === "win32";
-
-export function isWindows(): boolean {
-  return IS_WINDOWS;
-}
-
 export function isPidAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);

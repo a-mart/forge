@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RuntimeErrorEvent, RuntimeSessionEvent } from '../swarm/runtime-types.js'
 import type { AgentDescriptor, AgentStatus } from '../swarm/types.js'
+import { withPlatform } from './test-helpers.js'
 
 const rpcMockState = vi.hoisted(() => ({
   requestImpl: vi.fn<(...args: [any, string, unknown?]) => Promise<unknown>>(async () => ({})),
@@ -90,19 +91,6 @@ function createDeferred<T>(): { promise: Promise<T>; resolve: (value: T) => void
   })
 
   return { promise, resolve }
-}
-
-async function withPlatform<T>(platform: NodeJS.Platform, run: () => Promise<T> | T): Promise<T> {
-  const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')
-  Object.defineProperty(process, 'platform', { value: platform })
-
-  try {
-    return await run()
-  } finally {
-    if (descriptor) {
-      Object.defineProperty(process, 'platform', descriptor)
-    }
-  }
 }
 
 beforeEach(() => {

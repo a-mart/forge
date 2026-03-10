@@ -17,6 +17,7 @@ import { PlaywrightLivePreviewService } from '../playwright/playwright-live-prev
 import { PlaywrightSettingsService } from '../playwright/playwright-settings-service.js'
 import { getSharedPlaywrightDashboardSettingsPath } from '../swarm/data-paths.js'
 import { SwarmWebSocketServer } from '../ws/server.js'
+import { withPlatform } from './test-helpers.js'
 
 class FakeSwarmManager extends EventEmitter {
   constructor(
@@ -152,19 +153,6 @@ async function makeTempConfig(): Promise<SwarmConfig> {
       repoMemorySkillFile,
       schedulesFile: getScheduleFilePath(dataDir, 'manager'),
     },
-  }
-}
-
-async function withPlatform<T>(platform: NodeJS.Platform, run: () => Promise<T> | T): Promise<T> {
-  const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')
-  Object.defineProperty(process, 'platform', { value: platform })
-
-  try {
-    return await run()
-  } finally {
-    if (descriptor) {
-      Object.defineProperty(process, 'platform', descriptor)
-    }
   }
 }
 
