@@ -11,13 +11,13 @@
     "packages/protocol"
   ],
   "scripts": {
-    "dev": "concurrently --kill-others-on-fail --names backend,ui \"pnpm --filter @middleman/backend dev\" \"pnpm --filter @middleman/ui dev -- --host ${MIDDLEMAN_HOST:-$(node --env-file-if-exists=.env -p 'process.env.MIDDLEMAN_HOST || \"127.0.0.1\"' 2>/dev/null)}\"",
+    "dev": "concurrently --kill-others-on-fail --names backend,ui \"pnpm --filter @middleman/backend dev\" \"pnpm --filter @middleman/ui dev\"",
     "dev:backend": "pnpm --filter @middleman/backend dev",
-    "dev:ui": "pnpm --filter @middleman/ui dev -- --host ${MIDDLEMAN_HOST:-$(node --env-file-if-exists=.env -p 'process.env.MIDDLEMAN_HOST || \"127.0.0.1\"' 2>/dev/null)}",
+    "dev:ui": "pnpm --filter @middleman/ui dev",
     "dev:site": "pnpm --filter @middleman/site dev",
     "build": "pnpm --filter @middleman/protocol build && pnpm --filter @middleman/backend build && pnpm --filter @middleman/ui build && pnpm --filter @middleman/site build",
     "prod": "pnpm build && pnpm prod:start",
-    "prod:start": "concurrently --kill-others-on-fail --names backend,ui \"NODE_ENV=production MIDDLEMAN_PORT=47287 pnpm --filter @middleman/backend start\" \"pnpm --filter @middleman/ui preview\"",
+    "prod:start": "concurrently --kill-others-on-fail --names backend,ui \"cross-env NODE_ENV=production MIDDLEMAN_PORT=47287 pnpm --filter @middleman/backend start\" \"pnpm --filter @middleman/ui preview\"",
     "prod:daemon": "node scripts/prod-daemon.mjs",
     "prod:restart": "node scripts/prod-daemon-restart.mjs",
     "test": "pnpm --filter @middleman/backend test && pnpm --filter @middleman/ui test"
@@ -34,6 +34,7 @@
     }
   },
   "devDependencies": {
-    "concurrently": "^9.2.1"
+    "concurrently": "^9.2.1",
+    "cross-env": "^7.0.3"
   }
 }

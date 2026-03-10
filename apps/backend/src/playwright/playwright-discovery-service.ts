@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events'
 import { existsSync, realpathSync, watch, type FSWatcher } from 'node:fs'
 import { lstat, readFile, readdir, realpath, stat } from 'node:fs/promises'
 import { createConnection } from 'node:net'
+import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import type {
   AgentDescriptor,
@@ -21,7 +22,7 @@ import {
   createDefaultPersistedSettings,
 } from './playwright-settings-service.js'
 
-const SOCKETS_BASE_DIR = '/tmp/playwright-cli-sockets'
+const SOCKETS_BASE_DIR = join(tmpdir(), 'playwright-cli-sockets')
 
 const LIVENESS_PRIORITY: Record<PlaywrightDiscoveredSession['liveness'], number> = {
   active: 0,
@@ -164,6 +165,7 @@ export class PlaywrightDiscoveryService extends EventEmitter {
   private running = false
   private lifecycle: Promise<void> = Promise.resolve()
   private pollTimer: NodeJS.Timeout | null = null
+  private watchDebounceTimer: NodeJS.Timeout | null = null
   private readonly watchers = new Map<string, FSWatcher>()
 
   private currentSettings: PlaywrightDiscoverySettings
@@ -196,6 +198,12 @@ export class PlaywrightDiscoveryService extends EventEmitter {
     this.running = true
     this.currentSettings = this.computeEffectiveSettings()
     this.emitSettingsUpdated()
+
+    if (process.platform === 'win32') {
+      this.currentSnapshot = createEmptySnapshot(this.currentSettings, 'disabled')
+      this.emitSnapshot(this.currentSnapshot, 'playwright_discovery_snapshot')
+      return
+    }
 
     if (!this.currentSettings.effectiveEnabled) {
       this.currentSnapshot = createEmptySnapshot(this.currentSettings, 'disabled')
@@ -375,6 +383,11 @@ export class PlaywrightDiscoveryService extends EventEmitter {
   }
 
   private clearWatchers(): void {
+    if (this.watchDebounceTimer) {
+      clearTimeout(this.watchDebounceTimer)
+      this.watchDebounceTimer = null
+    }
+
     for (const watcher of this.watchers.values()) {
       watcher.close()
     }
@@ -399,7 +412,11 @@ export class PlaywrightDiscoveryService extends EventEmitter {
 
       try {
         const watcher = watch(watchPath, () => {
-          this.requestScan(`watch:${watchPath}`)
+          if (this.watchDebounceTimer) {
+            clearTimeout(this.watchDebounceTimer)
+          }
+          this.watchDebounceTimer = setTimeout(() => this.requestScan(`watch:${watchPath}`), 150)
+          this.watchDebounceTimer.unref?.()
         })
         watcher.on('error', (error) => {
           const message = error instanceof Error ? error.message : String(error)
@@ -648,9 +665,14 @@ function createEffectiveSettings(
   const source: PlaywrightDiscoverySettings['source'] =
     envEnabledOverride !== undefined ? 'env' : persisted.updatedAt ? 'settings' : 'default'
 
+  const effectiveEnabled =
+    process.platform === 'win32'
+      ? false
+      : (envEnabledOverride ?? persisted.enabled)
+
   return {
     enabled: persisted.enabled,
-    effectiveEnabled: envEnabledOverride ?? persisted.enabled,
+    effectiveEnabled,
     source,
     envOverride: envEnabledOverride ?? null,
     scanRoots: [...persisted.scanRoots],

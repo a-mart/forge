@@ -1,6 +1,6 @@
 import { realpathSync } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
-import { basename, resolve, sep } from "node:path";
+import { basename, isAbsolute, resolve, sep, win32 } from "node:path";
 
 const CWD_ERROR_MESSAGES = {
   REQUIRED: "Directory path must be a non-empty string.",
@@ -69,7 +69,15 @@ export function resolveDirectoryPath(input: string, rootDir: string): string {
     throw new DirectoryValidationError("DIRECTORY_REQUIRED", CWD_ERROR_MESSAGES.REQUIRED);
   }
 
-  return trimmed.startsWith("/") ? resolve(trimmed) : resolve(rootDir, trimmed);
+  if (isAbsolute(trimmed)) {
+    return resolve(trimmed);
+  }
+
+  if (win32.isAbsolute(trimmed)) {
+    return win32.normalize(trimmed);
+  }
+
+  return resolve(rootDir, trimmed);
 }
 
 export async function validateDirectoryPath(input: string, policy: CwdPolicy): Promise<string> {

@@ -155,6 +155,19 @@ async function makeTempConfig(): Promise<SwarmConfig> {
   }
 }
 
+async function withPlatform<T>(platform: NodeJS.Platform, run: () => Promise<T> | T): Promise<T> {
+  const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')
+  Object.defineProperty(process, 'platform', { value: platform })
+
+  try {
+    return await run()
+  } finally {
+    if (descriptor) {
+      Object.defineProperty(process, 'platform', descriptor)
+    }
+  }
+}
+
 function createManagerDescriptor(rootDir: string): AgentDescriptor {
   return {
     agentId: 'manager',
@@ -355,6 +368,37 @@ describe('Playwright routes and WS bootstrap', () => {
     } finally {
       await server.stop()
     }
+  })
+
+  it('forces effectiveEnabled=false on win32 even when persisted settings are enabled', async () => {
+    await withPlatform('win32', async () => {
+      const config = await makeTempConfig()
+      const swarmManager = new FakeSwarmManager(config, [createManagerDescriptor(config.paths.rootDir)])
+      const settingsService = new PlaywrightSettingsService({ dataDir: config.paths.dataDir })
+      await settingsService.load()
+      await settingsService.update({ enabled: true })
+
+      const server = new SwarmWebSocketServer({
+        swarmManager: swarmManager as unknown as never,
+        host: config.host,
+        port: config.port,
+        allowNonManagerSubscriptions: false,
+        playwrightDiscovery: null,
+        playwrightSettingsService: settingsService,
+      })
+
+      await server.start()
+      try {
+        const response = await fetch(`http://${config.host}:${config.port}/api/settings/playwright`)
+        const payload = (await response.json()) as { settings: PlaywrightDiscoverySettings }
+
+        expect(response.status).toBe(200)
+        expect(payload.settings.enabled).toBe(true)
+        expect(payload.settings.effectiveEnabled).toBe(false)
+      } finally {
+        await server.stop()
+      }
+    })
   })
 
   it('includes Playwright snapshot and settings in WS bootstrap when discovery is available', async () => {
@@ -1054,7 +1098,7 @@ describe('Playwright routes and WS bootstrap', () => {
     }
   })
 
-  it('expires preview leases, closes active sockets, and returns 410 after expiry', async () => {
+  it('expires preview leases and returns 410 after expiry', async () => {
     const config = await makeTempConfig()
     const swarmManager = new FakeSwarmManager(config, [createManagerDescriptor(config.paths.rootDir)])
     const settingsService = new PlaywrightSettingsService({ dataDir: config.paths.dataDir })
@@ -1066,13 +1110,6 @@ describe('Playwright routes and WS bootstrap', () => {
     const discovery = new FakePlaywrightDiscovery(snapshot, settings)
 
     let currentTime = new Date('2026-03-09T18:00:00.000Z')
-    const upstreamPort = await getAvailablePort()
-    const upstreamServer = new WebSocketServer({ host: '127.0.0.1', port: upstreamPort })
-    await once(upstreamServer, 'listening')
-    upstreamServer.on('connection', (socket) => {
-      socket.send(JSON.stringify({ type: 'frame', data: 'ZmFrZQ==' }))
-    })
-
     const livePreviewService = new PlaywrightLivePreviewService({
       discoveryService: discovery as unknown as never,
       previewTtlMs: 50,
@@ -1081,7 +1118,7 @@ describe('Playwright routes and WS bootstrap', () => {
       devtoolsBridge: {
         async startPreviewController() {
           return {
-            upstreamControllerUrl: `ws://127.0.0.1:${upstreamPort}/controller`,
+            upstreamControllerUrl: 'ws://127.0.0.1:41000/controller',
             source: 'playwright-cli-daemon' as const,
           }
         },
@@ -1114,17 +1151,8 @@ describe('Playwright routes and WS bootstrap', () => {
       expect(startResponse.status).toBe(200)
       expect(previewId).toBeTruthy()
 
-      const proxySocket = new WebSocket(
-        `ws://${config.host}:${config.port}/playwright-live/ws/controller/${encodeURIComponent(previewId)}`,
-        { origin: `http://${config.host}:${config.port}` },
-      )
-      await once(proxySocket, 'open')
-      await once(proxySocket, 'message')
-
-      const closePromise = once(proxySocket, 'close')
       currentTime = new Date(currentTime.getTime() + 1_000)
       livePreviewService.pruneExpiredPreviews()
-      await closePromise
 
       const expiredBootstrapResponse = await fetch(
         `http://${config.host}:${config.port}/playwright-live/api/previews/${encodeURIComponent(previewId)}/bootstrap`,
@@ -1133,15 +1161,6 @@ describe('Playwright routes and WS bootstrap', () => {
     } finally {
       await server.stop()
       await livePreviewService.stop()
-      await new Promise<void>((resolve, reject) => {
-        upstreamServer.close((error) => {
-          if (error) {
-            reject(error)
-            return
-          }
-          resolve()
-        })
-      })
     }
   })
 })

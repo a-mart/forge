@@ -162,6 +162,19 @@ function createTempSocketPath(prefix: string): string {
   return join(tmpdir(), `${prefix}-${process.pid}-${Math.random().toString(16).slice(2, 8)}.sock`)
 }
 
+async function withPlatform<T>(platform: NodeJS.Platform, run: () => Promise<T> | T): Promise<T> {
+  const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')
+  Object.defineProperty(process, 'platform', { value: platform })
+
+  try {
+    return await run()
+  } finally {
+    if (descriptor) {
+      Object.defineProperty(process, 'platform', descriptor)
+    }
+  }
+}
+
 async function writeSessionFile(
   rootDir: string,
   fileName: string,
@@ -180,7 +193,38 @@ async function writeSessionFile(
   )
 }
 
-describe('PlaywrightDiscoveryService', () => {
+describe('PlaywrightDiscoveryService (Windows)', () => {
+  it('disables discovery snapshots on win32 even when persisted settings enable it', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'playwright-discovery-win32-'))
+    const config = await makeTempConfig(rootDir)
+    const swarmManager = new FakeSwarmManager(config, [createManagerDescriptor(rootDir)])
+    const settingsService = new PlaywrightSettingsService({ dataDir: config.paths.dataDir })
+    await settingsService.load()
+    await settingsService.update({ enabled: true })
+
+    await withPlatform('win32', async () => {
+      const service = new PlaywrightDiscoveryService({
+        swarmManager: swarmManager as unknown as never,
+        settingsService,
+        now: () => new Date('2026-03-09T18:00:00.000Z'),
+      })
+
+      await service.start()
+      try {
+        const snapshot = service.getSnapshot()
+        expect(snapshot.serviceStatus).toBe('disabled')
+        expect(snapshot.sessions).toEqual([])
+        expect(snapshot.settings.effectiveEnabled).toBe(false)
+      } finally {
+        await service.stop()
+      }
+    })
+  })
+})
+
+const describeUnix = process.platform === 'win32' ? describe.skip : describe
+
+describeUnix('PlaywrightDiscoveryService', () => {
   it('serializes startup, manual rescans, and settings-update scans through one queue', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'playwright-discovery-queue-'))
     const config = await makeTempConfig(rootDir)

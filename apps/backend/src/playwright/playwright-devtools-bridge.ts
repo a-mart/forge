@@ -31,6 +31,13 @@ interface SocketRpcResponse {
 
 export class PlaywrightDevtoolsBridge implements PlaywrightDevtoolsBridgeLike {
   async startPreviewController(session: PlaywrightDiscoveredSession): Promise<PlaywrightDevtoolsStartResult> {
+    if (process.platform === 'win32') {
+      throw new PlaywrightDevtoolsBridgeError(
+        'Playwright live preview is not supported on Windows',
+        501,
+      )
+    }
+
     if (session.liveness !== 'active') {
       throw new PlaywrightDevtoolsBridgeError(
         `Session ${session.sessionName} is ${session.liveness} and cannot start live preview`,

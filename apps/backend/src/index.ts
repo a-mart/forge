@@ -104,17 +104,21 @@ async function main(): Promise<void> {
   const playwrightEnvEnabledOverride = readPlaywrightDashboardEnvOverride();
 
   let playwrightDiscovery: PlaywrightDiscoveryService | null = null;
-  try {
-    playwrightDiscovery = new PlaywrightDiscoveryService({
-      swarmManager,
-      settingsService: playwrightSettingsService,
-      envEnabledOverride: playwrightEnvEnabledOverride,
-    });
-    await playwrightDiscovery.start();
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.error(`[playwright] Failed to start discovery service: ${message}`);
-    playwrightDiscovery = null;
+  if (process.platform !== "win32") {
+    try {
+      playwrightDiscovery = new PlaywrightDiscoveryService({
+        swarmManager,
+        settingsService: playwrightSettingsService,
+        envEnabledOverride: playwrightEnvEnabledOverride,
+      });
+      await playwrightDiscovery.start();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[playwright] Failed to start discovery service: ${message}`);
+      playwrightDiscovery = null;
+    }
+  } else {
+    console.log("[playwright] Playwright dashboard disabled on Windows");
   }
 
   const playwrightLivePreviewService = new PlaywrightLivePreviewService({
@@ -156,6 +160,21 @@ async function main(): Promise<void> {
 
   process.on("SIGTERM", () => {
     void shutdown("SIGTERM");
+  });
+
+  if (process.platform === "win32") {
+    process.on("SIGBREAK", () => {
+      void shutdown("SIGBREAK");
+    });
+  }
+
+  process.on("message", (message) => {
+    if (
+      message === "shutdown" ||
+      (typeof message === "object" && message && (message as { type?: string }).type === "shutdown")
+    ) {
+      void shutdown("message:shutdown");
+    }
   });
 }
 
