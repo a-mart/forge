@@ -30,6 +30,17 @@ interface PlaywrightMosaicTileProps {
   onClose?: () => Promise<void>
 }
 
+/**
+ * Timeout for the embed handshake (postMessage 'active' from the iframe).
+ *
+ * Must be generous enough to cover cold-start scenarios where the Playwright
+ * daemon's devtools server needs to restart (e.g., after the tile was
+ * unmounted during split/focus mode). The split/focus view uses 30s; tiles
+ * use 25s as a compromise — still generous for cold starts but slightly
+ * tighter since tiles are smaller, less critical previews.
+ */
+const TILE_EMBED_HANDSHAKE_TIMEOUT_MS = 25_000
+
 function isSessionPreviewable(session: PlaywrightDiscoveredSession): boolean {
   if (session.previewability) return session.previewability.previewable
   return session.liveness === 'active'
@@ -60,15 +71,26 @@ export function PlaywrightMosaicTile({
   const previewIdRef = useRef<string | null>(null)
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const mountedRef = useRef(true)
+  /** Track whether we've already attempted one automatic retry after timeout. */
+  const retriedRef = useRef(false)
 
   const canClose = onClose && (session.liveness === 'active' || session.liveness === 'error') && session.socketExists
 
-  // Start preview on mount for previewable sessions
-  useEffect(() => {
-    mountedRef.current = true
+  /**
+   * Start (or restart) a preview lease. Releases any existing lease first,
+   * resets iframe/embed state, and initiates a fresh preview request.
+   */
+  const bootstrapPreview = useCallback(() => {
+    // Release any stale preview before starting fresh
+    const oldPid = previewIdRef.current
+    if (oldPid) {
+      previewIdRef.current = null
+      void releasePlaywrightLivePreview(wsUrl, oldPid)
+    }
 
-    if (!previewable) return
-
+    // Reset iframe/embed state so the timeout effect re-arms
+    setIframeSrc(null)
+    setEmbedActive(false)
     setStatus('starting')
 
     void startPlaywrightLivePreview(wsUrl, session.id, 'embedded')
@@ -85,6 +107,16 @@ export function PlaywrightMosaicTile({
         if (!mountedRef.current) return
         setStatus('failed')
       })
+  }, [wsUrl, session.id])
+
+  // Start preview on mount for previewable sessions
+  useEffect(() => {
+    mountedRef.current = true
+    retriedRef.current = false
+
+    if (!previewable) return
+
+    bootstrapPreview()
 
     return () => {
       mountedRef.current = false
@@ -94,31 +126,54 @@ export function PlaywrightMosaicTile({
         void releasePlaywrightLivePreview(wsUrl, pid)
       }
     }
-  }, [wsUrl, session.id, previewable])
+  }, [wsUrl, session.id, previewable, bootstrapPreview])
 
-  // Listen for embed status messages from the iframe
+  // Listen for embed status messages from the iframe.
+  // Uses both iframe source check AND previewId matching to prevent
+  // cross-tile message contamination (e.g., when iframeRef is still null
+  // because the iframe hasn't rendered yet).
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       if (!event.data || typeof event.data !== 'object') return
       if (event.data.type !== 'playwright:embed-status') return
-      if (iframeRef.current?.contentWindow && event.source !== iframeRef.current.contentWindow) return
 
       const msg = event.data as PlaywrightLivePreviewEmbedStatusMessage
+
+      // Primary guard: if our iframe is rendered, only accept from it
+      if (iframeRef.current?.contentWindow && event.source !== iframeRef.current.contentWindow) return
+
+      // Secondary guard: if iframe isn't rendered yet (ref is null), verify
+      // the previewId matches to avoid accepting another tile's messages
+      if (!iframeRef.current?.contentWindow) {
+        if (!msg.previewId || !previewIdRef.current || msg.previewId !== previewIdRef.current) return
+      }
+
       if (msg.status === 'active') setEmbedActive(true)
     }
     window.addEventListener('message', handleMessage)
     return () => window.removeEventListener('message', handleMessage)
   }, [])
 
-  // Timeout: if iframe is mounted but embed-ready never arrives, mark as failed
+  // Timeout: if iframe is mounted but embed-ready never arrives, retry once
+  // then mark as failed.
   useEffect(() => {
     if (!iframeSrc || embedActive || status !== 'active') return
     const timer = setTimeout(() => {
       if (!mountedRef.current) return
-      if (!embedActive) setStatus('failed')
-    }, 10_000) // 10s timeout for embed handshake
+      if (embedActive) return
+
+      // First timeout: retry automatically (cold-start recovery)
+      if (!retriedRef.current) {
+        retriedRef.current = true
+        bootstrapPreview()
+        return
+      }
+
+      // Second timeout: give up
+      setStatus('failed')
+    }, TILE_EMBED_HANDSHAKE_TIMEOUT_MS)
     return () => clearTimeout(timer)
-  }, [iframeSrc, embedActive, status])
+  }, [iframeSrc, embedActive, status, bootstrapPreview])
 
   const handleFocusClick = useCallback(
     (e: React.MouseEvent) => {
