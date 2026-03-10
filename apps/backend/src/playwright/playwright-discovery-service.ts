@@ -303,12 +303,13 @@ export class PlaywrightDiscoveryService extends EventEmitter {
     this.pollTimer.unref?.()
   }
 
-  private getScopedAgents(): AgentDescriptor[] {
+  private getScopedAgents(options?: { includeInactiveChildren?: boolean }): AgentDescriptor[] {
     const currentManagerId = this.swarmManager.getConfig().managerId?.trim()
     if (!currentManagerId) {
       return []
     }
 
+    const includeInactiveChildren = options?.includeInactiveChildren ?? false
     return this.swarmManager.listAgents().filter((agent) => {
       if (agent.agentId === currentManagerId) {
         return true
@@ -316,6 +317,10 @@ export class PlaywrightDiscoveryService extends EventEmitter {
 
       if (agent.managerId !== currentManagerId) {
         return false
+      }
+
+      if (includeInactiveChildren) {
+        return true
       }
 
       return agent.status !== 'terminated' && agent.status !== 'stopped'
@@ -456,7 +461,7 @@ export class PlaywrightDiscoveryService extends EventEmitter {
     for (const root of settings.scanRoots) {
       baseRoots.add(normalizePath(root))
     }
-    for (const agent of this.getScopedAgents()) {
+    for (const agent of this.getScopedAgents({ includeInactiveChildren: true })) {
       for (const discoveredRoot of discoverLikelyProjectRoots(agent.cwd)) {
         baseRoots.add(discoveredRoot)
       }

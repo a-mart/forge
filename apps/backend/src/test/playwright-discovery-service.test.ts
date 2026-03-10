@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import type { AgentDescriptor, SwarmConfig } from '../swarm/types.js'
 import { getScheduleFilePath } from '../scheduler/schedule-storage.js'
@@ -320,6 +320,48 @@ describe('PlaywrightDiscoveryService', () => {
     } finally {
       await service.stop()
       await Promise.all([closeCurrentSocket(), closeForeignSocket()])
+    }
+  })
+
+  it('includes current-manager child roots during discovery even when child descriptors are terminated', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'playwright-discovery-restart-'))
+    const recoveredWorkerRoot = await mkdtemp(join(tmpdir(), 'playwright-discovery-recovered-'))
+    const recoveredSocketPath = createTempSocketPath('pw-recovered')
+    const closeRecoveredSocket = await createSocketServer(recoveredSocketPath)
+
+    const recoveredWorker: AgentDescriptor = {
+      ...createManagerDescriptor(rootDir),
+      agentId: 'recovered-worker',
+      displayName: 'Recovered Worker',
+      role: 'worker',
+      managerId: 'manager',
+      status: 'terminated',
+      cwd: recoveredWorkerRoot,
+      sessionFile: join(recoveredWorkerRoot, 'sessions', 'recovered-worker.jsonl'),
+    }
+
+    const config = await makeTempConfig(rootDir)
+    const swarmManager = new FakeSwarmManager(config, [createManagerDescriptor(rootDir), recoveredWorker])
+    const settingsService = new PlaywrightSettingsService({ dataDir: config.paths.dataDir })
+    await settingsService.load()
+    await settingsService.update({ enabled: true })
+    await writeSessionFile(recoveredWorkerRoot, 'recovered.session', { socketPath: recoveredSocketPath, name: 'recovered' })
+
+    const service = new PlaywrightDiscoveryService({
+      swarmManager: swarmManager as unknown as never,
+      settingsService,
+      now: () => new Date('2026-03-09T18:00:00.000Z'),
+    })
+
+    await service.start()
+
+    try {
+      const snapshot = service.getSnapshot()
+      expect(snapshot.sessions.map((session) => session.sessionName)).toEqual(['recovered'])
+      expect(snapshot.sessions[0]?.rootPath).toContain(basename(recoveredWorkerRoot))
+    } finally {
+      await service.stop()
+      await closeRecoveredSocket()
     }
   })
 
