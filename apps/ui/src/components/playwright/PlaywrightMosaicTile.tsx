@@ -41,6 +41,29 @@ interface PlaywrightMosaicTileProps {
  */
 const TILE_EMBED_HANDSHAKE_TIMEOUT_MS = 25_000
 
+/**
+ * Maximum number of bootstrap attempts before giving up. Counts the initial
+ * attempt plus all retries (timeout-driven and error-driven combined).
+ */
+const MAX_BOOTSTRAP_ATTEMPTS = 3
+
+/**
+ * Brief delay (ms) before bootstrapping the preview after mount.
+ *
+ * When returning from split/focus mode to tiles, React cleanup effects
+ * release the split pane's preview lease (an async DELETE). The tile mount
+ * effects fire immediately after, initiating new preview starts (POST).
+ * Without a delay, these requests can race: the POST may arrive before the
+ * DELETE, causing the backend to serve a reuse of the about-to-be-released
+ * preview, or — for shared-daemon sessions — the DELETE's proxy-channel
+ * teardown can briefly shut down the devtools server before the new tiles'
+ * upstream WebSocket connections are established.
+ *
+ * A short RAF-based delay ensures the browser has flushed the cleanup
+ * DELETE onto the wire before the tiles send their POSTs.
+ */
+const MOUNT_BOOTSTRAP_DELAY_MS = 50
+
 function isSessionPreviewable(session: PlaywrightDiscoveredSession): boolean {
   if (session.previewability) return session.previewability.previewable
   return session.liveness === 'active'
@@ -71,16 +94,34 @@ export function PlaywrightMosaicTile({
   const previewIdRef = useRef<string | null>(null)
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const mountedRef = useRef(true)
-  /** Track whether we've already attempted one automatic retry after timeout. */
-  const retriedRef = useRef(false)
+  /**
+   * Monotonically increasing generation counter. Each call to
+   * `bootstrapPreview` bumps the generation; stale `.then()` callbacks
+   * from a previous generation are discarded. This prevents a race where
+   * an old async response (from a preview that was released during retry)
+   * overwrites the state set by the current bootstrap attempt.
+   */
+  const genRef = useRef(0)
+  /** Total number of bootstrap attempts in this mount cycle. */
+  const attemptCountRef = useRef(0)
 
   const canClose = onClose && (session.liveness === 'active' || session.liveness === 'error') && session.socketExists
 
   /**
    * Start (or restart) a preview lease. Releases any existing lease first,
    * resets iframe/embed state, and initiates a fresh preview request.
+   *
+   * Uses `reuseIfActive: false` so the backend always creates a fresh
+   * preview lease instead of returning a stale one that may be about to be
+   * released by the split/focus pane's cleanup. This eliminates the most
+   * common race during the split→tiles view transition.
    */
   const bootstrapPreview = useCallback(() => {
+    // Bump generation — any in-flight async from the previous generation
+    // will see a stale genRef and bail out.
+    const gen = ++genRef.current
+    attemptCountRef.current++
+
     // Release any stale preview before starting fresh
     const oldPid = previewIdRef.current
     if (oldPid) {
@@ -93,9 +134,9 @@ export function PlaywrightMosaicTile({
     setEmbedActive(false)
     setStatus('starting')
 
-    void startPlaywrightLivePreview(wsUrl, session.id, 'embedded')
+    void startPlaywrightLivePreview(wsUrl, session.id, 'embedded', { reuseIfActive: false })
       .then((handle) => {
-        if (!mountedRef.current) {
+        if (!mountedRef.current || gen !== genRef.current) {
           void releasePlaywrightLivePreview(wsUrl, handle.previewId)
           return
         }
@@ -104,21 +145,27 @@ export function PlaywrightMosaicTile({
         setStatus('active')
       })
       .catch(() => {
-        if (!mountedRef.current) return
+        if (!mountedRef.current || gen !== genRef.current) return
         setStatus('failed')
       })
   }, [wsUrl, session.id])
 
-  // Start preview on mount for previewable sessions
+  // Start preview on mount for previewable sessions.
+  // A short delay ensures the browser has flushed the split/focus pane's
+  // cleanup DELETE before the tile sends its POST, avoiding backend races.
   useEffect(() => {
     mountedRef.current = true
-    retriedRef.current = false
+    genRef.current = 0
+    attemptCountRef.current = 0
 
     if (!previewable) return
 
-    bootstrapPreview()
+    const timer = setTimeout(() => {
+      if (mountedRef.current) bootstrapPreview()
+    }, MOUNT_BOOTSTRAP_DELAY_MS)
 
     return () => {
+      clearTimeout(timer)
       mountedRef.current = false
       const pid = previewIdRef.current
       if (pid) {
@@ -132,6 +179,11 @@ export function PlaywrightMosaicTile({
   // Uses both iframe source check AND previewId matching to prevent
   // cross-tile message contamination (e.g., when iframeRef is still null
   // because the iframe hasn't rendered yet).
+  //
+  // In addition to tracking 'active', non-success statuses (error, expired,
+  // disconnected) trigger an immediate retry instead of waiting for the full
+  // handshake timeout. This provides fast recovery when the devtools server
+  // is briefly unavailable during the split→tiles transition.
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       if (!event.data || typeof event.data !== 'object') return
@@ -148,28 +200,40 @@ export function PlaywrightMosaicTile({
         if (!msg.previewId || !previewIdRef.current || msg.previewId !== previewIdRef.current) return
       }
 
-      if (msg.status === 'active') setEmbedActive(true)
+      if (msg.status === 'active') {
+        setEmbedActive(true)
+        return
+      }
+
+      // Non-success status from the embed (error, expired, disconnected,
+      // unavailable). Trigger an immediate retry if we haven't exhausted
+      // attempts, instead of waiting for the 25-second timeout.
+      if (
+        (msg.status === 'error' || msg.status === 'expired' || msg.status === 'disconnected') &&
+        attemptCountRef.current < MAX_BOOTSTRAP_ATTEMPTS &&
+        mountedRef.current
+      ) {
+        bootstrapPreview()
+      }
     }
     window.addEventListener('message', handleMessage)
     return () => window.removeEventListener('message', handleMessage)
-  }, [])
+  }, [bootstrapPreview])
 
-  // Timeout: if iframe is mounted but embed-ready never arrives, retry once
-  // then mark as failed.
+  // Timeout: if iframe is mounted but embed-ready never arrives, retry if
+  // attempts remain, otherwise mark as failed.
   useEffect(() => {
     if (!iframeSrc || embedActive || status !== 'active') return
     const timer = setTimeout(() => {
       if (!mountedRef.current) return
       if (embedActive) return
 
-      // First timeout: retry automatically (cold-start recovery)
-      if (!retriedRef.current) {
-        retriedRef.current = true
+      if (attemptCountRef.current < MAX_BOOTSTRAP_ATTEMPTS) {
         bootstrapPreview()
         return
       }
 
-      // Second timeout: give up
+      // Exhausted attempts — give up
       setStatus('failed')
     }, TILE_EMBED_HANDSHAKE_TIMEOUT_MS)
     return () => clearTimeout(timer)

@@ -75,12 +75,15 @@ export async function startPlaywrightLivePreview(
   wsUrl: string,
   sessionId: string,
   mode: 'embedded' | 'focus' = 'embedded',
+  options?: { reuseIfActive?: boolean },
 ): Promise<PlaywrightLivePreviewHandle> {
   const endpoint = resolveApiEndpoint(wsUrl, '/api/playwright/live-preview/start')
+  const body: Record<string, unknown> = { sessionId, mode }
+  if (options?.reuseIfActive === false) body.reuseIfActive = false
   const response = await fetch(endpoint, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ sessionId, mode }),
+    body: JSON.stringify(body),
   })
   if (!response.ok) throw new Error(await readApiError(response))
   const payload = (await response.json()) as { ok?: boolean; preview?: PlaywrightLivePreviewHandle }
