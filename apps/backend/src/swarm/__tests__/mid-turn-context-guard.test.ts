@@ -946,7 +946,7 @@ describe("mid-turn context guard", () => {
   });
 
   it("buildHandoffPrompt and buildResumePrompt produce expected templates", () => {
-    const handoffPath = "/tmp/project/.middleman-handoff-guard-worker.md";
+    const handoffPath = buildHandoffFilePath({ agentId: "guard-worker", cwd: "/tmp/project" });
     const handoffPrompt = buildHandoffPrompt(handoffPath);
     expect(handoffPrompt).toContain("URGENT — CONTEXT LIMIT");
     expect(handoffPrompt).toContain(`Use the write tool to create this file: \`${handoffPath}\``);
@@ -961,7 +961,7 @@ describe("mid-turn context guard", () => {
 
     const withoutHandoff = buildResumePrompt(undefined);
     expect(withoutHandoff).toContain("Some earlier conversation details have been summarized");
-    expect(withoutHandoff).toContain("ls -lt");
+    expect(withoutHandoff).toContain("git status");
   });
 
   it("buildHandoffFilePath falls back to current directory when cwd is undefined", () => {
