@@ -422,7 +422,9 @@ describe('SwarmWebSocketServer', () => {
 
     const daemonPid = 54321
     const repoHash = createHash('sha1').update(config.paths.rootDir).digest('hex').slice(0, 10)
-    const pidFile = join(tmpdir(), `swarm-prod-daemon-${repoHash}.pid`)
+    const daemonFilePrefix = join(tmpdir(), `swarm-prod-daemon-${repoHash}`)
+    const pidFile = `${daemonFilePrefix}.pid`
+    const restartFile = `${daemonFilePrefix}.restart`
     await writeFile(pidFile, `${daemonPid}\n`, 'utf8')
 
     const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true)
@@ -436,10 +438,17 @@ describe('SwarmWebSocketServer', () => {
       await new Promise((resolve) => setTimeout(resolve, 60))
 
       expect(killSpy).toHaveBeenCalledWith(daemonPid, 0)
-      expect(killSpy).toHaveBeenCalledWith(daemonPid, 'SIGUSR1')
+      if (process.platform === 'win32') {
+        const restartPayload = await readFile(restartFile, 'utf8')
+        expect(restartPayload.trim()).toMatch(/^\d+$/)
+        expect(killSpy).not.toHaveBeenCalledWith(daemonPid, 'SIGUSR1')
+      } else {
+        expect(killSpy).toHaveBeenCalledWith(daemonPid, 'SIGUSR1')
+      }
     } finally {
       killSpy.mockRestore()
       await rm(pidFile, { force: true })
+      await rm(restartFile, { force: true })
       await server.stop()
     }
   })
@@ -632,6 +641,45 @@ describe('SwarmWebSocketServer', () => {
       const savedContent = await readFile(targetPath, 'utf8')
       expect(savedContent).toBe(content)
     } finally {
+      await server.stop()
+    }
+  })
+
+  it('writes files through POST /api/write-file inside os.tmpdir()', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    const targetPath = join(tmpdir(), `middleman-ws-test-${process.pid}-${Date.now()}.md`)
+    const content = '# Temp Notes\n\nSaved from tmpdir.\n'
+
+    try {
+      const response = await fetch(`http://${config.host}:${config.port}/api/write-file`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          path: targetPath,
+          content,
+        }),
+      })
+
+      expect(response.status).toBe(200)
+      expect(await readFile(targetPath, 'utf8')).toBe(content)
+    } finally {
+      await rm(targetPath, { force: true })
       await server.stop()
     }
   })

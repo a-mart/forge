@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, rmSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { isPidAlive } from "../../swarm/platform.js";
 import {
   applyCorsHeaders,
   sendJson
@@ -50,6 +52,11 @@ function triggerRebootSignal(repoRoot: string): void {
     const daemonPid = resolveProdDaemonPid(repoRoot);
     const targetPid = daemonPid ?? process.pid;
 
+    if (process.platform === "win32") {
+      void writeFile(getProdDaemonRestartFile(repoRoot), `${Date.now()}\n`, "utf8");
+      return;
+    }
+
     process.kill(targetPid, RESTART_SIGNAL);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -69,23 +76,27 @@ function resolveProdDaemonPid(repoRoot: string): number | null {
   }
 
   try {
-    process.kill(pid, 0);
-    return pid;
-  } catch (error) {
-    if (
-      error &&
-      typeof error === "object" &&
-      "code" in error &&
-      (error as { code?: string }).code === "ESRCH"
-    ) {
-      rmSync(pidFile, { force: true });
+    if (isPidAlive(pid)) {
+      return pid;
     }
 
+    rmSync(pidFile, { force: true });
+    return null;
+  } catch {
+    rmSync(pidFile, { force: true });
     return null;
   }
 }
 
 function getProdDaemonPidFile(repoRoot: string): string {
+  return `${getProdDaemonFilePrefix(repoRoot)}.pid`;
+}
+
+function getProdDaemonRestartFile(repoRoot: string): string {
+  return `${getProdDaemonFilePrefix(repoRoot)}.restart`;
+}
+
+function getProdDaemonFilePrefix(repoRoot: string): string {
   const repoHash = createHash("sha1").update(repoRoot).digest("hex").slice(0, 10);
-  return join(tmpdir(), `swarm-prod-daemon-${repoHash}.pid`);
+  return join(tmpdir(), `swarm-prod-daemon-${repoHash}`);
 }

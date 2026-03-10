@@ -1,7 +1,8 @@
 import { realpathSync } from 'node:fs'
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, resolve } from 'node:path'
 import { getSharedPlaywrightDashboardSettingsPath } from '../swarm/data-paths.js'
+import { renameWithRetry } from '../swarm/retry-rename.js'
 
 const SETTINGS_FILE_VERSION = 1
 
@@ -288,7 +289,7 @@ async function writeSettingsFile(targetPath: string, settings: PlaywrightPersist
 
   await mkdir(dirname(targetPath), { recursive: true })
   await writeFile(tempPath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8')
-  await rename(tempPath, targetPath)
+  await renameWithRetry(tempPath, targetPath, { retries: 8, baseDelayMs: 15 })
 }
 
 function isEnoentError(error: unknown): boolean {

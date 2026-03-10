@@ -1,7 +1,8 @@
-import { access, copyFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { access, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { AuthStorage, type AuthCredential } from "@mariozechner/pi-coding-agent";
 import { normalizeEnvVarName, type ParsedSkillEnvDeclaration } from "./skill-frontmatter.js";
+import { renameWithRetry } from "./retry-rename.js";
 import type {
   SettingsAuthProvider,
   SettingsAuthProviderName,
@@ -237,7 +238,7 @@ export class SecretsEnvService {
 
     await mkdir(dirname(target), { recursive: true });
     await writeFile(tmp, `${JSON.stringify(this.secrets, null, 2)}\n`, "utf8");
-    await rename(tmp, target);
+    await renameWithRetry(tmp, target, { retries: 8, baseDelayMs: 15 });
   }
 
   private async resolveAuthFileForRead(): Promise<string> {

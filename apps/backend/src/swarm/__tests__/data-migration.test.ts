@@ -153,7 +153,7 @@ describe("data-migration", () => {
     expect(sentinel.trim().length).toBeGreaterThan(0);
   });
 
-  it("falls back to copy when hardlinking session files fails", async () => {
+  it.each(["EXDEV", "EPERM"])("falls back to copy when hardlinking session files fails with %s", async (code) => {
     const root = await mkdtemp(join(tmpdir(), "data-migration-link-fallback-"));
     const dataDir = join(root, "data");
     const agentsStoreFile = join(dataDir, "swarm", "agents.json");
@@ -168,7 +168,7 @@ describe("data-migration", () => {
     await writeText(getLegacySessionFilePath(dataDir, rootSessionId), "root-session\n");
     const sourceStatsBeforeMigration = await stat(getLegacySessionFilePath(dataDir, rootSessionId));
 
-    const failingLinkError = Object.assign(new Error("cross-device"), { code: "EXDEV" });
+    const failingLinkError = Object.assign(new Error("link failed"), { code });
     const linkMock = vi.fn(async () => {
       throw failingLinkError;
     });
@@ -197,6 +197,46 @@ describe("data-migration", () => {
     const targetStats = await stat(migratedPath);
     expect(targetStats.ino).not.toBe(sourceStatsBeforeMigration.ino);
     await expect(stat(getLegacySessionFilePath(dataDir, rootSessionId))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("treats ENOENT from the hardlink path as a benign no-op", async () => {
+    const root = await mkdtemp(join(tmpdir(), "data-migration-link-enoent-"));
+    const dataDir = join(root, "data");
+    const agentsStoreFile = join(dataDir, "swarm", "agents.json");
+
+    const profileId = "manager";
+    const rootSessionId = "manager";
+
+    const agents: AgentDescriptor[] = [createManagerDescriptor(rootSessionId, profileId)];
+    const profiles: ManagerProfile[] = [createProfile(profileId)];
+
+    await writeJson(agentsStoreFile, { agents, profiles });
+    await writeText(getLegacySessionFilePath(dataDir, rootSessionId), "root-session\n");
+
+    const linkMock = vi.fn(async () => {
+      throw Object.assign(new Error("source disappeared"), { code: "ENOENT" });
+    });
+    const copyMock = vi.fn(async () => undefined);
+
+    await migrateDataDirectory(
+      {
+        dataDir,
+        agentsStoreFile
+      },
+      agents,
+      profiles,
+      {},
+      {
+        fileOps: {
+          link: linkMock,
+          copyFile: copyMock
+        }
+      }
+    );
+
+    expect(linkMock).toHaveBeenCalledTimes(1);
+    expect(copyMock).not.toHaveBeenCalled();
+    await expect(stat(getSessionFilePath(dataDir, profileId, rootSessionId))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("skips migration when sentinel exists", async () => {

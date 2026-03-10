@@ -1,5 +1,6 @@
 import { SessionManager } from "@mariozechner/pi-coding-agent";
-import { renameSync, statSync, writeFileSync } from "node:fs";
+import { statSync, writeFileSync } from "node:fs";
+import { renameSyncWithRetry } from "./retry-rename.js";
 
 export const MAX_SESSION_FILE_BYTES_FOR_OPEN = 256 * 1024 * 1024;
 
@@ -72,7 +73,9 @@ function guardSessionFileForOpen(
   const backupFile = buildOversizedBackupPath(sessionFile);
 
   try {
-    renameSync(sessionFile, backupFile);
+    renameSyncWithRetry(sessionFile, backupFile, {
+      retries: 5
+    });
     writeFileSync(sessionFile, "", "utf8");
 
     warn(options, "session:file:oversized:rotated", {

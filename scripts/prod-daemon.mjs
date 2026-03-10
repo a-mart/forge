@@ -6,10 +6,15 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isPidAlive, resolveProdDaemonIpcPaths } from "./prod-daemon-ipc.mjs";
 
 const RESTART_SIGNAL = "SIGUSR1";
-const STOP_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"];
+const STOP_SIGNALS =
+  process.platform === "win32"
+    ? ["SIGINT", "SIGBREAK"]
+    : ["SIGINT", "SIGTERM", "SIGHUP"];
 const FORCE_KILL_AFTER_MS = 15_000;
+const RESTART_FILE_POLL_MS = 500;
 const DEFAULT_COMMAND = "pnpm prod";
 const DEFAULT_INSTALL_COMMAND = "pnpm i";
 
@@ -61,7 +66,7 @@ function parseEnvFile(filePath) {
 parseEnvFile(path.join(repoRoot, ".env"));
 
 const repoHash = createHash("sha1").update(repoRoot).digest("hex").slice(0, 10);
-const pidFile = path.join(os.tmpdir(), `swarm-prod-daemon-${repoHash}.pid`);
+const { pidFile, restartFile } = resolveProdDaemonIpcPaths(repoRoot);
 const lockFilePath = path.join(repoRoot, "pnpm-lock.yaml");
 const lockHashFile = path.join(os.tmpdir(), `swarm-prod-daemon-lock-${repoHash}.sha1`);
 const command = process.env.SWARM_PROD_DAEMON_COMMAND?.trim() || DEFAULT_COMMAND;
@@ -164,13 +169,8 @@ function writePidFile() {
     const existingPid = Number.parseInt(fs.readFileSync(pidFile, "utf8").trim(), 10);
 
     if (Number.isInteger(existingPid) && existingPid > 0 && existingPid !== process.pid) {
-      try {
-        process.kill(existingPid, 0);
+      if (isPidAlive(existingPid)) {
         throw new Error(`Daemon already running (pid ${existingPid}).`);
-      } catch (error) {
-        if (error.code !== "ESRCH") {
-          throw error;
-        }
       }
     }
   }
@@ -189,8 +189,25 @@ function removePidFile() {
   }
 }
 
+function consumeRestartFileIfPresent() {
+  if (!fs.existsSync(restartFile)) {
+    return false;
+  }
+
+  fs.rmSync(restartFile, { force: true });
+  return true;
+}
+
 function signalChildGroup(signal) {
   if (!child?.pid) {
+    return;
+  }
+
+  if (process.platform === "win32") {
+    spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
     return;
   }
 
@@ -271,6 +288,7 @@ function startChild() {
     stdio: "inherit",
     shell: true,
     detached: true,
+    windowsHide: true,
   });
 
   child.once("error", (error) => {
@@ -326,10 +344,27 @@ try {
   process.exit(1);
 }
 
-process.on(RESTART_SIGNAL, () => requestRestart(RESTART_SIGNAL));
+setInterval(() => {
+  if (consumeRestartFileIfPresent()) {
+    requestRestart("restart-file");
+  }
+}, RESTART_FILE_POLL_MS).unref();
+
+if (process.platform !== "win32") {
+  process.on(RESTART_SIGNAL, () => requestRestart(RESTART_SIGNAL));
+}
 for (const signal of STOP_SIGNALS) {
   process.on(signal, () => beginShutdown(signal));
 }
+
+process.on("message", (message) => {
+  if (
+    message === "shutdown" ||
+    (typeof message === "object" && message && message.type === "shutdown")
+  ) {
+    beginShutdown("message:shutdown");
+  }
+});
 
 process.on("exit", removePidFile);
 

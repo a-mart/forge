@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { SessionMeta, SessionWorkerMeta } from "@middleman/protocol";
 import {
@@ -7,6 +7,7 @@ import {
   getSessionMetaPath,
   resolveMemoryFilePath
 } from "./data-paths.js";
+import { renameWithRetry } from "./retry-rename.js";
 import type { AgentDescriptor } from "./types.js";
 
 export interface RebuildSessionMetaOptions {
@@ -42,7 +43,7 @@ export async function writeSessionMeta(dataDir: string, meta: SessionMeta): Prom
 
   await mkdir(dirname(target), { recursive: true });
   await writeFile(tmp, `${JSON.stringify(meta, null, 2)}\n`, "utf8");
-  await rename(tmp, target);
+  await renameWithRetry(tmp, target, { retries: 8, baseDelayMs: 15 });
 }
 
 export async function readSessionMeta(

@@ -19,6 +19,7 @@ import {
   getWorkerSessionFilePath
 } from "./data-paths.js";
 import { rebuildSessionMeta } from "./session-manifest.js";
+import { renameWithRetry } from "./retry-rename.js";
 import type { AgentDescriptor, ManagerProfile } from "./types.js";
 
 const MIGRATION_SENTINEL_FILE = ".migration-v1-done";
@@ -709,14 +710,14 @@ async function writeJsonAtomic(path: string, payload: unknown): Promise<void> {
   const tmpPath = `${path}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
   await fs.mkdir(dirname(path), { recursive: true });
   await fs.writeFile(tmpPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
-  await fs.rename(tmpPath, path);
+  await renameWithRetry(tmpPath, path, { retries: 8, baseDelayMs: 15 });
 }
 
 async function writeTextAtomic(path: string, content: string): Promise<void> {
   const tmpPath = `${path}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
   await fs.mkdir(dirname(path), { recursive: true });
   await fs.writeFile(tmpPath, content, "utf8");
-  await fs.rename(tmpPath, path);
+  await renameWithRetry(tmpPath, path, { retries: 8, baseDelayMs: 15 });
 }
 
 async function pathExists(path: string): Promise<boolean> {

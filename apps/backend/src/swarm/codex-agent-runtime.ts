@@ -75,6 +75,7 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
 
   private readonly rpc: CodexJsonRpcClient;
 
+  private shutdownRpcSupported = true;
   private status: AgentStatus;
   private threadId: string | undefined;
   private activeTurnId: string | undefined;
@@ -120,7 +121,7 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
     this.toolBridge = createCodexToolBridge(options.tools);
     this.sandboxSettings = buildCodexSandboxSettings();
 
-    const command = process.env.CODEX_BIN?.trim() || "codex";
+    const command = resolveCodexCommand(process.env.CODEX_BIN, process.platform);
     const runtimeEnv: NodeJS.ProcessEnv = {
       ...process.env
     };
@@ -253,6 +254,10 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
       }
     }
 
+    if (process.platform === "win32") {
+      await this.tryGracefulShutdownRpc();
+    }
+
     this.rpc.dispose();
 
     this.pendingDeliveries = [];
@@ -267,6 +272,21 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
     this.descriptor.updatedAt = this.now();
 
     await this.emitStatus();
+  }
+
+  private async tryGracefulShutdownRpc(): Promise<void> {
+    if (!this.shutdownRpcSupported) {
+      return;
+    }
+
+    try {
+      await this.rpc.request("shutdown", undefined, 250);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/method\s+not\s+found|unsupported/i.test(message)) {
+        this.shutdownRpcSupported = false;
+      }
+    }
   }
 
   async stopInFlight(options?: { abort?: boolean }): Promise<void> {
@@ -925,6 +945,19 @@ function buildCodexAppServerArgs(thinkingLevel: string | undefined): string[] {
   }
 
   return args;
+}
+
+function resolveCodexCommand(raw: string | undefined, platform: NodeJS.Platform): string {
+  const value = raw?.trim();
+  if (value) {
+    return value;
+  }
+
+  if (platform === "win32") {
+    return "codex.cmd";
+  }
+
+  return "codex";
 }
 
 function normalizeCodexReasoningEffort(value: string | undefined): string | undefined {
