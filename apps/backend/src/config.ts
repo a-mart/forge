@@ -26,7 +26,7 @@ export function readPlaywrightDashboardEnvOverride(): boolean | undefined {
 
 export function createConfig(): SwarmConfig {
   const rootDir = detectRootDir();
-  const dataDir = process.env.MIDDLEMAN_DATA_DIR ?? resolve(homedir(), ".middleman");
+  const dataDir = process.env.MIDDLEMAN_DATA_DIR ?? resolveDefaultDataDir();
   const managerId = undefined;
 
   const swarmDir = getSwarmDir(dataDir);
@@ -98,6 +98,29 @@ export function createConfig(): SwarmConfig {
       schedulesFile: undefined
     }
   };
+}
+
+function resolveDefaultDataDir(): string {
+  const legacyPath = resolve(homedir(), ".middleman");
+
+  if (process.platform !== "win32") {
+    return legacyPath;
+  }
+
+  const localAppDataBase = process.env.LOCALAPPDATA?.trim()
+    ? resolve(process.env.LOCALAPPDATA)
+    : resolve(homedir(), "AppData", "Local");
+  const windowsDefault = resolve(localAppDataBase, "middleman");
+
+  if (!existsSync(windowsDefault) && existsSync(legacyPath)) {
+    console.warn(
+      `[config] Using legacy data dir ${legacyPath} on Windows. ` +
+        `Set MIDDLEMAN_DATA_DIR or migrate to ${windowsDefault}.`
+    );
+    return legacyPath;
+  }
+
+  return windowsDefault;
 }
 
 function detectRootDir(): string {

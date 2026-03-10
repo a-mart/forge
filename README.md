@@ -33,6 +33,8 @@ pnpm dev
 # UI:      http://127.0.0.1:47188
 ```
 
+Windows notes: see `docs/WINDOWS_SETUP.md` for long-path guidance, Playwright limitations, and shell/tooling caveats. Script-specific constraints are documented in `scripts/README.md`.
+
 ## Key Features
 
 - **Persistent managers.** Onboard once, work for days. Managers remember your preferences, workflow, and project context across sessions via compacting memory.

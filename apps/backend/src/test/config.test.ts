@@ -1,5 +1,7 @@
-import { homedir } from 'node:os'
-import { resolve } from 'node:path'
+import { existsSync } from 'node:fs'
+import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { homedir, tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { createConfig, readPlaywrightDashboardEnvOverride } from '../config.js'
 
@@ -14,6 +16,7 @@ const MANAGED_ENV_KEYS = [
   'MIDDLEMAN_PORT',
   'MIDDLEMAN_DATA_DIR',
   'MIDDLEMAN_PLAYWRIGHT_DASHBOARD_ENABLED',
+  'LOCALAPPDATA',
   'SWARM_DEBUG',
   'SWARM_ALLOW_NON_MANAGER_SUBSCRIPTIONS',
   'SWARM_MANAGER_ID',
@@ -53,10 +56,42 @@ async function withEnv(overrides: Partial<Record<(typeof MANAGED_ENV_KEYS)[numbe
   }
 }
 
+async function withPlatform<T>(platform: NodeJS.Platform, run: () => Promise<T> | T): Promise<T> {
+  const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')
+  Object.defineProperty(process, 'platform', { value: platform })
+
+  try {
+    return await run()
+  } finally {
+    if (descriptor) {
+      Object.defineProperty(process, 'platform', descriptor)
+    }
+  }
+}
+
+function expectedDefaultDataDir(platform: NodeJS.Platform): string {
+  const legacyPath = resolve(homedir(), '.middleman')
+  if (platform !== 'win32') {
+    return legacyPath
+  }
+
+  const localAppDataBase = process.env.LOCALAPPDATA?.trim()
+    ? resolve(process.env.LOCALAPPDATA)
+    : resolve(homedir(), 'AppData', 'Local')
+  const windowsDefault = resolve(localAppDataBase, 'middleman')
+
+  if (!existsSync(windowsDefault) && existsSync(legacyPath)) {
+    return legacyPath
+  }
+
+  return windowsDefault
+}
+
 describe('createConfig', () => {
   it('uses fixed defaults for non-host/port config', async () => {
     await withEnv({}, () => {
       const config = createConfig()
+      const dataDir = expectedDefaultDataDir(process.platform)
 
       expect(config.host).toBe('127.0.0.1')
       expect(config.port).toBe(47187)
@@ -69,25 +104,25 @@ describe('createConfig', () => {
         thinkingLevel: 'xhigh',
       })
 
-      expect(config.paths.dataDir).toBe(resolve(homedir(), '.middleman'))
-      expect(config.paths.swarmDir).toBe(resolve(homedir(), '.middleman', 'swarm'))
-      expect(config.paths.sessionsDir).toBe(resolve(homedir(), '.middleman', 'sessions'))
-      expect(config.paths.uploadsDir).toBe(resolve(homedir(), '.middleman', 'uploads'))
-      expect(config.paths.profilesDir).toBe(resolve(homedir(), '.middleman', 'profiles'))
-      expect(config.paths.sharedDir).toBe(resolve(homedir(), '.middleman', 'shared'))
-      expect(config.paths.sharedAuthDir).toBe(resolve(homedir(), '.middleman', 'shared', 'auth'))
-      expect(config.paths.sharedAuthFile).toBe(resolve(homedir(), '.middleman', 'shared', 'auth', 'auth.json'))
-      expect(config.paths.sharedSecretsFile).toBe(resolve(homedir(), '.middleman', 'shared', 'secrets.json'))
-      expect(config.paths.sharedIntegrationsDir).toBe(resolve(homedir(), '.middleman', 'shared', 'integrations'))
-      expect(config.paths.authDir).toBe(resolve(homedir(), '.middleman', 'auth'))
-      expect(config.paths.authFile).toBe(resolve(homedir(), '.middleman', 'auth', 'auth.json'))
-      expect(config.paths.managerAgentDir).toBe(resolve(homedir(), '.middleman', 'agent', 'manager'))
+      expect(config.paths.dataDir).toBe(dataDir)
+      expect(config.paths.swarmDir).toBe(resolve(dataDir, 'swarm'))
+      expect(config.paths.sessionsDir).toBe(resolve(dataDir, 'sessions'))
+      expect(config.paths.uploadsDir).toBe(resolve(dataDir, 'uploads'))
+      expect(config.paths.profilesDir).toBe(resolve(dataDir, 'profiles'))
+      expect(config.paths.sharedDir).toBe(resolve(dataDir, 'shared'))
+      expect(config.paths.sharedAuthDir).toBe(resolve(dataDir, 'shared', 'auth'))
+      expect(config.paths.sharedAuthFile).toBe(resolve(dataDir, 'shared', 'auth', 'auth.json'))
+      expect(config.paths.sharedSecretsFile).toBe(resolve(dataDir, 'shared', 'secrets.json'))
+      expect(config.paths.sharedIntegrationsDir).toBe(resolve(dataDir, 'shared', 'integrations'))
+      expect(config.paths.authDir).toBe(resolve(dataDir, 'auth'))
+      expect(config.paths.authFile).toBe(resolve(dataDir, 'auth', 'auth.json'))
+      expect(config.paths.managerAgentDir).toBe(resolve(dataDir, 'agent', 'manager'))
       expect(config.paths.repoArchetypesDir).toBe(resolve(config.paths.rootDir, '.swarm', 'archetypes'))
-      expect(config.paths.memoryDir).toBe(resolve(homedir(), '.middleman', 'memory'))
+      expect(config.paths.memoryDir).toBe(resolve(dataDir, 'memory'))
       expect(config.paths.memoryFile).toBeUndefined()
       expect(config.paths.repoMemorySkillFile).toBe(resolve(config.paths.rootDir, '.swarm', 'skills', 'memory', 'SKILL.md'))
-      expect(config.paths.agentsStoreFile).toBe(resolve(homedir(), '.middleman', 'swarm', 'agents.json'))
-      expect(config.paths.secretsFile).toBe(resolve(homedir(), '.middleman', 'secrets.json'))
+      expect(config.paths.agentsStoreFile).toBe(resolve(dataDir, 'swarm', 'agents.json'))
+      expect(config.paths.secretsFile).toBe(resolve(dataDir, 'secrets.json'))
       expect(config.paths.schedulesFile).toBeUndefined()
 
       expect(config.defaultCwd).toBe(config.paths.rootDir)
@@ -105,17 +140,36 @@ describe('createConfig', () => {
   })
 
   it('respects MIDDLEMAN_DATA_DIR', async () => {
-    await withEnv({ MIDDLEMAN_DATA_DIR: '/tmp/middleman-data' }, () => {
+    const dataDir = join(tmpdir(), 'middleman-data')
+
+    await withEnv({ MIDDLEMAN_DATA_DIR: dataDir }, () => {
       const config = createConfig()
-      expect(config.paths.dataDir).toBe('/tmp/middleman-data')
-      expect(config.paths.swarmDir).toBe('/tmp/middleman-data/swarm')
-      expect(config.paths.profilesDir).toBe('/tmp/middleman-data/profiles')
-      expect(config.paths.sharedDir).toBe('/tmp/middleman-data/shared')
-      expect(config.paths.sharedAuthFile).toBe('/tmp/middleman-data/shared/auth/auth.json')
-      expect(config.paths.sharedSecretsFile).toBe('/tmp/middleman-data/shared/secrets.json')
-      expect(config.paths.sessionsDir).toBe('/tmp/middleman-data/sessions')
-      expect(config.paths.authFile).toBe('/tmp/middleman-data/auth/auth.json')
+      expect(config.paths.dataDir).toBe(dataDir)
+      expect(config.paths.swarmDir).toBe(resolve(dataDir, 'swarm'))
+      expect(config.paths.profilesDir).toBe(resolve(dataDir, 'profiles'))
+      expect(config.paths.sharedDir).toBe(resolve(dataDir, 'shared'))
+      expect(config.paths.sharedAuthFile).toBe(resolve(dataDir, 'shared', 'auth', 'auth.json'))
+      expect(config.paths.sharedSecretsFile).toBe(resolve(dataDir, 'shared', 'secrets.json'))
+      expect(config.paths.sessionsDir).toBe(resolve(dataDir, 'sessions'))
+      expect(config.paths.authFile).toBe(resolve(dataDir, 'auth', 'auth.json'))
     })
+  })
+
+  it('uses LOCALAPPDATA/middleman by default on mocked win32 when available', async () => {
+    const localAppData = await mkdtemp(join(tmpdir(), 'middleman-localappdata-'))
+    const windowsDefault = resolve(localAppData, 'middleman')
+    await mkdir(windowsDefault, { recursive: true })
+
+    try {
+      await withPlatform('win32', async () => {
+        await withEnv({ LOCALAPPDATA: localAppData }, () => {
+          const config = createConfig()
+          expect(config.paths.dataDir).toBe(windowsDefault)
+        })
+      })
+    } finally {
+      await rm(localAppData, { recursive: true, force: true })
+    }
   })
 
   it('ignores removed SWARM_* env vars', async () => {
@@ -137,8 +191,8 @@ describe('createConfig', () => {
       () => {
         const config = createConfig()
 
-        expect(config.paths.dataDir).toBe(resolve(homedir(), '.middleman'))
-        expect(config.paths.authFile).toBe(resolve(homedir(), '.middleman', 'auth', 'auth.json'))
+        expect(config.paths.dataDir).toBe(expectedDefaultDataDir(process.platform))
+        expect(config.paths.authFile).toBe(resolve(expectedDefaultDataDir(process.platform), 'auth', 'auth.json'))
         expect(config.debug).toBe(true)
         expect(config.allowNonManagerSubscriptions).toBe(true)
         expect(config.managerId).toBeUndefined()

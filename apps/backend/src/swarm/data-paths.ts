@@ -214,6 +214,18 @@ export function sanitizePathSegment(segment: string): string {
     throw new Error(`Invalid path segment: "${segment}"`);
   }
 
+  if (/[<>:"|?*]/.test(trimmed)) {
+    throw new Error(`Invalid path segment: "${segment}"`);
+  }
+
+  if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i.test(trimmed)) {
+    throw new Error(`Invalid path segment: "${segment}"`);
+  }
+
+  if (/[.\s]$/.test(trimmed)) {
+    throw new Error(`Invalid path segment: "${segment}"`);
+  }
+
   return trimmed;
 }
 

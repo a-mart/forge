@@ -26,9 +26,12 @@ describe('PlaywrightSettingsService', () => {
       updatedAt: null,
     })
 
+    const scanRootA = join(tmpdir(), 'playwright-a')
+    const scanRootB = join(tmpdir(), 'playwright-b')
+
     await service.update({
       enabled: true,
-      scanRoots: ['/tmp/playwright-a', '/tmp/playwright-a', '/tmp/playwright-b'],
+      scanRoots: [scanRootA, scanRootA, scanRootB],
       pollIntervalMs: 5_000,
       socketProbeTimeoutMs: 500,
       staleSessionThresholdMs: 120_000,
@@ -36,7 +39,7 @@ describe('PlaywrightSettingsService', () => {
 
     expect(service.getPersisted()).toEqual({
       enabled: true,
-      scanRoots: ['/tmp/playwright-a', '/tmp/playwright-b'],
+      scanRoots: [scanRootA, scanRootB],
       pollIntervalMs: 5_000,
       socketProbeTimeoutMs: 500,
       staleSessionThresholdMs: 120_000,
@@ -50,7 +53,7 @@ describe('PlaywrightSettingsService', () => {
     expect(stored).toMatchObject({
       version: 1,
       enabled: true,
-      scanRoots: ['/tmp/playwright-a', '/tmp/playwright-b'],
+      scanRoots: [scanRootA, scanRootB],
       pollIntervalMs: 5_000,
       socketProbeTimeoutMs: 500,
       staleSessionThresholdMs: 120_000,
