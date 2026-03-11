@@ -6,3 +6,22 @@ node_modules/
 .DS_Store
 .env
 .middleman-test/
+
+# Internal development artifacts
+REVIEW*.md
+remediation-plan-*.md
+troubleshoot-*.md
+project-docs/
+docs/plans/
+docs/playwright-dashboard/
+docs/upstream-review/
+docs/windows-compat-*.md
+docs/WINDOWS_COMPATIBILITY.md
+docs/WINDOWS_IMPLEMENTATION_PLAN.md
+docs/WINDOWS_PLAN_REVIEW.md
+docs/codebase-overview.md
+docs/manager-isolation.md
+docs/migration-audit.md
+docs/oss-readiness.md
+docs/stuck-*.md
+docs/test-coverage-audit.md
