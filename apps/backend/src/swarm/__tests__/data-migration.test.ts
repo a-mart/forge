@@ -269,7 +269,7 @@ describe("data-migration", () => {
     await expect(stat(migratedPath)).rejects.toMatchObject({ code: "ENOENT" });
 
     const stored = JSON.parse(await readFile(agentsStoreFile, "utf8")) as { agents: AgentDescriptor[] };
-    expect(stored.agents[0]?.sessionFile).toBe(`/Users/adam/.middleman/sessions/${rootSessionId}.jsonl`);
+    expect(stored.agents[0]?.sessionFile).toContain(`sessions/${rootSessionId}.jsonl`);
   });
 });
 
@@ -284,7 +284,7 @@ function createManagerDescriptor(agentId: string, profileId?: string): AgentDesc
     updatedAt: FIXED_TIMESTAMP,
     cwd: "/tmp/project",
     model: { ...DEFAULT_MODEL },
-    sessionFile: `/Users/adam/.middleman/sessions/${agentId}.jsonl`
+    sessionFile: join(tmpdir(), `.middleman/sessions/${agentId}.jsonl`)
   };
 
   if (profileId) {
@@ -305,7 +305,7 @@ function createWorkerDescriptor(workerId: string, managerId: string): AgentDescr
     updatedAt: FIXED_TIMESTAMP,
     cwd: "/tmp/project",
     model: { ...DEFAULT_MODEL },
-    sessionFile: `/Users/adam/.middleman/sessions/${workerId}.jsonl`
+    sessionFile: join(tmpdir(), `.middleman/sessions/${workerId}.jsonl`)
   };
 }
 

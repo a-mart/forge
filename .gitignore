@@ -25,3 +25,6 @@ docs/migration-audit.md
 docs/oss-readiness.md
 docs/stuck-*.md
 docs/test-coverage-audit.md
+scripts/cutover-to-main.sh
+scripts/validate-migration.ts
+scripts/test-run.sh

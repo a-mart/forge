@@ -1,3 +1,4 @@
+import { homedir } from "node:os";
 import { readdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -33,7 +34,7 @@ interface StaleMetaEntry {
 
 function parseArgs(argv: string[]): ScriptArgs {
   const args: ScriptArgs = {
-    dataDir: process.env.SWARM_DATA_DIR || "/Users/adam/.middleman",
+    dataDir: process.env.SWARM_DATA_DIR || join(homedir(), ".middleman"),
     json: false
   };
 

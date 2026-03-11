@@ -1,3 +1,4 @@
+import { homedir } from "node:os";
 import { createReadStream } from "node:fs";
 import { access } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -30,7 +31,7 @@ interface ContextHit {
 
 function parseArgs(argv: string[]): ScriptArgs {
   const args: ScriptArgs = {
-    dataDir: process.env.SWARM_DATA_DIR || "/Users/adam/.middleman",
+    dataDir: process.env.SWARM_DATA_DIR || join(homedir(), ".middleman"),
     profileId: undefined,
     sessionId: undefined,
     targets: [],
