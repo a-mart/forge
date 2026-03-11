@@ -267,9 +267,14 @@ function buildEffectiveSettings(
   persisted: PlaywrightPersistedSettings,
   envEnabledOverride: boolean | undefined,
 ): PlaywrightDiscoverySettings {
+  const effectiveEnabled =
+    process.platform === 'win32'
+      ? false
+      : (envEnabledOverride ?? persisted.enabled)
+
   return {
     enabled: persisted.enabled,
-    effectiveEnabled: envEnabledOverride ?? persisted.enabled,
+    effectiveEnabled,
     source: envEnabledOverride !== undefined ? 'env' : persisted.updatedAt ? 'settings' : 'default',
     envOverride: envEnabledOverride ?? null,
     scanRoots: [...persisted.scanRoots],

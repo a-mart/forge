@@ -1,6 +1,6 @@
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import {
   isPathWithinRoots,
   normalizeAllowlistRoots,
@@ -34,7 +34,7 @@ export function createFileRoutes(options: { swarmManager: SwarmManager }): HttpR
       ...config.cwdAllowlistRoots,
       config.paths.rootDir,
       homedir(),
-      "/tmp"
+      tmpdir()
     ]);
 
     if (isPathWithinRoots(resolvedPath, allowedRoots)) {

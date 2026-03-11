@@ -48,11 +48,15 @@ function emitServerEvent(socket: FakeWebSocket, event: unknown): void {
 describe('ManagerWsClient', () => {
   const originalWebSocket = globalThis.WebSocket
   const originalWindow = (globalThis as any).window
+  const originalDocument = (globalThis as any).document
 
   beforeEach(() => {
     FakeWebSocket.instances = []
     vi.useFakeTimers()
     ;(globalThis as any).window = {}
+    ;(globalThis as any).document = {
+      hasFocus: () => false,
+    }
     ;(globalThis as any).WebSocket = FakeWebSocket
   })
 
@@ -60,6 +64,7 @@ describe('ManagerWsClient', () => {
     vi.useRealTimers()
     ;(globalThis as any).WebSocket = originalWebSocket
     ;(globalThis as any).window = originalWindow
+    ;(globalThis as any).document = originalDocument
   })
 
   it('subscribes on connect and sends user_message commands to the active agent', () => {

@@ -1,7 +1,8 @@
 import { watch, type FSWatcher } from "node:fs";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, dirname } from "node:path";
 import { CronExpressionParser } from "cron-parser";
+import { renameWithRetry } from "../swarm/retry-rename.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 
 const DEFAULT_POLL_INTERVAL_MS = 30_000;
@@ -43,6 +44,7 @@ export class CronSchedulerService {
   private pendingProcess = false;
   private pollTimer?: NodeJS.Timeout;
   private watcher?: FSWatcher;
+  private watchDebounceTimer?: NodeJS.Timeout;
   private activeRunPromise?: Promise<void>;
   private readonly firedOccurrenceKeys = new Set<string>();
 
@@ -78,6 +80,11 @@ export class CronSchedulerService {
       this.pollTimer = undefined;
     }
 
+    if (this.watchDebounceTimer) {
+      clearTimeout(this.watchDebounceTimer);
+      this.watchDebounceTimer = undefined;
+    }
+
     if (this.watcher) {
       this.watcher.close();
       this.watcher = undefined;
@@ -103,7 +110,9 @@ export class CronSchedulerService {
       }
 
       if (!fileName || fileName.toString() === schedulesBasename) {
-        this.requestProcess(`watch:${eventType}`);
+        clearTimeout(this.watchDebounceTimer);
+        this.watchDebounceTimer = setTimeout(() => this.requestProcess(`watch:${eventType}`), 150);
+        this.watchDebounceTimer.unref?.();
       }
     });
 
@@ -373,7 +382,7 @@ export class CronSchedulerService {
 
     await mkdir(dirname(target), { recursive: true });
     await writeFile(temp, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
-    await rename(temp, target);
+    await renameWithRetry(temp, target, { retries: 8, baseDelayMs: 15 });
   }
 }
 

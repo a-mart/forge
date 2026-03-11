@@ -1236,7 +1236,7 @@ export function buildResumePrompt(handoffContent: string | undefined): string {
 
 Before continuing:
 1. Review the compaction summary above to orient yourself.
-2. Check your working directory for recent file modifications (\`ls -lt\` or \`git status\`) to verify the current state of any work in progress.
+2. Check your working directory for recent file modifications (\`git status\` is preferred; use your shell's directory listing command if needed) to verify current state.
 3. If you're unsure what you were doing, look for recently modified files.
 
 Then continue where you left off.`;

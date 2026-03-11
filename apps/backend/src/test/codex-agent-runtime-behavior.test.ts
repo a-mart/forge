@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RuntimeErrorEvent, RuntimeSessionEvent } from '../swarm/runtime-types.js'
 import type { AgentDescriptor, AgentStatus } from '../swarm/types.js'
+import { withPlatform } from './test-helpers.js'
 
 const rpcMockState = vi.hoisted(() => ({
   requestImpl: vi.fn<(...args: [any, string, unknown?]) => Promise<unknown>>(async () => ({})),
@@ -525,5 +526,89 @@ describe('CodexAgentRuntime behavior', () => {
     ).toBe(true)
     expect(runtime.getPendingCount()).toBe(0)
     expect(runtime.getStatus()).toBe('terminated')
+  })
+
+  it('uses codex.cmd by default on win32', async () => {
+    await withPlatform('win32', async () => {
+      const tempDir = await mkdtemp(join(tmpdir(), 'swarm-codex-runtime-'))
+      const descriptor = makeDescriptor(tempDir)
+      await mkdir(dirname(descriptor.sessionFile), { recursive: true })
+
+      rpcMockState.requestImpl.mockImplementation(async (_client: any, method: string) => {
+        if (method === 'initialize') {
+          return {}
+        }
+
+        if (method === 'account/read') {
+          return { requiresOpenaiAuth: false, account: { id: 'acct-1' } }
+        }
+
+        if (method === 'thread/start') {
+          return { thread: { id: 'thread-1' } }
+        }
+
+        return {}
+      })
+
+      const runtime = await CodexAgentRuntime.create({
+        descriptor,
+        callbacks: {
+          onStatusChange: async () => {},
+        },
+        systemPrompt: 'You are a test codex runtime.',
+        tools: [],
+      })
+
+      const instance = rpcMockState.instances[0]
+      expect(instance.command).toBe('codex.cmd')
+
+      await runtime.terminate({ abort: false })
+    })
+  })
+
+  it('self-disables shutdown RPC after an unsupported-method response on win32', async () => {
+    await withPlatform('win32', async () => {
+      const tempDir = await mkdtemp(join(tmpdir(), 'swarm-codex-runtime-'))
+      const descriptor = makeDescriptor(tempDir)
+      await mkdir(dirname(descriptor.sessionFile), { recursive: true })
+
+      rpcMockState.requestImpl.mockImplementation(async (_client: any, method: string) => {
+        if (method === 'initialize') {
+          return {}
+        }
+
+        if (method === 'account/read') {
+          return { requiresOpenaiAuth: false, account: { id: 'acct-1' } }
+        }
+
+        if (method === 'thread/start') {
+          return { thread: { id: 'thread-1' } }
+        }
+
+        if (method === 'shutdown') {
+          throw new Error('method not found')
+        }
+
+        return {}
+      })
+
+      const runtime = await CodexAgentRuntime.create({
+        descriptor,
+        callbacks: {
+          onStatusChange: async () => {},
+        },
+        systemPrompt: 'You are a test codex runtime.',
+        tools: [],
+      })
+
+      const instance = rpcMockState.instances[0]
+      await (runtime as any).tryGracefulShutdownRpc()
+      await (runtime as any).tryGracefulShutdownRpc()
+
+      expect(instance.requestCalls.filter((entry: { method: string }) => entry.method === 'shutdown')).toHaveLength(1)
+      expect((runtime as any).shutdownRpcSupported).toBe(false)
+
+      await runtime.terminate({ abort: false })
+    })
   })
 })

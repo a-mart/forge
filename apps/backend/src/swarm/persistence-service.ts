@@ -1,6 +1,7 @@
-import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { getProfileKnowledgeDir, getSharedKnowledgeDir, resolveMemoryFilePath } from "./data-paths.js";
+import { renameWithRetry } from "./retry-rename.js";
 import type { AgentDescriptor, AgentsStoreFile, ManagerProfile, SwarmConfig } from "./types.js";
 
 const DEFAULT_MEMORY_FILE_CONTENT = `# Swarm Memory
@@ -153,7 +154,7 @@ export class PersistenceService {
     const tmp = `${target}.tmp`;
     await mkdir(dirname(target), { recursive: true });
     await writeFile(tmp, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
-    await rename(tmp, target);
+    await renameWithRetry(tmp, target, { retries: 8, baseDelayMs: 15 });
   }
 
   private getAgentMemoryPath(

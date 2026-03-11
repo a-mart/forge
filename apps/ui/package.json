@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite dev --port 47188 --strictPort",
     "build": "vite build",
-    "preview": "vite preview --port 47189 --strictPort --host ${MIDDLEMAN_HOST:-127.0.0.1}",
+    "preview": "vite preview --port 47189 --strictPort",
     "test": "vitest run"
   },
   "dependencies": {

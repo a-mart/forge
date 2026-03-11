@@ -1,3 +1,4 @@
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
@@ -40,7 +41,7 @@ import {
   sanitizePathSegment
 } from "../data-paths.js";
 
-const DATA_DIR = "/tmp/middleman-data";
+const DATA_DIR = join(tmpdir(), "middleman-data");
 const PROFILE_ID = "feature-manager";
 const ROOT_SESSION_ID = "feature-manager";
 const NON_ROOT_SESSION_ID = "feature-manager--s2";
@@ -164,6 +165,13 @@ describe("data-paths", () => {
     expect(() => sanitizePathSegment("nested/segment")).toThrow(/Invalid path segment/);
     expect(() => sanitizePathSegment("nested\\segment")).toThrow(/Invalid path segment/);
     expect(() => sanitizePathSegment(`bad${String.fromCharCode(0)}id`)).toThrow(/Invalid path segment/);
+    expect(() => sanitizePathSegment("CON")).toThrow(/Invalid path segment/);
+    expect(() => sanitizePathSegment("NUL")).toThrow(/Invalid path segment/);
+    expect(() => sanitizePathSegment("COM1")).toThrow(/Invalid path segment/);
+    expect(() => sanitizePathSegment("LPT1")).toThrow(/Invalid path segment/);
+    expect(() => sanitizePathSegment("aux.txt")).toThrow(/Invalid path segment/);
+    expect(() => sanitizePathSegment("bad:name")).toThrow(/Invalid path segment/);
+    expect(() => sanitizePathSegment("bad*name")).toThrow(/Invalid path segment/);
   });
 
   it("legacy compat helpers resolve flat paths", () => {
