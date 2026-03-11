@@ -1,39 +1,35 @@
 # Scripts
 
-## Windows compatibility
+Helper scripts for running and managing Middleman.
 
-Middleman's runtime-critical Node scripts are Windows-aware:
+## Cross-Platform (Windows, macOS, Linux)
 
-- `scripts/prod-daemon.mjs`
-- `scripts/prod-daemon-restart.mjs`
+These Node.js scripts work on all platforms:
 
-These are used by:
+| Script | Used by | Description |
+|--------|---------|-------------|
+| `prod-daemon.mjs` | `pnpm prod:daemon` | Start Middleman as a background daemon |
+| `prod-daemon-restart.mjs` | `pnpm prod:restart` | Restart a running daemon |
+| `prod-daemon-ipc.mjs` | (internal) | IPC helper for daemon lifecycle |
 
-- `pnpm prod:daemon`
-- `pnpm prod:restart`
+## POSIX-Only (macOS, Linux, WSL)
 
-## POSIX-only scripts
+These shell scripts require `bash` and are **not required** to run the app:
 
-The following shell scripts still require a POSIX-compatible shell (`bash`):
+| Script | Description |
+|--------|-------------|
+| `cutover-to-main.sh` | Merge workflow helper for cutting a branch to main |
+| `test-instance.sh` | Spin up an isolated test instance |
+| `test-rebuild.sh` | Rebuild and restart a test instance |
+| `test-reset.sh` | Reset test instance data |
+| `test-run.sh` | Run a test instance |
 
-- `scripts/cutover-to-main.sh`
-- `scripts/test-instance.sh`
-- `scripts/test-rebuild.sh`
-- `scripts/test-reset.sh`
-- `scripts/test-run.sh`
+On Windows, run these from **WSL2** or **Git Bash**.
 
-On Windows, run them from one of:
+## Development Helpers
 
-- **WSL2**
-- **Git Bash**
-- another POSIX-compatible shell environment
+| Script | Description |
+|--------|-------------|
+| `validate-migration.ts` | Validate data directory migration (developer tool) |
 
-These scripts are developer tooling only; they are not required to run the core app on Windows.
-
-## Validation / migration helpers
-
-`scripts/validate-migration.ts` is a developer-focused helper and may contain machine-specific defaults.
-
-You can override its source data directory with:
-
-- `MIDDLEMAN_TEST_DATA_DIR`
+Override the source data directory with `MIDDLEMAN_TEST_DATA_DIR` if needed.
