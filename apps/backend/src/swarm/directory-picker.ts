@@ -77,13 +77,20 @@ export async function pickDirectory(options: PickDirectoryOptions = {}): Promise
     case "win32": {
       const pickScript = [
         "Add-Type -AssemblyName System.Windows.Forms",
+        // Create a hidden topmost owner form so the dialog appears in front of all windows.
+        // Without this, FolderBrowserDialog spawns behind the browser and looks frozen.
+        "$owner = New-Object System.Windows.Forms.Form",
+        "$owner.TopMost = $true",
+        "$owner.ShowInTaskbar = $false",
+        "$owner.WindowState = [System.Windows.Forms.FormWindowState]::Minimized",
         "$dialog = New-Object System.Windows.Forms.FolderBrowserDialog",
         `$dialog.Description = '${escapePowerShellString(prompt)}'`,
         "$dialog.UseDescriptionForTitle = $true",
         ...(defaultPath ? [`$dialog.SelectedPath = '${escapePowerShellString(defaultPath)}'`] : []),
-        "if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {",
+        "if ($dialog.ShowDialog($owner) -eq [System.Windows.Forms.DialogResult]::OK) {",
         "  [Console]::Out.Write($dialog.SelectedPath)",
-        "}"
+        "}",
+        "$owner.Dispose()"
       ].join(";");
 
       return pickDirectoryFromCommands(
