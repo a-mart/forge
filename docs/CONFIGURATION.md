@@ -11,7 +11,6 @@ Middleman is configured through environment variables, a `.env` file, and the da
 | `MIDDLEMAN_HOST` | `127.0.0.1` | Backend bind address. Set to `0.0.0.0` for network/remote access. |
 | `MIDDLEMAN_PORT` | `47187` (dev) / `47287` (prod) | Backend HTTP + WebSocket port. |
 | `MIDDLEMAN_DATA_DIR` | `~/.middleman` (macOS/Linux) or `%LOCALAPPDATA%\middleman` (Windows) | Data directory for all persistent state. |
-| `NODE_ENV` | — | Set to `production` for production mode. |
 
 ### UI
 
@@ -25,7 +24,9 @@ Middleman is configured through environment variables, a `.env` file, and the da
 |----------|---------|-------------|
 | `BRAVE_API_KEY` | — | API key for the [Brave Search](https://brave.com/search/api/) web search skill. |
 | `GEMINI_API_KEY` | — | API key for the Google Gemini image generation skill. |
-| `OPENAI_API_KEY` | — | OpenAI API key (alternative to setting it in the UI). |
+| `OPENAI_API_KEY` | — | Codex runtime API key fallback (used when `CODEX_API_KEY` is not set). |
+
+Skill API keys can also be configured in the dashboard under **Settings → Environment Variables**. `.env` values remain supported as fallback.
 
 ### Agent Runtimes
 
@@ -95,7 +96,7 @@ Override with `MIDDLEMAN_DATA_DIR` in your environment or `.env` file.
 | Mode | Backend | UI |
 |------|---------|-----|
 | Development (`pnpm dev`) | `47187` | `47188` |
-| Production (`pnpm prod`) | `47287` | `47289` |
+| Production (`pnpm prod`) | `47287` | `47189` |
 
 ## Remote / Network Access
 

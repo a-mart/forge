@@ -15,7 +15,7 @@
 - `apps/site` — Landing page
 - `packages/protocol` — Shared types and wire contracts
 
-**Data Storage:** All state lives in `~/.middleman` (or `%USERPROFILE%\.middleman` on Windows) with a hierarchical profile-scoped layout:
+**Data Storage:** All state lives in `~/.middleman` (or `%LOCALAPPDATA%\middleman` on Windows) with a hierarchical profile-scoped layout:
 - `profiles/<profileId>/` — sessions, memory, integrations, schedules
 - `shared/` — auth, secrets, global config
 - `swarm/agents.json` — agent registry
@@ -54,16 +54,17 @@ pnpm prod
 ```
 Default production ports:
 - Backend HTTP + WS: `http://127.0.0.1:47287` / `ws://127.0.0.1:47287`
-- UI preview: `http://127.0.0.1:47289`
+- UI preview: `http://127.0.0.1:47189`
 
 ### Validation
 ```bash
-pnpm build          # Build all packages
-pnpm test           # Run tests
-pnpm typecheck      # TypeScript validation across all packages
+pnpm build                                              # Build all packages
+pnpm test                                               # Run tests
+cd apps/backend && pnpm exec tsc -p tsconfig.build.json --noEmit
+cd apps/ui && pnpm exec tsc --noEmit
 ```
 
-**Before finishing any task, run `pnpm typecheck` and fix reported errors.**
+**Before finishing any task, run the backend and UI typecheck commands above and fix reported errors.**
 
 ## Working Conventions
 
@@ -87,14 +88,14 @@ pnpm dlx shadcn@latest add button label switch select tabs separator scroll-area
 
 Generated components go to `apps/ui/src/components/ui/`. Check available components and usage at https://ui.shadcn.com/docs.
 
-Currently installed: badge, button, card, checkbox, context-menu, dialog, input, label, scroll-area, select, separator, switch, tabs, textarea, tooltip.
+Currently installed: badge, button, card, checkbox, context-menu, dialog, dropdown-menu, input, label, popover, scroll-area, select, separator, skeleton, switch, table, tabs, textarea, tooltip.
 
 ### Code Quality
 1. Preserve existing behavior and interaction patterns unless explicitly asked to change them.
 2. Keep event handling deterministic across live stream and replayed history.
 3. Prefer working within existing backend/frontend boundaries.
 4. Validate changes with smoke checks (manager creation, chat send/stop, settings updates).
-5. Run `pnpm typecheck` before finishing any task.
+5. Run backend + UI typecheck commands before finishing any task (`cd apps/backend && pnpm exec tsc -p tsconfig.build.json --noEmit` and `cd apps/ui && pnpm exec tsc --noEmit`).
 6. Prefer shadcn/ui components over hand-rolled HTML for UI controls and surfaces.
 
 ## Platform Support
@@ -113,7 +114,7 @@ Middleman supports both **macOS** and **Windows**. When working on cross-platfor
 
 ### Feature Gating
 - Some features (like Playwright integration) are conditionally enabled based on platform capabilities.
-- Check `apps/backend/src/utils/platform.ts` for platform detection utilities.
+- Check `apps/backend/src/swarm/platform.ts` for platform detection utilities.
 
 ### File System
 - Be mindful of case sensitivity differences (macOS is case-insensitive by default, Linux is not).

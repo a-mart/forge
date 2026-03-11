@@ -16,6 +16,7 @@ const MANAGED_ENV_KEYS = [
   'MIDDLEMAN_HOST',
   'MIDDLEMAN_PORT',
   'MIDDLEMAN_DATA_DIR',
+  'MIDDLEMAN_DEBUG',
   'MIDDLEMAN_PLAYWRIGHT_DASHBOARD_ENABLED',
   'LOCALAPPDATA',
   'SWARM_DEBUG',
@@ -83,7 +84,7 @@ describe('createConfig', () => {
 
       expect(config.host).toBe('127.0.0.1')
       expect(config.port).toBe(47187)
-      expect(config.debug).toBe(true)
+      expect(config.debug).toBe(false)
       expect(config.allowNonManagerSubscriptions).toBe(true)
       expect(config.managerId).toBeUndefined()
       expect(config.defaultModel).toEqual({
@@ -124,6 +125,18 @@ describe('createConfig', () => {
       const config = createConfig()
       expect(config.host).toBe('0.0.0.0')
       expect(config.port).toBe(9999)
+    })
+  })
+
+  it('respects MIDDLEMAN_DEBUG', async () => {
+    await withEnv({ MIDDLEMAN_DEBUG: 'true' }, () => {
+      const config = createConfig()
+      expect(config.debug).toBe(true)
+    })
+
+    await withEnv({ MIDDLEMAN_DEBUG: 'false' }, () => {
+      const config = createConfig()
+      expect(config.debug).toBe(false)
     })
   })
 
@@ -222,7 +235,7 @@ describe('createConfig', () => {
 
         expect(config.paths.dataDir).toBe(expectedDefaultDataDir(process.platform))
         expect(config.paths.authFile).toBe(resolve(expectedDefaultDataDir(process.platform), 'auth', 'auth.json'))
-        expect(config.debug).toBe(true)
+        expect(config.debug).toBe(false)
         expect(config.allowNonManagerSubscriptions).toBe(true)
         expect(config.managerId).toBeUndefined()
         expect(config.defaultCwd).toBe(config.paths.rootDir)

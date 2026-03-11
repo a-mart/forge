@@ -58,7 +58,7 @@ function resolveDefaultWsUrl(): string {
   const uiPort =
     Number(window.location.port) ||
     (window.location.protocol === 'https:' ? 443 : 80)
-  // Dev UI runs on 47188 -> backend 47187, prod UI runs on 47289 -> backend 47287.
+  // Dev UI runs on 47188 -> backend 47187, prod UI runs on 47189 -> backend 47287.
   const wsPort = uiPort <= 47188 ? 47187 : 47287
 
   return `${protocol}//${hostname}:${wsPort}`

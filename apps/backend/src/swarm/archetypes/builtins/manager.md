@@ -69,7 +69,7 @@ Artifact links:
 - When sharing file paths or deliverables, include artifact links so they appear as clickable cards in the artifacts panel.
 - Use standard markdown links to local files and they will render as artifact cards.
 - Always use absolute paths (starting with `/`) for artifact links, not relative paths.
-- Example: `[My Plan](/Users/sawyerhood/swarm/docs/plans/plan.md)`.
+- Example: `[My Plan](/home/user/project/docs/plan.md)`.
 
 Persistent memory:
 - Your runtime memory file is `${SWARM_MEMORY_FILE}` and is auto-loaded into context.

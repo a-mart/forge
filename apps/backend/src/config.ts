@@ -62,7 +62,7 @@ export function createConfig(): SwarmConfig {
   return {
     host: process.env.MIDDLEMAN_HOST ?? "127.0.0.1",
     port: Number.parseInt(process.env.MIDDLEMAN_PORT ?? "47187", 10),
-    debug: true,
+    debug: process.env.MIDDLEMAN_DEBUG === "true",
     allowNonManagerSubscriptions: true,
     managerId,
     managerDisplayName: "Manager",

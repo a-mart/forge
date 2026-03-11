@@ -11,7 +11,7 @@ Middleman fully supports Windows for the backend daemon, dashboard UI, agent orc
 ## Installation
 
 ```powershell
-git clone https://github.com/nichochar/middleman.git
+git clone https://github.com/radopsai/middleman.git
 cd middleman
 pnpm i
 ```

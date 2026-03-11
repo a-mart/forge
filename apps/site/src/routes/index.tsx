@@ -54,7 +54,7 @@ const flow = [
 ]
 
 const quickStartCommands = [
-  'git clone https://github.com/SawyerHood/middleman.git',
+  'git clone https://github.com/radopsai/middleman.git',
   'cd middleman',
   'pnpm install',
   'pnpm dev',
@@ -73,7 +73,7 @@ function LandingPage() {
             Middleman
           </a>
           <a
-            href="https://github.com/SawyerHood/middleman"
+            href="https://github.com/radopsai/middleman"
             target="_blank"
             rel="noopener noreferrer"
             className="text-[13px] text-muted no-underline transition-colors duration-300 hover:text-ink"
@@ -104,7 +104,7 @@ function LandingPage() {
               Get started
             </a>
             <a
-              href="https://github.com/SawyerHood/middleman"
+              href="https://github.com/radopsai/middleman"
               target="_blank"
               rel="noopener noreferrer"
               className="text-[13px] text-muted no-underline transition-colors duration-300 hover:text-ink"
@@ -231,8 +231,8 @@ function LandingPage() {
           <div className="flex gap-6">
             {(
               [
-                ['GitHub', 'https://github.com/SawyerHood/middleman'],
-                ['License', 'https://github.com/SawyerHood/middleman/blob/main/LICENSE'],
+                ['GitHub', 'https://github.com/radopsai/middleman'],
+                ['License', 'https://github.com/radopsai/middleman/blob/main/LICENSE'],
               ] as const
             ).map(([label, href]) => (
               <a

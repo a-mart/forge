@@ -20,18 +20,18 @@ You're not an IC anymore. You've become a project manager. You need a middle man
 
 - **Node.js 22+**
 - **pnpm** (`npm install -g pnpm`)
-- An **OpenAI** or **Anthropic** API key
+- An **OpenAI** or **Anthropic** account (OAuth or API key)
 
 ### Install & Run
 
 ```bash
-git clone https://github.com/nichochar/middleman.git
+git clone https://github.com/radopsai/middleman.git
 cd middleman
 pnpm i
 pnpm prod:daemon
 ```
 
-Open the UI at [http://127.0.0.1:47289](http://127.0.0.1:47289), go to **Settings**, and enter your API key. Create a manager, point it at your project directory, and start chatting.
+Open the UI at [http://127.0.0.1:47189](http://127.0.0.1:47189), go to **Settings**, and sign in with your OpenAI or Anthropic account (OAuth or API key). Create a manager, point it at your project directory, and start chatting.
 
 > **Windows users:** See [docs/WINDOWS_SETUP.md](docs/WINDOWS_SETUP.md) for platform-specific setup notes.
 
@@ -95,7 +95,7 @@ pnpm prod:restart
 
 Production defaults:
 - Backend: `http://127.0.0.1:47287`
-- UI: `http://127.0.0.1:47289`
+- UI: `http://127.0.0.1:47189`
 
 ## Platform Notes
 
@@ -173,11 +173,11 @@ Managers and workers have access to built-in skills:
 |-------|-------------|----------|
 | **Web Search** | Search the web via Brave Search API | `BRAVE_API_KEY` |
 | **Image Generation** | Generate images with Google Gemini | `GEMINI_API_KEY` |
-| **Browser** | Interactive web browsing and extraction | — |
+| **Browser** | Interactive web browsing and extraction | `agent-browser` CLI |
 | **Cron Scheduling** | Persistent scheduled tasks with cron expressions | — |
 | **Memory** | Persistent agent memory across sessions | — |
 
-Skill API keys are set as environment variables (in `.env` or your shell).
+Skill API keys can be configured in the dashboard under **Settings → Environment Variables**. `.env` (or shell env vars) is still supported as a fallback.
 
 ## A Note
 

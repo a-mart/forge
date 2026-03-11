@@ -1,9 +1,9 @@
 import { Button } from '@/components/ui/button'
 
 const suggestions = [
-  'Plan a middleman workflow',
-  'Debug manager state',
-  'Summarize latest run',
+  'Help me plan a feature',
+  'What can you do?',
+  'Start a coding task',
 ]
 
 export function EmptyState({
