@@ -1,8 +1,4 @@
-<p align="center">
-  <img src="docs/images/middleman-header.png" alt="Middleman" width="100%">
-</p>
-
-# 👔 Middleman
+# 👔 Middleman Forge Edition
 
 A local-first multi-agent orchestration platform. One manager, many workers, zero tab-juggling.
 
@@ -11,8 +7,6 @@ If you're using agentic coding tools, you've probably hit this wall: you start w
 You're not an IC anymore. You've become a project manager. You need a middle manager.
 
 **Middleman gives you one.** You talk to a single persistent manager agent per project. You describe what needs to be done — a feature, a batch of bug fixes, a refactor — and the manager dispatches workers, parallelizes where it makes sense, and surfaces only the things that need your attention.
-
-![Middleman UI](docs/images/ui-screenshot.png)
 
 ## Quick Start
 
@@ -48,10 +42,6 @@ Open the UI at [http://127.0.0.1:47189](http://127.0.0.1:47189), go to **Setting
 ## Architecture
 
 Middleman runs three layers on your machine:
-
-<p align="center">
-  <img src="docs/architecture.svg" alt="Architecture" width="600">
-</p>
 
 | Layer | Description |
 |-------|-------------|
