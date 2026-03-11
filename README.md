@@ -57,7 +57,7 @@ Middleman runs three layers on your machine:
 |-------|-------------|
 | **Dashboard UI** (`apps/ui`) | TanStack Start + Vite SPA. Real-time agent monitoring, chat, settings, artifacts. |
 | **Backend Daemon** (`apps/backend`) | Node.js HTTP + WebSocket server. Agent orchestration, message routing, persistence, scheduler. |
-| **Agents** | Manager and worker agents powered by [pi](https://github.com/nichochar/pi-mono). Each worker runs in its own worktree. |
+| **Agents** | Manager and worker agents powered by [pi](https://github.com/nichochar/pi). Each worker runs in its own worktree. |
 
 Communication between UI and backend is over WebSocket. The backend spawns and manages agent processes, persists all state to disk, and handles integrations and scheduling.
 

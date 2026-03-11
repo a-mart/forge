@@ -29,3 +29,6 @@ scripts/cutover-to-main.sh
 scripts/validate-migration.ts
 scripts/test-run.sh
 data/
+
+# Audit reports
+AUDIT_*.md
