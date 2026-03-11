@@ -1,4 +1,4 @@
-# Middleman - Agent Notes
+# Middleman - Contributor Guide
 
 ## What This Project Is
 `middleman` is a local-first multi-agent orchestration platform. It runs:
@@ -8,15 +8,21 @@
 3. Realtime updates over WebSocket.
 
 **Stack:** TypeScript, React 19, TanStack Router, Radix UI/shadcn, Tailwind v4, Vitest, pnpm monorepo
-**Structure:** `apps/backend` (Node.js daemon), `apps/ui` (React SPA), `apps/site` (landing page), `packages/protocol` (shared types)
-**Data:** All state in `~/.middleman` — hierarchical profile-scoped layout under `profiles/<profileId>/` (sessions, memory, integrations, schedules), shared auth/secrets under `shared/`, agent registry at `swarm/agents.json`. See `apps/backend/src/swarm/data-paths.ts` for path resolution.
 
+**Structure:**
+- `apps/backend` — Node.js daemon (HTTP + WebSocket server)
+- `apps/ui` — React SPA (TanStack Start + Vite)
+- `apps/site` — Landing page
+- `packages/protocol` — Shared types and wire contracts
 
+**Data Storage:** All state lives in `~/.middleman` (or `%USERPROFILE%\.middleman` on Windows) with a hierarchical profile-scoped layout:
+- `profiles/<profileId>/` — sessions, memory, integrations, schedules
+- `shared/` — auth, secrets, global config
+- `swarm/agents.json` — agent registry
 
-## Scope Expectations
-For dashboard/chat/settings work, preserve existing behavior and interaction patterns unless the task explicitly requests a redesign.
+See `apps/backend/src/swarm/data-paths.ts` for path resolution logic.
 
-## Architecture (Current)
+## Architecture Overview
 
 ### Frontend
 - SPA with TanStack Start + Vite in `apps/ui`.
@@ -30,11 +36,9 @@ For dashboard/chat/settings work, preserve existing behavior and interaction pat
 - Scheduler in `apps/backend/src/scheduler/*`.
 
 ### Contracts
-Canonical wire contracts are defined in:
+Canonical wire contracts are defined in `packages/protocol/`.
 
-- `packages/protocol/`
-
-## Run and Test
+## Development Commands
 
 ### Development
 ```bash
@@ -52,15 +56,18 @@ Default production ports:
 - Backend HTTP + WS: `http://127.0.0.1:47287` / `ws://127.0.0.1:47287`
 - UI preview: `http://127.0.0.1:47289`
 
-### Useful checks
+### Validation
 ```bash
-pnpm build
-pnpm test
-pnpm exec tsc --noEmit
+pnpm build          # Build all packages
+pnpm test           # Run tests
+pnpm typecheck      # TypeScript validation across all packages
 ```
 
-## Shadcn UI
+**Before finishing any task, run `pnpm typecheck` and fix reported errors.**
 
+## Working Conventions
+
+### UI Components
 Use [shadcn/ui](https://ui.shadcn.com/) for shared UI primitives and new component additions. **Always prefer shadcn components over hand-rolled HTML elements.**
 
 Add components from the `apps/ui` directory using the shadcn CLI:
@@ -82,12 +89,43 @@ Generated components go to `apps/ui/src/components/ui/`. Check available compone
 
 Currently installed: badge, button, card, checkbox, context-menu, dialog, input, label, scroll-area, select, separator, switch, tabs, textarea, tooltip.
 
-## Working Rules for Future Changes
-
-1. Preserve behavior and interaction parity for existing dashboard/chat/settings flows unless a task calls for change.
+### Code Quality
+1. Preserve existing behavior and interaction patterns unless explicitly asked to change them.
 2. Keep event handling deterministic across live stream and replayed history.
-3. Prefer working within existing backend/frontend boundaries instead of introducing broad architectural churn.
-4. Validate changes with UI smoke checks (manager creation, chat send/stop, settings updates).
-5. Before finishing any task, run a full TypeScript typecheck and fix reported errors:
-   - `pnpm exec tsc --noEmit`
+3. Prefer working within existing backend/frontend boundaries.
+4. Validate changes with smoke checks (manager creation, chat send/stop, settings updates).
+5. Run `pnpm typecheck` before finishing any task.
 6. Prefer shadcn/ui components over hand-rolled HTML for UI controls and surfaces.
+
+## Platform Support
+
+Middleman supports both **macOS** and **Windows**. When working on cross-platform code:
+
+### Path Handling
+- Use `path.join()` and `path.resolve()` instead of string concatenation.
+- Use `os.tmpdir()` for temporary directories.
+- Use `path.isAbsolute()` to check path types.
+- Normalize paths with `path.normalize()` when comparing.
+
+### Process & Signals
+- Signal handling (e.g., `SIGTERM`, `SIGINT`) should be gated for Windows compatibility.
+- Use `process.platform` checks when platform-specific behavior is required.
+
+### Feature Gating
+- Some features (like Playwright integration) are conditionally enabled based on platform capabilities.
+- Check `apps/backend/src/utils/platform.ts` for platform detection utilities.
+
+### File System
+- Be mindful of case sensitivity differences (macOS is case-insensitive by default, Linux is not).
+- Use `fs.promises` for async file operations.
+- Handle `ENOENT` and permission errors gracefully.
+
+## Testing
+
+Smoke test checklist:
+- Create a new manager session
+- Send a chat message and verify response
+- Stop an active manager
+- Update settings (model, system prompt, etc.)
+- Verify WebSocket reconnection behavior
+- Test on both macOS and Windows if making platform-specific changes
