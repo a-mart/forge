@@ -28,3 +28,4 @@ docs/test-coverage-audit.md
 scripts/cutover-to-main.sh
 scripts/validate-migration.ts
 scripts/test-run.sh
+data/
