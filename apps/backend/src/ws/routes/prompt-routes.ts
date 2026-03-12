@@ -122,7 +122,12 @@ export function createPromptRoutes(options: {
             entryMap.set(`${entry.category}:${entry.promptId}`, entry);
           }
 
-          const prompts: PromptListEntry[] = PROMPT_METADATA.map((meta) => {
+          // Filter out prompts scoped to a different profile
+          const applicableMetadata = PROMPT_METADATA.filter(
+            (meta) => !meta.profileScope || meta.profileScope === profileId,
+          );
+
+          const prompts: PromptListEntry[] = applicableMetadata.map((meta) => {
             const entry = entryMap.get(`${meta.category}:${meta.promptId}`);
             const hasProfileOverride = profileId
               ? entry?.sourceLayer === "profile"

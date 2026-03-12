@@ -21,6 +21,11 @@ export interface PromptMetadataEntry {
   displayName: string;
   description: string;
   variables: PromptVariableDeclaration[];
+  /**
+   * When set, this prompt is only shown/relevant for the specified profile.
+   * Omit for prompts that apply to all profiles.
+   */
+  profileScope?: string;
 }
 
 /**
@@ -57,6 +62,7 @@ export const PROMPT_METADATA: PromptMetadataEntry[] = [
     promptId: 'cortex',
     displayName: 'Cortex System Prompt',
     description: 'Instructions for the Cortex intelligence/knowledge manager.',
+    profileScope: 'cortex',
     variables: [
       { name: 'SWARM_DATA_DIR', description: 'Path to the Middleman data directory' },
       { name: 'SWARM_MEMORY_FILE', description: 'Path to the memory file' },
@@ -101,6 +107,7 @@ export const PROMPT_METADATA: PromptMetadataEntry[] = [
     displayName: 'Common Knowledge Template',
     description:
       'Initial content for shared/knowledge/common.md when Cortex profile is created.',
+    profileScope: 'cortex',
     variables: [],
   },
   {
@@ -109,6 +116,7 @@ export const PROMPT_METADATA: PromptMetadataEntry[] = [
     displayName: 'Cortex Worker Prompt Templates',
     description:
       'Templates Cortex uses when spawning extraction/review/synthesis workers.',
+    profileScope: 'cortex',
     variables: [],
   },
   {
