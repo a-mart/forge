@@ -5,13 +5,16 @@ import { SettingsNotifications } from '@/components/settings/SettingsNotificatio
 import { SettingsAuth } from '@/components/settings/SettingsAuth'
 import { SettingsIntegrations } from '@/components/settings/SettingsIntegrations'
 import { SettingsSkills } from '@/components/settings/SettingsSkills'
-import type { AgentDescriptor, PlaywrightDiscoverySettings, PlaywrightDiscoverySnapshot, SlackStatusEvent, TelegramStatusEvent } from '@middleman/protocol'
+import { SettingsPrompts } from '@/components/settings/SettingsPrompts'
+import type { AgentDescriptor, ManagerProfile, PlaywrightDiscoverySettings, PlaywrightDiscoverySnapshot, SlackStatusEvent, TelegramStatusEvent } from '@middleman/protocol'
 
 interface SettingsPanelProps {
   wsUrl: string
   managers: AgentDescriptor[]
+  profiles: ManagerProfile[]
   slackStatus?: SlackStatusEvent | null
   telegramStatus?: TelegramStatusEvent | null
+  promptChangeKey: number
   onBack?: () => void
   onPlaywrightSnapshotUpdate?: (snapshot: PlaywrightDiscoverySnapshot) => void
   onPlaywrightSettingsLoaded?: (settings: PlaywrightDiscoverySettings) => void
@@ -20,8 +23,10 @@ interface SettingsPanelProps {
 export function SettingsPanel({
   wsUrl,
   managers,
+  profiles,
   slackStatus,
   telegramStatus,
+  promptChangeKey,
   onBack,
   onPlaywrightSnapshotUpdate,
   onPlaywrightSettingsLoaded,
@@ -42,6 +47,13 @@ export function SettingsPanel({
         />
       )}
       {activeTab === 'skills' && <SettingsSkills wsUrl={wsUrl} />}
+      {activeTab === 'prompts' && (
+        <SettingsPrompts
+          wsUrl={wsUrl}
+          profiles={profiles}
+          promptChangeKey={promptChangeKey}
+        />
+      )}
     </SettingsLayout>
   )
 }
