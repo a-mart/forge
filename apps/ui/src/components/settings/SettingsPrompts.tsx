@@ -23,7 +23,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { ScrollArea } from '@/components/ui/scroll-area'
+
 import { Badge } from '@/components/ui/badge'
 import { SettingsSection } from './settings-row'
 import { PromptEditor } from './prompts/PromptEditor'
@@ -281,7 +281,7 @@ export function SettingsPrompts({ wsUrl, profiles, promptChangeKey }: SettingsPr
 
       {/* Preview dialog */}
       <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
-        <DialogContent className="max-w-3xl max-h-[85vh] flex flex-col">
+        <DialogContent className="!max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
           <DialogHeader>
             <DialogTitle>System Prompt Preview</DialogTitle>
             <DialogDescription>
@@ -298,19 +298,19 @@ export function SettingsPrompts({ wsUrl, profiles, promptChangeKey }: SettingsPr
               <p className="text-xs text-destructive">{previewError}</p>
             </div>
           ) : (
-            <div className="flex flex-col gap-3 min-h-0 flex-1">
-              <div className="flex flex-wrap gap-1.5">
+            <div className="flex flex-col gap-3 min-h-0 flex-1 overflow-hidden">
+              <div className="flex flex-wrap gap-1.5 shrink-0">
                 {previewComponents.map((c) => (
                   <Badge key={c} variant="secondary" className="text-xs">
                     {c}
                   </Badge>
                 ))}
               </div>
-              <ScrollArea className="flex-1 min-h-0 rounded-md border bg-muted/50">
+              <div className="flex-1 min-h-0 overflow-auto rounded-md border bg-muted/50">
                 <pre className="p-4 text-xs leading-relaxed whitespace-pre-wrap break-words font-mono">
                   {previewContent}
                 </pre>
-              </ScrollArea>
+              </div>
             </div>
           )}
         </DialogContent>
