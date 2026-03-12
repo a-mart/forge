@@ -551,7 +551,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly runtimeFactory: RuntimeFactory;
   private readonly skillMetadataService: SkillMetadataService;
   private readonly secretsEnvService: SecretsEnvService;
-  private readonly promptRegistry: PromptRegistry;
+  readonly promptRegistry: PromptRegistry;
 
   private defaultMemoryTemplateNormalizedLines = DEFAULT_MEMORY_TEMPLATE_NORMALIZED_LINES;
   private integrationContextProvider: ((profileId: string) => string) | undefined;
