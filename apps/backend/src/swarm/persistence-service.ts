@@ -4,7 +4,7 @@ import { getProfileKnowledgeDir, getSharedKnowledgeDir, resolveMemoryFilePath } 
 import { renameWithRetry } from "./retry-rename.js";
 import type { AgentDescriptor, AgentsStoreFile, ManagerProfile, SwarmConfig } from "./types.js";
 
-const DEFAULT_MEMORY_FILE_CONTENT = `# Swarm Memory
+export const DEFAULT_MEMORY_FILE_CONTENT = `# Swarm Memory
 
 ## User Preferences
 - (none yet)
@@ -55,21 +55,27 @@ export class PersistenceService {
     }
   }
 
-  async ensureMemoryFilesForBoot(): Promise<void> {
-    const memoryFilePaths = new Set<string>();
+  async ensureMemoryFilesForBoot(options?: {
+    resolveMemoryTemplateContent?: (profileId: string) => Promise<string>;
+  }): Promise<void> {
+    const memoryFilePaths = new Map<string, string>();
     const configuredManagerId = this.deps.getConfiguredManagerId();
     if (configuredManagerId) {
       const configuredDescriptor = this.deps.descriptors.get(configuredManagerId);
       if (configuredDescriptor?.role === "manager") {
-        memoryFilePaths.add(this.getAgentMemoryPath(configuredDescriptor));
+        memoryFilePaths.set(
+          this.getAgentMemoryPath(configuredDescriptor),
+          configuredDescriptor.profileId ?? configuredDescriptor.agentId
+        );
       } else {
-        memoryFilePaths.add(
+        memoryFilePaths.set(
           this.getAgentMemoryPath({
             agentId: configuredManagerId,
             role: "manager",
             profileId: configuredManagerId,
             managerId: configuredManagerId
-          })
+          }),
+          configuredManagerId
         );
       }
     }
@@ -79,15 +85,18 @@ export class PersistenceService {
         continue;
       }
 
-      memoryFilePaths.add(this.getAgentMemoryPath(descriptor));
+      memoryFilePaths.set(this.getAgentMemoryPath(descriptor), descriptor.profileId ?? descriptor.agentId);
     }
 
-    for (const memoryFilePath of memoryFilePaths) {
-      await this.ensureAgentMemoryFile(memoryFilePath);
+    for (const [memoryFilePath, profileId] of memoryFilePaths.entries()) {
+      const memoryTemplateContent = options?.resolveMemoryTemplateContent
+        ? await options.resolveMemoryTemplateContent(profileId)
+        : DEFAULT_MEMORY_FILE_CONTENT;
+      await this.ensureAgentMemoryFile(memoryFilePath, memoryTemplateContent);
     }
   }
 
-  async ensureAgentMemoryFile(memoryFilePath: string): Promise<void> {
+  async ensureAgentMemoryFile(memoryFilePath: string, memoryTemplateContent = DEFAULT_MEMORY_FILE_CONTENT): Promise<void> {
     try {
       await readFile(memoryFilePath, "utf8");
       return;
@@ -98,7 +107,7 @@ export class PersistenceService {
     }
 
     await mkdir(dirname(memoryFilePath), { recursive: true });
-    await writeFile(memoryFilePath, DEFAULT_MEMORY_FILE_CONTENT, "utf8");
+    await writeFile(memoryFilePath, memoryTemplateContent, "utf8");
   }
 
   async deleteManagerSessionFile(sessionFile: string): Promise<void> {

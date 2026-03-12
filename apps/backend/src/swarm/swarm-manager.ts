@@ -7,10 +7,12 @@ import { getModel } from "@mariozechner/pi-ai";
 import { AuthStorage, ModelRegistry } from "@mariozechner/pi-coding-agent";
 import type { ServerEvent, SessionMeta } from "@middleman/protocol";
 import {
-  loadArchetypePromptRegistry,
+  FileBackedPromptRegistry,
   normalizeArchetypeId,
-  type ArchetypePromptRegistry
-} from "./archetypes/archetype-prompt-registry.js";
+  resolvePromptVariables,
+  type PromptCategory,
+  type PromptRegistry
+} from "./prompt-registry.js";
 import { ConversationProjector } from "./conversation-projector.js";
 import {
   getCommonKnowledgePath,
@@ -26,7 +28,7 @@ import {
   resolveMemoryFilePath
 } from "./data-paths.js";
 import { migrateDataDirectory } from "./data-migration.js";
-import { executeLLMMerge } from "./memory-merge.js";
+import { executeLLMMerge, MEMORY_MERGE_SYSTEM_PROMPT } from "./memory-merge.js";
 import { PersistenceService } from "./persistence-service.js";
 import { RuntimeFactory } from "./runtime-factory.js";
 import {
@@ -359,6 +361,20 @@ Do NOT rewrite knowledge files directly. Do NOT do unbounded manual transcript r
 `;
 /* eslint-enable no-useless-escape */
 
+const FORKED_SESSION_MEMORY_HEADER_TEMPLATE = [
+  "# Session Memory",
+  '> Forked from session "${SOURCE_LABEL}" (${SOURCE_AGENT_ID}) on ${FORK_TIMESTAMP}',
+  "> Parent session conversation history was duplicated at fork time.",
+  ""
+].join("\n");
+
+const IDLE_WORKER_WATCHDOG_MESSAGE_TEMPLATE = `⚠️ [IDLE WORKER WATCHDOG — BATCHED]
+
+\${WORKER_COUNT} \${WORKER_WORD} went idle without reporting this turn.
+Workers: \${WORKER_IDS}
+
+Use list_agents({"verbose":true,"limit":50,"offset":0}) for a paged full list.`;
+
 // Retain recent non-web activity while preserving the full user-facing web transcript.
 const SWARM_CONTEXT_FILE_NAME = "SWARM.md";
 // Integration services add ~3 event listeners per profile (Telegram conversation_message,
@@ -377,17 +393,26 @@ const MODEL_CAPACITY_BLOCK_MAX_MS = 7 * 24 * 60 * 60 * 1_000;
 const OPENAI_CODEX_CAPACITY_FALLBACK_CHAIN = ["gpt-5.3-codex-spark", "gpt-5.3-codex", "gpt-5.4"];
 const SESSION_ID_SUFFIX_SEPARATOR = "--s";
 const ROOT_SESSION_NUMBER = 1;
-const DEFAULT_MEMORY_TEMPLATE_NORMALIZED_LINES = [
+const DEFAULT_MEMORY_TEMPLATE_FALLBACK_CONTENT = [
   "# Swarm Memory",
+  "",
   "## User Preferences",
   "- (none yet)",
+  "",
   "## Project Facts",
   "- (none yet)",
+  "",
   "## Decisions",
   "- (none yet)",
+  "",
   "## Open Follow-ups",
-  "- (none yet)"
-];
+  "- (none yet)",
+  ""
+].join("\n");
+
+const DEFAULT_MEMORY_TEMPLATE_NORMALIZED_LINES = normalizeMemoryTemplateLines(
+  DEFAULT_MEMORY_TEMPLATE_FALLBACK_CONTENT
+);
 
 interface SessionMemoryMergeAuditEntry {
   timestamp: string;
@@ -426,11 +451,12 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
-function createEmptyArchetypePromptRegistry(): ArchetypePromptRegistry {
-  return {
-    resolvePrompt: () => undefined,
-    listArchetypeIds: () => []
-  };
+function normalizeMemoryTemplateLines(content: string): string[] {
+  return content
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
 }
 
 function cloneContextUsage(contextUsage: AgentContextUsage | undefined): AgentContextUsage | undefined {
@@ -525,8 +551,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly runtimeFactory: RuntimeFactory;
   private readonly skillMetadataService: SkillMetadataService;
   private readonly secretsEnvService: SecretsEnvService;
+  private readonly promptRegistry: PromptRegistry;
 
-  private archetypePromptRegistry: ArchetypePromptRegistry = createEmptyArchetypePromptRegistry();
+  private defaultMemoryTemplateNormalizedLines = DEFAULT_MEMORY_TEMPLATE_NORMALIZED_LINES;
   private integrationContextProvider: ((profileId: string) => string) | undefined;
 
   constructor(config: SwarmConfig, options?: { now?: () => string }) {
@@ -539,6 +566,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       defaultModel: resolveModelDescriptorFromPreset(this.defaultModelPreset)
     };
     this.now = options?.now ?? nowIso;
+    this.promptRegistry = new FileBackedPromptRegistry({
+      dataDir: this.config.paths.dataDir,
+      repoDir: this.config.paths.rootDir,
+      builtinArchetypesDir: join(this.config.paths.rootDir, "apps", "backend", "src", "swarm", "archetypes", "builtins"),
+      builtinOperationalDir: join(this.config.paths.rootDir, "apps", "backend", "src", "swarm", "operational", "builtins")
+    });
     this.persistenceService = new PersistenceService({
       config: this.config,
       descriptors: this.descriptors,
@@ -624,9 +657,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       throw error;
     }
 
-    this.archetypePromptRegistry = await loadArchetypePromptRegistry({
-      repoOverridesDir: this.config.paths.repoArchetypesDir
-    });
+    await this.refreshDefaultMemoryTemplateNormalizedLines();
 
     let loaded = await this.loadStore();
     const migrationResult = await migrateDataDirectory(
@@ -667,6 +698,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     await this.restoreRuntimesForBoot();
 
     const managerDescriptor = this.getBootLogManagerDescriptor();
+    const loadedPrompts = await this.promptRegistry.listAll();
+    const loadedArchetypeIds = loadedPrompts
+      .filter((entry) => entry.category === "archetype")
+      .map((entry) => entry.promptId)
+      .sort((left, right) => left.localeCompare(right));
+
     this.emitAgentsSnapshot();
     this.emitProfilesSnapshot();
 
@@ -677,7 +714,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       cwd: managerDescriptor?.cwd,
       managerAgentDir: this.config.paths.managerAgentDir,
       managerSystemPromptSource: managerDescriptor ? `archetype:${MANAGER_ARCHETYPE_ID}` : undefined,
-      loadedArchetypeIds: this.archetypePromptRegistry.listArchetypeIds(),
+      loadedArchetypeIds,
       restoredAgentIds: Array.from(this.runtimes.keys())
     });
   }
@@ -897,8 +934,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       const sessionMemoryPath = this.getAgentMemoryPath(agentId);
       const profileMemoryPath = getProfileMemoryPath(this.config.paths.dataDir, descriptor.profileId);
 
-      await this.ensureAgentMemoryFile(sessionMemoryPath);
-      await this.ensureAgentMemoryFile(profileMemoryPath);
+      await this.ensureAgentMemoryFile(sessionMemoryPath, descriptor.profileId);
+      await this.ensureAgentMemoryFile(profileMemoryPath, descriptor.profileId);
 
       const sessionMemoryContent = await readFile(sessionMemoryPath, "utf8");
       if (this.isSessionMemoryMergeNoOp(sessionMemoryContent)) {
@@ -1034,7 +1071,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     const requestedModel = this.resolveSpawnModel(input, manager.model);
     const model = this.resolveSpawnModelWithCapacityFallback(requestedModel);
-    const archetypeId = this.resolveSpawnWorkerArchetypeId(input, agentId);
+    const managerProfileId = manager.profileId ?? manager.agentId;
+    const archetypeId = await this.resolveSpawnWorkerArchetypeId(input, agentId, managerProfileId);
 
     const descriptor: AgentDescriptor = {
       agentId,
@@ -1075,7 +1113,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const baseSystemPrompt =
       explicitSystemPrompt && explicitSystemPrompt.length > 0
         ? explicitSystemPrompt
-        : this.resolveSystemPromptForDescriptor(descriptor);
+        : await this.resolveSystemPromptForDescriptor(descriptor);
 
     const runtimeSystemPrompt = this.injectWorkerIdentityContext(descriptor, baseSystemPrompt);
 
@@ -1352,7 +1390,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     try {
       runtime = await this.createRuntimeForDescriptor(
         descriptor,
-        this.resolveSystemPromptForDescriptor(descriptor)
+        await this.resolveSystemPromptForDescriptor(descriptor)
       );
     } catch (error) {
       this.descriptors.delete(descriptor.agentId);
@@ -1747,12 +1785,18 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     forkedSessionAgentId: string
   ): Promise<void> {
     const sourceLabel = sourceDescriptor.sessionLabel ?? sourceDescriptor.agentId;
-    const header = [
-      "# Session Memory",
-      `> Forked from session \"${sourceLabel}\" (${sourceDescriptor.agentId}) on ${this.now()}`,
-      "> Parent session conversation history was duplicated at fork time.",
-      ""
-    ].join("\n");
+    const profileId = sourceDescriptor.profileId ?? sourceDescriptor.agentId;
+    const headerTemplate = await this.resolvePromptWithFallback(
+      "operational",
+      "forked-session-header",
+      profileId,
+      FORKED_SESSION_MEMORY_HEADER_TEMPLATE
+    );
+    const header = resolvePromptVariables(headerTemplate, {
+      SOURCE_LABEL: sourceLabel,
+      SOURCE_AGENT_ID: sourceDescriptor.agentId,
+      FORK_TIMESTAMP: this.now()
+    });
 
     const forkedMemoryPath = this.getAgentMemoryPath(forkedSessionAgentId);
     await mkdir(dirname(forkedMemoryPath), { recursive: true });
@@ -2662,8 +2706,23 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return;
     }
 
+    const profileId = manager.profileId ?? manager.agentId;
+
+    await this.resolvePromptWithFallback(
+      "operational",
+      "idle-watchdog",
+      profileId,
+      IDLE_WORKER_WATCHDOG_MESSAGE_TEMPLATE
+    );
+
     try {
-      await this.sendMessage(managerId, managerId, MANAGER_BOOTSTRAP_INTERVIEW_MESSAGE, "auto", {
+      const bootstrapMessage = await this.resolvePromptWithFallback(
+        "operational",
+        "bootstrap",
+        profileId,
+        MANAGER_BOOTSTRAP_INTERVIEW_MESSAGE
+      );
+      await this.sendMessage(managerId, managerId, bootstrapMessage, "auto", {
         origin: "internal"
       });
       this.logDebug("manager:bootstrap_message:sent", { managerId });
@@ -2672,6 +2731,25 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         managerId,
         message: error instanceof Error ? error.message : String(error)
       });
+    }
+  }
+
+  private async resolvePromptWithFallback(
+    category: PromptCategory,
+    promptId: string,
+    profileId: string | undefined,
+    fallback: string
+  ): Promise<string> {
+    try {
+      return await this.promptRegistry.resolve(category, promptId, profileId);
+    } catch (error) {
+      this.logDebug("prompt:resolve:fallback", {
+        category,
+        promptId,
+        profileId,
+        message: error instanceof Error ? error.message : String(error)
+      });
+      return fallback;
     }
   }
 
@@ -2807,8 +2885,15 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       }
     }
 
+    const commonKnowledgeTemplate = await this.resolvePromptWithFallback(
+      "operational",
+      "common-knowledge-template",
+      CORTEX_PROFILE_ID,
+      COMMON_KNOWLEDGE_INITIAL_TEMPLATE
+    );
+
     await mkdir(dirname(commonKnowledgePath), { recursive: true });
-    await writeFile(commonKnowledgePath, COMMON_KNOWLEDGE_INITIAL_TEMPLATE, "utf8");
+    await writeFile(commonKnowledgePath, commonKnowledgeTemplate, "utf8");
   }
 
   private async ensureCortexWorkerPromptsFile(): Promise<void> {
@@ -2823,8 +2908,15 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       }
     }
 
+    const workerPromptTemplate = await this.resolvePromptWithFallback(
+      "operational",
+      "cortex-worker-prompts",
+      CORTEX_PROFILE_ID,
+      CORTEX_WORKER_PROMPTS_INITIAL_TEMPLATE
+    );
+
     await mkdir(dirname(workerPromptsPath), { recursive: true });
-    await writeFile(workerPromptsPath, CORTEX_WORKER_PROMPTS_INITIAL_TEMPLATE, "utf8");
+    await writeFile(workerPromptsPath, workerPromptTemplate, "utf8");
   }
 
   private normalizeStreamingStatusesForBoot(): void {
@@ -3052,7 +3144,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     await this.ensureSessionFileParentDirectory(descriptor.sessionFile);
 
-    const runtime = await this.createRuntimeForDescriptor(descriptor, this.resolveSystemPromptForDescriptor(descriptor));
+    const runtime = await this.createRuntimeForDescriptor(
+      descriptor,
+      await this.resolveSystemPromptForDescriptor(descriptor)
+    );
 
     const latestDescriptor = this.descriptors.get(descriptor.agentId);
     if (!latestDescriptor || isNonRunningAgentStatus(latestDescriptor.status)) {
@@ -3274,18 +3369,22 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     });
   }
 
-  private resolveSpawnWorkerArchetypeId(
+  private async resolveSpawnWorkerArchetypeId(
     input: SpawnAgentInput,
-    normalizedAgentId: string
-  ): string | undefined {
+    normalizedAgentId: string,
+    profileId: string
+  ): Promise<string | undefined> {
     if (input.archetypeId !== undefined) {
       const explicit = normalizeArchetypeId(input.archetypeId);
       if (!explicit) {
         throw new Error("spawn_agent archetypeId must include at least one letter or number");
       }
-      if (!this.archetypePromptRegistry.resolvePrompt(explicit)) {
+
+      const entry = await this.promptRegistry.resolveEntry("archetype", explicit, profileId);
+      if (!entry) {
         throw new Error(`Unknown archetypeId: ${explicit}`);
       }
+
       return explicit;
     }
 
@@ -3299,14 +3398,15 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return undefined;
   }
 
-  private resolveSystemPromptForDescriptor(descriptor: AgentDescriptor): string {
+  private async resolveSystemPromptForDescriptor(descriptor: AgentDescriptor): Promise<string> {
+    const profileId = descriptor.profileId ?? descriptor.agentId;
+
     if (descriptor.role === "manager") {
       const managerArchetypeId = descriptor.archetypeId
-        ? normalizeArchetypeId(descriptor.archetypeId) ?? MANAGER_ARCHETYPE_ID
+        ? normalizeArchetypeId(descriptor.archetypeId) || MANAGER_ARCHETYPE_ID
         : MANAGER_ARCHETYPE_ID;
-      let prompt = this.resolveRequiredArchetypePrompt(managerArchetypeId);
+      let prompt = await this.promptRegistry.resolve("archetype", managerArchetypeId, profileId);
 
-      const profileId = descriptor.profileId ?? descriptor.agentId;
       if (this.integrationContextProvider) {
         try {
           const integrationContext = this.integrationContextProvider(profileId).trim();
@@ -3326,13 +3426,26 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     if (descriptor.archetypeId) {
-      const archetypePrompt = this.archetypePromptRegistry.resolvePrompt(descriptor.archetypeId);
-      if (archetypePrompt) {
-        return archetypePrompt;
+      const normalizedArchetypeId = normalizeArchetypeId(descriptor.archetypeId);
+      if (normalizedArchetypeId) {
+        const archetypePrompt = await this.promptRegistry.resolveEntry("archetype", normalizedArchetypeId, profileId);
+        if (archetypePrompt) {
+          return archetypePrompt.content;
+        }
       }
     }
 
-    return DEFAULT_WORKER_SYSTEM_PROMPT;
+    try {
+      return await this.promptRegistry.resolve("archetype", "worker", profileId);
+    } catch (error) {
+      this.logDebug("prompt:resolve:fallback", {
+        category: "archetype",
+        promptId: "worker",
+        profileId,
+        message: error instanceof Error ? error.message : String(error)
+      });
+      return DEFAULT_WORKER_SYSTEM_PROMPT;
+    }
   }
 
   private injectWorkerIdentityContext(descriptor: AgentDescriptor, systemPrompt: string): string {
@@ -3350,14 +3463,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     ].join("\n");
 
     return systemPrompt + identityBlock;
-  }
-
-  private resolveRequiredArchetypePrompt(archetypeId: string): string {
-    const prompt = this.archetypePromptRegistry.resolvePrompt(archetypeId);
-    if (!prompt) {
-      throw new Error(`Missing archetype prompt: ${archetypeId}`);
-    }
-    return prompt;
   }
 
   private async resolveAndValidateCwd(cwd: string): Promise<string> {
@@ -3528,7 +3633,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     const memoryOwnerDescriptor = this.descriptors.get(memoryOwnerAgentId);
     if (memoryOwnerDescriptor?.role === "manager") {
-      await this.ensureAgentMemoryFile(memoryFilePath);
+      await this.ensureAgentMemoryFile(
+        memoryFilePath,
+        normalizeOptionalAgentId(memoryOwnerDescriptor.profileId) ?? memoryOwnerDescriptor.agentId
+      );
     }
 
     const sessionMemoryContent = await readFile(memoryFilePath, "utf8");
@@ -3537,7 +3645,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const profileMemoryOwnerId = this.resolveNonDefaultSessionProfileId(memoryOwnerAgentId);
     if (profileMemoryOwnerId) {
       const profileMemoryPath = getProfileMemoryPath(this.config.paths.dataDir, profileMemoryOwnerId);
-      await this.ensureAgentMemoryFile(profileMemoryPath);
+      await this.ensureAgentMemoryFile(profileMemoryPath, profileMemoryOwnerId);
       const profileMemoryContent = await readFile(profileMemoryPath, "utf8");
       memoryContent = buildSessionMemoryRuntimeView(profileMemoryContent, sessionMemoryContent);
     }
@@ -4336,13 +4444,18 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       (omittedCount > 0 ? ` (+${omittedCount} more)` : "");
 
     const workerWord = eligibleWorkerIds.length === 1 ? "worker" : "workers";
-
-    const watchdogMessage = `⚠️ [IDLE WORKER WATCHDOG — BATCHED]
-
-${eligibleWorkerIds.length} ${workerWord} went idle without reporting this turn.
-Workers: ${workersPreview}
-
-Use list_agents({"verbose":true,"limit":50,"offset":0}) for a paged full list.`;
+    const profileId = managerDescriptor.profileId ?? managerId;
+    const watchdogTemplate = await this.resolvePromptWithFallback(
+      "operational",
+      "idle-watchdog",
+      profileId,
+      IDLE_WORKER_WATCHDOG_MESSAGE_TEMPLATE
+    );
+    const watchdogMessage = resolvePromptVariables(watchdogTemplate, {
+      WORKER_COUNT: String(eligibleWorkerIds.length),
+      WORKER_WORD: workerWord,
+      WORKER_IDS: workersPreview
+    });
 
     if (this.isRuntimeInContextRecovery(managerId)) {
       return;
@@ -4562,8 +4675,15 @@ Use list_agents({"verbose":true,"limit":50,"offset":0}) for a paged full list.`;
     }
 
     const apiKey = await modelRegistry.getApiKey(model);
+    const memoryMergePrompt = await this.resolvePromptWithFallback(
+      "operational",
+      "memory-merge",
+      descriptor.profileId ?? descriptor.managerId,
+      MEMORY_MERGE_SYSTEM_PROMPT
+    );
     const mergedContent = await executeLLMMerge(model, profileMemoryContent, sessionMemoryContent, {
-      apiKey
+      apiKey,
+      systemPrompt: memoryMergePrompt
     });
 
     return {
@@ -4591,15 +4711,65 @@ Use list_agents({"verbose":true,"limit":50,"offset":0}) for a paged full list.`;
       return true;
     }
 
-    return isDefaultMemoryTemplateContent(sessionMemoryContent);
+    return this.isDefaultMemoryTemplateContent(sessionMemoryContent);
+  }
+
+  private isDefaultMemoryTemplateContent(content: string): boolean {
+    const normalizedLines = normalizeMemoryTemplateLines(content);
+
+    if (normalizedLines.length !== this.defaultMemoryTemplateNormalizedLines.length) {
+      return false;
+    }
+
+    for (let index = 0; index < normalizedLines.length; index += 1) {
+      if (normalizedLines[index] !== this.defaultMemoryTemplateNormalizedLines[index]) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  private async refreshDefaultMemoryTemplateNormalizedLines(): Promise<void> {
+    const memoryTemplate = await this.resolvePromptWithFallback(
+      "operational",
+      "memory-template",
+      undefined,
+      DEFAULT_MEMORY_TEMPLATE_FALLBACK_CONTENT
+    );
+
+    const normalizedLines = normalizeMemoryTemplateLines(memoryTemplate);
+    if (normalizedLines.length === 0) {
+      this.defaultMemoryTemplateNormalizedLines = DEFAULT_MEMORY_TEMPLATE_NORMALIZED_LINES;
+      return;
+    }
+
+    this.defaultMemoryTemplateNormalizedLines = normalizedLines;
+  }
+
+  private async resolveMemoryTemplateContent(profileId: string): Promise<string> {
+    return this.resolvePromptWithFallback(
+      "operational",
+      "memory-template",
+      profileId,
+      DEFAULT_MEMORY_TEMPLATE_FALLBACK_CONTENT
+    );
   }
 
   private async ensureMemoryFilesForBoot(): Promise<void> {
-    await this.persistenceService.ensureMemoryFilesForBoot();
+    await this.persistenceService.ensureMemoryFilesForBoot({
+      resolveMemoryTemplateContent: (profileId) => this.resolveMemoryTemplateContent(profileId)
+    });
   }
 
-  private async ensureAgentMemoryFile(memoryFilePath: string): Promise<void> {
-    await this.persistenceService.ensureAgentMemoryFile(memoryFilePath);
+  private async ensureAgentMemoryFile(memoryFilePath: string, profileId?: string): Promise<void> {
+    const resolvedProfileId =
+      normalizeOptionalAgentId(profileId) ??
+      this.resolvePreferredManagerId({ includeStoppedOnRestart: true }) ??
+      "default";
+    const memoryTemplateContent = await this.resolveMemoryTemplateContent(resolvedProfileId);
+
+    await this.persistenceService.ensureAgentMemoryFile(memoryFilePath, memoryTemplateContent);
   }
 
   private async deleteManagerSessionFile(sessionFile: string): Promise<void> {
@@ -4918,26 +5088,6 @@ function resolveModel(
   }
 
   return modelRegistry.getAll()[0];
-}
-
-function isDefaultMemoryTemplateContent(content: string): boolean {
-  const normalizedLines = content
-    .replace(/\r\n/g, "\n")
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
-
-  if (normalizedLines.length !== DEFAULT_MEMORY_TEMPLATE_NORMALIZED_LINES.length) {
-    return false;
-  }
-
-  for (let index = 0; index < normalizedLines.length; index += 1) {
-    if (normalizedLines[index] !== DEFAULT_MEMORY_TEMPLATE_NORMALIZED_LINES[index]) {
-      return false;
-    }
-  }
-
-  return true;
 }
 
 function previewForLog(text: string, maxLength = 160): string {

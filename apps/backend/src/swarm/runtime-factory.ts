@@ -11,7 +11,7 @@ import { openSessionManagerWithSizeGuard } from "./session-file-guard.js";
 import { CodexAgentRuntime } from "./codex-agent-runtime.js";
 import type { RuntimeErrorEvent, RuntimeSessionEvent, SwarmAgentRuntime } from "./runtime-types.js";
 import { buildSwarmTools, type SwarmToolHost } from "./swarm-tools.js";
-import { normalizeArchetypeId } from "./archetypes/archetype-prompt-registry.js";
+import { normalizeArchetypeId } from "./prompt-registry.js";
 import type {
   AgentContextUsage,
   AgentDescriptor,
