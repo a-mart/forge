@@ -24,10 +24,13 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 
-import { Badge } from '@/components/ui/badge'
 import { SettingsSection } from './settings-row'
 import { PromptEditor } from './prompts/PromptEditor'
-import { fetchPromptList, fetchPromptPreview } from './prompts/prompt-api'
+import {
+  fetchPromptList,
+  fetchPromptPreview,
+  type PromptPreviewSection,
+} from './prompts/prompt-api'
 import type { PromptCategory, PromptListEntry, ManagerProfile } from '@middleman/protocol'
 
 /* ------------------------------------------------------------------ */
@@ -115,8 +118,7 @@ export function SettingsPrompts({ wsUrl, profiles, promptChangeKey }: SettingsPr
 
   // ---- Preview state ----
   const [previewOpen, setPreviewOpen] = useState(false)
-  const [previewContent, setPreviewContent] = useState('')
-  const [previewComponents, setPreviewComponents] = useState<string[]>([])
+  const [previewSections, setPreviewSections] = useState<PromptPreviewSection[]>([])
   const [previewLoading, setPreviewLoading] = useState(false)
   const [previewError, setPreviewError] = useState<string | null>(null)
 
@@ -127,8 +129,7 @@ export function SettingsPrompts({ wsUrl, profiles, promptChangeKey }: SettingsPr
     setPreviewError(null)
     try {
       const result = await fetchPromptPreview(wsUrl, selectedProfileId)
-      setPreviewContent(result.content)
-      setPreviewComponents(result.components)
+      setPreviewSections(result.sections)
     } catch (err) {
       setPreviewError(err instanceof Error ? err.message : 'Failed to load preview')
     } finally {
@@ -172,7 +173,7 @@ export function SettingsPrompts({ wsUrl, profiles, promptChangeKey }: SettingsPr
                     <Eye className="size-4" />
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent>Preview System Prompt</TooltipContent>
+                <TooltipContent>Preview full runtime context</TooltipContent>
               </Tooltip>
             </TooltipProvider>
           </div>
@@ -199,7 +200,7 @@ export function SettingsPrompts({ wsUrl, profiles, promptChangeKey }: SettingsPr
                     Preview
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent>Preview the full resolved system prompt</TooltipContent>
+                <TooltipContent>Preview the full runtime context</TooltipContent>
               </Tooltip>
             </TooltipProvider>
           ) : undefined
@@ -283,10 +284,9 @@ export function SettingsPrompts({ wsUrl, profiles, promptChangeKey }: SettingsPr
       <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
         <DialogContent className="!max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
           <DialogHeader>
-            <DialogTitle>System Prompt Preview</DialogTitle>
+            <DialogTitle>Runtime Context Preview</DialogTitle>
             <DialogDescription>
-              This is the complete system prompt that would be used for a new session with this
-              profile.
+              This is the complete context a new session would receive for this profile.
             </DialogDescription>
           </DialogHeader>
           {previewLoading ? (
@@ -299,17 +299,35 @@ export function SettingsPrompts({ wsUrl, profiles, promptChangeKey }: SettingsPr
             </div>
           ) : (
             <div className="flex flex-col gap-3 min-h-0 flex-1 overflow-hidden">
-              <div className="flex flex-wrap gap-1.5 shrink-0">
-                {previewComponents.map((c) => (
-                  <Badge key={c} variant="secondary" className="text-xs">
-                    {c}
-                  </Badge>
-                ))}
+              <div className="shrink-0 text-xs text-muted-foreground">
+                {previewSections.length} {previewSections.length === 1 ? 'section' : 'sections'}
               </div>
-              <div className="flex-1 min-h-0 overflow-auto rounded-md border bg-muted/50">
-                <pre className="p-4 text-xs leading-relaxed whitespace-pre-wrap break-words font-mono">
-                  {previewContent}
-                </pre>
+              <div className="flex-1 min-h-0 overflow-auto rounded-md border bg-muted/50 p-3">
+                {previewSections.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">No preview sections were returned.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {previewSections.map((section, index) => (
+                      <details
+                        key={`${section.label}:${section.source}:${index}`}
+                        open={index === 0}
+                        className="overflow-hidden rounded-md border bg-background"
+                      >
+                        <summary className="cursor-pointer px-3 py-2 text-sm font-medium">
+                          {section.label}
+                        </summary>
+                        <div className="border-t px-3 py-2">
+                          <p className="mb-2 text-[11px] text-muted-foreground break-all">
+                            {section.source}
+                          </p>
+                          <pre className="text-xs leading-relaxed whitespace-pre-wrap break-words font-mono">
+                            {section.content}
+                          </pre>
+                        </div>
+                      </details>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           )}

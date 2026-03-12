@@ -84,8 +84,18 @@ const PROMPT_ITEM_PATTERN = /^\/api\/prompts\/([^/]+)\/([^/]+)$/;
 // Factory
 // ---------------------------------------------------------------------------
 
+export interface PromptPreviewSection {
+  label: string;
+  content: string;
+  source: string;
+}
+
+export interface PromptPreviewResponse {
+  sections: PromptPreviewSection[];
+}
+
 export interface PromptPreviewProvider {
-  previewManagerSystemPrompt(profileId: string): Promise<{ content: string; components: string[] }>;
+  previewManagerSystemPrompt(profileId: string): Promise<PromptPreviewResponse>;
 }
 
 export function createPromptRoutes(options: {
@@ -96,7 +106,7 @@ export function createPromptRoutes(options: {
   const { promptRegistry, broadcastEvent, promptPreviewProvider } = options;
 
   return [
-    // ── Preview resolved system prompt ────────────────────────
+    // ── Preview full manager runtime context ──────────────────
     {
       methods: "GET, OPTIONS",
       matches: (pathname) => pathname === PROMPTS_PREVIEW_PATH,

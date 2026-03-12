@@ -75,9 +75,14 @@ export async function savePromptOverride(
   if (!response.ok) throw new Error(await readApiError(response))
 }
 
-export interface PromptPreviewResponse {
+export interface PromptPreviewSection {
+  label: string
   content: string
-  components: string[]
+  source: string
+}
+
+export interface PromptPreviewResponse {
+  sections: PromptPreviewSection[]
 }
 
 export async function fetchPromptPreview(
@@ -88,7 +93,22 @@ export async function fetchPromptPreview(
   const endpoint = resolveApiEndpoint(wsUrl, `/api/prompts/preview?${params}`)
   const response = await fetch(endpoint)
   if (!response.ok) throw new Error(await readApiError(response))
-  return (await response.json()) as PromptPreviewResponse
+
+  const data = (await response.json()) as { sections?: unknown }
+  const sections = Array.isArray(data?.sections)
+    ? data.sections
+        .filter((section): section is PromptPreviewSection => {
+          if (!section || typeof section !== 'object') return false
+          const candidate = section as Partial<PromptPreviewSection>
+          return (
+            typeof candidate.label === 'string' &&
+            typeof candidate.content === 'string' &&
+            typeof candidate.source === 'string'
+          )
+        })
+    : []
+
+  return { sections }
 }
 
 export async function deletePromptOverride(

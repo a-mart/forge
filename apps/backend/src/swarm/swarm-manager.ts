@@ -377,6 +377,7 @@ Use list_agents({"verbose":true,"limit":50,"offset":0}) for a paged full list.`;
 
 // Retain recent non-web activity while preserving the full user-facing web transcript.
 const SWARM_CONTEXT_FILE_NAME = "SWARM.md";
+const AGENTS_CONTEXT_FILE_NAME = "AGENTS.md";
 // Integration services add ~3 event listeners per profile (Telegram conversation_message,
 // Slack conversation_message, Telegram session_lifecycle). Keep this limit above
 // base listeners + (3 × expected maximum profiles).
@@ -436,6 +437,12 @@ interface WorkerWatchdogState {
   consecutiveNotifications: number;
   suppressedUntilMs: number;
   circuitOpen: boolean;
+}
+
+interface PromptPreviewSection {
+  label: string;
+  content: string;
+  source: string;
 }
 
 interface ModelCapacityBlock {
@@ -1513,49 +1520,119 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     });
   }
 
-  async previewManagerSystemPrompt(profileId: string): Promise<{ content: string; components: string[] }> {
+  async previewManagerSystemPrompt(profileId: string): Promise<{ sections: PromptPreviewSection[] }> {
     const profile = this.profiles.get(profileId);
     if (!profile) {
       throw new Error(`Unknown profile: ${profileId}`);
     }
 
-    // Use the profile's default session descriptor if available, otherwise build a minimal one
     const defaultDescriptor = this.descriptors.get(profile.defaultSessionAgentId);
-    const descriptor: AgentDescriptor = defaultDescriptor
-      ? { ...defaultDescriptor }
-      : {
-          agentId: profile.defaultSessionAgentId,
-          role: "manager",
-          profileId,
-          status: "idle",
-          model: { provider: "default", modelId: "default" },
-          sessionFile: "",
-        } as AgentDescriptor;
+    const descriptor =
+      (this.isSessionAgent(defaultDescriptor) ? defaultDescriptor : undefined) ??
+      this.getSessionsForProfile(profileId)[0];
 
-    const components: string[] = [];
+    if (!descriptor || descriptor.role !== "manager") {
+      throw new Error(`Profile default session is missing: ${profile.defaultSessionAgentId}`);
+    }
 
-    // Resolve archetype
+    const resolvedProfileId = normalizeOptionalAgentId(descriptor.profileId) ?? profileId;
     const archetypeId = descriptor.archetypeId
       ? normalizeArchetypeId(descriptor.archetypeId) || MANAGER_ARCHETYPE_ID
       : MANAGER_ARCHETYPE_ID;
-    components.push(`archetype:${archetypeId}`);
+    const archetypeEntry = await this.promptRegistry.resolveEntry("archetype", archetypeId, resolvedProfileId);
+    if (!archetypeEntry) {
+      throw new Error(`Prompt not found: archetype/${archetypeId}`);
+    }
 
-    let prompt = await this.promptRegistry.resolve("archetype", archetypeId, profileId);
+    let systemPrompt = archetypeEntry.content;
+    let integrationContextAdded = false;
 
-    // Append integration context if available
     if (this.integrationContextProvider) {
       try {
-        const integrationContext = this.integrationContextProvider(profileId).trim();
+        const integrationContext = this.integrationContextProvider(resolvedProfileId).trim();
         if (integrationContext) {
-          prompt = `${prompt}\n\n${integrationContext}`;
-          components.push("integration-context");
+          systemPrompt = `${systemPrompt}\n\n${integrationContext}`;
+          integrationContextAdded = true;
         }
-      } catch {
-        // Silently skip integration context on error
+      } catch (error) {
+        this.logDebug("manager:integration_context:error", {
+          agentId: descriptor.agentId,
+          profileId: resolvedProfileId,
+          message: error instanceof Error ? error.message : String(error)
+        });
       }
     }
 
-    return { content: prompt, components };
+    const sections: PromptPreviewSection[] = [
+      {
+        label: "System Prompt",
+        source: integrationContextAdded
+          ? `${archetypeEntry.sourcePath} (+ integration context)`
+          : archetypeEntry.sourcePath,
+        content: systemPrompt
+      }
+    ];
+
+    const memoryResources = await this.getMemoryRuntimeResources(descriptor);
+    sections.push({
+      label: "Memory Composite",
+      source: memoryResources.memoryContextFile.path,
+      content: memoryResources.memoryContextFile.content
+    });
+
+    const agentsPath = join(descriptor.cwd, AGENTS_CONTEXT_FILE_NAME);
+    if (existsSync(agentsPath)) {
+      try {
+        sections.push({
+          label: AGENTS_CONTEXT_FILE_NAME,
+          source: agentsPath,
+          content: await readFile(agentsPath, "utf8")
+        });
+      } catch (error) {
+        this.logDebug("prompt:preview:agents_read:error", {
+          profileId: resolvedProfileId,
+          path: agentsPath,
+          message: error instanceof Error ? error.message : String(error)
+        });
+      }
+    }
+
+    const swarmContextFiles = await this.getSwarmContextFiles(descriptor.cwd);
+    for (const contextFile of swarmContextFiles) {
+      sections.push({
+        label: SWARM_CONTEXT_FILE_NAME,
+        source: contextFile.path,
+        content: contextFile.content
+      });
+    }
+
+    const skillMetadataByPath = new Map(
+      this.skillMetadataService.getSkillMetadata().map((metadata) => [metadata.path, metadata])
+    );
+    const seenSkillPaths = new Set<string>();
+    for (const skillPath of memoryResources.additionalSkillPaths) {
+      if (seenSkillPaths.has(skillPath)) {
+        continue;
+      }
+      seenSkillPaths.add(skillPath);
+
+      try {
+        const skillMetadata = skillMetadataByPath.get(skillPath);
+        sections.push({
+          label: skillMetadata ? `Skill: ${skillMetadata.skillName}` : "Skill",
+          source: skillPath,
+          content: await readFile(skillPath, "utf8")
+        });
+      } catch (error) {
+        this.logDebug("prompt:preview:skill_read:error", {
+          profileId: resolvedProfileId,
+          path: skillPath,
+          message: error instanceof Error ? error.message : String(error)
+        });
+      }
+    }
+
+    return { sections };
   }
 
   getAgent(agentId: string): AgentDescriptor | undefined {
