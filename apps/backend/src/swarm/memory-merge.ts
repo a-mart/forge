@@ -1,4 +1,5 @@
 import { complete, type Api, type AssistantMessage, type Model } from "@mariozechner/pi-ai";
+import type { PromptRegistry } from "./prompt-registry.js";
 
 export const MEMORY_MERGE_SYSTEM_PROMPT = [
   "You are a memory file editor. You receive two memory files and must produce one consolidated memory file.",
@@ -16,6 +17,8 @@ export const MEMORY_MERGE_SYSTEM_PROMPT = [
 
 export interface ExecuteLLMMergeOptions {
   systemPrompt?: string;
+  promptRegistry?: Pick<PromptRegistry, "resolve">;
+  profileId?: string;
   apiKey?: string;
   now?: () => number;
   completeFn?: typeof complete;
@@ -65,11 +68,15 @@ export async function executeLLMMerge(
 ): Promise<string> {
   const mergePrompt = buildMemoryMergeUserPrompt(profileContent, sessionContent);
   const invokeComplete = options?.completeFn ?? complete;
+  const resolvedPromptFromRegistry = options?.promptRegistry
+    ? await options.promptRegistry.resolve("operational", "memory-merge", options.profileId)
+    : undefined;
+  const systemPrompt = options?.systemPrompt ?? resolvedPromptFromRegistry ?? MEMORY_MERGE_SYSTEM_PROMPT;
 
   const response = await invokeComplete(
     model,
     {
-      systemPrompt: options?.systemPrompt ?? MEMORY_MERGE_SYSTEM_PROMPT,
+      systemPrompt,
       messages: [
         {
           role: "user",

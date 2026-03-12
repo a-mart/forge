@@ -14,6 +14,8 @@ import type {
   ManagerReasoningLevel,
   MessageSourceContext,
   ManagerProfile,
+  PromptCategory,
+  PromptSourceLayer,
 } from './shared-types.js'
 
 export interface ConversationMessageEvent {
@@ -288,6 +290,14 @@ export interface PlaywrightDiscoverySettingsUpdatedEvent {
   settings: PlaywrightDiscoverySettings
 }
 
+export interface PromptChangedEvent {
+  type: 'prompt_changed'
+  category: PromptCategory
+  promptId: string
+  layer: PromptSourceLayer
+  action: 'saved' | 'deleted'
+}
+
 export type ServerEvent =
   | { type: 'ready'; serverTime: string; subscribedAgentId: string }
   | { type: 'conversation_reset'; agentId: string; timestamp: string; reason: 'user_new_command' | 'api_reset' }
@@ -323,4 +333,5 @@ export type ServerEvent =
   | PlaywrightDiscoverySnapshotEvent
   | PlaywrightDiscoveryUpdatedEvent
   | PlaywrightDiscoverySettingsUpdatedEvent
+  | PromptChangedEvent
   | { type: 'error'; code: string; message: string; requestId?: string }

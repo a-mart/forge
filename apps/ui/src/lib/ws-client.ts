@@ -879,6 +879,10 @@ export class ManagerWsClient {
         })
         break
 
+      case 'prompt_changed':
+        this.updateState({ promptChangeKey: this.state.promptChangeKey + 1 })
+        break
+
       case 'error':
         this.updateState({ lastError: event.message })
         this.pushSystemMessage(`${event.code}: ${event.message}`)

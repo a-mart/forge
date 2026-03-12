@@ -136,6 +136,7 @@ async function main(): Promise<void> {
     playwrightLivePreviewService,
     playwrightSettingsService,
     playwrightEnvEnabledOverride,
+    promptRegistry: swarmManager.promptRegistry,
   });
   await wsServer.start();
 
