@@ -75,6 +75,22 @@ export async function savePromptOverride(
   if (!response.ok) throw new Error(await readApiError(response))
 }
 
+export interface PromptPreviewResponse {
+  content: string
+  components: string[]
+}
+
+export async function fetchPromptPreview(
+  wsUrl: string | undefined,
+  profileId: string,
+): Promise<PromptPreviewResponse> {
+  const params = new URLSearchParams({ profileId })
+  const endpoint = resolveApiEndpoint(wsUrl, `/api/prompts/preview?${params}`)
+  const response = await fetch(endpoint)
+  if (!response.ok) throw new Error(await readApiError(response))
+  return (await response.json()) as PromptPreviewResponse
+}
+
 export async function deletePromptOverride(
   wsUrl: string | undefined,
   category: PromptCategory,

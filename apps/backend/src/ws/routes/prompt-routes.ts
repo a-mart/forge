@@ -76,6 +76,7 @@ export interface PromptRegistryForRoutes {
 // ---------------------------------------------------------------------------
 
 const PROMPTS_LIST_PATH = "/api/prompts";
+const PROMPTS_PREVIEW_PATH = "/api/prompts/preview";
 // Matches /api/prompts/<category>/<promptId>
 const PROMPT_ITEM_PATTERN = /^\/api\/prompts\/([^/]+)\/([^/]+)$/;
 
@@ -83,13 +84,63 @@ const PROMPT_ITEM_PATTERN = /^\/api\/prompts\/([^/]+)\/([^/]+)$/;
 // Factory
 // ---------------------------------------------------------------------------
 
+export interface PromptPreviewProvider {
+  previewManagerSystemPrompt(profileId: string): Promise<{ content: string; components: string[] }>;
+}
+
 export function createPromptRoutes(options: {
   promptRegistry: PromptRegistryForRoutes;
   broadcastEvent: (event: ServerEvent) => void;
+  promptPreviewProvider?: PromptPreviewProvider;
 }): HttpRoute[] {
-  const { promptRegistry, broadcastEvent } = options;
+  const { promptRegistry, broadcastEvent, promptPreviewProvider } = options;
 
   return [
+    // ── Preview resolved system prompt ────────────────────────
+    {
+      methods: "GET, OPTIONS",
+      matches: (pathname) => pathname === PROMPTS_PREVIEW_PATH,
+      handle: async (request, response, requestUrl) => {
+        const methods = "GET, OPTIONS";
+
+        if (request.method === "OPTIONS") {
+          applyCorsHeaders(request, response, methods);
+          response.statusCode = 204;
+          response.end();
+          return;
+        }
+
+        if (request.method !== "GET") {
+          applyCorsHeaders(request, response, methods);
+          response.setHeader("Allow", methods);
+          sendJson(response, 405, { error: "Method Not Allowed" });
+          return;
+        }
+
+        applyCorsHeaders(request, response, methods);
+
+        if (!promptPreviewProvider) {
+          sendJson(response, 501, { error: "Prompt preview not available" });
+          return;
+        }
+
+        const profileId = requestUrl.searchParams.get("profileId");
+        if (!profileId || profileId.trim().length === 0) {
+          sendJson(response, 400, { error: "profileId query parameter is required." });
+          return;
+        }
+
+        try {
+          const result = await promptPreviewProvider.previewManagerSystemPrompt(profileId);
+          sendJson(response, 200, result as unknown as Record<string, unknown>);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          const statusCode = message.includes("Unknown profile") ? 404 : 500;
+          sendJson(response, statusCode, { error: message });
+        }
+      },
+    },
+
     // ── List all prompts ──────────────────────────────────────
     {
       methods: "GET, OPTIONS",

@@ -177,6 +177,7 @@ export class SwarmWebSocketServer {
         ? createPromptRoutes({
             promptRegistry: options.promptRegistry,
             broadcastEvent: (event) => this.wsHandler.broadcastToSubscribed(event),
+            promptPreviewProvider: this.swarmManager,
           })
         : []),
     ];

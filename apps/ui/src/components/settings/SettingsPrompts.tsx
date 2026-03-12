@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Loader2 } from 'lucide-react'
+import { Eye, Loader2 } from 'lucide-react'
 import {
   Select,
   SelectContent,
@@ -9,9 +9,25 @@ import {
 } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import { Label } from '@/components/ui/label'
+import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import { Badge } from '@/components/ui/badge'
 import { SettingsSection } from './settings-row'
 import { PromptEditor } from './prompts/PromptEditor'
-import { fetchPromptList } from './prompts/prompt-api'
+import { fetchPromptList, fetchPromptPreview } from './prompts/prompt-api'
 import type { PromptCategory, PromptListEntry, ManagerProfile } from '@middleman/protocol'
 
 /* ------------------------------------------------------------------ */
@@ -97,6 +113,29 @@ export function SettingsPrompts({ wsUrl, profiles, promptChangeKey }: SettingsPr
     [promptList, selectedCategory, selectedPromptId],
   )
 
+  // ---- Preview state ----
+  const [previewOpen, setPreviewOpen] = useState(false)
+  const [previewContent, setPreviewContent] = useState('')
+  const [previewComponents, setPreviewComponents] = useState<string[]>([])
+  const [previewLoading, setPreviewLoading] = useState(false)
+  const [previewError, setPreviewError] = useState<string | null>(null)
+
+  const handlePreview = useCallback(async () => {
+    if (!selectedProfileId) return
+    setPreviewOpen(true)
+    setPreviewLoading(true)
+    setPreviewError(null)
+    try {
+      const result = await fetchPromptPreview(wsUrl, selectedProfileId)
+      setPreviewContent(result.content)
+      setPreviewComponents(result.components)
+    } catch (err) {
+      setPreviewError(err instanceof Error ? err.message : 'Failed to load preview')
+    } finally {
+      setPreviewLoading(false)
+    }
+  }, [wsUrl, selectedProfileId])
+
   return (
     <div className="flex flex-col gap-6">
       {/* Profile scope selector */}
@@ -105,20 +144,37 @@ export function SettingsPrompts({ wsUrl, profiles, promptChangeKey }: SettingsPr
           label="Profile"
           description="Select which profile's prompt overrides to manage."
         >
-          <div className="flex flex-col gap-1.5">
-            <Label className="text-xs font-medium text-muted-foreground">Configuration scope</Label>
-            <Select value={selectedProfileId} onValueChange={setSelectedProfileId}>
-              <SelectTrigger className="w-full sm:w-64">
-                <SelectValue placeholder="Select profile" />
-              </SelectTrigger>
-              <SelectContent>
-                {profiles.map((p) => (
-                  <SelectItem key={p.profileId} value={p.profileId}>
-                    {p.displayName || p.profileId}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+          <div className="flex items-end gap-2">
+            <div className="flex flex-col gap-1.5">
+              <Label className="text-xs font-medium text-muted-foreground">Configuration scope</Label>
+              <Select value={selectedProfileId} onValueChange={setSelectedProfileId}>
+                <SelectTrigger className="w-full sm:w-64">
+                  <SelectValue placeholder="Select profile" />
+                </SelectTrigger>
+                <SelectContent>
+                  {profiles.map((p) => (
+                    <SelectItem key={p.profileId} value={p.profileId}>
+                      {p.displayName || p.profileId}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    onClick={handlePreview}
+                    disabled={!selectedProfileId}
+                  >
+                    <Eye className="size-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Preview System Prompt</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           </div>
         </SettingsSection>
       )}
@@ -127,6 +183,27 @@ export function SettingsPrompts({ wsUrl, profiles, promptChangeKey }: SettingsPr
       <SettingsSection
         label="Prompt Templates"
         description="Browse and edit system prompts. Overrides are scoped to the selected profile."
+        cta={
+          profiles.length <= 1 ? (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handlePreview}
+                    disabled={!selectedProfileId}
+                    className="gap-1.5"
+                  >
+                    <Eye className="size-3.5" />
+                    Preview
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Preview the full resolved system prompt</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          ) : undefined
+        }
       >
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
           {/* Category */}
@@ -201,6 +278,43 @@ export function SettingsPrompts({ wsUrl, profiles, promptChangeKey }: SettingsPr
           />
         </>
       )}
+
+      {/* Preview dialog */}
+      <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
+        <DialogContent className="max-w-3xl max-h-[85vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle>System Prompt Preview</DialogTitle>
+            <DialogDescription>
+              This is the complete system prompt that would be used for a new session with this
+              profile.
+            </DialogDescription>
+          </DialogHeader>
+          {previewLoading ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="size-5 animate-spin text-muted-foreground" />
+            </div>
+          ) : previewError ? (
+            <div className="rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2">
+              <p className="text-xs text-destructive">{previewError}</p>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-3 min-h-0 flex-1">
+              <div className="flex flex-wrap gap-1.5">
+                {previewComponents.map((c) => (
+                  <Badge key={c} variant="secondary" className="text-xs">
+                    {c}
+                  </Badge>
+                ))}
+              </div>
+              <ScrollArea className="flex-1 min-h-0 rounded-md border bg-muted/50">
+                <pre className="p-4 text-xs leading-relaxed whitespace-pre-wrap break-words font-mono">
+                  {previewContent}
+                </pre>
+              </ScrollArea>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

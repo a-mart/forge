@@ -1513,6 +1513,51 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     });
   }
 
+  async previewManagerSystemPrompt(profileId: string): Promise<{ content: string; components: string[] }> {
+    const profile = this.profiles.get(profileId);
+    if (!profile) {
+      throw new Error(`Unknown profile: ${profileId}`);
+    }
+
+    // Use the profile's default session descriptor if available, otherwise build a minimal one
+    const defaultDescriptor = this.descriptors.get(profile.defaultSessionAgentId);
+    const descriptor: AgentDescriptor = defaultDescriptor
+      ? { ...defaultDescriptor }
+      : {
+          agentId: profile.defaultSessionAgentId,
+          role: "manager",
+          profileId,
+          status: "idle",
+          model: { provider: "default", modelId: "default" },
+          sessionFile: "",
+        } as AgentDescriptor;
+
+    const components: string[] = [];
+
+    // Resolve archetype
+    const archetypeId = descriptor.archetypeId
+      ? normalizeArchetypeId(descriptor.archetypeId) || MANAGER_ARCHETYPE_ID
+      : MANAGER_ARCHETYPE_ID;
+    components.push(`archetype:${archetypeId}`);
+
+    let prompt = await this.promptRegistry.resolve("archetype", archetypeId, profileId);
+
+    // Append integration context if available
+    if (this.integrationContextProvider) {
+      try {
+        const integrationContext = this.integrationContextProvider(profileId).trim();
+        if (integrationContext) {
+          prompt = `${prompt}\n\n${integrationContext}`;
+          components.push("integration-context");
+        }
+      } catch {
+        // Silently skip integration context on error
+      }
+    }
+
+    return { content: prompt, components };
+  }
+
   getAgent(agentId: string): AgentDescriptor | undefined {
     const descriptor = this.descriptors.get(agentId);
     if (!descriptor) {
