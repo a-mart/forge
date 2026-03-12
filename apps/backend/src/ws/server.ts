@@ -18,6 +18,7 @@ import type { HttpRoute } from "./routes/http-route.js";
 import { createIntegrationRoutes } from "./routes/integration-routes.js";
 import { createPlaywrightLiveRoutes } from "./routes/playwright-live-routes.js";
 import { createPlaywrightRoutes } from "./routes/playwright-routes.js";
+import { createPromptRoutes, type PromptRegistryForRoutes } from "./routes/prompt-routes.js";
 import { createSchedulerRoutes } from "./routes/scheduler-routes.js";
 import { createSettingsRoutes, type SettingsRouteBundle } from "./routes/settings-routes.js";
 import { createTranscriptionRoutes } from "./routes/transcription-routes.js";
@@ -123,6 +124,7 @@ export class SwarmWebSocketServer {
     playwrightLivePreviewService?: PlaywrightLivePreviewService;
     playwrightSettingsService?: PlaywrightSettingsService;
     playwrightEnvEnabledOverride?: boolean;
+    promptRegistry?: PromptRegistryForRoutes;
   }) {
     this.swarmManager = options.swarmManager;
     this.host = options.host;
@@ -170,7 +172,13 @@ export class SwarmWebSocketServer {
       ...createIntegrationRoutes({
         swarmManager: this.swarmManager,
         integrationRegistry: this.integrationRegistry
-      })
+      }),
+      ...(options.promptRegistry
+        ? createPromptRoutes({
+            promptRegistry: options.promptRegistry,
+            broadcastEvent: (event) => this.wsHandler.broadcastToSubscribed(event),
+          })
+        : []),
     ];
   }
 

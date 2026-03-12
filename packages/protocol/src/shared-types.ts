@@ -125,3 +125,33 @@ export interface DirectoryItem {
   name: string
   path: string
 }
+
+// ── Prompt Centralization ─────────────────────────────────
+
+export type PromptCategory = 'archetype' | 'operational'
+
+export type PromptSourceLayer = 'profile' | 'repo' | 'builtin'
+
+export interface PromptVariableDeclaration {
+  name: string
+  description: string
+}
+
+export interface PromptListEntry {
+  category: PromptCategory
+  promptId: string
+  displayName: string
+  description: string
+  activeLayer: PromptSourceLayer
+  hasProfileOverride: boolean
+  variables: PromptVariableDeclaration[]
+}
+
+export interface PromptContentResponse {
+  category: PromptCategory
+  promptId: string
+  content: string
+  sourceLayer: PromptSourceLayer
+  sourcePath: string
+  variables: PromptVariableDeclaration[]
+}
