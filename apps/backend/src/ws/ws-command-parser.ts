@@ -1,7 +1,12 @@
 import type { ClientCommand } from "@middleman/protocol";
 import { type RawData } from "ws";
 import { parseConversationAttachments } from "./attachment-parser.js";
-import { describeSwarmModelPresets, describeSwarmReasoningLevels, isSwarmModelPreset, isSwarmReasoningLevel } from "../swarm/model-presets.js";
+import {
+  describeSwarmModelPresets,
+  describeSwarmReasoningLevels,
+  isSwarmModelPreset,
+  isSwarmReasoningLevel
+} from "../swarm/model-presets.js";
 
 export type ParsedClientCommand =
   | { ok: true; command: ClientCommand }
@@ -31,7 +36,20 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
     if (maybe.agentId !== undefined && typeof maybe.agentId !== "string") {
       return { ok: false, error: "subscribe.agentId must be a string when provided" };
     }
-    return { ok: true, command: { type: "subscribe", agentId: maybe.agentId } };
+
+    const maybeMessageCount = (maybe as { messageCount?: unknown }).messageCount;
+    if (maybeMessageCount !== undefined && !isSafeMessageCount(maybeMessageCount)) {
+      return { ok: false, error: "subscribe.messageCount must be a positive finite integer" };
+    }
+
+    return {
+      ok: true,
+      command: {
+        type: "subscribe",
+        agentId: maybe.agentId,
+        messageCount: normalizeMessageCount(maybeMessageCount)
+      }
+    };
   }
 
   if (maybe.type === "kill_agent") {
@@ -464,6 +482,23 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
   }
 
   return { ok: false, error: "Unknown command type" };
+}
+
+function isSafeMessageCount(value: unknown): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isInteger(value) &&
+    Number.isFinite(value) &&
+    value > 0
+  );
+}
+
+function normalizeMessageCount(value: unknown): number | undefined {
+  if (!isSafeMessageCount(value)) {
+    return undefined;
+  }
+
+  return value;
 }
 
 export function extractRequestId(command: ClientCommand): string | undefined {

@@ -2,7 +2,7 @@ import type { ConversationAttachment } from './attachments.js'
 import type { DeliveryMode, ManagerModelPreset, ManagerReasoningLevel } from './shared-types.js'
 
 export type ClientCommand =
-  | { type: 'subscribe'; agentId?: string }
+  | { type: 'subscribe'; agentId?: string; messageCount?: number }
   | {
       type: 'user_message'
       text: string

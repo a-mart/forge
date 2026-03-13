@@ -10,6 +10,8 @@ import { handleManagerCommand } from "./routes/manager-routes.js";
 import { handleSessionCommand } from "./routes/session-routes.js";
 
 const BOOTSTRAP_SUBSCRIPTION_AGENT_ID = "__bootstrap_manager__";
+const DEFAULT_SUBSCRIBE_MESSAGE_COUNT = 200;
+const MAX_SUBSCRIBE_MESSAGE_COUNT = 2000;
 
 export class WsHandler {
   private readonly swarmManager: SwarmManager;
@@ -139,7 +141,7 @@ export class WsHandler {
     }
 
     if (command.type === "subscribe") {
-      await this.handleSubscribe(socket, command.agentId);
+      await this.handleSubscribe(socket, command.agentId, command.messageCount);
       return;
     }
 
@@ -217,10 +219,17 @@ export class WsHandler {
     });
   }
 
-  private async handleSubscribe(socket: WebSocket, requestedAgentId?: string): Promise<void> {
+  private async handleSubscribe(
+    socket: WebSocket,
+    requestedAgentId?: string,
+    requestedMessageCount?: number,
+  ): Promise<void> {
     const managerId = this.resolveConfiguredManagerId();
     const targetAgentId =
       requestedAgentId ?? this.resolvePreferredManagerSubscriptionId() ?? this.resolveDefaultSubscriptionAgentId();
+    const messageCount = normalizeMessageCount(
+      requestedMessageCount ?? DEFAULT_SUBSCRIBE_MESSAGE_COUNT
+    );
 
     if (!this.allowNonManagerSubscriptions && managerId && targetAgentId !== managerId) {
       this.send(socket, {
@@ -247,7 +256,7 @@ export class WsHandler {
     }
 
     this.subscriptions.set(socket, targetAgentId);
-    this.sendSubscriptionBootstrap(socket, targetAgentId);
+    this.sendSubscriptionBootstrap(socket, targetAgentId, messageCount);
   }
 
   private resolveSubscribedAgentId(socket: WebSocket): string | undefined {
@@ -266,7 +275,7 @@ export class WsHandler {
     }
 
     this.subscriptions.set(socket, fallbackAgentId);
-    this.sendSubscriptionBootstrap(socket, fallbackAgentId);
+    this.sendSubscriptionBootstrap(socket, fallbackAgentId, DEFAULT_SUBSCRIBE_MESSAGE_COUNT);
 
     return fallbackAgentId;
   }
@@ -323,11 +332,15 @@ export class WsHandler {
       }
 
       this.subscriptions.set(socket, fallbackAgentId);
-      this.sendSubscriptionBootstrap(socket, fallbackAgentId);
+      this.sendSubscriptionBootstrap(socket, fallbackAgentId, DEFAULT_SUBSCRIBE_MESSAGE_COUNT);
     }
   }
 
-  private sendSubscriptionBootstrap(socket: WebSocket, targetAgentId: string): void {
+  private sendSubscriptionBootstrap(
+    socket: WebSocket,
+    targetAgentId: string,
+    requestedMessageCount?: number,
+  ): void {
     this.send(socket, {
       type: "ready",
       serverTime: new Date().toISOString(),
@@ -351,10 +364,13 @@ export class WsHandler {
         settings: this.playwrightDiscovery.getSettings()
       });
     }
+    const historyMessageCount = normalizeMessageCount(requestedMessageCount ?? DEFAULT_SUBSCRIBE_MESSAGE_COUNT);
+    const conversationHistory = this.swarmManager.getConversationHistory(targetAgentId);
+
     this.send(socket, {
       type: "conversation_history",
       agentId: targetAgentId,
-      messages: this.swarmManager.getConversationHistory(targetAgentId)
+      messages: conversationHistory.slice(-historyMessageCount)
     });
 
     const managerContextId = this.resolveManagerContextAgentId(targetAgentId);
@@ -429,4 +445,21 @@ export class WsHandler {
 
     socket.send(JSON.stringify(event));
   }
+}
+
+function normalizeMessageCount(messageCount: number | undefined): number {
+  if (typeof messageCount !== "number" || Number.isNaN(messageCount) || !Number.isFinite(messageCount)) {
+    return DEFAULT_SUBSCRIBE_MESSAGE_COUNT;
+  }
+
+  const rounded = Math.floor(messageCount);
+  if (rounded <= 0) {
+    return DEFAULT_SUBSCRIBE_MESSAGE_COUNT;
+  }
+
+  if (rounded > MAX_SUBSCRIBE_MESSAGE_COUNT) {
+    return MAX_SUBSCRIBE_MESSAGE_COUNT;
+  }
+
+  return rounded;
 }

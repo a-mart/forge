@@ -27,6 +27,23 @@ describe('ws command parser session commands', () => {
     })
   })
 
+  it('parses subscribe messageCount', () => {
+    const parsed = parseJsonCommand({
+      type: 'subscribe',
+      agentId: 'manager',
+      messageCount: 75,
+    })
+
+    expect(parsed).toEqual({
+      ok: true,
+      command: {
+        type: 'subscribe',
+        agentId: 'manager',
+        messageCount: 75,
+      },
+    })
+  })
+
   it('parses all session lifecycle commands', () => {
     const commands = [
       { type: 'stop_session', agentId: 'session-a', requestId: 'req-stop' },
@@ -76,6 +93,18 @@ describe('ws command parser session commands', () => {
       {
         payload: { type: 'merge_session_memory', agentId: '' },
         message: 'merge_session_memory.agentId must be a non-empty string',
+      },
+      {
+        payload: { type: 'subscribe', messageCount: 0 },
+        message: 'subscribe.messageCount must be a positive finite integer',
+      },
+      {
+        payload: { type: 'subscribe', messageCount: 7.2 },
+        message: 'subscribe.messageCount must be a positive finite integer',
+      },
+      {
+        payload: { type: 'subscribe', messageCount: Infinity },
+        message: 'subscribe.messageCount must be a positive finite integer',
       },
     ]
 
