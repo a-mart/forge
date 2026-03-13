@@ -258,6 +258,7 @@ export interface AgentStatusEvent {
   status: AgentStatus
   pendingCount: number
   contextUsage?: AgentContextUsage
+  contextRecoveryInProgress?: boolean
 }
 
 export interface AgentsSnapshotEvent {

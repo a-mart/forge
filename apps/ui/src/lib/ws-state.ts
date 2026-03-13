@@ -27,7 +27,7 @@ export interface ManagerWsState {
   activityMessages: AgentActivityEntry[]
   agents: AgentDescriptor[]
   profiles: ManagerProfile[]
-  statuses: Record<string, { status: AgentStatus; pendingCount: number; contextUsage?: AgentContextUsage }>
+  statuses: Record<string, { status: AgentStatus; pendingCount: number; contextUsage?: AgentContextUsage; contextRecoveryInProgress?: boolean }>
   lastError: string | null
   lastSuccess: string | null
   slackStatus: SlackStatusEvent | null

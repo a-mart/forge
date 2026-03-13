@@ -337,11 +337,13 @@ export class AgentRuntime implements SwarmAgentRuntime {
   private beginContextRecovery(): void {
     this.contextRecoveryInProgress = true;
     this.contextRecoveryGraceUntilMs = 0;
+    void this.emitStatus();
   }
 
   private endContextRecovery(graceMs = 0): void {
     this.contextRecoveryInProgress = false;
     this.contextRecoveryGraceUntilMs = graceMs > 0 ? Date.now() + graceMs : 0;
+    void this.emitStatus();
   }
 
   getCustomEntries(customType: string): unknown[] {

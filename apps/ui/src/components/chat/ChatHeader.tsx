@@ -34,6 +34,7 @@ interface ChatHeaderProps {
   showSmartCompact: boolean
   smartCompactInProgress: boolean
   onSmartCompact: () => void
+  autoCompactionInProgress?: boolean
   showStopAll: boolean
   stopAllInProgress: boolean
   stopAllDisabled: boolean
@@ -122,6 +123,7 @@ export function ChatHeader({
   showSmartCompact,
   smartCompactInProgress,
   onSmartCompact,
+  autoCompactionInProgress = false,
   showStopAll,
   stopAllInProgress,
   stopAllDisabled,
@@ -143,6 +145,7 @@ export function ChatHeader({
   const archetypeLabel = activeAgentArchetypeId?.trim()
   const isCortex = activeAgentArchetypeId === 'cortex'
   const panelLabel = isCortex ? 'Dashboard' : 'Artifacts'
+  const anyCompactionInProgress = compactInProgress || smartCompactInProgress || autoCompactionInProgress
 
   return (
     <header className="sticky top-0 z-10 flex h-[62px] w-full shrink-0 items-center justify-between gap-2 overflow-hidden border-b border-border/80 bg-card/80 px-2 backdrop-blur md:px-4">
@@ -269,32 +272,39 @@ export function ChatHeader({
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="size-9 shrink-0 text-muted-foreground hover:bg-accent/70 hover:text-foreground md:size-7"
-                  aria-label="More actions"
+                  className={cn(
+                    "size-9 shrink-0 text-muted-foreground hover:bg-accent/70 hover:text-foreground md:size-7",
+                    anyCompactionInProgress && "relative"
+                  )}
+                  aria-label={anyCompactionInProgress ? "Compaction in progress" : "More actions"}
                 >
-                  <MoreHorizontal className="size-4" />
+                  {anyCompactionInProgress ? (
+                    <Loader2 className="size-4 animate-spin text-amber-500" />
+                  ) : (
+                    <MoreHorizontal className="size-4" />
+                  )}
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" sideOffset={6} className="min-w-44">
                 {showCompact ? (
                   <DropdownMenuItem
                     onClick={onCompact}
-                    disabled={compactInProgress || smartCompactInProgress}
+                    disabled={anyCompactionInProgress}
                     className="gap-2 text-xs"
                   >
-                    {compactInProgress ? (
+                    {compactInProgress || (autoCompactionInProgress && !smartCompactInProgress) ? (
                       <Loader2 className="size-3.5 animate-spin" />
                     ) : (
                       <Minimize2 className="size-3.5" />
                     )}
-                    {compactInProgress ? 'Compacting…' : 'Compact context'}
+                    {compactInProgress ? 'Compacting…' : autoCompactionInProgress && !smartCompactInProgress ? 'Auto-compacting…' : 'Compact context'}
                   </DropdownMenuItem>
                 ) : null}
 
                 {showSmartCompact ? (
                   <DropdownMenuItem
                     onClick={onSmartCompact}
-                    disabled={smartCompactInProgress || compactInProgress}
+                    disabled={anyCompactionInProgress}
                     className="gap-2 text-xs"
                   >
                     {smartCompactInProgress ? (

@@ -706,6 +706,7 @@ export class ManagerWsClient {
             status: event.status,
             pendingCount: event.pendingCount,
             contextUsage: event.contextUsage,
+            contextRecoveryInProgress: event.contextRecoveryInProgress,
           },
         }
         this.updateState({ statuses })
@@ -903,6 +904,7 @@ export class ManagerWsClient {
             status,
             pendingCount: previous && previous.status === status ? previous.pendingCount : 0,
             contextUsage: agent.contextUsage,
+            contextRecoveryInProgress: previous?.contextRecoveryInProgress,
           },
         ]
       }),

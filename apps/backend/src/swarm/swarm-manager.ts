@@ -4079,12 +4079,15 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     contextUsage?: AgentContextUsage
   ): void {
     const resolvedContextUsage = normalizeContextUsage(contextUsage ?? this.descriptors.get(agentId)?.contextUsage);
+    const runtime = this.runtimes.get(agentId);
+    const contextRecoveryInProgress = runtime?.isContextRecoveryInProgress?.() === true;
     const payload: AgentStatusEvent = {
       type: "agent_status",
       agentId,
       status,
       pendingCount,
-      ...(resolvedContextUsage ? { contextUsage: resolvedContextUsage } : {})
+      ...(resolvedContextUsage ? { contextUsage: resolvedContextUsage } : {}),
+      ...(contextRecoveryInProgress ? { contextRecoveryInProgress } : {})
     };
 
     this.emit("agent_status", payload satisfies ServerEvent);

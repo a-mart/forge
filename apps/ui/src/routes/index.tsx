@@ -191,6 +191,11 @@ export function IndexPage() {
     isActiveManager &&
     (activeAgentStatus === 'idle' || activeAgentStatus === 'streaming')
 
+  const autoCompactionInProgress = useMemo(() => {
+    if (!activeAgentId) return false
+    return state.statuses[activeAgentId]?.contextRecoveryInProgress === true
+  }, [activeAgentId, state.statuses])
+
   const { allMessages, visibleMessages } = useVisibleMessages({
     messages: state.messages,
     activityMessages: state.activityMessages,
@@ -722,6 +727,7 @@ export function IndexPage() {
                   showSmartCompact={isActiveManager}
                   smartCompactInProgress={isSmartCompactingManager}
                   onSmartCompact={() => void handleSmartCompactManager()}
+                  autoCompactionInProgress={autoCompactionInProgress}
                   showStopAll={isActiveManager}
                   stopAllInProgress={isStoppingAllAgents}
                   stopAllDisabled={!state.connected || !canStopAllAgents}
