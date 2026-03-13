@@ -227,9 +227,9 @@ export class WsHandler {
     const managerId = this.resolveConfiguredManagerId();
     const targetAgentId =
       requestedAgentId ?? this.resolvePreferredManagerSubscriptionId() ?? this.resolveDefaultSubscriptionAgentId();
-    const messageCount = normalizeMessageCount(
-      requestedMessageCount ?? DEFAULT_SUBSCRIBE_MESSAGE_COUNT
-    );
+    const messageCount = requestedMessageCount !== undefined
+      ? normalizeMessageCount(requestedMessageCount)
+      : undefined;
 
     if (!this.allowNonManagerSubscriptions && managerId && targetAgentId !== managerId) {
       this.send(socket, {
@@ -364,13 +364,17 @@ export class WsHandler {
         settings: this.playwrightDiscovery.getSettings()
       });
     }
-    const historyMessageCount = normalizeMessageCount(requestedMessageCount ?? DEFAULT_SUBSCRIBE_MESSAGE_COUNT);
+    const historyMessageCount = requestedMessageCount !== undefined
+      ? normalizeMessageCount(requestedMessageCount)
+      : undefined;
     const conversationHistory = this.swarmManager.getConversationHistory(targetAgentId);
 
     this.send(socket, {
       type: "conversation_history",
       agentId: targetAgentId,
-      messages: conversationHistory.slice(-historyMessageCount)
+      messages: historyMessageCount !== undefined
+        ? conversationHistory.slice(-historyMessageCount)
+        : conversationHistory
     });
 
     const managerContextId = this.resolveManagerContextAgentId(targetAgentId);
@@ -447,9 +451,12 @@ export class WsHandler {
   }
 }
 
-function normalizeMessageCount(messageCount: number | undefined): number {
+function normalizeMessageCount(messageCount: number | undefined): number | undefined {
+  if (messageCount === undefined || messageCount === null) {
+    return undefined; // no limit — send full history (web UI default)
+  }
   if (typeof messageCount !== "number" || Number.isNaN(messageCount) || !Number.isFinite(messageCount)) {
-    return DEFAULT_SUBSCRIBE_MESSAGE_COUNT;
+    return undefined;
   }
 
   const rounded = Math.floor(messageCount);
