@@ -673,11 +673,31 @@ describe('SwarmWebSocketServer P0 endpoints', () => {
         agentStatusChanges: false,
       })
 
+      const legacyPrefsResponse = await fetch(`${localOrigin}/api/mobile/notification-preferences`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          enabled: false,
+          byChannel: {
+            mobilePush: true,
+          },
+        }),
+      })
+      const legacyPrefsPayload = await parseJsonResponse(legacyPrefsResponse)
+      expect(legacyPrefsPayload.status).toBe(200)
+      expect(legacyPrefsPayload.json.ok).toBe(true)
+      expect(legacyPrefsPayload.json.preferences).toMatchObject({
+        enabled: false,
+        unreadMessages: false,
+        agentStatusChanges: false,
+      })
+
       const prefsPath = getSharedMobileNotificationPreferencesPath(config.paths.dataDir)
       const storedPrefs = JSON.parse(await readFile(prefsPath, 'utf8')) as {
-        preferences: { unreadMessages: boolean; agentStatusChanges: boolean }
+        preferences: { enabled: boolean; unreadMessages: boolean; agentStatusChanges: boolean }
       }
       expect(storedPrefs.preferences).toMatchObject({
+        enabled: false,
         unreadMessages: false,
         agentStatusChanges: false,
       })

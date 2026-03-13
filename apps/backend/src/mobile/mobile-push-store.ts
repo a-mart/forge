@@ -499,7 +499,17 @@ function validatePreferencesPatch(patch: MobileNotificationPreferencesPatch): vo
     throw new Error("Request body must be a JSON object");
   }
 
-  for (const key of Object.keys(patch) as Array<keyof MobileNotificationPreferencesPatch>) {
+  const knownKeys: Array<keyof MobileNotificationPreferencesPatch> = [
+    "enabled",
+    "unreadMessages",
+    "agentStatusChanges",
+    "errors",
+    "suppressWhenActive"
+  ];
+
+  // Ignore unknown fields for forward/backward compatibility (for example, legacy payloads
+  // that include nested preference objects).
+  for (const key of knownKeys) {
     const value = patch[key];
     if (value === undefined) {
       continue;
