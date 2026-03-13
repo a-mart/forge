@@ -10,6 +10,7 @@ import {
 } from "../http-utils.js";
 import type { HttpRoute } from "./http-route.js";
 
+const HEALTH_ENDPOINT_PATH = "/api/health";
 const REBOOT_ENDPOINT_PATH = "/api/reboot";
 const RESTART_SIGNAL: NodeJS.Signals = "SIGUSR1";
 
@@ -17,6 +18,23 @@ export function createHealthRoutes(options: { resolveRepoRoot: () => string }): 
   const { resolveRepoRoot } = options;
 
   return [
+    {
+      methods: "GET",
+      matches: (pathname) => pathname === HEALTH_ENDPOINT_PATH,
+      handle: async (request, response) => {
+        if (request.method !== "GET") {
+          response.setHeader("Allow", "GET");
+          sendJson(response, 405, { error: "Method Not Allowed" });
+          return;
+        }
+
+        sendJson(response, 200, {
+          ok: true,
+          version: "1.0.0",
+          timestamp: Date.now()
+        });
+      }
+    },
     {
       methods: "POST, OPTIONS",
       matches: (pathname) => pathname === REBOOT_ENDPOINT_PATH,
