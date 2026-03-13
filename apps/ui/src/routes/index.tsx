@@ -40,6 +40,7 @@ import type {
   ManagerModelPreset,
   ManagerReasoningLevel,
 } from '@middleman/protocol'
+import { fetchSlashCommands, type SlashCommand } from '@/components/settings/slash-commands-api'
 
 export const Route = createFileRoute('/')({
   component: IndexPage,
@@ -81,6 +82,8 @@ export function IndexPage() {
   const [isArtifactsPanelOpen, setIsArtifactsPanelOpen] = useState(false)
   const [channelView, setChannelView] = useState<ChannelView>('web')
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
+  const [slashCommands, setSlashCommands] = useState<SlashCommand[]>([])
+  const slashCommandsFetchKeyRef = useRef(0)
 
   const activeAgentId = useMemo(() => {
     return state.targetAgentId ?? state.subscribedAgentId ?? chooseFallbackAgentId(state.agents)
@@ -285,6 +288,26 @@ export function IndexPage() {
     setIsArtifactsPanelOpen(false)
     setIsMobileSidebarOpen(false)
   }, [activeAgentId])
+
+  // Fetch slash commands when manager changes or when returning from settings
+  useEffect(() => {
+    if (!activeManagerId) return
+    const fetchKey = ++slashCommandsFetchKeyRef.current
+    void (async () => {
+      try {
+        const cmds = await fetchSlashCommands(wsUrl, activeManagerId)
+        // Only apply if this is still the latest fetch
+        if (fetchKey === slashCommandsFetchKeyRef.current) {
+          setSlashCommands(cmds)
+        }
+      } catch {
+        // Silently ignore — slash commands are optional
+        if (fetchKey === slashCommandsFetchKeyRef.current) {
+          setSlashCommands([])
+        }
+      }
+    })()
+  }, [wsUrl, activeManagerId, activeView])
 
   useEffect(() => {
     if (!state.lastSuccess) return
@@ -759,6 +782,7 @@ export function IndexPage() {
                   agentLabel={activeAgentLabel}
                   wsUrl={wsUrl}
                   agentId={activeAgentId ?? undefined}
+                  slashCommands={slashCommands}
                 />
               </>
             )}

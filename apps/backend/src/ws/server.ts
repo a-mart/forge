@@ -21,6 +21,7 @@ import { createPlaywrightRoutes } from "./routes/playwright-routes.js";
 import { createPromptRoutes, type PromptRegistryForRoutes } from "./routes/prompt-routes.js";
 import { createSchedulerRoutes } from "./routes/scheduler-routes.js";
 import { createSettingsRoutes, type SettingsRouteBundle } from "./routes/settings-routes.js";
+import { createSlashCommandRoutes } from "./routes/slash-command-routes.js";
 import { createTranscriptionRoutes } from "./routes/transcription-routes.js";
 import { WsHandler } from "./ws-handler.js";
 
@@ -159,6 +160,7 @@ export class SwarmWebSocketServer {
       ...createCortexRoutes({ swarmManager: this.swarmManager }),
       ...createTranscriptionRoutes({ swarmManager: this.swarmManager }),
       ...createSchedulerRoutes({ swarmManager: this.swarmManager }),
+      ...createSlashCommandRoutes({ swarmManager: this.swarmManager }),
       ...createAgentHttpRoutes({ swarmManager: this.swarmManager }),
       ...this.settingsRoutes.routes,
       ...createPlaywrightRoutes({

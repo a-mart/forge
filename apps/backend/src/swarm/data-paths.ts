@@ -90,6 +90,10 @@ export function getProfileScheduleFilePath(dataDir: string, profileId: string): 
   return join(getProfileSchedulesDir(dataDir, profileId), "schedules.json");
 }
 
+export function getProfileSlashCommandsPath(dataDir: string, profileId: string): string {
+  return join(getProfileDir(dataDir, profileId), "slash-commands.json");
+}
+
 // ── Shared paths ────────────────────────────────────────────────────────────────
 
 export function getSharedIntegrationsDir(dataDir: string): string {

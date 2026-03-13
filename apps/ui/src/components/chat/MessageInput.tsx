@@ -23,6 +23,7 @@ import { resolveApiEndpoint } from '@/lib/api-endpoint'
 import { transcribeVoice } from '@/lib/voice-transcription-client'
 import { cn } from '@/lib/utils'
 import type { ConversationAttachment } from '@middleman/protocol'
+import type { SlashCommand } from '@/components/settings/slash-commands-api'
 
 const TEXTAREA_MAX_HEIGHT = 186
 const ACTIVE_WAVEFORM_BAR_COUNT = 16
@@ -98,6 +99,7 @@ interface MessageInputProps {
   allowWhileLoading?: boolean
   wsUrl?: string
   agentId?: string
+  slashCommands?: SlashCommand[]
 }
 
 export interface MessageInputHandle {
@@ -172,6 +174,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
     allowWhileLoading = false,
     wsUrl,
     agentId,
+    slashCommands,
   },
   ref,
 ) {
@@ -179,6 +182,31 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
   const [attachedFiles, setAttachedFiles] = useState<PendingAttachment[]>([])
   const [isTranscribingVoice, setIsTranscribingVoice] = useState(false)
   const [voiceError, setVoiceError] = useState<string | null>(null)
+
+  // --- Slash command autocomplete ---
+  const [isSlashMenuOpen, setIsSlashMenuOpen] = useState(false)
+  const [slashFilter, setSlashFilter] = useState('')
+  const [slashSelectedIndex, setSlashSelectedIndex] = useState(0)
+  const slashMenuRef = useRef<HTMLDivElement | null>(null)
+
+  const filteredSlashCommands = useMemo(() => {
+    if (!slashCommands || slashCommands.length === 0) return []
+    if (!slashFilter) return slashCommands
+    const lower = slashFilter.toLowerCase()
+    return slashCommands.filter((cmd) => cmd.name.toLowerCase().startsWith(lower))
+  }, [slashCommands, slashFilter])
+
+  // Close slash menu on outside click
+  useEffect(() => {
+    if (!isSlashMenuOpen) return
+    const handleClick = (e: MouseEvent) => {
+      if (slashMenuRef.current && !slashMenuRef.current.contains(e.target as Node)) {
+        setIsSlashMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [isSlashMenuOpen])
 
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
@@ -517,12 +545,63 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
     [submitMessage],
   )
 
+  const selectSlashCommand = useCallback((command: SlashCommand) => {
+    setInputWithDraft(command.prompt)
+    setIsSlashMenuOpen(false)
+    setSlashFilter('')
+    setSlashSelectedIndex(0)
+    requestAnimationFrame(() => textareaRef.current?.focus())
+  }, [setInputWithDraft])
+
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    // Slash command autocomplete keyboard handling
+    if (isSlashMenuOpen && filteredSlashCommands.length > 0) {
+      if (event.key === 'ArrowDown') {
+        event.preventDefault()
+        setSlashSelectedIndex((prev) => (prev + 1) % filteredSlashCommands.length)
+        return
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault()
+        setSlashSelectedIndex((prev) => (prev - 1 + filteredSlashCommands.length) % filteredSlashCommands.length)
+        return
+      }
+      if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey)) {
+        event.preventDefault()
+        const selected = filteredSlashCommands[slashSelectedIndex]
+        if (selected) selectSlashCommand(selected)
+        return
+      }
+    }
+    if (isSlashMenuOpen && event.key === 'Escape') {
+      event.preventDefault()
+      setIsSlashMenuOpen(false)
+      return
+    }
+
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault()
       submitMessage()
     }
   }
+
+  // Track input changes for slash command detection
+  const handleInputChange = useCallback((value: string) => {
+    setInputWithDraft(value)
+
+    // Check for slash command trigger: starts with `/` and has no whitespace in the command portion
+    if (value.startsWith('/') && slashCommands && slashCommands.length > 0) {
+      const afterSlash = value.slice(1)
+      // Only show menu if we're still typing the command name (no spaces yet)
+      if (!afterSlash.includes(' ') && !afterSlash.includes('\n')) {
+        setSlashFilter(afterSlash)
+        setIsSlashMenuOpen(true)
+        setSlashSelectedIndex(0)
+        return
+      }
+    }
+    setIsSlashMenuOpen(false)
+  }, [setInputWithDraft, slashCommands])
 
   const hasContent = input.trim().length > 0 || attachedFiles.length > 0
   const canSubmit = hasContent && !disabled && !blockedByLoading && !isRecording && !isTranscribingVoice
@@ -541,6 +620,42 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
 
   return (
     <form onSubmit={handleSubmit} className="sticky bottom-0 shrink-0 bg-background p-2 md:p-3">
+      {/* Slash command autocomplete dropdown */}
+      {isSlashMenuOpen && filteredSlashCommands.length > 0 ? (
+        <div
+          ref={slashMenuRef}
+          className="mb-1 max-h-52 overflow-y-auto rounded-lg border border-border bg-popover shadow-lg"
+        >
+          {filteredSlashCommands.map((cmd, idx) => (
+            <button
+              key={cmd.id}
+              type="button"
+              className={cn(
+                'flex w-full items-start gap-3 px-3 py-2 text-left text-sm transition-colors',
+                idx === slashSelectedIndex
+                  ? 'bg-accent text-accent-foreground'
+                  : 'text-popover-foreground hover:bg-accent/50',
+              )}
+              onMouseEnter={() => setSlashSelectedIndex(idx)}
+              onMouseDown={(e) => {
+                e.preventDefault() // prevent textarea blur
+                selectSlashCommand(cmd)
+              }}
+            >
+              <code className="shrink-0 text-xs font-semibold text-foreground">/{cmd.name}</code>
+              <span className="line-clamp-1 text-xs text-muted-foreground">{cmd.prompt}</span>
+            </button>
+          ))}
+        </div>
+      ) : isSlashMenuOpen && slashCommands && slashCommands.length > 0 && filteredSlashCommands.length === 0 ? (
+        <div
+          ref={slashMenuRef}
+          className="mb-1 rounded-lg border border-border bg-popover px-3 py-2 shadow-lg"
+        >
+          <p className="text-xs text-muted-foreground">No matching commands</p>
+        </div>
+      ) : null}
+
       <div className="overflow-hidden rounded-2xl border border-border">
         <AttachedFiles attachments={attachedFiles} onRemove={removeAttachment} />
 
@@ -578,7 +693,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
             <textarea
               ref={textareaRef}
               value={input}
-              onChange={(event) => setInputWithDraft(event.target.value)}
+              onChange={(event) => handleInputChange(event.target.value)}
               onKeyDown={handleKeyDown}
               onPaste={handlePaste}
               placeholder={placeholder}
