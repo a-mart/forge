@@ -31,7 +31,11 @@
     },
     "patchedDependencies": {
       "@mariozechner/pi-coding-agent@0.55.0": "patches/@mariozechner__pi-coding-agent@0.55.0.patch"
-    }
+    },
+    "onlyBuiltDependencies": [
+      "sharp",
+      "esbuild"
+    ]
   },
   "devDependencies": {
     "concurrently": "^9.2.1",

@@ -34,6 +34,7 @@ import type {
   RequestedDeliveryMode,
   SendMessageReceipt
 } from "./types.js";
+import { resizeImageIfNeeded } from "./image-utils.js";
 
 const CODEX_RUNTIME_STATE_ENTRY_TYPE = "swarm_codex_runtime_state";
 const CODEX_SANDBOX_MODE = "danger-full-access";
@@ -486,7 +487,7 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
         threadId: this.threadId,
         cwd: this.descriptor.cwd,
         sandboxPolicy: this.sandboxSettings.turnSandboxPolicy,
-        input: toCodexInputItems(message)
+        input: await toCodexInputItems(message)
       });
 
       const turnId = parseThreadId(response.turn?.id);
@@ -525,7 +526,7 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
         await this.rpc.request("turn/steer", {
           threadId: this.threadId,
           expectedTurnId: this.activeTurnId,
-          input: toCodexInputItems(queued.message)
+          input: await toCodexInputItems(queued.message)
         });
 
         this.queuedSteers.shift();
@@ -1103,7 +1104,7 @@ function threadItemRepresentsError(item: { type: string; [key: string]: unknown 
   }
 }
 
-function toCodexInputItems(message: RuntimeUserMessage): unknown[] {
+async function toCodexInputItems(message: RuntimeUserMessage): Promise<unknown[]> {
   const items: unknown[] = [];
   const text = message.text ?? "";
 
@@ -1115,10 +1116,12 @@ function toCodexInputItems(message: RuntimeUserMessage): unknown[] {
     });
   }
 
-  for (const image of normalizeRuntimeImageAttachments(message.images)) {
+  const normalized = normalizeRuntimeImageAttachments(message.images);
+  for (const image of normalized) {
+    const resized = await resizeImageIfNeeded(image.data, image.mimeType);
     items.push({
       type: "image",
-      url: toDataUrl(image)
+      url: toDataUrl({ mimeType: resized.mimeType, data: resized.data })
     });
   }
 

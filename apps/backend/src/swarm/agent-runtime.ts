@@ -33,6 +33,7 @@ import type {
   RequestedDeliveryMode,
   SendMessageReceipt
 } from "./types.js";
+import { resizeImageIfNeeded } from "./image-utils.js";
 
 interface PendingDelivery {
   deliveryId: string;
@@ -382,7 +383,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
   }
 
   private async dispatchPromptWithRetry(message: RuntimeUserMessage): Promise<void> {
-    const images = toImageContent(message.images);
+    const images = await toImageContent(message.images);
 
     for (let attempt = 1; attempt <= MAX_PROMPT_DISPATCH_ATTEMPTS; attempt += 1) {
       try {
@@ -430,7 +431,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
   }
 
   private async enqueueMessage(deliveryId: string, message: RuntimeUserMessage): Promise<void> {
-    const images = toImageContent(message.images);
+    const images = await toImageContent(message.images);
     await this.session.steer(message.text, images.length > 0 ? images : undefined);
 
     this.pendingDeliveries.push({
@@ -470,7 +471,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
     for (const entry of buffered) {
       try {
-        const images = toImageContent(entry.message.images);
+        const images = await toImageContent(entry.message.images);
         await this.session.steer(entry.message.text, images.length > 0 ? images : undefined);
       } catch (error) {
         this.removePendingDeliveryById(entry.deliveryId);
@@ -1269,16 +1270,23 @@ export function isAlreadyCompactedError(message: string): boolean {
   return /already\s+compact(?:ed)?/i.test(message) || /nothing\s+to\s+compact/i.test(message);
 }
 
-function toImageContent(images: RuntimeImageAttachment[] | undefined): ImageContent[] {
+async function toImageContent(images: RuntimeImageAttachment[] | undefined): Promise<ImageContent[]> {
   if (!images || images.length === 0) {
     return [];
   }
 
-  return images.map((image) => ({
-    type: "image",
-    mimeType: image.mimeType,
-    data: image.data
-  }));
+  const results = await Promise.all(
+    images.map(async (image) => {
+      const resized = await resizeImageIfNeeded(image.data, image.mimeType);
+      return {
+        type: "image" as const,
+        mimeType: resized.mimeType,
+        data: resized.data
+      };
+    })
+  );
+
+  return results;
 }
 
 function buildUserMessageContent(text: string, images: ImageContent[]): string | (TextContent | ImageContent)[] {
