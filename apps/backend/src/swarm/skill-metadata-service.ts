@@ -13,7 +13,8 @@ const REQUIRED_SKILL_NAMES = [
   "brave-search",
   "cron-scheduling",
   "agent-browser",
-  "image-generation"
+  "image-generation",
+  "slash-commands"
 ] as const;
 
 const SKILL_METADATA_SERVICE_DIR = fileURLToPath(new URL(".", import.meta.url));
@@ -69,7 +70,8 @@ export class SkillMetadataService {
       this.resolveBraveSearchSkillPath(skillPathIndex),
       this.resolveCronSchedulingSkillPath(skillPathIndex),
       this.resolveAgentBrowserSkillPath(skillPathIndex),
-      this.resolveImageGenerationSkillPath(skillPathIndex)
+      this.resolveImageGenerationSkillPath(skillPathIndex),
+      this.resolveSlashCommandsSkillPath(skillPathIndex)
     ];
 
     const metadata: SkillMetadata[] = [];
@@ -114,6 +116,10 @@ export class SkillMetadataService {
 
   private resolveImageGenerationSkillPath(skillPathIndex: Map<string, string[]>): string {
     return this.resolveRequiredSkillPath("image-generation", skillPathIndex);
+  }
+
+  private resolveSlashCommandsSkillPath(skillPathIndex: Map<string, string[]>): string {
+    return this.resolveRequiredSkillPath("slash-commands", skillPathIndex);
   }
 
   private resolveRequiredSkillPath(

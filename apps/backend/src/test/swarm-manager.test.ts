@@ -678,7 +678,7 @@ describe('SwarmManager', () => {
     expect(workerPrompt).toContain('Follow the memory skill workflow before editing the memory file')
   })
 
-  it('auto-loads per-runtime memory context and wires built-in memory + brave-search + cron-scheduling + agent-browser + image-generation skills', async () => {
+  it('auto-loads per-runtime memory context and wires built-in memory + brave-search + cron-scheduling + agent-browser + image-generation + slash-commands skills', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -690,7 +690,7 @@ describe('SwarmManager', () => {
     expect(resources.memoryContextFile.path).toBe(config.paths.memoryFile!)
     expect(resources.memoryContextFile.content).toContain(persistedMemory.trim())
     expect(resources.memoryContextFile.content).toContain('# Common Knowledge (maintained by Cortex — read-only reference)')
-    expect(resources.additionalSkillPaths).toHaveLength(5)
+    expect(resources.additionalSkillPaths).toHaveLength(6)
 
     const memorySkill = await readFile(resources.additionalSkillPaths[0], 'utf8')
     expect(memorySkill).toContain('name: memory')
@@ -711,6 +711,10 @@ describe('SwarmManager', () => {
     const imageGenerationSkill = await readFile(resources.additionalSkillPaths[4], 'utf8')
     expect(imageGenerationSkill).toContain('name: image-generation')
     expect(imageGenerationSkill).toContain('GEMINI_API_KEY')
+
+    const slashCommandsSkill = await readFile(resources.additionalSkillPaths[5], 'utf8')
+    expect(slashCommandsSkill).toContain('name: slash-commands')
+    expect(slashCommandsSkill).toContain('slash-commands.js create')
 
   })
 
@@ -824,12 +828,13 @@ describe('SwarmManager', () => {
     await bootWithDefaultManager(manager, config)
 
     const resources = await manager.getMemoryRuntimeResourcesForTest()
-    expect(resources.additionalSkillPaths).toHaveLength(5)
+    expect(resources.additionalSkillPaths).toHaveLength(6)
     expect(resources.additionalSkillPaths[0]).toBe(config.paths.repoMemorySkillFile)
     expect(resources.additionalSkillPaths[1].endsWith(join('brave-search', 'SKILL.md'))).toBe(true)
     expect(resources.additionalSkillPaths[2].endsWith(join('cron-scheduling', 'SKILL.md'))).toBe(true)
     expect(resources.additionalSkillPaths[3].endsWith(join('agent-browser', 'SKILL.md'))).toBe(true)
     expect(resources.additionalSkillPaths[4].endsWith(join('image-generation', 'SKILL.md'))).toBe(true)
+    expect(resources.additionalSkillPaths[5].endsWith(join('slash-commands', 'SKILL.md'))).toBe(true)
   })
 
   it('prefers repo brave-search skill override when present', async () => {
@@ -855,12 +860,13 @@ describe('SwarmManager', () => {
     await bootWithDefaultManager(manager, config)
 
     const resources = await manager.getMemoryRuntimeResourcesForTest()
-    expect(resources.additionalSkillPaths).toHaveLength(5)
+    expect(resources.additionalSkillPaths).toHaveLength(6)
     expect(resources.additionalSkillPaths[0].endsWith(join('memory', 'SKILL.md'))).toBe(true)
     expect(resources.additionalSkillPaths[1]).toBe(repoBraveSkillFile)
     expect(resources.additionalSkillPaths[2].endsWith(join('cron-scheduling', 'SKILL.md'))).toBe(true)
     expect(resources.additionalSkillPaths[3].endsWith(join('agent-browser', 'SKILL.md'))).toBe(true)
     expect(resources.additionalSkillPaths[4].endsWith(join('image-generation', 'SKILL.md'))).toBe(true)
+    expect(resources.additionalSkillPaths[5].endsWith(join('slash-commands', 'SKILL.md'))).toBe(true)
   })
 
   it('uses repo manager archetype overrides on boot', async () => {
