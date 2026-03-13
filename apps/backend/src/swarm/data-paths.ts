@@ -140,6 +140,10 @@ export function getSharedPlaywrightDashboardSettingsPath(dataDir: string): strin
   return join(getSharedDir(dataDir), "playwright-dashboard.json");
 }
 
+export function getGlobalSlashCommandsPath(dataDir: string): string {
+  return join(getSharedDir(dataDir), "slash-commands.json");
+}
+
 // ── Unchanged global paths ─────────────────────────────────────────────────────
 
 export function getUploadsDir(dataDir: string): string {

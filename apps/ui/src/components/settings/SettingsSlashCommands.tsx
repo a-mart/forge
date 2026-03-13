@@ -21,22 +21,6 @@ import {
   deleteSlashCommand,
   type SlashCommand,
 } from './slash-commands-api'
-import type { AgentDescriptor, ManagerProfile } from '@middleman/protocol'
-
-/* ------------------------------------------------------------------ */
-/*  Helpers                                                           */
-/* ------------------------------------------------------------------ */
-
-function resolveManagerId(managers: AgentDescriptor[], profiles: ManagerProfile[]): string | null {
-  // Prefer the profile's defaultSessionAgentId if available
-  if (profiles.length > 0) {
-    const profile = profiles[0]
-    if (profile?.defaultSessionAgentId) return profile.defaultSessionAgentId
-  }
-  // Fallback to first manager agentId
-  const manager = managers.find((m) => m.role === 'manager')
-  return manager?.agentId ?? null
-}
 
 /* ------------------------------------------------------------------ */
 /*  Command row                                                       */
@@ -196,11 +180,9 @@ function CommandForm({
 
 interface SettingsSlashCommandsProps {
   wsUrl: string
-  managers: AgentDescriptor[]
-  profiles: ManagerProfile[]
 }
 
-export function SettingsSlashCommands({ wsUrl, managers, profiles }: SettingsSlashCommandsProps) {
+export function SettingsSlashCommands({ wsUrl }: SettingsSlashCommandsProps) {
   const [commands, setCommands] = useState<SlashCommand[]>([])
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
@@ -210,33 +192,29 @@ export function SettingsSlashCommands({ wsUrl, managers, profiles }: SettingsSla
   const [showForm, setShowForm] = useState(false)
   const [editingCommand, setEditingCommand] = useState<SlashCommand | null>(null)
 
-  const managerId = resolveManagerId(managers, profiles)
-
   const loadCommands = useCallback(async () => {
-    if (!managerId) return
     setIsLoading(true)
     setError(null)
     try {
-      const result = await fetchSlashCommands(wsUrl, managerId)
+      const result = await fetchSlashCommands(wsUrl)
       setCommands(result)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load slash commands')
     } finally {
       setIsLoading(false)
     }
-  }, [wsUrl, managerId])
+  }, [wsUrl])
 
   useEffect(() => {
     void loadCommands()
   }, [loadCommands])
 
   const handleCreate = async (name: string, prompt: string) => {
-    if (!managerId) return
     setError(null)
     setSuccess(null)
     setIsSaving(true)
     try {
-      await createSlashCommand(wsUrl, managerId, { name, prompt })
+      await createSlashCommand(wsUrl, { name, prompt })
       setSuccess(`/${name} created.`)
       setShowForm(false)
       await loadCommands()
@@ -248,12 +226,12 @@ export function SettingsSlashCommands({ wsUrl, managers, profiles }: SettingsSla
   }
 
   const handleUpdate = async (name: string, prompt: string) => {
-    if (!managerId || !editingCommand) return
+    if (!editingCommand) return
     setError(null)
     setSuccess(null)
     setIsSaving(true)
     try {
-      await updateSlashCommand(wsUrl, managerId, editingCommand.id, { name, prompt })
+      await updateSlashCommand(wsUrl, editingCommand.id, { name, prompt })
       setSuccess(`/${name} updated.`)
       setEditingCommand(null)
       await loadCommands()
@@ -265,12 +243,11 @@ export function SettingsSlashCommands({ wsUrl, managers, profiles }: SettingsSla
   }
 
   const handleDelete = async (command: SlashCommand) => {
-    if (!managerId) return
     setError(null)
     setSuccess(null)
     setDeletingId(command.id)
     try {
-      await deleteSlashCommand(wsUrl, managerId, command.id)
+      await deleteSlashCommand(wsUrl, command.id)
       setSuccess(`/${command.name} deleted.`)
       await loadCommands()
     } catch (err) {
@@ -315,7 +292,6 @@ export function SettingsSlashCommands({ wsUrl, managers, profiles }: SettingsSla
               size="sm"
               variant="outline"
               onClick={handleStartCreate}
-              disabled={!managerId}
               className="gap-1.5"
             >
               <Plus className="size-3.5" />
@@ -338,15 +314,7 @@ export function SettingsSlashCommands({ wsUrl, managers, profiles }: SettingsSla
           </div>
         ) : null}
 
-        {!managerId ? (
-          <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-12 text-center">
-            <Terminal className="mb-2 size-8 text-muted-foreground/40" />
-            <p className="text-sm text-muted-foreground">No manager available</p>
-            <p className="mt-1 text-xs text-muted-foreground/60">
-              Create a manager to configure slash commands.
-            </p>
-          </div>
-        ) : isLoading ? (
+        {isLoading ? (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="size-5 animate-spin text-muted-foreground" />
           </div>

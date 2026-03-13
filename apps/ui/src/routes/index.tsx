@@ -289,25 +289,25 @@ export function IndexPage() {
     setIsMobileSidebarOpen(false)
   }, [activeAgentId])
 
-  // Fetch slash commands when manager changes or when returning from settings
+  // Fetch slash commands on mount (global, not manager-scoped)
   useEffect(() => {
-    if (!activeManagerId) return
     const fetchKey = ++slashCommandsFetchKeyRef.current
     void (async () => {
       try {
-        const cmds = await fetchSlashCommands(wsUrl, activeManagerId)
+        const cmds = await fetchSlashCommands(wsUrl)
         // Only apply if this is still the latest fetch
         if (fetchKey === slashCommandsFetchKeyRef.current) {
           setSlashCommands(cmds)
         }
-      } catch {
-        // Silently ignore — slash commands are optional
+      } catch (error) {
+        // Slash commands are optional — log error but don't block UI
+        console.error('Failed to fetch slash commands:', error)
         if (fetchKey === slashCommandsFetchKeyRef.current) {
           setSlashCommands([])
         }
       }
     })()
-  }, [wsUrl, activeManagerId, activeView])
+  }, [wsUrl, activeView])
 
   useEffect(() => {
     if (!state.lastSuccess) return

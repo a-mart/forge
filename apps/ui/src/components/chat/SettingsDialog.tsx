@@ -58,8 +58,6 @@ export function SettingsPanel({
       {activeTab === 'slash-commands' && (
         <SettingsSlashCommands
           wsUrl={wsUrl}
-          managers={managers}
-          profiles={profiles}
         />
       )}
     </SettingsLayout>

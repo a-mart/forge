@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
-import { getProfileSlashCommandsPath } from "../../swarm/data-paths.js";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { getGlobalSlashCommandsPath, getProfilesDir } from "../../swarm/data-paths.js";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
 import {
   applyCorsHeaders,
@@ -12,8 +12,8 @@ import {
 } from "../http-utils.js";
 import type { HttpRoute } from "./http-route.js";
 
-const MANAGER_SLASH_COMMANDS_ENDPOINT_PATTERN = /^\/api\/managers\/([^/]+)\/slash-commands$/;
-const MANAGER_SLASH_COMMAND_ENDPOINT_PATTERN = /^\/api\/managers\/([^/]+)\/slash-commands\/([^/]+)$/;
+const GLOBAL_SLASH_COMMANDS_ENDPOINT_PATTERN = /^\/api\/slash-commands$/;
+const GLOBAL_SLASH_COMMAND_ENDPOINT_PATTERN = /^\/api\/slash-commands\/([^/]+)$/;
 const SLASH_COMMAND_NAME_PATTERN = /^[A-Za-z0-9_-]+$/;
 
 interface SlashCommand {
@@ -26,24 +26,86 @@ interface SlashCommand {
 
 type SlashCommandsRoute =
   | {
-      managerId: string;
       kind: "collection";
     }
   | {
-      managerId: string;
       kind: "item";
       commandId: string;
     };
 
+/**
+ * Migrates profile-scoped slash commands to the global location.
+ * This is a one-time migration that merges all profile-scoped slash-commands.json
+ * files into the shared/slash-commands.json file.
+ */
+async function migrateProfileSlashCommandsToGlobal(dataDir: string): Promise<void> {
+  const globalPath = getGlobalSlashCommandsPath(dataDir);
+  const profilesDir = getProfilesDir(dataDir);
+
+  // Check if global file already exists with content - if so, migration already done
+  const existingGlobal = await readSlashCommandsFile(globalPath);
+  if (existingGlobal.length > 0) {
+    return;
+  }
+
+  // Find all profile directories
+  let profileDirs: string[] = [];
+  try {
+    const entries = await readdir(profilesDir, { withFileTypes: true });
+    profileDirs = entries
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name);
+  } catch (error) {
+    if (isEnoentError(error)) {
+      // No profiles directory yet - nothing to migrate
+      return;
+    }
+    throw error;
+  }
+
+  // Collect all slash commands from profile directories
+  const allCommands: SlashCommand[] = [];
+  const seenNames = new Set<string>();
+
+  for (const profileId of profileDirs) {
+    const profileSlashCommandsPath = join(profilesDir, profileId, "slash-commands.json");
+    try {
+      const profileCommands = await readSlashCommandsFile(profileSlashCommandsPath);
+      
+      for (const command of profileCommands) {
+        const normalizedName = normalizeSlashCommandNameForComparison(command.name);
+        if (!seenNames.has(normalizedName)) {
+          allCommands.push(command);
+          seenNames.add(normalizedName);
+        }
+      }
+    } catch (error) {
+      if (!isEnoentError(error)) {
+        console.error(`Failed to read slash commands from profile ${profileId}:`, error);
+      }
+      // Continue with other profiles even if one fails
+    }
+  }
+
+  // Write merged commands to global location if we found any
+  if (allCommands.length > 0) {
+    await writeSlashCommandsFile(globalPath, allCommands);
+    console.log(`Migrated ${allCommands.length} slash command(s) to global storage`);
+  }
+}
+
 export function createSlashCommandRoutes(options: { swarmManager: SwarmManager }): HttpRoute[] {
   const { swarmManager } = options;
+
+  // Run migration asynchronously (fire and forget - will complete before first request)
+  void migrateProfileSlashCommandsToGlobal(swarmManager.getConfig().paths.dataDir);
 
   return [
     {
       methods: "GET, POST, PUT, DELETE, OPTIONS",
       matches: (pathname) =>
-        MANAGER_SLASH_COMMANDS_ENDPOINT_PATTERN.test(pathname) ||
-        MANAGER_SLASH_COMMAND_ENDPOINT_PATTERN.test(pathname),
+        GLOBAL_SLASH_COMMANDS_ENDPOINT_PATTERN.test(pathname) ||
+        GLOBAL_SLASH_COMMAND_ENDPOINT_PATTERN.test(pathname),
       handle: async (request, response, requestUrl) => {
         const methods = "GET, POST, PUT, DELETE, OPTIONS";
 
@@ -75,14 +137,7 @@ export function createSlashCommandRoutes(options: { swarmManager: SwarmManager }
           return;
         }
 
-        const descriptor = swarmManager.getAgent(route.managerId);
-        if (!descriptor || descriptor.role !== "manager") {
-          sendJson(response, 404, { error: `Unknown manager: ${route.managerId}` });
-          return;
-        }
-
-        const profileId = descriptor.profileId ?? route.managerId;
-        const slashCommandsPath = getProfileSlashCommandsPath(swarmManager.getConfig().paths.dataDir, profileId);
+        const slashCommandsPath = getGlobalSlashCommandsPath(swarmManager.getConfig().paths.dataDir);
 
         if (request.method === "GET" && route.kind === "collection") {
           const commands = await readSlashCommandsFile(slashCommandsPath);
@@ -169,29 +224,21 @@ export function createSlashCommandRoutes(options: { swarmManager: SwarmManager }
 }
 
 function resolveSlashCommandRoute(pathname: string): SlashCommandsRoute | null {
-  const collectionMatch = matchPathPattern(pathname, MANAGER_SLASH_COMMANDS_ENDPOINT_PATTERN);
+  const collectionMatch = matchPathPattern(pathname, GLOBAL_SLASH_COMMANDS_ENDPOINT_PATTERN);
   if (collectionMatch) {
-    const managerId = decodePathSegment(collectionMatch[1]);
-    if (!managerId) {
-      return null;
-    }
-
     return {
-      managerId,
       kind: "collection"
     };
   }
 
-  const itemMatch = matchPathPattern(pathname, MANAGER_SLASH_COMMAND_ENDPOINT_PATTERN);
+  const itemMatch = matchPathPattern(pathname, GLOBAL_SLASH_COMMAND_ENDPOINT_PATTERN);
   if (itemMatch) {
-    const managerId = decodePathSegment(itemMatch[1]);
-    const commandId = decodePathSegment(itemMatch[2]);
-    if (!managerId || !commandId) {
+    const commandId = decodePathSegment(itemMatch[1]);
+    if (!commandId) {
       return null;
     }
 
     return {
-      managerId,
       kind: "item",
       commandId
     };
