@@ -1,12 +1,13 @@
 import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
 import type { Duplex } from "node:stream";
+import type { ServerEvent } from "@middleman/protocol";
 import { WebSocketServer } from "ws";
+import { MobilePushService } from "../mobile/mobile-push-service.js";
 import type { IntegrationRegistryService } from "../integrations/registry.js";
 import type { PlaywrightDiscoveryService } from "../playwright/playwright-discovery-service.js";
 import { PlaywrightLivePreviewProxy } from "../playwright/playwright-live-preview-proxy.js";
 import { PlaywrightLivePreviewService } from "../playwright/playwright-live-preview-service.js";
 import { PlaywrightSettingsService } from "../playwright/playwright-settings-service.js";
-import type { ServerEvent } from "@middleman/protocol";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import { applyCorsHeaders, resolveRequestUrl, sendJson } from "./http-utils.js";
 import { createAgentHttpRoutes } from "./routes/agent-routes.js";
@@ -16,6 +17,7 @@ import { createFeedbackRoutes } from "./routes/feedback-routes.js";
 import { createHealthRoutes } from "./routes/health-routes.js";
 import type { HttpRoute } from "./routes/http-route.js";
 import { createIntegrationRoutes } from "./routes/integration-routes.js";
+import { createMobileRoutes } from "./routes/mobile-routes.js";
 import { createPlaywrightLiveRoutes } from "./routes/playwright-live-routes.js";
 import { createPlaywrightRoutes } from "./routes/playwright-routes.js";
 import { createPromptRoutes, type PromptRegistryForRoutes } from "./routes/prompt-routes.js";
@@ -40,6 +42,7 @@ export class SwarmWebSocketServer {
   private wss: WebSocketServer | null = null;
 
   private readonly wsHandler: WsHandler;
+  private readonly mobilePushService: MobilePushService;
   private readonly settingsRoutes: SettingsRouteBundle;
   private readonly httpRoutes: HttpRoute[];
 
@@ -149,6 +152,11 @@ export class SwarmWebSocketServer {
       playwrightDiscovery: this.playwrightDiscovery,
       allowNonManagerSubscriptions: options.allowNonManagerSubscriptions
     });
+    this.mobilePushService = new MobilePushService({
+      swarmManager: this.swarmManager,
+      dataDir: this.swarmManager.getConfig().paths.dataDir,
+      isSessionActive: (sessionAgentId) => this.wsHandler.hasActiveSubscription(sessionAgentId)
+    });
 
     this.settingsRoutes = createSettingsRoutes({ swarmManager: this.swarmManager });
     this.httpRoutes = [
@@ -161,6 +169,7 @@ export class SwarmWebSocketServer {
       ...createTranscriptionRoutes({ swarmManager: this.swarmManager }),
       ...createSchedulerRoutes({ swarmManager: this.swarmManager }),
       ...createSlashCommandRoutes({ swarmManager: this.swarmManager }),
+      ...createMobileRoutes({ mobilePushService: this.mobilePushService }),
       ...createAgentHttpRoutes({ swarmManager: this.swarmManager }),
       ...this.settingsRoutes.routes,
       ...createPlaywrightRoutes({
@@ -237,6 +246,7 @@ export class SwarmWebSocketServer {
     this.playwrightDiscovery?.on("playwright_discovery_snapshot", this.onPlaywrightDiscoverySnapshot);
     this.playwrightDiscovery?.on("playwright_discovery_updated", this.onPlaywrightDiscoveryUpdated);
     this.playwrightDiscovery?.on("playwright_discovery_settings_updated", this.onPlaywrightDiscoverySettingsUpdated);
+    await this.mobilePushService.start();
   }
 
   async stop(): Promise<void> {
@@ -264,6 +274,7 @@ export class SwarmWebSocketServer {
     this.settingsRoutes.cancelActiveSettingsAuthLoginFlows();
 
     await Promise.allSettled([
+      this.mobilePushService.stop(),
       this.playwrightLivePreviewProxy.stop(),
       currentWss ? closeWebSocketServer(currentWss) : Promise.resolve(),
       currentHttpServer ? closeHttpServer(currentHttpServer) : Promise.resolve(),

@@ -140,6 +140,14 @@ export function getSharedPlaywrightDashboardSettingsPath(dataDir: string): strin
   return join(getSharedDir(dataDir), "playwright-dashboard.json");
 }
 
+export function getSharedMobileDevicesPath(dataDir: string): string {
+  return join(getSharedDir(dataDir), "mobile-devices.json");
+}
+
+export function getSharedMobileNotificationPreferencesPath(dataDir: string): string {
+  return join(getSharedDir(dataDir), "mobile-notification-prefs.json");
+}
+
 export function getGlobalSlashCommandsPath(dataDir: string): string {
   return join(getSharedDir(dataDir), "slash-commands.json");
 }

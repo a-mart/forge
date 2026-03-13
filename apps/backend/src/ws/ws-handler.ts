@@ -95,6 +95,20 @@ export class WsHandler {
     }
   }
 
+  hasActiveSubscription(agentId: string): boolean {
+    for (const [socket, subscribedAgentId] of this.subscriptions.entries()) {
+      if (socket.readyState !== WebSocket.OPEN) {
+        continue;
+      }
+
+      if (subscribedAgentId === agentId) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   private async handleSocketMessage(socket: WebSocket, raw: RawData): Promise<void> {
     const parsed = parseClientCommand(raw);
     if (!parsed.ok) {
