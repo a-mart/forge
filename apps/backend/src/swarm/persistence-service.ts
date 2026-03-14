@@ -1,5 +1,6 @@
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { getScheduleFilePath } from "../scheduler/schedule-storage.js";
 import { getProfileKnowledgeDir, getSharedKnowledgeDir, resolveMemoryFilePath } from "./data-paths.js";
 import { renameWithRetry } from "./retry-rename.js";
 import type { AgentDescriptor, AgentsStoreFile, ManagerProfile, SwarmConfig } from "./types.js";
@@ -121,6 +122,19 @@ export class PersistenceService {
     }
   }
 
+  async deleteManagerSchedulesFile(profileId: string): Promise<void> {
+    const schedulesFile = getScheduleFilePath(this.deps.config.paths.dataDir, profileId);
+
+    try {
+      await unlink(schedulesFile);
+    } catch (error) {
+      if (isEnoentError(error)) {
+        return;
+      }
+      throw error;
+    }
+  }
+
   async loadStore(): Promise<AgentsStoreFile> {
     try {
       const raw = await readFile(this.deps.config.paths.agentsStoreFile, "utf8");
@@ -160,7 +174,7 @@ export class PersistenceService {
     };
 
     const target = this.deps.config.paths.agentsStoreFile;
-    const tmp = `${target}.tmp`;
+    const tmp = `${target}.${process.pid}.${Date.now()}.tmp`;
     await mkdir(dirname(target), { recursive: true });
     await writeFile(tmp, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
     await renameWithRetry(tmp, target, { retries: 8, baseDelayMs: 15 });

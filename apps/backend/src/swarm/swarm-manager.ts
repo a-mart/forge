@@ -1472,6 +1472,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       this.profiles.delete(targetManagerId);
     }
 
+    const schedulesProfileId = profile?.profileId ?? sessionDescriptors[0]?.profileId ?? targetManagerId;
+    await this.deleteManagerSchedulesFile(schedulesProfileId);
+
     await this.saveStore();
     this.emitAgentsSnapshot();
     this.emitProfilesSnapshot();
@@ -4887,6 +4890,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   private async deleteManagerSessionFile(sessionFile: string): Promise<void> {
     await this.persistenceService.deleteManagerSessionFile(sessionFile);
+  }
+
+  private async deleteManagerSchedulesFile(profileId: string): Promise<void> {
+    await this.persistenceService.deleteManagerSchedulesFile(profileId);
   }
 
   private async loadStore(): Promise<AgentsStoreFile> {

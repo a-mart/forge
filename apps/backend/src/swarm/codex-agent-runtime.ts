@@ -571,9 +571,23 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
         });
         await this.emitSessionEvent({ type: "agent_end" });
 
-        if (this.status !== "terminated") {
-          await this.updateStatus("idle");
+        if (this.status === "terminated") {
+          return;
         }
+
+        if (this.queuedSteers.length > 0) {
+          const next = this.queuedSteers.shift()!;
+          try {
+            await this.startTurn(next.message);
+          } catch (error) {
+            await this.recoverFromTurnFailure("steer_delivery", error, {
+              deliveryId: next.deliveryId
+            });
+          }
+          return;
+        }
+
+        await this.updateStatus("idle");
 
         if (this.callbacks.onAgentEnd) {
           await this.callbacks.onAgentEnd(this.descriptor.agentId);
