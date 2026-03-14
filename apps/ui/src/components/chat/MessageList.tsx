@@ -285,20 +285,38 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
 
   const displayEntries = useMemo(() => buildDisplayEntries(messages), [messages])
 
-  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'auto', force = false) => {
     const container = scrollContainerRef.current
     if (!container) {
       return
     }
 
-    if (behavior === 'smooth' && typeof container.scrollTo === 'function') {
-      container.scrollTo({ top: container.scrollHeight, behavior })
-    } else {
-      container.scrollTop = container.scrollHeight
+    const doScroll = () => {
+      if (behavior === 'smooth' && typeof container.scrollTo === 'function') {
+        container.scrollTo({ top: container.scrollHeight, behavior })
+      } else {
+        container.scrollTop = container.scrollHeight
+      }
+
+      isAtBottomRef.current = true
+      setShowScrollButton(false)
     }
 
-    isAtBottomRef.current = true
-    setShowScrollButton(false)
+    doScroll()
+
+    // When force-scrolling (agent switch, initial load), content-visibility: auto
+    // causes the browser to use estimated heights for off-screen items. The real
+    // heights are only resolved once content scrolls into view, which can push
+    // the position away from the true bottom. Schedule follow-up scrolls to
+    // compensate once layout has settled.
+    if (force) {
+      requestAnimationFrame(() => {
+        doScroll()
+        requestAnimationFrame(() => {
+          doScroll()
+        })
+      })
+    }
   }, [])
 
   useImperativeHandle(
@@ -349,7 +367,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
     const shouldAutoScroll = shouldForceScroll || isAtBottomRef.current
 
     if (shouldAutoScroll) {
-      scrollToBottom(shouldForceScroll ? 'auto' : 'smooth')
+      scrollToBottom(shouldForceScroll ? 'auto' : 'smooth', shouldForceScroll)
     }
 
     hasScrolledRef.current = true
