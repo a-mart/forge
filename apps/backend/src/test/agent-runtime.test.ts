@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { AgentRuntime } from '../swarm/agent-runtime.js'
 import type { AgentDescriptor } from '../swarm/types.js'
 
@@ -13,6 +13,7 @@ class FakeSession {
   abortCalls = 0
   disposeCalls = 0
   listener: ((event: any) => void) | undefined
+  contextUsageCalls = 0
   contextUsage: { tokens: number | null; contextWindow: number; percent: number | null } | undefined
 
   async prompt(message: string, options?: { images?: Array<{ type: string }> }): Promise<void> {
@@ -42,6 +43,7 @@ class FakeSession {
   }
 
   getContextUsage(): { tokens: number | null; contextWindow: number; percent: number | null } | undefined {
+    this.contextUsageCalls += 1
     return this.contextUsage
   }
 
@@ -191,6 +193,146 @@ describe('AgentRuntime', () => {
 
     expect(runtime.getPendingCount()).toBe(0)
     expect(statuses.at(-1)).toBe(0)
+  })
+
+  it('reuses cached context usage for throttled streaming updates and refreshes it on turn/tool boundaries', async () => {
+    const session = new FakeSession()
+    const statuses: Array<{ status: string; contextUsage: unknown }> = []
+    const nowSpy = vi.spyOn(Date, 'now')
+
+    try {
+      session.contextUsage = {
+        tokens: 128,
+        contextWindow: 1000,
+        percent: 12.8,
+      }
+
+      const runtime = new AgentRuntime({
+        descriptor: makeDescriptor(),
+        session: session as any,
+        callbacks: {
+          onStatusChange: (_agentId, status, _pendingCount, contextUsage) => {
+            statuses.push({ status, contextUsage })
+          },
+        },
+      })
+
+      nowSpy.mockReturnValue(1_000)
+      session.emit({ type: 'agent_start' })
+      await waitForCondition(() => statuses.length === 1)
+
+      expect(session.contextUsageCalls).toBe(1)
+      expect(statuses.at(-1)).toEqual({
+        status: 'streaming',
+        contextUsage: {
+          tokens: 128,
+          contextWindow: 1000,
+          percent: 12.8,
+        },
+      })
+
+      session.contextUsage = {
+        tokens: 160,
+        contextWindow: 1000,
+        percent: 16,
+      }
+      nowSpy.mockReturnValue(2_500)
+      session.emit({
+        type: 'message_update',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'partial' }],
+        },
+      })
+      await waitForCondition(() => statuses.length === 2)
+
+      expect(session.contextUsageCalls).toBe(1)
+      expect(statuses.at(-1)).toEqual({
+        status: 'streaming',
+        contextUsage: {
+          tokens: 128,
+          contextWindow: 1000,
+          percent: 12.8,
+        },
+      })
+
+      session.contextUsage = {
+        tokens: 192,
+        contextWindow: 1000,
+        percent: 19.2,
+      }
+      session.emit({
+        type: 'turn_end',
+        toolResults: [],
+      })
+      expect(session.contextUsageCalls).toBe(2)
+
+      session.contextUsage = {
+        tokens: 224,
+        contextWindow: 1000,
+        percent: 22.4,
+      }
+      nowSpy.mockReturnValue(4_000)
+      session.emit({
+        type: 'message_update',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'more partial' }],
+        },
+      })
+      await waitForCondition(() => statuses.length === 3)
+
+      expect(session.contextUsageCalls).toBe(2)
+      expect(statuses.at(-1)).toEqual({
+        status: 'streaming',
+        contextUsage: {
+          tokens: 192,
+          contextWindow: 1000,
+          percent: 19.2,
+        },
+      })
+
+      session.contextUsage = {
+        tokens: 256,
+        contextWindow: 1000,
+        percent: 25.6,
+      }
+      session.emit({
+        type: 'tool_execution_end',
+        toolName: 'bash',
+        toolCallId: 'tool-1',
+        result: { ok: true },
+        isError: false,
+      })
+      expect(session.contextUsageCalls).toBe(3)
+
+      session.contextUsage = {
+        tokens: 320,
+        contextWindow: 1000,
+        percent: 32,
+      }
+      nowSpy.mockReturnValue(5_500)
+      session.emit({
+        type: 'message_update',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'final partial' }],
+        },
+      })
+      await waitForCondition(() => statuses.length === 4)
+
+      expect(session.contextUsageCalls).toBe(3)
+      expect(statuses.at(-1)).toEqual({
+        status: 'streaming',
+        contextUsage: {
+          tokens: 256,
+          contextWindow: 1000,
+          percent: 25.6,
+        },
+      })
+    } finally {
+      nowSpy.mockRestore()
+    }
   })
 
   it('passes image attachments through prompt options when text is present', async () => {

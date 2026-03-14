@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -94,6 +94,29 @@ function findConversationCustomEntry(entries: SessionEntryWithId[], text: string
   )
 }
 
+async function waitForFileText(
+  path: string,
+  options?: { timeoutMs?: number; matches?: (text: string) => boolean },
+): Promise<string> {
+  const timeoutMs = options?.timeoutMs ?? 500
+  const deadline = Date.now() + timeoutMs
+
+  while (Date.now() < deadline) {
+    try {
+      const text = await readFile(path, 'utf8')
+      if (!options?.matches || options.matches(text)) {
+        return text
+      }
+    } catch {
+      // Keep polling until the cache write lands.
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  }
+
+  throw new Error(`Timed out waiting for file ${path}`)
+}
+
 describe('ConversationProjector session tree continuity', () => {
   it('chains direct-append conversation entries to the previous persisted entry after history preload', async () => {
     const root = await mkdtemp(join(tmpdir(), 'conversation-projector-'))
@@ -179,6 +202,92 @@ describe('ConversationProjector session tree continuity', () => {
 
     expect(fallbackEntry).toBeDefined()
     expect(fallbackEntry?.parentId).toBe(runtimeEntry?.id)
+  })
+
+  it('keeps runtime logs in cache history while only persisting durable entries to session JSONL', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-projector-persistence-'))
+    const sessionFile = join(root, 'manager.jsonl')
+    const descriptor = makeDescriptor(sessionFile, root)
+    const projector = makeProjector({ descriptor })
+
+    projector.emitConversationLog({
+      type: 'conversation_log',
+      agentId: descriptor.agentId,
+      timestamp: FIXED_NOW,
+      source: 'runtime_log',
+      kind: 'tool_execution_start',
+      toolName: 'read',
+      toolCallId: 'tool-1',
+      text: '{"path":"README.md"}',
+    })
+    projector.emitConversationMessage({
+      type: 'conversation_message',
+      agentId: descriptor.agentId,
+      role: 'assistant',
+      text: 'durable transcript entry',
+      timestamp: FIXED_NOW,
+      source: 'system',
+    })
+    projector.emitAgentMessage({
+      type: 'agent_message',
+      agentId: descriptor.agentId,
+      timestamp: FIXED_NOW,
+      source: 'agent_to_agent',
+      fromAgentId: 'worker',
+      toAgentId: descriptor.agentId,
+      text: 'durable routing entry',
+    })
+    projector.emitAgentToolCall({
+      type: 'agent_tool_call',
+      agentId: descriptor.agentId,
+      actorAgentId: 'worker',
+      timestamp: FIXED_NOW,
+      kind: 'tool_execution_end',
+      toolName: 'read',
+      toolCallId: 'tool-1',
+      text: '{"ok":true}',
+      isError: false,
+    })
+
+    const history = projector.getConversationHistory(descriptor.agentId)
+    expect(history.some((entry) => entry.type === 'conversation_log' && entry.kind === 'tool_execution_start')).toBe(
+      true,
+    )
+
+    const cacheFile = getConversationHistoryCacheFilePath(sessionFile)
+    const cacheText = await waitForFileText(cacheFile, {
+      matches: (text) =>
+        text.includes('"type":"conversation_log"') &&
+        text.includes('durable transcript entry') &&
+        text.includes('durable routing entry') &&
+        text.includes('"kind":"tool_execution_end"'),
+    })
+    expect(cacheText).toContain('"type":"conversation_log"')
+    expect(cacheText).toContain('durable transcript entry')
+    expect(cacheText).toContain('durable routing entry')
+    expect(cacheText).toContain('"kind":"tool_execution_end"')
+
+    const persistedConversationEntries = SessionManager.open(sessionFile)
+      .getEntries()
+      .filter((entry: any) => entry.type === 'custom' && entry.customType === 'swarm_conversation_entry')
+      .map((entry: any) => entry.data)
+
+    expect(persistedConversationEntries.some((entry: any) => entry?.type === 'conversation_log')).toBe(false)
+    expect(
+      persistedConversationEntries.some(
+        (entry: any) => entry?.type === 'conversation_message' && entry.text === 'durable transcript entry',
+      ),
+    ).toBe(true)
+    expect(
+      persistedConversationEntries.some(
+        (entry: any) => entry?.type === 'agent_message' && entry.text === 'durable routing entry',
+      ),
+    ).toBe(true)
+    expect(
+      persistedConversationEntries.some(
+        (entry: any) => entry?.type === 'agent_tool_call' && entry.kind === 'tool_execution_end',
+      ),
+    ).toBe(true)
   })
 
   it('merges runtime-captured in-memory entries with lazy disk history on first access', async () => {

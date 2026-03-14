@@ -271,9 +271,9 @@ export class ConversationProjector {
     this.deps.conversationEntriesByAgentId.set(event.agentId, history);
     this.queueConversationHistoryCacheWrite(event.agentId, history);
 
-    // tool_execution_update payloads are high-volume streaming snapshots.
-    // Persisting each snapshot causes runaway JSONL growth and can crash reopening.
-    // Keep updates in-memory/live WS only; terminal *_end events are still persisted.
+    // Runtime logs are valuable for the live in-memory transcript and cache, but
+    // they are high-volume JSONL noise during replay/fork/recovery. Keep them out
+    // of the session file while still persisting durable transcript/tool entries.
     if (!shouldPersistConversationEntry(event)) {
       this.assignConversationMessageIdIfMissing(event);
       return;
@@ -1023,11 +1023,11 @@ function buildManagerErrorConversationText(options: {
 }
 
 function shouldPersistConversationEntry(entry: ConversationEntryEvent): boolean {
-  if (entry.type === "agent_tool_call") {
-    return entry.kind !== "tool_execution_update";
+  if (entry.type === "conversation_log") {
+    return false;
   }
 
-  if (entry.type === "conversation_log") {
+  if (entry.type === "agent_tool_call") {
     return entry.kind !== "tool_execution_update";
   }
 

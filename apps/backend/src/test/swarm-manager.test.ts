@@ -1766,7 +1766,9 @@ describe('SwarmManager', () => {
 
   it('automatically reports worker completion summaries to the owning manager', async () => {
     const config = await makeTempConfig()
-    const manager = new TestSwarmManager(config)
+    let tick = 0
+    const now = () => new Date(Date.parse('2026-01-01T00:00:00.000Z') + tick++).toISOString()
+    const manager = new TestSwarmManager(config, { now })
     await bootWithDefaultManager(manager, config)
 
     const worker = await manager.spawnAgent('manager', { agentId: 'Summary Worker' })
@@ -1806,7 +1808,9 @@ describe('SwarmManager', () => {
 
   it('falls back to a generic completion signal when the latest summary was already reported', async () => {
     const config = await makeTempConfig()
-    const manager = new TestSwarmManager(config)
+    let tick = 0
+    const now = () => new Date(Date.parse('2026-01-01T00:00:00.000Z') + tick++).toISOString()
+    const manager = new TestSwarmManager(config, { now })
     await bootWithDefaultManager(manager, config)
 
     const worker = await manager.spawnAgent('manager', { agentId: 'Repeat Summary Worker' })
