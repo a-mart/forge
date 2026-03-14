@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { once } from 'node:events'
 import { createServer } from 'node:net'
@@ -16,6 +15,7 @@ import type {
   SwarmConfig,
 } from '../swarm/types.js'
 import type { SwarmAgentRuntime } from '../swarm/runtime-types.js'
+import { getControlPidFilePath } from '../reboot/control-pid.js'
 import { getScheduleFilePath } from '../scheduler/schedule-storage.js'
 import { getCommonKnowledgePath, getCortexNotesPath, getProfileKnowledgePath } from '../swarm/data-paths.js'
 import { scanCortexReviewStatus } from '../swarm/scripts/cortex-scan.js'
@@ -404,6 +404,35 @@ describe('SwarmWebSocketServer', () => {
     await server.stop()
   })
 
+  it('writes and removes its control pid file across start/stop', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    const pidFile = getControlPidFilePath(config.paths.rootDir)
+    await rm(pidFile, { force: true })
+
+    await server.start()
+
+    try {
+      const pidContents = await readFile(pidFile, 'utf8')
+      expect(pidContents.trim()).toBe(String(process.pid))
+    } finally {
+      await server.stop()
+    }
+
+    await expect(readFile(pidFile, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
   it('accepts POST /api/reboot and signals the daemon pid asynchronously', async () => {
     const port = await getAvailablePort()
     const config = await makeTempConfig(port)
@@ -421,10 +450,8 @@ describe('SwarmWebSocketServer', () => {
     await server.start()
 
     const daemonPid = 54321
-    const repoHash = createHash('sha1').update(config.paths.rootDir).digest('hex').slice(0, 10)
-    const daemonFilePrefix = join(tmpdir(), `swarm-prod-daemon-${repoHash}`)
-    const pidFile = `${daemonFilePrefix}.pid`
-    const restartFile = `${daemonFilePrefix}.restart`
+    const pidFile = getControlPidFilePath(config.paths.rootDir)
+    const restartFile = pidFile.replace(/\.pid$/, '.restart')
     await writeFile(pidFile, `${daemonPid}\n`, 'utf8')
 
     const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true)

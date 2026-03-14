@@ -41,7 +41,7 @@ const BASE_CONFIG: SwarmConfig = {
   }
 };
 
-const TRACKED_EVENTS = ["SIGINT", "SIGTERM", "SIGBREAK", "message"] as const;
+const TRACKED_EVENTS = ["SIGINT", "SIGTERM", "SIGUSR1", "SIGBREAK", "message"] as const;
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -49,11 +49,20 @@ afterEach(() => {
 });
 
 describe("index shutdown signal registration", () => {
-  it("registers SIGINT and SIGTERM on POSIX", async () => {
+  it("registers SIGINT, SIGTERM, and SIGUSR1 on POSIX", async () => {
     const signals = await loadRegisteredSignals("linux");
     expect(signals).toContain("SIGINT");
     expect(signals).toContain("SIGTERM");
+    expect(signals).toContain("SIGUSR1");
     expect(signals).not.toContain("SIGBREAK");
+    expect(signals).toContain("message");
+  });
+
+  it("does not register SIGUSR1 for daemonized children", async () => {
+    const signals = await loadRegisteredSignals("linux", { MIDDLEMAN_DAEMONIZED: "1" });
+    expect(signals).toContain("SIGINT");
+    expect(signals).toContain("SIGTERM");
+    expect(signals).not.toContain("SIGUSR1");
     expect(signals).toContain("message");
   });
 
@@ -61,14 +70,28 @@ describe("index shutdown signal registration", () => {
     const signals = await loadRegisteredSignals("win32");
     expect(signals).toContain("SIGINT");
     expect(signals).toContain("SIGTERM");
+    expect(signals).not.toContain("SIGUSR1");
     expect(signals).toContain("SIGBREAK");
     expect(signals).toContain("message");
   });
 });
 
-async function loadRegisteredSignals(platform: NodeJS.Platform): Promise<string[]> {
+async function loadRegisteredSignals(
+  platform: NodeJS.Platform,
+  envOverrides: Record<string, string | undefined> = {}
+): Promise<string[]> {
   const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
   Object.defineProperty(process, "platform", { value: platform });
+
+  const previousEnv = new Map<string, string | undefined>();
+  for (const [key, value] of Object.entries(envOverrides)) {
+    previousEnv.set(key, process.env[key]);
+    if (typeof value === "string") {
+      process.env[key] = value;
+    } else {
+      delete process.env[key];
+    }
+  }
 
   const processEvents = process as unknown as {
     listeners(eventName: string): Array<(...args: any[]) => void>;
@@ -167,6 +190,14 @@ async function loadRegisteredSignals(platform: NodeJS.Platform): Promise<string[
         if (!baseline.has(listener)) {
           processEvents.removeListener(eventName, listener);
         }
+      }
+    }
+
+    for (const [key, value] of previousEnv.entries()) {
+      if (typeof value === "string") {
+        process.env[key] = value;
+      } else {
+        delete process.env[key];
       }
     }
 

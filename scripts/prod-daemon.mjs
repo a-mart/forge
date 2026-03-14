@@ -284,7 +284,10 @@ function startChild() {
 
   child = spawn(command, {
     cwd: repoRoot,
-    env: process.env,
+    env: {
+      ...process.env,
+      MIDDLEMAN_DAEMONIZED: "1",
+    },
     stdio: "inherit",
     shell: true,
     detached: true,

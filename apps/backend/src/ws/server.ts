@@ -1,13 +1,16 @@
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
 import type { Duplex } from "node:stream";
 import type { ServerEvent } from "@middleman/protocol";
 import { WebSocketServer } from "ws";
-import { MobilePushService } from "../mobile/mobile-push-service.js";
 import type { IntegrationRegistryService } from "../integrations/registry.js";
+import { MobilePushService } from "../mobile/mobile-push-service.js";
 import type { PlaywrightDiscoveryService } from "../playwright/playwright-discovery-service.js";
 import { PlaywrightLivePreviewProxy } from "../playwright/playwright-live-preview-proxy.js";
 import { PlaywrightLivePreviewService } from "../playwright/playwright-live-preview-service.js";
 import { PlaywrightSettingsService } from "../playwright/playwright-settings-service.js";
+import { DAEMONIZED_ENV_VAR, getControlPidFilePath, readControlPidFromFile } from "../reboot/control-pid.js";
+import { isPidAlive } from "../swarm/platform.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import { applyCorsHeaders, resolveRequestUrl, sendJson } from "./http-utils.js";
 import { createAgentHttpRoutes } from "./routes/agent-routes.js";
@@ -45,6 +48,10 @@ export class SwarmWebSocketServer {
   private readonly mobilePushService: MobilePushService;
   private readonly settingsRoutes: SettingsRouteBundle;
   private readonly httpRoutes: HttpRoute[];
+  private readonly controlPidFile: string;
+  private readonly shouldManageControlPid: boolean;
+
+  private ownsControlPidFile = false;
 
   private readonly onConversationMessage = (event: ServerEvent): void => {
     if (event.type !== "conversation_message") return;
@@ -153,6 +160,8 @@ export class SwarmWebSocketServer {
       dataDir: this.swarmManager.getConfig().paths.dataDir,
       isSessionActive: (sessionAgentId) => wsHandlerRef?.hasActiveSubscription(sessionAgentId) ?? false
     });
+    this.controlPidFile = getControlPidFilePath(this.swarmManager.getConfig().paths.rootDir);
+    this.shouldManageControlPid = process.env[DAEMONIZED_ENV_VAR] !== "1";
 
     this.wsHandler = new WsHandler({
       swarmManager: this.swarmManager,
@@ -166,7 +175,8 @@ export class SwarmWebSocketServer {
     this.settingsRoutes = createSettingsRoutes({ swarmManager: this.swarmManager });
     this.httpRoutes = [
       ...createHealthRoutes({
-        resolveRepoRoot: () => this.swarmManager.getConfig().paths.rootDir
+        resolveRepoRoot: () => this.swarmManager.getConfig().paths.rootDir,
+        resolveControlPidFile: () => this.controlPidFile
       }),
       ...createFileRoutes({ swarmManager: this.swarmManager }),
       ...createFeedbackRoutes({ swarmManager: this.swarmManager }),
@@ -238,6 +248,10 @@ export class SwarmWebSocketServer {
       httpServer.listen(this.port, this.host);
     });
 
+    if (this.shouldManageControlPid) {
+      this.ownsControlPidFile = await tryWriteOwnedControlPidFile(this.controlPidFile);
+    }
+
     this.swarmManager.on("conversation_message", this.onConversationMessage);
     this.swarmManager.on("conversation_log", this.onConversationLog);
     this.swarmManager.on("agent_message", this.onAgentMessage);
@@ -284,6 +298,11 @@ export class SwarmWebSocketServer {
       currentWss ? closeWebSocketServer(currentWss) : Promise.resolve(),
       currentHttpServer ? closeHttpServer(currentHttpServer) : Promise.resolve(),
     ]);
+
+    if (this.ownsControlPidFile) {
+      await removeOwnedControlPidFile(this.controlPidFile);
+      this.ownsControlPidFile = false;
+    }
   }
 
   private handleUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer): void {
@@ -335,6 +354,49 @@ export class SwarmWebSocketServer {
       sendJson(response, statusCode, { error: message });
     }
   }
+}
+
+async function tryWriteOwnedControlPidFile(pidFile: string): Promise<boolean> {
+  const existingPid = await readControlPidFromFile(pidFile);
+  if (existingPid !== null && existingPid !== process.pid) {
+    try {
+      if (isPidAlive(existingPid)) {
+        console.warn(`[reboot] Control pid file is already owned by pid ${existingPid}: ${pidFile}`);
+        return false;
+      }
+    } catch {
+      // Ignore liveness errors and overwrite stale pid files below.
+    }
+  }
+
+  await writeFile(pidFile, `${process.pid}\n`, "utf8");
+  return true;
+}
+
+async function removeOwnedControlPidFile(pidFile: string): Promise<void> {
+  try {
+    const rawPid = await readFile(pidFile, "utf8");
+    if (Number.parseInt(rawPid.trim(), 10) !== process.pid) {
+      return;
+    }
+  } catch (error) {
+    if (isErrorWithCode(error, "ENOENT")) {
+      return;
+    }
+
+    throw error;
+  }
+
+  await rm(pidFile, { force: true });
+}
+
+function isErrorWithCode(error: unknown, code: string): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: string }).code === code
+  );
 }
 
 async function closeWebSocketServer(server: WebSocketServer): Promise<void> {

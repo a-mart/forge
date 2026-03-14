@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { config as loadDotenv } from "dotenv";
@@ -7,6 +8,11 @@ import { IntegrationRegistryService } from "./integrations/registry.js";
 import { PlaywrightDiscoveryService } from "./playwright/playwright-discovery-service.js";
 import { PlaywrightLivePreviewService } from "./playwright/playwright-live-preview-service.js";
 import { PlaywrightSettingsService } from "./playwright/playwright-settings-service.js";
+import {
+  DAEMONIZED_ENV_VAR,
+  RESTART_PARENT_PID_ENV_VAR,
+  RESTART_SIGNAL
+} from "./reboot/control-pid.js";
 import { CronSchedulerService } from "./scheduler/cron-scheduler-service.js";
 import { getScheduleFilePath } from "./scheduler/schedule-storage.js";
 import { SwarmManager } from "./swarm/swarm-manager.js";
@@ -138,21 +144,62 @@ async function main(): Promise<void> {
     playwrightEnvEnabledOverride,
     promptRegistry: swarmManager.promptRegistry,
   });
+
+  await waitForRestartParentToExit();
   await wsServer.start();
 
   console.log(`Middleman backend listening on ws://${config.host}:${config.port}`);
 
-  const shutdown = async (signal: string): Promise<void> => {
-    console.log(`Received ${signal}. Shutting down...`);
+  let stopped = false;
+  let restarting = false;
+
+  const stop = async (options?: { skipWsServer?: boolean }): Promise<void> => {
+    if (stopped) {
+      return;
+    }
+
+    stopped = true;
     swarmManager.off("agents_snapshot", handleAgentsSnapshot);
     await Promise.allSettled([
       queueSchedulerSync(new Set<string>()),
       integrationRegistry.stop(),
       playwrightDiscovery?.stop(),
       playwrightLivePreviewService.stop(),
-      wsServer.stop()
+      options?.skipWsServer ? Promise.resolve() : wsServer.stop()
     ]);
+  };
+
+  const shutdown = async (signal: string): Promise<void> => {
+    console.log(`Received ${signal}. Shutting down...`);
+    await stop();
     process.exit(0);
+  };
+
+  const restart = async (): Promise<void> => {
+    if (restarting || stopped) {
+      return;
+    }
+
+    restarting = true;
+    console.log(`[reboot] Received ${RESTART_SIGNAL}. Restarting backend...`);
+
+    try {
+      await wsServer.stop();
+      await spawnReplacementProcess();
+      await stop({ skipWsServer: true });
+      process.exit(0);
+    } catch (error) {
+      restarting = false;
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[reboot] Failed to restart current process: ${message}`);
+
+      try {
+        await wsServer.start();
+      } catch (restartError) {
+        const restartMessage = restartError instanceof Error ? restartError.message : String(restartError);
+        console.error(`[reboot] Failed to restore WebSocket server after restart failure: ${restartMessage}`);
+      }
+    }
   };
 
   process.on("SIGINT", () => {
@@ -162,6 +209,12 @@ async function main(): Promise<void> {
   process.on("SIGTERM", () => {
     void shutdown("SIGTERM");
   });
+
+  if (process.platform !== "win32" && process.env[DAEMONIZED_ENV_VAR] !== "1") {
+    process.on(RESTART_SIGNAL, () => {
+      void restart();
+    });
+  }
 
   if (process.platform === "win32") {
     process.on("SIGBREAK", () => {
@@ -214,6 +267,65 @@ function collectManagerIds(agents: unknown[], fallbackManagerId?: string): Set<s
   }
 
   return profileIds;
+}
+
+async function waitForRestartParentToExit(): Promise<void> {
+  const rawParentPid = process.env[RESTART_PARENT_PID_ENV_VAR];
+  if (typeof rawParentPid !== "string" || rawParentPid.trim().length === 0) {
+    return;
+  }
+
+  delete process.env[RESTART_PARENT_PID_ENV_VAR];
+
+  const parentPid = Number.parseInt(rawParentPid.trim(), 10);
+  if (!Number.isInteger(parentPid) || parentPid <= 0) {
+    return;
+  }
+
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    try {
+      process.kill(parentPid, 0);
+    } catch (error) {
+      if (isErrorWithCode(error, "ESRCH")) {
+        return;
+      }
+
+      throw error;
+    }
+
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 50));
+  }
+}
+
+async function spawnReplacementProcess(): Promise<void> {
+  const replacementArgs = [...process.execArgv, ...process.argv.slice(1)];
+  const replacementEnv = {
+    ...process.env,
+    [RESTART_PARENT_PID_ENV_VAR]: `${process.pid}`
+  };
+
+  await new Promise<void>((resolveSpawn, reject) => {
+    const child = spawn(process.execPath, replacementArgs, {
+      cwd: process.cwd(),
+      env: replacementEnv,
+      stdio: "inherit"
+    });
+
+    child.once("error", reject);
+    child.once("spawn", () => {
+      resolveSpawn();
+    });
+  });
+}
+
+function isErrorWithCode(error: unknown, code: string): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: string }).code === code
+  );
 }
 
 void main().catch((error) => {
