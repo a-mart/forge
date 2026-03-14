@@ -18,7 +18,7 @@ import { ChatHeader, type ChannelView } from '@/components/chat/ChatHeader'
 import { CreateManagerDialog } from '@/components/chat/CreateManagerDialog'
 import { DeleteManagerDialog } from '@/components/chat/DeleteManagerDialog'
 import { MessageInput, type MessageInputHandle } from '@/components/chat/MessageInput'
-import { MessageList } from '@/components/chat/MessageList'
+import { MessageList, type MessageListHandle } from '@/components/chat/MessageList'
 import { PlaywrightDashboardView } from '@/components/playwright/PlaywrightDashboardView'
 import { SettingsPanel } from '@/components/chat/SettingsDialog'
 import { chooseFallbackAgentId } from '@/lib/agent-hierarchy'
@@ -69,6 +69,7 @@ function resolveDefaultWsUrl(): string {
 export function IndexPage() {
   const wsUrl = import.meta.env.VITE_MIDDLEMAN_WS_URL ?? resolveDefaultWsUrl()
   const messageInputRef = useRef<MessageInputHandle | null>(null)
+  const messageListRef = useRef<MessageListHandle | null>(null)
   const navigate = useOptionalNavigate()
   const location = useOptionalLocation()
 
@@ -386,6 +387,10 @@ export function IndexPage() {
       attachments,
     })
   }
+
+  const handleMessageInputSubmitted = useCallback(() => {
+    messageListRef.current?.scrollToBottom('smooth')
+  }, [])
 
   const handleNewChat = () => {
     if (!isActiveManager || !activeAgentId || !activeAgent) {
@@ -772,6 +777,7 @@ export function IndexPage() {
                 ) : null}
 
                 <MessageList
+                  ref={messageListRef}
                   messages={visibleMessages}
                   isLoading={isLoading}
                   activeAgentId={activeAgentId}
@@ -788,6 +794,7 @@ export function IndexPage() {
                 <MessageInput
                   ref={messageInputRef}
                   onSend={handleSend}
+                  onSubmitted={handleMessageInputSubmitted}
                   isLoading={isLoading}
                   disabled={!state.connected || !activeAgentId}
                   allowWhileLoading
