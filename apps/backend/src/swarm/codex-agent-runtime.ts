@@ -85,6 +85,7 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
   private pendingDeliveries: PendingDelivery[] = [];
   private queuedSteers: QueuedSteer[] = [];
   private readonly toolNameByItemId = new Map<string, string>();
+  private readonly pendingCustomEntryWrites = new Set<Promise<void>>();
 
   private constructor(options: {
     descriptor: AgentDescriptor;
@@ -260,6 +261,7 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
     }
 
     this.rpc.dispose();
+    await this.waitForPendingCustomEntryWrites();
 
     this.pendingDeliveries = [];
     this.queuedSteers = [];
@@ -309,6 +311,8 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
         });
       }
     }
+
+    await this.waitForPendingCustomEntryWrites();
 
     this.pendingDeliveries = [];
     this.queuedSteers = [];
@@ -464,13 +468,40 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
   }
 
   private persistRuntimeState(): void {
-    if (!this.threadId) {
+    const threadId = this.threadId;
+    if (!threadId) {
       return;
     }
 
-    this.appendCustomEntry(CODEX_RUNTIME_STATE_ENTRY_TYPE, {
-      threadId: this.threadId
-    });
+    this.trackCustomEntryWrite(
+      CODEX_RUNTIME_STATE_ENTRY_TYPE,
+      Promise.resolve().then(() => {
+        this.sessionManager.appendCustomEntry(CODEX_RUNTIME_STATE_ENTRY_TYPE, {
+          threadId
+        });
+      })
+    );
+  }
+
+  private trackCustomEntryWrite(customType: string, writePromise: Promise<void>): void {
+    this.pendingCustomEntryWrites.add(writePromise);
+    void writePromise
+      .catch((error) => {
+        this.logRuntimeError("startup", error, {
+          customType
+        });
+      })
+      .finally(() => {
+        this.pendingCustomEntryWrites.delete(writePromise);
+      });
+  }
+
+  private async waitForPendingCustomEntryWrites(): Promise<void> {
+    if (this.pendingCustomEntryWrites.size === 0) {
+      return;
+    }
+
+    await Promise.allSettled(Array.from(this.pendingCustomEntryWrites));
   }
 
   private async startTurn(message: RuntimeUserMessage): Promise<void> {
@@ -804,6 +835,8 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
         pendingCount: this.pendingDeliveries.length
       }
     });
+
+    await this.waitForPendingCustomEntryWrites();
 
     this.pendingDeliveries = [];
     this.queuedSteers = [];

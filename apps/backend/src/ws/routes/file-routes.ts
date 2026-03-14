@@ -37,7 +37,7 @@ export function createFileRoutes(options: { swarmManager: SwarmManager }): HttpR
       tmpdir()
     ]);
 
-    if (isPathWithinRoots(resolvedPath, allowedRoots)) {
+    if (await isPathWithinRoots(resolvedPath, allowedRoots)) {
       return resolvedPath;
     }
 
@@ -56,7 +56,7 @@ export function createFileRoutes(options: { swarmManager: SwarmManager }): HttpR
       }
     }
 
-    if (!isPathWithinRoots(existingAncestor, allowedRoots)) {
+    if (!(await isPathWithinRoots(existingAncestor, allowedRoots))) {
       throw new Error("Path is outside allowed roots.");
     }
 

@@ -1,5 +1,4 @@
-import { realpathSync } from "node:fs";
-import { readdir, stat } from "node:fs/promises";
+import { readdir, realpath, stat } from "node:fs/promises";
 import { basename, isAbsolute, resolve, sep, win32 } from "node:path";
 
 const CWD_ERROR_MESSAGES = {
@@ -57,7 +56,7 @@ export function normalizeAllowlistRoots(roots: string[]): string[] {
     const trimmed = root.trim();
     if (!trimmed) continue;
 
-    normalized.add(resolveToRealPath(resolve(trimmed)));
+    normalized.add(resolve(trimmed));
   }
 
   return Array.from(normalized).sort((a, b) => a.localeCompare(b));
@@ -94,7 +93,7 @@ export async function validateDirectoryPath(input: string, policy: CwdPolicy): P
     throw new DirectoryValidationError("DIRECTORY_NOT_DIRECTORY", CWD_ERROR_MESSAGES.NOT_DIRECTORY);
   }
 
-  return resolveToRealPath(resolved);
+  return await resolveToRealPath(resolved);
 }
 
 export async function listDirectories(
@@ -107,19 +106,20 @@ export async function listDirectories(
 
   try {
     const entries = await readdir(resolvedPath, { withFileTypes: true });
-    const directories: DirectorySummary[] = [];
+    const directories = (
+      await Promise.all(
+        entries.map(async (entry): Promise<DirectorySummary | null> => {
+          if (!entry.isDirectory()) {
+            return null;
+          }
 
-    for (const entry of entries) {
-      if (!entry.isDirectory()) {
-        continue;
-      }
-
-      const candidatePath = resolveToRealPath(resolve(resolvedPath, entry.name));
-      directories.push({
-        name: entry.name,
-        path: candidatePath
-      });
-    }
+          return {
+            name: entry.name,
+            path: await resolveToRealPath(resolve(resolvedPath, entry.name))
+          };
+        })
+      )
+    ).filter((entry): entry is DirectorySummary => entry !== null);
 
     directories.sort((a, b) => a.name.localeCompare(b.name));
 
@@ -167,13 +167,24 @@ export async function validateDirectory(
   }
 }
 
-export function isPathWithinRoots(pathValue: string, roots: string[]): boolean {
-  return roots.some((root) => isPathWithinRoot(pathValue, root));
+export async function isPathWithinRoots(pathValue: string, roots: string[]): Promise<boolean> {
+  const normalizedPath = await resolveToRealPath(pathValue);
+  const normalizedRoots = await Promise.all(roots.map((root) => resolveToRealPath(root)));
+
+  return normalizedRoots.some((normalizedRoot) => {
+    if (normalizedPath === normalizedRoot) {
+      return true;
+    }
+
+    return normalizedPath.startsWith(`${normalizedRoot}${sep}`);
+  });
 }
 
-export function isPathWithinRoot(pathValue: string, rootPath: string): boolean {
-  const normalizedPath = resolveToRealPath(pathValue);
-  const normalizedRoot = resolveToRealPath(rootPath);
+export async function isPathWithinRoot(pathValue: string, rootPath: string): Promise<boolean> {
+  const [normalizedPath, normalizedRoot] = await Promise.all([
+    resolveToRealPath(pathValue),
+    resolveToRealPath(rootPath)
+  ]);
 
   if (normalizedPath === normalizedRoot) {
     return true;
@@ -182,9 +193,9 @@ export function isPathWithinRoot(pathValue: string, rootPath: string): boolean {
   return normalizedPath.startsWith(`${normalizedRoot}${sep}`);
 }
 
-function resolveToRealPath(pathValue: string): string {
+async function resolveToRealPath(pathValue: string): Promise<string> {
   try {
-    return resolve(realpathSync(pathValue));
+    return resolve(await realpath(pathValue));
   } catch {
     return resolve(pathValue);
   }
