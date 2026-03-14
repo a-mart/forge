@@ -1078,33 +1078,3 @@ function resolveDeletedAgentProfileId(
   return managerDescriptor.profileId?.trim() || managerDescriptor.agentId
 }
 
-function applyWindowNavigation({
-  to,
-  search,
-  replace,
-}: {
-  to: string
-  search?: { view?: string; agent?: string }
-  replace?: boolean
-}): void {
-  if (typeof window === 'undefined') {
-    return
-  }
-
-  const params = new URLSearchParams()
-  if (search?.view) {
-    params.set('view', search.view)
-  }
-  if (search?.agent) {
-    params.set('agent', search.agent)
-  }
-
-  const query = params.toString()
-  const nextUrl = query ? `${to}?${query}` : to
-
-  if (replace) {
-    window.history.replaceState(null, '', nextUrl)
-  } else {
-    window.history.pushState(null, '', nextUrl)
-  }
-}

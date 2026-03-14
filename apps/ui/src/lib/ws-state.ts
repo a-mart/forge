@@ -35,6 +35,7 @@ export interface ManagerWsState {
   playwrightSnapshot: PlaywrightDiscoverySnapshot | null
   playwrightSettings: PlaywrightDiscoverySettings | null
   unreadCounts: Record<string, number>
+  hasReceivedAgentsSnapshot: boolean
   /** Monotonically increasing counter bumped on each prompt_changed WS event */
   promptChangeKey: number
 }
@@ -56,6 +57,7 @@ export function createInitialManagerWsState(targetAgentId: string | null): Manag
     playwrightSnapshot: null,
     playwrightSettings: null,
     unreadCounts: {},
+    hasReceivedAgentsSnapshot: false,
     promptChangeKey: 0,
   }
 }
