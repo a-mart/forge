@@ -321,4 +321,102 @@ describe('IndexPage create manager model selection', () => {
     expect(queryByText(container, 'foreign worker chatter')).toBeNull()
     expect(queryByText(container, /foreign-call/)).toBeNull()
   })
+
+  it('keeps the root URL free of query params when the active agent is implicit', async () => {
+    const socket = await renderPage()
+
+    emitServerEvent(socket, {
+      type: 'agents_snapshot',
+      agents: [buildManager('manager', '/tmp/manager')],
+    })
+
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(window.location.pathname).toBe('/')
+    expect(window.location.search).toBe('')
+  })
+
+  it('falls back to the most recent session in the same profile when the explicit target disappears', async () => {
+    window.history.replaceState(null, '', '/?agent=alpha--s3')
+
+    const socket = await renderPage()
+
+    emitServerEvent(socket, {
+      type: 'agents_snapshot',
+      agents: [
+        {
+          ...buildManager('alpha', '/tmp/alpha'),
+          profileId: 'alpha',
+          sessionLabel: 'Default',
+          updatedAt: '2026-01-01T00:01:00.000Z',
+        },
+        {
+          ...buildManager('alpha--s2', '/tmp/alpha'),
+          managerId: 'alpha--s2',
+          profileId: 'alpha',
+          sessionLabel: 'Session 2',
+          updatedAt: '2026-01-01T00:02:00.000Z',
+        },
+        {
+          ...buildManager('alpha--s3', '/tmp/alpha'),
+          managerId: 'alpha--s3',
+          profileId: 'alpha',
+          sessionLabel: 'Session 3',
+          updatedAt: '2026-01-01T00:03:00.000Z',
+        },
+        {
+          ...buildManager('beta', '/tmp/beta'),
+          profileId: 'beta',
+          sessionLabel: 'Beta default',
+          updatedAt: '2026-01-01T00:04:00.000Z',
+        },
+      ],
+    })
+
+    await vi.advanceTimersByTimeAsync(0)
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'alpha--s3',
+    })
+
+    emitServerEvent(socket, {
+      type: 'agents_snapshot',
+      agents: [
+        {
+          ...buildManager('alpha', '/tmp/alpha'),
+          profileId: 'alpha',
+          sessionLabel: 'Default',
+          updatedAt: '2026-01-01T00:01:00.000Z',
+        },
+        {
+          ...buildManager('alpha--s2', '/tmp/alpha'),
+          managerId: 'alpha--s2',
+          profileId: 'alpha',
+          sessionLabel: 'Session 2',
+          updatedAt: '2026-01-01T00:05:00.000Z',
+        },
+        {
+          ...buildManager('beta', '/tmp/beta'),
+          profileId: 'beta',
+          sessionLabel: 'Beta default',
+          updatedAt: '2026-01-01T00:06:00.000Z',
+        },
+      ],
+    })
+
+    await vi.advanceTimersByTimeAsync(0)
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(window.location.pathname).toBe('/')
+    expect(window.location.search).toBe('?agent=alpha--s2')
+
+    const payloads = socket.sentPayloads.map((payload) => JSON.parse(payload))
+    expect(
+      payloads.some(
+        (payload) => payload.type === 'subscribe' && payload.agentId === 'alpha--s2',
+      ),
+    ).toBe(true)
+  })
 })

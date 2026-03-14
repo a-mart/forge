@@ -238,12 +238,32 @@ async function advanceToWatchdogBatchFlush(): Promise<void> {
   await vi.advanceTimersByTimeAsync(750)
 }
 
+function buildExpectedAutoCompletionMessage(worker: AgentDescriptor): string {
+  return `SYSTEM: Worker ${worker.agentId} completed its turn.`
+}
+
+function failAutoCompletionReports(runtime: FakeRuntime): void {
+  const originalSendMessage = runtime.sendMessage.bind(runtime)
+  runtime.sendMessage = async (message, delivery = 'auto') => {
+    if (
+      typeof message === 'string' &&
+      message.startsWith('SYSTEM: Worker ') &&
+      message.includes('completed its turn') &&
+      !message.includes('[IDLE WORKER WATCHDOG — BATCHED]')
+    ) {
+      throw new Error('synthetic auto-report failure')
+    }
+
+    return originalSendMessage(message, delivery)
+  }
+}
+
 afterEach(() => {
   vi.useRealTimers()
 })
 
 describe('idle worker watchdog', () => {
-  it('batches simultaneous idle workers into a single manager watchdog message', async () => {
+  it('auto-reports worker completion before watchdog batching would run', async () => {
     vi.useFakeTimers()
 
     const config = await makeTempConfig()
@@ -260,26 +280,17 @@ describe('idle worker watchdog', () => {
     await (manager as any).handleRuntimeAgentEnd(workerB.agentId)
     await (manager as any).handleRuntimeAgentEnd(workerC.agentId)
 
-    await vi.advanceTimersByTimeAsync(3_000)
+    expect(managerRuntime?.sendCalls).toHaveLength(3)
+    expect(managerRuntime?.sendCalls.map((call) => call.message)).toEqual([
+      buildExpectedAutoCompletionMessage(workerA),
+      buildExpectedAutoCompletionMessage(workerB),
+      buildExpectedAutoCompletionMessage(workerC),
+    ])
+
+    await advanceToWatchdogBatchFlush()
+
     expect(getBatchedWatchdogMessages(managerRuntime)).toHaveLength(0)
-
-    await vi.advanceTimersByTimeAsync(749)
-    expect(getBatchedWatchdogMessages(managerRuntime)).toHaveLength(0)
-
-    await vi.advanceTimersByTimeAsync(1)
-
-    const watchdogMessages = getBatchedWatchdogMessages(managerRuntime)
-    expect(watchdogMessages).toHaveLength(1)
-    expect(watchdogMessages[0]).toContain('3 workers went idle without reporting this turn.')
-    expect(watchdogMessages[0]).toContain(`\`${workerA.agentId}\``)
-    expect(watchdogMessages[0]).toContain(`\`${workerB.agentId}\``)
-    expect(watchdogMessages[0]).toContain(`\`${workerC.agentId}\``)
-
-    const userPublishes = getSystemWatchdogPublishes(manager)
-    expect(userPublishes).toHaveLength(1)
-    expect(userPublishes[0]).toMatchObject({
-      agentId: 'manager',
-    })
+    expect(getSystemWatchdogPublishes(manager)).toHaveLength(0)
   })
 
   it('batch flush skips stale workers and still notifies for valid queued workers', async () => {
@@ -293,6 +304,7 @@ describe('idle worker watchdog', () => {
     const staleWorker = await manager.spawnAgent('manager', { agentId: 'Stale Batch Worker' })
     const managerRuntime = manager.runtimeByAgentId.get('manager')
     expect(managerRuntime).toBeDefined()
+    failAutoCompletionReports(managerRuntime!)
 
     await (manager as any).handleRuntimeAgentEnd(validWorker.agentId)
     await (manager as any).handleRuntimeAgentEnd(staleWorker.agentId)
@@ -387,6 +399,7 @@ describe('idle worker watchdog', () => {
     const nonParentTarget = await manager.spawnAgent('manager', { agentId: 'Sibling Target' })
     const managerRuntime = manager.runtimeByAgentId.get('manager')
     expect(managerRuntime).toBeDefined()
+    failAutoCompletionReports(managerRuntime!)
 
     await manager.sendMessage(reportingWorker.agentId, nonParentTarget.agentId, 'status ping', 'auto', {
       origin: 'internal',
@@ -442,6 +455,7 @@ describe('idle worker watchdog', () => {
     const worker = await manager.spawnAgent('manager', { agentId: 'Cleanup Worker' })
     const managerRuntime = manager.runtimeByAgentId.get('manager')
     expect(managerRuntime).toBeDefined()
+    failAutoCompletionReports(managerRuntime!)
 
     await (manager as any).handleRuntimeAgentEnd(worker.agentId)
 
@@ -483,6 +497,7 @@ describe('idle worker watchdog', () => {
     const worker = await manager.spawnAgent('manager', { agentId: 'Backoff Worker' })
     const managerRuntime = manager.runtimeByAgentId.get('manager')
     expect(managerRuntime).toBeDefined()
+    failAutoCompletionReports(managerRuntime!)
 
     await (manager as any).handleRuntimeAgentEnd(worker.agentId)
     await advanceToWatchdogBatchFlush()
@@ -508,6 +523,7 @@ describe('idle worker watchdog', () => {
     const worker = await manager.spawnAgent('manager', { agentId: 'Circuit Worker' })
     const managerRuntime = manager.runtimeByAgentId.get('manager')
     expect(managerRuntime).toBeDefined()
+    failAutoCompletionReports(managerRuntime!)
 
     await (manager as any).handleRuntimeAgentEnd(worker.agentId)
     await advanceToWatchdogBatchFlush()
@@ -542,6 +558,7 @@ describe('idle worker watchdog', () => {
     const worker = await manager.spawnAgent('manager', { agentId: 'Reset Worker' })
     const managerRuntime = manager.runtimeByAgentId.get('manager')
     expect(managerRuntime).toBeDefined()
+    failAutoCompletionReports(managerRuntime!)
 
     await (manager as any).handleRuntimeAgentEnd(worker.agentId)
     await advanceToWatchdogBatchFlush()
@@ -563,5 +580,166 @@ describe('idle worker watchdog', () => {
     await advanceToWatchdogBatchFlush()
 
     expect(getBatchedWatchdogMessages(managerRuntime)).toHaveLength(2)
+  })
+
+  it('does not emit a watchdog notification when the worker is in error state', async () => {
+    vi.useFakeTimers()
+
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', { agentId: 'Errored Worker' })
+    const managerRuntime = manager.runtimeByAgentId.get('manager')
+    expect(managerRuntime).toBeDefined()
+
+    await (manager as any).handleRuntimeAgentEnd(worker.agentId)
+
+    const workerDescriptor = (manager as any).descriptors.get(worker.agentId) as AgentDescriptor
+    workerDescriptor.status = 'error'
+    ;(manager as any).descriptors.set(worker.agentId, workerDescriptor)
+
+    await vi.advanceTimersByTimeAsync(3_000)
+
+    expect(managerRuntime?.sendCalls).toHaveLength(1)
+    expect(managerRuntime?.sendCalls[0]?.message).toBe(buildExpectedAutoCompletionMessage(worker))
+  })
+
+  it('does not emit a watchdog notification when the worker is streaming', async () => {
+    vi.useFakeTimers()
+
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', { agentId: 'Streaming Worker' })
+    const managerRuntime = manager.runtimeByAgentId.get('manager')
+    expect(managerRuntime).toBeDefined()
+
+    await (manager as any).handleRuntimeAgentEnd(worker.agentId)
+
+    const workerDescriptor = (manager as any).descriptors.get(worker.agentId) as AgentDescriptor
+    workerDescriptor.status = 'streaming'
+    ;(manager as any).descriptors.set(worker.agentId, workerDescriptor)
+
+    await vi.advanceTimersByTimeAsync(3_000)
+
+    expect(managerRuntime?.sendCalls).toHaveLength(1)
+    expect(managerRuntime?.sendCalls[0]?.message).toBe(buildExpectedAutoCompletionMessage(worker))
+  })
+
+  it('does not emit a watchdog notification when the parent manager is not running', async () => {
+    vi.useFakeTimers()
+
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', { agentId: 'Orphan Worker' })
+    const managerRuntime = manager.runtimeByAgentId.get('manager')
+    expect(managerRuntime).toBeDefined()
+
+    await (manager as any).handleRuntimeAgentEnd(worker.agentId)
+
+    const managerDescriptor = (manager as any).descriptors.get('manager') as AgentDescriptor
+    managerDescriptor.status = 'terminated'
+    ;(manager as any).descriptors.set('manager', managerDescriptor)
+
+    await vi.advanceTimersByTimeAsync(3_000)
+
+    expect(managerRuntime?.sendCalls).toHaveLength(1)
+    expect(managerRuntime?.sendCalls[0]?.message).toBe(buildExpectedAutoCompletionMessage(worker))
+  })
+
+  it('still emits a watchdog notification when worker messages a non-parent target', async () => {
+    vi.useFakeTimers()
+
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', { agentId: 'Non Parent Reporter' })
+    const otherWorker = await manager.spawnAgent('manager', { agentId: 'Different Target Worker' })
+    const managerRuntime = manager.runtimeByAgentId.get('manager')
+    const otherWorkerRuntime = manager.runtimeByAgentId.get(otherWorker.agentId)
+    expect(managerRuntime).toBeDefined()
+    expect(otherWorkerRuntime).toBeDefined()
+
+    await manager.sendMessage(worker.agentId, otherWorker.agentId, 'hello peer', 'auto', { origin: 'internal' })
+    await (manager as any).handleRuntimeAgentEnd(worker.agentId)
+
+    expect(otherWorkerRuntime?.sendCalls).toHaveLength(1)
+    expect(otherWorkerRuntime?.sendCalls[0]?.message).toBe('SYSTEM: hello peer')
+
+    await vi.advanceTimersByTimeAsync(3_000)
+
+    expect(managerRuntime?.sendCalls).toHaveLength(1)
+    expect(managerRuntime?.sendCalls[0]?.message).toBe(buildExpectedAutoCompletionMessage(worker))
+  })
+
+  it('does not schedule watchdog activity for manager-role agent_end events', async () => {
+    vi.useFakeTimers()
+
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const managerRuntime = manager.runtimeByAgentId.get('manager')
+    expect(managerRuntime).toBeDefined()
+
+    await (manager as any).handleRuntimeAgentEnd('manager')
+    await vi.advanceTimersByTimeAsync(3_000)
+
+    expect(managerRuntime?.sendCalls).toHaveLength(0)
+    expect((manager as any).watchdogTimers.size).toBe(0)
+    expect((manager as any).workerWatchdogState.size).toBe(0)
+  })
+
+  it('clears watchdog state in terminateDescriptor via killAgent', async () => {
+    vi.useFakeTimers()
+
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', { agentId: 'Killed Worker' })
+    const managerRuntime = manager.runtimeByAgentId.get('manager')
+    expect(managerRuntime).toBeDefined()
+
+    await (manager as any).handleRuntimeAgentEnd(worker.agentId)
+
+    await manager.killAgent('manager', worker.agentId)
+
+    await vi.advanceTimersByTimeAsync(3_000)
+
+    expect(managerRuntime?.sendCalls).toHaveLength(1)
+    expect(managerRuntime?.sendCalls[0]?.message).toBe(buildExpectedAutoCompletionMessage(worker))
+    expect((manager as any).workerWatchdogState.has(worker.agentId)).toBe(false)
+    expect((manager as any).watchdogTimers.has(worker.agentId)).toBe(false)
+    expect((manager as any).watchdogTimerTokens.has(worker.agentId)).toBe(false)
+  })
+
+  it('clears watchdog state in stopAllAgents for affected workers', async () => {
+    vi.useFakeTimers()
+
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', { agentId: 'Stopped Worker' })
+    const managerRuntime = manager.runtimeByAgentId.get('manager')
+    expect(managerRuntime).toBeDefined()
+
+    await (manager as any).handleRuntimeAgentEnd(worker.agentId)
+
+    await manager.stopAllAgents('manager', 'manager')
+
+    await vi.advanceTimersByTimeAsync(3_000)
+
+    expect(managerRuntime?.sendCalls).toHaveLength(1)
+    expect(managerRuntime?.sendCalls[0]?.message).toBe(buildExpectedAutoCompletionMessage(worker))
+    expect((manager as any).workerWatchdogState.has(worker.agentId)).toBe(false)
+    expect((manager as any).watchdogTimers.has(worker.agentId)).toBe(false)
+    expect((manager as any).watchdogTimerTokens.has(worker.agentId)).toBe(false)
   })
 })

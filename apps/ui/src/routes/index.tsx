@@ -37,6 +37,7 @@ import { usePendingResponse } from '@/hooks/index-page/use-pending-response'
 import { useFileDrop } from '@/hooks/index-page/use-file-drop'
 import { useDynamicFavicon } from '@/hooks/use-dynamic-favicon'
 import type {
+  AgentDescriptor,
   ConversationAttachment,
   ManagerModelPreset,
   ManagerReasoningLevel,
@@ -70,6 +71,7 @@ export function IndexPage() {
   const wsUrl = import.meta.env.VITE_MIDDLEMAN_WS_URL ?? resolveDefaultWsUrl()
   const messageInputRef = useRef<MessageInputHandle | null>(null)
   const messageListRef = useRef<MessageListHandle | null>(null)
+  const previousAgentsByIdRef = useRef<Map<string, AgentDescriptor>>(new Map())
   const navigate = useOptionalNavigate()
   const location = useOptionalLocation()
 
@@ -335,6 +337,53 @@ export function IndexPage() {
     }
 
     const currentAgentId = state.targetAgentId ?? state.subscribedAgentId
+    const hasExplicitRouteSelection = routeState.agentId !== DEFAULT_MANAGER_AGENT_ID
+    const explicitSelectionAgentId =
+      clientRef.current?.getExplicitSelectionAgentId() ??
+      (hasExplicitRouteSelection ? routeState.agentId : null)
+    const hasExplicitSelection =
+      hasExplicitRouteSelection || clientRef.current?.hasExplicitSelection() === true
+
+    if (
+      hasExplicitSelection &&
+      explicitSelectionAgentId &&
+      explicitSelectionAgentId !== DEFAULT_MANAGER_AGENT_ID
+    ) {
+      const explicitTargetExists = state.agents.some(
+        (agent) => agent.agentId === explicitSelectionAgentId,
+      )
+
+      if (explicitTargetExists) {
+        if (currentAgentId !== explicitSelectionAgentId) {
+          clientRef.current?.subscribeToAgent(explicitSelectionAgentId)
+        }
+        return
+      }
+
+      if (!state.hasReceivedAgentsSnapshot) {
+        return
+      }
+
+      const fallbackAgentId =
+        chooseMostRecentSessionFallbackForDeletedTarget(
+          state.agents,
+          explicitSelectionAgentId,
+          previousAgentsByIdRef.current,
+        ) ?? chooseFallbackAgentId(state.agents)
+
+      if (!fallbackAgentId) {
+        navigateToRoute({ view: 'chat', agentId: DEFAULT_MANAGER_AGENT_ID }, true)
+        return
+      }
+
+      if (currentAgentId !== fallbackAgentId) {
+        clientRef.current?.subscribeToAgent(fallbackAgentId, { explicit: false })
+      }
+
+      navigateToRoute({ view: 'chat', agentId: fallbackAgentId }, true)
+      return
+    }
+
     if (currentAgentId === routeState.agentId) {
       return
     }
@@ -353,16 +402,22 @@ export function IndexPage() {
       return
     }
 
-    clientRef.current?.subscribeToAgent(fallbackAgentId)
-    navigateToRoute({ view: 'chat', agentId: fallbackAgentId }, true)
+    clientRef.current?.subscribeToAgent(fallbackAgentId, { explicit: false })
   }, [
     clientRef,
     navigateToRoute,
     routeState,
     state.agents,
+    state.hasReceivedAgentsSnapshot,
     state.subscribedAgentId,
     state.targetAgentId,
   ])
+
+  useEffect(() => {
+    previousAgentsByIdRef.current = new Map(
+      state.agents.map((agent) => [agent.agentId, agent]),
+    )
+  }, [state.agents])
 
   const handleSend = (text: string, attachments?: ConversationAttachment[]) => {
     if (!activeAgentId) {
@@ -956,5 +1011,100 @@ function parseWindowRouteSearch(search: string): { view?: string; agent?: string
   return {
     view: view ?? undefined,
     agent: agent ?? undefined,
+  }
+}
+
+function chooseMostRecentSessionFallbackForDeletedTarget(
+  agents: AgentDescriptor[],
+  deletedAgentId: string,
+  previousAgentsById: Map<string, AgentDescriptor>,
+): string | null {
+  const deletedAgent = previousAgentsById.get(deletedAgentId)
+  if (!deletedAgent) {
+    return null
+  }
+
+  const profileId = resolveDeletedAgentProfileId(agents, previousAgentsById, deletedAgent)
+  if (!profileId) {
+    return null
+  }
+
+  const profileSessions = agents
+    .filter((agent) => {
+      if (agent.role !== 'manager') {
+        return false
+      }
+
+      const agentProfileId = agent.profileId?.trim() || agent.agentId
+      return agentProfileId === profileId && agent.agentId !== deletedAgentId
+    })
+    .sort((left, right) => {
+      const leftTime = Date.parse(left.updatedAt)
+      const rightTime = Date.parse(right.updatedAt)
+      const normalizedLeftTime = Number.isFinite(leftTime) ? leftTime : 0
+      const normalizedRightTime = Number.isFinite(rightTime) ? rightTime : 0
+
+      if (normalizedLeftTime !== normalizedRightTime) {
+        return normalizedRightTime - normalizedLeftTime
+      }
+
+      return right.agentId.localeCompare(left.agentId)
+    })
+
+  return profileSessions[0]?.agentId ?? null
+}
+
+function resolveDeletedAgentProfileId(
+  agents: AgentDescriptor[],
+  previousAgentsById: Map<string, AgentDescriptor>,
+  deletedAgent: AgentDescriptor,
+): string | null {
+  if (deletedAgent.role === 'manager') {
+    return deletedAgent.profileId?.trim() || deletedAgent.agentId
+  }
+
+  const currentManager = agents.find(
+    (agent) => agent.role === 'manager' && agent.agentId === deletedAgent.managerId,
+  )
+  const previousManager = previousAgentsById.get(deletedAgent.managerId)
+  const managerDescriptor =
+    currentManager ??
+    (previousManager && previousManager.role === 'manager' ? previousManager : null)
+
+  if (!managerDescriptor || managerDescriptor.role !== 'manager') {
+    return null
+  }
+
+  return managerDescriptor.profileId?.trim() || managerDescriptor.agentId
+}
+
+function applyWindowNavigation({
+  to,
+  search,
+  replace,
+}: {
+  to: string
+  search?: { view?: string; agent?: string }
+  replace?: boolean
+}): void {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  const params = new URLSearchParams()
+  if (search?.view) {
+    params.set('view', search.view)
+  }
+  if (search?.agent) {
+    params.set('agent', search.agent)
+  }
+
+  const query = params.toString()
+  const nextUrl = query ? `${to}?${query}` : to
+
+  if (replace) {
+    window.history.replaceState(null, '', nextUrl)
+  } else {
+    window.history.pushState(null, '', nextUrl)
   }
 }

@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { SessionManager } from '@mariozechner/pi-coding-agent'
 import { getScheduleFilePath } from '../scheduler/schedule-storage.js'
 import { getConversationHistoryCacheFilePath } from '../swarm/conversation-history-cache.js'
@@ -1744,6 +1744,172 @@ describe('SwarmManager', () => {
     expect(autoReceipt.acceptedMode).toBe('steer')
     expect(followUpReceipt.acceptedMode).toBe('steer')
     expect(steerReceipt.acceptedMode).toBe('steer')
+  })
+
+  it('automatically reports worker completion summaries to the owning manager', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', { agentId: 'Summary Worker' })
+    const managerRuntime = manager.runtimeByAgentId.get('manager')
+    expect(managerRuntime).toBeDefined()
+
+    await (manager as any).handleRuntimeSessionEvent(worker.agentId, {
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'Implemented the completion hook and verified the flow.' }],
+      },
+    })
+
+    managerRuntime!.sendCalls = []
+
+    await (manager as any).handleRuntimeAgentEnd(worker.agentId)
+
+    expect(managerRuntime?.sendCalls).toHaveLength(1)
+    expect(managerRuntime?.sendCalls[0]).toMatchObject({
+      delivery: 'auto',
+      message:
+        'SYSTEM: Worker summary-worker completed its turn.\n\nLast assistant message:\nImplemented the completion hook and verified the flow.',
+    })
+  })
+
+  it('falls back to a generic completion signal when the latest summary was already reported', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', { agentId: 'Repeat Summary Worker' })
+    const managerRuntime = manager.runtimeByAgentId.get('manager')
+    expect(managerRuntime).toBeDefined()
+
+    await (manager as any).handleRuntimeSessionEvent(worker.agentId, {
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'Initial completion summary.' }],
+      },
+    })
+
+    await (manager as any).handleRuntimeAgentEnd(worker.agentId)
+
+    managerRuntime!.sendCalls = []
+
+    await (manager as any).handleRuntimeAgentEnd(worker.agentId)
+
+    expect(managerRuntime?.sendCalls).toHaveLength(1)
+    expect(managerRuntime?.sendCalls[0]).toMatchObject({
+      delivery: 'auto',
+      message: 'SYSTEM: Worker repeat-summary-worker completed its turn.',
+    })
+  })
+
+  it('does not replay stale worker summaries when recreating an idle worker runtime', async () => {
+    const config = await makeTempConfig()
+
+    appendSessionConversationMessage(join(config.paths.sessionsDir, 'worker-idle.jsonl'), 'worker-idle', 'stale summary')
+
+    await writeFile(
+      config.paths.agentsStoreFile,
+      JSON.stringify(
+        {
+          agents: [
+            {
+              agentId: 'manager',
+              displayName: 'Manager',
+              role: 'manager',
+              managerId: 'manager',
+              status: 'idle',
+              createdAt: '2026-01-01T00:00:00.000Z',
+              updatedAt: '2026-01-01T00:00:00.000Z',
+              cwd: config.defaultCwd,
+              model: config.defaultModel,
+              sessionFile: join(config.paths.sessionsDir, 'manager.jsonl'),
+            },
+            {
+              agentId: 'worker-idle',
+              displayName: 'Worker Idle',
+              role: 'worker',
+              managerId: 'manager',
+              status: 'idle',
+              createdAt: '2026-01-01T00:00:00.000Z',
+              updatedAt: '2026-01-01T00:00:00.000Z',
+              cwd: config.defaultCwd,
+              model: config.defaultModel,
+              sessionFile: join(config.paths.sessionsDir, 'worker-idle.jsonl'),
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    )
+
+    const manager = new TestSwarmManager(config)
+    await manager.boot()
+
+    await manager.sendMessage('manager', 'manager', 'bootstrap manager runtime')
+    const managerRuntime = manager.runtimeByAgentId.get('manager')
+    expect(managerRuntime).toBeDefined()
+    managerRuntime!.sendCalls = []
+
+    await manager.sendMessage('manager', 'worker-idle', 'start now')
+    await (manager as any).handleRuntimeAgentEnd('worker-idle')
+
+    expect(managerRuntime).toBeDefined()
+    expect(managerRuntime?.sendCalls.at(-1)?.message).toBe('SYSTEM: Worker worker-idle completed its turn.')
+  })
+
+  it('falls back to watchdog notifications when auto completion reporting fails', async () => {
+    vi.useFakeTimers()
+
+    try {
+      const config = await makeTempConfig()
+      const manager = new TestSwarmManager(config)
+      await bootWithDefaultManager(manager, config)
+
+      const worker = await manager.spawnAgent('manager', { agentId: 'Watchdog Worker' })
+      const managerRuntime = manager.runtimeByAgentId.get('manager')
+      expect(managerRuntime).toBeDefined()
+
+      const originalSendMessage = managerRuntime!.sendMessage.bind(managerRuntime)
+      let shouldFailAutoReport = true
+      ;(managerRuntime as any).sendMessage = async (
+        message: string,
+        delivery?: RequestedDeliveryMode,
+      ) => {
+        if (shouldFailAutoReport && message.includes('completed its turn')) {
+          shouldFailAutoReport = false
+          throw new Error('synthetic auto-report failure')
+        }
+
+        return originalSendMessage(message, delivery)
+      }
+
+      await (manager as any).handleRuntimeSessionEvent(worker.agentId, {
+        type: 'message_end',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'Done.' }],
+        },
+      })
+
+      managerRuntime!.sendCalls = []
+
+      await (manager as any).handleRuntimeAgentEnd(worker.agentId)
+      await vi.advanceTimersByTimeAsync(3_100)
+
+      expect(
+        managerRuntime?.sendCalls.some(
+          (call) =>
+            typeof call.message === 'string' && call.message.includes('IDLE WORKER WATCHDOG'),
+        ),
+      ).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('kills a busy runtime with abort then marks descriptor terminated', async () => {

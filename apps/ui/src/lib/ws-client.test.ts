@@ -957,6 +957,113 @@ describe('ManagerWsClient', () => {
     client.destroy()
   })
 
+  it('falls back to the most recent session in the same profile when the selected session is deleted', () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'alpha--s3')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'alpha--s3',
+    })
+
+    emitServerEvent(socket, {
+      type: 'agents_snapshot',
+      agents: [
+        {
+          agentId: 'alpha',
+          managerId: 'alpha',
+          displayName: 'Alpha Default',
+          role: 'manager',
+          status: 'idle',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:01:00.000Z',
+          cwd: '/tmp/alpha',
+          profileId: 'alpha',
+          model: {
+            provider: 'openai-codex',
+            modelId: 'gpt-5.3-codex',
+            thinkingLevel: 'medium',
+          },
+          sessionFile: '/tmp/alpha.jsonl',
+        },
+        {
+          agentId: 'alpha--s2',
+          managerId: 'alpha--s2',
+          displayName: 'Alpha Session 2',
+          role: 'manager',
+          status: 'idle',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:03:00.000Z',
+          cwd: '/tmp/alpha',
+          profileId: 'alpha',
+          model: {
+            provider: 'openai-codex',
+            modelId: 'gpt-5.3-codex',
+            thinkingLevel: 'medium',
+          },
+          sessionFile: '/tmp/alpha--s2.jsonl',
+        },
+        {
+          agentId: 'alpha--s3',
+          managerId: 'alpha--s3',
+          displayName: 'Alpha Session 3',
+          role: 'manager',
+          status: 'idle',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:04:00.000Z',
+          cwd: '/tmp/alpha',
+          profileId: 'alpha',
+          model: {
+            provider: 'openai-codex',
+            modelId: 'gpt-5.3-codex',
+            thinkingLevel: 'medium',
+          },
+          sessionFile: '/tmp/alpha--s3.jsonl',
+        },
+        {
+          agentId: 'beta',
+          managerId: 'beta',
+          displayName: 'Beta Default',
+          role: 'manager',
+          status: 'idle',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:05:00.000Z',
+          cwd: '/tmp/beta',
+          profileId: 'beta',
+          model: {
+            provider: 'openai-codex',
+            modelId: 'gpt-5.3-codex',
+            thinkingLevel: 'medium',
+          },
+          sessionFile: '/tmp/beta.jsonl',
+        },
+      ],
+    })
+
+    emitServerEvent(socket, {
+      type: 'session_deleted',
+      requestId: 'req-session-delete',
+      agentId: 'alpha--s3',
+      profileId: 'alpha',
+    })
+
+    expect(client.getState().targetAgentId).toBe('alpha--s2')
+
+    const subscribePayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+    expect(subscribePayload).toMatchObject({
+      type: 'subscribe',
+      agentId: 'alpha--s2',
+    })
+
+    client.destroy()
+  })
+
   it('falls back to the primary manager when selected manager is deleted', () => {
     const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
 

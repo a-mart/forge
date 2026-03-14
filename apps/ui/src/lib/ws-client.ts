@@ -112,6 +112,9 @@ export class ManagerWsClient {
   private destroyed = false
   private hasConnectedOnce = false
   private shouldReloadOnReconnect = false
+  private hasExplicitAgentSelection = false
+  private explicitAgentSelectionAgentId: string | null = null
+  private hasReceivedAgentsSnapshot = false
 
   private state: ManagerWsState
   private readonly listeners = new Set<Listener>()
@@ -144,6 +147,14 @@ export class ManagerWsClient {
         unreadCounts: { ...this.state.unreadCounts, [agentId]: 1 },
       })
     }
+  }
+
+  hasExplicitSelection(): boolean {
+    return this.hasExplicitAgentSelection
+  }
+
+  getExplicitSelectionAgentId(): string | null {
+    return this.explicitAgentSelectionAgentId
   }
 
   subscribe(listener: Listener): () => void {
@@ -181,9 +192,13 @@ export class ManagerWsClient {
     }
   }
 
-  subscribeToAgent(agentId: string): void {
+  subscribeToAgent(agentId: string, options?: { explicit?: boolean }): void {
     const trimmed = agentId.trim()
     if (!trimmed) return
+
+    const isExplicitSelection = options?.explicit ?? true
+    this.hasExplicitAgentSelection = isExplicitSelection
+    this.explicitAgentSelectionAgentId = isExplicitSelection ? trimmed : null
 
     this.desiredAgentId = trimmed
     const nextUnread = { ...this.state.unreadCounts }
@@ -564,9 +579,13 @@ export class ManagerWsClient {
       const shouldReload = this.shouldReloadOnReconnect
       this.hasConnectedOnce = true
       this.shouldReloadOnReconnect = false
+      this.hasExplicitAgentSelection = false
+      this.explicitAgentSelectionAgentId = null
+      this.hasReceivedAgentsSnapshot = false
 
       this.updateState({
         connected: true,
+        hasReceivedAgentsSnapshot: false,
         lastError: null,
       })
 
@@ -589,8 +608,13 @@ export class ManagerWsClient {
         this.shouldReloadOnReconnect = true
       }
 
+      this.hasExplicitAgentSelection = false
+      this.explicitAgentSelectionAgentId = null
+      this.hasReceivedAgentsSnapshot = false
+
       this.updateState({
         connected: false,
+        hasReceivedAgentsSnapshot: false,
         subscribedAgentId: null,
       })
 
@@ -924,9 +948,17 @@ export class ManagerWsClient {
         ? this.state.subscribedAgentId
         : fallbackTarget ?? null
 
+    if (targetChanged && fallbackTarget !== this.explicitAgentSelectionAgentId) {
+      this.hasExplicitAgentSelection = false
+      this.explicitAgentSelectionAgentId = null
+    }
+
+    this.hasReceivedAgentsSnapshot = true
+
     const patch: Partial<ManagerWsState> = {
       agents,
       statuses,
+      hasReceivedAgentsSnapshot: this.hasReceivedAgentsSnapshot,
     }
 
     if (targetChanged) {
@@ -975,11 +1007,12 @@ export class ManagerWsClient {
     )
 
     if (wasSelected) {
-      // Navigate to the profile's default session
-      const profile = this.state.profiles.find((p) => p.profileId === profileId)
-      const fallbackId = profile?.defaultSessionAgentId ?? chooseFallbackAgentId(nextAgents)
+      const fallbackId =
+        chooseMostRecentSessionAgentId(nextAgents, profileId, agentId) ?? chooseFallbackAgentId(nextAgents)
 
       if (fallbackId && this.socket?.readyState === WebSocket.OPEN) {
+        this.hasExplicitAgentSelection = false
+        this.explicitAgentSelectionAgentId = null
         this.desiredAgentId = fallbackId
         this.send({ type: 'subscribe', agentId: fallbackId })
         this.updateState({
@@ -1073,6 +1106,41 @@ export class ManagerWsClient {
   private rejectAllPendingRequests(reason: string): void {
     this.requestTracker.rejectAll(new Error(reason))
   }
+}
+
+function chooseMostRecentSessionAgentId(
+  agents: AgentDescriptor[],
+  profileId: string,
+  excludedAgentId?: string,
+): string | null {
+  const sessions = agents
+    .filter((agent) => {
+      if (agent.role !== 'manager') {
+        return false
+      }
+
+      if (agent.agentId === excludedAgentId) {
+        return false
+      }
+
+      const agentProfileId = agent.profileId?.trim() || agent.agentId
+      return agentProfileId === profileId
+    })
+    .sort((left, right) => {
+      const leftTime = Date.parse(left.updatedAt)
+      const rightTime = Date.parse(right.updatedAt)
+
+      const normalizedLeftTime = Number.isFinite(leftTime) ? leftTime : 0
+      const normalizedRightTime = Number.isFinite(rightTime) ? rightTime : 0
+
+      if (normalizedLeftTime !== normalizedRightTime) {
+        return normalizedRightTime - normalizedLeftTime
+      }
+
+      return right.agentId.localeCompare(left.agentId)
+    })
+
+  return sessions[0]?.agentId ?? null
 }
 
 function normalizeConversationAttachments(
