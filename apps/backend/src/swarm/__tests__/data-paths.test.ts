@@ -16,6 +16,8 @@ import {
   getProfileMergeAuditLogPath,
   getProfileKnowledgeDir,
   getProfileKnowledgePath,
+  getProfileReferenceDir,
+  getProfileReferencePath,
   getProfileScheduleFilePath,
   getProfileSchedulesDir,
   getProfilesDir,
@@ -56,6 +58,10 @@ describe("data-paths", () => {
     expect(getProfileMemoryPath(DATA_DIR, PROFILE_ID)).toBe(join(DATA_DIR, "profiles", PROFILE_ID, "memory.md"));
     expect(getProfileMergeAuditLogPath(DATA_DIR, PROFILE_ID)).toBe(
       join(DATA_DIR, "profiles", PROFILE_ID, "merge-audit.log")
+    );
+    expect(getProfileReferenceDir(DATA_DIR, PROFILE_ID)).toBe(join(DATA_DIR, "profiles", PROFILE_ID, "reference"));
+    expect(getProfileReferencePath(DATA_DIR, PROFILE_ID, "index.md")).toBe(
+      join(DATA_DIR, "profiles", PROFILE_ID, "reference", "index.md")
     );
 
     expect(getSessionsDir(DATA_DIR, PROFILE_ID)).toBe(join(DATA_DIR, "profiles", PROFILE_ID, "sessions"));

@@ -35,6 +35,14 @@ export function getProfileMergeAuditLogPath(dataDir: string, profileId: string):
   return join(getProfileDir(dataDir, profileId), "merge-audit.log");
 }
 
+export function getProfileReferenceDir(dataDir: string, profileId: string): string {
+  return join(getProfileDir(dataDir, profileId), "reference");
+}
+
+export function getProfileReferencePath(dataDir: string, profileId: string, fileName: string): string {
+  return join(getProfileReferenceDir(dataDir, profileId), sanitizePathSegment(fileName));
+}
+
 // ── Session-level paths ────────────────────────────────────────────────────────
 
 export function getSessionsDir(dataDir: string, profileId: string): string {

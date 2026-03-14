@@ -17,7 +17,6 @@ import { ConversationProjector } from "./conversation-projector.js";
 import {
   getCommonKnowledgePath,
   getCortexWorkerPromptsPath,
-  getProfileKnowledgePath,
   getProfileMemoryPath,
   getProfileMergeAuditLogPath,
   getSessionDir,
@@ -3791,17 +3790,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       if (!isEnoentError(error)) {
         throw error;
       }
-    }
-
-    const profileId = profileMemoryOwnerId ?? normalizeOptionalAgentId(memoryOwnerDescriptor?.profileId) ?? memoryOwnerAgentId;
-    const profileKnowledgePath = getProfileKnowledgePath(this.config.paths.dataDir, profileId);
-    try {
-      const profileKnowledge = await readFile(profileKnowledgePath, "utf-8");
-      if (profileKnowledge.trim()) {
-        memoryContent += `\n\n# Project Knowledge for ${profileId} (maintained by Cortex — read-only reference)\n\n${profileKnowledge}`;
-      }
-    } catch {
-      // File doesn't exist yet — that's fine, skip
     }
 
     await this.skillMetadataService.ensureSkillMetadataLoaded();
