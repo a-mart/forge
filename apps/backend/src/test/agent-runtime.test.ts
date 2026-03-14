@@ -89,6 +89,23 @@ function createDeferred(): { promise: Promise<void>; resolve: () => void } {
   return { promise, resolve }
 }
 
+async function waitForCondition(
+  condition: () => boolean,
+  timeoutMs = 500,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+
+  while (Date.now() < deadline) {
+    if (condition()) {
+      return
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  }
+
+  throw new Error('Timed out waiting for async condition')
+}
+
 describe('AgentRuntime', () => {
   it('queues steer for all messages when runtime is busy', async () => {
     const session = new FakeSession()
@@ -192,6 +209,8 @@ describe('AgentRuntime', () => {
       images: [{ mimeType: 'image/png', data: 'aGVsbG8=' }],
     })
 
+    await waitForCondition(() => session.promptCalls.length === 1)
+
     expect(session.promptCalls).toEqual(['describe this image'])
     expect(session.promptImageCounts).toEqual([1])
     expect(session.userMessageCalls).toHaveLength(0)
@@ -212,6 +231,8 @@ describe('AgentRuntime', () => {
       text: '',
       images: [{ mimeType: 'image/png', data: 'aGVsbG8=' }],
     })
+
+    await waitForCondition(() => session.userMessageCalls.length === 1)
 
     expect(session.promptCalls).toHaveLength(0)
     expect(session.userMessageCalls).toHaveLength(1)

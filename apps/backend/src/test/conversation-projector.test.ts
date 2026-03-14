@@ -1,9 +1,10 @@
-import { mkdtemp } from 'node:fs/promises'
+import { mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { SessionManager } from '@mariozechner/pi-coding-agent'
 import { ConversationProjector } from '../swarm/conversation-projector.js'
+import { getConversationHistoryCacheFilePath } from '../swarm/conversation-history-cache.js'
 import type { SwarmAgentRuntime } from '../swarm/runtime-types.js'
 import type { AgentDescriptor, ConversationEntryEvent } from '../swarm/types.js'
 
@@ -287,5 +288,86 @@ describe('ConversationProjector session tree continuity', () => {
       expect(legacyMessage.id).toBe(wrappedEntryId)
       expect(legacyMessage.timestamp).toBe(legacyTimestamp)
     }
+  })
+
+  it('falls back to JSONL replay when the cache is missing the latest persisted message', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-projector-stale-cache-'))
+    const sessionFile = join(root, 'manager.jsonl')
+    const descriptor = makeDescriptor(sessionFile, root)
+
+    const seededSession = SessionManager.open(sessionFile)
+    seededSession.appendMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'seed message' }],
+    } as any)
+
+    const staleCacheEntryId = seededSession.appendCustomEntry('swarm_conversation_entry', {
+      type: 'conversation_message',
+      agentId: descriptor.agentId,
+      role: 'assistant',
+      text: 'persisted before cache write stalled',
+      timestamp: '2025-12-31T23:58:00.000Z',
+      source: 'system',
+    })
+
+    seededSession.appendCustomEntry('swarm_conversation_entry', {
+      type: 'conversation_message',
+      agentId: descriptor.agentId,
+      role: 'assistant',
+      text: 'latest persisted message after cache went stale',
+      timestamp: FIXED_NOW,
+      source: 'system',
+    })
+
+    const cacheFile = getConversationHistoryCacheFilePath(sessionFile)
+    await writeFile(
+      cacheFile,
+      `${JSON.stringify({
+        type: 'conversation_message',
+        agentId: descriptor.agentId,
+        role: 'assistant',
+        text: 'persisted before cache write stalled',
+        timestamp: '2025-12-31T23:58:00.000Z',
+        source: 'system',
+        id: staleCacheEntryId,
+      })}\n`,
+      'utf8',
+    )
+
+    const projector = makeProjector({ descriptor })
+    const history = projector.getConversationHistory(descriptor.agentId)
+
+    expect(
+      history.some(
+        (entry) =>
+          entry.type === 'conversation_message' && entry.text === 'latest persisted message after cache went stale',
+      ),
+    ).toBe(true)
+  })
+
+  it('ignores stale cache entries after the session JSONL has been cleared', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-projector-cleared-session-'))
+    const sessionFile = join(root, 'manager.jsonl')
+    const descriptor = makeDescriptor(sessionFile, root)
+    const cacheFile = getConversationHistoryCacheFilePath(sessionFile)
+
+    await writeFile(sessionFile, '', 'utf8')
+    await writeFile(
+      cacheFile,
+      `${JSON.stringify({
+        type: 'conversation_message',
+        agentId: descriptor.agentId,
+        role: 'assistant',
+        text: 'stale cache after reset',
+        timestamp: FIXED_NOW,
+        source: 'system',
+        id: 'stale-cache-id',
+      })}\n`,
+      'utf8',
+    )
+
+    const projector = makeProjector({ descriptor })
+
+    expect(projector.getConversationHistory(descriptor.agentId)).toEqual([])
   })
 })

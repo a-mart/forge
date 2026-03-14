@@ -48,6 +48,40 @@ async function flushAsync(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0))
 }
 
+async function waitForCondition(
+  condition: () => boolean,
+  timeoutMs = 500,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+
+  while (Date.now() < deadline) {
+    if (condition()) {
+      return
+    }
+
+    await flushAsync()
+  }
+
+  throw new Error('Timed out waiting for async condition')
+}
+
+async function waitForAsyncCondition(
+  condition: () => Promise<boolean>,
+  timeoutMs = 500,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+
+  while (Date.now() < deadline) {
+    if (await condition()) {
+      return
+    }
+
+    await flushAsync()
+  }
+
+  throw new Error('Timed out waiting for async condition')
+}
+
 afterEach(() => {
   vi.restoreAllMocks()
 })
@@ -87,7 +121,7 @@ describe('MobilePushService', () => {
       source: 'speak_to_user',
     })
 
-    await flushAsync()
+    await waitForCondition(() => sendMock.mock.calls.length === 1)
     await service.stop()
 
     expect(sendMock).toHaveBeenCalledTimes(1)
@@ -188,12 +222,25 @@ describe('MobilePushService', () => {
     })
 
     await flushAsync()
-    await new Promise((resolve) => setTimeout(resolve, 10))
+    await waitForCondition(() => sendMock.mock.calls.length === 2)
+
+    const devicesPath = getSharedMobileDevicesPath(dataDir)
+    await waitForAsyncCondition(async () => {
+      try {
+        const devicesPayload = JSON.parse(await readFile(devicesPath, 'utf8')) as {
+          devices: Array<{ token: string; enabled: boolean; disabledReason?: string }>
+        }
+        const stored = devicesPayload.devices.find((device) => device.token === 'ExpoPushToken[retry-device]')
+        return stored?.enabled === false && stored?.disabledReason === 'DeviceNotRegistered'
+      } catch {
+        return false
+      }
+    })
+
     await service.stop()
 
     expect(sendMock).toHaveBeenCalledTimes(2)
 
-    const devicesPath = getSharedMobileDevicesPath(dataDir)
     const devicesPayload = JSON.parse(await readFile(devicesPath, 'utf8')) as {
       devices: Array<{ token: string; enabled: boolean; disabledReason?: string }>
     }
@@ -244,7 +291,7 @@ describe('MobilePushService', () => {
       source: 'speak_to_user',
     })
 
-    await flushAsync()
+    await waitForCondition(() => sendMock.mock.calls.length === 1)
     await (service as any).pollReceipts()
     await service.stop()
 

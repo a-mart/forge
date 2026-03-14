@@ -175,6 +175,23 @@ async function waitForFileText(path: string): Promise<string> {
   throw new Error(`Timed out waiting for ${path}`)
 }
 
+async function waitForCondition(
+  condition: () => boolean,
+  timeoutMs = 500,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+
+  while (Date.now() < deadline) {
+    if (condition()) {
+      return
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  }
+
+  throw new Error('Timed out waiting for async condition')
+}
+
 function isEnoentError(error: unknown): boolean {
   return (
     typeof error === 'object' &&
@@ -1763,6 +1780,17 @@ describe('SwarmManager', () => {
       },
     })
 
+    await waitForCondition(() =>
+      manager
+        .getConversationHistory(worker.agentId)
+        .some(
+          (entry) =>
+            entry.type === 'conversation_message' &&
+            entry.role === 'assistant' &&
+            entry.text === 'Implemented the completion hook and verified the flow.',
+        ),
+    )
+
     managerRuntime!.sendCalls = []
 
     await (manager as any).handleRuntimeAgentEnd(worker.agentId)
@@ -1899,7 +1927,7 @@ describe('SwarmManager', () => {
       managerRuntime!.sendCalls = []
 
       await (manager as any).handleRuntimeAgentEnd(worker.agentId)
-      await vi.advanceTimersByTimeAsync(3_100)
+      await vi.advanceTimersByTimeAsync(3_800)
 
       expect(
         managerRuntime?.sendCalls.some(

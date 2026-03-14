@@ -426,16 +426,24 @@ export class ConversationProjector {
 
     const cachedEntries = this.loadConversationHistoryFromCache(descriptor.sessionFile);
     if (cachedEntries) {
-      trimConversationHistory(cachedEntries);
-      const mergedEntries = this.mergeDiskAndInMemoryEntries(cachedEntries, existingInMemoryEntries);
-      this.loadedFromDisk.add(descriptor.agentId);
-      this.deps.conversationEntriesByAgentId.set(descriptor.agentId, mergedEntries);
-      this.queueConversationHistoryCacheWrite(descriptor.agentId, mergedEntries);
-      this.deps.logDebug("history:load:cache", {
+      const validatedCachedEntries = this.validateCachedConversationHistory(descriptor.sessionFile, cachedEntries);
+      if (validatedCachedEntries) {
+        trimConversationHistory(validatedCachedEntries);
+        const mergedEntries = this.mergeDiskAndInMemoryEntries(validatedCachedEntries, existingInMemoryEntries);
+        this.loadedFromDisk.add(descriptor.agentId);
+        this.deps.conversationEntriesByAgentId.set(descriptor.agentId, mergedEntries);
+        this.queueConversationHistoryCacheWrite(descriptor.agentId, mergedEntries);
+        this.deps.logDebug("history:load:cache", {
+          agentId: descriptor.agentId,
+          messageCount: mergedEntries.length
+        });
+        return mergedEntries;
+      }
+
+      this.deps.logDebug("history:load:cache:stale", {
         agentId: descriptor.agentId,
-        messageCount: mergedEntries.length
+        sessionFile: descriptor.sessionFile
       });
-      return mergedEntries;
     }
 
     const entriesForAgent: ConversationEntryEvent[] = [];
@@ -533,6 +541,100 @@ export class ConversationProjector {
         message: error instanceof Error ? error.message : String(error)
       });
       return null;
+    }
+  }
+
+  private validateCachedConversationHistory(
+    sessionFile: string,
+    cachedEntries: ConversationEntryEvent[]
+  ): ConversationEntryEvent[] | null {
+    const cachedIdentity = extractPersistedConversationEntryIdentity(cachedEntries.at(-1));
+    const lastPersistedCachedEntry =
+      cachedIdentity ?? this.findLastPersistedConversationEntryIdentityInCache(cachedEntries);
+    const lastPersistedSessionEntry = this.readLastPersistedConversationEntryIdentity(sessionFile);
+
+    if (!lastPersistedCachedEntry && !lastPersistedSessionEntry) {
+      return cachedEntries;
+    }
+
+    if (!lastPersistedSessionEntry) {
+      return lastPersistedCachedEntry && hasValidSessionHeader(sessionFile) ? cachedEntries : null;
+    }
+
+    if (!lastPersistedCachedEntry) {
+      return null;
+    }
+
+    return lastPersistedCachedEntry.key === lastPersistedSessionEntry.key ? cachedEntries : null;
+  }
+
+  private findLastPersistedConversationEntryIdentityInCache(
+    cachedEntries: ConversationEntryEvent[]
+  ): PersistedConversationEntryIdentity | null {
+    for (let index = cachedEntries.length - 1; index >= 0; index -= 1) {
+      const identity = extractPersistedConversationEntryIdentity(cachedEntries[index]);
+      if (identity) {
+        return identity;
+      }
+    }
+
+    return null;
+  }
+
+  private readLastPersistedConversationEntryIdentity(sessionFile: string): PersistedConversationEntryIdentity | null {
+    let fileDescriptor: number | undefined;
+
+    try {
+      const fileSize = statSync(sessionFile).size;
+      if (fileSize <= 0) {
+        return null;
+      }
+
+      const chunkSize = 8192;
+      let position = fileSize;
+      let remainder = "";
+
+      fileDescriptor = openSync(sessionFile, "r");
+
+      while (position > 0) {
+        const readOffset = Math.max(0, position - chunkSize);
+        const readLength = position - readOffset;
+        const buffer = Buffer.alloc(readLength);
+        const bytesRead = readSync(fileDescriptor, buffer, 0, readLength, readOffset);
+        if (bytesRead <= 0) {
+          break;
+        }
+
+        const chunk = buffer.toString("utf8", 0, bytesRead);
+        const combined = `${chunk}${remainder}`;
+        const lines = combined.split("\n");
+        remainder = readOffset > 0 ? (lines.shift() ?? "") : "";
+
+        for (let index = lines.length - 1; index >= 0; index -= 1) {
+          const identity = parsePersistedConversationEntryIdentity(lines[index]);
+          if (identity) {
+            return identity;
+          }
+        }
+
+        position = readOffset;
+      }
+
+      return parsePersistedConversationEntryIdentity(remainder);
+    } catch (error) {
+      if (isEnoentError(error)) {
+        return null;
+      }
+
+      this.deps.logDebug("history:load:cache:validate:error", {
+        sessionFile,
+        message: error instanceof Error ? error.message : String(error)
+      });
+      return null;
+    } finally {
+      if (fileDescriptor !== undefined) {
+        closeSync(fileDescriptor);
+      }
     }
   }
 
@@ -796,6 +898,10 @@ function extractSessionEntryId(entry: unknown): string | undefined {
   return entryId;
 }
 
+type PersistedConversationEntryIdentity = {
+  key: string;
+};
+
 function extractConversationEntryEventId(entry: ConversationEntryEvent): string | undefined {
   if (entry.type !== "conversation_message") {
     return undefined;
@@ -806,6 +912,63 @@ function extractConversationEntryEventId(entry: ConversationEntryEvent): string 
   }
 
   return entry.id;
+}
+
+function extractPersistedConversationEntryIdentity(
+  entry: ConversationEntryEvent | undefined
+): PersistedConversationEntryIdentity | null {
+  if (!entry || !shouldPersistConversationEntry(entry)) {
+    return null;
+  }
+
+  const entryId = extractConversationEntryEventId(entry);
+  if (entryId) {
+    return { key: `conversation_message:${entryId}` };
+  }
+
+  return { key: `entry:${safeJson(entry)}` };
+}
+
+function parsePersistedConversationEntryIdentity(line: string | undefined): PersistedConversationEntryIdentity | null {
+  const trimmedLine = line?.trim();
+  if (!trimmedLine) {
+    return null;
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmedLine);
+  } catch {
+    return null;
+  }
+
+  if (
+    typeof parsed !== "object" ||
+    parsed === null ||
+    (parsed as { type?: unknown }).type !== "custom" ||
+    (parsed as { customType?: unknown }).customType !== CONVERSATION_ENTRY_TYPE
+  ) {
+    return null;
+  }
+
+  const data = (parsed as { data?: unknown }).data;
+  if (!isConversationEntryEvent(data) || !shouldPersistConversationEntry(data)) {
+    return null;
+  }
+
+  const wrapperEntryId = extractSessionEntryId(parsed);
+  const hydratedEntry =
+    data.type === "conversation_message" && wrapperEntryId
+      ? {
+          ...data,
+          id:
+            typeof data.id === "string" && data.id.trim().length > 0
+              ? data.id
+              : wrapperEntryId
+        }
+      : data;
+
+  return extractPersistedConversationEntryIdentity(hydratedEntry);
 }
 
 function decrementCounter(counter: Map<string, number>, key: string): boolean {
