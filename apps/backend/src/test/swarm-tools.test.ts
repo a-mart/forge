@@ -2,12 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { buildSwarmTools, type SwarmToolHost } from '../swarm/swarm-tools.js'
 import type { AgentDescriptor, SendMessageReceipt, SpawnAgentInput } from '../swarm/types.js'
 
-function makeManagerDescriptor(): AgentDescriptor {
+function makeManagerDescriptor(agentId = 'manager', overrides: Partial<AgentDescriptor> = {}): AgentDescriptor {
   return {
-    agentId: 'manager',
-    displayName: 'manager',
+    agentId,
+    displayName: agentId,
     role: 'manager',
-    managerId: 'manager',
+    managerId: agentId,
     archetypeId: 'manager',
     status: 'idle',
     createdAt: '2026-01-01T00:00:00.000Z',
@@ -18,16 +18,21 @@ function makeManagerDescriptor(): AgentDescriptor {
       modelId: 'gpt-5.3-codex',
       thinkingLevel: 'xhigh',
     },
-    sessionFile: '/tmp/swarm/manager.jsonl',
+    sessionFile: `/tmp/swarm/${agentId}.jsonl`,
+    ...overrides,
   }
 }
 
-function makeWorkerDescriptor(agentId: string): AgentDescriptor {
+function makeWorkerDescriptor(
+  agentId: string,
+  managerId = 'manager',
+  overrides: Partial<AgentDescriptor> = {},
+): AgentDescriptor {
   return {
     agentId,
     displayName: agentId,
     role: 'worker',
-    managerId: 'manager',
+    managerId,
     status: 'idle',
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
@@ -38,6 +43,7 @@ function makeWorkerDescriptor(agentId: string): AgentDescriptor {
       thinkingLevel: 'xhigh',
     },
     sessionFile: `/tmp/swarm/${agentId}.jsonl`,
+    ...overrides,
   }
 }
 
@@ -350,6 +356,186 @@ describe('buildSwarmTools', () => {
       limit: 100,
       returned: 100,
       hasMore: true,
+    })
+  })
+
+  it('list_agents does not show other managers by default', async () => {
+    const host = makeHostWithAgents([
+      makeManagerDescriptor(),
+      makeWorkerDescriptor('worker-owned'),
+      makeManagerDescriptor('manager-two', {
+        profileId: 'alpha',
+        sessionLabel: 'Session 2',
+      }),
+      makeWorkerDescriptor('worker-external', 'manager-two'),
+    ])
+    const tools = buildSwarmTools(host, makeManagerDescriptor())
+    const listTool = tools.find((tool) => tool.name === 'list_agents')
+    expect(listTool).toBeDefined()
+
+    const result = await listTool!.execute('tool-call', {}, undefined, undefined, undefined as any)
+    const details = result.details as {
+      summary: { totalVisible: number; managers: number; workers: number }
+      agents: Array<{ agentId: string; isExternal?: boolean }>
+    }
+
+    expect(details.summary).toMatchObject({
+      totalVisible: 2,
+      managers: 1,
+      workers: 1,
+    })
+    expect(details.agents.map((agent) => agent.agentId)).toEqual(['manager', 'worker-owned'])
+    expect(details.agents.some((agent) => agent.isExternal === true)).toBe(false)
+  })
+
+  it('list_agents shows external managers for manager callers when includeManagers is true', async () => {
+    const host = makeHostWithAgents([
+      makeManagerDescriptor(),
+      makeWorkerDescriptor('worker-owned', 'manager', {
+        status: 'streaming',
+        updatedAt: '2026-01-03T00:00:00.000Z',
+      }),
+      makeManagerDescriptor('manager-two', {
+        updatedAt: '2026-01-02T00:00:00.000Z',
+        profileId: 'alpha',
+        sessionLabel: 'Planning',
+      }),
+      makeWorkerDescriptor('worker-external', 'manager-two'),
+      makeManagerDescriptor('manager-three', {
+        updatedAt: '2026-01-01T00:00:00.000Z',
+        profileId: 'beta',
+        sessionLabel: 'Review',
+      }),
+    ])
+    const tools = buildSwarmTools(host, makeManagerDescriptor())
+    const listTool = tools.find((tool) => tool.name === 'list_agents')
+    expect(listTool).toBeDefined()
+
+    const result = await listTool!.execute(
+      'tool-call',
+      {
+        includeManagers: true,
+      },
+      undefined,
+      undefined,
+      undefined as any,
+    )
+    const details = result.details as {
+      summary: { totalVisible: number; managers: number; workers: number }
+      page: { returned: number; hasMore: boolean }
+      agents: Array<{
+        agentId: string
+        isExternal?: boolean
+        profileId?: string
+        sessionLabel?: string
+      }>
+    }
+
+    expect(details.summary).toMatchObject({
+      totalVisible: 4,
+      managers: 3,
+      workers: 1,
+    })
+    expect(details.page).toMatchObject({
+      returned: 3,
+      hasMore: false,
+    })
+    expect(details.agents.map((agent) => agent.agentId)).toEqual([
+      'manager',
+      'worker-owned',
+      'manager-two',
+      'manager-three',
+    ])
+    expect(details.agents[2]).toMatchObject({
+      agentId: 'manager-two',
+      isExternal: true,
+      profileId: 'alpha',
+      sessionLabel: 'Planning',
+    })
+    expect(details.agents[3]).toMatchObject({
+      agentId: 'manager-three',
+      isExternal: true,
+      profileId: 'beta',
+      sessionLabel: 'Review',
+    })
+    expect(details.agents.some((agent) => agent.agentId === 'worker-external')).toBe(false)
+  })
+
+  it('list_agents ignores includeManagers for worker callers', async () => {
+    const workerCaller = makeWorkerDescriptor('worker-owned')
+    const host = makeHostWithAgents([
+      makeManagerDescriptor(),
+      workerCaller,
+      makeManagerDescriptor('manager-two', {
+        profileId: 'alpha',
+        sessionLabel: 'Planning',
+      }),
+      makeWorkerDescriptor('worker-external', 'manager-two'),
+    ])
+    const tools = buildSwarmTools(host, workerCaller)
+    const listTool = tools.find((tool) => tool.name === 'list_agents')
+    expect(listTool).toBeDefined()
+
+    const result = await listTool!.execute(
+      'tool-call',
+      {
+        includeManagers: true,
+      },
+      undefined,
+      undefined,
+      undefined as any,
+    )
+    const details = result.details as {
+      summary: { totalVisible: number; managers: number; workers: number }
+      agents: Array<{ agentId: string; isExternal?: boolean }>
+    }
+
+    expect(details.summary).toMatchObject({
+      totalVisible: 2,
+      managers: 1,
+      workers: 1,
+    })
+    expect(details.agents.map((agent) => agent.agentId)).toEqual(['manager', 'worker-owned'])
+    expect(details.agents.some((agent) => agent.isExternal === true)).toBe(false)
+  })
+
+  it('list_agents verbose output includes external manager metadata', async () => {
+    const host = makeHostWithAgents([
+      makeManagerDescriptor(),
+      makeManagerDescriptor('manager-two', {
+        profileId: 'alpha',
+        sessionLabel: 'Planning',
+      }),
+      makeWorkerDescriptor('worker-owned'),
+    ])
+    const tools = buildSwarmTools(host, makeManagerDescriptor())
+    const listTool = tools.find((tool) => tool.name === 'list_agents')
+    expect(listTool).toBeDefined()
+
+    const result = await listTool!.execute(
+      'tool-call',
+      {
+        verbose: true,
+        includeManagers: true,
+      },
+      undefined,
+      undefined,
+      undefined as any,
+    )
+    const details = result.details as {
+      agents: Array<{
+        agentId: string
+        isExternal?: boolean
+        profileId?: string
+        sessionLabel?: string
+      }>
+    }
+
+    expect(details.agents[2]).toMatchObject({
+      agentId: 'manager-two',
+      isExternal: true,
+      profileId: 'alpha',
+      sessionLabel: 'Planning',
     })
   })
 

@@ -74,12 +74,62 @@ const speakToUserTargetSchema = Type.Object({
   )
 });
 
+function includeListAgentsEntry(agent: AgentDescriptor, includeTerminated: boolean): boolean {
+  if (includeTerminated) {
+    return true;
+  }
+
+  return agent.status !== "terminated" && agent.status !== "stopped";
+}
+
+function rankListAgentsStatus(status: AgentDescriptor["status"]): number {
+  switch (status) {
+    case "streaming":
+      return 0;
+    case "error":
+      return 1;
+    case "idle":
+      return 2;
+    case "stopped":
+      return 3;
+    case "terminated":
+      return 4;
+    default:
+      return 5;
+  }
+}
+
+function sortAgentsForList(left: AgentDescriptor, right: AgentDescriptor): number {
+  const rankDiff = rankListAgentsStatus(left.status) - rankListAgentsStatus(right.status);
+  if (rankDiff !== 0) {
+    return rankDiff;
+  }
+
+  const updatedAtDiff = Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
+  if (Number.isFinite(updatedAtDiff) && updatedAtDiff !== 0) {
+    return updatedAtDiff;
+  }
+
+  return left.agentId.localeCompare(right.agentId);
+}
+
+function compactPath(value: string): string {
+  const normalized = value.replace(/\\/g, "/").replace(/\/+$/, "");
+  if (normalized.length === 0 || normalized === "/") {
+    return value;
+  }
+
+  const segments = normalized.split("/").filter(Boolean);
+  return segments.length > 0 ? segments[segments.length - 1] : normalized;
+}
+
 export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor): ToolDefinition[] {
   const shared: ToolDefinition[] = [
     {
       name: "list_agents",
       label: "List Agents",
-      description: "List swarm agents with ids, roles, status, model, and workspace.",
+      description:
+        "List swarm agents with ids, roles, status, model, and workspace. Managers can set includeManagers=true to include other manager sessions.",
       parameters: Type.Object({
         verbose: Type.Optional(
           Type.Boolean({ description: "Include full descriptor fields (still paginated)." })
@@ -99,7 +149,13 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
         ),
         includeTerminated: Type.Optional(
           Type.Boolean({
-            description: "Include terminated/stopped workers in results."
+            description: "Include terminated/stopped agents in results."
+          })
+        ),
+        includeManagers: Type.Optional(
+          Type.Boolean({
+            description:
+              "Manager only. Include other manager sessions outside the caller's own team, marked with isExternal=true."
           })
         )
       }),
@@ -109,71 +165,46 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
           limit?: number;
           offset?: number;
           includeTerminated?: boolean;
+          includeManagers?: boolean;
         };
 
         const verbose = parsed.verbose === true;
         const limit = Math.max(1, Math.min(parsed.limit ?? 20, 100));
         const offset = Math.max(0, parsed.offset ?? 0);
         const includeTerminated = parsed.includeTerminated === true;
+        const includeManagers = descriptor.role === "manager" && parsed.includeManagers === true;
+        const visibleManagerId = descriptor.role === "manager" ? descriptor.agentId : descriptor.managerId;
 
-        let agents = host.listAgents();
-
-        // Agents only see their own manager/session and sibling workers (same managerId)
-        if (descriptor.managerId) {
-          agents = agents.filter(
-            (agent) =>
-              agent.agentId === descriptor.managerId ||
-              (agent.role === "worker" && agent.managerId === descriptor.managerId)
-          );
-        }
-
+        const allAgents = host.listAgents();
         const managerDescriptor =
-          agents.find((agent) => agent.role === "manager" && agent.agentId === descriptor.managerId) ??
-          agents.find((agent) => agent.role === "manager");
+          allAgents.find((agent) => agent.role === "manager" && agent.agentId === visibleManagerId) ??
+          allAgents.find((agent) => agent.role === "manager");
 
-        const workers = agents
-          .filter((agent) => agent.role === "worker")
-          .filter((agent) => {
-            if (includeTerminated) {
-              return true;
-            }
-            return agent.status !== "terminated" && agent.status !== "stopped";
-          })
-          .sort((left, right) => {
-            const rank = (status: AgentDescriptor["status"]): number => {
-              switch (status) {
-                case "streaming":
-                  return 0;
-                case "error":
-                  return 1;
-                case "idle":
-                  return 2;
-                case "stopped":
-                  return 3;
-                case "terminated":
-                  return 4;
-                default:
-                  return 5;
-              }
-            };
+        const teamWorkers = allAgents
+          .filter(
+            (agent) =>
+              agent.role === "worker" &&
+              agent.managerId === visibleManagerId &&
+              includeListAgentsEntry(agent, includeTerminated)
+          )
+          .sort(sortAgentsForList);
 
-            const rankDiff = rank(left.status) - rank(right.status);
-            if (rankDiff !== 0) {
-              return rankDiff;
-            }
+        const externalManagers = includeManagers
+          ? allAgents
+              .filter(
+                (agent) =>
+                  agent.role === "manager" &&
+                  agent.agentId !== visibleManagerId &&
+                  includeListAgentsEntry(agent, includeTerminated)
+              )
+              .sort(sortAgentsForList)
+          : [];
 
-            const updatedAtDiff = Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
-            if (Number.isFinite(updatedAtDiff) && updatedAtDiff !== 0) {
-              return updatedAtDiff;
-            }
-
-            return left.agentId.localeCompare(right.agentId);
-          });
-
-        const pagedWorkers = workers.slice(offset, offset + limit);
-        const hasMore = offset + limit < workers.length;
-        const selectedAgents = managerDescriptor ? [managerDescriptor, ...pagedWorkers] : pagedWorkers;
-        const summaryAgents = managerDescriptor ? [managerDescriptor, ...workers] : workers;
+        const pageAgents = [...teamWorkers, ...externalManagers];
+        const pagedAgents = pageAgents.slice(offset, offset + limit);
+        const hasMore = offset + limit < pageAgents.length;
+        const selectedAgents = managerDescriptor ? [managerDescriptor, ...pagedAgents] : pagedAgents;
+        const summaryAgents = managerDescriptor ? [managerDescriptor, ...pageAgents] : pageAgents;
 
         const statusCounts: Record<string, number> = {
           streaming: 0,
@@ -187,25 +218,42 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
           statusCounts[agent.status] = (statusCounts[agent.status] ?? 0) + 1;
         }
 
-        const compactPath = (value: string): string => {
-          const normalized = value.replace(/\\/g, "/").replace(/\/+$/, "");
-          if (normalized.length === 0 || normalized === "/") {
-            return value;
+        const compactAgents = selectedAgents.map((agent) => {
+          const isExternalManager = agent.role === "manager" && agent.agentId !== visibleManagerId;
+          return {
+            agentId: agent.agentId,
+            role: agent.role,
+            status: agent.status,
+            managerId: agent.managerId,
+            model: `${agent.model.provider}/${agent.model.modelId}`,
+            cwd: compactPath(agent.cwd),
+            updatedAt: agent.updatedAt,
+            ...(isExternalManager ? { isExternal: true } : {}),
+            ...(isExternalManager && agent.profileId ? { profileId: agent.profileId } : {}),
+            ...(isExternalManager && agent.sessionLabel ? { sessionLabel: agent.sessionLabel } : {})
+          };
+        });
+
+        const verboseAgents = selectedAgents.map((agent) => {
+          if (agent.role === "manager" && agent.agentId !== visibleManagerId) {
+            return {
+              ...agent,
+              isExternal: true
+            };
           }
 
-          const segments = normalized.split("/").filter(Boolean);
-          return segments.length > 0 ? segments[segments.length - 1] : normalized;
-        };
+          return agent;
+        });
 
-        const compactAgents = selectedAgents.map((agent) => ({
-          agentId: agent.agentId,
-          role: agent.role,
-          status: agent.status,
-          managerId: agent.managerId,
-          model: `${agent.model.provider}/${agent.model.modelId}`,
-          cwd: compactPath(agent.cwd),
-          updatedAt: agent.updatedAt
-        }));
+        const nextPageParams = [
+          `"verbose":${verbose ? "true" : "false"}`,
+          `"limit":${limit}`,
+          `"offset":${offset + limit}`,
+          includeTerminated ? '"includeTerminated":true' : "",
+          includeManagers ? '"includeManagers":true' : ""
+        ]
+          .filter((entry) => entry.length > 0)
+          .join(",");
 
         const payload = {
           summary: {
@@ -217,13 +265,13 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
           page: {
             offset,
             limit,
-            returned: pagedWorkers.length,
+            returned: pagedAgents.length,
             hasMore,
             mode: verbose ? "verbose" : "default"
           },
-          agents: verbose ? selectedAgents : compactAgents,
+          agents: verbose ? verboseAgents : compactAgents,
           hint: hasMore
-            ? `More agents available. Use list_agents({"verbose":${verbose ? "true" : "false"},"limit":${limit},"offset":${offset + limit}${includeTerminated ? ',"includeTerminated":true' : ""}}) for the next page.`
+            ? `More agents available. Use list_agents({${nextPageParams}}) for the next page.`
             : "Use list_agents({\"verbose\":true,\"limit\":50,\"offset\":0}) for paged full descriptors."
         };
 

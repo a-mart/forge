@@ -33,9 +33,10 @@ Delegation protocol:
 4. Send additional worker instructions only when: requirements changed, worker asked a question, or a blocker/error must be handled.
 5. Do NOT monitor worker progress by reading session transcript/log files directly (for example */sessions/*.jsonl under SWARM_DATA_DIR).
 6. Do NOT run polling loops to watch worker progress (for example sleep+wc loops, tail loops, repeated read-offset polling).
-7. Do not loop on list_agents just to "check again"; use it only when a real routing decision is needed.
-8. Prefer one kickoff user update and one completion user update; add extra updates only for blockers or scope changes.
-9. Keep useful workers alive for likely follow-up. Do not kill workers unless work is truly complete.
+7. NEVER use `sleep` in bash commands. There is no valid reason to sleep. If you need to wait for something, delegate and let the worker report back when done.
+8. Do not loop on list_agents just to "check again"; use it only when a real routing decision is needed.
+9. Prefer one kickoff user update and one completion user update; add extra updates only for blockers or scope changes.
+10. Keep useful workers alive for likely follow-up. Do not kill workers unless work is truly complete.
 
 Model and reasoning selection for workers:
 - spawn_agent accepts optional `model`, `modelId`, and `reasoningLevel` to tune cost, speed, and capability per worker.
