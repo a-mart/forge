@@ -971,31 +971,40 @@ type NavigateFn = (options: {
 }) => void | Promise<void>
 
 function useOptionalNavigate(): NavigateFn {
+  const fallbackNavigate: NavigateFn = ({ to, search, replace }) => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    const params = new URLSearchParams()
+    if (search?.view) {
+      params.set('view', search.view)
+    }
+    if (search?.agent) {
+      params.set('agent', search.agent)
+    }
+
+    const query = params.toString()
+    const nextUrl = query ? `${to}?${query}` : to
+
+    if (replace) {
+      window.history.replaceState(null, '', nextUrl)
+    } else {
+      window.history.pushState(null, '', nextUrl)
+    }
+  }
+
   try {
-    return useNavigate() as unknown as NavigateFn
-  } catch {
-    return ({ to, search, replace }) => {
-      if (typeof window === 'undefined') {
-        return
-      }
-
-      const params = new URLSearchParams()
-      if (search?.view) {
-        params.set('view', search.view)
-      }
-      if (search?.agent) {
-        params.set('agent', search.agent)
-      }
-
-      const query = params.toString()
-      const nextUrl = query ? `${to}?${query}` : to
-
-      if (replace) {
-        window.history.replaceState(null, '', nextUrl)
-      } else {
-        window.history.pushState(null, '', nextUrl)
+    const routerNavigate = useNavigate() as unknown as NavigateFn
+    return (options) => {
+      try {
+        return routerNavigate(options)
+      } catch {
+        return fallbackNavigate(options)
       }
     }
+  } catch {
+    return fallbackNavigate
   }
 }
 
@@ -1020,11 +1029,9 @@ function chooseMostRecentSessionFallbackForDeletedTarget(
   previousAgentsById: Map<string, AgentDescriptor>,
 ): string | null {
   const deletedAgent = previousAgentsById.get(deletedAgentId)
-  if (!deletedAgent) {
-    return null
-  }
-
-  const profileId = resolveDeletedAgentProfileId(agents, previousAgentsById, deletedAgent)
+  const profileId = deletedAgent
+    ? resolveDeletedAgentProfileId(agents, previousAgentsById, deletedAgent)
+    : inferProfileIdFromDeletedAgentId(agents, deletedAgentId)
   if (!profileId) {
     return null
   }
@@ -1052,6 +1059,32 @@ function chooseMostRecentSessionFallbackForDeletedTarget(
     })
 
   return profileSessions[0]?.agentId ?? null
+}
+
+function inferProfileIdFromDeletedAgentId(
+  agents: AgentDescriptor[],
+  deletedAgentId: string,
+): string | null {
+  const explicitProfileMatch = agents.find(
+    (agent) => agent.role === 'manager' && (agent.profileId?.trim() || agent.agentId) === deletedAgentId,
+  )
+  if (explicitProfileMatch) {
+    return explicitProfileMatch.profileId?.trim() || explicitProfileMatch.agentId
+  }
+
+  const sessionMatch = /^(.*)--s\d+$/.exec(deletedAgentId.trim())
+  if (!sessionMatch) {
+    return null
+  }
+
+  const inferredProfileId = sessionMatch[1]?.trim()
+  if (!inferredProfileId) {
+    return null
+  }
+
+  return agents.some((agent) => agent.role === 'manager' && (agent.profileId?.trim() || agent.agentId) === inferredProfileId)
+    ? inferredProfileId
+    : null
 }
 
 function resolveDeletedAgentProfileId(

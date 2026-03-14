@@ -27,6 +27,8 @@ import type {
 } from "./types.js";
 
 const MAX_CONVERSATION_HISTORY = 2000;
+const MAX_SAFE_JSON_BYTES = 32 * 1024;
+const SAFE_JSON_TRUNCATED_SUFFIX = " [truncated]";
 const CONVERSATION_ENTRY_TYPE = "swarm_conversation_entry";
 const SESSION_HEADER_VERSION = 3;
 const MANAGER_ERROR_CONTEXT_HINT = "Try compacting the conversation to free up context space.";
@@ -878,11 +880,26 @@ export class ConversationProjector {
 }
 
 function safeJson(value: unknown): string {
+  let serialized: string;
   try {
-    return JSON.stringify(value);
+    serialized = JSON.stringify(value);
   } catch {
-    return String(value);
+    serialized = String(value);
   }
+
+  const serializedBytes = Buffer.byteLength(serialized, "utf8");
+  if (serializedBytes <= MAX_SAFE_JSON_BYTES) {
+    return serialized;
+  }
+
+  const suffixBytes = Buffer.byteLength(SAFE_JSON_TRUNCATED_SUFFIX, "utf8");
+  if (MAX_SAFE_JSON_BYTES <= suffixBytes) {
+    return SAFE_JSON_TRUNCATED_SUFFIX;
+  }
+
+  const previewByteCount = MAX_SAFE_JSON_BYTES - suffixBytes;
+  const preview = Buffer.from(serialized, "utf8").subarray(0, previewByteCount).toString("utf8");
+  return `${preview}${SAFE_JSON_TRUNCATED_SUFFIX}`;
 }
 
 function extractSessionEntryId(entry: unknown): string | undefined {

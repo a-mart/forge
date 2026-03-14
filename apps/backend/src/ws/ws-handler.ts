@@ -30,6 +30,9 @@ const API_PROXY_AUTH_TOKENS_PATH = "/api/auth/tokens";
 const API_PROXY_FEEDBACK_PATH = "/api/feedback";
 const API_PROXY_SLASH_COMMANDS_PATH = "/api/slash-commands";
 const API_PROXY_JSON_CONTENT_TYPE = "application/json; charset=utf-8";
+const MAX_WS_EVENT_BYTES = 1 * 1024 * 1024;
+const MAX_WS_BUFFERED_AMOUNT_BYTES = 1 * 1024 * 1024;
+const BOOTSTRAP_HISTORY_BYTE_BUDGET = MAX_WS_EVENT_BYTES - 16 * 1024;
 
 export class WsHandler {
   private readonly swarmManager: SwarmManager;
@@ -775,14 +778,12 @@ export class WsHandler {
     const historyMessageCount = requestedMessageCount !== undefined
       ? normalizeMessageCount(requestedMessageCount)
       : undefined;
-    const conversationHistory = this.swarmManager.getConversationHistory(targetAgentId);
+    const conversationHistory = this.selectBootstrapConversationHistory(targetAgentId, historyMessageCount);
 
     this.send(socket, {
       type: "conversation_history",
       agentId: targetAgentId,
-      messages: historyMessageCount !== undefined
-        ? conversationHistory.slice(-historyMessageCount)
-        : conversationHistory
+      messages: conversationHistory
     });
 
     const managerContextId = this.resolveManagerContextAgentId(targetAgentId);
@@ -836,6 +837,64 @@ export class WsHandler {
     return status === "idle" || status === "streaming";
   }
 
+  private selectBootstrapConversationHistory(
+    targetAgentId: string,
+    requestedMessageCount?: number,
+  ) {
+    const fullHistory = this.swarmManager.getConversationHistory(targetAgentId)
+    const requestedHistory = requestedMessageCount !== undefined
+      ? fullHistory.slice(-requestedMessageCount)
+      : fullHistory
+
+    const fullEventBytes = this.measureEventBytes({
+      type: 'conversation_history',
+      agentId: targetAgentId,
+      messages: requestedHistory,
+    })
+    if (fullEventBytes !== null && fullEventBytes <= BOOTSTRAP_HISTORY_BYTE_BUDGET) {
+      return requestedHistory
+    }
+
+    let low = 0
+    let high = requestedHistory.length
+
+    while (low < high) {
+      const mid = Math.floor((low + high) / 2)
+      const candidate = requestedHistory.slice(mid)
+      const candidateBytes = this.measureEventBytes({
+        type: 'conversation_history',
+        agentId: targetAgentId,
+        messages: candidate,
+      })
+
+      if (candidateBytes !== null && candidateBytes <= BOOTSTRAP_HISTORY_BYTE_BUDGET) {
+        high = mid
+      } else {
+        low = mid + 1
+      }
+    }
+
+    const trimmedHistory = requestedHistory.slice(low)
+    if (trimmedHistory.length !== requestedHistory.length) {
+      console.warn('[swarm] ws:trim_bootstrap_history', {
+        agentId: targetAgentId,
+        originalCount: requestedHistory.length,
+        trimmedCount: trimmedHistory.length,
+        maxEventBytes: BOOTSTRAP_HISTORY_BYTE_BUDGET,
+      })
+    }
+
+    return trimmedHistory
+  }
+
+  private measureEventBytes(event: ServerEvent): number | null {
+    try {
+      return Buffer.byteLength(JSON.stringify(event), 'utf8')
+    } catch {
+      return null
+    }
+  }
+
   private logDebug(message: string, details?: unknown): void {
     if (!this.swarmManager.getConfig().debug) {
       return;
@@ -855,7 +914,37 @@ export class WsHandler {
       return;
     }
 
-    socket.send(JSON.stringify(event));
+    if (socket.bufferedAmount > MAX_WS_BUFFERED_AMOUNT_BYTES) {
+      console.warn("[swarm] ws:drop_event:backpressure", {
+        eventType: event.type,
+        bufferedAmount: socket.bufferedAmount,
+        maxBufferedAmountBytes: MAX_WS_BUFFERED_AMOUNT_BYTES
+      });
+      return;
+    }
+
+    let serialized: string;
+    try {
+      serialized = JSON.stringify(event);
+    } catch (error) {
+      console.warn("[swarm] ws:drop_event:serialize_failed", {
+        eventType: event.type,
+        message: error instanceof Error ? error.message : String(error)
+      });
+      return;
+    }
+
+    const eventBytes = Buffer.byteLength(serialized, "utf8");
+    if (eventBytes > MAX_WS_EVENT_BYTES) {
+      console.warn("[swarm] ws:drop_event:oversized", {
+        eventType: event.type,
+        eventBytes,
+        maxEventBytes: MAX_WS_EVENT_BYTES
+      });
+      return;
+    }
+
+    socket.send(serialized);
   }
 }
 

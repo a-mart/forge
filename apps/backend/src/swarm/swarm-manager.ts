@@ -93,6 +93,7 @@ import type {
   AgentsSnapshotEvent,
   AgentsStoreFile,
   ConversationAttachment,
+  ConversationAttachmentMetadata,
   ConversationBinaryAttachment,
   ConversationEntryEvent,
   ConversationMessageEvent,
@@ -2158,7 +2159,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         if (!storedPath) {
           const directory = binaryAttachmentDir ?? (await this.createBinaryAttachmentDir(targetAgentId));
           binaryAttachmentDir = directory;
-          storedPath = await this.writeBinaryAttachmentToDisk(directory, attachment, index + 1);
+          storedPath = await this.writeBinaryAttachmentToDisk(directory, attachment, index + 1, "bin");
         }
         fileMessages.push(formatBinaryAttachmentForPrompt(attachment, storedPath, index + 1));
       }
@@ -2198,14 +2199,86 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   private async writeBinaryAttachmentToDisk(
     directory: string,
-    attachment: ConversationBinaryAttachment,
-    attachmentIndex: number
+    attachment: Pick<ConversationBinaryAttachment, "data" | "fileName">,
+    attachmentIndex: number,
+    fallbackExtension: string
   ): Promise<string> {
-    const safeName = sanitizeAttachmentFileName(attachment.fileName, `attachment-${attachmentIndex}.bin`);
+    const safeName = sanitizeAttachmentFileName(
+      attachment.fileName,
+      `attachment-${attachmentIndex}.${fallbackExtension}`
+    );
     const filePath = join(directory, `${String(attachmentIndex).padStart(2, "0")}-${safeName}`);
     const buffer = Buffer.from(attachment.data, "base64");
     await writeFile(filePath, buffer);
     return filePath;
+  }
+
+  private async writeTextAttachmentToDisk(
+    directory: string,
+    attachment: ConversationTextAttachment,
+    attachmentIndex: number
+  ): Promise<string> {
+    const safeName = sanitizeAttachmentFileName(attachment.fileName, `attachment-${attachmentIndex}.txt`);
+    const filePath = join(directory, `${String(attachmentIndex).padStart(2, "0")}-${safeName}`);
+    await writeFile(filePath, attachment.text, "utf8");
+    return filePath;
+  }
+
+  private async persistConversationAttachmentsIfNeeded(
+    targetAgentId: string,
+    attachments: ConversationAttachment[]
+  ): Promise<ConversationAttachment[]> {
+    if (attachments.length === 0) {
+      return [];
+    }
+
+    const persisted: ConversationAttachment[] = [];
+    let attachmentDir: string | undefined;
+
+    for (let index = 0; index < attachments.length; index += 1) {
+      const attachment = attachments[index];
+      const attachmentIndex = index + 1;
+      const persistedPath = normalizeOptionalAttachmentPath(attachment.filePath);
+
+      if (persistedPath) {
+        persisted.push({
+          ...attachment,
+          filePath: persistedPath
+        });
+        continue;
+      }
+
+      const directory = attachmentDir ?? (await this.createBinaryAttachmentDir(targetAgentId));
+      attachmentDir = directory;
+
+      if (isConversationTextAttachment(attachment)) {
+        const filePath = await this.writeTextAttachmentToDisk(directory, attachment, attachmentIndex);
+        persisted.push({
+          ...attachment,
+          filePath
+        });
+        continue;
+      }
+
+      if (isConversationBinaryAttachment(attachment)) {
+        const filePath = await this.writeBinaryAttachmentToDisk(directory, attachment, attachmentIndex, "bin");
+        persisted.push({
+          ...attachment,
+          filePath
+        });
+        continue;
+      }
+
+      if (isConversationImageAttachment(attachment)) {
+        const filePath = await this.writeBinaryAttachmentToDisk(directory, attachment, attachmentIndex, "png");
+        persisted.push({
+          ...attachment,
+          filePath
+        });
+      }
+    }
+
+    return persisted;
   }
 
   async publishToUser(
@@ -2459,9 +2532,13 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       throw new Error(`Target agent is not running: ${targetAgentId}`);
     }
 
+    const persistedAttachments = await this.persistConversationAttachmentsIfNeeded(targetAgentId, attachments);
+    const attachmentMetadata = toConversationAttachmentMetadata(persistedAttachments);
+    const runtimeAttachments = toRuntimeDispatchAttachments(attachments, persistedAttachments);
+
     const receivedAt = this.now();
     const compactCommand =
-      target.role === "manager" && attachments.length === 0 ? parseCompactSlashCommand(trimmed) : undefined;
+      target.role === "manager" && persistedAttachments.length === 0 ? parseCompactSlashCommand(trimmed) : undefined;
     if (compactCommand) {
       this.markSessionActivity(targetAgentId, receivedAt);
       this.logDebug("manager:user_message_compact_command", {
@@ -2484,7 +2561,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       managerContextId,
       sourceContext,
       textPreview: previewForLog(trimmed),
-      attachmentCount: attachments.length
+      attachmentCount: persistedAttachments.length
     });
 
     const userEvent: ConversationMessageEvent = {
@@ -2492,7 +2569,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       agentId: targetAgentId,
       role: "user",
       text: trimmed,
-      attachments: attachments.length > 0 ? attachments : undefined,
+      attachments: attachmentMetadata.length > 0 ? attachmentMetadata : undefined,
       timestamp: receivedAt,
       source: "user_input",
       sourceContext
@@ -2506,7 +2583,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       try {
         receipt = await this.sendMessage(managerContextId, targetAgentId, trimmed, requestedDelivery, {
           origin: "user",
-          attachments
+          attachments: runtimeAttachments
         });
       } catch (error) {
         this.logDebug("manager:user_message_dispatch_error", {
@@ -2516,7 +2593,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
           requestedDelivery,
           sourceContext,
           textPreview: previewForLog(trimmed),
-          attachmentCount: attachments.length,
+          attachmentCount: persistedAttachments.length,
           message: error instanceof Error ? error.message : String(error),
           stack: error instanceof Error ? error.stack : undefined
         });
@@ -2530,7 +2607,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         requestedDelivery,
         acceptedMode: receipt.acceptedMode,
         sourceContext,
-        attachmentCount: attachments.length
+        attachmentCount: persistedAttachments.length
       });
 
       this.emitAgentMessage({
@@ -2543,7 +2620,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         sourceContext,
         requestedDelivery,
         acceptedMode: receipt.acceptedMode,
-        attachmentCount: attachments.length > 0 ? attachments.length : undefined
+        attachmentCount: persistedAttachments.length > 0 ? persistedAttachments.length : undefined
       });
       return;
     }
@@ -2559,7 +2636,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         requestedDelivery: "steer",
         sourceContext,
         textPreview: previewForLog(trimmed),
-        attachmentCount: attachments.length,
+        attachmentCount: persistedAttachments.length,
         message: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined
       });
@@ -2573,7 +2650,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       managerContextId,
       {
         text: managerVisibleMessage,
-        attachments
+        attachments: runtimeAttachments
       },
       "user"
     );
@@ -2585,7 +2662,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       requestedDelivery: "steer",
       sourceContext,
       textPreview: previewForLog(trimmed),
-      attachmentCount: attachments.length,
+      attachmentCount: persistedAttachments.length,
       runtimeTextPreview: previewForLog(extractRuntimeMessageText(runtimeMessage)),
       runtimeImageCount: typeof runtimeMessage === "string" ? 0 : (runtimeMessage.images?.length ?? 0)
     });
@@ -2599,7 +2676,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         requestedDelivery: "steer",
         acceptedMode: receipt.acceptedMode,
         sourceContext,
-        attachmentCount: attachments.length
+        attachmentCount: persistedAttachments.length
       });
     } catch (error) {
       this.logDebug("manager:user_message_dispatch_error", {
@@ -2609,7 +2686,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         requestedDelivery: "steer",
         sourceContext,
         textPreview: previewForLog(trimmed),
-        attachmentCount: attachments.length,
+        attachmentCount: persistedAttachments.length,
         runtimeTextPreview: previewForLog(extractRuntimeMessageText(runtimeMessage)),
         runtimeImageCount: typeof runtimeMessage === "string" ? 0 : (runtimeMessage.images?.length ?? 0),
         message: error instanceof Error ? error.message : String(error),
@@ -5531,6 +5608,100 @@ function normalizeConversationAttachments(
   }
 
   return normalized;
+}
+
+function toConversationAttachmentMetadata(attachments: ConversationAttachment[]): ConversationAttachmentMetadata[] {
+  const metadata: ConversationAttachmentMetadata[] = [];
+
+  for (const attachment of attachments) {
+    if (!attachment || typeof attachment !== "object") {
+      continue;
+    }
+
+    const normalizedPath = normalizeOptionalAttachmentPath(attachment.filePath);
+    const normalizedName = normalizeOptionalMetadataValue(attachment.fileName);
+    const sizeBytes = computeAttachmentSizeBytes(attachment);
+
+    if (isConversationTextAttachment(attachment)) {
+      metadata.push({
+        type: "text",
+        mimeType: attachment.mimeType,
+        fileName: normalizedName,
+        filePath: normalizedPath,
+        sizeBytes
+      });
+      continue;
+    }
+
+    if (isConversationBinaryAttachment(attachment)) {
+      metadata.push({
+        type: "binary",
+        mimeType: attachment.mimeType,
+        fileName: normalizedName,
+        filePath: normalizedPath,
+        sizeBytes
+      });
+      continue;
+    }
+
+    if (isConversationImageAttachment(attachment)) {
+      metadata.push({
+        type: "image",
+        mimeType: attachment.mimeType,
+        fileName: normalizedName,
+        filePath: normalizedPath,
+        sizeBytes
+      });
+    }
+  }
+
+  return metadata;
+}
+
+function toRuntimeDispatchAttachments(
+  attachments: ConversationAttachment[],
+  persistedAttachments: ConversationAttachment[]
+): ConversationAttachment[] {
+  return attachments.map((attachment, index) => {
+    const persistedAttachment = persistedAttachments[index];
+    if (!persistedAttachment) {
+      return attachment;
+    }
+
+    if (normalizeOptionalAttachmentPath(attachment.filePath)) {
+      return attachment;
+    }
+
+    return isConversationBinaryAttachment(attachment) ? persistedAttachment : attachment;
+  });
+}
+
+function computeAttachmentSizeBytes(attachment: ConversationAttachment): number | undefined {
+  if (isConversationTextAttachment(attachment)) {
+    return Buffer.byteLength(attachment.text, "utf8");
+  }
+
+  if (isConversationBinaryAttachment(attachment) || isConversationImageAttachment(attachment)) {
+    return decodeBase64ByteLength(attachment.data);
+  }
+
+  return undefined;
+}
+
+function decodeBase64ByteLength(value: string): number {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return 0;
+  }
+
+  let padding = 0;
+  if (trimmed.endsWith("==")) {
+    padding = 2;
+  } else if (trimmed.endsWith("=")) {
+    padding = 1;
+  }
+
+  return Math.max(0, Math.floor((trimmed.length * 3) / 4) - padding);
 }
 
 function toRuntimeImageAttachments(attachments: ConversationAttachment[]): RuntimeImageAttachment[] {

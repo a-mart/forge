@@ -1293,10 +1293,12 @@ describe('SwarmWebSocketServer', () => {
       expect(userEvent.attachments).toHaveLength(1)
       const persistedAttachment = userEvent.attachments?.[0]
       expect(persistedAttachment).toMatchObject({
+        type: 'image',
         mimeType: 'image/png',
-        data: 'aGVsbG8=',
         fileName: 'diagram.png',
+        sizeBytes: 5,
       })
+      expect('data' in (persistedAttachment ?? {})).toBe(false)
       expect(typeof persistedAttachment?.filePath).toBe('string')
 
       if (persistedAttachment?.filePath) {
@@ -1377,18 +1379,20 @@ describe('SwarmWebSocketServer', () => {
       expect(textAttachment).toMatchObject({
         type: 'text',
         mimeType: 'text/markdown',
-        text: '# Notes',
         fileName: 'notes.md',
+        sizeBytes: 7,
       })
+      expect('text' in (textAttachment ?? {})).toBe(false)
       expect(typeof textAttachment?.filePath).toBe('string')
 
       const binaryAttachment = userEvent.attachments?.[1]
       expect(binaryAttachment).toMatchObject({
         type: 'binary',
         mimeType: 'application/pdf',
-        data: 'aGVsbG8=',
         fileName: 'design.pdf',
+        sizeBytes: 5,
       })
+      expect('data' in (binaryAttachment ?? {})).toBe(false)
       expect(typeof binaryAttachment?.filePath).toBe('string')
 
       if (textAttachment?.filePath) {

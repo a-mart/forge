@@ -1600,13 +1600,14 @@ describe('SwarmManager', () => {
     expect(userEvent).toBeDefined()
     if (userEvent && userEvent.type === 'conversation_message') {
       expect(userEvent.text).toBe('')
-      expect(userEvent.attachments).toEqual([
-        {
-          mimeType: 'image/png',
-          data: 'aGVsbG8=',
-          fileName: 'diagram.png',
-        },
-      ])
+      expect(userEvent.attachments).toHaveLength(1)
+      expect(userEvent.attachments?.[0]).toMatchObject({
+        type: 'image',
+        mimeType: 'image/png',
+        fileName: 'diagram.png',
+        sizeBytes: 5,
+      })
+      expect('data' in (userEvent.attachments?.[0] ?? {})).toBe(false)
     }
   })
 

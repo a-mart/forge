@@ -117,6 +117,7 @@ const originalScrollIntoView = HTMLElement.prototype.scrollIntoView
 beforeEach(() => {
   FakeWebSocket.instances = []
   vi.useFakeTimers()
+  window.history.replaceState(null, '', '/')
   ;(globalThis as any).WebSocket = FakeWebSocket
   Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
     configurable: true,
