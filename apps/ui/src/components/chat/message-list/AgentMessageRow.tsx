@@ -1,7 +1,8 @@
+import { memo } from 'react'
 import { SourceBadge, formatTimestamp } from './message-row-utils'
 import type { AgentMessageEntry } from './types'
 
-export function AgentMessageRow({
+export const AgentMessageRow = memo(function AgentMessageRow({
   message,
 }: {
   message: AgentMessageEntry
@@ -65,4 +66,4 @@ export function AgentMessageRow({
       ) : null}
     </div>
   )
-}
+})

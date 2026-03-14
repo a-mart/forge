@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { memo, useState, useCallback } from 'react'
 import { Copy, Check } from 'lucide-react'
 import { MarkdownMessage } from '@/components/chat/MarkdownMessage'
 import type { ArtifactReference } from '@/lib/artifacts'
@@ -65,7 +65,7 @@ interface ConversationMessageRowProps {
   isFeedbackSubmitting?: boolean
 }
 
-export function ConversationMessageRow({
+export const ConversationMessageRow = memo(function ConversationMessageRow({
   message,
   feedbackTargetId,
   feedbackLegacyTargetId,
@@ -177,4 +177,4 @@ export function ConversationMessageRow({
       ) : null}
     </div>
   )
-}
+})

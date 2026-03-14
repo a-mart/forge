@@ -853,7 +853,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     });
 
     this.descriptors.delete(agentId);
-    this.conversationProjector.deleteConversationHistory(agentId);
+    this.conversationProjector.deleteConversationHistory(agentId, descriptor.sessionFile);
 
     if (descriptor.sessionFile === canonicalSessionFile) {
       await rm(sessionDir, { recursive: true, force: true });
@@ -1458,12 +1458,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         terminatedWorkerIds.push(workerDescriptor.agentId);
         await this.terminateDescriptor(workerDescriptor, { abort: true, emitStatus: true });
         this.descriptors.delete(workerDescriptor.agentId);
-        this.conversationProjector.deleteConversationHistory(workerDescriptor.agentId);
+        this.conversationProjector.deleteConversationHistory(workerDescriptor.agentId, workerDescriptor.sessionFile);
       }
 
       await this.terminateDescriptor(sessionDescriptor, { abort: true, emitStatus: true });
       this.descriptors.delete(sessionDescriptor.agentId);
-      this.conversationProjector.deleteConversationHistory(sessionDescriptor.agentId);
+      this.conversationProjector.deleteConversationHistory(sessionDescriptor.agentId, sessionDescriptor.sessionFile);
     }
 
     if (profile) {
@@ -1856,7 +1856,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       if (options.deleteWorkers) {
         this.descriptors.delete(workerDescriptor.agentId);
       }
-      this.conversationProjector.deleteConversationHistory(workerDescriptor.agentId);
+      this.conversationProjector.deleteConversationHistory(workerDescriptor.agentId, workerDescriptor.sessionFile);
     }
 
     const runtime = this.runtimes.get(agentId);
@@ -1955,7 +1955,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     });
 
     this.descriptors.delete(descriptor.agentId);
-    this.conversationProjector.deleteConversationHistory(descriptor.agentId);
+    this.conversationProjector.deleteConversationHistory(descriptor.agentId, descriptor.sessionFile);
 
     try {
       if (descriptor.sessionFile === canonicalSessionFile) {

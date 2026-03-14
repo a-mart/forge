@@ -363,40 +363,55 @@ export function MessageList({
               const feedbackLegacyTargetId = resolveConversationMessageLegacyTargetId(entry.message)
 
               return (
-                <ConversationMessageRow
+                <div
                   key={entry.id}
-                  message={entry.message}
-                  feedbackTargetId={feedbackTargetId}
-                  feedbackLegacyTargetId={feedbackLegacyTargetId}
-                  onArtifactClick={onArtifactClick}
-                  feedbackVote={
-                    isAssistant && getVote
-                      ? getVote(feedbackTargetId, feedbackLegacyTargetId)
-                      : undefined
-                  }
-                  feedbackHasComment={
-                    isAssistant && hasComment
-                      ? hasComment(feedbackTargetId, feedbackLegacyTargetId)
-                      : undefined
-                  }
-                  onFeedbackVote={isAssistant ? onFeedbackVote : undefined}
-                  onFeedbackComment={isAssistant ? onFeedbackComment : undefined}
-                  onFeedbackClearComment={isAssistant ? onFeedbackClearComment : undefined}
-                  isFeedbackSubmitting={isFeedbackSubmitting}
-                />
+                  className="[content-visibility:auto] [contain-intrinsic-size:auto_96px]"
+                >
+                  <ConversationMessageRow
+                    message={entry.message}
+                    feedbackTargetId={feedbackTargetId}
+                    feedbackLegacyTargetId={feedbackLegacyTargetId}
+                    onArtifactClick={onArtifactClick}
+                    feedbackVote={
+                      isAssistant && getVote
+                        ? getVote(feedbackTargetId, feedbackLegacyTargetId)
+                        : undefined
+                    }
+                    feedbackHasComment={
+                      isAssistant && hasComment
+                        ? hasComment(feedbackTargetId, feedbackLegacyTargetId)
+                        : undefined
+                    }
+                    onFeedbackVote={isAssistant ? onFeedbackVote : undefined}
+                    onFeedbackComment={isAssistant ? onFeedbackComment : undefined}
+                    onFeedbackClearComment={isAssistant ? onFeedbackClearComment : undefined}
+                    isFeedbackSubmitting={isFeedbackSubmitting}
+                  />
+                </div>
               )
             }
 
             if (entry.type === 'agent_message') {
-              return <AgentMessageRow key={entry.id} message={entry.message} />
+              return (
+                <div
+                  key={entry.id}
+                  className="[content-visibility:auto] [contain-intrinsic-size:auto_84px]"
+                >
+                  <AgentMessageRow message={entry.message} />
+                </div>
+              )
             }
 
             return (
-              <ToolLogRow
+              <div
                 key={entry.id}
-                type={entry.type}
-                entry={entry.entry}
-              />
+                className="[content-visibility:auto] [contain-intrinsic-size:auto_84px]"
+              >
+                <ToolLogRow
+                  type={entry.type}
+                  entry={entry.entry}
+                />
+              </div>
             )
           })}
           {isLoading ? <LoadingIndicator /> : null}

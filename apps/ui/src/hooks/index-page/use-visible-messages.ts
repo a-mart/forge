@@ -81,7 +81,7 @@ function isManagerScopedAllViewEntry(
   return scopedAgentIds.has(entry.agentId)
 }
 
-interface UseVisibleMessagesOptions {
+export interface VisibleMessagesOptions {
   messages: ConversationEntry[]
   activityMessages: ConversationEntry[]
   agents: AgentDescriptor[]
@@ -89,51 +89,57 @@ interface UseVisibleMessagesOptions {
   channelView: ChannelView
 }
 
-export function useVisibleMessages({
+export function deriveVisibleMessages({
   messages,
   activityMessages,
   agents,
   activeAgent,
   channelView,
-}: UseVisibleMessagesOptions): {
+}: VisibleMessagesOptions): {
   allMessages: ConversationEntry[]
   visibleMessages: ConversationEntry[]
 } {
-  const managerScopedAgentIds = useMemo(() => {
-    if (activeAgent?.role !== 'manager') {
-      return null
-    }
+  const managerScopedAgentIds =
+    activeAgent?.role === 'manager' ? buildManagerScopedAgentIds(agents, activeAgent.agentId) : null
 
-    return buildManagerScopedAgentIds(agents, activeAgent.agentId)
-  }, [activeAgent, agents])
+  const allMessages = mergeConversationAndActivityMessages(messages, activityMessages)
 
-  const allMessages = useMemo(
-    () => mergeConversationAndActivityMessages(messages, activityMessages),
-    [activityMessages, messages],
-  )
+  const visibleMessages =
+    channelView === 'all'
+      ? activeAgent?.role !== 'manager' || !managerScopedAgentIds
+        ? allMessages
+        : allMessages.filter((entry) =>
+            isManagerScopedAllViewEntry(entry, activeAgent.agentId, managerScopedAgentIds),
+          )
+      : messages.filter((entry) => {
+          if (entry.type !== 'conversation_message') {
+            return true
+          }
 
-  const visibleMessages = useMemo(() => {
-    if (channelView === 'all') {
-      if (activeAgent?.role !== 'manager' || !managerScopedAgentIds) {
-        return allMessages
-      }
-
-      return allMessages.filter((entry) =>
-        isManagerScopedAllViewEntry(entry, activeAgent.agentId, managerScopedAgentIds),
-      )
-    }
-
-    return messages.filter((entry) => {
-      if (entry.type !== 'conversation_message') {
-        return true
-      }
-
-      return (entry.sourceContext?.channel ?? 'web') === 'web'
-    })
-  }, [activeAgent, allMessages, channelView, managerScopedAgentIds, messages])
+          return (entry.sourceContext?.channel ?? 'web') === 'web'
+        })
 
   return {
     allMessages,
     visibleMessages,
   }
+}
+
+export function useVisibleMessages(options: VisibleMessagesOptions): {
+  allMessages: ConversationEntry[]
+  visibleMessages: ConversationEntry[]
+} {
+  const { messages, activityMessages, agents, activeAgent, channelView } = options
+
+  return useMemo(
+    () =>
+      deriveVisibleMessages({
+        messages,
+        activityMessages,
+        agents,
+        activeAgent,
+        channelView,
+      }),
+    [activeAgent, activityMessages, agents, channelView, messages],
+  )
 }

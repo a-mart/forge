@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { appendFileSync, closeSync, existsSync, openSync, readSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, openSync, readFileSync, readSync, statSync, writeFileSync } from "node:fs";
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 import type { ServerEvent } from "@middleman/protocol";
+import { getConversationHistoryCacheFilePath } from "./conversation-history-cache.js";
 import { isConversationEntryEvent } from "./conversation-validators.js";
 import { openSessionManagerWithSizeGuard } from "./session-file-guard.js";
 import {
@@ -48,6 +51,8 @@ interface ConversationProjectorDependencies {
 export class ConversationProjector {
   private readonly lastSessionEntryIdBySessionFile = new Map<string, string>();
   private readonly loadedFromDisk = new Set<string>();
+  private readonly pendingCacheWrites = new Map<string, Promise<void>>();
+  private readonly queuedCacheSnapshots = new Map<string, ConversationEntryEvent[] | null>();
 
   constructor(private readonly deps: ConversationProjectorDependencies) {}
 
@@ -60,22 +65,33 @@ export class ConversationProjector {
     }
 
     const history = this.deps.conversationEntriesByAgentId.get(agentId) ?? [];
-    return history.map((entry) => ({ ...entry }));
+    return history;
   }
 
-  resetConversationHistory(agentId: string): void {
+  resetConversationHistory(agentId: string, sessionFile?: string): void {
     this.deps.conversationEntriesByAgentId.set(agentId, []);
     this.loadedFromDisk.add(agentId);
+
+    const resolvedSessionFile = sessionFile ?? this.deps.descriptors.get(agentId)?.sessionFile;
+    if (!resolvedSessionFile) {
+      return;
+    }
+
+    this.lastSessionEntryIdBySessionFile.delete(resolvedSessionFile);
+    this.queueCacheSnapshotWrite(resolvedSessionFile, null);
   }
 
-  deleteConversationHistory(agentId: string): void {
+  deleteConversationHistory(agentId: string, sessionFile?: string): void {
     this.deps.conversationEntriesByAgentId.delete(agentId);
     this.loadedFromDisk.delete(agentId);
 
-    const descriptor = this.deps.descriptors.get(agentId);
-    if (descriptor) {
-      this.lastSessionEntryIdBySessionFile.delete(descriptor.sessionFile);
+    const resolvedSessionFile = sessionFile ?? this.deps.descriptors.get(agentId)?.sessionFile;
+    if (!resolvedSessionFile) {
+      return;
     }
+
+    this.lastSessionEntryIdBySessionFile.delete(resolvedSessionFile);
+    this.queueCacheSnapshotWrite(resolvedSessionFile, null);
   }
 
   emitConversationMessage(event: ConversationMessageEvent): void {
@@ -251,6 +267,7 @@ export class ConversationProjector {
     history.push(event);
     trimConversationHistory(history);
     this.deps.conversationEntriesByAgentId.set(event.agentId, history);
+    this.queueConversationHistoryCacheWrite(event.agentId, history);
 
     // tool_execution_update payloads are high-volume streaming snapshots.
     // Persisting each snapshot causes runaway JSONL growth and can crash reopening.
@@ -406,6 +423,21 @@ export class ConversationProjector {
 
   private loadConversationHistoryForDescriptor(descriptor: AgentDescriptor): ConversationEntryEvent[] {
     const existingInMemoryEntries = this.deps.conversationEntriesByAgentId.get(descriptor.agentId) ?? [];
+
+    const cachedEntries = this.loadConversationHistoryFromCache(descriptor.sessionFile);
+    if (cachedEntries) {
+      trimConversationHistory(cachedEntries);
+      const mergedEntries = this.mergeDiskAndInMemoryEntries(cachedEntries, existingInMemoryEntries);
+      this.loadedFromDisk.add(descriptor.agentId);
+      this.deps.conversationEntriesByAgentId.set(descriptor.agentId, mergedEntries);
+      this.queueConversationHistoryCacheWrite(descriptor.agentId, mergedEntries);
+      this.deps.logDebug("history:load:cache", {
+        agentId: descriptor.agentId,
+        messageCount: mergedEntries.length
+      });
+      return mergedEntries;
+    }
+
     const entriesForAgent: ConversationEntryEvent[] = [];
     let lastSessionEntryId: string | undefined = this.lastSessionEntryIdBySessionFile.get(descriptor.sessionFile);
 
@@ -456,7 +488,103 @@ export class ConversationProjector {
     this.trackLastSessionEntryId(descriptor.sessionFile, lastSessionEntryId);
     this.loadedFromDisk.add(descriptor.agentId);
     this.deps.conversationEntriesByAgentId.set(descriptor.agentId, mergedEntries);
+    this.queueConversationHistoryCacheWrite(descriptor.agentId, mergedEntries);
     return mergedEntries;
+  }
+
+  private loadConversationHistoryFromCache(sessionFile: string): ConversationEntryEvent[] | null {
+    const cacheFile = getConversationHistoryCacheFilePath(sessionFile);
+    if (!existsSync(cacheFile)) {
+      return null;
+    }
+
+    try {
+      const raw = readFileSync(cacheFile, "utf8");
+      if (raw.trim().length === 0) {
+        return [];
+      }
+
+      const entries: ConversationEntryEvent[] = [];
+      for (const line of raw.split("\n")) {
+        if (!line.trim()) {
+          continue;
+        }
+
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(line);
+        } catch {
+          continue;
+        }
+
+        if (isConversationEntryEvent(parsed)) {
+          entries.push(parsed);
+        }
+      }
+
+      if (entries.length === 0 && raw.trim().length > 0) {
+        return null;
+      }
+
+      return entries;
+    } catch (error) {
+      this.deps.logDebug("history:load:cache:error", {
+        cacheFile,
+        message: error instanceof Error ? error.message : String(error)
+      });
+      return null;
+    }
+  }
+
+  private queueConversationHistoryCacheWrite(agentId: string, history: ConversationEntryEvent[]): void {
+    const descriptor = this.deps.descriptors.get(agentId);
+    if (!descriptor) {
+      return;
+    }
+
+    this.queueCacheSnapshotWrite(descriptor.sessionFile, history.slice());
+  }
+
+  private queueCacheSnapshotWrite(sessionFile: string, history: ConversationEntryEvent[] | null): void {
+    const cacheFile = getConversationHistoryCacheFilePath(sessionFile);
+    this.queuedCacheSnapshots.set(cacheFile, history);
+
+    if (this.pendingCacheWrites.has(cacheFile)) {
+      return;
+    }
+
+    const writePromise = this.flushQueuedCacheSnapshot(cacheFile)
+      .catch((error) => {
+        this.deps.logDebug("history:cache:write:error", {
+          cacheFile,
+          message: error instanceof Error ? error.message : String(error)
+        });
+      })
+      .finally(() => {
+        this.pendingCacheWrites.delete(cacheFile);
+        if (this.queuedCacheSnapshots.has(cacheFile)) {
+          this.queueCacheSnapshotWrite(sessionFile, this.queuedCacheSnapshots.get(cacheFile) ?? null);
+        }
+      });
+
+    this.pendingCacheWrites.set(cacheFile, writePromise);
+  }
+
+  private async flushQueuedCacheSnapshot(cacheFile: string): Promise<void> {
+    while (this.queuedCacheSnapshots.has(cacheFile)) {
+      const history = this.queuedCacheSnapshots.get(cacheFile) ?? null;
+      this.queuedCacheSnapshots.delete(cacheFile);
+
+      if (history === null) {
+        await rm(cacheFile, { force: true });
+        continue;
+      }
+
+      await mkdir(dirname(cacheFile), { recursive: true });
+      const serializedHistory =
+        history.length === 0 ? "" : `${history.map((entry) => JSON.stringify(entry)).join("\n")}\n`;
+      await writeFile(cacheFile, serializedHistory, "utf8");
+    }
   }
 
   private mergeDiskAndInMemoryEntries(
