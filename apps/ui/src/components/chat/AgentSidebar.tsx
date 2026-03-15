@@ -1910,50 +1910,6 @@ export function AgentSidebar({
         </div>
       </div>
 
-      {/* Pinned Cortex entry */}
-      {(() => {
-        const sourceRows = isSearchActive ? filteredTreeRows : treeRows
-        const cortexRow = sourceRows.find((row) => isCortexProfile(row))
-        if (!cortexRow) return null
-
-        return (
-          <CortexSection
-            cortexRow={cortexRow}
-            statuses={statuses}
-            unreadCounts={unreadCounts}
-            selectedAgentId={selectedAgentId}
-            isSettingsActive={isSettingsActive}
-            isCollapsed={isSearchActive ? false : collapsedProfileIds.has('cortex')}
-            collapsedSessionIds={expandedSessionIds}
-            isSessionListExpanded={isSearchActive || expandedSessionListProfileIds.has('cortex')}
-            expandedWorkerListSessionIds={expandedWorkerListSessionIds}
-            onToggleCollapsed={() => toggleProfileCollapsed('cortex')}
-            onToggleSessionCollapsed={toggleSessionCollapsed}
-            onToggleSessionListExpanded={() => toggleSessionListExpanded('cortex')}
-            onToggleWorkerListExpanded={toggleWorkerListExpanded}
-            onSelect={handleSelectAgent}
-            onDeleteAgent={onDeleteAgent}
-            onOpenSettings={handleOpenSettings}
-            onCreateSession={onCreateSession ? handleRequestCreateSession : undefined}
-            onStopSession={onStopSession}
-            onResumeSession={onResumeSession}
-            onDeleteSession={handleRequestDelete}
-            onRequestRenameSession={handleRequestRename}
-            onForkSession={onForkSession ? (sourceAgentId: string) => setForkTarget({ sourceAgentId }) : undefined}
-            onMergeSessionMemory={onMergeSessionMemory}
-            onMarkUnread={onMarkUnread}
-            onChangeModel={onUpdateManagerModel ? handleRequestChangeModel : undefined}
-            highlightQuery={isSearchActive ? parsedSearch.term : undefined}
-          />
-        )
-      })()}
-
-      <div className="px-3 pb-1">
-        <h2 className="text-xs font-semibold text-muted-foreground">
-          {isSearchActive ? `${matchCount} match${matchCount !== 1 ? 'es' : ''}` : 'Agents'}
-        </h2>
-      </div>
-
       <div
         className="flex-1 overflow-y-auto px-2 pb-2 [color-scheme:light] dark:[color-scheme:dark] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-sidebar-border [&::-webkit-scrollbar-thumb:hover]:bg-sidebar-border/80"
         style={{
@@ -1961,6 +1917,50 @@ export function AgentSidebar({
           scrollbarColor: 'var(--sidebar-border) transparent',
         }}
       >
+        {/* Pinned Cortex entry */}
+        {(() => {
+          const sourceRows = isSearchActive ? filteredTreeRows : treeRows
+          const cortexRow = sourceRows.find((row) => isCortexProfile(row))
+          if (!cortexRow) return null
+
+          return (
+            <CortexSection
+              cortexRow={cortexRow}
+              statuses={statuses}
+              unreadCounts={unreadCounts}
+              selectedAgentId={selectedAgentId}
+              isSettingsActive={isSettingsActive}
+              isCollapsed={isSearchActive ? false : collapsedProfileIds.has('cortex')}
+              collapsedSessionIds={expandedSessionIds}
+              isSessionListExpanded={isSearchActive || expandedSessionListProfileIds.has('cortex')}
+              expandedWorkerListSessionIds={expandedWorkerListSessionIds}
+              onToggleCollapsed={() => toggleProfileCollapsed('cortex')}
+              onToggleSessionCollapsed={toggleSessionCollapsed}
+              onToggleSessionListExpanded={() => toggleSessionListExpanded('cortex')}
+              onToggleWorkerListExpanded={toggleWorkerListExpanded}
+              onSelect={handleSelectAgent}
+              onDeleteAgent={onDeleteAgent}
+              onOpenSettings={handleOpenSettings}
+              onCreateSession={onCreateSession ? handleRequestCreateSession : undefined}
+              onStopSession={onStopSession}
+              onResumeSession={onResumeSession}
+              onDeleteSession={handleRequestDelete}
+              onRequestRenameSession={handleRequestRename}
+              onForkSession={onForkSession ? (sourceAgentId: string) => setForkTarget({ sourceAgentId }) : undefined}
+              onMergeSessionMemory={onMergeSessionMemory}
+              onMarkUnread={onMarkUnread}
+              onChangeModel={onUpdateManagerModel ? handleRequestChangeModel : undefined}
+              highlightQuery={isSearchActive ? parsedSearch.term : undefined}
+            />
+          )
+        })()}
+
+        <div className="px-1 pb-1">
+          <h2 className="text-xs font-semibold text-muted-foreground">
+            {isSearchActive ? `${matchCount} match${matchCount !== 1 ? 'es' : ''}` : 'Agents'}
+          </h2>
+        </div>
+
         {(() => {
           const sourceRows = isSearchActive ? filteredTreeRows : treeRows
           const regularRows = sourceRows.filter((row) => !isCortexProfile(row))
