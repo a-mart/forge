@@ -1,4 +1,5 @@
 import { AuthStorage, type AuthCredential } from "@mariozechner/pi-coding-agent";
+import { ensureCanonicalAuthFilePath } from "../../swarm/auth-storage-paths.js";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
 import {
   normalizeMimeType,
@@ -93,7 +94,7 @@ export function createTranscriptionRoutes(options: { swarmManager: SwarmManager 
           return;
         }
 
-        const apiKey = resolveOpenAiApiKey(swarmManager);
+        const apiKey = await resolveOpenAiApiKey(swarmManager);
         if (!apiKey) {
           sendJson(response, 400, { error: "OpenAI API key required — add it in Settings." });
           return;
@@ -151,8 +152,9 @@ export function createTranscriptionRoutes(options: { swarmManager: SwarmManager 
   ];
 }
 
-function resolveOpenAiApiKey(swarmManager: SwarmManager): string | undefined {
-  const authStorage = AuthStorage.create(swarmManager.getConfig().paths.authFile);
+async function resolveOpenAiApiKey(swarmManager: SwarmManager): Promise<string | undefined> {
+  const authFilePath = await ensureCanonicalAuthFilePath(swarmManager.getConfig());
+  const authStorage = AuthStorage.create(authFilePath);
   const credential = authStorage.get("openai-codex");
   return extractAuthCredentialToken(credential as AuthCredential | undefined);
 }

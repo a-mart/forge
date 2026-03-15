@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { AlertCircle, CheckCircle2, Clock, Loader2, RefreshCw, Send } from 'lucide-react'
+import { AlertCircle, CheckCircle2, Clock, FileWarning, Loader2, RefreshCw, Send } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -20,6 +20,16 @@ interface ScanSession {
   totalBytes: number
   reviewedBytes: number
   reviewedAt: string | null
+  memoryDeltaBytes: number
+  memoryTotalBytes: number
+  memoryReviewedBytes: number
+  memoryReviewedAt: string | null
+  feedbackDeltaBytes: number
+  feedbackTotalBytes: number
+  feedbackReviewedBytes: number
+  feedbackReviewedAt: string | null
+  lastFeedbackAt: string | null
+  feedbackTimestampDrift: boolean
   status: 'never-reviewed' | 'needs-review' | 'up-to-date'
 }
 
@@ -31,6 +41,16 @@ interface CortexScanResponse {
       upToDate: number
       totalBytes: number
       reviewedBytes: number
+      transcriptTotalBytes: number
+      transcriptReviewedBytes: number
+      memoryTotalBytes: number
+      memoryReviewedBytes: number
+      feedbackTotalBytes: number
+      feedbackReviewedBytes: number
+      attentionBytes: number
+      sessionsWithTranscriptDrift: number
+      sessionsWithMemoryDrift: number
+      sessionsWithFeedbackDrift: number
     }
   }
   files?: {
@@ -40,6 +60,7 @@ interface CortexScanResponse {
 }
 
 type ScanState = 'idle' | 'loading' | 'error'
+type ReviewDisplayStatus = 'needs-review' | 'never-reviewed' | 'up-to-date' | 'compacted'
 
 function formatBytes(bytes: number): string {
   const absoluteBytes = Math.abs(bytes)
@@ -48,14 +69,57 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
-function getSessionStatus(result: ScanSession): 'needs-review' | 'never-reviewed' | 'up-to-date' | 'compacted' {
-  if (result.deltaBytes === 0) return 'up-to-date'
-  if (result.deltaBytes < 0) return 'compacted'
-  if (result.reviewedAt === null) return 'never-reviewed'
+function getSessionStatus(result: ScanSession): ReviewDisplayStatus {
+  if (result.deltaBytes < 0 || result.memoryDeltaBytes < 0 || result.feedbackDeltaBytes < 0) {
+    return 'compacted'
+  }
+
+  if (result.status === 'up-to-date') {
+    return 'up-to-date'
+  }
+
+  if (result.status === 'never-reviewed') {
+    return 'never-reviewed'
+  }
+
   return 'needs-review'
 }
 
-function StatusBadge({ status }: { status: ReturnType<typeof getSessionStatus> }) {
+function buildSessionReasonPills(result: ScanSession): string[] {
+  const reasons: string[] = []
+
+  if (result.deltaBytes < 0) reasons.push('transcript compacted')
+  else if (result.deltaBytes > 0) reasons.push(`${formatBytes(result.deltaBytes)} transcript`)
+
+  if (result.memoryDeltaBytes < 0) reasons.push('memory compacted')
+  else if (result.memoryDeltaBytes > 0) reasons.push(`${formatBytes(result.memoryDeltaBytes)} memory`)
+
+  if (result.feedbackDeltaBytes < 0) reasons.push('feedback compacted')
+  else if (result.feedbackDeltaBytes > 0) reasons.push(`${formatBytes(result.feedbackDeltaBytes)} feedback`)
+  else if (result.feedbackTimestampDrift) reasons.push('feedback updated')
+
+  if (reasons.length === 0 && result.status === 'never-reviewed') {
+    reasons.push('never reviewed')
+  }
+
+  return reasons
+}
+
+function buildReviewRequest(result: ScanSession): string {
+  const axes: string[] = []
+
+  if (result.deltaBytes !== 0) axes.push('transcript')
+  if (result.memoryDeltaBytes !== 0) axes.push('memory')
+  if (result.feedbackDeltaBytes !== 0 || result.feedbackTimestampDrift) axes.push('feedback')
+
+  if (axes.length === 0) {
+    return `Review session ${result.profileId}/${result.sessionId}`
+  }
+
+  return `Review session ${result.profileId}/${result.sessionId} (${axes.join(', ')} freshness)`
+}
+
+function StatusBadge({ status }: { status: ReviewDisplayStatus }) {
   switch (status) {
     case 'up-to-date':
       return (
@@ -81,7 +145,7 @@ function StatusBadge({ status }: { status: ReturnType<typeof getSessionStatus> }
     case 'compacted':
       return (
         <Badge variant="outline" className="h-5 gap-1 border-blue-500/30 bg-blue-500/10 px-1.5 text-[10px] font-medium text-blue-500">
-          <RefreshCw className="size-2.5" />
+          <FileWarning className="size-2.5" />
           Re-review
         </Badge>
       )
@@ -153,8 +217,8 @@ export function ReviewStatusPanel({ wsUrl, refreshKey = 0, onTriggerReview }: Re
   }, [doScan, refreshKey])
 
   const handleReviewSession = useCallback(
-    (profileId: string, sessionId: string) => {
-      onTriggerReview(`Review session ${profileId}/${sessionId}`)
+    (session: ScanSession) => {
+      onTriggerReview(buildReviewRequest(session))
     },
     [onTriggerReview],
   )
@@ -163,18 +227,18 @@ export function ReviewStatusPanel({ wsUrl, refreshKey = 0, onTriggerReview }: Re
     onTriggerReview('Review all sessions that need attention')
   }, [onTriggerReview])
 
-  // Combine and group sessions
   const allSessions = scanData ? scanData.scan.sessions : []
   const grouped = groupByProfile(allSessions)
   const needsReviewCount = scanData?.scan.summary.needsReview ?? 0
   const upToDateCount = scanData?.scan.summary.upToDate ?? 0
-  const totalBytes = allSessions.reduce((sum, s) => sum + s.totalBytes, 0)
-  const reviewedBytes = allSessions.reduce((sum, s) => sum + Math.min(s.reviewedBytes, s.totalBytes), 0)
-  const progressPct = totalBytes > 0 ? Math.min(100, Math.round((reviewedBytes / totalBytes) * 100)) : 0
+  const transcriptTotalBytes = scanData?.scan.summary.transcriptTotalBytes ?? 0
+  const transcriptReviewedBytes = scanData?.scan.summary.transcriptReviewedBytes ?? 0
+  const transcriptProgressPct =
+    transcriptTotalBytes > 0 ? Math.min(100, Math.round((transcriptReviewedBytes / transcriptTotalBytes) * 100)) : 0
+  const attentionBytes = scanData?.scan.summary.attentionBytes ?? 0
 
   return (
     <div className="flex h-full flex-col">
-      {/* Header toolbar */}
       <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/60 px-3 py-2">
         <h3 className="text-xs font-semibold text-foreground">Review Status</h3>
         <div className="flex items-center gap-1">
@@ -202,14 +266,12 @@ export function ReviewStatusPanel({ wsUrl, refreshKey = 0, onTriggerReview }: Re
         </div>
       </div>
 
-      {/* Error banner */}
       {error ? (
         <div className="shrink-0 border-b border-destructive/20 bg-destructive/10 px-3 py-1.5 text-[11px] text-destructive">
           {error}
         </div>
       ) : null}
 
-      {/* Loading state */}
       {scanState === 'loading' && !scanData ? (
         <div className="flex flex-1 items-center justify-center py-12">
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -226,9 +288,8 @@ export function ReviewStatusPanel({ wsUrl, refreshKey = 0, onTriggerReview }: Re
         </div>
       ) : scanData ? (
         <>
-          {/* Summary bar */}
           <div className="shrink-0 space-y-2 border-b border-border/60 px-3 py-2.5">
-            <div className="flex items-center gap-2 text-[11px]">
+            <div className="flex flex-wrap items-center gap-2 text-[11px]">
               <span className="text-muted-foreground">
                 <span className="font-semibold text-foreground">{needsReviewCount}</span> need review
               </span>
@@ -237,26 +298,40 @@ export function ReviewStatusPanel({ wsUrl, refreshKey = 0, onTriggerReview }: Re
                 <span className="font-semibold text-foreground">{upToDateCount}</span> up to date
               </span>
               <span className="text-muted-foreground/40">·</span>
-              <span className="text-muted-foreground">
-                {formatBytes(totalBytes)} total
-              </span>
+              <span className="text-muted-foreground">{formatBytes(attentionBytes)} pending bytes</span>
             </div>
 
-            {/* Progress bar */}
-            <div className="flex items-center gap-2">
-              <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted/60">
-                <div
-                  className="h-full rounded-full bg-emerald-500 transition-all duration-300"
-                  style={{ width: `${progressPct}%` }}
-                />
+            <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
+              <Badge variant="outline" className="h-5 border-border/60 px-1.5 text-[10px] text-muted-foreground">
+                Transcript drift {scanData.scan.summary.sessionsWithTranscriptDrift}
+              </Badge>
+              <Badge variant="outline" className="h-5 border-border/60 px-1.5 text-[10px] text-muted-foreground">
+                Memory drift {scanData.scan.summary.sessionsWithMemoryDrift}
+              </Badge>
+              <Badge variant="outline" className="h-5 border-border/60 px-1.5 text-[10px] text-muted-foreground">
+                Feedback drift {scanData.scan.summary.sessionsWithFeedbackDrift}
+              </Badge>
+            </div>
+
+            <div className="space-y-1">
+              <div className="flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
+                <span>Transcript coverage</span>
+                <span>{formatBytes(transcriptReviewedBytes)} / {formatBytes(transcriptTotalBytes)}</span>
               </div>
-              <span className="shrink-0 text-[10px] font-medium text-muted-foreground">
-                {progressPct}%
-              </span>
+              <div className="flex items-center gap-2">
+                <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted/60">
+                  <div
+                    className="h-full rounded-full bg-emerald-500 transition-all duration-300"
+                    style={{ width: `${transcriptProgressPct}%` }}
+                  />
+                </div>
+                <span className="shrink-0 text-[10px] font-medium text-muted-foreground">
+                  {transcriptProgressPct}%
+                </span>
+              </div>
             </div>
           </div>
 
-          {/* Session list */}
           <ScrollArea
             className={cn(
               'min-h-0 flex-1',
@@ -281,22 +356,27 @@ export function ReviewStatusPanel({ wsUrl, refreshKey = 0, onTriggerReview }: Re
                     </div>
                     {sessions.map((session) => {
                       const status = getSessionStatus(session)
+                      const reasonPills = buildSessionReasonPills(session)
+
                       return (
                         <div
                           key={`${session.profileId}/${session.sessionId}`}
                           className="group flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-accent/50"
                         >
-                          <div className="min-w-0 flex-1">
+                          <div className="min-w-0 flex-1 space-y-1">
                             <p className="truncate text-xs font-medium text-foreground">
                               {session.sessionId}
                             </p>
-                            <div className="flex items-center gap-1.5">
+                            <div className="flex flex-wrap items-center gap-1.5">
                               <StatusBadge status={status} />
-                              {session.deltaBytes !== 0 ? (
-                                <span className="text-[10px] text-muted-foreground">
-                                  {session.deltaBytes > 0 ? '+' : ''}{formatBytes(session.deltaBytes)}
+                              {reasonPills.map((reason) => (
+                                <span
+                                  key={reason}
+                                  className="rounded-sm bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                                >
+                                  {reason}
                                 </span>
-                              ) : null}
+                              ))}
                             </div>
                           </div>
                           {status !== 'up-to-date' ? (
@@ -304,7 +384,7 @@ export function ReviewStatusPanel({ wsUrl, refreshKey = 0, onTriggerReview }: Re
                               variant="ghost"
                               size="icon"
                               className="size-6 shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-primary group-hover:opacity-100"
-                              onClick={() => handleReviewSession(session.profileId, session.sessionId)}
+                              onClick={() => handleReviewSession(session)}
                               aria-label={`Review session ${session.sessionId}`}
                             >
                               <Send className="size-3" />

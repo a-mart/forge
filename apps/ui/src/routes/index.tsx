@@ -581,10 +581,13 @@ export function IndexPage() {
 
     void (async () => {
       try {
-        await client.mergeSessionMemory(agentId)
+        const result = await client.mergeSessionMemory(agentId)
         setState((prev) => ({
           ...prev,
-          lastSuccess: `Session memory merged successfully.`,
+          lastSuccess:
+            result.status === 'applied'
+              ? 'Session memory promoted into profile summary successfully.'
+              : `Session memory merge skipped (${result.strategy.replace(/_/g, ' ')}).`,
           lastError: null,
         }))
       } catch (error) {

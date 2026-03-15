@@ -19,6 +19,7 @@ import {
   type ManagerModelPreset,
   type ManagerReasoningLevel,
   type ServerEvent,
+  type SessionMemoryMergeResult,
 } from '@middleman/protocol'
 
 export type { ManagerWsState } from './ws-state'
@@ -45,7 +46,6 @@ type Listener = (state: ManagerWsState) => void
 type SessionCreatedResult = { sessionAgent: AgentDescriptor; profileId: string }
 type SessionActionResult = { agentId: string }
 type SessionForkedResult = { sourceAgentId: string; newSessionAgent: AgentDescriptor }
-type SessionMemoryMergeResult = { agentId: string; mergedAt?: string }
 
 type WsRequestResultMap = {
   create_manager: AgentDescriptor
@@ -829,19 +829,28 @@ export class ManagerWsClient {
       }
 
       case 'session_memory_merge_started': {
-        this.requestTracker.resolve('merge_session_memory', event.requestId, {
-          agentId: event.agentId,
-        })
         break
       }
 
       case 'session_memory_merged': {
-        // Already resolved by merge_started; this is informational.
+        this.requestTracker.resolve('merge_session_memory', event.requestId, {
+          agentId: event.agentId,
+          status: event.status,
+          strategy: event.strategy,
+          mergedAt: event.mergedAt,
+          auditPath: event.auditPath,
+        })
         break
       }
 
       case 'session_memory_merge_failed': {
-        // Already resolved by merge_started; failure is surfaced via error event.
+        if (event.requestId) {
+          this.requestTracker.reject(
+            'merge_session_memory',
+            event.requestId,
+            new Error(event.message || 'Session memory merge failed.'),
+          )
+        }
         break
       }
 

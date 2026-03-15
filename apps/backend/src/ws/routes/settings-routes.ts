@@ -7,6 +7,7 @@ import {
 } from "@mariozechner/pi-ai/oauth";
 import { AuthStorage } from "@mariozechner/pi-coding-agent";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { ensureCanonicalAuthFilePath } from "../../swarm/auth-storage-paths.js";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
 import {
   applyCorsHeaders,
@@ -294,7 +295,8 @@ async function handleSettingsAuthLoginHttpRequest(
   activeSettingsAuthLoginFlows.set(providerId, flow);
 
   const provider = SETTINGS_AUTH_LOGIN_PROVIDERS[providerId];
-  const authStorage = AuthStorage.create(swarmManager.getConfig().paths.authFile);
+  const authFilePath = await ensureCanonicalAuthFilePath(swarmManager.getConfig());
+  const authStorage = AuthStorage.create(authFilePath);
 
   response.statusCode = 200;
   response.setHeader("Cache-Control", "no-cache, no-transform");

@@ -16,6 +16,9 @@ import type {
   ManagerProfile,
   PromptCategory,
   PromptSourceLayer,
+  SessionMemoryMergeFailureStage,
+  SessionMemoryMergeResult,
+  SessionMemoryMergeStrategy,
 } from './shared-types.js'
 
 export interface ConversationMessageEvent {
@@ -159,10 +162,8 @@ export interface SessionMemoryMergeStartedEvent {
   requestId?: string
 }
 
-export interface SessionMemoryMergedEvent {
+export interface SessionMemoryMergedEvent extends SessionMemoryMergeResult {
   type: 'session_memory_merged'
-  agentId: string
-  mergedAt: string
   requestId?: string
 }
 
@@ -170,6 +171,10 @@ export interface SessionMemoryMergeFailedEvent {
   type: 'session_memory_merge_failed'
   agentId: string
   message: string
+  status: 'failed'
+  strategy?: SessionMemoryMergeStrategy
+  stage?: SessionMemoryMergeFailureStage
+  auditPath?: string
   requestId?: string
 }
 

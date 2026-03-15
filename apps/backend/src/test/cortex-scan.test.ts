@@ -52,6 +52,10 @@ describe('cortex-scan script', () => {
         totalBytes: 1000,
         reviewedBytes: 200,
         reviewedAt: '2026-03-01T10:00:00.000Z',
+        memoryDeltaBytes: 0,
+        memoryTotalBytes: 0,
+        memoryReviewedBytes: 0,
+        memoryReviewedAt: null,
         feedbackDeltaBytes: 0,
         feedbackTotalBytes: 0,
         feedbackReviewedBytes: 0,
@@ -67,6 +71,10 @@ describe('cortex-scan script', () => {
         totalBytes: 500,
         reviewedBytes: 500,
         reviewedAt: '2026-03-01T11:00:00.000Z',
+        memoryDeltaBytes: 0,
+        memoryTotalBytes: 0,
+        memoryReviewedBytes: 0,
+        memoryReviewedAt: null,
         feedbackDeltaBytes: 0,
         feedbackTotalBytes: 0,
         feedbackReviewedBytes: 0,
@@ -82,6 +90,16 @@ describe('cortex-scan script', () => {
       upToDate: 1,
       totalBytes: 1500,
       reviewedBytes: 700,
+      transcriptTotalBytes: 1500,
+      transcriptReviewedBytes: 700,
+      memoryTotalBytes: 0,
+      memoryReviewedBytes: 0,
+      feedbackTotalBytes: 0,
+      feedbackReviewedBytes: 0,
+      attentionBytes: 800,
+      sessionsWithTranscriptDrift: 1,
+      sessionsWithMemoryDrift: 0,
+      sessionsWithFeedbackDrift: 0,
     })
   })
 
@@ -117,6 +135,86 @@ describe('cortex-scan script', () => {
     expect(output).toContain('Summary: 2 sessions need review, 0 up to date')
   })
 
+  it('includes session-memory freshness signals in scan results and output', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'cortex-scan-test-'))
+
+    await writeMeta(dataDir, 'alpha', 'alpha--s1', {
+      profileId: 'alpha',
+      sessionId: 'alpha--s1',
+      stats: { sessionFileSize: '100', memoryFileSize: '80' },
+      cortexReviewedBytes: 100,
+      cortexReviewedAt: '2026-03-01T12:00:00.000Z',
+      cortexReviewedMemoryBytes: 50,
+      cortexReviewedMemoryAt: '2026-03-01T12:30:00.000Z',
+    })
+
+    const result = await scanCortexReviewStatus(dataDir)
+
+    expect(result.sessions).toEqual([
+      {
+        profileId: 'alpha',
+        sessionId: 'alpha--s1',
+        deltaBytes: 0,
+        totalBytes: 100,
+        reviewedBytes: 100,
+        reviewedAt: '2026-03-01T12:00:00.000Z',
+        memoryDeltaBytes: 30,
+        memoryTotalBytes: 80,
+        memoryReviewedBytes: 50,
+        memoryReviewedAt: '2026-03-01T12:30:00.000Z',
+        feedbackDeltaBytes: 0,
+        feedbackTotalBytes: 0,
+        feedbackReviewedBytes: 0,
+        feedbackReviewedAt: null,
+        lastFeedbackAt: null,
+        feedbackTimestampDrift: false,
+        status: 'needs-review',
+      },
+    ])
+
+    const output = await runCortexScan(dataDir)
+    expect(output).toContain('30 new memory bytes')
+  })
+
+  it('formats memory compaction as a re-review reason', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'cortex-scan-test-'))
+
+    await writeMeta(dataDir, 'alpha', 'alpha--s1', {
+      profileId: 'alpha',
+      sessionId: 'alpha--s1',
+      stats: { sessionFileSize: '100', memoryFileSize: '40' },
+      cortexReviewedBytes: 100,
+      cortexReviewedAt: '2026-03-01T12:00:00.000Z',
+      cortexReviewedMemoryBytes: 70,
+      cortexReviewedMemoryAt: '2026-03-01T12:30:00.000Z',
+    })
+
+    const result = await scanCortexReviewStatus(dataDir)
+    expect(result.sessions[0]?.memoryDeltaBytes).toBe(-30)
+    expect(result.sessions[0]?.status).toBe('needs-review')
+
+    const output = await runCortexScan(dataDir)
+    expect(output).toContain('memory compacted (reviewed 70 > current 40)')
+  })
+
+  it('treats missing memory review fields as a no-drift baseline for back-compat', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'cortex-scan-test-'))
+
+    await writeMeta(dataDir, 'gamma', 'gamma--s1', {
+      profileId: 'gamma',
+      sessionId: 'gamma--s1',
+      stats: { sessionFileSize: '100', memoryFileSize: '42' },
+      cortexReviewedBytes: 100,
+      cortexReviewedAt: '2026-03-02T12:00:00.000Z',
+    })
+
+    const result = await scanCortexReviewStatus(dataDir)
+
+    expect(result.sessions[0]?.memoryDeltaBytes).toBe(0)
+    expect(result.sessions[0]?.memoryReviewedBytes).toBe(42)
+    expect(result.sessions[0]?.status).toBe('up-to-date')
+  })
+
   it('includes feedback review watermarks and feedback delta bytes', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'cortex-scan-test-'))
 
@@ -142,6 +240,10 @@ describe('cortex-scan script', () => {
         totalBytes: 100,
         reviewedBytes: 100,
         reviewedAt: '2026-03-01T12:00:00.000Z',
+        memoryDeltaBytes: 0,
+        memoryTotalBytes: 0,
+        memoryReviewedBytes: 0,
+        memoryReviewedAt: null,
         feedbackDeltaBytes: 35,
         feedbackTotalBytes: 55,
         feedbackReviewedBytes: 20,

@@ -1,10 +1,11 @@
-import type { ClientCommand, ServerEvent } from "@middleman/protocol";
+import type {
+  ClientCommand,
+  ServerEvent,
+  SessionMemoryMergeFailureStage,
+  SessionMemoryMergeStrategy
+} from "@middleman/protocol";
 import type { WebSocket } from "ws";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
-
-interface SessionMemoryMergeCapable {
-  mergeSessionMemory(agentId: string): Promise<void>;
-}
 
 export interface SessionCommandRouteContext {
   command: ClientCommand;
@@ -256,30 +257,56 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
   });
 
   try {
-    const mergeCapable = swarmManager as unknown as Partial<SessionMemoryMergeCapable>;
-    if (typeof mergeCapable.mergeSessionMemory !== "function") {
-      throw new Error("Session memory merge is not available.");
-    }
+    const result = await swarmManager.mergeSessionMemory(command.agentId);
 
-    await mergeCapable.mergeSessionMemory.call(swarmManager, command.agentId);
-
-    const descriptor = swarmManager.getAgent(command.agentId);
     send(socket, {
       type: "session_memory_merged",
-      agentId: command.agentId,
-      mergedAt: descriptor?.mergedAt ?? new Date().toISOString(),
+      ...result,
       requestId: command.requestId
     });
   } catch (error) {
+    const diagnostics = getSessionMemoryMergeFailureDiagnostics(error);
     send(socket, {
       type: "session_memory_merge_failed",
       agentId: command.agentId,
       message: error instanceof Error ? error.message : String(error),
+      status: "failed",
+      ...(diagnostics.strategy ? { strategy: diagnostics.strategy } : {}),
+      ...(diagnostics.stage ? { stage: diagnostics.stage } : {}),
+      ...(diagnostics.auditPath ? { auditPath: diagnostics.auditPath } : {}),
       requestId: command.requestId
     });
   }
 
   return true;
+}
+
+function getSessionMemoryMergeFailureDiagnostics(error: unknown): {
+  strategy?: SessionMemoryMergeStrategy;
+  stage?: SessionMemoryMergeFailureStage;
+  auditPath?: string;
+} {
+  if (typeof error !== "object" || error === null) {
+    return {};
+  }
+
+  const diagnostics = error as {
+    strategy?: unknown;
+    stage?: unknown;
+    auditPath?: unknown;
+  };
+
+  return {
+    strategy:
+      typeof diagnostics.strategy === "string"
+        ? (diagnostics.strategy as SessionMemoryMergeStrategy)
+        : undefined,
+    stage:
+      typeof diagnostics.stage === "string"
+        ? (diagnostics.stage as SessionMemoryMergeFailureStage)
+        : undefined,
+    auditPath: typeof diagnostics.auditPath === "string" ? diagnostics.auditPath : undefined
+  };
 }
 
 function resolveSessionProfileId(swarmManager: SwarmManager, sessionAgentId: string): string {

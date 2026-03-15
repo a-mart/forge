@@ -21,6 +21,7 @@ import {
   getProfileScheduleFilePath,
   getProfileSchedulesDir,
   getProfilesDir,
+  getRootSessionMemoryPath,
   getSessionDir,
   getSessionFilePath,
   getSessionFeedbackPath,
@@ -71,6 +72,9 @@ describe("data-paths", () => {
     expect(getSessionMemoryPath(DATA_DIR, PROFILE_ID, NON_ROOT_SESSION_ID)).toBe(
       join(DATA_DIR, "profiles", PROFILE_ID, "sessions", NON_ROOT_SESSION_ID, "memory.md")
     );
+    expect(getRootSessionMemoryPath(DATA_DIR, PROFILE_ID)).toBe(
+      join(DATA_DIR, "profiles", PROFILE_ID, "sessions", PROFILE_ID, "memory.md")
+    );
     expect(getSessionFilePath(DATA_DIR, PROFILE_ID, NON_ROOT_SESSION_ID)).toBe(
       join(DATA_DIR, "profiles", PROFILE_ID, "sessions", NON_ROOT_SESSION_ID, "session.jsonl")
     );
@@ -113,7 +117,7 @@ describe("data-paths", () => {
     expect(getAgentsStoreFilePath(DATA_DIR)).toBe(join(DATA_DIR, "swarm", "agents.json"));
   });
 
-  it("resolveMemoryFilePath routes root sessions to profile memory", () => {
+  it("resolveMemoryFilePath routes root sessions to root-session working memory", () => {
     expect(
       resolveMemoryFilePath(DATA_DIR, {
         agentId: ROOT_SESSION_ID,
@@ -121,7 +125,7 @@ describe("data-paths", () => {
         profileId: PROFILE_ID,
         managerId: ROOT_SESSION_ID
       })
-    ).toBe(join(DATA_DIR, "profiles", PROFILE_ID, "memory.md"));
+    ).toBe(join(DATA_DIR, "profiles", PROFILE_ID, "sessions", PROFILE_ID, "memory.md"));
   });
 
   it("resolveMemoryFilePath routes non-root sessions to session memory", () => {
@@ -135,7 +139,7 @@ describe("data-paths", () => {
     ).toBe(join(DATA_DIR, "profiles", PROFILE_ID, "sessions", NON_ROOT_SESSION_ID, "memory.md"));
   });
 
-  it("resolveMemoryFilePath routes workers to root profile memory when parent is root session", () => {
+  it("resolveMemoryFilePath routes workers to root-session working memory when parent is root session", () => {
     expect(
       resolveMemoryFilePath(
         DATA_DIR,
@@ -146,7 +150,7 @@ describe("data-paths", () => {
         },
         { profileId: PROFILE_ID }
       )
-    ).toBe(join(DATA_DIR, "profiles", PROFILE_ID, "memory.md"));
+    ).toBe(join(DATA_DIR, "profiles", PROFILE_ID, "sessions", PROFILE_ID, "memory.md"));
   });
 
   it("resolveMemoryFilePath routes workers to non-root session memory", () => {

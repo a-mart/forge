@@ -7,6 +7,7 @@ import {
   type AgentSession
 } from "@mariozechner/pi-coding-agent";
 import { AgentRuntime } from "./agent-runtime.js";
+import { ensureCanonicalAuthFilePath } from "./auth-storage-paths.js";
 import { openSessionManagerWithSizeGuard } from "./session-file-guard.js";
 import { CodexAgentRuntime } from "./codex-agent-runtime.js";
 import type { RuntimeErrorEvent, RuntimeSessionEvent, SwarmAgentRuntime } from "./runtime-types.js";
@@ -75,6 +76,8 @@ export class RuntimeFactory {
       descriptor.role === "manager" ? this.deps.config.paths.managerAgentDir : this.deps.config.paths.agentDir;
     const memoryResources = await this.deps.getMemoryRuntimeResources(descriptor);
 
+    const authFilePath = await ensureCanonicalAuthFilePath(this.deps.config);
+
     this.deps.logDebug("runtime:create:start", {
       runtime: "pi",
       agentId: descriptor.agentId,
@@ -82,14 +85,14 @@ export class RuntimeFactory {
       model: descriptor.model,
       archetypeId: descriptor.archetypeId,
       cwd: descriptor.cwd,
-      authFile: this.deps.config.paths.authFile,
+      authFile: authFilePath,
       agentDir: runtimeAgentDir,
       memoryFile: memoryResources.memoryContextFile.path,
       managerSystemPromptSource:
         descriptor.role === "manager" ? "archetype:manager" : undefined
     });
 
-    const authStorage = AuthStorage.create(this.deps.config.paths.authFile);
+    const authStorage = AuthStorage.create(authFilePath);
     const modelRegistry = new ModelRegistry(authStorage);
     const swarmContextFiles = await this.deps.getSwarmContextFiles(descriptor.cwd);
     const applyRuntimeContext = (base: { agentsFiles: Array<{ path: string; content: string }> }) => ({

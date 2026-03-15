@@ -57,6 +57,10 @@ export function getSessionMemoryPath(dataDir: string, profileId: string, session
   return join(getSessionDir(dataDir, profileId, sessionAgentId), "memory.md");
 }
 
+export function getRootSessionMemoryPath(dataDir: string, profileId: string): string {
+  return getSessionMemoryPath(dataDir, profileId, profileId);
+}
+
 export function getSessionFilePath(dataDir: string, profileId: string, sessionAgentId: string): string {
   return join(getSessionDir(dataDir, profileId, sessionAgentId), "session.jsonl");
 }
@@ -191,15 +195,15 @@ export function resolveMemoryFilePath(
     const isRootSession = descriptor.agentId === profileId;
 
     if (isRootSession) {
-      // Root session reads/writes profile core memory directly.
-      return getProfileMemoryPath(dataDir, profileId);
+      // Root sessions now have their own working memory, separate from canonical profile memory.
+      return getRootSessionMemoryPath(dataDir, profileId);
     }
 
-    // Non-root session has its own session memory.
+    // Non-root sessions have their own session memory.
     return getSessionMemoryPath(dataDir, profileId, descriptor.agentId);
   }
 
-  // Workers: resolve to their owning session's memory.
+  // Workers: resolve to their owning session's working memory.
   // Workers do NOT get their own memory file.
   // The memory owner is the managerId (which is the session agent).
   // We need the parent's profileId to build the path.
@@ -207,7 +211,7 @@ export function resolveMemoryFilePath(
   const isParentRootSession = descriptor.managerId === parentProfileId;
 
   if (isParentRootSession) {
-    return getProfileMemoryPath(dataDir, parentProfileId);
+    return getRootSessionMemoryPath(dataDir, parentProfileId);
   }
 
   return getSessionMemoryPath(dataDir, parentProfileId, descriptor.managerId);

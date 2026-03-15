@@ -2,7 +2,7 @@ import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { getScheduleFilePath } from "../scheduler/schedule-storage.js";
 import { getConversationHistoryCacheFilePath } from "./conversation-history-cache.js";
-import { getProfileKnowledgeDir, getSharedKnowledgeDir, resolveMemoryFilePath } from "./data-paths.js";
+import { getProfileKnowledgeDir, getProfileMemoryPath, getSharedKnowledgeDir, resolveMemoryFilePath } from "./data-paths.js";
 import { renameWithRetry } from "./retry-rename.js";
 import type { AgentDescriptor, AgentsStoreFile, ManagerProfile, SwarmConfig } from "./types.js";
 
@@ -87,7 +87,9 @@ export class PersistenceService {
         continue;
       }
 
-      memoryFilePaths.set(this.getAgentMemoryPath(descriptor), descriptor.profileId ?? descriptor.agentId);
+      const profileId = descriptor.profileId ?? descriptor.agentId;
+      memoryFilePaths.set(this.getAgentMemoryPath(descriptor), profileId);
+      memoryFilePaths.set(getProfileMemoryPath(this.deps.config.paths.dataDir, profileId), profileId);
     }
 
     for (const [memoryFilePath, profileId] of memoryFilePaths.entries()) {

@@ -4,8 +4,12 @@ import {
   getCommonKnowledgePath,
   getCortexNotesPath,
   getProfileKnowledgeDir,
-  getProfileKnowledgePath
+  getProfileKnowledgePath,
+  getProfileMemoryPath,
+  getProfileMergeAuditLogPath,
+  getProfileReferencePath
 } from "../../swarm/data-paths.js";
+import { ensureProfileReferenceIndex, migrateLegacyProfileKnowledgeToReferenceDoc } from "../../swarm/reference-docs.js";
 import { scanCortexReviewStatus } from "../../swarm/scripts/cortex-scan.js";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
 import { applyCorsHeaders, sendJson } from "../http-utils.js";
@@ -42,17 +46,31 @@ export function createCortexRoutes(options: { swarmManager: SwarmManager }): Htt
           const config = swarmManager.getConfig();
           const dataDir = config.paths.dataDir;
           const scan = await scanCortexReviewStatus(dataDir);
-          const profileIds = Array.from(new Set(scan.sessions.map((session) => session.profileId))).sort((a, b) =>
-            a.localeCompare(b)
-          );
-          const profileKnowledge = await buildProfileKnowledgeInfoMap(dataDir, profileIds);
+          const profileIds = Array.from(
+            new Set([
+              ...scan.sessions.map((session) => session.profileId),
+              ...swarmManager
+                .listProfiles()
+                .map((profile) => profile.profileId)
+                .filter((profileId) => profileId !== "cortex")
+            ])
+          ).sort((a, b) => a.localeCompare(b));
+          const [profileMemory, profileKnowledge, profileReference, profileMergeAudit] = await Promise.all([
+            buildProfileMemoryInfoMap(dataDir, profileIds),
+            buildProfileKnowledgeInfoMap(dataDir, profileIds),
+            buildProfileReferenceInfoMap(dataDir, profileIds),
+            buildProfileMergeAuditInfoMap(dataDir, profileIds)
+          ]);
 
           sendJson(response, 200, {
             scan,
             files: {
               commonKnowledge: getCommonKnowledgePath(dataDir),
               cortexNotes: getCortexNotesPath(dataDir),
-              profileKnowledge
+              profileMemory,
+              profileKnowledge,
+              profileReference,
+              profileMergeAudit
             }
           });
         } catch (error) {
@@ -68,6 +86,43 @@ interface ProfileKnowledgeFileInfo {
   path: string;
   exists: boolean;
   sizeBytes: number;
+}
+
+interface ProfileReferenceFileInfo {
+  path: string;
+  exists: boolean;
+  sizeBytes: number;
+}
+
+async function buildProfileMemoryInfoMap(
+  dataDir: string,
+  profileIds: string[]
+): Promise<Record<string, ProfileKnowledgeFileInfo>> {
+  const profileMemory: Record<string, ProfileKnowledgeFileInfo> = {};
+
+  await Promise.all(
+    profileIds.map(async (profileId) => {
+      const path = getProfileMemoryPath(dataDir, profileId);
+      let sizeBytes = 0;
+
+      try {
+        const fileStats = await stat(path);
+        sizeBytes = fileStats.size;
+      } catch (error) {
+        if (!isEnoentError(error)) {
+          throw error;
+        }
+      }
+
+      profileMemory[profileId] = {
+        path,
+        exists: sizeBytes > 0,
+        sizeBytes
+      };
+    })
+  );
+
+  return profileMemory;
 }
 
 async function buildProfileKnowledgeInfoMap(
@@ -116,6 +171,75 @@ async function buildProfileKnowledgeInfoMap(
   }
 
   return profileKnowledge;
+}
+
+async function buildProfileReferenceInfoMap(
+  dataDir: string,
+  profileIds: string[]
+): Promise<Record<string, ProfileReferenceFileInfo>> {
+  const profileReference: Record<string, ProfileReferenceFileInfo> = {};
+
+  await Promise.all(
+    profileIds.map(async (profileId) => {
+      const indexPath = getProfileReferencePath(dataDir, profileId, "index.md");
+      let sizeBytes = 0;
+
+      try {
+        await migrateLegacyProfileKnowledgeToReferenceDoc(dataDir, profileId);
+      } catch {
+        // Degrade gracefully: a broken legacy knowledge file for one profile should not fail the full scan route.
+      }
+
+      try {
+        const ensured = await ensureProfileReferenceIndex(dataDir, profileId);
+        const fileStats = await stat(ensured.path);
+        sizeBytes = fileStats.size;
+      } catch {
+        sizeBytes = 0;
+      }
+
+      profileReference[profileId] = {
+        path: indexPath,
+        exists: sizeBytes > 0,
+        sizeBytes
+      };
+    })
+  );
+
+  return profileReference;
+}
+
+async function buildProfileMergeAuditInfoMap(
+  dataDir: string,
+  profileIds: string[]
+): Promise<Record<string, ProfileKnowledgeFileInfo>> {
+  const profileMergeAudit: Record<string, ProfileKnowledgeFileInfo> = {};
+
+  await Promise.all(
+    profileIds.map(async (profileId) => {
+      const path = getProfileMergeAuditLogPath(dataDir, profileId);
+      let exists = false;
+      let sizeBytes = 0;
+
+      try {
+        const fileStats = await stat(path);
+        exists = true;
+        sizeBytes = fileStats.size;
+      } catch (error) {
+        if (!isEnoentError(error)) {
+          throw error;
+        }
+      }
+
+      profileMergeAudit[profileId] = {
+        path,
+        exists,
+        sizeBytes
+      };
+    })
+  );
+
+  return profileMergeAudit;
 }
 
 function isEnoentError(error: unknown): boolean {

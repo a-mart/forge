@@ -17,7 +17,14 @@ import type {
 import type { SwarmAgentRuntime } from '../swarm/runtime-types.js'
 import { getControlPidFilePath } from '../reboot/control-pid.js'
 import { getScheduleFilePath } from '../scheduler/schedule-storage.js'
-import { getCommonKnowledgePath, getCortexNotesPath, getProfileKnowledgePath } from '../swarm/data-paths.js'
+import {
+  getCommonKnowledgePath,
+  getCortexNotesPath,
+  getProfileKnowledgePath,
+  getProfileMemoryPath,
+  getProfileMergeAuditLogPath,
+  getProfileReferencePath,
+} from '../swarm/data-paths.js'
 import { scanCortexReviewStatus } from '../swarm/scripts/cortex-scan.js'
 import { SwarmWebSocketServer } from '../ws/server.js'
 import type { ServerEvent } from '@middleman/protocol'
@@ -855,9 +862,16 @@ describe('SwarmWebSocketServer', () => {
     await mkdir(dirname(commonKnowledgePath), { recursive: true })
     await writeFile(commonKnowledgePath, '# Common knowledge\n', 'utf8')
 
+    const alphaProfileMemoryPath = getProfileMemoryPath(config.paths.dataDir, 'alpha')
+    const alphaProfileMemoryContent = '# Alpha Memory\n\n## Overview\n- concise injected summary\n'
+    await writeFile(alphaProfileMemoryPath, alphaProfileMemoryContent, 'utf8')
+
     const alphaProfileKnowledgePath = getProfileKnowledgePath(config.paths.dataDir, 'alpha')
     const alphaProfileKnowledgeContent = '# Alpha knowledge\n\n- scoped fact\n'
     await writeFile(alphaProfileKnowledgePath, alphaProfileKnowledgeContent, 'utf8')
+
+    const alphaProfileMergeAuditPath = getProfileMergeAuditLogPath(config.paths.dataDir, 'alpha')
+    await writeFile(alphaProfileMergeAuditPath, '', 'utf8')
 
     const expectedScan = await scanCortexReviewStatus(config.paths.dataDir)
 
@@ -886,12 +900,46 @@ describe('SwarmWebSocketServer', () => {
             upToDate: number
             totalBytes: number
             reviewedBytes: number
+            transcriptTotalBytes: number
+            transcriptReviewedBytes: number
+            memoryTotalBytes: number
+            memoryReviewedBytes: number
+            feedbackTotalBytes: number
+            feedbackReviewedBytes: number
+            attentionBytes: number
+            sessionsWithTranscriptDrift: number
+            sessionsWithMemoryDrift: number
+            sessionsWithFeedbackDrift: number
           }
         }
         files: {
           commonKnowledge: string
           cortexNotes: string
+          profileMemory: Record<
+            string,
+            {
+              path: string
+              exists: boolean
+              sizeBytes: number
+            }
+          >
           profileKnowledge: Record<
+            string,
+            {
+              path: string
+              exists: boolean
+              sizeBytes: number
+            }
+          >
+          profileReference: Record<
+            string,
+            {
+              path: string
+              exists: boolean
+              sizeBytes: number
+            }
+          >
+          profileMergeAudit: Record<
             string,
             {
               path: string
@@ -906,6 +954,23 @@ describe('SwarmWebSocketServer', () => {
       expect(payload.files).toEqual({
         commonKnowledge: commonKnowledgePath,
         cortexNotes: getCortexNotesPath(config.paths.dataDir),
+        profileMemory: {
+          alpha: {
+            path: alphaProfileMemoryPath,
+            exists: true,
+            sizeBytes: Buffer.byteLength(alphaProfileMemoryContent, 'utf8'),
+          },
+          beta: {
+            path: getProfileMemoryPath(config.paths.dataDir, 'beta'),
+            exists: false,
+            sizeBytes: 0,
+          },
+          manager: {
+            path: getProfileMemoryPath(config.paths.dataDir, 'manager'),
+            exists: true,
+            sizeBytes: expect.any(Number),
+          },
+        },
         profileKnowledge: {
           alpha: {
             path: alphaProfileKnowledgePath,
@@ -917,8 +982,177 @@ describe('SwarmWebSocketServer', () => {
             exists: false,
             sizeBytes: 0,
           },
+          manager: {
+            path: getProfileKnowledgePath(config.paths.dataDir, 'manager'),
+            exists: false,
+            sizeBytes: 0,
+          },
+        },
+        profileReference: {
+          alpha: {
+            path: getProfileReferencePath(config.paths.dataDir, 'alpha', 'index.md'),
+            exists: true,
+            sizeBytes: expect.any(Number),
+          },
+          beta: {
+            path: getProfileReferencePath(config.paths.dataDir, 'beta', 'index.md'),
+            exists: true,
+            sizeBytes: expect.any(Number),
+          },
+          manager: {
+            path: getProfileReferencePath(config.paths.dataDir, 'manager', 'index.md'),
+            exists: true,
+            sizeBytes: expect.any(Number),
+          },
+        },
+        profileMergeAudit: {
+          alpha: {
+            path: alphaProfileMergeAuditPath,
+            exists: true,
+            sizeBytes: 0,
+          },
+          beta: {
+            path: getProfileMergeAuditLogPath(config.paths.dataDir, 'beta'),
+            exists: false,
+            sizeBytes: 0,
+          },
+          manager: {
+            path: getProfileMergeAuditLogPath(config.paths.dataDir, 'manager'),
+            exists: false,
+            sizeBytes: 0,
+          },
         },
       })
+
+      await expect(readFile(getProfileReferencePath(config.paths.dataDir, 'alpha', 'index.md'), 'utf8')).resolves.toContain(
+        '# alpha Reference Index',
+      )
+      await expect(readFile(getProfileReferencePath(config.paths.dataDir, 'alpha', 'legacy-profile-knowledge.md'), 'utf8')).resolves.toContain(
+        '# alpha Legacy Profile Knowledge',
+      )
+      await expect(readFile(getProfileReferencePath(config.paths.dataDir, 'beta', 'index.md'), 'utf8')).resolves.toContain(
+        '# beta Reference Index',
+      )
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('includes manager profiles in GET /api/cortex/scan even before transcript byte stats exist', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const createdManager = await manager.createManager('manager', {
+      name: 'fresh-profile',
+      cwd: config.paths.rootDir,
+    })
+    const profileId = createdManager.profileId ?? createdManager.agentId
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    try {
+      const response = await fetch(`http://${config.host}:${config.port}/api/cortex/scan`)
+      expect(response.status).toBe(200)
+
+      const payload = (await response.json()) as {
+        scan: { sessions: Array<{ profileId: string }> }
+        files: {
+          profileMemory: Record<string, { path: string; exists: boolean; sizeBytes: number }>
+          profileReference: Record<string, { path: string; exists: boolean; sizeBytes: number }>
+          profileMergeAudit: Record<string, { path: string; exists: boolean; sizeBytes: number }>
+        }
+      }
+
+      expect(payload.scan.sessions).toEqual([])
+      expect(payload.files.profileMemory[profileId]).toEqual({
+        path: getProfileMemoryPath(config.paths.dataDir, profileId),
+        exists: expect.any(Boolean),
+        sizeBytes: expect.any(Number),
+      })
+      expect(payload.files.profileReference[profileId]).toEqual({
+        path: getProfileReferencePath(config.paths.dataDir, profileId, 'index.md'),
+        exists: true,
+        sizeBytes: expect.any(Number),
+      })
+      expect(payload.files.profileMergeAudit[profileId]).toEqual({
+        path: getProfileMergeAuditLogPath(config.paths.dataDir, profileId),
+        exists: false,
+        sizeBytes: 0,
+      })
+      await expect(readFile(getProfileReferencePath(config.paths.dataDir, profileId, 'index.md'), 'utf8')).resolves.toContain(
+        `# ${profileId} Reference Index`,
+      )
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('isolates per-profile reference migration failures in GET /api/cortex/scan', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    const alphaSessionDir = join(config.paths.dataDir, 'profiles', 'alpha', 'sessions', 'alpha--s1')
+    await mkdir(alphaSessionDir, { recursive: true })
+    await writeFile(
+      join(alphaSessionDir, 'meta.json'),
+      `${JSON.stringify({ profileId: 'alpha', sessionId: 'alpha--s1', stats: { sessionFileSize: '100' } }, null, 2)}\n`,
+      'utf8',
+    )
+
+    const betaSessionDir = join(config.paths.dataDir, 'profiles', 'beta', 'sessions', 'beta--s1')
+    await mkdir(betaSessionDir, { recursive: true })
+    await writeFile(
+      join(betaSessionDir, 'meta.json'),
+      `${JSON.stringify({ profileId: 'beta', sessionId: 'beta--s1', stats: { sessionFileSize: '200' } }, null, 2)}\n`,
+      'utf8',
+    )
+
+    const alphaLegacyPath = getProfileKnowledgePath(config.paths.dataDir, 'alpha')
+    await mkdir(dirname(alphaLegacyPath), { recursive: true })
+    await writeFile(alphaLegacyPath, '# Alpha legacy\n', 'utf8')
+
+    const betaLegacyPath = getProfileKnowledgePath(config.paths.dataDir, 'beta')
+    await mkdir(betaLegacyPath, { recursive: true })
+
+    try {
+      const response = await fetch(`http://${config.host}:${config.port}/api/cortex/scan`)
+      expect(response.status).toBe(200)
+
+      const payload = (await response.json()) as {
+        files: {
+          profileReference: Record<string, { path: string; exists: boolean; sizeBytes: number }>
+        }
+      }
+
+      expect(payload.files.profileReference.alpha.path).toBe(
+        getProfileReferencePath(config.paths.dataDir, 'alpha', 'index.md'),
+      )
+      expect(payload.files.profileReference.alpha.exists).toBe(true)
+      expect(payload.files.profileReference.beta.path).toBe(
+        getProfileReferencePath(config.paths.dataDir, 'beta', 'index.md'),
+      )
+      expect(typeof payload.files.profileReference.beta.exists).toBe('boolean')
     } finally {
       await server.stop()
     }
@@ -2460,10 +2694,17 @@ describe('SwarmWebSocketServer', () => {
     await bootWithDefaultManager(manager, config)
 
     const mergeCalls: string[] = []
-    ;(manager as unknown as { mergeSessionMemory: (agentId: string) => Promise<void> }).mergeSessionMemory = async (
+    ;(manager as unknown as { mergeSessionMemory: (agentId: string) => Promise<{ agentId: string; status: 'applied'; strategy: 'llm'; mergedAt: string; auditPath: string }> }).mergeSessionMemory = async (
       agentId,
     ) => {
       mergeCalls.push(agentId)
+      return {
+        agentId,
+        status: 'applied',
+        strategy: 'llm',
+        mergedAt: '2026-03-15T20:00:00.000Z',
+        auditPath: '/tmp/merge-audit.log',
+      }
     }
 
     const server = new SwarmWebSocketServer({
@@ -2607,6 +2848,11 @@ describe('SwarmWebSocketServer', () => {
       (event) => event.type === 'session_memory_merged' && event.agentId === sessionAgentId && event.requestId === 'merge-1',
     )
     expect(merged.type).toBe('session_memory_merged')
+    if (merged.type === 'session_memory_merged') {
+      expect(merged.status).toBe('applied')
+      expect(merged.strategy).toBe('llm')
+      expect(merged.auditPath).toBe('/tmp/merge-audit.log')
+    }
     expect(mergeCalls).toEqual([sessionAgentId])
 
     client.send(
@@ -2640,10 +2886,13 @@ describe('SwarmWebSocketServer', () => {
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
 
-    ;(manager as unknown as { mergeSessionMemory: (agentId: string) => Promise<void> }).mergeSessionMemory =
-      async () => {
-        throw new Error('merge exploded')
-      }
+    ;(manager as unknown as { mergeSessionMemory: (agentId: string) => Promise<unknown> }).mergeSessionMemory = async () => {
+      throw Object.assign(new Error('merge exploded'), {
+        strategy: 'llm',
+        stage: 'write_audit',
+        auditPath: '/tmp/merge-audit.log',
+      })
+    }
 
     const server = new SwarmWebSocketServer({
       swarmManager: manager,
@@ -2685,6 +2934,10 @@ describe('SwarmWebSocketServer', () => {
     expect(mergeFailed.type).toBe('session_memory_merge_failed')
     if (mergeFailed.type === 'session_memory_merge_failed') {
       expect(mergeFailed.message).toContain('merge exploded')
+      expect(mergeFailed.status).toBe('failed')
+      expect(mergeFailed.strategy).toBe('llm')
+      expect(mergeFailed.stage).toBe('write_audit')
+      expect(mergeFailed.auditPath).toBe('/tmp/merge-audit.log')
     }
 
     client.close()
