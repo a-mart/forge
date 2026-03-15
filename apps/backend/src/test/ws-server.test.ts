@@ -2591,6 +2591,111 @@ describe('SwarmWebSocketServer', () => {
     await server.stop()
   })
 
+  it('handles api_proxy websocket commands for mobile + slash-command endpoints', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    const client = new WebSocket(`ws://${config.host}:${config.port}`)
+    const events: ServerEvent[] = []
+
+    client.on('message', (raw) => {
+      events.push(JSON.parse(raw.toString()) as ServerEvent)
+    })
+
+    await once(client, 'open')
+    client.send(JSON.stringify({ type: 'subscribe' }))
+
+    await waitForEvent(events, (event) => event.type === 'ready')
+
+    client.send(
+      JSON.stringify({
+        type: 'api_proxy',
+        requestId: 'proxy-get-1',
+        method: 'GET',
+        path: '/api/mobile/notification-preferences',
+      }),
+    )
+
+    const getResponse = await waitForEvent(
+      events,
+      (event) => event.type === 'api_proxy_response' && event.requestId === 'proxy-get-1',
+    )
+    expect(getResponse.type).toBe('api_proxy_response')
+    if (getResponse.type === 'api_proxy_response') {
+      expect(getResponse.status).toBe(200)
+      const body = JSON.parse(getResponse.body) as {
+        preferences?: {
+          unreadMessages?: boolean
+          enabled?: boolean
+        }
+      }
+      expect(body.preferences?.enabled).toBe(true)
+      expect(body.preferences?.unreadMessages).toBe(true)
+    }
+
+    client.send(
+      JSON.stringify({
+        type: 'api_proxy',
+        requestId: 'proxy-put-1',
+        method: 'PUT',
+        path: '/api/mobile/notification-preferences',
+        body: JSON.stringify({ unreadMessages: false }),
+      }),
+    )
+
+    const putResponse = await waitForEvent(
+      events,
+      (event) => event.type === 'api_proxy_response' && event.requestId === 'proxy-put-1',
+    )
+    expect(putResponse.type).toBe('api_proxy_response')
+    if (putResponse.type === 'api_proxy_response') {
+      expect(putResponse.status).toBe(200)
+      const body = JSON.parse(putResponse.body) as {
+        preferences?: {
+          unreadMessages?: boolean
+        }
+      }
+      expect(body.preferences?.unreadMessages).toBe(false)
+    }
+
+    client.send(
+      JSON.stringify({
+        type: 'api_proxy',
+        requestId: 'proxy-slash-1',
+        method: 'GET',
+        path: '/api/slash-commands',
+      }),
+    )
+
+    const slashResponse = await waitForEvent(
+      events,
+      (event) => event.type === 'api_proxy_response' && event.requestId === 'proxy-slash-1',
+    )
+    expect(slashResponse.type).toBe('api_proxy_response')
+    if (slashResponse.type === 'api_proxy_response') {
+      expect(slashResponse.status).toBe(200)
+      const body = JSON.parse(slashResponse.body) as { commands?: unknown[] }
+      expect(Array.isArray(body.commands)).toBe(true)
+      expect(body.commands).toHaveLength(0)
+    }
+
+    client.close()
+    await once(client, 'close')
+    await server.stop()
+  })
+
   it('rejects non-manager subscription with explicit error', async () => {
     const port = await getAvailablePort()
     const config = await makeTempConfig(port)

@@ -52,6 +52,37 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
     };
   }
 
+  if (maybe.type === "api_proxy") {
+    const requestId = (maybe as { requestId?: unknown }).requestId;
+    const method = (maybe as { method?: unknown }).method;
+    const path = (maybe as { path?: unknown }).path;
+    const body = (maybe as { body?: unknown }).body;
+
+    if (typeof requestId !== "string" || requestId.trim().length === 0) {
+      return { ok: false, error: "api_proxy.requestId must be a non-empty string" };
+    }
+    if (!isApiProxyMethod(method)) {
+      return { ok: false, error: "api_proxy.method must be one of GET|POST|PUT|DELETE" };
+    }
+    if (typeof path !== "string" || path.trim().length === 0 || !path.trim().startsWith("/")) {
+      return { ok: false, error: "api_proxy.path must be a non-empty string starting with /" };
+    }
+    if (body !== undefined && typeof body !== "string") {
+      return { ok: false, error: "api_proxy.body must be a string when provided" };
+    }
+
+    return {
+      ok: true,
+      command: {
+        type: "api_proxy",
+        requestId: requestId.trim(),
+        method,
+        path: path.trim(),
+        body
+      }
+    };
+  }
+
   if (maybe.type === "kill_agent") {
     if (typeof maybe.agentId !== "string" || maybe.agentId.trim().length === 0) {
       return { ok: false, error: "kill_agent.agentId must be a non-empty string" };
@@ -484,6 +515,10 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
   return { ok: false, error: "Unknown command type" };
 }
 
+function isApiProxyMethod(value: unknown): value is "GET" | "POST" | "PUT" | "DELETE" {
+  return value === "GET" || value === "POST" || value === "PUT" || value === "DELETE";
+}
+
 function isSafeMessageCount(value: unknown): value is number {
   return (
     typeof value === "number" &&
@@ -503,6 +538,7 @@ function normalizeMessageCount(value: unknown): number | undefined {
 
 export function extractRequestId(command: ClientCommand): string | undefined {
   switch (command.type) {
+    case "api_proxy":
     case "create_manager":
     case "delete_manager":
     case "update_manager_model":

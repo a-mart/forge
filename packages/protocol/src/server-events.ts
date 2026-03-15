@@ -299,6 +299,14 @@ export interface PromptChangedEvent {
   action: 'saved' | 'deleted'
 }
 
+export interface ApiProxyResponseEvent {
+  type: 'api_proxy_response'
+  requestId: string
+  status: number
+  body: string
+  headers?: Record<string, string>
+}
+
 export type ServerEvent =
   | { type: 'ready'; serverTime: string; subscribedAgentId: string }
   | { type: 'conversation_reset'; agentId: string; timestamp: string; reason: 'user_new_command' | 'api_reset' }
@@ -335,4 +343,5 @@ export type ServerEvent =
   | PlaywrightDiscoveryUpdatedEvent
   | PlaywrightDiscoverySettingsUpdatedEvent
   | PromptChangedEvent
+  | ApiProxyResponseEvent
   | { type: 'error'; code: string; message: string; requestId?: string }

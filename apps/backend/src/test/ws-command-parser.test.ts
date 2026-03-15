@@ -60,6 +60,27 @@ describe('ws command parser session commands', () => {
     }
   })
 
+  it('parses api_proxy commands', () => {
+    const parsed = parseJsonCommand({
+      type: 'api_proxy',
+      requestId: 'proxy-1',
+      method: 'POST',
+      path: '/api/mobile/push/test',
+      body: JSON.stringify({ token: 'ExpoPushToken[abc]' }),
+    })
+
+    expect(parsed).toEqual({
+      ok: true,
+      command: {
+        type: 'api_proxy',
+        requestId: 'proxy-1',
+        method: 'POST',
+        path: '/api/mobile/push/test',
+        body: JSON.stringify({ token: 'ExpoPushToken[abc]' }),
+      },
+    })
+  })
+
   it('rejects invalid session command payloads', () => {
     const invalidPayloads: Array<{ payload: unknown; message: string }> = [
       {
@@ -95,6 +116,18 @@ describe('ws command parser session commands', () => {
         message: 'merge_session_memory.agentId must be a non-empty string',
       },
       {
+        payload: { type: 'api_proxy', requestId: 'proxy-1', method: 'PATCH', path: '/api/mobile/push/test' },
+        message: 'api_proxy.method must be one of GET|POST|PUT|DELETE',
+      },
+      {
+        payload: { type: 'api_proxy', requestId: '', method: 'GET', path: '/api/slash-commands' },
+        message: 'api_proxy.requestId must be a non-empty string',
+      },
+      {
+        payload: { type: 'api_proxy', requestId: 'proxy-1', method: 'GET', path: 'api/slash-commands' },
+        message: 'api_proxy.path must be a non-empty string starting with /',
+      },
+      {
         payload: { type: 'subscribe', messageCount: 0 },
         message: 'subscribe.messageCount must be a positive finite integer',
       },
@@ -116,6 +149,7 @@ describe('ws command parser session commands', () => {
 
   it('extracts request ids for new session commands', () => {
     const commands = [
+      { type: 'api_proxy', requestId: 'req-proxy', method: 'GET', path: '/api/slash-commands' },
       { type: 'create_session', profileId: 'manager', requestId: 'req-create' },
       { type: 'stop_session', agentId: 'manager--s2', requestId: 'req-stop' },
       { type: 'resume_session', agentId: 'manager--s2', requestId: 'req-resume' },

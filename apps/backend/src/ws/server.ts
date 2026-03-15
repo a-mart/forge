@@ -146,17 +146,22 @@ export class SwarmWebSocketServer {
       new PlaywrightSettingsService({ dataDir: this.swarmManager.getConfig().paths.dataDir });
     this.playwrightEnvEnabledOverride = options.playwrightEnvEnabledOverride;
 
-    this.wsHandler = new WsHandler({
-      swarmManager: this.swarmManager,
-      integrationRegistry: this.integrationRegistry,
-      playwrightDiscovery: this.playwrightDiscovery,
-      allowNonManagerSubscriptions: options.allowNonManagerSubscriptions
-    });
+    let wsHandlerRef: WsHandler | null = null;
+
     this.mobilePushService = new MobilePushService({
       swarmManager: this.swarmManager,
       dataDir: this.swarmManager.getConfig().paths.dataDir,
-      isSessionActive: (sessionAgentId) => this.wsHandler.hasActiveSubscription(sessionAgentId)
+      isSessionActive: (sessionAgentId) => wsHandlerRef?.hasActiveSubscription(sessionAgentId) ?? false
     });
+
+    this.wsHandler = new WsHandler({
+      swarmManager: this.swarmManager,
+      integrationRegistry: this.integrationRegistry,
+      mobilePushService: this.mobilePushService,
+      playwrightDiscovery: this.playwrightDiscovery,
+      allowNonManagerSubscriptions: options.allowNonManagerSubscriptions
+    });
+    wsHandlerRef = this.wsHandler;
 
     this.settingsRoutes = createSettingsRoutes({ swarmManager: this.swarmManager });
     this.httpRoutes = [

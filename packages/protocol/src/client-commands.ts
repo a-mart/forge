@@ -1,6 +1,14 @@
 import type { ConversationAttachment } from './attachments.js'
 import type { DeliveryMode, ManagerModelPreset, ManagerReasoningLevel } from './shared-types.js'
 
+export interface ApiProxyCommand {
+  type: 'api_proxy'
+  requestId: string
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE'
+  path: string
+  body?: string
+}
+
 export type ClientCommand =
   | { type: 'subscribe'; agentId?: string; messageCount?: number }
   | {
@@ -10,6 +18,7 @@ export type ClientCommand =
       agentId?: string
       delivery?: DeliveryMode
     }
+  | ApiProxyCommand
   | { type: 'kill_agent'; agentId: string }
   | { type: 'stop_all_agents'; managerId: string; requestId?: string }
   | { type: 'create_manager'; name: string; cwd: string; model?: ManagerModelPreset; requestId?: string }
