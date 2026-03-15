@@ -128,3 +128,46 @@ export interface TelegramDraft {
   allowText: boolean
   allowBinary: boolean
 }
+
+/* ------------------------------------------------------------------ */
+/*  Skill metadata                                                    */
+/* ------------------------------------------------------------------ */
+
+export interface SkillInfo {
+  name: string
+  description: string
+  envCount: number
+  hasRichConfig: boolean
+}
+
+/* ------------------------------------------------------------------ */
+/*  Chrome CDP types                                                  */
+/* ------------------------------------------------------------------ */
+
+export interface ChromeCdpConfig {
+  contextId: string | null
+  urlAllow: string[]
+  urlBlock: string[]
+}
+
+export interface ChromeCdpStatus {
+  connected: boolean
+  port?: number
+  browser?: string
+  version?: string
+  tabCount?: number
+  error?: string
+}
+
+export interface ChromeCdpProfile {
+  contextId: string
+  tabCount: number
+  sampleUrls: string[]
+  isDefault: boolean
+}
+
+export interface ChromeCdpPreviewTab {
+  targetId: string
+  title: string
+  url: string
+}

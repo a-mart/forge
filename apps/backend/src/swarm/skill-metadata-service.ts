@@ -14,7 +14,8 @@ const REQUIRED_SKILL_NAMES = [
   "cron-scheduling",
   "agent-browser",
   "image-generation",
-  "slash-commands"
+  "slash-commands",
+  "chrome-cdp"
 ] as const;
 
 const SKILL_METADATA_SERVICE_DIR = fileURLToPath(new URL(".", import.meta.url));
@@ -23,6 +24,7 @@ const BUILT_IN_SKILLS_FALLBACK_DIR = resolve(BACKEND_PACKAGE_DIR, "src", "swarm"
 
 export interface SkillMetadata {
   skillName: string;
+  description?: string;
   path: string;
   env: ParsedSkillEnvDeclaration[];
 }
@@ -44,6 +46,7 @@ export class SkillMetadataService {
   getSkillMetadata(): SkillMetadata[] {
     return this.skillMetadata.map((metadata) => ({
       skillName: metadata.skillName,
+      description: metadata.description,
       path: metadata.path,
       env: [...metadata.env]
     }));
@@ -71,7 +74,8 @@ export class SkillMetadataService {
       this.resolveCronSchedulingSkillPath(skillPathIndex),
       this.resolveAgentBrowserSkillPath(skillPathIndex),
       this.resolveImageGenerationSkillPath(skillPathIndex),
-      this.resolveSlashCommandsSkillPath(skillPathIndex)
+      this.resolveSlashCommandsSkillPath(skillPathIndex),
+      this.resolveChromeCdpSkillPath(skillPathIndex)
     ];
 
     const metadata: SkillMetadata[] = [];
@@ -90,6 +94,7 @@ export class SkillMetadataService {
       seenSkillNames.add(normalizedSkillName);
       metadata.push({
         skillName,
+        description: parsed.description,
         path: skillPath,
         env: parsed.env
       });
@@ -120,6 +125,10 @@ export class SkillMetadataService {
 
   private resolveSlashCommandsSkillPath(skillPathIndex: Map<string, string[]>): string {
     return this.resolveRequiredSkillPath("slash-commands", skillPathIndex);
+  }
+
+  private resolveChromeCdpSkillPath(skillPathIndex: Map<string, string[]>): string {
+    return this.resolveRequiredSkillPath("chrome-cdp", skillPathIndex);
   }
 
   private resolveRequiredSkillPath(

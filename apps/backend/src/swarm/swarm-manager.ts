@@ -2682,6 +2682,27 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return this.secretsEnvService.listSettingsEnv();
   }
 
+  async listSkillMetadata(): Promise<
+    Array<{
+      name: string;
+      description?: string;
+      envCount: number;
+      hasRichConfig: boolean;
+    }>
+  > {
+    await this.skillMetadataService.ensureSkillMetadataLoaded();
+
+    return this.skillMetadataService
+      .getSkillMetadata()
+      .map((metadata) => ({
+        name: metadata.skillName,
+        description: metadata.description,
+        envCount: metadata.env.length,
+        hasRichConfig: metadata.skillName.trim().toLowerCase() === "chrome-cdp"
+      }))
+      .sort((left, right) => left.name.localeCompare(right.name));
+  }
+
   async updateSettingsEnv(values: Record<string, string>): Promise<void> {
     await this.secretsEnvService.updateSettingsEnv(values);
   }

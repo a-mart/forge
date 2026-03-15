@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   AlertTriangle,
   Check,
@@ -8,19 +8,42 @@ import {
   KeyRound,
   Loader2,
   Save,
+  Settings2,
   Trash2,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectSeparator,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { SettingsSection } from './settings-row'
-import type { SettingsEnvVariable } from './settings-types'
+import type { SettingsEnvVariable, SkillInfo } from './settings-types'
 import {
   fetchSettingsEnvVariables,
+  fetchSkillsList,
   updateSettingsEnvVariables,
   deleteSettingsEnvVariable,
   toErrorMessage,
 } from './settings-api'
+import { SettingsChromeCdp } from './SettingsChromeCdp'
+
+/* ------------------------------------------------------------------ */
+/*  Constants                                                         */
+/* ------------------------------------------------------------------ */
+
+const ALL_SKILLS_VALUE = '__all__'
+
+/** Skills that have a dedicated rich configuration panel. */
+const RICH_CONFIG_SKILLS: Record<string, React.ComponentType<{ wsUrl: string; onConfigChanged?: () => void }>> = {
+  'chrome-cdp': SettingsChromeCdp,
+}
 
 /* ------------------------------------------------------------------ */
 /*  Sub-components                                                    */
@@ -163,6 +186,99 @@ function EnvVariableRow({
 }
 
 /* ------------------------------------------------------------------ */
+/*  Env variable list sub-component                                   */
+/* ------------------------------------------------------------------ */
+
+interface SkillEnvVariablesProps {
+  variables: SettingsEnvVariable[]
+  isLoading: boolean
+  error: string | null
+  success: string | null
+  draftByName: Record<string, string>
+  revealByName: Record<string, boolean>
+  savingVar: string | null
+  deletingVar: string | null
+  onDraftChange: (name: string, value: string) => void
+  onToggleReveal: (name: string) => void
+  onSave: (name: string) => void
+  onDelete: (name: string) => void
+}
+
+function SkillEnvVariables({
+  variables,
+  isLoading,
+  error,
+  success,
+  draftByName,
+  revealByName,
+  savingVar,
+  deletingVar,
+  onDraftChange,
+  onToggleReveal,
+  onSave,
+  onDelete,
+}: SkillEnvVariablesProps) {
+  const setCount = variables.filter((v) => v.isSet).length
+  const totalCount = variables.length
+
+  return (
+    <SettingsSection
+      label="Environment Variables"
+      description={
+        !isLoading && totalCount > 0
+          ? `${setCount} of ${totalCount} configured`
+          : 'API keys and secrets required by installed skills'
+      }
+    >
+      {error ? (
+        <div className="flex items-center gap-2 rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2">
+          <AlertTriangle className="size-3.5 shrink-0 text-destructive" />
+          <p className="text-xs text-destructive">{error}</p>
+        </div>
+      ) : null}
+
+      {success ? (
+        <div className="flex items-center gap-2 rounded-md border border-emerald-500/20 bg-emerald-500/10 px-3 py-2">
+          <Check className="size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+          <p className="text-xs text-emerald-600 dark:text-emerald-400">{success}</p>
+        </div>
+      ) : null}
+
+      {isLoading ? (
+        <div className="flex items-center justify-center py-12">
+          <Loader2 className="size-5 animate-spin text-muted-foreground" />
+        </div>
+      ) : variables.length === 0 ? (
+        <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-12 text-center">
+          <KeyRound className="mb-2 size-8 text-muted-foreground/40" />
+          <p className="text-sm text-muted-foreground">No environment variables found</p>
+          <p className="mt-1 text-xs text-muted-foreground/60">
+            Install skills that declare environment variables to configure them here.
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {variables.map((variable) => (
+            <EnvVariableRow
+              key={`${variable.skillName}:${variable.name}`}
+              variable={variable}
+              draftValue={draftByName[variable.name] ?? ''}
+              isRevealed={revealByName[variable.name] === true}
+              isSaving={savingVar === variable.name}
+              isDeleting={deletingVar === variable.name}
+              onDraftChange={(value) => onDraftChange(variable.name, value)}
+              onToggleReveal={() => onToggleReveal(variable.name)}
+              onSave={() => onSave(variable.name)}
+              onDelete={() => onDelete(variable.name)}
+            />
+          ))}
+        </div>
+      )}
+    </SettingsSection>
+  )
+}
+
+/* ------------------------------------------------------------------ */
 /*  Main skills settings tab                                          */
 /* ------------------------------------------------------------------ */
 
@@ -171,6 +287,12 @@ interface SettingsSkillsProps {
 }
 
 export function SettingsSkills({ wsUrl }: SettingsSkillsProps) {
+  /* ---------- Skill list state ---------- */
+  const [skills, setSkills] = useState<SkillInfo[]>([])
+  const [selectedSkill, setSelectedSkill] = useState<string>(ALL_SKILLS_VALUE)
+  const [skillsLoading, setSkillsLoading] = useState(false)
+
+  /* ---------- Env variable state ---------- */
   const [envVariables, setEnvVariables] = useState<SettingsEnvVariable[]>([])
   const [draftByName, setDraftByName] = useState<Record<string, string>>({})
   const [revealByName, setRevealByName] = useState<Record<string, boolean>>({})
@@ -179,6 +301,21 @@ export function SettingsSkills({ wsUrl }: SettingsSkillsProps) {
   const [isLoading, setIsLoading] = useState(false)
   const [savingVar, setSavingVar] = useState<string | null>(null)
   const [deletingVar, setDeletingVar] = useState<string | null>(null)
+
+  /* ---------- Data loading ---------- */
+
+  const loadSkills = useCallback(async () => {
+    setSkillsLoading(true)
+    try {
+      const result = await fetchSkillsList(wsUrl)
+      setSkills(result)
+    } catch {
+      // Non-fatal — skill list failure shouldn't block env var loading.
+      // The dropdown just won't appear.
+    } finally {
+      setSkillsLoading(false)
+    }
+  }, [wsUrl])
 
   const loadVariables = useCallback(async () => {
     setIsLoading(true)
@@ -194,8 +331,34 @@ export function SettingsSkills({ wsUrl }: SettingsSkillsProps) {
   }, [wsUrl])
 
   useEffect(() => {
+    void loadSkills()
     void loadVariables()
-  }, [loadVariables])
+  }, [loadSkills, loadVariables])
+
+  /* ---------- Filtered variables ---------- */
+
+  const filteredVariables = useMemo(() => {
+    if (selectedSkill === ALL_SKILLS_VALUE) return envVariables
+    return envVariables.filter((v) => v.skillName === selectedSkill)
+  }, [envVariables, selectedSkill])
+
+  /* ---------- Rich config panel ---------- */
+
+  const RichConfigPanel = selectedSkill !== ALL_SKILLS_VALUE
+    ? RICH_CONFIG_SKILLS[selectedSkill] ?? null
+    : null
+
+  /* ---------- Env variable handlers ---------- */
+
+  const handleDraftChange = (name: string, value: string) => {
+    setDraftByName((prev) => ({ ...prev, [name]: value }))
+    setError(null)
+    setSuccess(null)
+  }
+
+  const handleToggleReveal = (name: string) => {
+    setRevealByName((prev) => ({ ...prev, [name]: !prev[name] }))
+  }
 
   const handleSave = async (variableName: string) => {
     const value = draftByName[variableName]?.trim() ?? ''
@@ -234,70 +397,74 @@ export function SettingsSkills({ wsUrl }: SettingsSkillsProps) {
     }
   }
 
-  const setCount = envVariables.filter((v) => v.isSet).length
-  const totalCount = envVariables.length
+  const handleConfigChanged = useCallback(() => {
+    void loadVariables()
+  }, [loadVariables])
+
+  /* ---------- Render ---------- */
 
   return (
     <div className="flex flex-col gap-8">
-      <SettingsSection
-        label="Environment Variables"
-        description={
-          !isLoading && totalCount > 0
-            ? `${setCount} of ${totalCount} configured`
-            : 'API keys and secrets required by installed skills'
-        }
-      >
-        {error ? (
-          <div className="flex items-center gap-2 rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2">
-            <AlertTriangle className="size-3.5 shrink-0 text-destructive" />
-            <p className="text-xs text-destructive">{error}</p>
+      {/* Skill selector */}
+      {skills.length > 0 && (
+        <SettingsSection
+          label="Skills"
+          description="Select a skill to view its configuration and environment variables"
+        >
+          <div className="flex items-center gap-3">
+            <Label className="text-sm font-medium text-muted-foreground">Skill</Label>
+            <Select value={selectedSkill} onValueChange={setSelectedSkill}>
+              <SelectTrigger className="w-[240px]">
+                <SelectValue placeholder="All Skills" />
+              </SelectTrigger>
+              <SelectContent position="popper">
+                <SelectItem value={ALL_SKILLS_VALUE}>All Skills</SelectItem>
+                <SelectSeparator />
+                {skills.map((skill) => (
+                  <SelectItem key={skill.name} value={skill.name}>
+                    <span className="flex items-center gap-2">
+                      {skill.name}
+                      {skill.hasRichConfig && (
+                        <Settings2 className="size-3 text-muted-foreground" />
+                      )}
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
-        ) : null}
+        </SettingsSection>
+      )}
 
-        {success ? (
-          <div className="flex items-center gap-2 rounded-md border border-emerald-500/20 bg-emerald-500/10 px-3 py-2">
-            <Check className="size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
-            <p className="text-xs text-emerald-600 dark:text-emerald-400">{success}</p>
-          </div>
-        ) : null}
+      {/* Skill loading indicator (brief) */}
+      {skillsLoading && skills.length === 0 && (
+        <div className="flex items-center justify-center py-4">
+          <Loader2 className="size-4 animate-spin text-muted-foreground" />
+        </div>
+      )}
 
-        {isLoading ? (
-          <div className="flex items-center justify-center py-12">
-            <Loader2 className="size-5 animate-spin text-muted-foreground" />
-          </div>
-        ) : envVariables.length === 0 ? (
-          <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-12 text-center">
-            <KeyRound className="mb-2 size-8 text-muted-foreground/40" />
-            <p className="text-sm text-muted-foreground">No environment variables found</p>
-            <p className="mt-1 text-xs text-muted-foreground/60">
-              Install skills that declare environment variables to configure them here.
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {envVariables.map((variable) => (
-              <EnvVariableRow
-                key={`${variable.skillName}:${variable.name}`}
-                variable={variable}
-                draftValue={draftByName[variable.name] ?? ''}
-                isRevealed={revealByName[variable.name] === true}
-                isSaving={savingVar === variable.name}
-                isDeleting={deletingVar === variable.name}
-                onDraftChange={(value) => {
-                  setDraftByName((prev) => ({ ...prev, [variable.name]: value }))
-                  setError(null)
-                  setSuccess(null)
-                }}
-                onToggleReveal={() =>
-                  setRevealByName((prev) => ({ ...prev, [variable.name]: !prev[variable.name] }))
-                }
-                onSave={() => void handleSave(variable.name)}
-                onDelete={() => void handleDelete(variable.name)}
-              />
-            ))}
-          </div>
-        )}
-      </SettingsSection>
+      {/* Rich config panel for selected skill */}
+      {RichConfigPanel && (
+        <div className="rounded-lg border border-border bg-card/30 p-5">
+          <RichConfigPanel wsUrl={wsUrl} onConfigChanged={handleConfigChanged} />
+        </div>
+      )}
+
+      {/* Env variables */}
+      <SkillEnvVariables
+        variables={filteredVariables}
+        isLoading={isLoading}
+        error={error}
+        success={success}
+        draftByName={draftByName}
+        revealByName={revealByName}
+        savingVar={savingVar}
+        deletingVar={deletingVar}
+        onDraftChange={handleDraftChange}
+        onToggleReveal={handleToggleReveal}
+        onSave={(name) => void handleSave(name)}
+        onDelete={(name) => void handleDelete(name)}
+      />
     </div>
   )
 }

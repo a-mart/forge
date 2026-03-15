@@ -14,6 +14,7 @@ import { isPidAlive } from "../swarm/platform.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import { applyCorsHeaders, resolveRequestUrl, sendJson } from "./http-utils.js";
 import { createAgentHttpRoutes } from "./routes/agent-routes.js";
+import { createChromeCdpRoutes } from "./routes/chrome-cdp-routes.js";
 import { createCortexRoutes } from "./routes/cortex-routes.js";
 import { createFileRoutes } from "./routes/file-routes.js";
 import { createFeedbackRoutes } from "./routes/feedback-routes.js";
@@ -189,6 +190,7 @@ export class SwarmWebSocketServer {
       ...createMobileRoutes({ mobilePushService: this.mobilePushService }),
       ...createAgentHttpRoutes({ swarmManager: this.swarmManager }),
       ...this.settingsRoutes.routes,
+      ...createChromeCdpRoutes({ swarmManager: this.swarmManager }),
       ...createPlaywrightRoutes({
         discoveryService: this.playwrightDiscovery,
         settingsService: this.playwrightSettingsService,
