@@ -34,6 +34,9 @@ const MAX_WS_EVENT_BYTES = 1 * 1024 * 1024;
 const MAX_WS_BUFFERED_AMOUNT_BYTES = 1 * 1024 * 1024;
 const BOOTSTRAP_HISTORY_BYTE_BUDGET = MAX_WS_EVENT_BYTES - 16 * 1024;
 
+type BootstrapConversationHistory = ReturnType<SwarmManager["getConversationHistory"]>;
+type BootstrapConversationEntry = BootstrapConversationHistory[number];
+
 export class WsHandler {
   private readonly swarmManager: SwarmManager;
   private readonly integrationRegistry: IntegrationRegistryService | null;
@@ -841,57 +844,155 @@ export class WsHandler {
     targetAgentId: string,
     requestedMessageCount?: number,
   ) {
-    const fullHistory = this.swarmManager.getConversationHistory(targetAgentId)
+    const fullHistory = this.swarmManager.getConversationHistory(targetAgentId);
     const requestedHistory = requestedMessageCount !== undefined
       ? fullHistory.slice(-requestedMessageCount)
-      : fullHistory
+      : fullHistory;
 
-    const fullEventBytes = this.measureEventBytes({
-      type: 'conversation_history',
-      agentId: targetAgentId,
-      messages: requestedHistory,
-    })
-    if (fullEventBytes !== null && fullEventBytes <= BOOTSTRAP_HISTORY_BYTE_BUDGET) {
-      return requestedHistory
+    if (this.isBootstrapConversationHistoryWithinBudget(targetAgentId, requestedHistory)) {
+      return requestedHistory;
     }
 
-    let low = 0
-    let high = requestedHistory.length
+    const conversationEntries = requestedHistory.filter(
+      (entry) => entry.type === "conversation_message" || entry.type === "conversation_log",
+    );
+    const activityEntries = requestedHistory.filter(
+      (entry) => entry.type === "agent_message" || entry.type === "agent_tool_call",
+    );
+
+    if (!this.isBootstrapConversationHistoryWithinBudget(targetAgentId, conversationEntries)) {
+      const trimmedConversationEntries = this.trimBootstrapConversationHistoryTailToBudget(
+        targetAgentId,
+        conversationEntries,
+      );
+      this.logBootstrapHistoryTrim(targetAgentId, requestedHistory.length, trimmedConversationEntries.length);
+      return trimmedConversationEntries;
+    }
+
+    const selectedActivityEntries = this.selectTailActivityEntriesWithinBootstrapBudget(
+      targetAgentId,
+      requestedHistory,
+      conversationEntries,
+      activityEntries,
+    );
+    const trimmedHistory = this.mergeBootstrapConversationHistory(
+      requestedHistory,
+      conversationEntries,
+      selectedActivityEntries,
+    );
+
+    this.logBootstrapHistoryTrim(targetAgentId, requestedHistory.length, trimmedHistory.length);
+    return trimmedHistory;
+  }
+
+  private isBootstrapConversationHistoryWithinBudget(
+    targetAgentId: string,
+    messages: BootstrapConversationHistory,
+  ): boolean {
+    const eventBytes = this.measureEventBytes({
+      type: "conversation_history",
+      agentId: targetAgentId,
+      messages,
+    });
+
+    return eventBytes !== null && eventBytes <= BOOTSTRAP_HISTORY_BYTE_BUDGET;
+  }
+
+  private trimBootstrapConversationHistoryTailToBudget(
+    targetAgentId: string,
+    history: BootstrapConversationHistory,
+  ): BootstrapConversationHistory {
+    let low = 0;
+    let high = history.length;
 
     while (low < high) {
-      const mid = Math.floor((low + high) / 2)
-      const candidate = requestedHistory.slice(mid)
-      const candidateBytes = this.measureEventBytes({
-        type: 'conversation_history',
-        agentId: targetAgentId,
-        messages: candidate,
-      })
+      const mid = Math.floor((low + high) / 2);
+      const candidate = history.slice(mid);
 
-      if (candidateBytes !== null && candidateBytes <= BOOTSTRAP_HISTORY_BYTE_BUDGET) {
-        high = mid
+      if (this.isBootstrapConversationHistoryWithinBudget(targetAgentId, candidate)) {
+        high = mid;
       } else {
-        low = mid + 1
+        low = mid + 1;
       }
     }
 
-    const trimmedHistory = requestedHistory.slice(low)
-    if (trimmedHistory.length !== requestedHistory.length) {
-      console.warn('[swarm] ws:trim_bootstrap_history', {
-        agentId: targetAgentId,
-        originalCount: requestedHistory.length,
-        trimmedCount: trimmedHistory.length,
-        maxEventBytes: BOOTSTRAP_HISTORY_BYTE_BUDGET,
-      })
+    return history.slice(low);
+  }
+
+  private selectTailActivityEntriesWithinBootstrapBudget(
+    targetAgentId: string,
+    sourceHistory: BootstrapConversationHistory,
+    conversationEntries: BootstrapConversationHistory,
+    activityEntries: BootstrapConversationHistory,
+  ): BootstrapConversationHistory {
+    if (activityEntries.length === 0) {
+      return [];
     }
 
-    return trimmedHistory
+    let low = 0;
+    let high = activityEntries.length;
+
+    while (low < high) {
+      const mid = Math.floor((low + high + 1) / 2);
+      const candidateActivityEntries = activityEntries.slice(-mid);
+      const candidateHistory = this.mergeBootstrapConversationHistory(
+        sourceHistory,
+        conversationEntries,
+        candidateActivityEntries,
+      );
+
+      if (this.isBootstrapConversationHistoryWithinBudget(targetAgentId, candidateHistory)) {
+        low = mid;
+      } else {
+        high = mid - 1;
+      }
+    }
+
+    return activityEntries.slice(-low);
+  }
+
+  private mergeBootstrapConversationHistory(
+    sourceHistory: BootstrapConversationHistory,
+    conversationEntries: BootstrapConversationHistory,
+    activityEntries: BootstrapConversationHistory,
+  ): BootstrapConversationHistory {
+    if (conversationEntries.length === 0) {
+      return activityEntries;
+    }
+
+    if (activityEntries.length === 0) {
+      return conversationEntries;
+    }
+
+    const selectedEntries = new Set<BootstrapConversationEntry>();
+    for (const entry of conversationEntries) {
+      selectedEntries.add(entry);
+    }
+    for (const entry of activityEntries) {
+      selectedEntries.add(entry);
+    }
+
+    return sourceHistory.filter((entry) => selectedEntries.has(entry));
+  }
+
+  private logBootstrapHistoryTrim(targetAgentId: string, originalCount: number, trimmedCount: number): void {
+    if (trimmedCount === originalCount) {
+      return;
+    }
+
+    console.warn("[swarm] ws:trim_bootstrap_history", {
+      agentId: targetAgentId,
+      originalCount,
+      trimmedCount,
+      maxEventBytes: BOOTSTRAP_HISTORY_BYTE_BUDGET,
+    });
   }
 
   private measureEventBytes(event: ServerEvent): number | null {
     try {
-      return Buffer.byteLength(JSON.stringify(event), 'utf8')
+      return Buffer.byteLength(JSON.stringify(event), "utf8");
     } catch {
-      return null
+      return null;
     }
   }
 
