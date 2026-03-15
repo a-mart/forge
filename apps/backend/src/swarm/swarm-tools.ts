@@ -236,8 +236,9 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
 
         const verboseAgents = selectedAgents.map((agent) => {
           if (agent.role === "manager" && agent.agentId !== visibleManagerId) {
+            const { sessionFile: _sessionFile, ...safeExternalManager } = agent;
             return {
-              ...agent,
+              ...safeExternalManager,
               isExternal: true
             };
           }

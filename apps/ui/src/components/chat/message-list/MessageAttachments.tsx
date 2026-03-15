@@ -1,11 +1,16 @@
-import { File, FileText } from 'lucide-react'
+import { File, FileText, ImageIcon } from 'lucide-react'
+import { resolveApiEndpoint } from '@/lib/api-endpoint'
 import { cn } from '@/lib/utils'
 import type {
   ConversationImageAttachment,
   ConversationMessageAttachment,
 } from '@middleman/protocol'
 
-function isMessageImageAttachment(
+type PreviewableMessageImageAttachment =
+  | ConversationImageAttachment
+  | (ConversationMessageAttachment & { fileRef: string })
+
+function isInlineImageAttachment(
   attachment: ConversationMessageAttachment,
 ): attachment is ConversationImageAttachment {
   const maybeType = attachment.type
@@ -14,6 +19,55 @@ function isMessageImageAttachment(
   }
 
   return 'data' in attachment && typeof attachment.data === 'string' && attachment.data.length > 0
+}
+
+function hasAttachmentFileRef(
+  attachment: ConversationMessageAttachment,
+): attachment is ConversationMessageAttachment & { fileRef: string } {
+  return 'fileRef' in attachment && typeof attachment.fileRef === 'string' && attachment.fileRef.length > 0
+}
+
+function isMessageImageAttachment(
+  attachment: ConversationMessageAttachment,
+): attachment is PreviewableMessageImageAttachment {
+  const maybeType = attachment.type
+  if (maybeType === 'text' || maybeType === 'binary') {
+    return false
+  }
+
+  if (isInlineImageAttachment(attachment)) {
+    return true
+  }
+
+  // Metadata-only images need a server-side attachment reference for preview.
+  // Without one, they fall back to the file card renderer below.
+  return attachment.mimeType.startsWith('image/') && hasAttachmentFileRef(attachment)
+}
+
+function isImageFileAttachment(attachment: ConversationMessageAttachment): boolean {
+  if (attachment.type === 'image') {
+    return true
+  }
+
+  return attachment.type !== 'text' && attachment.type !== 'binary' && attachment.mimeType.startsWith('image/')
+}
+
+function resolveMessageImageSrc(
+  attachment: PreviewableMessageImageAttachment,
+  wsUrl?: string,
+): string | null {
+  if (isInlineImageAttachment(attachment)) {
+    return `data:${attachment.mimeType};base64,${attachment.data}`
+  }
+
+  if (hasAttachmentFileRef(attachment)) {
+    return resolveApiEndpoint(
+      wsUrl,
+      `/api/attachments/${encodeURIComponent(attachment.fileRef)}`,
+    )
+  }
+
+  return null
 }
 
 function fileAttachmentSubtitle(attachment: ConversationMessageAttachment): string {
@@ -28,12 +82,26 @@ function fileAttachmentSubtitle(attachment: ConversationMessageAttachment): stri
   return 'Image file'
 }
 
+function attachmentIcon(attachment: ConversationMessageAttachment) {
+  if (attachment.type === 'text') {
+    return <FileText className="size-3.5" />
+  }
+
+  if (isImageFileAttachment(attachment)) {
+    return <ImageIcon className="size-3.5" />
+  }
+
+  return <File className="size-3.5" />
+}
+
 function MessageImageAttachments({
   attachments,
   isUser,
+  wsUrl,
 }: {
-  attachments: ConversationImageAttachment[]
+  attachments: PreviewableMessageImageAttachment[]
   isUser: boolean
+  wsUrl?: string
 }) {
   if (attachments.length === 0) {
     return null
@@ -42,11 +110,18 @@ function MessageImageAttachments({
   return (
     <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
       {attachments.map((attachment, index) => {
-        const src = `data:${attachment.mimeType};base64,${attachment.data}`
+        const src = resolveMessageImageSrc(attachment, wsUrl)
+        if (!src) {
+          return null
+        }
+
+        const imageKey = isInlineImageAttachment(attachment)
+          ? `${attachment.mimeType}-${attachment.data.slice(0, 32)}-${index}`
+          : `${attachment.mimeType}-${attachment.fileRef}-${index}`
 
         return (
           <img
-            key={`${attachment.mimeType}-${attachment.data.slice(0, 32)}-${index}`}
+            key={imageKey}
             src={src}
             alt={attachment.fileName || `Attached image ${index + 1}`}
             className={cn(
@@ -77,7 +152,6 @@ function MessageFileAttachments({
   return (
     <div className="space-y-1.5">
       {attachments.map((attachment, index) => {
-        const isTextFile = attachment.type === 'text'
         const fileName = attachment.fileName || `Attachment ${index + 1}`
         const subtitle = fileAttachmentSubtitle(attachment)
 
@@ -99,7 +173,7 @@ function MessageFileAttachments({
                   : 'bg-muted text-muted-foreground',
               )}
             >
-              {isTextFile ? <FileText className="size-3.5" /> : <File className="size-3.5" />}
+              {attachmentIcon(attachment)}
             </span>
             <span className="min-w-0">
               <p className="truncate text-xs font-medium">{fileName}</p>
@@ -124,9 +198,11 @@ function MessageFileAttachments({
 export function MessageAttachments({
   attachments,
   isUser,
+  wsUrl,
 }: {
   attachments: ConversationMessageAttachment[]
   isUser: boolean
+  wsUrl?: string
 }) {
   const imageAttachments = attachments.filter(isMessageImageAttachment)
   const fileAttachments = attachments.filter((attachment) => !isMessageImageAttachment(attachment))
@@ -137,7 +213,7 @@ export function MessageAttachments({
 
   return (
     <>
-      <MessageImageAttachments attachments={imageAttachments} isUser={isUser} />
+      <MessageImageAttachments attachments={imageAttachments} isUser={isUser} wsUrl={wsUrl} />
       <MessageFileAttachments attachments={fileAttachments} isUser={isUser} />
     </>
   )

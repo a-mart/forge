@@ -1,6 +1,5 @@
 import type { ClientCommand, ServerEvent } from "@middleman/protocol";
 import type { WebSocket } from "ws";
-import { persistConversationAttachments } from "../attachment-parser.js";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
 
 export interface ConversationCommandRouteContext {
@@ -30,7 +29,6 @@ export async function handleConversationCommand(context: ConversationCommandRout
     return false;
   }
 
-  const config = swarmManager.getConfig();
   const managerId = resolveConfiguredManagerId();
   const targetAgentId = command.agentId ?? subscribedAgentId;
 
@@ -78,21 +76,16 @@ export async function handleConversationCommand(context: ConversationCommandRout
       return true;
     }
 
-    const persistedAttachments =
-      command.attachments && command.attachments.length > 0
-        ? await persistConversationAttachments(command.attachments, config.paths.uploadsDir)
-        : undefined;
-
     logDebug("user_message:dispatch:start", {
       targetAgentId,
       targetRole: targetDescriptor.role,
-      persistedAttachmentCount: persistedAttachments?.length ?? 0
+      persistedAttachmentCount: command.attachments?.length ?? 0
     });
 
     await swarmManager.handleUserMessage(command.text, {
       targetAgentId,
       delivery: command.delivery,
-      attachments: persistedAttachments,
+      attachments: command.attachments,
       sourceContext: { channel: "web" }
     });
 

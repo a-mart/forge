@@ -1,7 +1,5 @@
 import { rm, writeFile } from "node:fs/promises";
 import {
-  findCandidateControlPidFiles,
-  getControlRestartFilePath,
   getRestartFilePathForPidFile,
   readControlPidFromFile,
   RESTART_SIGNAL
@@ -17,10 +15,9 @@ const HEALTH_ENDPOINT_PATH = "/api/health";
 const REBOOT_ENDPOINT_PATH = "/api/reboot";
 
 export function createHealthRoutes(options: {
-  resolveRepoRoot: () => string;
   resolveControlPidFile: () => string;
 }): HttpRoute[] {
-  const { resolveRepoRoot, resolveControlPidFile } = options;
+  const { resolveControlPidFile } = options;
 
   return [
     {
@@ -63,7 +60,6 @@ export function createHealthRoutes(options: {
 
         const rebootTimer = setTimeout(() => {
           void triggerRebootSignal({
-            repoRoot: resolveRepoRoot(),
             controlPidFile: resolveControlPidFile()
           });
         }, 25);
@@ -74,28 +70,19 @@ export function createHealthRoutes(options: {
 }
 
 async function triggerRebootSignal(options: {
-  repoRoot: string;
   controlPidFile: string;
 }): Promise<void> {
-  const { repoRoot, controlPidFile } = options;
+  const { controlPidFile } = options;
 
   try {
     const daemonTarget = await resolveProdDaemonTarget(controlPidFile);
 
     if (process.platform === "win32") {
-      if (!daemonTarget) {
-        console.warn("[reboot] No prod-daemon found; restart file written but may not be consumed.");
-      }
-
-      const restartFile = daemonTarget
-        ? getRestartFilePathForPidFile(daemonTarget.pidFile)
-        : getControlRestartFilePath(repoRoot);
-      await writeFile(restartFile, `${Date.now()}\n`, "utf8");
+      await writeFile(getRestartFilePathForPidFile(daemonTarget.pidFile), `${Date.now()}\n`, "utf8");
       return;
     }
 
-    const targetPid = daemonTarget?.pid ?? process.pid;
-    process.kill(targetPid, RESTART_SIGNAL);
+    process.kill(daemonTarget.pid, RESTART_SIGNAL);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`[reboot] Failed to send ${RESTART_SIGNAL}: ${message}`);
@@ -104,7 +91,7 @@ async function triggerRebootSignal(options: {
 
 async function resolveProdDaemonTarget(
   controlPidFile: string
-): Promise<{ pid: number; pidFile: string } | null> {
+): Promise<{ pid: number; pidFile: string }> {
   const primaryPid = await readRunningPidFromFile(controlPidFile);
   if (primaryPid !== null) {
     return {
@@ -113,22 +100,7 @@ async function resolveProdDaemonTarget(
     };
   }
 
-  const candidatePidFiles = await findCandidateControlPidFiles();
-  for (const candidatePidFile of candidatePidFiles) {
-    if (candidatePidFile === controlPidFile) {
-      continue;
-    }
-
-    const pid = await readRunningPidFromFile(candidatePidFile);
-    if (pid !== null) {
-      return {
-        pid,
-        pidFile: candidatePidFile
-      };
-    }
-  }
-
-  return null;
+  throw new Error("No control PID file found for this instance");
 }
 
 async function readRunningPidFromFile(pidFile: string): Promise<number | null> {

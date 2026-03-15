@@ -418,7 +418,7 @@ describe('SwarmWebSocketServer', () => {
       allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
     })
 
-    const pidFile = getControlPidFilePath(config.paths.rootDir)
+    const pidFile = getControlPidFilePath(config.paths.rootDir, config.port)
     await rm(pidFile, { force: true })
 
     await server.start()
@@ -450,7 +450,7 @@ describe('SwarmWebSocketServer', () => {
     await server.start()
 
     const daemonPid = 54321
-    const pidFile = getControlPidFilePath(config.paths.rootDir)
+    const pidFile = getControlPidFilePath(config.paths.rootDir, config.port)
     const restartFile = pidFile.replace(/\.pid$/, '.restart')
     await writeFile(pidFile, `${daemonPid}\n`, 'utf8')
 
@@ -476,6 +476,55 @@ describe('SwarmWebSocketServer', () => {
       killSpy.mockRestore()
       await rm(pidFile, { force: true })
       await rm(restartFile, { force: true })
+      await server.stop()
+    }
+  })
+
+  it('does not scan foreign control pid files when rebooting', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    const foreignPid = 65432
+    const primaryPidFile = getControlPidFilePath(config.paths.rootDir, config.port)
+    await rm(primaryPidFile, { force: true })
+    const foreignPidFile = getControlPidFilePath(config.paths.rootDir, config.port + 1)
+    const foreignRestartFile = foreignPidFile.replace(/\.pid$/, '.restart')
+    await writeFile(foreignPidFile, `${foreignPid}\n`, 'utf8')
+
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true)
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    try {
+      const response = await fetch(`http://${config.host}:${config.port}/api/reboot`, {
+        method: 'POST',
+      })
+
+      expect(response.status).toBe(200)
+      await new Promise((resolve) => setTimeout(resolve, 60))
+
+      expect(killSpy).not.toHaveBeenCalledWith(foreignPid, 'SIGUSR1')
+      expect(killSpy).not.toHaveBeenCalledWith(foreignPid, 0)
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('No control PID file found for this instance'),
+      )
+      await expect(readFile(foreignRestartFile, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      consoleErrorSpy.mockRestore()
+      killSpy.mockRestore()
+      await rm(foreignPidFile, { force: true })
+      await rm(foreignRestartFile, { force: true })
       await server.stop()
     }
   })
@@ -1326,12 +1375,19 @@ describe('SwarmWebSocketServer', () => {
         sizeBytes: 5,
       })
       expect('data' in (persistedAttachment ?? {})).toBe(false)
-      expect(typeof persistedAttachment?.filePath).toBe('string')
+      expect('filePath' in (persistedAttachment ?? {})).toBe(false)
+      const persistedFileRef =
+        persistedAttachment && 'fileRef' in persistedAttachment && typeof persistedAttachment.fileRef === 'string'
+          ? persistedAttachment.fileRef
+          : undefined
+      expect(typeof persistedFileRef).toBe('string')
 
-      if (persistedAttachment?.filePath) {
-        expect(persistedAttachment.filePath.startsWith(config.paths.uploadsDir)).toBe(true)
-        const content = await readFile(persistedAttachment.filePath)
-        expect(content.toString('utf8')).toBe('hello')
+      if (persistedFileRef) {
+        const attachmentResponse = await fetch(
+          `http://${config.host}:${config.port}/api/attachments/${encodeURIComponent(persistedFileRef)}`,
+        )
+        expect(attachmentResponse.status).toBe(200)
+        expect(await attachmentResponse.text()).toBe('hello')
       }
     }
 
@@ -1410,7 +1466,12 @@ describe('SwarmWebSocketServer', () => {
         sizeBytes: 7,
       })
       expect('text' in (textAttachment ?? {})).toBe(false)
-      expect(typeof textAttachment?.filePath).toBe('string')
+      expect('filePath' in (textAttachment ?? {})).toBe(false)
+      const textFileRef =
+        textAttachment && 'fileRef' in textAttachment && typeof textAttachment.fileRef === 'string'
+          ? textAttachment.fileRef
+          : undefined
+      expect(typeof textFileRef).toBe('string')
 
       const binaryAttachment = userEvent.attachments?.[1]
       expect(binaryAttachment).toMatchObject({
@@ -1420,18 +1481,27 @@ describe('SwarmWebSocketServer', () => {
         sizeBytes: 5,
       })
       expect('data' in (binaryAttachment ?? {})).toBe(false)
-      expect(typeof binaryAttachment?.filePath).toBe('string')
+      expect('filePath' in (binaryAttachment ?? {})).toBe(false)
+      const binaryFileRef =
+        binaryAttachment && 'fileRef' in binaryAttachment && typeof binaryAttachment.fileRef === 'string'
+          ? binaryAttachment.fileRef
+          : undefined
+      expect(typeof binaryFileRef).toBe('string')
 
-      if (textAttachment?.filePath) {
-        expect(textAttachment.filePath.startsWith(config.paths.uploadsDir)).toBe(true)
-        const textContent = await readFile(textAttachment.filePath, 'utf8')
-        expect(textContent).toBe('# Notes')
+      if (textFileRef) {
+        const textResponse = await fetch(
+          `http://${config.host}:${config.port}/api/attachments/${encodeURIComponent(textFileRef)}`,
+        )
+        expect(textResponse.status).toBe(200)
+        expect(await textResponse.text()).toBe('# Notes')
       }
 
-      if (binaryAttachment?.filePath) {
-        expect(binaryAttachment.filePath.startsWith(config.paths.uploadsDir)).toBe(true)
-        const binaryContent = await readFile(binaryAttachment.filePath)
-        expect(binaryContent.toString('utf8')).toBe('hello')
+      if (binaryFileRef) {
+        const binaryResponse = await fetch(
+          `http://${config.host}:${config.port}/api/attachments/${encodeURIComponent(binaryFileRef)}`,
+        )
+        expect(binaryResponse.status).toBe(200)
+        expect(await binaryResponse.text()).toBe('hello')
       }
     }
 

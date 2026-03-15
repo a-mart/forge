@@ -1,5 +1,5 @@
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import {
   isPathWithinRoots,
@@ -15,6 +15,8 @@ import {
 } from "../http-utils.js";
 import type { HttpRoute } from "./http-route.js";
 
+const ATTACHMENT_ENDPOINT_PREFIX = "/api/attachments/";
+const ATTACHMENT_METHODS = "GET, OPTIONS";
 const READ_FILE_ENDPOINT_PATH = "/api/read-file";
 const READ_FILE_METHODS = "GET, POST, OPTIONS";
 const MAX_READ_FILE_BODY_BYTES = 64 * 1024;
@@ -63,7 +65,70 @@ export function createFileRoutes(options: { swarmManager: SwarmManager }): HttpR
     return resolvedPath;
   };
 
+  const resolveAttachmentPath = (fileRef: string): string => {
+    const normalizedRef = basename(fileRef.trim());
+    if (!normalizedRef || normalizedRef !== fileRef.trim() || !/^[A-Za-z0-9._-]+$/.test(normalizedRef)) {
+      throw new Error("Invalid attachment reference.");
+    }
+
+    return join(swarmManager.getConfig().paths.uploadsDir, normalizedRef);
+  };
+
   return [
+    {
+      methods: ATTACHMENT_METHODS,
+      matches: (pathname) => pathname.startsWith(ATTACHMENT_ENDPOINT_PREFIX),
+      handle: async (request, response, requestUrl) => {
+        if (request.method === "OPTIONS") {
+          applyCorsHeaders(request, response, ATTACHMENT_METHODS);
+          response.statusCode = 204;
+          response.end();
+          return;
+        }
+
+        if (request.method !== "GET") {
+          applyCorsHeaders(request, response, ATTACHMENT_METHODS);
+          response.setHeader("Allow", ATTACHMENT_METHODS);
+          sendJson(response, 405, { error: "Method Not Allowed" });
+          return;
+        }
+
+        applyCorsHeaders(request, response, ATTACHMENT_METHODS);
+
+        try {
+          const rawRef = decodeURIComponent(requestUrl.pathname.slice(ATTACHMENT_ENDPOINT_PREFIX.length));
+          const resolvedPath = resolveAttachmentPath(rawRef);
+          const fileStats = await stat(resolvedPath);
+
+          if (!fileStats.isFile()) {
+            sendJson(response, 404, { error: "Attachment not found." });
+            return;
+          }
+
+          if (fileStats.size > MAX_READ_FILE_CONTENT_BYTES) {
+            sendJson(response, 413, {
+              error: `File is too large. Maximum supported size is ${MAX_READ_FILE_CONTENT_BYTES} bytes.`
+            });
+            return;
+          }
+
+          const content = await readFile(resolvedPath);
+          response.statusCode = 200;
+          response.setHeader("Content-Type", resolveReadFileContentType(resolvedPath));
+          response.setHeader("Content-Length", String(content.byteLength));
+          response.setHeader("Cache-Control", "no-store");
+          response.end(content);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Unable to read attachment.";
+          if (message.includes("Invalid attachment reference")) {
+            sendJson(response, 400, { error: message });
+            return;
+          }
+
+          sendJson(response, 404, { error: "Attachment not found." });
+        }
+      }
+    },
     {
       methods: READ_FILE_METHODS,
       matches: (pathname) => pathname === READ_FILE_ENDPOINT_PATH,

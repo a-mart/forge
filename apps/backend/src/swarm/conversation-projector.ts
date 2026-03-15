@@ -272,8 +272,9 @@ export class ConversationProjector {
     this.queueConversationHistoryCacheWrite(event.agentId, history);
 
     // Runtime logs are valuable for the live in-memory transcript and cache, but
-    // they are high-volume JSONL noise during replay/fork/recovery. Keep them out
-    // of the session file while still persisting durable transcript/tool entries.
+    // they are high-volume JSONL noise during replay/fork/recovery. Forks may omit
+    // prior conversation_log entries as a tradeoff to keep the canonical session file
+    // focused on durable transcript/tool entries instead of transient runtime chatter.
     if (!shouldPersistConversationEntry(event)) {
       this.assignConversationMessageIdIfMissing(event);
       return;

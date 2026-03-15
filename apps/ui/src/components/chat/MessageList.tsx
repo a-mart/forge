@@ -26,6 +26,7 @@ import type {
 interface MessageListProps {
   messages: ConversationEntry[]
   isLoading: boolean
+  wsUrl?: string
   activeAgentId?: string | null
   onSuggestionClick?: (suggestion: string) => void
   onArtifactClick?: (artifact: ArtifactReference) => void
@@ -264,6 +265,7 @@ function LoadingIndicator() {
 export const MessageList = forwardRef<MessageListHandle, MessageListProps>(function MessageList({
   messages,
   isLoading,
+  wsUrl,
   activeAgentId,
   onSuggestionClick,
   onArtifactClick,
@@ -416,6 +418,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
                 >
                   <ConversationMessageRow
                     message={entry.message}
+                    wsUrl={wsUrl}
                     feedbackTargetId={feedbackTargetId}
                     feedbackLegacyTargetId={feedbackLegacyTargetId}
                     onArtifactClick={onArtifactClick}

@@ -835,6 +835,7 @@ export function IndexPage() {
                   ref={messageListRef}
                   messages={visibleMessages}
                   isLoading={isLoading}
+                  wsUrl={wsUrl}
                   activeAgentId={activeAgentId}
                   onSuggestionClick={handleSuggestionClick}
                   onArtifactClick={handleOpenArtifact}

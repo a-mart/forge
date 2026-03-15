@@ -32,6 +32,7 @@ export interface ConversationAttachmentMetadata {
   mimeType: string
   fileName?: string
   filePath?: string
+  fileRef?: string
   sizeBytes?: number
 }
 

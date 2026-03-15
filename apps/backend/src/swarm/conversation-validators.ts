@@ -143,6 +143,10 @@ export function isConversationAttachmentMetadata(value: unknown): value is Conve
     return false;
   }
 
+  if (maybe.fileRef !== undefined && typeof maybe.fileRef !== "string") {
+    return false;
+  }
+
   if (
     maybe.sizeBytes !== undefined &&
     (typeof maybe.sizeBytes !== "number" || !Number.isFinite(maybe.sizeBytes) || maybe.sizeBytes < 0)

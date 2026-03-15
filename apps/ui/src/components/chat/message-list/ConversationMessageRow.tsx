@@ -38,6 +38,7 @@ function CopyButton({ text }: { text: string }) {
 
 interface ConversationMessageRowProps {
   message: ConversationMessageEntry
+  wsUrl?: string
   feedbackTargetId?: string
   feedbackLegacyTargetId?: string
   onArtifactClick?: (artifact: ArtifactReference) => void
@@ -67,6 +68,7 @@ interface ConversationMessageRowProps {
 
 export const ConversationMessageRow = memo(function ConversationMessageRow({
   message,
+  wsUrl,
   feedbackTargetId,
   feedbackLegacyTargetId,
   onArtifactClick,
@@ -100,7 +102,7 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
               {normalizedText}
             </p>
           ) : null}
-          <MessageAttachments attachments={attachments} isUser={false} />
+          <MessageAttachments attachments={attachments} isUser={false} wsUrl={wsUrl} />
         </div>
         {timestampLabel || sourceContext ? (
           <div className="mt-1 flex items-center gap-1.5 text-[11px] text-amber-700/80 dark:text-amber-300/80">
@@ -117,7 +119,7 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
       <div className="flex justify-end">
         <div className="max-w-[85%] rounded-lg rounded-tr-sm bg-primary px-3 py-2 text-primary-foreground">
           <div className="space-y-2">
-            <MessageAttachments attachments={attachments} isUser />
+            <MessageAttachments attachments={attachments} isUser wsUrl={wsUrl} />
             {hasText ? (
               <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">
                 {normalizedText}
@@ -149,7 +151,7 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
       {hasText ? (
         <MarkdownMessage content={normalizedText} onArtifactClick={onArtifactClick} />
       ) : null}
-      <MessageAttachments attachments={attachments} isUser={false} />
+      <MessageAttachments attachments={attachments} isUser={false} wsUrl={wsUrl} />
       {timestampLabel || sourceContext || showFeedback ? (
         <div className="flex items-center gap-1.5 text-[11px] leading-none text-muted-foreground/70">
           <SourceBadge sourceContext={sourceContext} />

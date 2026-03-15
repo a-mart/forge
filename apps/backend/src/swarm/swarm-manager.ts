@@ -1,11 +1,12 @@
 import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
 import { appendFile, copyFile, mkdir, open, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import type { Api, Model } from "@mariozechner/pi-ai";
 import { getModel } from "@mariozechner/pi-ai";
 import { AuthStorage, ModelRegistry } from "@mariozechner/pi-coding-agent";
 import type { ServerEvent, SessionMeta } from "@middleman/protocol";
+import { persistConversationAttachments } from "../ws/attachment-parser.js";
 import {
   FileBackedPromptRegistry,
   normalizeArchetypeId,
@@ -2213,72 +2214,14 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return filePath;
   }
 
-  private async writeTextAttachmentToDisk(
-    directory: string,
-    attachment: ConversationTextAttachment,
-    attachmentIndex: number
-  ): Promise<string> {
-    const safeName = sanitizeAttachmentFileName(attachment.fileName, `attachment-${attachmentIndex}.txt`);
-    const filePath = join(directory, `${String(attachmentIndex).padStart(2, "0")}-${safeName}`);
-    await writeFile(filePath, attachment.text, "utf8");
-    return filePath;
-  }
-
   private async persistConversationAttachmentsIfNeeded(
-    targetAgentId: string,
     attachments: ConversationAttachment[]
   ): Promise<ConversationAttachment[]> {
     if (attachments.length === 0) {
       return [];
     }
 
-    const persisted: ConversationAttachment[] = [];
-    let attachmentDir: string | undefined;
-
-    for (let index = 0; index < attachments.length; index += 1) {
-      const attachment = attachments[index];
-      const attachmentIndex = index + 1;
-      const persistedPath = normalizeOptionalAttachmentPath(attachment.filePath);
-
-      if (persistedPath) {
-        persisted.push({
-          ...attachment,
-          filePath: persistedPath
-        });
-        continue;
-      }
-
-      const directory = attachmentDir ?? (await this.createBinaryAttachmentDir(targetAgentId));
-      attachmentDir = directory;
-
-      if (isConversationTextAttachment(attachment)) {
-        const filePath = await this.writeTextAttachmentToDisk(directory, attachment, attachmentIndex);
-        persisted.push({
-          ...attachment,
-          filePath
-        });
-        continue;
-      }
-
-      if (isConversationBinaryAttachment(attachment)) {
-        const filePath = await this.writeBinaryAttachmentToDisk(directory, attachment, attachmentIndex, "bin");
-        persisted.push({
-          ...attachment,
-          filePath
-        });
-        continue;
-      }
-
-      if (isConversationImageAttachment(attachment)) {
-        const filePath = await this.writeBinaryAttachmentToDisk(directory, attachment, attachmentIndex, "png");
-        persisted.push({
-          ...attachment,
-          filePath
-        });
-      }
-    }
-
-    return persisted;
+    return persistConversationAttachments(attachments, this.config.paths.uploadsDir);
   }
 
   async publishToUser(
@@ -2532,8 +2475,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       throw new Error(`Target agent is not running: ${targetAgentId}`);
     }
 
-    const persistedAttachments = await this.persistConversationAttachmentsIfNeeded(targetAgentId, attachments);
-    const attachmentMetadata = toConversationAttachmentMetadata(persistedAttachments);
+    const persistedAttachments = await this.persistConversationAttachmentsIfNeeded(attachments);
+    const attachmentMetadata = toConversationAttachmentMetadata(
+      persistedAttachments,
+      this.config.paths.uploadsDir
+    );
     const runtimeAttachments = toRuntimeDispatchAttachments(attachments, persistedAttachments);
 
     const receivedAt = this.now();
@@ -5560,7 +5506,6 @@ function normalizeConversationAttachments(
 
     const mimeType = typeof attachment.mimeType === "string" ? attachment.mimeType.trim() : "";
     const fileName = typeof attachment.fileName === "string" ? attachment.fileName.trim() : "";
-    const filePath = typeof attachment.filePath === "string" ? attachment.filePath.trim() : "";
 
     if (attachment.type === "text") {
       const text = typeof attachment.text === "string" ? attachment.text : "";
@@ -5572,8 +5517,7 @@ function normalizeConversationAttachments(
         type: "text",
         mimeType,
         text,
-        fileName: fileName || undefined,
-        filePath: filePath || undefined
+        fileName: fileName || undefined
       });
       continue;
     }
@@ -5588,8 +5532,7 @@ function normalizeConversationAttachments(
         type: "binary",
         mimeType,
         data,
-        fileName: fileName || undefined,
-        filePath: filePath || undefined
+        fileName: fileName || undefined
       });
       continue;
     }
@@ -5602,15 +5545,17 @@ function normalizeConversationAttachments(
     normalized.push({
       mimeType,
       data,
-      fileName: fileName || undefined,
-      filePath: filePath || undefined
+      fileName: fileName || undefined
     });
   }
 
   return normalized;
 }
 
-function toConversationAttachmentMetadata(attachments: ConversationAttachment[]): ConversationAttachmentMetadata[] {
+function toConversationAttachmentMetadata(
+  attachments: ConversationAttachment[],
+  uploadsDir: string
+): ConversationAttachmentMetadata[] {
   const metadata: ConversationAttachmentMetadata[] = [];
 
   for (const attachment of attachments) {
@@ -5618,8 +5563,8 @@ function toConversationAttachmentMetadata(attachments: ConversationAttachment[])
       continue;
     }
 
-    const normalizedPath = normalizeOptionalAttachmentPath(attachment.filePath);
     const normalizedName = normalizeOptionalMetadataValue(attachment.fileName);
+    const fileRef = resolveAttachmentFileRef(attachment.filePath, uploadsDir);
     const sizeBytes = computeAttachmentSizeBytes(attachment);
 
     if (isConversationTextAttachment(attachment)) {
@@ -5627,7 +5572,7 @@ function toConversationAttachmentMetadata(attachments: ConversationAttachment[])
         type: "text",
         mimeType: attachment.mimeType,
         fileName: normalizedName,
-        filePath: normalizedPath,
+        fileRef,
         sizeBytes
       });
       continue;
@@ -5638,7 +5583,7 @@ function toConversationAttachmentMetadata(attachments: ConversationAttachment[])
         type: "binary",
         mimeType: attachment.mimeType,
         fileName: normalizedName,
-        filePath: normalizedPath,
+        fileRef,
         sizeBytes
       });
       continue;
@@ -5649,7 +5594,7 @@ function toConversationAttachmentMetadata(attachments: ConversationAttachment[])
         type: "image",
         mimeType: attachment.mimeType,
         fileName: normalizedName,
-        filePath: normalizedPath,
+        fileRef,
         sizeBytes
       });
     }
@@ -5664,15 +5609,15 @@ function toRuntimeDispatchAttachments(
 ): ConversationAttachment[] {
   return attachments.map((attachment, index) => {
     const persistedAttachment = persistedAttachments[index];
-    if (!persistedAttachment) {
+    const persistedPath = normalizeOptionalAttachmentPath(persistedAttachment?.filePath);
+    if (!persistedAttachment || !persistedPath) {
       return attachment;
     }
 
-    if (normalizeOptionalAttachmentPath(attachment.filePath)) {
-      return attachment;
-    }
-
-    return isConversationBinaryAttachment(attachment) ? persistedAttachment : attachment;
+    return {
+      ...attachment,
+      filePath: persistedPath
+    };
   });
 }
 
@@ -5787,6 +5732,21 @@ function normalizeOptionalAttachmentPath(path: string | undefined): string | und
 
   const trimmed = path.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function resolveAttachmentFileRef(path: string | undefined, uploadsDir: string): string | undefined {
+  const normalizedPath = normalizeOptionalAttachmentPath(path);
+  if (!normalizedPath) {
+    return undefined;
+  }
+
+  const resolvedPath = resolve(normalizedPath);
+  const resolvedUploadsDir = resolve(uploadsDir);
+  if (dirname(resolvedPath) !== resolvedUploadsDir) {
+    return undefined;
+  }
+
+  return basename(resolvedPath);
 }
 
 function extractRuntimeMessageText(message: string | RuntimeUserMessage): string {

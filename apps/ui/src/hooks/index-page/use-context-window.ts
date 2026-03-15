@@ -33,6 +33,24 @@ function isTextAttachmentWithContent(
   return attachment.type === 'text' && 'text' in attachment && typeof attachment.text === 'string'
 }
 
+function estimateTextAttachmentChars(attachment: ConversationMessageAttachment): number {
+  if (isTextAttachmentWithContent(attachment)) {
+    return attachment.text.length
+  }
+
+  if (
+    attachment.type === 'text' &&
+    'sizeBytes' in attachment &&
+    typeof attachment.sizeBytes === 'number' &&
+    Number.isFinite(attachment.sizeBytes) &&
+    attachment.sizeBytes > 0
+  ) {
+    return attachment.sizeBytes
+  }
+
+  return 0
+}
+
 function estimateUsedTokens(messages: ConversationEntry[]): number {
   let totalChars = 0
 
@@ -44,9 +62,7 @@ function estimateUsedTokens(messages: ConversationEntry[]): number {
     totalChars += entry.text.length
 
     for (const attachment of entry.attachments ?? []) {
-      if (isTextAttachmentWithContent(attachment)) {
-        totalChars += attachment.text.length
-      }
+      totalChars += estimateTextAttachmentChars(attachment)
     }
   }
 

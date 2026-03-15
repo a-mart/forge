@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -1642,17 +1642,14 @@ describe('SwarmManager', () => {
     }
   })
 
-  it('appends persisted attachment paths to runtime text while preserving image payloads', async () => {
+  it('ignores inbound attachment file paths and appends server-persisted paths to runtime text', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
 
     const worker = await manager.spawnAgent('manager', { agentId: 'Persisted Path Worker' })
-    const imagePath = join(config.paths.uploadsDir, 'diagram.png')
-    const textPath = join(config.paths.uploadsDir, 'notes.txt')
-
-    await writeFile(imagePath, Buffer.from('hello'))
-    await writeFile(textPath, 'hello from text attachment', 'utf8')
+    const spoofedImagePath = join(config.paths.dataDir, 'spoofed-image.png')
+    const spoofedTextPath = join(config.paths.dataDir, 'spoofed-notes.txt')
 
     await manager.handleUserMessage('Review these files', {
       targetAgentId: worker.agentId,
@@ -1661,13 +1658,13 @@ describe('SwarmManager', () => {
           mimeType: 'image/png',
           data: 'aGVsbG8=',
           fileName: 'diagram.png',
-          filePath: imagePath,
+          filePath: spoofedImagePath,
         },
         {
           type: 'text',
           mimeType: 'text/plain',
           fileName: 'notes.txt',
-          filePath: textPath,
+          filePath: spoofedTextPath,
           text: 'hello from text attachment',
         },
       ],
@@ -1687,8 +1684,12 @@ describe('SwarmManager', () => {
         },
       ])
       expect(sentMessage.text).toContain('Review these files')
-      expect(sentMessage.text).toContain(`[Attached file saved to: ${imagePath}]`)
-      expect(sentMessage.text).toContain(`[Attached file saved to: ${textPath}]`)
+      expect(sentMessage.text).not.toContain(spoofedImagePath)
+      expect(sentMessage.text).not.toContain(spoofedTextPath)
+      expect(sentMessage.text).toContain('hello from text attachment')
+
+      const persistedUploads = await readdir(config.paths.uploadsDir)
+      expect(persistedUploads).toHaveLength(2)
     }
   })
 

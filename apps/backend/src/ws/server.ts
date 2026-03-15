@@ -160,7 +160,10 @@ export class SwarmWebSocketServer {
       dataDir: this.swarmManager.getConfig().paths.dataDir,
       isSessionActive: (sessionAgentId) => wsHandlerRef?.hasActiveSubscription(sessionAgentId) ?? false
     });
-    this.controlPidFile = getControlPidFilePath(this.swarmManager.getConfig().paths.rootDir);
+    this.controlPidFile = getControlPidFilePath(
+      this.swarmManager.getConfig().paths.rootDir,
+      this.swarmManager.getConfig().port
+    );
     this.shouldManageControlPid = process.env[DAEMONIZED_ENV_VAR] !== "1";
 
     this.wsHandler = new WsHandler({
@@ -175,7 +178,6 @@ export class SwarmWebSocketServer {
     this.settingsRoutes = createSettingsRoutes({ swarmManager: this.swarmManager });
     this.httpRoutes = [
       ...createHealthRoutes({
-        resolveRepoRoot: () => this.swarmManager.getConfig().paths.rootDir,
         resolveControlPidFile: () => this.controlPidFile
       }),
       ...createFileRoutes({ swarmManager: this.swarmManager }),
