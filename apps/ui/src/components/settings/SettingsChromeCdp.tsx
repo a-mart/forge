@@ -654,7 +654,7 @@ export function SettingsChromeCdp({ wsUrl, onConfigChanged }: SettingsChromeCdpP
             variant="outline"
             size="sm"
             onClick={() => void handleDiscoverProfiles()}
-            disabled={isDiscoveringProfiles || !status?.connected}
+            disabled={isDiscoveringProfiles}
             className="gap-1.5"
           >
             {isDiscoveringProfiles ? (
@@ -666,11 +666,7 @@ export function SettingsChromeCdp({ wsUrl, onConfigChanged }: SettingsChromeCdpP
           </Button>
         </div>
 
-        {!status?.connected && (
-          <p className="text-[11px] text-muted-foreground/60">
-            Connect to Chrome first to discover profiles.
-          </p>
-        )}
+
       </SettingsSection>
 
       {/* Section 3: URL Filters */}
