@@ -4,6 +4,8 @@
 
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
 import type {
+  CortexPromptSurfaceContentResponse,
+  CortexPromptSurfaceListResponse,
   PromptCategory,
   PromptSourceLayer,
   PromptListEntry,
@@ -123,5 +125,68 @@ export async function deletePromptOverride(
     `/api/prompts/${encodeURIComponent(category)}/${encodeURIComponent(promptId)}?${params}`,
   )
   const response = await fetch(endpoint, { method: 'DELETE' })
+  if (!response.ok) throw new Error(await readApiError(response))
+}
+
+export async function fetchCortexPromptSurfaceList(
+  wsUrl: string | undefined,
+  profileId: string,
+): Promise<CortexPromptSurfaceListResponse> {
+  const params = new URLSearchParams({ profileId })
+  const endpoint = resolveApiEndpoint(wsUrl, `/api/prompts/cortex-surfaces?${params}`)
+  const response = await fetch(endpoint)
+  if (!response.ok) throw new Error(await readApiError(response))
+
+  const data = (await response.json()) as Partial<CortexPromptSurfaceListResponse>
+  return {
+    enabled: data.enabled === true,
+    surfaces: Array.isArray(data.surfaces) ? data.surfaces : [],
+  }
+}
+
+export async function fetchCortexPromptSurfaceContent(
+  wsUrl: string | undefined,
+  surfaceId: string,
+  profileId: string,
+): Promise<CortexPromptSurfaceContentResponse> {
+  const params = new URLSearchParams({ profileId })
+  const endpoint = resolveApiEndpoint(
+    wsUrl,
+    `/api/prompts/cortex-surfaces/${encodeURIComponent(surfaceId)}?${params}`,
+  )
+  const response = await fetch(endpoint)
+  if (!response.ok) throw new Error(await readApiError(response))
+  return (await response.json()) as CortexPromptSurfaceContentResponse
+}
+
+export async function saveCortexPromptSurface(
+  wsUrl: string | undefined,
+  surfaceId: string,
+  content: string,
+  profileId: string,
+): Promise<void> {
+  const endpoint = resolveApiEndpoint(
+    wsUrl,
+    `/api/prompts/cortex-surfaces/${encodeURIComponent(surfaceId)}`,
+  )
+  const response = await fetch(endpoint, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content, profileId }),
+  })
+  if (!response.ok) throw new Error(await readApiError(response))
+}
+
+export async function resetCortexPromptSurface(
+  wsUrl: string | undefined,
+  surfaceId: string,
+  profileId: string,
+): Promise<void> {
+  const params = new URLSearchParams({ profileId })
+  const endpoint = resolveApiEndpoint(
+    wsUrl,
+    `/api/prompts/cortex-surfaces/${encodeURIComponent(surfaceId)}/reset?${params}`,
+  )
+  const response = await fetch(endpoint, { method: 'POST' })
   if (!response.ok) throw new Error(await readApiError(response))
 }

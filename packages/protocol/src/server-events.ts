@@ -304,6 +304,14 @@ export interface PromptChangedEvent {
   action: 'saved' | 'deleted'
 }
 
+export interface CortexPromptSurfaceChangedEvent {
+  type: 'cortex_prompt_surface_changed'
+  profileId: string
+  surfaceId: string
+  filePath: string
+  updatedAt: string
+}
+
 export interface ApiProxyResponseEvent {
   type: 'api_proxy_response'
   requestId: string
@@ -348,5 +356,6 @@ export type ServerEvent =
   | PlaywrightDiscoveryUpdatedEvent
   | PlaywrightDiscoverySettingsUpdatedEvent
   | PromptChangedEvent
+  | CortexPromptSurfaceChangedEvent
   | ApiProxyResponseEvent
   | { type: 'error'; code: string; message: string; requestId?: string }
