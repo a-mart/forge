@@ -15,6 +15,18 @@ async function writeMeta(
   await writeFile(join(metaDir, 'meta.json'), `${JSON.stringify(meta, null, 2)}\n`, 'utf8')
 }
 
+async function writeSessionFile(
+  dataDir: string,
+  profileId: string,
+  sessionId: string,
+  fileName: string,
+  content: string,
+): Promise<void> {
+  const sessionDir = join(dataDir, 'profiles', profileId, 'sessions', sessionId)
+  await mkdir(sessionDir, { recursive: true })
+  await writeFile(join(sessionDir, fileName), content, 'utf8')
+}
+
 describe('cortex-scan script', () => {
   it('returns structured review status with summary totals', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'cortex-scan-test-'))
@@ -278,6 +290,47 @@ describe('cortex-scan script', () => {
 
     const output = await runCortexScan(dataDir)
     expect(output).toContain('feedback updated since last feedback review')
+  })
+
+  it('prefers actual session, memory, and feedback file sizes over stale meta byte fields', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'cortex-scan-test-'))
+    const profileId = 'zeta'
+    const sessionId = 'zeta--s1'
+    const sessionContent = 'session-live'
+    const memoryContent = 'memory-live'
+    const feedbackContent = 'feedback-live'
+
+    await writeSessionFile(dataDir, profileId, sessionId, 'session.jsonl', sessionContent)
+    await writeSessionFile(dataDir, profileId, sessionId, 'memory.md', memoryContent)
+    await writeSessionFile(dataDir, profileId, sessionId, 'feedback.jsonl', feedbackContent)
+    await writeMeta(dataDir, profileId, sessionId, {
+      profileId,
+      sessionId,
+      stats: {
+        sessionFileSize: '1',
+        memoryFileSize: '1',
+      },
+      feedbackFileSize: '1',
+      cortexReviewedBytes: sessionContent.length,
+      cortexReviewedAt: '2026-03-02T12:00:00.000Z',
+      cortexReviewedMemoryBytes: memoryContent.length,
+      cortexReviewedMemoryAt: '2026-03-02T12:00:00.000Z',
+      cortexReviewedFeedbackBytes: feedbackContent.length,
+      cortexReviewedFeedbackAt: '2026-03-02T12:00:00.000Z',
+      lastFeedbackAt: '2026-03-01T12:00:00.000Z',
+    })
+
+    const result = await scanCortexReviewStatus(dataDir)
+
+    expect(result.sessions[0]).toMatchObject({
+      totalBytes: sessionContent.length,
+      memoryTotalBytes: memoryContent.length,
+      feedbackTotalBytes: feedbackContent.length,
+      deltaBytes: 0,
+      memoryDeltaBytes: 0,
+      feedbackDeltaBytes: 0,
+      status: 'up-to-date',
+    })
   })
 
   it('treats malformed feedbackReviewedAt timestamps as review-needed when byte deltas are zero', async () => {

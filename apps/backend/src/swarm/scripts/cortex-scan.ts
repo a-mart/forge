@@ -1,4 +1,4 @@
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -91,7 +91,8 @@ export async function scanCortexReviewStatus(dataDir: string): Promise<ScanResul
         continue;
       }
 
-      const metaPath = join(sessionsDir, sessionEntry.name, "meta.json");
+      const sessionDir = join(sessionsDir, sessionEntry.name);
+      const metaPath = join(sessionDir, "meta.json");
       let rawMeta: string;
       try {
         rawMeta = await readFile(metaPath, "utf8");
@@ -112,7 +113,12 @@ export async function scanCortexReviewStatus(dataDir: string): Promise<ScanResul
       }
 
       const sessionId = typeof parsed?.sessionId === "string" ? parsed.sessionId : sessionEntry.name;
-      const totalBytes = parseSessionTotalBytes(parsed?.stats?.sessionFileSize);
+      const [actualSessionBytes, actualMemoryBytes, actualFeedbackBytes] = await Promise.all([
+        readExistingFileSize(join(sessionDir, "session.jsonl")),
+        readExistingFileSize(join(sessionDir, "memory.md")),
+        readExistingFileSize(join(sessionDir, "feedback.jsonl"))
+      ]);
+      const totalBytes = actualSessionBytes ?? parseSessionTotalBytes(parsed?.stats?.sessionFileSize);
       if (!Number.isFinite(totalBytes)) {
         continue;
       }
@@ -124,7 +130,7 @@ export async function scanCortexReviewStatus(dataDir: string): Promise<ScanResul
       const reviewedAt = typeof parsed?.cortexReviewedAt === "string" ? parsed.cortexReviewedAt : null;
       const deltaBytes = totalBytes - reviewedBytes;
 
-      const memoryTotalBytesRaw = parseSessionTotalBytes(parsed?.stats?.memoryFileSize);
+      const memoryTotalBytesRaw = actualMemoryBytes ?? parseSessionTotalBytes(parsed?.stats?.memoryFileSize);
       const memoryTotalBytes = Number.isFinite(memoryTotalBytesRaw) ? memoryTotalBytesRaw : 0;
       const memoryReviewedBytes =
         typeof parsed?.cortexReviewedMemoryBytes === "number" && Number.isFinite(parsed.cortexReviewedMemoryBytes)
@@ -134,7 +140,7 @@ export async function scanCortexReviewStatus(dataDir: string): Promise<ScanResul
         typeof parsed?.cortexReviewedMemoryAt === "string" ? parsed.cortexReviewedMemoryAt : null;
       const memoryDeltaBytes = memoryTotalBytes - memoryReviewedBytes;
 
-      const feedbackTotalBytesRaw = parseSessionTotalBytes(parsed?.feedbackFileSize);
+      const feedbackTotalBytesRaw = actualFeedbackBytes ?? parseSessionTotalBytes(parsed?.feedbackFileSize);
       const feedbackTotalBytes = Number.isFinite(feedbackTotalBytesRaw) ? feedbackTotalBytesRaw : 0;
       const feedbackReviewedBytes =
         typeof parsed?.cortexReviewedFeedbackBytes === "number" && Number.isFinite(parsed.cortexReviewedFeedbackBytes)
@@ -391,6 +397,15 @@ function parseSessionTotalBytes(value: unknown): number {
   }
 
   return Number.NaN;
+}
+
+async function readExistingFileSize(filePath: string): Promise<number | null> {
+  try {
+    const stats = await stat(filePath);
+    return stats.isFile() ? stats.size : null;
+  } catch {
+    return null;
+  }
 }
 
 async function main(): Promise<void> {
