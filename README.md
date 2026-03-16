@@ -1,4 +1,4 @@
-# 👔 Middleman Forge Edition
+# 🔨 Forge
 
 A local-first multi-agent orchestration platform. One manager, many workers, zero tab-juggling.
 
@@ -6,7 +6,7 @@ If you're using agentic coding tools, you've probably hit this wall: you start w
 
 You're not an IC anymore. You've become a project manager. You need a middle manager.
 
-**Middleman gives you one.** You talk to a single persistent manager agent per project. You describe what needs to be done — a feature, a batch of bug fixes, a refactor — and the manager dispatches workers, parallelizes where it makes sense, and surfaces only the things that need your attention.
+**Forge gives you one.** You talk to a single persistent manager agent per project. You describe what needs to be done — a feature, a batch of bug fixes, a refactor — and the manager dispatches workers, parallelizes where it makes sense, and surfaces only the things that need your attention.
 
 ## Quick Start
 
@@ -18,12 +18,15 @@ You're not an IC anymore. You've become a project manager. You need a middle man
 
 ### Install & Run
 
+<!-- TODO: confirm canonical URL before publish -->
 ```bash
 git clone https://github.com/radopsai/middleman.git
 cd middleman
 pnpm i
 pnpm prod:daemon
 ```
+
+Default configuration works out of the box. See [Configuration](#configuration) to customize.
 
 Open the UI at [http://127.0.0.1:47189](http://127.0.0.1:47189), go to **Settings**, and sign in with your OpenAI or Anthropic account (OAuth or API key). Create a manager, point it at your project directory, and start chatting.
 
@@ -41,13 +44,13 @@ Open the UI at [http://127.0.0.1:47189](http://127.0.0.1:47189), go to **Setting
 
 ## Architecture
 
-Middleman runs three layers on your machine:
+Forge runs three layers on your machine:
 
 | Layer | Description |
 |-------|-------------|
 | **Dashboard UI** (`apps/ui`) | TanStack Start + Vite SPA. Real-time agent monitoring, chat, settings, artifacts. |
 | **Backend Daemon** (`apps/backend`) | Node.js HTTP + WebSocket server. Agent orchestration, message routing, persistence, scheduler. |
-| **Agents** | Manager and worker agents powered by [pi](https://github.com/nichochar/pi). Each worker runs in its own worktree. |
+| **Agents** | Manager and worker agents powered by [pi](https://github.com/badlogic/pi-mono). Each worker runs in its own worktree. |
 
 Communication between UI and backend is over WebSocket. The backend spawns and manages agent processes, persists all state to disk, and handles integrations and scheduling.
 
@@ -66,7 +69,7 @@ pnpm build
 pnpm test
 
 # Typecheck (run from each package, not root)
-cd apps/backend && pnpm exec tsc --noEmit
+cd apps/backend && pnpm exec tsc -p tsconfig.build.json --noEmit
 cd apps/ui && pnpm exec tsc --noEmit
 ```
 
@@ -89,16 +92,16 @@ Production defaults:
 
 ## Platform Notes
 
-Middleman runs on **macOS**, **Linux**, and **Windows**.
+Forge runs on **macOS**, **Linux**, and **Windows**.
 
-| | macOS / Linux | Windows |
-|---|---|---|
-| Core functionality | ✅ | ✅ |
-| Dashboard UI | ✅ | ✅ |
-| Agent orchestration | ✅ | ✅ |
-| Playwright dashboard | ✅ | ❌ (Unix sockets required) |
-| Shell scripts (`scripts/*.sh`) | ✅ | Requires WSL or Git Bash |
-| Default data directory | `~/.middleman` | `%LOCALAPPDATA%\middleman` |
+| | macOS | Linux | Windows |
+|---|---|---|---|
+| Core functionality | ✅ | ✅ | ✅ |
+| Dashboard UI | ✅ | ✅ | ✅ |
+| Agent orchestration | ✅ | ✅ | ✅ |
+| Playwright dashboard | ✅ | ✅ | ❌ (Unix sockets required) |
+| Shell scripts (`scripts/*.sh`) | ✅ | ✅ | Requires WSL or Git Bash |
+| Default data directory | `~/.middleman` | `~/.middleman` | `%LOCALAPPDATA%\middleman` |
 
 See [docs/WINDOWS_SETUP.md](docs/WINDOWS_SETUP.md) for detailed Windows setup instructions.
 
@@ -108,37 +111,29 @@ See [docs/WINDOWS_SETUP.md](docs/WINDOWS_SETUP.md) for detailed Windows setup in
 middleman/
 ├── apps/
 │   ├── backend/       # Node.js daemon — orchestration, persistence, integrations
-│   ├── ui/            # React dashboard — TanStack Start + Vite SPA
-│   └── site/          # Landing page
+│   └── ui/            # React dashboard — TanStack Start + Vite SPA
 ├── packages/
 │   └── protocol/      # Shared TypeScript types and wire contracts
 ├── scripts/           # Production daemon, dev helpers (see scripts/README.md)
 ├── docs/              # Documentation
-└── .env               # Environment config (create from .env example below)
+└── .env               # Environment config (copy from .env.example)
 ```
 
 ## Configuration
 
-Create a `.env` file in the project root for environment overrides:
+Copy the example environment file and edit as needed:
 
 ```bash
-# Backend host and port
-MIDDLEMAN_HOST=127.0.0.1
-MIDDLEMAN_PORT=47187
-
-# Data directory (default: ~/.middleman on macOS/Linux, %LOCALAPPDATA%\middleman on Windows)
-# MIDDLEMAN_DATA_DIR=/path/to/data
-
-# WebSocket URL for UI to connect to backend (dev only — production auto-resolves)
-# VITE_MIDDLEMAN_WS_URL=ws://127.0.0.1:47187
-
-# Skill API keys (optional — enables specific skills)
-# BRAVE_API_KEY=...        # Web search skill
-# GEMINI_API_KEY=...       # Image generation skill
-
-# Playwright dashboard (macOS/Linux only)
-# MIDDLEMAN_PLAYWRIGHT_DASHBOARD_ENABLED=true
+cp .env.example .env
 ```
+
+The `.env.example` file documents all available options with comments. Key categories:
+
+- **Core** — Host, port, data directory, debug mode
+- **UI** — WebSocket URL override (dev only — production auto-resolves)
+- **Skills** — API keys for Brave Search, Gemini image generation
+- **Agent Runtimes** — Codex API key and binary path
+- **Playwright** — Dashboard toggle (macOS/Linux only)
 
 **API keys** for LLM providers (OpenAI, Anthropic) are configured in the dashboard UI under **Settings**, not in `.env`.
 
@@ -146,7 +141,7 @@ See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for the full configuration re
 
 ## Integrations
 
-Middleman supports messaging integrations so you can chat with your manager from mobile or desktop messaging apps:
+Forge supports messaging integrations so you can chat with your manager from mobile or desktop messaging apps:
 
 - **Telegram** — Create a bot via [@BotFather](https://t.me/botfather), add the token in Settings.
 - **Slack** — Create a Slack app with Socket Mode, add the bot and app tokens in Settings.
@@ -163,15 +158,19 @@ Managers and workers have access to built-in skills:
 |-------|-------------|----------|
 | **Web Search** | Search the web via Brave Search API | `BRAVE_API_KEY` |
 | **Image Generation** | Generate images with Google Gemini | `GEMINI_API_KEY` |
-| **Browser** | Interactive web browsing and extraction | `agent-browser` CLI |
+| **Browser** | Interactive web browsing and extraction | [`agent-browser`](https://github.com/vercel-labs/agent-browser) CLI |
+| **Chrome CDP** | Inspect and interact with a local Chrome session via DevTools Protocol | Local Chrome instance |
 | **Cron Scheduling** | Persistent scheduled tasks with cron expressions | — |
+| **Slash Commands** | Create and manage global slash commands | — |
 | **Memory** | Persistent agent memory across sessions | — |
 
 Skill API keys can be configured in the dashboard under **Settings → Environment Variables**. `.env` (or shell env vars) is still supported as a fallback.
 
 ## A Note
 
-This is a vibecoded project. It's here to inspire, not to be a polished product. Fork it, tear it apart, or use it as a starting point to build your own middle manager.
+Forge is built on [Middleman](https://github.com/SawyerHood/middleman) by Sawyer Hood.
+
+This project started as a personal tool and is shared in that spirit. It's functional, actively used in production, and being improved continuously — but it prioritizes practical utility over enterprise polish. Fork it, tear it apart, or use it as a starting point to build your own middle manager.
 
 ## License
 

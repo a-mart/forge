@@ -1,106 +1,217 @@
-# Middleman - Contributor Guide
+# Forge — Contributor & Development Guide
+
+> This file is auto-loaded by AI coding agents (e.g., the `pi` runtime) when working in this
+> directory. It also serves as the primary development reference for human contributors. Instructions
+> here apply to both audiences unless otherwise noted.
 
 ## What This Project Is
-`middleman` is a local-first multi-agent orchestration platform. It runs:
 
-1. A Node.js backend for manager/worker orchestration and persistence.
-2. A TanStack Start + Vite SPA for dashboard, chat, settings, and artifacts.
-3. Realtime updates over WebSocket.
+Forge is a local-first multi-agent orchestration platform. It provides:
 
-**Stack:** TypeScript, React 19, TanStack Router, Radix UI/shadcn, Tailwind v4, Vitest, pnpm monorepo
+1. A **Node.js backend** for manager/worker agent orchestration, persistence, and integrations.
+2. A **React SPA** (TanStack Start + Vite) for dashboard, chat, settings, and artifacts.
+3. **Real-time updates** over WebSocket.
 
-**Structure:**
-- `apps/backend` — Node.js daemon (HTTP + WebSocket server)
-- `apps/ui` — React SPA (TanStack Start + Vite)
-- `apps/site` — Landing page
-- `packages/protocol` — Shared types and wire contracts
+**Stack:** TypeScript, React 19, TanStack Start, Radix UI/shadcn, Tailwind v4, Vitest, pnpm monorepo
 
-**Data Storage:** All state lives in `~/.middleman` (or `%LOCALAPPDATA%\middleman` on Windows) with a hierarchical profile-scoped layout:
-- `profiles/<profileId>/` — sessions, memory, integrations, schedules
-- `shared/` — auth, secrets, global config
-- `swarm/agents.json` — agent registry
+## Prerequisites
 
-See `apps/backend/src/swarm/data-paths.ts` for path resolution logic.
+- **Node.js 22+**
+- **pnpm 10.30+** — install with `npm install -g pnpm` (exact version pinned in `package.json` → `packageManager`)
+- An **OpenAI** or **Anthropic** account (OAuth or API key, configured through the UI after first launch)
+
+## Getting Started
+
+```bash
+git clone https://github.com/radopsai/middleman.git
+cd middleman
+cp .env.example .env          # Review and set any needed env vars
+pnpm install
+pnpm dev                      # Starts backend + UI in dev mode
+```
+
+See the [README](README.md) for full setup instructions, including Windows-specific notes.
 
 ## Architecture Overview
 
 ### Frontend
+
 - SPA with TanStack Start + Vite in `apps/ui`.
-- Real-time client state and transport in `apps/ui/src/lib/ws-client.ts`.
+- Real-time client state and WebSocket transport in `apps/ui/src/lib/ws-client.ts`.
 - Core UI surfaces in `apps/ui/src/components/chat/*` and `apps/ui/src/components/settings/*`.
 
 ### Backend
+
 - HTTP + WebSocket server in `apps/backend/src/ws/server.ts`.
+- Route handlers in `apps/backend/src/ws/routes/*` (one file per domain: agents, sessions, settings, etc.).
 - Agent orchestration and runtime logic in `apps/backend/src/swarm/*`.
-- Integrations in `apps/backend/src/integrations/*`.
+- Integrations (Slack, Telegram) in `apps/backend/src/integrations/*`.
 - Scheduler in `apps/backend/src/scheduler/*`.
 
-### Contracts
-Canonical wire contracts are defined in `packages/protocol/`.
+### Protocol
+
+Shared TypeScript types and API message definitions live in `packages/protocol/`. Both backend and UI import from this package — any changes to message shapes must be made here first.
+
+### Additional Subsystems
+
+These are briefly described for orientation. Most have both backend and UI components.
+
+| Subsystem | Backend | UI | Purpose |
+|-----------|---------|-----|---------|
+| **Prompt system** | `swarm/prompt-registry.ts`, `swarm/archetypes/` | Settings UI | Prompt templates, archetypes, and resolution (profile → repo → builtin) |
+| **Memory system** | `swarm/memory-merge.ts`, `swarm/memory-paths.ts` | Chat UI | Per-session and per-profile persistent memory with merge lifecycle |
+| **Cortex** | `swarm/operational/` | `components/chat/cortex/` | AI self-improvement and knowledge management |
+| **Playwright dashboard** | `playwright/*` | `components/playwright/*` | Live browser preview and automation dashboard |
+| **Codex runtime** | `swarm/codex-agent-runtime.ts`, `swarm/codex-*.ts` | — | OpenAI Codex agent runtime integration |
+| **Mobile push** | `mobile/*` | — | Expo push notification service for mobile companion app |
+| **Voice/transcription** | `ws/routes/transcription-routes.ts` | `lib/voice-transcription-client.ts` | Voice input and transcription |
+| **Feedback** | `swarm/feedback-service.ts` | `lib/feedback-client.ts` | User feedback collection |
+| **Daemon management** | `reboot/`, `scripts/prod-daemon*.mjs` | — | Production process lifecycle (start, restart, PID tracking) |
+| **Reference docs** | `swarm/reference-docs.ts` | Settings UI | Profile-scoped reference documents |
+
+Backend paths above are relative to `apps/backend/src/`. UI paths are relative to `apps/ui/src/`.
+
+## Project Structure
+
+```
+middleman/
+├── apps/
+│   ├── backend/           # Node.js daemon — orchestration, persistence, integrations
+│   └── ui/                # React SPA — dashboard, chat, settings
+├── packages/
+│   └── protocol/          # Shared TypeScript types and API message definitions
+├── scripts/               # Production daemon scripts, test helpers, migration tools
+└── .env.example           # Environment variable reference
+```
+
+### Data Storage
+
+All runtime state lives in `~/.middleman` (or `%LOCALAPPDATA%\middleman` on Windows), overridable via `MIDDLEMAN_DATA_DIR`. The layout is profile-scoped:
+
+```
+~/.middleman/
+├── swarm/
+│   └── agents.json                        # Global agent registry
+├── uploads/                               # User-uploaded files
+├── shared/
+│   ├── auth/auth.json                     # Authentication credentials
+│   ├── secrets.json                       # Encrypted secrets
+│   ├── integrations/                      # Slack/Telegram integration configs
+│   ├── knowledge/                         # Knowledge base
+│   │   ├── common.md                      #   Common knowledge (cross-profile)
+│   │   └── profiles/<profileId>.md        #   Per-profile knowledge
+│   ├── slash-commands.json                # Global slash commands
+│   ├── playwright-dashboard.json          # Playwright dashboard settings
+│   ├── mobile-devices.json                # Registered mobile devices
+│   └── mobile-notification-prefs.json     # Mobile push preferences
+└── profiles/<profileId>/
+    ├── memory.md                          # Profile-level memory
+    ├── reference/                         # Profile reference documents
+    ├── integrations/                      # Profile integration configs
+    ├── schedules/schedules.json           # Scheduled tasks
+    ├── slash-commands.json                # Profile slash commands
+    └── sessions/<sessionId>/
+        ├── session.jsonl                  # Conversation history
+        ├── memory.md                      # Session working memory
+        ├── meta.json                      # Session metadata
+        ├── feedback.jsonl                 # User feedback
+        └── workers/<workerId>.jsonl       # Worker conversation logs
+```
+
+See `apps/backend/src/swarm/data-paths.ts` for the canonical path resolution logic.
 
 ## Development Commands
 
 ### Development
+
 ```bash
-pnpm dev
+pnpm dev                    # Start backend + UI in dev mode (with hot reload)
+pnpm dev:backend            # Start backend only
+pnpm dev:ui                 # Start UI only
 ```
-Starts backend + UI in one command (two local ports):
-- Backend HTTP + WS: `http://127.0.0.1:47187` / `ws://127.0.0.1:47187`
+
+Dev ports:
+- Backend HTTP + WS: `http://127.0.0.1:47187`
 - UI: `http://127.0.0.1:47188`
 
 ### Production
+
 ```bash
-pnpm prod
+pnpm prod                   # Build all packages, then start backend + UI
+pnpm prod:daemon            # Start as a background daemon (recommended for production)
+pnpm prod:restart           # Restart a running daemon
 ```
-Default production ports:
-- Backend HTTP + WS: `http://127.0.0.1:47287` / `ws://127.0.0.1:47287`
+
+> `pnpm prod` implicitly runs `pnpm build` before starting. The daemon commands in `scripts/` manage PID tracking and process lifecycle.
+
+Production ports:
+- Backend HTTP + WS: `http://127.0.0.1:47287`
 - UI preview: `http://127.0.0.1:47189`
 
 ### Validation
+
 ```bash
-pnpm build                                              # Build all packages
-pnpm test                                               # Run tests
-cd apps/backend && pnpm exec tsc -p tsconfig.build.json --noEmit
-cd apps/ui && pnpm exec tsc --noEmit
+pnpm build                                                # Build all packages
+pnpm test                                                 # Run all tests (backend + UI)
+cd apps/backend && pnpm exec tsc -p tsconfig.build.json --noEmit   # Backend typecheck
+cd apps/ui && pnpm exec tsc --noEmit                               # UI typecheck
 ```
 
-**Before finishing any task, run the backend and UI typecheck commands above and fix reported errors.**
+Run individual test files with Vitest:
+```bash
+cd apps/backend && pnpm exec vitest run src/swarm/__tests__/some-test.ts
+cd apps/ui && pnpm exec vitest run src/components/chat/SomeComponent.test.ts
+```
+
+**Before finishing any task, run both typecheck commands above and fix all reported errors.**
+
+## Environment Variables
+
+Copy `.env.example` to `.env` and uncomment/set values as needed. Key variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MIDDLEMAN_HOST` | `127.0.0.1` | Backend bind address |
+| `MIDDLEMAN_PORT` | `47187` | Backend port (production uses `47287`) |
+| `MIDDLEMAN_DATA_DIR` | `~/.middleman` | Data storage root |
+| `MIDDLEMAN_DEBUG` | `false` | Enable debug logging |
+| `VITE_MIDDLEMAN_WS_URL` | auto-detected | WebSocket URL override (dev mode only) |
+| `BRAVE_API_KEY` | — | Brave Search skill |
+| `GEMINI_API_KEY` | — | Image generation skill |
+| `CODEX_API_KEY` | — | OpenAI Codex runtime |
+| `CODEX_BIN` | `codex` | Path to Codex binary |
+| `MIDDLEMAN_PLAYWRIGHT_DASHBOARD_ENABLED` | `false` | Enable Playwright dashboard (macOS/Linux only) |
+
+See `.env.example` for the full reference.
 
 ## Working Conventions
 
 ### UI Components
-Use [shadcn/ui](https://ui.shadcn.com/) for shared UI primitives and new component additions. **Always prefer shadcn components over hand-rolled HTML elements.**
 
-Add components from the `apps/ui` directory using the shadcn CLI:
+Use [shadcn/ui](https://ui.shadcn.com/) for all shared UI primitives. Prefer shadcn components over hand-rolled HTML elements.
 
+To add a new shadcn component:
 ```bash
-cd apps/ui
-pnpm dlx shadcn@latest add <component-name>
+cd apps/ui                                      # Must run from apps/ui/ (where components.json lives)
+pnpm dlx shadcn@latest add <component-name>     # e.g., button, dialog, tabs
 ```
 
-For example:
-```bash
-cd apps/ui
-pnpm dlx shadcn@latest add button label switch select tabs separator scroll-area checkbox tooltip textarea
-```
-
-**Important:** The `shadcn` CLI must be run from `apps/ui/` (where `components.json` lives), not from the repo root.
-
-Generated components go to `apps/ui/src/components/ui/`. Check available components and usage at https://ui.shadcn.com/docs.
-
-Currently installed: badge, button, card, checkbox, context-menu, dialog, dropdown-menu, input, label, popover, scroll-area, select, separator, skeleton, switch, table, tabs, textarea, tooltip.
+Generated components go to `apps/ui/src/components/ui/`. Check that directory for currently installed components. Browse the [shadcn docs](https://ui.shadcn.com/docs) for usage and available components.
 
 ### Code Quality
-1. Preserve existing behavior and interaction patterns unless explicitly asked to change them.
-2. Keep event handling deterministic across live stream and replayed history.
-3. Prefer working within existing backend/frontend boundaries.
-4. Validate changes with smoke checks (manager creation, chat send/stop, settings updates).
-5. Run backend + UI typecheck commands before finishing any task (`cd apps/backend && pnpm exec tsc -p tsconfig.build.json --noEmit` and `cd apps/ui && pnpm exec tsc --noEmit`).
-6. Prefer shadcn/ui components over hand-rolled HTML for UI controls and surfaces.
+
+1. **Preserve existing behavior** unless explicitly asked to change it. The UI replays conversation history from JSONL files — event handling must work identically for both live-streamed and replayed messages.
+2. **Respect backend/frontend boundaries.** Shared types go in `packages/protocol/`. Don't duplicate type definitions across apps.
+3. **Validate changes** with smoke checks: manager creation, chat send/stop, settings updates.
+4. **Run typechecks** before finishing any task:
+   ```bash
+   cd apps/backend && pnpm exec tsc -p tsconfig.build.json --noEmit
+   cd apps/ui && pnpm exec tsc --noEmit
+   ```
 
 ## Platform Support
 
-Middleman supports both **macOS** and **Windows**. When working on cross-platform code:
+Forge supports **macOS**, **Linux**, and **Windows**. When working on cross-platform code:
 
 ### Path Handling
 - Use `path.join()` and `path.resolve()` instead of string concatenation.
@@ -113,20 +224,31 @@ Middleman supports both **macOS** and **Windows**. When working on cross-platfor
 - Use `process.platform` checks when platform-specific behavior is required.
 
 ### Feature Gating
-- Some features (like Playwright integration) are conditionally enabled based on platform capabilities.
-- Check `apps/backend/src/swarm/platform.ts` for platform detection utilities.
+- Playwright dashboard is gated by the `MIDDLEMAN_PLAYWRIGHT_DASHBOARD_ENABLED` env var and requires macOS or Linux (Unix sockets).
 
 ### File System
-- Be mindful of case sensitivity differences (macOS is case-insensitive by default, Linux is not).
+- Be mindful of case sensitivity differences (macOS is case-insensitive by default, Linux is case-sensitive).
 - Use `fs.promises` for async file operations.
 - Handle `ENOENT` and permission errors gracefully.
 
 ## Testing
 
-Smoke test checklist:
+### Automated Tests
+
+```bash
+pnpm test                                       # Run all tests
+cd apps/backend && pnpm exec vitest run          # Backend tests only
+cd apps/ui && pnpm exec vitest run               # UI tests only
+cd apps/backend && pnpm exec vitest run path/to/test.ts   # Single test file
+```
+
+### Smoke Test Checklist
+
+After making changes, manually verify these core flows in the UI (at `http://127.0.0.1:47188` in dev mode):
+
 - Create a new manager session
-- Send a chat message and verify response
-- Stop an active manager
-- Update settings (model, system prompt, etc.)
-- Verify WebSocket reconnection behavior
-- Test on both macOS and Windows if making platform-specific changes
+- Send a chat message and verify the response streams correctly
+- Stop an active manager mid-response
+- Update settings (model, system prompt, etc.) and verify they persist
+- Verify WebSocket reconnection after a backend restart
+- If making platform-specific changes, test on macOS, Linux, and Windows

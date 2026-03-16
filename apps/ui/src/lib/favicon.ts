@@ -4,8 +4,8 @@ import type {
   AgentStatus,
 } from '@middleman/protocol'
 
-export const DEFAULT_FAVICON_EMOJI = '👔'
-export const ACTIVE_FAVICON_EMOJI = '👨‍💻'
+export const DEFAULT_FAVICON_EMOJI = '🔨'
+export const ACTIVE_FAVICON_EMOJI = '🔥'
 
 type AgentLiveStatuses = Record<
   string,

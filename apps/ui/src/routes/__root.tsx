@@ -20,14 +20,14 @@ export const Route = createRootRoute({
         content: 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no',
       },
       {
-        title: 'Middleman Manager UI',
+        title: 'Forge',
       },
     ],
     links: [
       {
         rel: 'icon',
         type: 'image/svg+xml',
-        href: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%91%94%3C/text%3E%3C/svg%3E",
+        href: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%94%A8%3C/text%3E%3C/svg%3E",
       },
       {
         rel: 'stylesheet',

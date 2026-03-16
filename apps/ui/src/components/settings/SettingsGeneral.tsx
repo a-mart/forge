@@ -145,7 +145,7 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
                 </span>
               </>
             ) : (
-              'Discover Playwright CLI sessions across repo roots and worktrees, and correlate them with Middleman agents.'
+              'Discover Playwright CLI sessions across repo roots and worktrees, and correlate them with Forge agents.'
             )
           }
         >
@@ -192,11 +192,11 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
 
       <SettingsSection
         label="System"
-        description="Manage the Middleman daemon"
+        description="Manage the Forge daemon"
       >
         <SettingsWithCTA
           label="Reboot"
-          description="Restart the Middleman daemon and all agents"
+          description="Restart the Forge daemon and all agents"
         >
           <Button
             variant="outline"

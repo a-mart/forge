@@ -4,18 +4,19 @@
   "license": "Apache-2.0",
   "packageManager": "pnpm@10.30.1",
   "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "workspaces": [
     "apps/backend",
     "apps/ui",
-    "apps/site",
     "packages/protocol"
   ],
   "scripts": {
     "dev": "concurrently --kill-others-on-fail --names backend,ui \"pnpm --filter @middleman/backend dev\" \"pnpm --filter @middleman/ui dev\"",
     "dev:backend": "pnpm --filter @middleman/backend dev",
     "dev:ui": "pnpm --filter @middleman/ui dev",
-    "dev:site": "pnpm --filter @middleman/site dev",
-    "build": "pnpm --filter @middleman/protocol build && pnpm --filter @middleman/backend build && pnpm --filter @middleman/ui build && pnpm --filter @middleman/site build",
+    "build": "pnpm --filter @middleman/protocol build && pnpm --filter @middleman/backend build && pnpm --filter @middleman/ui build",
     "prod": "pnpm build && pnpm prod:start",
     "prod:start": "concurrently --kill-others-on-fail --names backend,ui \"cross-env NODE_ENV=production MIDDLEMAN_PORT=47287 pnpm --filter @middleman/backend start\" \"pnpm --filter @middleman/ui preview\"",
     "prod:daemon": "node scripts/prod-daemon.mjs",

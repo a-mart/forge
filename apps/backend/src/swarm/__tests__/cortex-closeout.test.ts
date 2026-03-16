@@ -42,7 +42,7 @@ describe("normalizeCortexUserVisiblePaths", () => {
   it("converts absolute Unix data paths to relative profile paths", () => {
     expect(
       normalizeCortexUserVisiblePaths(
-        "FILES: /Users/adam/.middleman-cortex-memory-v2-migrate/profiles/feature-manager/reference/gotchas.md, /Users/adam/.middleman-cortex-memory-v2-migrate/profiles/feature-manager/sessions/playwright-test/meta.json",
+        "FILES: /Users/testuser/.middleman-cortex-memory-v2-migrate/profiles/feature-manager/reference/gotchas.md, /Users/testuser/.middleman-cortex-memory-v2-migrate/profiles/feature-manager/sessions/playwright-test/meta.json",
       ),
     ).toBe(
       "FILES: profiles/feature-manager/reference/gotchas.md, profiles/feature-manager/sessions/playwright-test/meta.json",
@@ -52,7 +52,7 @@ describe("normalizeCortexUserVisiblePaths", () => {
   it("normalizes Windows-style absolute paths too", () => {
     expect(
       normalizeCortexUserVisiblePaths(
-        "FILES: C:\\Users\\adam\\AppData\\Local\\middleman\\profiles\\demo\\reference\\index.md",
+        "FILES: C:\\Users\\testuser\\AppData\\Local\\middleman\\profiles\\demo\\reference\\index.md",
       ),
     ).toBe("FILES: profiles/demo/reference/index.md")
   })
