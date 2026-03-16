@@ -64,7 +64,7 @@ Session JSONL format — each line is a JSON object:
 Review protocol — scan → prioritize → spawn → collect → classify → manifest → promote → watermark:
 1. **Scan**: Run the scan script yourself to find sessions with unreviewed content (see "Finding work" above). The scan reports transcript, memory, and feedback drift. Delegate scan only as an explicit fallback when you cannot safely run the bounded scan directly.
 2. **Prioritize**: Rank review work using more than bytes alone. Prefer explicit user corrections, feedback drift, never-reviewed sessions, and stale unresolved notes ahead of raw delta size when those signals conflict.
-3. **Lease**: Before the first real content change of a review cycle, confirm you are the active Cortex review owner. Use `shared/knowledge/.cortex-lock.json` as a simple singleton/lease file when you need an explicit ownership marker or stale-lock recovery trail. Helper scripts may manage this file, but manual file discipline is acceptable if those helpers are unavailable.
+3. **Lease**: Before the first real content change of a review cycle, confirm you are the active Cortex review owner. Use `shared/knowledge/.cortex-lock.json` as a simple singleton/lease file when you need an explicit ownership marker or stale-lock recovery trail. Prefer the `cortex-review-state` helper when available because it can acquire, renew, and release per-review leases with expiry checks; fall back to manual file discipline only if the helper path is unavailable.
 4. **Spawn**: For each session needing review, spawn bounded workers. Read `${SWARM_DATA_DIR}/shared/knowledge/.cortex-worker-prompts.md` for ready-to-use templates. One worker per session transcript delta. If session memory has changed, spawn a session-memory extraction worker too. If feedback drift exists, spawn a feedback telemetry worker. Shard very large deltas before synthesis when one worker would become unreliable.
 5. **Collect**: Require workers to send a concise callback via `send_message_to_agent` with: status, finding count, output artifact path, and any blockers. Workers write detailed findings to markdown artifacts — you read the artifacts, not raw sessions.
 6. **Classify**: Every finding gets one of four outcomes:
@@ -73,7 +73,7 @@ Review protocol — scan → prioritize → spawn → collect → classify → m
    - **reference** → valuable but too detailed for injection; goes to `profiles/<profileId>/reference/*.md`
    - **discard** → transient, duplicated, low-confidence, or task-local; dropped
 7. **Synthesize**: When 3+ workers have reported, run a synthesis pass to deduplicate and reconcile before promotion. For 1–2 workers, synthesize directly.
-8. **Manifest**: Before writing durable files, assemble a concise promotion manifest describing intended note/promote/no-op actions, target files, and blockers. Store the manifest under `shared/knowledge/.cortex-promotion-manifests/` when a review cycle is non-trivial or when multiple files may change. Helper scripts may write these manifests, but the important invariant is that the plan exists before watermark advancement.
+8. **Manifest**: Before writing durable files, assemble a concise promotion manifest describing intended note/promote/no-op actions, target files, and blockers. Store the manifest under `shared/knowledge/.cortex-promotion-manifests/` when a review cycle is non-trivial or when multiple files may change. Prefer the `cortex-review-state` helper when available so the manifest can be recorded before any watermark advancement.
 9. **Promote / hold**: Record `note` findings in working notes, and write promoted findings to their targets using `edit` for surgical updates. Only write when the destination content will actually change. Snapshot once per file immediately before the first real edit in that pass.
    - `note` findings → `.cortex-notes.md` or equivalent working-note surface
    - `inject` findings → `common.md` (cross-profile) or `profiles/<profileId>/memory.md` (profile-specific)
@@ -81,7 +81,7 @@ Review protocol — scan → prioritize → spawn → collect → classify → m
    - Prefer **note** over weak promotion.
    - Prefer **reference** over **inject** for narrow operational procedures, command catalogs, and long troubleshooting flows.
    - Prefer **discard** over weak retention. A clean no-op review is a success.
-10. **Review log**: Append a concise cycle record to `shared/knowledge/.cortex-review-log.jsonl` including reviewed scope, promoted/note/no-op outcome, changed files, blockers, and whether watermarks advanced. Helper scripts may append this log, but Cortex remains responsible for keeping it accurate.
+10. **Review log**: Append a concise cycle record to `shared/knowledge/.cortex-review-log.jsonl` including reviewed scope, promoted/note/no-op outcome, changed files, blockers, and whether watermarks advanced. Prefer the `cortex-review-state` helper when available so manifest creation, watermark writes, and review-log append happen in one best-effort finalization path.
 11. **Watermark**: Update `meta.json` review watermarks only after successful writes or a validated no-op outcome: `cortexReviewedBytes`, `cortexReviewedAt`, `cortexReviewedMemoryBytes`, `cortexReviewedMemoryAt`, `cortexReviewedFeedbackBytes`, `cortexReviewedFeedbackAt`. Never advance watermarks after a partial failed promotion.
 12. **Closeout (direct/on-demand reviews)**: After watermarking, emit exactly one concise `speak_to_user` completion that names the reviewed `profile/session`, lists changed files or `NONE`, and summarizes the durable outcome. When listing files, use paths relative to the active data dir (for example `profiles/<profileId>/reference/gotchas.md`) — never absolute host paths. If exact changed files are uncertain, prefer `NONE` over guessing. Never leave an on-demand review without a closeout, and never send a closeout for a different session than the one just reviewed.
 
@@ -223,10 +223,10 @@ For each review cycle:
 2. validate them against evidence, scope, and budget discipline
 3. snapshot each target file once immediately before its first real edit
 4. apply writes
-5. append a concise review-log entry and preserve any non-trivial manifest
-6. only then advance review watermarks
+5. preserve any non-trivial manifest and append a concise review-log entry when the cycle can be finalized cleanly
+6. advance review watermarks only when the cycle is being finalized successfully
 
-If any write fails, do not advance the corresponding watermarks. Prefer a recorded blocked cycle over a partial silent success. Use helper scripts for manifests/logs/locks when available, or manual file operations when they are not.
+If any write fails, do not advance the corresponding watermarks. Prefer a recorded blocked cycle over a partial silent success. Use helper-backed finalization for manifests/logs/locks when available, or manual file operations when they are not. Treat this as disciplined best-effort sequencing, not a guaranteed database-style transaction or perfectly atomic commit.
 
 ---
 
