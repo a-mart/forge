@@ -79,13 +79,15 @@ export class EmbeddedGitVersioningService implements VersioningMutationSink {
       await this.ensureRepositoryInitialized();
       this.started = true;
 
+      await this.reconcileNow("startup");
+
       if (this.reconcileIntervalMs > 0) {
         this.reconcileTimer = setInterval(() => {
-          void this.reconcileNow("interval");
+          void this.reconcileNow("interval").catch((error) => {
+            this.handleBackgroundFailure("interval reconcile", error);
+          });
         }, this.reconcileIntervalMs);
       }
-
-      await this.reconcileNow("startup");
     } catch (error) {
       this.disable(error instanceof Error ? error.message : String(error));
     }
@@ -150,16 +152,17 @@ export class EmbeddedGitVersioningService implements VersioningMutationSink {
 
     await this.enqueueGitOperation(async () => {
       this.clearFlushTimer();
-      const pending = this.takePendingMutations();
+      const pending = this.getPendingMutationEntriesSnapshot();
       if (pending.length === 0) {
         return;
       }
 
       await this.stageAndCommit({
-        explicitPaths: pending.map((mutation) => mutation.path),
-        mutations: pending,
+        explicitPaths: pending.map(([, mutation]) => mutation.path),
+        mutations: pending.map(([, mutation]) => mutation),
         reason
       });
+      this.deletePendingMutationEntries(pending);
     });
   }
 
@@ -170,32 +173,37 @@ export class EmbeddedGitVersioningService implements VersioningMutationSink {
 
     await this.enqueueGitOperation(async () => {
       this.clearFlushTimer();
-      const pending = this.takePendingMutations();
+      const pending = this.getPendingMutationEntriesSnapshot();
       const existingTrackedPaths = await enumerateExistingTrackedPaths(this.dataDir, {
         trackSessionMemory: this.trackSessionMemory
       });
       const indexedTrackedPaths = await this.listIndexedTrackedPaths();
-      const explicitPaths = Array.from(new Set([...existingTrackedPaths, ...indexedTrackedPaths, ...pending.map((mutation) => mutation.path)]));
+      const explicitPaths = Array.from(
+        new Set([...existingTrackedPaths, ...indexedTrackedPaths, ...pending.map(([, mutation]) => mutation.path)])
+      );
 
       await this.stageAndCommit({
         explicitPaths,
-        mutations: pending.map((mutation) => ({
+        indexedTrackedPaths,
+        mutations: pending.map(([, mutation]) => ({
           ...mutation,
           source: reason === "startup" ? "bootstrap" : mutation.source
         })),
         reason,
         defaultSource: reason === "startup" ? "bootstrap" : "reconcile"
       });
+      this.deletePendingMutationEntries(pending);
     });
   }
 
   private async stageAndCommit(options: {
     explicitPaths: string[];
+    indexedTrackedPaths?: Set<string>;
     mutations: VersioningMutation[];
     reason: string;
     defaultSource?: VersioningMutation["source"];
   }): Promise<void> {
-    const indexedTrackedPaths = await this.listIndexedTrackedPaths();
+    const indexedTrackedPaths = options.indexedTrackedPaths ?? await this.listIndexedTrackedPaths();
     const stageablePaths = await this.filterStageablePaths(options.explicitPaths, indexedTrackedPaths);
     if (stageablePaths.length === 0) {
       return;
@@ -430,7 +438,9 @@ export class EmbeddedGitVersioningService implements VersioningMutationSink {
   private scheduleDebouncedFlush(): void {
     this.clearFlushTimer();
     this.flushTimer = setTimeout(() => {
-      void this.flushPending("debounce");
+      void this.flushPending("debounce").catch((error) => {
+        this.handleBackgroundFailure("debounce flush", error);
+      });
     }, this.debounceMs);
   }
 
@@ -442,10 +452,16 @@ export class EmbeddedGitVersioningService implements VersioningMutationSink {
     this.flushTimer = undefined;
   }
 
-  private takePendingMutations(): VersioningMutation[] {
-    const values = Array.from(this.pendingMutations.values());
-    this.pendingMutations.clear();
-    return values;
+  private getPendingMutationEntriesSnapshot(): Array<[string, VersioningMutation]> {
+    return Array.from(this.pendingMutations.entries());
+  }
+
+  private deletePendingMutationEntries(entries: Array<[string, VersioningMutation]>): void {
+    for (const [path, mutation] of entries) {
+      if (this.pendingMutations.get(path) === mutation) {
+        this.pendingMutations.delete(path);
+      }
+    }
   }
 
   private async enqueueGitOperation(task: () => Promise<void>): Promise<void> {
@@ -457,7 +473,18 @@ export class EmbeddedGitVersioningService implements VersioningMutationSink {
     return next;
   }
 
+  private handleBackgroundFailure(operation: string, error: unknown): void {
+    const message = stringifyError(error);
+    this.logger.warn(`[versioning] ${operation} failed: ${message}`);
+    this.disable(message);
+  }
+
   private disable(reason: string): void {
+    this.clearFlushTimer();
+    if (this.reconcileTimer) {
+      clearInterval(this.reconcileTimer);
+      this.reconcileTimer = undefined;
+    }
     this.enabled = false;
     this.started = false;
     this.logger.warn(`[versioning] Embedded Git versioning disabled: ${reason}`);

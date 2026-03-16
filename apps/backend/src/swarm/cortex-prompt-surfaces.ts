@@ -7,6 +7,7 @@ import type {
   PromptCategory,
   ServerEvent,
 } from "@middleman/protocol";
+import type { VersioningMutationSink } from "../versioning/versioning-types.js";
 import {
   getCommonKnowledgePath,
   getCortexNotesPath,
@@ -298,6 +299,7 @@ export async function writeTrackedCortexPromptSurfaceFile(options: {
   filePath: string;
   content: string;
   broadcastEvent?: (event: ServerEvent) => void;
+  versioning?: VersioningMutationSink;
 }): Promise<{ surfaceId: string; filePath: string; lastModifiedAt: string; bytesWritten: number }> {
   const trackedSurface = getTrackedCortexPromptSurfaceByPath(options.dataDir, options.filePath);
   if (!trackedSurface) {
@@ -316,6 +318,15 @@ export async function writeTrackedCortexPromptSurfaceFile(options: {
     updatedAt: lastModifiedAt,
   });
 
+  void options.versioning?.recordMutation({
+    path: trackedSurface.filePath,
+    action: "write",
+    source: "api-write-file",
+    profileId: CORTEX_PROFILE_ID,
+  }).catch(() => {
+    // Fail open: Cortex prompt-surface writes succeed even when versioning cannot record them.
+  });
+
   return {
     surfaceId: trackedSurface.surfaceId,
     filePath: trackedSurface.filePath,
@@ -331,6 +342,7 @@ export async function saveCortexPromptSurface(options: {
   content: string;
   promptRegistry: PromptRegistryForRoutes;
   broadcastEvent?: (event: ServerEvent) => void;
+  versioning?: VersioningMutationSink;
 }): Promise<void> {
   if (!isCortexProfile(options.profileId)) {
     throw new Error("Cortex prompt surfaces are only available for the cortex profile.");
@@ -372,6 +384,7 @@ export async function saveCortexPromptSurface(options: {
     filePath,
     content: options.content,
     broadcastEvent: options.broadcastEvent,
+    versioning: options.versioning,
   });
 }
 
@@ -381,6 +394,7 @@ export async function resetCortexPromptSurface(options: {
   surfaceId: string;
   promptRegistry: PromptRegistryForRoutes;
   broadcastEvent?: (event: ServerEvent) => void;
+  versioning?: VersioningMutationSink;
 }): Promise<void> {
   if (!isCortexProfile(options.profileId)) {
     throw new Error("Cortex prompt surfaces are only available for the cortex profile.");
@@ -436,6 +450,7 @@ export async function resetCortexPromptSurface(options: {
     filePath,
     content: templateContent,
     broadcastEvent: options.broadcastEvent,
+    versioning: options.versioning,
   });
 }
 

@@ -212,6 +212,7 @@ export class SwarmWebSocketServer {
             dataDir: this.swarmManager.getConfig().paths.dataDir,
             broadcastEvent: (event) => this.wsHandler.broadcastToSubscribed(event),
             promptPreviewProvider: this.swarmManager,
+            versioning: this.swarmManager.getVersioningService(),
           })
         : []),
     ];

@@ -1008,6 +1008,85 @@ describe('SwarmWebSocketServer', () => {
     await expect(readFile(`${workerPromptsPath}.v2.bak`, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
+  it('records versioning mutations for Cortex prompt-surface file saves and resets', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port)
+    const recordMutation = vi.fn(async () => true)
+
+    const manager = new TestSwarmManager(config, {
+      versioningService: {
+        isTrackedPath: () => true,
+        recordMutation,
+        flushPending: async () => {},
+        reconcileNow: async () => {},
+      },
+    })
+    await bootWithDefaultManager(manager, config)
+
+    const commonKnowledgePath = getCommonKnowledgePath(config.paths.dataDir)
+    const workerPromptsPath = getCortexWorkerPromptsPath(config.paths.dataDir)
+    const customTemplate = [
+      '# Cortex Worker Prompt Templates — v3',
+      '<!-- Cortex Worker Prompts Version: 3 -->',
+      '',
+      'Custom template content.',
+      '',
+    ].join('\n')
+
+    await manager.promptRegistry.save('operational', 'cortex-worker-prompts', customTemplate, 'cortex')
+    recordMutation.mockClear()
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+      promptRegistry: manager.promptRegistry,
+    })
+
+    await server.start()
+
+    try {
+      const saveResponse = await fetch(
+        `http://${config.host}:${config.port}/api/prompts/cortex-surfaces/common-knowledge-live`,
+        {
+          method: 'PUT',
+          headers: {
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({
+            profileId: 'cortex',
+            content: '# Common Knowledge\n\nUpdated through cortex surface save\n',
+          }),
+        },
+      )
+      expect(saveResponse.status).toBe(200)
+
+      const resetResponse = await fetch(
+        `http://${config.host}:${config.port}/api/prompts/cortex-surfaces/cortex-worker-prompts-live/reset?profileId=cortex`,
+        {
+          method: 'POST',
+        },
+      )
+      expect(resetResponse.status).toBe(200)
+
+      expect(recordMutation).toHaveBeenNthCalledWith(1, {
+        path: commonKnowledgePath,
+        action: 'write',
+        source: 'api-write-file',
+        profileId: 'cortex',
+      })
+      expect(recordMutation).toHaveBeenNthCalledWith(2, {
+        path: workerPromptsPath,
+        action: 'write',
+        source: 'api-write-file',
+        profileId: 'cortex',
+      })
+    } finally {
+      await server.stop()
+    }
+  })
+
   it('emits a Cortex prompt surface change event when POST /api/write-file updates a tracked Cortex file', async () => {
     const port = await getAvailablePort()
     const config = await makeTempConfig(port)

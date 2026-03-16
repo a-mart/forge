@@ -19,6 +19,7 @@ import {
   resetCortexPromptSurface,
   saveCortexPromptSurface,
 } from "../../swarm/cortex-prompt-surfaces.js";
+import type { VersioningMutationSink } from "../../versioning/versioning-types.js";
 import {
   applyCorsHeaders,
   readJsonBody,
@@ -118,8 +119,9 @@ export function createPromptRoutes(options: {
   dataDir: string;
   broadcastEvent: (event: ServerEvent) => void;
   promptPreviewProvider?: PromptPreviewProvider;
+  versioning?: VersioningMutationSink;
 }): HttpRoute[] {
-  const { promptRegistry, dataDir, broadcastEvent, promptPreviewProvider } = options;
+  const { promptRegistry, dataDir, broadcastEvent, promptPreviewProvider, versioning } = options;
 
   return [
     // ── Preview full manager runtime context ──────────────────
@@ -316,6 +318,7 @@ export function createPromptRoutes(options: {
             surfaceId,
             promptRegistry,
             broadcastEvent,
+            versioning,
           });
           sendJson(response, 200, { reset: true });
         } catch (error) {
@@ -379,6 +382,7 @@ export function createPromptRoutes(options: {
               content,
               promptRegistry,
               broadcastEvent,
+              versioning,
             });
             sendJson(response, 200, { saved: true });
           } catch (error) {
