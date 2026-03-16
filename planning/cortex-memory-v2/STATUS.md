@@ -73,10 +73,10 @@ Implement the full Cortex memory redesign with:
 - **Phase 5**: Extended `GET /api/cortex/scan` with `files.profileMergeAudit[profileId]` so validators/UI/Cortex can discover existing `profiles/<profileId>/merge-audit.log` paths without introducing a new profile-level review-state file, and zero-byte audit logs now report `exists: true`.
 
 ## Next Up
-1. Continue fresh isolated live-dispatch investigation with bounded, evidence-rich runs; keep the blocker framed as env/auth unless product evidence says otherwise.
-2. Run more copied-prod Cortex behavior against historical conversations and evaluate the resulting memory/knowledge output quality.
-3. Keep the backend/full-suite gate clean after the low-churn env-sensitive test fixes captured in `planning/cortex-memory-v2/E2E_BACKEND_GATES.md`.
-4. Keep `planning/cortex-memory-v2/OVERNIGHT_RUNBOOK.md`, `E2E_EXEC_SUMMARY.md`, `E2E_ACTIVE_TRACKER.md`, and `E2E_TEST_INDEX.md` aligned as overnight evidence expands.
+1. Keep pushing repeated copied-history stress runs to confirm the improved closeout/review behavior holds across more scenario shapes, not just the postfix trio.
+2. Keep the backend/full-suite gate clean after the low-churn env-sensitive test fixes captured in `planning/cortex-memory-v2/E2E_BACKEND_GATES.md`.
+3. Keep `planning/cortex-memory-v2/OVERNIGHT_RUNBOOK.md`, `E2E_EXEC_SUMMARY.md`, `E2E_ACTIVE_TRACKER.md`, and `E2E_TEST_INDEX.md` aligned as hardening evidence expands.
+4. Decide whether the newest hardening posture should also be folded into the formal package docs beyond the tracker/postfix artifacts.
 
 ## Open User Review Gates
 - None currently

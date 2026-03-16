@@ -49,7 +49,7 @@
 ## Overnight Validation / Follow-Through
 - [x] Build a synthesis-ready E2E evidence package (`E2E_EXEC_SUMMARY.md`, `E2E_TEST_INDEX.md`, `E2E_ACTIVE_TRACKER.md`)
 - [x] Add 30-minute overnight Cortex heartbeat schedules for the next ~6 hours
-- [ ] Continue fresh isolated live-dispatch investigation with bounded, evidence-rich runs only
+- [x] Continue fresh isolated live-dispatch investigation with bounded, evidence-rich runs only
 - [ ] Run additional copied-prod Cortex behavior against historical conversations and evaluate memory/knowledge usefulness
 - [x] Investigate or explicitly waive the 2 failing backend tests recorded in `.tmp/e2e-full-backend-vitest.log`
 - [ ] Keep `OVERNIGHT_RUNBOOK.md`, summary, tracker, and test index aligned as new evidence lands

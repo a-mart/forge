@@ -594,7 +594,7 @@ const IDLE_WORKER_WATCHDOG_MESSAGE_TEMPLATE = `⚠️ [IDLE WORKER WATCHDOG — 
 Workers: \${WORKER_IDS}
 
 Use list_agents({"verbose":true,"limit":50,"offset":0}) for a paged full list.`;
-const CORTEX_USER_CLOSEOUT_REMINDER_MESSAGE = `SYSTEM: Before ending this direct review, publish a concise speak_to_user closeout. State the reviewed scope, whether anything was promoted, which files changed (or NONE), and whether follow-up remains. Do this even for a no-op review.`;
+const CORTEX_USER_CLOSEOUT_REMINDER_MESSAGE = `SYSTEM: Before ending this direct review, publish a concise speak_to_user closeout. State the reviewed scope, whether anything was promoted, which files changed (or NONE), and whether follow-up remains. Report changed files as paths relative to the active data dir only — never absolute host paths. If exact files are uncertain, prefer NONE over guessing. Do this even for a no-op review.`;
 
 // Retain recent non-web activity while preserving the full user-facing web transcript.
 const SWARM_CONTEXT_FILE_NAME = "SWARM.md";
@@ -865,6 +865,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly modelCapacityBlocks = new Map<string, ModelCapacityBlock>();
   private readonly lastWorkerCompletionReportTimestampByAgentId = new Map<string, number>();
   private readonly lastCortexCloseoutReminderUserTimestampByAgentId = new Map<string, number>();
+  private readonly cortexCloseoutReminderTimersByAgentId = new Map<string, NodeJS.Timeout>();
   private readonly conversationProjector: ConversationProjector;
   private readonly persistenceService: PersistenceService;
   private readonly runtimeFactory: RuntimeFactory;
@@ -2722,10 +2723,15 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     targetContext?: MessageTargetContext
   ): Promise<{ targetContext: MessageSourceContext }> {
     let resolvedTargetContext: MessageSourceContext;
+    let normalizedText = text;
 
     if (source === "speak_to_user") {
-      this.assertManager(agentId, "speak to user");
+      const descriptor = this.assertManager(agentId, "speak to user");
       resolvedTargetContext = this.resolveReplyTargetContext(targetContext);
+
+      if (normalizeArchetypeId(descriptor.archetypeId ?? "") === CORTEX_ARCHETYPE_ID) {
+        normalizedText = normalizeCortexUserVisiblePaths(text);
+      }
     } else {
       resolvedTargetContext = normalizeMessageSourceContext(targetContext ?? { channel: "web" });
     }
@@ -2734,7 +2740,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       type: "conversation_message",
       agentId,
       role: source === "system" ? "system" : "assistant",
-      text,
+      text: normalizedText,
       timestamp: this.now(),
       source,
       sourceContext: resolvedTargetContext
@@ -2749,7 +2755,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       source,
       agentId,
       targetContext: resolvedTargetContext,
-      textPreview: previewForLog(text)
+      textPreview: previewForLog(normalizedText)
     });
 
     return {
@@ -4473,13 +4479,49 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       contextUsage: descriptor.contextUsage
     });
 
-    if (descriptor.role === "manager" && nextStatus === "idle" && pendingCount === 0) {
-      await this.maybeRemindCortexCloseout(descriptor);
+    if (descriptor.role === "manager") {
+      if (nextStatus === "idle" && pendingCount === 0) {
+        this.scheduleCortexCloseoutReminder(descriptor.agentId);
+      } else {
+        this.clearCortexCloseoutReminder(descriptor.agentId);
+      }
     }
   }
 
-  private async maybeRemindCortexCloseout(descriptor: AgentDescriptor): Promise<void> {
+  private scheduleCortexCloseoutReminder(agentId: string): void {
+    this.clearCortexCloseoutReminder(agentId);
+
+    const timer = setTimeout(() => {
+      this.cortexCloseoutReminderTimersByAgentId.delete(agentId);
+      void this.maybeRemindCortexCloseout(agentId);
+    }, 250);
+
+    this.cortexCloseoutReminderTimersByAgentId.set(agentId, timer);
+  }
+
+  private clearCortexCloseoutReminder(agentId: string): void {
+    const timer = this.cortexCloseoutReminderTimersByAgentId.get(agentId);
+    if (!timer) {
+      return;
+    }
+    clearTimeout(timer);
+    this.cortexCloseoutReminderTimersByAgentId.delete(agentId);
+  }
+
+  private async maybeRemindCortexCloseout(agentId: string): Promise<void> {
+    const descriptor = this.descriptors.get(agentId);
+    if (!descriptor) {
+      return;
+    }
     if (normalizeArchetypeId(descriptor.archetypeId ?? "") !== CORTEX_ARCHETYPE_ID) {
+      return;
+    }
+    if (descriptor.status !== "idle") {
+      return;
+    }
+
+    const runtime = this.runtimes.get(agentId);
+    if (runtime && runtime.getPendingCount() > 0) {
       return;
     }
 
@@ -6201,6 +6243,18 @@ function truncateWorkerCompletionText(text: string, maxChars: number): string {
   }
 
   return `${truncated}${WORKER_COMPLETION_TRUNCATION_SUFFIX}`;
+}
+
+export function normalizeCortexUserVisiblePaths(text: string): string {
+  return text.replace(/(?:[A-Za-z]:)?(?:[\\/][^,\s`]+)+[\\/]profiles(?:[\\/][^,\s`]+)+/g, (matchedPath) => {
+    const normalized = matchedPath.replace(/\\/g, "/");
+    const profilesIndex = normalized.toLowerCase().lastIndexOf("/profiles/");
+    if (profilesIndex < 0) {
+      return matchedPath;
+    }
+
+    return normalized.slice(profilesIndex + 1);
+  });
 }
 
 export function analyzeLatestCortexCloseoutNeed(

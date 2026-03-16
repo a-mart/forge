@@ -577,6 +577,23 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
     }
   }
 
+  private async startNextQueuedTurn(details?: Record<string, unknown>): Promise<void> {
+    if (this.status === "terminated" || this.startRequestPending || this.activeTurnId || this.queuedSteers.length === 0) {
+      return;
+    }
+
+    const next = this.queuedSteers.shift()!;
+    try {
+      await this.startTurn(next.message);
+    } catch (error) {
+      consumePendingDeliveryByMessageKey(this.pendingDeliveries, buildRuntimeMessageKey(next.message));
+      await this.recoverFromTurnFailure("steer_delivery", error, {
+        deliveryId: next.deliveryId,
+        ...details
+      });
+    }
+  }
+
   private async handleNotification(notification: JsonRpcNotificationMessage): Promise<void> {
     switch (notification.method) {
       case "turn/started": {
@@ -611,14 +628,9 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
         }
 
         if (this.queuedSteers.length > 0) {
-          const next = this.queuedSteers.shift()!;
-          try {
-            await this.startTurn(next.message);
-          } catch (error) {
-            await this.recoverFromTurnFailure("steer_delivery", error, {
-              deliveryId: next.deliveryId
-            });
-          }
+          await this.startNextQueuedTurn({
+            recovery: "turn_completed"
+          });
           return;
         }
 
@@ -940,6 +952,12 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
           });
         }
       }
+    }
+
+    if (phase === "steer_delivery" && this.queuedSteers.length > 0) {
+      await this.startNextQueuedTurn({
+        recovery: "steer_failure_recovery"
+      });
     }
   }
 

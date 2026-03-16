@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { analyzeLatestCortexCloseoutNeed } from "../swarm-manager.js";
+import { analyzeLatestCortexCloseoutNeed, normalizeCortexUserVisiblePaths } from "../swarm-manager.js";
 import type { AgentMessageEvent, ConversationEntryEvent, ConversationMessageEvent } from "../types.js";
 
 function userEntry(timestamp: string, text = "review this"): ConversationMessageEvent {
@@ -37,6 +37,26 @@ function workerEntry(timestamp: string, text = "STATUS: DONE"): AgentMessageEven
     text
   };
 }
+
+describe("normalizeCortexUserVisiblePaths", () => {
+  it("converts absolute Unix data paths to relative profile paths", () => {
+    expect(
+      normalizeCortexUserVisiblePaths(
+        "FILES: /Users/adam/.middleman-cortex-memory-v2-migrate/profiles/feature-manager/reference/gotchas.md, /Users/adam/.middleman-cortex-memory-v2-migrate/profiles/feature-manager/sessions/playwright-test/meta.json",
+      ),
+    ).toBe(
+      "FILES: profiles/feature-manager/reference/gotchas.md, profiles/feature-manager/sessions/playwright-test/meta.json",
+    )
+  })
+
+  it("normalizes Windows-style absolute paths too", () => {
+    expect(
+      normalizeCortexUserVisiblePaths(
+        "FILES: C:\\Users\\adam\\AppData\\Local\\middleman\\profiles\\demo\\reference\\index.md",
+      ),
+    ).toBe("FILES: profiles/demo/reference/index.md")
+  })
+})
 
 describe("analyzeLatestCortexCloseoutNeed", () => {
   it("does nothing when no direct user turn exists", () => {

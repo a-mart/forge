@@ -372,6 +372,81 @@ describe('CodexAgentRuntime behavior', () => {
     await runtime.terminate({ abort: false })
   })
 
+  it('recovers from steer delivery failure by starting the queued message as a new turn', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'swarm-codex-runtime-'))
+    const descriptor = makeDescriptor(tempDir)
+    await mkdir(dirname(descriptor.sessionFile), { recursive: true })
+
+    const runtimeErrors: RuntimeErrorEvent[] = []
+    let turnStartCalls = 0
+
+    rpcMockState.requestImpl.mockImplementation(async (_client: any, method: string) => {
+      if (method === 'initialize') {
+        return {}
+      }
+
+      if (method === 'account/read') {
+        return { requiresOpenaiAuth: false, account: { id: 'acct-1' } }
+      }
+
+      if (method === 'thread/start') {
+        return { thread: { id: 'thread-1' } }
+      }
+
+      if (method === 'turn/start') {
+        turnStartCalls += 1
+        return { turn: { id: `turn-${turnStartCalls}` } }
+      }
+
+      if (method === 'turn/steer') {
+        throw new Error('no active turn to steer')
+      }
+
+      throw new Error(`Unexpected method: ${method}`)
+    })
+
+    const runtime = await CodexAgentRuntime.create({
+      descriptor,
+      callbacks: {
+        onStatusChange: async () => {},
+        onRuntimeError: async (_agentId, event) => {
+          runtimeErrors.push(event)
+        },
+      },
+      systemPrompt: 'You are a test codex runtime.',
+      tools: [],
+    })
+
+    const first = await runtime.sendMessage('first prompt')
+    expect(first.acceptedMode).toBe('prompt')
+
+    const queued = await runtime.sendMessage('queued after steer failure')
+    expect(queued.acceptedMode).toBe('steer')
+
+    const instance = rpcMockState.instances[0]
+    const requestMethods = instance.requestCalls.map((entry: { method: string }) => entry.method)
+    const turnStartRequests = instance.requestCalls.filter((entry: { method: string }) => entry.method === 'turn/start')
+    const steerRequests = instance.requestCalls.filter((entry: { method: string }) => entry.method === 'turn/steer')
+
+    expect(requestMethods).toEqual(
+      expect.arrayContaining(['turn/start', 'turn/steer', 'turn/start']),
+    )
+    expect(turnStartRequests).toHaveLength(2)
+    expect(steerRequests).toHaveLength(1)
+    expect(runtimeErrors).toContainEqual(
+      expect.objectContaining({
+        phase: 'steer_delivery',
+        message: 'no active turn to steer',
+        details: expect.objectContaining({
+          queuedDeliveryId: queued.deliveryId,
+        }),
+      }),
+    )
+    expect(runtime.getStatus()).toBe('streaming')
+
+    await runtime.terminate({ abort: false })
+  })
+
   it('translates turn notifications, handles runtime exit, and reports terminated status', async () => {
     const tempDir = await mkdtemp(join(tmpdir(), 'swarm-codex-runtime-'))
     const descriptor = makeDescriptor(tempDir)

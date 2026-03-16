@@ -103,7 +103,7 @@ The earlier failures were traced to env-sensitive test assumptions, not Memory v
 | 3. Ownership / Memory Behavior | **PASS** | Ownership split is strong, and direct memory-skill target proof now exists for both root and sub-session writable targets. |
 | 4. Reference-Doc Behavior | **PASS** | Migration, preservation, fresh no-legacy dependency, and non-injection behavior are sufficiently evidenced via runtime + focused tests. |
 | 5. Merge / Promotion Behavior | **PASS (mixed live + test-backed)** | Happy-path merge, seed, idempotent skip, audit, and meta evidence are strong. Some deeper failure/retry coverage remains primarily automated-test backed. |
-| 6. Auth / Isolation Behavior | **PARTIAL** | Canonical path and isolated boot behavior are proved. Production non-touch is carried by an evidence-backed waiver note rather than byte-diff proof, and fresh runtime auth remains unusable in the test env. |
+| 6. Auth / Isolation Behavior | **PASS with AUTH-03 caveat** | Canonical path and isolated boot behavior are proved. Fresh isolated live dispatch also passes after repairing isolated auth from the valid legacy source. Production non-touch is still carried by an evidence-backed waiver note rather than byte-diff proof. |
 | 7. Operational Safety | **PASS** | Backend/UI typechecks are clean and the full backend Vitest suite now passes after low-churn env-sensitive test hardening. |
 
 ## 8) Merge assessment
