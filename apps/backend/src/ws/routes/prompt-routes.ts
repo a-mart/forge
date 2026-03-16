@@ -230,6 +230,9 @@ export function createPromptRoutes(options: {
     },
 
     // ── Cortex prompt surfaces ────────────────────────────────
+    // NOTE: These routes must stay ahead of the generic PROMPT_ITEM_PATTERN route below,
+    // because `/api/prompts/cortex-surfaces/:surfaceId` would otherwise also match the
+    // generic `/api/prompts/:category/:promptId` handler.
     {
       methods: "GET, OPTIONS",
       matches: (pathname) => pathname === CORTEX_SURFACES_LIST_PATH,

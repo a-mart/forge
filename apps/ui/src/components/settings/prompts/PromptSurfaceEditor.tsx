@@ -131,6 +131,8 @@ function FilePromptSurfaceEditor({
   const [resetting, setResetting] = useState(false)
   const [successMessage, setSuccessMessage] = useState<string | null>(null)
   const successTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
+  const contentRef = useRef(content)
+  const originalContentRef = useRef(originalContent)
 
   const isDirty = content !== originalContent
   const canReset = entry?.resetMode === 'reseedFromTemplate'
@@ -142,13 +144,21 @@ function FilePromptSurfaceEditor({
     setPendingRemoteEntry(null)
   }, [])
 
+  useEffect(() => {
+    contentRef.current = content
+  }, [content])
+
+  useEffect(() => {
+    originalContentRef.current = originalContent
+  }, [originalContent])
+
   const loadContent = useCallback(async (options?: { preserveDirty?: boolean }) => {
     setLoading(true)
     setError(null)
     try {
       const data = await fetchCortexPromptSurfaceContent(wsUrl, surface.surfaceId, profileId)
-      if (options?.preserveDirty && content !== originalContent) {
-        if (data.content !== originalContent) {
+      if (options?.preserveDirty && contentRef.current !== originalContentRef.current) {
+        if (data.content !== originalContentRef.current) {
           setEntry((current) => current ? { ...current, ...data } : data)
           setPendingRemoteEntry(data)
           return
@@ -163,7 +173,7 @@ function FilePromptSurfaceEditor({
     } finally {
       setLoading(false)
     }
-  }, [wsUrl, surface.surfaceId, profileId, content, originalContent, applyLoadedEntry])
+  }, [wsUrl, surface.surfaceId, profileId, applyLoadedEntry])
 
   useEffect(() => {
     void loadContent()

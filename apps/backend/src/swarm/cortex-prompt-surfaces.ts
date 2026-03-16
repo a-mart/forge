@@ -417,13 +417,13 @@ export async function resetCortexPromptSurface(options: {
     return;
   }
 
-  if (definition.surfaceId !== "cortex-worker-prompts-live") {
-    throw new Error(`Unsupported Cortex prompt surface reset mode for '${options.surfaceId}'.`);
+  if (!definition.seedPrompt) {
+    throw new Error(`Cortex prompt surface '${options.surfaceId}' does not define a seed prompt.`);
   }
 
   const templateContent = await options.promptRegistry.resolve(
-    "operational",
-    "cortex-worker-prompts",
+    definition.seedPrompt.category,
+    definition.seedPrompt.promptId,
     options.profileId,
   );
   const filePath = definition.resolveFilePath?.(options.dataDir);

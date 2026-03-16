@@ -284,14 +284,12 @@ export function createFileRoutes(options: {
           }
 
           const resolvedPath = await resolveAllowedPath(pathFromBody);
-          const trackedWrite = swarmManager.getConfig().paths.dataDir
-            ? await maybeWriteTrackedCortexFile(
-                swarmManager.getConfig().paths.dataDir,
-                resolvedPath,
-                contentFromBody,
-                broadcastEvent,
-              )
-            : undefined;
+          const trackedWrite = await maybeWriteTrackedCortexFile(
+            swarmManager.getConfig().paths.dataDir,
+            resolvedPath,
+            contentFromBody,
+            broadcastEvent,
+          );
 
           if (!trackedWrite) {
             await mkdir(dirname(resolvedPath), { recursive: true });

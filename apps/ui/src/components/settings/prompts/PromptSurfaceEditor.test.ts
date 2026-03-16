@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { getByText, queryByRole } from '@testing-library/dom'
+import { fireEvent, getByText, queryByRole } from '@testing-library/dom'
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
@@ -86,6 +86,55 @@ describe('PromptSurfaceEditor', () => {
       '# Common Knowledge\n\nInjected content\n',
     )
     expect(getByText(container, '/tmp/data/shared/knowledge/common.md')).toBeTruthy()
+  })
+
+  it('preserves unsaved edits without refetching on every keystroke', async () => {
+    const surface: CortexPromptSurfaceListEntry = {
+      surfaceId: 'common-knowledge-live',
+      title: 'Common Knowledge',
+      description: 'Live injected shared knowledge used in Cortex memory injection.',
+      group: 'live',
+      kind: 'file',
+      editable: true,
+      resetMode: 'none',
+      runtimeEffect: 'liveInjected',
+      warning: 'Live injected context — edits affect the current shared/knowledge/common.md used across agents.',
+      filePath: '/tmp/data/shared/knowledge/common.md',
+      sourcePath: '/tmp/data/shared/knowledge/common.md',
+      seedPrompt: { category: 'operational', promptId: 'common-knowledge-template' },
+    }
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        ...surface,
+        content: '# Common Knowledge\n\nOriginal\n',
+        lastModifiedAt: '2026-03-16T12:00:00.000Z',
+      }),
+    })
+    globalThis.fetch = fetchMock as typeof fetch
+
+    root = createRoot(container)
+    flushSync(() => {
+      root?.render(
+        createElement(PromptSurfaceEditor, {
+          wsUrl: 'ws://127.0.0.1:47187',
+          profileId: 'cortex',
+          surface,
+          refreshKey: 0,
+        }),
+      )
+    })
+
+    await flushPromises()
+
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement | null
+    expect(textarea).toBeTruthy()
+    fireEvent.change(textarea!, { target: { value: '# Common Knowledge\n\nEdited locally\n' } })
+    await flushPromises()
+
+    expect(textarea?.value).toBe('# Common Knowledge\n\nEdited locally\n')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
   it('renders scratch surfaces as read-only supplemental files', async () => {
