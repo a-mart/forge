@@ -340,9 +340,64 @@ describe('SwarmWebSocketServer P0 endpoints', () => {
     }
   })
 
+  it('copies legacy auth forward for /api/transcribe when canonical shared auth is absent', async () => {
+    const config = await makeTempConfig({ managerId: 'manager' })
+    await writeAuthKey(config.paths.authFile, 'sk-legacy-transcribe')
+
+    const manager = new FakeSwarmManager(config, [createManagerDescriptor(config.paths.rootDir, 'manager')])
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager as unknown as never,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: false,
+    })
+
+    await server.start()
+
+    const localOrigin = `http://${config.host}:${config.port}`
+    const originalFetch = globalThis.fetch
+
+    try {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+        const url =
+          typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+
+        if (url.startsWith(localOrigin)) {
+          return originalFetch(input as any, init as any)
+        }
+
+        return new Response(JSON.stringify({ text: 'legacy-auth-transcribed' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      })
+
+      const response = await postTranscribe(`${localOrigin}/api/transcribe`)
+      const payload = await parseJsonResponse(response)
+      expect(payload.status).toBe(200)
+      expect(payload.json.text).toBe('legacy-auth-transcribed')
+
+      const upstreamAuthHeader = fetchSpy.mock.calls
+        .map((call) => call[1]?.headers)
+        .find((headers) => headers && typeof headers === 'object' && 'Authorization' in headers) as
+        | Record<string, string>
+        | undefined
+      expect(upstreamAuthHeader?.Authorization).toBe('Bearer sk-legacy-transcribe')
+
+      const sharedAuth = JSON.parse(await readFile(config.paths.sharedAuthFile, 'utf8')) as Record<
+        string,
+        { type: string; key?: string; access?: string }
+      >
+      expect(sharedAuth['openai-codex']).toMatchObject({ type: 'api_key' })
+      expect(sharedAuth['openai-codex'].key ?? sharedAuth['openai-codex'].access).toBe('sk-legacy-transcribe')
+    } finally {
+      await server.stop()
+    }
+  })
+
   it('maps /api/transcribe upstream auth errors, upstream failures, and aborts', async () => {
     const config = await makeTempConfig({ managerId: 'manager' })
-    await writeAuthKey(config.paths.authFile, 'sk-test-123')
+    await writeAuthKey(config.paths.sharedAuthFile, 'sk-test-123')
 
     const manager = new FakeSwarmManager(config, [createManagerDescriptor(config.paths.rootDir, 'manager')])
     const server = new SwarmWebSocketServer({
@@ -477,10 +532,83 @@ describe('SwarmWebSocketServer P0 endpoints', () => {
       expect(eventNames).toEqual(expect.arrayContaining(['progress', 'auth_url', 'prompt', 'complete']))
       expect(oauthMockState.anthropicLogin).toHaveBeenCalledTimes(1)
 
-      const storedAuth = JSON.parse(await readFile(config.paths.authFile, 'utf8')) as Record<string, unknown>
+      const storedAuth = JSON.parse(await readFile(config.paths.sharedAuthFile, 'utf8')) as Record<string, unknown>
       expect(storedAuth.anthropic).toMatchObject({
         type: 'oauth',
       })
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('copies legacy auth forward for OAuth login and preserves prior credentials in canonical shared auth', async () => {
+    oauthMockState.anthropicLogin.mockImplementation(async (callbacks: any) => {
+      callbacks.onProgress?.('Preparing OAuth login')
+      callbacks.onAuth?.({
+        url: 'https://auth.example.test',
+        instructions: 'Open the URL in your browser.',
+      })
+
+      await callbacks.onPrompt?.({
+        message: 'Paste the one-time code',
+        placeholder: 'code-123',
+      })
+
+      return {
+        accessToken: 'oauth-access-token',
+        refreshToken: 'oauth-refresh-token',
+      }
+    })
+
+    const config = await makeTempConfig({ managerId: 'manager' })
+    await writeAuthKey(config.paths.authFile, 'sk-legacy-openai')
+
+    const manager = new FakeSwarmManager(config, [createManagerDescriptor(config.paths.rootDir, 'manager')])
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager as unknown as never,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: false,
+    })
+
+    await server.start()
+
+    try {
+      const streamResponse = await fetch(`http://${config.host}:${config.port}/api/settings/auth/login/anthropic`, {
+        method: 'POST',
+      })
+      expect(streamResponse.status).toBe(200)
+
+      let responded = false
+      await readSseEvents(streamResponse, async (event) => {
+        if (event.event !== 'prompt' || responded) {
+          return
+        }
+
+        responded = true
+        const respondResponse = await fetch(
+          `http://${config.host}:${config.port}/api/settings/auth/login/anthropic/respond`,
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ value: 'code-from-user' }),
+          },
+        )
+
+        const payload = await parseJsonResponse(respondResponse)
+        expect(payload.status).toBe(200)
+        expect(payload.json.ok).toBe(true)
+      })
+
+      const storedAuth = JSON.parse(await readFile(config.paths.sharedAuthFile, 'utf8')) as Record<
+        string,
+        { type: string; key?: string; access?: string; accessToken?: string; refresh?: string; refreshToken?: string }
+      >
+      expect(storedAuth['openai-codex']).toMatchObject({ type: 'api_key' })
+      expect(storedAuth['openai-codex'].key ?? storedAuth['openai-codex'].access).toBe('sk-legacy-openai')
+      expect(storedAuth.anthropic).toMatchObject({ type: 'oauth' })
+      expect(storedAuth.anthropic.accessToken ?? storedAuth.anthropic.access).toBe('oauth-access-token')
+      expect(storedAuth.anthropic.refreshToken ?? storedAuth.anthropic.refresh).toBe('oauth-refresh-token')
     } finally {
       await server.stop()
     }

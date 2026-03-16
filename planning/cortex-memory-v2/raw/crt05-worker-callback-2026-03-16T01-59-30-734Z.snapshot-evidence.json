@@ -1,0 +1,26 @@
+{
+  "runId": "crt05-worker-callback-2026-03-16T01-59-30-734Z",
+  "agentsSnapshotEvidence": [
+    {
+      "eventIndex": 21,
+      "cortexWorkerCount": 160,
+      "hasNewWorker": false
+    },
+    {
+      "eventIndex": 24,
+      "cortexWorkerCount": 160,
+      "hasNewWorker": false
+    },
+    {
+      "eventIndex": 32,
+      "cortexWorkerCount": 160,
+      "hasNewWorker": false
+    },
+    {
+      "eventIndex": 39,
+      "cortexWorkerCount": 161,
+      "hasNewWorker": true,
+      "newWorkerId": "crt05-cortex-s13-worker"
+    }
+  ]
+}

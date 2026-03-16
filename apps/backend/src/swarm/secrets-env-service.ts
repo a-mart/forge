@@ -169,9 +169,10 @@ export class SecretsEnvService {
         access: normalizedValue,
         refresh: "",
         expires: ""
-      };
+      } as unknown as AuthCredential;
 
-      authStorage.set(resolvedProvider.storageProvider, credential as unknown as AuthCredential);
+      authStorage.set(resolvedProvider.storageProvider, credential);
+      await this.syncLegacyAuthProvider(resolvedProvider.storageProvider, credential);
     }
   }
 
@@ -184,6 +185,7 @@ export class SecretsEnvService {
     const authFile = await this.resolveAuthFileForWrite();
     const authStorage = AuthStorage.create(authFile);
     authStorage.remove(resolvedProvider.storageProvider);
+    await this.syncLegacyAuthProvider(resolvedProvider.storageProvider, undefined);
   }
 
   async loadSecretsStore(): Promise<void> {
@@ -269,6 +271,24 @@ export class SecretsEnvService {
     }
 
     return preferredPath;
+  }
+
+  private async syncLegacyAuthProvider(storageProvider: string, credential: AuthCredential | undefined): Promise<void> {
+    const legacyPath = this.deps.config.paths.authFile;
+    const preferredPath = this.deps.config.paths.sharedAuthFile;
+    if (legacyPath === preferredPath || !(await this.pathExists(legacyPath))) {
+      return;
+    }
+
+    await mkdir(dirname(legacyPath), { recursive: true });
+
+    const legacyAuthStorage = AuthStorage.create(legacyPath);
+    if (credential) {
+      legacyAuthStorage.set(storageProvider, credential);
+      return;
+    }
+
+    legacyAuthStorage.remove(storageProvider);
   }
 
   private async pathExists(path: string): Promise<boolean> {

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { SessionMeta } from "@middleman/protocol";
 import {
-  getProfileMemoryPath,
+  getRootSessionMemoryPath,
   getSessionFilePath,
   getSessionMetaPath,
   getSessionMemoryPath
@@ -41,6 +41,9 @@ describe("session-manifest", () => {
       cwd: "/tmp/project",
       promptFingerprint: null,
       promptComponents: null,
+      lastMemoryMergeAttemptId: "manager--s2:2026-03-01T00:00:00.000Z",
+      lastMemoryMergeProfileHashBefore: "before-hash",
+      lastMemoryMergeProfileHashAfter: "after-hash",
       workers: [],
       stats: {
         totalWorkers: 0,
@@ -88,7 +91,7 @@ describe("session-manifest", () => {
 
     const rootSessionFile = getSessionFilePath(dataDir, profileId, rootSessionId);
     const nonRootSessionFile = getSessionFilePath(dataDir, profileId, nonRootSessionId);
-    const rootMemoryFile = getProfileMemoryPath(dataDir, profileId);
+    const rootMemoryFile = getRootSessionMemoryPath(dataDir, profileId);
     const nonRootMemoryFile = getSessionMemoryPath(dataDir, profileId, nonRootSessionId);
 
     await mkdir(join(dataDir, "swarm"), { recursive: true });
@@ -183,6 +186,8 @@ describe("session-manifest", () => {
     expect(rootMeta?.workers[0]?.status).toBe("terminated");
     expect(rootMeta?.stats.sessionFileSize).toBe(String("root-session".length));
     expect(rootMeta?.stats.memoryFileSize).toBe(String("root-memory".length));
+    expect(rootMeta?.cortexReviewedMemoryBytes).toBe("root-memory".length);
+    expect(rootMeta?.cortexReviewedMemoryAt).toBeNull();
 
     const childMeta = await readSessionMeta(dataDir, profileId, nonRootSessionId);
     expect(childMeta?.label).toBe("Child");
@@ -191,6 +196,8 @@ describe("session-manifest", () => {
     expect(childMeta?.stats.activeWorkers).toBe(1);
     expect(childMeta?.stats.sessionFileSize).toBe(String("child-session".length));
     expect(childMeta?.stats.memoryFileSize).toBe(String("child-memory".length));
+    expect(childMeta?.cortexReviewedMemoryBytes).toBe("child-memory".length);
+    expect(childMeta?.cortexReviewedMemoryAt).toBeNull();
   });
 
   it("updates worker metadata incrementally", async () => {
@@ -276,7 +283,7 @@ describe("session-manifest", () => {
     const sessionId = "manager";
 
     const sessionFile = getSessionFilePath(dataDir, profileId, sessionId);
-    const memoryFile = getProfileMemoryPath(dataDir, profileId);
+    const memoryFile = getRootSessionMemoryPath(dataDir, profileId);
 
     await mkdir(join(dataDir, "profiles", profileId, "sessions", sessionId), { recursive: true });
     await writeFile(sessionFile, "session-payload", "utf8");
@@ -311,5 +318,55 @@ describe("session-manifest", () => {
     const refreshed = await updateSessionMetaStats(dataDir, profileId, sessionId);
     expect(refreshed?.stats.sessionFileSize).toBe(String("session-payload".length));
     expect(refreshed?.stats.memoryFileSize).toBe(String("memory-payload".length));
+    expect(refreshed?.cortexReviewedMemoryBytes).toBe("memory-payload".length);
+    expect(refreshed?.cortexReviewedMemoryAt).toBeNull();
+  });
+
+  it("does not overwrite existing memory watermarks on stats refresh", async () => {
+    const root = await mkdtemp(join(tmpdir(), "session-manifest-"));
+    const dataDir = join(root, "data");
+    const profileId = "manager";
+    const sessionId = "manager";
+
+    const sessionFile = getSessionFilePath(dataDir, profileId, sessionId);
+    const memoryFile = getRootSessionMemoryPath(dataDir, profileId);
+    const reviewedAt = "2026-03-02T00:00:00.000Z";
+
+    await mkdir(join(dataDir, "profiles", profileId, "sessions", sessionId), { recursive: true });
+    await writeFile(sessionFile, "session-payload", "utf8");
+    await writeFile(memoryFile, "memory-payload-updated", "utf8");
+
+    await writeSessionMeta(dataDir, {
+      sessionId,
+      profileId,
+      label: null,
+      model: {
+        provider: "openai-codex",
+        modelId: "gpt-5.3-codex"
+      },
+      createdAt: "2026-03-01T00:00:00.000Z",
+      updatedAt: "2026-03-01T00:00:00.000Z",
+      cwd: "/tmp/project",
+      promptFingerprint: null,
+      promptComponents: null,
+      cortexReviewedMemoryBytes: 10,
+      cortexReviewedMemoryAt: reviewedAt,
+      workers: [],
+      stats: {
+        totalWorkers: 0,
+        activeWorkers: 0,
+        totalTokens: {
+          input: null,
+          output: null
+        },
+        sessionFileSize: null,
+        memoryFileSize: null
+      }
+    });
+
+    const refreshed = await updateSessionMetaStats(dataDir, profileId, sessionId);
+    expect(refreshed?.stats.memoryFileSize).toBe(String("memory-payload-updated".length));
+    expect(refreshed?.cortexReviewedMemoryBytes).toBe(10);
+    expect(refreshed?.cortexReviewedMemoryAt).toBe(reviewedAt);
   });
 });

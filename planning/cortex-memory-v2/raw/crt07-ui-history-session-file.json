@@ -1,0 +1,36 @@
+{
+  "path": "/Users/adam/.middleman-cortex-memory-v2-migrate/profiles/middleman-project/sessions/session-history-visability/session.jsonl",
+  "totalConversationMessages": 6,
+  "messages": [
+    {
+      "timestamp": "2026-03-15T15:33:49.448Z",
+      "role": "user",
+      "text": "I wanted to see if you could help look into an issue that I think has been caused by a recent change, maybe around caching. Right now a lot of the sessions that I go to aren't loading the full history, or even more than just a few messages. The path below is one that is doing that.\n\n/Users/adam/.middleman/profiles/middleman-project/sessions/review-upstream"
+    },
+    {
+      "timestamp": "2026-03-15T15:33:58.893Z",
+      "role": "assistant",
+      "text": "Looking into this — I'll investigate the session history loading issue. Let me examine the session data and the recent caching-related code changes to find the root cause."
+    },
+    {
+      "timestamp": "2026-03-15T15:36:28.137Z",
+      "role": "assistant",
+      "text": "Found the root cause. Here's the chain:\n\n1. **Conversation cache fills to 2,000 entries** (the `MAX_CONVERSATION_HISTORY` cap), mostly `agent_tool_call` entries with large JSON payloads — in `review-upstream` that's 8.2 MB of tool calls vs just 1.1 MB of actual conversation messages.\n2. **Bootstrap WS byte budget is ~1 MB** (`MAX_WS_EVENT_BYTES - 16KB`). When the UI subscribes to a session, `selectBootstrapConversationHistory` tries to send all 2,000 entries as one WS event, sees it's ~9.4 MB, then binary-searches for the latest N entries that fit in 1 MB.\n3. **Tool calls crowd out conversation messages.** Since tool calls and messages are interleaved chronologically, the tail-trim keeps only ~200 recent entries total, of which maybe a handful are actual visible `conversation_message` entries.\n\nMultiple sessions are affected: `mobile-app` (43 MB cache!), `middleman-project` (9.2 MB), `review-upstream` (9.3 MB), `slash-commands` (2.3 MB).\n\n**The fix:** `selectBootstrapConversationHistory` needs to prioritize conversation messages over activity entries when fitting within the byte budget — strip tool calls first, not conversation messages. I'm spawning a worker to implement this now."
+    },
+    {
+      "timestamp": "2026-03-15T15:42:37.019Z",
+      "role": "assistant",
+      "text": "Fix is implemented and validated. Single file change: [ws-handler.ts](/Users/adam/repos/middleman/apps/backend/src/ws/ws-handler.ts) (+133/-32 lines).\n\n**What changed:** `selectBootstrapConversationHistory` now uses a two-phase budget fitting strategy instead of a naive tail-trim:\n\n1. **Conversation-first priority** — all `conversation_message` and `conversation_log` entries (the actual user-visible transcript) are included first.\n2. **Activity entries fill remaining budget** — `agent_tool_call` and `agent_message` entries are added from the tail until the ~1 MB WS budget is full.\n3. **Graceful degradation** — if even conversation messages alone exceed the budget, it falls back to tail-trimming just those entries.\n4. **Chronological order preserved** — the merge step filters the original source array by a Set of selected entries, maintaining order.\n\n**Before:** `review-upstream` had 9.4 MB of mixed entries → binary search keeps a tiny tail → user sees ~5 messages.  \n**After:** 1.1 MB of conversation messages all fit within budget → all 128 visible messages load, plus recent activity entries fill the remaining space.\n\nTypechecks pass on both backend and UI. The two test failures (`index-shutdown-signals` and `ws-server` PID file) are pre-existing on `main` — confirmed by running tests with the change stashed.\n\nReady for a restart to pick up the fix, or I can commit it first if you want."
+    },
+    {
+      "timestamp": "2026-03-15T16:00:10.030Z",
+      "role": "user",
+      "text": "looks good. please commit"
+    },
+    {
+      "timestamp": "2026-03-15T16:00:19.495Z",
+      "role": "assistant",
+      "text": "Committed as `6aff004`. You'll need a restart to pick up the change."
+    }
+  ]
+}

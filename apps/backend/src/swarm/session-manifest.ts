@@ -141,10 +141,27 @@ export async function rebuildSessionMeta(options: RebuildSessionMetaOptions): Pr
             promptComponents: existingMeta?.promptComponents ?? null,
             cortexReviewedAt: existingMeta?.cortexReviewedAt,
             cortexReviewedBytes: existingMeta?.cortexReviewedBytes,
+            cortexReviewedMemoryBytes: resolveInitialReviewedMemoryBytes(
+              existingMeta?.cortexReviewedMemoryBytes,
+              memoryFileSize
+            ),
+            cortexReviewedMemoryAt: existingMeta?.cortexReviewedMemoryAt ?? null,
             feedbackFileSize: existingMeta?.feedbackFileSize,
             lastFeedbackAt: existingMeta?.lastFeedbackAt,
             cortexReviewedFeedbackBytes: existingMeta?.cortexReviewedFeedbackBytes,
             cortexReviewedFeedbackAt: existingMeta?.cortexReviewedFeedbackAt,
+            memoryMergeAttemptCount: existingMeta?.memoryMergeAttemptCount ?? 0,
+            lastMemoryMergeAttemptId: existingMeta?.lastMemoryMergeAttemptId ?? null,
+            lastMemoryMergeAttemptAt: existingMeta?.lastMemoryMergeAttemptAt ?? null,
+            lastMemoryMergeAppliedAt: existingMeta?.lastMemoryMergeAppliedAt ?? null,
+            lastMemoryMergeStatus: existingMeta?.lastMemoryMergeStatus ?? null,
+            lastMemoryMergeStrategy: existingMeta?.lastMemoryMergeStrategy ?? null,
+            lastMemoryMergeFailureStage: existingMeta?.lastMemoryMergeFailureStage ?? null,
+            lastMemoryMergeSourceHash: existingMeta?.lastMemoryMergeSourceHash ?? null,
+            lastMemoryMergeProfileHashBefore: existingMeta?.lastMemoryMergeProfileHashBefore ?? null,
+            lastMemoryMergeProfileHashAfter: existingMeta?.lastMemoryMergeProfileHashAfter ?? null,
+            lastMemoryMergeAppliedSourceHash: existingMeta?.lastMemoryMergeAppliedSourceHash ?? null,
+            lastMemoryMergeError: existingMeta?.lastMemoryMergeError ?? null,
             workers,
             stats: buildWorkerStats(workers, {
               sessionFileSize,
@@ -258,6 +275,12 @@ export async function updateSessionMetaStats(
     sessionFileSize,
     memoryFileSize
   });
+  if (meta.cortexReviewedMemoryBytes === undefined) {
+    meta.cortexReviewedMemoryBytes = resolveInitialReviewedMemoryBytes(undefined, memoryFileSize);
+  }
+  if (meta.cortexReviewedMemoryAt === undefined) {
+    meta.cortexReviewedMemoryAt = null;
+  }
   meta.updatedAt = (options.now ?? nowIso)();
 
   await writeSessionMeta(dataDir, meta);
@@ -303,6 +326,18 @@ function createEmptySessionMeta(profileId: string, sessionId: string, timestamp:
     lastFeedbackAt: null,
     cortexReviewedFeedbackBytes: 0,
     cortexReviewedFeedbackAt: null,
+    memoryMergeAttemptCount: 0,
+    lastMemoryMergeAttemptId: null,
+    lastMemoryMergeAttemptAt: null,
+    lastMemoryMergeAppliedAt: null,
+    lastMemoryMergeStatus: null,
+    lastMemoryMergeStrategy: null,
+    lastMemoryMergeFailureStage: null,
+    lastMemoryMergeSourceHash: null,
+    lastMemoryMergeProfileHashBefore: null,
+    lastMemoryMergeProfileHashAfter: null,
+    lastMemoryMergeAppliedSourceHash: null,
+    lastMemoryMergeError: null,
     workers: [],
     stats: {
       totalWorkers: 0,
@@ -433,6 +468,24 @@ async function readFileSize(path: string): Promise<string | null> {
   }
 }
 
+function resolveInitialReviewedMemoryBytes(
+  reviewedBytes: number | undefined,
+  memoryFileSize: string | null
+): number {
+  if (typeof reviewedBytes === "number" && Number.isFinite(reviewedBytes)) {
+    return Math.max(0, Math.round(reviewedBytes));
+  }
+
+  if (typeof memoryFileSize === "string") {
+    const parsed = Number.parseInt(memoryFileSize, 10);
+    if (Number.isFinite(parsed)) {
+      return Math.max(0, parsed);
+    }
+  }
+
+  return 0;
+}
+
 async function readDescriptorsFromAgentsStore(agentsStoreFile: string): Promise<AgentDescriptor[]> {
   try {
     const raw = await readFile(agentsStoreFile, "utf8");
@@ -553,10 +606,24 @@ function coerceSessionMeta(value: unknown): SessionMeta | undefined {
       : null,
     cortexReviewedAt: normalizeOptionalString(value.cortexReviewedAt),
     cortexReviewedBytes: coerceOptionalNonNegativeInteger(value.cortexReviewedBytes),
+    cortexReviewedMemoryBytes: coerceOptionalNonNegativeInteger(value.cortexReviewedMemoryBytes),
+    cortexReviewedMemoryAt: normalizeOptionalNullableString(value.cortexReviewedMemoryAt),
     feedbackFileSize: coerceOptionalFileSizeString(value.feedbackFileSize),
     lastFeedbackAt: normalizeOptionalNullableString(value.lastFeedbackAt),
     cortexReviewedFeedbackBytes: coerceOptionalNonNegativeInteger(value.cortexReviewedFeedbackBytes),
     cortexReviewedFeedbackAt: normalizeOptionalNullableString(value.cortexReviewedFeedbackAt),
+    memoryMergeAttemptCount: coerceOptionalNonNegativeInteger(value.memoryMergeAttemptCount),
+    lastMemoryMergeAttemptId: normalizeOptionalNullableString(value.lastMemoryMergeAttemptId),
+    lastMemoryMergeAttemptAt: normalizeOptionalNullableString(value.lastMemoryMergeAttemptAt),
+    lastMemoryMergeAppliedAt: normalizeOptionalNullableString(value.lastMemoryMergeAppliedAt),
+    lastMemoryMergeStatus: normalizeOptionalNullableString(value.lastMemoryMergeStatus) as SessionMeta["lastMemoryMergeStatus"],
+    lastMemoryMergeStrategy: normalizeOptionalNullableString(value.lastMemoryMergeStrategy) as SessionMeta["lastMemoryMergeStrategy"],
+    lastMemoryMergeFailureStage: normalizeOptionalNullableString(value.lastMemoryMergeFailureStage) as SessionMeta["lastMemoryMergeFailureStage"],
+    lastMemoryMergeSourceHash: normalizeOptionalNullableString(value.lastMemoryMergeSourceHash),
+    lastMemoryMergeProfileHashBefore: normalizeOptionalNullableString(value.lastMemoryMergeProfileHashBefore),
+    lastMemoryMergeProfileHashAfter: normalizeOptionalNullableString(value.lastMemoryMergeProfileHashAfter),
+    lastMemoryMergeAppliedSourceHash: normalizeOptionalNullableString(value.lastMemoryMergeAppliedSourceHash),
+    lastMemoryMergeError: normalizeOptionalNullableString(value.lastMemoryMergeError),
     workers,
     stats: {
       totalWorkers:

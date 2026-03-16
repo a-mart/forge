@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
 import { appendFile, copyFile, mkdir, open, readdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -5,7 +6,14 @@ import { basename, dirname, join, resolve } from "node:path";
 import type { Api, Model } from "@mariozechner/pi-ai";
 import { getModel } from "@mariozechner/pi-ai";
 import { AuthStorage, ModelRegistry } from "@mariozechner/pi-coding-agent";
-import type { ServerEvent, SessionMeta } from "@middleman/protocol";
+import type {
+  ServerEvent,
+  SessionMemoryMergeAttemptStatus,
+  SessionMemoryMergeFailureStage,
+  SessionMemoryMergeResult,
+  SessionMemoryMergeStrategy,
+  SessionMeta
+} from "@middleman/protocol";
 import { persistConversationAttachments } from "../ws/attachment-parser.js";
 import {
   FileBackedPromptRegistry,
@@ -27,9 +35,11 @@ import {
   getWorkersDir,
   resolveMemoryFilePath
 } from "./data-paths.js";
+import { ensureCanonicalAuthFilePath } from "./auth-storage-paths.js";
 import { migrateDataDirectory } from "./data-migration.js";
 import { executeLLMMerge, MEMORY_MERGE_SYSTEM_PROMPT } from "./memory-merge.js";
 import { PersistenceService } from "./persistence-service.js";
+import { migrateLegacyProfileKnowledgeToReferenceDoc } from "./reference-docs.js";
 import { RuntimeFactory } from "./runtime-factory.js";
 import {
   computePromptFingerprint,
@@ -172,114 +182,185 @@ const COMMON_KNOWLEDGE_INITIAL_TEMPLATE = `# Common Knowledge
 `;
 
 /* eslint-disable no-useless-escape */
-const CORTEX_WORKER_PROMPTS_INITIAL_TEMPLATE = `# Cortex Worker Prompt Templates
+const CORTEX_WORKER_PROMPTS_INITIAL_TEMPLATE = `# Cortex Worker Prompt Templates — v3
+<!-- Cortex Worker Prompts Version: 3 -->
 
 > Owned by Cortex. Refine these templates over time based on what produces good vs bad results from workers.
 
-Use these templates when spawning Spark workers. Copy the relevant template, fill in the placeholders (marked with \`{{...}}\`), and send as the worker's task message. Use \`modelId: "gpt-5.3-codex-spark"\` by default for extraction workers, and escalate to \`modelId: "gpt-5.4"\` for harder synthesis passes.
+Use these templates when spawning Spark workers. Copy the relevant template, fill in the placeholders (marked with \`{{...}}\`), and send as the worker's task message.
+
+Model selection default/fallback:
+- Default extraction model: \`modelId: "gpt-5.3-codex-spark"\`
+- If workers idle with provider/quota errors or emit no output, retry with \`modelId: "gpt-5.3-codex"\`
+- Escalate to \`modelId: "gpt-5.4"\` for ambiguous/high-complexity synthesis
 
 ---
 
-## 1. Session Review / Extraction Worker
+## Callback Format (all templates)
 
-Use for: Reviewing a single session's new content and extracting durable knowledge signals.
+Every worker MUST send a final callback to the manager via \`send_message_to_agent\` in this format:
+
+\`\`\`
+STATUS: DONE | FAILED
+FINDINGS: <count>
+ARTIFACT: <path to output file>
+BLOCKER: <none | brief description>
+\`\`\`
+
+Detailed reasoning and full findings go in the output artifact file, NOT in the callback message.
+
+---
+
+## 1. Session Transcript Extraction Worker
+
+Use for: Reviewing a single session's new transcript content and extracting durable knowledge signals.
 
 \`\`\`
 You are a knowledge extraction worker for Cortex.
 
 ## Task
-Read the session file at \\\`{{SESSION_JSONL_PATH}}\\\` starting from byte offset {{BYTE_OFFSET}} (use the \\\`read\\\` tool with offset to skip already-reviewed content). If the byte offset is 0, read from the beginning.
+Review only the transcript delta that starts at byte offset {{BYTE_OFFSET}} in \`{{SESSION_JSONL_PATH}}\`.
 
-The file is JSONL — each line is a JSON object with a \\\`type\\\` field:
-- \\\`user_message\\\` — what the user said (highest signal)
-- \\\`assistant_chunk\\\` — what the manager said
-- \\\`worker_message\\\` — worker reporting to manager
-- \\\`tool_call\\\` / \\\`tool_result\\\` — tool usage
+Important: the \`read\` tool offset is line-based, NOT byte-based. Do NOT pass {{BYTE_OFFSET}} into \`read\` directly.
 
-Focus on \\\`content\\\` or \\\`text\\\` fields for actual text.
+Use this two-step workflow instead:
+1. Use \`bash\` with Python/Node to copy the transcript slice starting at byte offset {{BYTE_OFFSET}} into \`{{DELTA_SLICE_PATH}}\`.
+2. Use the \`read\` tool on \`{{DELTA_SLICE_PATH}}\` to inspect the sliced content.
+
+If \`{{BYTE_OFFSET}}\` is 0, you may read the original session file directly with \`read\`.
+
+The file is JSONL — each line is a JSON object with a \`type\` field:
+- \`user_message\` — what the user said (highest signal)
+- \`assistant_chunk\` — what the manager said
+- \`worker_message\` — worker reporting to manager
+- \`tool_call\` / \`tool_result\` — tool usage
+
+Focus on \`content\` or \`text\` fields for actual text.
 
 ## What to extract
-Find and return ANY of the following durable signals:
-
-**User preferences** — communication style, detail level, response format, working hours, interaction patterns
-**Workflow patterns** — delegation style, review process, approval gates, how they like status updates
-**Technical decisions** — architecture choices, technology picks, naming conventions, design rationale
-**Project facts** — repos, purposes, relationships, team structure, deployment targets
-**Quality standards** — code review expectations, testing requirements, merge policies
-**Working conventions** — git strategy, branching model, environment setup, tooling choices
-**Recurring pain points** — things that caused problems, sharp edges, known gotchas
-**Cross-project patterns** — conventions that apply across multiple projects
+Find durable signals such as:
+- user preferences
+- workflow patterns
+- technical decisions
+- project facts
+- quality standards
+- working conventions
+- recurring gotchas
+- cross-project patterns
 
 ## What to SKIP
-- Transient task details (specific bug fixes, one-off debugging)
-- Implementation minutiae (file edits, build output, test logs)
-- Credentials, tokens, API keys, secrets
-- Ephemeral status updates and progress check-ins
-- Raw code content unless it reveals a convention or pattern
+- transient task details
+- implementation minutiae
+- secrets
+- ephemeral status/progress chatter
+- raw code unless it reveals a durable pattern
 
-## Output format
-Return your findings as a structured list. For each finding:
+## Output
+Write findings to \`{{OUTPUT_ARTIFACT_PATH}}\`. For each finding:
 
 ### [CATEGORY] Finding title
 - **Evidence**: Brief quote or paraphrase from the session
 - **Confidence**: high / medium / low
+- **Classification**: inject | reference | discard
 - **Scope**: common (cross-project) | profile-specific
+- **Target**: common.md | profiles/{{PROFILE_ID}}/memory.md | profiles/{{PROFILE_ID}}/reference/<file>.md
 - **Profile**: {{PROFILE_ID}}
 - **Session**: {{SESSION_ID}}
 
-If you find nothing worth extracting, say "No durable signals found in this segment." That's a valid and useful result.
+If you find nothing worth extracting, write "No durable signals found in this segment."
 
-Do NOT summarize the session. Do NOT return raw content. Only return extracted signals in the format above.
+## Callback
+After writing the artifact, send the callback format above to manager {{MANAGER_ID}}.
 \`\`\`
 
 ---
 
-## 2. Knowledge Synthesis Worker
+## 2. Session-Memory Extraction Worker
 
-Use for: Taking findings from multiple extraction workers and producing deduplicated, synthesis-ready knowledge updates.
+Use for: Reviewing a session's working memory file for signals worth promoting.
+
+\`\`\`
+You are a session-memory review worker for Cortex.
+
+## Task
+Read the session memory file at \`{{SESSION_MEMORY_PATH}}\`.
+
+For context, the current profile memory is:
+{{PROFILE_MEMORY_CONTENT_OR "Profile memory is currently empty."}}
+
+## What to look for
+- decisions or conventions that have become durable
+- patterns not already captured in profile memory
+- corrections to existing profile memory
+- architectural understanding that should persist
+- gotchas worth remembering
+
+## What to SKIP
+- active task state and in-progress work items
+- duplicates of existing profile memory
+- speculative notes without evidence
+- Cortex-internal orchestration details
+
+## Output
+Write findings to \`{{OUTPUT_ARTIFACT_PATH}}\`. For each finding:
+
+### [CATEGORY] Finding title
+- **Source**: Quote or paraphrase from session memory
+- **Confidence**: high / medium / low
+- **Classification**: inject | reference | discard
+- **Target**: profiles/{{PROFILE_ID}}/memory.md | profiles/{{PROFILE_ID}}/reference/<file>.md
+- **Action**: add | update | remove
+- **Existing entry**: (if update/remove) which entry to modify
+
+If nothing is worth promoting, write "No promotable signals in session memory."
+
+## Callback
+After writing the artifact, send the callback format above to manager {{MANAGER_ID}}.
+\`\`\`
+
+---
+
+## 3. Knowledge Synthesis Worker
+
+Use for: Deduplicating multiple worker outputs into promotion-ready updates.
 
 \`\`\`
 You are a knowledge synthesis worker for Cortex.
 
 ## Task
-Below are raw findings from multiple session extraction workers. Your job is to deduplicate, reconcile conflicts, and produce a clean set of knowledge updates ready for promotion.
+Below are raw findings from multiple worker artifacts. Deduplicate, reconcile conflicts, and produce promotion-ready updates.
 
 ## Raw findings
 {{PASTE_ALL_WORKER_FINDINGS_HERE}}
 
 ## Current knowledge state
-The following entries already exist in the knowledge base — do NOT re-extract these unless the new findings update, refine, or contradict them:
-
 {{PASTE_RELEVANT_EXISTING_KNOWLEDGE_OR "No existing entries — all findings are new."}}
 
 ## Instructions
-1. **Deduplicate**: If multiple workers found the same signal, merge into one entry with the strongest evidence.
-2. **Reconcile conflicts**: If findings contradict each other, note both sides and flag the tension. Do not silently pick one.
-3. **Check against existing**: If a finding matches an existing knowledge entry, only include it if it adds new detail or updates something.
-4. **Classify placement**: Mark each as \\\`common\\\` (cross-project) or \\\`profile:<profileId>\\\` (project-specific).
+1. Deduplicate overlapping findings.
+2. Reconcile conflicts and flag tensions explicitly.
+3. Only keep findings that add new durable signal.
+4. Validate each finding's classification: inject | reference | discard.
+5. Confirm each retained finding's target file.
 
-## Output format
-Return two sections:
+## Output
+Write synthesis to \`{{OUTPUT_ARTIFACT_PATH}}\` with sections:
+- Updates to existing entries
+- New entries to add
+- Discarded
 
-### Updates to existing entries
-For each existing entry that needs modification:
-- **Entry**: which entry to update
-- **Change**: what to add/modify/remove
-- **Evidence**: source findings
+For retained findings include:
+- **Classification**: inject | reference
+- **Target**: target file path
+- **Evidence**: supporting findings
 
-### New entries to add
-For each new signal not already in knowledge:
-- **Section**: which knowledge file section it belongs in
-- **Placement**: common | profile:<profileId>
-- **Content**: the knowledge entry text, ready to insert
-- **Evidence**: source findings and confidence level
-
-If nothing is new or worth updating, say "No updates needed." That's fine.
+## Callback
+After writing the artifact, send the callback format above to manager {{MANAGER_ID}}.
 \`\`\`
 
 ---
 
-## 3. Scan / Triage Worker
+## 4. Scan / Triage Worker
 
 Use for: Running the scan script and returning a prioritized work queue.
 
@@ -287,80 +368,218 @@ Use for: Running the scan script and returning a prioritized work queue.
 You are a scan and triage worker for Cortex.
 
 ## Task
-Run the session scan script and return a prioritized list of sessions needing review.
+Run the session scan script and return a prioritized review queue.
 
-1. Execute: \\\`bash node {{SWARM_SCRIPTS_DIR}}/cortex-scan.js {{SWARM_DATA_DIR}}\\\`
-2. Parse the output — it lists sessions with unreviewed bytes.
-3. Return the results sorted by priority (largest unreviewed delta first).
+1. Execute: \`bash node {{SWARM_SCRIPTS_DIR}}/cortex-scan.js {{SWARM_DATA_DIR}}\`
+2. Parse transcript, memory, and feedback drift.
+3. Sort by largest total attention bytes first.
 
-## Output format
-Return a structured list:
+## Output
+Write results to \`{{OUTPUT_ARTIFACT_PATH}}\`:
 
 ### Review Queue
-| Priority | Profile | Session | Unreviewed Bytes | Path |
-|----------|---------|---------|-----------------|------|
-| 1 | ... | ... | ... | ... |
-| 2 | ... | ... | ... | ... |
+| Priority | Profile | Session | Transcript Δ | Memory Δ | Feedback Δ | Status |
+|----------|---------|---------|--------------|----------|------------|--------|
+| 1 | ... | ... | ... | ... | ... | ... |
 
-If no sessions need review, say "All sessions up to date. No reviews needed."
+### Summary
+- Sessions needing review: X
+- Sessions up to date: Y
+- Total attention bytes: Z
 
-Do NOT read any session files yourself. Only run the scan script and report results.
+If no sessions need review, write "All sessions up to date. No reviews needed."
+
+## Callback
+After writing the artifact, send the callback format above to manager {{MANAGER_ID}}.
 \`\`\`
 
 ---
 
-## 4. Feedback Telemetry Worker (Programmatic-First)
+## 5. Feedback Telemetry Worker (Programmatic-First)
 
-Use for: Programmatic feedback review (queue summaries, digests, and scoped context pulls) before any manual session reading.
+Use for: Feedback-system reviews where you want structured signal without reading whole sessions manually.
 
 \`\`\`
 You are a feedback telemetry worker for Cortex.
 
 ## Task
-Use scripts and structured outputs first. Avoid broad manual reads unless specifically requested.
+Use scripts and structured outputs first.
 
 1. Run one or more telemetry scripts:
-   - \\\`node {{SWARM_SCRIPTS_DIR}}/feedback-review-queue.js {{SWARM_DATA_DIR}}\\\`
-   - \\\`node {{SWARM_SCRIPTS_DIR}}/feedback-session-digest.js {{SWARM_DATA_DIR}} --profile {{PROFILE_ID}} --session {{SESSION_ID}}\\\`
-   - \\\`node {{SWARM_SCRIPTS_DIR}}/feedback-global-summary.js {{SWARM_DATA_DIR}}\\\`
-2. Identify high-signal anomalies:
-   - stale watermarks
-   - missing files / metadata mismatches
-   - sessions with large feedback deltas
-   - unusual spikes in downvotes or clarification signals
-3. Only if needed, run targeted context extraction for top anomalies:
-   - \\\`node {{SWARM_SCRIPTS_DIR}}/feedback-target-context.js {{SWARM_DATA_DIR}} --profile {{PROFILE_ID}} --session {{SESSION_ID}} --target {{TARGET_ID}}\\\`
+   - \`node {{SWARM_SCRIPTS_DIR}}/feedback-review-queue.js {{SWARM_DATA_DIR}}\`
+   - \`node {{SWARM_SCRIPTS_DIR}}/feedback-session-digest.js {{SWARM_DATA_DIR}} --profile {{PROFILE_ID}} --session {{SESSION_ID}}\`
+   - \`node {{SWARM_SCRIPTS_DIR}}/feedback-global-summary.js {{SWARM_DATA_DIR}}\`
+2. Identify high-signal anomalies.
+3. Only if needed, run targeted context extraction:
+   - \`node {{SWARM_SCRIPTS_DIR}}/feedback-target-context.js {{SWARM_DATA_DIR}} --profile {{PROFILE_ID}} --session {{SESSION_ID}} --target {{TARGET_ID}}\`
 
-## Output format
-Return a concise structured report:
+## Output
+Write findings to \`{{OUTPUT_ARTIFACT_PATH}}\` with sections:
+- Queue Summary
+- Reliability Findings
+- Priority Targets
+- Recommended Next Actions
 
-### Queue Summary
-- Sessions needing review (count + top priorities)
+For actionable findings include:
+- **Classification**: inject | reference | discard
+- **Target**: target file path (if not discard)
 
-### Reliability Findings
-- Any metadata/file mismatches or watermark issues
+## Callback
+After writing the artifact, send the callback format above to manager {{MANAGER_ID}}.
+\`\`\`
 
-### Priority Targets
-- Top sessions/targets with rationale
+---
 
-### Recommended Next Actions
-- Exact follow-up worker tasks to run (if any)
+## 6. Orchestration Kickoff Worker
 
-Do NOT rewrite knowledge files directly. Do NOT do unbounded manual transcript review.
+Use for: Planning a review cycle from scan results.
+
+\`\`\`
+You are an orchestration planning worker for Cortex.
+
+## Task
+Given scan results, produce a concrete execution plan.
+
+## Scan results
+{{SCAN_RESULTS_OR_ARTIFACT_CONTENT}}
+
+## Constraints
+- Max concurrent workers: {{MAX_WORKERS | default: 5}}
+- Default extraction model: gpt-5.3-codex-spark
+- Fallback: gpt-5.3-codex
+- Escalation: gpt-5.4
+
+## Output
+Write plan to \`{{OUTPUT_ARTIFACT_PATH}}\` with:
+- execution batches
+- risk flags
+- synthesis plan
+
+## Callback
+After writing the artifact, send the callback format above to manager {{MANAGER_ID}}.
+\`\`\`
+
+---
+
+## 7. Deep Audit Worker
+
+Use for: Auditing knowledge files for stale entries, scope drift, contradictions, and bloat.
+
+\`\`\`
+You are a knowledge audit worker for Cortex.
+
+## Task
+Audit the listed knowledge files for quality and scope correctness.
+
+## Files to audit
+{{LIST_OF_FILES_TO_AUDIT}}
+
+## Current file contents
+{{PASTE_FILE_CONTENTS_HERE}}
+
+## Output
+Write audit results to \`{{OUTPUT_ARTIFACT_PATH}}\`.
+For each issue include:
+- **Entry**
+- **Issue type**: stale | scope-drift | contradiction | vague | bloated | missing-link
+- **Recommendation**: update | move | remove | sharpen | split-to-reference
+- **Detail**
+
+## Callback
+After writing the artifact, send the callback format above to manager {{MANAGER_ID}}.
+\`\`\`
+
+---
+
+## 8. Prune / Retirement Worker
+
+Use for: Identifying knowledge entries that should be retired or demoted from inject to reference.
+
+\`\`\`
+You are a knowledge pruning worker for Cortex.
+
+## Task
+Review the knowledge file below and identify entries that should be retired, demoted, archived, or sharpened.
+
+## File to prune
+Path: {{FILE_PATH}}
+Contents:
+{{FILE_CONTENTS}}
+
+## Recent evidence
+{{RECENT_EVIDENCE_SUMMARY_OR "No recent evidence provided."}}
+
+## Output
+Write recommendations to \`{{OUTPUT_ARTIFACT_PATH}}\`.
+For each entry include:
+- **Action**: retire | demote-to-reference | archive | sharpen
+- **Rationale**
+- **Replacement text**: (if sharpen)
+
+## Callback
+After writing the artifact, send the callback format above to manager {{MANAGER_ID}}.
+\`\`\`
+
+---
+
+## 9. Migration / Reclassification Worker
+
+Use for: Migrating legacy \`shared/knowledge/profiles/<profileId>.md\` content into the v2 structure.
+
+\`\`\`
+You are a knowledge migration worker for Cortex.
+
+## Task
+Reclassify the legacy profile knowledge file into inject | reference | discard outputs.
+
+## Legacy file
+Path: {{LEGACY_FILE_PATH}}
+Contents:
+{{LEGACY_FILE_CONTENTS}}
+
+## Current v2 state
+Profile memory (\`profiles/{{PROFILE_ID}}/memory.md\`):
+{{PROFILE_MEMORY_CONTENTS_OR "Empty — not yet created."}}
+
+Reference docs exist: {{REFERENCE_DOCS_LIST_OR "None yet."}}
+
+## Output
+Write migration recommendations to \`{{OUTPUT_ARTIFACT_PATH}}\` with sections:
+- Inject (→ profile memory)
+- Reference (→ reference docs)
+- Discard
+- Migration summary
+
+## Callback
+After writing the artifact, send the callback format above to manager {{MANAGER_ID}}.
 \`\`\`
 
 ---
 
 ## Usage Notes
 
-- **Always use template 1** for session reviews. One worker per session. Don't batch multiple sessions into one worker.
-- **Use template 2** when you have findings from 3+ workers and need to synthesize before writing to knowledge files. For 1-2 workers, you can synthesize directly.
-- **Use template 3** at the start of each review cycle to build your work queue.
-- **Use template 4** when feedback volume grows, reliability looks off, or you need a fast programmatic triage pass before extraction workers.
-- Fill in ALL placeholders before sending. Workers have no context about your state — the prompt IS their entire instruction set.
-- Workers report back via \`worker_message\`. Read their findings, then proceed with synthesis and knowledge updates.
+- Always use template 1 for transcript deltas.
+- Use template 2 when session memory drift exists.
+- Use template 3 when 3+ workers need synthesis.
+- Use template 4 to bootstrap the review queue.
+- Use template 5 for feedback-specific analysis.
+- Use template 6 for large review-cycle planning.
+- Use template 7 periodically for quality audits.
+- Use template 8 when injected knowledge grows stale or bloated.
+- Use template 9 for legacy-profile-knowledge migration/reclassification.
+- Every template requires the concise callback.
+- Workers classify findings as \`inject | reference | discard\`; Cortex validates before promotion.
 `;
 /* eslint-enable no-useless-escape */
+
+const CORTEX_WORKER_PROMPTS_VERSION_MARKER = "<!-- Cortex Worker Prompts Version: 3 -->";
+const PREVIOUS_CORTEX_WORKER_PROMPTS_VERSION_MARKER = "<!-- Cortex Worker Prompts Version: 2 -->";
+const LEGACY_CORTEX_WORKER_PROMPTS_SIGNATURES = [
+  "# Cortex Worker Prompt Templates",
+  "Read the session file at \\`{{SESSION_JSONL_PATH}}\\` starting from byte offset {{BYTE_OFFSET}}",
+  "Return your findings as a structured list.",
+  "Workers report back via \\`worker_message\\`."
+] as const;
 
 const FORKED_SESSION_MEMORY_HEADER_TEMPLATE = [
   "# Session Memory",
@@ -375,6 +594,7 @@ const IDLE_WORKER_WATCHDOG_MESSAGE_TEMPLATE = `⚠️ [IDLE WORKER WATCHDOG — 
 Workers: \${WORKER_IDS}
 
 Use list_agents({"verbose":true,"limit":50,"offset":0}) for a paged full list.`;
+const CORTEX_USER_CLOSEOUT_REMINDER_MESSAGE = `SYSTEM: Before ending this direct review, publish a concise speak_to_user closeout. State the reviewed scope, whether anything was promoted, which files changed (or NONE), and whether follow-up remains. Report changed files as paths relative to the active data dir only — never absolute host paths. If exact files are uncertain, prefer NONE over guessing. Do this even for a no-op review.`;
 
 // Retain recent non-web activity while preserving the full user-facing web transcript.
 const SWARM_CONTEXT_FILE_NAME = "SWARM.md";
@@ -419,13 +639,54 @@ const DEFAULT_MEMORY_TEMPLATE_NORMALIZED_LINES = normalizeMemoryTemplateLines(
 );
 
 interface SessionMemoryMergeAuditEntry {
+  attemptId: string;
   timestamp: string;
   sessionAgentId: string;
   profileId: string;
+  status: SessionMemoryMergeAttemptStatus;
+  strategy: SessionMemoryMergeStrategy;
+  stage?: SessionMemoryMergeFailureStage;
   llmMergeSucceeded: boolean;
   usedFallbackAppend: boolean;
+  appliedChange: boolean;
   model: string;
+  sessionContentHash: string;
+  profileContentHashBefore: string;
+  profileContentHashAfter?: string;
   error?: string;
+}
+
+interface SessionMemoryMergeFailureContext {
+  timestamp: string;
+  attemptId: string;
+  profileId: string;
+  auditPath: string;
+  stage: SessionMemoryMergeFailureStage;
+  strategy?: SessionMemoryMergeStrategy;
+  sessionContentHash?: string;
+  profileContentHashBefore: string;
+  profileContentHashAfter?: string;
+  llmMergeSucceeded: boolean;
+  model: string;
+  appliedChange: boolean;
+}
+
+class SessionMemoryMergeFailure extends Error {
+  readonly strategy?: SessionMemoryMergeStrategy;
+  readonly stage: SessionMemoryMergeFailureStage;
+  readonly auditPath: string;
+
+  constructor(message: string, options: {
+    strategy?: SessionMemoryMergeStrategy;
+    stage: SessionMemoryMergeFailureStage;
+    auditPath: string;
+  }) {
+    super(message);
+    this.name = "SessionMemoryMergeFailure";
+    this.strategy = options.strategy;
+    this.stage = options.stage;
+    this.auditPath = options.auditPath;
+  }
 }
 
 interface SessionRenameHistoryEntry {
@@ -461,12 +722,58 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
+function errorToMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 function normalizeMemoryTemplateLines(content: string): string[] {
   return content
     .replace(/\r\n/g, "\n")
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
+}
+
+function getCortexWorkerPromptsBackupSuffix(content: string): ".v1.bak" | ".v2.bak" | undefined {
+  if (content.includes(CORTEX_WORKER_PROMPTS_VERSION_MARKER)) {
+    return undefined;
+  }
+
+  if (content.includes(PREVIOUS_CORTEX_WORKER_PROMPTS_VERSION_MARKER)) {
+    return ".v2.bak";
+  }
+
+  if (LEGACY_CORTEX_WORKER_PROMPTS_SIGNATURES.every((signature) => content.includes(signature))) {
+    return ".v1.bak";
+  }
+
+  return undefined;
+}
+
+function shouldUpgradeLegacyCortexWorkerPrompts(content: string): boolean {
+  return getCortexWorkerPromptsBackupSuffix(content) !== undefined;
+}
+
+async function backupLegacyCortexWorkerPrompts(path: string, content: string): Promise<void> {
+  const suffix = getCortexWorkerPromptsBackupSuffix(content);
+  if (!suffix) {
+    return;
+  }
+
+  try {
+    await copyFile(path, `${path}${suffix}`);
+  } catch (error) {
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      (error as { code?: string }).code === "EEXIST"
+    ) {
+      return;
+    }
+
+    throw error;
+  }
 }
 
 function cloneContextUsage(contextUsage: AgentContextUsage | undefined): AgentContextUsage | undefined {
@@ -557,6 +864,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly watchdogBatchTimersByManager = new Map<string, NodeJS.Timeout>();
   private readonly modelCapacityBlocks = new Map<string, ModelCapacityBlock>();
   private readonly lastWorkerCompletionReportTimestampByAgentId = new Map<string, number>();
+  private readonly lastCortexCloseoutReminderUserTimestampByAgentId = new Map<string, number>();
+  private readonly cortexCloseoutReminderTimersByAgentId = new Map<string, NodeJS.Timeout>();
   private readonly conversationProjector: ConversationProjector;
   private readonly persistenceService: PersistenceService;
   private readonly runtimeFactory: RuntimeFactory;
@@ -651,7 +960,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.logDebug("boot:start", {
       host: this.config.host,
       port: this.config.port,
-      authFile: this.config.paths.authFile,
+      authFile: this.config.paths.sharedAuthFile,
       managerId: this.config.managerId
     });
 
@@ -698,6 +1007,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     this.reconcileProfilesOnBoot();
     await this.ensureCortexProfile();
+    await this.ensureLegacyProfileKnowledgeReferenceDocs();
     this.normalizeStreamingStatusesForBoot();
     await this.recoverMissingWorkerDescriptorsForBoot();
 
@@ -756,6 +1066,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.descriptors.set(sessionDescriptor.agentId, sessionDescriptor);
 
     await this.ensureSessionFileParentDirectory(sessionDescriptor.sessionFile);
+    await this.ensureAgentMemoryFile(this.getAgentMemoryPath(sessionDescriptor.agentId), prepared.profile.profileId);
+    await this.ensureAgentMemoryFile(getProfileMemoryPath(this.config.paths.dataDir, prepared.profile.profileId), prepared.profile.profileId);
     await this.writeInitialSessionMeta(sessionDescriptor);
 
     try {
@@ -933,87 +1245,264 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.emitProfilesSnapshot();
   }
 
-  async mergeSessionMemory(agentId: string): Promise<void> {
+  async mergeSessionMemory(agentId: string): Promise<SessionMemoryMergeResult> {
     const descriptor = this.getRequiredSessionDescriptor(agentId);
-    if (descriptor.agentId === descriptor.profileId) {
-      throw new Error(`Default session memory is already the profile core memory: ${agentId}`);
+    const profileId = descriptor.profileId ?? descriptor.agentId;
+    if (descriptor.agentId === profileId) {
+      throw new Error(`Default session working memory merge is not supported: ${agentId}`);
     }
 
-    const releaseMergeLock = await this.acquireProfileMergeLock(descriptor.profileId);
+    const releaseMergeLock = await this.acquireProfileMergeLock(profileId);
+
+    const mergedAt = this.now();
+    const attemptId = `${descriptor.agentId}:${mergedAt}`;
+    const auditPath = getProfileMergeAuditLogPath(this.config.paths.dataDir, profileId);
+    const failureContext: SessionMemoryMergeFailureContext = {
+      timestamp: mergedAt,
+      attemptId,
+      profileId,
+      auditPath,
+      stage: "prepare",
+      profileContentHashBefore: "",
+      llmMergeSucceeded: false,
+      model: `${descriptor.model.provider}/${descriptor.model.modelId}`,
+      appliedChange: false
+    };
 
     try {
       const sessionMemoryPath = this.getAgentMemoryPath(agentId);
-      const profileMemoryPath = getProfileMemoryPath(this.config.paths.dataDir, descriptor.profileId);
+      const profileMemoryPath = getProfileMemoryPath(this.config.paths.dataDir, profileId);
 
-      await this.ensureAgentMemoryFile(sessionMemoryPath, descriptor.profileId);
-      await this.ensureAgentMemoryFile(profileMemoryPath, descriptor.profileId);
+      await this.ensureAgentMemoryFile(sessionMemoryPath, profileId);
+      await this.ensureAgentMemoryFile(profileMemoryPath, profileId);
 
-      const sessionMemoryContent = await readFile(sessionMemoryPath, "utf8");
+      failureContext.stage = "read_inputs";
+      const [sessionMemoryContent, profileMemoryContent, existingMeta] = await Promise.all([
+        readFile(sessionMemoryPath, "utf8"),
+        readFile(profileMemoryPath, "utf8"),
+        readSessionMeta(this.config.paths.dataDir, profileId, descriptor.agentId)
+      ]);
+
+      const sessionContentHash = hashMemoryMergeContent(sessionMemoryContent);
+      const profileContentHashBefore = hashMemoryMergeContent(profileMemoryContent);
+      const lastAppliedAt = existingMeta?.lastMemoryMergeAppliedAt ?? descriptor.mergedAt;
+      failureContext.sessionContentHash = sessionContentHash;
+      failureContext.profileContentHashBefore = profileContentHashBefore;
+
       if (this.isSessionMemoryMergeNoOp(sessionMemoryContent)) {
-        return;
+        failureContext.strategy = "template_noop";
+        failureContext.model = "noop";
+        failureContext.profileContentHashAfter = profileContentHashBefore;
+        failureContext.stage = "record_attempt";
+        await this.recordSessionMemoryMergeAttempt(descriptor, {
+          attemptId,
+          timestamp: mergedAt,
+          status: "skipped",
+          strategy: "template_noop",
+          sessionContentHash,
+          profileContentHashBefore,
+          profileContentHashAfter: profileContentHashBefore
+        });
+        failureContext.stage = "write_audit";
+        await this.appendSessionMemoryMergeAuditEntry({
+          attemptId,
+          timestamp: mergedAt,
+          sessionAgentId: descriptor.agentId,
+          profileId,
+          status: "skipped",
+          strategy: "template_noop",
+          llmMergeSucceeded: false,
+          usedFallbackAppend: false,
+          appliedChange: false,
+          model: "noop",
+          sessionContentHash,
+          profileContentHashBefore,
+          profileContentHashAfter: profileContentHashBefore
+        });
+
+        return {
+          agentId: descriptor.agentId,
+          status: "skipped",
+          strategy: "template_noop",
+          mergedAt: lastAppliedAt,
+          auditPath
+        };
       }
 
-      const profileMemoryContent = await readFile(profileMemoryPath, "utf8");
-      const mergedAt = this.now();
+      if (
+        this.shouldSkipSessionMemoryMergeIdempotently(
+          existingMeta,
+          sessionContentHash,
+          profileContentHashBefore
+        )
+      ) {
+        failureContext.strategy = "idempotent_noop";
+        failureContext.model = "noop";
+        failureContext.profileContentHashAfter = profileContentHashBefore;
+        failureContext.stage = "record_attempt";
+        await this.recordSessionMemoryMergeAttempt(descriptor, {
+          attemptId,
+          timestamp: mergedAt,
+          status: "skipped",
+          strategy: "idempotent_noop",
+          sessionContentHash,
+          profileContentHashBefore,
+          profileContentHashAfter: profileContentHashBefore
+        });
+        failureContext.stage = "write_audit";
+        await this.appendSessionMemoryMergeAuditEntry({
+          attemptId,
+          timestamp: mergedAt,
+          sessionAgentId: descriptor.agentId,
+          profileId,
+          status: "skipped",
+          strategy: "idempotent_noop",
+          llmMergeSucceeded: false,
+          usedFallbackAppend: false,
+          appliedChange: false,
+          model: "noop",
+          sessionContentHash,
+          profileContentHashBefore,
+          profileContentHashAfter: profileContentHashBefore
+        });
 
-      let mergedProfileMemory: string;
+        return {
+          agentId: descriptor.agentId,
+          status: "skipped",
+          strategy: "idempotent_noop",
+          mergedAt: lastAppliedAt,
+          auditPath
+        };
+      }
+
+      let mergedProfileMemory = finalizeMergedMemoryContent(profileMemoryContent);
       let llmMergeSucceeded = false;
-      let usedFallbackAppend = false;
-      let mergeModel = "fallback";
-      let mergeError: string | undefined;
+      let mergeModel = "seed";
+      let strategy: SessionMemoryMergeStrategy = "seed";
+      failureContext.strategy = strategy;
+      failureContext.model = mergeModel;
 
-      if (profileMemoryContent.trim().length === 0) {
-        mergedProfileMemory = sessionMemoryContent;
+      if (normalizeMemoryMergeContent(profileMemoryContent).length === 0) {
+        mergedProfileMemory = finalizeMergedMemoryContent(sessionMemoryContent);
       } else {
-        try {
-          const llmMerge = await this.executeSessionMemoryLLMMerge(
-            descriptor,
-            profileMemoryContent,
-            sessionMemoryContent
-          );
-          mergedProfileMemory = llmMerge.mergedContent;
-          llmMergeSucceeded = true;
-          mergeModel = llmMerge.model;
-        } catch (error) {
-          usedFallbackAppend = true;
-          mergeError = error instanceof Error ? error.message : String(error);
-          this.logDebug("session:memory_merge:llm_fallback", {
-            sessionAgentId: descriptor.agentId,
-            profileId: descriptor.profileId,
-            model: descriptor.model,
-            message: mergeError
-          });
-
-          mergedProfileMemory = appendSessionMemoryToProfileMemory(
-            profileMemoryContent,
-            sessionMemoryContent,
-            {
-              agentId: descriptor.agentId,
-              sessionLabel: descriptor.sessionLabel,
-              mergedAt
-            }
-          );
-        }
+        failureContext.stage = "llm";
+        failureContext.strategy = "llm";
+        const llmMerge = await this.executeSessionMemoryLLMMerge(
+          descriptor,
+          profileMemoryContent,
+          sessionMemoryContent
+        );
+        mergedProfileMemory = finalizeMergedMemoryContent(llmMerge.mergedContent);
+        llmMergeSucceeded = true;
+        mergeModel = llmMerge.model;
+        strategy = "llm";
+        failureContext.strategy = strategy;
+        failureContext.model = mergeModel;
+        failureContext.llmMergeSucceeded = true;
       }
 
-      await writeFile(profileMemoryPath, mergedProfileMemory, "utf8");
-      await this.refreshSessionMetaStatsBySessionId(descriptor.profileId);
-      await this.appendSessionMemoryMergeAuditEntry({
+      failureContext.profileContentHashAfter = hashMemoryMergeContent(mergedProfileMemory);
+      const matchesCurrentProfileMemory =
+        strategy === "llm" &&
+        normalizeMemoryMergeContent(mergedProfileMemory) === normalizeMemoryMergeContent(profileMemoryContent);
+      const shouldRepairPostApplyFailure = this.shouldRepairFailedPostApplyMerge(
+        existingMeta,
+        sessionContentHash,
+        profileContentHashBefore
+      );
+
+      if (matchesCurrentProfileMemory && !shouldRepairPostApplyFailure) {
+        strategy = "no_change";
+        failureContext.strategy = strategy;
+        failureContext.stage = "record_attempt";
+        await this.recordSessionMemoryMergeAttempt(descriptor, {
+          attemptId,
+          timestamp: mergedAt,
+          status: "skipped",
+          strategy,
+          sessionContentHash,
+          profileContentHashBefore,
+          profileContentHashAfter: profileContentHashBefore
+        });
+        failureContext.stage = "write_audit";
+        await this.appendSessionMemoryMergeAuditEntry({
+          attemptId,
+          timestamp: mergedAt,
+          sessionAgentId: descriptor.agentId,
+          profileId,
+          status: "skipped",
+          strategy,
+          llmMergeSucceeded,
+          usedFallbackAppend: false,
+          appliedChange: false,
+          model: mergeModel,
+          sessionContentHash,
+          profileContentHashBefore,
+          profileContentHashAfter: profileContentHashBefore
+        });
+
+        return {
+          agentId: descriptor.agentId,
+          status: "skipped",
+          strategy,
+          mergedAt: lastAppliedAt,
+          auditPath
+        };
+      }
+
+      if (!matchesCurrentProfileMemory) {
+        failureContext.stage = "write_profile_memory";
+        await writeFile(profileMemoryPath, mergedProfileMemory, "utf8");
+        failureContext.appliedChange = true;
+      }
+      failureContext.stage = "refresh_session_meta_stats";
+      await this.refreshSessionMetaStatsBySessionId(profileId);
+      failureContext.stage = "record_attempt";
+      await this.recordSessionMemoryMergeAttempt(descriptor, {
+        attemptId,
         timestamp: mergedAt,
-        sessionAgentId: descriptor.agentId,
-        profileId: descriptor.profileId,
-        llmMergeSucceeded,
-        usedFallbackAppend,
-        model: llmMergeSucceeded ? mergeModel : "fallback",
-        ...(mergeError ? { error: mergeError } : {})
+        status: "applied",
+        strategy,
+        sessionContentHash,
+        profileContentHashBefore,
+        profileContentHashAfter: failureContext.profileContentHashAfter,
+        appliedSourceHash: sessionContentHash
       });
 
       descriptor.mergedAt = mergedAt;
       descriptor.updatedAt = mergedAt;
       this.descriptors.set(descriptor.agentId, descriptor);
 
+      failureContext.stage = "save_store";
       await this.saveStore();
+      failureContext.stage = "write_audit";
+      await this.appendSessionMemoryMergeAuditEntry({
+        attemptId,
+        timestamp: mergedAt,
+        sessionAgentId: descriptor.agentId,
+        profileId,
+        status: "applied",
+        strategy,
+        llmMergeSucceeded,
+        usedFallbackAppend: false,
+        appliedChange: true,
+        model: mergeModel,
+        sessionContentHash,
+        profileContentHashBefore,
+        profileContentHashAfter: failureContext.profileContentHashAfter
+      });
+
       this.emitAgentsSnapshot();
+
+      return {
+        agentId: descriptor.agentId,
+        status: "applied",
+        strategy,
+        mergedAt,
+        auditPath
+      };
+    } catch (error) {
+      throw await this.finalizeSessionMemoryMergeFailure(descriptor, failureContext, error);
     } finally {
       releaseMergeLock();
     }
@@ -1397,6 +1886,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.profiles.set(profile.profileId, profile);
 
     await this.ensureSessionFileParentDirectory(descriptor.sessionFile);
+    await this.ensureAgentMemoryFile(this.getAgentMemoryPath(descriptor.agentId), profile.profileId);
+    await this.ensureAgentMemoryFile(getProfileMemoryPath(this.config.paths.dataDir, profile.profileId), profile.profileId);
     await this.writeInitialSessionMeta(descriptor);
 
     let runtime: SwarmAgentRuntime;
@@ -1420,6 +1911,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     await this.captureSessionRuntimePromptMeta(descriptor);
     await this.refreshSessionMetaStats(descriptor);
+    await migrateLegacyProfileKnowledgeToReferenceDoc(this.config.paths.dataDir, profile.profileId);
     await this.saveStore();
 
     this.emitStatus(managerId, descriptor.status, runtime.getPendingCount(), contextUsage);
@@ -2231,10 +2723,15 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     targetContext?: MessageTargetContext
   ): Promise<{ targetContext: MessageSourceContext }> {
     let resolvedTargetContext: MessageSourceContext;
+    let normalizedText = text;
 
     if (source === "speak_to_user") {
-      this.assertManager(agentId, "speak to user");
+      const descriptor = this.assertManager(agentId, "speak to user");
       resolvedTargetContext = this.resolveReplyTargetContext(targetContext);
+
+      if (normalizeArchetypeId(descriptor.archetypeId ?? "") === CORTEX_ARCHETYPE_ID) {
+        normalizedText = normalizeCortexUserVisiblePaths(text);
+      }
     } else {
       resolvedTargetContext = normalizeMessageSourceContext(targetContext ?? { channel: "web" });
     }
@@ -2243,7 +2740,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       type: "conversation_message",
       agentId,
       role: source === "system" ? "system" : "assistant",
-      text,
+      text: normalizedText,
       timestamp: this.now(),
       source,
       sourceContext: resolvedTargetContext
@@ -2258,7 +2755,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       source,
       agentId,
       targetContext: resolvedTargetContext,
-      textPreview: previewForLog(text)
+      textPreview: previewForLog(normalizedText)
     });
 
     return {
@@ -3025,6 +3522,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.profiles.set(profile.profileId, profile);
 
     await this.ensureSessionFileParentDirectory(descriptor.sessionFile);
+    await this.ensureAgentMemoryFile(this.getAgentMemoryPath(descriptor.agentId), profile.profileId);
+    await this.ensureAgentMemoryFile(getProfileMemoryPath(this.config.paths.dataDir, profile.profileId), profile.profileId);
     await this.writeInitialSessionMeta(descriptor);
     await this.refreshSessionMetaStats(descriptor);
     await this.ensureCommonKnowledgeFile();
@@ -3034,6 +3533,14 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       profileId: CORTEX_PROFILE_ID,
       archetypeId: CORTEX_ARCHETYPE_ID
     });
+  }
+
+  private async ensureLegacyProfileKnowledgeReferenceDocs(): Promise<void> {
+    await Promise.all(
+      this.sortedProfiles().map(async (profile) => {
+        await migrateLegacyProfileKnowledgeToReferenceDoc(this.config.paths.dataDir, profile.profileId);
+      })
+    );
   }
 
   private hasCortexDescriptor(): boolean {
@@ -3071,22 +3578,30 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   private async ensureCortexWorkerPromptsFile(): Promise<void> {
     const workerPromptsPath = getCortexWorkerPromptsPath(this.config.paths.dataDir);
-
-    try {
-      await readFile(workerPromptsPath, "utf8");
-      return;
-    } catch (error) {
-      if (!isEnoentError(error)) {
-        throw error;
-      }
-    }
-
     const workerPromptTemplate = await this.resolvePromptWithFallback(
       "operational",
       "cortex-worker-prompts",
       CORTEX_PROFILE_ID,
       CORTEX_WORKER_PROMPTS_INITIAL_TEMPLATE
     );
+
+    try {
+      const existingContent = await readFile(workerPromptsPath, "utf8");
+      if (!shouldUpgradeLegacyCortexWorkerPrompts(existingContent)) {
+        return;
+      }
+
+      await backupLegacyCortexWorkerPrompts(workerPromptsPath, existingContent);
+      await writeFile(workerPromptsPath, workerPromptTemplate, "utf8");
+      this.logDebug("cortex:worker_prompts:auto_upgraded", {
+        path: workerPromptsPath
+      });
+      return;
+    } catch (error) {
+      if (!isEnoentError(error)) {
+        throw error;
+      }
+    }
 
     await mkdir(dirname(workerPromptsPath), { recursive: true });
     await writeFile(workerPromptsPath, workerPromptTemplate, "utf8");
@@ -3820,7 +4335,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const sessionMemoryContent = await readFile(memoryFilePath, "utf8");
     let memoryContent = sessionMemoryContent;
 
-    const profileMemoryOwnerId = this.resolveNonDefaultSessionProfileId(memoryOwnerAgentId);
+    const profileMemoryOwnerId = this.resolveSessionProfileId(memoryOwnerAgentId);
     if (profileMemoryOwnerId) {
       const profileMemoryPath = getProfileMemoryPath(this.config.paths.dataDir, profileMemoryOwnerId);
       await this.ensureAgentMemoryFile(profileMemoryPath, profileMemoryOwnerId);
@@ -3984,6 +4499,80 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       pendingCount,
       contextUsage: descriptor.contextUsage
     });
+
+    if (descriptor.role === "manager") {
+      if (nextStatus === "idle" && pendingCount === 0) {
+        this.scheduleCortexCloseoutReminder(descriptor.agentId);
+      } else {
+        this.clearCortexCloseoutReminder(descriptor.agentId);
+      }
+    }
+  }
+
+  private scheduleCortexCloseoutReminder(agentId: string): void {
+    this.clearCortexCloseoutReminder(agentId);
+
+    const timer = setTimeout(() => {
+      this.cortexCloseoutReminderTimersByAgentId.delete(agentId);
+      void this.maybeRemindCortexCloseout(agentId);
+    }, 250);
+
+    this.cortexCloseoutReminderTimersByAgentId.set(agentId, timer);
+  }
+
+  private clearCortexCloseoutReminder(agentId: string): void {
+    const timer = this.cortexCloseoutReminderTimersByAgentId.get(agentId);
+    if (!timer) {
+      return;
+    }
+    clearTimeout(timer);
+    this.cortexCloseoutReminderTimersByAgentId.delete(agentId);
+  }
+
+  private async maybeRemindCortexCloseout(agentId: string): Promise<void> {
+    const descriptor = this.descriptors.get(agentId);
+    if (!descriptor) {
+      return;
+    }
+    if (normalizeArchetypeId(descriptor.archetypeId ?? "") !== CORTEX_ARCHETYPE_ID) {
+      return;
+    }
+    if (descriptor.status !== "idle") {
+      return;
+    }
+
+    const runtime = this.runtimes.get(agentId);
+    if (runtime && runtime.getPendingCount() > 0) {
+      return;
+    }
+
+    const analysis = analyzeLatestCortexCloseoutNeed(this.getConversationHistory(descriptor.agentId));
+    if (!analysis.needsReminder || typeof analysis.userTimestamp !== "number") {
+      return;
+    }
+
+    if (this.lastCortexCloseoutReminderUserTimestampByAgentId.get(descriptor.agentId) === analysis.userTimestamp) {
+      return;
+    }
+
+    try {
+      await this.sendMessage(descriptor.agentId, descriptor.agentId, CORTEX_USER_CLOSEOUT_REMINDER_MESSAGE, "auto", {
+        origin: "internal"
+      });
+      this.lastCortexCloseoutReminderUserTimestampByAgentId.set(descriptor.agentId, analysis.userTimestamp);
+      this.logDebug("cortex:closeout_reminder:sent", {
+        agentId: descriptor.agentId,
+        userTimestamp: analysis.userTimestamp,
+        reason: analysis.reason
+      });
+    } catch (error) {
+      this.logDebug("cortex:closeout_reminder:error", {
+        agentId: descriptor.agentId,
+        userTimestamp: analysis.userTimestamp,
+        reason: analysis.reason,
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
   }
 
   private async handleRuntimeSessionEvent(agentId: string, event: RuntimeSessionEvent): Promise<void> {
@@ -4217,10 +4806,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       await this.skillMetadataService.ensureSkillMetadataLoaded();
 
       const memoryFilePath = this.getAgentMemoryPath(descriptor.agentId);
-      const profileMemoryPath =
-        descriptor.agentId === profileId
-          ? null
-          : getProfileMemoryPath(this.config.paths.dataDir, profileId);
+      const profileMemoryPath = getProfileMemoryPath(this.config.paths.dataDir, profileId);
 
       const agentsFileCandidate = join(descriptor.cwd, "AGENTS.md");
       const promptComponents: NonNullable<SessionMeta["promptComponents"]> = {
@@ -4279,6 +4865,18 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       lastFeedbackAt: null,
       cortexReviewedFeedbackBytes: 0,
       cortexReviewedFeedbackAt: null,
+      memoryMergeAttemptCount: 0,
+      lastMemoryMergeAttemptId: null,
+      lastMemoryMergeAttemptAt: null,
+      lastMemoryMergeAppliedAt: null,
+      lastMemoryMergeStatus: null,
+      lastMemoryMergeStrategy: null,
+      lastMemoryMergeFailureStage: null,
+      lastMemoryMergeSourceHash: null,
+      lastMemoryMergeProfileHashBefore: null,
+      lastMemoryMergeProfileHashAfter: null,
+      lastMemoryMergeAppliedSourceHash: null,
+      lastMemoryMergeError: null,
       workers: [],
       stats: {
         totalWorkers: 0,
@@ -4902,18 +5500,13 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return this.resolvePreferredManagerId({ includeStoppedOnRestart: true }) ?? descriptor.agentId;
   }
 
-  private resolveNonDefaultSessionProfileId(memoryOwnerAgentId: string): string | undefined {
+  private resolveSessionProfileId(memoryOwnerAgentId: string): string | undefined {
     const memoryOwnerDescriptor = this.descriptors.get(memoryOwnerAgentId);
     if (!memoryOwnerDescriptor || memoryOwnerDescriptor.role !== "manager") {
       return undefined;
     }
 
-    const profileId = normalizeOptionalAgentId(memoryOwnerDescriptor.profileId);
-    if (!profileId || profileId === memoryOwnerDescriptor.agentId) {
-      return undefined;
-    }
-
-    return profileId;
+    return normalizeOptionalAgentId(memoryOwnerDescriptor.profileId) ?? memoryOwnerDescriptor.agentId;
   }
 
   private async acquireProfileMergeLock(profileId: string): Promise<() => void> {
@@ -4945,7 +5538,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     profileMemoryContent: string,
     sessionMemoryContent: string
   ): Promise<{ mergedContent: string; model: string }> {
-    const authStorage = AuthStorage.create(this.config.paths.authFile);
+    const authFilePath = await ensureCanonicalAuthFilePath(this.config);
+    const authStorage = AuthStorage.create(authFilePath);
     const modelRegistry = new ModelRegistry(authStorage);
     const model = resolveModel(modelRegistry, descriptor.model);
 
@@ -4973,18 +5567,229 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     };
   }
 
+  private async writeSessionMemoryMergeAttemptMeta(
+    descriptor: AgentDescriptor,
+    attempt: {
+      attemptId?: string | null;
+      timestamp: string;
+      status: SessionMemoryMergeAttemptStatus;
+      strategy?: SessionMemoryMergeStrategy | null;
+      failureStage?: SessionMemoryMergeFailureStage | null;
+      sessionContentHash?: string | null;
+      profileContentHashBefore?: string | null;
+      profileContentHashAfter?: string | null;
+      appliedSourceHash?: string | null;
+      error?: string;
+    }
+  ): Promise<void> {
+    const profileId = descriptor.profileId ?? descriptor.agentId;
+    const existingMeta = await readSessionMeta(this.config.paths.dataDir, profileId, descriptor.agentId);
+    const base = existingMeta ?? this.createSessionMetaSkeleton(descriptor);
+
+    const next: SessionMeta = {
+      ...base,
+      sessionId: descriptor.agentId,
+      profileId,
+      label: normalizeOptionalAgentId(descriptor.sessionLabel) ?? base.label,
+      model: {
+        provider: descriptor.model.provider,
+        modelId: descriptor.model.modelId
+      },
+      cwd: descriptor.cwd,
+      updatedAt: attempt.timestamp,
+      memoryMergeAttemptCount: (base.memoryMergeAttemptCount ?? 0) + 1,
+      lastMemoryMergeAttemptId: attempt.attemptId ?? (base.lastMemoryMergeAttemptId ?? null),
+      lastMemoryMergeAttemptAt: attempt.timestamp,
+      lastMemoryMergeAppliedAt:
+        attempt.status === "applied"
+          ? attempt.timestamp
+          : attempt.appliedSourceHash
+            ? attempt.timestamp
+            : (base.lastMemoryMergeAppliedAt ?? null),
+      lastMemoryMergeStatus: attempt.status,
+      lastMemoryMergeStrategy: attempt.strategy ?? null,
+      lastMemoryMergeFailureStage: attempt.failureStage ?? null,
+      lastMemoryMergeSourceHash: attempt.sessionContentHash ?? null,
+      lastMemoryMergeProfileHashBefore:
+        attempt.profileContentHashBefore ?? (base.lastMemoryMergeProfileHashBefore ?? null),
+      lastMemoryMergeProfileHashAfter:
+        attempt.profileContentHashAfter ?? (base.lastMemoryMergeProfileHashAfter ?? null),
+      lastMemoryMergeAppliedSourceHash: attempt.appliedSourceHash ?? (base.lastMemoryMergeAppliedSourceHash ?? null),
+      lastMemoryMergeError: attempt.error ?? null
+    };
+
+    await writeSessionMeta(this.config.paths.dataDir, next);
+  }
+
+  private async recordSessionMemoryMergeAttempt(
+    descriptor: AgentDescriptor,
+    attempt: {
+      attemptId?: string | null;
+      timestamp: string;
+      status: SessionMemoryMergeAttemptStatus;
+      strategy?: SessionMemoryMergeStrategy | null;
+      failureStage?: SessionMemoryMergeFailureStage | null;
+      sessionContentHash?: string | null;
+      profileContentHashBefore?: string | null;
+      profileContentHashAfter?: string | null;
+      appliedSourceHash?: string | null;
+      error?: string;
+    }
+  ): Promise<void> {
+    await this.writeSessionMemoryMergeAttemptMeta(descriptor, attempt);
+  }
+
+  private async recordSessionMemoryMergeFailureAttemptSafely(
+    descriptor: AgentDescriptor,
+    attempt: {
+      attemptId?: string | null;
+      timestamp: string;
+      strategy?: SessionMemoryMergeStrategy | null;
+      failureStage: SessionMemoryMergeFailureStage;
+      sessionContentHash?: string | null;
+      profileContentHashBefore?: string | null;
+      profileContentHashAfter?: string | null;
+      appliedSourceHash?: string | null;
+      error?: string;
+    }
+  ): Promise<string | undefined> {
+    try {
+      await this.recordSessionMemoryMergeAttempt(descriptor, {
+        ...attempt,
+        status: "failed"
+      });
+      return undefined;
+    } catch (recordError) {
+      try {
+        await this.writeSessionMemoryMergeAttemptMeta(descriptor, {
+          ...attempt,
+          status: "failed"
+        });
+        return undefined;
+      } catch (fallbackError) {
+        return `failed to persist merge-attempt metadata (${errorToMessage(recordError)}; fallback: ${errorToMessage(fallbackError)})`;
+      }
+    }
+  }
+
   private async appendSessionMemoryMergeAuditEntry(entry: SessionMemoryMergeAuditEntry): Promise<void> {
     const auditLogPath = getProfileMergeAuditLogPath(this.config.paths.dataDir, entry.profileId);
+    await appendFile(auditLogPath, `${JSON.stringify(entry)}\n`, "utf8");
+  }
 
-    try {
-      await appendFile(auditLogPath, `${JSON.stringify(entry)}\n`, "utf8");
-    } catch (error) {
-      this.logDebug("session:memory_merge:audit_log_error", {
-        path: auditLogPath,
-        entry,
-        message: error instanceof Error ? error.message : String(error)
+  private async finalizeSessionMemoryMergeFailure(
+    descriptor: AgentDescriptor,
+    context: SessionMemoryMergeFailureContext,
+    error: unknown
+  ): Promise<SessionMemoryMergeFailure> {
+    const errorMessage = errorToMessage(error);
+
+    if (context.stage === "llm") {
+      this.logDebug("session:memory_merge:llm_failed", {
+        sessionAgentId: descriptor.agentId,
+        profileId: context.profileId,
+        model: descriptor.model,
+        message: errorMessage
       });
     }
+
+    const mergeErrorMessage = `Session memory merge failed during ${context.stage}: ${errorMessage}`;
+    const metaFailure = await this.recordSessionMemoryMergeFailureAttemptSafely(descriptor, {
+      attemptId: context.attemptId,
+      timestamp: context.timestamp,
+      strategy: context.strategy ?? null,
+      failureStage: context.stage,
+      sessionContentHash: context.sessionContentHash ?? null,
+      profileContentHashBefore: context.profileContentHashBefore || null,
+      profileContentHashAfter:
+        (context.profileContentHashAfter ?? context.profileContentHashBefore) || null,
+      appliedSourceHash: context.appliedChange ? (context.sessionContentHash ?? null) : null,
+      error: mergeErrorMessage
+    });
+
+    let auditFailure: string | undefined;
+    if (context.stage !== "write_audit" && context.sessionContentHash) {
+      try {
+        await this.appendSessionMemoryMergeAuditEntry({
+          attemptId: context.attemptId,
+          timestamp: context.timestamp,
+          sessionAgentId: descriptor.agentId,
+          profileId: context.profileId,
+          status: "failed",
+          strategy: context.strategy ?? "seed",
+          stage: context.stage,
+          llmMergeSucceeded: context.llmMergeSucceeded,
+          usedFallbackAppend: false,
+          appliedChange: context.appliedChange,
+          model: context.model,
+          sessionContentHash: context.sessionContentHash,
+          profileContentHashBefore: context.profileContentHashBefore,
+          profileContentHashAfter:
+            context.profileContentHashAfter ?? context.profileContentHashBefore,
+          error: mergeErrorMessage
+        });
+      } catch (auditError) {
+        auditFailure = `failed to append merge audit entry (${errorToMessage(auditError)})`;
+      }
+    } else if (context.stage === "write_audit") {
+      auditFailure = `failed to append merge audit entry (${errorMessage})`;
+    }
+
+    const suffixes = [metaFailure, auditFailure].filter((value): value is string => !!value);
+    const finalMessage = suffixes.length > 0 ? `${mergeErrorMessage} [${suffixes.join("; ")}]` : mergeErrorMessage;
+
+    return new SessionMemoryMergeFailure(finalMessage, {
+      strategy: context.strategy,
+      stage: context.stage,
+      auditPath: context.auditPath
+    });
+  }
+
+  private shouldSkipSessionMemoryMergeIdempotently(
+    existingMeta: SessionMeta | undefined,
+    sessionContentHash: string,
+    profileContentHashBefore: string
+  ): boolean {
+    if (!existingMeta || existingMeta.lastMemoryMergeSourceHash !== sessionContentHash) {
+      return false;
+    }
+
+    if (existingMeta.lastMemoryMergeStatus === "failed") {
+      return false;
+    }
+
+    if (!existingMeta.lastMemoryMergeProfileHashAfter) {
+      return true;
+    }
+
+    return existingMeta.lastMemoryMergeProfileHashAfter === profileContentHashBefore;
+  }
+
+  private shouldRepairFailedPostApplyMerge(
+    existingMeta: SessionMeta | undefined,
+    sessionContentHash: string,
+    profileContentHashBefore: string
+  ): boolean {
+    if (!existingMeta || existingMeta.lastMemoryMergeStatus !== "failed") {
+      return false;
+    }
+
+    if (existingMeta.lastMemoryMergeAppliedSourceHash !== sessionContentHash) {
+      return false;
+    }
+
+    if (
+      existingMeta.lastMemoryMergeFailureStage &&
+      !isPostApplyFailureStage(existingMeta.lastMemoryMergeFailureStage)
+    ) {
+      return false;
+    }
+
+    if (!existingMeta.lastMemoryMergeProfileHashAfter) {
+      return true;
+    }
+
+    return existingMeta.lastMemoryMergeProfileHashAfter === profileContentHashBefore;
   }
 
   private isSessionMemoryMergeNoOp(sessionMemoryContent: string): boolean {
@@ -5317,7 +6122,8 @@ function normalizeThinkingLevelForProvider(provider: string, thinkingLevel: stri
   return thinkingLevel;
 }
 
-function buildSessionMemoryRuntimeView(profileMemoryContent: string, sessionMemoryContent: string): string {
+/** @visibleForTesting Root/profile memory composition is part of the Phase 3 ownership contract. */
+export function buildSessionMemoryRuntimeView(profileMemoryContent: string, sessionMemoryContent: string): string {
   const normalizedProfileMemory = profileMemoryContent.trimEnd();
   const normalizedSessionMemory = sessionMemoryContent.trimEnd();
 
@@ -5334,28 +6140,26 @@ function buildSessionMemoryRuntimeView(profileMemoryContent: string, sessionMemo
   ].join("\n");
 }
 
-function appendSessionMemoryToProfileMemory(
-  profileMemoryContent: string,
-  sessionMemoryContent: string,
-  options: { agentId: string; sessionLabel?: string; mergedAt: string }
-): string {
-  const normalizedProfileMemory = profileMemoryContent.trimEnd();
-  const normalizedSessionMemory = sessionMemoryContent.trimEnd();
-  const mergedHeader = [
-    "---",
-    "",
-    `## Session Memory Merge — ${options.sessionLabel ?? options.agentId}`,
-    `> Source session: ${options.agentId}`,
-    `> Merged at: ${options.mergedAt}`,
-    "",
-    normalizedSessionMemory
-  ].join("\n");
+function normalizeMemoryMergeContent(content: string): string {
+  return content.replace(/\r\n/g, "\n").trimEnd();
+}
 
-  if (normalizedProfileMemory.length === 0) {
-    return `${mergedHeader}\n`;
-  }
+function finalizeMergedMemoryContent(content: string): string {
+  const normalized = normalizeMemoryMergeContent(content);
+  return normalized.length > 0 ? `${normalized}\n` : "";
+}
 
-  return `${normalizedProfileMemory}\n\n${mergedHeader}\n`;
+function hashMemoryMergeContent(content: string): string {
+  return createHash("sha256").update(normalizeMemoryMergeContent(content)).digest("hex");
+}
+
+function isPostApplyFailureStage(stage: SessionMemoryMergeFailureStage): boolean {
+  return (
+    stage === "refresh_session_meta_stats" ||
+    stage === "record_attempt" ||
+    stage === "write_audit" ||
+    stage === "save_store"
+  );
 }
 
 function resolveModel(
@@ -5460,6 +6264,88 @@ function truncateWorkerCompletionText(text: string, maxChars: number): string {
   }
 
   return `${truncated}${WORKER_COMPLETION_TRUNCATION_SUFFIX}`;
+}
+
+export function normalizeCortexUserVisiblePaths(text: string): string {
+  return text.replace(/(?:[A-Za-z]:)?(?:[\\/][^,\s`]+)+[\\/]profiles(?:[\\/][^,\s`]+)+/g, (matchedPath) => {
+    const normalized = matchedPath.replace(/\\/g, "/");
+    const profilesIndex = normalized.toLowerCase().lastIndexOf("/profiles/");
+    if (profilesIndex < 0) {
+      return matchedPath;
+    }
+
+    return normalized.slice(profilesIndex + 1);
+  });
+}
+
+export function analyzeLatestCortexCloseoutNeed(
+  history: ConversationEntryEvent[]
+): { needsReminder: boolean; userTimestamp?: number; reason?: "missing_speak_to_user" | "stale_after_worker_progress" } {
+  let latestUserIndex = -1;
+
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    const entry = history[index];
+    if (entry.type === "conversation_message" && entry.role === "user" && entry.source === "user_input") {
+      latestUserIndex = index;
+      break;
+    }
+  }
+
+  if (latestUserIndex < 0) {
+    return { needsReminder: false };
+  }
+
+  const latestUserEntry = history[latestUserIndex];
+  const userTimestamp =
+    latestUserEntry.type === "conversation_message"
+      ? parseTimestampToMillis(latestUserEntry.timestamp)
+      : undefined;
+
+  let lastSpeakToUserTimestamp: number | undefined;
+  for (let index = latestUserIndex + 1; index < history.length; index += 1) {
+    const entry = history[index];
+    if (entry.type !== "conversation_message" || entry.source !== "speak_to_user") {
+      continue;
+    }
+
+    const timestamp = parseTimestampToMillis(entry.timestamp);
+    if (typeof timestamp === "number") {
+      lastSpeakToUserTimestamp = timestamp;
+    }
+  }
+
+  if (typeof lastSpeakToUserTimestamp !== "number") {
+    return {
+      needsReminder: true,
+      userTimestamp,
+      reason: "missing_speak_to_user"
+    };
+  }
+
+  for (let index = latestUserIndex + 1; index < history.length; index += 1) {
+    const entry = history[index];
+    if (!isCortexCloseoutFollowUpEntry(entry)) {
+      continue;
+    }
+
+    const timestamp = parseTimestampToMillis(entry.timestamp);
+    if (typeof timestamp === "number" && timestamp > lastSpeakToUserTimestamp) {
+      return {
+        needsReminder: true,
+        userTimestamp,
+        reason: "stale_after_worker_progress"
+      };
+    }
+  }
+
+  return {
+    needsReminder: false,
+    userTimestamp
+  };
+}
+
+function isCortexCloseoutFollowUpEntry(entry: ConversationEntryEvent): boolean {
+  return entry.type === "agent_message" && entry.source === "agent_to_agent";
 }
 
 function parseTimestampToMillis(value: string | undefined): number | undefined {

@@ -55,7 +55,7 @@ function persistWidth(width: number): void {
   }
 }
 
-interface ProfileKnowledgeEntry {
+interface ProfileScopedFileEntry {
   path: string
   exists: boolean
   sizeBytes: number
@@ -64,7 +64,7 @@ interface ProfileKnowledgeEntry {
 interface CortexPaths {
   commonKnowledge: string | null
   cortexNotes: string | null
-  profileKnowledge: Record<string, ProfileKnowledgeEntry>
+  profileMemory: Record<string, ProfileScopedFileEntry>
 }
 
 function isDashboardTab(value: string): value is DashboardTab {
@@ -81,10 +81,10 @@ export function CortexDashboardPanel({
 }: CortexDashboardPanelProps) {
   const [activeTab, setActiveTab] = useState<DashboardTab>('knowledge')
   const [panelWidth, setPanelWidth] = useState(loadPersistedWidth)
-  const [paths, setPaths] = useState<CortexPaths>({ 
-    commonKnowledge: null, 
+  const [paths, setPaths] = useState<CortexPaths>({
+    commonKnowledge: null,
     cortexNotes: null,
-    profileKnowledge: {}
+    profileMemory: {},
   })
   const [pathsLoaded, setPathsLoaded] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
@@ -110,17 +110,19 @@ export function CortexDashboardPanel({
           files?: {
             commonKnowledge?: string
             cortexNotes?: string
-            profileKnowledge?: Record<string, ProfileKnowledgeEntry>
+            profileMemory?: Record<string, ProfileScopedFileEntry>
+            profileKnowledge?: Record<string, ProfileScopedFileEntry>
           }
           paths?: { commonKnowledge?: string; cortexNotes?: string }
-          profileKnowledge?: Record<string, ProfileKnowledgeEntry>
+          profileMemory?: Record<string, ProfileScopedFileEntry>
+          profileKnowledge?: Record<string, ProfileScopedFileEntry>
         }
         const files = payload.files ?? payload.paths
-        const profileKnowledge = payload.files?.profileKnowledge ?? payload.profileKnowledge ?? {}
+        const profileMemory = payload.files?.profileMemory ?? payload.profileMemory ?? payload.files?.profileKnowledge ?? payload.profileKnowledge ?? {}
         setPaths({
           commonKnowledge: typeof files?.commonKnowledge === 'string' ? files.commonKnowledge : null,
           cortexNotes: typeof files?.cortexNotes === 'string' ? files.cortexNotes : null,
-          profileKnowledge,
+          profileMemory,
         })
         setPathsLoaded(true)
       })
@@ -275,7 +277,7 @@ export function CortexDashboardPanel({
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="common">Common Knowledge</SelectItem>
-                    {Object.entries(paths.profileKnowledge)
+                    {Object.entries(paths.profileMemory)
                       .sort(([a], [b]) => a.localeCompare(b))
                       .map(([profileId, entry]) => (
                         <SelectItem key={profileId} value={profileId}>
@@ -302,17 +304,17 @@ export function CortexDashboardPanel({
                   filePath={
                     selectedKnowledgeScope === 'common'
                       ? paths.commonKnowledge
-                      : paths.profileKnowledge[selectedKnowledgeScope]?.path ?? null
+                      : paths.profileMemory[selectedKnowledgeScope]?.path ?? null
                   }
                   label={
                     selectedKnowledgeScope === 'common'
                       ? 'Common Knowledge'
-                      : `Project Knowledge: ${selectedKnowledgeScope}`
+                      : `Profile Memory: ${selectedKnowledgeScope}`
                   }
                   description={
                     selectedKnowledgeScope === 'common'
                       ? 'Shared knowledge base across all profiles'
-                      : `Knowledge specific to ${selectedKnowledgeScope}`
+                      : `Injected profile summary memory for ${selectedKnowledgeScope}`
                   }
                   editable
                   onArtifactClick={onArtifactClick}
