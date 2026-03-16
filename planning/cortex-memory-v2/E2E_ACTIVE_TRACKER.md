@@ -44,7 +44,7 @@
 |---|---|---|---|
 | `ART-RUBRIC` | `planning/cortex-memory-v2/E2E_GOALS_RUBRIC.md` | Final scoring rubric | Defines the required acceptance surface |
 | `ART-MIGRATE-RUNTIME` | `planning/cortex-memory-v2/E2E_MIGRATE_RUNTIME.md` | Existing-data runtime narrative | Strong for boot/chat/scan snapshots; incomplete for rubric-wide coverage |
-| `ART-FRESH-RUNTIME` | `planning/cortex-memory-v2/E2E_FRESH_RUNTIME.md` | Net-new runtime narrative | Strong for provisioning/scan; blocked for live assistant dispatch |
+| `ART-FRESH-RUNTIME` | `planning/cortex-memory-v2/E2E_FRESH_RUNTIME.md` | Net-new runtime narrative | Strong for provisioning/scan and now live-pass for bounded assistant dispatch after isolated auth repair |
 | `ART-PHASE3` | `planning/cortex-memory-v2/VALIDATION_PHASE3_REPORT.md` | Ownership/auth validation summary | Strong file-layout/auth-path evidence |
 | `ART-TESTING` | `planning/cortex-memory-v2/TESTING.md` | Command log + focused test matrix | Good static/test evidence; not a substitute for live rubric coverage |
 | `ART-AUTH-AUDIT` | `planning/cortex-memory-v2/E2E_AUTH_RUNTIME_AUDIT.md` | Cross-env auth diagnosis | Explains configured-vs-valid auth gap and fallback confusion |
@@ -124,7 +124,7 @@ Each scenario below is the unit of evidence collection. The rubric references ar
 | `AUTH-04` | Fresh env boots cleanly with empty data dir | `ENV-FRESH` | `6.4` | `E2E_FRESH_RUNTIME.md`, `VALIDATION_PHASE3_REPORT.md` | `LIVE-PASS` | Fresh reset/boot/provisioning are documented. |
 | `AUTH-05` | `/api/transcribe` uses canonical shared auth | automated | `6.5` | `TESTING.md` | `TEST-PASS` | Test-covered, not isolated live-called in the E2E package. |
 | `AUTH-06` | OAuth login writes canonical shared auth | automated | `6.6` | `TESTING.md` | `TEST-PASS` | Test-covered, not live-exercised in isolated runtime docs. |
-| `AUTH-07` | Provider-specific runtime auth failures are characterized, not conflated with transport regressions | `ENV-MIGRATE`, `ENV-FRESH` | supports `1.2`, `6.1` | `E2E_AUTH_RUNTIME_AUDIT.md`, `E2E_COPIED_DIAGNOSIS_R2.md`, `E2E_FRESH_DIAGNOSIS_R2.md` | `LIVE-PASS` | Current diagnosis package is strong and should be retained as supporting context for blocked live-chat scenarios. |
+| `AUTH-07` | Provider-specific runtime auth failures are characterized, not conflated with transport regressions | `ENV-MIGRATE`, `ENV-FRESH` | supports `1.2`, `6.1` | `E2E_AUTH_RUNTIME_AUDIT.md`, `E2E_COPIED_DIAGNOSIS_R2.md`, `E2E_FRESH_DIAGNOSIS_R2.md` | `LIVE-PASS` | Current diagnosis package is strong and should be retained as supporting context for future isolated auth-state drift or provider-health failures. |
 
 ### 4.7 Operational safety / compatibility scenarios
 
@@ -132,7 +132,7 @@ Each scenario below is the unit of evidence collection. The rubric references ar
 |---|---|---|---|---|---|---|
 | `OPS-01` | Backend typecheck clean | repo | `7.1` | `TESTING.md`, `CLOSEOUT_READINESS.md` | `LIVE-PASS` | Repeatedly logged as passing. |
 | `OPS-02` | UI typecheck clean | repo | `7.2` | `TESTING.md`, `CLOSEOUT_READINESS.md` | `LIVE-PASS` | Repeatedly logged as passing. |
-| `OPS-03` | Full unit/integration suite clean (`vitest run`) | repo | `7.3` | full-suite command output artifact | `LIVE-PASS` | Full backend `vitest run` now exists in `.tmp/e2e-full-backend-vitest.log` with `425 passed / 0 failed`. |
+| `OPS-03` | Full unit/integration suite clean (`vitest run`) | repo | `7.3` | full-suite command output artifact | `LIVE-PASS` | Full backend `vitest run` now exists in `.tmp/e2e-full-backend-vitest.log` with `435 passed / 0 failed`. |
 | `OPS-04` | Build succeeds | repo | `7.4` | `TESTING.md`, runtime docs | `LIVE-PASS` | Build steps are documented in both migrate and fresh runs. |
 | `OPS-05` | Scan/UI contract remains additive with `profileKnowledge` back-compat | repo + runtime snapshots | `7.5` | `TESTING.md`, scan snapshots, optional contract-diff note | `PARTIAL` | Compatibility is described and UI was updated to prefer `profileMemory`, but there is no dedicated before/after contract proof artifact. |
 | `OPS-06` | Worker prompt v2 deployed with `.v1.bak` rollback path | repo | `7.6` | code/path inspection note, optionally `TESTING.md` or targeted artifact | `PARTIAL` | Status/closeout docs assert this landed, but the E2E package lacks a dedicated evidence line for deployed prompt + backup coexistence. |
@@ -148,7 +148,7 @@ Each scenario below is the unit of evidence collection. The rubric references ar
 | 3. Ownership / Memory Behavior | `PASS` | File-layout ownership split is strong, and memory-skill target behavior now has isolated runtime proof for both root and sub-session writes. |
 | 4. Reference-Doc Behavior | `MOSTLY COVERED` | Migrate/fresh structural behavior is well covered, though some criteria remain test-only rather than separately live-runtime demonstrated. |
 | 5. Merge / Promotion Behavior | `MOSTLY COVERED` | Isolated live merge evidence now exists, supplemented by strong focused automated coverage for deeper failure/retry cases. |
-| 6. Auth / Isolation Behavior | `PARTIAL` | Canonical path behavior is covered; fresh boot is covered; production non-touch now has a dedicated evidence-backed waiver note instead of byte-diff proof; transcribe/OAuth remain test-only. |
+| 6. Auth / Isolation Behavior | `PASS with AUTH-03 caveat` | Canonical path behavior, fresh boot, and fresh live dispatch after isolated auth repair are covered; production non-touch is still carried by an evidence-backed waiver note instead of byte-diff proof, and transcribe/OAuth remain test-backed rather than isolated live-called. |
 | 7. Operational Safety | `PASS` | Build/typecheck are covered and the full backend `vitest run` is now present in the E2E package. |
 
 ---

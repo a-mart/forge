@@ -1073,7 +1073,7 @@ describe('SwarmWebSocketServer', () => {
       expect(response.status).toBe(200)
 
       const payload = (await response.json()) as {
-        scan: { sessions: Array<{ profileId: string }> }
+        scan: { sessions: Array<{ profileId: string; sessionId: string; status: string }> }
         files: {
           profileMemory: Record<string, { path: string; exists: boolean; sizeBytes: number }>
           profileReference: Record<string, { path: string; exists: boolean; sizeBytes: number }>
@@ -1081,7 +1081,26 @@ describe('SwarmWebSocketServer', () => {
         }
       }
 
-      expect(payload.scan.sessions).toEqual([])
+      expect(
+        payload.scan.sessions.map((session) => ({
+          profileId: session.profileId,
+          sessionId: session.sessionId,
+          status: session.status,
+        })),
+      ).toEqual(
+        expect.arrayContaining([
+          {
+            profileId,
+            sessionId: profileId,
+            status: 'never-reviewed',
+          },
+          {
+            profileId: 'manager',
+            sessionId: 'manager',
+            status: 'never-reviewed',
+          },
+        ]),
+      )
       expect(payload.files.profileMemory[profileId]).toEqual({
         path: getProfileMemoryPath(config.paths.dataDir, profileId),
         exists: expect.any(Boolean),

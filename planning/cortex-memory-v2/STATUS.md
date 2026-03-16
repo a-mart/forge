@@ -23,13 +23,10 @@ Implement the full Cortex memory redesign with:
 - E2E validation: separate medium-reasoning workers
 
 ## Current Phase
-- Phase 1 foundation + review remediation implemented in code/tests
-- Phase 2a legacy profile-knowledge → reference-doc migration plumbing implemented in code/tests
-- Phase 2b prompt/classification updates implemented in `cortex.md` + deployed to runtime worker-prompt seeding
-- Phase 2 review remediation implemented in code/tests, including prompt upgrade path, ownership/offset guidance fixes, scan-route hardening, and isolated migrate/fresh validation
-- Phase 3 ownership/auth hardening is functionally landed and awaiting final isolated validation confirmation
-- Phase 4 merge/promotion hardening has now landed in code/tests: profile-summary promotion fails closed, merge attempts are tracked/idempotent, and audit/result metadata is emitted end-to-end
-- Phase 5 metadata/audit hardening has now landed in code/tests: session meta records merge attempt/profile hashes for safer idempotency, legacy meta stays compatible during transition, and scan payloads expose per-profile merge-audit paths without adding a new persisted v1 review-state file
+- Implementation, validation, and hardening are complete enough for merge.
+- Phase 1 through Phase 5 code/test work is landed in the branch.
+- Copied-prod and fresh isolated validation are both in documented GO shape.
+- Remaining work is optional polish/evidence expansion, not a product blocker.
 
 ## Latest Completed
 - Two architecture/review cycles completed
@@ -73,10 +70,9 @@ Implement the full Cortex memory redesign with:
 - **Phase 5**: Extended `GET /api/cortex/scan` with `files.profileMergeAudit[profileId]` so validators/UI/Cortex can discover existing `profiles/<profileId>/merge-audit.log` paths without introducing a new profile-level review-state file, and zero-byte audit logs now report `exists: true`.
 
 ## Next Up
-1. Keep pushing repeated copied-history stress runs to confirm the improved closeout/review behavior holds across more scenario shapes, not just the postfix trio.
-2. Keep the backend/full-suite gate clean after the low-churn env-sensitive test fixes captured in `planning/cortex-memory-v2/E2E_BACKEND_GATES.md`.
-3. Keep `planning/cortex-memory-v2/OVERNIGHT_RUNBOOK.md`, `E2E_EXEC_SUMMARY.md`, `E2E_ACTIVE_TRACKER.md`, and `E2E_TEST_INDEX.md` aligned as hardening evidence expands.
-4. Decide whether the newest hardening posture should also be folded into the formal package docs beyond the tracker/postfix artifacts.
+1. Merge `feat/cortex-memory-v2` to `main` and preserve the final docs/evidence set.
+2. Optionally run broader copied-history stress shapes later if more product-polish evidence is desired beyond the already-clean postfix reruns.
+3. Optionally strengthen AUTH-03 from waiver note to before/after manifest proof if a future audit needs it.
 
 ## Open User Review Gates
 - None currently

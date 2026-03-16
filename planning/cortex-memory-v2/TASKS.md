@@ -25,7 +25,7 @@
 - [x] Add migration logic preserving existing root profile memory content
 - [x] Add ownership-path tests for root/non-root/worker cases
 - [x] Harden runtime-critical auth consumers to prefer canonical `shared/auth/auth.json` with legacy copy-forward fallback
-- [ ] Re-run isolated migrate/fresh validation with the Phase 3 + auth-path changes
+- [x] Re-run isolated migrate/fresh validation with the Phase 3 + auth-path changes
 
 ## Phase 4 — Merge / Promotion Hardening
 - [x] Replace raw-append fallback semantics for profile summary memory
@@ -52,7 +52,7 @@
 - [x] Continue fresh isolated live-dispatch investigation with bounded, evidence-rich runs only
 - [ ] Run additional copied-prod Cortex behavior against historical conversations and evaluate memory/knowledge usefulness
 - [x] Investigate or explicitly waive the 2 failing backend tests recorded in `.tmp/e2e-full-backend-vitest.log`
-- [ ] Keep `OVERNIGHT_RUNBOOK.md`, summary, tracker, and test index aligned as new evidence lands
+- [x] Keep `OVERNIGHT_RUNBOOK.md`, summary, tracker, and test index aligned as new evidence lands
 
 ## Review Lanes
 - [x] Cycle A implementation review (Codex)

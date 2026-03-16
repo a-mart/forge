@@ -67,7 +67,7 @@ These changes keep behavior expectations explicit and deterministic across paren
 - Command:
   - `cd apps/backend && pnpm exec vitest run`
 - Result:
-  - `42 passed` files, `425 passed` tests, `0 failed`.
+  - `43 passed` files, `435 passed` tests, `0 failed`.
 
 ### Required typechecks
 - Command:

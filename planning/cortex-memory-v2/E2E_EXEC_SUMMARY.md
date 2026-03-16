@@ -58,7 +58,7 @@ Primary artifacts reviewed:
 | Existing copied-session UI history load | **PASS** | A preexisting copied session was selected from the sidebar and its persisted transcript rendered in the chat pane with text matching the on-disk copied session file | Bounded to one real copied session in the migrate env | `E2E_UI_HISTORY_LOAD.md` |
 | Memory-skill target routing | **PASS** | Root remember write landed in `profiles/<pid>/sessions/<pid>/memory.md`; sub-session remember write landed in `profiles/<pid>/sessions/<sid>/memory.md`; canonical profile memory stayed unchanged | Root assistant ack had a harness-capture caveat, but session logs and file writes proved the target path | `E2E_MEMORY_SKILL_TARGETS.md` |
 | Merge/promotion runtime | **PASS with bounded caveat** | Root memory stayed local; non-root merge applied/seeded; audit + meta persisted; idempotent skip verified | Full injected failure matrix remains partly test-backed rather than all live-runtime | `E2E_MEMORY_MERGE_RUNTIME.md`, `E2E_MIGRATE_RUNTIME.md`, `TESTING.md` |
-| Full backend Vitest | **PASS** | Full backend suite rerun is now clean after low-churn env-sensitive test hardening | `425 passed / 0 failed` | `.tmp/e2e-full-backend-vitest.log`, `E2E_BACKEND_GATES.md` |
+| Full backend Vitest | **PASS** | Full backend suite rerun is now clean after low-churn env-sensitive test hardening | `435 passed / 0 failed` | `.tmp/e2e-full-backend-vitest.log`, `E2E_BACKEND_GATES.md` |
 
 ## 5) Product evidence vs environment/auth issues
 
@@ -88,7 +88,7 @@ The earlier fresh-lane dispatch failure was an auth-state problem, not a Memory 
 ## 6) Full-suite test result
 
 The requested full backend suite evidence now exists and is clean after low-churn test hardening for ambient daemonized-env coupling:
-- **Result:** `425 passed / 0 failed`
+- **Result:** `435 passed / 0 failed`
 - **Artifact:** `.tmp/e2e-full-backend-vitest.log`
 - **Supporting diagnosis/fix note:** `planning/cortex-memory-v2/E2E_BACKEND_GATES.md`
 

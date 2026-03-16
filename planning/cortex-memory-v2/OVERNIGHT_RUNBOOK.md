@@ -49,6 +49,6 @@
 - `.tmp/e2e-full-backend-vitest.log`
 
 ## Backend Gate Status
-- Full backend Vitest is now clean at `425 passed / 0 failed`.
+- Full backend Vitest is now clean at `435 passed / 0 failed`.
 - Supporting artifact: `planning/cortex-memory-v2/E2E_BACKEND_GATES.md`.
 - If failures reappear, treat them as new regressions rather than relying on the old diagnosis.

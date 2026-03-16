@@ -59,7 +59,7 @@ Older placeholder names such as `E2E_RUNTIME_COPIED_PRODUCTION.md` and `E2E_RUNT
 | `RAW-MERGE` | Merge/audit WS probe artifacts | `.tmp/e2e-memory-merge-*`, `.tmp/e2e-migrate-v2-*merge*` | merge lanes | Present | Includes runtime result JSON + audit tails |
 | `RAW-RECONNECT` | Reconnect/session-memory probe artifacts | `.tmp/e2e-crt06-*` | reconnect lane | Present | Includes reconnect result JSON and backend log |
 | `RAW-WORKER` | Worker spawn/callback artifacts | `.tmp/e2e-worker-callback-*`, `.tmp/e2e-crt05-*` | worker lane | Present | Includes raw WS event log + structured result |
-| `RAW-VITEST` | Full backend suite log | `.tmp/e2e-full-backend-vitest.log` | validation lane | Present | Executed; latest result is `425 passed / 0 failed` after low-churn test hardening |
+| `RAW-VITEST` | Full backend suite log | `.tmp/e2e-full-backend-vitest.log` | validation lane | Present | Executed; latest result is `435 passed / 0 failed` after low-churn test hardening |
 
 ---
 
@@ -104,7 +104,7 @@ Older placeholder names such as `E2E_RUNTIME_COPIED_PRODUCTION.md` and `E2E_RUNT
 | `AUTH-07` | auth/diagnosis docs | existing auth raw logs | provider-validity diagnosis result | Live-pass |
 | `OPS-01` | `TESTING.md`, `CLOSEOUT_READINESS.md` | command output | backend typecheck result | Live-pass |
 | `OPS-02` | `TESTING.md`, `CLOSEOUT_READINESS.md` | command output | UI typecheck result | Live-pass |
-| `OPS-03` | `.tmp/e2e-full-backend-vitest.log`, `E2E_EXEC_SUMMARY.md`, `E2E_BACKEND_GATES.md` | `RAW-VITEST` | full test-suite result | Live-pass (`425 passed / 0 failed`) |
+| `OPS-03` | `.tmp/e2e-full-backend-vitest.log`, `E2E_EXEC_SUMMARY.md`, `E2E_BACKEND_GATES.md` | `RAW-VITEST` | full test-suite result | Live-pass (`435 passed / 0 failed`) |
 | `OPS-04` | runtime docs / `TESTING.md` | build output | build result | Live-pass |
 | `OPS-05` | runtime docs, `TESTING.md`, future contract note if desired | scan snapshots and/or test logs | additive contract result | Partial |
 | `OPS-06` | closeout/status note or future focused proof | file inspection or test/log evidence | prompt-v2-backup result | Partial |
@@ -145,6 +145,6 @@ Current synthesis headline:
 - copied-prod evidence is strong,
 - fresh live dispatch is now live-pass after isolated auth repair,
 - dedicated CRT-07 and OWN-04 artifacts are present,
-- full backend Vitest executed clean at `425 passed / 0 failed`.
+- full backend Vitest executed clean at `435 passed / 0 failed`.
 
 Use `planning/cortex-memory-v2/E2E_EXEC_SUMMARY.md` as the final verdict source.
