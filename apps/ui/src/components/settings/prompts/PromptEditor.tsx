@@ -17,6 +17,7 @@ interface PromptEditorProps {
   description: string
   /** Bumped externally when a prompt_changed WS event arrives */
   refreshKey: number
+  hideTitleDescription?: boolean
 }
 
 export function PromptEditor({
@@ -27,6 +28,7 @@ export function PromptEditor({
   displayName,
   description,
   refreshKey,
+  hideTitleDescription = false,
 }: PromptEditorProps) {
   const [entry, setEntry] = useState<PromptContentResponse | null>(null)
   const [content, setContent] = useState('')
@@ -133,10 +135,12 @@ export function PromptEditor({
     <div className="flex flex-col gap-3">
       {/* Header */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0 flex-1">
-          <h2 className="text-base font-semibold text-foreground">{displayName}</h2>
-          <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
-        </div>
+        {!hideTitleDescription ? (
+          <div className="min-w-0 flex-1">
+            <h2 className="text-base font-semibold text-foreground">{displayName}</h2>
+            <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
+          </div>
+        ) : null}
         <div className="flex shrink-0 items-center gap-2">
           {hasOverride && (
             <Button
@@ -169,13 +173,20 @@ export function PromptEditor({
       </div>
 
       {/* Source indicator + dirty badge */}
-      <div className="flex flex-wrap items-center gap-2">
-        {entry && <PromptSourceIndicator sourceLayer={entry.sourceLayer} />}
-        {isDirty && (
-          <span className="text-xs font-medium text-amber-600 dark:text-amber-400">
-            Unsaved changes
-          </span>
-        )}
+      <div className="flex flex-col gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {entry && <PromptSourceIndicator sourceLayer={entry.sourceLayer} />}
+          {isDirty && (
+            <span className="text-xs font-medium text-amber-600 dark:text-amber-400">
+              Unsaved changes
+            </span>
+          )}
+        </div>
+        {entry?.sourcePath ? (
+          <p className="text-[11px] text-muted-foreground break-all">
+            Source: <span className="font-mono">{entry.sourcePath}</span>
+          </p>
+        ) : null}
       </div>
 
       {/* Feedback banners */}

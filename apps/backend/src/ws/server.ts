@@ -181,7 +181,10 @@ export class SwarmWebSocketServer {
       ...createHealthRoutes({
         resolveControlPidFile: () => this.controlPidFile
       }),
-      ...createFileRoutes({ swarmManager: this.swarmManager }),
+      ...createFileRoutes({
+        swarmManager: this.swarmManager,
+        broadcastEvent: (event) => this.wsHandler.broadcastToSubscribed(event),
+      }),
       ...createFeedbackRoutes({ swarmManager: this.swarmManager }),
       ...createCortexRoutes({ swarmManager: this.swarmManager }),
       ...createTranscriptionRoutes({ swarmManager: this.swarmManager }),
@@ -206,8 +209,10 @@ export class SwarmWebSocketServer {
       ...(options.promptRegistry
         ? createPromptRoutes({
             promptRegistry: options.promptRegistry,
+            dataDir: this.swarmManager.getConfig().paths.dataDir,
             broadcastEvent: (event) => this.wsHandler.broadcastToSubscribed(event),
             promptPreviewProvider: this.swarmManager,
+            versioning: this.swarmManager.getVersioningService(),
           })
         : []),
     ];

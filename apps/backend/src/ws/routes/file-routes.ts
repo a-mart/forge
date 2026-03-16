@@ -1,11 +1,13 @@
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { homedir, tmpdir } from "node:os";
+import type { ServerEvent } from "@middleman/protocol";
 import {
   isPathWithinRoots,
   normalizeAllowlistRoots,
   resolveDirectoryPath
 } from "../../swarm/cwd-policy.js";
+import { writeTrackedCortexPromptSurfaceFile } from "../../swarm/cortex-prompt-surfaces.js";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
 import {
   applyCorsHeaders,
@@ -26,8 +28,11 @@ const WRITE_FILE_ENDPOINT_PATH = "/api/write-file";
 const WRITE_FILE_METHODS = "POST, OPTIONS";
 const MAX_WRITE_FILE_BODY_BYTES = 2 * 1024 * 1024;
 
-export function createFileRoutes(options: { swarmManager: SwarmManager }): HttpRoute[] {
-  const { swarmManager } = options;
+export function createFileRoutes(options: {
+  swarmManager: SwarmManager;
+  broadcastEvent?: (event: ServerEvent) => void;
+}): HttpRoute[] {
+  const { swarmManager, broadcastEvent } = options;
 
   const resolveAllowedPath = async (requestedPath: string): Promise<string> => {
     const config = swarmManager.getConfig();
@@ -279,12 +284,29 @@ export function createFileRoutes(options: { swarmManager: SwarmManager }): HttpR
           }
 
           const resolvedPath = await resolveAllowedPath(pathFromBody);
-          await mkdir(dirname(resolvedPath), { recursive: true });
-          await writeFile(resolvedPath, contentFromBody, "utf8");
+          const trackedWrite = await maybeWriteTrackedCortexFile(
+            swarmManager.getConfig().paths.dataDir,
+            resolvedPath,
+            contentFromBody,
+            broadcastEvent,
+          );
+
+          if (!trackedWrite) {
+            await mkdir(dirname(resolvedPath), { recursive: true });
+            await writeFile(resolvedPath, contentFromBody, "utf8");
+          }
+
+          void swarmManager.getVersioningService()?.recordMutation({
+            path: resolvedPath,
+            action: "write",
+            source: "api-write-file"
+          }).catch(() => {
+            // Fail open: file writes succeed even when versioning cannot record them.
+          });
 
           sendJson(response, 200, {
             success: true,
-            bytesWritten: Buffer.byteLength(contentFromBody, "utf8")
+            bytesWritten: trackedWrite?.bytesWritten ?? Buffer.byteLength(contentFromBody, "utf8")
           });
         } catch (error) {
           const message = error instanceof Error ? error.message : "Unable to write file.";
@@ -309,4 +331,26 @@ export function createFileRoutes(options: { swarmManager: SwarmManager }): HttpR
       }
     }
   ];
+}
+
+async function maybeWriteTrackedCortexFile(
+  dataDir: string,
+  filePath: string,
+  content: string,
+  broadcastEvent?: (event: ServerEvent) => void,
+): Promise<{ bytesWritten: number } | undefined> {
+  try {
+    return await writeTrackedCortexPromptSurfaceFile({
+      dataDir,
+      filePath,
+      content,
+      broadcastEvent,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes("not a tracked Cortex prompt surface")) {
+      return undefined;
+    }
+    throw error;
+  }
 }

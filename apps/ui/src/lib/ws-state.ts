@@ -36,7 +36,7 @@ export interface ManagerWsState {
   playwrightSettings: PlaywrightDiscoverySettings | null
   unreadCounts: Record<string, number>
   hasReceivedAgentsSnapshot: boolean
-  /** Monotonically increasing counter bumped on each prompt_changed WS event */
+  /** Monotonically increasing counter bumped on prompt-related WS events */
   promptChangeKey: number
 }
 

@@ -20,6 +20,10 @@ import { getScheduleFilePath } from '../scheduler/schedule-storage.js'
 import {
   getCommonKnowledgePath,
   getCortexNotesPath,
+  getCortexPromotionManifestsDir,
+  getCortexReviewLockPath,
+  getCortexReviewLogPath,
+  getCortexWorkerPromptsPath,
   getProfileKnowledgePath,
   getProfileMemoryPath,
   getProfileMergeAuditLogPath,
@@ -737,6 +741,57 @@ describe('SwarmWebSocketServer', () => {
     }
   })
 
+  it('records versioning mutations for tracked data-dir writes through POST /api/write-file', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port)
+    const recordMutation = vi.fn(async () => true)
+
+    const manager = new TestSwarmManager(config, {
+      versioningService: {
+        isTrackedPath: () => true,
+        recordMutation,
+        flushPending: async () => {},
+        reconcileNow: async () => {},
+      },
+    })
+    await bootWithDefaultManager(manager, config)
+    recordMutation.mockClear()
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    const targetPath = getCommonKnowledgePath(config.paths.dataDir)
+    const content = '# Common Knowledge\n\nTracked dashboard write.\n'
+
+    try {
+      const response = await fetch(`http://${config.host}:${config.port}/api/write-file`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          path: targetPath,
+          content,
+        }),
+      })
+
+      expect(response.status).toBe(200)
+      expect(recordMutation).toHaveBeenCalledWith({
+        path: targetPath,
+        action: 'write',
+        source: 'api-write-file',
+      })
+    } finally {
+      await server.stop()
+    }
+  })
+
   it('writes files through POST /api/write-file inside os.tmpdir()', async () => {
     const port = await getAvailablePort()
     const config = await makeTempConfig(port)
@@ -811,6 +866,286 @@ describe('SwarmWebSocketServer', () => {
       const payload = (await response.json()) as { error: string }
       expect(payload.error).toContain('outside allowed roots')
     } finally {
+      await server.stop()
+    }
+  })
+
+  it('lists and reads Cortex prompt surfaces through the additive prompt routes', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const commonKnowledgePath = getCommonKnowledgePath(config.paths.dataDir)
+    const workerPromptsPath = getCortexWorkerPromptsPath(config.paths.dataDir)
+    const cortexNotesPath = getCortexNotesPath(config.paths.dataDir)
+
+    await writeFile(commonKnowledgePath, '# Common Knowledge\n\nLive common content\n', 'utf8')
+    await writeFile(workerPromptsPath, '# Cortex Worker Prompt Templates — v4\n<!-- Cortex Worker Prompts Version: 4 -->\n\nLive worker content\n', 'utf8')
+    await writeFile(cortexNotesPath, '# Cortex Notes\n\nScratch note\n', 'utf8')
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+      promptRegistry: manager.promptRegistry,
+    })
+
+    await server.start()
+
+    try {
+      const listResponse = await fetch(
+        `http://${config.host}:${config.port}/api/prompts/cortex-surfaces?profileId=cortex`,
+      )
+      expect(listResponse.status).toBe(200)
+      const listPayload = (await listResponse.json()) as {
+        enabled: boolean
+        surfaces: Array<{
+          surfaceId: string
+          title: string
+          group: string
+          runtimeEffect: string
+          editable: boolean
+          filePath?: string
+        }>
+      }
+
+      expect(listPayload.enabled).toBe(true)
+      expect(listPayload.surfaces.map((surface) => surface.surfaceId)).toEqual([
+        'cortex-system-prompt',
+        'common-knowledge-template',
+        'common-knowledge-live',
+        'cortex-worker-prompts-template',
+        'cortex-worker-prompts-live',
+        'cortex-notes',
+      ])
+
+      const notesSurface = listPayload.surfaces.find((surface) => surface.surfaceId === 'cortex-notes')
+      expect(notesSurface).toMatchObject({
+        group: 'scratch',
+        runtimeEffect: 'scratchOnly',
+        editable: false,
+        filePath: cortexNotesPath,
+      })
+
+      const commonResponse = await fetch(
+        `http://${config.host}:${config.port}/api/prompts/cortex-surfaces/common-knowledge-live?profileId=cortex`,
+      )
+      expect(commonResponse.status).toBe(200)
+      const commonPayload = (await commonResponse.json()) as { content: string; filePath: string }
+      expect(commonPayload).toMatchObject({
+        content: '# Common Knowledge\n\nLive common content\n',
+        filePath: commonKnowledgePath,
+      })
+
+      const workerResponse = await fetch(
+        `http://${config.host}:${config.port}/api/prompts/cortex-surfaces/cortex-worker-prompts-live?profileId=cortex`,
+      )
+      expect(workerResponse.status).toBe(200)
+      const workerPayload = (await workerResponse.json()) as { content: string; filePath: string }
+      expect(workerPayload).toMatchObject({
+        content: '# Cortex Worker Prompt Templates — v4\n<!-- Cortex Worker Prompts Version: 4 -->\n\nLive worker content\n',
+        filePath: workerPromptsPath,
+      })
+
+      const nonCortexResponse = await fetch(
+        `http://${config.host}:${config.port}/api/prompts/cortex-surfaces?profileId=manager`,
+      )
+      expect(nonCortexResponse.status).toBe(200)
+      expect(await nonCortexResponse.json()).toEqual({ enabled: false, surfaces: [] })
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('reseeds the live Cortex worker prompt file from the current template without triggering legacy upgrade on next boot', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const workerPromptsPath = getCortexWorkerPromptsPath(config.paths.dataDir)
+    const customTemplate = [
+      '# Cortex Worker Prompt Templates — v4',
+      '<!-- Cortex Worker Prompts Version: 4 -->',
+      '',
+      'Custom template content.',
+      '',
+    ].join('\n')
+
+    await manager.promptRegistry.save('operational', 'cortex-worker-prompts', customTemplate, 'cortex')
+    await writeFile(workerPromptsPath, '# Cortex Worker Prompt Templates\n\nlegacy content\n', 'utf8')
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+      promptRegistry: manager.promptRegistry,
+    })
+
+    await server.start()
+
+    try {
+      const resetResponse = await fetch(
+        `http://${config.host}:${config.port}/api/prompts/cortex-surfaces/cortex-worker-prompts-live/reset?profileId=cortex`,
+        {
+          method: 'POST',
+        },
+      )
+
+      expect(resetResponse.status).toBe(200)
+      expect(await readFile(workerPromptsPath, 'utf8')).toBe(customTemplate)
+    } finally {
+      await server.stop()
+    }
+
+    const rebootedManager = new TestSwarmManager(config)
+    await rebootedManager.boot()
+
+    expect(await readFile(workerPromptsPath, 'utf8')).toBe(customTemplate)
+    await expect(readFile(`${workerPromptsPath}.v1.bak`, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(`${workerPromptsPath}.v2.bak`, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('records versioning mutations for Cortex prompt-surface file saves and resets', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port)
+    const recordMutation = vi.fn(async () => true)
+
+    const manager = new TestSwarmManager(config, {
+      versioningService: {
+        isTrackedPath: () => true,
+        recordMutation,
+        flushPending: async () => {},
+        reconcileNow: async () => {},
+      },
+    })
+    await bootWithDefaultManager(manager, config)
+
+    const commonKnowledgePath = getCommonKnowledgePath(config.paths.dataDir)
+    const workerPromptsPath = getCortexWorkerPromptsPath(config.paths.dataDir)
+    const customTemplate = [
+      '# Cortex Worker Prompt Templates — v4',
+      '<!-- Cortex Worker Prompts Version: 4 -->',
+      '',
+      'Custom template content.',
+      '',
+    ].join('\n')
+
+    await manager.promptRegistry.save('operational', 'cortex-worker-prompts', customTemplate, 'cortex')
+    recordMutation.mockClear()
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+      promptRegistry: manager.promptRegistry,
+    })
+
+    await server.start()
+
+    try {
+      const saveResponse = await fetch(
+        `http://${config.host}:${config.port}/api/prompts/cortex-surfaces/common-knowledge-live`,
+        {
+          method: 'PUT',
+          headers: {
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({
+            profileId: 'cortex',
+            content: '# Common Knowledge\n\nUpdated through cortex surface save\n',
+          }),
+        },
+      )
+      expect(saveResponse.status).toBe(200)
+
+      const resetResponse = await fetch(
+        `http://${config.host}:${config.port}/api/prompts/cortex-surfaces/cortex-worker-prompts-live/reset?profileId=cortex`,
+        {
+          method: 'POST',
+        },
+      )
+      expect(resetResponse.status).toBe(200)
+
+      expect(recordMutation).toHaveBeenNthCalledWith(1, {
+        path: commonKnowledgePath,
+        action: 'write',
+        source: 'api-write-file',
+        profileId: 'cortex',
+      })
+      expect(recordMutation).toHaveBeenNthCalledWith(2, {
+        path: workerPromptsPath,
+        action: 'write',
+        source: 'api-write-file',
+        profileId: 'cortex',
+      })
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('emits a Cortex prompt surface change event when POST /api/write-file updates a tracked Cortex file', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+      promptRegistry: manager.promptRegistry,
+    })
+
+    await server.start()
+
+    const client = new WebSocket(`ws://${config.host}:${config.port}`)
+    const events: ServerEvent[] = []
+    client.on('message', (raw) => {
+      events.push(JSON.parse(raw.toString()) as ServerEvent)
+    })
+
+    await once(client, 'open')
+    client.send(JSON.stringify({ type: 'subscribe' }))
+    await waitForEvent(events, (event) => event.type === 'ready')
+
+    const commonKnowledgePath = getCommonKnowledgePath(config.paths.dataDir)
+    const content = '# Common Knowledge\n\nUpdated through /api/write-file\n'
+
+    try {
+      const response = await fetch(`http://${config.host}:${config.port}/api/write-file`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          path: commonKnowledgePath,
+          content,
+        }),
+      })
+
+      expect(response.status).toBe(200)
+      expect(await readFile(commonKnowledgePath, 'utf8')).toBe(content)
+
+      await expect(
+        waitForEvent(
+          events,
+          (event) =>
+            event.type === 'cortex_prompt_surface_changed' &&
+            event.surfaceId === 'common-knowledge-live' &&
+            event.filePath === commonKnowledgePath,
+        ),
+      ).resolves.toBeTruthy()
+    } finally {
+      client.close()
       await server.stop()
     }
   })
@@ -924,6 +1259,21 @@ describe('SwarmWebSocketServer', () => {
         files: {
           commonKnowledge: string
           cortexNotes: string
+          cortexReviewLog: {
+            path: string
+            exists: boolean
+            sizeBytes: number
+          }
+          cortexReviewLock: {
+            path: string
+            exists: boolean
+            sizeBytes: number
+          }
+          cortexPromotionManifests: {
+            path: string
+            exists: boolean
+            fileCount: number
+          }
           profileMemory: Record<
             string,
             {
@@ -963,6 +1313,21 @@ describe('SwarmWebSocketServer', () => {
       expect(payload.files).toEqual({
         commonKnowledge: commonKnowledgePath,
         cortexNotes: getCortexNotesPath(config.paths.dataDir),
+        cortexReviewLog: {
+          path: getCortexReviewLogPath(config.paths.dataDir),
+          exists: true,
+          sizeBytes: 0,
+        },
+        cortexReviewLock: {
+          path: getCortexReviewLockPath(config.paths.dataDir),
+          exists: false,
+          sizeBytes: 0,
+        },
+        cortexPromotionManifests: {
+          path: getCortexPromotionManifestsDir(config.paths.dataDir),
+          exists: true,
+          fileCount: 0,
+        },
         profileMemory: {
           alpha: {
             path: alphaProfileMemoryPath,
@@ -1000,18 +1365,18 @@ describe('SwarmWebSocketServer', () => {
         profileReference: {
           alpha: {
             path: getProfileReferencePath(config.paths.dataDir, 'alpha', 'index.md'),
-            exists: true,
-            sizeBytes: expect.any(Number),
+            exists: false,
+            sizeBytes: 0,
           },
           beta: {
             path: getProfileReferencePath(config.paths.dataDir, 'beta', 'index.md'),
-            exists: true,
-            sizeBytes: expect.any(Number),
+            exists: false,
+            sizeBytes: 0,
           },
           manager: {
             path: getProfileReferencePath(config.paths.dataDir, 'manager', 'index.md'),
-            exists: true,
-            sizeBytes: expect.any(Number),
+            exists: false,
+            sizeBytes: 0,
           },
         },
         profileMergeAudit: {
@@ -1033,21 +1398,21 @@ describe('SwarmWebSocketServer', () => {
         },
       })
 
-      await expect(readFile(getProfileReferencePath(config.paths.dataDir, 'alpha', 'index.md'), 'utf8')).resolves.toContain(
-        '# alpha Reference Index',
-      )
-      await expect(readFile(getProfileReferencePath(config.paths.dataDir, 'alpha', 'legacy-profile-knowledge.md'), 'utf8')).resolves.toContain(
-        '# alpha Legacy Profile Knowledge',
-      )
-      await expect(readFile(getProfileReferencePath(config.paths.dataDir, 'beta', 'index.md'), 'utf8')).resolves.toContain(
-        '# beta Reference Index',
-      )
+      await expect(readFile(getProfileReferencePath(config.paths.dataDir, 'alpha', 'index.md'), 'utf8')).rejects.toMatchObject({
+        code: 'ENOENT',
+      })
+      await expect(
+        readFile(getProfileReferencePath(config.paths.dataDir, 'alpha', 'legacy-profile-knowledge.md'), 'utf8'),
+      ).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(readFile(getProfileReferencePath(config.paths.dataDir, 'beta', 'index.md'), 'utf8')).rejects.toMatchObject({
+        code: 'ENOENT',
+      })
     } finally {
       await server.stop()
     }
   })
 
-  it('includes manager profiles in GET /api/cortex/scan even before transcript byte stats exist', async () => {
+  it('includes manager profiles in GET /api/cortex/scan without materializing reference docs', async () => {
     const port = await getAvailablePort()
     const config = await makeTempConfig(port)
 
@@ -1108,23 +1473,23 @@ describe('SwarmWebSocketServer', () => {
       })
       expect(payload.files.profileReference[profileId]).toEqual({
         path: getProfileReferencePath(config.paths.dataDir, profileId, 'index.md'),
-        exists: true,
-        sizeBytes: expect.any(Number),
+        exists: false,
+        sizeBytes: 0,
       })
       expect(payload.files.profileMergeAudit[profileId]).toEqual({
         path: getProfileMergeAuditLogPath(config.paths.dataDir, profileId),
         exists: false,
         sizeBytes: 0,
       })
-      await expect(readFile(getProfileReferencePath(config.paths.dataDir, profileId, 'index.md'), 'utf8')).resolves.toContain(
-        `# ${profileId} Reference Index`,
-      )
+      await expect(readFile(getProfileReferencePath(config.paths.dataDir, profileId, 'index.md'), 'utf8')).rejects.toMatchObject({
+        code: 'ENOENT',
+      })
     } finally {
       await server.stop()
     }
   })
 
-  it('isolates per-profile reference migration failures in GET /api/cortex/scan', async () => {
+  it('keeps GET /api/cortex/scan read-only even when legacy knowledge files are malformed', async () => {
     const port = await getAvailablePort()
     const config = await makeTempConfig(port)
 
@@ -1176,11 +1541,13 @@ describe('SwarmWebSocketServer', () => {
       expect(payload.files.profileReference.alpha.path).toBe(
         getProfileReferencePath(config.paths.dataDir, 'alpha', 'index.md'),
       )
-      expect(payload.files.profileReference.alpha.exists).toBe(true)
+      expect(payload.files.profileReference.alpha.exists).toBe(false)
       expect(payload.files.profileReference.beta.path).toBe(
         getProfileReferencePath(config.paths.dataDir, 'beta', 'index.md'),
       )
-      expect(typeof payload.files.profileReference.beta.exists).toBe('boolean')
+      expect(payload.files.profileReference.beta.exists).toBe(false)
+      await expect(readFile(getProfileReferencePath(config.paths.dataDir, 'alpha', 'index.md'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(readFile(getProfileReferencePath(config.paths.dataDir, 'beta', 'index.md'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
     } finally {
       await server.stop()
     }

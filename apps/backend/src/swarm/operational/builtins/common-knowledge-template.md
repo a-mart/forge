@@ -1,9 +1,10 @@
 # Common Knowledge
+<!-- Maintained by Cortex. Last updated: {ISO timestamp} -->
 
-> Maintained by Cortex. Injected into all agents.
+## Interaction Defaults
 
-## User Profile
+## Workflow Defaults
 
-## Working Patterns
+## Cross-Project Technical Standards
 
-## Quality Standards
+## Cross-Project Gotchas

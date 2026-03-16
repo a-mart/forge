@@ -195,3 +195,45 @@ export interface PromptContentResponse {
   sourcePath: string
   variables: PromptVariableDeclaration[]
 }
+
+export type CortexPromptSurfaceKind = 'registry' | 'file'
+export type CortexPromptSurfaceGroup = 'system' | 'seed' | 'live' | 'scratch'
+export type CortexPromptSurfaceRuntimeEffect =
+  | 'futureSeedOnly'
+  | 'liveImmediate'
+  | 'liveInjected'
+  | 'scratchOnly'
+export type CortexPromptResetMode = 'profileOverride' | 'reseedFromTemplate' | 'none'
+
+export interface CortexPromptSurfaceSeedPrompt {
+  category: PromptCategory
+  promptId: string
+}
+
+export interface CortexPromptSurfaceListEntry {
+  surfaceId: string
+  title: string
+  description: string
+  group: CortexPromptSurfaceGroup
+  kind: CortexPromptSurfaceKind
+  editable: boolean
+  resetMode: CortexPromptResetMode
+  runtimeEffect: CortexPromptSurfaceRuntimeEffect
+  warning?: string
+  category?: PromptCategory
+  promptId?: string
+  activeLayer?: PromptSourceLayer
+  filePath?: string
+  sourcePath?: string
+  lastModifiedAt?: string
+  seedPrompt?: CortexPromptSurfaceSeedPrompt | null
+}
+
+export interface CortexPromptSurfaceContentResponse extends CortexPromptSurfaceListEntry {
+  content: string
+}
+
+export interface CortexPromptSurfaceListResponse {
+  enabled: boolean
+  surfaces: CortexPromptSurfaceListEntry[]
+}

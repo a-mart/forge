@@ -136,6 +136,18 @@ export function getCortexWorkerPromptsPath(dataDir: string): string {
   return join(getSharedKnowledgeDir(dataDir), ".cortex-worker-prompts.md");
 }
 
+export function getCortexReviewLogPath(dataDir: string): string {
+  return join(getSharedKnowledgeDir(dataDir), ".cortex-review-log.jsonl");
+}
+
+export function getCortexPromotionManifestsDir(dataDir: string): string {
+  return join(getSharedKnowledgeDir(dataDir), ".cortex-promotion-manifests");
+}
+
+export function getCortexReviewLockPath(dataDir: string): string {
+  return join(getSharedKnowledgeDir(dataDir), ".cortex-lock.json");
+}
+
 export function getSharedAuthDir(dataDir: string): string {
   return join(getSharedDir(dataDir), "auth");
 }

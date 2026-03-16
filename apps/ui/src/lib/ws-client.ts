@@ -914,6 +914,7 @@ export class ManagerWsClient {
         break
 
       case 'prompt_changed':
+      case 'cortex_prompt_surface_changed':
         this.updateState({ promptChangeKey: this.state.promptChangeKey + 1 })
         break
 
