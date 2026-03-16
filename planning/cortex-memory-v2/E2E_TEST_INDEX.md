@@ -28,8 +28,11 @@ Older placeholder names such as `E2E_RUNTIME_COPIED_PRODUCTION.md` and `E2E_RUNT
 | `IDX-MERGE` | Memory merge runtime lane | `planning/cortex-memory-v2/E2E_MEMORY_MERGE_RUNTIME.md` | focused runtime note | `MRG-01`, `MRG-02`, `MRG-05`, parts of `MRG-04`, `OWN-01` | Present | Live WS merge/audit/meta evidence |
 | `IDX-WORKER` | Worker callback runtime lane | `planning/cortex-memory-v2/E2E_WORKER_CALLBACK_RUNTIME.md` | focused runtime note | `CRT-05` | Present | Raw WS callback proof captured |
 | `IDX-LEARNING` | Copied-instance Cortex learning evaluation | `planning/cortex-memory-v2/E2E_CORTEX_LEARNING_EVAL.md` | focused evaluation note | quality/readback assessment | Present | Evaluates whether Cortex learns useful durable signals without bloating memory |
+| `IDX-UI-HISTORY` | Existing copied-session UI history load proof | `planning/cortex-memory-v2/E2E_UI_HISTORY_LOAD.md` | focused runtime note | `CRT-07` | Present | Real copied-UI proof that a preexisting session transcript renders in the chat pane |
+| `IDX-MEM-TARGETS` | Memory-skill session-target proof | `planning/cortex-memory-v2/E2E_MEMORY_SKILL_TARGETS.md` | focused runtime note | `OWN-04` | Present | Isolated runtime proof for root and sub-session memory writes landing in the correct session-local files |
 | `IDX-WATERMARK` | Scan watermark precision fix note | `planning/cortex-memory-v2/E2E_WATERMARK_PRECISION.md` | focused bugfix note | scan bookkeeping precision | Present | Documents low-churn fix for stale meta size fields vs live file sizes |
 | `IDX-FM-CURATION` | Feature-manager curation plan | `planning/cortex-memory-v2/E2E_FEATURE_MANAGER_CURATION.md` | focused curation note | profile-memory slimming plan | Present | Concrete keep/compress/move plan for de-bloating feature-manager memory |
+| `IDX-PROD-NONTOUCH` | Production non-touch waiver note | `planning/cortex-memory-v2/E2E_PRODUCTION_NON_TOUCH.md` | focused waiver note | `AUTH-03` | Present | Evidence-backed waiver note for production non-touch without byte-diff proof |
 | `IDX-PHASE3` | Phase 3 ownership/auth validation report | `planning/cortex-memory-v2/VALIDATION_PHASE3_REPORT.md` | validation report | `OWN-01`, `AUTH-01`, `AUTH-04` | Present | Strong file-layout + auth-path evidence |
 | `IDX-TESTING` | Testing matrix / command log | `planning/cortex-memory-v2/TESTING.md` | command log / test evidence | `OWN-*`, `REF-*`, `MRG-*`, `AUTH-*`, `OPS-*` | Present | Focused test coverage source of truth |
 | `IDX-AUTH-AUDIT` | Cross-env auth runtime audit | `planning/cortex-memory-v2/E2E_AUTH_RUNTIME_AUDIT.md` | diagnosis | `AUTH-07` | Present | Explains configured-vs-valid auth gap + fallback behavior |
@@ -70,7 +73,7 @@ Older placeholder names such as `E2E_RUNTIME_COPIED_PRODUCTION.md` and `E2E_RUNT
 | `CRT-04` | `E2E_FRESH_RUNTIME.md` | `RAW-FRESH-JSON`, `RAW-FRESH-LOGS` | fresh live-dispatch result | Blocked (env/auth) |
 | `CRT-05` | `E2E_WORKER_CALLBACK_RUNTIME.md` | `RAW-WORKER` | worker spawn/callback result | Live-pass |
 | `CRT-06` | `E2E_RECONNECT_PERSISTENCE.md` | `RAW-RECONNECT` | reconnect persistence result | Live-pass (migrate env) |
-| `CRT-07` | `E2E_MIGRATE_RUNTIME.md` or future UI note | UI-specific raw notes/screenshots if captured | existing-session load result | Missing |
+| `CRT-07` | `E2E_UI_HISTORY_LOAD.md` | UI-specific raw notes/screenshots captured under `planning/cortex-memory-v2/raw/` | existing-session load result | Live-pass |
 | `SCAN-01` | runtime docs + `E2E_SCAN_AUDIT.md` | `RAW-MIGRATE-JSON`, `RAW-FRESH-JSON` | enriched-scan result | Live-pass |
 | `SCAN-02` | `E2E_SCAN_DELTAS.md` | `RAW-DELTA` | transcript-delta result | Live-pass |
 | `SCAN-03` | `E2E_SCAN_DELTAS.md` | `RAW-DELTA` | memory-delta result | Live-pass |
@@ -80,7 +83,7 @@ Older placeholder names such as `E2E_RUNTIME_COPIED_PRODUCTION.md` and `E2E_RUNT
 | `OWN-01` | `VALIDATION_PHASE3_REPORT.md`, `E2E_SCAN_AUDIT.md`, `E2E_MEMORY_MERGE_RUNTIME.md` | existing file-path evidence | ownership split result | Live-pass |
 | `OWN-02` | `TESTING.md` | test logs | runtime composition result | Test-pass |
 | `OWN-03` | `TESTING.md` | test logs | non-root memory-path result | Test-pass |
-| `OWN-04` | future focused runtime note | raw memory-file diffs | memory-skill target result | Partial (root-only signal via reconnect lane) |
+| `OWN-04` | `E2E_MEMORY_SKILL_TARGETS.md` | `.tmp/e2e-memory-skill-targets-*` + isolated session logs/meta | memory-skill target result | Live-pass |
 | `REF-01` | `VALIDATION_PHASE3_REPORT.md`, `TESTING.md` | existing file-path evidence | migration-on-boot result | Live-pass |
 | `REF-02` | `TESTING.md` | test logs | non-destructive migration result | Test-pass |
 | `REF-03` | `TESTING.md` | test logs | curated-doc preservation result | Test-pass |
@@ -94,7 +97,7 @@ Older placeholder names such as `E2E_RUNTIME_COPIED_PRODUCTION.md` and `E2E_RUNT
 | `MRG-06` | `TESTING.md` | test logs | legacy-meta compatibility result | Test-pass |
 | `AUTH-01` | `VALIDATION_PHASE3_REPORT.md`, `TESTING.md` | existing auth/path evidence | canonical-auth-path result | Live-pass |
 | `AUTH-02` | `TESTING.md` | test logs | legacy-copy-forward result | Test-pass |
-| `AUTH-03` | summary/guard note | explicit prod before/after artifact if ever added | production-non-touch result | Partial |
+| `AUTH-03` | `E2E_PRODUCTION_NON_TOUCH.md` | process/log/path-isolation evidence summarized in waiver note | production-non-touch result | Waived (evidence-backed) |
 | `AUTH-04` | `E2E_FRESH_RUNTIME.md`, `VALIDATION_PHASE3_REPORT.md` | `RAW-FRESH-JSON`, `RAW-FRESH-LOGS` | fresh-empty-boot result | Live-pass |
 | `AUTH-05` | `TESTING.md` | test logs | transcribe-auth-path result | Test-pass |
 | `AUTH-06` | `TESTING.md` | test logs | OAuth-write-path result | Test-pass |
@@ -123,9 +126,9 @@ Older placeholder names such as `E2E_RUNTIME_COPIED_PRODUCTION.md` and `E2E_RUNT
 - [x] `E2E_EXEC_SUMMARY.md` is filled and references the actual artifact names
 
 ### Still-open evidence gaps
-- [ ] Existing copied-session UI history rendering is captured in a dedicated artifact, or explicitly waived
-- [ ] Memory-skill target proof for both root and sub-session writable targets is captured in a dedicated artifact, or explicitly waived
-- [ ] Production non-touch is backed by explicit before/after diff evidence, or explicitly waived
+- [x] Existing copied-session UI history rendering is captured in a dedicated artifact, or explicitly waived
+- [x] Memory-skill target proof for both root and sub-session writable targets is captured in a dedicated artifact, or explicitly waived
+- [x] Production non-touch is backed by explicit before/after diff evidence, or explicitly waived
 - [x] Backend full-suite failures are resolved or formally waived
 
 ---
@@ -140,6 +143,7 @@ The package is now **synthesis-ready** because:
 
 Current synthesis headline:
 - copied-prod evidence is strong,
+- dedicated CRT-07 and OWN-04 artifacts are now present,
 - fresh live dispatch remains an env/auth blocker,
 - full backend Vitest executed clean at `425 passed / 0 failed`.
 

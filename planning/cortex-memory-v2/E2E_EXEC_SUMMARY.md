@@ -33,6 +33,9 @@ Primary artifacts reviewed:
 - `planning/cortex-memory-v2/E2E_MEMORY_MERGE_RUNTIME.md`
 - `planning/cortex-memory-v2/E2E_WORKER_CALLBACK_RUNTIME.md`
 - `planning/cortex-memory-v2/E2E_CORTEX_LEARNING_EVAL.md`
+- `planning/cortex-memory-v2/E2E_UI_HISTORY_LOAD.md`
+- `planning/cortex-memory-v2/E2E_MEMORY_SKILL_TARGETS.md`
+- `planning/cortex-memory-v2/E2E_PRODUCTION_NON_TOUCH.md`
 - `planning/cortex-memory-v2/VALIDATION_PHASE3_REPORT.md`
 - `planning/cortex-memory-v2/TESTING.md`
 - `planning/cortex-memory-v2/CLOSEOUT_READINESS.md`
@@ -52,6 +55,8 @@ Primary artifacts reviewed:
 | Worker callback | **PASS** | Worker creation, callback token, and post-callback idle states captured with raw WS evidence | Captured in migrate env only | `E2E_WORKER_CALLBACK_RUNTIME.md` |
 | Copied-instance learning quality | **PASS with polish caveat** | Cortex really extracted useful durable findings from an old copied-instance conversation without bloating profile memory | Manager-level completion and curated promotion/writeback remain rough/noisy in this scenario | `E2E_CORTEX_LEARNING_EVAL.md` |
 | Reconnect persistence | **PASS** | Session-local memory token survived disconnect/reconnect and was recalled after reconnect | Captured in migrate env only | `E2E_RECONNECT_PERSISTENCE.md` |
+| Existing copied-session UI history load | **PASS** | A preexisting copied session was selected from the sidebar and its persisted transcript rendered in the chat pane with text matching the on-disk copied session file | Bounded to one real copied session in the migrate env | `E2E_UI_HISTORY_LOAD.md` |
+| Memory-skill target routing | **PASS** | Root remember write landed in `profiles/<pid>/sessions/<pid>/memory.md`; sub-session remember write landed in `profiles/<pid>/sessions/<sid>/memory.md`; canonical profile memory stayed unchanged | Root assistant ack had a harness-capture caveat, but session logs and file writes proved the target path | `E2E_MEMORY_SKILL_TARGETS.md` |
 | Merge/promotion runtime | **PASS with bounded caveat** | Root memory stayed local; non-root merge applied/seeded; audit + meta persisted; idempotent skip verified | Full injected failure matrix remains partly test-backed rather than all live-runtime | `E2E_MEMORY_MERGE_RUNTIME.md`, `E2E_MIGRATE_RUNTIME.md`, `TESTING.md` |
 | Full backend Vitest | **PASS** | Full backend suite rerun is now clean after low-churn env-sensitive test hardening | `425 passed / 0 failed` | `.tmp/e2e-full-backend-vitest.log`, `E2E_BACKEND_GATES.md` |
 
@@ -67,6 +72,8 @@ The following behaviors are well-supported by live isolated evidence and/or focu
 - lazy reference index provisioning and legacy knowledge migration behavior
 - worker spawn/callback completion path
 - reconnect/session-memory persistence
+- existing copied-session transcript load/render in the UI
+- direct memory-skill writes route to the correct session-local memory targets without mutating canonical profile memory
 - runtime merge behavior with audit/meta recording and idempotent skip
 - copied-instance historical-review extraction quality is good; the main rough edge is promotion/closeout polish rather than signal selection
 
@@ -90,12 +97,12 @@ The earlier failures were traced to env-sensitive test assumptions, not Memory v
 
 | Category | Verdict | Notes |
 |---|---|---|
-| 1. Core Chat / Session Behavior | **PARTIAL** | Copied-prod live chat, worker callback, and reconnect persistence are proved. Fresh live chat remains blocked by env/auth, and an explicit pre-existing-session UI-history capture is still absent. |
+| 1. Core Chat / Session Behavior | **PARTIAL** | Copied-prod live chat, worker callback, reconnect persistence, and explicit pre-existing-session UI-history load are now proved. Fresh live chat remains blocked by env/auth. |
 | 2. Cortex Scan / Review Behavior | **PASS** | Enriched scan surfaces, manager-only profiles, Cortex exclusion, lazy reference provisioning, and transcript/memory/feedback deltas are all evidenced. |
-| 3. Ownership / Memory Behavior | **PARTIAL** | Ownership split is strong. Direct memory-skill target proof across both root and sub-session targets is still not fully packaged. |
+| 3. Ownership / Memory Behavior | **PASS** | Ownership split is strong, and direct memory-skill target proof now exists for both root and sub-session writable targets. |
 | 4. Reference-Doc Behavior | **PASS** | Migration, preservation, fresh no-legacy dependency, and non-injection behavior are sufficiently evidenced via runtime + focused tests. |
 | 5. Merge / Promotion Behavior | **PASS (mixed live + test-backed)** | Happy-path merge, seed, idempotent skip, audit, and meta evidence are strong. Some deeper failure/retry coverage remains primarily automated-test backed. |
-| 6. Auth / Isolation Behavior | **PARTIAL** | Canonical path and isolated boot behavior are proved. Production non-touch lacks explicit byte-diff proof, and fresh runtime auth remains unusable in the test env. |
+| 6. Auth / Isolation Behavior | **PARTIAL** | Canonical path and isolated boot behavior are proved. Production non-touch is carried by an evidence-backed waiver note rather than byte-diff proof, and fresh runtime auth remains unusable in the test env. |
 | 7. Operational Safety | **PASS** | Backend/UI typechecks are clean and the full backend Vitest suite now passes after low-churn env-sensitive test hardening. |
 
 ## 8) Merge assessment
@@ -112,11 +119,9 @@ If the owner chooses to merge on the current package, the decision record should
 
 ## 9) Remaining gaps / accepted waivers to call out
 
-Remaining non-zero gaps in the package:
+Remaining non-zero gaps / accepted waivers in the package:
 - fresh live assistant reply still not demonstrated
-- no explicit artifact for loading a pre-existing copied session transcript in the UI
-- no dedicated root+sub-session memory-skill write proof artifact
-- production non-touch is policy-backed and path-isolated, but not proven with a byte-identical before/after diff
+- production non-touch is carried as an evidence-backed waiver note, not a byte-identical before/after diff proof
 
 ## 10) Final decision record
 
@@ -127,8 +132,11 @@ Remaining non-zero gaps in the package:
   - `planning/cortex-memory-v2/E2E_MIGRATE_RUNTIME.md`
   - `planning/cortex-memory-v2/E2E_SCAN_DELTAS.md`
   - `planning/cortex-memory-v2/E2E_RECONNECT_PERSISTENCE.md`
+  - `planning/cortex-memory-v2/E2E_UI_HISTORY_LOAD.md`
+  - `planning/cortex-memory-v2/E2E_MEMORY_SKILL_TARGETS.md`
   - `planning/cortex-memory-v2/E2E_MEMORY_MERGE_RUNTIME.md`
   - `planning/cortex-memory-v2/E2E_WORKER_CALLBACK_RUNTIME.md`
   - `planning/cortex-memory-v2/E2E_FRESH_RUNTIME.md`
   - `planning/cortex-memory-v2/E2E_AUTH_RUNTIME_AUDIT.md`
+  - `planning/cortex-memory-v2/E2E_PRODUCTION_NON_TOUCH.md`
   - `.tmp/e2e-full-backend-vitest.log`

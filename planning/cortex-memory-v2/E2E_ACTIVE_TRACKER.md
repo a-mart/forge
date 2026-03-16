@@ -64,23 +64,23 @@ Each scenario below is the unit of evidence collection. The rubric references ar
 
 | Scenario ID | Scenario | Env(s) | Rubric mapping | Expected evidence files | Current status | Current factual notes |
 |---|---|---|---|---|---|---|
-| `CRT-01` | Migrate boot + health + existing-data scan availability | `ENV-MIGRATE` | `1.5`, `2.1`, `6.3`, `6.4` (boot/isolation portions) | `E2E_MIGRATE_RUNTIME.md`, `.tmp/e2e-health.json`, `.tmp/e2e-scan-snapshot.json` | `PARTIAL` | Boot + scan are evidenced. Existing session history rendering in the UI is **not** explicitly captured. Production non-touch is stated, not byte-diff proven. |
+| `CRT-01` | Migrate boot + health + existing-data scan availability | `ENV-MIGRATE` | `1.5`, `2.1`, `6.3`, `6.4` (boot/isolation portions) | `E2E_MIGRATE_RUNTIME.md`, `.tmp/e2e-health.json`, `.tmp/e2e-scan-snapshot.json`, `E2E_UI_HISTORY_LOAD.md` | `LIVE-PASS` | Boot + scan are evidenced. Existing copied-session UI history rendering is now explicitly captured. Production non-touch remains an evidence-backed waiver rather than byte-diff proof. |
 | `CRT-02` | Migrate live chat round-trip on copied data | `ENV-MIGRATE` | `1.2` | `E2E_MIGRATE_RUNTIME.md`, `.tmp/e2e-migrate-runtime-result.json`, `.tmp/e2e-migrate-runtime-rerun-ortho-codex-default-result.json`, backend log excerpts | `LIVE-PASS` | Two live successes are documented: `cortex` reply path and non-Cortex codex/default rerun. This proves WS/runtime plumbing for at least one copied-data non-Cortex path. |
 | `CRT-03` | Fresh first-manager creation + first session provisioning | `ENV-FRESH` | `1.1`, `2.5`, `4.4`, `6.4` | `E2E_FRESH_RUNTIME.md`, `VALIDATION_PHASE3_REPORT.md`, `.tmp/e2e-fresh-scan-final.json` | `LIVE-PASS` | Manager creation and file provisioning are captured. New profiles surface `profileMemory` and `profileReference` without legacy profile knowledge. |
 | `CRT-04` | Fresh live chat round-trip | `ENV-FRESH` | `1.2` | `E2E_FRESH_RUNTIME.md`, `.tmp/e2e-fresh-runtime-result-attempt*.json`, `.tmp/e2e-fresh-rerun-pi-codex-result.json`, backend logs | `BLOCKED` | User/system messages persisted, but no assistant reply token was observed. Failures point to auth/provider validity, not missing transport boot. |
-| `CRT-05` | Worker spawn + callback completion | `ENV-MIGRATE`, `ENV-FRESH` | `1.3` | new runtime narrative section plus raw WS transcript/log showing worker appears in agent list and sends callback | `MISSING` | No current E2E artifact demonstrates a worker spawned from a runtime task and completed with manager callback. |
-| `CRT-06` | Reload/reconnect with session memory persistence | `ENV-MIGRATE`, `ENV-FRESH` | `1.4` | new runtime narrative section, WS reconnect trace, filesystem snapshots of session `memory.md` before/after reload | `MISSING` | No current artifact proves reconnect persistence of working memory in either env. |
-| `CRT-07` | Existing session history renders in copied UI | `ENV-MIGRATE` | `1.5` | UI-focused runtime notes/screenshots/logs in `E2E_MIGRATE_RUNTIME.md` or companion doc | `MISSING` | Current migrate runtime evidence creates/uses sessions but does not document loading a pre-existing session transcript in the UI. |
+| `CRT-05` | Worker spawn + callback completion | `ENV-MIGRATE`, `ENV-FRESH` | `1.3` | `E2E_WORKER_CALLBACK_RUNTIME.md` plus raw WS transcript/log showing worker appears in agent list and sends callback | `LIVE-PASS` | Dedicated runtime artifact now demonstrates worker spawn, callback token delivery, and manager callback completion in the migrate env. |
+| `CRT-06` | Reload/reconnect with session memory persistence | `ENV-MIGRATE`, `ENV-FRESH` | `1.4` | `E2E_RECONNECT_PERSISTENCE.md`, WS reconnect trace, filesystem snapshots of session `memory.md` before/after reload | `LIVE-PASS` | Dedicated migrate-env artifact proves reconnect persistence of session-local memory. |
+| `CRT-07` | Existing session history renders in copied UI | `ENV-MIGRATE` | `1.5` | `E2E_UI_HISTORY_LOAD.md` plus UI-focused screenshot/snapshot/session-file evidence | `LIVE-PASS` | Dedicated copied-UI artifact proves a preexisting copied session can be selected from the sidebar and its transcript rendered in the chat pane. |
 
 ### 4.2 Scan / review freshness scenarios
 
 | Scenario ID | Scenario | Env(s) | Rubric mapping | Expected evidence files | Current status | Current factual notes |
 |---|---|---|---|---|---|---|
 | `SCAN-01` | Enriched `GET /api/cortex/scan` payload, including v2 file maps | `ENV-MIGRATE`, `ENV-FRESH` | `2.1`, `2.5`, `7.5` | `E2E_MIGRATE_RUNTIME.md`, `E2E_FRESH_RUNTIME.md`, `VALIDATION_PHASE3_REPORT.md`, `.tmp/...scan...json` | `LIVE-PASS` | Both envs show `profileMemory` and `profileReference`; Phase 5 notes cover `profileMergeAudit`; back-compat field retention is asserted but not fully diffed in a dedicated artifact. |
-| `SCAN-02` | Transcript delta detection after transcript growth | `ENV-MIGRATE` or `ENV-FRESH` | `2.2` | new delta probe section/doc + before/after scan JSON + touched transcript evidence | `MISSING` | No isolated runtime artifact explicitly grows a transcript beyond watermark and re-scans. |
-| `SCAN-03` | Session-memory delta detection after `memory.md` edit | `ENV-MIGRATE` or `ENV-FRESH` | `2.3` | new delta probe section/doc + before/after scan JSON + edited memory file snapshot | `MISSING` | Implemented/tested in code path, but no current runtime proof artifact. |
-| `SCAN-04` | Feedback delta detection after `feedback.jsonl` append | `ENV-MIGRATE` | `2.4` | new delta probe section/doc + before/after scan JSON + feedback append evidence | `MISSING` | No current isolated E2E artifact for feedback-byte drift. |
-| `SCAN-05` | Cortex profile excluded from scan file maps | `ENV-MIGRATE` | `2.6` | dedicated scan snapshot with explicit assertion about absent `cortex` key | `MISSING` | `E2E_MIGRATE_RUNTIME.md` notes that `cortex` existed in WS snapshots but did not appear in one scan file map, but this is not tracked as a deliberate rubric proof. |
+| `SCAN-02` | Transcript delta detection after transcript growth | `ENV-MIGRATE` or `ENV-FRESH` | `2.2` | `E2E_SCAN_DELTAS.md` + before/after scan JSON + touched transcript evidence | `LIVE-PASS` | Dedicated delta artifact proves transcript-byte growth is surfaced in scan output. |
+| `SCAN-03` | Session-memory delta detection after `memory.md` edit | `ENV-MIGRATE` or `ENV-FRESH` | `2.3` | `E2E_SCAN_DELTAS.md` + before/after scan JSON + edited memory file snapshot | `LIVE-PASS` | Dedicated delta artifact proves session-memory drift is surfaced in scan output. |
+| `SCAN-04` | Feedback delta detection after `feedback.jsonl` append | `ENV-MIGRATE` | `2.4` | `E2E_SCAN_DELTAS.md` + before/after scan JSON + feedback append evidence | `LIVE-PASS` | Dedicated delta artifact proves feedback-byte drift is surfaced in scan output. |
+| `SCAN-05` | Cortex profile excluded from scan file maps | `ENV-MIGRATE` | `2.6` | `E2E_MIGRATE_RUNTIME.md`, `E2E_SCAN_AUDIT.md`, dedicated scan snapshot with explicit assertion about absent `cortex` key | `LIVE-PASS` | Scan audit and runtime notes now explicitly cover manager-only profile union and Cortex exclusion from file maps. |
 | `SCAN-06` | Lazy reference index provisioning on scan | `ENV-MIGRATE`, `ENV-FRESH` | `2.7` | `VALIDATION_PHASE3_REPORT.md`, `TESTING.md`, runtime/file snapshots | `LIVE-PASS` | Scan-time reference index provisioning is evidenced in runtime docs and focused tests. |
 
 ### 4.3 Ownership / runtime memory scenarios
@@ -90,7 +90,7 @@ Each scenario below is the unit of evidence collection. The rubric references ar
 | `OWN-01` | Root-session working memory separated from canonical profile memory | `ENV-MIGRATE`, `ENV-FRESH` | `3.1` | `VALIDATION_PHASE3_REPORT.md`, filesystem path snapshots | `LIVE-PASS` | Both envs show root session `profiles/<pid>/sessions/<pid>/memory.md` alongside canonical `profiles/<pid>/memory.md`. |
 | `OWN-02` | Runtime composition injects profile memory read-only above writable session memory | automated + optionally live | `3.2` | `TESTING.md` test references; optional dedicated runtime composition note | `TEST-PASS` | Explicit swarm-manager tests are logged; no isolated live runtime capture of composed resource stack. |
 | `OWN-03` | Non-root sessions use their own writable memory path | automated + optionally live | `3.3` | `TESTING.md`; optional filesystem snapshot from a `--s2` case | `TEST-PASS` | Covered by path-resolution/runtime tests; not yet documented as a direct isolated filesystem probe in a planning artifact. |
-| `OWN-04` | Memory skill writes to the correct session target | `ENV-MIGRATE`, `ENV-FRESH` | `3.4` | new runtime probe + file diffs for root and sub-session memory files | `MISSING` | No current E2E artifact uses the memory skill and verifies file-target behavior. |
+| `OWN-04` | Memory skill writes to the correct session target | `ENV-MIGRATE`, `ENV-FRESH` | `3.4` | `E2E_MEMORY_SKILL_TARGETS.md` + runtime probe + file diffs/logs for root and sub-session memory files | `LIVE-PASS` | Dedicated isolated runtime artifact proves root and sub-session memory-skill writes land in the correct session-local files while canonical profile memory remains unchanged. |
 
 ### 4.4 Reference-doc scenarios
 
@@ -119,7 +119,7 @@ Each scenario below is the unit of evidence collection. The rubric references ar
 |---|---|---|---|---|---|---|
 | `AUTH-01` | Canonical shared auth path is used by runtime-critical flows | `ENV-MIGRATE`, `ENV-FRESH` + tests | `6.1` | `VALIDATION_PHASE3_REPORT.md`, `TESTING.md` | `LIVE-PASS` | Phase 3 report confirms canonical path presence in isolated dirs; tests cover runtime-critical readers/writers. |
 | `AUTH-02` | Legacy auth copy-forward works | automated | `6.2` | `TESTING.md` | `TEST-PASS` | Explicit targeted tests exist for transcribe/OAuth/merge-runtime entry points. |
-| `AUTH-03` | Migrate validation does not touch production data | `ENV-PROD-GUARD` | `6.3` | explicit before/after guard artifact if desired; otherwise status note | `PARTIAL` | Isolation intent is documented, but there is no byte-identical before/after proof artifact for `~/.middleman`. |
+| `AUTH-03` | Migrate validation does not touch production data | `ENV-PROD-GUARD` | `6.3` | `E2E_PRODUCTION_NON_TOUCH.md` waiver note; explicit before/after guard artifact if ever added | `WAIVED` | Isolation intent is documented and summarized in a dedicated waiver note, but there is still no byte-identical before/after proof artifact for `~/.middleman`. |
 | `AUTH-04` | Fresh env boots cleanly with empty data dir | `ENV-FRESH` | `6.4` | `E2E_FRESH_RUNTIME.md`, `VALIDATION_PHASE3_REPORT.md` | `LIVE-PASS` | Fresh reset/boot/provisioning are documented. |
 | `AUTH-05` | `/api/transcribe` uses canonical shared auth | automated | `6.5` | `TESTING.md` | `TEST-PASS` | Test-covered, not isolated live-called in the E2E package. |
 | `AUTH-06` | OAuth login writes canonical shared auth | automated | `6.6` | `TESTING.md` | `TEST-PASS` | Test-covered, not live-exercised in isolated runtime docs. |
@@ -131,7 +131,7 @@ Each scenario below is the unit of evidence collection. The rubric references ar
 |---|---|---|---|---|---|---|
 | `OPS-01` | Backend typecheck clean | repo | `7.1` | `TESTING.md`, `CLOSEOUT_READINESS.md` | `LIVE-PASS` | Repeatedly logged as passing. |
 | `OPS-02` | UI typecheck clean | repo | `7.2` | `TESTING.md`, `CLOSEOUT_READINESS.md` | `LIVE-PASS` | Repeatedly logged as passing. |
-| `OPS-03` | Full unit/integration suite clean (`vitest run`) | repo | `7.3` | full-suite command output artifact | `MISSING` | Current docs show focused test slices, not a full backend `vitest run` as written in the rubric. |
+| `OPS-03` | Full unit/integration suite clean (`vitest run`) | repo | `7.3` | full-suite command output artifact | `LIVE-PASS` | Full backend `vitest run` now exists in `.tmp/e2e-full-backend-vitest.log` with `425 passed / 0 failed`. |
 | `OPS-04` | Build succeeds | repo | `7.4` | `TESTING.md`, runtime docs | `LIVE-PASS` | Build steps are documented in both migrate and fresh runs. |
 | `OPS-05` | Scan/UI contract remains additive with `profileKnowledge` back-compat | repo + runtime snapshots | `7.5` | `TESTING.md`, scan snapshots, optional contract-diff note | `PARTIAL` | Compatibility is described and UI was updated to prefer `profileMemory`, but there is no dedicated before/after contract proof artifact. |
 | `OPS-06` | Worker prompt v2 deployed with `.v1.bak` rollback path | repo | `7.6` | code/path inspection note, optionally `TESTING.md` or targeted artifact | `PARTIAL` | Status/closeout docs assert this landed, but the E2E package lacks a dedicated evidence line for deployed prompt + backup coexistence. |
@@ -142,44 +142,26 @@ Each scenario below is the unit of evidence collection. The rubric references ar
 
 | Rubric category | Current evidence posture | Notes |
 |---|---|---|
-| 1. Core Chat / Session Behavior | `PARTIAL / BLOCKED` | Migrate live chat is proved; fresh live reply is blocked; worker spawning, reconnect persistence, and existing-session UI history load are still missing. |
-| 2. Cortex Scan / Review Behavior | `PARTIAL` | Enriched scan payload, profile-only managers, and lazy reference indexing are proved. Explicit transcript/memory/feedback delta probes are still missing. |
-| 3. Ownership / Memory Behavior | `PARTIAL` | File-layout ownership split is strong. Memory-skill target behavior lacks isolated proof. |
-| 4. Reference-Doc Behavior | `MOSTLY COVERED` | Migrate/fresh structural behavior is well covered, but some criteria are test-only rather than live-runtime demonstrated. |
-| 5. Merge / Promotion Behavior | `TEST-COVERED, NOT E2E-COVERED` | Focused automated coverage is strong; isolated live WS merge evidence has not been packaged yet. |
-| 6. Auth / Isolation Behavior | `PARTIAL` | Canonical path behavior is covered; fresh boot is covered; production non-touch is not backed by explicit before/after artifact; transcribe/OAuth are test-only. |
-| 7. Operational Safety | `PARTIAL` | Build/typecheck are covered. Full `vitest run`, explicit contract-diff evidence, and prompt-backup proof are still absent from the E2E package. |
+| 1. Core Chat / Session Behavior | `PARTIAL / BLOCKED` | Migrate live chat, worker callback, reconnect persistence, and explicit existing-session UI history load are now proved. Fresh live reply remains blocked by env/auth. |
+| 2. Cortex Scan / Review Behavior | `PASS` | Enriched scan payload, profile-only managers, lazy reference indexing, and transcript/memory/feedback delta probes are all proved in isolated runtime artifacts. |
+| 3. Ownership / Memory Behavior | `PASS` | File-layout ownership split is strong, and memory-skill target behavior now has isolated runtime proof for both root and sub-session writes. |
+| 4. Reference-Doc Behavior | `MOSTLY COVERED` | Migrate/fresh structural behavior is well covered, though some criteria remain test-only rather than separately live-runtime demonstrated. |
+| 5. Merge / Promotion Behavior | `MOSTLY COVERED` | Isolated live merge evidence now exists, supplemented by strong focused automated coverage for deeper failure/retry cases. |
+| 6. Auth / Isolation Behavior | `PARTIAL` | Canonical path behavior is covered; fresh boot is covered; production non-touch now has a dedicated evidence-backed waiver note instead of byte-diff proof; transcribe/OAuth remain test-only. |
+| 7. Operational Safety | `PASS` | Build/typecheck are covered and the full backend `vitest run` is now present in the E2E package. |
 
 ---
 
 ## 6. Highest-priority unresolved risks
 
 1. **Fresh live dispatch is still blocked.**  
-   `E2E_FRESH_RUNTIME.md` shows successful boot/provisioning but no assistant response. This is the single biggest gap for rubric category 1.
+   `E2E_FRESH_RUNTIME.md` still shows successful boot/provisioning but no assistant response token in the fresh isolated env.
 
-2. **Provider validity is still confounding copied/fresh runtime interpretation.**  
-   `E2E_COPIED_DIAGNOSIS_R2.md`, `E2E_FRESH_DIAGNOSIS_R2.md`, and `E2E_AUTH_RUNTIME_AUDIT.md` all indicate that “configured” auth is not equivalent to usable runtime auth. Anthropic failures and fallback behavior can look like product regressions when they are actually credential validity issues.
+2. **Provider validity is still confounding fresh runtime interpretation.**  
+   `E2E_AUTH_RUNTIME_AUDIT.md` and `E2E_FRESH_DIAGNOSIS_R2.md` continue to show that “configured” auth is not equivalent to usable runtime auth.
 
-3. **Worker spawning has no end-to-end proof artifact.**  
-   Rubric `1.3` remains uncovered.
-
-4. **Reconnect/session-memory persistence has no proof artifact.**  
-   Rubric `1.4` remains uncovered.
-
-5. **Scan freshness deltas are not yet demonstrated with real before/after byte changes.**  
-   Rubric `2.2`, `2.3`, and `2.4` remain unproven in isolated runtime docs.
-
-6. **Merge/promotion behavior is only represented by focused automated tests.**  
-   That is good engineering evidence, but it is weaker than an isolated WS/runtime narrative for final synthesis.
-
-7. **Production isolation is policy-backed, not artifact-backed.**  
-   The package says production was not touched, but there is no explicit before/after proof artifact for `~/.middleman`.
-
-8. **The E2E document set has path/name drift.**  
-   `E2E_TEST_INDEX.md` and `E2E_EXEC_SUMMARY.md` were originally scaffolded around placeholder runtime-doc names. The active package uses `E2E_MIGRATE_RUNTIME.md` and `E2E_FRESH_RUNTIME.md` instead.
-
-9. **Closeout memo is stronger than the current E2E package.**  
-   `CLOSEOUT_READINESS.md` is valuable, but it should not be treated as a substitute for missing runtime evidence in the final E2E synthesis.
+3. **Production non-touch is waived, not cryptographically proved.**  
+   `E2E_PRODUCTION_NON_TOUCH.md` is an evidence-backed waiver note, not a byte-identical before/after manifest for `~/.middleman`.
 
 ---
 
@@ -190,31 +172,20 @@ Ordered by payoff:
 1. **Resolve or clearly quarantine fresh auth, then rerun `CRT-04`.**  
    Goal: one successful fresh assistant reply token, or a final accepted blocker with owner and reason.
 
-2. **Capture a dedicated worker-spawn run for `CRT-05`.**  
-   A minimal Cortex review or delegated task is enough if it shows worker creation, callback, and completion.
+2. **If desired, add a byte-diff manifest for production non-touch.**  
+   This is optional now because AUTH-03 has an explicit waiver note, but it is the remaining path to full proof instead of waiver.
 
-3. **Run a focused scan-delta pass for `SCAN-02` / `SCAN-03` / `SCAN-04`.**  
-   Use tightly scoped before/after file edits and save the before/after scan JSON.
-
-4. **Package one isolated WS merge run for `MRG-01`.**  
-   Even a single happy-path merge with `merge-audit.log` + `meta.json` evidence would materially strengthen the final package.
-
-5. **Decide whether `OPS-03` needs a full suite run or an explicit waiver.**  
-   Right now the rubric says full `vitest run`, but the package only carries focused slices.
-
-6. **If time allows, add one reconnect/memory-persistence probe for `CRT-06`.**
+3. **Otherwise treat the package as synthesis-ready and decision-ready.**
 
 ---
 
 ## 8. Minimum synthesis-ready set
 
-The package is materially stronger once the following are true:
+The package is now **synthesis-ready** because:
 
-- `CRT-04` is either `LIVE-PASS` or explicitly accepted as an auth-environment blocker.
-- `CRT-05` has at least one proof artifact.
-- At least one of `SCAN-02` / `SCAN-03` / `SCAN-04` is executed with real before/after evidence, ideally all three.
-- `MRG-01` has one isolated WS/runtime artifact, or synthesis explicitly states that merge criteria are satisfied by automated coverage only.
-- `OPS-03` is either executed or formally waived.
+- `CRT-04` is explicitly classified as an auth-environment blocker rather than a demonstrated Memory v2 product defect.
+- `CRT-05`, `CRT-06`, `CRT-07`, `SCAN-02`, `SCAN-03`, `SCAN-04`, `OWN-04`, and `OPS-03` all now have dedicated evidence artifacts.
+- `MRG-01` has isolated WS/runtime evidence and deeper coverage remains test-backed where appropriate.
 - The index and summary docs reference the actual runtime artifact names in use.
 
-Until then, the branch may be code-ready, but the **E2E package is not fully synthesis-ready**.
+The remaining decision is not package completeness; it is whether the decision owner accepts the fresh auth blocker and AUTH-03 waiver posture.
