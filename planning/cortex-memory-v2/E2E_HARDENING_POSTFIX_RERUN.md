@@ -58,6 +58,13 @@ Result: **clean pass**
   - Codex queued-steer recovery after `no active turn to steer`
   - Cortex user-visible path normalization
 
+### Pass 5 — overnight heartbeat confirmation rerun
+Result: **still clean**
+- reran the postfix harness again on commit `b70ae75`
+- all 3 scenarios still completed successfully
+- no `steer_delivery` / `no active turn to steer` errors reappeared
+- scenario 3 continued to report relative `profiles/...` paths instead of absolute host paths
+
 ## Latest results
 
 ### 1) `postfix-01-noop-review`

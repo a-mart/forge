@@ -29,10 +29,12 @@ Harden the end-to-end Cortex Memory v2 flow toward reliable, low-noise, high-sig
 |---|---|---:|---|
 | Lane 1 — Usefulness | Historical stress + postfix rerun kept finding narrow, reusable signal without major bloat regressions | **8/10** | Keep running mixed historical scenarios; watch for any weak/duplicative promotions in larger sessions |
 | Lane 2 — Precision | Scan precision hardening is solid, closeout path reporting now normalizes to relative `profiles/...` paths, and queued-steer recovery no longer leaves a poisoned delivery at the head of the queue in focused tests | **9/10** | Keep stress-testing for any repeated `queuedDeliveryId` poisoning or path-format regressions |
-| Lane 3 — Closeout quality | Postfix rerun is now clean end-to-end: all 3 scenarios emitted correct `speak_to_user` closeouts, and scenario 3 now reports relative changed-file paths | **9/10** | Keep validating across more historical shapes; watch for duplicate or stale closeouts |
+| Lane 3 — Closeout quality | Postfix rerun is now clean end-to-end across repeated reruns: all 3 scenarios emitted correct `speak_to_user` closeouts, and scenario 3 now reports relative changed-file paths | **9/10** | Keep validating across more historical shapes; watch for duplicate or stale closeouts |
 | Lane 4 — Low noise | No-op discipline is much better after the latest hardening; narrow reference placement remains strong; `feature-manager` memory still warrants caution | **9/10** | Keep pressure on lean injected memory, especially for `feature-manager` |
 | Lane 5 — Magical-feeling output | Fresh chat, reconnect, history load, and direct-review closeout now feel much more coherent; the latest postfix rerun removed the last obvious path-leak distraction | **9/10** | Push broader repeated scenario coverage instead of more closeout-path tweaking |
 
 ## Notes
+- Latest overnight heartbeat confirmation reran the postfix copied-history harness cleanly again on commit `b70ae75`.
+- A separate rerun of the older lane-specific `stress-a-validate-closeout` scratch harness timed out once without reproducing the earlier `steer_delivery` error signature. For now, treat that as a lower-priority scratch-lane flake unless it repeats in a cleaner harness.
 - This is a **supplemental coordination artifact only**. It does not overwrite existing package docs.
 - No production-side writes were performed as part of this tracker update.
