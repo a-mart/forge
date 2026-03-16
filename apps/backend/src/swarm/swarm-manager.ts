@@ -594,6 +594,7 @@ const IDLE_WORKER_WATCHDOG_MESSAGE_TEMPLATE = `⚠️ [IDLE WORKER WATCHDOG — 
 Workers: \${WORKER_IDS}
 
 Use list_agents({"verbose":true,"limit":50,"offset":0}) for a paged full list.`;
+const CORTEX_USER_CLOSEOUT_REMINDER_MESSAGE = `SYSTEM: Before ending this direct review, publish a concise speak_to_user closeout. State the reviewed scope, whether anything was promoted, which files changed (or NONE), and whether follow-up remains. Do this even for a no-op review.`;
 
 // Retain recent non-web activity while preserving the full user-facing web transcript.
 const SWARM_CONTEXT_FILE_NAME = "SWARM.md";
@@ -863,6 +864,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly watchdogBatchTimersByManager = new Map<string, NodeJS.Timeout>();
   private readonly modelCapacityBlocks = new Map<string, ModelCapacityBlock>();
   private readonly lastWorkerCompletionReportTimestampByAgentId = new Map<string, number>();
+  private readonly lastCortexCloseoutReminderUserTimestampByAgentId = new Map<string, number>();
   private readonly conversationProjector: ConversationProjector;
   private readonly persistenceService: PersistenceService;
   private readonly runtimeFactory: RuntimeFactory;
@@ -4470,6 +4472,44 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       pendingCount,
       contextUsage: descriptor.contextUsage
     });
+
+    if (descriptor.role === "manager" && nextStatus === "idle" && pendingCount === 0) {
+      await this.maybeRemindCortexCloseout(descriptor);
+    }
+  }
+
+  private async maybeRemindCortexCloseout(descriptor: AgentDescriptor): Promise<void> {
+    if (normalizeArchetypeId(descriptor.archetypeId ?? "") !== CORTEX_ARCHETYPE_ID) {
+      return;
+    }
+
+    const analysis = analyzeLatestCortexCloseoutNeed(this.getConversationHistory(descriptor.agentId));
+    if (!analysis.needsReminder || typeof analysis.userTimestamp !== "number") {
+      return;
+    }
+
+    if (this.lastCortexCloseoutReminderUserTimestampByAgentId.get(descriptor.agentId) === analysis.userTimestamp) {
+      return;
+    }
+
+    try {
+      await this.sendMessage(descriptor.agentId, descriptor.agentId, CORTEX_USER_CLOSEOUT_REMINDER_MESSAGE, "auto", {
+        origin: "internal"
+      });
+      this.lastCortexCloseoutReminderUserTimestampByAgentId.set(descriptor.agentId, analysis.userTimestamp);
+      this.logDebug("cortex:closeout_reminder:sent", {
+        agentId: descriptor.agentId,
+        userTimestamp: analysis.userTimestamp,
+        reason: analysis.reason
+      });
+    } catch (error) {
+      this.logDebug("cortex:closeout_reminder:error", {
+        agentId: descriptor.agentId,
+        userTimestamp: analysis.userTimestamp,
+        reason: analysis.reason,
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
   }
 
   private async handleRuntimeSessionEvent(agentId: string, event: RuntimeSessionEvent): Promise<void> {
@@ -6161,6 +6201,76 @@ function truncateWorkerCompletionText(text: string, maxChars: number): string {
   }
 
   return `${truncated}${WORKER_COMPLETION_TRUNCATION_SUFFIX}`;
+}
+
+export function analyzeLatestCortexCloseoutNeed(
+  history: ConversationEntryEvent[]
+): { needsReminder: boolean; userTimestamp?: number; reason?: "missing_speak_to_user" | "stale_after_worker_progress" } {
+  let latestUserIndex = -1;
+
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    const entry = history[index];
+    if (entry.type === "conversation_message" && entry.role === "user" && entry.source === "user_input") {
+      latestUserIndex = index;
+      break;
+    }
+  }
+
+  if (latestUserIndex < 0) {
+    return { needsReminder: false };
+  }
+
+  const latestUserEntry = history[latestUserIndex];
+  const userTimestamp =
+    latestUserEntry.type === "conversation_message"
+      ? parseTimestampToMillis(latestUserEntry.timestamp)
+      : undefined;
+
+  let lastSpeakToUserTimestamp: number | undefined;
+  for (let index = latestUserIndex + 1; index < history.length; index += 1) {
+    const entry = history[index];
+    if (entry.type !== "conversation_message" || entry.source !== "speak_to_user") {
+      continue;
+    }
+
+    const timestamp = parseTimestampToMillis(entry.timestamp);
+    if (typeof timestamp === "number") {
+      lastSpeakToUserTimestamp = timestamp;
+    }
+  }
+
+  if (typeof lastSpeakToUserTimestamp !== "number") {
+    return {
+      needsReminder: true,
+      userTimestamp,
+      reason: "missing_speak_to_user"
+    };
+  }
+
+  for (let index = latestUserIndex + 1; index < history.length; index += 1) {
+    const entry = history[index];
+    if (!isCortexCloseoutFollowUpEntry(entry)) {
+      continue;
+    }
+
+    const timestamp = parseTimestampToMillis(entry.timestamp);
+    if (typeof timestamp === "number" && timestamp > lastSpeakToUserTimestamp) {
+      return {
+        needsReminder: true,
+        userTimestamp,
+        reason: "stale_after_worker_progress"
+      };
+    }
+  }
+
+  return {
+    needsReminder: false,
+    userTimestamp
+  };
+}
+
+function isCortexCloseoutFollowUpEntry(entry: ConversationEntryEvent): boolean {
+  return entry.type === "agent_message" && entry.source === "agent_to_agent";
 }
 
 function parseTimestampToMillis(value: string | undefined): number | undefined {
