@@ -73,10 +73,10 @@ Implement the full Cortex memory redesign with:
 - **Phase 5**: Extended `GET /api/cortex/scan` with `files.profileMergeAudit[profileId]` so validators/UI/Cortex can discover existing `profiles/<profileId>/merge-audit.log` paths without introducing a new profile-level review-state file, and zero-byte audit logs now report `exists: true`.
 
 ## Next Up
-1. Finish the remaining Phase 3 isolated migrate/fresh validation pass and capture final runtime evidence for shared-auth + root-session ownership
-2. Decide whether Phase 2 can now drop `profileKnowledge` compatibility from the scan/UI contract or keep it temporarily for back-compat
-3. Extend the new reference-doc write/update helpers into actual Cortex promotion/write-back flows, not only migration/provisioning paths
-4. If review surfaces any remaining audit gaps, keep them additive to the existing session `meta.json` + `merge-audit.log` model rather than adding a new persisted v1 review-state file
+1. Continue fresh isolated live-dispatch investigation with bounded, evidence-rich runs; keep the blocker framed as env/auth unless product evidence says otherwise.
+2. Run more copied-prod Cortex behavior against historical conversations and evaluate the resulting memory/knowledge output quality.
+3. Keep the backend/full-suite gate clean after the low-churn env-sensitive test fixes captured in `planning/cortex-memory-v2/E2E_BACKEND_GATES.md`.
+4. Keep `planning/cortex-memory-v2/OVERNIGHT_RUNBOOK.md`, `E2E_EXEC_SUMMARY.md`, `E2E_ACTIVE_TRACKER.md`, and `E2E_TEST_INDEX.md` aligned as overnight evidence expands.
 
 ## Open User Review Gates
 - None currently

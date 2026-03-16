@@ -15,7 +15,7 @@ import type {
   SwarmConfig,
 } from '../swarm/types.js'
 import type { SwarmAgentRuntime } from '../swarm/runtime-types.js'
-import { getControlPidFilePath } from '../reboot/control-pid.js'
+import { DAEMONIZED_ENV_VAR, getControlPidFilePath } from '../reboot/control-pid.js'
 import { getScheduleFilePath } from '../scheduler/schedule-storage.js'
 import {
   getCommonKnowledgePath,
@@ -412,6 +412,9 @@ describe('SwarmWebSocketServer', () => {
   })
 
   it('writes and removes its control pid file across start/stop', async () => {
+    const previousDaemonized = process.env[DAEMONIZED_ENV_VAR]
+    delete process.env[DAEMONIZED_ENV_VAR]
+
     const port = await getAvailablePort()
     const config = await makeTempConfig(port)
 
@@ -428,16 +431,22 @@ describe('SwarmWebSocketServer', () => {
     const pidFile = getControlPidFilePath(config.paths.rootDir, config.port)
     await rm(pidFile, { force: true })
 
-    await server.start()
-
     try {
+      await server.start()
+
       const pidContents = await readFile(pidFile, 'utf8')
       expect(pidContents.trim()).toBe(String(process.pid))
+
+      await server.stop()
+      await expect(readFile(pidFile, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
     } finally {
       await server.stop()
+      if (previousDaemonized === undefined) {
+        delete process.env[DAEMONIZED_ENV_VAR]
+      } else {
+        process.env[DAEMONIZED_ENV_VAR] = previousDaemonized
+      }
     }
-
-    await expect(readFile(pidFile, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('accepts POST /api/reboot and signals the daemon pid asynchronously', async () => {

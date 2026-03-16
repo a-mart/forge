@@ -50,7 +50,7 @@ afterEach(() => {
 
 describe("index shutdown signal registration", () => {
   it("registers SIGINT, SIGTERM, and SIGUSR1 on POSIX", async () => {
-    const signals = await loadRegisteredSignals("linux");
+    const signals = await loadRegisteredSignals("linux", { MIDDLEMAN_DAEMONIZED: undefined });
     expect(signals).toContain("SIGINT");
     expect(signals).toContain("SIGTERM");
     expect(signals).toContain("SIGUSR1");
