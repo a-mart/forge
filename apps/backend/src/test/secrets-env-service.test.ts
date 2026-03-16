@@ -114,10 +114,23 @@ describe('SecretsEnvService path migration', () => {
     await service.updateSettingsAuth({ 'openai-codex': 'new-openai-key' })
 
     const sharedAuthStorage = AuthStorage.create(sharedAuthFile)
+    const legacyAuthAfterUpdate = AuthStorage.create(legacyAuthFile)
     const anthropic = sharedAuthStorage.get('anthropic')
     const openai = sharedAuthStorage.get('openai-codex')
+    const legacyOpenai = legacyAuthAfterUpdate.get('openai-codex')
 
     expect((anthropic as any)?.key ?? (anthropic as any)?.access).toBe('legacy-anthropic-key')
     expect((openai as any)?.key ?? (openai as any)?.access).toBe('new-openai-key')
+    expect((legacyOpenai as any)?.key ?? (legacyOpenai as any)?.access).toBe('new-openai-key')
+
+    await service.deleteSettingsAuth('openai-codex')
+
+    const sharedAuthAfterDelete = AuthStorage.create(sharedAuthFile)
+    const legacyAuthAfterDelete = AuthStorage.create(legacyAuthFile)
+    const sharedOpenaiAfterDelete = sharedAuthAfterDelete.get('openai-codex')
+    const legacyOpenaiAfterDelete = legacyAuthAfterDelete.get('openai-codex')
+
+    expect(sharedOpenaiAfterDelete).toBeUndefined()
+    expect(legacyOpenaiAfterDelete).toBeUndefined()
   })
 })

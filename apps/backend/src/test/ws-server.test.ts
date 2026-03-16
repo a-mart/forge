@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import WebSocket from 'ws'
 import { describe, expect, it, vi } from 'vitest'
-import { SessionManager } from '@mariozechner/pi-coding-agent'
+import { AuthStorage, SessionManager } from '@mariozechner/pi-coding-agent'
 import { SwarmManager } from '../swarm/swarm-manager.js'
 import type {
   AgentContextUsage,
@@ -1495,6 +1495,15 @@ describe('SwarmWebSocketServer', () => {
         ]),
       )
 
+      const legacyAuthStorage = AuthStorage.create(config.paths.authFile)
+      legacyAuthStorage.set('anthropic', {
+        type: 'api_key',
+        key: 'sk-legacy-anthropic',
+        access: 'sk-legacy-anthropic',
+        refresh: '',
+        expires: '',
+      } as any)
+
       const updateResponse = await fetch(`http://${config.host}:${config.port}/api/settings/auth`, {
         method: 'PUT',
         headers: {
@@ -1523,6 +1532,10 @@ describe('SwarmWebSocketServer', () => {
         string,
         { type: string; key?: string; access?: string }
       >
+      const legacyStoredAuth = JSON.parse(await readFile(config.paths.authFile, 'utf8')) as Record<
+        string,
+        { type: string; key?: string; access?: string }
+      >
 
       expect(storedAuth.anthropic).toMatchObject({
         type: 'api_key',
@@ -1532,6 +1545,8 @@ describe('SwarmWebSocketServer', () => {
         type: 'api_key',
       })
       expect(storedAuth['openai-codex'].key ?? storedAuth['openai-codex'].access).toBe('sk-openai-test-5678')
+      expect(legacyStoredAuth.anthropic.key ?? legacyStoredAuth.anthropic.access).toBe('sk-ant-test-1234')
+      expect(legacyStoredAuth['openai-codex'].key ?? legacyStoredAuth['openai-codex'].access).toBe('sk-openai-test-5678')
 
       const deleteResponse = await fetch(`http://${config.host}:${config.port}/api/settings/auth/openai-codex`, {
         method: 'DELETE',
@@ -1544,7 +1559,9 @@ describe('SwarmWebSocketServer', () => {
       expect(afterDeletePayload.providers.find((entry) => entry.provider === 'openai-codex')?.configured).toBe(false)
 
       const afterDeleteAuth = JSON.parse(await readFile(config.paths.sharedAuthFile, 'utf8')) as Record<string, unknown>
+      const afterDeleteLegacyAuth = JSON.parse(await readFile(config.paths.authFile, 'utf8')) as Record<string, unknown>
       expect(afterDeleteAuth['openai-codex']).toBeUndefined()
+      expect(afterDeleteLegacyAuth['openai-codex']).toBeUndefined()
     } finally {
       await server.stop()
     }
