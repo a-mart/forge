@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -7,6 +7,8 @@ import { getScheduleFilePath } from '../scheduler/schedule-storage.js'
 import { getConversationHistoryCacheFilePath } from '../swarm/conversation-history-cache.js'
 import {
   getCommonKnowledgePath,
+  getCortexPromotionManifestsDir,
+  getCortexReviewLogPath,
   getCortexWorkerPromptsPath,
   getProfileKnowledgePath,
   getProfileMemoryPath,
@@ -413,6 +415,11 @@ describe('SwarmManager', () => {
     const commonKnowledge = await readFile(getCommonKnowledgePath(config.paths.dataDir), 'utf8')
     expect(commonKnowledge).toContain('# Common Knowledge')
     expect(commonKnowledge).toContain('Maintained by Cortex')
+    const reviewLog = await readFile(getCortexReviewLogPath(config.paths.dataDir), 'utf8')
+    expect(reviewLog).toBe('')
+
+    const promotionManifestsDir = getCortexPromotionManifestsDir(config.paths.dataDir)
+    await expect(stat(promotionManifestsDir)).resolves.toMatchObject({ isDirectory: expect.any(Function) })
   })
 
   it('upgrades legacy auto-seeded Cortex worker prompts to the current version on boot', async () => {
@@ -439,14 +446,14 @@ describe('SwarmManager', () => {
     const upgraded = await readFile(workerPromptsPath, 'utf8')
     const backup = await readFile(`${workerPromptsPath}.v1.bak`, 'utf8')
 
-    expect(upgraded).toContain('<!-- Cortex Worker Prompts Version: 3 -->')
+    expect(upgraded).toContain('<!-- Cortex Worker Prompts Version: 4 -->')
     expect(upgraded).toContain('STATUS: DONE | FAILED')
     expect(upgraded).toContain('line-based, NOT byte-based')
     expect(upgraded).toContain('## Promotion Discipline (all templates)')
     expect(backup).toContain('Return your findings as a structured list.')
   })
 
-  it('upgrades v2 Cortex worker prompts to v3 on boot and keeps a v2 backup', async () => {
+  it('upgrades v2 Cortex worker prompts to v4 on boot and keeps a v2 backup', async () => {
     const config = await makeTempConfig()
     const workerPromptsPath = getCortexWorkerPromptsPath(config.paths.dataDir)
     await mkdir(dirname(workerPromptsPath), { recursive: true })
@@ -469,8 +476,9 @@ describe('SwarmManager', () => {
     const upgraded = await readFile(workerPromptsPath, 'utf8')
     const backup = await readFile(`${workerPromptsPath}.v2.bak`, 'utf8')
 
-    expect(upgraded).toContain('<!-- Cortex Worker Prompts Version: 3 -->')
-    expect(upgraded).toContain('- **Outcome**: promote | no-op | follow-up-needed')
+    expect(upgraded).toContain('<!-- Cortex Worker Prompts Version: 4 -->')
+    expect(upgraded).toContain('## Required Finding Schema (all extraction templates)')
+    expect(upgraded).toContain('proposed_outcome')
     expect(upgraded).toContain('Concise completion summary')
     expect(backup).toContain('<!-- Cortex Worker Prompts Version: 2 -->')
   })

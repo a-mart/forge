@@ -20,6 +20,8 @@ describe("versioned-paths", () => {
     expect(isTrackedVersionedPath(dataDir, `${dataDir}/shared/auth/auth.json`)).toBe(false);
     expect(isTrackedVersionedPath(dataDir, `${dataDir}/profiles/alpha/sessions/alpha/session.jsonl`)).toBe(false);
     expect(isTrackedVersionedPath(dataDir, `${dataDir}/profiles/alpha/sessions/alpha/meta.json`)).toBe(false);
+    expect(isTrackedVersionedPath(dataDir, `${dataDir}/shared/knowledge/.cortex-review-log.jsonl`)).toBe(false);
+    expect(isTrackedVersionedPath(dataDir, `${dataDir}/shared/knowledge/.cortex-lock.json`)).toBe(false);
     expect(isTrackedVersionedPath(dataDir, `${dataDir}/shared/knowledge/.cortex-worker-prompts.md.bak.1`)).toBe(false);
   });
 

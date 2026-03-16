@@ -3,13 +3,15 @@ import { join } from "node:path";
 import {
   getCommonKnowledgePath,
   getCortexNotesPath,
+  getCortexPromotionManifestsDir,
+  getCortexReviewLockPath,
+  getCortexReviewLogPath,
   getProfileKnowledgeDir,
   getProfileKnowledgePath,
   getProfileMemoryPath,
   getProfileMergeAuditLogPath,
   getProfileReferencePath
 } from "../../swarm/data-paths.js";
-import { ensureProfileReferenceIndex, migrateLegacyProfileKnowledgeToReferenceDoc } from "../../swarm/reference-docs.js";
 import { scanCortexReviewStatus } from "../../swarm/scripts/cortex-scan.js";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
 import { applyCorsHeaders, sendJson } from "../http-utils.js";
@@ -55,11 +57,14 @@ export function createCortexRoutes(options: { swarmManager: SwarmManager }): Htt
                 .filter((profileId) => profileId !== "cortex")
             ])
           ).sort((a, b) => a.localeCompare(b));
-          const [profileMemory, profileKnowledge, profileReference, profileMergeAudit] = await Promise.all([
+          const [profileMemory, profileKnowledge, profileReference, profileMergeAudit, cortexReviewLog, cortexReviewLock, cortexPromotionManifests] = await Promise.all([
             buildProfileMemoryInfoMap(dataDir, profileIds),
             buildProfileKnowledgeInfoMap(dataDir, profileIds),
             buildProfileReferenceInfoMap(dataDir, profileIds),
-            buildProfileMergeAuditInfoMap(dataDir, profileIds)
+            buildProfileMergeAuditInfoMap(dataDir, profileIds),
+            buildFileInfo(getCortexReviewLogPath(dataDir)),
+            buildFileInfo(getCortexReviewLockPath(dataDir)),
+            buildDirectoryInfo(getCortexPromotionManifestsDir(dataDir))
           ]);
 
           sendJson(response, 200, {
@@ -67,6 +72,9 @@ export function createCortexRoutes(options: { swarmManager: SwarmManager }): Htt
             files: {
               commonKnowledge: getCommonKnowledgePath(dataDir),
               cortexNotes: getCortexNotesPath(dataDir),
+              cortexReviewLog,
+              cortexReviewLock,
+              cortexPromotionManifests,
               profileMemory,
               profileKnowledge,
               profileReference,
@@ -82,17 +90,21 @@ export function createCortexRoutes(options: { swarmManager: SwarmManager }): Htt
   ];
 }
 
-interface ProfileKnowledgeFileInfo {
+interface FileSystemPathInfo {
   path: string;
   exists: boolean;
   sizeBytes: number;
 }
 
-interface ProfileReferenceFileInfo {
+interface DirectoryPathInfo {
   path: string;
   exists: boolean;
-  sizeBytes: number;
+  fileCount: number;
 }
+
+interface ProfileKnowledgeFileInfo extends FileSystemPathInfo {}
+
+interface ProfileReferenceFileInfo extends FileSystemPathInfo {}
 
 async function buildProfileMemoryInfoMap(
   dataDir: string,
@@ -181,28 +193,8 @@ async function buildProfileReferenceInfoMap(
 
   await Promise.all(
     profileIds.map(async (profileId) => {
-      const indexPath = getProfileReferencePath(dataDir, profileId, "index.md");
-      let sizeBytes = 0;
-
-      try {
-        await migrateLegacyProfileKnowledgeToReferenceDoc(dataDir, profileId);
-      } catch {
-        // Degrade gracefully: a broken legacy knowledge file for one profile should not fail the full scan route.
-      }
-
-      try {
-        const ensured = await ensureProfileReferenceIndex(dataDir, profileId);
-        const fileStats = await stat(ensured.path);
-        sizeBytes = fileStats.size;
-      } catch {
-        sizeBytes = 0;
-      }
-
-      profileReference[profileId] = {
-        path: indexPath,
-        exists: sizeBytes > 0,
-        sizeBytes
-      };
+      const info = await buildFileInfo(getProfileReferencePath(dataDir, profileId, "index.md"));
+      profileReference[profileId] = info;
     })
   );
 
@@ -249,4 +241,38 @@ function isEnoentError(error: unknown): boolean {
     "code" in error &&
     (error as { code?: string }).code === "ENOENT"
   );
+}
+
+async function buildFileInfo(path: string): Promise<FileSystemPathInfo> {
+  let exists = false;
+  let sizeBytes = 0;
+
+  try {
+    const fileStats = await stat(path);
+    exists = fileStats.isFile();
+    sizeBytes = exists ? fileStats.size : 0;
+  } catch (error) {
+    if (!isEnoentError(error)) {
+      throw error;
+    }
+  }
+
+  return { path, exists, sizeBytes };
+}
+
+async function buildDirectoryInfo(path: string): Promise<DirectoryPathInfo> {
+  try {
+    const entries = await readdir(path, { withFileTypes: true });
+    return {
+      path,
+      exists: true,
+      fileCount: entries.filter((entry) => entry.isFile()).length
+    };
+  } catch (error) {
+    if (!isEnoentError(error)) {
+      throw error;
+    }
+  }
+
+  return { path, exists: false, fileCount: 0 };
 }

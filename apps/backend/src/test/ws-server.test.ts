@@ -20,6 +20,9 @@ import { getScheduleFilePath } from '../scheduler/schedule-storage.js'
 import {
   getCommonKnowledgePath,
   getCortexNotesPath,
+  getCortexPromotionManifestsDir,
+  getCortexReviewLockPath,
+  getCortexReviewLogPath,
   getCortexWorkerPromptsPath,
   getProfileKnowledgePath,
   getProfileMemoryPath,
@@ -879,7 +882,7 @@ describe('SwarmWebSocketServer', () => {
     const cortexNotesPath = getCortexNotesPath(config.paths.dataDir)
 
     await writeFile(commonKnowledgePath, '# Common Knowledge\n\nLive common content\n', 'utf8')
-    await writeFile(workerPromptsPath, '# Cortex Worker Prompt Templates — v3\n<!-- Cortex Worker Prompts Version: 3 -->\n\nLive worker content\n', 'utf8')
+    await writeFile(workerPromptsPath, '# Cortex Worker Prompt Templates — v4\n<!-- Cortex Worker Prompts Version: 4 -->\n\nLive worker content\n', 'utf8')
     await writeFile(cortexNotesPath, '# Cortex Notes\n\nScratch note\n', 'utf8')
 
     const server = new SwarmWebSocketServer({
@@ -943,7 +946,7 @@ describe('SwarmWebSocketServer', () => {
       expect(workerResponse.status).toBe(200)
       const workerPayload = (await workerResponse.json()) as { content: string; filePath: string }
       expect(workerPayload).toMatchObject({
-        content: '# Cortex Worker Prompt Templates — v3\n<!-- Cortex Worker Prompts Version: 3 -->\n\nLive worker content\n',
+        content: '# Cortex Worker Prompt Templates — v4\n<!-- Cortex Worker Prompts Version: 4 -->\n\nLive worker content\n',
         filePath: workerPromptsPath,
       })
 
@@ -966,8 +969,8 @@ describe('SwarmWebSocketServer', () => {
 
     const workerPromptsPath = getCortexWorkerPromptsPath(config.paths.dataDir)
     const customTemplate = [
-      '# Cortex Worker Prompt Templates — v3',
-      '<!-- Cortex Worker Prompts Version: 3 -->',
+      '# Cortex Worker Prompt Templates — v4',
+      '<!-- Cortex Worker Prompts Version: 4 -->',
       '',
       'Custom template content.',
       '',
@@ -1026,8 +1029,8 @@ describe('SwarmWebSocketServer', () => {
     const commonKnowledgePath = getCommonKnowledgePath(config.paths.dataDir)
     const workerPromptsPath = getCortexWorkerPromptsPath(config.paths.dataDir)
     const customTemplate = [
-      '# Cortex Worker Prompt Templates — v3',
-      '<!-- Cortex Worker Prompts Version: 3 -->',
+      '# Cortex Worker Prompt Templates — v4',
+      '<!-- Cortex Worker Prompts Version: 4 -->',
       '',
       'Custom template content.',
       '',
@@ -1256,6 +1259,21 @@ describe('SwarmWebSocketServer', () => {
         files: {
           commonKnowledge: string
           cortexNotes: string
+          cortexReviewLog: {
+            path: string
+            exists: boolean
+            sizeBytes: number
+          }
+          cortexReviewLock: {
+            path: string
+            exists: boolean
+            sizeBytes: number
+          }
+          cortexPromotionManifests: {
+            path: string
+            exists: boolean
+            fileCount: number
+          }
           profileMemory: Record<
             string,
             {
@@ -1295,6 +1313,21 @@ describe('SwarmWebSocketServer', () => {
       expect(payload.files).toEqual({
         commonKnowledge: commonKnowledgePath,
         cortexNotes: getCortexNotesPath(config.paths.dataDir),
+        cortexReviewLog: {
+          path: getCortexReviewLogPath(config.paths.dataDir),
+          exists: true,
+          sizeBytes: 0,
+        },
+        cortexReviewLock: {
+          path: getCortexReviewLockPath(config.paths.dataDir),
+          exists: false,
+          sizeBytes: 0,
+        },
+        cortexPromotionManifests: {
+          path: getCortexPromotionManifestsDir(config.paths.dataDir),
+          exists: true,
+          fileCount: 0,
+        },
         profileMemory: {
           alpha: {
             path: alphaProfileMemoryPath,
@@ -1332,18 +1365,18 @@ describe('SwarmWebSocketServer', () => {
         profileReference: {
           alpha: {
             path: getProfileReferencePath(config.paths.dataDir, 'alpha', 'index.md'),
-            exists: true,
-            sizeBytes: expect.any(Number),
+            exists: false,
+            sizeBytes: 0,
           },
           beta: {
             path: getProfileReferencePath(config.paths.dataDir, 'beta', 'index.md'),
-            exists: true,
-            sizeBytes: expect.any(Number),
+            exists: false,
+            sizeBytes: 0,
           },
           manager: {
             path: getProfileReferencePath(config.paths.dataDir, 'manager', 'index.md'),
-            exists: true,
-            sizeBytes: expect.any(Number),
+            exists: false,
+            sizeBytes: 0,
           },
         },
         profileMergeAudit: {
@@ -1365,21 +1398,21 @@ describe('SwarmWebSocketServer', () => {
         },
       })
 
-      await expect(readFile(getProfileReferencePath(config.paths.dataDir, 'alpha', 'index.md'), 'utf8')).resolves.toContain(
-        '# alpha Reference Index',
-      )
-      await expect(readFile(getProfileReferencePath(config.paths.dataDir, 'alpha', 'legacy-profile-knowledge.md'), 'utf8')).resolves.toContain(
-        '# alpha Legacy Profile Knowledge',
-      )
-      await expect(readFile(getProfileReferencePath(config.paths.dataDir, 'beta', 'index.md'), 'utf8')).resolves.toContain(
-        '# beta Reference Index',
-      )
+      await expect(readFile(getProfileReferencePath(config.paths.dataDir, 'alpha', 'index.md'), 'utf8')).rejects.toMatchObject({
+        code: 'ENOENT',
+      })
+      await expect(
+        readFile(getProfileReferencePath(config.paths.dataDir, 'alpha', 'legacy-profile-knowledge.md'), 'utf8'),
+      ).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(readFile(getProfileReferencePath(config.paths.dataDir, 'beta', 'index.md'), 'utf8')).rejects.toMatchObject({
+        code: 'ENOENT',
+      })
     } finally {
       await server.stop()
     }
   })
 
-  it('includes manager profiles in GET /api/cortex/scan even before transcript byte stats exist', async () => {
+  it('includes manager profiles in GET /api/cortex/scan without materializing reference docs', async () => {
     const port = await getAvailablePort()
     const config = await makeTempConfig(port)
 
@@ -1440,23 +1473,23 @@ describe('SwarmWebSocketServer', () => {
       })
       expect(payload.files.profileReference[profileId]).toEqual({
         path: getProfileReferencePath(config.paths.dataDir, profileId, 'index.md'),
-        exists: true,
-        sizeBytes: expect.any(Number),
+        exists: false,
+        sizeBytes: 0,
       })
       expect(payload.files.profileMergeAudit[profileId]).toEqual({
         path: getProfileMergeAuditLogPath(config.paths.dataDir, profileId),
         exists: false,
         sizeBytes: 0,
       })
-      await expect(readFile(getProfileReferencePath(config.paths.dataDir, profileId, 'index.md'), 'utf8')).resolves.toContain(
-        `# ${profileId} Reference Index`,
-      )
+      await expect(readFile(getProfileReferencePath(config.paths.dataDir, profileId, 'index.md'), 'utf8')).rejects.toMatchObject({
+        code: 'ENOENT',
+      })
     } finally {
       await server.stop()
     }
   })
 
-  it('isolates per-profile reference migration failures in GET /api/cortex/scan', async () => {
+  it('keeps GET /api/cortex/scan read-only even when legacy knowledge files are malformed', async () => {
     const port = await getAvailablePort()
     const config = await makeTempConfig(port)
 
@@ -1508,11 +1541,13 @@ describe('SwarmWebSocketServer', () => {
       expect(payload.files.profileReference.alpha.path).toBe(
         getProfileReferencePath(config.paths.dataDir, 'alpha', 'index.md'),
       )
-      expect(payload.files.profileReference.alpha.exists).toBe(true)
+      expect(payload.files.profileReference.alpha.exists).toBe(false)
       expect(payload.files.profileReference.beta.path).toBe(
         getProfileReferencePath(config.paths.dataDir, 'beta', 'index.md'),
       )
-      expect(typeof payload.files.profileReference.beta.exists).toBe('boolean')
+      expect(payload.files.profileReference.beta.exists).toBe(false)
+      await expect(readFile(getProfileReferencePath(config.paths.dataDir, 'alpha', 'index.md'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(readFile(getProfileReferencePath(config.paths.dataDir, 'beta', 'index.md'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
     } finally {
       await server.stop()
     }
