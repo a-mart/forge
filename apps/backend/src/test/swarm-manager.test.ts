@@ -415,7 +415,7 @@ describe('SwarmManager', () => {
     expect(commonKnowledge).toContain('Maintained by Cortex')
   })
 
-  it('upgrades legacy auto-seeded Cortex worker prompts to v2 on boot', async () => {
+  it('upgrades legacy auto-seeded Cortex worker prompts to the current version on boot', async () => {
     const config = await makeTempConfig()
     const workerPromptsPath = getCortexWorkerPromptsPath(config.paths.dataDir)
     await mkdir(dirname(workerPromptsPath), { recursive: true })
@@ -439,10 +439,40 @@ describe('SwarmManager', () => {
     const upgraded = await readFile(workerPromptsPath, 'utf8')
     const backup = await readFile(`${workerPromptsPath}.v1.bak`, 'utf8')
 
-    expect(upgraded).toContain('<!-- Cortex Worker Prompts Version: 2 -->')
+    expect(upgraded).toContain('<!-- Cortex Worker Prompts Version: 3 -->')
     expect(upgraded).toContain('STATUS: DONE | FAILED')
     expect(upgraded).toContain('line-based, NOT byte-based')
+    expect(upgraded).toContain('## Promotion Discipline (all templates)')
     expect(backup).toContain('Return your findings as a structured list.')
+  })
+
+  it('upgrades v2 Cortex worker prompts to v3 on boot and keeps a v2 backup', async () => {
+    const config = await makeTempConfig()
+    const workerPromptsPath = getCortexWorkerPromptsPath(config.paths.dataDir)
+    await mkdir(dirname(workerPromptsPath), { recursive: true })
+    await writeFile(
+      workerPromptsPath,
+      [
+        '# Cortex Worker Prompt Templates — v2',
+        '<!-- Cortex Worker Prompts Version: 2 -->',
+        '',
+        '## Callback Format (all templates)',
+        'STATUS: DONE | FAILED',
+        '',
+      ].join('\n'),
+      'utf8',
+    )
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const upgraded = await readFile(workerPromptsPath, 'utf8')
+    const backup = await readFile(`${workerPromptsPath}.v2.bak`, 'utf8')
+
+    expect(upgraded).toContain('<!-- Cortex Worker Prompts Version: 3 -->')
+    expect(upgraded).toContain('- **Outcome**: promote | no-op | follow-up-needed')
+    expect(upgraded).toContain('Concise completion summary')
+    expect(backup).toContain('<!-- Cortex Worker Prompts Version: 2 -->')
   })
 
   it('bootstraps profile memory and root-session working memory when missing', async () => {

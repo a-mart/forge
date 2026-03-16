@@ -182,8 +182,8 @@ const COMMON_KNOWLEDGE_INITIAL_TEMPLATE = `# Common Knowledge
 `;
 
 /* eslint-disable no-useless-escape */
-const CORTEX_WORKER_PROMPTS_INITIAL_TEMPLATE = `# Cortex Worker Prompt Templates — v2
-<!-- Cortex Worker Prompts Version: 2 -->
+const CORTEX_WORKER_PROMPTS_INITIAL_TEMPLATE = `# Cortex Worker Prompt Templates — v3
+<!-- Cortex Worker Prompts Version: 3 -->
 
 > Owned by Cortex. Refine these templates over time based on what produces good vs bad results from workers.
 
@@ -572,7 +572,8 @@ After writing the artifact, send the callback format above to manager {{MANAGER_
 `;
 /* eslint-enable no-useless-escape */
 
-const CORTEX_WORKER_PROMPTS_VERSION_MARKER = "<!-- Cortex Worker Prompts Version: 2 -->";
+const CORTEX_WORKER_PROMPTS_VERSION_MARKER = "<!-- Cortex Worker Prompts Version: 3 -->";
+const PREVIOUS_CORTEX_WORKER_PROMPTS_VERSION_MARKER = "<!-- Cortex Worker Prompts Version: 2 -->";
 const LEGACY_CORTEX_WORKER_PROMPTS_SIGNATURES = [
   "# Cortex Worker Prompt Templates",
   "Read the session file at \\`{{SESSION_JSONL_PATH}}\\` starting from byte offset {{BYTE_OFFSET}}",
@@ -732,17 +733,34 @@ function normalizeMemoryTemplateLines(content: string): string[] {
     .filter((line) => line.length > 0);
 }
 
-function shouldUpgradeLegacyCortexWorkerPrompts(content: string): boolean {
+function getCortexWorkerPromptsBackupSuffix(content: string): ".v1.bak" | ".v2.bak" | undefined {
   if (content.includes(CORTEX_WORKER_PROMPTS_VERSION_MARKER)) {
-    return false;
+    return undefined;
   }
 
-  return LEGACY_CORTEX_WORKER_PROMPTS_SIGNATURES.every((signature) => content.includes(signature));
+  if (content.includes(PREVIOUS_CORTEX_WORKER_PROMPTS_VERSION_MARKER)) {
+    return ".v2.bak";
+  }
+
+  if (LEGACY_CORTEX_WORKER_PROMPTS_SIGNATURES.every((signature) => content.includes(signature))) {
+    return ".v1.bak";
+  }
+
+  return undefined;
 }
 
-async function backupLegacyCortexWorkerPrompts(path: string): Promise<void> {
+function shouldUpgradeLegacyCortexWorkerPrompts(content: string): boolean {
+  return getCortexWorkerPromptsBackupSuffix(content) !== undefined;
+}
+
+async function backupLegacyCortexWorkerPrompts(path: string, content: string): Promise<void> {
+  const suffix = getCortexWorkerPromptsBackupSuffix(content);
+  if (!suffix) {
+    return;
+  }
+
   try {
-    await copyFile(path, `${path}.v1.bak`);
+    await copyFile(path, `${path}${suffix}`);
   } catch (error) {
     if (
       typeof error === "object" &&
@@ -3544,7 +3562,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         return;
       }
 
-      await backupLegacyCortexWorkerPrompts(workerPromptsPath);
+      await backupLegacyCortexWorkerPrompts(workerPromptsPath, existingContent);
       await writeFile(workerPromptsPath, workerPromptTemplate, "utf8");
       this.logDebug("cortex:worker_prompts:auto_upgraded", {
         path: workerPromptsPath
