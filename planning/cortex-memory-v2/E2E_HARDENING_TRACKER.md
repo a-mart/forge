@@ -36,5 +36,6 @@ Harden the end-to-end Cortex Memory v2 flow toward reliable, low-noise, high-sig
 ## Notes
 - Latest overnight heartbeat confirmation reran the postfix copied-history harness cleanly again on commit `b70ae75`.
 - A separate rerun of the older lane-specific `stress-a-validate-closeout` scratch harness timed out once without reproducing the earlier `steer_delivery` error signature. For now, treat that as a lower-priority scratch-lane flake unless it repeats in a cleaner harness.
+- Subsequent heartbeat validation on commit `7ecea78` kept the approach intentionally bounded: migrate and fresh backends both returned healthy `/api/health` and `/api/cortex/scan` responses, migrate still exposed 6 profile memory + merge-audit paths with no Cortex leak, and fresh remained structurally healthy even though the fresh UI process was not listening on `47489`.
 - This is a **supplemental coordination artifact only**. It does not overwrite existing package docs.
 - No production-side writes were performed as part of this tracker update.
