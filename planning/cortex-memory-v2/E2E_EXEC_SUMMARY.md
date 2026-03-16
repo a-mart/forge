@@ -32,6 +32,7 @@ Primary artifacts reviewed:
 - `planning/cortex-memory-v2/E2E_RECONNECT_PERSISTENCE.md`
 - `planning/cortex-memory-v2/E2E_MEMORY_MERGE_RUNTIME.md`
 - `planning/cortex-memory-v2/E2E_WORKER_CALLBACK_RUNTIME.md`
+- `planning/cortex-memory-v2/E2E_CORTEX_LEARNING_EVAL.md`
 - `planning/cortex-memory-v2/VALIDATION_PHASE3_REPORT.md`
 - `planning/cortex-memory-v2/TESTING.md`
 - `planning/cortex-memory-v2/CLOSEOUT_READINESS.md`
@@ -49,6 +50,7 @@ Primary artifacts reviewed:
 | Fresh live dispatch | **BLOCKED (env/auth)** | Failure pattern points to unusable/expired copied OAuth plus model fallback behavior, not missing WS/backend/UI plumbing | No successful assistant token in fresh lane | `E2E_FRESH_RUNTIME.md`, `E2E_AUTH_RUNTIME_AUDIT.md`, `E2E_FRESH_DIAGNOSIS_R2.md` |
 | Scan/bookkeeping | **PASS** | `profileMemory`, `profileReference`, `profileMergeAudit`, manager-only profile union, transcript/memory/feedback deltas all evidenced | Minor legacy meta normalization gaps only | `E2E_SCAN_AUDIT.md`, `E2E_SCAN_DELTAS.md` |
 | Worker callback | **PASS** | Worker creation, callback token, and post-callback idle states captured with raw WS evidence | Captured in migrate env only | `E2E_WORKER_CALLBACK_RUNTIME.md` |
+| Copied-instance learning quality | **PASS with polish caveat** | Cortex really extracted useful durable findings from an old copied-instance conversation without bloating profile memory | Manager-level completion and curated promotion/writeback remain rough/noisy in this scenario | `E2E_CORTEX_LEARNING_EVAL.md` |
 | Reconnect persistence | **PASS** | Session-local memory token survived disconnect/reconnect and was recalled after reconnect | Captured in migrate env only | `E2E_RECONNECT_PERSISTENCE.md` |
 | Merge/promotion runtime | **PASS with bounded caveat** | Root memory stayed local; non-root merge applied/seeded; audit + meta persisted; idempotent skip verified | Full injected failure matrix remains partly test-backed rather than all live-runtime | `E2E_MEMORY_MERGE_RUNTIME.md`, `E2E_MIGRATE_RUNTIME.md`, `TESTING.md` |
 | Full backend Vitest | **PASS** | Full backend suite rerun is now clean after low-churn env-sensitive test hardening | `425 passed / 0 failed` | `.tmp/e2e-full-backend-vitest.log`, `E2E_BACKEND_GATES.md` |
@@ -66,6 +68,7 @@ The following behaviors are well-supported by live isolated evidence and/or focu
 - worker spawn/callback completion path
 - reconnect/session-memory persistence
 - runtime merge behavior with audit/meta recording and idempotent skip
+- copied-instance historical-review extraction quality is good; the main rough edge is promotion/closeout polish rather than signal selection
 
 ### Environment-specific auth issues that should not be misclassified as product regressions
 The fresh-lane live dispatch blocker is best explained by auth validity, not by Memory v2 plumbing:

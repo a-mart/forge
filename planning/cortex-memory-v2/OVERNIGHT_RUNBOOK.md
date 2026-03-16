@@ -45,6 +45,7 @@
 - `planning/cortex-memory-v2/E2E_RECONNECT_PERSISTENCE.md`
 - `planning/cortex-memory-v2/E2E_MEMORY_MERGE_RUNTIME.md`
 - `planning/cortex-memory-v2/E2E_WORKER_CALLBACK_RUNTIME.md`
+- `planning/cortex-memory-v2/E2E_CORTEX_LEARNING_EVAL.md`
 - `.tmp/e2e-full-backend-vitest.log`
 
 ## Backend Gate Status
