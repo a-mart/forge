@@ -67,7 +67,7 @@ Each scenario below is the unit of evidence collection. The rubric references ar
 | `CRT-01` | Migrate boot + health + existing-data scan availability | `ENV-MIGRATE` | `1.5`, `2.1`, `6.3`, `6.4` (boot/isolation portions) | `E2E_MIGRATE_RUNTIME.md`, `.tmp/e2e-health.json`, `.tmp/e2e-scan-snapshot.json`, `E2E_UI_HISTORY_LOAD.md` | `LIVE-PASS` | Boot + scan are evidenced. Existing copied-session UI history rendering is now explicitly captured. Production non-touch remains an evidence-backed waiver rather than byte-diff proof. |
 | `CRT-02` | Migrate live chat round-trip on copied data | `ENV-MIGRATE` | `1.2` | `E2E_MIGRATE_RUNTIME.md`, `.tmp/e2e-migrate-runtime-result.json`, `.tmp/e2e-migrate-runtime-rerun-ortho-codex-default-result.json`, backend log excerpts | `LIVE-PASS` | Two live successes are documented: `cortex` reply path and non-Cortex codex/default rerun. This proves WS/runtime plumbing for at least one copied-data non-Cortex path. |
 | `CRT-03` | Fresh first-manager creation + first session provisioning | `ENV-FRESH` | `1.1`, `2.5`, `4.4`, `6.4` | `E2E_FRESH_RUNTIME.md`, `VALIDATION_PHASE3_REPORT.md`, `.tmp/e2e-fresh-scan-final.json` | `LIVE-PASS` | Manager creation and file provisioning are captured. New profiles surface `profileMemory` and `profileReference` without legacy profile knowledge. |
-| `CRT-04` | Fresh live chat round-trip | `ENV-FRESH` | `1.2` | `E2E_FRESH_RUNTIME.md`, `.tmp/e2e-fresh-runtime-result-attempt*.json`, `.tmp/e2e-fresh-rerun-pi-codex-result.json`, backend logs | `BLOCKED` | User/system messages persisted, but no assistant reply token was observed. Failures point to auth/provider validity, not missing transport boot. |
+| `CRT-04` | Fresh live chat round-trip | `ENV-FRESH` | `1.2` | `E2E_FRESH_RUNTIME.md`, `.tmp/e2e-fresh-runtime-result-attempt*.json`, `.tmp/e2e-fresh-rerun-pi-codex-result.json`, `.tmp/e2e-fresh-auth-fix-rerun.json`, `planning/cortex-memory-v2/raw/crt04-fresh-auth-fix-rerun.json`, backend logs | `LIVE-PASS` | Earlier auth/provider failure was resolved by syncing the isolated fresh env from the valid production legacy auth source into both fresh canonical and legacy auth paths; bounded rerun returned `PI_CODEX_FRESH_OK`. |
 | `CRT-05` | Worker spawn + callback completion | `ENV-MIGRATE`, `ENV-FRESH` | `1.3` | `E2E_WORKER_CALLBACK_RUNTIME.md` plus raw WS transcript/log showing worker appears in agent list and sends callback | `LIVE-PASS` | Dedicated runtime artifact now demonstrates worker spawn, callback token delivery, and manager callback completion in the migrate env. |
 | `CRT-06` | Reload/reconnect with session memory persistence | `ENV-MIGRATE`, `ENV-FRESH` | `1.4` | `E2E_RECONNECT_PERSISTENCE.md`, WS reconnect trace, filesystem snapshots of session `memory.md` before/after reload | `LIVE-PASS` | Dedicated migrate-env artifact proves reconnect persistence of session-local memory. |
 | `CRT-07` | Existing session history renders in copied UI | `ENV-MIGRATE` | `1.5` | `E2E_UI_HISTORY_LOAD.md` plus UI-focused screenshot/snapshot/session-file evidence | `LIVE-PASS` | Dedicated copied-UI artifact proves a preexisting copied session can be selected from the sidebar and its transcript rendered in the chat pane. |
@@ -142,7 +142,7 @@ Each scenario below is the unit of evidence collection. The rubric references ar
 
 | Rubric category | Current evidence posture | Notes |
 |---|---|---|
-| 1. Core Chat / Session Behavior | `PARTIAL / BLOCKED` | Migrate live chat, worker callback, reconnect persistence, and explicit existing-session UI history load are now proved. Fresh live reply remains blocked by env/auth. |
+| 1. Core Chat / Session Behavior | `PASS` | Migrate live chat, fresh live chat, worker callback, reconnect persistence, and explicit existing-session UI history load are now all proved. |
 | 2. Cortex Scan / Review Behavior | `PASS` | Enriched scan payload, profile-only managers, lazy reference indexing, and transcript/memory/feedback delta probes are all proved in isolated runtime artifacts. |
 | 3. Ownership / Memory Behavior | `PASS` | File-layout ownership split is strong, and memory-skill target behavior now has isolated runtime proof for both root and sub-session writes. |
 | 4. Reference-Doc Behavior | `MOSTLY COVERED` | Migrate/fresh structural behavior is well covered, though some criteria remain test-only rather than separately live-runtime demonstrated. |
@@ -154,14 +154,11 @@ Each scenario below is the unit of evidence collection. The rubric references ar
 
 ## 6. Highest-priority unresolved risks
 
-1. **Fresh live dispatch is still blocked.**  
-   `E2E_FRESH_RUNTIME.md` still shows successful boot/provisioning but no assistant response token in the fresh isolated env.
-
-2. **Provider validity is still confounding fresh runtime interpretation.**  
-   `E2E_AUTH_RUNTIME_AUDIT.md` and `E2E_FRESH_DIAGNOSIS_R2.md` continue to show that “configured” auth is not equivalent to usable runtime auth.
-
-3. **Production non-touch is waived, not cryptographically proved.**  
+1. **Production non-touch is waived, not cryptographically proved.**  
    `E2E_PRODUCTION_NON_TOUCH.md` is an evidence-backed waiver note, not a byte-identical before/after manifest for `~/.middleman`.
+
+2. **Auth-state drift between production canonical and legacy auth stores is an operational sharp edge.**  
+   The fresh fix succeeded only after using the valid production legacy auth source because production shared auth was stale.
 
 ---
 
@@ -169,11 +166,11 @@ Each scenario below is the unit of evidence collection. The rubric references ar
 
 Ordered by payoff:
 
-1. **Resolve or clearly quarantine fresh auth, then rerun `CRT-04`.**  
-   Goal: one successful fresh assistant reply token, or a final accepted blocker with owner and reason.
-
-2. **If desired, add a byte-diff manifest for production non-touch.**  
+1. **If desired, add a byte-diff manifest for production non-touch.**  
    This is optional now because AUTH-03 has an explicit waiver note, but it is the remaining path to full proof instead of waiver.
+
+2. **Optionally harden auth-state repair guidance.**  
+   Document or automate the legacy-to-canonical auth sync path for isolated envs when production shared auth has drifted stale.
 
 3. **Otherwise treat the package as synthesis-ready and decision-ready.**
 
@@ -183,9 +180,9 @@ Ordered by payoff:
 
 The package is now **synthesis-ready** because:
 
-- `CRT-04` is explicitly classified as an auth-environment blocker rather than a demonstrated Memory v2 product defect.
+- `CRT-04` is now live-pass after isolated auth repair and is no longer a runtime blocker.
 - `CRT-05`, `CRT-06`, `CRT-07`, `SCAN-02`, `SCAN-03`, `SCAN-04`, `OWN-04`, and `OPS-03` all now have dedicated evidence artifacts.
 - `MRG-01` has isolated WS/runtime evidence and deeper coverage remains test-backed where appropriate.
 - The index and summary docs reference the actual runtime artifact names in use.
 
-The remaining decision is not package completeness; it is whether the decision owner accepts the fresh auth blocker and AUTH-03 waiver posture.
+The remaining decision is not package completeness; it is whether the decision owner is comfortable with the AUTH-03 waiver posture and the documented auth-state sharp edge.

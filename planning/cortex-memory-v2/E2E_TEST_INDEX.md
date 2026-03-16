@@ -21,7 +21,7 @@ Older placeholder names such as `E2E_RUNTIME_COPIED_PRODUCTION.md` and `E2E_RUNT
 | `IDX-TRACKER` | Active execution tracker | `planning/cortex-memory-v2/E2E_ACTIVE_TRACKER.md` | tracker | all | Present | Master ledger for scenario-level progress, gaps, and risks |
 | `IDX-RUBRIC` | Goals rubric | `planning/cortex-memory-v2/E2E_GOALS_RUBRIC.md` | acceptance rubric | all rubric IDs | Present | Final scoring target |
 | `IDX-MIGRATE` | Copied-data runtime narrative | `planning/cortex-memory-v2/E2E_MIGRATE_RUNTIME.md` | runtime narrative | `CRT-01`, `CRT-02`, `SCAN-01`, `SCAN-05`, merge/ownership live proof | Present | Strong copied-prod lane; includes comprehensive rerun block |
-| `IDX-FRESH` | Fresh runtime narrative | `planning/cortex-memory-v2/E2E_FRESH_RUNTIME.md` | runtime narrative | `CRT-03`, `CRT-04`, `SCAN-01`, `AUTH-04` | Present | Fresh boot/provisioning pass; live dispatch blocked by env/auth |
+| `IDX-FRESH` | Fresh runtime narrative | `planning/cortex-memory-v2/E2E_FRESH_RUNTIME.md` | runtime narrative | `CRT-03`, `CRT-04`, `SCAN-01`, `AUTH-04` | Present | Fresh boot/provisioning pass plus bounded auth repair proving live dispatch |
 | `IDX-SCAN-AUDIT` | Scan/API bookkeeping audit | `planning/cortex-memory-v2/E2E_SCAN_AUDIT.md` | focused audit | `SCAN-01`, `SCAN-05`, `SCAN-06`, `OWN-01` | Present | Confirms profile-union, v2 file maps, Cortex exclusion, merge-audit visibility |
 | `IDX-SCAN-DELTAS` | Scan delta evidence | `planning/cortex-memory-v2/E2E_SCAN_DELTAS.md` | focused runtime note | `SCAN-02`, `SCAN-03`, `SCAN-04` | Present | Real before/after drift evidence with restore snapshots |
 | `IDX-RECONNECT` | Reconnect + memory persistence | `planning/cortex-memory-v2/E2E_RECONNECT_PERSISTENCE.md` | focused runtime note | `CRT-06`, partial `OWN-04` root-only | Present | Reconnect replay + memory persistence proved in migrate env |
@@ -70,7 +70,7 @@ Older placeholder names such as `E2E_RUNTIME_COPIED_PRODUCTION.md` and `E2E_RUNT
 | `CRT-01` | `E2E_MIGRATE_RUNTIME.md` | `RAW-MIGRATE-JSON`, `RAW-MIGRATE-LOGS` | boot/scan/existing-data notes | Partial |
 | `CRT-02` | `E2E_MIGRATE_RUNTIME.md` | `RAW-MIGRATE-JSON`, `RAW-MIGRATE-LOGS` | copied-data chat round-trip result | Live-pass |
 | `CRT-03` | `E2E_FRESH_RUNTIME.md` | `RAW-FRESH-JSON`, `RAW-FRESH-LOGS` | fresh provisioning result | Live-pass |
-| `CRT-04` | `E2E_FRESH_RUNTIME.md` | `RAW-FRESH-JSON`, `RAW-FRESH-LOGS` | fresh live-dispatch result | Blocked (env/auth) |
+| `CRT-04` | `E2E_FRESH_RUNTIME.md` | `RAW-FRESH-JSON`, `RAW-FRESH-LOGS`, `planning/cortex-memory-v2/raw/crt04-fresh-auth-fix-rerun.json` | fresh live-dispatch result | Live-pass |
 | `CRT-05` | `E2E_WORKER_CALLBACK_RUNTIME.md` | `RAW-WORKER` | worker spawn/callback result | Live-pass |
 | `CRT-06` | `E2E_RECONNECT_PERSISTENCE.md` | `RAW-RECONNECT` | reconnect persistence result | Live-pass (migrate env) |
 | `CRT-07` | `E2E_UI_HISTORY_LOAD.md` | UI-specific raw notes/screenshots captured under `planning/cortex-memory-v2/raw/` | existing-session load result | Live-pass |
@@ -143,8 +143,8 @@ The package is now **synthesis-ready** because:
 
 Current synthesis headline:
 - copied-prod evidence is strong,
-- dedicated CRT-07 and OWN-04 artifacts are now present,
-- fresh live dispatch remains an env/auth blocker,
+- fresh live dispatch is now live-pass after isolated auth repair,
+- dedicated CRT-07 and OWN-04 artifacts are present,
 - full backend Vitest executed clean at `425 passed / 0 failed`.
 
 Use `planning/cortex-memory-v2/E2E_EXEC_SUMMARY.md` as the final verdict source.

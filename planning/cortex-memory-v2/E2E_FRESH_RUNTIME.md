@@ -7,7 +7,7 @@ Fresh data dir: `/Users/adam/.middleman-cortex-memory-v2-fresh`
 Target ports: backend `47487`, UI `47489`
 
 ## Final status
-**Blocked**: live model auth in fresh runtime did not produce assistant responses; runtime returns provider auth/key errors (`openai-codex` missing key; `anthropic` missing/expired auth).
+**PASS after isolated auth repair**: fresh runtime now produces a real assistant response token. The earlier blocker was isolated-auth state, not Memory v2 plumbing.
 
 ---
 
@@ -329,6 +329,27 @@ Fresh live dispatch is currently blocked by credential validity, not by session/
 - User messages persist.
 - Dispatch fails immediately at model credential resolution (`openai-codex`) before assistant content can stream.
 
-### Minimal next fix (bounded)
+### Resolution achieved afterward
 
-Run a fresh isolated re-auth for the active provider (`/login openai-codex`) in `~/.middleman-cortex-memory-v2-fresh`, then rerun **one** bounded script invocation (`.tmp/e2e-fresh-live-dispatch-bounded.mjs`) on a unique port to seek a real assistant token.
+The bounded next fix was completed without touching production writes:
+- identified that production **shared** auth was stale, but production **legacy** auth (`/Users/adam/.middleman/auth/auth.json`) held valid current OAuth state,
+- copied that valid legacy auth into the isolated fresh env at both:
+  - `/Users/adam/.middleman-cortex-memory-v2-fresh/shared/auth/auth.json`
+  - `/Users/adam/.middleman-cortex-memory-v2-fresh/auth/auth.json`
+- restarted the isolated fresh backend on `47487`,
+- reran exactly one bounded pi-codex dispatch check.
+
+Bounded rerun artifact:
+- `.tmp/e2e-fresh-auth-fix-rerun.json`
+- durable copy: `planning/cortex-memory-v2/raw/crt04-fresh-auth-fix-rerun.json`
+
+Observed result:
+- `ok: true`
+- `assistantText: "PI_CODEX_FRESH_OK"`
+- `managerId: fresh-pi-codex-rerun-582531`
+- `sessionAgentId: fresh-pi-codex-rerun-582531--s2`
+
+Interpretation:
+- fresh live dispatch is now proved,
+- the prior fresh blocker was an isolated auth-state problem caused by seeding from stale canonical production auth, not a Cortex Memory v2 runtime defect,
+- this fix mirrors the copied-env auth repair pattern: use the valid legacy auth source when canonical auth has drifted stale.

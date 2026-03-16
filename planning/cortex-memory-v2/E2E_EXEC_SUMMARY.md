@@ -6,10 +6,10 @@
 
 ## 1) Headline verdict
 
-- **Headline:** Copied-production evidence is strong. Fresh isolated live dispatch remains blocked by environment/auth validity, not by demonstrated Cortex Memory v2 product plumbing.
-- **Strict merge gate verdict:** **CONDITIONAL GO** once the decision owner explicitly accepts that the remaining fresh live-dispatch blocker is an environment/auth issue outside demonstrated Memory v2 product behavior. The full backend Vitest gate is now clean.
-- **Product-evidence verdict:** **GO / strong confidence** on the Cortex Memory v2 feature set itself for copied-data migration, scan/bookkeeping, ownership split, worker callback, reconnect persistence, and merge/audit behavior.
-- **Practical recommendation:** merge is reasonable if the decision owner explicitly accepts that the remaining fresh live-dispatch blocker is an **environment-specific auth problem**, not a demonstrated product regression.
+- **Headline:** Both copied-production and fresh isolated evidence are now strong. Fresh live dispatch is proved after isolated auth repair, and the failure mode was auth-state drift rather than demonstrated Cortex Memory v2 product plumbing.
+- **Strict merge gate verdict:** **GO** with one explicit documentation caveat: AUTH-03 remains an evidence-backed waiver note rather than byte-identical before/after proof.
+- **Product-evidence verdict:** **GO / strong confidence** on the Cortex Memory v2 feature set for copied-data migration, fresh isolated runtime, scan/bookkeeping, ownership split, worker callback, reconnect persistence, merge/audit behavior, and copied-history learning quality.
+- **Practical recommendation:** merge is reasonable now; the major runtime blocker was resolved in the isolated fresh env by repairing auth state.
 
 ## 2) Decision framing
 
@@ -17,8 +17,8 @@ This package now supports two different conclusions depending on which gate is b
 
 | Decision lens | Verdict | Why |
 |---|---|---|
-| **Strict rubric / zero-open-gates merge call** | **CONDITIONAL GO** | The only remaining major gap is fresh live dispatch, which current evidence classifies as an environment/auth blocker rather than a Memory v2 product regression. Backend full-suite and typecheck gates are now clean. |
-| **Feature-specific product assessment** | **GO / strong** | Copied-prod runtime, scan deltas, worker callback, reconnect persistence, ownership split, merge/audit evidence, and backend test gates all align with the intended Cortex Memory v2 design. |
+| **Strict rubric / merge call** | **GO** | Copied-prod and fresh isolated runtime evidence are both now live-pass. Backend full-suite and typecheck gates are clean. The only remaining caveat is the documented AUTH-03 waiver posture rather than byte-diff proof. |
+| **Feature-specific product assessment** | **GO / strong** | Copied-prod runtime, fresh isolated runtime, scan deltas, worker callback, reconnect persistence, ownership split, merge/audit evidence, and backend test gates all align with the intended Cortex Memory v2 design. |
 
 ## 3) Evidence inputs used for this synthesis
 
@@ -49,8 +49,8 @@ Primary artifacts reviewed:
 | Track | Status | Key finding | Main caveat | Primary artifacts |
 |---|---|---|---|---|
 | Copied-production runtime | **PASS / strong** | Real assistant replies, enriched scan surfaces, ownership split, merge telemetry, transcript/memory drift, and Cortex exclusion all evidenced in isolated copied data | Not every provider/model combo was healthy; Anthropic failures were provider-auth specific | `E2E_MIGRATE_RUNTIME.md`, `E2E_SCAN_AUDIT.md`, `E2E_SCAN_DELTAS.md` |
-| Fresh runtime structure/provisioning | **PASS** | Fresh boot, manager creation, session provisioning, canonical auth path, and v2 file surfaces all worked in empty isolated dir | Live assistant reply still blocked | `E2E_FRESH_RUNTIME.md`, `VALIDATION_PHASE3_REPORT.md` |
-| Fresh live dispatch | **BLOCKED (env/auth)** | Failure pattern points to unusable/expired copied OAuth plus model fallback behavior, not missing WS/backend/UI plumbing | No successful assistant token in fresh lane | `E2E_FRESH_RUNTIME.md`, `E2E_AUTH_RUNTIME_AUDIT.md`, `E2E_FRESH_DIAGNOSIS_R2.md` |
+| Fresh runtime structure/provisioning | **PASS** | Fresh boot, manager creation, session provisioning, canonical auth path, and v2 file surfaces all worked in empty isolated dir | Earlier auth-state failure was repaired later in the same isolated env | `E2E_FRESH_RUNTIME.md`, `VALIDATION_PHASE3_REPORT.md` |
+| Fresh live dispatch | **PASS after auth repair** | A bounded rerun returned `PI_CODEX_FRESH_OK` after syncing fresh isolated auth from the valid production legacy auth source into both fresh canonical and legacy auth paths | Resolution depends on repairing isolated auth state when canonical auth is stale | `E2E_FRESH_RUNTIME.md`, `E2E_AUTH_RUNTIME_AUDIT.md`, `planning/cortex-memory-v2/raw/crt04-fresh-auth-fix-rerun.json` |
 | Scan/bookkeeping | **PASS** | `profileMemory`, `profileReference`, `profileMergeAudit`, manager-only profile union, transcript/memory/feedback deltas all evidenced | Minor legacy meta normalization gaps only; scan precision was also hardened to prefer live on-disk sizes over stale meta byte fields | `E2E_SCAN_AUDIT.md`, `E2E_SCAN_DELTAS.md`, `E2E_WATERMARK_PRECISION.md` |
 | Worker callback | **PASS** | Worker creation, callback token, and post-callback idle states captured with raw WS evidence | Captured in migrate env only | `E2E_WORKER_CALLBACK_RUNTIME.md` |
 | Copied-instance learning quality | **PASS with polish caveat** | Cortex really extracted useful durable findings from an old copied-instance conversation without bloating profile memory | Manager-level completion and curated promotion/writeback remain rough/noisy in this scenario | `E2E_CORTEX_LEARNING_EVAL.md` |
@@ -78,11 +78,12 @@ The following behaviors are well-supported by live isolated evidence and/or focu
 - copied-instance historical-review extraction quality is good; the main rough edge is promotion/closeout polish rather than signal selection
 
 ### Environment-specific auth issues that should not be misclassified as product regressions
-The fresh-lane live dispatch blocker is best explained by auth validity, not by Memory v2 plumbing:
-- copied `shared/auth/auth.json` made providers appear **configured**, but runtime diagnosis shows configured != valid/unexpired
-- both `anthropic` and `openai-codex` OAuth state in the fresh isolated env were diagnosed as stale/unusable for runtime dispatch
-- runtime model resolution can fall back in a way that surfaces a different provider's auth error than the originally requested model, which makes the failure look more product-like than it is
-- fresh lane persisted user/system messages and created expected files, reinforcing that the failure happens at provider dispatch time rather than at session creation, WebSocket transport, or file-layout layers
+The earlier fresh-lane dispatch failure was an auth-state problem, not a Memory v2 plumbing problem:
+- copied `shared/auth/auth.json` made providers appear **configured**, but runtime diagnosis showed configured != valid/unexpired
+- production **shared** auth had stale OAuth state while production **legacy** auth held valid current OAuth state
+- syncing the isolated fresh env from the valid production legacy auth source into both fresh canonical and legacy auth paths restored successful dispatch
+- runtime model resolution can fall back in a way that surfaces a different provider's auth error than the originally requested model, which is why the earlier failure looked more product-like than it was
+- fresh lane always persisted user/system messages and created expected files, reinforcing that the failure lived at provider credential resolution rather than at session creation, WebSocket transport, or file-layout layers
 
 ## 6) Full-suite test result
 
@@ -97,7 +98,7 @@ The earlier failures were traced to env-sensitive test assumptions, not Memory v
 
 | Category | Verdict | Notes |
 |---|---|---|
-| 1. Core Chat / Session Behavior | **PARTIAL** | Copied-prod live chat, worker callback, reconnect persistence, and explicit pre-existing-session UI-history load are now proved. Fresh live chat remains blocked by env/auth. |
+| 1. Core Chat / Session Behavior | **PASS** | Copied-prod live chat, fresh live chat, worker callback, reconnect persistence, and explicit pre-existing-session UI-history load are all now proved. |
 | 2. Cortex Scan / Review Behavior | **PASS** | Enriched scan surfaces, manager-only profiles, Cortex exclusion, lazy reference provisioning, and transcript/memory/feedback deltas are all evidenced. |
 | 3. Ownership / Memory Behavior | **PASS** | Ownership split is strong, and direct memory-skill target proof now exists for both root and sub-session writable targets. |
 | 4. Reference-Doc Behavior | **PASS** | Migration, preservation, fresh no-legacy dependency, and non-injection behavior are sufficiently evidenced via runtime + focused tests. |
@@ -108,24 +109,23 @@ The earlier failures were traced to env-sensitive test assumptions, not Memory v
 ## 8) Merge assessment
 
 ### Recommended final call
-- **Strict go/no-go for merge:** **CONDITIONAL GO** if the decision owner accepts the remaining fresh live-dispatch blocker as environment/auth-scoped rather than a Memory v2 defect.
-- **Feature-quality call:** **GO** on the Cortex Memory v2 implementation itself; copied-prod evidence is strong, backend test gates are now clean, and the remaining fresh dispatch issue is environment/auth-scoped.
+- **Strict go/no-go for merge:** **GO** with the explicit note that AUTH-03 is documented as an evidence-backed waiver rather than byte-diff proof.
+- **Feature-quality call:** **GO** on the Cortex Memory v2 implementation itself; copied-prod and fresh isolated evidence are both strong and backend test gates are clean.
 
 ### If the branch is merged now, the acceptance should be explicit
 If the owner chooses to merge on the current package, the decision record should explicitly state:
-1. the merge is based on strong feature evidence in copied-prod + isolated structural fresh validation,
-2. fresh live dispatch is blocked by auth validity in the isolated env and is **not** currently classified as a Memory v2 defect,
+1. the merge is based on strong feature evidence in copied-prod + fresh isolated runtime validation,
+2. the earlier fresh dispatch blocker was resolved by repairing isolated auth state from the valid production legacy auth source and is **not** classified as a Memory v2 defect,
 3. backend full-suite and typecheck gates are clean as of the latest overnight rerun/fix cycle.
 
 ## 9) Remaining gaps / accepted waivers to call out
 
 Remaining non-zero gaps / accepted waivers in the package:
-- fresh live assistant reply still not demonstrated
 - production non-touch is carried as an evidence-backed waiver note, not a byte-identical before/after diff proof
 
 ## 10) Final decision record
 
-- **Go / No-Go:** **CONDITIONAL GO under the strict rubric if the fresh auth blocker is accepted as environment-specific; GO/strong on feature evidence**
+- **Go / No-Go:** **GO, with AUTH-03 explicitly carried as a documented waiver rather than byte-diff proof**
 - **Decision owner:** repo owner / user
 - **Decision date:** 2026-03-16
 - **Primary supporting artifacts:**

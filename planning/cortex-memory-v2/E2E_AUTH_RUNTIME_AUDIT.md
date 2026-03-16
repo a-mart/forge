@@ -8,9 +8,11 @@
 
 ## Executive Summary
 
-**Root Cause:** OAuth token expiry for both `anthropic` and `openai-codex` combined with an **undocumented model-resolution fallback** in `runtime-factory.ts`.
+**Root Cause (for the failing fresh state examined here):** OAuth token expiry for both `anthropic` and `openai-codex` combined with an **undocumented model-resolution fallback** in `runtime-factory.ts`.
 
 **Key Insight:** `/api/settings/auth` correctly reports that providers are **configured** (present in `auth.json`), but does not validate whether OAuth tokens are **valid/unexpired**. Runtime dispatch fails at credential validation time, triggering a fallback to the first available model in the registry — which is also expired.
+
+**Later resolution note:** a bounded repair pass showed that production **shared** auth had drifted stale while production **legacy** auth (`/Users/adam/.middleman/auth/auth.json`) still held valid current OAuth state. Syncing the isolated fresh env from that valid legacy source into both fresh canonical and legacy auth paths restored successful fresh dispatch. This audit remains accurate for the earlier failing fresh state that was seeded from stale canonical auth.
 
 ---
 
