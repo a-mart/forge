@@ -738,6 +738,57 @@ describe('SwarmWebSocketServer', () => {
     }
   })
 
+  it('records versioning mutations for tracked data-dir writes through POST /api/write-file', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port)
+    const recordMutation = vi.fn(async () => true)
+
+    const manager = new TestSwarmManager(config, {
+      versioningService: {
+        isTrackedPath: () => true,
+        recordMutation,
+        flushPending: async () => {},
+        reconcileNow: async () => {},
+      },
+    })
+    await bootWithDefaultManager(manager, config)
+    recordMutation.mockClear()
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    const targetPath = getCommonKnowledgePath(config.paths.dataDir)
+    const content = '# Common Knowledge\n\nTracked dashboard write.\n'
+
+    try {
+      const response = await fetch(`http://${config.host}:${config.port}/api/write-file`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          path: targetPath,
+          content,
+        }),
+      })
+
+      expect(response.status).toBe(200)
+      expect(recordMutation).toHaveBeenCalledWith({
+        path: targetPath,
+        action: 'write',
+        source: 'api-write-file',
+      })
+    } finally {
+      await server.stop()
+    }
+  })
+
   it('writes files through POST /api/write-file inside os.tmpdir()', async () => {
     const port = await getAvailablePort()
     const config = await makeTempConfig(port)

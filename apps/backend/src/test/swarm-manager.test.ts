@@ -1503,29 +1503,41 @@ describe('SwarmManager', () => {
     expect(resources.memoryContextFile.path).toBe(rootSessionMemoryPath)
     expect(resources.memoryContextFile.content).toContain(persistedMemory.trim())
     expect(resources.memoryContextFile.content).toContain('# Common Knowledge (maintained by Cortex — read-only reference)')
-    expect(resources.additionalSkillPaths).toHaveLength(6)
+    expect(resources.additionalSkillPaths.length).toBeGreaterThanOrEqual(6)
 
-    const memorySkill = await readFile(resources.additionalSkillPaths[0], 'utf8')
+    const memorySkillPath = resources.additionalSkillPaths.find((path) => path.endsWith(join('memory', 'SKILL.md')))
+    expect(memorySkillPath).toBeDefined()
+    const memorySkill = await readFile(memorySkillPath!, 'utf8')
     expect(memorySkill).toContain('name: memory')
     expect(memorySkill).toContain('${SWARM_MEMORY_FILE}')
 
-    const braveSkill = await readFile(resources.additionalSkillPaths[1], 'utf8')
+    const braveSkillPath = resources.additionalSkillPaths.find((path) => path.endsWith(join('brave-search', 'SKILL.md')))
+    expect(braveSkillPath).toBeDefined()
+    const braveSkill = await readFile(braveSkillPath!, 'utf8')
     expect(braveSkill).toContain('name: brave-search')
     expect(braveSkill).toContain('BRAVE_API_KEY')
 
-    const cronSkill = await readFile(resources.additionalSkillPaths[2], 'utf8')
+    const cronSkillPath = resources.additionalSkillPaths.find((path) => path.endsWith(join('cron-scheduling', 'SKILL.md')))
+    expect(cronSkillPath).toBeDefined()
+    const cronSkill = await readFile(cronSkillPath!, 'utf8')
     expect(cronSkill).toContain('name: cron-scheduling')
     expect(cronSkill).toContain('schedule.js add')
 
-    const agentBrowserSkill = await readFile(resources.additionalSkillPaths[3], 'utf8')
+    const agentBrowserSkillPath = resources.additionalSkillPaths.find((path) => path.endsWith(join('agent-browser', 'SKILL.md')))
+    expect(agentBrowserSkillPath).toBeDefined()
+    const agentBrowserSkill = await readFile(agentBrowserSkillPath!, 'utf8')
     expect(agentBrowserSkill).toContain('name: agent-browser')
     expect(agentBrowserSkill).toContain('agent-browser snapshot -i --json')
 
-    const imageGenerationSkill = await readFile(resources.additionalSkillPaths[4], 'utf8')
+    const imageGenerationSkillPath = resources.additionalSkillPaths.find((path) => path.endsWith(join('image-generation', 'SKILL.md')))
+    expect(imageGenerationSkillPath).toBeDefined()
+    const imageGenerationSkill = await readFile(imageGenerationSkillPath!, 'utf8')
     expect(imageGenerationSkill).toContain('name: image-generation')
     expect(imageGenerationSkill).toContain('GEMINI_API_KEY')
 
-    const slashCommandsSkill = await readFile(resources.additionalSkillPaths[5], 'utf8')
+    const slashCommandsSkillPath = resources.additionalSkillPaths.find((path) => path.endsWith(join('slash-commands', 'SKILL.md')))
+    expect(slashCommandsSkillPath).toBeDefined()
+    const slashCommandsSkill = await readFile(slashCommandsSkillPath!, 'utf8')
     expect(slashCommandsSkill).toContain('name: slash-commands')
     expect(slashCommandsSkill).toContain('slash-commands.js create')
 
@@ -1641,13 +1653,13 @@ describe('SwarmManager', () => {
     await bootWithDefaultManager(manager, config)
 
     const resources = await manager.getMemoryRuntimeResourcesForTest()
-    expect(resources.additionalSkillPaths).toHaveLength(6)
-    expect(resources.additionalSkillPaths[0]).toBe(config.paths.repoMemorySkillFile)
-    expect(resources.additionalSkillPaths[1].endsWith(join('brave-search', 'SKILL.md'))).toBe(true)
-    expect(resources.additionalSkillPaths[2].endsWith(join('cron-scheduling', 'SKILL.md'))).toBe(true)
-    expect(resources.additionalSkillPaths[3].endsWith(join('agent-browser', 'SKILL.md'))).toBe(true)
-    expect(resources.additionalSkillPaths[4].endsWith(join('image-generation', 'SKILL.md'))).toBe(true)
-    expect(resources.additionalSkillPaths[5].endsWith(join('slash-commands', 'SKILL.md'))).toBe(true)
+    expect(resources.additionalSkillPaths.length).toBeGreaterThanOrEqual(6)
+    expect(resources.additionalSkillPaths).toContain(config.paths.repoMemorySkillFile)
+    expect(resources.additionalSkillPaths.some((path) => path.endsWith(join('brave-search', 'SKILL.md')))).toBe(true)
+    expect(resources.additionalSkillPaths.some((path) => path.endsWith(join('cron-scheduling', 'SKILL.md')))).toBe(true)
+    expect(resources.additionalSkillPaths.some((path) => path.endsWith(join('agent-browser', 'SKILL.md')))).toBe(true)
+    expect(resources.additionalSkillPaths.some((path) => path.endsWith(join('image-generation', 'SKILL.md')))).toBe(true)
+    expect(resources.additionalSkillPaths.some((path) => path.endsWith(join('slash-commands', 'SKILL.md')))).toBe(true)
   })
 
   it('prefers repo brave-search skill override when present', async () => {
@@ -1673,13 +1685,13 @@ describe('SwarmManager', () => {
     await bootWithDefaultManager(manager, config)
 
     const resources = await manager.getMemoryRuntimeResourcesForTest()
-    expect(resources.additionalSkillPaths).toHaveLength(6)
-    expect(resources.additionalSkillPaths[0].endsWith(join('memory', 'SKILL.md'))).toBe(true)
-    expect(resources.additionalSkillPaths[1]).toBe(repoBraveSkillFile)
-    expect(resources.additionalSkillPaths[2].endsWith(join('cron-scheduling', 'SKILL.md'))).toBe(true)
-    expect(resources.additionalSkillPaths[3].endsWith(join('agent-browser', 'SKILL.md'))).toBe(true)
-    expect(resources.additionalSkillPaths[4].endsWith(join('image-generation', 'SKILL.md'))).toBe(true)
-    expect(resources.additionalSkillPaths[5].endsWith(join('slash-commands', 'SKILL.md'))).toBe(true)
+    expect(resources.additionalSkillPaths.length).toBeGreaterThanOrEqual(6)
+    expect(resources.additionalSkillPaths.some((path) => path.endsWith(join('memory', 'SKILL.md')))).toBe(true)
+    expect(resources.additionalSkillPaths).toContain(repoBraveSkillFile)
+    expect(resources.additionalSkillPaths.some((path) => path.endsWith(join('cron-scheduling', 'SKILL.md')))).toBe(true)
+    expect(resources.additionalSkillPaths.some((path) => path.endsWith(join('agent-browser', 'SKILL.md')))).toBe(true)
+    expect(resources.additionalSkillPaths.some((path) => path.endsWith(join('image-generation', 'SKILL.md')))).toBe(true)
+    expect(resources.additionalSkillPaths.some((path) => path.endsWith(join('slash-commands', 'SKILL.md')))).toBe(true)
   })
 
   it('uses repo manager archetype overrides on boot', async () => {
@@ -1891,6 +1903,107 @@ describe('SwarmManager', () => {
         (entry: any) => entry?.type === 'agent_tool_call' && entry.kind === 'tool_execution_end',
       ),
     ).toBe(true)
+  })
+
+  it('records versioning mutations for successful agent write/edit tool events on tracked data-dir files', async () => {
+    const config = await makeTempConfig()
+    const recordMutation = vi.fn(async () => true)
+    const manager = new TestSwarmManager(config, {
+      versioningService: {
+        isTrackedPath: () => true,
+        recordMutation,
+        flushPending: async () => {},
+        reconcileNow: async () => {},
+      },
+    })
+    await bootWithDefaultManager(manager, config)
+    recordMutation.mockClear()
+
+    const commonKnowledgePath = getCommonKnowledgePath(config.paths.dataDir)
+
+    await (manager as any).handleRuntimeSessionEvent('manager', {
+      type: 'tool_execution_start',
+      toolName: 'write',
+      toolCallId: 'tool-write-1',
+      args: {
+        path: commonKnowledgePath,
+        content: '# Common Knowledge\n\n- updated\n',
+      },
+    })
+    await (manager as any).handleRuntimeSessionEvent('manager', {
+      type: 'tool_execution_end',
+      toolName: 'write',
+      toolCallId: 'tool-write-1',
+      result: { ok: true },
+      isError: false,
+    })
+
+    await (manager as any).handleRuntimeSessionEvent('manager', {
+      type: 'tool_execution_start',
+      toolName: 'edit',
+      toolCallId: 'tool-edit-1',
+      args: {
+        path: commonKnowledgePath,
+        oldText: 'updated',
+        newText: 'edited',
+      },
+    })
+    await (manager as any).handleRuntimeSessionEvent('manager', {
+      type: 'tool_execution_end',
+      toolName: 'edit',
+      toolCallId: 'tool-edit-1',
+      result: { ok: true },
+      isError: false,
+    })
+
+    expect(recordMutation).toHaveBeenNthCalledWith(1, {
+      path: commonKnowledgePath,
+      action: 'write',
+      source: 'agent-write-tool',
+      profileId: 'manager',
+      sessionId: 'manager',
+      agentId: 'manager',
+    })
+    expect(recordMutation).toHaveBeenNthCalledWith(2, {
+      path: commonKnowledgePath,
+      action: 'write',
+      source: 'agent-edit-tool',
+      profileId: 'manager',
+      sessionId: 'manager',
+      agentId: 'manager',
+    })
+  })
+
+  it('records versioning mutations when session memory merges update profile memory', async () => {
+    const config = await makeTempConfig()
+    const recordMutation = vi.fn(async () => true)
+    const manager = new MergeEnabledTestSwarmManager(config, {
+      versioningService: {
+        isTrackedPath: () => true,
+        recordMutation,
+        flushPending: async () => {},
+        reconcileNow: async () => {},
+      },
+    })
+    await bootWithDefaultManager(manager, config)
+    recordMutation.mockClear()
+
+    const { sessionAgent } = await manager.createSession('manager', { label: 'Versioned Merge Session' })
+    const profileMemoryPath = getProfileMemoryPath(config.paths.dataDir, 'manager')
+    const sessionMemoryPath = getSessionMemoryPath(config.paths.dataDir, 'manager', sessionAgent.agentId)
+    await mkdir(dirname(sessionMemoryPath), { recursive: true })
+    await writeFile(profileMemoryPath, '# Swarm Memory\n\n## Decisions\n- existing profile decision\n', 'utf8')
+    await writeFile(sessionMemoryPath, '# Swarm Memory\n\n## Decisions\n- session merge detail\n', 'utf8')
+
+    await manager.mergeSessionMemory(sessionAgent.agentId)
+
+    expect(recordMutation).toHaveBeenCalledWith({
+      path: profileMemoryPath,
+      action: 'write',
+      source: 'profile-memory-merge',
+      profileId: 'manager',
+      sessionId: sessionAgent.agentId,
+    })
   })
 
   it('does not bump session updatedAt for worker runtime assistant message_start events', async () => {

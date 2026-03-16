@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { getProfileReferencePath } from "../data-paths.js";
 import {
   LEGACY_PROFILE_KNOWLEDGE_REFERENCE_FILE,
@@ -203,5 +203,37 @@ describe("reference-docs", () => {
     await expect(
       ensureProfileReferenceDoc(dataDir, "feature-manager", "../../etc/passwd")
     ).rejects.toThrow(/Invalid path segment/);
+  });
+
+  it("records versioning mutations for doc and index updates", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "reference-docs-"));
+    const recordMutation = vi.fn(async () => true);
+
+    await writeProfileReferenceDoc(dataDir, "feature-manager", "architecture.md", "# Architecture\n\n- v1\n", {
+      indexLink: {
+        sectionTitle: "Topic docs",
+        label: "Architecture notes",
+        fileName: "architecture.md"
+      },
+      versioning: {
+        isTrackedPath: () => true,
+        recordMutation,
+        flushPending: async () => {},
+        reconcileNow: async () => {}
+      }
+    });
+
+    expect(recordMutation).toHaveBeenCalledWith({
+      path: getProfileReferencePath(dataDir, "feature-manager", "architecture.md"),
+      action: "write",
+      source: "reference-doc",
+      profileId: "feature-manager"
+    });
+    expect(recordMutation).toHaveBeenCalledWith({
+      path: getProfileReferencePath(dataDir, "feature-manager", PROFILE_REFERENCE_INDEX_FILE),
+      action: "write",
+      source: "reference-index",
+      profileId: "feature-manager"
+    });
   });
 });

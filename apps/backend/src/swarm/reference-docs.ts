@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import type { VersioningMutationSink } from "../versioning/versioning-types.js";
 import { getProfileKnowledgePath, getProfileReferencePath } from "./data-paths.js";
 
 export const PROFILE_REFERENCE_INDEX_FILE = "index.md";
@@ -11,18 +12,30 @@ export interface ProfileReferenceIndexLink {
   fileName: string;
 }
 
+export interface ReferenceDocWriteOptions {
+  versioning?: VersioningMutationSink;
+}
+
 export async function ensureProfileReferenceIndex(
   dataDir: string,
-  profileId: string
+  profileId: string,
+  options?: ReferenceDocWriteOptions
 ): Promise<{ path: string; created: boolean }> {
-  return ensureProfileReferenceDoc(dataDir, profileId, PROFILE_REFERENCE_INDEX_FILE, buildProfileReferenceIndexTemplate(profileId));
+  return ensureProfileReferenceDoc(
+    dataDir,
+    profileId,
+    PROFILE_REFERENCE_INDEX_FILE,
+    buildProfileReferenceIndexTemplate(profileId),
+    options
+  );
 }
 
 export async function ensureProfileReferenceDoc(
   dataDir: string,
   profileId: string,
   fileName: string,
-  initialContent?: string
+  initialContent?: string,
+  options?: ReferenceDocWriteOptions
 ): Promise<{ path: string; created: boolean }> {
   const targetPath = getProfileReferencePath(dataDir, profileId, fileName);
 
@@ -38,13 +51,19 @@ export async function ensureProfileReferenceDoc(
   await mkdir(dirname(targetPath), { recursive: true });
 
   if (fileName !== PROFILE_REFERENCE_INDEX_FILE) {
-    await ensureProfileReferenceIndex(dataDir, profileId);
+    await ensureProfileReferenceIndex(dataDir, profileId, options);
   }
 
   try {
     await writeFile(targetPath, initialContent ?? buildProfileReferenceDocTemplate(profileId, fileName), {
       encoding: "utf8",
       flag: "wx"
+    });
+    queueReferenceVersioningMutation(options?.versioning, {
+      path: targetPath,
+      action: "write",
+      source: fileName === PROFILE_REFERENCE_INDEX_FILE ? "reference-index" : "reference-doc",
+      profileId
     });
     return { path: targetPath, created: true };
   } catch (error) {
@@ -61,9 +80,9 @@ export async function writeProfileReferenceDoc(
   profileId: string,
   fileName: string,
   content: string,
-  options?: { indexLink?: ProfileReferenceIndexLink }
+  options?: { indexLink?: ProfileReferenceIndexLink; versioning?: VersioningMutationSink }
 ): Promise<{ path: string; created: boolean; updated: boolean }> {
-  const ensured = await ensureProfileReferenceDoc(dataDir, profileId, fileName, content);
+  const ensured = await ensureProfileReferenceDoc(dataDir, profileId, fileName, content, options);
   const normalizedContent = ensureTrailingNewline(content.trimEnd());
   let updated = false;
 
@@ -72,11 +91,17 @@ export async function writeProfileReferenceDoc(
     if (existingContent !== normalizedContent) {
       await writeFile(ensured.path, normalizedContent, "utf8");
       updated = true;
+      queueReferenceVersioningMutation(options?.versioning, {
+        path: ensured.path,
+        action: "write",
+        source: "reference-doc",
+        profileId
+      });
     }
   }
 
   if (options?.indexLink) {
-    await ensureProfileReferenceIndexLink(dataDir, profileId, options.indexLink);
+    await ensureProfileReferenceIndexLink(dataDir, profileId, options.indexLink, options);
   }
 
   return {
@@ -89,9 +114,10 @@ export async function writeProfileReferenceDoc(
 export async function ensureProfileReferenceIndexLink(
   dataDir: string,
   profileId: string,
-  link: ProfileReferenceIndexLink
+  link: ProfileReferenceIndexLink,
+  options?: ReferenceDocWriteOptions
 ): Promise<{ path: string; updated: boolean }> {
-  const index = await ensureProfileReferenceIndex(dataDir, profileId);
+  const index = await ensureProfileReferenceIndex(dataDir, profileId, options);
   const existing = await readFile(index.path, "utf8");
   const nextContent = buildReferenceIndexWithLink(existing, link);
 
@@ -103,6 +129,12 @@ export async function ensureProfileReferenceIndexLink(
   }
 
   await writeFile(index.path, nextContent, "utf8");
+  queueReferenceVersioningMutation(options?.versioning, {
+    path: index.path,
+    action: "write",
+    source: "reference-index",
+    profileId
+  });
   return {
     path: index.path,
     updated: true
@@ -111,7 +143,8 @@ export async function ensureProfileReferenceIndexLink(
 
 export async function migrateLegacyProfileKnowledgeToReferenceDoc(
   dataDir: string,
-  profileId: string
+  profileId: string,
+  options?: ReferenceDocWriteOptions
 ): Promise<
   | {
       sourcePath: string;
@@ -148,9 +181,17 @@ export async function migrateLegacyProfileKnowledgeToReferenceDoc(
         sectionTitle: "Migrated docs",
         label: "Legacy profile knowledge snapshot",
         fileName: LEGACY_PROFILE_KNOWLEDGE_REFERENCE_FILE
-      }
+      },
+      versioning: options?.versioning
     }
   );
+
+  queueReferenceVersioningMutation(options?.versioning, {
+    path: sourcePath,
+    action: "write",
+    source: "legacy-knowledge-migration",
+    profileId
+  });
 
   return {
     sourcePath,
@@ -194,6 +235,15 @@ export function buildLegacyProfileKnowledgeReferenceDoc(profileId: string, legac
     normalizedLegacyContent,
     ""
   ].join("\n");
+}
+
+function queueReferenceVersioningMutation(
+  versioning: VersioningMutationSink | undefined,
+  mutation: { path: string; action: "write" | "delete"; source: "reference-doc" | "reference-index" | "legacy-knowledge-migration"; profileId: string }
+): void {
+  void versioning?.recordMutation(mutation).catch(() => {
+    // Fail open: reference doc writes succeed even when versioning cannot record them.
+  });
 }
 
 function buildProfileReferenceDocTemplate(profileId: string, fileName: string): string {

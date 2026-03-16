@@ -148,6 +148,13 @@ async function loadRegisteredSignals(
     formatIntegrationContext: () => ""
   }));
 
+  vi.doMock("../versioning/embedded-git-versioning-service.js", () => ({
+    EmbeddedGitVersioningService: class {
+      async start(): Promise<void> {}
+      async stop(): Promise<void> {}
+    }
+  }));
+
   vi.doMock("../playwright/playwright-settings-service.js", () => ({
     PlaywrightSettingsService: class {
       async load(): Promise<void> {}
@@ -177,7 +184,7 @@ async function loadRegisteredSignals(
 
   try {
     await import("../index.js");
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await waitForSignalRegistration(processEvents, baselineListeners);
 
     return TRACKED_EVENTS.filter((eventName) => {
       const baseline = baselineListeners.get(eventName) ?? new Set();
@@ -204,5 +211,25 @@ async function loadRegisteredSignals(
     if (platformDescriptor) {
       Object.defineProperty(process, "platform", platformDescriptor);
     }
+  }
+}
+
+async function waitForSignalRegistration(
+  processEvents: {
+    listeners(eventName: string): Array<(...args: any[]) => void>;
+  },
+  baselineListeners: Map<string, Set<(...args: any[]) => void>>
+): Promise<void> {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const hasNewListener = TRACKED_EVENTS.some((eventName) => {
+      const baseline = baselineListeners.get(eventName) ?? new Set();
+      return processEvents.listeners(eventName).some((listener) => !baseline.has(listener));
+    });
+
+    if (hasNewListener) {
+      return;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
   }
 }

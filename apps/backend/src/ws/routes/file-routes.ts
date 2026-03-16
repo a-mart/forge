@@ -296,6 +296,14 @@ export function createFileRoutes(options: {
             await writeFile(resolvedPath, contentFromBody, "utf8");
           }
 
+          void swarmManager.getVersioningService()?.recordMutation({
+            path: resolvedPath,
+            action: "write",
+            source: "api-write-file"
+          }).catch(() => {
+            // Fail open: file writes succeed even when versioning cannot record them.
+          });
+
           sendJson(response, 200, {
             success: true,
             bytesWritten: trackedWrite?.bytesWritten ?? Buffer.byteLength(contentFromBody, "utf8")

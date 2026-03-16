@@ -8,6 +8,7 @@ import { IntegrationRegistryService } from "./integrations/registry.js";
 import { PlaywrightDiscoveryService } from "./playwright/playwright-discovery-service.js";
 import { PlaywrightLivePreviewService } from "./playwright/playwright-live-preview-service.js";
 import { PlaywrightSettingsService } from "./playwright/playwright-settings-service.js";
+import { EmbeddedGitVersioningService } from "./versioning/embedded-git-versioning-service.js";
 import {
   DAEMONIZED_ENV_VAR,
   RESTART_PARENT_PID_ENV_VAR,
@@ -26,7 +27,19 @@ loadDotenv({ path: resolve(repoRoot, ".env") });
 async function main(): Promise<void> {
   const config = createConfig();
 
-  const swarmManager = new SwarmManager(config);
+  const versioningService = new EmbeddedGitVersioningService({
+    dataDir: config.paths.dataDir,
+    logger: {
+      info: (message) => console.log(message),
+      warn: (message) => console.warn(message),
+      error: (message) => console.error(message)
+    }
+  });
+  await versioningService.start();
+
+  const swarmManager = new SwarmManager(config, {
+    versioningService
+  });
   await swarmManager.boot();
 
   const schedulersByManagerId = new Map<string, CronSchedulerService>();
@@ -165,6 +178,7 @@ async function main(): Promise<void> {
       integrationRegistry.stop(),
       playwrightDiscovery?.stop(),
       playwrightLivePreviewService.stop(),
+      versioningService.stop(),
       options?.skipWsServer ? Promise.resolve() : wsServer.stop()
     ]);
   };

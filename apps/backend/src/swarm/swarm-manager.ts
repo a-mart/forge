@@ -15,6 +15,7 @@ import type {
   SessionMeta
 } from "@middleman/protocol";
 import { persistConversationAttachments } from "../ws/attachment-parser.js";
+import type { VersioningMutation, VersioningMutationSink } from "../versioning/versioning-types.js";
 import {
   FileBackedPromptRegistry,
   normalizeArchetypeId,
@@ -875,8 +876,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   private defaultMemoryTemplateNormalizedLines = DEFAULT_MEMORY_TEMPLATE_NORMALIZED_LINES;
   private integrationContextProvider: ((profileId: string) => string) | undefined;
+  private readonly versioningService: VersioningMutationSink | undefined;
+  private readonly trackedToolPathsByAgentId = new Map<string, Map<string, { toolName: string; path: string }>>();
 
-  constructor(config: SwarmConfig, options?: { now?: () => string }) {
+  constructor(config: SwarmConfig, options?: { now?: () => string; versioningService?: VersioningMutationSink }) {
     super();
 
     this.defaultModelPreset =
@@ -886,11 +889,13 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       defaultModel: resolveModelDescriptorFromPreset(this.defaultModelPreset)
     };
     this.now = options?.now ?? nowIso;
+    this.versioningService = options?.versioningService;
     this.promptRegistry = new FileBackedPromptRegistry({
       dataDir: this.config.paths.dataDir,
       repoDir: this.config.paths.rootDir,
       builtinArchetypesDir: join(this.config.paths.rootDir, "apps", "backend", "src", "swarm", "archetypes", "builtins"),
-      builtinOperationalDir: join(this.config.paths.rootDir, "apps", "backend", "src", "swarm", "operational", "builtins")
+      builtinOperationalDir: join(this.config.paths.rootDir, "apps", "backend", "src", "swarm", "operational", "builtins"),
+      versioning: this.versioningService
     });
     this.persistenceService = new PersistenceService({
       config: this.config,
@@ -1454,6 +1459,13 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         failureContext.stage = "write_profile_memory";
         await writeFile(profileMemoryPath, mergedProfileMemory, "utf8");
         failureContext.appliedChange = true;
+        this.queueVersioningMutation({
+          path: profileMemoryPath,
+          action: "write",
+          source: "profile-memory-merge",
+          profileId,
+          sessionId: descriptor.agentId
+        });
       }
       failureContext.stage = "refresh_session_meta_stats";
       await this.refreshSessionMetaStatsBySessionId(profileId);
@@ -1911,7 +1923,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     await this.captureSessionRuntimePromptMeta(descriptor);
     await this.refreshSessionMetaStats(descriptor);
-    await migrateLegacyProfileKnowledgeToReferenceDoc(this.config.paths.dataDir, profile.profileId);
+    await migrateLegacyProfileKnowledgeToReferenceDoc(this.config.paths.dataDir, profile.profileId, {
+      versioning: this.versioningService
+    });
     await this.saveStore();
 
     this.emitStatus(managerId, descriptor.status, runtime.getPendingCount(), contextUsage);
@@ -3171,6 +3185,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return this.config;
   }
 
+  getVersioningService(): VersioningMutationSink | undefined {
+    return this.versioningService;
+  }
+
   setIntegrationContextProvider(provider?: (profileId: string) => string): void {
     this.integrationContextProvider = provider;
   }
@@ -3538,7 +3556,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private async ensureLegacyProfileKnowledgeReferenceDocs(): Promise<void> {
     await Promise.all(
       this.sortedProfiles().map(async (profile) => {
-        await migrateLegacyProfileKnowledgeToReferenceDoc(this.config.paths.dataDir, profile.profileId);
+        await migrateLegacyProfileKnowledgeToReferenceDoc(this.config.paths.dataDir, profile.profileId, {
+          versioning: this.versioningService
+        });
       })
     );
   }
@@ -3574,6 +3594,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     await mkdir(dirname(commonKnowledgePath), { recursive: true });
     await writeFile(commonKnowledgePath, commonKnowledgeTemplate, "utf8");
+    this.queueVersioningMutation({
+      path: commonKnowledgePath,
+      action: "write",
+      source: "bootstrap",
+      profileId: CORTEX_PROFILE_ID
+    });
   }
 
   private async ensureCortexWorkerPromptsFile(): Promise<void> {
@@ -3593,6 +3619,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
       await backupLegacyCortexWorkerPrompts(workerPromptsPath, existingContent);
       await writeFile(workerPromptsPath, workerPromptTemplate, "utf8");
+      this.queueVersioningMutation({
+        path: workerPromptsPath,
+        action: "write",
+        source: "bootstrap",
+        profileId: CORTEX_PROFILE_ID
+      });
       this.logDebug("cortex:worker_prompts:auto_upgraded", {
         path: workerPromptsPath
       });
@@ -3605,6 +3637,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     await mkdir(dirname(workerPromptsPath), { recursive: true });
     await writeFile(workerPromptsPath, workerPromptTemplate, "utf8");
+    this.queueVersioningMutation({
+      path: workerPromptsPath,
+      action: "write",
+      source: "bootstrap",
+      profileId: CORTEX_PROFILE_ID
+    });
   }
 
   private normalizeStreamingStatusesForBoot(): void {
@@ -4577,6 +4615,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   private async handleRuntimeSessionEvent(agentId: string, event: RuntimeSessionEvent): Promise<void> {
     this.captureConversationEventFromRuntime(agentId, event);
+    this.maybeRecordVersionedToolMutation(agentId, event);
 
     const descriptor = this.descriptors.get(agentId);
     if (
@@ -4646,6 +4685,60 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       case "auto_retry_end":
         return;
     }
+  }
+
+  private maybeRecordVersionedToolMutation(agentId: string, event: RuntimeSessionEvent): void {
+    if (!this.versioningService) {
+      return;
+    }
+
+    if (event.type === "tool_execution_start") {
+      if (!isVersionedWriteToolName(event.toolName)) {
+        return;
+      }
+
+      const path = extractVersionedToolPath(event.args);
+      if (!path) {
+        return;
+      }
+
+      const byToolCallId = this.trackedToolPathsByAgentId.get(agentId) ?? new Map<string, { toolName: string; path: string }>();
+      byToolCallId.set(event.toolCallId, { toolName: event.toolName, path });
+      this.trackedToolPathsByAgentId.set(agentId, byToolCallId);
+      return;
+    }
+
+    if (event.type !== "tool_execution_end" || event.isError || !isVersionedWriteToolName(event.toolName)) {
+      return;
+    }
+
+    const descriptor = this.descriptors.get(agentId);
+    const tracked = this.trackedToolPathsByAgentId.get(agentId)?.get(event.toolCallId);
+    this.trackedToolPathsByAgentId.get(agentId)?.delete(event.toolCallId);
+
+    const path = tracked?.path ?? extractVersionedToolPath(event.result);
+    if (!descriptor || !path) {
+      return;
+    }
+
+    this.queueVersioningMutation({
+      path,
+      action: "write",
+      source: tracked?.toolName === "edit" ? "agent-edit-tool" : "agent-write-tool",
+      profileId: descriptor.profileId ?? descriptor.agentId,
+      sessionId: descriptor.role === "manager" ? descriptor.agentId : descriptor.managerId,
+      agentId
+    });
+  }
+
+  private queueVersioningMutation(mutation: VersioningMutation): void {
+    void this.versioningService?.recordMutation(mutation).catch((error) => {
+      this.logDebug("versioning:record_error", {
+        path: mutation.path,
+        source: mutation.source,
+        message: error instanceof Error ? error.message : String(error)
+      });
+    });
   }
 
   private async handleRuntimeError(agentId: string, error: RuntimeErrorEvent): Promise<void> {
@@ -5031,6 +5124,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   private async handleRuntimeAgentEnd(agentId: string): Promise<void> {
+    this.trackedToolPathsByAgentId.delete(agentId);
     const descriptor = this.descriptors.get(agentId);
     if (!descriptor || descriptor.role !== "worker") {
       return;
@@ -6733,6 +6827,67 @@ function normalizeOptionalMetadataValue(value: string | undefined): string | und
 
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function isVersionedWriteToolName(toolName: string): boolean {
+  return toolName === "write" || toolName === "edit";
+}
+
+function extractVersionedToolPath(value: unknown, depth = 0): string | undefined {
+  if (depth > 4 || value === null || value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return undefined;
+    }
+
+    if ((trimmed.startsWith("{") && trimmed.endsWith("}")) || (trimmed.startsWith("[") && trimmed.endsWith("]"))) {
+      try {
+        return extractVersionedToolPath(JSON.parse(trimmed), depth + 1);
+      } catch {
+        return undefined;
+      }
+    }
+
+    return undefined;
+  }
+
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const candidate = extractVersionedToolPath(entry, depth + 1);
+      if (candidate) {
+        return candidate;
+      }
+    }
+    return undefined;
+  }
+
+  if (typeof value !== "object") {
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+  for (const key of ["path", "filePath"]) {
+    if (typeof record[key] === "string" && record[key].trim().length > 0) {
+      return record[key].trim();
+    }
+  }
+
+  for (const nestedKey of ["args", "arguments", "result", "payload", "input", "data", "preview"]) {
+    if (!(nestedKey in record)) {
+      continue;
+    }
+
+    const candidate = extractVersionedToolPath(record[nestedKey], depth + 1);
+    if (candidate) {
+      return candidate;
+    }
+  }
+
+  return undefined;
 }
 
 async function readFileHead(filePath: string, bytes: number): Promise<string> {

@@ -2,6 +2,7 @@ import type { Dirent } from "node:fs";
 import { access, mkdir, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { VersioningMutationSink } from "../versioning/versioning-types.js";
 import { sanitizePathSegment } from "./data-paths.js";
 
 const PROMPT_REGISTRY_DIR = fileURLToPath(new URL(".", import.meta.url));
@@ -24,6 +25,7 @@ export interface PromptRegistryOptions {
   repoDir: string;
   builtinArchetypesDir: string;
   builtinOperationalDir: string;
+  versioning?: VersioningMutationSink;
 }
 
 export interface PromptRegistry {
@@ -193,6 +195,16 @@ export class FileBackedPromptRegistry implements PromptRegistry {
     await mkdir(directoryPath, { recursive: true });
     await writeFile(profilePath, content, "utf8");
     this.invalidate(category, normalizedPromptId);
+    void this.options.versioning?.recordMutation({
+      path: profilePath,
+      action: "write",
+      source: "prompt-save",
+      profileId,
+      promptCategory: category,
+      promptId: normalizedPromptId
+    }).catch(() => {
+      // Fail open: prompt writes succeed even when versioning cannot record them.
+    });
   }
 
   async deleteOverride(category: PromptCategory, promptId: string, profileId: string): Promise<void> {
@@ -208,6 +220,16 @@ export class FileBackedPromptRegistry implements PromptRegistry {
     }
 
     this.invalidate(category, normalizedPromptId);
+    void this.options.versioning?.recordMutation({
+      path: profilePath,
+      action: "delete",
+      source: "prompt-delete",
+      profileId,
+      promptCategory: category,
+      promptId: normalizedPromptId
+    }).catch(() => {
+      // Fail open: prompt deletes succeed even when versioning cannot record them.
+    });
   }
 
   async hasOverride(category: PromptCategory, promptId: string, profileId: string): Promise<boolean> {
