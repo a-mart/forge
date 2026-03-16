@@ -58,10 +58,17 @@ Also passed:
 - `cd apps/backend && pnpm exec tsc -p tsconfig.build.json --noEmit`
 - `cd apps/ui && pnpm exec tsc --noEmit`
 
-## Important residual note
-Scenario `postfix-03-larger-history` still emitted **absolute host paths** in its closeout `FILES:` field. That is a separate closeout-format/relative-path issue, not a schedule/steer interference failure.
+## Follow-up result
+A later hardening pass cleaned up the remaining closeout-format issue too:
+- Cortex user-visible `FILES:` reporting now normalizes absolute `.../profiles/...` paths to relative `profiles/...` paths.
+- Latest postfix rerun evidence shows scenario `postfix-03-larger-history` closing with:
+  - `profiles/feature-manager/reference/gotchas.md`
+  - `profiles/feature-manager/sessions/playwright-test/meta.json`
+
+That path-format fix is separate from the self-steer diagnosis, but it means this lane no longer has an outstanding user-visible sharp edge in the current rerun set.
 
 ## Recommended disposition
 - Treat the timer-based closeout reminder deferral as the **main mitigation** for this lane.
+- Treat the Codex queued-steer recovery fallback and path normalization as useful defensive follow-through, not the primary root-cause fix.
 - Do **not** block additional hardening on a deeper Codex runtime change right now.
-- Keep an eye on future `steer_delivery` / `no active turn to steer` logs, but only reopen runtime-level recovery work if the failure reappears after this manager-side fix.
+- Keep an eye on future `steer_delivery` / `no active turn to steer` logs, but only reopen runtime-level recovery work if the failure reappears after these fixes.

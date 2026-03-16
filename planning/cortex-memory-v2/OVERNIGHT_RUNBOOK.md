@@ -8,10 +8,10 @@
 5. `planning/cortex-memory-v2/TASKS.md`
 
 ## Current Decision Frame
-- **Strict rubric call:** conditional GO once the decision owner explicitly accepts the remaining fresh-env blocker as an environment/auth issue rather than a Memory v2 product regression.
-- **Feature-evidence call:** GO/strong confidence; copied-prod evidence is strong and backend test gates are now clean.
-- Copied-prod evidence is strong.
-- Fresh isolated env still has live-dispatch auth/env blockage; do not misclassify it as a Memory v2 product regression.
+- **Strict rubric call:** **GO** with the explicit AUTH-03 documentation caveat (evidence-backed production non-touch waiver rather than byte-identical before/after proof).
+- **Feature-evidence call:** **GO / strong confidence**; copied-prod and fresh isolated runtime evidence are both strong and backend test gates are clean.
+- Fresh isolated live dispatch is no longer the blocker; it passed after isolated auth repair and should not be misclassified as a Memory v2 defect.
+- The current hardening focus is no longer basic viability. It is repeated copied-history stress to make Cortex feel reliably sharp, quiet, and well-closed-out.
 
 ## Must-Keep Truths
 - Work only in `/Users/adam/repos/middleman-worktrees/cortex-memory-v2`.
@@ -22,10 +22,10 @@
 - Prefer short, bounded commands; no endless retry loops.
 
 ## Overnight Priorities
-1. **Fresh env:** continue narrowing the live-dispatch blocker; document exact auth/runtime behavior, but keep solution elegantly simple.
-2. **Copied env:** run more real Cortex behavior against historical conversations and inspect resulting memory/knowledge outputs for usefulness, precision, and noise.
+1. **Copied env:** run more real Cortex behavior against historical conversations and inspect resulting memory/knowledge outputs for usefulness, precision, noise, and finish quality.
+2. **Fresh env:** keep validation bounded and simple; basic health/scan/runtime evidence is already good, so only do more if it adds real signal.
 3. **Test gates:** keep the backend suite clean after the env-sensitive test hardening captured in `E2E_BACKEND_GATES.md`; if regressions reappear, diagnose them cleanly and keep fixes low-churn.
-4. **Doc coherence:** keep `E2E_EXEC_SUMMARY.md`, `E2E_TEST_INDEX.md`, and `E2E_ACTIVE_TRACKER.md` aligned whenever new evidence lands.
+4. **Doc coherence:** keep `E2E_EXEC_SUMMARY.md`, `E2E_TEST_INDEX.md`, `E2E_ACTIVE_TRACKER.md`, and the newer hardening docs aligned whenever new evidence lands.
 
 ## Scenario Expansion Backlog
 - More copied-env historical conversation processing with isolated Cortex review behavior.

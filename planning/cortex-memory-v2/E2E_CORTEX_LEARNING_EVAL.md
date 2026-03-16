@@ -8,6 +8,13 @@
 ## Goal
 Run more real Cortex review behavior against historical conversations in the copied isolated instance and judge what it actually learns and writes.
 
+## Follow-up note after later hardening
+This document captures the **initial** copied-history learning evaluation, including rough edges that were later hardened. The latest postfix rerun follow-through is documented separately in:
+- `planning/cortex-memory-v2/E2E_HARDENING_POSTFIX_RERUN.md`
+- `planning/cortex-memory-v2/E2E_SCHEDULE_INTERFERENCE.md`
+
+Most importantly, the later hardening cycle fixed the earlier closeout/finish problems in the postfix scenarios and also cleaned up the absolute-path leak in `FILES:` reporting. So this doc should now be read as the baseline diagnosis that motivated those fixes, not as the final current-state verdict.
+
 Primary evaluation lenses:
 - **usefulness** — does the learned output help future work?
 - **precision** — does Cortex write the right thing to the right place?

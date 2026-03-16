@@ -2,9 +2,9 @@
 
 **Purpose:** working tracker for the final isolated E2E package before synthesis. This is the execution ledger for what must be proven, where the evidence should land, and what is still missing.
 
-> **Note:** This tracker reflects the pre-closeout planning state. For the latest overnight package status, use `E2E_EXEC_SUMMARY.md`, `E2E_TEST_INDEX.md`, and `E2E_BACKEND_GATES.md` as the current source of truth.
+> **Note:** This tracker began as the pre-closeout planning ledger. The package is now decision-ready, and the latest hardening state should be read alongside `E2E_EXEC_SUMMARY.md`, `E2E_TEST_INDEX.md`, `E2E_BACKEND_GATES.md`, `E2E_HARDENING_POSTFIX_RERUN.md`, and `E2E_SCHEDULE_INTERFERENCE.md`.
 
-**Last updated:** 2026-03-15 20:23 CDT  
+**Last updated:** 2026-03-15/16 overnight hardening follow-through  
 **Scope:** isolated `migrate` + `fresh` validation only; no long-lived services in this lane  
 **Primary synthesis inputs:** `E2E_GOALS_RUBRIC.md`, `E2E_MIGRATE_RUNTIME.md`, `E2E_FRESH_RUNTIME.md`, `VALIDATION_PHASE3_REPORT.md`, `TESTING.md`, diagnosis/auth docs
 
@@ -26,14 +26,14 @@
 
 | Env ID | Purpose | Data dir | Ports | Current factual state | Source docs |
 |---|---|---|---|---|---|
-| `ENV-MIGRATE` | Existing-data migration/runtime validation | `/Users/adam/.middleman-cortex-memory-v2-migrate` | backend `47387`, UI `47389`; rerun backend `47487` | Booted successfully; scan works; live chat succeeded for `cortex` and non-Cortex codex/default; Anthropic dispatch failed on at least one non-Cortex path | `E2E_MIGRATE_RUNTIME.md`, `E2E_MIGRATE_AUTH_DIFF.md`, `E2E_COPIED_DIAGNOSIS_R2.md`, `VALIDATION_PHASE3_REPORT.md` |
-| `ENV-FRESH` | Net-new empty-dir validation | `/Users/adam/.middleman-cortex-memory-v2-fresh` | backend `47487`, UI `47489` | Booted successfully; manager/session provisioning works; scan surfaces v2 files for new profiles; live model dispatch blocked by auth/provider validity issues | `E2E_FRESH_RUNTIME.md`, `E2E_FRESH_AUTH_DIFF.md`, `E2E_FRESH_DIAGNOSIS_R2.md`, `E2E_AUTH_RUNTIME_AUDIT.md`, `VALIDATION_PHASE3_REPORT.md` |
+| `ENV-MIGRATE` | Existing-data migration/runtime validation | `/Users/adam/.middleman-cortex-memory-v2-migrate` | backend `47387`, UI `47389` | Booted successfully; scan works; live chat succeeded; latest hardening reruns against copied-history scenarios are clean, including Cortex closeouts and relative changed-file reporting | `E2E_MIGRATE_RUNTIME.md`, `E2E_COPIED_DIAGNOSIS_R2.md`, `E2E_HARDENING_POSTFIX_RERUN.md`, `E2E_SCHEDULE_INTERFERENCE.md`, `VALIDATION_PHASE3_REPORT.md` |
+| `ENV-FRESH` | Net-new empty-dir validation | `/Users/adam/.middleman-cortex-memory-v2-fresh` | backend `47487`, UI `47489` | Booted successfully; manager/session provisioning works; scan surfaces v2 files for new profiles; fresh live dispatch is now a documented pass after isolated auth repair | `E2E_FRESH_RUNTIME.md`, `E2E_FRESH_AUTH_DIFF.md`, `E2E_FRESH_DIAGNOSIS_R2.md`, `E2E_AUTH_RUNTIME_AUDIT.md`, `VALIDATION_PHASE3_REPORT.md` |
 | `ENV-PROD-GUARD` | Safety boundary only | `/Users/adam/.middleman` | n/a | Must not be mutated by this validation program; only approved single-file auth copy into fresh was used in prior runtime testing | `STATUS.md`, `VALIDATION_PHASE3_REPORT.md`, `E2E_FRESH_RUNTIME.md` |
 
 ### Environment-specific constraints already observed
-- `ENV-FRESH` used one explicitly approved auth copy workaround: `~/.middleman/shared/auth/auth.json` -> `~/.middleman-cortex-memory-v2-fresh/shared/auth/auth.json`.
-- Fresh runtime still failed to produce assistant replies after that copy; diagnosis points to expired/unusable OAuth and fallback behavior rather than missing backend/UI plumbing.
-- `ENV-MIGRATE` proved runtime chat on codex/default, but did **not** prove all provider/model combinations.
+- `ENV-FRESH` required an explicitly approved auth repair path because production shared auth had drifted stale while the legacy auth source still held valid current OAuth state.
+- Fresh runtime is now treated as **proved after isolated auth repair**, not as an unresolved product blocker.
+- `ENV-MIGRATE` proved runtime chat and subsequent copied-history hardening behavior, but did **not** prove every provider/model combination.
 
 ---
 
