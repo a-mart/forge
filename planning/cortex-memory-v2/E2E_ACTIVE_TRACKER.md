@@ -34,6 +34,7 @@
 - `ENV-FRESH` required an explicitly approved auth repair path because production shared auth had drifted stale while the legacy auth source still held valid current OAuth state.
 - Fresh runtime is now treated as **proved after isolated auth repair**, not as an unresolved product blocker.
 - `ENV-MIGRATE` proved runtime chat and subsequent copied-history hardening behavior, but did **not** prove every provider/model combination.
+- Later hardening evidence has now been partially folded back into the formal executive summary so the package no longer overstates the old copied-history closeout roughness.
 
 ---
 
