@@ -1,4 +1,4 @@
-import type { ServerEvent } from "@middleman/protocol";
+import type { ServerEvent } from "@forge/protocol";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
 import { normalizeManagerId } from "../../utils/normalize.js";
 import { SlackWebApiClient } from "./slack-client.js";

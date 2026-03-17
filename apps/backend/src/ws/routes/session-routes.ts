@@ -3,7 +3,7 @@ import type {
   ServerEvent,
   SessionMemoryMergeFailureStage,
   SessionMemoryMergeStrategy
-} from "@middleman/protocol";
+} from "@forge/protocol";
 import type { WebSocket } from "ws";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
 

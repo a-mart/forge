@@ -4,19 +4,19 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 
-HOST="${MIDDLEMAN_HOST:-127.0.0.1}"
+HOST="${FORGE_HOST:-127.0.0.1}"
 BACKEND_PORT="47387"
 UI_PORT="47389"
-LIVE_DATA_DIR="${HOME}/.middleman"
-TEST_DATA_DIR="${HOME}/.middleman-dev"
+LIVE_DATA_DIR="${HOME}/.forge"
+TEST_DATA_DIR="${HOME}/.forge-dev"
 WS_URL="ws://${HOST}:${BACKEND_PORT}"
-PID_FILE="${TMPDIR:-/tmp}/middleman-test-instance-middleman-multi-session.pid"
-ASSUME_YES="${MIDDLEMAN_TEST_ASSUME_YES:-0}"
+PID_FILE="${TMPDIR:-/tmp}/forge-test-instance-forge-multi-session.pid"
+ASSUME_YES="${FORGE_TEST_ASSUME_YES:-0}"
 
-export MIDDLEMAN_HOST="${HOST}"
-export MIDDLEMAN_PORT="${BACKEND_PORT}"
-export MIDDLEMAN_DATA_DIR="${TEST_DATA_DIR}"
-export VITE_MIDDLEMAN_WS_URL="${WS_URL}"
+export FORGE_HOST="${HOST}"
+export FORGE_PORT="${BACKEND_PORT}"
+export FORGE_DATA_DIR="${TEST_DATA_DIR}"
+export VITE_FORGE_WS_URL="${WS_URL}"
 
 BACKEND_PID=""
 UI_PID=""
@@ -156,7 +156,7 @@ else
   fi
 fi
 
-log "Building production artifacts (VITE_MIDDLEMAN_WS_URL=${VITE_MIDDLEMAN_WS_URL})..."
+log "Building production artifacts (VITE_FORGE_WS_URL=${VITE_FORGE_WS_URL})..."
 (
   cd "${REPO_ROOT}"
   pnpm build
@@ -165,7 +165,7 @@ log "Building production artifacts (VITE_MIDDLEMAN_WS_URL=${VITE_MIDDLEMAN_WS_UR
 log "Starting backend on ${HOST}:${BACKEND_PORT} ..."
 (
   cd "${REPO_ROOT}"
-  NODE_ENV=production pnpm --filter @middleman/backend start
+  NODE_ENV=production pnpm --filter @forge/backend start
 ) &
 BACKEND_PID="$!"
 

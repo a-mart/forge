@@ -74,7 +74,7 @@ Backend paths above are relative to `apps/backend/src/`. UI paths are relative t
 ## Project Structure
 
 ```
-middleman/
+forge/
 ├── apps/
 │   ├── backend/           # Node.js daemon — orchestration, persistence, integrations
 │   └── ui/                # React SPA — dashboard, chat, settings
@@ -86,10 +86,10 @@ middleman/
 
 ### Data Storage
 
-All runtime state lives in `~/.middleman` (or `%LOCALAPPDATA%\middleman` on Windows), overridable via `MIDDLEMAN_DATA_DIR`. The layout is profile-scoped:
+All runtime state lives in `~/.forge` (or `%LOCALAPPDATA%\forge` on Windows), overridable via `FORGE_DATA_DIR`. The layout is profile-scoped:
 
 ```
-~/.middleman/
+~/.forge/
 ├── swarm/
 │   └── agents.json                        # Global agent registry
 ├── uploads/                               # User-uploaded files
@@ -171,16 +171,18 @@ Copy `.env.example` to `.env` and uncomment/set values as needed. Key variables:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MIDDLEMAN_HOST` | `127.0.0.1` | Backend bind address |
-| `MIDDLEMAN_PORT` | `47187` | Backend port (production uses `47287`) |
-| `MIDDLEMAN_DATA_DIR` | `~/.middleman` | Data storage root |
-| `MIDDLEMAN_DEBUG` | `false` | Enable debug logging |
-| `VITE_MIDDLEMAN_WS_URL` | auto-detected | WebSocket URL override (dev mode only) |
+| `FORGE_HOST` | `127.0.0.1` | Backend bind address |
+| `FORGE_PORT` | `47187` | Backend port (production uses `47287`) |
+| `FORGE_DATA_DIR` | `~/.forge` | Data storage root |
+| `FORGE_DEBUG` | `false` | Enable debug logging |
+| `VITE_FORGE_WS_URL` | auto-detected | WebSocket URL override (dev mode only) |
 | `BRAVE_API_KEY` | — | Brave Search skill |
 | `GEMINI_API_KEY` | — | Image generation skill |
 | `CODEX_API_KEY` | — | OpenAI Codex runtime |
 | `CODEX_BIN` | `codex` | Path to Codex binary |
-| `MIDDLEMAN_PLAYWRIGHT_DASHBOARD_ENABLED` | `false` | Enable Playwright dashboard (macOS/Linux only) |
+| `FORGE_PLAYWRIGHT_DASHBOARD_ENABLED` | `false` | Enable Playwright dashboard (macOS/Linux only) |
+
+For compatibility, legacy `MIDDLEMAN_*` names are still accepted during startup.
 
 See `.env.example` for the full reference.
 
@@ -224,7 +226,7 @@ Forge supports **macOS**, **Linux**, and **Windows**. When working on cross-plat
 - Use `process.platform` checks when platform-specific behavior is required.
 
 ### Feature Gating
-- Playwright dashboard is gated by the `MIDDLEMAN_PLAYWRIGHT_DASHBOARD_ENABLED` env var and requires macOS or Linux (Unix sockets).
+- Playwright dashboard is gated by the `FORGE_PLAYWRIGHT_DASHBOARD_ENABLED` env var and requires macOS or Linux (Unix sockets).
 
 ### File System
 - Be mindful of case sensitivity differences (macOS is case-insensitive by default, Linux is case-sensitive).

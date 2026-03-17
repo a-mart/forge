@@ -13,7 +13,7 @@ import { PromptEditor } from './PromptEditor'
 import type {
   CortexPromptSurfaceContentResponse,
   CortexPromptSurfaceListEntry,
-} from '@middleman/protocol'
+} from '@forge/protocol'
 
 const GROUP_LABELS: Record<CortexPromptSurfaceListEntry['group'], string> = {
   system: 'System template',

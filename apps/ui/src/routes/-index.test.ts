@@ -5,7 +5,7 @@ import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { MANAGER_MODEL_PRESETS } from '@middleman/protocol'
+import { MANAGER_MODEL_PRESETS } from '@forge/protocol'
 import { IndexPage } from './index'
 
 const CREATE_MANAGER_MODEL_PRESETS = MANAGER_MODEL_PRESETS.filter(

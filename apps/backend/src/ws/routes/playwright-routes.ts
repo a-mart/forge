@@ -7,7 +7,7 @@ import type {
   TriggerPlaywrightRescanResponse,
   UpdatePlaywrightSettingsRequest,
   UpdatePlaywrightSettingsResponse,
-} from '@middleman/protocol'
+} from '@forge/protocol'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import {
   PlaywrightSettingsConflictError,

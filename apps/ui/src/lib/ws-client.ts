@@ -20,7 +20,7 @@ import {
   type ManagerReasoningLevel,
   type ServerEvent,
   type SessionMemoryMergeResult,
-} from '@middleman/protocol'
+} from '@forge/protocol'
 
 export type { ManagerWsState } from './ws-state'
 

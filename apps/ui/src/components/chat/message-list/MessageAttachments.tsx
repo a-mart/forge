@@ -4,7 +4,7 @@ import { cn } from '@/lib/utils'
 import type {
   ConversationImageAttachment,
   ConversationMessageAttachment,
-} from '@middleman/protocol'
+} from '@forge/protocol'
 
 type PreviewableMessageImageAttachment =
   | ConversationImageAttachment

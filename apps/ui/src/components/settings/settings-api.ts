@@ -16,7 +16,7 @@ import type {
   ChromeCdpProfile,
   ChromeCdpPreviewTab,
 } from './settings-types'
-import type { SlackStatusEvent, TelegramStatusEvent } from '@middleman/protocol'
+import type { SlackStatusEvent, TelegramStatusEvent } from '@forge/protocol'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
 
 /* ------------------------------------------------------------------ */

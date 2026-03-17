@@ -6,7 +6,7 @@ import type {
   CortexPromptSurfaceListResponse,
   PromptCategory,
   ServerEvent,
-} from "@middleman/protocol";
+} from "@forge/protocol";
 import type { VersioningMutationSink } from "../versioning/versioning-types.js";
 import {
   getCommonKnowledgePath,

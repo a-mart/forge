@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { isTrackedVersionedPath, resolveVersionedPathMetadata } from "../versioned-paths.js";
 
 describe("versioned-paths", () => {
-  const dataDir = "/tmp/middleman-versioned-paths";
+  const dataDir = "/tmp/forge-versioned-paths";
 
   it("tracks the durable allowlisted knowledge, memory, reference, and prompt paths", () => {
     expect(isTrackedVersionedPath(dataDir, `${dataDir}/shared/knowledge/common.md`)).toBe(true);

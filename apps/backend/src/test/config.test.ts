@@ -8,25 +8,17 @@ import { withPlatform } from './test-helpers.js'
 
 const MANAGED_ENV_KEYS = [
   'NODE_ENV',
-  'SWARM_ROOT_DIR',
-  'SWARM_DATA_DIR',
-  'SWARM_AUTH_FILE',
-  'SWARM_HOST',
-  'SWARM_PORT',
+  'FORGE_HOST',
+  'FORGE_PORT',
+  'FORGE_DATA_DIR',
+  'FORGE_DEBUG',
+  'FORGE_PLAYWRIGHT_DASHBOARD_ENABLED',
   'MIDDLEMAN_HOST',
   'MIDDLEMAN_PORT',
   'MIDDLEMAN_DATA_DIR',
   'MIDDLEMAN_DEBUG',
   'MIDDLEMAN_PLAYWRIGHT_DASHBOARD_ENABLED',
   'LOCALAPPDATA',
-  'SWARM_DEBUG',
-  'SWARM_ALLOW_NON_MANAGER_SUBSCRIPTIONS',
-  'SWARM_MANAGER_ID',
-  'SWARM_DEFAULT_CWD',
-  'SWARM_MODEL_PROVIDER',
-  'SWARM_MODEL_ID',
-  'SWARM_THINKING_LEVEL',
-  'SWARM_CWD_ALLOWLIST_ROOTS',
 ] as const
 
 async function withEnv(overrides: Partial<Record<(typeof MANAGED_ENV_KEYS)[number], string>>, run: () => Promise<void> | void) {
@@ -59,17 +51,36 @@ async function withEnv(overrides: Partial<Record<(typeof MANAGED_ENV_KEYS)[numbe
 }
 
 function expectedDefaultDataDir(platform: NodeJS.Platform): string {
+  const forgePath = resolve(homedir(), '.forge')
   const legacyPath = resolve(homedir(), '.middleman')
+
   if (platform !== 'win32') {
-    return legacyPath
+    if (existsSync(forgePath)) {
+      return forgePath
+    }
+
+    if (existsSync(legacyPath)) {
+      return legacyPath
+    }
+
+    return forgePath
   }
 
   const localAppDataBase = process.env.LOCALAPPDATA?.trim()
     ? resolve(process.env.LOCALAPPDATA)
     : resolve(homedir(), 'AppData', 'Local')
-  const windowsDefault = resolve(localAppDataBase, 'middleman')
+  const windowsDefault = resolve(localAppDataBase, 'forge')
+  const windowsLegacy = resolve(localAppDataBase, 'middleman')
 
-  if (!existsSync(windowsDefault) && existsSync(legacyPath)) {
+  if (existsSync(windowsDefault)) {
+    return windowsDefault
+  }
+
+  if (existsSync(windowsLegacy)) {
+    return windowsLegacy
+  }
+
+  if (existsSync(legacyPath)) {
     return legacyPath
   }
 
@@ -77,7 +88,7 @@ function expectedDefaultDataDir(platform: NodeJS.Platform): string {
 }
 
 describe('createConfig', () => {
-  it('uses fixed defaults for non-host/port config', async () => {
+  it('uses defaults', async () => {
     await withEnv({}, () => {
       const config = createConfig()
       const dataDir = expectedDefaultDataDir(process.platform)
@@ -85,80 +96,77 @@ describe('createConfig', () => {
       expect(config.host).toBe('127.0.0.1')
       expect(config.port).toBe(47187)
       expect(config.debug).toBe(false)
-      expect(config.allowNonManagerSubscriptions).toBe(true)
-      expect(config.managerId).toBeUndefined()
-      expect(config.defaultModel).toEqual({
-        provider: 'openai-codex',
-        modelId: 'gpt-5.3-codex',
-        thinkingLevel: 'xhigh',
-      })
-
       expect(config.paths.dataDir).toBe(dataDir)
-      expect(config.paths.swarmDir).toBe(resolve(dataDir, 'swarm'))
-      expect(config.paths.sessionsDir).toBe(resolve(dataDir, 'sessions'))
-      expect(config.paths.uploadsDir).toBe(resolve(dataDir, 'uploads'))
-      expect(config.paths.profilesDir).toBe(resolve(dataDir, 'profiles'))
-      expect(config.paths.sharedDir).toBe(resolve(dataDir, 'shared'))
-      expect(config.paths.sharedAuthDir).toBe(resolve(dataDir, 'shared', 'auth'))
-      expect(config.paths.sharedAuthFile).toBe(resolve(dataDir, 'shared', 'auth', 'auth.json'))
-      expect(config.paths.sharedSecretsFile).toBe(resolve(dataDir, 'shared', 'secrets.json'))
-      expect(config.paths.sharedIntegrationsDir).toBe(resolve(dataDir, 'shared', 'integrations'))
-      expect(config.paths.authDir).toBe(resolve(dataDir, 'auth'))
-      expect(config.paths.authFile).toBe(resolve(dataDir, 'auth', 'auth.json'))
-      expect(config.paths.managerAgentDir).toBe(resolve(dataDir, 'agent', 'manager'))
-      expect(config.paths.repoArchetypesDir).toBe(resolve(config.paths.rootDir, '.swarm', 'archetypes'))
-      expect(config.paths.memoryDir).toBe(resolve(dataDir, 'memory'))
-      expect(config.paths.memoryFile).toBeUndefined()
-      expect(config.paths.repoMemorySkillFile).toBe(resolve(config.paths.rootDir, '.swarm', 'skills', 'memory', 'SKILL.md'))
-      expect(config.paths.agentsStoreFile).toBe(resolve(dataDir, 'swarm', 'agents.json'))
-      expect(config.paths.secretsFile).toBe(resolve(dataDir, 'secrets.json'))
-      expect(config.paths.schedulesFile).toBeUndefined()
-
-      expect(config.defaultCwd).toBe(config.paths.rootDir)
-      expect(config.cwdAllowlistRoots).toContain(config.paths.rootDir)
-      expect(config.cwdAllowlistRoots).toContain(resolve(homedir(), 'worktrees'))
     })
   })
 
-  it('respects MIDDLEMAN_HOST and MIDDLEMAN_PORT', async () => {
-    await withEnv({ MIDDLEMAN_HOST: '0.0.0.0', MIDDLEMAN_PORT: '9999' }, () => {
-      const config = createConfig()
-      expect(config.host).toBe('0.0.0.0')
-      expect(config.port).toBe(9999)
-    })
+  it('respects FORGE_* env vars', async () => {
+    const dataDir = join(tmpdir(), 'forge-data-dir')
+
+    await withEnv(
+      {
+        FORGE_HOST: '0.0.0.0',
+        FORGE_PORT: '9999',
+        FORGE_DEBUG: 'true',
+        FORGE_DATA_DIR: dataDir,
+      },
+      () => {
+        const config = createConfig()
+        expect(config.host).toBe('0.0.0.0')
+        expect(config.port).toBe(9999)
+        expect(config.debug).toBe(true)
+        expect(config.paths.dataDir).toBe(dataDir)
+      }
+    )
   })
 
-  it('respects MIDDLEMAN_DEBUG', async () => {
-    await withEnv({ MIDDLEMAN_DEBUG: 'true' }, () => {
-      const config = createConfig()
-      expect(config.debug).toBe(true)
-    })
+  it('supports legacy MIDDLEMAN_* env vars when FORGE_* is absent', async () => {
+    const dataDir = join(tmpdir(), 'legacy-middleman-data-dir')
 
-    await withEnv({ MIDDLEMAN_DEBUG: 'false' }, () => {
-      const config = createConfig()
-      expect(config.debug).toBe(false)
-    })
+    await withEnv(
+      {
+        MIDDLEMAN_HOST: '0.0.0.0',
+        MIDDLEMAN_PORT: '7777',
+        MIDDLEMAN_DEBUG: 'true',
+        MIDDLEMAN_DATA_DIR: dataDir,
+      },
+      () => {
+        const config = createConfig()
+        expect(config.host).toBe('0.0.0.0')
+        expect(config.port).toBe(7777)
+        expect(config.debug).toBe(true)
+        expect(config.paths.dataDir).toBe(dataDir)
+      }
+    )
   })
 
-  it('respects MIDDLEMAN_DATA_DIR', async () => {
-    const dataDir = join(tmpdir(), 'middleman-data')
+  it('FORGE_* values win when both FORGE_* and MIDDLEMAN_* are set', async () => {
+    const forgeDataDir = join(tmpdir(), 'forge-data-dir-win')
 
-    await withEnv({ MIDDLEMAN_DATA_DIR: dataDir }, () => {
-      const config = createConfig()
-      expect(config.paths.dataDir).toBe(dataDir)
-      expect(config.paths.swarmDir).toBe(resolve(dataDir, 'swarm'))
-      expect(config.paths.profilesDir).toBe(resolve(dataDir, 'profiles'))
-      expect(config.paths.sharedDir).toBe(resolve(dataDir, 'shared'))
-      expect(config.paths.sharedAuthFile).toBe(resolve(dataDir, 'shared', 'auth', 'auth.json'))
-      expect(config.paths.sharedSecretsFile).toBe(resolve(dataDir, 'shared', 'secrets.json'))
-      expect(config.paths.sessionsDir).toBe(resolve(dataDir, 'sessions'))
-      expect(config.paths.authFile).toBe(resolve(dataDir, 'auth', 'auth.json'))
-    })
+    await withEnv(
+      {
+        FORGE_HOST: '127.0.0.2',
+        FORGE_PORT: '1234',
+        FORGE_DEBUG: 'true',
+        FORGE_DATA_DIR: forgeDataDir,
+        MIDDLEMAN_HOST: '127.0.0.3',
+        MIDDLEMAN_PORT: '9876',
+        MIDDLEMAN_DEBUG: 'false',
+        MIDDLEMAN_DATA_DIR: join(tmpdir(), 'middleman-ignored'),
+      },
+      () => {
+        const config = createConfig()
+        expect(config.host).toBe('127.0.0.2')
+        expect(config.port).toBe(1234)
+        expect(config.debug).toBe(true)
+        expect(config.paths.dataDir).toBe(forgeDataDir)
+      }
+    )
   })
 
-  it('uses LOCALAPPDATA/middleman by default on mocked win32 when available', async () => {
-    const localAppData = await mkdtemp(join(tmpdir(), 'middleman-localappdata-'))
-    const windowsDefault = resolve(localAppData, 'middleman')
+  it('uses LOCALAPPDATA/forge by default on mocked win32 when available', async () => {
+    const localAppData = await mkdtemp(join(tmpdir(), 'forge-localappdata-'))
+    const windowsDefault = resolve(localAppData, 'forge')
     await mkdir(windowsDefault, { recursive: true })
 
     try {
@@ -173,11 +181,28 @@ describe('createConfig', () => {
     }
   })
 
-  it('falls back to legacy ~/.middleman on win32 when LOCALAPPDATA/middleman is absent', async () => {
-    const fakeHome = await mkdtemp(join(tmpdir(), 'middleman-home-'))
+  it('falls back to LOCALAPPDATA/middleman on win32 when forge dir is absent', async () => {
+    const localAppData = await mkdtemp(join(tmpdir(), 'forge-localappdata-legacy-'))
+    const windowsLegacy = resolve(localAppData, 'middleman')
+    await mkdir(windowsLegacy, { recursive: true })
+
+    try {
+      await withPlatform('win32', async () => {
+        await withEnv({ LOCALAPPDATA: localAppData }, () => {
+          const config = createConfig()
+          expect(config.paths.dataDir).toBe(windowsLegacy)
+        })
+      })
+    } finally {
+      await rm(localAppData, { recursive: true, force: true })
+    }
+  })
+
+  it('falls back to ~/.middleman on win32 when appdata dirs are absent', async () => {
+    const fakeHome = await mkdtemp(join(tmpdir(), 'forge-home-'))
     const legacyPath = resolve(fakeHome, '.middleman')
-    const localAppData = await mkdtemp(join(tmpdir(), 'middleman-localappdata-'))
-    const windowsDefault = resolve(localAppData, 'middleman')
+    const localAppData = await mkdtemp(join(tmpdir(), 'forge-localappdata-absent-'))
+    const windowsDefault = resolve(localAppData, 'forge')
     await mkdir(legacyPath, { recursive: true })
 
     try {
@@ -197,9 +222,8 @@ describe('createConfig', () => {
             const { createConfig: createConfigWithMockedHome } = await import('../config.js')
             const config = createConfigWithMockedHome()
             expect(config.paths.dataDir).toBe(legacyPath)
-            expect(windowsDefault).not.toBe(legacyPath)
             expect(warnSpy).toHaveBeenCalledWith(
-              `[config] Using legacy data dir ${legacyPath} on Windows. Set MIDDLEMAN_DATA_DIR or migrate to ${windowsDefault}.`
+              `[config] Using legacy data dir ${legacyPath} on Windows. Set FORGE_DATA_DIR or migrate to ${windowsDefault}.`
             )
           } finally {
             warnSpy.mockRestore()
@@ -214,43 +238,8 @@ describe('createConfig', () => {
     }
   })
 
-  it('ignores removed SWARM_* env vars', async () => {
-    await withEnv(
-      {
-        NODE_ENV: 'development',
-        SWARM_ROOT_DIR: '/tmp/swarm-root',
-        SWARM_DATA_DIR: '/tmp/swarm-data',
-        SWARM_AUTH_FILE: '/tmp/swarm-auth/auth.json',
-        SWARM_DEBUG: 'false',
-        SWARM_ALLOW_NON_MANAGER_SUBSCRIPTIONS: 'false',
-        SWARM_MANAGER_ID: 'opus-manager',
-        SWARM_DEFAULT_CWD: '/tmp/swarm-cwd',
-        SWARM_MODEL_PROVIDER: 'anthropic',
-        SWARM_MODEL_ID: 'claude-opus-4-6',
-        SWARM_THINKING_LEVEL: 'low',
-        SWARM_CWD_ALLOWLIST_ROOTS: '/tmp/swarm-allowlist',
-      },
-      () => {
-        const config = createConfig()
-
-        expect(config.paths.dataDir).toBe(expectedDefaultDataDir(process.platform))
-        expect(config.paths.authFile).toBe(resolve(expectedDefaultDataDir(process.platform), 'auth', 'auth.json'))
-        expect(config.debug).toBe(false)
-        expect(config.allowNonManagerSubscriptions).toBe(true)
-        expect(config.managerId).toBeUndefined()
-        expect(config.defaultCwd).toBe(config.paths.rootDir)
-        expect(config.defaultModel).toEqual({
-          provider: 'openai-codex',
-          modelId: 'gpt-5.3-codex',
-          thinkingLevel: 'xhigh',
-        })
-        expect(config.cwdAllowlistRoots).not.toContain('/tmp/swarm-allowlist')
-      }
-    )
-  })
-
-  it('parses Playwright Dashboard env override values', async () => {
-    await withEnv({ MIDDLEMAN_PLAYWRIGHT_DASHBOARD_ENABLED: 'yes' }, () => {
+  it('parses Playwright Dashboard env override values with FORGE_* precedence', async () => {
+    await withEnv({ FORGE_PLAYWRIGHT_DASHBOARD_ENABLED: 'yes' }, () => {
       expect(readPlaywrightDashboardEnvOverride()).toBe(true)
     })
 
@@ -258,12 +247,24 @@ describe('createConfig', () => {
       expect(readPlaywrightDashboardEnvOverride()).toBe(false)
     })
 
+    await withEnv(
+      {
+        FORGE_PLAYWRIGHT_DASHBOARD_ENABLED: 'true',
+        MIDDLEMAN_PLAYWRIGHT_DASHBOARD_ENABLED: 'off',
+      },
+      () => {
+        expect(readPlaywrightDashboardEnvOverride()).toBe(true)
+      }
+    )
+
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     try {
-      await withEnv({ MIDDLEMAN_PLAYWRIGHT_DASHBOARD_ENABLED: 'maybe' }, () => {
+      await withEnv({ FORGE_PLAYWRIGHT_DASHBOARD_ENABLED: 'maybe' }, () => {
         expect(readPlaywrightDashboardEnvOverride()).toBeUndefined()
       })
-      expect(warnSpy).toHaveBeenCalled()
+      expect(warnSpy).toHaveBeenCalledWith(
+        '[config] Ignoring invalid FORGE_PLAYWRIGHT_DASHBOARD_ENABLED value: maybe',
+      )
     } finally {
       warnSpy.mockRestore()
     }

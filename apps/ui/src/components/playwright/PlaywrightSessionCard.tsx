@@ -29,7 +29,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
-import type { PlaywrightDiscoveredSession } from '@middleman/protocol'
+import type { PlaywrightDiscoveredSession } from '@forge/protocol'
 
 interface PlaywrightSessionCardProps {
   session: PlaywrightDiscoveredSession

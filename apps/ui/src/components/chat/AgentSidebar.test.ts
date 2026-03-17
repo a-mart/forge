@@ -6,7 +6,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AgentSidebar } from './AgentSidebar'
-import type { AgentDescriptor, AgentStatus, ManagerProfile } from '@middleman/protocol'
+import type { AgentDescriptor, AgentStatus, ManagerProfile } from '@forge/protocol'
 
 function manager(
   agentId: string,

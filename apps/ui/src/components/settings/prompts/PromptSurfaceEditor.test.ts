@@ -6,7 +6,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PromptSurfaceEditor } from './PromptSurfaceEditor'
-import type { CortexPromptSurfaceListEntry } from '@middleman/protocol'
+import type { CortexPromptSurfaceListEntry } from '@forge/protocol'
 
 let container: HTMLDivElement
 let root: Root | null = null

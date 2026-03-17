@@ -1,4 +1,4 @@
-import { MANAGER_MODEL_PRESETS, type ClientCommand, type ManagerModelPreset, type ServerEvent } from "@middleman/protocol";
+import { MANAGER_MODEL_PRESETS, type ClientCommand, type ManagerModelPreset, type ServerEvent } from "@forge/protocol";
 import type { WebSocket } from "ws";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
 import type { SwarmModelPreset, SwarmReasoningLevel } from "../../swarm/types.js";

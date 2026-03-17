@@ -1,6 +1,6 @@
 # Integrations
 
-Middleman supports messaging integrations that let you chat with your manager from Telegram or Slack. Both support bidirectional messaging — send tasks and receive responses with formatted text, code blocks, and file attachments.
+Forge supports messaging integrations that let you chat with your manager from Telegram or Slack. Both support bidirectional messaging — send tasks and receive responses with formatted text, code blocks, and file attachments.
 
 ## Telegram
 
@@ -8,7 +8,7 @@ Middleman supports messaging integrations that let you chat with your manager fr
 
 1. **Create a bot** — Talk to [@BotFather](https://t.me/botfather) on Telegram and create a new bot. Copy the bot token.
 
-2. **Configure in Middleman** — Open the dashboard, go to **Settings → Integrations → Telegram**, and paste your bot token.
+2. **Configure in Forge** — Open the dashboard, go to **Settings → Integrations → Telegram**, and paste your bot token.
 
 3. **Start chatting** — Send a message to your bot on Telegram. It will be routed to your manager.
 
@@ -53,7 +53,7 @@ Middleman supports messaging integrations that let you chat with your manager fr
 
 5. **Install the app** — Install to your workspace and copy the **Bot User OAuth Token**.
 
-6. **Configure in Middleman** — Open the dashboard, go to **Settings → Integrations → Slack**, and enter:
+6. **Configure in Forge** — Open the dashboard, go to **Settings → Integrations → Slack**, and enter:
    - **Bot Token** — The Bot User OAuth Token (`xoxb-...`)
    - **App Token** — The App-Level Token (`xapp-...`)
 

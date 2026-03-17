@@ -5,7 +5,7 @@ import type {
   PromptListEntry,
   PromptContentResponse,
   ServerEvent,
-} from "@middleman/protocol";
+} from "@forge/protocol";
 import {
   PROMPT_METADATA,
   getPromptMetadata,

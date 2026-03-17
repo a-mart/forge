@@ -1,6 +1,6 @@
 import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
-import type { CortexReviewControlAction, CortexReviewRunAxis, CortexReviewRunScope } from "@middleman/protocol";
+import type { CortexReviewControlAction, CortexReviewRunAxis, CortexReviewRunScope } from "@forge/protocol";
 import {
   getCommonKnowledgePath,
   getCortexNotesPath,

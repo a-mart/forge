@@ -6,7 +6,7 @@ import type {
   PlaywrightControllerBootstrap,
   PlaywrightDiscoveredSession,
   PlaywrightLivePreviewCandidate,
-} from '@middleman/protocol'
+} from '@forge/protocol'
 import { readFile } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { dirname, extname, resolve } from 'node:path'
@@ -77,7 +77,7 @@ interface CliLikeSessionConfig {
       isolated?: boolean
     }
   }
-  __middleman: {
+  __forge: {
     sessionId: string
   }
 }
@@ -483,7 +483,7 @@ function resolveSessionIdFromCliPayload(
   }
 
   const maybeConfig = config as Partial<CliLikeSessionConfig>
-  const sessionId = typeof maybeConfig.__middleman?.sessionId === 'string' ? maybeConfig.__middleman.sessionId.trim() : ''
+  const sessionId = typeof maybeConfig.__forge?.sessionId === 'string' ? maybeConfig.__forge.sessionId.trim() : ''
   if (sessionId) {
     return sessionId
   }
@@ -541,7 +541,7 @@ function toCliLikeSessionConfig(session: PlaywrightDiscoveredSession): CliLikeSe
         isolated: session.isolated ?? undefined,
       },
     },
-    __middleman: {
+    __forge: {
       sessionId: session.id,
     },
   }
@@ -738,7 +738,7 @@ function renderEmbedDocument(options: {
           }
         };
 
-        class MiddlemanPlaywrightWebSocket extends NativeWebSocket {
+        class ForgePlaywrightWebSocket extends NativeWebSocket {
           constructor(url, protocols) {
             if (protocols === undefined) {
               super(url);
@@ -781,12 +781,12 @@ function renderEmbedDocument(options: {
           }
         }
 
-        MiddlemanPlaywrightWebSocket.prototype = NativeWebSocket.prototype;
-        Object.defineProperty(MiddlemanPlaywrightWebSocket, 'CONNECTING', { value: NativeWebSocket.CONNECTING });
-        Object.defineProperty(MiddlemanPlaywrightWebSocket, 'OPEN', { value: NativeWebSocket.OPEN });
-        Object.defineProperty(MiddlemanPlaywrightWebSocket, 'CLOSING', { value: NativeWebSocket.CLOSING });
-        Object.defineProperty(MiddlemanPlaywrightWebSocket, 'CLOSED', { value: NativeWebSocket.CLOSED });
-        window.WebSocket = MiddlemanPlaywrightWebSocket;
+        ForgePlaywrightWebSocket.prototype = NativeWebSocket.prototype;
+        Object.defineProperty(ForgePlaywrightWebSocket, 'CONNECTING', { value: NativeWebSocket.CONNECTING });
+        Object.defineProperty(ForgePlaywrightWebSocket, 'OPEN', { value: NativeWebSocket.OPEN });
+        Object.defineProperty(ForgePlaywrightWebSocket, 'CLOSING', { value: NativeWebSocket.CLOSING });
+        Object.defineProperty(ForgePlaywrightWebSocket, 'CLOSED', { value: NativeWebSocket.CLOSED });
+        window.WebSocket = ForgePlaywrightWebSocket;
 
         const originalFetch = window.fetch.bind(window);
         window.fetch = async (input, init) => {

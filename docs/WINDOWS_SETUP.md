@@ -1,6 +1,6 @@
 # Windows Setup
 
-Middleman fully supports Windows for the backend daemon, dashboard UI, agent orchestration, and all persistence. This guide covers platform-specific setup, configuration, and known limitations.
+Forge fully supports Windows for the backend daemon, dashboard UI, agent orchestration, and all persistence. This guide covers platform-specific setup, configuration, and known limitations.
 
 ## Prerequisites
 
@@ -33,24 +33,24 @@ All core `pnpm` commands (`dev`, `build`, `test`, `prod:daemon`, `prod:restart`)
 
 ## Data Directory
 
-On Windows, Middleman defaults to:
+On Windows, Forge defaults to:
 
 ```
-%LOCALAPPDATA%\middleman
+%LOCALAPPDATA%\forge
 ```
 
-If a legacy `~/.middleman` directory already exists and the new default does not, Middleman will keep using the legacy path and log a warning so existing installs continue to work.
+If a legacy `~/.middleman` directory already exists and the new default does not, Forge will keep using the legacy path and log a warning so existing installs continue to work.
 
 To override the location:
 
 ```powershell
-$env:MIDDLEMAN_DATA_DIR = 'C:\middleman-data'
+$env:FORGE_DATA_DIR = 'C:\forge-data'
 ```
 
 Or set it permanently in your `.env` file:
 
 ```
-MIDDLEMAN_DATA_DIR=C:\middleman-data
+FORGE_DATA_DIR=C:\forge-data
 ```
 
 ## Long Path Support
@@ -84,7 +84,7 @@ What is disabled:
 
 ### Shell Scripts
 
-The `scripts/*.sh` files are POSIX shell scripts used for developer tooling (test instances, cutover helpers). They are **not required** to run Middleman.
+The `scripts/*.sh` files are POSIX shell scripts used for developer tooling (test instances, cutover helpers). They are **not required** to run Forge.
 
 To use them on Windows, run from:
 - **WSL2** (recommended)
@@ -102,7 +102,7 @@ WSL2 is a good option if you want:
 
 Tips for WSL2:
 - Keep the repo and data directory **inside the WSL filesystem** (`/home/...`) for best performance. Cross-filesystem access between Windows and WSL is slower.
-- Windows Defender can increase I/O latency — consider adding exclusions for your WSL filesystem or the Middleman data directory.
+- Windows Defender can increase I/O latency — consider adding exclusions for your WSL filesystem or the Forge data directory.
 
 ## Environment Variables
 
@@ -110,9 +110,9 @@ These are the most relevant environment variables for Windows:
 
 | Variable | Default (Windows) | Description |
 |----------|-------------------|-------------|
-| `MIDDLEMAN_DATA_DIR` | `%LOCALAPPDATA%\middleman` | Data directory location |
-| `MIDDLEMAN_HOST` | `127.0.0.1` | Backend bind address |
-| `MIDDLEMAN_PORT` | `47187` (dev) / `47287` (prod) | Backend port |
-| `MIDDLEMAN_PLAYWRIGHT_DASHBOARD_ENABLED` | `false` (Windows) | Force-enable/disable Playwright dashboard |
+| `FORGE_DATA_DIR` | `%LOCALAPPDATA%\forge` | Data directory location |
+| `FORGE_HOST` | `127.0.0.1` | Backend bind address |
+| `FORGE_PORT` | `47187` (dev) / `47287` (prod) | Backend port |
+| `FORGE_PLAYWRIGHT_DASHBOARD_ENABLED` | `false` (Windows) | Force-enable/disable Playwright dashboard |
 
 See [docs/CONFIGURATION.md](CONFIGURATION.md) for the full configuration reference.

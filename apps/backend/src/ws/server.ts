@@ -1,7 +1,7 @@
 import { readFile, rm, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
 import type { Duplex } from "node:stream";
-import type { ServerEvent } from "@middleman/protocol";
+import type { ServerEvent } from "@forge/protocol";
 import { WebSocketServer } from "ws";
 import type { IntegrationRegistryService } from "../integrations/registry.js";
 import { MobilePushService } from "../mobile/mobile-push-service.js";
@@ -9,7 +9,11 @@ import type { PlaywrightDiscoveryService } from "../playwright/playwright-discov
 import { PlaywrightLivePreviewProxy } from "../playwright/playwright-live-preview-proxy.js";
 import { PlaywrightLivePreviewService } from "../playwright/playwright-live-preview-service.js";
 import { PlaywrightSettingsService } from "../playwright/playwright-settings-service.js";
-import { DAEMONIZED_ENV_VAR, getControlPidFilePath, readControlPidFromFile } from "../reboot/control-pid.js";
+import {
+  getControlPidFilePath,
+  readControlPidFromFile,
+  readDaemonizedEnv
+} from "../reboot/control-pid.js";
 import { isPidAlive } from "../swarm/platform.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import { applyCorsHeaders, resolveRequestUrl, sendJson } from "./http-utils.js";
@@ -165,7 +169,7 @@ export class SwarmWebSocketServer {
       this.swarmManager.getConfig().paths.rootDir,
       this.swarmManager.getConfig().port
     );
-    this.shouldManageControlPid = process.env[DAEMONIZED_ENV_VAR] !== "1";
+    this.shouldManageControlPid = readDaemonizedEnv() !== "1";
 
     this.wsHandler = new WsHandler({
       swarmManager: this.swarmManager,

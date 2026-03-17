@@ -3,7 +3,7 @@ import type { FeedbackEvent, FeedbackState } from '@/lib/feedback-types'
 
 function resolveWsUrl(): string {
   if (typeof window === 'undefined') return 'ws://127.0.0.1:47187'
-  const envUrl = import.meta.env.VITE_MIDDLEMAN_WS_URL as string | undefined
+  const envUrl = (import.meta.env.VITE_FORGE_WS_URL as string | undefined) ?? (import.meta.env.VITE_MIDDLEMAN_WS_URL as string | undefined)
   if (envUrl) return envUrl
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
   const hostname = window.location.hostname

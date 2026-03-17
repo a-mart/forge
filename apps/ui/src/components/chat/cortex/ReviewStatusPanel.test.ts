@@ -5,7 +5,7 @@ import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { CortexReviewRunRecord } from '@middleman/protocol'
+import type { CortexReviewRunRecord } from '@forge/protocol'
 import { ReviewStatusPanel } from './ReviewStatusPanel'
 
 let container: HTMLDivElement

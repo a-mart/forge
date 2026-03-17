@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import type { SessionMeta, SessionWorkerMeta } from "@middleman/protocol";
+import type { SessionMeta, SessionWorkerMeta } from "@forge/protocol";
 import {
   getSessionFilePath,
   getSessionMetaPath,

@@ -8,7 +8,7 @@ import type {
   AgentContextUsage,
   AgentDescriptor,
   AgentStatus,
-} from '@middleman/protocol'
+} from '@forge/protocol'
 
 interface UseDynamicFaviconOptions {
   agents: AgentDescriptor[]

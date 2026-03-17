@@ -1,4 +1,4 @@
-import type { AgentDescriptor, ManagerModelPreset } from '@middleman/protocol'
+import type { AgentDescriptor, ManagerModelPreset } from '@forge/protocol'
 
 export function inferModelPreset(agent: AgentDescriptor): ManagerModelPreset | undefined {
   const provider = agent.model.provider.trim().toLowerCase()

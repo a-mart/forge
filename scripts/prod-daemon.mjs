@@ -282,11 +282,12 @@ function startChild() {
 
   log(`Starting child command: ${command}`);
 
+  const daemonizedEnvValue = process.env.FORGE_DAEMONIZED ?? process.env.MIDDLEMAN_DAEMONIZED ?? "1";
   child = spawn(command, {
     cwd: repoRoot,
     env: {
       ...process.env,
-      MIDDLEMAN_DAEMONIZED: "1",
+      FORGE_DAEMONIZED: daemonizedEnvValue,
     },
     stdio: "inherit",
     shell: true,

@@ -7,7 +7,7 @@ import {
   type FeedbackState,
   type FeedbackSubmitEvent,
   type FeedbackSubmitValue
-} from "@middleman/protocol";
+} from "@forge/protocol";
 import { getProfilesDir, getSessionFeedbackPath, getSessionsDir } from "./data-paths.js";
 import { readSessionMeta, writeSessionMeta } from "./session-manifest.js";
 

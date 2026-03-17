@@ -28,6 +28,9 @@ importers:
 
   apps/backend:
     dependencies:
+      '@forge/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
       '@google/genai':
         specifier: ^1.42.0
         version: 1.42.0(@modelcontextprotocol/sdk@1.26.0(zod@4.3.6))
@@ -37,9 +40,6 @@ importers:
       '@mariozechner/pi-coding-agent':
         specifier: ^0.55.0
         version: 0.55.0(patch_hash=f76dfd19c403b2edde1a94cae839452e02cb39dcdc54c84de58e641aac504c91)(@modelcontextprotocol/sdk@1.26.0(zod@4.3.6))(ws@8.19.0)(zod@4.3.6)
-      '@middleman/protocol':
-        specifier: workspace:*
-        version: link:../../packages/protocol
       '@mozilla/readability':
         specifier: ^0.6.0
         version: 0.6.0
@@ -98,7 +98,7 @@ importers:
 
   apps/ui:
     dependencies:
-      '@middleman/protocol':
+      '@forge/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
       '@radix-ui/react-checkbox':

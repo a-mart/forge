@@ -9,7 +9,7 @@ import { nitro } from 'nitro/vite'
 
 const config = defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
-  const host = env.MIDDLEMAN_HOST || '127.0.0.1'
+  const host = process.env.FORGE_HOST ?? process.env.MIDDLEMAN_HOST ?? env.MIDDLEMAN_HOST ?? '127.0.0.1'
 
   return {
     server: {

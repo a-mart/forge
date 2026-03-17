@@ -14,7 +14,7 @@ import type {
   PlaywrightSessionCorrelation,
   PlaywrightSessionPorts,
   PlaywrightSessionSchemaVersion,
-} from '@middleman/protocol'
+} from '@forge/protocol'
 import type { SwarmManager } from '../swarm/swarm-manager.js'
 import {
   PlaywrightSettingsService,
@@ -136,7 +136,7 @@ interface PlaywrightScanRootResolution {
 }
 
 export class PlaywrightSettingsConflictError extends Error {
-  constructor(message = 'Playwright Dashboard settings are controlled by MIDDLEMAN_PLAYWRIGHT_DASHBOARD_ENABLED') {
+  constructor(message = 'Playwright Dashboard settings are controlled by FORGE_PLAYWRIGHT_DASHBOARD_ENABLED (legacy MIDDLEMAN_PLAYWRIGHT_DASHBOARD_ENABLED also works)') {
     super(message)
     this.name = 'PlaywrightSettingsConflictError'
   }

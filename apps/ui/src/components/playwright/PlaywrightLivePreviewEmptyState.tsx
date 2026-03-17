@@ -1,6 +1,6 @@
 import { Eye, Loader2, MonitorPlay, Unplug, WifiOff, XCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import type { PlaywrightPreviewStatus } from '@middleman/protocol'
+import type { PlaywrightPreviewStatus } from '@forge/protocol'
 
 interface PlaywrightLivePreviewEmptyStateProps {
   status: PlaywrightPreviewStatus

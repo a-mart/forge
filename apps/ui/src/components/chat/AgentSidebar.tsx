@@ -52,7 +52,7 @@ import {
   type ManagerModelPreset,
   type ManagerReasoningLevel,
   type ManagerProfile,
-} from '@middleman/protocol'
+} from '@forge/protocol'
 
 interface AgentSidebarProps {
   connected: boolean

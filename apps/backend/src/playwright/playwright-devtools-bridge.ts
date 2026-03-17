@@ -1,5 +1,5 @@
 import { createConnection } from 'node:net'
-import type { PlaywrightDiscoveredSession } from '@middleman/protocol'
+import type { PlaywrightDiscoveredSession } from '@forge/protocol'
 
 export interface PlaywrightDevtoolsStartResult {
   upstreamControllerUrl: string

@@ -5,7 +5,7 @@ import {
   chooseFallbackAgentId,
   getPrimaryManagerId,
 } from './agent-hierarchy'
-import type { AgentDescriptor, ManagerProfile } from '@middleman/protocol'
+import type { AgentDescriptor, ManagerProfile } from '@forge/protocol'
 
 function manager(agentId: string, managerId = agentId): AgentDescriptor {
   return {

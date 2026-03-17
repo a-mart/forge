@@ -9,7 +9,7 @@ import type {
   CortexReviewRunStatus,
   CortexReviewRunTrigger,
   MessageSourceContext
-} from "@middleman/protocol";
+} from "@forge/protocol";
 import { getCortexReviewRunsPath } from "./data-paths.js";
 import type { ConversationEntryEvent } from "./types.js";
 

@@ -50,7 +50,7 @@ afterEach(() => {
 
 describe("index shutdown signal registration", () => {
   it("registers SIGINT, SIGTERM, and SIGUSR1 on POSIX", async () => {
-    const signals = await loadRegisteredSignals("linux", { MIDDLEMAN_DAEMONIZED: undefined });
+    const signals = await loadRegisteredSignals("linux", { FORGE_DAEMONIZED: undefined });
     expect(signals).toContain("SIGINT");
     expect(signals).toContain("SIGTERM");
     expect(signals).toContain("SIGUSR1");
@@ -59,7 +59,7 @@ describe("index shutdown signal registration", () => {
   });
 
   it("does not register SIGUSR1 for daemonized children", async () => {
-    const signals = await loadRegisteredSignals("linux", { MIDDLEMAN_DAEMONIZED: "1" });
+    const signals = await loadRegisteredSignals("linux", { FORGE_DAEMONIZED: "1" });
     expect(signals).toContain("SIGINT");
     expect(signals).toContain("SIGTERM");
     expect(signals).not.toContain("SIGUSR1");
@@ -109,6 +109,10 @@ async function loadRegisteredSignals(
   vi.doMock("../config.js", () => ({
     createConfig: () => BASE_CONFIG,
     readPlaywrightDashboardEnvOverride: () => undefined
+  }));
+
+  vi.doMock("../startup-migration.js", () => ({
+    checkDataDirMigration: async () => undefined
   }));
 
   vi.doMock("../swarm/swarm-manager.js", () => ({

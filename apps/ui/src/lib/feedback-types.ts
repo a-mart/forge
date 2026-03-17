@@ -1,4 +1,4 @@
-// Local feedback types (will be replaced with @middleman/protocol imports after integration)
+// Local feedback types (will be replaced with @forge/protocol imports after integration)
 
 export interface FeedbackEvent {
   id: string

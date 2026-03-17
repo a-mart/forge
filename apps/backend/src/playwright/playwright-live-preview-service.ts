@@ -9,7 +9,7 @@ import type {
   PlaywrightLivePreviewMode,
   ReleasePlaywrightLivePreviewResponse,
   StartPlaywrightLivePreviewRequest,
-} from '@middleman/protocol'
+} from '@forge/protocol'
 import type { PlaywrightDiscoveryService } from './playwright-discovery-service.js'
 import {
   PlaywrightDevtoolsBridge,

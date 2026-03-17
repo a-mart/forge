@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import type { ChannelView } from '@/components/chat/ChatHeader'
-import type { AgentDescriptor, ConversationEntry } from '@middleman/protocol'
+import type { AgentDescriptor, ConversationEntry } from '@forge/protocol'
 
 function toEpochMillis(timestamp: string): number {
   const parsed = Date.parse(timestamp)

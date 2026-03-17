@@ -3,6 +3,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { config as loadDotenv } from "dotenv";
 import { createConfig, readPlaywrightDashboardEnvOverride } from "./config.js";
+import { checkDataDirMigration } from "./startup-migration.js";
 import { formatIntegrationContext } from "./integrations/integration-context.js";
 import { IntegrationRegistryService } from "./integrations/registry.js";
 import { PlaywrightDiscoveryService } from "./playwright/playwright-discovery-service.js";
@@ -10,9 +11,11 @@ import { PlaywrightLivePreviewService } from "./playwright/playwright-live-previ
 import { PlaywrightSettingsService } from "./playwright/playwright-settings-service.js";
 import { EmbeddedGitVersioningService } from "./versioning/embedded-git-versioning-service.js";
 import {
-  DAEMONIZED_ENV_VAR,
-  RESTART_PARENT_PID_ENV_VAR,
-  RESTART_SIGNAL
+  RESTART_SIGNAL,
+  clearRestartParentPidEnv,
+  readDaemonizedEnv,
+  readRestartParentPidEnv,
+  setRestartParentPidEnv
 } from "./reboot/control-pid.js";
 import { CronSchedulerService } from "./scheduler/cron-scheduler-service.js";
 import { getScheduleFilePath } from "./scheduler/schedule-storage.js";
@@ -25,6 +28,7 @@ const repoRoot = resolve(backendRoot, "..", "..");
 loadDotenv({ path: resolve(repoRoot, ".env") });
 
 async function main(): Promise<void> {
+  await checkDataDirMigration();
   const config = createConfig();
 
   const versioningService = new EmbeddedGitVersioningService({
@@ -161,7 +165,7 @@ async function main(): Promise<void> {
   await waitForRestartParentToExit();
   await wsServer.start();
 
-  console.log(`Middleman backend listening on ws://${config.host}:${config.port}`);
+  console.log(`Forge backend listening on ws://${config.host}:${config.port}`);
 
   let stopped = false;
   let restarting = false;
@@ -224,7 +228,7 @@ async function main(): Promise<void> {
     void shutdown("SIGTERM");
   });
 
-  if (process.platform !== "win32" && process.env[DAEMONIZED_ENV_VAR] !== "1") {
+  if (process.platform !== "win32" && readDaemonizedEnv() !== "1") {
     process.on(RESTART_SIGNAL, () => {
       void restart();
     });
@@ -284,12 +288,12 @@ function collectManagerIds(agents: unknown[], fallbackManagerId?: string): Set<s
 }
 
 async function waitForRestartParentToExit(): Promise<void> {
-  const rawParentPid = process.env[RESTART_PARENT_PID_ENV_VAR];
+  const rawParentPid = readRestartParentPidEnv();
   if (typeof rawParentPid !== "string" || rawParentPid.trim().length === 0) {
     return;
   }
 
-  delete process.env[RESTART_PARENT_PID_ENV_VAR];
+  clearRestartParentPidEnv();
 
   const parentPid = Number.parseInt(rawParentPid.trim(), 10);
   if (!Number.isInteger(parentPid) || parentPid <= 0) {
@@ -316,8 +320,9 @@ async function spawnReplacementProcess(): Promise<void> {
   const replacementArgs = [...process.execArgv, ...process.argv.slice(1)];
   const replacementEnv = {
     ...process.env,
-    [RESTART_PARENT_PID_ENV_VAR]: `${process.pid}`
   };
+  setRestartParentPidEnv(`${process.pid}`);
+  replacementEnv.FORGE_RESTART_PARENT_PID = `${process.pid}`;
 
   await new Promise<void>((resolveSpawn, reject) => {
     const child = spawn(process.execPath, replacementArgs, {
@@ -352,7 +357,7 @@ void main().catch((error) => {
     const config = createConfig();
     console.error(
       `Failed to start backend: ws://${config.host}:${config.port} is already in use. ` +
-        `Stop the other process or run with MIDDLEMAN_PORT=<port>.`
+        `Stop the other process or run with FORGE_PORT=<port> (legacy MIDDLEMAN_PORT also works).`
     );
   } else {
     console.error(error);

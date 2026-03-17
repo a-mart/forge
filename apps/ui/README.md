@@ -1,6 +1,6 @@
-# @middleman/ui
+# @forge/ui
 
-`@middleman/ui` is the Middleman web app built with TanStack Start, Vite, and React.
+`@forge/ui` is the Forge web app built with TanStack Start, Vite, and React.
 
 ## What it contains
 
@@ -14,10 +14,10 @@
 Run from repo root:
 
 ```bash
-pnpm --filter @middleman/ui dev
-pnpm --filter @middleman/ui build
-pnpm --filter @middleman/ui preview
-pnpm --filter @middleman/ui test
+pnpm --filter @forge/ui dev
+pnpm --filter @forge/ui build
+pnpm --filter @forge/ui preview
+pnpm --filter @forge/ui test
 ```
 
 ## Local runtime

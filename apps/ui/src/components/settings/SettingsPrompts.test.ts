@@ -6,7 +6,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SettingsPrompts } from './SettingsPrompts'
-import type { ManagerProfile } from '@middleman/protocol'
+import type { ManagerProfile } from '@forge/protocol'
 
 let container: HTMLDivElement
 let root: Root | null = null

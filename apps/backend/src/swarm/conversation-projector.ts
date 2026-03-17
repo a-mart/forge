@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { appendFileSync, closeSync, existsSync, openSync, readFileSync, readSync, statSync, writeFileSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import type { ServerEvent } from "@middleman/protocol";
+import type { ServerEvent } from "@forge/protocol";
 import { getConversationHistoryCacheFilePath } from "./conversation-history-cache.js";
 import { isConversationEntryEvent } from "./conversation-validators.js";
 import { openSessionManagerWithSizeGuard } from "./session-file-guard.js";

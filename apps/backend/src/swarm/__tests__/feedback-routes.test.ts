@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentDescriptor } from "@middleman/protocol";
+import type { AgentDescriptor } from "@forge/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import type { SwarmManager } from "../swarm-manager.js";
 import { createFeedbackRoutes } from "../../ws/routes/feedback-routes.js";

@@ -41,7 +41,7 @@ import type {
   ConversationAttachment,
   ManagerModelPreset,
   ManagerReasoningLevel,
-} from '@middleman/protocol'
+} from '@forge/protocol'
 import { fetchSlashCommands, type SlashCommand } from '@/components/settings/slash-commands-api'
 
 export const Route = createFileRoute('/')({
@@ -68,7 +68,7 @@ function resolveDefaultWsUrl(): string {
 }
 
 export function IndexPage() {
-  const wsUrl = import.meta.env.VITE_MIDDLEMAN_WS_URL ?? resolveDefaultWsUrl()
+  const wsUrl = import.meta.env.VITE_FORGE_WS_URL ?? import.meta.env.VITE_MIDDLEMAN_WS_URL ?? resolveDefaultWsUrl()
   const messageInputRef = useRef<MessageInputHandle | null>(null)
   const messageListRef = useRef<MessageListHandle | null>(null)
   const previousAgentsByIdRef = useRef<Map<string, AgentDescriptor>>(new Map())
@@ -695,7 +695,7 @@ export function IndexPage() {
   )
 
   const handlePlaywrightSnapshotUpdate = useCallback(
-    (snapshot: import('@middleman/protocol').PlaywrightDiscoverySnapshot) => {
+    (snapshot: import('@forge/protocol').PlaywrightDiscoverySnapshot) => {
       setState((prev) => ({
         ...prev,
         playwrightSnapshot: snapshot,
@@ -706,7 +706,7 @@ export function IndexPage() {
   )
 
   const handlePlaywrightSettingsLoaded = useCallback(
-    (settings: import('@middleman/protocol').PlaywrightDiscoverySettings) => {
+    (settings: import('@forge/protocol').PlaywrightDiscoverySettings) => {
       setState((prev) => ({
         ...prev,
         playwrightSettings: settings,

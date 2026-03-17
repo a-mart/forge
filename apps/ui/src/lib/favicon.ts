@@ -2,7 +2,7 @@ import type {
   AgentContextUsage,
   AgentDescriptor,
   AgentStatus,
-} from '@middleman/protocol'
+} from '@forge/protocol'
 
 export const DEFAULT_FAVICON_EMOJI = '🔨'
 export const ACTIVE_FAVICON_EMOJI = '🔥'
@@ -14,7 +14,7 @@ type AgentLiveStatuses = Record<
 
 const FAVICON_SIZE = 64
 const FAVICON_FONT_SIZE = Math.round(FAVICON_SIZE * 0.85)
-const FAVICON_LINK_SELECTOR = 'link[rel="icon"][data-middleman-favicon], link[rel="icon"]'
+const FAVICON_LINK_SELECTOR = 'link[rel="icon"][data-forge-favicon], link[rel="icon"]'
 const emojiFaviconCache = new Map<string, string>()
 
 export function createEmojiSvgFaviconDataUrl(emoji: string): string {
@@ -92,7 +92,7 @@ export function setDocumentFavicon(dataUrl: string): void {
   link.rel = 'icon'
   link.href = dataUrl
   link.type = dataUrl.startsWith('data:image/png') ? 'image/png' : 'image/svg+xml'
-  link.dataset.middlemanFavicon = 'true'
+  link.dataset.forgeFavicon = 'true'
 
   if (!existingLink) {
     document.head.append(link)

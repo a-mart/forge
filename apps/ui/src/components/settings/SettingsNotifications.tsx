@@ -24,7 +24,7 @@ import {
   removeCustomSound,
   previewSound,
 } from '@/lib/notification-service'
-import type { AgentDescriptor } from '@middleman/protocol'
+import type { AgentDescriptor } from '@forge/protocol'
 
 // ── Helpers ──
 

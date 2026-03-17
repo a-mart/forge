@@ -1,4 +1,4 @@
-import type { ClientCommand, ServerEvent } from "@middleman/protocol";
+import type { ClientCommand, ServerEvent } from "@forge/protocol";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { WebSocket } from "ws";
 import {

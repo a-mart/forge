@@ -43,7 +43,7 @@ import {
   SHARED_INTEGRATION_MANAGER_ID,
   toErrorMessage,
 } from './settings-api'
-import type { AgentDescriptor, SlackStatusEvent, TelegramStatusEvent } from '@middleman/protocol'
+import type { AgentDescriptor, SlackStatusEvent, TelegramStatusEvent } from '@forge/protocol'
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                           */

@@ -1,5 +1,5 @@
 {
-  "name": "middleman",
+  "name": "forge",
   "private": true,
   "license": "Apache-2.0",
   "packageManager": "pnpm@10.30.1",
@@ -13,15 +13,15 @@
     "packages/protocol"
   ],
   "scripts": {
-    "dev": "concurrently --kill-others-on-fail --names backend,ui \"pnpm --filter @middleman/backend dev\" \"pnpm --filter @middleman/ui dev\"",
-    "dev:backend": "pnpm --filter @middleman/backend dev",
-    "dev:ui": "pnpm --filter @middleman/ui dev",
-    "build": "pnpm --filter @middleman/protocol build && pnpm --filter @middleman/backend build && pnpm --filter @middleman/ui build",
+    "dev": "concurrently --kill-others-on-fail --names backend,ui \"pnpm --filter @forge/backend dev\" \"pnpm --filter @forge/ui dev\"",
+    "dev:backend": "pnpm --filter @forge/backend dev",
+    "dev:ui": "pnpm --filter @forge/ui dev",
+    "build": "pnpm --filter @forge/protocol build && pnpm --filter @forge/backend build && pnpm --filter @forge/ui build",
     "prod": "pnpm build && pnpm prod:start",
-    "prod:start": "concurrently --kill-others-on-fail --names backend,ui \"cross-env NODE_ENV=production MIDDLEMAN_PORT=47287 pnpm --filter @middleman/backend start\" \"pnpm --filter @middleman/ui preview\"",
+    "prod:start": "concurrently --kill-others-on-fail --names backend,ui \"cross-env NODE_ENV=production FORGE_PORT=47287 pnpm --filter @forge/backend start\" \"pnpm --filter @forge/ui preview\"",
     "prod:daemon": "node scripts/prod-daemon.mjs",
     "prod:restart": "node scripts/prod-daemon-restart.mjs",
-    "test": "pnpm --filter @middleman/backend test && pnpm --filter @middleman/ui test"
+    "test": "pnpm --filter @forge/backend test && pnpm --filter @forge/ui test"
   },
   "pnpm": {
     "overrides": {

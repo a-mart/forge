@@ -12,7 +12,7 @@ import {
   Send,
   SquareStack,
 } from 'lucide-react'
-import type { CortexReviewControlAction, CortexReviewRunAxis, CortexReviewRunRecord, CortexReviewRunScope } from '@middleman/protocol'
+import type { CortexReviewControlAction, CortexReviewRunAxis, CortexReviewRunRecord, CortexReviewRunScope } from '@forge/protocol'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'

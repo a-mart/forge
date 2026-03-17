@@ -16,7 +16,7 @@ import type {
   SessionMemoryMergeResult,
   SessionMemoryMergeStrategy,
   SessionMeta
-} from "@middleman/protocol";
+} from "@forge/protocol";
 import { persistConversationAttachments } from "../ws/attachment-parser.js";
 import type { VersioningMutation, VersioningMutationSink } from "../versioning/versioning-types.js";
 import {

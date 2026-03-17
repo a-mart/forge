@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import type { SessionMeta } from "@middleman/protocol";
+import type { SessionMeta } from "@forge/protocol";
 import { describe, expect, it } from "vitest";
 import {
   acquireCortexReviewLock,

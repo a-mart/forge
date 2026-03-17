@@ -20,11 +20,11 @@ import {
   fetchPlaywrightSettings,
   updatePlaywrightSettings,
 } from '@/components/playwright/playwright-api'
-import type { PlaywrightDiscoverySettings } from '@middleman/protocol'
+import type { PlaywrightDiscoverySettings } from '@forge/protocol'
 
 interface SettingsGeneralProps {
   wsUrl: string
-  onPlaywrightSnapshotUpdate?: (snapshot: import('@middleman/protocol').PlaywrightDiscoverySnapshot) => void
+  onPlaywrightSnapshotUpdate?: (snapshot: import('@forge/protocol').PlaywrightDiscoverySnapshot) => void
   onPlaywrightSettingsLoaded?: (settings: PlaywrightDiscoverySettings) => void
 }
 
@@ -141,7 +141,7 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
                 <br />
                 <span className="text-amber-600 dark:text-amber-400">
                   This feature is {playwrightSettings.effectiveEnabled ? 'forced on' : 'forced off'} by the{' '}
-                  <code className="text-[10px]">MIDDLEMAN_PLAYWRIGHT_DASHBOARD_ENABLED</code> environment variable.
+                  <code className="text-[10px]">FORGE_PLAYWRIGHT_DASHBOARD_ENABLED</code> environment variable.
                 </span>
               </>
             ) : (

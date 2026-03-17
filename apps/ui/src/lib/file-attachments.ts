@@ -3,7 +3,7 @@ import type {
   ConversationBinaryAttachment,
   ConversationImageAttachment,
   ConversationTextAttachment,
-} from '@middleman/protocol'
+} from '@forge/protocol'
 
 export interface PendingImageAttachment extends ConversationImageAttachment {
   id: string

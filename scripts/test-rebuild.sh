@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # Safely rebuild and restart the test instance.
-# This script ALWAYS sets VITE_MIDDLEMAN_WS_URL to prevent connecting to the live backend.
+# This script ALWAYS sets VITE_FORGE_WS_URL to prevent connecting to the live backend.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 
-HOST="${MIDDLEMAN_HOST:-127.0.0.1}"
+HOST="${FORGE_HOST:-127.0.0.1}"
 BACKEND_PORT="47387"
 UI_PORT="47389"
-TEST_DATA_DIR="${HOME}/.middleman-dev"
+TEST_DATA_DIR="${HOME}/.forge-dev"
 WS_URL="ws://${HOST}:${BACKEND_PORT}"
 
 log() { printf '[test-rebuild] %s\n' "$*"; }
@@ -32,22 +32,22 @@ if [[ ! -d "${TEST_DATA_DIR}" ]]; then
   exit 1
 fi
 
-# ── Build with VITE_MIDDLEMAN_WS_URL hardcoded ──
-log "Building with VITE_MIDDLEMAN_WS_URL=${WS_URL} ..."
+# ── Build with VITE_FORGE_WS_URL hardcoded ──
+log "Building with VITE_FORGE_WS_URL=${WS_URL} ..."
 cd "${REPO_ROOT}"
-export VITE_MIDDLEMAN_WS_URL="${WS_URL}"
+export VITE_FORGE_WS_URL="${WS_URL}"
 pnpm build
 
 # ── Start backend ──
 log "Starting backend on ${HOST}:${BACKEND_PORT} ..."
-MIDDLEMAN_DATA_DIR="${TEST_DATA_DIR}" MIDDLEMAN_PORT="${BACKEND_PORT}" \
-  node apps/backend/dist/index.js > /tmp/middleman-test-backend.log 2>&1 &
+FORGE_DATA_DIR="${TEST_DATA_DIR}" FORGE_PORT="${BACKEND_PORT}" \
+  node apps/backend/dist/index.js > /tmp/forge-test-backend.log 2>&1 &
 BACKEND_PID=$!
 disown "${BACKEND_PID}"
 sleep 3
 
 if ! lsof -ti :"${BACKEND_PORT}" >/dev/null 2>&1; then
-  log "ERROR: Backend failed to start. Check /tmp/middleman-test-backend.log"
+  log "ERROR: Backend failed to start. Check /tmp/forge-test-backend.log"
   exit 1
 fi
 log "  ✅ Backend running (PID ${BACKEND_PID})"
@@ -56,13 +56,13 @@ log "  ✅ Backend running (PID ${BACKEND_PID})"
 log "Starting UI on ${HOST}:${UI_PORT} ..."
 cd "${REPO_ROOT}/apps/ui"
 PORT="${UI_PORT}" HOST="${HOST}" \
-  node .output/server/index.mjs > /tmp/middleman-test-ui.log 2>&1 &
+  node .output/server/index.mjs > /tmp/forge-test-ui.log 2>&1 &
 UI_PID=$!
 disown "${UI_PID}"
 sleep 2
 
 if ! lsof -ti :"${UI_PORT}" >/dev/null 2>&1; then
-  log "ERROR: UI failed to start. Check /tmp/middleman-test-ui.log"
+  log "ERROR: UI failed to start. Check /tmp/forge-test-ui.log"
   kill -9 "${BACKEND_PID}" 2>/dev/null || true
   exit 1
 fi
@@ -82,4 +82,4 @@ log "║  ⚠️  Your live instance is NOT affected.           ║"
 log "╚════════════════════════════════════════════════════╝"
 log ""
 log "To stop: kill ${BACKEND_PID} ${UI_PID}"
-echo "${BACKEND_PID} ${UI_PID}" > /tmp/middleman-test-pids.txt
+echo "${BACKEND_PID} ${UI_PID}" > /tmp/forge-test-pids.txt

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Original source: https://github.com/pasky/chrome-cdp-skill
 // Copyright (c) Petr Baudis (pasky) — MIT License
-// Vendored with modifications for Middleman integration.
+// Vendored with modifications for Forge integration.
 // cdp - lightweight Chrome DevTools Protocol CLI
 // Uses raw CDP over WebSocket, no Puppeteer dependency.
 // Requires Node 22+ (built-in WebSocket).

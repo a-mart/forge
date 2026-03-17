@@ -6,6 +6,7 @@ node_modules/
 .DS_Store
 .env
 .middleman-test/
+.forge-test/
 .cta.json
 
 # Internal development artifacts

@@ -22,13 +22,13 @@ import {
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
 import { transcribeVoice } from '@/lib/voice-transcription-client'
 import { cn } from '@/lib/utils'
-import type { ConversationAttachment } from '@middleman/protocol'
+import type { ConversationAttachment } from '@forge/protocol'
 import type { SlashCommand } from '@/components/settings/slash-commands-api'
 
 const TEXTAREA_MAX_HEIGHT = 186
 const ACTIVE_WAVEFORM_BAR_COUNT = 16
 const OPENAI_KEY_REQUIRED_MESSAGE = 'OpenAI API key required \u2014 add it in Settings.'
-const DRAFTS_STORAGE_KEY = 'middleman-chat-drafts'
+const DRAFTS_STORAGE_KEY = 'forge-chat-drafts'
 
 function loadDrafts(): Record<string, string> {
   try {
@@ -52,7 +52,7 @@ function persistDrafts(drafts: Record<string, string>): void {
   }
 }
 
-const ATTACHMENT_DRAFTS_STORAGE_KEY = 'middleman-chat-attachment-drafts'
+const ATTACHMENT_DRAFTS_STORAGE_KEY = 'forge-chat-attachment-drafts'
 /** Max serialized size (bytes) we'll commit to localStorage for attachment drafts. */
 const ATTACHMENT_DRAFTS_MAX_BYTES = 4 * 1024 * 1024
 

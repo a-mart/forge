@@ -10,7 +10,7 @@ import type {
   PlaywrightDiscoveredSession,
   PlaywrightDiscoverySettings,
   PlaywrightDiscoverySnapshot,
-} from '@middleman/protocol'
+} from '@forge/protocol'
 import type { SwarmConfig } from '../swarm/types.js'
 import { getScheduleFilePath } from '../scheduler/schedule-storage.js'
 import { PlaywrightLivePreviewService } from '../playwright/playwright-live-preview-service.js'

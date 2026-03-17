@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { ConversationEntry } from '@middleman/protocol'
+import type { ConversationEntry } from '@forge/protocol'
 
 export interface PendingResponseStart {
   agentId: string

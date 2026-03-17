@@ -1,5 +1,5 @@
 {
-  "name": "@middleman/backend",
+  "name": "@forge/backend",
   "private": true,
   "license": "Apache-2.0",
   "type": "module",
@@ -13,7 +13,6 @@
     "@google/genai": "^1.42.0",
     "@mariozechner/pi-ai": "^0.56.2",
     "@mariozechner/pi-coding-agent": "^0.55.0",
-    "@middleman/protocol": "workspace:*",
     "@mozilla/readability": "^0.6.0",
     "@sinclair/typebox": "^0.34.41",
     "@slack/socket-mode": "^2.0.5",
@@ -26,7 +25,8 @@
     "slackify-markdown": "^5.0.0",
     "turndown": "^7.2.2",
     "turndown-plugin-gfm": "^1.0.2",
-    "ws": "^8.18.0"
+    "ws": "^8.18.0",
+    "@forge/protocol": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^24.3.0",

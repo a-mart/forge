@@ -1,4 +1,4 @@
-import type { AgentDescriptor, ManagerProfile } from '@middleman/protocol'
+import type { AgentDescriptor, ManagerProfile } from '@forge/protocol'
 
 const ACTIVE_STATUSES = new Set(['idle', 'streaming'])
 

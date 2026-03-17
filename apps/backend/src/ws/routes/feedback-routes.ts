@@ -1,4 +1,4 @@
-import { FEEDBACK_REASON_CODES, type FeedbackEvent, type FeedbackSubmitValue } from "@middleman/protocol";
+import { FEEDBACK_REASON_CODES, type FeedbackEvent, type FeedbackSubmitValue } from "@forge/protocol";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
 import { FeedbackService, type FeedbackAcrossSessionsOptions, type FeedbackListOptions } from "../../swarm/feedback-service.js";
 import { applyCorsHeaders, decodePathSegment, matchPathPattern, readJsonBody, sendJson } from "../http-utils.js";

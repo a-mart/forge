@@ -34,7 +34,7 @@ interface StaleMetaEntry {
 
 function parseArgs(argv: string[]): ScriptArgs {
   const args: ScriptArgs = {
-    dataDir: process.env.SWARM_DATA_DIR || join(homedir(), ".middleman"),
+    dataDir: process.env.SWARM_DATA_DIR || join(homedir(), ".forge"),
     json: false
   };
 

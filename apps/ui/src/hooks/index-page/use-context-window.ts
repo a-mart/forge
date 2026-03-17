@@ -8,7 +8,7 @@ import type {
   ConversationMessageAttachment,
   ConversationTextAttachment,
   ManagerModelPreset,
-} from '@middleman/protocol'
+} from '@forge/protocol'
 
 const CHARS_PER_TOKEN_ESTIMATE = 4
 const CONTEXT_WINDOW_BY_PRESET: Record<ManagerModelPreset, number> = {

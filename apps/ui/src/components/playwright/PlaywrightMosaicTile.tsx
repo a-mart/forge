@@ -19,7 +19,7 @@ import {
 import type {
   PlaywrightDiscoveredSession,
   PlaywrightLivePreviewEmbedStatusMessage,
-} from '@middleman/protocol'
+} from '@forge/protocol'
 
 interface PlaywrightMosaicTileProps {
   wsUrl: string

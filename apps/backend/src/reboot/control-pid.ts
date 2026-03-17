@@ -4,12 +4,31 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 export const RESTART_SIGNAL: NodeJS.Signals = "SIGUSR1";
-export const DAEMONIZED_ENV_VAR = "MIDDLEMAN_DAEMONIZED";
-export const RESTART_PARENT_PID_ENV_VAR = "MIDDLEMAN_RESTART_PARENT_PID";
+export const DAEMONIZED_ENV_VAR = "FORGE_DAEMONIZED";
+export const LEGACY_DAEMONIZED_ENV_VAR = "MIDDLEMAN_DAEMONIZED";
+export const RESTART_PARENT_PID_ENV_VAR = "FORGE_RESTART_PARENT_PID";
+export const LEGACY_RESTART_PARENT_PID_ENV_VAR = "MIDDLEMAN_RESTART_PARENT_PID";
 
 const CONTROL_PID_FILE_PREFIX = "swarm-prod-daemon-";
 const CONTROL_PID_FILE_SUFFIX = ".pid";
 const CONTROL_RESTART_FILE_SUFFIX = ".restart";
+
+export function readDaemonizedEnv(): string | undefined {
+  return process.env[DAEMONIZED_ENV_VAR] ?? process.env[LEGACY_DAEMONIZED_ENV_VAR];
+}
+
+export function readRestartParentPidEnv(): string | undefined {
+  return process.env[RESTART_PARENT_PID_ENV_VAR] ?? process.env[LEGACY_RESTART_PARENT_PID_ENV_VAR];
+}
+
+export function setRestartParentPidEnv(value: string): void {
+  process.env[RESTART_PARENT_PID_ENV_VAR] = value;
+}
+
+export function clearRestartParentPidEnv(): void {
+  delete process.env[RESTART_PARENT_PID_ENV_VAR];
+  delete process.env[LEGACY_RESTART_PARENT_PID_ENV_VAR];
+}
 
 export function getControlPidFilePath(repoRoot: string, port?: number): string {
   const controlHash = createControlPidHash(repoRoot, port);

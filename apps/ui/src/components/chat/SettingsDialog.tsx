@@ -7,7 +7,7 @@ import { SettingsIntegrations } from '@/components/settings/SettingsIntegrations
 import { SettingsSkills } from '@/components/settings/SettingsSkills'
 import { SettingsPrompts } from '@/components/settings/SettingsPrompts'
 import { SettingsSlashCommands } from '@/components/settings/SettingsSlashCommands'
-import type { AgentDescriptor, ManagerProfile, PlaywrightDiscoverySettings, PlaywrightDiscoverySnapshot, SlackStatusEvent, TelegramStatusEvent } from '@middleman/protocol'
+import type { AgentDescriptor, ManagerProfile, PlaywrightDiscoverySettings, PlaywrightDiscoverySnapshot, SlackStatusEvent, TelegramStatusEvent } from '@forge/protocol'
 
 interface SettingsPanelProps {
   wsUrl: string

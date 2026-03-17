@@ -4,7 +4,7 @@ import type {
   ApiProxyResponseEvent,
   FeedbackSubmitEvent,
   ServerEvent
-} from "@middleman/protocol";
+} from "@forge/protocol";
 import type { IntegrationRegistryService } from "../integrations/registry.js";
 import type { MobilePushService } from "../mobile/mobile-push-service.js";
 import type { PlaywrightDiscoveryService } from "../playwright/playwright-discovery-service.js";

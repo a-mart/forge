@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-TEST_DATA_DIR="${HOME}/.middleman-dev"
-LIVE_DATA_DIR="${HOME}/.middleman"
+TEST_DATA_DIR="${HOME}/.forge-dev"
+LIVE_DATA_DIR="${HOME}/.forge"
 BACKEND_PORT="47387"
 UI_PORT="47389"
-PID_FILE="${TMPDIR:-/tmp}/middleman-test-instance-middleman-multi-session.pid"
+PID_FILE="${TMPDIR:-/tmp}/forge-test-instance-forge-multi-session.pid"
 
 log() {
   printf '[test-reset] %s\n' "$*"
@@ -105,7 +105,7 @@ if is_port_in_use "${BACKEND_PORT}" || is_port_in_use "${UI_PORT}"; then
   log "Continuing with data reset."
 fi
 
-if [ "${TEST_DATA_DIR}" != "${HOME}/.middleman-dev" ]; then
+if [ "${TEST_DATA_DIR}" != "${HOME}/.forge-dev" ]; then
   log "Safety check failed: unexpected TEST_DATA_DIR=${TEST_DATA_DIR}"
   exit 1
 fi

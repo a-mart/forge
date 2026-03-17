@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
-import type { CortexReviewRunScope } from "@middleman/protocol";
+import type { CortexReviewRunScope } from "@forge/protocol";
 import { getCortexReviewRunsPath } from "../data-paths.js";
 import {
   buildCortexReviewRunRequestText,

@@ -4,7 +4,7 @@ import type {
   PlaywrightDiscoverySnapshot,
   PlaywrightLivePreviewHandle,
   UpdatePlaywrightSettingsRequest,
-} from '@middleman/protocol'
+} from '@forge/protocol'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
 
 async function readApiError(response: Response): Promise<string> {

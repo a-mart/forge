@@ -8,7 +8,7 @@ import type {
   PlaywrightDiscoverySnapshot,
   SlackStatusEvent,
   TelegramStatusEvent,
-} from '@middleman/protocol'
+} from '@forge/protocol'
 
 export type ConversationHistoryEntry = Extract<
   ConversationEntry,

@@ -1,4 +1,4 @@
-import type { ManagerProfile } from "@middleman/protocol";
+import type { ManagerProfile } from "@forge/protocol";
 import type { AgentStatus } from "./agent-state-machine.js";
 
 export type AgentRole = "manager" | "worker";

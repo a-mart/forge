@@ -12,7 +12,7 @@ import {
 import { ContextWindowIndicator } from '@/components/chat/ContextWindowIndicator'
 import { MessageFeedback } from '@/components/chat/message-list/MessageFeedback'
 import { cn } from '@/lib/utils'
-import type { AgentStatus } from '@middleman/protocol'
+import type { AgentStatus } from '@forge/protocol'
 
 export type ChannelView = 'web' | 'all'
 

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { ChevronDown, ChevronRight, Variable } from 'lucide-react'
-import type { PromptVariableDeclaration } from '@middleman/protocol'
+import type { PromptVariableDeclaration } from '@forge/protocol'
 
 interface PromptVariablePanelProps {
   variables: PromptVariableDeclaration[]

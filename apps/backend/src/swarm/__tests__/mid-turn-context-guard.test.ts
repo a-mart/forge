@@ -970,7 +970,7 @@ describe("mid-turn context guard", () => {
       cwd: undefined
     });
 
-    expect(path).toBe(".middleman-handoff-guard-worker.md");
+    expect(path).toBe(".forge-handoff-guard-worker.md");
   });
 
   it("isAlreadyCompactedError matches already-compacted and nothing-to-compact strings", () => {

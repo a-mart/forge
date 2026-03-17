@@ -32,7 +32,7 @@ import {
 } from '../swarm/data-paths.js'
 import { scanCortexReviewStatus } from '../swarm/scripts/cortex-scan.js'
 import { SwarmWebSocketServer } from '../ws/server.js'
-import type { ServerEvent } from '@middleman/protocol'
+import type { ServerEvent } from '@forge/protocol'
 
 class FakeRuntime {
   readonly descriptor: AgentDescriptor
@@ -856,7 +856,7 @@ describe('SwarmWebSocketServer', () => {
 
     await server.start()
 
-    const targetPath = join(tmpdir(), `middleman-ws-test-${process.pid}-${Date.now()}.md`)
+    const targetPath = join(tmpdir(), `forge-ws-test-${process.pid}-${Date.now()}.md`)
     const content = '# Temp Notes\n\nSaved from tmpdir.\n'
 
     try {

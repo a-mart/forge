@@ -11,7 +11,7 @@ const AGENTS_STORE_RELATIVE_PATH = "swarm/agents.json";
 const DEFAULT_MANAGER_CANDIDATES = ["manager", "opus-manager"];
 
 function resolveDataDir() {
-  return process.env.SWARM_DATA_DIR || resolve(homedir(), ".middleman");
+  return process.env.SWARM_DATA_DIR || resolve(homedir(), ".forge");
 }
 
 function resolveSchedulesFilePath(dataDir, managerId) {

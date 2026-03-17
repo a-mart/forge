@@ -35,7 +35,7 @@ import type {
   PlaywrightDiscoveredSession,
   PlaywrightDiscoverySummary,
   PlaywrightDiscoverySnapshot,
-} from '@middleman/protocol'
+} from '@forge/protocol'
 
 export interface PlaywrightDashboardViewProps {
   wsUrl: string
@@ -384,7 +384,7 @@ export function PlaywrightDashboardView({
                 <h3 className="text-lg font-semibold">Playwright Dashboard is disabled</h3>
                 <p className="text-sm text-muted-foreground">
                   {snapshot.settings.source === 'env'
-                    ? 'This feature is forced off by the MIDDLEMAN_PLAYWRIGHT_DASHBOARD_ENABLED environment variable.'
+                    ? 'This feature is forced off by the FORGE_PLAYWRIGHT_DASHBOARD_ENABLED environment variable.'
                     : 'Enable the Playwright Dashboard in Settings to discover browser sessions across your worktrees.'}
                 </p>
               </div>

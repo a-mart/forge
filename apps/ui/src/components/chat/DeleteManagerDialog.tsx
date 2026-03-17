@@ -6,7 +6,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import type { AgentDescriptor } from '@middleman/protocol'
+import type { AgentDescriptor } from '@forge/protocol'
 
 interface DeleteManagerDialogProps {
   managerToDelete: AgentDescriptor | null

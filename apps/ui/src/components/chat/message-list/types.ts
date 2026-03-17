@@ -1,4 +1,4 @@
-import type { ConversationEntry } from '@middleman/protocol'
+import type { ConversationEntry } from '@forge/protocol'
 
 export type ConversationMessageEntry = Extract<
   ConversationEntry,

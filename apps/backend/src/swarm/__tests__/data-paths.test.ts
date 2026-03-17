@@ -48,7 +48,7 @@ import {
   sanitizePathSegment
 } from "../data-paths.js";
 
-const DATA_DIR = join(tmpdir(), "middleman-data");
+const DATA_DIR = join(tmpdir(), "forge-data");
 const PROFILE_ID = "feature-manager";
 const ROOT_SESSION_ID = "feature-manager";
 const NON_ROOT_SESSION_ID = "feature-manager--s2";

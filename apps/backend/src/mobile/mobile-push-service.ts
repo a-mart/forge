@@ -1,4 +1,4 @@
-import type { ServerEvent } from "@middleman/protocol";
+import type { ServerEvent } from "@forge/protocol";
 import { isNonRunningAgentStatus } from "../swarm/agent-state-machine.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import { ExpoPushClient, type ExpoPushMessage, type ExpoSendResult } from "./expo-push-client.js";
@@ -12,7 +12,7 @@ import {
 const DEFAULT_RECEIPT_POLL_INTERVAL_MS = 60_000;
 const DEFAULT_SEND_RETRY_BACKOFF_MS = [250, 1000, 2_500] as const;
 const RECEIPTS_CHUNK_SIZE = 100;
-const DEFAULT_PUSH_TITLE = "Middleman";
+const DEFAULT_PUSH_TITLE = "Forge";
 const DEFAULT_TEST_BODY = "Forge push notifications are configured.";
 
 type PushNotificationType = "unread" | "agent_status" | "error" | "test";

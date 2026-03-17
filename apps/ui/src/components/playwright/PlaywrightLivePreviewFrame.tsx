@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2, MousePointer } from 'lucide-react'
-import type { PlaywrightLivePreviewEmbedStatusMessage } from '@middleman/protocol'
+import type { PlaywrightLivePreviewEmbedStatusMessage } from '@forge/protocol'
 import { cn } from '@/lib/utils'
 
 interface PlaywrightLivePreviewFrameProps {

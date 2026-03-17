@@ -21,12 +21,15 @@ import {
 import type { SwarmConfig } from "./swarm/types.js";
 
 export function readPlaywrightDashboardEnvOverride(): boolean | undefined {
-  return parseOptionalBooleanEnv(process.env.MIDDLEMAN_PLAYWRIGHT_DASHBOARD_ENABLED);
+  return parseOptionalBooleanEnv(
+    process.env.FORGE_PLAYWRIGHT_DASHBOARD_ENABLED ??
+      process.env.MIDDLEMAN_PLAYWRIGHT_DASHBOARD_ENABLED
+  );
 }
 
 export function createConfig(): SwarmConfig {
   const rootDir = detectRootDir();
-  const dataDir = process.env.MIDDLEMAN_DATA_DIR ?? resolveDefaultDataDir();
+  const dataDir = process.env.FORGE_DATA_DIR ?? process.env.MIDDLEMAN_DATA_DIR ?? resolveDefaultDataDir();
   const managerId = undefined;
 
   const swarmDir = getSwarmDir(dataDir);
@@ -60,9 +63,9 @@ export function createConfig(): SwarmConfig {
   ]);
 
   return {
-    host: process.env.MIDDLEMAN_HOST ?? "127.0.0.1",
-    port: Number.parseInt(process.env.MIDDLEMAN_PORT ?? "47187", 10),
-    debug: process.env.MIDDLEMAN_DEBUG === "true",
+    host: process.env.FORGE_HOST ?? process.env.MIDDLEMAN_HOST ?? "127.0.0.1",
+    port: Number.parseInt(process.env.FORGE_PORT ?? process.env.MIDDLEMAN_PORT ?? "47187", 10),
+    debug: (process.env.FORGE_DEBUG ?? process.env.MIDDLEMAN_DEBUG ?? "false") === "true",
     allowNonManagerSubscriptions: true,
     managerId,
     managerDisplayName: "Manager",
@@ -101,21 +104,47 @@ export function createConfig(): SwarmConfig {
 }
 
 function resolveDefaultDataDir(): string {
+  const forgePath = resolve(homedir(), ".forge");
   const legacyPath = resolve(homedir(), ".middleman");
 
   if (process.platform !== "win32") {
-    return legacyPath;
+    if (existsSync(forgePath)) {
+      return forgePath;
+    }
+
+    if (existsSync(legacyPath)) {
+      console.warn(
+        `[config] Using legacy data dir ${legacyPath}. ` +
+          `Set FORGE_DATA_DIR or migrate to ${forgePath}.`
+      );
+      return legacyPath;
+    }
+
+    return forgePath;
   }
 
   const localAppDataBase = process.env.LOCALAPPDATA?.trim()
     ? resolve(process.env.LOCALAPPDATA)
     : resolve(homedir(), "AppData", "Local");
-  const windowsDefault = resolve(localAppDataBase, "middleman");
+  const windowsDefault = resolve(localAppDataBase, "forge");
+  const windowsLegacy = resolve(localAppDataBase, "middleman");
 
-  if (!existsSync(windowsDefault) && existsSync(legacyPath)) {
+  if (existsSync(windowsDefault)) {
+    return windowsDefault;
+  }
+
+  if (existsSync(windowsLegacy)) {
+    console.warn(
+      `[config] Using legacy Windows data dir ${windowsLegacy}. ` +
+        `Set FORGE_DATA_DIR or migrate to ${windowsDefault}.`
+    );
+    return windowsLegacy;
+  }
+
+  if (existsSync(legacyPath)) {
     console.warn(
       `[config] Using legacy data dir ${legacyPath} on Windows. ` +
-        `Set MIDDLEMAN_DATA_DIR or migrate to ${windowsDefault}.`
+        `Set FORGE_DATA_DIR or migrate to ${windowsDefault}.`
     );
     return legacyPath;
   }
@@ -161,7 +190,7 @@ function parseOptionalBooleanEnv(value: string | undefined): boolean | undefined
   }
 
   console.warn(
-    `[config] Ignoring invalid MIDDLEMAN_PLAYWRIGHT_DASHBOARD_ENABLED value: ${value}`,
+    `[config] Ignoring invalid FORGE_PLAYWRIGHT_DASHBOARD_ENABLED value: ${value}`,
   );
   return undefined;
 }

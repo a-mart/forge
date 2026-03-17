@@ -6,11 +6,11 @@
  * stay clean (no YAML frontmatter) — all discoverability metadata lives here.
  *
  * Canonical type definitions for PromptCategory, PromptSourceLayer, and
- * PromptVariableDeclaration live in `@middleman/protocol` (shared-types).
+ * PromptVariableDeclaration live in `@forge/protocol` (shared-types).
  * We re-export them here for convenience.
  */
 
-import type { PromptCategory, PromptSourceLayer, PromptVariableDeclaration } from "@middleman/protocol";
+import type { PromptCategory, PromptSourceLayer, PromptVariableDeclaration } from "@forge/protocol";
 
 // Re-export protocol types so consumers can import from either location.
 export type { PromptCategory, PromptSourceLayer, PromptVariableDeclaration };
@@ -64,7 +64,7 @@ export const PROMPT_METADATA: PromptMetadataEntry[] = [
     description: 'Instructions for the Cortex intelligence/knowledge manager.',
     profileScope: 'cortex',
     variables: [
-      { name: 'SWARM_DATA_DIR', description: 'Path to the Middleman data directory' },
+      { name: 'SWARM_DATA_DIR', description: 'Path to the Forge data directory' },
       { name: 'SWARM_MEMORY_FILE', description: 'Path to the memory file' },
       { name: 'SWARM_SCRIPTS_DIR', description: 'Path to the scripts directory' },
     ],

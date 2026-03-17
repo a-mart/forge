@@ -1,7 +1,7 @@
 import { appendFile, mkdir, open, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import type { SessionMeta } from "@middleman/protocol";
+import type { SessionMeta } from "@forge/protocol";
 import {
   getCortexPromotionManifestsDir,
   getCortexReviewLockPath,

@@ -102,14 +102,14 @@ Forge runs on **macOS**, **Linux**, and **Windows**.
 | Agent orchestration | ✅ | ✅ | ✅ |
 | Playwright dashboard | ✅ | ✅ | ❌ (Unix sockets required) |
 | Shell scripts (`scripts/*.sh`) | ✅ | ✅ | Requires WSL or Git Bash |
-| Default data directory | `~/.middleman` | `~/.middleman` | `%LOCALAPPDATA%\middleman` |
+| Default data directory | `~/.forge` | `~/.forge` | `%LOCALAPPDATA%\forge` |
 
 See [docs/WINDOWS_SETUP.md](docs/WINDOWS_SETUP.md) for detailed Windows setup instructions.
 
 ## Project Structure
 
 ```
-middleman/
+forge/
 ├── apps/
 │   ├── backend/       # Node.js daemon — orchestration, persistence, integrations
 │   └── ui/            # React dashboard — TanStack Start + Vite SPA

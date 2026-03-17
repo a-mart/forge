@@ -1,6 +1,6 @@
 import { Layers } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
-import type { PromptSourceLayer } from '@middleman/protocol'
+import type { PromptSourceLayer } from '@forge/protocol'
 
 const LAYER_LABELS: Record<PromptSourceLayer, string> = {
   profile: 'Profile override',

@@ -1,7 +1,7 @@
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { homedir, tmpdir } from "node:os";
-import type { ServerEvent } from "@middleman/protocol";
+import type { ServerEvent } from "@forge/protocol";
 import {
   isPathWithinRoots,
   normalizeAllowlistRoots,

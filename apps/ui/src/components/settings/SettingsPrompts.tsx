@@ -41,7 +41,7 @@ import type {
   PromptCategory,
   PromptListEntry,
   ManagerProfile,
-} from '@middleman/protocol'
+} from '@forge/protocol'
 
 const CORTEX_PROFILE_ID = 'cortex'
 

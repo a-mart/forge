@@ -10,7 +10,7 @@ import type {
   PlaywrightDiscoveredSession,
   PlaywrightLivePreviewEmbedStatusMessage,
   PlaywrightPreviewStatus,
-} from '@middleman/protocol'
+} from '@forge/protocol'
 
 interface PlaywrightLivePreviewPaneProps {
   wsUrl: string

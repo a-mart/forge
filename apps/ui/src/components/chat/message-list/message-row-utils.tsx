@@ -1,5 +1,5 @@
 import { cn } from '@/lib/utils'
-import type { MessageSourceContext } from '@middleman/protocol'
+import type { MessageSourceContext } from '@forge/protocol'
 
 export function formatTimestamp(iso: string): string {
   try {

@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { FeedbackEvent, FeedbackSubmitEvent, SessionMeta } from "@middleman/protocol";
+import type { FeedbackEvent, FeedbackSubmitEvent, SessionMeta } from "@forge/protocol";
 import { describe, expect, it } from "vitest";
 import { getSessionFeedbackPath } from "../data-paths.js";
 import { FeedbackService } from "../feedback-service.js";

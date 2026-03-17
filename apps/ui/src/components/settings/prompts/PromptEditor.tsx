@@ -6,7 +6,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { PromptSourceIndicator } from './PromptSourceIndicator'
 import { PromptVariablePanel } from './PromptVariablePanel'
 import { fetchPromptContent, savePromptOverride, deletePromptOverride } from './prompt-api'
-import type { PromptCategory, PromptContentResponse } from '@middleman/protocol'
+import type { PromptCategory, PromptContentResponse } from '@forge/protocol'
 
 interface PromptEditorProps {
   wsUrl: string

@@ -3,7 +3,7 @@ import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import type { ManagerProfile } from "@middleman/protocol";
+import type { ManagerProfile } from "@forge/protocol";
 import {
   getLegacyAgentMemoryPath,
   getLegacyAuthFilePath,
@@ -284,7 +284,7 @@ function createManagerDescriptor(agentId: string, profileId?: string): AgentDesc
     updatedAt: FIXED_TIMESTAMP,
     cwd: "/tmp/project",
     model: { ...DEFAULT_MODEL },
-    sessionFile: join(tmpdir(), `.middleman/sessions/${agentId}.jsonl`)
+    sessionFile: join(tmpdir(), `.forge/sessions/${agentId}.jsonl`)
   };
 
   if (profileId) {
@@ -305,7 +305,7 @@ function createWorkerDescriptor(workerId: string, managerId: string): AgentDescr
     updatedAt: FIXED_TIMESTAMP,
     cwd: "/tmp/project",
     model: { ...DEFAULT_MODEL },
-    sessionFile: join(tmpdir(), `.middleman/sessions/${workerId}.jsonl`)
+    sessionFile: join(tmpdir(), `.forge/sessions/${workerId}.jsonl`)
   };
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { AgentDescriptor, ConversationEntry } from '@middleman/protocol'
+import type { AgentDescriptor, ConversationEntry } from '@forge/protocol'
 import { deriveVisibleMessages } from './use-visible-messages'
 
 const manager: AgentDescriptor = {

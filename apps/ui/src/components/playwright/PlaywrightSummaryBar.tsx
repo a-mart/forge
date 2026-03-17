@@ -2,7 +2,7 @@ import {
   Activity,
   Clock,
 } from 'lucide-react'
-import type { PlaywrightDiscoverySummary } from '@middleman/protocol'
+import type { PlaywrightDiscoverySummary } from '@forge/protocol'
 
 interface PlaywrightSummaryBarProps {
   summary: PlaywrightDiscoverySummary

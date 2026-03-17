@@ -10,7 +10,7 @@ import type {
   PromptSourceLayer,
   PromptListEntry,
   PromptContentResponse,
-} from '@middleman/protocol'
+} from '@forge/protocol'
 
 async function readApiError(response: Response): Promise<string> {
   try {

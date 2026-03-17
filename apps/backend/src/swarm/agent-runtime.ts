@@ -1276,7 +1276,7 @@ Continue your work now.`;
 
 export function buildHandoffFilePath(descriptor: Pick<AgentDescriptor, "agentId"> & { cwd?: string }): string {
   const safeId = descriptor.agentId.replace(/[^a-zA-Z0-9_-]/g, "_");
-  return join(descriptor.cwd ?? ".", `.middleman-handoff-${safeId}.md`);
+  return join(descriptor.cwd ?? ".", `.forge-handoff-${safeId}.md`);
 }
 
 export function isAlreadyCompactedError(message: string): boolean {

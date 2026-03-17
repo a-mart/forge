@@ -8,7 +8,7 @@ import { dirname, resolve } from "node:path";
 const SLASH_COMMAND_NAME_PATTERN = /^[A-Za-z0-9_-]+$/;
 
 function resolveDataDir() {
-  return process.env.SWARM_DATA_DIR || resolve(homedir(), ".middleman");
+  return process.env.SWARM_DATA_DIR || resolve(homedir(), ".forge");
 }
 
 function resolveSlashCommandsFilePath(dataDir) {
