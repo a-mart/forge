@@ -185,11 +185,18 @@ const pendingCompletionCheck = new Map<string, number>() // agentId → timestam
 // ── Trigger checks ──
 
 function hasStreamingWorkers(managerAgentId: string, state: ManagerWsState): boolean {
-  return state.agents.some((agent) => {
+  const hasLoadedStreamingWorker = state.agents.some((agent) => {
     if (agent.role !== 'worker' || agent.managerId !== managerAgentId) return false
     const liveStatus = state.statuses[agent.agentId]?.status ?? agent.status
     return liveStatus === 'streaming'
   })
+
+  if (hasLoadedStreamingWorker) {
+    return true
+  }
+
+  const manager = state.agents.find((agent) => agent.role === 'manager' && agent.agentId === managerAgentId)
+  return (manager?.activeWorkerCount ?? 0) > 0
 }
 
 function isManagerStreaming(agentId: string, state: ManagerWsState): boolean {

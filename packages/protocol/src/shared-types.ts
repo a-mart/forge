@@ -45,6 +45,8 @@ export interface AgentDescriptor {
   sessionLabel?: string
   sessionPurpose?: AgentSessionPurpose
   mergedAt?: string
+  workerCount?: number
+  activeWorkerCount?: number
 }
 
 export type CortexReviewRunTrigger = 'manual' | 'scheduled'

@@ -103,6 +103,28 @@ export async function handleAgentCommand(context: AgentCommandRouteContext): Pro
     return true;
   }
 
+  if (command.type === "get_session_workers") {
+    const manager = swarmManager.getAgent(command.sessionAgentId);
+    if (!manager || manager.role !== "manager") {
+      send(socket, {
+        type: "error",
+        code: "UNKNOWN_SESSION",
+        message: `Unknown or non-manager session: ${command.sessionAgentId}`,
+        requestId: command.requestId
+      });
+      return true;
+    }
+
+    send(socket, {
+      type: "session_workers_snapshot",
+      sessionAgentId: command.sessionAgentId,
+      workers: swarmManager.listWorkersForSession(command.sessionAgentId),
+      requestId: command.requestId
+    });
+
+    return true;
+  }
+
   if (command.type === "list_directories") {
     try {
       const listed = await swarmManager.listDirectories(command.path);

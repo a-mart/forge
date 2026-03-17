@@ -2618,6 +2618,99 @@ describe('SwarmWebSocketServer', () => {
     await server.stop()
   })
 
+  it('returns session workers on demand over websocket', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', { agentId: 'Worker Snapshot' })
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    const client = new WebSocket(`ws://${config.host}:${config.port}`)
+    const events: ServerEvent[] = []
+
+    client.on('message', (raw) => {
+      events.push(JSON.parse(raw.toString()) as ServerEvent)
+    })
+
+    await once(client, 'open')
+    client.send(JSON.stringify({ type: 'subscribe', agentId: 'manager' }))
+    await waitForEvent(events, (event) => event.type === 'ready' && event.subscribedAgentId === 'manager')
+
+    client.send(JSON.stringify({ type: 'get_session_workers', sessionAgentId: 'manager', requestId: 'req-workers' }))
+
+    const workerSnapshotEvent = await waitForEvent(
+      events,
+      (event) =>
+        event.type === 'session_workers_snapshot' &&
+        event.sessionAgentId === 'manager' &&
+        event.requestId === 'req-workers',
+    )
+
+    expect(workerSnapshotEvent.type).toBe('session_workers_snapshot')
+    if (workerSnapshotEvent.type === 'session_workers_snapshot') {
+      expect(workerSnapshotEvent.workers).toHaveLength(1)
+      expect(workerSnapshotEvent.workers[0]).toMatchObject({
+        agentId: worker.agentId,
+        managerId: 'manager',
+      })
+    }
+
+    client.close()
+    await once(client, 'close')
+    await server.stop()
+  })
+
+  it('returns an UNKNOWN_SESSION error for unknown get_session_workers requests', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    const client = new WebSocket(`ws://${config.host}:${config.port}`)
+    const events: ServerEvent[] = []
+
+    client.on('message', (raw) => {
+      events.push(JSON.parse(raw.toString()) as ServerEvent)
+    })
+
+    await once(client, 'open')
+    client.send(JSON.stringify({ type: 'subscribe', agentId: 'manager' }))
+    await waitForEvent(events, (event) => event.type === 'ready' && event.subscribedAgentId === 'manager')
+
+    client.send(JSON.stringify({ type: 'get_session_workers', sessionAgentId: 'missing', requestId: 'req-missing' }))
+
+    const errorEvent = await waitForEvent(
+      events,
+      (event) => event.type === 'error' && event.code === 'UNKNOWN_SESSION' && event.requestId === 'req-missing',
+    )
+    expect(errorEvent.type).toBe('error')
+
+    client.close()
+    await once(client, 'close')
+    await server.stop()
+  })
+
   it('kills a worker via kill_agent command and emits updated status + snapshot events', async () => {
     const port = await getAvailablePort()
     const config = await makeTempConfig(port, true)
@@ -2647,7 +2740,15 @@ describe('SwarmWebSocketServer', () => {
     client.send(JSON.stringify({ type: 'subscribe' }))
 
     await waitForEvent(events, (event) => event.type === 'ready')
-    await waitForEvent(events, (event) => event.type === 'agents_snapshot')
+    const bootstrapSnapshot = await waitForEvent(events, (event) => event.type === 'agents_snapshot')
+    expect(bootstrapSnapshot.type).toBe('agents_snapshot')
+    if (bootstrapSnapshot.type === 'agents_snapshot') {
+      expect(bootstrapSnapshot.agents.some((agent) => agent.agentId === worker.agentId)).toBe(false)
+      expect(bootstrapSnapshot.agents.find((agent) => agent.agentId === 'manager')).toMatchObject({
+        workerCount: 1,
+        activeWorkerCount: 0,
+      })
+    }
 
     client.send(JSON.stringify({ type: 'kill_agent', agentId: worker.agentId }))
 
@@ -2656,14 +2757,32 @@ describe('SwarmWebSocketServer', () => {
       (event) => event.type === 'agent_status' && event.agentId === worker.agentId && event.status === 'terminated',
     )
     expect(statusEvent.type).toBe('agent_status')
+    if (statusEvent.type === 'agent_status') {
+      expect(statusEvent.managerId).toBe('manager')
+    }
 
     const snapshotEvent = await waitForEvent(
       events,
       (event) =>
         event.type === 'agents_snapshot' &&
-        event.agents.some((agent) => agent.agentId === worker.agentId && agent.status === 'terminated'),
+        event.agents.some(
+          (agent) =>
+            agent.agentId === 'manager' &&
+            agent.role === 'manager' &&
+            agent.workerCount === 1 &&
+            agent.activeWorkerCount === 0,
+        ),
     )
     expect(snapshotEvent.type).toBe('agents_snapshot')
+
+    const workerSnapshotEvent = await waitForEvent(
+      events,
+      (event) =>
+        event.type === 'session_workers_snapshot' &&
+        event.sessionAgentId === 'manager' &&
+        event.workers.some((agent) => agent.agentId === worker.agentId && agent.status === 'terminated'),
+    )
+    expect(workerSnapshotEvent.type).toBe('session_workers_snapshot')
 
     const descriptor = manager.listAgents().find((agent) => agent.agentId === worker.agentId)
     expect(descriptor?.status).toBe('terminated')
@@ -2724,10 +2843,24 @@ describe('SwarmWebSocketServer', () => {
       events,
       (event) =>
         event.type === 'agents_snapshot' &&
-        event.agents.some((agent) => agent.agentId === 'manager' && agent.status === 'idle') &&
-        event.agents.some((agent) => agent.agentId === worker.agentId && agent.status === 'idle'),
+        event.agents.some(
+          (agent) =>
+            agent.agentId === 'manager' &&
+            agent.status === 'idle' &&
+            agent.workerCount === 1 &&
+            agent.activeWorkerCount === 0,
+        ),
     )
     expect(snapshotEvent.type).toBe('agents_snapshot')
+
+    const workerSnapshotEvent = await waitForEvent(
+      events,
+      (event) =>
+        event.type === 'session_workers_snapshot' &&
+        event.sessionAgentId === 'manager' &&
+        event.workers.some((agent) => agent.agentId === worker.agentId && agent.status === 'idle'),
+    )
+    expect(workerSnapshotEvent.type).toBe('session_workers_snapshot')
 
     expect(managerRuntime?.stopInFlightCalls).toEqual([{ abort: true }])
     expect(workerRuntime?.stopInFlightCalls).toEqual([{ abort: true }])
