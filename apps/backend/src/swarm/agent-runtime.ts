@@ -55,6 +55,7 @@ const CONTEXT_RECOVERY_GRACE_MS = 2_000;
 const HANDOFF_TURN_TIMEOUT_MS = 45_000;
 const MAX_HANDOFF_CONTENT_CHARS = 3_000;
 const MAX_RECOVERY_BUFFERED_MESSAGES = 25;
+const DEFAULT_ABORT_TIMEOUT_MS = 5_000;
 
 export type { RuntimeImageAttachment, RuntimeUserMessage, RuntimeUserMessageInput } from "./runtime-types.js";
 
@@ -78,6 +79,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
   private guardAbortController: AbortController | undefined;
   private lastContextBudgetCheckAtMs = 0;
   private latestAutoCompactionReason: "threshold" | "overflow" | undefined;
+  private suppressSessionEventsUntilIdle = false;
 
   constructor(options: {
     descriptor: AgentDescriptor;
@@ -121,6 +123,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
     _requestedMode: RequestedDeliveryMode = "auto"
   ): Promise<SendMessageReceipt> {
     this.ensureNotTerminated();
+    this.suppressSessionEventsUntilIdle = false;
 
     const deliveryId = randomUUID();
     const message = normalizeRuntimeUserMessage(input);
@@ -159,7 +162,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
     };
   }
 
-  async terminate(options?: { abort?: boolean }): Promise<void> {
+  async terminate(options?: { abort?: boolean; shutdownTimeoutMs?: number }): Promise<void> {
     if (this.status === "terminated") return;
 
     this.endContextRecovery();
@@ -170,7 +173,11 @@ export class AgentRuntime implements SwarmAgentRuntime {
     const shouldAbort = options?.abort ?? true;
     if (shouldAbort) {
       try {
-        await this.session.abort();
+        await withTimeout(
+          this.session.abort(),
+          options?.shutdownTimeoutMs ?? DEFAULT_ABORT_TIMEOUT_MS,
+          "terminate_abort"
+        );
       } catch (error) {
         this.logRuntimeError("interrupt", error, {
           stage: "terminate_abort_failed"
@@ -193,7 +200,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
     await this.emitStatus();
   }
 
-  async stopInFlight(options?: { abort?: boolean }): Promise<void> {
+  async stopInFlight(options?: { abort?: boolean; shutdownTimeoutMs?: number }): Promise<void> {
     if (this.status === "terminated") {
       return;
     }
@@ -206,8 +213,13 @@ export class AgentRuntime implements SwarmAgentRuntime {
     const shouldAbort = options?.abort ?? true;
     if (shouldAbort) {
       try {
-        await this.session.abort();
+        await withTimeout(
+          this.session.abort(),
+          options?.shutdownTimeoutMs ?? DEFAULT_ABORT_TIMEOUT_MS,
+          "stop_in_flight_abort"
+        );
       } catch (error) {
+        this.suppressSessionEventsUntilIdle = true;
         this.logRuntimeError("interrupt", error, {
           stage: "stop_in_flight_abort_failed"
         });
@@ -487,6 +499,16 @@ export class AgentRuntime implements SwarmAgentRuntime {
   }
 
   private async handleEvent(event: AgentSessionEvent): Promise<void> {
+    if (this.suppressSessionEventsUntilIdle) {
+      if (event.type === "agent_end") {
+        this.suppressSessionEventsUntilIdle = false;
+        if (this.status !== "terminated") {
+          await this.updateStatus("idle");
+        }
+      }
+      return;
+    }
+
     if (this.callbacks.onSessionEvent) {
       await this.callbacks.onSessionEvent(this.descriptor.agentId, event as unknown as RuntimeSessionEvent);
     }

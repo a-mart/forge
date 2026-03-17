@@ -41,14 +41,15 @@ interface RuntimeFactoryDependencies {
   ) => Array<{ path: string; content: string }>;
   callbacks: {
     onStatusChange: (
+      runtimeToken: number,
       agentId: string,
       status: AgentStatus,
       pendingCount: number,
       contextUsage?: AgentContextUsage
     ) => Promise<void>;
-    onSessionEvent: (agentId: string, event: RuntimeSessionEvent) => Promise<void>;
-    onAgentEnd: (agentId: string) => Promise<void>;
-    onRuntimeError: (agentId: string, error: RuntimeErrorEvent) => Promise<void>;
+    onSessionEvent: (runtimeToken: number, agentId: string, event: RuntimeSessionEvent) => Promise<void>;
+    onAgentEnd: (runtimeToken: number, agentId: string) => Promise<void>;
+    onRuntimeError: (runtimeToken: number, agentId: string, error: RuntimeErrorEvent) => Promise<void>;
   };
 }
 
@@ -57,18 +58,20 @@ export class RuntimeFactory {
 
   async createRuntimeForDescriptor(
     descriptor: AgentDescriptor,
-    systemPrompt: string
+    systemPrompt: string,
+    runtimeToken = 0
   ): Promise<SwarmAgentRuntime> {
     if (isCodexAppServerModelDescriptor(descriptor.model)) {
-      return this.createCodexRuntimeForDescriptor(descriptor, systemPrompt);
+      return this.createCodexRuntimeForDescriptor(descriptor, systemPrompt, runtimeToken);
     }
 
-    return this.createPiRuntimeForDescriptor(descriptor, systemPrompt);
+    return this.createPiRuntimeForDescriptor(descriptor, systemPrompt, runtimeToken);
   }
 
   private async createPiRuntimeForDescriptor(
     descriptor: AgentDescriptor,
-    systemPrompt: string
+    systemPrompt: string,
+    runtimeToken: number
   ): Promise<SwarmAgentRuntime> {
     const swarmTools = this.buildRuntimeTools(descriptor);
     const thinkingLevel = normalizeThinkingLevel(descriptor.model.thinkingLevel);
@@ -185,16 +188,16 @@ export class RuntimeFactory {
       session: session as AgentSession,
       callbacks: {
         onStatusChange: async (agentId, status, pendingCount, contextUsage) => {
-          await this.deps.callbacks.onStatusChange(agentId, status, pendingCount, contextUsage);
+          await this.deps.callbacks.onStatusChange(runtimeToken, agentId, status, pendingCount, contextUsage);
         },
         onSessionEvent: async (agentId, event) => {
-          await this.deps.callbacks.onSessionEvent(agentId, event);
+          await this.deps.callbacks.onSessionEvent(runtimeToken, agentId, event);
         },
         onAgentEnd: async (agentId) => {
-          await this.deps.callbacks.onAgentEnd(agentId);
+          await this.deps.callbacks.onAgentEnd(runtimeToken, agentId);
         },
         onRuntimeError: async (agentId, error) => {
-          await this.deps.callbacks.onRuntimeError(agentId, error);
+          await this.deps.callbacks.onRuntimeError(runtimeToken, agentId, error);
         }
       },
       now: this.deps.now
@@ -203,7 +206,8 @@ export class RuntimeFactory {
 
   private async createCodexRuntimeForDescriptor(
     descriptor: AgentDescriptor,
-    systemPrompt: string
+    systemPrompt: string,
+    runtimeToken: number
   ): Promise<SwarmAgentRuntime> {
     const swarmTools = this.buildRuntimeTools(descriptor);
     const memoryResources = await this.deps.getMemoryRuntimeResources(descriptor);
@@ -227,16 +231,16 @@ export class RuntimeFactory {
       descriptor,
       callbacks: {
         onStatusChange: async (agentId, status, pendingCount, contextUsage) => {
-          await this.deps.callbacks.onStatusChange(agentId, status, pendingCount, contextUsage);
+          await this.deps.callbacks.onStatusChange(runtimeToken, agentId, status, pendingCount, contextUsage);
         },
         onSessionEvent: async (agentId, event) => {
-          await this.deps.callbacks.onSessionEvent(agentId, event);
+          await this.deps.callbacks.onSessionEvent(runtimeToken, agentId, event);
         },
         onAgentEnd: async (agentId) => {
-          await this.deps.callbacks.onAgentEnd(agentId);
+          await this.deps.callbacks.onAgentEnd(runtimeToken, agentId);
         },
         onRuntimeError: async (agentId, error) => {
-          await this.deps.callbacks.onRuntimeError(agentId, error);
+          await this.deps.callbacks.onRuntimeError(runtimeToken, agentId, error);
         }
       },
       now: this.deps.now,

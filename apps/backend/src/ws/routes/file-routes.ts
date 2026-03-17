@@ -28,23 +28,86 @@ const WRITE_FILE_ENDPOINT_PATH = "/api/write-file";
 const WRITE_FILE_METHODS = "POST, OPTIONS";
 const MAX_WRITE_FILE_BODY_BYTES = 2 * 1024 * 1024;
 
+interface FileAccessContext {
+  rootDir: string;
+  allowedRoots: string[];
+}
+
+export function normalizeFileAccessPath(pathValue: string): string {
+  const trimmed = pathValue.trim();
+  if (!trimmed) {
+    return "";
+  }
+
+  if (/^\/+[A-Za-z]:[\\/]/.test(trimmed)) {
+    return trimmed.replace(/^\/+/, "");
+  }
+
+  return trimmed;
+}
+
+function resolveFileAccessContext(swarmManager: SwarmManager, agentId?: string): FileAccessContext {
+  const config = swarmManager.getConfig();
+  const normalizedAgentId = agentId?.trim();
+  const baseAllowedRoots = [config.paths.dataDir, config.paths.uploadsDir];
+
+  if (!normalizedAgentId) {
+    return {
+      rootDir: config.paths.rootDir,
+      allowedRoots: normalizeAllowlistRoots([
+        ...config.cwdAllowlistRoots,
+        config.paths.rootDir,
+        ...baseAllowedRoots,
+      ])
+    };
+  }
+
+  const descriptor = swarmManager.getAgent(normalizedAgentId);
+  if (!descriptor) {
+    throw new Error(`Unknown agent: ${normalizedAgentId}`);
+  }
+
+  const contextualRoots = [descriptor.cwd];
+  if (descriptor.role === "worker") {
+    const owner = swarmManager.getAgent(descriptor.managerId);
+    if (owner?.role === "manager") {
+      contextualRoots.push(owner.cwd);
+    }
+  }
+
+  return {
+    rootDir: descriptor.cwd,
+    allowedRoots: normalizeAllowlistRoots([...contextualRoots, ...baseAllowedRoots])
+  };
+}
+
+function resolveLegacyFileAccessContext(swarmManager: SwarmManager): FileAccessContext {
+  const config = swarmManager.getConfig();
+  return {
+    rootDir: config.paths.rootDir,
+    allowedRoots: normalizeAllowlistRoots([
+      ...config.cwdAllowlistRoots,
+      config.paths.rootDir,
+      config.paths.dataDir,
+      config.paths.uploadsDir,
+      homedir(),
+      tmpdir(),
+    ])
+  };
+}
+
 export function createFileRoutes(options: {
   swarmManager: SwarmManager;
   broadcastEvent?: (event: ServerEvent) => void;
 }): HttpRoute[] {
   const { swarmManager, broadcastEvent } = options;
 
-  const resolveAllowedPath = async (requestedPath: string): Promise<string> => {
-    const config = swarmManager.getConfig();
-    const resolvedPath = resolveDirectoryPath(requestedPath, config.paths.rootDir);
-    const allowedRoots = normalizeAllowlistRoots([
-      ...config.cwdAllowlistRoots,
-      config.paths.rootDir,
-      homedir(),
-      tmpdir()
-    ]);
+  const resolveAllowedPath = async (requestedPath: string, agentId?: string): Promise<string> => {
+    const accessContext = resolveFileAccessContext(swarmManager, agentId);
+    const normalizedRequestedPath = normalizeFileAccessPath(requestedPath);
+    const resolvedPath = resolveDirectoryPath(normalizedRequestedPath, accessContext.rootDir);
 
-    if (await isPathWithinRoots(resolvedPath, allowedRoots)) {
+    if (await isPathWithinRoots(resolvedPath, accessContext.allowedRoots)) {
       return resolvedPath;
     }
 
@@ -63,7 +126,38 @@ export function createFileRoutes(options: {
       }
     }
 
-    if (!(await isPathWithinRoots(existingAncestor, allowedRoots))) {
+    if (!(await isPathWithinRoots(existingAncestor, accessContext.allowedRoots))) {
+      throw new Error("Path is outside allowed roots.");
+    }
+
+    return resolvedPath;
+  };
+
+  const resolveWriteAllowedPath = async (requestedPath: string): Promise<string> => {
+    const accessContext = resolveLegacyFileAccessContext(swarmManager);
+    const normalizedRequestedPath = normalizeFileAccessPath(requestedPath);
+    const resolvedPath = resolveDirectoryPath(normalizedRequestedPath, accessContext.rootDir);
+
+    if (await isPathWithinRoots(resolvedPath, accessContext.allowedRoots)) {
+      return resolvedPath;
+    }
+
+    let existingAncestor = resolvedPath;
+    while (true) {
+      try {
+        await stat(existingAncestor);
+        break;
+      } catch {
+        const parentPath = dirname(existingAncestor);
+        if (parentPath === existingAncestor) {
+          break;
+        }
+
+        existingAncestor = parentPath;
+      }
+    }
+
+    if (!(await isPathWithinRoots(existingAncestor, accessContext.allowedRoots))) {
       throw new Error("Path is outside allowed roots.");
     }
 
@@ -156,6 +250,7 @@ export function createFileRoutes(options: {
 
         try {
           let requestedPath = "";
+          let agentId: string | undefined;
 
           if (request.method === "GET") {
             const pathFromQuery = requestUrl.searchParams.get("path");
@@ -164,6 +259,8 @@ export function createFileRoutes(options: {
               return;
             }
             requestedPath = pathFromQuery;
+            const agentIdFromQuery = requestUrl.searchParams.get("agentId")?.trim();
+            agentId = agentIdFromQuery ? agentIdFromQuery : undefined;
           } else {
             const payload = await parseJsonBody(request, MAX_READ_FILE_BODY_BYTES);
             if (!payload || typeof payload !== "object") {
@@ -178,6 +275,10 @@ export function createFileRoutes(options: {
             }
 
             requestedPath = pathFromBody;
+            const agentIdFromBody = (payload as { agentId?: unknown }).agentId;
+            if (typeof agentIdFromBody === "string" && agentIdFromBody.trim().length > 0) {
+              agentId = agentIdFromBody.trim();
+            }
           }
 
           if (requestedPath.trim().length === 0) {
@@ -185,7 +286,7 @@ export function createFileRoutes(options: {
             return;
           }
 
-          const resolvedPath = await resolveAllowedPath(requestedPath);
+          const resolvedPath = await resolveAllowedPath(requestedPath, agentId);
 
           let fileStats;
           try {
@@ -224,6 +325,11 @@ export function createFileRoutes(options: {
           });
         } catch (error) {
           const message = error instanceof Error ? error.message : "Unable to read file.";
+
+          if (message.includes("Unknown agent")) {
+            sendJson(response, 404, { error: message });
+            return;
+          }
 
           if (message.includes("Path is outside allowed roots")) {
             sendJson(response, 403, { error: message });
@@ -283,7 +389,7 @@ export function createFileRoutes(options: {
             return;
           }
 
-          const resolvedPath = await resolveAllowedPath(pathFromBody);
+          const resolvedPath = await resolveWriteAllowedPath(pathFromBody);
           const trackedWrite = await maybeWriteTrackedCortexFile(
             swarmManager.getConfig().paths.dataDir,
             resolvedPath,

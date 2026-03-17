@@ -613,4 +613,26 @@ describe('AgentRuntime', () => {
     expect(session.disposeCalls).toBe(1)
     expect(runtime.getStatus()).toBe('terminated')
   })
+
+  it('bounds stopInFlight when session abort never resolves', async () => {
+    const session = new FakeSession()
+    const abortDeferred = createDeferred()
+    session.abort = async () => {
+      session.abortCalls += 1
+      await abortDeferred.promise
+    }
+
+    const runtime = new AgentRuntime({
+      descriptor: makeDescriptor(),
+      session: session as any,
+      callbacks: {
+        onStatusChange: () => {},
+      },
+    })
+
+    await expect(runtime.stopInFlight({ abort: true, shutdownTimeoutMs: 25 })).resolves.toBeUndefined()
+
+    expect(session.abortCalls).toBe(1)
+    expect(runtime.getStatus()).toBe('idle')
+  })
 })

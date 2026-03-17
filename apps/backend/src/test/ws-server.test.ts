@@ -1,8 +1,8 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { once } from 'node:events'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, normalize } from 'node:path'
 import WebSocket from 'ws'
 import { describe, expect, it, vi } from 'vitest'
 import { AuthStorage, SessionManager } from '@mariozechner/pi-coding-agent'
@@ -39,7 +39,9 @@ class FakeRuntime {
   private readonly sessionManager: SessionManager
   compactCalls: Array<string | undefined> = []
   terminateCalls = 0
-  stopInFlightCalls: Array<{ abort?: boolean } | undefined> = []
+  stopInFlightCalls: Array<{ abort?: boolean; shutdownTimeoutMs?: number; drainTimeoutMs?: number } | undefined> = []
+  stopInFlightImpl?: (options?: { abort?: boolean; shutdownTimeoutMs?: number; drainTimeoutMs?: number }) => Promise<void>
+  terminateImpl?: (options?: { abort?: boolean; shutdownTimeoutMs?: number; drainTimeoutMs?: number }) => Promise<void>
 
   constructor(descriptor: AgentDescriptor) {
     this.descriptor = descriptor
@@ -71,12 +73,20 @@ class FakeRuntime {
     }
   }
 
-  async terminate(): Promise<void> {
+  async terminate(options?: { abort?: boolean; shutdownTimeoutMs?: number; drainTimeoutMs?: number }): Promise<void> {
     this.terminateCalls += 1
+    if (this.terminateImpl) {
+      await this.terminateImpl(options)
+    }
   }
 
-  async stopInFlight(options?: { abort?: boolean }): Promise<void> {
+  async stopInFlight(options?: { abort?: boolean; shutdownTimeoutMs?: number; drainTimeoutMs?: number }): Promise<void> {
     this.stopInFlightCalls.push(options)
+    if (this.stopInFlightImpl) {
+      await this.stopInFlightImpl(options)
+      return
+    }
+
     this.descriptor.status = 'idle'
   }
 
@@ -106,7 +116,11 @@ class TestSwarmManager extends SwarmManager {
   lastPickedDirectoryDefaultPath: string | undefined
   readonly runtimeByAgentId = new Map<string, FakeRuntime>()
 
-  protected override async createRuntimeForDescriptor(descriptor: AgentDescriptor): Promise<SwarmAgentRuntime> {
+  protected override async createRuntimeForDescriptor(
+    descriptor: AgentDescriptor,
+    _systemPrompt?: string,
+    _runtimeToken?: number,
+  ): Promise<SwarmAgentRuntime> {
     const runtime = new FakeRuntime(descriptor)
     this.runtimeByAgentId.set(descriptor.agentId, runtime)
     return runtime as unknown as SwarmAgentRuntime
@@ -738,6 +752,119 @@ describe('SwarmWebSocketServer', () => {
 
       const payload = (await response.json()) as { error: string }
       expect(payload.error).toContain('outside allowed roots')
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('resolves relative /api/read-file paths against the requested agent workspace', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const workspaceDir = join(config.paths.rootDir, 'worktrees', 'session-a')
+    await mkdir(workspaceDir, { recursive: true })
+
+    const secondary = await manager.createManager('manager', {
+      name: 'Workspace Manager',
+      cwd: workspaceDir,
+    })
+
+    const workspaceFile = join(workspaceDir, 'notes.md')
+    await writeFile(workspaceFile, '# Workspace\n', 'utf8')
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    try {
+      const response = await fetch(`http://${config.host}:${config.port}/api/read-file`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          path: 'notes.md',
+          agentId: secondary.agentId,
+        }),
+      })
+
+      expect(response.status).toBe(200)
+      const payload = (await response.json()) as { path: string; content: string }
+      expect(normalize(await realpath(payload.path))).toBe(normalize(await realpath(workspaceFile)))
+      expect(payload.content).toBe('# Workspace\n')
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('allows data-dir reads with agent context but rejects files outside the contextual workspace', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const workspaceDir = join(config.paths.rootDir, 'worktrees', 'session-b')
+    await mkdir(workspaceDir, { recursive: true })
+
+    const secondary = await manager.createManager('manager', {
+      name: 'Context Manager',
+      cwd: workspaceDir,
+    })
+
+    const outsideWorkspaceFile = join(config.paths.rootDir, 'root-only.md')
+    await writeFile(outsideWorkspaceFile, 'root only\n', 'utf8')
+
+    const profileMemoryPath = getProfileMemoryPath(config.paths.dataDir, secondary.agentId)
+    await mkdir(dirname(profileMemoryPath), { recursive: true })
+    await writeFile(profileMemoryPath, '# Profile Memory\n', 'utf8')
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    try {
+      const deniedResponse = await fetch(`http://${config.host}:${config.port}/api/read-file`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          path: outsideWorkspaceFile,
+          agentId: secondary.agentId,
+        }),
+      })
+
+      expect(deniedResponse.status).toBe(403)
+
+      const allowedResponse = await fetch(`http://${config.host}:${config.port}/api/read-file`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          path: profileMemoryPath,
+          agentId: secondary.agentId,
+        }),
+      })
+
+      expect(allowedResponse.status).toBe(200)
+      const payload = (await allowedResponse.json()) as { path: string; content: string }
+      expect(payload.path).toBe(profileMemoryPath)
+      expect(payload.content).toBe('# Profile Memory\n')
     } finally {
       await server.stop()
     }
@@ -3137,10 +3264,77 @@ describe('SwarmWebSocketServer', () => {
       ),
     ).toBe(false)
 
-    expect(managerRuntime?.stopInFlightCalls).toEqual([{ abort: true }])
-    expect(workerRuntime?.stopInFlightCalls).toEqual([{ abort: true }])
+    expect(managerRuntime?.stopInFlightCalls).toEqual([
+      expect.objectContaining({ abort: true }),
+    ])
+    expect(workerRuntime?.stopInFlightCalls).toEqual([
+      expect.objectContaining({ abort: true }),
+    ])
     expect(managerRuntime?.terminateCalls).toBe(0)
     expect(workerRuntime?.terminateCalls).toBe(0)
+
+    client.close()
+    await once(client, 'close')
+    await server.stop()
+  })
+
+  it('returns stop_all_agents_result even when a worker runtime blocks shutdown', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', { agentId: 'Hung Stop Worker' })
+    const workerRuntime = manager.runtimeByAgentId.get(worker.agentId)
+    expect(workerRuntime).toBeDefined()
+    if (!workerRuntime) {
+      throw new Error('Expected worker runtime to exist')
+    }
+
+    workerRuntime.stopInFlightImpl = async () => {
+      await new Promise(() => {})
+    }
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    const client = new WebSocket(`ws://${config.host}:${config.port}`)
+    const events: ServerEvent[] = []
+
+    client.on('message', (raw) => {
+      events.push(JSON.parse(raw.toString()) as ServerEvent)
+    })
+
+    await once(client, 'open')
+    client.send(JSON.stringify({ type: 'subscribe', agentId: 'manager' }))
+    await waitForEvent(events, (event) => event.type === 'ready' && event.subscribedAgentId === 'manager')
+
+    client.send(JSON.stringify({ type: 'stop_all_agents', managerId: 'manager', requestId: 'stop-timeout' }))
+
+    const resultEvent = await waitForEvent(
+      events,
+      (event) => event.type === 'stop_all_agents_result' && event.requestId === 'stop-timeout',
+      8_000,
+    )
+    expect(resultEvent.type).toBe('stop_all_agents_result')
+    if (resultEvent.type === 'stop_all_agents_result') {
+      expect(resultEvent.stoppedWorkerIds).toContain(worker.agentId)
+      expect(resultEvent.managerStopped).toBe(true)
+    }
+
+    const statusEvent = await waitForEvent(
+      events,
+      (event) => event.type === 'agent_status' && event.agentId === worker.agentId && event.status === 'idle',
+      8_000,
+    )
+    expect(statusEvent.type).toBe('agent_status')
 
     client.close()
     await once(client, 'close')
@@ -3464,7 +3658,7 @@ describe('SwarmWebSocketServer', () => {
     await server.stop()
   })
 
-  it('enforces strict ownership for kill_agent based on selected manager context', async () => {
+  it('routes kill_agent by the target worker owner instead of the current subscription context', async () => {
     const port = await getAvailablePort()
     const config = await makeTempConfig(port, true)
 
@@ -3498,25 +3692,53 @@ describe('SwarmWebSocketServer', () => {
 
     client.send(JSON.stringify({ type: 'kill_agent', agentId: ownedWorker.agentId }))
 
-    const denied = await waitForEvent(
-      events,
-      (event) => event.type === 'error' && event.code === 'KILL_AGENT_FAILED',
-    )
-    expect(denied.type).toBe('error')
-
-    client.send(JSON.stringify({ type: 'subscribe', agentId: secondary.agentId }))
-    await waitForEvent(
-      events,
-      (event) => event.type === 'ready' && event.subscribedAgentId === secondary.agentId,
-    )
-
-    client.send(JSON.stringify({ type: 'kill_agent', agentId: ownedWorker.agentId }))
-
     const statusEvent = await waitForEvent(
       events,
       (event) => event.type === 'agent_status' && event.agentId === ownedWorker.agentId && event.status === 'terminated',
     )
     expect(statusEvent.type).toBe('agent_status')
+
+    client.close()
+    await once(client, 'close')
+    await server.stop()
+  })
+
+  it('rejects kill_agent when targeting a manager descriptor', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    const client = new WebSocket(`ws://${config.host}:${config.port}`)
+    const events: ServerEvent[] = []
+    client.on('message', (raw) => {
+      events.push(JSON.parse(raw.toString()) as ServerEvent)
+    })
+
+    await once(client, 'open')
+    client.send(JSON.stringify({ type: 'subscribe', agentId: 'manager' }))
+    await waitForEvent(events, (event) => event.type === 'ready')
+
+    client.send(JSON.stringify({ type: 'kill_agent', agentId: 'manager' }))
+
+    const errorEvent = await waitForEvent(
+      events,
+      (event) => event.type === 'error' && event.code === 'KILL_AGENT_FAILED',
+    )
+    expect(errorEvent.type).toBe('error')
+    if (errorEvent.type === 'error') {
+      expect(errorEvent.message).toContain('Manager cannot be killed')
+    }
 
     client.close()
     await once(client, 'close')

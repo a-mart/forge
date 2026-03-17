@@ -603,6 +603,55 @@ describe('CodexAgentRuntime behavior', () => {
     expect(runtime.getStatus()).toBe('terminated')
   })
 
+  it('bounds stopInFlight when pending custom entry writes never settle', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'swarm-codex-runtime-'))
+    const descriptor = makeDescriptor(tempDir)
+    await mkdir(dirname(descriptor.sessionFile), { recursive: true })
+
+    rpcMockState.requestImpl.mockImplementation(async (_client: any, method: string) => {
+      if (method === 'initialize') {
+        return {}
+      }
+
+      if (method === 'account/read') {
+        return { requiresOpenaiAuth: false, account: { id: 'acct-1' } }
+      }
+
+      if (method === 'thread/start') {
+        return { thread: { id: 'thread-1' } }
+      }
+
+      if (method === 'turn/start') {
+        return { turn: { id: 'turn-1' } }
+      }
+
+      if (method === 'turn/interrupt') {
+        throw new Error('interrupt timed out')
+      }
+
+      return {}
+    })
+
+    const runtime = await CodexAgentRuntime.create({
+      descriptor,
+      callbacks: {
+        onStatusChange: async () => {},
+      },
+      systemPrompt: 'You are a test codex runtime.',
+      tools: [],
+    })
+
+    await runtime.sendMessage('start a turn')
+    ;(runtime as any).pendingCustomEntryWrites.add(new Promise(() => {}))
+
+    await expect(
+      runtime.stopInFlight({ abort: true, shutdownTimeoutMs: 20, drainTimeoutMs: 20 }),
+    ).resolves.toBeUndefined()
+
+    expect(runtime.getStatus()).toBe('idle')
+    expect(runtime.getPendingCount()).toBe(0)
+  })
+
   it('uses codex.cmd by default on win32', async () => {
     await withPlatform('win32', async () => {
       const tempDir = await mkdtemp(join(tmpdir(), 'swarm-codex-runtime-'))

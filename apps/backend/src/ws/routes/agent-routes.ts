@@ -44,18 +44,27 @@ export async function handleAgentCommand(context: AgentCommandRouteContext): Pro
   const { command, socket, subscribedAgentId, swarmManager, resolveManagerContextAgentId, send } = context;
 
   if (command.type === "kill_agent") {
-    const managerContextId = resolveManagerContextAgentId(subscribedAgentId);
-    if (!managerContextId) {
+    const target = swarmManager.getAgent(command.agentId);
+    if (!target) {
       send(socket, {
         type: "error",
         code: "UNKNOWN_AGENT",
-        message: `Agent ${subscribedAgentId} does not exist.`
+        message: `Agent ${command.agentId} does not exist.`
+      });
+      return true;
+    }
+
+    if (target.role !== "worker") {
+      send(socket, {
+        type: "error",
+        code: "KILL_AGENT_FAILED",
+        message: "Manager cannot be killed"
       });
       return true;
     }
 
     try {
-      await swarmManager.killAgent(managerContextId, command.agentId);
+      await swarmManager.killAgent(target.managerId, target.agentId);
     } catch (error) {
       send(socket, {
         type: "error",

@@ -59,12 +59,12 @@ class FakeRuntime {
     return { status: 'ok' }
   }
 
-  async stopInFlight(options?: { abort?: boolean }): Promise<void> {
+  async stopInFlight(options?: { abort?: boolean; shutdownTimeoutMs?: number; drainTimeoutMs?: number }): Promise<void> {
     this.stopInFlightCalls.push(options)
     this.descriptor.status = 'idle'
   }
 
-  async terminate(options?: { abort?: boolean }): Promise<void> {
+  async terminate(options?: { abort?: boolean; shutdownTimeoutMs?: number; drainTimeoutMs?: number }): Promise<void> {
     this.terminateCalls.push(options)
     this.descriptor.status = 'terminated'
   }
@@ -100,6 +100,7 @@ class TestSwarmManager extends SwarmManager {
   protected override async createRuntimeForDescriptor(
     descriptor: AgentDescriptor,
     _systemPrompt: string,
+    _runtimeToken?: number,
   ): Promise<SwarmAgentRuntime> {
     const runtime = new FakeRuntime(descriptor)
     this.runtimeByAgentId.set(descriptor.agentId, runtime)

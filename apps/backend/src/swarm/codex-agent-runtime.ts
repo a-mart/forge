@@ -43,6 +43,8 @@ const MAX_TOOL_ITEM_PREVIEW_BYTES = 2 * 1024;
 const MAX_TOOL_ITEM_STRING_BYTES = 256;
 const MAX_TOOL_ITEM_PREVIEW_FIELDS = 16;
 const TOOL_ITEM_PREVIEW_TRUNCATED_SUFFIX = " [truncated]";
+const DEFAULT_SHUTDOWN_TIMEOUT_MS = 5_000;
+const DEFAULT_CUSTOM_ENTRY_WRITE_DRAIN_TIMEOUT_MS = 1_500;
 
 interface CodexRuntimeState {
   threadId: string;
@@ -90,6 +92,7 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
   private queuedSteers: QueuedSteer[] = [];
   private readonly toolNameByItemId = new Map<string, string>();
   private readonly pendingCustomEntryWrites = new Set<Promise<void>>();
+  private suppressNotificationsUntilIdle = false;
 
   private constructor(options: {
     descriptor: AgentDescriptor;
@@ -206,6 +209,7 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
     _requestedMode: RequestedDeliveryMode = "auto"
   ): Promise<SendMessageReceipt> {
     this.ensureNotTerminated();
+    this.suppressNotificationsUntilIdle = false;
 
     const message = normalizeRuntimeUserMessage(input);
     const deliveryId = randomUUID();
@@ -239,18 +243,23 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
     };
   }
 
-  async terminate(options?: { abort?: boolean }): Promise<void> {
+  async terminate(options?: { abort?: boolean; shutdownTimeoutMs?: number; drainTimeoutMs?: number }): Promise<void> {
     if (this.status === "terminated") {
       return;
     }
 
+    const shutdownTimeoutMs = options?.shutdownTimeoutMs ?? DEFAULT_SHUTDOWN_TIMEOUT_MS;
     const shouldAbort = options?.abort ?? true;
     if (shouldAbort && this.threadId && this.activeTurnId) {
       try {
-        await this.rpc.request("turn/interrupt", {
-          threadId: this.threadId,
-          turnId: this.activeTurnId
-        });
+        await this.rpc.request(
+          "turn/interrupt",
+          {
+            threadId: this.threadId,
+            turnId: this.activeTurnId
+          },
+          shutdownTimeoutMs
+        );
       } catch (error) {
         this.logRuntimeError("interrupt", error, {
           threadId: this.threadId,
@@ -265,7 +274,13 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
     }
 
     this.rpc.dispose();
-    await this.waitForPendingCustomEntryWrites();
+    try {
+      await this.waitForPendingCustomEntryWrites(options?.drainTimeoutMs ?? DEFAULT_CUSTOM_ENTRY_WRITE_DRAIN_TIMEOUT_MS);
+    } catch (error) {
+      this.logRuntimeError("startup", error, {
+        stage: "terminate_pending_custom_entry_writes_failed"
+      });
+    }
 
     this.pendingDeliveries = [];
     this.queuedSteers = [];
@@ -296,19 +311,25 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
     }
   }
 
-  async stopInFlight(options?: { abort?: boolean }): Promise<void> {
+  async stopInFlight(options?: { abort?: boolean; shutdownTimeoutMs?: number; drainTimeoutMs?: number }): Promise<void> {
     if (this.status === "terminated") {
       return;
     }
 
+    const shutdownTimeoutMs = options?.shutdownTimeoutMs ?? DEFAULT_SHUTDOWN_TIMEOUT_MS;
     const shouldAbort = options?.abort ?? true;
     if (shouldAbort && this.threadId && this.activeTurnId) {
       try {
-        await this.rpc.request("turn/interrupt", {
-          threadId: this.threadId,
-          turnId: this.activeTurnId
-        });
+        await this.rpc.request(
+          "turn/interrupt",
+          {
+            threadId: this.threadId,
+            turnId: this.activeTurnId
+          },
+          shutdownTimeoutMs
+        );
       } catch (error) {
+        this.suppressNotificationsUntilIdle = true;
         this.logRuntimeError("interrupt", error, {
           threadId: this.threadId,
           turnId: this.activeTurnId
@@ -316,7 +337,13 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
       }
     }
 
-    await this.waitForPendingCustomEntryWrites();
+    try {
+      await this.waitForPendingCustomEntryWrites(options?.drainTimeoutMs ?? DEFAULT_CUSTOM_ENTRY_WRITE_DRAIN_TIMEOUT_MS);
+    } catch (error) {
+      this.logRuntimeError("startup", error, {
+        stage: "stop_in_flight_pending_custom_entry_writes_failed"
+      });
+    }
 
     this.pendingDeliveries = [];
     this.queuedSteers = [];
@@ -500,12 +527,16 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
       });
   }
 
-  private async waitForPendingCustomEntryWrites(): Promise<void> {
+  private async waitForPendingCustomEntryWrites(timeoutMs = DEFAULT_CUSTOM_ENTRY_WRITE_DRAIN_TIMEOUT_MS): Promise<void> {
     if (this.pendingCustomEntryWrites.size === 0) {
       return;
     }
 
-    await Promise.allSettled(Array.from(this.pendingCustomEntryWrites));
+    await raceWithTimeout(
+      Promise.allSettled(Array.from(this.pendingCustomEntryWrites)),
+      timeoutMs,
+      `wait_for_pending_custom_entry_writes:${this.descriptor.agentId}`
+    );
   }
 
   private async startTurn(message: RuntimeUserMessage): Promise<void> {
@@ -595,6 +626,19 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
   }
 
   private async handleNotification(notification: JsonRpcNotificationMessage): Promise<void> {
+    if (this.suppressNotificationsUntilIdle) {
+      if (notification.method === "turn/completed") {
+        this.startRequestPending = false;
+        this.activeTurnId = undefined;
+        this.queuedSteers = [];
+        this.suppressNotificationsUntilIdle = false;
+        if (this.status !== "terminated") {
+          await this.updateStatus("idle");
+        }
+      }
+      return;
+    }
+
     switch (notification.method) {
       case "turn/started": {
         const turnId = parseThreadId(
@@ -989,6 +1033,25 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
       stack: normalized.stack,
       ...details
     });
+  }
+}
+
+async function raceWithTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timeoutHandle: NodeJS.Timeout | undefined;
+
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timeoutHandle = setTimeout(() => {
+          reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+    }
   }
 }
 

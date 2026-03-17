@@ -110,6 +110,12 @@ export interface SmartCompactResult {
   compactionFailureReason?: string;
 }
 
+export interface RuntimeShutdownOptions {
+  abort?: boolean;
+  shutdownTimeoutMs?: number;
+  drainTimeoutMs?: number;
+}
+
 export interface SwarmAgentRuntime {
   readonly descriptor: AgentDescriptor;
 
@@ -127,9 +133,9 @@ export interface SwarmAgentRuntime {
 
   smartCompact(): Promise<SmartCompactResult>;
 
-  stopInFlight(options?: { abort?: boolean }): Promise<void>;
+  stopInFlight(options?: RuntimeShutdownOptions): Promise<void>;
 
-  terminate(options?: { abort?: boolean }): Promise<void>;
+  terminate(options?: RuntimeShutdownOptions): Promise<void>;
 
   getCustomEntries(customType: string): unknown[];
   appendCustomEntry(customType: string, data?: unknown): string;

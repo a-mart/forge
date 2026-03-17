@@ -37,6 +37,7 @@ import { buildSessionMemoryRuntimeView, SwarmManager } from '../swarm/swarm-mana
 import type {
   AgentContextUsage,
   AgentDescriptor,
+  AgentStatus,
   RequestedDeliveryMode,
   SendMessageReceipt,
   SwarmConfig,
@@ -46,8 +47,8 @@ import type { RuntimeUserMessage, SwarmAgentRuntime } from '../swarm/runtime-typ
 class FakeRuntime {
   readonly descriptor: AgentDescriptor
   private readonly sessionManager: SessionManager
-  terminateCalls: Array<{ abort?: boolean } | undefined> = []
-  stopInFlightCalls: Array<{ abort?: boolean } | undefined> = []
+  terminateCalls: Array<{ abort?: boolean; shutdownTimeoutMs?: number; drainTimeoutMs?: number } | undefined> = []
+  stopInFlightCalls: Array<{ abort?: boolean; shutdownTimeoutMs?: number; drainTimeoutMs?: number } | undefined> = []
   sendCalls: Array<{ message: string | RuntimeUserMessage; delivery: RequestedDeliveryMode }> = []
   compactCalls: Array<string | undefined> = []
   nextDeliveryId = 0
@@ -85,11 +86,11 @@ class FakeRuntime {
     }
   }
 
-  async terminate(options?: { abort?: boolean }): Promise<void> {
+  async terminate(options?: { abort?: boolean; shutdownTimeoutMs?: number; drainTimeoutMs?: number }): Promise<void> {
     this.terminateCalls.push(options)
   }
 
-  async stopInFlight(options?: { abort?: boolean }): Promise<void> {
+  async stopInFlight(options?: { abort?: boolean; shutdownTimeoutMs?: number; drainTimeoutMs?: number }): Promise<void> {
     this.stopInFlightCalls.push(options)
     this.busy = false
     this.descriptor.status = 'idle'
@@ -148,6 +149,7 @@ class TestSwarmManager extends SwarmManager {
   protected override async createRuntimeForDescriptor(
     descriptor: AgentDescriptor,
     systemPrompt: string,
+    _runtimeToken?: number,
   ): Promise<SwarmAgentRuntime> {
     const runtime = new FakeRuntime(descriptor)
     this.createdRuntimeIds.push(descriptor.agentId)
@@ -183,6 +185,7 @@ class AuthFallbackSwarmManager extends SwarmManager {
   protected override async createRuntimeForDescriptor(
     descriptor: AgentDescriptor,
     _systemPrompt: string,
+    _runtimeToken?: number,
   ): Promise<SwarmAgentRuntime> {
     return new FakeRuntime(descriptor) as unknown as SwarmAgentRuntime
   }
@@ -2380,6 +2383,7 @@ describe('SwarmManager', () => {
       protected override async createRuntimeForDescriptor(
         descriptor: AgentDescriptor,
         systemPrompt: string,
+        _runtimeToken?: number,
       ): Promise<SwarmAgentRuntime> {
         const runtime = new BlockingReviewRuntime(descriptor, releaseFirstRunPromise)
         this.createdRuntimeIds.push(descriptor.agentId)
@@ -3072,7 +3076,9 @@ describe('SwarmManager', () => {
 
     await manager.killAgent('manager', worker.agentId)
 
-    expect(runtime!.terminateCalls).toEqual([{ abort: true }])
+    expect(runtime!.terminateCalls).toEqual([
+      expect.objectContaining({ abort: true }),
+    ])
     const descriptor = manager.listAgents().find((agent) => agent.agentId === worker.agentId)
     expect(descriptor?.status).toBe('terminated')
   })
@@ -3108,8 +3114,12 @@ describe('SwarmManager', () => {
       terminatedWorkerIds: [worker.agentId],
       managerTerminated: true,
     })
-    expect(managerRuntime!.stopInFlightCalls).toEqual([{ abort: true }])
-    expect(workerRuntime!.stopInFlightCalls).toEqual([{ abort: true }])
+    expect(managerRuntime!.stopInFlightCalls).toEqual([
+      expect.objectContaining({ abort: true }),
+    ])
+    expect(workerRuntime!.stopInFlightCalls).toEqual([
+      expect.objectContaining({ abort: true }),
+    ])
     expect(managerRuntime!.terminateCalls).toEqual([])
     expect(workerRuntime!.terminateCalls).toEqual([])
 
@@ -3417,6 +3427,124 @@ describe('SwarmManager', () => {
     await bootWithDefaultManager(thirdBoot, config)
     expect(thirdBoot.listAgents().filter((agent) => agent.agentId === worker.agentId)).toHaveLength(1)
     expect(thirdBoot.createdRuntimeIds).toEqual([])
+  })
+
+  it('preserves the active runtime token when clearing a stale token', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const state = manager as any as {
+      runtimeTokensByAgentId: Map<string, number>
+      clearRuntimeToken: (agentId: string, runtimeToken?: number) => void
+    }
+
+    state.runtimeTokensByAgentId.set('manager', 22)
+    state.clearRuntimeToken('manager', 11)
+
+    expect(state.runtimeTokensByAgentId.get('manager')).toBe(22)
+  })
+
+  it('does not detach a newer runtime when a stale runtime token is provided', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const descriptor = manager.getAgent('manager')
+    expect(descriptor).toBeDefined()
+    if (!descriptor) {
+      throw new Error('Expected manager descriptor')
+    }
+
+    const freshRuntime = new FakeRuntime({ ...descriptor })
+    const state = manager as any as {
+      runtimes: Map<string, SwarmAgentRuntime>
+      runtimeTokensByAgentId: Map<string, number>
+      detachRuntime: (agentId: string, runtimeToken?: number) => boolean
+    }
+
+    state.runtimes.set('manager', freshRuntime as unknown as SwarmAgentRuntime)
+    state.runtimeTokensByAgentId.set('manager', 44)
+
+    expect(state.detachRuntime('manager', 33)).toBe(false)
+    expect(state.runtimes.get('manager')).toBe(freshRuntime)
+    expect(state.runtimeTokensByAgentId.get('manager')).toBe(44)
+
+    expect(state.detachRuntime('manager', 44)).toBe(true)
+    expect(state.runtimes.has('manager')).toBe(false)
+    expect(state.runtimeTokensByAgentId.has('manager')).toBe(false)
+  })
+
+  it('keeps the winning runtime token current when concurrent runtime creation overlaps', async () => {
+    const config = await makeTempConfig()
+
+    let releaseCreation!: () => void
+    const creationGate = new Promise<void>((resolve) => {
+      releaseCreation = resolve
+    })
+
+    class ConcurrentRuntimeCreationSwarmManager extends TestSwarmManager {
+      blockAgentId: string | null = null
+      observedRuntimeTokens: number[] = []
+
+      protected override async createRuntimeForDescriptor(
+        descriptor: AgentDescriptor,
+        systemPrompt: string,
+        runtimeToken?: number,
+      ): Promise<SwarmAgentRuntime> {
+        if (descriptor.agentId === this.blockAgentId) {
+          this.observedRuntimeTokens.push(runtimeToken ?? -1)
+          await creationGate
+        }
+
+        return super.createRuntimeForDescriptor(descriptor, systemPrompt, runtimeToken)
+      }
+    }
+
+    const manager = new ConcurrentRuntimeCreationSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', { agentId: 'Runtime Race Worker' })
+    const descriptor = manager.getAgent(worker.agentId)
+    expect(descriptor).toBeDefined()
+    if (!descriptor) {
+      throw new Error('Expected worker descriptor')
+    }
+
+    const state = manager as any as {
+      runtimes: Map<string, SwarmAgentRuntime>
+      runtimeTokensByAgentId: Map<string, number>
+      getOrCreateRuntimeForDescriptor: (descriptor: AgentDescriptor) => Promise<SwarmAgentRuntime>
+      handleRuntimeStatus: (
+        runtimeToken: number,
+        agentId: string,
+        status: AgentStatus,
+        pendingCount: number,
+      ) => Promise<void>
+    }
+
+    state.runtimes.delete(worker.agentId)
+    state.runtimeTokensByAgentId.delete(worker.agentId)
+    manager.blockAgentId = worker.agentId
+
+    const firstCreation = state.getOrCreateRuntimeForDescriptor(descriptor)
+    await waitForCondition(() => manager.observedRuntimeTokens.length === 1)
+
+    const secondCreation = state.getOrCreateRuntimeForDescriptor(descriptor)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(manager.observedRuntimeTokens).toHaveLength(1)
+
+    releaseCreation()
+
+    const [firstRuntime, secondRuntime] = await Promise.all([firstCreation, secondCreation])
+    expect(firstRuntime).toBe(secondRuntime)
+    expect(manager.observedRuntimeTokens).toHaveLength(1)
+
+    const winningRuntimeToken = manager.observedRuntimeTokens[0]
+    expect(state.runtimeTokensByAgentId.get(worker.agentId)).toBe(winningRuntimeToken)
+
+    await state.handleRuntimeStatus(winningRuntimeToken, worker.agentId, 'streaming', 0)
+    expect(manager.getAgent(worker.agentId)?.status).toBe('streaming')
   })
 
   it('persists manager conversation history to disk and reloads it on restart', async () => {

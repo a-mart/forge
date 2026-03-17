@@ -108,6 +108,7 @@ import type {
   RuntimeImageAttachment,
   RuntimeErrorEvent,
   RuntimeSessionEvent,
+  RuntimeShutdownOptions,
   RuntimeUserMessage,
   SwarmAgentRuntime
 } from "./runtime-types.js";
@@ -736,6 +737,8 @@ const WATCHDOG_BATCH_PREVIEW_LIMIT = 10;
 const WATCHDOG_BACKOFF_BASE_MS = 15_000;
 const WATCHDOG_BACKOFF_MAX_MS = 5 * 60_000;
 const WATCHDOG_MAX_CONSECUTIVE_NOTIFICATIONS = 3;
+const RUNTIME_SHUTDOWN_TIMEOUT_MS = 1_500;
+const RUNTIME_SHUTDOWN_DRAIN_TIMEOUT_MS = 500;
 const MODEL_CAPACITY_BLOCK_DEFAULT_MS = 10 * 60_000;
 const MODEL_CAPACITY_BLOCK_MIN_MS = 5_000;
 const MODEL_CAPACITY_BLOCK_MAX_MS = 7 * 24 * 60 * 60 * 1_000;
@@ -987,6 +990,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private cortexReviewRunStartMutex: Promise<void> = Promise.resolve();
   private cortexReviewRunQueueTimer: NodeJS.Timeout | null = null;
   private readonly runtimes = new Map<string, SwarmAgentRuntime>();
+  private readonly runtimeCreationPromisesByAgentId = new Map<string, Promise<SwarmAgentRuntime>>();
+  private readonly runtimeTokensByAgentId = new Map<string, number>();
+  private nextRuntimeToken = 1;
   private readonly conversationEntriesByAgentId = new Map<string, ConversationEntryEvent[]>();
   private readonly workerWatchdogState = new Map<string, WorkerWatchdogState>();
   private readonly watchdogTimers = new Map<string, NodeJS.Timeout>();
@@ -1074,17 +1080,17 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       mergeRuntimeContextFiles: (baseAgentsFiles, options) =>
         this.mergeRuntimeContextFiles(baseAgentsFiles, options),
       callbacks: {
-        onStatusChange: async (agentId, status, pendingCount, contextUsage) => {
-          await this.handleRuntimeStatus(agentId, status, pendingCount, contextUsage);
+        onStatusChange: async (runtimeToken, agentId, status, pendingCount, contextUsage) => {
+          await this.handleRuntimeStatus(runtimeToken, agentId, status, pendingCount, contextUsage);
         },
-        onSessionEvent: async (agentId, event) => {
-          await this.handleRuntimeSessionEvent(agentId, event);
+        onSessionEvent: async (runtimeToken, agentId, event) => {
+          await this.handleRuntimeSessionEvent(runtimeToken, agentId, event);
         },
-        onAgentEnd: async (agentId) => {
-          await this.handleRuntimeAgentEnd(agentId);
+        onAgentEnd: async (runtimeToken, agentId) => {
+          await this.handleRuntimeAgentEnd(runtimeToken, agentId);
         },
-        onRuntimeError: async (agentId, error) => {
-          await this.handleRuntimeError(agentId, error);
+        onRuntimeError: async (runtimeToken, agentId, error) => {
+          await this.handleRuntimeError(runtimeToken, agentId, error);
         }
       }
     });
@@ -2018,8 +2024,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     const runtime = this.runtimes.get(agentId);
     if (runtime) {
-      await runtime.terminate({ abort: true });
-      this.runtimes.delete(agentId);
+      const shutdown = await this.runRuntimeShutdown(descriptor, "terminate", { abort: true });
+      this.detachRuntime(agentId, shutdown.runtimeToken);
     }
 
     if (descriptor.role === "worker") {
@@ -2125,14 +2131,16 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
       const runtime = this.runtimes.get(descriptor.agentId);
       if (runtime) {
-        await runtime.stopInFlight({ abort: true });
-      } else {
-        descriptor.status = transitionAgentStatus(descriptor.status, "idle");
-        descriptor.updatedAt = this.now();
-        this.descriptors.set(descriptor.agentId, descriptor);
-        await this.updateSessionMetaForWorkerDescriptor(descriptor);
-        this.emitStatus(descriptor.agentId, descriptor.status, 0, descriptor.contextUsage);
+        const shutdown = await this.runRuntimeShutdown(descriptor, "stopInFlight", { abort: true });
+        this.detachRuntime(descriptor.agentId, shutdown.runtimeToken);
       }
+
+      descriptor.status = transitionAgentStatus(descriptor.status, "idle");
+      descriptor.contextUsage = undefined;
+      descriptor.updatedAt = this.now();
+      this.descriptors.set(descriptor.agentId, descriptor);
+      await this.updateSessionMetaForWorkerDescriptor(descriptor);
+      this.emitStatus(descriptor.agentId, descriptor.status, 0, descriptor.contextUsage);
 
       stoppedWorkerIds.push(descriptor.agentId);
     }
@@ -2141,14 +2149,15 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     if (!isNonRunningAgentStatus(target.status)) {
       const managerRuntime = this.runtimes.get(target.agentId);
       if (managerRuntime) {
-        await managerRuntime.stopInFlight({ abort: true });
-      } else {
-        target.status = transitionAgentStatus(target.status, "idle");
-        target.updatedAt = this.now();
-        this.descriptors.set(target.agentId, target);
-        this.emitStatus(target.agentId, target.status, 0, target.contextUsage);
+        const shutdown = await this.runRuntimeShutdown(target, "stopInFlight", { abort: true });
+        this.detachRuntime(target.agentId, shutdown.runtimeToken);
       }
 
+      target.status = transitionAgentStatus(target.status, "idle");
+      target.contextUsage = undefined;
+      target.updatedAt = this.now();
+      this.descriptors.set(target.agentId, target);
+      this.emitStatus(target.agentId, target.status, 0, target.contextUsage);
       managerStopped = true;
     }
 
@@ -2732,8 +2741,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     const runtime = this.runtimes.get(agentId);
     if (runtime) {
-      await runtime.terminate({ abort: true });
-      this.runtimes.delete(agentId);
+      const shutdown = await this.runRuntimeShutdown(descriptor, "terminate", { abort: true });
+      this.detachRuntime(agentId, shutdown.runtimeToken);
     }
 
     descriptor.status = descriptor.status === "error"
@@ -2803,8 +2812,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     try {
       const runtime = this.runtimes.get(descriptor.agentId);
       if (runtime) {
-        await runtime.terminate({ abort: true });
-        this.runtimes.delete(descriptor.agentId);
+        const shutdown = await this.runRuntimeShutdown(descriptor, "terminate", { abort: true });
+        this.detachRuntime(descriptor.agentId, shutdown.runtimeToken);
       }
     } catch (error) {
       this.logDebug("session:rollback:runtime_error", {
@@ -4302,22 +4311,59 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return existingRuntime;
     }
 
+    const inFlightCreation = this.runtimeCreationPromisesByAgentId.get(descriptor.agentId);
+    if (inFlightCreation) {
+      return inFlightCreation;
+    }
+
+    const creationPromise = this.createAndAttachRuntimeForDescriptor(descriptor);
+    this.runtimeCreationPromisesByAgentId.set(descriptor.agentId, creationPromise);
+
+    try {
+      return await creationPromise;
+    } finally {
+      if (this.runtimeCreationPromisesByAgentId.get(descriptor.agentId) === creationPromise) {
+        this.runtimeCreationPromisesByAgentId.delete(descriptor.agentId);
+      }
+    }
+  }
+
+  private async createAndAttachRuntimeForDescriptor(descriptor: AgentDescriptor): Promise<SwarmAgentRuntime> {
     await this.ensureSessionFileParentDirectory(descriptor.sessionFile);
 
-    const runtime = await this.createRuntimeForDescriptor(
-      descriptor,
-      await this.resolveSystemPromptForDescriptor(descriptor)
-    );
+    const existingRuntime = this.runtimes.get(descriptor.agentId);
+    if (existingRuntime) {
+      return existingRuntime;
+    }
+
+    const systemPrompt = await this.resolveSystemPromptForDescriptor(descriptor);
+    const runtimeBeforeCreate = this.runtimes.get(descriptor.agentId);
+    if (runtimeBeforeCreate) {
+      return runtimeBeforeCreate;
+    }
+
+    const runtimeToken = this.allocateRuntimeToken(descriptor.agentId);
+    const runtime = await this.createRuntimeForDescriptor(descriptor, systemPrompt, runtimeToken);
 
     const latestDescriptor = this.descriptors.get(descriptor.agentId);
     if (!latestDescriptor || isNonRunningAgentStatus(latestDescriptor.status)) {
-      await runtime.terminate({ abort: true });
+      await runtime.terminate({
+        abort: true,
+        shutdownTimeoutMs: RUNTIME_SHUTDOWN_TIMEOUT_MS,
+        drainTimeoutMs: RUNTIME_SHUTDOWN_DRAIN_TIMEOUT_MS,
+      });
+      this.clearRuntimeToken(descriptor.agentId, runtimeToken);
       throw new Error(`Target agent is not running: ${descriptor.agentId}`);
     }
 
     const concurrentRuntime = this.runtimes.get(descriptor.agentId);
     if (concurrentRuntime) {
-      await runtime.terminate({ abort: true });
+      await runtime.terminate({
+        abort: true,
+        shutdownTimeoutMs: RUNTIME_SHUTDOWN_TIMEOUT_MS,
+        drainTimeoutMs: RUNTIME_SHUTDOWN_DRAIN_TIMEOUT_MS,
+      });
+      this.clearRuntimeToken(descriptor.agentId, runtimeToken);
       return concurrentRuntime;
     }
 
@@ -4768,8 +4814,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     const runtime = this.runtimes.get(descriptor.agentId);
     if (runtime) {
-      await runtime.terminate({ abort: options.abort });
-      this.runtimes.delete(descriptor.agentId);
+      const shutdown = await this.runRuntimeShutdown(descriptor, "terminate", { abort: options.abort });
+      this.detachRuntime(descriptor.agentId, shutdown.runtimeToken);
     }
 
     descriptor.status = transitionAgentStatus(descriptor.status, "terminated");
@@ -4916,17 +4962,113 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   protected async createRuntimeForDescriptor(
     descriptor: AgentDescriptor,
-    systemPrompt: string
+    systemPrompt: string,
+    runtimeToken = this.allocateRuntimeToken(descriptor.agentId)
   ): Promise<SwarmAgentRuntime> {
-    return this.runtimeFactory.createRuntimeForDescriptor(descriptor, systemPrompt);
+    try {
+      return await this.runtimeFactory.createRuntimeForDescriptor(descriptor, systemPrompt, runtimeToken);
+    } catch (error) {
+      this.clearRuntimeToken(descriptor.agentId, runtimeToken);
+      throw error;
+    }
+  }
+
+  private allocateRuntimeToken(agentId: string): number {
+    const token = this.nextRuntimeToken;
+    this.nextRuntimeToken += 1;
+    this.runtimeTokensByAgentId.set(agentId, token);
+    return token;
+  }
+
+  private isCurrentRuntimeToken(agentId: string, runtimeToken: number): boolean {
+    return this.runtimeTokensByAgentId.get(agentId) === runtimeToken;
+  }
+
+  private clearRuntimeToken(agentId: string, runtimeToken?: number): void {
+    if (runtimeToken !== undefined && !this.isCurrentRuntimeToken(agentId, runtimeToken)) {
+      return;
+    }
+
+    this.runtimeTokensByAgentId.delete(agentId);
+  }
+
+  private detachRuntime(agentId: string, runtimeToken?: number): boolean {
+    if (runtimeToken !== undefined && !this.isCurrentRuntimeToken(agentId, runtimeToken)) {
+      return false;
+    }
+
+    this.runtimes.delete(agentId);
+    this.clearRuntimeToken(agentId, runtimeToken);
+    return true;
+  }
+
+  private async runRuntimeShutdown(
+    descriptor: AgentDescriptor,
+    action: "terminate" | "stopInFlight",
+    options?: RuntimeShutdownOptions
+  ): Promise<{ timedOut: boolean; runtimeToken?: number }> {
+    const runtime = this.runtimes.get(descriptor.agentId);
+    if (!runtime) {
+      return { timedOut: false, runtimeToken: undefined };
+    }
+
+    const runtimeToken = this.runtimeTokensByAgentId.get(descriptor.agentId);
+    const operation =
+      action === "terminate"
+        ? runtime.terminate({
+            abort: options?.abort,
+            shutdownTimeoutMs: options?.shutdownTimeoutMs ?? RUNTIME_SHUTDOWN_TIMEOUT_MS,
+            drainTimeoutMs: options?.drainTimeoutMs ?? RUNTIME_SHUTDOWN_DRAIN_TIMEOUT_MS,
+          })
+        : runtime.stopInFlight({
+            abort: options?.abort,
+            shutdownTimeoutMs: options?.shutdownTimeoutMs ?? RUNTIME_SHUTDOWN_TIMEOUT_MS,
+            drainTimeoutMs: options?.drainTimeoutMs ?? RUNTIME_SHUTDOWN_DRAIN_TIMEOUT_MS,
+          });
+
+    try {
+      await withManagerTimeout(
+        operation,
+        options?.shutdownTimeoutMs ?? RUNTIME_SHUTDOWN_TIMEOUT_MS,
+        `${action}:${descriptor.agentId}`
+      );
+      return { timedOut: false, runtimeToken };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const timedOut = /timed out/i.test(message);
+      if (timedOut) {
+        this.logDebug("runtime:shutdown:timeout", {
+          agentId: descriptor.agentId,
+          action,
+          timeoutMs: options?.shutdownTimeoutMs ?? RUNTIME_SHUTDOWN_TIMEOUT_MS,
+          message,
+        });
+        void operation.catch((lateError) => {
+          this.logDebug("runtime:shutdown:late_completion", {
+            agentId: descriptor.agentId,
+            action,
+            message: lateError instanceof Error ? lateError.message : String(lateError),
+          });
+        });
+        this.detachRuntime(descriptor.agentId, runtimeToken);
+        return { timedOut: true, runtimeToken };
+      }
+
+      throw error;
+    }
   }
 
   private async handleRuntimeStatus(
+    runtimeToken: number,
     agentId: string,
     status: AgentStatus,
     pendingCount: number,
     contextUsage?: AgentContextUsage
   ): Promise<void> {
+    if (!this.isCurrentRuntimeToken(agentId, runtimeToken)) {
+      return;
+    }
+
     const descriptor = this.descriptors.get(agentId);
     if (!descriptor) return;
 
@@ -5047,7 +5189,25 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
   }
 
-  private async handleRuntimeSessionEvent(agentId: string, event: RuntimeSessionEvent): Promise<void> {
+  private async handleRuntimeSessionEvent(
+    runtimeTokenOrAgentId: number | string,
+    agentIdOrEvent: string | RuntimeSessionEvent,
+    maybeEvent?: RuntimeSessionEvent
+  ): Promise<void> {
+    const invokedWithExplicitToken = typeof runtimeTokenOrAgentId === "number";
+    const runtimeToken = invokedWithExplicitToken ? runtimeTokenOrAgentId : undefined;
+    const agentId = invokedWithExplicitToken
+      ? (agentIdOrEvent as string)
+      : runtimeTokenOrAgentId;
+    const event = invokedWithExplicitToken ? maybeEvent : (agentIdOrEvent as RuntimeSessionEvent);
+
+    if (!event) {
+      return;
+    }
+
+    if (runtimeToken !== undefined && !this.isCurrentRuntimeToken(agentId, runtimeToken)) {
+      return;
+    }
     this.captureConversationEventFromRuntime(agentId, event);
     this.maybeRecordVersionedToolMutation(agentId, event);
 
@@ -5175,7 +5335,25 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     });
   }
 
-  private async handleRuntimeError(agentId: string, error: RuntimeErrorEvent): Promise<void> {
+  private async handleRuntimeError(
+    runtimeTokenOrAgentId: number | string,
+    agentIdOrError: string | RuntimeErrorEvent,
+    maybeError?: RuntimeErrorEvent
+  ): Promise<void> {
+    const invokedWithExplicitToken = typeof runtimeTokenOrAgentId === "number";
+    const runtimeToken = invokedWithExplicitToken ? runtimeTokenOrAgentId : undefined;
+    const agentId = invokedWithExplicitToken
+      ? (agentIdOrError as string)
+      : runtimeTokenOrAgentId;
+    const error = invokedWithExplicitToken ? maybeError : (agentIdOrError as RuntimeErrorEvent);
+
+    if (!error) {
+      return;
+    }
+
+    if (runtimeToken !== undefined && !this.isCurrentRuntimeToken(agentId, runtimeToken)) {
+      return;
+    }
     const descriptor = this.descriptors.get(agentId);
     if (!descriptor) {
       return;
@@ -5568,7 +5746,17 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return Boolean(runtime?.isContextRecoveryInProgress?.());
   }
 
-  private async handleRuntimeAgentEnd(agentId: string): Promise<void> {
+  private async handleRuntimeAgentEnd(runtimeTokenOrAgentId: number | string, maybeAgentId?: string): Promise<void> {
+    const runtimeToken = typeof runtimeTokenOrAgentId === "number" ? runtimeTokenOrAgentId : undefined;
+    const agentId = typeof runtimeTokenOrAgentId === "number" ? maybeAgentId : runtimeTokenOrAgentId;
+
+    if (!agentId) {
+      return;
+    }
+
+    if (runtimeToken !== undefined && !this.isCurrentRuntimeToken(agentId, runtimeToken)) {
+      return;
+    }
     this.trackedToolPathsByAgentId.delete(agentId);
     const descriptor = this.descriptors.get(agentId);
     if (!descriptor || descriptor.role !== "worker") {
@@ -7069,6 +7257,25 @@ function toRuntimeDispatchAttachments(
       filePath: persistedPath
     };
   });
+}
+
+async function withManagerTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timeoutHandle: NodeJS.Timeout | undefined;
+
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timeoutHandle = setTimeout(() => {
+          reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+    }
+  }
 }
 
 function computeAttachmentSizeBytes(attachment: ConversationAttachment): number | undefined {
