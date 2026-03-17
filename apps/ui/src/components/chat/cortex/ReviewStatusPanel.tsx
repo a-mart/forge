@@ -182,6 +182,13 @@ function StatusBadge({ status }: { status: ReviewDisplayStatus }) {
 
 function ReviewRunStatusBadge({ run }: { run: CortexReviewRunRecord }) {
   switch (run.status) {
+    case 'queued':
+      return (
+        <Badge variant="outline" className="h-5 gap-1 border-amber-500/30 bg-amber-500/10 px-1.5 text-[10px] font-medium text-amber-500">
+          <Clock className="size-2.5" />
+          {run.queuePosition ? `Queued #${run.queuePosition}` : 'Queued'}
+        </Badge>
+      )
     case 'running':
       return (
         <Badge variant="outline" className="h-5 gap-1 border-blue-500/30 bg-blue-500/10 px-1.5 text-[10px] font-medium text-blue-500">
@@ -371,6 +378,8 @@ export function ReviewStatusPanel({ wsUrl, refreshKey = 0, onOpenSession }: Revi
   const transcriptProgressPct =
     transcriptTotalBytes > 0 ? Math.min(100, Math.round((transcriptReviewedBytes / transcriptTotalBytes) * 100)) : 0
   const attentionBytes = scanData?.scan.summary.attentionBytes ?? 0
+  const runningRunCount = reviewRuns.filter((run) => run.status === 'running').length
+  const queuedRunCount = reviewRuns.filter((run) => run.status === 'queued').length
 
   return (
     <div className="flex h-full flex-col">
@@ -492,6 +501,16 @@ export function ReviewStatusPanel({ wsUrl, refreshKey = 0, onOpenSession }: Revi
                 <div className="mb-2 flex items-center gap-2">
                   <SquareStack className="size-3.5 text-muted-foreground" />
                   <h4 className="text-[11px] font-semibold text-foreground">Recent Runs</h4>
+                  {runningRunCount > 0 ? (
+                    <Badge variant="outline" className="h-5 border-blue-500/30 bg-blue-500/10 px-1.5 text-[10px] text-blue-500">
+                      {runningRunCount} running
+                    </Badge>
+                  ) : null}
+                  {queuedRunCount > 0 ? (
+                    <Badge variant="outline" className="h-5 border-amber-500/30 bg-amber-500/10 px-1.5 text-[10px] text-amber-500">
+                      {queuedRunCount} queued
+                    </Badge>
+                  ) : null}
                 </div>
                 {reviewRuns.length === 0 ? (
                   <p className="text-[11px] text-muted-foreground">No review runs recorded yet.</p>
@@ -514,6 +533,10 @@ export function ReviewStatusPanel({ wsUrl, refreshKey = 0, onOpenSession }: Revi
                             <p className="mt-0.5 text-[10px] text-muted-foreground">Started {formatTimestamp(run.requestedAt)}</p>
                             {run.blockedReason ? (
                               <p className="mt-1 text-[10px] text-amber-500">{run.blockedReason}</p>
+                            ) : run.status === 'queued' ? (
+                              <p className="mt-1 text-[10px] text-muted-foreground">
+                                {run.queuePosition ? `Waiting in queue (#${run.queuePosition}).` : 'Waiting in queue.'} Starts automatically after the active review finishes.
+                              </p>
                             ) : run.latestCloseout ? (
                               <p className="mt-1 text-[10px] text-muted-foreground">{truncateMiddle(run.latestCloseout)}</p>
                             ) : null}

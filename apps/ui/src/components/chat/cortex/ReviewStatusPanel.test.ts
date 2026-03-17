@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { getByLabelText, getByText, queryByText } from '@testing-library/dom'
+import { getAllByText, getByLabelText, getByText, queryByText } from '@testing-library/dom'
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
@@ -42,6 +42,21 @@ describe('ReviewStatusPanel', () => {
     const onOpenSession = vi.fn()
     const reviewRuns: CortexReviewRunRecord[] = [
       {
+        runId: 'review-queued',
+        trigger: 'manual' as const,
+        scope: { mode: 'session', profileId: 'beta', sessionId: 'beta--s2', axes: ['memory'] },
+        scopeLabel: 'beta/beta--s2 (memory)',
+        requestText: 'Review session beta/beta--s2 (memory freshness)',
+        requestedAt: '2026-03-16T23:02:00.000Z',
+        status: 'queued',
+        sessionAgentId: null,
+        activeWorkerCount: 0,
+        latestCloseout: null,
+        queuePosition: 1,
+        blockedReason: null,
+        scheduleName: null,
+      },
+      {
         runId: 'review-1',
         trigger: 'scheduled' as const,
         scope: { mode: 'all' as const },
@@ -52,6 +67,7 @@ describe('ReviewStatusPanel', () => {
         sessionAgentId: 'cortex--s2',
         activeWorkerCount: 0,
         latestCloseout: 'reviewed, no durable updates',
+        queuePosition: null,
         blockedReason: null,
         scheduleName: 'Nightly review',
       },
@@ -127,6 +143,7 @@ describe('ReviewStatusPanel', () => {
           sessionAgentId: 'cortex--s3',
           activeWorkerCount: 0,
           latestCloseout: null,
+          queuePosition: null,
           blockedReason: null,
           scheduleName: null,
         }
@@ -157,6 +174,10 @@ describe('ReviewStatusPanel', () => {
 
     expect(getByText(container, 'Recent Runs')).toBeTruthy()
     expect(getByText(container, 'All sessions that need attention')).toBeTruthy()
+    expect(getByText(container, 'beta/beta--s2 (memory)')).toBeTruthy()
+    expect(getByText(container, 'Queued #1')).toBeTruthy()
+    expect(getByText(container, '1 queued')).toBeTruthy()
+    expect(getByText(container, 'Waiting in queue (#1). Starts automatically after the active review finishes.')).toBeTruthy()
     expect(getByText(container, 'Scheduled')).toBeTruthy()
     expect(getByText(container, 'reviewed, no durable updates')).toBeTruthy()
     expect(getByText(container, '64 B memory')).toBeTruthy()
@@ -191,6 +212,6 @@ describe('ReviewStatusPanel', () => {
       }),
     )
     expect(getByText(container, 'alpha/alpha--s1 (memory, feedback)')).toBeTruthy()
-    expect(getByText(container, 'Manual')).toBeTruthy()
+    expect(getAllByText(container, 'Manual').length).toBeGreaterThan(0)
   })
 })

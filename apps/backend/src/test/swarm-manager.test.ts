@@ -2349,7 +2349,7 @@ describe('SwarmManager', () => {
     })
   })
 
-  it('serializes concurrent review starts so a second trigger blocks while the first review run is actively starting', async () => {
+  it('queues concurrent review starts FIFO and automatically launches the next run after the active one finishes', async () => {
     const config = await makeTempConfig()
 
     class BlockingReviewRuntime extends FakeRuntime {
@@ -2411,18 +2411,34 @@ describe('SwarmManager', () => {
       sourceContext: { channel: 'web' },
     })
 
+    expect(secondRun.status).toBe('queued')
+    expect(secondRun.sessionAgentId).toBeNull()
+    expect(secondRun.queuePosition).toBe(1)
+
     releaseFirstRun()
     const firstRun = await firstRunPromise
 
-    expect(firstRun.status).toBe('running')
-    expect(secondRun.status).toBe('blocked')
-    expect(secondRun.blockedReason).toContain('Review already running in Review Run · Full Queue')
+    let refreshedRuns = await manager.listCortexReviewRuns()
+    let refreshedSecondRun = refreshedRuns.find((entry) => entry.runId === secondRun.runId)
+    for (let attempt = 0; attempt < 50 && !refreshedSecondRun?.sessionAgentId; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      refreshedRuns = await manager.listCortexReviewRuns()
+      refreshedSecondRun = refreshedRuns.find((entry) => entry.runId === secondRun.runId)
+    }
+
+    const refreshedFirstRun = refreshedRuns.find((entry) => entry.runId === firstRun.runId)
+
+    expect(refreshedFirstRun?.status).toBe('completed')
+    expect(refreshedSecondRun?.queuePosition ?? null).toBeNull()
+    expect(refreshedSecondRun?.sessionAgentId).toMatch(/^cortex--s\d+$/)
+    expect(refreshedSecondRun?.sessionAgentId).not.toBe(firstRun.sessionAgentId)
 
     const storedRuns = JSON.parse(await readFile(getCortexReviewRunsPath(config.paths.dataDir), 'utf8')) as {
-      runs: Array<{ blockedReason?: string | null; sessionAgentId: string | null }>
+      runs: Array<{ runId: string; blockedReason?: string | null; sessionAgentId: string | null }>
     }
-    expect(storedRuns.runs[0]?.blockedReason).toContain('Review already running')
-    expect(storedRuns.runs[1]?.sessionAgentId).toBe(firstRun.sessionAgentId)
+    const storedSecondRun = storedRuns.runs.find((entry) => entry.runId === secondRun.runId)
+    expect(storedSecondRun?.blockedReason ?? null).toBeNull()
+    expect(storedSecondRun?.sessionAgentId).toBe(refreshedSecondRun?.sessionAgentId ?? null)
   })
 
   it('tags web user messages with default source metadata', async () => {

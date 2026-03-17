@@ -52,7 +52,8 @@ import {
   createCortexReviewRunId,
   parseCortexReviewRunScopeFromText,
   parseScheduledTaskEnvelope,
-  readStoredCortexReviewRuns
+  readStoredCortexReviewRuns,
+  type StoredCortexReviewRun
 } from "./cortex-review-runs.js";
 import { executeLLMMerge, MEMORY_MERGE_SYSTEM_PROMPT } from "./memory-merge.js";
 import { PersistenceService } from "./persistence-service.js";
@@ -157,6 +158,7 @@ const MERGER_ARCHETYPE_ID = "merger";
 const CORTEX_ARCHETYPE_ID = "cortex";
 const CORTEX_PROFILE_ID = "cortex";
 const CORTEX_DISPLAY_NAME = "Cortex";
+const CORTEX_REVIEW_RUN_QUEUE_RETRY_MS = 250;
 const INTERNAL_MODEL_MESSAGE_PREFIX = "SYSTEM: ";
 const MANAGER_BOOTSTRAP_INTERVIEW_MESSAGE = `You are a newly created manager agent for this user.
 
@@ -983,6 +985,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly profiles = new Map<string, ManagerProfile>();
   private readonly profileMergeMutexes = new Map<string, Promise<void>>();
   private cortexReviewRunStartMutex: Promise<void> = Promise.resolve();
+  private cortexReviewRunQueueTimer: NodeJS.Timeout | null = null;
   private readonly runtimes = new Map<string, SwarmAgentRuntime>();
   private readonly conversationEntriesByAgentId = new Map<string, ConversationEntryEvent[]>();
   private readonly workerWatchdogState = new Map<string, WorkerWatchdogState>();
@@ -1159,6 +1162,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     this.emitAgentsSnapshot();
     this.emitProfilesSnapshot();
+    this.scheduleCortexReviewRunQueueCheck(0);
 
     this.logDebug("boot:ready", {
       managerId: managerDescriptor?.agentId,
@@ -1182,6 +1186,15 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   async listCortexReviewRuns(): Promise<CortexReviewRunRecord[]> {
     const storedRuns = await readStoredCortexReviewRuns(this.config.paths.dataDir);
+    const queuedRunIdsByPosition = new Map<string, number>();
+
+    storedRuns
+      .filter((stored) => !stored.blockedReason && !stored.sessionAgentId)
+      .slice()
+      .reverse()
+      .forEach((stored, index) => {
+        queuedRunIdsByPosition.set(stored.runId, index + 1);
+      });
 
     return storedRuns.map((stored) => {
       const sessionDescriptor = stored.sessionAgentId ? this.descriptors.get(stored.sessionAgentId) : undefined;
@@ -1193,7 +1206,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         stored,
         sessionDescriptor,
         activeWorkerCount,
-        history: stored.sessionAgentId ? this.getConversationHistory(stored.sessionAgentId) : []
+        history: stored.sessionAgentId ? this.getConversationHistory(stored.sessionAgentId) : [],
+        queuePosition: queuedRunIdsByPosition.get(stored.runId) ?? null
       });
     });
   }
@@ -1205,66 +1219,28 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     requestText?: string;
     scheduleName?: string | null;
   }): Promise<CortexReviewRunRecord> {
-    return this.withCortexReviewRunStartLock(async () => {
+    const runId = createCortexReviewRunId();
+
+    await this.withCortexReviewRunStartLock(async () => {
       await this.ensureCortexProfile();
-
-      const runId = createCortexReviewRunId();
-      const requestedAt = this.now();
-      const scopeLabel = buildCortexReviewRunScopeLabel(input.scope);
-      const requestText = input.requestText?.trim() || buildCortexReviewRunRequestText(input.scope);
-
-      const activeReviewSession = Array.from(this.descriptors.values()).find((descriptor) => (
-        descriptor.role === "manager" &&
-        descriptor.profileId === CORTEX_PROFILE_ID &&
-        descriptor.sessionPurpose === "cortex_review" &&
-        (descriptor.status === "streaming" || this.getWorkersForManager(descriptor.agentId).some((worker) => worker.status === "streaming"))
-      ));
-
-      if (activeReviewSession) {
-        await appendCortexReviewRun(this.config.paths.dataDir, {
-          runId,
-          trigger: input.trigger,
-          scope: input.scope,
-          scopeLabel,
-          requestText,
-          requestedAt,
-          sessionAgentId: null,
-          blockedReason: `Review already running in ${activeReviewSession.sessionLabel ?? activeReviewSession.agentId}`,
-          scheduleName: input.scheduleName ?? null
-        });
-
-        const [blocked] = await this.listCortexReviewRuns();
-        return blocked;
-      }
-
-      const label = input.scope.mode === "all"
-        ? `Review Run · Full Queue`
-        : `Review Run · ${input.scope.profileId}/${input.scope.sessionId}`;
-
-      const { sessionAgent } = await this.createSession(CORTEX_PROFILE_ID, {
-        label,
-        sessionPurpose: "cortex_review"
-      });
 
       await appendCortexReviewRun(this.config.paths.dataDir, {
         runId,
         trigger: input.trigger,
         scope: input.scope,
-        scopeLabel,
-        requestText,
-        requestedAt,
-        sessionAgentId: sessionAgent.agentId,
+        scopeLabel: buildCortexReviewRunScopeLabel(input.scope),
+        requestText: input.requestText?.trim() || buildCortexReviewRunRequestText(input.scope),
+        requestedAt: this.now(),
+        sessionAgentId: null,
+        sourceContext: input.sourceContext ?? { channel: "web" },
         scheduleName: input.scheduleName ?? null
       });
 
-      await this.handleUserMessage(requestText, {
-        targetAgentId: sessionAgent.agentId,
-        sourceContext: input.sourceContext ?? { channel: "web" }
-      });
-
-      const [createdRun] = await this.listCortexReviewRuns();
-      return createdRun;
+      await this.startNextQueuedCortexReviewRun();
     });
+
+    this.scheduleCortexReviewRunQueueCheck();
+    return this.getCortexReviewRunByIdOrThrow(runId);
   }
 
   private async withCortexReviewRunStartLock<T>(operation: () => Promise<T>): Promise<T> {
@@ -1281,6 +1257,119 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     } finally {
       release?.();
     }
+  }
+
+  private getActiveCortexReviewSession(): AgentDescriptor | undefined {
+    return Array.from(this.descriptors.values()).find((descriptor) => (
+      descriptor.role === "manager" &&
+      descriptor.profileId === CORTEX_PROFILE_ID &&
+      descriptor.sessionPurpose === "cortex_review" &&
+      (
+        descriptor.status === "streaming" ||
+        this.getWorkersForManager(descriptor.agentId).some((worker) => worker.status === "streaming")
+      )
+    ));
+  }
+
+  private async getCortexReviewRunByIdOrThrow(runId: string): Promise<CortexReviewRunRecord> {
+    const runs = await this.listCortexReviewRuns();
+    const run = runs.find((entry) => entry.runId === runId);
+    if (!run) {
+      throw new Error(`Unable to load Cortex review run ${runId}`);
+    }
+    return run;
+  }
+
+  private async startNextQueuedCortexReviewRun(): Promise<CortexReviewRunRecord | null> {
+    const activeReviewSession = this.getActiveCortexReviewSession();
+    if (activeReviewSession) {
+      return null;
+    }
+
+    const queuedRun = await this.findNextQueuedCortexReviewRun();
+    if (!queuedRun) {
+      this.clearCortexReviewRunQueueCheck();
+      return null;
+    }
+
+    const label = queuedRun.scope.mode === "all"
+      ? "Review Run · Full Queue"
+      : `Review Run · ${queuedRun.scope.profileId}/${queuedRun.scope.sessionId}`;
+
+    const { sessionAgent } = await this.createSession(CORTEX_PROFILE_ID, {
+      label,
+      sessionPurpose: "cortex_review"
+    });
+
+    await appendCortexReviewRun(this.config.paths.dataDir, {
+      ...queuedRun,
+      sessionAgentId: sessionAgent.agentId,
+      sourceContext: queuedRun.sourceContext ?? { channel: "web" }
+    });
+
+    await this.handleUserMessage(queuedRun.requestText, {
+      targetAgentId: sessionAgent.agentId,
+      sourceContext: queuedRun.sourceContext ?? { channel: "web" }
+    });
+
+    return this.getCortexReviewRunByIdOrThrow(queuedRun.runId);
+  }
+
+  private async findNextQueuedCortexReviewRun(): Promise<StoredCortexReviewRun | null> {
+    const storedRuns = await readStoredCortexReviewRuns(this.config.paths.dataDir);
+    const nextQueued = storedRuns
+      .slice()
+      .reverse()
+      .find((stored) => !stored.blockedReason && !stored.sessionAgentId);
+
+    return nextQueued ?? null;
+  }
+
+  private scheduleCortexReviewRunQueueCheck(delayMs = CORTEX_REVIEW_RUN_QUEUE_RETRY_MS): void {
+    this.clearCortexReviewRunQueueCheck();
+
+    const timer = setTimeout(() => {
+      this.cortexReviewRunQueueTimer = null;
+      void this.processCortexReviewRunQueue().catch((error) => {
+        this.logDebug("cortex:review_queue:error", {
+          message: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined
+        });
+      });
+    }, Math.max(0, delayMs));
+
+    timer.unref?.();
+    this.cortexReviewRunQueueTimer = timer;
+  }
+
+  private clearCortexReviewRunQueueCheck(): void {
+    if (!this.cortexReviewRunQueueTimer) {
+      return;
+    }
+
+    clearTimeout(this.cortexReviewRunQueueTimer);
+    this.cortexReviewRunQueueTimer = null;
+  }
+
+  private async processCortexReviewRunQueue(): Promise<void> {
+    await this.withCortexReviewRunStartLock(async () => {
+      const activeReviewSession = this.getActiveCortexReviewSession();
+      const queuedRun = await this.findNextQueuedCortexReviewRun();
+
+      if (!queuedRun) {
+        this.clearCortexReviewRunQueueCheck();
+        return;
+      }
+
+      if (activeReviewSession) {
+        this.scheduleCortexReviewRunQueueCheck();
+        return;
+      }
+
+      await this.ensureCortexProfile();
+      await this.startNextQueuedCortexReviewRun();
+      this.scheduleCortexReviewRunQueueCheck();
+    });
   }
 
   getConversationHistory(agentId?: string): ConversationEntryEvent[] {
@@ -5112,7 +5201,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     pendingCount: number,
     contextUsage?: AgentContextUsage
   ): void {
-    const resolvedContextUsage = normalizeContextUsage(contextUsage ?? this.descriptors.get(agentId)?.contextUsage);
+    const descriptor = this.descriptors.get(agentId);
+    const resolvedContextUsage = normalizeContextUsage(contextUsage ?? descriptor?.contextUsage);
     const runtime = this.runtimes.get(agentId);
     const contextRecoveryInProgress = runtime?.isContextRecoveryInProgress?.() === true;
     const payload: AgentStatusEvent = {
@@ -5125,6 +5215,15 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     };
 
     this.emit("agent_status", payload satisfies ServerEvent);
+
+    const reviewSessionDescriptor = descriptor?.sessionPurpose === "cortex_review"
+      ? descriptor
+      : descriptor?.role === "worker"
+        ? this.descriptors.get(descriptor.managerId)
+        : undefined;
+    if (reviewSessionDescriptor?.sessionPurpose === "cortex_review") {
+      this.scheduleCortexReviewRunQueueCheck(status === "streaming" ? CORTEX_REVIEW_RUN_QUEUE_RETRY_MS : 0);
+    }
   }
 
   private emitAgentsSnapshot(): void {

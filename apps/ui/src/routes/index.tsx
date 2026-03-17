@@ -13,7 +13,7 @@ import {
 import { AgentSidebar } from '@/components/chat/AgentSidebar'
 import { ArtifactPanel } from '@/components/chat/ArtifactPanel'
 import { ArtifactsSidebar } from '@/components/chat/ArtifactsSidebar'
-import { CortexDashboardPanel } from '@/components/chat/cortex/CortexDashboardPanel'
+import { CortexDashboardPanel, type DashboardTab as CortexDashboardTab } from '@/components/chat/cortex/CortexDashboardPanel'
 import { ChatHeader, type ChannelView } from '@/components/chat/ChatHeader'
 import { CreateManagerDialog } from '@/components/chat/CreateManagerDialog'
 import { DeleteManagerDialog } from '@/components/chat/DeleteManagerDialog'
@@ -84,6 +84,8 @@ export function IndexPage() {
 
   const [activeArtifact, setActiveArtifact] = useState<ArtifactReference | null>(null)
   const [isArtifactsPanelOpen, setIsArtifactsPanelOpen] = useState(false)
+  const [cortexDashboardTabRequest, setCortexDashboardTabRequest] = useState<{ tab: CortexDashboardTab; nonce: number } | null>(null)
+  const [pendingCortexDashboardOpen, setPendingCortexDashboardOpen] = useState(false)
   const [channelView, setChannelView] = useState<ChannelView>('web')
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
   const [slashCommands, setSlashCommands] = useState<SlashCommand[]>([])
@@ -302,6 +304,15 @@ export function IndexPage() {
     setIsArtifactsPanelOpen(false)
     setIsMobileSidebarOpen(false)
   }, [activeAgentId])
+
+  useEffect(() => {
+    if (!pendingCortexDashboardOpen || activeAgent?.archetypeId !== 'cortex') {
+      return
+    }
+
+    setIsArtifactsPanelOpen(true)
+    setPendingCortexDashboardOpen(false)
+  }, [activeAgent, pendingCortexDashboardOpen])
 
   // Fetch slash commands on mount (global, not manager-scoped)
   useEffect(() => {
@@ -623,6 +634,13 @@ export function IndexPage() {
     clientRef.current?.subscribeToAgent(agentId)
   }
 
+  const handleOpenCortexReview = useCallback((agentId: string) => {
+    navigateToRoute({ view: 'chat', agentId })
+    clientRef.current?.subscribeToAgent(agentId)
+    setPendingCortexDashboardOpen(true)
+    setCortexDashboardTabRequest({ tab: 'review', nonce: Date.now() })
+  }, [navigateToRoute])
+
   const handleDeleteAgent = (agentId: string) => {
     const agent = state.agents.find((entry) => entry.agentId === agentId)
     if (!agent || agent.role !== 'worker') {
@@ -719,6 +737,7 @@ export function IndexPage() {
           onDeleteAgent={handleDeleteAgent}
           onDeleteManager={handleRequestDeleteManager}
           onOpenSettings={handleOpenSettingsPanel}
+          onOpenCortexReview={handleOpenCortexReview}
           onOpenPlaywright={handleOpenPlaywright}
           onCreateSession={handleCreateSession}
           onStopSession={handleStopSession}
@@ -875,6 +894,7 @@ export function IndexPage() {
                 onClose={() => setIsArtifactsPanelOpen(false)}
                 onArtifactClick={handleOpenArtifact}
                 onOpenSession={handleSelectAgent}
+                requestedTab={cortexDashboardTabRequest}
               />
             ) : (
               <ArtifactsSidebar

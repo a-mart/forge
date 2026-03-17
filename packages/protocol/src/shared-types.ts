@@ -48,7 +48,7 @@ export interface AgentDescriptor {
 }
 
 export type CortexReviewRunTrigger = 'manual' | 'scheduled'
-export type CortexReviewRunStatus = 'running' | 'completed' | 'blocked' | 'stopped'
+export type CortexReviewRunStatus = 'queued' | 'running' | 'completed' | 'blocked' | 'stopped'
 export type CortexReviewRunAxis = 'transcript' | 'memory' | 'feedback'
 
 export type CortexReviewRunScope =
@@ -71,6 +71,7 @@ export interface CortexReviewRunRecord {
   sessionAgentId: string | null
   activeWorkerCount: number
   latestCloseout: string | null
+  queuePosition?: number | null
   blockedReason?: string | null
   scheduleName?: string | null
 }

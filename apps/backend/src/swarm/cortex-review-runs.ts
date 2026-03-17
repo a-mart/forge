@@ -7,7 +7,8 @@ import type {
   CortexReviewRunRecord,
   CortexReviewRunScope,
   CortexReviewRunStatus,
-  CortexReviewRunTrigger
+  CortexReviewRunTrigger,
+  MessageSourceContext
 } from "@middleman/protocol";
 import { getCortexReviewRunsPath } from "./data-paths.js";
 import type { ConversationEntryEvent } from "./types.js";
@@ -20,7 +21,7 @@ interface StoredCortexReviewRunsFile {
   runs: StoredCortexReviewRun[];
 }
 
-interface StoredCortexReviewRun {
+export interface StoredCortexReviewRun {
   runId: string;
   trigger: CortexReviewRunTrigger;
   scope: CortexReviewRunScope;
@@ -28,6 +29,7 @@ interface StoredCortexReviewRun {
   requestText: string;
   requestedAt: string;
   sessionAgentId: string | null;
+  sourceContext?: MessageSourceContext | null;
   blockedReason?: string | null;
   scheduleName?: string | null;
 }
@@ -150,6 +152,7 @@ export function buildLiveCortexReviewRunRecord(options: {
   sessionDescriptor?: ProtocolAgentDescriptor;
   activeWorkerCount: number;
   history?: ConversationEntryEvent[];
+  queuePosition?: number | null;
 }): CortexReviewRunRecord {
   const latestCloseout = findLatestUserVisibleCloseout(options.history ?? []);
 
@@ -164,6 +167,7 @@ export function buildLiveCortexReviewRunRecord(options: {
     sessionAgentId: options.stored.sessionAgentId,
     activeWorkerCount: options.activeWorkerCount,
     latestCloseout,
+    queuePosition: options.queuePosition ?? null,
     blockedReason: options.stored.blockedReason ?? null,
     scheduleName: options.stored.scheduleName ?? null
   };
@@ -197,6 +201,10 @@ function deriveLiveStatus(
 ): CortexReviewRunStatus {
   if (stored.blockedReason) {
     return "blocked";
+  }
+
+  if (!stored.sessionAgentId) {
+    return "queued";
   }
 
   if (!sessionDescriptor) {
@@ -265,6 +273,7 @@ function isStoredCortexReviewRun(value: unknown): value is StoredCortexReviewRun
     typeof candidate.requestText === "string" &&
     typeof candidate.requestedAt === "string" &&
     (candidate.sessionAgentId === null || typeof candidate.sessionAgentId === "string") &&
+    (candidate.sourceContext === undefined || candidate.sourceContext === null || isMessageSourceContext(candidate.sourceContext)) &&
     (candidate.blockedReason === undefined || candidate.blockedReason === null || typeof candidate.blockedReason === "string") &&
     (candidate.scheduleName === undefined || candidate.scheduleName === null || typeof candidate.scheduleName === "string")
   );
@@ -306,6 +315,15 @@ function isCortexReviewRunScope(value: unknown): value is CortexReviewRunScope {
   }
 
   return Array.isArray(candidate.axes) && candidate.axes.every((axis) => isCortexReviewAxis(String(axis)));
+}
+
+function isMessageSourceContext(value: unknown): value is MessageSourceContext {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const candidate = value as Partial<MessageSourceContext>;
+  return candidate.channel === "web" || candidate.channel === "slack" || candidate.channel === "telegram";
 }
 
 function isEnoentError(error: unknown): boolean {

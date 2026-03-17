@@ -71,6 +71,7 @@ interface AgentSidebarProps {
   onDeleteAgent: (agentId: string) => void
   onDeleteManager: (managerId: string) => void
   onOpenSettings: () => void
+  onOpenCortexReview?: (agentId: string) => void
   onOpenPlaywright?: () => void
   onCreateSession?: (profileId: string, name?: string) => void
   onStopSession?: (agentId: string) => void
@@ -1347,6 +1348,7 @@ function CortexSection({
   onSelect,
   onDeleteAgent,
   onOpenSettings,
+  onOpenCortexReview,
   onCreateSession,
   onStopSession,
   onResumeSession,
@@ -1374,6 +1376,7 @@ function CortexSection({
   onSelect: (agentId: string) => void
   onDeleteAgent: (agentId: string) => void
   onOpenSettings: () => void
+  onOpenCortexReview?: (agentId: string) => void
   onCreateSession?: (profileId: string) => void
   onStopSession?: (agentId: string) => void
   onResumeSession?: (agentId: string) => void
@@ -1418,6 +1421,10 @@ function CortexSection({
     (count, s) => count + s.workers.filter((w) => getAgentLiveStatus(w, statuses).status === 'streaming').length,
     0,
   )
+  const activeReviewRunCount = reviewRunSessions.filter((session) => {
+    const reviewStatus = getAgentLiveStatus(session.sessionAgent, statuses).status
+    return reviewStatus === 'streaming' || session.workers.some((worker) => getAgentLiveStatus(worker, statuses).status === 'streaming')
+  }).length
   const activeSessionCount = visibleSessions.filter((s) => isSessionRunning(s.sessionAgent)).length
 
   // Root session status
@@ -1496,6 +1503,12 @@ function CortexSection({
               {reviewRunSessions.length > 0 && !isSearchActive ? (
                 <span className="shrink-0 rounded-full border border-border/60 px-1.5 py-0.5 text-[9px] text-muted-foreground">
                   Review {reviewRunSessions.length}
+                </span>
+              ) : null}
+              {activeReviewRunCount > 0 ? (
+                <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-blue-500/30 bg-blue-500/10 px-1.5 py-0.5 text-[9px] text-blue-500">
+                  <CircleDashed className="size-2.5 animate-spin" aria-hidden="true" />
+                  Running
                 </span>
               ) : null}
               {showUnread ? (
@@ -1655,9 +1668,23 @@ function CortexSection({
                   </button>
                 ) : null}
                 {reviewRunSessions.length > 0 && !selectedReviewRunSession ? (
-                  <p className="px-5 pt-1 text-[10px] text-muted-foreground/70">
-                    {reviewRunSessions.length} review run{reviewRunSessions.length === 1 ? '' : 's'} hidden here — open them from Cortex Review.
-                  </p>
+                  onOpenCortexReview && targetId ? (
+                    <button
+                      type="button"
+                      className={cn(
+                        'px-5 pt-1 text-left text-[10px] text-muted-foreground/70 transition-colors',
+                        'hover:text-muted-foreground',
+                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
+                      )}
+                      onClick={() => onOpenCortexReview(targetId)}
+                    >
+                      {reviewRunSessions.length} review run{reviewRunSessions.length === 1 ? '' : 's'} hidden here — open them from Cortex Review.
+                    </button>
+                  ) : (
+                    <p className="px-5 pt-1 text-[10px] text-muted-foreground/70">
+                      {reviewRunSessions.length} review run{reviewRunSessions.length === 1 ? '' : 's'} hidden here — open them from Cortex Review.
+                    </p>
+                  )
                 ) : null}
               </>
             )
@@ -1687,6 +1714,7 @@ export function AgentSidebar({
   onDeleteAgent,
   onDeleteManager,
   onOpenSettings,
+  onOpenCortexReview,
   onOpenPlaywright,
   onCreateSession,
   onStopSession,
@@ -1800,6 +1828,11 @@ export function AgentSidebar({
     onOpenSettings()
     onMobileClose?.()
   }, [onOpenSettings, onMobileClose])
+
+  const handleOpenCortexReview = useCallback((agentId: string) => {
+    onOpenCortexReview?.(agentId)
+    onMobileClose?.()
+  }, [onOpenCortexReview, onMobileClose])
 
   const handleOpenPlaywright = useCallback(() => {
     onOpenPlaywright?.()
@@ -1965,6 +1998,7 @@ export function AgentSidebar({
               onSelect={handleSelectAgent}
               onDeleteAgent={onDeleteAgent}
               onOpenSettings={handleOpenSettings}
+              onOpenCortexReview={handleOpenCortexReview}
               onCreateSession={onCreateSession ? handleRequestCreateSession : undefined}
               onStopSession={onStopSession}
               onResumeSession={onResumeSession}

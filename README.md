@@ -41,6 +41,7 @@ Open the UI at [http://127.0.0.1:47189](http://127.0.0.1:47189), go to **Setting
 - **Multi-session** — Run multiple sessions per manager for different workstreams, each with their own context and memory.
 - **Integrations** — Chat with your manager from Telegram or Slack. See [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md).
 - **Built-in skills** — Web search, image generation, browser automation, cron scheduling, and persistent memory. See [Skills](#skills).
+- **Cortex review queue** — Scan backlog, launch review runs, track queued/running/completed work, and open backing review sessions without cluttering the main sidebar. See [docs/CORTEX_REVIEW_RUNS.md](docs/CORTEX_REVIEW_RUNS.md).
 
 ## Architecture
 

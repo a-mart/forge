@@ -98,6 +98,7 @@ function renderSidebar({
   onDeleteAgent = vi.fn(),
   onDeleteManager = vi.fn(),
   onOpenSettings = vi.fn(),
+  onOpenCortexReview = vi.fn(),
   isSettingsActive = false,
   statuses = {},
 }: {
@@ -108,6 +109,7 @@ function renderSidebar({
   onDeleteAgent?: (agentId: string) => void
   onDeleteManager?: (managerId: string) => void
   onOpenSettings?: () => void
+  onOpenCortexReview?: (agentId: string) => void
   isSettingsActive?: boolean
   statuses?: Record<string, { status: AgentStatus; pendingCount: number }>
 }) {
@@ -132,6 +134,7 @@ function renderSidebar({
         onDeleteAgent,
         onDeleteManager,
         onOpenSettings,
+        onOpenCortexReview,
         isSettingsActive,
       }),
     )
@@ -272,9 +275,10 @@ describe('AgentSidebar', () => {
     expect(queryByText(sidebar, 'beta-mgr')).toBeTruthy()
   })
 
-  it('hides Cortex review-run sessions from the default sidebar list', () => {
+  it('hides Cortex review-run sessions from the default sidebar list and makes the Cortex Review hint clickable', () => {
     const createdAt = '2026-01-01T00:00:00.000Z'
     const updatedAt = createdAt
+    const onOpenCortexReview = vi.fn()
     const cortexRoot = {
       ...sessionManager('cortex', 'cortex'),
       displayName: 'Cortex',
@@ -303,12 +307,58 @@ describe('AgentSidebar', () => {
     renderSidebar({
       agents: [cortexRoot, reviewRunSession],
       profiles: [cortexProfile],
+      onOpenCortexReview,
     })
 
     const sidebar = getDesktopSidebar()
     expect(queryByText(sidebar, 'Review Run · Full Queue')).toBeNull()
     expect(getByText(sidebar, 'Review 1')).toBeTruthy()
-    expect(getByText(sidebar, '1 review run hidden here — open them from Cortex Review.')).toBeTruthy()
+    const reviewHint = getByRole(sidebar, 'button', { name: '1 review run hidden here — open them from Cortex Review.' })
+    expect(reviewHint).toBeTruthy()
+
+    click(reviewHint)
+    expect(onOpenCortexReview).toHaveBeenCalledWith('cortex')
+  })
+
+  it('shows a running indicator when a hidden Cortex review run is active', () => {
+    const createdAt = '2026-01-01T00:00:00.000Z'
+    const updatedAt = createdAt
+    const cortexRoot = {
+      ...sessionManager('cortex', 'cortex'),
+      displayName: 'Cortex',
+      archetypeId: 'cortex',
+      sessionLabel: 'Main',
+      createdAt,
+      updatedAt,
+    }
+    const reviewRunSession: AgentDescriptor = {
+      ...sessionManager('cortex--s2', 'cortex'),
+      displayName: 'Cortex',
+      archetypeId: 'cortex',
+      sessionLabel: 'Review Run · Full Queue',
+      sessionPurpose: 'cortex_review',
+      status: 'streaming',
+      createdAt,
+      updatedAt,
+    }
+    const cortexProfile: ManagerProfile = {
+      profileId: 'cortex',
+      displayName: 'Cortex',
+      defaultSessionAgentId: 'cortex',
+      createdAt,
+      updatedAt,
+    }
+
+    renderSidebar({
+      agents: [cortexRoot, reviewRunSession],
+      profiles: [cortexProfile],
+      statuses: {
+        'cortex--s2': { status: 'streaming', pendingCount: 0 },
+      },
+    })
+
+    const sidebar = getDesktopSidebar()
+    expect(getByText(sidebar, 'Running')).toBeTruthy()
   })
 
   it('shows the selected Cortex review-run session so it stays directly reachable', () => {

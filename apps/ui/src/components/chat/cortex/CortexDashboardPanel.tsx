@@ -23,9 +23,10 @@ interface CortexDashboardPanelProps {
   onClose: () => void
   onArtifactClick: (artifact: ArtifactReference) => void
   onOpenSession: (agentId: string) => void
+  requestedTab?: { tab: DashboardTab; nonce: number } | null
 }
 
-type DashboardTab = 'knowledge' | 'notes' | 'review' | 'schedules'
+export type DashboardTab = 'knowledge' | 'notes' | 'review' | 'schedules'
 
 const PANEL_WIDTH_KEY = 'cortex-panel-width'
 const DEFAULT_WIDTH = 420
@@ -78,6 +79,7 @@ export function CortexDashboardPanel({
   onClose,
   onArtifactClick,
   onOpenSession,
+  requestedTab,
 }: CortexDashboardPanelProps) {
   const [activeTab, setActiveTab] = useState<DashboardTab>('knowledge')
   const [panelWidth, setPanelWidth] = useState(loadPersistedWidth)
@@ -91,6 +93,12 @@ export function CortexDashboardPanel({
   const [selectedKnowledgeScope, setSelectedKnowledgeScope] = useState<string>('common')
   const isDraggingRef = useRef(false)
   const panelRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (requestedTab) {
+      setActiveTab(requestedTab.tab)
+    }
+  }, [requestedTab])
 
   // Fetch file paths from scan endpoint on mount
   useEffect(() => {
