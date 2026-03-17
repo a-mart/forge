@@ -9,6 +9,7 @@ import {
   getCommonKnowledgePath,
   getCortexPromotionManifestsDir,
   getCortexReviewLogPath,
+  getCortexReviewRunsPath,
   getCortexWorkerPromptsPath,
   getProfileKnowledgePath,
   getProfileMemoryPath,
@@ -2227,6 +2228,163 @@ describe('SwarmManager', () => {
 
     const managerRuntime = manager.runtimeByAgentId.get('manager')
     expect(managerRuntime?.compactCalls).toEqual(['focus the summary on open implementation tasks'])
+  })
+
+  it('starts fresh Cortex review runs in dedicated review sessions and records them for the Review tab', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await manager.boot()
+
+    const run = await manager.startCortexReviewRun({
+      scope: { mode: 'session', profileId: 'alpha', sessionId: 'alpha--s1', axes: ['memory', 'feedback'] },
+      trigger: 'manual',
+      sourceContext: { channel: 'web' },
+    })
+
+    expect(run.status).toBe('completed')
+    expect(run.scopeLabel).toBe('alpha/alpha--s1 (memory, feedback)')
+    expect(run.sessionAgentId).toMatch(/^cortex--s\d+$/)
+
+    const reviewSession = manager.listAgents().find((descriptor) => descriptor.agentId === run.sessionAgentId)
+    expect(reviewSession).toMatchObject({
+      profileId: 'cortex',
+      sessionPurpose: 'cortex_review',
+    })
+
+    const reviewRuntime = manager.runtimeByAgentId.get(run.sessionAgentId!)
+    expect(reviewRuntime?.sendCalls.at(-1)?.delivery).toBe('steer')
+    expect(reviewRuntime?.sendCalls.at(-1)?.message).toBe(
+      '[sourceContext] {"channel":"web"}\n\nReview session alpha/alpha--s1 (memory, feedback freshness)',
+    )
+
+    const storedRuns = JSON.parse(await readFile(getCortexReviewRunsPath(config.paths.dataDir), 'utf8')) as {
+      runs: Array<{ sessionAgentId: string | null; trigger: string }>
+    }
+    expect(storedRuns.runs[0]).toMatchObject({
+      sessionAgentId: run.sessionAgentId,
+      trigger: 'manual',
+    })
+  })
+
+  it('routes root Cortex review messages into fresh review-run sessions instead of the interactive root session', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await manager.boot()
+
+    expect(manager.runtimeByAgentId.get('cortex')).toBeUndefined()
+
+    await manager.handleUserMessage('Review all sessions that need attention', {
+      targetAgentId: 'cortex',
+      sourceContext: { channel: 'web' },
+    })
+
+    expect(manager.runtimeByAgentId.get('cortex')).toBeUndefined()
+
+    const runs = await manager.listCortexReviewRuns()
+    expect(runs[0]).toMatchObject({
+      trigger: 'manual',
+      scope: { mode: 'all' },
+    })
+    expect(runs[0]?.sessionAgentId).toMatch(/^cortex--s\d+$/)
+  })
+
+  it('routes scheduled review envelopes into the same review-run path with schedule metadata', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await manager.boot()
+
+    await manager.handleUserMessage(
+      '[Scheduled Task: Nightly Review]\n[scheduleContext] {"scheduleId":"sched-1"}\n\nReview all sessions that need attention',
+      {
+        targetAgentId: 'cortex',
+        sourceContext: { channel: 'web' },
+      },
+    )
+
+    const runs = await manager.listCortexReviewRuns()
+    expect(runs[0]).toMatchObject({
+      trigger: 'scheduled',
+      scope: { mode: 'all' },
+      scheduleName: 'Nightly Review',
+      requestText:
+        '[Scheduled Task: Nightly Review]\n[scheduleContext] {"scheduleId":"sched-1"}\n\nReview all sessions that need attention',
+    })
+  })
+
+  it('serializes concurrent review starts so a second trigger blocks while the first review run is actively starting', async () => {
+    const config = await makeTempConfig()
+
+    class BlockingReviewRuntime extends FakeRuntime {
+      constructor(
+        descriptor: AgentDescriptor,
+        private readonly release: Promise<void>,
+      ) {
+        super(descriptor)
+      }
+
+      override async sendMessage(message: string | RuntimeUserMessage, delivery: RequestedDeliveryMode = 'auto'): Promise<SendMessageReceipt> {
+        if (this.descriptor.sessionPurpose === 'cortex_review') {
+          this.descriptor.status = 'streaming'
+          void this.release.then(() => {
+            this.descriptor.status = 'idle'
+          })
+        }
+        return super.sendMessage(message, delivery)
+      }
+    }
+
+    let releaseFirstRun!: () => void
+    const releaseFirstRunPromise = new Promise<void>((resolve) => {
+      releaseFirstRun = resolve
+    })
+
+    class ConcurrentReviewTestSwarmManager extends TestSwarmManager {
+      protected override async createRuntimeForDescriptor(
+        descriptor: AgentDescriptor,
+        systemPrompt: string,
+      ): Promise<SwarmAgentRuntime> {
+        const runtime = new BlockingReviewRuntime(descriptor, releaseFirstRunPromise)
+        this.createdRuntimeIds.push(descriptor.agentId)
+        this.runtimeByAgentId.set(descriptor.agentId, runtime)
+        this.systemPromptByAgentId.set(descriptor.agentId, systemPrompt)
+        return runtime as unknown as SwarmAgentRuntime
+      }
+    }
+
+    const manager = new ConcurrentReviewTestSwarmManager(config)
+    await manager.boot()
+
+    const firstRunPromise = manager.startCortexReviewRun({
+      scope: { mode: 'all' },
+      trigger: 'manual',
+      sourceContext: { channel: 'web' },
+    })
+
+    await waitForCondition(() => {
+      const streamingReviewSession = manager
+        .listAgents()
+        .find((descriptor) => descriptor.sessionPurpose === 'cortex_review' && descriptor.status === 'streaming')
+      return Boolean(streamingReviewSession)
+    })
+
+    const secondRun = await manager.startCortexReviewRun({
+      scope: { mode: 'session', profileId: 'alpha', sessionId: 'alpha--s1', axes: ['memory'] },
+      trigger: 'manual',
+      sourceContext: { channel: 'web' },
+    })
+
+    releaseFirstRun()
+    const firstRun = await firstRunPromise
+
+    expect(firstRun.status).toBe('running')
+    expect(secondRun.status).toBe('blocked')
+    expect(secondRun.blockedReason).toContain('Review already running in Review Run · Full Queue')
+
+    const storedRuns = JSON.parse(await readFile(getCortexReviewRunsPath(config.paths.dataDir), 'utf8')) as {
+      runs: Array<{ blockedReason?: string | null; sessionAgentId: string | null }>
+    }
+    expect(storedRuns.runs[0]?.blockedReason).toContain('Review already running')
+    expect(storedRuns.runs[1]?.sessionAgentId).toBe(firstRun.sessionAgentId)
   })
 
   it('tags web user messages with default source metadata', async () => {

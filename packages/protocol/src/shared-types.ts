@@ -26,6 +26,8 @@ export interface ManagerProfile {
   updatedAt: string
 }
 
+export type AgentSessionPurpose = 'cortex_review'
+
 export interface AgentDescriptor {
   agentId: string
   managerId: string
@@ -41,7 +43,36 @@ export interface AgentDescriptor {
   contextUsage?: AgentContextUsage
   profileId?: string
   sessionLabel?: string
+  sessionPurpose?: AgentSessionPurpose
   mergedAt?: string
+}
+
+export type CortexReviewRunTrigger = 'manual' | 'scheduled'
+export type CortexReviewRunStatus = 'running' | 'completed' | 'blocked' | 'stopped'
+export type CortexReviewRunAxis = 'transcript' | 'memory' | 'feedback'
+
+export type CortexReviewRunScope =
+  | { mode: 'all' }
+  | {
+      mode: 'session'
+      profileId: string
+      sessionId: string
+      axes?: CortexReviewRunAxis[]
+    }
+
+export interface CortexReviewRunRecord {
+  runId: string
+  trigger: CortexReviewRunTrigger
+  scope: CortexReviewRunScope
+  scopeLabel: string
+  requestText: string
+  requestedAt: string
+  status: CortexReviewRunStatus
+  sessionAgentId: string | null
+  activeWorkerCount: number
+  latestCloseout: string | null
+  blockedReason?: string | null
+  scheduleName?: string | null
 }
 
 export type SessionMemoryMergeStatus = 'applied' | 'skipped'

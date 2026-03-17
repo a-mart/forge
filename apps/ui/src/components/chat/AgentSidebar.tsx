@@ -1386,13 +1386,27 @@ function CortexSection({
   highlightQuery?: string
 }) {
   const { profile, sessions } = cortexRow
-  const defaultSession = sessions.find((s) => s.isDefault)
-  const targetId = defaultSession?.sessionAgent.agentId ?? sessions[0]?.sessionAgent.agentId
+  const reviewRunSessions = sessions.filter((session) => session.sessionAgent.sessionPurpose === 'cortex_review')
+  const primarySessions = sessions.filter((session) => session.sessionAgent.sessionPurpose !== 'cortex_review')
+  const selectedReviewRunSession = reviewRunSessions.find(
+    (session) =>
+      session.sessionAgent.agentId === selectedAgentId ||
+      session.workers.some((worker) => worker.agentId === selectedAgentId),
+  )
+  const isSearchActive = Boolean(highlightQuery?.trim())
+  const visibleSessions = isSearchActive
+    ? sessions
+    : selectedReviewRunSession
+      ? [selectedReviewRunSession, ...primarySessions]
+      : primarySessions
+
+  const defaultSession = visibleSessions.find((s) => s.isDefault) ?? sessions.find((s) => s.isDefault)
+  const targetId = defaultSession?.sessionAgent.agentId ?? visibleSessions[0]?.sessionAgent.agentId ?? sessions[0]?.sessionAgent.agentId
   const isHeaderSelected = !isSettingsActive && selectedAgentId === targetId
-  const hasAnySessions = sessions.length > 0
+  const hasAnySessions = visibleSessions.length > 0
 
   // Unread: aggregate when collapsed, root-only when expanded
-  const totalUnread = sessions.reduce(
+  const totalUnread = visibleSessions.reduce(
     (sum, s) => sum + (unreadCounts[s.sessionAgent.agentId] ?? 0), 0,
   )
   const rootUnread = targetId ? (unreadCounts[targetId] ?? 0) : 0
@@ -1400,14 +1414,14 @@ function CortexSection({
   const showUnread = displayUnread > 0 && !isHeaderSelected
 
   // Activity
-  const totalStreamingWorkers = sessions.reduce(
+  const totalStreamingWorkers = visibleSessions.reduce(
     (count, s) => count + s.workers.filter((w) => getAgentLiveStatus(w, statuses).status === 'streaming').length,
     0,
   )
-  const activeSessionCount = sessions.filter((s) => isSessionRunning(s.sessionAgent)).length
+  const activeSessionCount = visibleSessions.filter((s) => isSessionRunning(s.sessionAgent)).length
 
   // Root session status
-  const cortexAgent = defaultSession?.sessionAgent ?? sessions[0]?.sessionAgent
+  const cortexAgent = defaultSession?.sessionAgent ?? visibleSessions[0]?.sessionAgent ?? sessions[0]?.sessionAgent
   const cortexStatus = cortexAgent ? getAgentLiveStatus(cortexAgent, statuses).status : null
   const cortexRunning = cortexStatus === 'idle' || cortexStatus === 'streaming'
 
@@ -1474,9 +1488,14 @@ function CortexSection({
               <span className="min-w-0 flex-1 truncate text-sm font-semibold leading-5">
                 {profile.displayName}
               </span>
-              {isCollapsed && sessions.length > 1 ? (
+              {isCollapsed && visibleSessions.length > 1 ? (
                 <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
-                  {activeSessionCount}/{sessions.length}
+                  {activeSessionCount}/{visibleSessions.length}
+                </span>
+              ) : null}
+              {reviewRunSessions.length > 0 && !isSearchActive ? (
+                <span className="shrink-0 rounded-full border border-border/60 px-1.5 py-0.5 text-[9px] text-muted-foreground">
+                  Review {reviewRunSessions.length}
                 </span>
               ) : null}
               {showUnread ? (
@@ -1547,14 +1566,14 @@ function CortexSection({
         <div className="relative mt-0.5">
           <div className="absolute bottom-1 left-3.5 top-0 w-px bg-sidebar-border/40" />
           {(() => {
-            const needsTruncation = sessions.length > MAX_VISIBLE_SESSIONS
-            let visibleSessions: SessionRow[]
+            const needsTruncation = visibleSessions.length > MAX_VISIBLE_SESSIONS
+            let renderedSessions: SessionRow[]
             let hiddenCount = 0
 
             if (isSessionListExpanded || !needsTruncation) {
-              visibleSessions = sessions
+              renderedSessions = visibleSessions
             } else {
-              const topSessions = sessions.slice(0, MAX_VISIBLE_SESSIONS)
+              const topSessions = visibleSessions.slice(0, MAX_VISIBLE_SESSIONS)
               const selectedSessionInTop = !selectedAgentId || isSettingsActive || topSessions.some(
                 (s) =>
                   s.sessionAgent.agentId === selectedAgentId ||
@@ -1562,26 +1581,26 @@ function CortexSection({
               )
 
               if (selectedSessionInTop) {
-                visibleSessions = topSessions
+                renderedSessions = topSessions
               } else {
-                const selectedSession = sessions.find(
+                const selectedSession = visibleSessions.find(
                   (s) =>
                     s.sessionAgent.agentId === selectedAgentId ||
                     s.workers.some((w) => w.agentId === selectedAgentId),
                 )
                 if (selectedSession) {
-                  visibleSessions = [...topSessions.slice(0, MAX_VISIBLE_SESSIONS - 1), selectedSession]
+                  renderedSessions = [...topSessions.slice(0, MAX_VISIBLE_SESSIONS - 1), selectedSession]
                 } else {
-                  visibleSessions = topSessions
+                  renderedSessions = topSessions
                 }
               }
-              hiddenCount = sessions.length - visibleSessions.length
+              hiddenCount = visibleSessions.length - renderedSessions.length
             }
 
             return (
               <>
                 <ul className="space-y-0.5">
-                  {visibleSessions.map((session) => {
+                  {renderedSessions.map((session) => {
                     const sessionCollapsed = !collapsedSessionIds.has(session.sessionAgent.agentId)
 
                     return (
@@ -1634,6 +1653,11 @@ function CortexSection({
                       </>
                     )}
                   </button>
+                ) : null}
+                {reviewRunSessions.length > 0 && !selectedReviewRunSession ? (
+                  <p className="px-5 pt-1 text-[10px] text-muted-foreground/70">
+                    {reviewRunSessions.length} review run{reviewRunSessions.length === 1 ? '' : 's'} hidden here — open them from Cortex Review.
+                  </p>
                 ) : null}
               </>
             )

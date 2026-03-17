@@ -7,6 +7,9 @@ import type { Api, Model } from "@mariozechner/pi-ai";
 import { getModel } from "@mariozechner/pi-ai";
 import { AuthStorage, ModelRegistry } from "@mariozechner/pi-coding-agent";
 import type {
+  CortexReviewRunRecord,
+  CortexReviewRunScope,
+  CortexReviewRunTrigger,
   ServerEvent,
   SessionMemoryMergeAttemptStatus,
   SessionMemoryMergeFailureStage,
@@ -28,6 +31,7 @@ import {
   getCommonKnowledgePath,
   getCortexPromotionManifestsDir,
   getCortexReviewLogPath,
+  getCortexReviewRunsPath,
   getCortexWorkerPromptsPath,
   getProfileMemoryPath,
   getProfileMergeAuditLogPath,
@@ -40,6 +44,16 @@ import {
 } from "./data-paths.js";
 import { ensureCanonicalAuthFilePath } from "./auth-storage-paths.js";
 import { migrateDataDirectory } from "./data-migration.js";
+import {
+  appendCortexReviewRun,
+  buildCortexReviewRunRequestText,
+  buildCortexReviewRunScopeLabel,
+  buildLiveCortexReviewRunRecord,
+  createCortexReviewRunId,
+  parseCortexReviewRunScopeFromText,
+  parseScheduledTaskEnvelope,
+  readStoredCortexReviewRuns
+} from "./cortex-review-runs.js";
 import { executeLLMMerge, MEMORY_MERGE_SYSTEM_PROMPT } from "./memory-merge.js";
 import { PersistenceService } from "./persistence-service.js";
 import { migrateLegacyProfileKnowledgeToReferenceDoc } from "./reference-docs.js";
@@ -968,6 +982,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly descriptors = new Map<string, AgentDescriptor>();
   private readonly profiles = new Map<string, ManagerProfile>();
   private readonly profileMergeMutexes = new Map<string, Promise<void>>();
+  private cortexReviewRunStartMutex: Promise<void> = Promise.resolve();
   private readonly runtimes = new Map<string, SwarmAgentRuntime>();
   private readonly conversationEntriesByAgentId = new Map<string, ConversationEntryEvent[]>();
   private readonly workerWatchdogState = new Map<string, WorkerWatchdogState>();
@@ -1165,6 +1180,109 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return this.sortedProfiles().map((profile) => ({ ...profile }));
   }
 
+  async listCortexReviewRuns(): Promise<CortexReviewRunRecord[]> {
+    const storedRuns = await readStoredCortexReviewRuns(this.config.paths.dataDir);
+
+    return storedRuns.map((stored) => {
+      const sessionDescriptor = stored.sessionAgentId ? this.descriptors.get(stored.sessionAgentId) : undefined;
+      const activeWorkerCount = stored.sessionAgentId
+        ? this.getWorkersForManager(stored.sessionAgentId).filter((worker) => worker.status === "streaming").length
+        : 0;
+
+      return buildLiveCortexReviewRunRecord({
+        stored,
+        sessionDescriptor,
+        activeWorkerCount,
+        history: stored.sessionAgentId ? this.getConversationHistory(stored.sessionAgentId) : []
+      });
+    });
+  }
+
+  async startCortexReviewRun(input: {
+    scope: CortexReviewRunScope;
+    trigger: CortexReviewRunTrigger;
+    sourceContext?: MessageSourceContext;
+    requestText?: string;
+    scheduleName?: string | null;
+  }): Promise<CortexReviewRunRecord> {
+    return this.withCortexReviewRunStartLock(async () => {
+      await this.ensureCortexProfile();
+
+      const runId = createCortexReviewRunId();
+      const requestedAt = this.now();
+      const scopeLabel = buildCortexReviewRunScopeLabel(input.scope);
+      const requestText = input.requestText?.trim() || buildCortexReviewRunRequestText(input.scope);
+
+      const activeReviewSession = Array.from(this.descriptors.values()).find((descriptor) => (
+        descriptor.role === "manager" &&
+        descriptor.profileId === CORTEX_PROFILE_ID &&
+        descriptor.sessionPurpose === "cortex_review" &&
+        (descriptor.status === "streaming" || this.getWorkersForManager(descriptor.agentId).some((worker) => worker.status === "streaming"))
+      ));
+
+      if (activeReviewSession) {
+        await appendCortexReviewRun(this.config.paths.dataDir, {
+          runId,
+          trigger: input.trigger,
+          scope: input.scope,
+          scopeLabel,
+          requestText,
+          requestedAt,
+          sessionAgentId: null,
+          blockedReason: `Review already running in ${activeReviewSession.sessionLabel ?? activeReviewSession.agentId}`,
+          scheduleName: input.scheduleName ?? null
+        });
+
+        const [blocked] = await this.listCortexReviewRuns();
+        return blocked;
+      }
+
+      const label = input.scope.mode === "all"
+        ? `Review Run · Full Queue`
+        : `Review Run · ${input.scope.profileId}/${input.scope.sessionId}`;
+
+      const { sessionAgent } = await this.createSession(CORTEX_PROFILE_ID, {
+        label,
+        sessionPurpose: "cortex_review"
+      });
+
+      await appendCortexReviewRun(this.config.paths.dataDir, {
+        runId,
+        trigger: input.trigger,
+        scope: input.scope,
+        scopeLabel,
+        requestText,
+        requestedAt,
+        sessionAgentId: sessionAgent.agentId,
+        scheduleName: input.scheduleName ?? null
+      });
+
+      await this.handleUserMessage(requestText, {
+        targetAgentId: sessionAgent.agentId,
+        sourceContext: input.sourceContext ?? { channel: "web" }
+      });
+
+      const [createdRun] = await this.listCortexReviewRuns();
+      return createdRun;
+    });
+  }
+
+  private async withCortexReviewRunStartLock<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.cortexReviewRunStartMutex;
+    let release: (() => void) | undefined;
+    this.cortexReviewRunStartMutex = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    await previous;
+
+    try {
+      return await operation();
+    } finally {
+      release?.();
+    }
+  }
+
   getConversationHistory(agentId?: string): ConversationEntryEvent[] {
     const resolvedAgentId = normalizeOptionalAgentId(agentId) ?? this.resolvePreferredManagerId();
     if (!resolvedAgentId) {
@@ -1176,7 +1294,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   async createSession(
     profileId: string,
-    options?: { label?: string; name?: string }
+    options?: { label?: string; name?: string; sessionPurpose?: AgentDescriptor["sessionPurpose"] }
   ): Promise<{ profile: ManagerProfile; sessionAgent: AgentDescriptor }> {
     const prepared = this.prepareSessionCreation(profileId, options);
     const sessionDescriptor = prepared.sessionDescriptor;
@@ -2367,7 +2485,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   private prepareSessionCreation(
     profileId: string,
-    options?: { label?: string; name?: string }
+    options?: { label?: string; name?: string; sessionPurpose?: AgentDescriptor["sessionPurpose"] }
   ): { profile: ManagerProfile; sessionDescriptor: AgentDescriptor; sessionNumber: number } {
     const profile = this.profiles.get(profileId);
     if (!profile) {
@@ -2410,6 +2528,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       archetypeId: templateDescriptor.archetypeId,
       profileId: profile.profileId,
       sessionLabel,
+      sessionPurpose: options?.sessionPurpose,
       status: "idle",
       createdAt,
       updatedAt: createdAt,
@@ -3098,6 +3217,13 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       throw new Error(`Target agent is not running: ${targetAgentId}`);
     }
 
+    if (target.role === "manager" && attachments.length === 0) {
+      const routedReviewRun = await this.maybeStartCortexReviewRunFromIncomingMessage(trimmed, target, sourceContext);
+      if (routedReviewRun) {
+        return;
+      }
+    }
+
     const persistedAttachments = await this.persistConversationAttachmentsIfNeeded(attachments);
     const attachmentMetadata = toConversationAttachmentMetadata(
       persistedAttachments,
@@ -3263,6 +3389,42 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       });
       throw error;
     }
+  }
+
+  private async maybeStartCortexReviewRunFromIncomingMessage(
+    text: string,
+    target: AgentDescriptor,
+    sourceContext: MessageSourceContext
+  ): Promise<boolean> {
+    if (!this.isCortexRootInteractiveSession(target)) {
+      return false;
+    }
+
+    const scheduledEnvelope = parseScheduledTaskEnvelope(text);
+    const reviewText = scheduledEnvelope?.body ?? text;
+    const scope = parseCortexReviewRunScopeFromText(reviewText);
+    if (!scope) {
+      return false;
+    }
+
+    await this.startCortexReviewRun({
+      scope,
+      trigger: scheduledEnvelope ? "scheduled" : "manual",
+      sourceContext,
+      requestText: text.trim(),
+      scheduleName: scheduledEnvelope?.scheduleName ?? null
+    });
+    return true;
+  }
+
+  private isCortexRootInteractiveSession(descriptor: AgentDescriptor): boolean {
+    return (
+      descriptor.role === "manager" &&
+      descriptor.agentId === CORTEX_PROFILE_ID &&
+      descriptor.profileId === CORTEX_PROFILE_ID &&
+      normalizeArchetypeId(descriptor.archetypeId ?? "") === CORTEX_ARCHETYPE_ID &&
+      descriptor.sessionPurpose !== "cortex_review"
+    );
   }
 
   async resetManagerSession(
@@ -3719,6 +3881,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private async ensureCortexOperationalFiles(): Promise<void> {
     const knowledgeDir = dirname(getCortexReviewLogPath(this.config.paths.dataDir));
     const reviewLogPath = getCortexReviewLogPath(this.config.paths.dataDir);
+    const reviewRunsPath = getCortexReviewRunsPath(this.config.paths.dataDir);
     const manifestsDir = getCortexPromotionManifestsDir(this.config.paths.dataDir);
 
     await mkdir(knowledgeDir, { recursive: true });
@@ -3731,6 +3894,16 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       }
 
       await writeFile(reviewLogPath, "", "utf8");
+    }
+
+    try {
+      await readFile(reviewRunsPath, "utf8");
+    } catch (error) {
+      if (!isEnoentError(error)) {
+        throw error;
+      }
+
+      await writeFile(reviewRunsPath, `${JSON.stringify({ version: 1, runs: [] }, null, 2)}\n`, "utf8");
     }
 
     await mkdir(manifestsDir, { recursive: true });
@@ -6178,6 +6351,10 @@ function validateAgentDescriptor(value: unknown): AgentDescriptor | string {
 
   if (value.archetypeId !== undefined && typeof value.archetypeId !== "string") {
     return "archetypeId must be a string when provided";
+  }
+
+  if (value.sessionPurpose !== undefined && value.sessionPurpose !== "cortex_review") {
+    return 'sessionPurpose must be "cortex_review" when provided';
   }
 
   const descriptor = value as unknown as AgentDescriptor;

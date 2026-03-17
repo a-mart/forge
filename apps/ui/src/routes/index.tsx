@@ -874,7 +874,7 @@ export function IndexPage() {
                 isOpen={isArtifactsPanelOpen}
                 onClose={() => setIsArtifactsPanelOpen(false)}
                 onArtifactClick={handleOpenArtifact}
-                onSendMessage={(text) => handleSend(text)}
+                onOpenSession={handleSelectAgent}
               />
             ) : (
               <ArtifactsSidebar

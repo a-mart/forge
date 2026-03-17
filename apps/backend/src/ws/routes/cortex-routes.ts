@@ -1,11 +1,13 @@
 import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
+import type { CortexReviewRunAxis, CortexReviewRunScope } from "@middleman/protocol";
 import {
   getCommonKnowledgePath,
   getCortexNotesPath,
   getCortexPromotionManifestsDir,
   getCortexReviewLockPath,
   getCortexReviewLogPath,
+  getCortexReviewRunsPath,
   getProfileKnowledgeDir,
   getProfileKnowledgePath,
   getProfileMemoryPath,
@@ -14,16 +16,76 @@ import {
 } from "../../swarm/data-paths.js";
 import { scanCortexReviewStatus } from "../../swarm/scripts/cortex-scan.js";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
-import { applyCorsHeaders, sendJson } from "../http-utils.js";
+import { applyCorsHeaders, parseJsonBody, sendJson } from "../http-utils.js";
 import type { HttpRoute } from "./http-route.js";
 
 const CORTEX_SCAN_ENDPOINT_PATH = "/api/cortex/scan";
 const CORTEX_SCAN_METHODS = "GET, OPTIONS";
+const CORTEX_REVIEW_RUNS_ENDPOINT_PATH = "/api/cortex/review-runs";
+const CORTEX_REVIEW_RUNS_METHODS = "GET, POST, OPTIONS";
 
 export function createCortexRoutes(options: { swarmManager: SwarmManager }): HttpRoute[] {
   const { swarmManager } = options;
 
   return [
+    {
+      methods: CORTEX_REVIEW_RUNS_METHODS,
+      matches: (pathname) => pathname === CORTEX_REVIEW_RUNS_ENDPOINT_PATH,
+      handle: async (request, response) => {
+        if (request.method === "OPTIONS") {
+          applyCorsHeaders(request, response, CORTEX_REVIEW_RUNS_METHODS);
+          response.statusCode = 204;
+          response.end();
+          return;
+        }
+
+        applyCorsHeaders(request, response, CORTEX_REVIEW_RUNS_METHODS);
+
+        if (request.method === "GET") {
+          try {
+            const runs = await swarmManager.listCortexReviewRuns();
+            sendJson(response, 200, { runs });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : "Unable to load Cortex review runs.";
+            sendJson(response, 500, { error: message });
+          }
+          return;
+        }
+
+        if (request.method === "POST") {
+          try {
+            const payload = await parseJsonBody(request, 16 * 1024);
+            const scope = parseReviewRunScopePayload(payload);
+            if (!scope) {
+              sendJson(response, 400, { error: "Request body must include a valid review scope." });
+              return;
+            }
+
+            const run = await swarmManager.startCortexReviewRun({
+              scope,
+              trigger: "manual",
+              sourceContext: { channel: "web" }
+            });
+            sendJson(response, 202, { run });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : "Unable to start Cortex review run.";
+            if (message.includes("Request body must be valid JSON")) {
+              sendJson(response, 400, { error: message });
+              return;
+            }
+            if (message.includes("Request body exceeds")) {
+              sendJson(response, 413, { error: message });
+              return;
+            }
+            sendJson(response, 500, { error: message });
+          }
+          return;
+        }
+
+        response.setHeader("Allow", CORTEX_REVIEW_RUNS_METHODS);
+        sendJson(response, 405, { error: "Method Not Allowed" });
+      }
+    },
     {
       methods: CORTEX_SCAN_METHODS,
       matches: (pathname) => pathname === CORTEX_SCAN_ENDPOINT_PATH,
@@ -57,13 +119,14 @@ export function createCortexRoutes(options: { swarmManager: SwarmManager }): Htt
                 .filter((profileId) => profileId !== "cortex")
             ])
           ).sort((a, b) => a.localeCompare(b));
-          const [profileMemory, profileKnowledge, profileReference, profileMergeAudit, cortexReviewLog, cortexReviewLock, cortexPromotionManifests] = await Promise.all([
+          const [profileMemory, profileKnowledge, profileReference, profileMergeAudit, cortexReviewLog, cortexReviewLock, cortexReviewRuns, cortexPromotionManifests] = await Promise.all([
             buildProfileMemoryInfoMap(dataDir, profileIds),
             buildProfileKnowledgeInfoMap(dataDir, profileIds),
             buildProfileReferenceInfoMap(dataDir, profileIds),
             buildProfileMergeAuditInfoMap(dataDir, profileIds),
             buildFileInfo(getCortexReviewLogPath(dataDir)),
             buildFileInfo(getCortexReviewLockPath(dataDir)),
+            buildFileInfo(getCortexReviewRunsPath(dataDir)),
             buildDirectoryInfo(getCortexPromotionManifestsDir(dataDir))
           ]);
 
@@ -74,6 +137,7 @@ export function createCortexRoutes(options: { swarmManager: SwarmManager }): Htt
               cortexNotes: getCortexNotesPath(dataDir),
               cortexReviewLog,
               cortexReviewLock,
+              cortexReviewRuns,
               cortexPromotionManifests,
               profileMemory,
               profileKnowledge,
@@ -88,6 +152,46 @@ export function createCortexRoutes(options: { swarmManager: SwarmManager }): Htt
       }
     }
   ];
+}
+
+function parseReviewRunScopePayload(payload: unknown): CortexReviewRunScope | null {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return null;
+  }
+
+  const scope = (payload as { scope?: unknown }).scope;
+  if (!scope || typeof scope !== "object" || Array.isArray(scope)) {
+    return null;
+  }
+
+  const mode = typeof (scope as { mode?: unknown }).mode === "string" ? (scope as { mode: string }).mode : null;
+  if (mode === "all") {
+    return { mode: "all" };
+  }
+
+  if (mode !== "session") {
+    return null;
+  }
+
+  const profileId = typeof (scope as { profileId?: unknown }).profileId === "string"
+    ? (scope as { profileId: string }).profileId.trim()
+    : "";
+  const sessionId = typeof (scope as { sessionId?: unknown }).sessionId === "string"
+    ? (scope as { sessionId: string }).sessionId.trim()
+    : "";
+
+  if (!profileId || !sessionId) {
+    return null;
+  }
+
+  const rawAxes: unknown[] = Array.isArray((scope as { axes?: unknown[] }).axes)
+    ? [...((scope as { axes?: unknown[] }).axes ?? [])]
+    : [];
+  const axes = rawAxes.filter((value): value is CortexReviewRunAxis => value === "transcript" || value === "memory" || value === "feedback");
+
+  return axes.length > 0
+    ? { mode: "session", profileId, sessionId, axes }
+    : { mode: "session", profileId, sessionId };
 }
 
 interface FileSystemPathInfo {

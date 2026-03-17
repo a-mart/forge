@@ -28,6 +28,8 @@ export interface AgentContextUsage {
   percent: number;
 }
 
+export type AgentSessionPurpose = "cortex_review";
+
 export interface AgentDescriptor {
   agentId: string;
   displayName: string;
@@ -43,6 +45,7 @@ export interface AgentDescriptor {
   contextUsage?: AgentContextUsage;
   profileId?: string;
   sessionLabel?: string;
+  sessionPurpose?: AgentSessionPurpose;
   mergedAt?: string;
 }
 

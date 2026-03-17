@@ -148,6 +148,10 @@ export function getCortexReviewLockPath(dataDir: string): string {
   return join(getSharedKnowledgeDir(dataDir), ".cortex-lock.json");
 }
 
+export function getCortexReviewRunsPath(dataDir: string): string {
+  return join(getSharedKnowledgeDir(dataDir), ".cortex-review-runs.json");
+}
+
 export function getSharedAuthDir(dataDir: string): string {
   return join(getSharedDir(dataDir), "auth");
 }
