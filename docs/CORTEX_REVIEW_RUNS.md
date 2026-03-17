@@ -14,5 +14,8 @@ Cortex Review is the backlog/knowledge-review surface for session drift. It scan
 ## Operator notes
 
 - Use **Review All** to enqueue a full sweep of sessions that currently need attention.
+- Never-reviewed sessions now expose **Exclude** so you can skip them from automatic review without deleting anything.
+- Excluded never-reviewed sessions stay visible with **Resume review** and are removed from actionable review counts/coverage until resumed.
+- Already-reviewed sessions that are currently up to date expose **Reprocess**, which reuses the normal review-run API to force a fresh review pass.
 - Use the per-session send button to enqueue a targeted transcript/memory/feedback review.
 - If you need the detailed backing conversation, open it from **Recent Runs** rather than from the default sidebar list.

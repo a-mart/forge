@@ -12,7 +12,7 @@ import {
   Send,
   SquareStack,
 } from 'lucide-react'
-import type { CortexReviewRunAxis, CortexReviewRunRecord, CortexReviewRunScope } from '@middleman/protocol'
+import type { CortexReviewControlAction, CortexReviewRunAxis, CortexReviewRunRecord, CortexReviewRunScope } from '@middleman/protocol'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -33,6 +33,8 @@ interface ScanSession {
   totalBytes: number
   reviewedBytes: number
   reviewedAt: string | null
+  reviewExcluded: boolean
+  reviewExcludedAt: string | null
   memoryDeltaBytes: number
   memoryTotalBytes: number
   memoryReviewedBytes: number
@@ -52,6 +54,7 @@ interface CortexScanResponse {
     summary: {
       needsReview: number
       upToDate: number
+      excluded: number
       totalBytes: number
       reviewedBytes: number
       transcriptTotalBytes: number
@@ -73,7 +76,7 @@ interface CortexReviewRunsResponse {
 }
 
 type ScanState = 'idle' | 'loading' | 'error'
-type ReviewDisplayStatus = 'needs-review' | 'never-reviewed' | 'up-to-date' | 'compacted'
+type ReviewDisplayStatus = 'needs-review' | 'never-reviewed' | 'up-to-date' | 'compacted' | 'excluded'
 
 function formatBytes(bytes: number): string {
   const absoluteBytes = Math.abs(bytes)
@@ -102,6 +105,10 @@ function truncateMiddle(text: string, maxLength = 180): string {
 }
 
 function getSessionStatus(result: ScanSession): ReviewDisplayStatus {
+  if (result.reviewExcluded) {
+    return 'excluded'
+  }
+
   if (result.deltaBytes < 0 || result.memoryDeltaBytes < 0 || result.feedbackDeltaBytes < 0) {
     return 'compacted'
   }
@@ -132,6 +139,10 @@ function buildSessionReasonPills(result: ScanSession): string[] {
 
   if (reasons.length === 0 && result.status === 'never-reviewed') {
     reasons.push('never reviewed')
+  }
+
+  if (result.reviewExcluded && result.reviewExcludedAt) {
+    reasons.push(`excluded ${formatTimestamp(result.reviewExcludedAt)}`)
   }
 
   return reasons
@@ -177,6 +188,13 @@ function StatusBadge({ status }: { status: ReviewDisplayStatus }) {
         <Badge variant="outline" className="h-5 gap-1 border-blue-500/30 bg-blue-500/10 px-1.5 text-[10px] font-medium text-blue-500">
           <FileWarning className="size-2.5" />
           Re-review
+        </Badge>
+      )
+    case 'excluded':
+      return (
+        <Badge variant="outline" className="h-5 gap-1 border-muted-foreground/30 bg-muted/60 px-1.5 text-[10px] font-medium text-muted-foreground">
+          <AlertCircle className="size-2.5" />
+          Excluded
         </Badge>
       )
   }
@@ -291,6 +309,23 @@ async function startReviewRun(wsUrl: string, scope: CortexReviewRunScope): Promi
   return payload.run
 }
 
+async function updateReviewControl(
+  wsUrl: string,
+  payload: { profileId: string; sessionId: string; action: CortexReviewControlAction },
+): Promise<void> {
+  const endpoint = resolveApiEndpoint(wsUrl, '/api/cortex/review-controls')
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+
+  const body = (await response.json().catch(() => null)) as { error?: string; ok?: boolean } | null
+  if (!response.ok || !body?.ok) {
+    throw new Error(body?.error ?? `Unable to update review control (${response.status})`)
+  }
+}
+
 export function ReviewStatusPanel({ wsUrl, refreshKey = 0, onOpenSession }: ReviewStatusPanelProps) {
   const [scanState, setScanState] = useState<ScanState>('idle')
   const [scanData, setScanData] = useState<CortexScanResponse | null>(null)
@@ -362,10 +397,31 @@ export function ReviewStatusPanel({ wsUrl, refreshKey = 0, onOpenSession }: Revi
   )
 
   const handleReviewSession = useCallback(
-    (session: ScanSession) => {
-      void handleLaunchReview(buildReviewScope(session), `${session.profileId}/${session.sessionId}`)
+    (session: ScanSession, actionKey = `${session.profileId}/${session.sessionId}:review`) => {
+      void handleLaunchReview(buildReviewScope(session), actionKey)
     },
     [handleLaunchReview],
+  )
+
+  const handleReviewControl = useCallback(
+    async (session: ScanSession, action: CortexReviewControlAction) => {
+      const actionKey = `${session.profileId}/${session.sessionId}:${action}`
+      setLaunchError(null)
+      setLaunchingKey(actionKey)
+      try {
+        await updateReviewControl(wsUrl, {
+          profileId: session.profileId,
+          sessionId: session.sessionId,
+          action,
+        })
+        doScan()
+      } catch (controlError) {
+        setLaunchError(controlError instanceof Error ? controlError.message : 'Unable to update review control')
+      } finally {
+        setLaunchingKey(null)
+      }
+    },
+    [doScan, wsUrl],
   )
 
   const handleReviewAll = useCallback(() => {
@@ -376,6 +432,7 @@ export function ReviewStatusPanel({ wsUrl, refreshKey = 0, onOpenSession }: Revi
   const grouped = groupByProfile(allSessions)
   const needsReviewCount = scanData?.scan.summary.needsReview ?? 0
   const upToDateCount = scanData?.scan.summary.upToDate ?? 0
+  const excludedCount = scanData?.scan.summary.excluded ?? 0
   const transcriptTotalBytes = scanData?.scan.summary.transcriptTotalBytes ?? 0
   const transcriptReviewedBytes = scanData?.scan.summary.transcriptReviewedBytes ?? 0
   const transcriptProgressPct =
@@ -455,6 +512,10 @@ export function ReviewStatusPanel({ wsUrl, refreshKey = 0, onOpenSession }: Revi
               <span className="text-muted-foreground/40">·</span>
               <span className="text-muted-foreground">
                 <span className="font-semibold text-foreground">{upToDateCount}</span> up to date
+              </span>
+              <span className="text-muted-foreground/40">·</span>
+              <span className="text-muted-foreground">
+                <span className="font-semibold text-foreground">{excludedCount}</span> excluded
               </span>
               <span className="text-muted-foreground/40">·</span>
               <span className="text-muted-foreground">{formatBytes(attentionBytes)} pending bytes</span>
@@ -594,12 +655,24 @@ export function ReviewStatusPanel({ wsUrl, refreshKey = 0, onOpenSession }: Revi
                       {sessions.map((session) => {
                         const status = getSessionStatus(session)
                         const reasonPills = buildSessionReasonPills(session)
-                        const launchKey = `${session.profileId}/${session.sessionId}`
+                        const reviewActionKey = `${session.profileId}/${session.sessionId}:review`
+                        const excludeActionKey = `${session.profileId}/${session.sessionId}:exclude`
+                        const resumeActionKey = `${session.profileId}/${session.sessionId}:resume`
+                        const isReviewedSession =
+                          session.reviewedAt !== null || session.memoryReviewedAt !== null || session.feedbackReviewedAt !== null
+                        const canReview = status === 'needs-review' || status === 'never-reviewed' || status === 'compacted'
+                        const canExclude =
+                          status === 'needs-review' || status === 'never-reviewed' || status === 'compacted'
+                        const canResume = status === 'excluded'
+                        const canReprocess = status === 'up-to-date' && isReviewedSession
 
                         return (
                           <div
                             key={`${session.profileId}/${session.sessionId}`}
-                            className="group flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-accent/50"
+                            className={cn(
+                              'group flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-accent/50',
+                              status === 'excluded' && 'opacity-80',
+                            )}
                           >
                             <div className="min-w-0 flex-1 space-y-1">
                               <p className="truncate text-xs font-medium text-foreground">
@@ -617,18 +690,56 @@ export function ReviewStatusPanel({ wsUrl, refreshKey = 0, onOpenSession }: Revi
                                 ))}
                               </div>
                             </div>
-                            {status !== 'up-to-date' ? (
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="size-6 shrink-0 text-muted-foreground opacity-100 transition-opacity hover:text-primary md:opacity-0 md:group-hover:opacity-100"
-                                onClick={() => handleReviewSession(session)}
-                                disabled={launchingKey !== null}
-                                aria-label={`Review session ${session.sessionId}`}
-                              >
-                                {launchingKey === launchKey ? <Loader2 className="size-3 animate-spin" /> : <Send className="size-3" />}
-                              </Button>
-                            ) : null}
+                            <div className="flex shrink-0 items-center gap-1">
+                              {canReview ? (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="size-6 text-muted-foreground opacity-100 transition-opacity hover:text-primary md:opacity-0 md:group-hover:opacity-100"
+                                  onClick={() => handleReviewSession(session, reviewActionKey)}
+                                  disabled={launchingKey !== null}
+                                  aria-label={`Review session ${session.sessionId}`}
+                                >
+                                  {launchingKey === reviewActionKey ? <Loader2 className="size-3 animate-spin" /> : <Send className="size-3" />}
+                                </Button>
+                              ) : null}
+                              {canExclude ? (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-6 px-2 text-[10px]"
+                                  onClick={() => void handleReviewControl(session, 'exclude')}
+                                  disabled={launchingKey !== null}
+                                  aria-label={`Exclude session ${session.sessionId} from review`}
+                                >
+                                  {launchingKey === excludeActionKey ? <Loader2 className="size-3 animate-spin" /> : 'Exclude'}
+                                </Button>
+                              ) : null}
+                              {canResume ? (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-6 px-2 text-[10px]"
+                                  onClick={() => void handleReviewControl(session, 'resume')}
+                                  disabled={launchingKey !== null}
+                                  aria-label={`Resume review for session ${session.sessionId}`}
+                                >
+                                  {launchingKey === resumeActionKey ? <Loader2 className="size-3 animate-spin" /> : 'Resume review'}
+                                </Button>
+                              ) : null}
+                              {canReprocess ? (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-6 px-2 text-[10px]"
+                                  onClick={() => handleReviewSession(session, reviewActionKey)}
+                                  disabled={launchingKey !== null}
+                                  aria-label={`Reprocess session ${session.sessionId}`}
+                                >
+                                  {launchingKey === reviewActionKey ? <Loader2 className="size-3 animate-spin" /> : 'Reprocess'}
+                                </Button>
+                              ) : null}
+                            </div>
                           </div>
                         )
                       })}
