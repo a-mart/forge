@@ -24,11 +24,12 @@ export async function checkDataDirMigration(config: StartupMigrationConfig = {})
     return;
   }
 
-  const { newPath, legacyPath } = resolveDefaultDataDirs();
-
-  if (existsSync(newPath) || !existsSync(legacyPath)) {
+  const { newPath, selectedLegacyPath } = resolveMigrationPaths();
+  if (!selectedLegacyPath || existsSync(newPath)) {
     return;
   }
+
+  const legacyPath = selectedLegacyPath;
 
   const daemonized =
     process.env.FORGE_DAEMONIZED === "1" ||
@@ -189,11 +190,17 @@ function hasActiveLegacyDaemon(legacyDataDir: string): boolean {
   return false;
 }
 
-function resolveDefaultDataDirs(): { newPath: string; legacyPath: string } {
+function resolveMigrationPaths(): {
+  newPath: string;
+  legacyCandidates: string[];
+  selectedLegacyPath: string | undefined;
+} {
   if (process.platform !== "win32") {
+    const legacyCandidates = [resolve(homedir(), ".middleman")];
     return {
       newPath: resolve(homedir(), ".forge"),
-      legacyPath: resolve(homedir(), ".middleman")
+      legacyCandidates,
+      selectedLegacyPath: legacyCandidates.find((candidate) => existsSync(candidate))
     };
   }
 
@@ -201,9 +208,17 @@ function resolveDefaultDataDirs(): { newPath: string; legacyPath: string } {
     ? resolve(process.env.LOCALAPPDATA)
     : resolve(homedir(), "AppData", "Local");
 
+  // Keep this precedence aligned with config.ts fallback behavior on Windows:
+  // prefer %LOCALAPPDATA%\middleman, then fall back to ~/.middleman.
+  const legacyCandidates = [
+    resolve(localAppDataBase, "middleman"),
+    resolve(homedir(), ".middleman")
+  ];
+
   return {
     newPath: resolve(localAppDataBase, "forge"),
-    legacyPath: resolve(localAppDataBase, "middleman")
+    legacyCandidates,
+    selectedLegacyPath: legacyCandidates.find((candidate) => existsSync(candidate))
   };
 }
 

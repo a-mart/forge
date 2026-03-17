@@ -2,12 +2,14 @@ import { mkdtemp, mkdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { withPlatform } from './test-helpers.js'
 
 const MANAGED_ENV_KEYS = [
   'FORGE_DATA_DIR',
   'MIDDLEMAN_DATA_DIR',
   'FORGE_DAEMONIZED',
   'MIDDLEMAN_DAEMONIZED',
+  'LOCALAPPDATA',
 ] as const
 
 afterEach(() => {
@@ -187,6 +189,119 @@ describe('checkDataDirMigration', () => {
       expect(prompt).not.toHaveBeenCalled()
     } finally {
       await rm(fakeHome, { recursive: true, force: true })
+    }
+  })
+
+  it('uses LOCALAPPDATA/middleman on win32 when that is the only legacy dir', async () => {
+    const fakeHome = await mkdtemp(join(tmpdir(), 'startup-migration-win-home-'))
+    const localAppData = await mkdtemp(join(tmpdir(), 'startup-migration-win-appdata-'))
+    const windowsLegacy = resolve(localAppData, 'middleman')
+    await mkdir(windowsLegacy, { recursive: true })
+
+    try {
+      const prompt = vi.fn(async () => true)
+      const { checkDataDirMigration } = await loadMigrationModule(fakeHome)
+
+      await withPlatform('win32', async () => {
+        await withEnv({ LOCALAPPDATA: localAppData }, async () => {
+          await withTTY(false, false, async () => {
+            await checkDataDirMigration({ prompt })
+            expect(process.env.FORGE_DATA_DIR).toBe(windowsLegacy)
+          })
+        })
+      })
+
+      expect(prompt).not.toHaveBeenCalled()
+    } finally {
+      await rm(fakeHome, { recursive: true, force: true })
+      await rm(localAppData, { recursive: true, force: true })
+    }
+  })
+
+  it('uses ~/.middleman on win32 when appdata legacy dir is absent', async () => {
+    const fakeHome = await mkdtemp(join(tmpdir(), 'startup-migration-win-home-'))
+    const homeLegacy = resolve(fakeHome, '.middleman')
+    const localAppData = await mkdtemp(join(tmpdir(), 'startup-migration-win-appdata-'))
+    await mkdir(homeLegacy, { recursive: true })
+
+    try {
+      const prompt = vi.fn(async (question: string) => {
+        expect(question).toContain(homeLegacy)
+        return false
+      })
+      const { checkDataDirMigration } = await loadMigrationModule(fakeHome)
+
+      await withPlatform('win32', async () => {
+        await withEnv({ LOCALAPPDATA: localAppData }, async () => {
+          await withTTY(true, true, async () => {
+            await checkDataDirMigration({ prompt })
+            expect(process.env.FORGE_DATA_DIR).toBe(homeLegacy)
+          })
+        })
+      })
+
+      expect(prompt).toHaveBeenCalledTimes(1)
+    } finally {
+      await rm(fakeHome, { recursive: true, force: true })
+      await rm(localAppData, { recursive: true, force: true })
+    }
+  })
+
+  it('prefers LOCALAPPDATA/middleman over ~/.middleman on win32 when both exist', async () => {
+    const fakeHome = await mkdtemp(join(tmpdir(), 'startup-migration-win-home-'))
+    const homeLegacy = resolve(fakeHome, '.middleman')
+    const localAppData = await mkdtemp(join(tmpdir(), 'startup-migration-win-appdata-'))
+    const windowsLegacy = resolve(localAppData, 'middleman')
+    await mkdir(homeLegacy, { recursive: true })
+    await mkdir(windowsLegacy, { recursive: true })
+
+    try {
+      const prompt = vi.fn(async (question: string) => {
+        expect(question).toContain(windowsLegacy)
+        expect(question).not.toContain(homeLegacy)
+        return false
+      })
+      const { checkDataDirMigration } = await loadMigrationModule(fakeHome)
+
+      await withPlatform('win32', async () => {
+        await withEnv({ LOCALAPPDATA: localAppData }, async () => {
+          await withTTY(true, true, async () => {
+            await checkDataDirMigration({ prompt })
+            expect(process.env.FORGE_DATA_DIR).toBe(windowsLegacy)
+          })
+        })
+      })
+
+      expect(prompt).toHaveBeenCalledTimes(1)
+    } finally {
+      await rm(fakeHome, { recursive: true, force: true })
+      await rm(localAppData, { recursive: true, force: true })
+    }
+  })
+
+  it('falls back to ~/.middleman in no-TTY win32 mode when appdata legacy dir is absent', async () => {
+    const fakeHome = await mkdtemp(join(tmpdir(), 'startup-migration-win-home-'))
+    const homeLegacy = resolve(fakeHome, '.middleman')
+    const localAppData = await mkdtemp(join(tmpdir(), 'startup-migration-win-appdata-'))
+    await mkdir(homeLegacy, { recursive: true })
+
+    try {
+      const prompt = vi.fn(async () => true)
+      const { checkDataDirMigration } = await loadMigrationModule(fakeHome)
+
+      await withPlatform('win32', async () => {
+        await withEnv({ LOCALAPPDATA: localAppData }, async () => {
+          await withTTY(false, false, async () => {
+            await checkDataDirMigration({ prompt })
+            expect(process.env.FORGE_DATA_DIR).toBe(homeLegacy)
+          })
+        })
+      })
+
+      expect(prompt).not.toHaveBeenCalled()
+    } finally {
+      await rm(fakeHome, { recursive: true, force: true })
+      await rm(localAppData, { recursive: true, force: true })
     }
   })
 })
