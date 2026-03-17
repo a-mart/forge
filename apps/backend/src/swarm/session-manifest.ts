@@ -547,6 +547,7 @@ function coerceAgentDescriptor(value: unknown): AgentDescriptor | undefined {
     contextUsage: undefined,
     profileId: normalizeOptionalString(value.profileId),
     sessionLabel: normalizeOptionalString(value.sessionLabel),
+    sessionPurpose: normalizeOptionalString(value.sessionPurpose) === "cortex_review" ? "cortex_review" : undefined,
     mergedAt: normalizeOptionalString(value.mergedAt)
   };
 }

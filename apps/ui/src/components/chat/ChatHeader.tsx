@@ -345,8 +345,8 @@ export function ChatHeader({
           </>
         ) : null}
 
-        {/* ── Inline: artifacts toggle (hidden on mobile) ── */}
-        <div className="hidden md:inline-flex">
+        {/* ── Inline: artifacts/dashboard toggle ── */}
+        <div className="inline-flex">
           <TooltipProvider delayDuration={200}>
             <Tooltip>
               <TooltipTrigger asChild>

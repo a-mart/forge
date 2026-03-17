@@ -1,5 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { AlertCircle, CheckCircle2, Clock, FileWarning, Loader2, RefreshCw, Send } from 'lucide-react'
+import {
+  AlertCircle,
+  CheckCircle2,
+  Clock,
+  ExternalLink,
+  FileWarning,
+  Loader2,
+  RefreshCw,
+  Send,
+  SquareStack,
+} from 'lucide-react'
+import type { CortexReviewRunAxis, CortexReviewRunRecord, CortexReviewRunScope } from '@middleman/protocol'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -10,7 +21,7 @@ import { cn } from '@/lib/utils'
 interface ReviewStatusPanelProps {
   wsUrl: string
   refreshKey?: number
-  onTriggerReview: (message: string) => void
+  onOpenSession: (agentId: string) => void
 }
 
 interface ScanSession {
@@ -53,10 +64,10 @@ interface CortexScanResponse {
       sessionsWithFeedbackDrift: number
     }
   }
-  files?: {
-    commonKnowledge: string
-    cortexNotes: string
-  }
+}
+
+interface CortexReviewRunsResponse {
+  runs: CortexReviewRunRecord[]
 }
 
 type ScanState = 'idle' | 'loading' | 'error'
@@ -67,6 +78,25 @@ function formatBytes(bytes: number): string {
   if (absoluteBytes < 1024) return `${bytes} B`
   if (absoluteBytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function formatTimestamp(timestamp: string): string {
+  const parsed = new Date(timestamp)
+  if (Number.isNaN(parsed.getTime())) {
+    return timestamp
+  }
+
+  return parsed.toLocaleString([], {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  })
+}
+
+function truncateMiddle(text: string, maxLength = 180): string {
+  if (text.length <= maxLength) return text
+  return `${text.slice(0, maxLength - 1)}…`
 }
 
 function getSessionStatus(result: ScanSession): ReviewDisplayStatus {
@@ -105,18 +135,16 @@ function buildSessionReasonPills(result: ScanSession): string[] {
   return reasons
 }
 
-function buildReviewRequest(result: ScanSession): string {
-  const axes: string[] = []
+function buildReviewScope(result: ScanSession): CortexReviewRunScope {
+  const axes: CortexReviewRunAxis[] = []
 
   if (result.deltaBytes !== 0) axes.push('transcript')
   if (result.memoryDeltaBytes !== 0) axes.push('memory')
   if (result.feedbackDeltaBytes !== 0 || result.feedbackTimestampDrift) axes.push('feedback')
 
-  if (axes.length === 0) {
-    return `Review session ${result.profileId}/${result.sessionId}`
-  }
-
-  return `Review session ${result.profileId}/${result.sessionId} (${axes.join(', ')} freshness)`
+  return axes.length > 0
+    ? { mode: 'session', profileId: result.profileId, sessionId: result.sessionId, axes }
+    : { mode: 'session', profileId: result.profileId, sessionId: result.sessionId }
 }
 
 function StatusBadge({ status }: { status: ReviewDisplayStatus }) {
@@ -152,6 +180,47 @@ function StatusBadge({ status }: { status: ReviewDisplayStatus }) {
   }
 }
 
+function ReviewRunStatusBadge({ run }: { run: CortexReviewRunRecord }) {
+  switch (run.status) {
+    case 'running':
+      return (
+        <Badge variant="outline" className="h-5 gap-1 border-blue-500/30 bg-blue-500/10 px-1.5 text-[10px] font-medium text-blue-500">
+          <Loader2 className="size-2.5 animate-spin" />
+          Running
+        </Badge>
+      )
+    case 'blocked':
+      return (
+        <Badge variant="outline" className="h-5 gap-1 border-amber-500/30 bg-amber-500/10 px-1.5 text-[10px] font-medium text-amber-500">
+          <AlertCircle className="size-2.5" />
+          Blocked
+        </Badge>
+      )
+    case 'stopped':
+      return (
+        <Badge variant="outline" className="h-5 gap-1 border-red-500/30 bg-red-500/10 px-1.5 text-[10px] font-medium text-red-500">
+          <FileWarning className="size-2.5" />
+          Stopped
+        </Badge>
+      )
+    case 'completed':
+      return (
+        <Badge variant="outline" className="h-5 gap-1 border-emerald-500/30 bg-emerald-500/10 px-1.5 text-[10px] font-medium text-emerald-500">
+          <CheckCircle2 className="size-2.5" />
+          Completed
+        </Badge>
+      )
+  }
+}
+
+function TriggerBadge({ trigger }: { trigger: CortexReviewRunRecord['trigger'] }) {
+  return (
+    <Badge variant="outline" className="h-5 border-border/60 px-1.5 text-[10px] text-muted-foreground">
+      {trigger === 'scheduled' ? 'Scheduled' : 'Manual'}
+    </Badge>
+  )
+}
+
 function groupByProfile(results: ScanSession[]): Map<string, ScanSession[]> {
   const groups = new Map<string, ScanSession[]>()
   for (const result of results) {
@@ -181,10 +250,45 @@ async function fetchScanData(wsUrl: string, signal: AbortSignal): Promise<Cortex
   return (await response.json()) as CortexScanResponse
 }
 
-export function ReviewStatusPanel({ wsUrl, refreshKey = 0, onTriggerReview }: ReviewStatusPanelProps) {
+async function fetchReviewRuns(wsUrl: string, signal: AbortSignal): Promise<CortexReviewRunsResponse> {
+  const endpoint = resolveApiEndpoint(wsUrl, '/api/cortex/review-runs')
+  const response = await fetch(endpoint, { signal })
+
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null)
+    const message =
+      payload && typeof payload === 'object' && typeof (payload as { error?: string }).error === 'string'
+        ? (payload as { error: string }).error
+        : `Review runs failed (${response.status})`
+    throw new Error(message)
+  }
+
+  return (await response.json()) as CortexReviewRunsResponse
+}
+
+async function startReviewRun(wsUrl: string, scope: CortexReviewRunScope): Promise<CortexReviewRunRecord> {
+  const endpoint = resolveApiEndpoint(wsUrl, '/api/cortex/review-runs')
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ scope }),
+  })
+
+  const payload = (await response.json().catch(() => null)) as { error?: string; run?: CortexReviewRunRecord } | null
+  if (!response.ok || !payload?.run) {
+    throw new Error(payload?.error ?? `Unable to start review run (${response.status})`)
+  }
+
+  return payload.run
+}
+
+export function ReviewStatusPanel({ wsUrl, refreshKey = 0, onOpenSession }: ReviewStatusPanelProps) {
   const [scanState, setScanState] = useState<ScanState>('idle')
   const [scanData, setScanData] = useState<CortexScanResponse | null>(null)
+  const [reviewRuns, setReviewRuns] = useState<CortexReviewRunRecord[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [launchError, setLaunchError] = useState<string | null>(null)
+  const [launchingKey, setLaunchingKey] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
 
   const doScan = useCallback(() => {
@@ -195,10 +299,14 @@ export function ReviewStatusPanel({ wsUrl, refreshKey = 0, onTriggerReview }: Re
     setScanState('loading')
     setError(null)
 
-    void fetchScanData(wsUrl, controller.signal)
-      .then((data) => {
+    void Promise.all([
+      fetchScanData(wsUrl, controller.signal),
+      fetchReviewRuns(wsUrl, controller.signal),
+    ])
+      .then(([scan, runs]) => {
         if (controller.signal.aborted) return
-        setScanData(data)
+        setScanData(scan)
+        setReviewRuns(runs.runs)
         setScanState('idle')
       })
       .catch((scanError: unknown) => {
@@ -216,16 +324,43 @@ export function ReviewStatusPanel({ wsUrl, refreshKey = 0, onTriggerReview }: Re
     }
   }, [doScan, refreshKey])
 
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      doScan()
+    }, 8000)
+
+    return () => {
+      window.clearInterval(timer)
+    }
+  }, [doScan])
+
+  const handleLaunchReview = useCallback(
+    async (scope: CortexReviewRunScope, launchKey: string) => {
+      setLaunchError(null)
+      setLaunchingKey(launchKey)
+      try {
+        const run = await startReviewRun(wsUrl, scope)
+        setReviewRuns((current) => [run, ...current.filter((entry) => entry.runId !== run.runId)])
+        doScan()
+      } catch (launchRunError) {
+        setLaunchError(launchRunError instanceof Error ? launchRunError.message : 'Unable to start review run')
+      } finally {
+        setLaunchingKey(null)
+      }
+    },
+    [doScan, wsUrl],
+  )
+
   const handleReviewSession = useCallback(
     (session: ScanSession) => {
-      onTriggerReview(buildReviewRequest(session))
+      void handleLaunchReview(buildReviewScope(session), `${session.profileId}/${session.sessionId}`)
     },
-    [onTriggerReview],
+    [handleLaunchReview],
   )
 
   const handleReviewAll = useCallback(() => {
-    onTriggerReview('Review all sessions that need attention')
-  }, [onTriggerReview])
+    void handleLaunchReview({ mode: 'all' }, 'all')
+  }, [handleLaunchReview])
 
   const allSessions = scanData ? scanData.scan.sessions : []
   const grouped = groupByProfile(allSessions)
@@ -240,7 +375,12 @@ export function ReviewStatusPanel({ wsUrl, refreshKey = 0, onTriggerReview }: Re
   return (
     <div className="flex h-full flex-col">
       <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/60 px-3 py-2">
-        <h3 className="text-xs font-semibold text-foreground">Review Status</h3>
+        <div>
+          <h3 className="text-xs font-semibold text-foreground">Review Runs</h3>
+          <p className="text-[10px] text-muted-foreground">
+            Fresh Cortex review sessions per run, with recent activity tracked here.
+          </p>
+        </div>
         <div className="flex items-center gap-1">
           {scanData && needsReviewCount > 0 ? (
             <Button
@@ -248,8 +388,9 @@ export function ReviewStatusPanel({ wsUrl, refreshKey = 0, onTriggerReview }: Re
               size="sm"
               className="h-6 gap-1 px-2 text-[10px] font-medium text-primary hover:text-primary"
               onClick={handleReviewAll}
+              disabled={launchingKey !== null}
             >
-              <Send className="size-2.5" />
+              {launchingKey === 'all' ? <Loader2 className="size-2.5 animate-spin" /> : <Send className="size-2.5" />}
               Review All
             </Button>
           ) : null}
@@ -272,16 +413,22 @@ export function ReviewStatusPanel({ wsUrl, refreshKey = 0, onTriggerReview }: Re
         </div>
       ) : null}
 
+      {launchError ? (
+        <div className="shrink-0 border-b border-destructive/20 bg-destructive/10 px-3 py-1.5 text-[11px] text-destructive">
+          {launchError}
+        </div>
+      ) : null}
+
       {scanState === 'loading' && !scanData ? (
         <div className="flex flex-1 items-center justify-center py-12">
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
-            Scanning sessions…
+            Loading review dashboard…
           </div>
         </div>
       ) : scanState === 'error' && !scanData ? (
         <div className="flex flex-1 flex-col items-center justify-center px-4 py-12 text-center">
-          <p className="text-xs text-muted-foreground">Failed to load scan data</p>
+          <p className="text-xs text-muted-foreground">Failed to load review dashboard</p>
           <Button variant="ghost" size="sm" className="mt-2 h-7 text-[11px]" onClick={doScan}>
             Retry
           </Button>
@@ -340,63 +487,115 @@ export function ReviewStatusPanel({ wsUrl, refreshKey = 0, onTriggerReview }: Re
               'hover:[&>[data-slot=scroll-area-scrollbar]>[data-slot=scroll-area-thumb]]:bg-border',
             )}
           >
-            <div className="space-y-0.5 p-2">
-              {allSessions.length === 0 ? (
-                <div className="flex flex-col items-center justify-center px-4 py-8 text-center">
-                  <CheckCircle2 className="mb-2 size-8 text-muted-foreground/40" aria-hidden="true" />
-                  <p className="text-xs text-muted-foreground">No sessions found</p>
+            <div className="space-y-3 p-2">
+              <section className="rounded-md border border-border/60 bg-card/60 p-2">
+                <div className="mb-2 flex items-center gap-2">
+                  <SquareStack className="size-3.5 text-muted-foreground" />
+                  <h4 className="text-[11px] font-semibold text-foreground">Recent Runs</h4>
                 </div>
-              ) : (
-                Array.from(grouped.entries()).map(([profileId, sessions]) => (
-                  <div key={profileId}>
-                    <div className="px-2 pb-1 pt-2">
-                      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
-                        {profileId}
-                      </p>
-                    </div>
-                    {sessions.map((session) => {
-                      const status = getSessionStatus(session)
-                      const reasonPills = buildSessionReasonPills(session)
-
-                      return (
-                        <div
-                          key={`${session.profileId}/${session.sessionId}`}
-                          className="group flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-accent/50"
-                        >
-                          <div className="min-w-0 flex-1 space-y-1">
-                            <p className="truncate text-xs font-medium text-foreground">
-                              {session.sessionId}
-                            </p>
+                {reviewRuns.length === 0 ? (
+                  <p className="text-[11px] text-muted-foreground">No review runs recorded yet.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {reviewRuns.slice(0, 8).map((run) => (
+                      <div key={run.runId} className="rounded-md border border-border/50 bg-background/70 px-2 py-2">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0 flex-1">
                             <div className="flex flex-wrap items-center gap-1.5">
-                              <StatusBadge status={status} />
-                              {reasonPills.map((reason) => (
-                                <span
-                                  key={reason}
-                                  className="rounded-sm bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground"
-                                >
-                                  {reason}
-                                </span>
-                              ))}
+                              <ReviewRunStatusBadge run={run} />
+                              <TriggerBadge trigger={run.trigger} />
+                              {run.activeWorkerCount > 0 ? (
+                                <Badge variant="outline" className="h-5 border-border/60 px-1.5 text-[10px] text-muted-foreground">
+                                  {run.activeWorkerCount} worker{run.activeWorkerCount === 1 ? '' : 's'}
+                                </Badge>
+                              ) : null}
                             </div>
+                            <p className="mt-1 truncate text-xs font-medium text-foreground">{run.scopeLabel}</p>
+                            <p className="mt-0.5 text-[10px] text-muted-foreground">Started {formatTimestamp(run.requestedAt)}</p>
+                            {run.blockedReason ? (
+                              <p className="mt-1 text-[10px] text-amber-500">{run.blockedReason}</p>
+                            ) : run.latestCloseout ? (
+                              <p className="mt-1 text-[10px] text-muted-foreground">{truncateMiddle(run.latestCloseout)}</p>
+                            ) : null}
                           </div>
-                          {status !== 'up-to-date' ? (
+                          {run.sessionAgentId ? (
                             <Button
                               variant="ghost"
-                              size="icon"
-                              className="size-6 shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-primary group-hover:opacity-100"
-                              onClick={() => handleReviewSession(session)}
-                              aria-label={`Review session ${session.sessionId}`}
+                              size="sm"
+                              className="h-6 gap-1 px-2 text-[10px]"
+                              onClick={() => onOpenSession(run.sessionAgentId!)}
                             >
-                              <Send className="size-3" />
+                              <ExternalLink className="size-3" />
+                              Open
                             </Button>
                           ) : null}
                         </div>
-                      )
-                    })}
-                    <Separator className="my-1 bg-border/40" />
+                      </div>
+                    ))}
                   </div>
-                ))
-              )}
+                )}
+              </section>
+
+              <section>
+                {allSessions.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center px-4 py-8 text-center">
+                    <CheckCircle2 className="mb-2 size-8 text-muted-foreground/40" aria-hidden="true" />
+                    <p className="text-xs text-muted-foreground">No sessions found</p>
+                  </div>
+                ) : (
+                  Array.from(grouped.entries()).map(([profileId, sessions]) => (
+                    <div key={profileId}>
+                      <div className="px-2 pb-1 pt-2">
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+                          {profileId}
+                        </p>
+                      </div>
+                      {sessions.map((session) => {
+                        const status = getSessionStatus(session)
+                        const reasonPills = buildSessionReasonPills(session)
+                        const launchKey = `${session.profileId}/${session.sessionId}`
+
+                        return (
+                          <div
+                            key={`${session.profileId}/${session.sessionId}`}
+                            className="group flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-accent/50"
+                          >
+                            <div className="min-w-0 flex-1 space-y-1">
+                              <p className="truncate text-xs font-medium text-foreground">
+                                {session.sessionId}
+                              </p>
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <StatusBadge status={status} />
+                                {reasonPills.map((reason) => (
+                                  <span
+                                    key={reason}
+                                    className="rounded-sm bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                                  >
+                                    {reason}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                            {status !== 'up-to-date' ? (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="size-6 shrink-0 text-muted-foreground opacity-100 transition-opacity hover:text-primary md:opacity-0 md:group-hover:opacity-100"
+                                onClick={() => handleReviewSession(session)}
+                                disabled={launchingKey !== null}
+                                aria-label={`Review session ${session.sessionId}`}
+                              >
+                                {launchingKey === launchKey ? <Loader2 className="size-3 animate-spin" /> : <Send className="size-3" />}
+                              </Button>
+                            ) : null}
+                          </div>
+                        )
+                      })}
+                      <Separator className="my-1 bg-border/40" />
+                    </div>
+                  ))
+                )}
+              </section>
             </div>
           </ScrollArea>
         </>

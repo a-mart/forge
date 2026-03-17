@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { BookOpen, ClipboardList, Clock3, StickyNote, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -22,7 +22,7 @@ interface CortexDashboardPanelProps {
   isOpen: boolean
   onClose: () => void
   onArtifactClick: (artifact: ArtifactReference) => void
-  onSendMessage: (text: string) => void
+  onOpenSession: (agentId: string) => void
 }
 
 type DashboardTab = 'knowledge' | 'notes' | 'review' | 'schedules'
@@ -77,7 +77,7 @@ export function CortexDashboardPanel({
   isOpen,
   onClose,
   onArtifactClick,
-  onSendMessage,
+  onOpenSession,
 }: CortexDashboardPanelProps) {
   const [activeTab, setActiveTab] = useState<DashboardTab>('knowledge')
   const [panelWidth, setPanelWidth] = useState(loadPersistedWidth)
@@ -183,13 +183,6 @@ export function CortexDashboardPanel({
     [panelWidth],
   )
 
-  const handleTriggerReview = useCallback(
-    (message: string) => {
-      onSendMessage(message)
-    },
-    [onSendMessage],
-  )
-
   return (
     <div
       ref={panelRef}
@@ -197,11 +190,11 @@ export function CortexDashboardPanel({
         'relative flex h-full shrink-0 flex-col border-l border-border/80 bg-card/50',
         'transition-[width,opacity] duration-200 ease-out',
         isOpen
-          ? 'max-md:fixed max-md:inset-0 max-md:z-40 max-md:w-full max-md:border-l-0 md:opacity-100'
+          ? 'max-md:fixed max-md:inset-0 max-md:z-40 max-md:w-full max-md:border-l-0 md:w-[var(--cortex-panel-width)] md:opacity-100'
           : 'w-0 opacity-0 overflow-hidden max-md:hidden',
         isOpen && 'opacity-100',
       )}
-      style={isOpen ? { width: `${panelWidth}px` } : undefined}
+      style={isOpen ? ({ '--cortex-panel-width': `${panelWidth}px` } as CSSProperties) : undefined}
       aria-label="Cortex Dashboard"
       aria-hidden={!isOpen}
     >
@@ -342,7 +335,7 @@ export function CortexDashboardPanel({
           <ReviewStatusPanel
             key={`review-${refreshKey}`}
             wsUrl={wsUrl}
-            onTriggerReview={handleTriggerReview}
+            onOpenSession={onOpenSession}
           />
         </TabsContent>
 

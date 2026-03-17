@@ -33,6 +33,7 @@ import {
   getCortexPromotionManifestsDir,
   getCortexReviewLockPath,
   getCortexReviewLogPath,
+  getCortexReviewRunsPath,
   getSharedAuthDir,
   getSharedAuthFilePath,
   getSharedDir,
@@ -112,6 +113,7 @@ describe("data-paths", () => {
     expect(getCommonKnowledgePath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "knowledge", "common.md"));
     expect(getCortexNotesPath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "knowledge", ".cortex-notes.md"));
     expect(getCortexReviewLogPath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "knowledge", ".cortex-review-log.jsonl"));
+    expect(getCortexReviewRunsPath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "knowledge", ".cortex-review-runs.json"));
     expect(getCortexPromotionManifestsDir(DATA_DIR)).toBe(join(DATA_DIR, "shared", "knowledge", ".cortex-promotion-manifests"));
     expect(getCortexReviewLockPath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "knowledge", ".cortex-lock.json"));
     expect(getSharedAuthDir(DATA_DIR)).toBe(join(DATA_DIR, "shared", "auth"));

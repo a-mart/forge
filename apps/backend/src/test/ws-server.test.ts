@@ -23,6 +23,7 @@ import {
   getCortexPromotionManifestsDir,
   getCortexReviewLockPath,
   getCortexReviewLogPath,
+  getCortexReviewRunsPath,
   getCortexWorkerPromptsPath,
   getProfileKnowledgePath,
   getProfileMemoryPath,
@@ -1269,6 +1270,11 @@ describe('SwarmWebSocketServer', () => {
             exists: boolean
             sizeBytes: number
           }
+          cortexReviewRuns: {
+            path: string
+            exists: boolean
+            sizeBytes: number
+          }
           cortexPromotionManifests: {
             path: string
             exists: boolean
@@ -1322,6 +1328,11 @@ describe('SwarmWebSocketServer', () => {
           path: getCortexReviewLockPath(config.paths.dataDir),
           exists: false,
           sizeBytes: 0,
+        },
+        cortexReviewRuns: {
+          path: getCortexReviewRunsPath(config.paths.dataDir),
+          exists: true,
+          sizeBytes: expect.any(Number),
         },
         cortexPromotionManifests: {
           path: getCortexPromotionManifestsDir(config.paths.dataDir),
@@ -1407,6 +1418,166 @@ describe('SwarmWebSocketServer', () => {
       await expect(readFile(getProfileReferencePath(config.paths.dataDir, 'beta', 'index.md'), 'utf8')).rejects.toMatchObject({
         code: 'ENOENT',
       })
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('starts Cortex review runs through POST /api/cortex/review-runs and exposes them via GET', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port)
+    const manager = new TestSwarmManager(config)
+    await manager.boot()
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    try {
+      const createResponse = await fetch(`http://${config.host}:${config.port}/api/cortex/review-runs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scope: {
+            mode: 'session',
+            profileId: 'alpha',
+            sessionId: 'alpha--s1',
+            axes: ['memory', 'feedback'],
+          },
+        }),
+      })
+
+      expect(createResponse.status).toBe(202)
+      const createdPayload = (await createResponse.json()) as {
+        run: {
+          status: string
+          scopeLabel: string
+          sessionAgentId: string | null
+        }
+      }
+      expect(createdPayload.run).toMatchObject({
+        status: 'completed',
+        scopeLabel: 'alpha/alpha--s1 (memory, feedback)',
+      })
+      expect(createdPayload.run.sessionAgentId).toMatch(/^cortex--s\d+$/)
+
+      const listResponse = await fetch(`http://${config.host}:${config.port}/api/cortex/review-runs`)
+      expect(listResponse.status).toBe(200)
+      const listPayload = (await listResponse.json()) as {
+        runs: Array<{
+          trigger: string
+          scopeLabel: string
+          sessionAgentId: string | null
+        }>
+      }
+      expect(listPayload.runs[0]).toMatchObject({
+        trigger: 'manual',
+        scopeLabel: 'alpha/alpha--s1 (memory, feedback)',
+        sessionAgentId: createdPayload.run.sessionAgentId,
+      })
+
+      const persistedRuns = JSON.parse(await readFile(getCortexReviewRunsPath(config.paths.dataDir), 'utf8')) as {
+        runs: Array<{ sessionAgentId: string | null }>
+      }
+      expect(persistedRuns.runs[0]?.sessionAgentId).toBe(createdPayload.run.sessionAgentId)
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('returns 400 for malformed JSON bodies on POST /api/cortex/review-runs', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port)
+    const manager = new TestSwarmManager(config)
+    await manager.boot()
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    try {
+      const response = await fetch(`http://${config.host}:${config.port}/api/cortex/review-runs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{not valid json',
+      })
+
+      expect(response.status).toBe(400)
+      await expect(response.json()).resolves.toEqual({ error: 'Request body must be valid JSON.' })
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('returns 400 for invalid review scope payloads on POST /api/cortex/review-runs', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port)
+    const manager = new TestSwarmManager(config)
+    await manager.boot()
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    try {
+      const response = await fetch(`http://${config.host}:${config.port}/api/cortex/review-runs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scope: {
+            mode: 'session',
+            profileId: 'alpha',
+          },
+        }),
+      })
+
+      expect(response.status).toBe(400)
+      await expect(response.json()).resolves.toEqual({ error: 'Request body must include a valid review scope.' })
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('returns 413 for oversized bodies on POST /api/cortex/review-runs', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port)
+    const manager = new TestSwarmManager(config)
+    await manager.boot()
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    try {
+      const response = await fetch(`http://${config.host}:${config.port}/api/cortex/review-runs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scope: { mode: 'all' }, padding: 'x'.repeat(20_000) }),
+      })
+
+      expect(response.status).toBe(413)
+      const payload = (await response.json()) as { error: string }
+      expect(payload.error).toContain('Request body exceeds')
     } finally {
       await server.stop()
     }
