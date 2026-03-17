@@ -1519,6 +1519,40 @@ describe('SwarmWebSocketServer', () => {
     }
   })
 
+  it('returns 400 for invalid review scope payloads on POST /api/cortex/review-runs', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port)
+    const manager = new TestSwarmManager(config)
+    await manager.boot()
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    try {
+      const response = await fetch(`http://${config.host}:${config.port}/api/cortex/review-runs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scope: {
+            mode: 'session',
+            profileId: 'alpha',
+          },
+        }),
+      })
+
+      expect(response.status).toBe(400)
+      await expect(response.json()).resolves.toEqual({ error: 'Request body must include a valid review scope.' })
+    } finally {
+      await server.stop()
+    }
+  })
+
   it('returns 413 for oversized bodies on POST /api/cortex/review-runs', async () => {
     const port = await getAvailablePort()
     const config = await makeTempConfig(port)

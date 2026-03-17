@@ -271,4 +271,81 @@ describe('AgentSidebar', () => {
     expect(queryByText(sidebar, 'alpha-mgr')).toBeTruthy()
     expect(queryByText(sidebar, 'beta-mgr')).toBeTruthy()
   })
+
+  it('hides Cortex review-run sessions from the default sidebar list', () => {
+    const createdAt = '2026-01-01T00:00:00.000Z'
+    const updatedAt = createdAt
+    const cortexRoot = {
+      ...sessionManager('cortex', 'cortex'),
+      displayName: 'Cortex',
+      archetypeId: 'cortex',
+      sessionLabel: 'Main',
+      createdAt,
+      updatedAt,
+    }
+    const reviewRunSession: AgentDescriptor = {
+      ...sessionManager('cortex--s2', 'cortex'),
+      displayName: 'Cortex',
+      archetypeId: 'cortex',
+      sessionLabel: 'Review Run · Full Queue',
+      sessionPurpose: 'cortex_review',
+      createdAt,
+      updatedAt,
+    }
+    const cortexProfile: ManagerProfile = {
+      profileId: 'cortex',
+      displayName: 'Cortex',
+      defaultSessionAgentId: 'cortex',
+      createdAt,
+      updatedAt,
+    }
+
+    renderSidebar({
+      agents: [cortexRoot, reviewRunSession],
+      profiles: [cortexProfile],
+    })
+
+    const sidebar = getDesktopSidebar()
+    expect(queryByText(sidebar, 'Review Run · Full Queue')).toBeNull()
+    expect(getByText(sidebar, 'Review 1')).toBeTruthy()
+    expect(getByText(sidebar, '1 review run hidden here — open them from Cortex Review.')).toBeTruthy()
+  })
+
+  it('shows the selected Cortex review-run session so it stays directly reachable', () => {
+    const createdAt = '2026-01-01T00:00:00.000Z'
+    const updatedAt = createdAt
+    const cortexRoot = {
+      ...sessionManager('cortex', 'cortex'),
+      displayName: 'Cortex',
+      archetypeId: 'cortex',
+      sessionLabel: 'Main',
+      createdAt,
+      updatedAt,
+    }
+    const reviewRunSession: AgentDescriptor = {
+      ...sessionManager('cortex--s2', 'cortex'),
+      displayName: 'Cortex',
+      archetypeId: 'cortex',
+      sessionLabel: 'Review Run · Full Queue',
+      sessionPurpose: 'cortex_review',
+      createdAt,
+      updatedAt,
+    }
+    const cortexProfile: ManagerProfile = {
+      profileId: 'cortex',
+      displayName: 'Cortex',
+      defaultSessionAgentId: 'cortex',
+      createdAt,
+      updatedAt,
+    }
+
+    renderSidebar({
+      agents: [cortexRoot, reviewRunSession],
+      profiles: [cortexProfile],
+      selectedAgentId: 'cortex--s2',
+    })
+
+    const sidebar = getDesktopSidebar()
+    expect(getByText(sidebar, 'Review Run · Full Queue')).toBeTruthy()
+  })
 })

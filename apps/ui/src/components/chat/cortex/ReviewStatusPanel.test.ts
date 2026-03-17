@@ -38,7 +38,8 @@ async function flushPromises(): Promise<void> {
 }
 
 describe('ReviewStatusPanel', () => {
-  it('renders recent runs and starts fresh review runs through the Cortex review API', async () => {
+  it('renders recent runs, opens backing sessions, and starts fresh review runs through the Cortex review API', async () => {
+    const onOpenSession = vi.fn()
     const reviewRuns: CortexReviewRunRecord[] = [
       {
         runId: 'review-1',
@@ -147,7 +148,7 @@ describe('ReviewStatusPanel', () => {
       root?.render(
         createElement(ReviewStatusPanel, {
           wsUrl: 'ws://127.0.0.1:47187',
-          onOpenSession: vi.fn(),
+          onOpenSession,
         }),
       )
     })
@@ -163,6 +164,12 @@ describe('ReviewStatusPanel', () => {
     expect(getByText(container, 'Memory drift 1')).toBeTruthy()
     expect(getByText(container, 'Feedback drift 1')).toBeTruthy()
     expect(queryByText(container, 'Up to date')).toBeNull()
+
+    const openButton = getByText(container, 'Open').closest('button') as HTMLButtonElement
+    flushSync(() => {
+      openButton.click()
+    })
+    expect(onOpenSession).toHaveBeenCalledWith('cortex--s2')
 
     const reviewButton = getByLabelText(container, 'Review session alpha--s1')
     flushSync(() => {

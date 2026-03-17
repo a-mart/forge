@@ -2288,6 +2288,44 @@ describe('SwarmManager', () => {
     expect(runs[0]?.sessionAgentId).toMatch(/^cortex--s\d+$/)
   })
 
+  it('reconstructs persisted Cortex review runs after restart, including closeout text', async () => {
+    const config = await makeTempConfig()
+    const firstBoot = new TestSwarmManager(config)
+    await firstBoot.boot()
+
+    const run = await firstBoot.startCortexReviewRun({
+      scope: { mode: 'session', profileId: 'alpha', sessionId: 'alpha--s1', axes: ['memory'] },
+      trigger: 'manual',
+      sourceContext: { channel: 'web' },
+    })
+
+    expect(run.sessionAgentId).toMatch(/^cortex--s\d+$/)
+
+    const reviewSession = firstBoot.getAgent(run.sessionAgentId!)
+    expect(reviewSession?.sessionPurpose).toBe('cortex_review')
+    expect(reviewSession).toBeDefined()
+
+    appendSessionConversationMessage(
+      reviewSession!.sessionFile,
+      reviewSession!.agentId,
+      'reviewed profile/session, changed files: NONE',
+    )
+
+    const secondBoot = new TestSwarmManager(config)
+    await secondBoot.boot()
+
+    const persistedRuns = await secondBoot.listCortexReviewRuns()
+    expect(persistedRuns[0]).toMatchObject({
+      runId: run.runId,
+      sessionAgentId: run.sessionAgentId,
+      status: 'completed',
+      latestCloseout: 'reviewed profile/session, changed files: NONE',
+      scope: { mode: 'session', profileId: 'alpha', sessionId: 'alpha--s1', axes: ['memory'] },
+    })
+
+    expect(secondBoot.getAgent(run.sessionAgentId!)?.sessionPurpose).toBe('cortex_review')
+  })
+
   it('routes scheduled review envelopes into the same review-run path with schedule metadata', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
