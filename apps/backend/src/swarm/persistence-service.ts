@@ -1,5 +1,5 @@
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, resolve, sep } from "node:path";
 import { getScheduleFilePath } from "../scheduler/schedule-storage.js";
 import { getConversationHistoryCacheFilePath } from "./conversation-history-cache.js";
 import { getProfileKnowledgeDir, getProfileMemoryPath, getSharedKnowledgeDir, resolveMemoryFilePath } from "./data-paths.js";
@@ -143,6 +143,7 @@ export class PersistenceService {
       }
 
       const validAgents: AgentDescriptor[] = [];
+      let normalizedPathCount = 0;
       for (const [index, candidate] of parsed.agents.entries()) {
         const validated = this.deps.validateAgentDescriptor(candidate);
         if (typeof validated === "string") {
@@ -154,7 +155,19 @@ export class PersistenceService {
           continue;
         }
 
-        validAgents.push(validated);
+        const normalizedDescriptor = normalizeDescriptorPaths(validated, this.deps.config.paths.dataDir);
+        if (normalizedDescriptor !== validated) {
+          normalizedPathCount += 1;
+        }
+
+        validAgents.push(normalizedDescriptor);
+      }
+
+      if (normalizedPathCount > 0) {
+        this.deps.logDebug("Normalized legacy descriptor sessionFile paths during store load", {
+          normalizedPathCount,
+          dataDir: this.deps.config.paths.dataDir
+        });
       }
 
       return {
@@ -189,6 +202,56 @@ export class PersistenceService {
       managerId: descriptor.managerId
     });
   }
+}
+
+function normalizeDescriptorPaths(descriptor: AgentDescriptor, dataDir: string): AgentDescriptor {
+  const normalizedDataDir = resolve(dataDir);
+  const legacyDataDir = resolveLegacyDataDirForCurrentDataDir(normalizedDataDir);
+  if (!legacyDataDir) {
+    return descriptor;
+  }
+
+  const normalizedSessionFile = resolve(descriptor.sessionFile);
+  if (!isPathWithinDirectory(normalizedSessionFile, legacyDataDir)) {
+    return descriptor;
+  }
+
+  const relativeSessionPath = normalizedSessionFile.slice(legacyDataDir.length).replace(/^[/\\]+/, "");
+  if (!relativeSessionPath) {
+    return descriptor;
+  }
+
+  if (relativeSessionPath === ".." || relativeSessionPath.startsWith(`..${sep}`)) {
+    return descriptor;
+  }
+
+  const rewrittenSessionFile = resolve(normalizedDataDir, relativeSessionPath);
+  if (rewrittenSessionFile === descriptor.sessionFile) {
+    return descriptor;
+  }
+
+  return {
+    ...descriptor,
+    sessionFile: rewrittenSessionFile
+  };
+}
+
+function resolveLegacyDataDirForCurrentDataDir(dataDir: string): string | undefined {
+  const normalized = dataDir.toLowerCase();
+
+  if (normalized.endsWith(`${sep}.forge`)) {
+    return `${dataDir.slice(0, -(".forge".length))}.middleman`;
+  }
+
+  if (normalized.endsWith(`${sep}forge`)) {
+    return `${dataDir.slice(0, -("forge".length))}middleman`;
+  }
+
+  return undefined;
+}
+
+function isPathWithinDirectory(pathValue: string, directoryPath: string): boolean {
+  return pathValue === directoryPath || pathValue.startsWith(`${directoryPath}${sep}`);
 }
 
 function isEnoentError(error: unknown): boolean {
