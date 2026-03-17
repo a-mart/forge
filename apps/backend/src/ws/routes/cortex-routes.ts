@@ -1,6 +1,6 @@
 import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
-import type { CortexReviewRunAxis, CortexReviewRunScope } from "@middleman/protocol";
+import type { CortexReviewControlAction, CortexReviewRunAxis, CortexReviewRunScope } from "@middleman/protocol";
 import {
   getCommonKnowledgePath,
   getCortexNotesPath,
@@ -15,6 +15,7 @@ import {
   getProfileReferencePath
 } from "../../swarm/data-paths.js";
 import { scanCortexReviewStatus } from "../../swarm/scripts/cortex-scan.js";
+import { readSessionMeta, writeSessionMeta } from "../../swarm/session-manifest.js";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
 import { applyCorsHeaders, parseJsonBody, sendJson } from "../http-utils.js";
 import type { HttpRoute } from "./http-route.js";
@@ -23,6 +24,8 @@ const CORTEX_SCAN_ENDPOINT_PATH = "/api/cortex/scan";
 const CORTEX_SCAN_METHODS = "GET, OPTIONS";
 const CORTEX_REVIEW_RUNS_ENDPOINT_PATH = "/api/cortex/review-runs";
 const CORTEX_REVIEW_RUNS_METHODS = "GET, POST, OPTIONS";
+const CORTEX_REVIEW_CONTROLS_ENDPOINT_PATH = "/api/cortex/review-controls";
+const CORTEX_REVIEW_CONTROLS_METHODS = "POST, OPTIONS";
 
 export function createCortexRoutes(options: { swarmManager: SwarmManager }): HttpRoute[] {
   const { swarmManager } = options;
@@ -84,6 +87,88 @@ export function createCortexRoutes(options: { swarmManager: SwarmManager }): Htt
 
         response.setHeader("Allow", CORTEX_REVIEW_RUNS_METHODS);
         sendJson(response, 405, { error: "Method Not Allowed" });
+      }
+    },
+    {
+      methods: CORTEX_REVIEW_CONTROLS_METHODS,
+      matches: (pathname) => pathname === CORTEX_REVIEW_CONTROLS_ENDPOINT_PATH,
+      handle: async (request, response) => {
+        if (request.method === "OPTIONS") {
+          applyCorsHeaders(request, response, CORTEX_REVIEW_CONTROLS_METHODS);
+          response.statusCode = 204;
+          response.end();
+          return;
+        }
+
+        if (request.method !== "POST") {
+          applyCorsHeaders(request, response, CORTEX_REVIEW_CONTROLS_METHODS);
+          response.setHeader("Allow", CORTEX_REVIEW_CONTROLS_METHODS);
+          sendJson(response, 405, { error: "Method Not Allowed" });
+          return;
+        }
+
+        applyCorsHeaders(request, response, CORTEX_REVIEW_CONTROLS_METHODS);
+
+        try {
+          const payload = await parseJsonBody(request, 8 * 1024);
+          const control = parseReviewControlPayload(payload);
+          if (!control) {
+            sendJson(response, 400, { error: "Request body must include profileId, sessionId, and a valid review control action." });
+            return;
+          }
+
+          const dataDir = swarmManager.getConfig().paths.dataDir;
+          const meta = await readSessionMeta(dataDir, control.profileId, control.sessionId);
+          if (!meta) {
+            sendJson(response, 404, { error: "Session meta not found." });
+            return;
+          }
+
+          const scan = await scanCortexReviewStatus(dataDir);
+          const session = scan.sessions.find(
+            (candidate) => candidate.profileId === control.profileId && candidate.sessionId === control.sessionId
+          );
+          if (!session) {
+            sendJson(response, 404, { error: "Session review state not found." });
+            return;
+          }
+
+          if (control.action === "exclude") {
+            if (session.reviewExcluded) {
+              sendJson(response, 409, { error: "Session is already excluded from Cortex review." });
+              return;
+            }
+            if (session.status === "up-to-date") {
+              sendJson(response, 409, { error: "Only review-actionable sessions can be excluded from Cortex review." });
+              return;
+            }
+          }
+
+          if (control.action === "resume" && !session.reviewExcluded) {
+            sendJson(response, 409, { error: "Session is not excluded from Cortex review." });
+            return;
+          }
+
+          const now = new Date().toISOString();
+          await writeSessionMeta(swarmManager.getConfig().paths.dataDir, {
+            ...meta,
+            updatedAt: now,
+            cortexReviewExcludedAt: control.action === "exclude" ? now : null
+          });
+
+          sendJson(response, 200, { ok: true });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Unable to update Cortex review controls.";
+          if (message.includes("Request body must be valid JSON")) {
+            sendJson(response, 400, { error: message });
+            return;
+          }
+          if (message.includes("Request body exceeds")) {
+            sendJson(response, 413, { error: message });
+            return;
+          }
+          sendJson(response, 500, { error: message });
+        }
       }
     },
     {
@@ -192,6 +277,30 @@ function parseReviewRunScopePayload(payload: unknown): CortexReviewRunScope | nu
   return axes.length > 0
     ? { mode: "session", profileId, sessionId, axes }
     : { mode: "session", profileId, sessionId };
+}
+
+function parseReviewControlPayload(
+  payload: unknown
+): { profileId: string; sessionId: string; action: CortexReviewControlAction } | null {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return null;
+  }
+
+  const profileId = typeof (payload as { profileId?: unknown }).profileId === "string"
+    ? (payload as { profileId: string }).profileId.trim()
+    : "";
+  const sessionId = typeof (payload as { sessionId?: unknown }).sessionId === "string"
+    ? (payload as { sessionId: string }).sessionId.trim()
+    : "";
+  const action = typeof (payload as { action?: unknown }).action === "string"
+    ? ((payload as { action: string }).action.trim() as CortexReviewControlAction)
+    : null;
+
+  if (!profileId || !sessionId || (action !== "exclude" && action !== "resume")) {
+    return null;
+  }
+
+  return { profileId, sessionId, action };
 }
 
 interface FileSystemPathInfo {

@@ -333,6 +333,7 @@ async function prepareWatermarkUpdates(
       nextMeta: {
         ...existing,
         updatedAt: new Date().toISOString(),
+        cortexReviewExcludedAt: null,
         cortexReviewedBytes: update.cortexReviewedBytes ?? existing.cortexReviewedBytes,
         cortexReviewedAt:
           update.cortexReviewedAt === undefined ? existing.cortexReviewedAt : update.cortexReviewedAt ?? undefined,

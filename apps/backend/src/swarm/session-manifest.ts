@@ -141,6 +141,7 @@ export async function rebuildSessionMeta(options: RebuildSessionMetaOptions): Pr
             promptComponents: existingMeta?.promptComponents ?? null,
             cortexReviewedAt: existingMeta?.cortexReviewedAt,
             cortexReviewedBytes: existingMeta?.cortexReviewedBytes,
+            cortexReviewExcludedAt: existingMeta?.cortexReviewExcludedAt ?? null,
             cortexReviewedMemoryBytes: resolveInitialReviewedMemoryBytes(
               existingMeta?.cortexReviewedMemoryBytes,
               memoryFileSize
@@ -322,6 +323,7 @@ function createEmptySessionMeta(profileId: string, sessionId: string, timestamp:
     cwd: null,
     promptFingerprint: null,
     promptComponents: null,
+    cortexReviewExcludedAt: null,
     feedbackFileSize: null,
     lastFeedbackAt: null,
     cortexReviewedFeedbackBytes: 0,
@@ -607,6 +609,7 @@ function coerceSessionMeta(value: unknown): SessionMeta | undefined {
       : null,
     cortexReviewedAt: normalizeOptionalString(value.cortexReviewedAt),
     cortexReviewedBytes: coerceOptionalNonNegativeInteger(value.cortexReviewedBytes),
+    cortexReviewExcludedAt: normalizeOptionalNullableString(value.cortexReviewExcludedAt),
     cortexReviewedMemoryBytes: coerceOptionalNonNegativeInteger(value.cortexReviewedMemoryBytes),
     cortexReviewedMemoryAt: normalizeOptionalNullableString(value.cortexReviewedMemoryAt),
     feedbackFileSize: coerceOptionalFileSizeString(value.feedbackFileSize),

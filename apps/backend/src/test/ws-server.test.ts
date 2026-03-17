@@ -1280,6 +1280,8 @@ describe('SwarmWebSocketServer', () => {
             totalBytes: number
             reviewedBytes: number
             reviewedAt: string | null
+            reviewExcluded: boolean
+            reviewExcludedAt: string | null
             feedbackDeltaBytes: number
             feedbackTotalBytes: number
             feedbackReviewedBytes: number
@@ -1290,6 +1292,7 @@ describe('SwarmWebSocketServer', () => {
           summary: {
             needsReview: number
             upToDate: number
+            excluded: number
             totalBytes: number
             reviewedBytes: number
             transcriptTotalBytes: number
@@ -1464,6 +1467,229 @@ describe('SwarmWebSocketServer', () => {
       ).rejects.toMatchObject({ code: 'ENOENT' })
       await expect(readFile(getProfileReferencePath(config.paths.dataDir, 'beta', 'index.md'), 'utf8')).rejects.toMatchObject({
         code: 'ENOENT',
+      })
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('updates review-actionable session exclusion through POST /api/cortex/review-controls', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    const alphaSessionDir = join(config.paths.dataDir, 'profiles', 'alpha', 'sessions', 'alpha--s1')
+    await mkdir(alphaSessionDir, { recursive: true })
+    await writeFile(
+      join(alphaSessionDir, 'meta.json'),
+      `${JSON.stringify(
+        {
+          profileId: 'alpha',
+          sessionId: 'alpha--s1',
+          createdAt: '2026-03-01T10:00:00.000Z',
+          updatedAt: '2026-03-01T10:00:00.000Z',
+          model: { provider: null, modelId: null },
+          label: null,
+          cwd: null,
+          promptFingerprint: null,
+          promptComponents: null,
+          workers: [],
+          stats: { sessionFileSize: '1000', memoryFileSize: null, totalWorkers: 0, activeWorkers: 0, totalTokens: { input: null, output: null } },
+        },
+        null,
+        2,
+      )}\n`,
+      'utf8',
+    )
+
+    const reviewedSessionDir = join(config.paths.dataDir, 'profiles', 'beta', 'sessions', 'beta--s1')
+    await mkdir(reviewedSessionDir, { recursive: true })
+    await writeFile(
+      join(reviewedSessionDir, 'meta.json'),
+      `${JSON.stringify(
+        {
+          profileId: 'beta',
+          sessionId: 'beta--s1',
+          createdAt: '2026-03-01T10:00:00.000Z',
+          updatedAt: '2026-03-01T10:00:00.000Z',
+          model: { provider: null, modelId: null },
+          label: null,
+          cwd: null,
+          promptFingerprint: null,
+          promptComponents: null,
+          workers: [],
+          stats: { sessionFileSize: '1000', memoryFileSize: null, totalWorkers: 0, activeWorkers: 0, totalTokens: { input: null, output: null } },
+          cortexReviewedBytes: 400,
+          cortexReviewedAt: '2026-03-02T10:00:00.000Z',
+        },
+        null,
+        2,
+      )}\n`,
+      'utf8',
+    )
+
+    const upToDateSessionDir = join(config.paths.dataDir, 'profiles', 'gamma', 'sessions', 'gamma--s1')
+    await mkdir(upToDateSessionDir, { recursive: true })
+    await writeFile(
+      join(upToDateSessionDir, 'meta.json'),
+      `${JSON.stringify(
+        {
+          profileId: 'gamma',
+          sessionId: 'gamma--s1',
+          createdAt: '2026-03-01T10:00:00.000Z',
+          updatedAt: '2026-03-01T10:00:00.000Z',
+          model: { provider: null, modelId: null },
+          label: null,
+          cwd: null,
+          promptFingerprint: null,
+          promptComponents: null,
+          workers: [],
+          stats: { sessionFileSize: '1000', memoryFileSize: null, totalWorkers: 0, activeWorkers: 0, totalTokens: { input: null, output: null } },
+          cortexReviewedBytes: 1000,
+          cortexReviewedAt: '2026-03-02T10:00:00.000Z',
+        },
+        null,
+        2,
+      )}\n`,
+      'utf8',
+    )
+
+    try {
+      const baselineScanResponse = await fetch(`http://${config.host}:${config.port}/api/cortex/scan`)
+      const baselinePayload = (await baselineScanResponse.json()) as {
+        scan: {
+          summary: {
+            needsReview: number
+            upToDate: number
+            excluded: number
+          }
+        }
+      }
+
+      const excludeResponse = await fetch(`http://${config.host}:${config.port}/api/cortex/review-controls`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profileId: 'alpha', sessionId: 'alpha--s1', action: 'exclude' }),
+      })
+      expect(excludeResponse.status).toBe(200)
+      await expect(excludeResponse.json()).resolves.toEqual({ ok: true })
+
+      const excludedScanResponse = await fetch(`http://${config.host}:${config.port}/api/cortex/scan`)
+      const excludedPayload = (await excludedScanResponse.json()) as {
+        scan: {
+          sessions: Array<{
+            profileId: string
+            sessionId: string
+            reviewExcluded: boolean
+            reviewExcludedAt: string | null
+            status: string
+          }>
+          summary: {
+            needsReview: number
+            upToDate: number
+            excluded: number
+          }
+        }
+      }
+
+      expect(excludedPayload.scan.sessions.find((session) => session.sessionId === 'alpha--s1')).toMatchObject({
+        profileId: 'alpha',
+        sessionId: 'alpha--s1',
+        reviewExcluded: true,
+        status: 'never-reviewed',
+      })
+      expect(excludedPayload.scan.summary).toMatchObject({
+        needsReview: Math.max(0, baselinePayload.scan.summary.needsReview - 1),
+        upToDate: baselinePayload.scan.summary.upToDate,
+        excluded: baselinePayload.scan.summary.excluded + 1,
+      })
+
+      const reviewedExcludeResponse = await fetch(`http://${config.host}:${config.port}/api/cortex/review-controls`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profileId: 'beta', sessionId: 'beta--s1', action: 'exclude' }),
+      })
+      expect(reviewedExcludeResponse.status).toBe(200)
+      await expect(reviewedExcludeResponse.json()).resolves.toEqual({ ok: true })
+
+      const reviewedExcludedScanResponse = await fetch(`http://${config.host}:${config.port}/api/cortex/scan`)
+      const reviewedExcludedPayload = (await reviewedExcludedScanResponse.json()) as {
+        scan: {
+          sessions: Array<{
+            sessionId: string
+            reviewExcluded: boolean
+            status: string
+          }>
+          summary: {
+            needsReview: number
+            upToDate: number
+            excluded: number
+          }
+        }
+      }
+
+      expect(reviewedExcludedPayload.scan.sessions.find((session) => session.sessionId === 'beta--s1')).toMatchObject({
+        reviewExcluded: true,
+        status: 'needs-review',
+      })
+      expect(reviewedExcludedPayload.scan.summary).toMatchObject({
+        needsReview: Math.max(0, baselinePayload.scan.summary.needsReview - 2),
+        upToDate: baselinePayload.scan.summary.upToDate,
+        excluded: baselinePayload.scan.summary.excluded + 2,
+      })
+
+      const invalidExcludeResponse = await fetch(`http://${config.host}:${config.port}/api/cortex/review-controls`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profileId: 'gamma', sessionId: 'gamma--s1', action: 'exclude' }),
+      })
+      expect(invalidExcludeResponse.status).toBe(409)
+      await expect(invalidExcludeResponse.json()).resolves.toMatchObject({
+        error: 'Only review-actionable sessions can be excluded from Cortex review.',
+      })
+
+      const resumeResponse = await fetch(`http://${config.host}:${config.port}/api/cortex/review-controls`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profileId: 'alpha', sessionId: 'alpha--s1', action: 'resume' }),
+      })
+      expect(resumeResponse.status).toBe(200)
+      await expect(resumeResponse.json()).resolves.toEqual({ ok: true })
+
+      const resumedScanResponse = await fetch(`http://${config.host}:${config.port}/api/cortex/scan`)
+      const resumedPayload = (await resumedScanResponse.json()) as {
+        scan: {
+          sessions: Array<{
+            profileId: string
+            sessionId: string
+            reviewExcluded: boolean
+            reviewExcludedAt: string | null
+          }>
+          summary: {
+            needsReview: number
+            excluded: number
+          }
+        }
+      }
+
+      expect(resumedPayload.scan.sessions.find((session) => session.sessionId === 'alpha--s1')).toMatchObject({
+        reviewExcluded: false,
+        reviewExcludedAt: null,
+      })
+      expect(resumedPayload.scan.summary).toMatchObject({
+        needsReview: Math.max(0, baselinePayload.scan.summary.needsReview - 1),
+        excluded: baselinePayload.scan.summary.excluded + 1,
       })
     } finally {
       await server.stop()

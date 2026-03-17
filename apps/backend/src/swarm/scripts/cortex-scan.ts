@@ -9,6 +9,8 @@ export interface ScanSession {
   totalBytes: number;
   reviewedBytes: number;
   reviewedAt: string | null;
+  reviewExcluded: boolean;
+  reviewExcludedAt: string | null;
   memoryDeltaBytes: number;
   memoryTotalBytes: number;
   memoryReviewedBytes: number;
@@ -27,6 +29,7 @@ export interface ScanResult {
   summary: {
     needsReview: number;
     upToDate: number;
+    excluded: number;
     totalBytes: number;
     reviewedBytes: number;
     transcriptTotalBytes: number;
@@ -56,6 +59,7 @@ export async function scanCortexReviewStatus(dataDir: string): Promise<ScanResul
       summary: {
         needsReview: 0,
         upToDate: 0,
+        excluded: 0,
         totalBytes: 0,
         reviewedBytes: 0,
         transcriptTotalBytes: 0,
@@ -151,11 +155,15 @@ export async function scanCortexReviewStatus(dataDir: string): Promise<ScanResul
       const lastFeedbackAt = typeof parsed?.lastFeedbackAt === "string" ? parsed.lastFeedbackAt : null;
       const feedbackDeltaBytes = feedbackTotalBytes - feedbackReviewedBytes;
       const feedbackTimestampDrift = hasFeedbackTimestampDrift(lastFeedbackAt, feedbackReviewedAt);
+      const hasPriorReview = reviewedAt !== null || memoryReviewedAt !== null || feedbackReviewedAt !== null;
+      const reviewExcludedAt =
+        typeof parsed?.cortexReviewExcludedAt === "string" ? parsed.cortexReviewExcludedAt : null;
+      const reviewExcluded = reviewExcludedAt !== null;
 
       const status: ScanSession["status"] =
         deltaBytes === 0 && memoryDeltaBytes === 0 && feedbackDeltaBytes === 0 && !feedbackTimestampDrift
           ? "up-to-date"
-          : reviewedAt === null && memoryReviewedAt === null && feedbackReviewedAt === null
+          : !hasPriorReview
             ? "never-reviewed"
             : "needs-review";
 
@@ -166,6 +174,8 @@ export async function scanCortexReviewStatus(dataDir: string): Promise<ScanResul
         totalBytes,
         reviewedBytes,
         reviewedAt,
+        reviewExcluded,
+        reviewExcludedAt: reviewExcluded ? reviewExcludedAt : null,
         memoryDeltaBytes,
         memoryTotalBytes,
         memoryReviewedBytes,
@@ -182,14 +192,14 @@ export async function scanCortexReviewStatus(dataDir: string): Promise<ScanResul
   }
 
   sessions.sort((left, right) => {
-    const leftNeedsReview = left.status === "up-to-date" ? 1 : 0;
-    const rightNeedsReview = right.status === "up-to-date" ? 1 : 0;
+    const leftRank = getSessionSortRank(left);
+    const rightRank = getSessionSortRank(right);
 
-    if (leftNeedsReview !== rightNeedsReview) {
-      return leftNeedsReview - rightNeedsReview;
+    if (leftRank !== rightRank) {
+      return leftRank - rightRank;
     }
 
-    if (left.status !== "up-to-date" && right.status !== "up-to-date") {
+    if (leftRank === 0 && rightRank === 0) {
       const leftCombinedDelta = getAttentionDeltaBytes(left);
       const rightCombinedDelta = getAttentionDeltaBytes(right);
       const deltaDifference = rightCombinedDelta - leftCombinedDelta;
@@ -203,6 +213,11 @@ export async function scanCortexReviewStatus(dataDir: string): Promise<ScanResul
 
   const summary = sessions.reduce(
     (accumulator, session) => {
+      if (session.reviewExcluded) {
+        accumulator.excluded += 1;
+        return accumulator;
+      }
+
       if (session.status === "up-to-date") {
         accumulator.upToDate += 1;
       } else {
@@ -234,6 +249,7 @@ export async function scanCortexReviewStatus(dataDir: string): Promise<ScanResul
     {
       needsReview: 0,
       upToDate: 0,
+      excluded: 0,
       totalBytes: 0,
       reviewedBytes: 0,
       transcriptTotalBytes: 0,
@@ -257,12 +273,17 @@ export async function scanCortexReviewStatus(dataDir: string): Promise<ScanResul
 
 export async function runCortexScan(dataDir: string): Promise<string> {
   const scanResult = await scanCortexReviewStatus(dataDir);
-  const sessionsNeedingReview = scanResult.sessions.filter((result) => result.status !== "up-to-date");
-  const unchangedSessions = scanResult.sessions.filter((result) => result.status === "up-to-date");
+  const sessionsNeedingReview = scanResult.sessions.filter((result) => !result.reviewExcluded && result.status !== "up-to-date");
+  const excludedSessions = scanResult.sessions.filter((result) => result.reviewExcluded);
+  const unchangedSessions = scanResult.sessions.filter((result) => !result.reviewExcluded && result.status === "up-to-date");
 
   const needsReviewLines =
     sessionsNeedingReview.length > 0
       ? sessionsNeedingReview.map((result) => formatNeedsReviewLine(result))
+      : ["  (none)"];
+  const excludedLines =
+    excludedSessions.length > 0
+      ? excludedSessions.map((result) => formatExcludedLine(result))
       : ["  (none)"];
   const unchangedLines =
     unchangedSessions.length > 0
@@ -281,10 +302,13 @@ export async function runCortexScan(dataDir: string): Promise<string> {
     "Sessions needing attention:",
     ...needsReviewLines,
     "",
+    "Sessions excluded from review:",
+    ...excludedLines,
+    "",
     "Sessions up to date:",
     ...unchangedLines,
     "",
-    `Summary: ${scanResult.summary.needsReview} sessions need review, ${scanResult.summary.upToDate} up to date | signals — transcript: ${scanResult.summary.sessionsWithTranscriptDrift}, memory: ${scanResult.summary.sessionsWithMemoryDrift}, feedback: ${scanResult.summary.sessionsWithFeedbackDrift} | transcript coverage: ${transcriptCoverage}%`
+    `Summary: ${scanResult.summary.needsReview} sessions need review, ${scanResult.summary.upToDate} up to date, ${scanResult.summary.excluded} excluded | signals — transcript: ${scanResult.summary.sessionsWithTranscriptDrift}, memory: ${scanResult.summary.sessionsWithMemoryDrift}, feedback: ${scanResult.summary.sessionsWithFeedbackDrift} | transcript coverage: ${transcriptCoverage}%`
   ].join("\n");
 }
 
@@ -339,6 +363,20 @@ function formatNeedsReviewLine(result: ScanSession): string {
       : "no feedback review watermark";
 
   return `  ${result.profileId}/${result.sessionId}: ${parts.join(", ")} (${reviewedLabel}; ${memoryReviewedLabel}; ${feedbackReviewedLabel})`;
+}
+
+function formatExcludedLine(result: ScanSession): string {
+  const excludedLabel = result.reviewExcludedAt ? `excluded: ${result.reviewExcludedAt.slice(0, 10)}` : "excluded";
+  const reviewLabel = result.reviewedAt ? `last reviewed: ${result.reviewedAt.slice(0, 10)}` : "never reviewed";
+  return `  ${result.profileId}/${result.sessionId}: excluded from automatic review (${excludedLabel}; ${reviewLabel})`;
+}
+
+function getSessionSortRank(result: ScanSession): number {
+  if (result.reviewExcluded) {
+    return 1;
+  }
+
+  return result.status === "up-to-date" ? 2 : 0;
 }
 
 function getAttentionDeltaBytes(result: ScanSession): number {

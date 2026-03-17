@@ -180,7 +180,8 @@ describe("cortex-review-state", () => {
       sessionId,
       profileId,
       cortexReviewedBytes: 10,
-      cortexReviewedAt: "2026-03-16T18:00:00.000Z"
+      cortexReviewedAt: "2026-03-16T18:00:00.000Z",
+      cortexReviewExcludedAt: "2026-03-16T17:59:00.000Z"
     });
 
     await acquireCortexReviewLock({
@@ -224,6 +225,7 @@ describe("cortex-review-state", () => {
     expect(meta).toMatchObject({
       cortexReviewedBytes: 42,
       cortexReviewedAt: "2026-03-16T18:06:00.000Z",
+      cortexReviewExcludedAt: null,
       cortexReviewedMemoryBytes: 12,
       cortexReviewedMemoryAt: "2026-03-16T18:06:00.000Z"
     });

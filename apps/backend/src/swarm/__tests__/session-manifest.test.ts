@@ -41,6 +41,7 @@ describe("session-manifest", () => {
       cwd: "/tmp/project",
       promptFingerprint: null,
       promptComponents: null,
+      cortexReviewExcludedAt: "2026-03-01T00:10:00.000Z",
       lastMemoryMergeAttemptId: "manager--s2:2026-03-01T00:00:00.000Z",
       lastMemoryMergeProfileHashBefore: "before-hash",
       lastMemoryMergeProfileHashAfter: "after-hash",

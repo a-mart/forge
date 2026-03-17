@@ -52,6 +52,7 @@ export interface AgentDescriptor {
 export type CortexReviewRunTrigger = 'manual' | 'scheduled'
 export type CortexReviewRunStatus = 'queued' | 'running' | 'completed' | 'blocked' | 'stopped'
 export type CortexReviewRunAxis = 'transcript' | 'memory' | 'feedback'
+export type CortexReviewControlAction = 'exclude' | 'resume'
 
 export type CortexReviewRunScope =
   | { mode: 'all' }
@@ -143,6 +144,7 @@ export interface SessionMeta {
 
   cortexReviewedAt?: string
   cortexReviewedBytes?: number
+  cortexReviewExcludedAt?: string | null
   cortexReviewedMemoryBytes?: number
   cortexReviewedMemoryAt?: string | null
   feedbackFileSize?: string | null
