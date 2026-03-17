@@ -793,6 +793,11 @@ export class ManagerWsClient {
           }
 
           nextAgents = this.state.agents.map((agent) => {
+            // Update the worker's own status in state.agents
+            if (agent.agentId === event.agentId && agent.status !== event.status) {
+              return { ...agent, status: event.status, contextUsage: event.contextUsage }
+            }
+
             if (agent.role !== 'manager' || agent.agentId !== event.managerId) {
               return agent
             }
@@ -1065,7 +1070,7 @@ export class ManagerWsClient {
       ...Object.fromEntries(
         mergedAgents.map((agent) => {
           const previous = this.state.statuses[agent.agentId]
-          const status = agent.status
+          const status = (agent.role === 'worker' && previous) ? previous.status : agent.status
           return [
             agent.agentId,
             {
