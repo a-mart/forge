@@ -121,7 +121,6 @@ import type {
   AgentStatusEvent,
   AgentsSnapshotEvent,
   AgentsStoreFile,
-  SessionWorkersSnapshotEvent,
   ConversationAttachment,
   ConversationAttachmentMetadata,
   ConversationBinaryAttachment,
@@ -1182,7 +1181,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   listBootstrapAgents(): AgentDescriptor[] {
-    return this.buildManagerSnapshotDescriptors({ includeStreamingWorkers: true });
+    return this.listManagerAgents();
   }
 
   listManagerAgents(): AgentDescriptor[] {
@@ -1975,7 +1974,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     this.emitStatus(agentId, descriptor.status, runtime.getPendingCount(), contextUsage);
     this.emitAgentsSnapshot();
-    this.emitSessionWorkersSnapshot(descriptor.managerId);
 
     if (input.initialMessage && input.initialMessage.trim().length > 0) {
       await this.sendMessage(callerAgentId, agentId, input.initialMessage, "auto", { origin: "internal" });
@@ -2010,7 +2008,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     this.emitStatus(targetAgentId, target.status, 0);
     this.emitAgentsSnapshot();
-    this.emitSessionWorkersSnapshot(target.managerId);
   }
 
   async stopWorker(agentId: string): Promise<void> {
@@ -2041,7 +2038,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     this.emitStatus(agentId, descriptor.status, 0);
     this.emitAgentsSnapshot();
-    this.emitSessionWorkersSnapshot(descriptor.managerId);
   }
 
   async resumeWorker(agentId: string): Promise<void> {
@@ -2087,7 +2083,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     await this.saveStore();
     this.emitAgentsSnapshot();
-    this.emitSessionWorkersSnapshot(descriptor.managerId);
   }
 
   async stopAllAgents(
@@ -2160,7 +2155,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     await this.refreshSessionMetaStatsBySessionId(targetManagerId);
     await this.saveStore();
     this.emitAgentsSnapshot();
-    this.emitSessionWorkersSnapshot(targetManagerId);
 
     this.logDebug("manager:stop_all", {
       callerAgentId,
@@ -2761,7 +2755,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     if (options.emitSnapshots) {
       this.emitAgentsSnapshot();
-      this.emitSessionWorkersSnapshot(agentId);
       this.emitProfilesSnapshot();
     }
 
@@ -5279,17 +5272,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     };
 
     this.emit("agents_snapshot", payload satisfies ServerEvent);
-  }
-
-  private emitSessionWorkersSnapshot(sessionAgentId: string, requestId?: string): void {
-    const payload: SessionWorkersSnapshotEvent = {
-      type: "session_workers_snapshot",
-      sessionAgentId,
-      workers: this.listWorkersForSession(sessionAgentId),
-      ...(requestId ? { requestId } : {})
-    };
-
-    this.emit("session_workers_snapshot", payload satisfies ServerEvent);
   }
 
   private emitProfilesSnapshot(): void {

@@ -762,10 +762,7 @@ export class WsHandler {
     });
     this.send(socket, {
       type: "agents_snapshot",
-      agents:
-        typeof (this.swarmManager as SwarmManager & { listBootstrapAgents?: () => ReturnType<SwarmManager["listAgents"]> }).listBootstrapAgents === "function"
-          ? (this.swarmManager as SwarmManager & { listBootstrapAgents: () => ReturnType<SwarmManager["listAgents"]> }).listBootstrapAgents()
-          : this.swarmManager.listAgents()
+      agents: this.swarmManager.listBootstrapAgents()
     });
     this.send(socket, {
       type: "profiles_snapshot",

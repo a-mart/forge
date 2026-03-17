@@ -773,6 +773,7 @@ export class ManagerWsClient {
 
       case 'agent_status': {
         const prevStatus = this.state.statuses[event.agentId]?.status
+        const isKnownAgent = this.state.agents.some((agent) => agent.agentId === event.agentId)
         const statuses = {
           ...this.state.statuses,
           [event.agentId]: {
@@ -784,7 +785,13 @@ export class ManagerWsClient {
         }
 
         let nextAgents = this.state.agents
+        let nextLoadedSessionIds = this.state.loadedSessionIds
         if (event.managerId) {
+          if (!isKnownAgent && this.state.loadedSessionIds.has(event.managerId)) {
+            nextLoadedSessionIds = new Set(this.state.loadedSessionIds)
+            nextLoadedSessionIds.delete(event.managerId)
+          }
+
           nextAgents = this.state.agents.map((agent) => {
             if (agent.role !== 'manager' || agent.agentId !== event.managerId) {
               return agent
@@ -811,15 +818,23 @@ export class ManagerWsClient {
         const nextState = {
           statuses,
           ...(nextAgents !== this.state.agents ? { agents: nextAgents } : {}),
+          ...(nextLoadedSessionIds !== this.state.loadedSessionIds
+            ? { loadedSessionIds: nextLoadedSessionIds }
+            : {}),
         }
         this.updateState(nextState)
 
         // Detect manager streaming → idle transition for deferred notification evaluation.
         // When a manager goes idle, check if a pending all-done sound should play now.
         if (prevStatus === 'streaming' && event.status === 'idle') {
-          const stateForNotifications = nextAgents !== this.state.agents
-            ? { ...this.state, agents: nextAgents, statuses }
-            : { ...this.state, statuses }
+          const stateForNotifications = {
+            ...this.state,
+            ...(nextAgents !== this.state.agents ? { agents: nextAgents } : {}),
+            ...(nextLoadedSessionIds !== this.state.loadedSessionIds
+              ? { loadedSessionIds: nextLoadedSessionIds }
+              : {}),
+            statuses,
+          }
           const agent = stateForNotifications.agents.find((a) => a.agentId === event.agentId)
           if (agent?.role === 'manager') {
             handleManagerIdleTransition(event.agentId, stateForNotifications)
@@ -1039,21 +1054,30 @@ export class ManagerWsClient {
       }
     }
 
-    const statuses = Object.fromEntries(
-      mergedAgents.map((agent) => {
-        const previous = this.state.statuses[agent.agentId]
-        const status = agent.status
-        return [
-          agent.agentId,
-          {
-            status,
-            pendingCount: previous && previous.status === status ? previous.pendingCount : 0,
-            contextUsage: agent.contextUsage,
-            contextRecoveryInProgress: previous?.contextRecoveryInProgress,
-          },
-        ]
-      }),
+    const previousAgentIds = new Set(this.state.agents.map((agent) => agent.agentId))
+    const preservedUnloadedStatuses = Object.fromEntries(
+      Object.entries(this.state.statuses).filter(
+        ([agentId]) => !mergedAgentIds.has(agentId) && !previousAgentIds.has(agentId),
+      ),
     )
+    const statuses = {
+      ...preservedUnloadedStatuses,
+      ...Object.fromEntries(
+        mergedAgents.map((agent) => {
+          const previous = this.state.statuses[agent.agentId]
+          const status = agent.status
+          return [
+            agent.agentId,
+            {
+              status,
+              pendingCount: previous && previous.status === status ? previous.pendingCount : 0,
+              contextUsage: agent.contextUsage,
+              contextRecoveryInProgress: previous?.contextRecoveryInProgress,
+            },
+          ]
+        }),
+      ),
+    }
 
     const currentTarget = this.state.targetAgentId ?? this.state.subscribedAgentId ?? this.desiredAgentId ?? undefined
     const currentTargetStillExists = currentTarget ? mergedAgentIds.has(currentTarget) : false
