@@ -12,6 +12,7 @@ import { MarkdownMessage } from './MarkdownMessage'
 interface ArtifactPanelProps {
   artifact: ArtifactReference | null
   wsUrl: string
+  activeAgentId?: string | null
   onClose: () => void
   onArtifactClick?: (artifact: ArtifactReference) => void
 }
@@ -24,7 +25,7 @@ interface ReadFileResult {
 const MARKDOWN_FILE_PATTERN = /\.(md|markdown|mdx)$/i
 const IMAGE_FILE_PATTERN = /\.(png|jpg|jpeg|gif|webp|svg)$/i
 
-export function ArtifactPanel({ artifact, wsUrl, onClose, onArtifactClick }: ArtifactPanelProps) {
+export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtifactClick }: ArtifactPanelProps) {
   const [isVisible, setIsVisible] = useState(false)
   const [isClosing, setIsClosing] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
@@ -84,6 +85,7 @@ export function ArtifactPanel({ artifact, wsUrl, onClose, onArtifactClick }: Art
         const file = await readArtifactFile({
           wsUrl,
           path: artifactPath,
+          agentId: artifact?.sourceAgentId ?? activeAgentId,
           signal: abortController.signal,
         })
 
@@ -110,7 +112,7 @@ export function ArtifactPanel({ artifact, wsUrl, onClose, onArtifactClick }: Art
     return () => {
       abortController.abort()
     }
-  }, [artifact?.fileName, artifactPath, wsUrl])
+  }, [activeAgentId, artifact?.fileName, artifact?.sourceAgentId, artifactPath, wsUrl])
 
   useEffect(() => {
     return () => {
@@ -143,8 +145,8 @@ export function ArtifactPanel({ artifact, wsUrl, onClose, onArtifactClick }: Art
       return null
     }
 
-    return resolveReadFileUrl(wsUrl, displayPath)
-  }, [displayPath, isImage, wsUrl])
+    return resolveReadFileUrl(wsUrl, displayPath, artifact?.sourceAgentId ?? activeAgentId)
+  }, [activeAgentId, artifact?.sourceAgentId, displayPath, isImage, wsUrl])
 
   if (!artifact && !isClosing) {
     return null
@@ -276,7 +278,14 @@ export function ArtifactPanel({ artifact, wsUrl, onClose, onArtifactClick }: Art
                     content={content}
                     variant="document"
                     enableMermaid
-                    onArtifactClick={onArtifactClick}
+                    artifactSourceAgentId={artifact?.sourceAgentId ?? activeAgentId}
+                    onArtifactClick={(nextArtifact) => {
+                      onArtifactClick?.({
+                        ...nextArtifact,
+                        sourceAgentId:
+                          nextArtifact.sourceAgentId ?? artifact?.sourceAgentId ?? activeAgentId ?? undefined,
+                      })
+                    }}
                   />
                 </article>
               ) : (
@@ -297,10 +306,12 @@ export function ArtifactPanel({ artifact, wsUrl, onClose, onArtifactClick }: Art
 async function readArtifactFile({
   wsUrl,
   path,
+  agentId,
   signal,
 }: {
   wsUrl: string
   path: string
+  agentId?: string | null
   signal: AbortSignal
 }): Promise<ReadFileResult> {
   const endpoint = resolveReadFileEndpoint(wsUrl)
@@ -310,7 +321,7 @@ async function readArtifactFile({
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ path }),
+    body: JSON.stringify({ path, agentId: agentId?.trim() || undefined }),
     signal,
   })
 
@@ -351,8 +362,17 @@ function resolveReadFileEndpoint(wsUrl: string): string {
   }
 }
 
-function resolveReadFileUrl(wsUrl: string, path: string): string {
+function resolveReadFileUrl(wsUrl: string, path: string, agentId?: string | null): string {
   const endpoint = resolveReadFileEndpoint(wsUrl)
+  const searchParams = new URLSearchParams({
+    path,
+  })
+
+  const normalizedAgentId = agentId?.trim()
+  if (normalizedAgentId) {
+    searchParams.set('agentId', normalizedAgentId)
+  }
+
   const separator = endpoint.includes('?') ? '&' : '?'
-  return `${endpoint}${separator}path=${encodeURIComponent(path)}`
+  return `${endpoint}${separator}${searchParams.toString()}`
 }

@@ -302,6 +302,7 @@ export function CortexDashboardPanel({
                 <KnowledgeFileViewer
                   key={`knowledge-${selectedKnowledgeScope}-${refreshKey}`}
                   wsUrl={wsUrl}
+                  agentId={managerId}
                   filePath={
                     selectedKnowledgeScope === 'common'
                       ? paths.commonKnowledge
@@ -330,6 +331,7 @@ export function CortexDashboardPanel({
             <KnowledgeFileViewer
               key={`notes-${refreshKey}`}
               wsUrl={wsUrl}
+              agentId={managerId}
               filePath={paths.cortexNotes}
               label="Cortex Notes"
               description="Working notes and tentative observations"

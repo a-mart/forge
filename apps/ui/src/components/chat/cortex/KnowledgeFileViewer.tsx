@@ -11,6 +11,7 @@ import type { ArtifactReference } from '@/lib/artifacts'
 interface KnowledgeFileViewerProps {
   wsUrl: string
   filePath: string | null
+  agentId?: string | null
   label: string
   description?: string
   refreshKey?: number
@@ -25,12 +26,17 @@ interface ReadFileResult {
   content: string
 }
 
-async function readFileContent(wsUrl: string, filePath: string, signal: AbortSignal): Promise<ReadFileResult> {
+async function readFileContent(
+  wsUrl: string,
+  filePath: string,
+  agentId: string | null | undefined,
+  signal: AbortSignal,
+): Promise<ReadFileResult> {
   const endpoint = resolveApiEndpoint(wsUrl, '/api/read-file')
   const response = await fetch(endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ path: filePath }),
+    body: JSON.stringify({ path: filePath, agentId: agentId?.trim() || undefined }),
     signal,
   })
 
@@ -77,6 +83,7 @@ async function writeFileContent(wsUrl: string, filePath: string, content: string
 export function KnowledgeFileViewer({
   wsUrl,
   filePath,
+  agentId,
   label,
   description,
   refreshKey = 0,
@@ -103,7 +110,7 @@ export function KnowledgeFileViewer({
       setError(null)
       setIsEmpty(false)
 
-      void readFileContent(wsUrl, filePath, signal)
+      void readFileContent(wsUrl, filePath, agentId, signal)
         .then((result) => {
           if (signal.aborted) return
           setContent(result.content)
@@ -124,7 +131,7 @@ export function KnowledgeFileViewer({
           setViewerState('error')
         })
     },
-    [wsUrl, filePath],
+    [agentId, wsUrl, filePath],
   )
 
   useEffect(() => {
@@ -301,6 +308,7 @@ export function KnowledgeFileViewer({
               <MarkdownMessage
                 content={content}
                 variant="document"
+                artifactSourceAgentId={agentId}
                 onArtifactClick={onArtifactClick}
               />
             </div>

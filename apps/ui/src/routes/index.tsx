@@ -930,6 +930,7 @@ export function IndexPage() {
       <ArtifactPanel
         artifact={activeArtifact}
         wsUrl={wsUrl}
+        activeAgentId={activeAgentId}
         onClose={handleCloseArtifact}
         onArtifactClick={handleOpenArtifact}
       />

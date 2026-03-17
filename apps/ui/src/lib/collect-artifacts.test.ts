@@ -25,6 +25,7 @@ describe('collectArtifactsFromMessages', () => {
         fileName: 'terminal-support.md',
         href: 'docs/plans/terminal-support.md',
         title: 'Terminal Support Plan',
+        sourceAgentId: 'manager',
       },
     ])
   })
@@ -40,6 +41,22 @@ describe('collectArtifactsFromMessages', () => {
         fileName: 'build.md',
         href: 'docs/plans/build.md',
         title: 'Build Plan',
+        sourceAgentId: 'manager',
+      },
+    ])
+  })
+
+  it('normalizes Windows artifact shortcodes and preserves source agent context', () => {
+    const artifacts = collectArtifactsFromMessages([
+      assistantMessage('[artifact:C:/Users/example/project/README.md]'),
+    ])
+
+    expect(artifacts).toEqual([
+      {
+        path: 'C:/Users/example/project/README.md',
+        fileName: 'README.md',
+        href: 'swarm-file:///C:/Users/example/project/README.md',
+        sourceAgentId: 'manager',
       },
     ])
   })

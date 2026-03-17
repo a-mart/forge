@@ -33,6 +33,20 @@ describe('artifacts helpers', () => {
     })
   })
 
+  it('normalizes Windows swarm-file and vscode artifact paths', () => {
+    expect(parseArtifactReference('swarm-file:///C:/Users/example/project/README.md')).toEqual({
+      path: 'C:/Users/example/project/README.md',
+      fileName: 'README.md',
+      href: 'swarm-file:///C:/Users/example/project/README.md',
+    })
+
+    expect(parseArtifactReference('vscode-insiders://file//C:/Users/example/project/README.md')).toEqual({
+      path: 'C:/Users/example/project/README.md',
+      fileName: 'README.md',
+      href: 'vscode-insiders://file//C:/Users/example/project/README.md',
+    })
+  })
+
   it('parses local file paths into artifact references', () => {
     const artifact = parseArtifactReference('docs/plans/terminal-support.md')
 
@@ -64,6 +78,12 @@ describe('artifacts helpers', () => {
 
   it('builds artifact href helpers', () => {
     expect(toSwarmFileHref('/tmp/my notes.md')).toBe('swarm-file:///tmp/my%20notes.md')
+    expect(toSwarmFileHref('C:/Users/example/my notes.md')).toBe(
+      'swarm-file:///C:/Users/example/my%20notes.md',
+    )
     expect(toVscodeInsidersHref('/tmp/my notes.md')).toBe('vscode-insiders://file/tmp/my%20notes.md')
+    expect(toVscodeInsidersHref('C:/Users/example/my notes.md')).toBe(
+      'vscode-insiders://file/C:/Users/example/my%20notes.md',
+    )
   })
 })

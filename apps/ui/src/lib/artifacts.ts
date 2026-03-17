@@ -3,6 +3,7 @@ export interface ArtifactReference {
   fileName: string
   href: string
   title?: string
+  sourceAgentId?: string
 }
 
 const ARTIFACT_SHORTCODE_PATTERN = /\[artifact:([^\]\n]+)\]/gi
@@ -16,6 +17,7 @@ const LIKELY_DOMAIN_PATH_PATTERN = /^[a-z0-9-]+(?:\.[a-z0-9-]+)+\//i
 
 interface ParseArtifactReferenceOptions {
   title?: string | null
+  sourceAgentId?: string | null
 }
 
 export function normalizeArtifactShortcodes(content: string): string {
@@ -43,6 +45,7 @@ export function parseArtifactReference(
   }
 
   const title = normalizeArtifactTitle(options?.title)
+  const sourceAgentId = normalizeSourceAgentId(options?.sourceAgentId)
   const lowered = trimmed.toLowerCase()
 
   if (lowered.startsWith(SWARM_FILE_PREFIX)) {
@@ -52,7 +55,7 @@ export function parseArtifactReference(
       return null
     }
 
-    return createArtifactReference(decodedPath, trimmed, title)
+    return createArtifactReference(decodedPath, trimmed, title, sourceAgentId)
   }
 
   if (VSCODE_FILE_LINK_PATTERN.test(trimmed)) {
@@ -63,11 +66,13 @@ export function parseArtifactReference(
     }
 
     const normalizedPath =
-      decodedPath.startsWith('/') || WINDOWS_ABSOLUTE_PATH_PATTERN.test(decodedPath)
-        ? decodedPath
-        : `/${decodedPath}`
+      WINDOWS_ABSOLUTE_PATH_PATTERN.test(decodedPath)
+        ? normalizeArtifactPath(decodedPath)
+        : decodedPath.startsWith('/')
+          ? decodedPath
+          : `/${decodedPath}`
 
-    return createArtifactReference(normalizedPath, trimmed, title)
+    return createArtifactReference(normalizedPath, trimmed, title, sourceAgentId)
   }
 
   if (!isLocalFilePath(trimmed)) {
@@ -80,41 +85,65 @@ export function parseArtifactReference(
     return null
   }
 
-  return createArtifactReference(decodedPath, trimmed, title)
+  return createArtifactReference(decodedPath, trimmed, title, sourceAgentId)
 }
 
 export function toSwarmFileHref(path: string): string {
-  const normalizedPath = path.trim()
+  const normalizedPath = normalizeArtifactPath(path)
   if (!normalizedPath) {
     return SWARM_FILE_PREFIX
   }
 
-  return `${SWARM_FILE_PREFIX}${encodeURI(normalizedPath)}`
+  const encodedPath = encodeURI(normalizedPath)
+  return WINDOWS_ABSOLUTE_PATH_PATTERN.test(normalizedPath)
+    ? `${SWARM_FILE_PREFIX}/${encodedPath}`
+    : `${SWARM_FILE_PREFIX}${encodedPath}`
 }
 
 export function toVscodeInsidersHref(path: string): string {
-  const normalizedPath = path.trim()
+  const normalizedPath = normalizeArtifactPath(path)
   if (!normalizedPath) {
     return 'vscode-insiders://file'
   }
 
-  const prefixedPath =
-    normalizedPath.startsWith('/') || WINDOWS_ABSOLUTE_PATH_PATTERN.test(normalizedPath)
-      ? normalizedPath
-      : `/${normalizedPath}`
+  const prefixedPath = normalizedPath.startsWith('/') ? normalizedPath : `/${normalizedPath}`
 
   return `vscode-insiders://file${encodeURI(prefixedPath)}`
 }
 
-function createArtifactReference(path: string, href: string, title?: string): ArtifactReference {
-  const trimmedPath = path.trim()
+function createArtifactReference(
+  path: string,
+  href: string,
+  title?: string,
+  sourceAgentId?: string,
+): ArtifactReference {
+  const normalizedPath = normalizeArtifactPath(path)
 
   return {
-    path: trimmedPath,
-    fileName: fileNameFromPath(trimmedPath),
+    path: normalizedPath,
+    fileName: fileNameFromPath(normalizedPath),
     href,
     ...(title ? { title } : {}),
+    ...(sourceAgentId ? { sourceAgentId } : {}),
   }
+}
+
+function normalizeArtifactPath(path: string): string {
+  const trimmedPath = path.trim()
+  if (!trimmedPath) {
+    return ''
+  }
+
+  if (/^\/+[A-Za-z]:[\\/]/.test(trimmedPath)) {
+    return trimmedPath.replace(/^\/+/, '')
+  }
+
+  return trimmedPath
+}
+
+function normalizeSourceAgentId(sourceAgentId: string | null | undefined): string | undefined {
+  const trimmed = sourceAgentId?.trim()
+  return trimmed ? trimmed : undefined
 }
 
 function safeDecodeURIComponent(value: string): string {

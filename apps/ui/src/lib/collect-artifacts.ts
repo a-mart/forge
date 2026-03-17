@@ -1,4 +1,4 @@
-import { parseArtifactReference, type ArtifactReference } from './artifacts'
+import { parseArtifactReference, toSwarmFileHref, type ArtifactReference } from './artifacts'
 import type { ConversationEntry } from '@forge/protocol'
 
 const ARTIFACT_SHORTCODE_PATTERN = /\[artifact:([^\]\n]+)\]/gi
@@ -25,7 +25,7 @@ export function collectArtifactsFromMessages(messages: ConversationEntry[]): Art
     for (const match of text.matchAll(ARTIFACT_SHORTCODE_PATTERN)) {
       const rawPath = match[1]?.trim()
       if (!rawPath) continue
-      const ref = parseArtifactReference(`swarm-file://${encodeURI(rawPath)}`)
+      const ref = parseArtifactReference(toSwarmFileHref(rawPath), { sourceAgentId: message.agentId })
       if (ref && !seen.has(ref.path)) {
         seen.set(ref.path, ref)
       }
@@ -33,7 +33,7 @@ export function collectArtifactsFromMessages(messages: ConversationEntry[]): Art
 
     // Extract swarm-file:// links
     for (const match of text.matchAll(SWARM_FILE_PATTERN)) {
-      const ref = parseArtifactReference(match[0])
+      const ref = parseArtifactReference(match[0], { sourceAgentId: message.agentId })
       if (ref && !seen.has(ref.path)) {
         seen.set(ref.path, ref)
       }
@@ -41,7 +41,7 @@ export function collectArtifactsFromMessages(messages: ConversationEntry[]): Art
 
     // Extract vscode:// / vscode-insiders:// links
     for (const match of text.matchAll(VSCODE_FILE_PATTERN)) {
-      const ref = parseArtifactReference(match[0])
+      const ref = parseArtifactReference(match[0], { sourceAgentId: message.agentId })
       if (ref && !seen.has(ref.path)) {
         seen.set(ref.path, ref)
       }
@@ -57,7 +57,7 @@ export function collectArtifactsFromMessages(messages: ConversationEntry[]): Art
       const linkText = match[1]?.trim()
       const href = parseMarkdownLinkHref(match[2] ?? '')
       if (!href) continue
-      const ref = parseArtifactReference(href, { title: linkText })
+      const ref = parseArtifactReference(href, { title: linkText, sourceAgentId: message.agentId })
       if (ref && !seen.has(ref.path)) {
         seen.set(ref.path, ref)
       }

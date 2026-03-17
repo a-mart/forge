@@ -149,7 +149,11 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
   return (
     <div className="min-w-0 space-y-2 text-foreground">
       {hasText ? (
-        <MarkdownMessage content={normalizedText} onArtifactClick={onArtifactClick} />
+        <MarkdownMessage
+          content={normalizedText}
+          onArtifactClick={onArtifactClick}
+          artifactSourceAgentId={message.agentId}
+        />
       ) : null}
       <MessageAttachments attachments={attachments} isUser={false} wsUrl={wsUrl} />
       {timestampLabel || sourceContext || showFeedback ? (

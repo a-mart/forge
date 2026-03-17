@@ -27,6 +27,7 @@ interface MarkdownMessageProps {
   content: string
   variant?: 'message' | 'document'
   onArtifactClick?: (artifact: ArtifactReference) => void
+  artifactSourceAgentId?: string | null
   enableMermaid?: boolean
 }
 
@@ -45,6 +46,7 @@ export const MarkdownMessage = memo(function MarkdownMessage({
   content,
   variant = 'message',
   onArtifactClick,
+  artifactSourceAgentId,
   enableMermaid = false,
 }: MarkdownMessageProps) {
   const isDocument = variant === 'document'
@@ -189,7 +191,10 @@ export const MarkdownMessage = memo(function MarkdownMessage({
               return <hr className={cn('my-6 border-border/50', isDocument && 'my-8')} />
             },
             a({ children, href }) {
-              const artifact = parseArtifactReference(href, { title: extractLinkText(children) })
+              const artifact = parseArtifactReference(href, {
+                title: extractLinkText(children),
+                sourceAgentId: artifactSourceAgentId,
+              })
               if (artifact && onArtifactClick) {
                 return <ArtifactReferenceCard artifact={artifact} onClick={onArtifactClick} />
               }
