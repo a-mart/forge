@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   AlertCircle,
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
   Clock,
   ExternalLink,
   FileWarning,
@@ -296,6 +298,7 @@ export function ReviewStatusPanel({ wsUrl, refreshKey = 0, onOpenSession }: Revi
   const [error, setError] = useState<string | null>(null)
   const [launchError, setLaunchError] = useState<string | null>(null)
   const [launchingKey, setLaunchingKey] = useState<string | null>(null)
+  const [recentRunsExpanded, setRecentRunsExpanded] = useState(true)
   const abortRef = useRef<AbortController | null>(null)
 
   const doScan = useCallback(() => {
@@ -497,8 +500,19 @@ export function ReviewStatusPanel({ wsUrl, refreshKey = 0, onOpenSession }: Revi
             )}
           >
             <div className="space-y-3 p-2">
-              <section className="rounded-md border border-border/60 bg-card/60 p-2">
-                <div className="mb-2 flex items-center gap-2">
+              <section className="rounded-md border border-border/60 bg-card/60">
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-2 px-2 py-2 text-left transition-colors hover:text-foreground"
+                  onClick={() => setRecentRunsExpanded((current) => !current)}
+                  aria-expanded={recentRunsExpanded}
+                  aria-controls="cortex-review-recent-runs"
+                >
+                  {recentRunsExpanded ? (
+                    <ChevronDown className="size-3.5 text-muted-foreground" aria-hidden="true" />
+                  ) : (
+                    <ChevronRight className="size-3.5 text-muted-foreground" aria-hidden="true" />
+                  )}
                   <SquareStack className="size-3.5 text-muted-foreground" />
                   <h4 className="text-[11px] font-semibold text-foreground">Recent Runs</h4>
                   {runningRunCount > 0 ? (
@@ -511,52 +525,56 @@ export function ReviewStatusPanel({ wsUrl, refreshKey = 0, onOpenSession }: Revi
                       {queuedRunCount} queued
                     </Badge>
                   ) : null}
-                </div>
-                {reviewRuns.length === 0 ? (
-                  <p className="text-[11px] text-muted-foreground">No review runs recorded yet.</p>
-                ) : (
-                  <div className="space-y-2">
-                    {reviewRuns.slice(0, 8).map((run) => (
-                      <div key={run.runId} className="rounded-md border border-border/50 bg-background/70 px-2 py-2">
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="min-w-0 flex-1">
-                            <div className="flex flex-wrap items-center gap-1.5">
-                              <ReviewRunStatusBadge run={run} />
-                              <TriggerBadge trigger={run.trigger} />
-                              {run.activeWorkerCount > 0 ? (
-                                <Badge variant="outline" className="h-5 border-border/60 px-1.5 text-[10px] text-muted-foreground">
-                                  {run.activeWorkerCount} worker{run.activeWorkerCount === 1 ? '' : 's'}
-                                </Badge>
+                </button>
+                {recentRunsExpanded ? (
+                  <div id="cortex-review-recent-runs" className="border-t border-border/50 px-2 pb-2 pt-2">
+                    {reviewRuns.length === 0 ? (
+                      <p className="text-[11px] text-muted-foreground">No review runs recorded yet.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {reviewRuns.slice(0, 8).map((run) => (
+                          <div key={run.runId} className="rounded-md border border-border/50 bg-background/70 px-2 py-2">
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0 flex-1">
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  <ReviewRunStatusBadge run={run} />
+                                  <TriggerBadge trigger={run.trigger} />
+                                  {run.activeWorkerCount > 0 ? (
+                                    <Badge variant="outline" className="h-5 border-border/60 px-1.5 text-[10px] text-muted-foreground">
+                                      {run.activeWorkerCount} worker{run.activeWorkerCount === 1 ? '' : 's'}
+                                    </Badge>
+                                  ) : null}
+                                </div>
+                                <p className="mt-1 truncate text-xs font-medium text-foreground">{run.scopeLabel}</p>
+                                <p className="mt-0.5 text-[10px] text-muted-foreground">Started {formatTimestamp(run.requestedAt)}</p>
+                                {run.blockedReason ? (
+                                  <p className="mt-1 text-[10px] text-amber-500">{run.blockedReason}</p>
+                                ) : run.status === 'queued' ? (
+                                  <p className="mt-1 text-[10px] text-muted-foreground">
+                                    {run.queuePosition ? `Waiting in queue (#${run.queuePosition}).` : 'Waiting in queue.'} Starts automatically after the active review finishes.
+                                  </p>
+                                ) : run.latestCloseout ? (
+                                  <p className="mt-1 text-[10px] text-muted-foreground">{truncateMiddle(run.latestCloseout)}</p>
+                                ) : null}
+                              </div>
+                              {run.sessionAgentId ? (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-6 gap-1 px-2 text-[10px]"
+                                  onClick={() => onOpenSession(run.sessionAgentId!)}
+                                >
+                                  <ExternalLink className="size-3" />
+                                  Open
+                                </Button>
                               ) : null}
                             </div>
-                            <p className="mt-1 truncate text-xs font-medium text-foreground">{run.scopeLabel}</p>
-                            <p className="mt-0.5 text-[10px] text-muted-foreground">Started {formatTimestamp(run.requestedAt)}</p>
-                            {run.blockedReason ? (
-                              <p className="mt-1 text-[10px] text-amber-500">{run.blockedReason}</p>
-                            ) : run.status === 'queued' ? (
-                              <p className="mt-1 text-[10px] text-muted-foreground">
-                                {run.queuePosition ? `Waiting in queue (#${run.queuePosition}).` : 'Waiting in queue.'} Starts automatically after the active review finishes.
-                              </p>
-                            ) : run.latestCloseout ? (
-                              <p className="mt-1 text-[10px] text-muted-foreground">{truncateMiddle(run.latestCloseout)}</p>
-                            ) : null}
                           </div>
-                          {run.sessionAgentId ? (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-6 gap-1 px-2 text-[10px]"
-                              onClick={() => onOpenSession(run.sessionAgentId!)}
-                            >
-                              <ExternalLink className="size-3" />
-                              Open
-                            </Button>
-                          ) : null}
-                        </div>
+                        ))}
                       </div>
-                    ))}
+                    )}
                   </div>
-                )}
+                ) : null}
               </section>
 
               <section>
