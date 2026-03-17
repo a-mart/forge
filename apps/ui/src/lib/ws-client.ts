@@ -46,6 +46,7 @@ type Listener = (state: ManagerWsState) => void
 type SessionCreatedResult = { sessionAgent: AgentDescriptor; profileId: string }
 type SessionActionResult = { agentId: string }
 type SessionForkedResult = { sourceAgentId: string; newSessionAgent: AgentDescriptor }
+type SessionWorkersResult = { sessionAgentId: string; workers: AgentDescriptor[] }
 
 type WsRequestResultMap = {
   create_manager: AgentDescriptor
@@ -60,6 +61,7 @@ type WsRequestResultMap = {
   rename_session: SessionActionResult
   fork_session: SessionForkedResult
   merge_session_memory: SessionMemoryMergeResult
+  get_session_workers: { sessionAgentId: string; workers: AgentDescriptor[] }
   list_directories: DirectoriesListedResult
   validate_directory: DirectoryValidationResult
   pick_directory: string | null
@@ -79,6 +81,7 @@ const WS_REQUEST_TYPES: WsRequestType[] = [
   'rename_session',
   'fork_session',
   'merge_session_memory',
+  'get_session_workers',
   'list_directories',
   'validate_directory',
   'pick_directory',
@@ -97,6 +100,7 @@ const WS_REQUEST_ERROR_HINTS: Array<{ requestType: WsRequestType; codeFragment: 
   { requestType: 'rename_session', codeFragment: 'rename_session' },
   { requestType: 'fork_session', codeFragment: 'fork_session' },
   { requestType: 'merge_session_memory', codeFragment: 'merge_session_memory' },
+  { requestType: 'get_session_workers', codeFragment: 'get_session_workers' },
   { requestType: 'list_directories', codeFragment: 'list_directories' },
   { requestType: 'validate_directory', codeFragment: 'validate_directory' },
   { requestType: 'pick_directory', codeFragment: 'pick_directory' },
@@ -124,6 +128,7 @@ export class ManagerWsClient {
     WS_REQUEST_TYPES,
     REQUEST_TIMEOUT_MS,
   )
+  private readonly pendingWorkerFetches = new Map<string, Promise<SessionWorkersResult>>()
 
   constructor(url: string, initialAgentId?: string | null) {
     const normalizedInitialAgentId = normalizeAgentId(initialAgentId)
@@ -185,6 +190,7 @@ export class ManagerWsClient {
     }
 
     this.rejectAllPendingRequests('Client destroyed before request completed.')
+    this.pendingWorkerFetches.clear()
 
     if (this.socket) {
       this.socket.close()
@@ -258,7 +264,11 @@ export class ManagerWsClient {
       return
     }
 
-    if (this.state.agents.length > 0 && !this.state.agents.some((agent) => agent.agentId === agentId)) {
+    if (
+      this.state.agents.length > 0 &&
+      !this.state.agents.some((agent) => agent.agentId === agentId) &&
+      !this.state.statuses[agentId]
+    ) {
       this.updateState({
         lastError: 'No active agent selected. Create a manager or select an active thread.',
       })
@@ -569,6 +579,43 @@ export class ManagerWsClient {
     }))
   }
 
+  async getSessionWorkers(sessionAgentId: string): Promise<SessionWorkersResult> {
+    const trimmed = sessionAgentId.trim()
+    if (!trimmed) {
+      throw new Error('Session agent id is required.')
+    }
+
+    if (this.state.loadedSessionIds.has(trimmed)) {
+      return {
+        sessionAgentId: trimmed,
+        workers: this.state.agents.filter((agent) => agent.role === 'worker' && agent.managerId === trimmed),
+      }
+    }
+
+    const existingRequest = this.pendingWorkerFetches.get(trimmed)
+    if (existingRequest) {
+      return existingRequest
+    }
+
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+      throw new Error('WebSocket is disconnected.')
+    }
+
+    const request = this.enqueueRequest('get_session_workers', (requestId) => ({
+      type: 'get_session_workers',
+      sessionAgentId: trimmed,
+      requestId,
+    }))
+
+    this.pendingWorkerFetches.set(trimmed, request)
+
+    try {
+      return await request
+    } finally {
+      this.pendingWorkerFetches.delete(trimmed)
+    }
+  }
+
   private connect(): void {
     if (this.destroyed) return
 
@@ -586,6 +633,7 @@ export class ManagerWsClient {
       this.updateState({
         connected: true,
         hasReceivedAgentsSnapshot: false,
+        loadedSessionIds: new Set(),
         lastError: null,
       })
 
@@ -615,6 +663,7 @@ export class ManagerWsClient {
       this.updateState({
         connected: false,
         hasReceivedAgentsSnapshot: false,
+        loadedSessionIds: new Set(),
         subscribedAgentId: null,
       })
 
@@ -724,6 +773,7 @@ export class ManagerWsClient {
 
       case 'agent_status': {
         const prevStatus = this.state.statuses[event.agentId]?.status
+        const isKnownAgent = this.state.agents.some((agent) => agent.agentId === event.agentId)
         const statuses = {
           ...this.state.statuses,
           [event.agentId]: {
@@ -733,14 +783,61 @@ export class ManagerWsClient {
             contextRecoveryInProgress: event.contextRecoveryInProgress,
           },
         }
-        this.updateState({ statuses })
+
+        let nextAgents = this.state.agents
+        let nextLoadedSessionIds = this.state.loadedSessionIds
+        if (event.managerId) {
+          if (!isKnownAgent && this.state.loadedSessionIds.has(event.managerId)) {
+            nextLoadedSessionIds = new Set(this.state.loadedSessionIds)
+            nextLoadedSessionIds.delete(event.managerId)
+          }
+
+          nextAgents = this.state.agents.map((agent) => {
+            if (agent.role !== 'manager' || agent.agentId !== event.managerId) {
+              return agent
+            }
+
+            const delta =
+              event.status === 'streaming' && prevStatus !== 'streaming'
+                ? 1
+                : event.status !== 'streaming' && prevStatus === 'streaming'
+                  ? -1
+                  : 0
+
+            if (delta === 0) {
+              return agent
+            }
+
+            return {
+              ...agent,
+              activeWorkerCount: Math.max(0, (agent.activeWorkerCount ?? 0) + delta),
+            }
+          })
+        }
+
+        const nextState = {
+          statuses,
+          ...(nextAgents !== this.state.agents ? { agents: nextAgents } : {}),
+          ...(nextLoadedSessionIds !== this.state.loadedSessionIds
+            ? { loadedSessionIds: nextLoadedSessionIds }
+            : {}),
+        }
+        this.updateState(nextState)
 
         // Detect manager streaming → idle transition for deferred notification evaluation.
         // When a manager goes idle, check if a pending all-done sound should play now.
         if (prevStatus === 'streaming' && event.status === 'idle') {
-          const agent = this.state.agents.find((a) => a.agentId === event.agentId)
+          const stateForNotifications = {
+            ...this.state,
+            ...(nextAgents !== this.state.agents ? { agents: nextAgents } : {}),
+            ...(nextLoadedSessionIds !== this.state.loadedSessionIds
+              ? { loadedSessionIds: nextLoadedSessionIds }
+              : {}),
+            statuses,
+          }
+          const agent = stateForNotifications.agents.find((a) => a.agentId === event.agentId)
           if (agent?.role === 'manager') {
-            handleManagerIdleTransition(event.agentId, this.state)
+            handleManagerIdleTransition(event.agentId, stateForNotifications)
           }
         }
         break
@@ -748,6 +845,10 @@ export class ManagerWsClient {
 
       case 'agents_snapshot':
         this.applyAgentsSnapshot(event.agents)
+        break
+
+      case 'session_workers_snapshot':
+        this.applySessionWorkersSnapshot(event.sessionAgentId, event.workers, event.requestId)
         break
 
       case 'profiles_snapshot':
@@ -927,36 +1028,76 @@ export class ManagerWsClient {
   }
 
   private applyAgentsSnapshot(agents: AgentDescriptor[]): void {
-    const liveAgentIds = new Set(agents.map((agent) => agent.agentId))
-    const statuses = Object.fromEntries(
-      agents.map((agent) => {
-        const previous = this.state.statuses[agent.agentId]
-        const status = agent.status
-        return [
-          agent.agentId,
-          {
-            status,
-            pendingCount: previous && previous.status === status ? previous.pendingCount : 0,
-            contextUsage: agent.contextUsage,
-            contextRecoveryInProgress: previous?.contextRecoveryInProgress,
-          },
-        ]
-      }),
+    const incomingAgentIds = new Set(agents.map((agent) => agent.agentId))
+    const preservedWorkers = this.state.agents.filter(
+      (agent) =>
+        agent.role === 'worker' &&
+        !incomingAgentIds.has(agent.agentId) &&
+        this.isWorkerFromLoadedSession(agent),
     )
 
-    // Keep the current target stable if the agent still exists in the snapshot
-    // (even if terminated — user may be viewing its conversation history).
-    // Only fall back when the agent has been fully removed from the snapshot.
+    const mergedAgents = [...agents, ...preservedWorkers]
+    const mergedAgentIds = new Set(mergedAgents.map((agent) => agent.agentId))
+    const nextLoadedSessionIds = new Set(this.state.loadedSessionIds)
+
+    for (const manager of agents) {
+      if (manager.role !== 'manager' || manager.workerCount === undefined) {
+        continue
+      }
+
+      const cachedWorkers = this.state.agents.filter(
+        (agent) => agent.role === 'worker' && agent.managerId === manager.agentId,
+      )
+
+      if (nextLoadedSessionIds.has(manager.agentId) && cachedWorkers.length !== manager.workerCount) {
+        nextLoadedSessionIds.delete(manager.agentId)
+      }
+    }
+
+    const previousAgentIds = new Set(this.state.agents.map((agent) => agent.agentId))
+    const preservedUnloadedStatuses = Object.fromEntries(
+      Object.entries(this.state.statuses).filter(
+        ([agentId]) => !mergedAgentIds.has(agentId) && !previousAgentIds.has(agentId),
+      ),
+    )
+    const statuses = {
+      ...preservedUnloadedStatuses,
+      ...Object.fromEntries(
+        mergedAgents.map((agent) => {
+          const previous = this.state.statuses[agent.agentId]
+          const status = agent.status
+          return [
+            agent.agentId,
+            {
+              status,
+              pendingCount: previous && previous.status === status ? previous.pendingCount : 0,
+              contextUsage: agent.contextUsage,
+              contextRecoveryInProgress: previous?.contextRecoveryInProgress,
+            },
+          ]
+        }),
+      ),
+    }
+
     const currentTarget = this.state.targetAgentId ?? this.state.subscribedAgentId ?? this.desiredAgentId ?? undefined
-    const currentTargetStillExists = currentTarget && liveAgentIds.has(currentTarget)
+    const currentTargetStillExists = currentTarget ? mergedAgentIds.has(currentTarget) : false
+    const currentTargetIsIntentionalWorkerSubscription = Boolean(
+      currentTarget &&
+      currentTarget === this.state.subscribedAgentId &&
+      !agents.some((agent) => agent.agentId === currentTarget && agent.role === 'manager'),
+    )
     const fallbackTarget = currentTargetStillExists
       ? currentTarget
-      : chooseFallbackAgentId(agents, currentTarget)
+      : currentTargetIsIntentionalWorkerSubscription
+        ? currentTarget
+        : chooseFallbackAgentId(mergedAgents, currentTarget)
     const targetChanged = fallbackTarget !== this.state.targetAgentId
     const nextSubscribedAgentId =
-      this.state.subscribedAgentId && liveAgentIds.has(this.state.subscribedAgentId)
+      this.state.subscribedAgentId && mergedAgentIds.has(this.state.subscribedAgentId)
         ? this.state.subscribedAgentId
-        : fallbackTarget ?? null
+        : currentTargetIsIntentionalWorkerSubscription
+          ? this.state.subscribedAgentId
+          : fallbackTarget ?? null
 
     if (targetChanged && fallbackTarget !== this.explicitAgentSelectionAgentId) {
       this.hasExplicitAgentSelection = false
@@ -966,8 +1107,9 @@ export class ManagerWsClient {
     this.hasReceivedAgentsSnapshot = true
 
     const patch: Partial<ManagerWsState> = {
-      agents,
+      agents: mergedAgents,
       statuses,
+      loadedSessionIds: nextLoadedSessionIds,
       hasReceivedAgentsSnapshot: this.hasReceivedAgentsSnapshot,
     }
 
@@ -985,12 +1127,66 @@ export class ManagerWsClient {
 
     this.updateState(patch)
 
-    if (targetChanged && fallbackTarget && this.socket?.readyState === WebSocket.OPEN) {
+    if (
+      targetChanged &&
+      fallbackTarget &&
+      this.socket?.readyState === WebSocket.OPEN &&
+      !currentTargetIsIntentionalWorkerSubscription
+    ) {
       this.send({
         type: 'subscribe',
         agentId: fallbackTarget,
       })
     }
+  }
+
+  private applySessionWorkersSnapshot(sessionAgentId: string, workers: AgentDescriptor[], requestId?: string): void {
+    const nextLoadedSessionIds = new Set(this.state.loadedSessionIds)
+    nextLoadedSessionIds.add(sessionAgentId)
+
+    const incomingWorkerIds = new Set(workers.map((worker) => worker.agentId))
+    const preserved = this.state.agents.filter(
+      (agent) =>
+        !(agent.role === 'worker' && agent.managerId === sessionAgentId && !incomingWorkerIds.has(agent.agentId)),
+    )
+    const nextAgents = [
+      ...preserved.filter((agent) => !(agent.role === 'worker' && agent.managerId === sessionAgentId)),
+      ...workers,
+    ]
+
+    const nextStatuses = { ...this.state.statuses }
+    for (const worker of this.state.agents) {
+      if (worker.role === 'worker' && worker.managerId === sessionAgentId && !incomingWorkerIds.has(worker.agentId)) {
+        delete nextStatuses[worker.agentId]
+      }
+    }
+
+    for (const worker of workers) {
+      const previous = nextStatuses[worker.agentId]
+      nextStatuses[worker.agentId] = {
+        status: worker.status,
+        pendingCount: previous && previous.status === worker.status ? previous.pendingCount : 0,
+        contextUsage: worker.contextUsage,
+        contextRecoveryInProgress: previous?.contextRecoveryInProgress,
+      }
+    }
+
+    this.updateState({
+      agents: nextAgents,
+      statuses: nextStatuses,
+      loadedSessionIds: nextLoadedSessionIds,
+    })
+
+    if (requestId) {
+      this.requestTracker.resolve('get_session_workers', requestId, {
+        sessionAgentId,
+        workers,
+      })
+    }
+  }
+
+  private isWorkerFromLoadedSession(worker: AgentDescriptor): boolean {
+    return worker.role === 'worker' && this.state.loadedSessionIds.has(worker.managerId)
   }
 
   private applyManagerCreated(manager: AgentDescriptor): void {
@@ -1002,10 +1198,62 @@ export class ManagerWsClient {
   }
 
   private applyManagerDeleted(managerId: string): void {
+    const wasSelected =
+      this.state.targetAgentId === managerId || this.state.subscribedAgentId === managerId
+
     const nextAgents = this.state.agents.filter(
       (agent) => agent.agentId !== managerId && agent.managerId !== managerId,
     )
-    this.applyAgentsSnapshot(nextAgents)
+    const nextStatuses = { ...this.state.statuses }
+    delete nextStatuses[managerId]
+    for (const worker of this.state.agents) {
+      if (worker.role === 'worker' && worker.managerId === managerId) {
+        delete nextStatuses[worker.agentId]
+      }
+    }
+    const nextLoadedSessionIds = new Set(this.state.loadedSessionIds)
+    nextLoadedSessionIds.delete(managerId)
+
+    if (wasSelected) {
+      const fallbackId = chooseFallbackAgentId(nextAgents)
+
+      if (fallbackId && this.socket?.readyState === WebSocket.OPEN) {
+        this.hasExplicitAgentSelection = false
+        this.explicitAgentSelectionAgentId = null
+        this.desiredAgentId = fallbackId
+        this.send({ type: 'subscribe', agentId: fallbackId })
+        this.updateState({
+          agents: nextAgents,
+          statuses: nextStatuses,
+          loadedSessionIds: nextLoadedSessionIds,
+          targetAgentId: fallbackId,
+          subscribedAgentId: fallbackId,
+          messages: [],
+          activityMessages: [],
+        })
+        return
+      }
+
+      this.hasExplicitAgentSelection = false
+      this.explicitAgentSelectionAgentId = null
+      this.desiredAgentId = null
+      this.updateState({
+        agents: nextAgents,
+        statuses: nextStatuses,
+        loadedSessionIds: nextLoadedSessionIds,
+        targetAgentId: null,
+        subscribedAgentId: null,
+        messages: [],
+        activityMessages: [],
+      })
+      return
+    }
+
+    this.updateState({
+      agents: nextAgents,
+      statuses: nextStatuses,
+      loadedSessionIds: nextLoadedSessionIds,
+    })
   }
 
   private applySessionDeleted(agentId: string, profileId: string): void {
@@ -1015,6 +1263,15 @@ export class ManagerWsClient {
     const nextAgents = this.state.agents.filter(
       (agent) => agent.agentId !== agentId && agent.managerId !== agentId,
     )
+    const nextStatuses = { ...this.state.statuses }
+    delete nextStatuses[agentId]
+    for (const worker of this.state.agents) {
+      if (worker.role === 'worker' && worker.managerId === agentId) {
+        delete nextStatuses[worker.agentId]
+      }
+    }
+    const nextLoadedSessionIds = new Set(this.state.loadedSessionIds)
+    nextLoadedSessionIds.delete(agentId)
 
     if (wasSelected) {
       const fallbackId =
@@ -1027,6 +1284,8 @@ export class ManagerWsClient {
         this.send({ type: 'subscribe', agentId: fallbackId })
         this.updateState({
           agents: nextAgents,
+          statuses: nextStatuses,
+          loadedSessionIds: nextLoadedSessionIds,
           targetAgentId: fallbackId,
           subscribedAgentId: fallbackId,
           messages: [],
@@ -1036,7 +1295,11 @@ export class ManagerWsClient {
       }
     }
 
-    this.applyAgentsSnapshot(nextAgents)
+    this.updateState({
+      agents: nextAgents,
+      statuses: nextStatuses,
+      loadedSessionIds: nextLoadedSessionIds,
+    })
   }
 
   private pushSystemMessage(text: string): void {

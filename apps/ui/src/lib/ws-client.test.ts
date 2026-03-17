@@ -1188,4 +1188,233 @@ describe('ManagerWsClient', () => {
 
     client.destroy()
   })
+
+  it('invalidates a loaded session when an unknown worker status arrives and refetches on demand', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    emitServerEvent(socket, {
+      type: 'agents_snapshot',
+      agents: [
+        {
+          agentId: 'manager',
+          managerId: 'manager',
+          displayName: 'Manager',
+          role: 'manager',
+          status: 'idle',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+          cwd: '/tmp',
+          workerCount: 1,
+          activeWorkerCount: 0,
+          model: {
+            provider: 'openai-codex',
+            modelId: 'gpt-5.3-codex',
+            thinkingLevel: 'medium',
+          },
+          sessionFile: '/tmp/manager.jsonl',
+        },
+      ],
+    })
+
+    const initialFetch = client.getSessionWorkers('manager')
+    const initialFetchPayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+    expect(initialFetchPayload).toMatchObject({
+      type: 'get_session_workers',
+      sessionAgentId: 'manager',
+    })
+
+    emitServerEvent(socket, {
+      type: 'session_workers_snapshot',
+      sessionAgentId: 'manager',
+      requestId: initialFetchPayload.requestId,
+      workers: [
+        {
+          agentId: 'worker-1',
+          managerId: 'manager',
+          displayName: 'Worker 1',
+          role: 'worker',
+          status: 'idle',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+          cwd: '/tmp',
+          model: {
+            provider: 'openai-codex',
+            modelId: 'gpt-5.3-codex',
+            thinkingLevel: 'medium',
+          },
+          sessionFile: '/tmp/worker-1.jsonl',
+        },
+      ],
+    })
+
+    await expect(initialFetch).resolves.toMatchObject({ sessionAgentId: 'manager' })
+    expect(client.getState().loadedSessionIds.has('manager')).toBe(true)
+
+    emitServerEvent(socket, {
+      type: 'agent_status',
+      agentId: 'worker-2',
+      managerId: 'manager',
+      status: 'streaming',
+      pendingCount: 1,
+    })
+
+    expect(client.getState().loadedSessionIds.has('manager')).toBe(false)
+    expect(client.getState().agents.some((agent) => agent.agentId === 'worker-2')).toBe(false)
+    expect(client.getState().agents.find((agent) => agent.agentId === 'manager')?.activeWorkerCount).toBe(1)
+
+    const refetch = client.getSessionWorkers('manager')
+    const refetchPayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+    expect(refetchPayload).toMatchObject({
+      type: 'get_session_workers',
+      sessionAgentId: 'manager',
+    })
+    expect(refetchPayload.requestId).not.toBe(initialFetchPayload.requestId)
+
+    emitServerEvent(socket, {
+      type: 'session_workers_snapshot',
+      sessionAgentId: 'manager',
+      requestId: refetchPayload.requestId,
+      workers: [
+        {
+          agentId: 'worker-1',
+          managerId: 'manager',
+          displayName: 'Worker 1',
+          role: 'worker',
+          status: 'idle',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+          cwd: '/tmp',
+          model: {
+            provider: 'openai-codex',
+            modelId: 'gpt-5.3-codex',
+            thinkingLevel: 'medium',
+          },
+          sessionFile: '/tmp/worker-1.jsonl',
+        },
+        {
+          agentId: 'worker-2',
+          managerId: 'manager',
+          displayName: 'Worker 2',
+          role: 'worker',
+          status: 'streaming',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+          cwd: '/tmp',
+          model: {
+            provider: 'openai-codex',
+            modelId: 'gpt-5.3-codex',
+            thinkingLevel: 'medium',
+          },
+          sessionFile: '/tmp/worker-2.jsonl',
+        },
+      ],
+    })
+
+    await expect(refetch).resolves.toMatchObject({ sessionAgentId: 'manager' })
+    expect(client.getState().loadedSessionIds.has('manager')).toBe(true)
+    expect(client.getState().agents.some((agent) => agent.agentId === 'worker-2')).toBe(true)
+
+    client.destroy()
+  })
+
+  it('preserves unloaded worker statuses across agents snapshots for stable active-worker deltas', () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    emitServerEvent(socket, {
+      type: 'agents_snapshot',
+      agents: [
+        {
+          agentId: 'manager',
+          managerId: 'manager',
+          displayName: 'Manager',
+          role: 'manager',
+          status: 'idle',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+          cwd: '/tmp',
+          workerCount: 1,
+          activeWorkerCount: 0,
+          model: {
+            provider: 'openai-codex',
+            modelId: 'gpt-5.3-codex',
+            thinkingLevel: 'medium',
+          },
+          sessionFile: '/tmp/manager.jsonl',
+        },
+      ],
+    })
+
+    emitServerEvent(socket, {
+      type: 'agent_status',
+      agentId: 'worker-ghost',
+      managerId: 'manager',
+      status: 'streaming',
+      pendingCount: 1,
+    })
+
+    expect(client.getState().agents.find((agent) => agent.agentId === 'manager')?.activeWorkerCount).toBe(1)
+    expect(client.getState().statuses['worker-ghost']?.status).toBe('streaming')
+
+    emitServerEvent(socket, {
+      type: 'agents_snapshot',
+      agents: [
+        {
+          agentId: 'manager',
+          managerId: 'manager',
+          displayName: 'Manager',
+          role: 'manager',
+          status: 'idle',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+          cwd: '/tmp',
+          workerCount: 1,
+          activeWorkerCount: 1,
+          model: {
+            provider: 'openai-codex',
+            modelId: 'gpt-5.3-codex',
+            thinkingLevel: 'medium',
+          },
+          sessionFile: '/tmp/manager.jsonl',
+        },
+      ],
+    })
+
+    expect(client.getState().statuses['worker-ghost']?.status).toBe('streaming')
+
+    emitServerEvent(socket, {
+      type: 'agent_status',
+      agentId: 'worker-ghost',
+      managerId: 'manager',
+      status: 'streaming',
+      pendingCount: 2,
+    })
+
+    expect(client.getState().agents.find((agent) => agent.agentId === 'manager')?.activeWorkerCount).toBe(1)
+
+    client.destroy()
+  })
 })

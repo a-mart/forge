@@ -82,6 +82,7 @@ interface AgentSidebarProps {
   onMergeSessionMemory?: (agentId: string) => void
   onMarkUnread?: (agentId: string) => void
   onUpdateManagerModel?: (managerId: string, model: ManagerModelPreset, reasoningLevel?: ManagerReasoningLevel) => void
+  onRequestSessionWorkers?: (sessionId: string) => void
 }
 
 type AgentLiveStatus = {
@@ -479,8 +480,10 @@ function SessionRowItem({
   const isSelected = !isSettingsActive && selectedAgentId === sessionAgent.agentId
   const isActive = liveStatus.status === 'streaming'
   const label = sessionAgent.sessionLabel || (isDefault ? 'Main' : sessionAgent.displayName || sessionAgent.agentId)
+  const workerCount = session.sessionAgent.workerCount ?? workers.length
+  const hasWorkers = workerCount > 0
   const streamingWorkerCount = isCollapsed
-    ? workers.filter((w) => getAgentLiveStatus(w, statuses).status === 'streaming').length
+    ? workers.filter((w) => getAgentLiveStatus(w, statuses).status === 'streaming').length || sessionAgent.activeWorkerCount || 0
     : 0
   const showUnread = unreadCount > 0 && !isSelected
 
@@ -497,7 +500,7 @@ function SessionRowItem({
             )}
           >
             {/* Expand/collapse toggle (only show if has workers) */}
-            {workers.length > 0 ? (
+            {hasWorkers ? (
               <button
                 type="button"
                 onClick={onToggleCollapse}
@@ -523,7 +526,7 @@ function SessionRowItem({
               className={cn(
                 'flex min-w-0 flex-1 items-center gap-1.5 py-2.5 pr-1.5 text-left md:py-1.5',
                 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
-                workers.length > 0 ? 'pl-7' : 'pl-5',
+                hasWorkers ? 'pl-7' : 'pl-5',
               )}
               title={`${label}${running ? ' (running)' : ' (idle)'}`}
             >
@@ -607,7 +610,7 @@ function SessionRowItem({
       </ContextMenu>
 
       {/* Workers nested under session */}
-      {workers.length > 0 && !isCollapsed ? (
+      {hasWorkers && !isCollapsed ? (
         <div className="relative mt-0.5">
           <div className="absolute bottom-1 left-6 top-0 w-px bg-sidebar-border/40" />
           {(() => {
@@ -760,7 +763,10 @@ function ProfileGroup({
   // Count active sessions for collapsed summary
   const activeSessionCount = sessions.filter((s) => isSessionRunning(s.sessionAgent)).length
   const totalStreamingWorkers = sessions.reduce(
-    (count, s) => count + s.workers.filter((w) => getAgentLiveStatus(w, statuses).status === 'streaming').length,
+    (count, s) =>
+      count
+      + (s.sessionAgent.activeWorkerCount
+        ?? s.workers.filter((w) => getAgentLiveStatus(w, statuses).status === 'streaming').length),
     0,
   )
 
@@ -1418,7 +1424,10 @@ function CortexSection({
 
   // Activity
   const totalStreamingWorkers = visibleSessions.reduce(
-    (count, s) => count + s.workers.filter((w) => getAgentLiveStatus(w, statuses).status === 'streaming').length,
+    (count, s) =>
+      count
+      + (s.sessionAgent.activeWorkerCount
+        ?? s.workers.filter((w) => getAgentLiveStatus(w, statuses).status === 'streaming').length),
     0,
   )
   const activeReviewRunCount = reviewRunSessions.filter((session) => {
@@ -1725,6 +1734,7 @@ export function AgentSidebar({
   onMergeSessionMemory,
   onMarkUnread,
   onUpdateManagerModel,
+  onRequestSessionWorkers,
 }: AgentSidebarProps) {
   const treeRows = buildProfileTreeRows(agents, profiles)
 
@@ -1790,10 +1800,11 @@ export function AgentSidebar({
         next.delete(sessionId)
       } else {
         next.add(sessionId)
+        onRequestSessionWorkers?.(sessionId)
       }
       return next
     })
-  }, [])
+  }, [onRequestSessionWorkers])
 
   const toggleSessionListExpanded = useCallback((profileId: string) => {
     setExpandedSessionListProfileIds((prev) => {
@@ -1814,10 +1825,11 @@ export function AgentSidebar({
         next.delete(sessionId)
       } else {
         next.add(sessionId)
+        onRequestSessionWorkers?.(sessionId)
       }
       return next
     })
-  }, [])
+  }, [onRequestSessionWorkers])
 
   const handleSelectAgent = useCallback((agentId: string) => {
     onSelectAgent(agentId)

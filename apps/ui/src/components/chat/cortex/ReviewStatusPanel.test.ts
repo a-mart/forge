@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { getAllByText, getByLabelText, getByText, queryByText } from '@testing-library/dom'
+import { getAllByText, getByLabelText, getByRole, getByText, queryByText } from '@testing-library/dom'
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
@@ -172,6 +172,9 @@ describe('ReviewStatusPanel', () => {
 
     await flushPromises()
 
+    const recentRunsToggle = getByRole(container, 'button', { name: /Recent Runs/i })
+
+    expect(recentRunsToggle.getAttribute('aria-expanded')).toBe('true')
     expect(getByText(container, 'Recent Runs')).toBeTruthy()
     expect(getByText(container, 'All sessions that need attention')).toBeTruthy()
     expect(getByText(container, 'beta/beta--s2 (memory)')).toBeTruthy()
@@ -185,6 +188,20 @@ describe('ReviewStatusPanel', () => {
     expect(getByText(container, 'Memory drift 1')).toBeTruthy()
     expect(getByText(container, 'Feedback drift 1')).toBeTruthy()
     expect(queryByText(container, 'Up to date')).toBeNull()
+
+    flushSync(() => {
+      recentRunsToggle.click()
+    })
+    expect(recentRunsToggle.getAttribute('aria-expanded')).toBe('false')
+    expect(queryByText(container, 'All sessions that need attention')).toBeNull()
+    expect(queryByText(container, 'beta/beta--s2 (memory)')).toBeNull()
+    expect(getByText(container, '1 queued')).toBeTruthy()
+
+    flushSync(() => {
+      recentRunsToggle.click()
+    })
+    expect(recentRunsToggle.getAttribute('aria-expanded')).toBe('true')
+    expect(getByText(container, 'All sessions that need attention')).toBeTruthy()
 
     const openButton = getByText(container, 'Open').closest('button') as HTMLButtonElement
     flushSync(() => {

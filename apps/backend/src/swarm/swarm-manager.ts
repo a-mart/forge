@@ -1180,6 +1180,20 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return this.sortedDescriptors().map((descriptor) => cloneDescriptor(descriptor));
   }
 
+  listBootstrapAgents(): AgentDescriptor[] {
+    return this.listManagerAgents();
+  }
+
+  listManagerAgents(): AgentDescriptor[] {
+    return this.buildManagerSnapshotDescriptors({ includeStreamingWorkers: false });
+  }
+
+  listWorkersForSession(sessionAgentId: string): AgentDescriptor[] {
+    return this.sortedDescriptors()
+      .filter((descriptor) => descriptor.role === "worker" && descriptor.managerId === sessionAgentId)
+      .map((descriptor) => cloneDescriptor(descriptor));
+  }
+
   listProfiles(): ManagerProfile[] {
     return this.sortedProfiles().map((profile) => ({ ...profile }));
   }
@@ -2531,6 +2545,30 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return Array.from(this.descriptors.values()).filter(
       (descriptor) => descriptor.role === "worker" && descriptor.managerId === managerId
     );
+  }
+
+  private buildManagerSnapshotDescriptors(options: { includeStreamingWorkers: boolean }): AgentDescriptor[] {
+    const managers = this.sortedDescriptors()
+      .filter((descriptor) => descriptor.role === "manager")
+      .map((descriptor) => this.cloneManagerDescriptorWithWorkerCounts(descriptor));
+
+    if (!options.includeStreamingWorkers) {
+      return managers;
+    }
+
+    const hotWorkers = this.sortedDescriptors()
+      .filter((descriptor) => descriptor.role === "worker" && descriptor.status === "streaming")
+      .map((descriptor) => cloneDescriptor(descriptor));
+
+    return [...managers, ...hotWorkers];
+  }
+
+  private cloneManagerDescriptorWithWorkerCounts(descriptor: AgentDescriptor): AgentDescriptor {
+    const clone = cloneDescriptor(descriptor);
+    const workers = this.getWorkersForManager(clone.agentId);
+    clone.workerCount = workers.length;
+    clone.activeWorkerCount = workers.filter((worker) => worker.status === "streaming").length;
+    return clone;
   }
 
   private generateSessionAgentIdentity(profileId: string): { agentId: string; sessionNumber: number } {
@@ -5208,6 +5246,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const payload: AgentStatusEvent = {
       type: "agent_status",
       agentId,
+      ...(descriptor?.role === "worker" ? { managerId: descriptor.managerId } : {}),
       status,
       pendingCount,
       ...(resolvedContextUsage ? { contextUsage: resolvedContextUsage } : {}),
@@ -5229,7 +5268,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private emitAgentsSnapshot(): void {
     const payload: AgentsSnapshotEvent = {
       type: "agents_snapshot",
-      agents: this.listAgents()
+      agents: this.listManagerAgents()
     };
 
     this.emit("agents_snapshot", payload satisfies ServerEvent);

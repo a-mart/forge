@@ -36,6 +36,10 @@ class FakeSwarmManager extends EventEmitter {
     return [...this.agents]
   }
 
+  listBootstrapAgents(): AgentDescriptor[] {
+    return [...this.agents]
+  }
+
   getAgent(agentId: string): AgentDescriptor | undefined {
     return this.agents.find((agent) => agent.agentId === agentId)
   }

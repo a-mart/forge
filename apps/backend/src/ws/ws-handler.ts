@@ -30,7 +30,7 @@ const API_PROXY_AUTH_TOKENS_PATH = "/api/auth/tokens";
 const API_PROXY_FEEDBACK_PATH = "/api/feedback";
 const API_PROXY_SLASH_COMMANDS_PATH = "/api/slash-commands";
 const API_PROXY_JSON_CONTENT_TYPE = "application/json; charset=utf-8";
-const MAX_WS_EVENT_BYTES = 5 * 1024 * 1024;
+const MAX_WS_EVENT_BYTES = 1 * 1024 * 1024;
 const MAX_WS_BUFFERED_AMOUNT_BYTES = 1 * 1024 * 1024;
 const BOOTSTRAP_HISTORY_BYTE_BUDGET = MAX_WS_EVENT_BYTES - 16 * 1024;
 
@@ -762,7 +762,7 @@ export class WsHandler {
     });
     this.send(socket, {
       type: "agents_snapshot",
-      agents: this.swarmManager.listAgents()
+      agents: this.swarmManager.listBootstrapAgents()
     });
     this.send(socket, {
       type: "profiles_snapshot",

@@ -403,6 +403,27 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
     };
   }
 
+  if (maybe.type === "get_session_workers") {
+    const sessionAgentId = (maybe as { sessionAgentId?: unknown }).sessionAgentId;
+    const requestId = (maybe as { requestId?: unknown }).requestId;
+
+    if (typeof sessionAgentId !== "string" || sessionAgentId.trim().length === 0) {
+      return { ok: false, error: "get_session_workers.sessionAgentId must be a non-empty string" };
+    }
+    if (requestId !== undefined && typeof requestId !== "string") {
+      return { ok: false, error: "get_session_workers.requestId must be a string when provided" };
+    }
+
+    return {
+      ok: true,
+      command: {
+        type: "get_session_workers",
+        sessionAgentId: sessionAgentId.trim(),
+        requestId
+      }
+    };
+  }
+
   if (maybe.type === "list_directories") {
     const path = (maybe as { path?: unknown }).path;
     const requestId = (maybe as { requestId?: unknown }).requestId;
@@ -550,6 +571,7 @@ export function extractRequestId(command: ClientCommand): string | undefined {
     case "rename_session":
     case "fork_session":
     case "merge_session_memory":
+    case "get_session_workers":
     case "stop_all_agents":
     case "list_directories":
     case "validate_directory":

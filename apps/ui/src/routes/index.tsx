@@ -611,6 +611,22 @@ export function IndexPage() {
     })()
   }, [clientRef, setState])
 
+  const handleRequestSessionWorkers = useCallback((sessionAgentId: string) => {
+    const client = clientRef.current
+    if (!client) return
+
+    void (async () => {
+      try {
+        await client.getSessionWorkers(sessionAgentId)
+      } catch (error) {
+        setState((prev) => ({
+          ...prev,
+          lastError: `Failed to load session workers: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        }))
+      }
+    })()
+  }, [clientRef, setState])
+
   const handleMarkUnread = useCallback((agentId: string) => {
     clientRef.current?.markUnread(agentId)
   }, [clientRef])
@@ -748,6 +764,7 @@ export function IndexPage() {
           onMergeSessionMemory={handleMergeSessionMemory}
           onMarkUnread={handleMarkUnread}
           onUpdateManagerModel={handleUpdateManagerModel}
+          onRequestSessionWorkers={handleRequestSessionWorkers}
         />
 
         <div

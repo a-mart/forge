@@ -52,6 +52,7 @@ describe('ws command parser session commands', () => {
       { type: 'rename_session', agentId: 'session-a', label: 'Renamed', requestId: 'req-rename' },
       { type: 'fork_session', sourceAgentId: 'session-a', label: 'Forked', requestId: 'req-fork' },
       { type: 'merge_session_memory', agentId: 'session-a', requestId: 'req-merge' },
+      { type: 'get_session_workers', sessionAgentId: 'session-a', requestId: 'req-workers' },
     ] as const
 
     for (const command of commands) {
@@ -116,6 +117,10 @@ describe('ws command parser session commands', () => {
         message: 'merge_session_memory.agentId must be a non-empty string',
       },
       {
+        payload: { type: 'get_session_workers', sessionAgentId: '' },
+        message: 'get_session_workers.sessionAgentId must be a non-empty string',
+      },
+      {
         payload: { type: 'api_proxy', requestId: 'proxy-1', method: 'PATCH', path: '/api/mobile/push/test' },
         message: 'api_proxy.method must be one of GET|POST|PUT|DELETE',
       },
@@ -157,6 +162,7 @@ describe('ws command parser session commands', () => {
       { type: 'rename_session', agentId: 'manager--s2', label: 'Renamed', requestId: 'req-rename' },
       { type: 'fork_session', sourceAgentId: 'manager--s2', requestId: 'req-fork' },
       { type: 'merge_session_memory', agentId: 'manager--s2', requestId: 'req-merge' },
+      { type: 'get_session_workers', sessionAgentId: 'manager--s2', requestId: 'req-workers' },
     ] as const
 
     for (const command of commands) {

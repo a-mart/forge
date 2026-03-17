@@ -260,6 +260,7 @@ export type ConversationEntryEvent = ConversationEntry
 export interface AgentStatusEvent {
   type: 'agent_status'
   agentId: string
+  managerId?: string
   status: AgentStatus
   pendingCount: number
   contextUsage?: AgentContextUsage
@@ -269,6 +270,13 @@ export interface AgentStatusEvent {
 export interface AgentsSnapshotEvent {
   type: 'agents_snapshot'
   agents: AgentDescriptor[]
+}
+
+export interface SessionWorkersSnapshotEvent {
+  type: 'session_workers_snapshot'
+  sessionAgentId: string
+  workers: AgentDescriptor[]
+  requestId?: string
 }
 
 export interface ProfilesSnapshotEvent {
@@ -331,6 +339,7 @@ export type ServerEvent =
   | ConversationEntry
   | AgentStatusEvent
   | AgentsSnapshotEvent
+  | SessionWorkersSnapshotEvent
   | ProfilesSnapshotEvent
   | UnreadNotificationEvent
   | ManagerCreatedEvent

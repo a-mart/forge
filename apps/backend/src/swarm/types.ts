@@ -47,6 +47,8 @@ export interface AgentDescriptor {
   sessionLabel?: string;
   sessionPurpose?: AgentSessionPurpose;
   mergedAt?: string;
+  workerCount?: number;
+  activeWorkerCount?: number;
 }
 
 export interface AgentsStoreFile {
@@ -272,14 +274,23 @@ export type ConversationEntryEvent =
 export interface AgentStatusEvent {
   type: "agent_status";
   agentId: string;
+  managerId?: string;
   status: AgentStatus;
   pendingCount: number;
   contextUsage?: AgentContextUsage;
+  contextRecoveryInProgress?: boolean;
 }
 
 export interface AgentsSnapshotEvent {
   type: "agents_snapshot";
   agents: AgentDescriptor[];
+}
+
+export interface SessionWorkersSnapshotEvent {
+  type: "session_workers_snapshot";
+  sessionAgentId: string;
+  workers: AgentDescriptor[];
+  requestId?: string;
 }
 
 export interface SessionLifecycleEvent {
