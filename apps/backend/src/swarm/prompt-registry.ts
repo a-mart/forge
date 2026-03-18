@@ -353,7 +353,9 @@ export class BuiltinPromptResolver implements PromptResolver {
     this.operationalDirs = dedupePaths([
       options.builtinOperationalDir,
       join(PROMPT_REGISTRY_DIR, "operational", "builtins"),
-      join(BACKEND_PACKAGE_DIR, "src", "swarm", "operational", "builtins")
+      join(BACKEND_PACKAGE_DIR, "src", "swarm", "operational", "builtins"),
+      join(PROMPT_REGISTRY_DIR, "operational"),
+      join(BACKEND_PACKAGE_DIR, "src", "swarm", "operational")
     ]);
   }
 
