@@ -197,6 +197,77 @@ export type MessageTargetContext = Pick<
   'channel' | 'channelId' | 'userId' | 'threadTs' | 'integrationProfileId'
 >
 
+export const ONBOARDING_STATUSES = ['not_started', 'active', 'deferred', 'completed', 'migrated'] as const
+export type OnboardingStatus = (typeof ONBOARDING_STATUSES)[number]
+
+export const ONBOARDING_FACT_STATUSES = ['unknown', 'tentative', 'confirmed', 'promoted'] as const
+export type OnboardingFactStatus = (typeof ONBOARDING_FACT_STATUSES)[number]
+
+export interface OnboardingFact<T> {
+  value: T | null
+  status: OnboardingFactStatus
+  updatedAt: string | null
+}
+
+export const ONBOARDING_TECHNICAL_COMFORT_VALUES = ['non_technical', 'mixed', 'technical', 'advanced'] as const
+export type OnboardingTechnicalComfort = (typeof ONBOARDING_TECHNICAL_COMFORT_VALUES)[number]
+
+export const ONBOARDING_RESPONSE_VERBOSITY_VALUES = ['concise', 'balanced', 'detailed'] as const
+export type OnboardingResponseVerbosity = (typeof ONBOARDING_RESPONSE_VERBOSITY_VALUES)[number]
+
+export const ONBOARDING_EXPLANATION_DEPTH_VALUES = ['minimal', 'standard', 'teaching'] as const
+export type OnboardingExplanationDepth = (typeof ONBOARDING_EXPLANATION_DEPTH_VALUES)[number]
+
+export const ONBOARDING_UPDATE_CADENCE_VALUES = ['milestones', 'periodic', 'frequent'] as const
+export type OnboardingUpdateCadence = (typeof ONBOARDING_UPDATE_CADENCE_VALUES)[number]
+
+export const ONBOARDING_AUTONOMY_DEFAULT_VALUES = ['collaborative', 'balanced', 'autonomous'] as const
+export type OnboardingAutonomyDefault = (typeof ONBOARDING_AUTONOMY_DEFAULT_VALUES)[number]
+
+export const ONBOARDING_RISK_ESCALATION_PREFERENCE_VALUES = ['low_threshold', 'normal', 'high_threshold'] as const
+export type OnboardingRiskEscalationPreference = (typeof ONBOARDING_RISK_ESCALATION_PREFERENCE_VALUES)[number]
+
+export interface OnboardingCaptured {
+  preferredName: OnboardingFact<string>
+  technicalComfort: OnboardingFact<OnboardingTechnicalComfort>
+  responseVerbosity: OnboardingFact<OnboardingResponseVerbosity>
+  explanationDepth: OnboardingFact<OnboardingExplanationDepth>
+  updateCadence: OnboardingFact<OnboardingUpdateCadence>
+  autonomyDefault: OnboardingFact<OnboardingAutonomyDefault>
+  riskEscalationPreference: OnboardingFact<OnboardingRiskEscalationPreference>
+  primaryUseCases: OnboardingFact<string[]>
+}
+
+export interface OnboardingStateOwner {
+  ownerId: string
+  authUserId: string | null
+  displayName: string | null
+}
+
+export interface OnboardingRenderState {
+  lastRenderedAt: string | null
+  lastRenderedRevision: number
+}
+
+export interface OnboardingState {
+  schemaVersion: number
+  owner: OnboardingStateOwner
+  status: OnboardingStatus
+  cycleId: string
+  revision: number
+  firstPromptSentAt: string | null
+  startedAt: string | null
+  completedAt: string | null
+  deferredAt: string | null
+  migratedAt: string | null
+  lastUpdatedAt: string | null
+  sourceSessionId: string
+  firstManagerCreatedAt: string | null
+  migrationReason: string | null
+  captured: OnboardingCaptured
+  renderState: OnboardingRenderState
+}
+
 export interface DirectoryItem {
   name: string
   path: string
