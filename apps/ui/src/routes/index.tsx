@@ -14,6 +14,7 @@ import { AgentSidebar } from '@/components/chat/AgentSidebar'
 import { ArtifactPanel } from '@/components/chat/ArtifactPanel'
 import { ArtifactsSidebar } from '@/components/chat/ArtifactsSidebar'
 import { CortexDashboardPanel, type DashboardTab as CortexDashboardTab } from '@/components/chat/cortex/CortexDashboardPanel'
+import { OnboardingCallout } from '@/components/chat/cortex/OnboardingCallout'
 import { ChatHeader, type ChannelView } from '@/components/chat/ChatHeader'
 import { CreateManagerDialog } from '@/components/chat/CreateManagerDialog'
 import { DeleteManagerDialog } from '@/components/chat/DeleteManagerDialog'
@@ -24,6 +25,7 @@ import { SettingsPanel } from '@/components/chat/SettingsDialog'
 import { chooseFallbackAgentId } from '@/lib/agent-hierarchy'
 import type { ArtifactReference } from '@/lib/artifacts'
 import { collectArtifactsFromMessages } from '@/lib/collect-artifacts'
+import { hasProjectManagers, onboardingShowsPostSetupCta, ROOT_CORTEX_AGENT_ID, shouldAutoRouteToCortexOnboarding } from '@/lib/onboarding-ui'
 import { useFeedback } from '@/lib/use-feedback'
 import {
   DEFAULT_MANAGER_AGENT_ID,
@@ -35,6 +37,7 @@ import { useVisibleMessages } from '@/hooks/index-page/use-visible-messages'
 import { useContextWindow } from '@/hooks/index-page/use-context-window'
 import { usePendingResponse } from '@/hooks/index-page/use-pending-response'
 import { useFileDrop } from '@/hooks/index-page/use-file-drop'
+import { useOnboardingState } from '@/hooks/use-onboarding-state'
 import { useDynamicFavicon } from '@/hooks/use-dynamic-favicon'
 import type {
   AgentDescriptor,
@@ -81,6 +84,15 @@ export function IndexPage() {
     search: location.search,
     navigate,
   })
+  const {
+    onboardingState,
+    hasLoaded: hasLoadedOnboardingState,
+    isMutating: isMutatingOnboardingState,
+    error: onboardingError,
+    refresh: refreshOnboardingState,
+    deferOnboarding,
+    resumeOnboarding,
+  } = useOnboardingState(wsUrl)
 
   const [activeArtifact, setActiveArtifact] = useState<ArtifactReference | null>(null)
   const [isArtifactsPanelOpen, setIsArtifactsPanelOpen] = useState(false)
@@ -102,6 +114,18 @@ export function IndexPage() {
 
     return state.agents.find((agent) => agent.agentId === activeAgentId) ?? null
   }, [activeAgentId, state.agents])
+
+  const hasCreatedProjectManager = useMemo(() => hasProjectManagers(state.agents), [state.agents])
+
+  const isCortexChatActive = routeState.view === 'chat' && activeAgent?.agentId === ROOT_CORTEX_AGENT_ID
+  const shouldShowOnboardingCallout =
+    isCortexChatActive &&
+    Boolean(
+      onboardingState &&
+      (onboardingState.status === 'not_started' ||
+        onboardingState.status === 'active' ||
+        onboardingShowsPostSetupCta(onboardingState.status)),
+    )
 
   const activeAgentProfileName = useMemo(() => {
     if (!activeAgent?.profileId || !activeAgent.sessionLabel) return undefined
@@ -395,6 +419,25 @@ export function IndexPage() {
       return
     }
 
+    if (!hasExplicitSelection && routeState.agentId === DEFAULT_MANAGER_AGENT_ID && !hasLoadedOnboardingState) {
+      return
+    }
+
+    if (
+      shouldAutoRouteToCortexOnboarding({
+        routeState,
+        onboardingState,
+        hasExplicitSelection,
+        agents: state.agents,
+      })
+    ) {
+      if (currentAgentId !== ROOT_CORTEX_AGENT_ID) {
+        clientRef.current?.subscribeToAgent(ROOT_CORTEX_AGENT_ID, { explicit: false })
+      }
+      navigateToRoute({ view: 'chat', agentId: ROOT_CORTEX_AGENT_ID }, true)
+      return
+    }
+
     if (currentAgentId === routeState.agentId) {
       return
     }
@@ -416,7 +459,9 @@ export function IndexPage() {
     clientRef.current?.subscribeToAgent(fallbackAgentId, { explicit: false })
   }, [
     clientRef,
+    hasLoadedOnboardingState,
     navigateToRoute,
+    onboardingState,
     routeState,
     state.agents,
     state.hasReceivedAgentsSnapshot,
@@ -429,6 +474,22 @@ export function IndexPage() {
       state.agents.map((agent) => [agent.agentId, agent]),
     )
   }, [state.agents])
+
+  useEffect(() => {
+    if (!isCortexChatActive) {
+      return
+    }
+
+    if (!onboardingState || (onboardingState.status !== 'not_started' && onboardingState.status !== 'active')) {
+      return
+    }
+
+    const timer = setTimeout(() => {
+      void refreshOnboardingState()
+    }, 250)
+
+    return () => clearTimeout(timer)
+  }, [isCortexChatActive, onboardingState, refreshOnboardingState, state.messages.length])
 
   const handleSend = (text: string, attachments?: ConversationAttachment[]) => {
     if (!activeAgentId) {
@@ -683,6 +744,29 @@ export function IndexPage() {
     navigateToRoute({ view: 'playwright' })
   }
 
+  const handleSkipOnboarding = useCallback(() => {
+    void (async () => {
+      const nextState = await deferOnboarding()
+      if (!nextState) {
+        return
+      }
+      navigateToRoute({ view: 'chat', agentId: ROOT_CORTEX_AGENT_ID }, true)
+      clientRef.current?.subscribeToAgent(ROOT_CORTEX_AGENT_ID, { explicit: false })
+    })()
+  }, [clientRef, deferOnboarding, navigateToRoute])
+
+  const handleResumeOnboarding = useCallback(() => {
+    void (async () => {
+      const nextState = await resumeOnboarding()
+      if (!nextState) {
+        return
+      }
+      navigateToRoute({ view: 'chat', agentId: ROOT_CORTEX_AGENT_ID }, true)
+      clientRef.current?.subscribeToAgent(ROOT_CORTEX_AGENT_ID, { explicit: false })
+      void refreshOnboardingState()
+    })()
+  }, [clientRef, navigateToRoute, refreshOnboardingState, resumeOnboarding])
+
   const handlePlaywrightViewStateChange = useCallback(
     (sessionId: string | null, mode: import('@/hooks/index-page/use-route-state').PlaywrightViewMode) => {
       navigateToRoute({
@@ -868,6 +952,18 @@ export function IndexPage() {
                   <div className="border-b border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-400">
                     {state.lastSuccess}
                   </div>
+                ) : null}
+
+                {shouldShowOnboardingCallout && onboardingState ? (
+                  <OnboardingCallout
+                    status={onboardingState.status}
+                    hasProjectManagers={hasCreatedProjectManager}
+                    isBusy={isMutatingOnboardingState}
+                    error={onboardingError}
+                    onSkipForNow={handleSkipOnboarding}
+                    onCreateManager={handleOpenCreateManagerDialog}
+                    onResumeOnboarding={handleResumeOnboarding}
+                  />
                 ) : null}
 
                 <MessageList
