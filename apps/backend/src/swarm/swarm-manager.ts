@@ -219,12 +219,12 @@ Distinguish durable repo conventions from one-off task details.
 Do not collapse project-specific rules into cross-project user defaults.
 
 Useful first-message shapes:
-- If onboarding defaults are present: “Hi — I already have a baseline sense of how you like to work, so I’ll focus on this project. What are we building here, and which repo or directory should I treat as the source of truth?”
-- If onboarding defaults are absent: “Hi — I’ll focus on getting oriented to this project. What are we building here, and which repo or directory should I treat as the source of truth?”
+- If onboarding defaults are present: "Hi - I already have a baseline sense of how you like to work, so I'll focus on this project. What are we building here, and which repo or directory should I treat as the source of truth?"
+- If onboarding defaults are absent: "Hi - I'll focus on getting oriented to this project. What are we building here, and which repo or directory should I treat as the source of truth?"
 
-Do not include the old generic “how do you like to work” interview.
-This manager’s onboarding is about the project, not the person.`;
-const CORTEX_ONBOARDING_STATIC_GREETING = `Hey — I'm Cortex, the persistent layer across your Forge sessions. Before we get started, what's your name? And are you coming at this as a developer, or more from a non-technical angle?
+Do not include the old generic "how do you like to work" interview.
+This manager's onboarding is about the project, not the person.`;
+const CORTEX_ONBOARDING_STATIC_GREETING = `Hey - I'm Cortex, the persistent layer across your Forge sessions. Before we get started, what's your name? And are you coming at this as a developer, or more from a non-technical angle?
 
 That'll help me calibrate how all your future managers communicate with you. If you'd rather skip this and jump straight into a manager, that's totally fine too.`;
 const COMMON_KNOWLEDGE_MEMORY_HEADER =
@@ -3511,28 +3511,66 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return pending;
   }
 
+  private async resolveOnboardingMutationBase(input: {
+    cycleId?: string;
+    baseRevision?: number;
+  }): Promise<{ cycleId: string; baseRevision: number; autoResolved: boolean }> {
+    if (typeof input.cycleId === "string" && Number.isInteger(input.baseRevision)) {
+      return {
+        cycleId: input.cycleId,
+        baseRevision: input.baseRevision!,
+        autoResolved: false
+      };
+    }
+
+    const snapshot = await getOnboardingSnapshot(this.config.paths.dataDir);
+    return {
+      cycleId: snapshot.cycleId,
+      baseRevision: snapshot.revision,
+      autoResolved: true
+    };
+  }
+
   async saveOnboardingFacts(
     callerAgentId: string,
     input: {
-      cycleId: string;
-      baseRevision: number;
+      cycleId?: string;
+      baseRevision?: number;
       facts: OnboardingFactsPatch;
       renderCommonMd?: boolean;
     }
   ): Promise<OnboardingMutationResult> {
     this.assertCortexRootInteractiveManager(callerAgentId, "save onboarding facts");
-    const result = await saveOnboardingFacts(
-      this.config.paths.dataDir,
-      input.facts,
-      input.cycleId,
-      input.baseRevision
-    );
 
-    if (result.ok && input.renderCommonMd) {
-      await renderOnboardingCommonKnowledge(this.config.paths.dataDir, result.snapshot);
+    let lastResult: OnboardingMutationResult | undefined;
+    const maxAttempts = input.cycleId !== undefined && input.baseRevision !== undefined ? 1 : 2;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      const mutationBase = await this.resolveOnboardingMutationBase(input);
+      const result = await saveOnboardingFacts(
+        this.config.paths.dataDir,
+        input.facts,
+        mutationBase.cycleId,
+        mutationBase.baseRevision
+      );
+
+      if (!result.ok && mutationBase.autoResolved && attempt + 1 < maxAttempts) {
+        lastResult = result;
+        continue;
+      }
+
+      if (result.ok && input.renderCommonMd) {
+        await renderOnboardingCommonKnowledge(this.config.paths.dataDir, result.snapshot);
+      }
+
+      return result;
     }
 
-    return result;
+    return lastResult ?? {
+      ok: false,
+      reason: "stale_revision",
+      snapshot: await getOnboardingSnapshot(this.config.paths.dataDir)
+    };
   }
 
   async setOnboardingStatus(
@@ -3540,32 +3578,50 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     input: {
       status: OnboardingStatus;
       reason?: string | null;
-      cycleId: string;
-      baseRevision: number;
+      cycleId?: string;
+      baseRevision?: number;
       renderCommonMd?: boolean;
     }
   ): Promise<OnboardingMutationResult> {
     this.assertCortexRootInteractiveManager(callerAgentId, "set onboarding status");
-    const result = await setOnboardingStatus(
-      this.config.paths.dataDir,
-      input.status,
-      input.reason ?? null,
-      input.cycleId,
-      input.baseRevision
-    );
 
-    if (result.ok && input.renderCommonMd) {
-      await renderOnboardingCommonKnowledge(this.config.paths.dataDir, result.snapshot);
-    }
+    let lastResult: OnboardingMutationResult | undefined;
+    const maxAttempts = input.cycleId !== undefined && input.baseRevision !== undefined ? 1 : 2;
 
-    if (result.ok) {
-      const descriptor = this.descriptors.get(callerAgentId);
-      if (descriptor) {
-        await this.syncManagerPromptMode(descriptor, { recycleIfChanged: true });
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      const mutationBase = await this.resolveOnboardingMutationBase(input);
+      const result = await setOnboardingStatus(
+        this.config.paths.dataDir,
+        input.status,
+        input.reason ?? null,
+        mutationBase.cycleId,
+        mutationBase.baseRevision
+      );
+
+      if (!result.ok && mutationBase.autoResolved && attempt + 1 < maxAttempts) {
+        lastResult = result;
+        continue;
       }
+
+      if (result.ok && input.renderCommonMd) {
+        await renderOnboardingCommonKnowledge(this.config.paths.dataDir, result.snapshot);
+      }
+
+      if (result.ok) {
+        const descriptor = this.descriptors.get(callerAgentId);
+        if (descriptor) {
+          await this.syncManagerPromptMode(descriptor, { recycleIfChanged: true });
+        }
+      }
+
+      return result;
     }
 
-    return result;
+    return lastResult ?? {
+      ok: false,
+      reason: "stale_revision",
+      snapshot: await getOnboardingSnapshot(this.config.paths.dataDir)
+    };
   }
 
   async updateOnboardingStatusFromUi(

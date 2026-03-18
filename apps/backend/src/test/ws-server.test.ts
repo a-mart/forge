@@ -485,6 +485,56 @@ describe('SwarmWebSocketServer', () => {
     await server.stop()
   })
 
+  it('preserves Unicode conversation_message text over WebSocket delivery', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    try {
+      const client = new WebSocket(`ws://${config.host}:${config.port}`)
+      const events: ServerEvent[] = []
+
+      client.on('message', (raw) => {
+        events.push(JSON.parse(raw.toString()) as ServerEvent)
+      })
+
+      await once(client, 'open')
+      client.send(JSON.stringify({ type: 'subscribe', agentId: 'manager' }))
+      await waitForEvent(
+        events,
+        (event) => event.type === 'ready' && event.subscribedAgentId === 'manager',
+      )
+      await waitForEvent(
+        events,
+        (event) => event.type === 'conversation_history' && event.agentId === 'manager',
+      )
+
+      const unicodeReply = 'Unicode — “quotes” café'
+      await manager.publishToUser('manager', unicodeReply, 'speak_to_user')
+
+      await waitForEvent(
+        events,
+        (event) => event.type === 'conversation_message' && event.agentId === 'manager' && event.text === unicodeReply,
+      )
+
+      client.close()
+      await once(client, 'close')
+    } finally {
+      await server.stop()
+    }
+  })
+
   it('suppresses unread_notification events for cortex review sessions', async () => {
     const port = await getAvailablePort()
     const config = await makeTempConfig(port, true)
@@ -1718,10 +1768,15 @@ describe('SwarmWebSocketServer', () => {
       client.send(JSON.stringify({ type: 'subscribe', agentId: 'cortex' }))
 
       await waitForEvent(events, (event) => event.type === 'ready' && event.subscribedAgentId === 'cortex')
-
-      const cortexRuntime = manager.runtimeByAgentId.get('cortex')
-      expect(cortexRuntime?.sendCalls).toHaveLength(1)
-      expect(cortexRuntime?.sendCalls[0]?.message).toContain('Onboarding mode just activated and the chat is opening for the first time.')
+      await waitForEvent(
+        events,
+        (event) =>
+          event.type === 'conversation_message' &&
+          event.agentId === 'cortex' &&
+          event.source === 'speak_to_user' &&
+          event.text ===
+            "Hey - I'm Cortex, the persistent layer across your Forge sessions. Before we get started, what's your name? And are you coming at this as a developer, or more from a non-technical angle?\n\nThat'll help me calibrate how all your future managers communicate with you. If you'd rather skip this and jump straight into a manager, that's totally fine too.",
+      )
 
       const snapshot = await loadOnboardingState(config.paths.dataDir)
       expect(snapshot.status).toBe('active')

@@ -1548,12 +1548,17 @@ describe('SwarmManager', () => {
       channel: 'web',
     })
 
-    const cortexRuntime = manager.runtimeByAgentId.get('cortex')
-    expect(cortexRuntime).toBeDefined()
-    expect(cortexRuntime?.sendCalls).toHaveLength(1)
-    expect(cortexRuntime?.sendCalls[0]?.delivery).toBe('auto')
-    expect(cortexRuntime?.sendCalls[0]?.message).toContain('SYSTEM: [sourceContext] {"channel":"web"}')
-    expect(cortexRuntime?.sendCalls[0]?.message).toContain('Onboarding mode just activated and the chat is opening for the first time.')
+    const history = manager.getConversationHistory('cortex')
+    expect(
+      history.some(
+        (entry) =>
+          entry.type === 'conversation_message' &&
+          entry.agentId === 'cortex' &&
+          entry.source === 'speak_to_user' &&
+          entry.text ===
+            "Hey - I'm Cortex, the persistent layer across your Forge sessions. Before we get started, what's your name? And are you coming at this as a developer, or more from a non-technical angle?\n\nThat'll help me calibrate how all your future managers communicate with you. If you'd rather skip this and jump straight into a manager, that's totally fine too.",
+      ),
+    ).toBe(true)
 
     const snapshot = await getOnboardingSnapshot(config.paths.dataDir)
     expect(snapshot.status).toBe('active')
@@ -1563,7 +1568,18 @@ describe('SwarmManager', () => {
     await manager.ensureCortexOnboardingAutoGreeting({
       channel: 'web',
     })
-    expect(cortexRuntime?.sendCalls).toHaveLength(1)
+    expect(
+      manager
+        .getConversationHistory('cortex')
+        .filter(
+          (entry) =>
+            entry.type === 'conversation_message' &&
+            entry.agentId === 'cortex' &&
+            entry.source === 'speak_to_user' &&
+            entry.text ===
+              "Hey - I'm Cortex, the persistent layer across your Forge sessions. Before we get started, what's your name? And are you coming at this as a developer, or more from a non-technical angle?\n\nThat'll help me calibrate how all your future managers communicate with you. If you'd rather skip this and jump straight into a manager, that's totally fine too.",
+        ),
+    ).toHaveLength(1)
   })
 
   it('returns the root Cortex runtime to the normal prompt after onboarding completes', async () => {
@@ -1588,6 +1604,39 @@ describe('SwarmManager', () => {
     expect(cortexPrompt).not.toContain('You are Cortex in first-launch onboarding mode.')
     expect(cortexPrompt).toContain('Maintain `${SWARM_DATA_DIR}/shared/knowledge/common.md`')
     expect(manager.isOnboardingMode('cortex')).toBe(false)
+  })
+
+  it('auto-resolves onboarding cycleId/baseRevision for Cortex save tools when omitted', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+
+    await manager.boot()
+
+    const saved = await manager.saveOnboardingFacts('cortex', {
+      facts: {
+        preferredName: { value: 'Ada', status: 'confirmed' },
+      },
+      renderCommonMd: true,
+    })
+    expect(saved.ok).toBe(true)
+    if (!saved.ok) {
+      throw new Error('Expected onboarding fact save to succeed')
+    }
+    expect(saved.snapshot.captured.preferredName).toMatchObject({
+      value: 'Ada',
+      status: 'confirmed',
+    })
+
+    const completed = await manager.setOnboardingStatus('cortex', {
+      status: 'completed',
+      renderCommonMd: true,
+    })
+    expect(completed.ok).toBe(true)
+    if (!completed.ok) {
+      throw new Error('Expected onboarding status save to succeed')
+    }
+    expect(completed.snapshot.status).toBe('completed')
+    expect(completed.snapshot.revision).toBe(saved.snapshot.revision + 1)
   })
 
   it('injects confirmed onboarding defaults into newly created manager runtime memory', async () => {
@@ -3775,6 +3824,34 @@ describe('SwarmManager', () => {
         (message) =>
           message.type === 'conversation_message' &&
           message.text === 'saved reply' &&
+          message.source === 'speak_to_user',
+      ),
+    ).toBe(true)
+  })
+
+  it('preserves Unicode speak_to_user text through JSONL persistence and reload', async () => {
+    const config = await makeTempConfig()
+    const firstBoot = new TestSwarmManager(config)
+    await bootWithDefaultManager(firstBoot, config)
+
+    const unicodeReply = 'Unicode — “quotes” café'
+    await firstBoot.publishToUser('manager', unicodeReply, 'speak_to_user')
+
+    const managerDescriptor = firstBoot.getAgent('manager')
+    expect(managerDescriptor).toBeDefined()
+    const sessionFile = managerDescriptor?.sessionFile ?? join(config.paths.sessionsDir, 'manager.jsonl')
+    const sessionText = await readFile(sessionFile, 'utf8')
+    expect(sessionText).toContain(unicodeReply)
+
+    const secondBoot = new TestSwarmManager(config)
+    await bootWithDefaultManager(secondBoot, config)
+
+    const history = secondBoot.getConversationHistory('manager')
+    expect(
+      history.some(
+        (message) =>
+          message.type === 'conversation_message' &&
+          message.text === unicodeReply &&
           message.source === 'speak_to_user',
       ),
     ).toBe(true)

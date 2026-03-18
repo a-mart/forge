@@ -752,6 +752,98 @@ describe('buildSwarmTools', () => {
     expect(normalTools.some((tool) => tool.name === 'set_onboarding_status')).toBe(false)
   })
 
+  it('allows onboarding tools to omit cycleId/baseRevision so the backend can auto-resolve CAS state', async () => {
+    const saveInputs: Array<Record<string, unknown>> = []
+    const statusInputs: Array<Record<string, unknown>> = []
+
+    const host: SwarmToolHost = {
+      listAgents: () => [makeManagerDescriptor('cortex', { archetypeId: 'cortex', profileId: 'cortex' })],
+      spawnAgent: async () => makeWorkerDescriptor('worker'),
+      killAgent: async () => {},
+      sendMessage: async () => ({
+        targetAgentId: 'worker',
+        deliveryId: 'delivery-1',
+        acceptedMode: 'prompt',
+      }),
+      publishToUser: async () => ({ targetContext: { channel: 'web' } }),
+      isOnboardingMode: () => true,
+      saveOnboardingFacts: async (_callerAgentId, input) => {
+        saveInputs.push(input as Record<string, unknown>)
+        return {
+          ok: true,
+          snapshot: {
+            cycleId: 'cycle-1',
+            revision: 1,
+          },
+        } as any
+      },
+      setOnboardingStatus: async (_callerAgentId, input) => {
+        statusInputs.push(input as Record<string, unknown>)
+        return {
+          ok: true,
+          snapshot: {
+            cycleId: 'cycle-1',
+            revision: 2,
+          },
+        } as any
+      },
+    }
+
+    const tools = buildSwarmTools(host, makeManagerDescriptor('cortex', { archetypeId: 'cortex', profileId: 'cortex' }))
+    const saveTool = tools.find((tool) => tool.name === 'save_onboarding_facts')
+    const statusTool = tools.find((tool) => tool.name === 'set_onboarding_status')
+
+    expect(saveTool).toBeDefined()
+    expect(statusTool).toBeDefined()
+
+    await saveTool!.execute(
+      'tool-call',
+      {
+        facts: {
+          preferredName: {
+            value: 'Adam',
+            status: 'confirmed',
+          },
+        },
+      },
+      undefined,
+      undefined,
+      undefined as any,
+    )
+    await statusTool!.execute(
+      'tool-call',
+      {
+        status: 'completed',
+      },
+      undefined,
+      undefined,
+      undefined as any,
+    )
+
+    expect(saveInputs).toEqual([
+      {
+        cycleId: undefined,
+        baseRevision: undefined,
+        facts: {
+          preferredName: {
+            value: 'Adam',
+            status: 'confirmed',
+          },
+        },
+        renderCommonMd: undefined,
+      },
+    ])
+    expect(statusInputs).toEqual([
+      {
+        status: 'completed',
+        reason: undefined,
+        cycleId: undefined,
+        baseRevision: undefined,
+        renderCommonMd: undefined,
+      },
+    ])
+  })
+
   it('preserves host binding when executing onboarding tools', async () => {
     class BindingAwareHost implements SwarmToolHost {
       saveCalls = 0

@@ -44,8 +44,8 @@ Distinguish durable repo conventions from one-off task details.
 Do not collapse project-specific rules into cross-project user defaults.
 
 Useful first-message shapes:
-- If onboarding defaults are present: “Hi — I already have a baseline sense of how you like to work, so I’ll focus on this project. What are we building here, and which repo or directory should I treat as the source of truth?”
-- If onboarding defaults are absent: “Hi — I’ll focus on getting oriented to this project. What are we building here, and which repo or directory should I treat as the source of truth?”
+- If onboarding defaults are present: "Hi - I already have a baseline sense of how you like to work, so I'll focus on this project. What are we building here, and which repo or directory should I treat as the source of truth?"
+- If onboarding defaults are absent: "Hi - I'll focus on getting oriented to this project. What are we building here, and which repo or directory should I treat as the source of truth?"
 
-Do not include the old generic “how do you like to work” interview.
-This manager’s onboarding is about the project, not the person.
+Do not include the old generic "how do you like to work" interview.
+This manager's onboarding is about the project, not the person.

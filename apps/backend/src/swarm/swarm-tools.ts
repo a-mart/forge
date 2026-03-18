@@ -41,8 +41,8 @@ export interface SwarmToolHost {
   saveOnboardingFacts?(
     callerAgentId: string,
     input: {
-      cycleId: string;
-      baseRevision: number;
+      cycleId?: string;
+      baseRevision?: number;
       facts: OnboardingFactsPatch;
       renderCommonMd?: boolean;
     }
@@ -52,8 +52,8 @@ export interface SwarmToolHost {
     input: {
       status: OnboardingStatus;
       reason?: string | null;
-      cycleId: string;
-      baseRevision: number;
+      cycleId?: string;
+      baseRevision?: number;
       renderCommonMd?: boolean;
     }
   ): Promise<OnboardingMutationResult>;
@@ -599,10 +599,12 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
         name: "save_onboarding_facts",
         label: "Save Onboarding Facts",
         description:
-          "Persist durable onboarding facts for the root Cortex onboarding conversation using compare-and-swap revision control.",
+          "Persist durable onboarding facts for the root Cortex onboarding conversation. If cycleId/baseRevision are omitted, the backend resolves the current onboarding snapshot automatically.",
         parameters: Type.Object({
-          cycleId: Type.String({ description: "Current onboarding cycle id." }),
-          baseRevision: Type.Integer({ minimum: 0, description: "Current onboarding revision for CAS." }),
+          cycleId: Type.Optional(Type.String({ description: "Optional onboarding cycle id. Omit to use the current cycle automatically." })),
+          baseRevision: Type.Optional(
+            Type.Integer({ minimum: 0, description: "Optional onboarding revision for CAS. Omit to use the current revision automatically." })
+          ),
           facts: onboardingFactsPatchSchema,
           renderCommonMd: Type.Optional(
             Type.Boolean({ description: "Render the managed onboarding block in common.md after a successful save." })
@@ -610,8 +612,8 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
         }),
         async execute(_toolCallId, params) {
           const parsed = params as {
-            cycleId: string;
-            baseRevision: number;
+            cycleId?: string;
+            baseRevision?: number;
             facts: OnboardingFactsPatch;
             renderCommonMd?: boolean;
           };
@@ -629,7 +631,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
                 type: "text",
                 text: result.ok
                   ? `Saved onboarding facts at revision ${result.snapshot.revision}.`
-                  : `Onboarding fact save failed: ${result.reason}.`
+                  : `Onboarding fact save failed: ${result.reason}. Current cycleId=${result.snapshot.cycleId}, revision=${result.snapshot.revision}.`
               }
             ],
             details: result
@@ -640,12 +642,14 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
         name: "set_onboarding_status",
         label: "Set Onboarding Status",
         description:
-          "Persist the onboarding lifecycle status for the root Cortex onboarding conversation using compare-and-swap revision control.",
+          "Persist the onboarding lifecycle status for the root Cortex onboarding conversation. If cycleId/baseRevision are omitted, the backend resolves the current onboarding snapshot automatically.",
         parameters: Type.Object({
           status: onboardingStatusSchema,
           reason: Type.Optional(Type.String({ description: "Optional short reason for the status change." })),
-          cycleId: Type.String({ description: "Current onboarding cycle id." }),
-          baseRevision: Type.Integer({ minimum: 0, description: "Current onboarding revision for CAS." }),
+          cycleId: Type.Optional(Type.String({ description: "Optional onboarding cycle id. Omit to use the current cycle automatically." })),
+          baseRevision: Type.Optional(
+            Type.Integer({ minimum: 0, description: "Optional onboarding revision for CAS. Omit to use the current revision automatically." })
+          ),
           renderCommonMd: Type.Optional(
             Type.Boolean({ description: "Render the managed onboarding block in common.md after a successful status change." })
           )
@@ -654,8 +658,8 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
           const parsed = params as {
             status: OnboardingStatus;
             reason?: string;
-            cycleId: string;
-            baseRevision: number;
+            cycleId?: string;
+            baseRevision?: number;
             renderCommonMd?: boolean;
           };
 
@@ -673,7 +677,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
                 type: "text",
                 text: result.ok
                   ? `Set onboarding status to ${parsed.status} at revision ${result.snapshot.revision}.`
-                  : `Onboarding status update failed: ${result.reason}.`
+                  : `Onboarding status update failed: ${result.reason}. Current cycleId=${result.snapshot.cycleId}, revision=${result.snapshot.revision}.`
               }
             ],
             details: result
