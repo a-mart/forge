@@ -224,17 +224,9 @@ Useful first-message shapes:
 
 Do not include the old generic “how do you like to work” interview.
 This manager’s onboarding is about the project, not the person.`;
-const CORTEX_ONBOARDING_AUTO_GREETING_MESSAGE = `Onboarding mode just activated and the chat is opening for the first time.
+const CORTEX_ONBOARDING_STATIC_GREETING = `Hey — I'm Cortex, the persistent layer across your Forge sessions. Before we get started, what's your name? And are you coming at this as a developer, or more from a non-technical angle?
 
-Send the opening onboarding greeting now via speak_to_user.
-This is the very first user-visible message of the onboarding conversation, and there is no prior user message to answer yet.
-
-Keep it short, warm, and natural:
-- greet the user
-- explain Cortex in one sentence
-- offer an easy path to either talk for a minute or skip straight to creating their first manager
-- do not imply you already know their preferences
-- do not claim anything has been saved yet`;
+That'll help me calibrate how all your future managers communicate with you. If you'd rather skip this and jump straight into a manager, that's totally fine too.`;
 const COMMON_KNOWLEDGE_MEMORY_HEADER =
   "# Common Knowledge (maintained by Cortex — read-only reference)";
 const ONBOARDING_SNAPSHOT_MEMORY_HEADER =
@@ -3427,19 +3419,20 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     await this.syncManagerPromptMode(descriptor, { recycleIfChanged: true });
 
     const resolvedSourceContext = normalizeMessageSourceContext(sourceContext ?? { channel: "web" });
-    const greetingMessage = formatInboundUserMessageForManager(
-      CORTEX_ONBOARDING_AUTO_GREETING_MESSAGE,
-      resolvedSourceContext
-    );
 
-    await this.sendMessage(descriptor.agentId, descriptor.agentId, greetingMessage, "auto", {
-      origin: "internal"
+    await this.publishToUser(descriptor.agentId, CORTEX_ONBOARDING_STATIC_GREETING, "speak_to_user", {
+      channel: resolvedSourceContext.channel,
+      channelId: resolvedSourceContext.channelId,
+      userId: resolvedSourceContext.userId,
+      threadTs: resolvedSourceContext.threadTs,
+      integrationProfileId: resolvedSourceContext.integrationProfileId
     });
     await markOnboardingFirstPromptSent(this.config.paths.dataDir);
 
     this.logDebug("onboarding:auto_greeting:sent", {
       agentId: descriptor.agentId,
-      sourceContext: resolvedSourceContext
+      sourceContext: resolvedSourceContext,
+      mode: "static"
     });
   }
 
