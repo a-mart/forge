@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { getAllByText, getByLabelText, getByRole, getByText, queryByText } from '@testing-library/dom'
+import { getAllByText, getByLabelText, getByRole, getByText, queryByLabelText, queryByText } from '@testing-library/dom'
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
@@ -234,6 +234,126 @@ describe('ReviewStatusPanel', () => {
     )
     expect(getByText(container, 'alpha/alpha--s1 (memory, feedback)')).toBeTruthy()
     expect(getAllByText(container, 'Manual').length).toBeGreaterThan(0)
+  })
+
+  it('updates the clicked session row immediately when a review run is queued', async () => {
+    const onOpenSession = vi.fn()
+    const reviewRuns: CortexReviewRunRecord[] = []
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const method = init?.method ?? 'GET'
+
+      if (url.endsWith('/api/cortex/scan')) {
+        return {
+          ok: true,
+          json: async () => ({
+            scan: {
+              sessions: [
+                {
+                  profileId: 'alpha',
+                  sessionId: 'alpha--s1',
+                  deltaBytes: 120,
+                  totalBytes: 240,
+                  reviewedBytes: 120,
+                  reviewedAt: '2026-03-03T08:00:00.000Z',
+                  reviewExcluded: false,
+                  reviewExcludedAt: null,
+                  memoryDeltaBytes: 0,
+                  memoryTotalBytes: 0,
+                  memoryReviewedBytes: 0,
+                  memoryReviewedAt: null,
+                  feedbackDeltaBytes: 0,
+                  feedbackTotalBytes: 0,
+                  feedbackReviewedBytes: 0,
+                  feedbackReviewedAt: null,
+                  lastFeedbackAt: null,
+                  feedbackTimestampDrift: false,
+                  status: 'needs-review',
+                },
+              ],
+              summary: {
+                needsReview: 1,
+                upToDate: 0,
+                excluded: 0,
+                totalBytes: 240,
+                reviewedBytes: 120,
+                transcriptTotalBytes: 240,
+                transcriptReviewedBytes: 120,
+                memoryTotalBytes: 0,
+                memoryReviewedBytes: 0,
+                feedbackTotalBytes: 0,
+                feedbackReviewedBytes: 0,
+                attentionBytes: 120,
+                sessionsWithTranscriptDrift: 1,
+                sessionsWithMemoryDrift: 0,
+                sessionsWithFeedbackDrift: 0,
+              },
+            },
+          }),
+        } as Response
+      }
+
+      if (url.endsWith('/api/cortex/review-runs') && method === 'GET') {
+        return {
+          ok: true,
+          json: async () => ({ runs: reviewRuns }),
+        } as Response
+      }
+
+      if (url.endsWith('/api/cortex/review-runs') && method === 'POST') {
+        const run: CortexReviewRunRecord = {
+          runId: 'review-queued-1',
+          trigger: 'manual',
+          scope: { mode: 'session', profileId: 'alpha', sessionId: 'alpha--s1', axes: ['transcript'] },
+          scopeLabel: 'alpha/alpha--s1 (transcript)',
+          requestText: 'Review session alpha/alpha--s1 (transcript freshness)',
+          requestedAt: '2026-03-16T23:05:00.000Z',
+          status: 'queued',
+          sessionAgentId: null,
+          activeWorkerCount: 0,
+          latestCloseout: null,
+          queuePosition: 2,
+          blockedReason: null,
+          scheduleName: null,
+        }
+        reviewRuns.unshift(run)
+
+        return {
+          ok: true,
+          json: async () => ({ run }),
+        } as Response
+      }
+
+      throw new Error(`Unexpected fetch: ${method} ${url}`)
+    })
+
+    globalThis.fetch = fetchMock as typeof fetch
+
+    root = createRoot(container)
+    flushSync(() => {
+      root?.render(
+        createElement(ReviewStatusPanel, {
+          wsUrl: 'ws://127.0.0.1:47187',
+          onOpenSession,
+        }),
+      )
+    })
+
+    await flushPromises()
+
+    expect(queryByText(container, 'Queued #2')).toBeNull()
+    expect(getByLabelText(container, 'Review session alpha--s1')).toBeTruthy()
+
+    flushSync(() => {
+      ;(getByLabelText(container, 'Review session alpha--s1') as HTMLButtonElement).click()
+    })
+
+    await flushPromises()
+
+    expect(getAllByText(container, 'Queued #2')).toHaveLength(2)
+    expect(queryByLabelText(container, 'Review session alpha--s1')).toBeNull()
+    expect(getByText(container, 'Needs review')).toBeTruthy()
   })
 
   it('shows exclude/resume/reprocess controls and sends the expected API payloads', async () => {

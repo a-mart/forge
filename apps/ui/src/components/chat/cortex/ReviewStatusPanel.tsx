@@ -160,6 +160,18 @@ function buildReviewScope(result: ScanSession): CortexReviewRunScope {
     : { mode: 'session', profileId: result.profileId, sessionId: result.sessionId }
 }
 
+function getActiveReviewRunForSession(session: ScanSession, reviewRuns: CortexReviewRunRecord[]): CortexReviewRunRecord | null {
+  return (
+    reviewRuns.find(
+      (run) =>
+        (run.status === 'queued' || run.status === 'running' || run.status === 'blocked') &&
+        run.scope.mode === 'session' &&
+        run.scope.profileId === session.profileId &&
+        run.scope.sessionId === session.sessionId,
+    ) ?? null
+  )
+}
+
 function StatusBadge({ status }: { status: ReviewDisplayStatus }) {
   switch (status) {
     case 'up-to-date':
@@ -654,17 +666,20 @@ export function ReviewStatusPanel({ wsUrl, refreshKey = 0, onOpenSession }: Revi
                       </div>
                       {sessions.map((session) => {
                         const status = getSessionStatus(session)
+                        const activeReviewRun = getActiveReviewRunForSession(session, reviewRuns)
                         const reasonPills = buildSessionReasonPills(session)
                         const reviewActionKey = `${session.profileId}/${session.sessionId}:review`
                         const excludeActionKey = `${session.profileId}/${session.sessionId}:exclude`
                         const resumeActionKey = `${session.profileId}/${session.sessionId}:resume`
                         const isReviewedSession =
                           session.reviewedAt !== null || session.memoryReviewedAt !== null || session.feedbackReviewedAt !== null
-                        const canReview = status === 'needs-review' || status === 'never-reviewed' || status === 'compacted'
+                        const hasPendingReview = activeReviewRun !== null
+                        const canReview =
+                          !hasPendingReview && (status === 'needs-review' || status === 'never-reviewed' || status === 'compacted')
                         const canExclude =
-                          status === 'needs-review' || status === 'never-reviewed' || status === 'compacted'
+                          !hasPendingReview && (status === 'needs-review' || status === 'never-reviewed' || status === 'compacted')
                         const canResume = status === 'excluded'
-                        const canReprocess = status === 'up-to-date' && isReviewedSession
+                        const canReprocess = !hasPendingReview && status === 'up-to-date' && isReviewedSession
 
                         return (
                           <div
@@ -679,6 +694,7 @@ export function ReviewStatusPanel({ wsUrl, refreshKey = 0, onOpenSession }: Revi
                                 {session.sessionId}
                               </p>
                               <div className="flex flex-wrap items-center gap-1.5">
+                                {activeReviewRun ? <ReviewRunStatusBadge run={activeReviewRun} /> : null}
                                 <StatusBadge status={status} />
                                 {reasonPills.map((reason) => (
                                   <span
