@@ -710,4 +710,45 @@ describe('buildSwarmTools', () => {
       },
     })
   })
+
+  it('exposes onboarding tools only while onboarding mode is active', () => {
+    const host: SwarmToolHost = {
+      listAgents: () => [makeManagerDescriptor('cortex', { archetypeId: 'cortex', profileId: 'cortex' })],
+      spawnAgent: async () => makeWorkerDescriptor('worker'),
+      killAgent: async () => {},
+      sendMessage: async () => ({
+        targetAgentId: 'worker',
+        deliveryId: 'delivery-1',
+        acceptedMode: 'prompt',
+      }),
+      publishToUser: async () => ({ targetContext: { channel: 'web' } }),
+      isOnboardingMode: () => true,
+      saveOnboardingFacts: async () => ({
+        ok: true,
+        snapshot: {
+          revision: 1,
+        },
+      } as any),
+      setOnboardingStatus: async () => ({
+        ok: true,
+        snapshot: {
+          revision: 2,
+        },
+      } as any),
+    }
+
+    const onboardingTools = buildSwarmTools(host, makeManagerDescriptor('cortex', { archetypeId: 'cortex', profileId: 'cortex' }))
+    expect(onboardingTools.some((tool) => tool.name === 'save_onboarding_facts')).toBe(true)
+    expect(onboardingTools.some((tool) => tool.name === 'set_onboarding_status')).toBe(true)
+
+    const normalTools = buildSwarmTools(
+      {
+        ...host,
+        isOnboardingMode: () => false,
+      },
+      makeManagerDescriptor('cortex', { archetypeId: 'cortex', profileId: 'cortex' }),
+    )
+    expect(normalTools.some((tool) => tool.name === 'save_onboarding_facts')).toBe(false)
+    expect(normalTools.some((tool) => tool.name === 'set_onboarding_status')).toBe(false)
+  })
 })

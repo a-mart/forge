@@ -33,6 +33,7 @@ vi.mock('../swarm/memory-merge.js', async () => {
 })
 
 import { readSessionMeta } from '../swarm/session-manifest.js'
+import { getOnboardingSnapshot, loadOnboardingState, saveOnboardingFacts, setOnboardingStatus } from '../swarm/onboarding-state.js'
 import { buildSessionMemoryRuntimeView, SwarmManager } from '../swarm/swarm-manager.js'
 import type {
   AgentContextUsage,
@@ -126,6 +127,7 @@ class TestSwarmManager extends SwarmManager {
   readonly runtimeByAgentId = new Map<string, FakeRuntime>()
   readonly createdRuntimeIds: string[] = []
   readonly systemPromptByAgentId = new Map<string, string>()
+  onboardingExtractorImpl?: (snapshot: any, userMessage: string) => Promise<any | null>
 
   async getMemoryRuntimeResourcesForTest(agentId = 'manager'): Promise<{
     memoryContextFile: { path: string; content: string }
@@ -169,6 +171,14 @@ class TestSwarmManager extends SwarmManager {
     _sessionMemoryContent: string,
   ): Promise<{ mergedContent: string; model: string }> {
     throw new Error('LLM merge disabled in tests')
+  }
+
+  protected override async executeOnboardingExtractorPrompt(snapshot: any, userMessage: string): Promise<any | null> {
+    if (!this.onboardingExtractorImpl) {
+      return null
+    }
+
+    return this.onboardingExtractorImpl(snapshot, userMessage)
   }
 }
 
@@ -229,13 +239,13 @@ async function waitForFileText(path: string): Promise<string> {
 }
 
 async function waitForCondition(
-  condition: () => boolean,
+  condition: () => boolean | Promise<boolean>,
   timeoutMs = 500,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs
 
   while (Date.now() < deadline) {
-    if (condition()) {
+    if (await condition()) {
       return
     }
 
@@ -1505,6 +1515,118 @@ describe('SwarmManager', () => {
     expect(workerPrompt).toContain('Persistent memory for this runtime is at ${SWARM_MEMORY_FILE}')
     expect(workerPrompt).toContain('Workers read their owning manager\'s memory file.')
     expect(workerPrompt).toContain('Follow the memory skill workflow before editing the memory file')
+  })
+
+  it('switches the root Cortex runtime into onboarding prompt mode while review sessions stay on the normal prompt', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+
+    await manager.boot()
+    await manager.handleUserMessage('Hello Cortex', { targetAgentId: 'cortex' })
+
+    const cortexPrompt = manager.systemPromptByAgentId.get('cortex')
+    expect(cortexPrompt).toContain('You are Cortex in first-launch onboarding mode.')
+    expect(manager.isOnboardingMode('cortex')).toBe(true)
+
+    const { sessionAgent: reviewSession } = await manager.createSession('cortex', {
+      label: 'Review Session',
+      sessionPurpose: 'cortex_review',
+    })
+
+    const reviewPrompt = manager.systemPromptByAgentId.get(reviewSession.agentId)
+    expect(reviewPrompt).toBeDefined()
+    expect(reviewPrompt).not.toContain('You are Cortex in first-launch onboarding mode.')
+    expect(reviewPrompt).toContain('Maintain `${SWARM_DATA_DIR}/shared/knowledge/common.md`')
+  })
+
+  it('returns the root Cortex runtime to the normal prompt after onboarding completes', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+
+    await manager.boot()
+    await manager.handleUserMessage('Hello Cortex', { targetAgentId: 'cortex' })
+
+    const activeSnapshot = await getOnboardingSnapshot(config.paths.dataDir)
+    const completed = await manager.setOnboardingStatus('cortex', {
+      status: 'completed',
+      cycleId: activeSnapshot.cycleId,
+      baseRevision: activeSnapshot.revision,
+    })
+    expect(completed.ok).toBe(true)
+
+    await manager.handleUserMessage('Thanks, moving on', { targetAgentId: 'cortex' })
+
+    const cortexPrompt = manager.systemPromptByAgentId.get('cortex')
+    expect(cortexPrompt).toBeDefined()
+    expect(cortexPrompt).not.toContain('You are Cortex in first-launch onboarding mode.')
+    expect(cortexPrompt).toContain('Maintain `${SWARM_DATA_DIR}/shared/knowledge/common.md`')
+    expect(manager.isOnboardingMode('cortex')).toBe(false)
+  })
+
+  it('injects confirmed onboarding defaults into newly created manager runtime memory', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+
+    await manager.boot()
+    const initialSnapshot = await loadOnboardingState(config.paths.dataDir)
+    const saved = await saveOnboardingFacts(
+      config.paths.dataDir,
+      {
+        preferredName: { value: 'Ada', status: 'confirmed' },
+        responseVerbosity: { value: 'detailed', status: 'tentative' },
+        autonomyDefault: { value: 'autonomous', status: 'promoted' },
+      },
+      initialSnapshot.cycleId,
+      initialSnapshot.revision,
+    )
+    expect(saved.ok).toBe(true)
+
+    const created = await manager.createManager('cortex', {
+      name: 'Project Manager',
+      cwd: config.defaultCwd,
+    })
+
+    const resources = await manager.getMemoryRuntimeResourcesForTest(created.agentId)
+    expect(resources.memoryContextFile.content).toContain('# Onboarding Snapshot (authoritative backend state — read-only reference)')
+    expect(resources.memoryContextFile.content).toContain('- preferred name: Ada')
+    expect(resources.memoryContextFile.content).toContain('- autonomy default: autonomous')
+    expect(resources.memoryContextFile.content).not.toContain('- response verbosity: detailed')
+  })
+
+  it('runs the onboarding extractor after eligible Cortex turns without blocking the main conversation', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    manager.onboardingExtractorImpl = async (snapshot, userMessage) => {
+      if (userMessage !== 'Call me Ada') {
+        return null
+      }
+
+      return {
+        action: 'patch',
+        cycleId: snapshot.cycleId,
+        baseRevision: snapshot.revision,
+        facts: {
+          preferredName: { value: 'Ada', status: 'confirmed' },
+        },
+      }
+    }
+
+    await manager.boot()
+    await manager.handleUserMessage('Call me Ada', { targetAgentId: 'cortex' })
+
+    const runtimeToken = (manager as any).runtimeTokensByAgentId.get('cortex') as number
+    await (manager as any).handleRuntimeStatus(runtimeToken, 'cortex', 'idle', 0)
+
+    await waitForCondition(async () => {
+      const snapshot = await getOnboardingSnapshot(config.paths.dataDir)
+      return snapshot.captured.preferredName.value === 'Ada'
+    })
+
+    const snapshot = await getOnboardingSnapshot(config.paths.dataDir)
+    expect(snapshot.captured.preferredName).toMatchObject({
+      value: 'Ada',
+      status: 'confirmed',
+    })
   })
 
   it('auto-loads per-runtime memory context and wires built-in memory + brave-search + cron-scheduling + agent-browser + image-generation + slash-commands + chrome-cdp skills', async () => {

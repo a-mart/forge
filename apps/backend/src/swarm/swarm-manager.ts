@@ -3,13 +3,14 @@ import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
 import { appendFile, copyFile, mkdir, open, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
-import type { Api, Model } from "@mariozechner/pi-ai";
-import { getModel } from "@mariozechner/pi-ai";
+import { complete, getModel, type Api, type AssistantMessage, type Model } from "@mariozechner/pi-ai";
 import { AuthStorage, ModelRegistry } from "@mariozechner/pi-coding-agent";
 import type {
   CortexReviewRunRecord,
   CortexReviewRunScope,
   CortexReviewRunTrigger,
+  OnboardingState,
+  OnboardingStatus,
   ServerEvent,
   SessionMemoryMergeAttemptStatus,
   SessionMemoryMergeFailureStage,
@@ -96,8 +97,18 @@ import {
   normalizeSwarmModelDescriptor,
   parseSwarmModelPreset,
   parseSwarmReasoningLevel,
-  resolveModelDescriptorFromPreset
+  resolveModelDescriptorFromPreset,
+  resolveOnboardingManagerModelDescriptor
 } from "./model-presets.js";
+import {
+  activateOnboardingForEligibleTurn,
+  getOnboardingSnapshot,
+  loadOnboardingState,
+  renderOnboardingCommonKnowledge,
+  saveOnboardingFacts,
+  setOnboardingStatus
+} from "./onboarding-state.js";
+import type { OnboardingFactsPatch, OnboardingMutationResult } from "./onboarding-state.js";
 import {
   isNonRunningAgentStatus,
   normalizeAgentStatus,
@@ -161,35 +172,61 @@ const CORTEX_PROFILE_ID = "cortex";
 const CORTEX_DISPLAY_NAME = "Cortex";
 const CORTEX_REVIEW_RUN_QUEUE_RETRY_MS = 250;
 const INTERNAL_MODEL_MESSAGE_PREFIX = "SYSTEM: ";
-const MANAGER_BOOTSTRAP_INTERVIEW_MESSAGE = `You are a newly created manager agent for this user.
+const MANAGER_BOOTSTRAP_INTERVIEW_MESSAGE = `You are a newly created manager agent for this specific project/profile.
 
-Send a warm welcome via speak_to_user and explain that you orchestrate worker agents to get work done quickly and safely.
+Cortex may already have captured durable cross-project user defaults such as preferred name, technical comfort, response style, explanation depth, update cadence, autonomy default, and risk escalation preference.
+If an onboarding snapshot or onboarding-derived summary is present in injected context, treat that as authoritative over any rendered natural-language copy.
 
-Then run a short onboarding interview. Ask:
-1. What kinds of projects/tasks they expect to work on most.
-2. Whether they prefer delegation-heavy execution or hands-on collaboration.
-3. Which tools/integrations matter most (Slack, Telegram, cron scheduling, web search, etc.).
-4. Any coding/process preferences (style conventions, testing expectations, branching/PR habits).
-5. Communication style preferences (concise vs detailed, formal vs casual, update cadence).
+Do NOT re-run a generic user onboarding interview.
+Do NOT ask broad user-level questions like:
+- what they like to be called
+- whether they prefer concise or detailed responses in general
+- whether they prefer autonomy or collaboration in general
+- what explanation depth they want in general
+unless that information is truly missing and directly necessary for the immediate work.
 
-Offer this example workflow to show what's possible:
+Important honesty rule:
+- If onboarding defaults are actually present, you may briefly acknowledge that you already have a baseline sense of how they like to work.
+- If onboarding was skipped, deferred, or is effectively empty, do NOT imply that you already know their preferences.
+- In that case, stay project-focused and let Cortex handle cross-project preferences later.
 
-"The Delegator" workflow:
-- User describes a feature or task.
-- Manager spawns a codex worker in a git worktree branch.
-- Worker implements and validates (typecheck, build, tests).
-- Merger agent merges the branch to main.
-- Multiple independent tasks can run in parallel across separate workers.
-- Use different model workers for different strengths (e.g. opus for UI polish, codex for backend).
-- Manager focuses on orchestration and concise status updates.
-- Memory file tracks preferences, decisions, and project context across sessions.
+Your first job is to orient to THIS project.
 
-This is just one example — ask the user how they'd like to work and adapt to their style.
+Send a warm welcome. Then run a short, practical, project bootstrap conversation focused on:
+1. What they are building or trying to accomplish here.
+2. Which repo, directory, or codebase is the source of truth.
+3. The project stack and architecture, if not obvious from files.
+4. Validation commands and quality gates.
+5. Repo-specific conventions, constraints, workflows, or guardrails.
+6. Docs or guidance you should read first.
+7. What they want to do first.
 
-Close by asking if they want you to save their preferences to memory for future sessions.
-If they agree, summarize the choices and persist them using the memory workflow.`;
+Keep this conversational, not checklist-like.
+Ask only the next most useful question.
+If the user arrives with a concrete task, get enough bootstrap context to work safely, then move into execution.
+
+Prefer repo inspection over interrogation.
+Start by reading these in order when they exist and are relevant:
+1. AGENTS.md / SWARM.md / repo-specific agent instructions
+2. README.md or top-level docs for project overview
+3. package.json / pnpm-workspace.yaml / pyproject.toml / Cargo.toml / go.mod / equivalent manifests
+4. build, test, lint, typecheck, or task-runner config
+5. CONTRIBUTING.md, docs/DEVELOPMENT.md, or similar contributor guidance
+
+Ask the user only for what you cannot infer confidently from those materials.
+Distinguish durable repo conventions from one-off task details.
+Do not collapse project-specific rules into cross-project user defaults.
+
+Useful first-message shapes:
+- If onboarding defaults are present: “Hi — I already have a baseline sense of how you like to work, so I’ll focus on this project. What are we building here, and which repo or directory should I treat as the source of truth?”
+- If onboarding defaults are absent: “Hi — I’ll focus on getting oriented to this project. What are we building here, and which repo or directory should I treat as the source of truth?”
+
+Do not include the old generic “how do you like to work” interview.
+This manager’s onboarding is about the project, not the person.`;
 const COMMON_KNOWLEDGE_MEMORY_HEADER =
   "# Common Knowledge (maintained by Cortex — read-only reference)";
+const ONBOARDING_SNAPSHOT_MEMORY_HEADER =
+  "# Onboarding Snapshot (authoritative backend state — read-only reference)";
 const COMMON_KNOWLEDGE_INITIAL_TEMPLATE = `# Common Knowledge
 <!-- Maintained by Cortex. Last updated: {ISO timestamp} -->
 
@@ -848,6 +885,24 @@ interface ModelCapacityBlock {
   reason: string;
 }
 
+type ManagerPromptMode = "default" | "cortex_onboarding";
+
+interface PendingOnboardingTurn {
+  userMessage: string;
+  sourceContext: MessageSourceContext;
+  recordedAt: string;
+}
+
+interface OnboardingExtractorPatch {
+  action: "patch";
+  cycleId: string;
+  baseRevision: number;
+  facts?: OnboardingFactsPatch;
+  status?: OnboardingStatus | null;
+  renderCommonMd?: boolean;
+  reason?: string;
+}
+
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -862,6 +917,87 @@ function normalizeMemoryTemplateLines(content: string): string[] {
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
+}
+
+function isInjectableOnboardingFactStatus(status: string | null | undefined): boolean {
+  return status === "confirmed" || status === "promoted";
+}
+
+function shouldInjectOnboardingSnapshot(snapshot: OnboardingState): boolean {
+  return (
+    (typeof snapshot.captured.preferredName.value === "string" &&
+      isInjectableOnboardingFactStatus(snapshot.captured.preferredName.status)) ||
+    (snapshot.captured.technicalComfort.value !== null &&
+      isInjectableOnboardingFactStatus(snapshot.captured.technicalComfort.status)) ||
+    (snapshot.captured.responseVerbosity.value !== null &&
+      isInjectableOnboardingFactStatus(snapshot.captured.responseVerbosity.status)) ||
+    (snapshot.captured.explanationDepth.value !== null &&
+      isInjectableOnboardingFactStatus(snapshot.captured.explanationDepth.status)) ||
+    (snapshot.captured.updateCadence.value !== null &&
+      isInjectableOnboardingFactStatus(snapshot.captured.updateCadence.status)) ||
+    (snapshot.captured.autonomyDefault.value !== null &&
+      isInjectableOnboardingFactStatus(snapshot.captured.autonomyDefault.status)) ||
+    (snapshot.captured.riskEscalationPreference.value !== null &&
+      isInjectableOnboardingFactStatus(snapshot.captured.riskEscalationPreference.status)) ||
+    ((snapshot.captured.primaryUseCases.value?.length ?? 0) > 0 &&
+      isInjectableOnboardingFactStatus(snapshot.captured.primaryUseCases.status))
+  );
+}
+
+function buildOnboardingSnapshotMemoryBlock(snapshot: OnboardingState): string {
+  const lines = [ONBOARDING_SNAPSHOT_MEMORY_HEADER, "", `- status: ${snapshot.status}`];
+
+  if (
+    snapshot.captured.preferredName.value &&
+    isInjectableOnboardingFactStatus(snapshot.captured.preferredName.status)
+  ) {
+    lines.push(`- preferred name: ${snapshot.captured.preferredName.value}`);
+  }
+  if (
+    snapshot.captured.technicalComfort.value &&
+    isInjectableOnboardingFactStatus(snapshot.captured.technicalComfort.status)
+  ) {
+    lines.push(`- technical comfort: ${snapshot.captured.technicalComfort.value}`);
+  }
+  if (
+    snapshot.captured.responseVerbosity.value &&
+    isInjectableOnboardingFactStatus(snapshot.captured.responseVerbosity.status)
+  ) {
+    lines.push(`- response verbosity: ${snapshot.captured.responseVerbosity.value}`);
+  }
+  if (
+    snapshot.captured.explanationDepth.value &&
+    isInjectableOnboardingFactStatus(snapshot.captured.explanationDepth.status)
+  ) {
+    lines.push(`- explanation depth: ${snapshot.captured.explanationDepth.value}`);
+  }
+  if (
+    snapshot.captured.updateCadence.value &&
+    isInjectableOnboardingFactStatus(snapshot.captured.updateCadence.status)
+  ) {
+    lines.push(`- update cadence: ${snapshot.captured.updateCadence.value}`);
+  }
+  if (
+    snapshot.captured.autonomyDefault.value &&
+    isInjectableOnboardingFactStatus(snapshot.captured.autonomyDefault.status)
+  ) {
+    lines.push(`- autonomy default: ${snapshot.captured.autonomyDefault.value}`);
+  }
+  if (
+    snapshot.captured.riskEscalationPreference.value &&
+    isInjectableOnboardingFactStatus(snapshot.captured.riskEscalationPreference.status)
+  ) {
+    lines.push(`- risk escalation preference: ${snapshot.captured.riskEscalationPreference.value}`);
+  }
+  const primaryUseCases = snapshot.captured.primaryUseCases.value ?? [];
+  if (
+    primaryUseCases.length > 0 &&
+    isInjectableOnboardingFactStatus(snapshot.captured.primaryUseCases.status)
+  ) {
+    lines.push(`- primary use cases: ${primaryUseCases.join(", ")}`);
+  }
+
+  return `${lines.join("\n")}\n`;
 }
 
 function getCortexWorkerPromptsBackupSuffix(content: string): ".v1.bak" | ".v2.bak" | ".v3.bak" | undefined {
@@ -1015,6 +1151,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private integrationContextProvider: ((profileId: string) => string) | undefined;
   private readonly versioningService: VersioningMutationSink | undefined;
   private readonly trackedToolPathsByAgentId = new Map<string, Map<string, { toolName: string; path: string }>>();
+  private readonly managerPromptModesByAgentId = new Map<string, ManagerPromptMode>();
+  private readonly pendingOnboardingTurnsByAgentId = new Map<string, PendingOnboardingTurn[]>();
 
   constructor(config: SwarmConfig, options?: { now?: () => string; versioningService?: VersioningMutationSink }) {
     super();
@@ -1149,6 +1287,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     this.reconcileProfilesOnBoot();
     await this.ensureCortexProfile();
+    await loadOnboardingState(this.config.paths.dataDir);
     await this.ensureLegacyProfileKnowledgeReferenceDocs();
     this.normalizeStreamingStatusesForBoot();
     await this.recoverMissingWorkerDescriptorsForBoot();
@@ -2391,7 +2530,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   private async applyManagerRuntimeRecyclePolicy(
     agentId: string,
-    reason: "model_change" | "idle_transition"
+    reason: "model_change" | "idle_transition" | "prompt_mode_change"
   ): Promise<"recycled" | "deferred" | "none"> {
     const descriptor = this.descriptors.get(agentId);
     if (!descriptor || descriptor.role !== "manager") {
@@ -2434,7 +2573,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private async recycleManagerRuntime(
     descriptor: AgentDescriptor,
     runtime: SwarmAgentRuntime,
-    reason: "model_change" | "idle_transition"
+    reason: "model_change" | "idle_transition" | "prompt_mode_change"
   ): Promise<void> {
     if (descriptor.role !== "manager") {
       return;
@@ -3229,6 +3368,144 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     };
   }
 
+  isOnboardingMode(agentId: string): boolean {
+    return this.managerPromptModesByAgentId.get(agentId) === "cortex_onboarding";
+  }
+
+  private async resolveManagerPromptMode(descriptor: AgentDescriptor): Promise<ManagerPromptMode> {
+    if (descriptor.role !== "manager") {
+      return "default";
+    }
+
+    if (!this.isCortexRootInteractiveSession(descriptor)) {
+      return "default";
+    }
+
+    const snapshot = await getOnboardingSnapshot(this.config.paths.dataDir);
+    return snapshot.status === "not_started" || snapshot.status === "active"
+      ? "cortex_onboarding"
+      : "default";
+  }
+
+  private async syncManagerPromptMode(
+    descriptor: AgentDescriptor,
+    options?: { recycleIfChanged?: boolean }
+  ): Promise<ManagerPromptMode> {
+    const nextMode = await this.resolveManagerPromptMode(descriptor);
+    const previousMode = this.managerPromptModesByAgentId.get(descriptor.agentId) ?? "default";
+    this.managerPromptModesByAgentId.set(descriptor.agentId, nextMode);
+
+    if (
+      options?.recycleIfChanged &&
+      descriptor.role === "manager" &&
+      previousMode !== nextMode &&
+      this.runtimes.has(descriptor.agentId)
+    ) {
+      this.pendingManagerRuntimeRecycleAgentIds.add(descriptor.agentId);
+      await this.applyManagerRuntimeRecyclePolicy(descriptor.agentId, "prompt_mode_change");
+    }
+
+    return nextMode;
+  }
+
+  private queuePendingOnboardingTurn(agentId: string, turn: PendingOnboardingTurn): void {
+    const existing = this.pendingOnboardingTurnsByAgentId.get(agentId) ?? [];
+    existing.push(turn);
+    this.pendingOnboardingTurnsByAgentId.set(agentId, existing);
+  }
+
+  private takePendingOnboardingTurns(agentId: string): PendingOnboardingTurn[] {
+    const pending = this.pendingOnboardingTurnsByAgentId.get(agentId) ?? [];
+    this.pendingOnboardingTurnsByAgentId.delete(agentId);
+    return pending;
+  }
+
+  async saveOnboardingFacts(
+    callerAgentId: string,
+    input: {
+      cycleId: string;
+      baseRevision: number;
+      facts: OnboardingFactsPatch;
+      renderCommonMd?: boolean;
+    }
+  ): Promise<OnboardingMutationResult> {
+    this.assertCortexRootInteractiveManager(callerAgentId, "save onboarding facts");
+    const result = await saveOnboardingFacts(
+      this.config.paths.dataDir,
+      input.facts,
+      input.cycleId,
+      input.baseRevision
+    );
+
+    if (result.ok && input.renderCommonMd) {
+      await renderOnboardingCommonKnowledge(this.config.paths.dataDir, result.snapshot);
+    }
+
+    return result;
+  }
+
+  async setOnboardingStatus(
+    callerAgentId: string,
+    input: {
+      status: OnboardingStatus;
+      reason?: string | null;
+      cycleId: string;
+      baseRevision: number;
+      renderCommonMd?: boolean;
+    }
+  ): Promise<OnboardingMutationResult> {
+    this.assertCortexRootInteractiveManager(callerAgentId, "set onboarding status");
+    const result = await setOnboardingStatus(
+      this.config.paths.dataDir,
+      input.status,
+      input.reason ?? null,
+      input.cycleId,
+      input.baseRevision
+    );
+
+    if (result.ok && input.renderCommonMd) {
+      await renderOnboardingCommonKnowledge(this.config.paths.dataDir, result.snapshot);
+    }
+
+    if (result.ok) {
+      const descriptor = this.descriptors.get(callerAgentId);
+      if (descriptor) {
+        await this.syncManagerPromptMode(descriptor, { recycleIfChanged: true });
+      }
+    }
+
+    return result;
+  }
+
+  async updateOnboardingStatusFromUi(
+    input: {
+      status: Extract<OnboardingStatus, "active" | "deferred">;
+      reason?: string | null;
+    }
+  ): Promise<OnboardingMutationResult> {
+    const snapshot = await getOnboardingSnapshot(this.config.paths.dataDir);
+    const result = await setOnboardingStatus(
+      this.config.paths.dataDir,
+      input.status,
+      input.reason ?? null,
+      snapshot.cycleId,
+      snapshot.revision
+    );
+
+    if (result.ok && input.status === "deferred") {
+      await renderOnboardingCommonKnowledge(this.config.paths.dataDir, result.snapshot);
+    }
+
+    if (result.ok) {
+      const descriptor = this.descriptors.get(CORTEX_PROFILE_ID);
+      if (descriptor && this.isCortexRootInteractiveSession(descriptor)) {
+        await this.syncManagerPromptMode(descriptor, { recycleIfChanged: true });
+      }
+    }
+
+    return result;
+  }
+
   async compactAgentContext(
     agentId: string,
     options?: {
@@ -3493,6 +3770,20 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.emitConversationMessage(userEvent);
     this.markSessionActivity(targetAgentId, receivedAt);
 
+    let pendingOnboardingTurn: PendingOnboardingTurn | undefined;
+    if (target.role === "manager" && trimmed.length > 0 && this.isCortexRootInteractiveSession(target)) {
+      const onboardingSnapshot = await getOnboardingSnapshot(this.config.paths.dataDir);
+      if (onboardingSnapshot.status === "not_started" || onboardingSnapshot.status === "active") {
+        await activateOnboardingForEligibleTurn(this.config.paths.dataDir);
+        await this.syncManagerPromptMode(target, { recycleIfChanged: true });
+        pendingOnboardingTurn = {
+          userMessage: trimmed,
+          sourceContext,
+          recordedAt: receivedAt
+        };
+      }
+    }
+
     if (target.role !== "manager") {
       const requestedDelivery = options?.delivery ?? "auto";
       let receipt: SendMessageReceipt;
@@ -3602,6 +3893,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         sourceContext,
         attachmentCount: persistedAttachments.length
       });
+
+      if (pendingOnboardingTurn) {
+        this.queuePendingOnboardingTurn(target.agentId, pendingOnboardingTurn);
+      }
     } catch (error) {
       this.logDebug("manager:user_message_dispatch_error", {
         managerContextId,
@@ -3944,6 +4239,21 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
   }
 
+  private async resolveOnboardingOperationalPrompt(fileName: string, fallback: string): Promise<string> {
+    const promptPath = new URL(`./operational/${fileName}`, import.meta.url);
+
+    try {
+      return await readFile(promptPath, "utf8");
+    } catch (error) {
+      this.logDebug("prompt:resolve:onboarding_fallback", {
+        fileName,
+        path: String(promptPath),
+        message: error instanceof Error ? error.message : String(error)
+      });
+      return fallback;
+    }
+  }
+
   private reconcileProfilesOnBoot(): void {
     const managerDescriptorsById = new Map<string, AgentDescriptor>();
 
@@ -4028,7 +4338,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       createdAt,
       updatedAt: createdAt,
       cwd: this.config.defaultCwd,
-      model: this.resolveDefaultModelDescriptor(),
+      model: await resolveOnboardingManagerModelDescriptor(this.config),
       sessionFile: getSessionFilePath(this.config.paths.dataDir, CORTEX_PROFILE_ID, CORTEX_PROFILE_ID)
     };
 
@@ -4708,7 +5018,14 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       const managerArchetypeId = descriptor.archetypeId
         ? normalizeArchetypeId(descriptor.archetypeId) || MANAGER_ARCHETYPE_ID
         : MANAGER_ARCHETYPE_ID;
-      let prompt = await this.promptRegistry.resolve("archetype", managerArchetypeId, profileId);
+      const promptMode = await this.syncManagerPromptMode(descriptor);
+      let prompt =
+        promptMode === "cortex_onboarding"
+          ? await this.resolveOnboardingOperationalPrompt(
+              "cortex-onboarding.md",
+              await this.promptRegistry.resolve("archetype", managerArchetypeId, profileId)
+            )
+          : await this.promptRegistry.resolve("archetype", managerArchetypeId, profileId);
 
       if (this.integrationContextProvider) {
         try {
@@ -4829,6 +5146,15 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     if (isNonRunningAgentStatus(descriptor.status)) {
       throw new Error(`Manager is not running: ${agentId}`);
+    }
+
+    return descriptor;
+  }
+
+  private assertCortexRootInteractiveManager(agentId: string, action: string): AgentDescriptor {
+    const descriptor = this.assertManager(agentId, action);
+    if (!this.isCortexRootInteractiveSession(descriptor)) {
+      throw new Error(`Only the root interactive Cortex session can ${action}`);
     }
 
     return descriptor;
@@ -4973,6 +5299,22 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     } catch (error) {
       if (!isEnoentError(error)) {
         throw error;
+      }
+    }
+
+    if (
+      descriptor.role === "manager" &&
+      normalizeArchetypeId(descriptor.archetypeId ?? "") !== CORTEX_ARCHETYPE_ID
+    ) {
+      const onboardingSnapshot = await getOnboardingSnapshot(this.config.paths.dataDir);
+      if (shouldInjectOnboardingSnapshot(onboardingSnapshot)) {
+        memoryContent = [
+          memoryContent.trimEnd(),
+          "",
+          "---",
+          "",
+          buildOnboardingSnapshotMemoryBlock(onboardingSnapshot).trimEnd()
+        ].join("\n");
       }
     }
 
@@ -5211,6 +5553,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     if (descriptor.role === "manager") {
       if (nextStatus === "idle" && pendingCount === 0) {
         this.scheduleCortexCloseoutReminder(descriptor.agentId);
+        this.launchPendingOnboardingExtractors(descriptor);
         const recycleDisposition = await this.applyManagerRuntimeRecyclePolicy(descriptor.agentId, "idle_transition");
         if (recycleDisposition === "recycled") {
           await this.saveStore();
@@ -5220,6 +5563,184 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         this.clearCortexCloseoutReminder(descriptor.agentId);
       }
     }
+  }
+
+  private launchPendingOnboardingExtractors(descriptor: AgentDescriptor): void {
+    if (!this.isCortexRootInteractiveSession(descriptor)) {
+      this.pendingOnboardingTurnsByAgentId.delete(descriptor.agentId);
+      return;
+    }
+
+    const pendingTurns = this.takePendingOnboardingTurns(descriptor.agentId);
+    if (pendingTurns.length === 0) {
+      return;
+    }
+
+    for (const turn of pendingTurns) {
+      void this.captureOnboardingFactsFromTurn(descriptor, turn).catch((error) => {
+        this.logDebug("onboarding:extractor:error", {
+          agentId: descriptor.agentId,
+          recordedAt: turn.recordedAt,
+          sourceContext: turn.sourceContext,
+          message: error instanceof Error ? error.message : String(error)
+        });
+      });
+    }
+  }
+
+  private async captureOnboardingFactsFromTurn(
+    descriptor: AgentDescriptor,
+    turn: PendingOnboardingTurn
+  ): Promise<void> {
+    const snapshot = await getOnboardingSnapshot(this.config.paths.dataDir);
+    if (snapshot.status !== "active" && snapshot.status !== "not_started") {
+      return;
+    }
+
+    const extractorPatch = await this.executeOnboardingExtractorPrompt(snapshot, turn.userMessage);
+    if (!extractorPatch) {
+      return;
+    }
+
+    await this.applyOnboardingExtractorPatch(extractorPatch, descriptor);
+  }
+
+  private async applyOnboardingExtractorPatch(
+    patch: OnboardingExtractorPatch,
+    descriptor: AgentDescriptor
+  ): Promise<void> {
+    const dataDir = this.config.paths.dataDir;
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      let currentPatch = patch;
+      if (attempt > 0) {
+        const latestSnapshot = await getOnboardingSnapshot(dataDir);
+        currentPatch = {
+          ...patch,
+          cycleId: latestSnapshot.cycleId,
+          baseRevision: latestSnapshot.revision
+        };
+      }
+
+      let currentRevision = currentPatch.baseRevision;
+      let latestSnapshot: OnboardingState | undefined;
+
+      if (currentPatch.facts && Object.keys(currentPatch.facts).length > 0) {
+        const factResult = await saveOnboardingFacts(
+          dataDir,
+          currentPatch.facts,
+          currentPatch.cycleId,
+          currentRevision
+        );
+
+        if (!factResult.ok) {
+          if (factResult.reason === "stale_revision" && attempt === 0) {
+            continue;
+          }
+
+          this.logDebug("onboarding:extractor:fact_save_failed", {
+            agentId: descriptor.agentId,
+            reason: factResult.reason,
+            cycleId: currentPatch.cycleId,
+            baseRevision: currentRevision,
+            patchReason: currentPatch.reason
+          });
+          return;
+        }
+
+        latestSnapshot = factResult.snapshot;
+        currentRevision = factResult.snapshot.revision;
+      }
+
+      if (currentPatch.status) {
+        const statusResult = await setOnboardingStatus(
+          dataDir,
+          currentPatch.status,
+          currentPatch.reason ?? null,
+          currentPatch.cycleId,
+          currentRevision
+        );
+
+        if (!statusResult.ok) {
+          if (statusResult.reason === "stale_revision" && attempt === 0) {
+            continue;
+          }
+
+          this.logDebug("onboarding:extractor:status_save_failed", {
+            agentId: descriptor.agentId,
+            reason: statusResult.reason,
+            cycleId: currentPatch.cycleId,
+            baseRevision: currentRevision,
+            status: currentPatch.status,
+            patchReason: currentPatch.reason
+          });
+          return;
+        }
+
+        latestSnapshot = statusResult.snapshot;
+      }
+
+      if (currentPatch.renderCommonMd && latestSnapshot) {
+        await renderOnboardingCommonKnowledge(dataDir, latestSnapshot);
+      }
+
+      await this.syncManagerPromptMode(descriptor, { recycleIfChanged: true });
+      return;
+    }
+  }
+
+  protected async executeOnboardingExtractorPrompt(
+    snapshot: OnboardingState,
+    userMessage: string
+  ): Promise<OnboardingExtractorPatch | null> {
+    const extractorPrompt = await this.resolveOnboardingOperationalPrompt(
+      "onboarding-extractor.md",
+      [
+        "You are the onboarding post-turn extractor.",
+        "Return NOOP or a minimal JSON patch.",
+        "Only extract explicit durable cross-project onboarding facts.",
+        "Do not include prose or code fences."
+      ].join("\n")
+    );
+
+    const onboardingModelDescriptor = await resolveOnboardingManagerModelDescriptor(this.config);
+    const authFilePath = await ensureCanonicalAuthFilePath(this.config);
+    const authStorage = AuthStorage.create(authFilePath);
+    const modelRegistry = new ModelRegistry(authStorage);
+    const model = resolveModel(modelRegistry, onboardingModelDescriptor);
+
+    if (!model) {
+      throw new Error(
+        `Unable to resolve model ${onboardingModelDescriptor.provider}/${onboardingModelDescriptor.modelId} for onboarding extraction.`
+      );
+    }
+
+    const apiKey = await modelRegistry.getApiKey(model);
+    const response = await complete(
+      model,
+      {
+        systemPrompt: extractorPrompt,
+        messages: [
+          {
+            role: "user",
+            timestamp: Date.now(),
+            content: [
+              {
+                type: "text",
+                text: [
+                  `current onboarding snapshot: ${JSON.stringify(snapshot)}`,
+                  "",
+                  `user message: ${userMessage}`
+                ].join("\n")
+              }
+            ]
+          }
+        ]
+      },
+      apiKey ? { apiKey } : undefined
+    );
+
+    return parseOnboardingExtractorPatch(response);
   }
 
   private scheduleCortexCloseoutReminder(agentId: string): void {
@@ -7511,6 +8032,72 @@ function extractRuntimeMessageText(message: string | RuntimeUserMessage): string
   }
 
   return message.text;
+}
+
+function extractAssistantMessageText(message: AssistantMessage): string {
+  return message.content
+    .filter((part): part is Extract<AssistantMessage["content"][number], { type: "text" }> => part.type === "text")
+    .map((part) => part.text)
+    .join("")
+    .trim();
+}
+
+function stripOuterCodeFence(content: string): string {
+  const trimmed = content.trim();
+  const fencedMatch = trimmed.match(/^```(?:[a-zA-Z0-9_-]+)?\s*\n([\s\S]*?)\n?```$/);
+  return fencedMatch ? fencedMatch[1].trim() : trimmed;
+}
+
+function parseOnboardingExtractorPatch(message: AssistantMessage): OnboardingExtractorPatch | null {
+  const raw = stripOuterCodeFence(extractAssistantMessageText(message));
+  if (raw.length === 0 || raw.toUpperCase() === "NOOP") {
+    return null;
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return null;
+  }
+
+  const candidate = parsed as Record<string, unknown>;
+  if (candidate.action !== "patch") {
+    return null;
+  }
+
+  if (typeof candidate.cycleId !== "string" || !Number.isInteger(candidate.baseRevision)) {
+    return null;
+  }
+
+  const facts =
+    candidate.facts && typeof candidate.facts === "object" && !Array.isArray(candidate.facts)
+      ? (candidate.facts as OnboardingFactsPatch)
+      : undefined;
+  const status =
+    typeof candidate.status === "string" || candidate.status === null
+      ? (candidate.status as OnboardingStatus | null)
+      : undefined;
+  const renderCommonMd = candidate.renderCommonMd === true;
+  const reason = typeof candidate.reason === "string" ? candidate.reason : undefined;
+
+  if ((!facts || Object.keys(facts).length === 0) && !status) {
+    return null;
+  }
+
+  return {
+    action: "patch",
+    cycleId: candidate.cycleId,
+    baseRevision: candidate.baseRevision as number,
+    ...(facts ? { facts } : {}),
+    ...(status !== undefined ? { status } : {}),
+    ...(renderCommonMd ? { renderCommonMd: true } : {}),
+    ...(reason ? { reason } : {})
+  };
 }
 
 function formatInboundUserMessageForManager(text: string, sourceContext: MessageSourceContext): string {

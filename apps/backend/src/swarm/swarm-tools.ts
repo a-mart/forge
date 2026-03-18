@@ -1,6 +1,16 @@
 import { Type } from "@sinclair/typebox";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
+import type {
+  OnboardingAutonomyDefault,
+  OnboardingExplanationDepth,
+  OnboardingResponseVerbosity,
+  OnboardingRiskEscalationPreference,
+  OnboardingStatus,
+  OnboardingTechnicalComfort,
+  OnboardingUpdateCadence
+} from "@forge/protocol";
 import { parseSwarmModelPreset, parseSwarmReasoningLevel } from "./model-presets.js";
+import type { OnboardingFactsPatch, OnboardingMutationResult } from "./onboarding-state.js";
 import {
   type AgentDescriptor,
   type MessageChannel,
@@ -27,6 +37,26 @@ export interface SwarmToolHost {
     source?: "speak_to_user" | "system",
     targetContext?: MessageTargetContext
   ): Promise<{ targetContext: MessageSourceContext }>;
+  isOnboardingMode?(agentId: string): boolean;
+  saveOnboardingFacts?(
+    callerAgentId: string,
+    input: {
+      cycleId: string;
+      baseRevision: number;
+      facts: OnboardingFactsPatch;
+      renderCommonMd?: boolean;
+    }
+  ): Promise<OnboardingMutationResult>;
+  setOnboardingStatus?(
+    callerAgentId: string,
+    input: {
+      status: OnboardingStatus;
+      reason?: string | null;
+      cycleId: string;
+      baseRevision: number;
+      renderCommonMd?: boolean;
+    }
+  ): Promise<OnboardingMutationResult>;
 }
 
 const deliveryModeSchema = Type.Union([
@@ -72,6 +102,109 @@ const speakToUserTargetSchema = Type.Object({
   integrationProfileId: Type.Optional(
     Type.String({ description: "Optional integration profile id for provider-targeted delivery." })
   )
+});
+
+const onboardingFactStatusSchema = Type.Union([
+  Type.Literal("unknown"),
+  Type.Literal("tentative"),
+  Type.Literal("confirmed"),
+  Type.Literal("promoted")
+]);
+
+const onboardingStatusSchema = Type.Union([
+  Type.Literal("not_started"),
+  Type.Literal("active"),
+  Type.Literal("deferred"),
+  Type.Literal("completed"),
+  Type.Literal("migrated")
+]);
+
+const technicalComfortValueSchema = Type.Union([
+  Type.Literal("non_technical"),
+  Type.Literal("mixed"),
+  Type.Literal("technical"),
+  Type.Literal("advanced")
+]);
+
+const responseVerbosityValueSchema = Type.Union([
+  Type.Literal("concise"),
+  Type.Literal("balanced"),
+  Type.Literal("detailed")
+]);
+
+const explanationDepthValueSchema = Type.Union([
+  Type.Literal("minimal"),
+  Type.Literal("standard"),
+  Type.Literal("teaching")
+]);
+
+const updateCadenceValueSchema = Type.Union([
+  Type.Literal("milestones"),
+  Type.Literal("periodic"),
+  Type.Literal("frequent")
+]);
+
+const autonomyDefaultValueSchema = Type.Union([
+  Type.Literal("collaborative"),
+  Type.Literal("balanced"),
+  Type.Literal("autonomous")
+]);
+
+const riskEscalationPreferenceValueSchema = Type.Union([
+  Type.Literal("low_threshold"),
+  Type.Literal("normal"),
+  Type.Literal("high_threshold")
+]);
+
+const stringFactPatchSchema = Type.Object({
+  value: Type.String(),
+  status: onboardingFactStatusSchema
+});
+
+const technicalComfortFactPatchSchema = Type.Object({
+  value: technicalComfortValueSchema,
+  status: onboardingFactStatusSchema
+});
+
+const responseVerbosityFactPatchSchema = Type.Object({
+  value: responseVerbosityValueSchema,
+  status: onboardingFactStatusSchema
+});
+
+const explanationDepthFactPatchSchema = Type.Object({
+  value: explanationDepthValueSchema,
+  status: onboardingFactStatusSchema
+});
+
+const updateCadenceFactPatchSchema = Type.Object({
+  value: updateCadenceValueSchema,
+  status: onboardingFactStatusSchema
+});
+
+const autonomyDefaultFactPatchSchema = Type.Object({
+  value: autonomyDefaultValueSchema,
+  status: onboardingFactStatusSchema
+});
+
+const riskEscalationPreferenceFactPatchSchema = Type.Object({
+  value: riskEscalationPreferenceValueSchema,
+  status: onboardingFactStatusSchema
+});
+
+const primaryUseCasesFactPatchSchema = Type.Object({
+  value: Type.Array(Type.String()),
+  status: onboardingFactStatusSchema
+});
+
+const onboardingFactsPatchSchema = Type.Object({
+  preferredName: Type.Optional(stringFactPatchSchema),
+  technicalComfort: Type.Optional(technicalComfortFactPatchSchema),
+  responseVerbosity: Type.Optional(responseVerbosityFactPatchSchema),
+  explanationDepth: Type.Optional(explanationDepthFactPatchSchema),
+  updateCadence: Type.Optional(updateCadenceFactPatchSchema),
+  autonomyDefault: Type.Optional(autonomyDefaultFactPatchSchema),
+  riskEscalationPreference: Type.Optional(riskEscalationPreferenceFactPatchSchema),
+  primaryUseCases: Type.Optional(primaryUseCasesFactPatchSchema)
 });
 
 function includeListAgentsEntry(agent: AgentDescriptor, includeTerminated: boolean): boolean {
@@ -455,6 +588,100 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
       }
     }
   ];
+
+  const isOnboardingMode = host.isOnboardingMode?.(descriptor.agentId) === true;
+  const saveOnboardingFacts = host.saveOnboardingFacts;
+  const setOnboardingStatus = host.setOnboardingStatus;
+
+  if (isOnboardingMode && saveOnboardingFacts && setOnboardingStatus) {
+    managerOnly.push(
+      {
+        name: "save_onboarding_facts",
+        label: "Save Onboarding Facts",
+        description:
+          "Persist durable onboarding facts for the root Cortex onboarding conversation using compare-and-swap revision control.",
+        parameters: Type.Object({
+          cycleId: Type.String({ description: "Current onboarding cycle id." }),
+          baseRevision: Type.Integer({ minimum: 0, description: "Current onboarding revision for CAS." }),
+          facts: onboardingFactsPatchSchema,
+          renderCommonMd: Type.Optional(
+            Type.Boolean({ description: "Render the managed onboarding block in common.md after a successful save." })
+          )
+        }),
+        async execute(_toolCallId, params) {
+          const parsed = params as {
+            cycleId: string;
+            baseRevision: number;
+            facts: OnboardingFactsPatch;
+            renderCommonMd?: boolean;
+          };
+
+          const result = await saveOnboardingFacts(descriptor.agentId, {
+            cycleId: parsed.cycleId,
+            baseRevision: parsed.baseRevision,
+            facts: parsed.facts,
+            renderCommonMd: parsed.renderCommonMd
+          });
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: result.ok
+                  ? `Saved onboarding facts at revision ${result.snapshot.revision}.`
+                  : `Onboarding fact save failed: ${result.reason}.`
+              }
+            ],
+            details: result
+          };
+        }
+      },
+      {
+        name: "set_onboarding_status",
+        label: "Set Onboarding Status",
+        description:
+          "Persist the onboarding lifecycle status for the root Cortex onboarding conversation using compare-and-swap revision control.",
+        parameters: Type.Object({
+          status: onboardingStatusSchema,
+          reason: Type.Optional(Type.String({ description: "Optional short reason for the status change." })),
+          cycleId: Type.String({ description: "Current onboarding cycle id." }),
+          baseRevision: Type.Integer({ minimum: 0, description: "Current onboarding revision for CAS." }),
+          renderCommonMd: Type.Optional(
+            Type.Boolean({ description: "Render the managed onboarding block in common.md after a successful status change." })
+          )
+        }),
+        async execute(_toolCallId, params) {
+          const parsed = params as {
+            status: OnboardingStatus;
+            reason?: string;
+            cycleId: string;
+            baseRevision: number;
+            renderCommonMd?: boolean;
+          };
+
+          const result = await setOnboardingStatus(descriptor.agentId, {
+            status: parsed.status,
+            reason: parsed.reason,
+            cycleId: parsed.cycleId,
+            baseRevision: parsed.baseRevision,
+            renderCommonMd: parsed.renderCommonMd
+          });
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: result.ok
+                  ? `Set onboarding status to ${parsed.status} at revision ${result.snapshot.revision}.`
+                  : `Onboarding status update failed: ${result.reason}.`
+              }
+            ],
+            details: result
+          };
+        }
+      }
+    );
+  }
 
   return [...shared, ...managerOnly];
 }

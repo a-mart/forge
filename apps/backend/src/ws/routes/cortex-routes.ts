@@ -1,6 +1,6 @@
 import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
-import type { CortexReviewControlAction, CortexReviewRunAxis, CortexReviewRunScope } from "@forge/protocol";
+import type { CortexReviewControlAction, CortexReviewRunAxis, CortexReviewRunScope, OnboardingState, OnboardingStatus } from "@forge/protocol";
 import {
   getCommonKnowledgePath,
   getCortexNotesPath,
@@ -14,6 +14,7 @@ import {
   getProfileMergeAuditLogPath,
   getProfileReferencePath
 } from "../../swarm/data-paths.js";
+import { getOnboardingSnapshot } from "../../swarm/onboarding-state.js";
 import { scanCortexReviewStatus } from "../../swarm/scripts/cortex-scan.js";
 import { readSessionMeta, writeSessionMeta } from "../../swarm/session-manifest.js";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
@@ -26,11 +27,75 @@ const CORTEX_REVIEW_RUNS_ENDPOINT_PATH = "/api/cortex/review-runs";
 const CORTEX_REVIEW_RUNS_METHODS = "GET, POST, OPTIONS";
 const CORTEX_REVIEW_CONTROLS_ENDPOINT_PATH = "/api/cortex/review-controls";
 const CORTEX_REVIEW_CONTROLS_METHODS = "POST, OPTIONS";
+const ONBOARDING_STATE_ENDPOINT_PATH = "/api/onboarding/state";
+const ONBOARDING_STATE_METHODS = "GET, POST, OPTIONS";
 
 export function createCortexRoutes(options: { swarmManager: SwarmManager }): HttpRoute[] {
   const { swarmManager } = options;
 
   return [
+    {
+      methods: ONBOARDING_STATE_METHODS,
+      matches: (pathname) => pathname === ONBOARDING_STATE_ENDPOINT_PATH,
+      handle: async (request, response) => {
+        if (request.method === "OPTIONS") {
+          applyCorsHeaders(request, response, ONBOARDING_STATE_METHODS);
+          response.statusCode = 204;
+          response.end();
+          return;
+        }
+
+        applyCorsHeaders(request, response, ONBOARDING_STATE_METHODS);
+
+        if (request.method === "GET") {
+          try {
+            const snapshot = await getOnboardingSnapshot(swarmManager.getConfig().paths.dataDir);
+            sendJson(response, 200, { state: buildOnboardingStateResponse(snapshot) });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : "Unable to load onboarding state.";
+            sendJson(response, 500, { error: message });
+          }
+          return;
+        }
+
+        if (request.method === "POST") {
+          try {
+            const payload = await parseJsonBody(request, 8 * 1024);
+            const mutation = parseOnboardingStateMutationPayload(payload);
+            if (!mutation) {
+              sendJson(response, 400, { error: "Request body must include status: \"active\" or \"deferred\"." });
+              return;
+            }
+
+            const result = await swarmManager.updateOnboardingStatusFromUi(mutation);
+            if (!result.ok) {
+              sendJson(response, 409, {
+                error: result.reason === "stale_cycle" ? "Onboarding cycle changed." : "Onboarding revision changed.",
+                state: buildOnboardingStateResponse(result.snapshot)
+              });
+              return;
+            }
+
+            sendJson(response, 200, { state: buildOnboardingStateResponse(result.snapshot) });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : "Unable to update onboarding state.";
+            if (message.includes("Request body must be valid JSON")) {
+              sendJson(response, 400, { error: message });
+              return;
+            }
+            if (message.includes("Request body exceeds")) {
+              sendJson(response, 413, { error: message });
+              return;
+            }
+            sendJson(response, 500, { error: message });
+          }
+          return;
+        }
+
+        response.setHeader("Allow", ONBOARDING_STATE_METHODS);
+        sendJson(response, 405, { error: "Method Not Allowed" });
+      }
+    },
     {
       methods: CORTEX_REVIEW_RUNS_METHODS,
       matches: (pathname) => pathname === CORTEX_REVIEW_RUNS_ENDPOINT_PATH,
@@ -237,6 +302,46 @@ export function createCortexRoutes(options: { swarmManager: SwarmManager }): Htt
       }
     }
   ];
+}
+
+function buildOnboardingStateResponse(snapshot: OnboardingState) {
+  return {
+    status: snapshot.status,
+    cycleId: snapshot.cycleId,
+    revision: snapshot.revision,
+    firstPromptSentAt: snapshot.firstPromptSentAt,
+    startedAt: snapshot.startedAt,
+    completedAt: snapshot.completedAt,
+    deferredAt: snapshot.deferredAt,
+    migratedAt: snapshot.migratedAt,
+    lastUpdatedAt: snapshot.lastUpdatedAt,
+    captured: snapshot.captured
+  };
+}
+
+function parseOnboardingStateMutationPayload(
+  payload: unknown
+): { status: Extract<OnboardingStatus, "active" | "deferred">; reason?: string | null } | null {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return null;
+  }
+
+  const status = typeof (payload as { status?: unknown }).status === "string"
+    ? (payload as { status: string }).status.trim()
+    : "";
+  const reasonValue = (payload as { reason?: unknown }).reason;
+  const reason = typeof reasonValue === "string" && reasonValue.trim().length > 0
+    ? reasonValue.trim()
+    : null;
+
+  if (status !== "active" && status !== "deferred") {
+    return null;
+  }
+
+  return {
+    status,
+    reason
+  };
 }
 
 function parseReviewRunScopePayload(payload: unknown): CortexReviewRunScope | null {
