@@ -81,6 +81,8 @@ All persistent state lives in a single data directory:
 │       └── workers/           # Worker session logs
 ├── swarm/
 │   └── agents.json            # Agent registry
+├── skills/                    # Machine-local skills (optional, station-specific)
+│   └── <skillName>/SKILL.md
 └── uploads/                   # File uploads
 ```
 
@@ -92,6 +94,31 @@ All persistent state lives in a single data directory:
 | Windows | `%LOCALAPPDATA%\forge` |
 
 Override with `FORGE_DATA_DIR` in your environment or `.env` file.
+
+### Machine-local skills
+
+Forge automatically scans `${FORGE_DATA_DIR}/skills` for optional machine-local skills.
+
+Discovery precedence is:
+1. `${FORGE_DATA_DIR}/skills`
+2. repo-local `.swarm/skills`
+3. built-in skill definitions shipped with Forge
+
+Discovered skills are injected into all agent/runtime sessions the same way other loaded skills are.
+
+Use this for station-specific workflows that should stay outside a shared repository. A local skill should live at:
+
+```text
+${FORGE_DATA_DIR}/skills/<skillName>/SKILL.md
+```
+
+`SKILL.md` uses the normal skill frontmatter format (`name`, `description`, optional `env` declarations, then markdown body).
+
+On a default macOS/Linux install this becomes:
+
+```text
+~/.forge/skills/<skillName>/SKILL.md
+```
 
 ## Ports
 
