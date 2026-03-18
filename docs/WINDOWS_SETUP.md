@@ -11,7 +11,7 @@ Forge fully supports Windows for the backend daemon, dashboard UI, agent orchest
 ## Installation
 
 ```powershell
-git clone https://github.com/radopsai/middleman.git
+git clone https://github.com/a-mart/forge.git
 cd middleman
 pnpm i
 ```

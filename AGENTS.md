@@ -23,7 +23,7 @@ Forge is a local-first multi-agent orchestration platform. It provides:
 ## Getting Started
 
 ```bash
-git clone https://github.com/radopsai/middleman.git
+git clone https://github.com/a-mart/forge.git
 cd middleman
 cp .env.example .env          # Review and set any needed env vars
 pnpm install

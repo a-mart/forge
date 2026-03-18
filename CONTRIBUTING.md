@@ -10,7 +10,7 @@ Thanks for your interest in contributing! We welcome bug fixes, docs improvement
 ## Setup
 
 ```bash
-git clone https://github.com/radopsai/middleman.git
+git clone https://github.com/a-mart/forge.git
 cd middleman
 pnpm install
 cp .env.example .env

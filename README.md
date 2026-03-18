@@ -18,9 +18,8 @@ You're not an IC anymore. You've become a project manager. You need a middle man
 
 ### Install & Run
 
-<!-- TODO: confirm canonical URL before publish -->
 ```bash
-git clone https://github.com/radopsai/middleman.git
+git clone https://github.com/a-mart/forge.git
 cd middleman
 pnpm i
 pnpm prod:daemon
