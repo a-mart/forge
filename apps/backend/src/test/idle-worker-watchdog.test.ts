@@ -21,6 +21,7 @@ class FakeRuntime {
   sendCalls: Array<{ message: string | RuntimeUserMessage; delivery: RequestedDeliveryMode }> = []
   terminateCalls: Array<{ abort?: boolean } | undefined> = []
   stopInFlightCalls: Array<{ abort?: boolean } | undefined> = []
+  recycleCalls = 0
   contextRecoveryInProgress = false
   private nextDeliveryId = 0
 
@@ -67,6 +68,10 @@ class FakeRuntime {
   async terminate(options?: { abort?: boolean; shutdownTimeoutMs?: number; drainTimeoutMs?: number }): Promise<void> {
     this.terminateCalls.push(options)
     this.descriptor.status = 'terminated'
+  }
+
+  async recycle(): Promise<void> {
+    this.recycleCalls += 1
   }
 
   getCustomEntries(_customType: string): unknown[] {

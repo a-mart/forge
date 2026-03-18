@@ -49,6 +49,7 @@ class FakeRuntime {
   private readonly sessionManager: SessionManager
   terminateCalls: Array<{ abort?: boolean; shutdownTimeoutMs?: number; drainTimeoutMs?: number } | undefined> = []
   stopInFlightCalls: Array<{ abort?: boolean; shutdownTimeoutMs?: number; drainTimeoutMs?: number } | undefined> = []
+  recycleCalls = 0
   sendCalls: Array<{ message: string | RuntimeUserMessage; delivery: RequestedDeliveryMode }> = []
   compactCalls: Array<string | undefined> = []
   nextDeliveryId = 0
@@ -88,6 +89,10 @@ class FakeRuntime {
 
   async terminate(options?: { abort?: boolean; shutdownTimeoutMs?: number; drainTimeoutMs?: number }): Promise<void> {
     this.terminateCalls.push(options)
+  }
+
+  async recycle(): Promise<void> {
+    this.recycleCalls += 1
   }
 
   async stopInFlight(options?: { abort?: boolean; shutdownTimeoutMs?: number; drainTimeoutMs?: number }): Promise<void> {
@@ -4002,6 +4007,109 @@ describe('SwarmManager', () => {
         model: 'invalid-model' as any,
       }),
     ).rejects.toThrow('create_manager.model must be one of pi-codex|pi-5.4|pi-opus|codex-app')
+  })
+
+  it('recycles idle manager session runtimes after a profile model change and recreates them on the next prompt', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    const rootSession = await bootWithDefaultManager(manager, config)
+    const { sessionAgent } = await manager.createSession('manager', { label: 'Alt Session' })
+
+    const rootRuntime = manager.runtimeByAgentId.get(rootSession.agentId)
+    const sessionRuntime = manager.runtimeByAgentId.get(sessionAgent.agentId)
+    const state = manager as unknown as {
+      runtimes: Map<string, SwarmAgentRuntime>
+    }
+
+    expect(rootRuntime).toBeDefined()
+    expect(sessionRuntime).toBeDefined()
+    expect(state.runtimes.has(rootSession.agentId)).toBe(true)
+    expect(state.runtimes.has(sessionAgent.agentId)).toBe(true)
+
+    await manager.updateManagerModel('manager', 'pi-5.4')
+
+    expect(rootRuntime?.recycleCalls).toBe(1)
+    expect(sessionRuntime?.recycleCalls).toBe(1)
+    expect(state.runtimes.has(rootSession.agentId)).toBe(false)
+    expect(state.runtimes.has(sessionAgent.agentId)).toBe(false)
+    expect(manager.getAgent(rootSession.agentId)?.model).toEqual({
+      provider: 'openai-codex',
+      modelId: 'gpt-5.4',
+      thinkingLevel: 'xhigh',
+    })
+    expect(manager.getAgent(sessionAgent.agentId)?.model).toEqual({
+      provider: 'openai-codex',
+      modelId: 'gpt-5.4',
+      thinkingLevel: 'xhigh',
+    })
+
+    const createdRuntimeCountBeforePrompt = manager.createdRuntimeIds.length
+    await manager.handleUserMessage('Use the new model', { targetAgentId: sessionAgent.agentId })
+
+    expect(manager.createdRuntimeIds.length).toBe(createdRuntimeCountBeforePrompt + 1)
+    expect(manager.runtimeByAgentId.get(sessionAgent.agentId)).not.toBe(sessionRuntime)
+    expect(state.runtimes.has(sessionAgent.agentId)).toBe(true)
+  })
+
+  it('defers runtime recycle for active manager sessions until they return to idle', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const { sessionAgent } = await manager.createSession('manager', { label: 'Streaming Session' })
+
+    const descriptor = manager.getAgent(sessionAgent.agentId)
+    const sessionRuntime = manager.runtimeByAgentId.get(sessionAgent.agentId)
+    const state = manager as unknown as {
+      runtimes: Map<string, SwarmAgentRuntime>
+      runtimeTokensByAgentId: Map<string, number>
+      pendingManagerRuntimeRecycleAgentIds: Set<string>
+      handleRuntimeStatus: (
+        runtimeToken: number,
+        agentId: string,
+        status: AgentDescriptor['status'],
+        pendingCount: number,
+        contextUsage?: AgentContextUsage,
+      ) => Promise<void>
+    }
+
+    expect(descriptor?.role).toBe('manager')
+    expect(sessionRuntime).toBeDefined()
+
+    if (!descriptor || descriptor.role !== 'manager' || !sessionRuntime) {
+      throw new Error('Expected manager session runtime to exist')
+    }
+
+    descriptor.status = 'streaming'
+    descriptor.updatedAt = new Date().toISOString()
+    sessionRuntime.busy = true
+
+    await manager.updateManagerModel('manager', 'pi-opus')
+
+    expect(sessionRuntime.recycleCalls).toBe(0)
+    expect(state.pendingManagerRuntimeRecycleAgentIds.has(sessionAgent.agentId)).toBe(true)
+    expect(state.runtimes.has(sessionAgent.agentId)).toBe(true)
+
+    const runtimeToken = state.runtimeTokensByAgentId.get(sessionAgent.agentId)
+    expect(runtimeToken).toBeTypeOf('number')
+
+    sessionRuntime.busy = false
+    await state.handleRuntimeStatus(runtimeToken as number, sessionAgent.agentId, 'idle', 0)
+
+    expect(sessionRuntime.recycleCalls).toBe(1)
+    expect(state.pendingManagerRuntimeRecycleAgentIds.has(sessionAgent.agentId)).toBe(false)
+    expect(state.runtimes.has(sessionAgent.agentId)).toBe(false)
+    expect(manager.getAgent(sessionAgent.agentId)?.model).toEqual({
+      provider: 'anthropic',
+      modelId: 'claude-opus-4-6',
+      thinkingLevel: 'xhigh',
+    })
+
+    const createdRuntimeCountBeforePrompt = manager.createdRuntimeIds.length
+    await manager.handleUserMessage('Recreate after idle', { targetAgentId: sessionAgent.agentId })
+
+    expect(manager.createdRuntimeIds.length).toBe(createdRuntimeCountBeforePrompt + 1)
+    expect(manager.runtimeByAgentId.get(sessionAgent.agentId)).not.toBe(sessionRuntime)
+    expect(state.runtimes.has(sessionAgent.agentId)).toBe(true)
   })
 
   it('maps spawn_agent model presets to canonical runtime models with highest reasoning', async () => {

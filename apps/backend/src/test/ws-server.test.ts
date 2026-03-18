@@ -39,6 +39,7 @@ class FakeRuntime {
   private readonly sessionManager: SessionManager
   compactCalls: Array<string | undefined> = []
   terminateCalls = 0
+  recycleCalls = 0
   stopInFlightCalls: Array<{ abort?: boolean; shutdownTimeoutMs?: number; drainTimeoutMs?: number } | undefined> = []
   stopInFlightImpl?: (options?: { abort?: boolean; shutdownTimeoutMs?: number; drainTimeoutMs?: number }) => Promise<void>
   terminateImpl?: (options?: { abort?: boolean; shutdownTimeoutMs?: number; drainTimeoutMs?: number }) => Promise<void>
@@ -78,6 +79,10 @@ class FakeRuntime {
     if (this.terminateImpl) {
       await this.terminateImpl(options)
     }
+  }
+
+  async recycle(): Promise<void> {
+    this.recycleCalls += 1
   }
 
   async stopInFlight(options?: { abort?: boolean; shutdownTimeoutMs?: number; drainTimeoutMs?: number }): Promise<void> {

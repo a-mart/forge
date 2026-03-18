@@ -83,6 +83,7 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
   private readonly rpc: CodexJsonRpcClient;
 
   private shutdownRpcSupported = true;
+  private suppressProcessExitHandling = false;
   private status: AgentStatus;
   private threadId: string | undefined;
   private activeTurnId: string | undefined;
@@ -273,27 +274,41 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
       await this.tryGracefulShutdownRpc();
     }
 
-    this.rpc.dispose();
-    try {
-      await this.waitForPendingCustomEntryWrites(options?.drainTimeoutMs ?? DEFAULT_CUSTOM_ENTRY_WRITE_DRAIN_TIMEOUT_MS);
-    } catch (error) {
-      this.logRuntimeError("startup", error, {
-        stage: "terminate_pending_custom_entry_writes_failed"
-      });
-    }
-
-    this.pendingDeliveries = [];
-    this.queuedSteers = [];
-    this.toolNameByItemId.clear();
-    this.threadId = undefined;
-    this.activeTurnId = undefined;
-    this.startRequestPending = false;
+    await this.disposeRpcResources(
+      options?.drainTimeoutMs ?? DEFAULT_CUSTOM_ENTRY_WRITE_DRAIN_TIMEOUT_MS,
+      "terminate_pending_custom_entry_writes_failed"
+    );
 
     this.status = transitionAgentStatus(this.status, "terminated");
     this.descriptor.status = this.status;
     this.descriptor.updatedAt = this.now();
 
     await this.emitStatus();
+  }
+
+  async recycle(): Promise<void> {
+    if (this.status === "terminated") {
+      return;
+    }
+
+    if (
+      this.status !== "idle" ||
+      this.startRequestPending ||
+      this.activeTurnId ||
+      this.pendingDeliveries.length > 0 ||
+      this.queuedSteers.length > 0
+    ) {
+      throw new Error(`Agent ${this.descriptor.agentId} runtime is not idle and cannot be recycled`);
+    }
+
+    if (process.platform === "win32") {
+      await this.tryGracefulShutdownRpc();
+    }
+
+    await this.disposeRpcResources(
+      DEFAULT_CUSTOM_ENTRY_WRITE_DRAIN_TIMEOUT_MS,
+      "recycle_pending_custom_entry_writes_failed"
+    );
   }
 
   private async tryGracefulShutdownRpc(): Promise<void> {
@@ -309,6 +324,25 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
         this.shutdownRpcSupported = false;
       }
     }
+  }
+
+  private async disposeRpcResources(drainTimeoutMs: number, failureStage: string): Promise<void> {
+    this.suppressProcessExitHandling = true;
+    this.rpc.dispose();
+    try {
+      await this.waitForPendingCustomEntryWrites(drainTimeoutMs);
+    } catch (error) {
+      this.logRuntimeError("startup", error, {
+        stage: failureStage
+      });
+    }
+
+    this.pendingDeliveries = [];
+    this.queuedSteers = [];
+    this.toolNameByItemId.clear();
+    this.threadId = undefined;
+    this.activeTurnId = undefined;
+    this.startRequestPending = false;
   }
 
   async stopInFlight(options?: { abort?: boolean; shutdownTimeoutMs?: number; drainTimeoutMs?: number }): Promise<void> {
@@ -876,7 +910,7 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
   }
 
   private async handleProcessExit(error: Error): Promise<void> {
-    if (this.status === "terminated") {
+    if (this.suppressProcessExitHandling || this.status === "terminated") {
       return;
     }
 

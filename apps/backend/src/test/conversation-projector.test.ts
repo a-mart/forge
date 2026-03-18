@@ -69,6 +69,7 @@ function makeRuntimeForSession(descriptor: AgentDescriptor): SwarmAgentRuntime {
     smartCompact: async () => ({ compactionSucceeded: true }),
     stopInFlight: async () => {},
     terminate: async () => {},
+    recycle: async () => {},
     getCustomEntries: (customType: string) => {
       const entries = sessionManager.getEntries()
       return entries

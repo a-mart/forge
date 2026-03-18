@@ -993,6 +993,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly runtimeCreationPromisesByAgentId = new Map<string, Promise<SwarmAgentRuntime>>();
   private readonly runtimeTokensByAgentId = new Map<string, number>();
   private nextRuntimeToken = 1;
+  private readonly pendingManagerRuntimeRecycleAgentIds = new Set<string>();
   private readonly conversationEntriesByAgentId = new Map<string, ConversationEntryEvent[]>();
   private readonly workerWatchdogState = new Map<string, WorkerWatchdogState>();
   private readonly watchdogTimers = new Map<string, NodeJS.Timeout>();
@@ -2358,12 +2359,21 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       modelDescriptor.thinkingLevel = reasoningLevel;
     }
     const sessions = this.getSessionsForProfile(profile.profileId);
+    const recycledSessions: string[] = [];
+    const deferredSessions: string[] = [];
 
     for (const session of sessions) {
       session.model = { ...modelDescriptor };
       // Intentionally do NOT bump updatedAt — model changes are config updates,
       // not user-visible activity, and bumping would scramble session sort order.
       this.descriptors.set(session.agentId, session);
+
+      const recycleDisposition = await this.applyManagerRuntimeRecyclePolicy(session.agentId, "model_change");
+      if (recycleDisposition === "recycled") {
+        recycledSessions.push(session.agentId);
+      } else if (recycleDisposition === "deferred") {
+        deferredSessions.push(session.agentId);
+      }
     }
 
     await this.saveStore();
@@ -2373,7 +2383,81 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       managerId,
       modelPreset,
       reasoningLevel,
-      updatedSessions: sessions.map((s) => s.agentId)
+      updatedSessions: sessions.map((s) => s.agentId),
+      recycledSessions,
+      deferredSessions
+    });
+  }
+
+  private async applyManagerRuntimeRecyclePolicy(
+    agentId: string,
+    reason: "model_change" | "idle_transition"
+  ): Promise<"recycled" | "deferred" | "none"> {
+    const descriptor = this.descriptors.get(agentId);
+    if (!descriptor || descriptor.role !== "manager") {
+      this.pendingManagerRuntimeRecycleAgentIds.delete(agentId);
+      return "none";
+    }
+
+    if (reason === "idle_transition" && !this.pendingManagerRuntimeRecycleAgentIds.has(agentId)) {
+      return "none";
+    }
+
+    const runtime = this.runtimes.get(agentId);
+    if (!runtime) {
+      this.pendingManagerRuntimeRecycleAgentIds.delete(agentId);
+      return "none";
+    }
+
+    if (!this.canRecycleManagerRuntimeImmediately(descriptor, runtime)) {
+      this.pendingManagerRuntimeRecycleAgentIds.add(agentId);
+      return "deferred";
+    }
+
+    await this.recycleManagerRuntime(descriptor, runtime, reason);
+    return "recycled";
+  }
+
+  private canRecycleManagerRuntimeImmediately(
+    descriptor: AgentDescriptor,
+    runtime: SwarmAgentRuntime
+  ): boolean {
+    return (
+      descriptor.role === "manager" &&
+      descriptor.status === "idle" &&
+      runtime.getStatus() === "idle" &&
+      runtime.getPendingCount() === 0 &&
+      !runtime.isContextRecoveryInProgress?.()
+    );
+  }
+
+  private async recycleManagerRuntime(
+    descriptor: AgentDescriptor,
+    runtime: SwarmAgentRuntime,
+    reason: "model_change" | "idle_transition"
+  ): Promise<void> {
+    if (descriptor.role !== "manager") {
+      return;
+    }
+
+    const runtimeToken = this.runtimeTokensByAgentId.get(descriptor.agentId);
+    await runtime.recycle();
+    this.detachRuntime(descriptor.agentId, runtimeToken);
+    this.pendingManagerRuntimeRecycleAgentIds.delete(descriptor.agentId);
+
+    if (descriptor.contextUsage) {
+      descriptor.contextUsage = undefined;
+      this.descriptors.set(descriptor.agentId, descriptor);
+    }
+
+    await this.refreshSessionMetaStats(descriptor);
+
+    this.emitStatus(descriptor.agentId, descriptor.status, 0);
+    this.logDebug("manager:runtime_recycled", {
+      agentId: descriptor.agentId,
+      profileId: descriptor.profileId,
+      reason,
+      model: descriptor.model
     });
   }
 
@@ -2744,6 +2828,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       const shutdown = await this.runRuntimeShutdown(descriptor, "terminate", { abort: true });
       this.detachRuntime(agentId, shutdown.runtimeToken);
     }
+    this.pendingManagerRuntimeRecycleAgentIds.delete(agentId);
 
     descriptor.status = descriptor.status === "error"
       ? "idle"
@@ -3454,6 +3539,14 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         attachmentCount: persistedAttachments.length > 0 ? persistedAttachments.length : undefined
       });
       return;
+    }
+
+    if (this.pendingManagerRuntimeRecycleAgentIds.has(target.agentId)) {
+      const recycleDisposition = await this.applyManagerRuntimeRecyclePolicy(target.agentId, "idle_transition");
+      if (recycleDisposition === "recycled") {
+        await this.saveStore();
+        this.emitAgentsSnapshot();
+      }
     }
 
     let managerRuntime: SwarmAgentRuntime;
@@ -4817,6 +4910,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       const shutdown = await this.runRuntimeShutdown(descriptor, "terminate", { abort: options.abort });
       this.detachRuntime(descriptor.agentId, shutdown.runtimeToken);
     }
+    this.pendingManagerRuntimeRecycleAgentIds.delete(descriptor.agentId);
 
     descriptor.status = transitionAgentStatus(descriptor.status, "terminated");
     descriptor.contextUsage = undefined;
@@ -5117,6 +5211,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     if (descriptor.role === "manager") {
       if (nextStatus === "idle" && pendingCount === 0) {
         this.scheduleCortexCloseoutReminder(descriptor.agentId);
+        const recycleDisposition = await this.applyManagerRuntimeRecyclePolicy(descriptor.agentId, "idle_transition");
+        if (recycleDisposition === "recycled") {
+          await this.saveStore();
+          this.emitAgentsSnapshot();
+        }
       } else {
         this.clearCortexCloseoutReminder(descriptor.agentId);
       }

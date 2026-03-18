@@ -137,6 +137,8 @@ export interface SwarmAgentRuntime {
 
   terminate(options?: RuntimeShutdownOptions): Promise<void>;
 
+  recycle(): Promise<void>;
+
   getCustomEntries(customType: string): unknown[];
   appendCustomEntry(customType: string, data?: unknown): string;
 }

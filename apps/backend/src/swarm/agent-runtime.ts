@@ -186,20 +186,34 @@ export class AgentRuntime implements SwarmAgentRuntime {
       }
     }
 
-    this.unsubscribe?.();
-    this.unsubscribe = undefined;
-    this.session.dispose();
-    this.pendingDeliveries = [];
-    this.recoveryBufferedMessages.length = 0;
-    this.promptDispatchPending = false;
-    this.ignoreNextAgentStart = false;
-    this.latestAutoCompactionReason = undefined;
-    this.autoCompactionRecoveryInProgress = false;
-    this.inFlightPrompts.clear();
+    this.disposeSessionResources();
     this.status = transitionAgentStatus(this.status, "terminated");
     this.descriptor.status = this.status;
     this.descriptor.updatedAt = this.now();
     await this.emitStatus();
+  }
+
+  async recycle(): Promise<void> {
+    if (this.status === "terminated") {
+      return;
+    }
+
+    if (
+      this.status !== "idle" ||
+      this.session.isStreaming ||
+      this.promptDispatchPending ||
+      this.pendingDeliveries.length > 0 ||
+      this.recoveryBufferedMessages.length > 0 ||
+      this.isContextRecoveryActive()
+    ) {
+      throw new Error(`Agent ${this.descriptor.agentId} runtime is not idle and cannot be recycled`);
+    }
+
+    this.endContextRecovery();
+    this.guardAbortController?.abort();
+    this.guardAbortController = undefined;
+    this.lastContextBudgetCheckAtMs = 0;
+    this.disposeSessionResources();
   }
 
   async stopInFlight(options?: { abort?: boolean; shutdownTimeoutMs?: number }): Promise<void> {
@@ -237,6 +251,20 @@ export class AgentRuntime implements SwarmAgentRuntime {
     this.inFlightPrompts.clear();
 
     await this.updateStatus("idle");
+  }
+
+  private disposeSessionResources(): void {
+    this.unsubscribe?.();
+    this.unsubscribe = undefined;
+    this.session.dispose();
+    this.pendingDeliveries = [];
+    this.recoveryBufferedMessages.length = 0;
+    this.promptDispatchPending = false;
+    this.ignoreNextAgentStart = false;
+    this.latestAutoCompactionReason = undefined;
+    this.autoCompactionRecoveryInProgress = false;
+    this.suppressSessionEventsUntilIdle = false;
+    this.inFlightPrompts.clear();
   }
 
   async smartCompact(): Promise<SmartCompactResult> {
