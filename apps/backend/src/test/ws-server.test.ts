@@ -39,6 +39,7 @@ class FakeRuntime {
   readonly descriptor: AgentDescriptor
   private readonly sessionManager: SessionManager
   compactCalls: Array<string | undefined> = []
+  sendCalls: Array<{ message: string; delivery: RequestedDeliveryMode }> = []
   terminateCalls = 0
   recycleCalls = 0
   stopInFlightCalls: Array<{ abort?: boolean; shutdownTimeoutMs?: number; drainTimeoutMs?: number } | undefined> = []
@@ -62,7 +63,8 @@ class FakeRuntime {
     return undefined
   }
 
-  async sendMessage(_message: string, _delivery: RequestedDeliveryMode = 'auto'): Promise<SendMessageReceipt> {
+  async sendMessage(message: string, delivery: RequestedDeliveryMode = 'auto'): Promise<SendMessageReceipt> {
+    this.sendCalls.push({ message, delivery })
     this.sessionManager.appendMessage({
       role: 'assistant',
       content: [{ type: 'text', text: 'ack' }],
@@ -1683,6 +1685,49 @@ describe('SwarmWebSocketServer', () => {
       await expect(readFile(getProfileReferencePath(config.paths.dataDir, 'beta', 'index.md'), 'utf8')).rejects.toMatchObject({
         code: 'ENOENT',
       })
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('queues the first Cortex onboarding greeting when the client subscribes to the root Cortex session', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+
+    const manager = new TestSwarmManager(config)
+    await manager.boot()
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    try {
+      const client = new WebSocket(`ws://${config.host}:${config.port}`)
+      const events: ServerEvent[] = []
+
+      client.on('message', (raw) => {
+        events.push(JSON.parse(raw.toString()) as ServerEvent)
+      })
+
+      await once(client, 'open')
+      client.send(JSON.stringify({ type: 'subscribe', agentId: 'cortex' }))
+
+      await waitForEvent(events, (event) => event.type === 'ready' && event.subscribedAgentId === 'cortex')
+
+      const cortexRuntime = manager.runtimeByAgentId.get('cortex')
+      expect(cortexRuntime?.sendCalls).toHaveLength(1)
+      expect(cortexRuntime?.sendCalls[0]?.message).toContain('Onboarding mode just activated and the chat is opening for the first time.')
+
+      const snapshot = await loadOnboardingState(config.paths.dataDir)
+      expect(snapshot.status).toBe('active')
+      expect(snapshot.firstPromptSentAt).toMatch(/T/)
+
+      client.close()
     } finally {
       await server.stop()
     }

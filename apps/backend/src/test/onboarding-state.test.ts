@@ -7,8 +7,10 @@ import type { OnboardingState } from "@forge/protocol";
 import type { SwarmConfig } from "../swarm/types.js";
 import { getCommonKnowledgePath, getSessionFilePath, getSharedAuthFilePath } from "../swarm/data-paths.js";
 import {
+  activateOnboardingForEligibleTurn,
   getOnboardingSnapshot,
   loadOnboardingState,
+  markOnboardingFirstPromptSent,
   renderOnboardingCommonKnowledge,
   saveOnboardingFacts,
   setOnboardingStatus
@@ -33,6 +35,21 @@ describe("onboarding-state", () => {
       sourceSessionId: "cortex"
     });
     expect(state.cycleId).toMatch(/^onb_/);
+  });
+
+  it("activates onboarding without marking the first prompt until the greeting is dispatched", async () => {
+    const dataDir = await createTempDataDir();
+
+    const activated = await activateOnboardingForEligibleTurn(dataDir);
+    expect(activated.status).toBe("active");
+    expect(activated.startedAt).toMatch(/T/);
+    expect(activated.firstPromptSentAt).toBeNull();
+
+    const marked = await markOnboardingFirstPromptSent(dataDir);
+    expect(marked.firstPromptSentAt).toMatch(/T/);
+
+    const markedAgain = await markOnboardingFirstPromptSent(dataDir);
+    expect(markedAgain.firstPromptSentAt).toBe(marked.firstPromptSentAt);
   });
 
   it("accepts CAS fact writes with the correct revision and cycle", async () => {

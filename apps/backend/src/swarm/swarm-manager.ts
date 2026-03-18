@@ -104,6 +104,7 @@ import {
   activateOnboardingForEligibleTurn,
   getOnboardingSnapshot,
   loadOnboardingState,
+  markOnboardingFirstPromptSent,
   renderOnboardingCommonKnowledge,
   saveOnboardingFacts,
   setOnboardingStatus
@@ -223,6 +224,17 @@ Useful first-message shapes:
 
 Do not include the old generic “how do you like to work” interview.
 This manager’s onboarding is about the project, not the person.`;
+const CORTEX_ONBOARDING_AUTO_GREETING_MESSAGE = `Onboarding mode just activated and the chat is opening for the first time.
+
+Send the opening onboarding greeting now via speak_to_user.
+This is the very first user-visible message of the onboarding conversation, and there is no prior user message to answer yet.
+
+Keep it short, warm, and natural:
+- greet the user
+- explain Cortex in one sentence
+- offer an easy path to either talk for a minute or skip straight to creating their first manager
+- do not imply you already know their preferences
+- do not claim anything has been saved yet`;
 const COMMON_KNOWLEDGE_MEMORY_HEADER =
   "# Common Knowledge (maintained by Cortex — read-only reference)";
 const ONBOARDING_SNAPSHOT_MEMORY_HEADER =
@@ -1153,6 +1165,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly trackedToolPathsByAgentId = new Map<string, Map<string, { toolName: string; path: string }>>();
   private readonly managerPromptModesByAgentId = new Map<string, ManagerPromptMode>();
   private readonly pendingOnboardingTurnsByAgentId = new Map<string, PendingOnboardingTurn[]>();
+  private cortexOnboardingAutoGreetingPromise: Promise<void> | null = null;
 
   constructor(config: SwarmConfig, options?: { now?: () => string; versioningService?: VersioningMutationSink }) {
     super();
@@ -3370,6 +3383,91 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   isOnboardingMode(agentId: string): boolean {
     return this.managerPromptModesByAgentId.get(agentId) === "cortex_onboarding";
+  }
+
+  async ensureCortexOnboardingAutoGreeting(sourceContext?: MessageSourceContext): Promise<void> {
+    const inFlight = this.cortexOnboardingAutoGreetingPromise;
+    if (inFlight) {
+      await inFlight;
+      return;
+    }
+
+    const operation = this.ensureCortexOnboardingAutoGreetingInternal(sourceContext);
+    this.cortexOnboardingAutoGreetingPromise = operation;
+
+    try {
+      await operation;
+    } finally {
+      if (this.cortexOnboardingAutoGreetingPromise === operation) {
+        this.cortexOnboardingAutoGreetingPromise = null;
+      }
+    }
+  }
+
+  private async ensureCortexOnboardingAutoGreetingInternal(sourceContext?: MessageSourceContext): Promise<void> {
+    const descriptor = this.descriptors.get(CORTEX_PROFILE_ID);
+    if (!descriptor || !this.isCortexRootInteractiveSession(descriptor) || isNonRunningAgentStatus(descriptor.status)) {
+      return;
+    }
+
+    const snapshot = await getOnboardingSnapshot(this.config.paths.dataDir);
+    if ((snapshot.status !== "not_started" && snapshot.status !== "active") || snapshot.firstPromptSentAt) {
+      return;
+    }
+
+    const hasConversationHistory = this.getConversationHistory(descriptor.agentId).some(
+      (entry) => entry.type === "conversation_message"
+    );
+    if (hasConversationHistory) {
+      return;
+    }
+
+    await activateOnboardingForEligibleTurn(this.config.paths.dataDir);
+    await this.applyCortexOnboardingModelPreference(descriptor);
+    await this.syncManagerPromptMode(descriptor, { recycleIfChanged: true });
+
+    const resolvedSourceContext = normalizeMessageSourceContext(sourceContext ?? { channel: "web" });
+    const greetingMessage = formatInboundUserMessageForManager(
+      CORTEX_ONBOARDING_AUTO_GREETING_MESSAGE,
+      resolvedSourceContext
+    );
+
+    await this.sendMessage(descriptor.agentId, descriptor.agentId, greetingMessage, "auto", {
+      origin: "internal"
+    });
+    await markOnboardingFirstPromptSent(this.config.paths.dataDir);
+
+    this.logDebug("onboarding:auto_greeting:sent", {
+      agentId: descriptor.agentId,
+      sourceContext: resolvedSourceContext
+    });
+  }
+
+  private async applyCortexOnboardingModelPreference(descriptor: AgentDescriptor): Promise<void> {
+    if (!this.isCortexRootInteractiveSession(descriptor)) {
+      return;
+    }
+
+    const preferredModel = await resolveOnboardingManagerModelDescriptor(this.config);
+    const modelChanged =
+      descriptor.model.provider !== preferredModel.provider ||
+      descriptor.model.modelId !== preferredModel.modelId ||
+      descriptor.model.thinkingLevel !== preferredModel.thinkingLevel;
+
+    if (!modelChanged) {
+      return;
+    }
+
+    descriptor.model = { ...preferredModel };
+    this.descriptors.set(descriptor.agentId, descriptor);
+    await this.applyManagerRuntimeRecyclePolicy(descriptor.agentId, "model_change");
+    await this.saveStore();
+    this.emitAgentsSnapshot();
+
+    this.logDebug("onboarding:model_preference:applied", {
+      agentId: descriptor.agentId,
+      model: descriptor.model
+    });
   }
 
   private async resolveManagerPromptMode(descriptor: AgentDescriptor): Promise<ManagerPromptMode> {

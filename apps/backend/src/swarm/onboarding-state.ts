@@ -118,7 +118,7 @@ export async function activateOnboardingForEligibleTurn(dataDir: string): Promis
     return current;
   }
 
-  if (current.status === "active" && current.firstPromptSentAt) {
+  if (current.status === "active") {
     return current;
   }
 
@@ -126,7 +126,6 @@ export async function activateOnboardingForEligibleTurn(dataDir: string): Promis
   const next: OnboardingState = {
     ...cloneOnboardingState(current),
     status: "active",
-    firstPromptSentAt: current.firstPromptSentAt ?? now,
     startedAt: current.startedAt ?? now,
     lastUpdatedAt: now,
     revision: current.revision + 1
@@ -134,6 +133,31 @@ export async function activateOnboardingForEligibleTurn(dataDir: string): Promis
 
   await writeJsonAtomic(getOnboardingStatePath(dataDir), next);
   return next;
+}
+
+export async function markOnboardingFirstPromptSent(dataDir: string): Promise<OnboardingState> {
+  for (;;) {
+    const current = await loadOnboardingState(dataDir);
+
+    if (current.status !== "not_started" && current.status !== "active") {
+      return current;
+    }
+
+    if (current.firstPromptSentAt) {
+      return current;
+    }
+
+    const result = await mutateOnboardingState(dataDir, current.cycleId, current.revision, (state, now) => ({
+      ...state,
+      status: "active",
+      firstPromptSentAt: state.firstPromptSentAt ?? now,
+      startedAt: state.startedAt ?? now
+    }));
+
+    if (result.ok) {
+      return result.snapshot;
+    }
+  }
 }
 
 export async function saveOnboardingFacts(

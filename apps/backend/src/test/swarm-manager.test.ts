@@ -1539,6 +1539,33 @@ describe('SwarmManager', () => {
     expect(reviewPrompt).toContain('Maintain `${SWARM_DATA_DIR}/shared/knowledge/common.md`')
   })
 
+  it('auto-dispatches a single Cortex onboarding greeting and marks firstPromptSentAt after queueing it', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+
+    await manager.boot()
+    await manager.ensureCortexOnboardingAutoGreeting({
+      channel: 'web',
+    })
+
+    const cortexRuntime = manager.runtimeByAgentId.get('cortex')
+    expect(cortexRuntime).toBeDefined()
+    expect(cortexRuntime?.sendCalls).toHaveLength(1)
+    expect(cortexRuntime?.sendCalls[0]?.delivery).toBe('auto')
+    expect(cortexRuntime?.sendCalls[0]?.message).toContain('SYSTEM: [sourceContext] {"channel":"web"}')
+    expect(cortexRuntime?.sendCalls[0]?.message).toContain('Onboarding mode just activated and the chat is opening for the first time.')
+
+    const snapshot = await getOnboardingSnapshot(config.paths.dataDir)
+    expect(snapshot.status).toBe('active')
+    expect(snapshot.firstPromptSentAt).toMatch(/T/)
+    expect(manager.isOnboardingMode('cortex')).toBe(true)
+
+    await manager.ensureCortexOnboardingAutoGreeting({
+      channel: 'web',
+    })
+    expect(cortexRuntime?.sendCalls).toHaveLength(1)
+  })
+
   it('returns the root Cortex runtime to the normal prompt after onboarding completes', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)

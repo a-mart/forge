@@ -670,6 +670,9 @@ export class WsHandler {
     }
 
     this.subscriptions.set(socket, targetAgentId);
+    if (targetAgentId === 'cortex') {
+      await this.swarmManager.ensureCortexOnboardingAutoGreeting({ channel: 'web' });
+    }
     this.sendSubscriptionBootstrap(socket, targetAgentId, messageCount);
   }
 
