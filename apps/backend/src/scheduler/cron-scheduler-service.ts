@@ -104,22 +104,42 @@ export class CronSchedulerService {
     const schedulesDir = dirname(this.schedulesFile);
     const schedulesBasename = basename(this.schedulesFile);
 
-    this.watcher = watch(schedulesDir, (eventType, fileName) => {
-      if (!this.running) {
-        return;
-      }
+    try {
+      const watcher = watch(schedulesDir, (eventType, fileName) => {
+        if (!this.running) {
+          return;
+        }
 
-      if (!fileName || fileName.toString() === schedulesBasename) {
-        clearTimeout(this.watchDebounceTimer);
-        this.watchDebounceTimer = setTimeout(() => this.requestProcess(`watch:${eventType}`), 150);
-        this.watchDebounceTimer.unref?.();
-      }
-    });
+        if (!fileName || fileName.toString() === schedulesBasename) {
+          clearTimeout(this.watchDebounceTimer);
+          this.watchDebounceTimer = setTimeout(() => this.requestProcess(`watch:${eventType}`), 150);
+          this.watchDebounceTimer.unref?.();
+        }
+      });
 
-    this.watcher.on("error", (error) => {
+      this.watcher = watcher;
+      watcher.on("error", (error) => {
+        const message = error instanceof Error ? error.message : String(error);
+
+        try {
+          watcher.close();
+        } catch {
+          // Ignore close failures; polling fallback remains active.
+        }
+
+        if (this.watcher === watcher) {
+          this.watcher = undefined;
+        }
+
+        console.warn(
+          `[scheduler] File watcher unavailable (falling back to polling): ${message}`
+        );
+      });
+    } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      console.error(`[scheduler] File watcher error: ${message}`);
-    });
+      this.watcher = undefined;
+      console.warn(`[scheduler] File watcher unavailable (falling back to polling): ${message}`);
+    }
   }
 
   private requestProcess(reason: string): void {
