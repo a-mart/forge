@@ -167,6 +167,8 @@ Managers and workers have access to built-in skills:
 
 Skill API keys can be configured in the dashboard under **Settings → Environment Variables**. `.env` (or shell env vars) is still supported as a fallback.
 
+For machine-local extensions, Forge also scans `${FORGE_DATA_DIR}/skills` (default: `~/.forge/skills` on macOS/Linux, `%LOCALAPPDATA%\forge\skills` on Windows) before repo-local `.swarm/skills` overrides and built-ins. Skills there use the normal `SKILL.md` frontmatter format and are injected into all agent/runtime sessions. See [docs/CONFIGURATION.md](docs/CONFIGURATION.md#machine-local-skills).
+
 ## A Note
 
 Forge is built on [Middleman](https://github.com/SawyerHood/middleman) by Sawyer Hood.

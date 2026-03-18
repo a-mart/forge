@@ -6,6 +6,7 @@ import { parseSkillFrontmatter, type ParsedSkillEnvDeclaration } from "./skill-f
 import type { SwarmConfig } from "./types.js";
 
 const REPO_SKILLS_RELATIVE_DIR = ".swarm/skills";
+const LOCAL_DATA_DIR_SKILLS_RELATIVE_DIR = "skills";
 const REPO_BUILT_IN_SKILLS_RELATIVE_DIR = "apps/backend/src/swarm/skills/builtins";
 const SKILL_FILE_NAME = "SKILL.md";
 const REQUIRED_SKILL_NAMES = [
@@ -82,22 +83,33 @@ export class SkillMetadataService {
     const seenSkillNames = new Set<string>();
 
     for (const skillPath of requiredSkillPaths) {
-      const markdown = await readFile(skillPath, "utf8");
-      const parsed = parseSkillFrontmatter(markdown);
-      const fallbackSkillName = this.resolveSkillNameFromPath(skillPath);
-      const skillName = (parsed.name ?? fallbackSkillName).trim();
-      const normalizedSkillName = normalizeSkillName(skillName);
+      const loaded = await this.loadSkillMetadataFromPath(skillPath);
+      if (!loaded) {
+        continue;
+      }
+
+      const normalizedSkillName = normalizeSkillName(loaded.skillName);
       if (seenSkillNames.has(normalizedSkillName)) {
         continue;
       }
 
       seenSkillNames.add(normalizedSkillName);
-      metadata.push({
-        skillName,
-        description: parsed.description,
-        path: skillPath,
-        env: parsed.env
-      });
+      metadata.push(loaded);
+    }
+
+    for (const candidate of scannedCandidates) {
+      const loaded = await this.loadSkillMetadataFromPath(candidate.path);
+      if (!loaded) {
+        continue;
+      }
+
+      const normalizedSkillName = normalizeSkillName(loaded.skillName);
+      if (seenSkillNames.has(normalizedSkillName)) {
+        continue;
+      }
+
+      seenSkillNames.add(normalizedSkillName);
+      metadata.push(loaded);
     }
 
     this.skillMetadata = metadata;
@@ -152,9 +164,11 @@ export class SkillMetadataService {
   private async scanSkillPathCandidates(): Promise<SkillPathCandidate[]> {
     const candidates: SkillPathCandidate[] = [];
 
+    const localSkillsDir = resolve(this.deps.config.paths.dataDir, LOCAL_DATA_DIR_SKILLS_RELATIVE_DIR);
     const repositorySkillsDir = resolve(this.deps.config.paths.rootDir, REPO_SKILLS_RELATIVE_DIR);
     const repositoryBuiltInSkillsDir = resolve(this.deps.config.paths.rootDir, REPO_BUILT_IN_SKILLS_RELATIVE_DIR);
 
+    candidates.push(...(await this.scanSkillFilesInDirectory(localSkillsDir)));
     candidates.push(...(await this.scanSkillFilesInDirectory(repositorySkillsDir)));
     candidates.push(...(await this.scanSkillFilesInDirectory(repositoryBuiltInSkillsDir)));
     candidates.push(...(await this.scanSkillFilesInDirectory(BUILT_IN_SKILLS_FALLBACK_DIR)));
@@ -209,6 +223,20 @@ export class SkillMetadataService {
     }
 
     return index;
+  }
+
+  private async loadSkillMetadataFromPath(path: string): Promise<SkillMetadata | null> {
+    const markdown = await readFile(path, "utf8");
+    const parsed = parseSkillFrontmatter(markdown);
+    const fallbackSkillName = this.resolveSkillNameFromPath(path);
+    const skillName = (parsed.name ?? fallbackSkillName).trim();
+
+    return {
+      skillName,
+      description: parsed.description,
+      path,
+      env: parsed.env
+    };
   }
 
   private resolveSkillNameFromPath(path: string): string {
