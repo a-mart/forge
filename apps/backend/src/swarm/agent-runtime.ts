@@ -76,6 +76,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
   private lastContextUsage: AgentContextUsage | undefined;
   private contextRecoveryInProgress = false;
   private contextRecoveryGraceUntilMs = 0;
+  private autoCompactionRecoveryInProgress = false;
   private guardAbortController: AbortController | undefined;
   private lastContextBudgetCheckAtMs = 0;
   private latestAutoCompactionReason: "threshold" | "overflow" | undefined;
@@ -193,6 +194,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
     this.promptDispatchPending = false;
     this.ignoreNextAgentStart = false;
     this.latestAutoCompactionReason = undefined;
+    this.autoCompactionRecoveryInProgress = false;
     this.inFlightPrompts.clear();
     this.status = transitionAgentStatus(this.status, "terminated");
     this.descriptor.status = this.status;
@@ -231,6 +233,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
     this.promptDispatchPending = false;
     this.ignoreNextAgentStart = false;
     this.latestAutoCompactionReason = undefined;
+    this.autoCompactionRecoveryInProgress = false;
     this.inFlightPrompts.clear();
 
     await this.updateStatus("idle");
@@ -352,6 +355,24 @@ export class AgentRuntime implements SwarmAgentRuntime {
     this.contextRecoveryInProgress = true;
     this.contextRecoveryGraceUntilMs = 0;
     void this.emitStatus();
+  }
+
+  private beginAutoCompactionRecovery(): void {
+    if (this.autoCompactionRecoveryInProgress) {
+      return;
+    }
+
+    this.autoCompactionRecoveryInProgress = true;
+    this.beginContextRecovery();
+  }
+
+  private endAutoCompactionRecovery(): void {
+    if (!this.autoCompactionRecoveryInProgress) {
+      return;
+    }
+
+    this.autoCompactionRecoveryInProgress = false;
+    this.endContextRecovery(CONTEXT_RECOVERY_GRACE_MS);
   }
 
   private endContextRecovery(graceMs = 0): void {
@@ -538,6 +559,9 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
     if (event.type === "auto_compaction_start") {
       this.latestAutoCompactionReason = event.reason;
+      if (!this.isContextRecoveryActive()) {
+        this.beginAutoCompactionRecovery();
+      }
       return;
     }
 
@@ -873,6 +897,8 @@ export class AgentRuntime implements SwarmAgentRuntime {
         }
       });
       this.latestAutoCompactionReason = undefined;
+      this.endAutoCompactionRecovery();
+      await this.flushRecoveryBufferedMessages();
       return;
     }
 
@@ -882,10 +908,11 @@ export class AgentRuntime implements SwarmAgentRuntime {
         reason: this.contextRecoveryInProgress ? "recovery_already_in_progress" : "recovery_grace_period"
       });
       this.latestAutoCompactionReason = undefined;
+      this.endAutoCompactionRecovery();
       return;
     }
 
-    this.beginContextRecovery();
+    this.beginAutoCompactionRecovery();
 
     try {
       const baseDetails = {
@@ -937,7 +964,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
         }
       });
     } finally {
-      this.endContextRecovery(CONTEXT_RECOVERY_GRACE_MS);
+      this.endAutoCompactionRecovery();
       await this.flushRecoveryBufferedMessages();
     }
   }
