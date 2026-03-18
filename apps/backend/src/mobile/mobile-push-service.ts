@@ -275,6 +275,10 @@ export class MobilePushService {
     }
 
     const context = this.resolveAgentRoutingContext(notification.agentId);
+    if (this.isPushSuppressedForSession(context.sessionAgentId)) {
+      return;
+    }
+
     if (preferences.suppressWhenActive && this.isSessionActive(context.sessionAgentId)) {
       return;
     }
@@ -446,6 +450,11 @@ export class MobilePushService {
         sessionAgentId: agentId
       })
     };
+  }
+
+  private isPushSuppressedForSession(sessionAgentId: string): boolean {
+    const descriptor = this.swarmManager.getAgent(sessionAgentId);
+    return descriptor?.role === "manager" && descriptor.sessionPurpose === "cortex_review";
   }
 
   private logError(scope: string, error: unknown): void {

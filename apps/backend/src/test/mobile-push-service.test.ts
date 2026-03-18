@@ -24,7 +24,11 @@ class FakeSwarmManager extends EventEmitter {
   }
 }
 
-function createManagerDescriptor(profileId = 'profile-a', agentId = 'manager'): AgentDescriptor {
+function createManagerDescriptor(
+  profileId = 'profile-a',
+  agentId = 'manager',
+  sessionPurpose?: AgentDescriptor['sessionPurpose'],
+): AgentDescriptor {
   return {
     agentId,
     displayName: 'Manager',
@@ -41,6 +45,7 @@ function createManagerDescriptor(profileId = 'profile-a', agentId = 'manager'): 
     },
     sessionFile: `/tmp/${agentId}.jsonl`,
     profileId,
+    sessionPurpose,
   }
 }
 
@@ -169,6 +174,45 @@ describe('MobilePushService', () => {
       agentId: 'manager',
       role: 'assistant',
       text: 'suppressed message',
+      timestamp: new Date().toISOString(),
+      source: 'speak_to_user',
+    })
+
+    await flushAsync()
+    await service.stop()
+
+    expect(sendMock).not.toHaveBeenCalled()
+  })
+
+  it('suppresses push notifications for cortex review sessions', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'mobile-push-service-'))
+    const manager = new FakeSwarmManager([createManagerDescriptor('cortex', 'review-run', 'cortex_review')])
+
+    const sendMock = vi.fn(async () => ({ ok: true, retryable: false, ticketId: 'ticket-1' }))
+
+    const service = new MobilePushService({
+      swarmManager: manager as unknown as SwarmManager,
+      dataDir,
+      expoPushClient: {
+        send: sendMock,
+        getReceipts: vi.fn(async () => ({})),
+      } as unknown as ExpoPushClient,
+      isSessionActive: () => false,
+      receiptPollIntervalMs: 60_000,
+    })
+
+    await service.registerDevice({
+      token: 'ExpoPushToken[test-device]',
+      platform: 'ios',
+      deviceName: 'Review Phone',
+    })
+
+    await service.start()
+    manager.emit('conversation_message', {
+      type: 'conversation_message',
+      agentId: 'review-run',
+      role: 'assistant',
+      text: 'review update',
       timestamp: new Date().toISOString(),
       source: 'speak_to_user',
     })

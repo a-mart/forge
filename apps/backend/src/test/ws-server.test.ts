@@ -477,6 +477,88 @@ describe('SwarmWebSocketServer', () => {
     await server.stop()
   })
 
+  it('suppresses unread_notification events for cortex review sessions', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const { sessionAgent: reviewSession } = await manager.createSession('manager', {
+      label: 'Review Run',
+      sessionPurpose: 'cortex_review',
+    })
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    const reviewClient = new WebSocket(`ws://${config.host}:${config.port}`)
+    const reviewEvents: ServerEvent[] = []
+    reviewClient.on('message', (raw) => {
+      reviewEvents.push(JSON.parse(raw.toString()) as ServerEvent)
+    })
+
+    await once(reviewClient, 'open')
+    reviewClient.send(JSON.stringify({ type: 'subscribe', agentId: reviewSession.agentId }))
+    await waitForEvent(
+      reviewEvents,
+      (event) => event.type === 'ready' && event.subscribedAgentId === reviewSession.agentId,
+    )
+    await waitForEvent(
+      reviewEvents,
+      (event) => event.type === 'conversation_history' && event.agentId === reviewSession.agentId,
+    )
+
+    const managerClient = new WebSocket(`ws://${config.host}:${config.port}`)
+    const managerEvents: ServerEvent[] = []
+    managerClient.on('message', (raw) => {
+      managerEvents.push(JSON.parse(raw.toString()) as ServerEvent)
+    })
+
+    await once(managerClient, 'open')
+    managerClient.send(JSON.stringify({ type: 'subscribe', agentId: 'manager' }))
+    await waitForEvent(
+      managerEvents,
+      (event) => event.type === 'ready' && event.subscribedAgentId === 'manager',
+    )
+    await waitForEvent(
+      managerEvents,
+      (event) => event.type === 'conversation_history' && event.agentId === 'manager',
+    )
+
+    manager.emit(
+      'conversation_message',
+      {
+        type: 'conversation_message',
+        agentId: reviewSession.agentId,
+        role: 'assistant',
+        text: 'review assistant update',
+        timestamp: new Date().toISOString(),
+        source: 'speak_to_user',
+      } satisfies ServerEvent,
+    )
+
+    await waitForEvent(
+      reviewEvents,
+      (event) => event.type === 'conversation_message' && event.agentId === reviewSession.agentId && event.text === 'review assistant update',
+    )
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    expect(reviewEvents.some((event) => event.type === 'unread_notification' && event.agentId === reviewSession.agentId)).toBe(false)
+    expect(managerEvents.some((event) => event.type === 'unread_notification' && event.agentId === reviewSession.agentId)).toBe(false)
+
+    reviewClient.close()
+    await once(reviewClient, 'close')
+    managerClient.close()
+    await once(managerClient, 'close')
+    await server.stop()
+  })
+
   it('writes and removes its control pid file across start/stop', async () => {
     const previousDaemonized = process.env[DAEMONIZED_ENV_VAR]
     delete process.env[DAEMONIZED_ENV_VAR]

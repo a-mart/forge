@@ -62,7 +62,11 @@ export class SwarmWebSocketServer {
     if (event.type !== "conversation_message") return;
     this.wsHandler.broadcastToSubscribed(event);
 
-    if (event.role === "assistant" && event.source === "speak_to_user") {
+    if (
+      event.role === "assistant" &&
+      event.source === "speak_to_user" &&
+      !this.isUnreadNotificationSuppressed(event.agentId)
+    ) {
       this.wsHandler.broadcastToSubscribed({
         type: "unread_notification",
         agentId: event.agentId,
@@ -129,6 +133,11 @@ export class SwarmWebSocketServer {
     if (event.type !== "playwright_discovery_settings_updated") return;
     this.wsHandler.broadcastToSubscribed(event);
   };
+
+  private isUnreadNotificationSuppressed(agentId: string): boolean {
+    const descriptor = this.swarmManager.getAgent(agentId);
+    return descriptor?.role === "manager" && descriptor.sessionPurpose === "cortex_review";
+  }
 
   constructor(options: {
     swarmManager: SwarmManager;
