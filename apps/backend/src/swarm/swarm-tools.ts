@@ -590,8 +590,8 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
   ];
 
   const isOnboardingMode = host.isOnboardingMode?.(descriptor.agentId) === true;
-  const saveOnboardingFacts = host.saveOnboardingFacts;
-  const setOnboardingStatus = host.setOnboardingStatus;
+  const saveOnboardingFacts = host.saveOnboardingFacts?.bind(host);
+  const setOnboardingStatus = host.setOnboardingStatus?.bind(host);
 
   if (isOnboardingMode && saveOnboardingFacts && setOnboardingStatus) {
     managerOnly.push(

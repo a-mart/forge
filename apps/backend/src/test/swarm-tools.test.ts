@@ -751,4 +751,127 @@ describe('buildSwarmTools', () => {
     expect(normalTools.some((tool) => tool.name === 'save_onboarding_facts')).toBe(false)
     expect(normalTools.some((tool) => tool.name === 'set_onboarding_status')).toBe(false)
   })
+
+  it('preserves host binding when executing onboarding tools', async () => {
+    class BindingAwareHost implements SwarmToolHost {
+      saveCalls = 0
+      statusCalls = 0
+
+      listAgents(): AgentDescriptor[] {
+        return [makeManagerDescriptor('cortex', { archetypeId: 'cortex', profileId: 'cortex' })]
+      }
+
+      async spawnAgent(): Promise<AgentDescriptor> {
+        return makeWorkerDescriptor('worker')
+      }
+
+      async killAgent(): Promise<void> {}
+
+      async sendMessage(): Promise<SendMessageReceipt> {
+        return {
+          targetAgentId: 'worker',
+          deliveryId: 'delivery-1',
+          acceptedMode: 'prompt',
+        }
+      }
+
+      async publishToUser(): Promise<{ targetContext: { channel: 'web' } }> {
+        return {
+          targetContext: { channel: 'web' },
+        }
+      }
+
+      isOnboardingMode(): boolean {
+        return true
+      }
+
+      async saveOnboardingFacts(callerAgentId: string, input: any): Promise<any> {
+        this.saveCalls += 1
+        expect(callerAgentId).toBe('cortex')
+        expect(input).toMatchObject({
+          cycleId: 'cycle-1',
+          baseRevision: 0,
+          renderCommonMd: true,
+        })
+
+        return {
+          ok: true,
+          snapshot: {
+            revision: 1,
+          },
+        }
+      }
+
+      async setOnboardingStatus(callerAgentId: string, input: any): Promise<any> {
+        this.statusCalls += 1
+        expect(callerAgentId).toBe('cortex')
+        expect(input).toMatchObject({
+          status: 'completed',
+          cycleId: 'cycle-1',
+          baseRevision: 1,
+          renderCommonMd: true,
+        })
+
+        return {
+          ok: true,
+          snapshot: {
+            revision: 2,
+          },
+        }
+      }
+    }
+
+    const host = new BindingAwareHost()
+    const tools = buildSwarmTools(host, makeManagerDescriptor('cortex', { archetypeId: 'cortex', profileId: 'cortex' }))
+    const saveTool = tools.find((tool) => tool.name === 'save_onboarding_facts')
+    const statusTool = tools.find((tool) => tool.name === 'set_onboarding_status')
+
+    expect(saveTool).toBeDefined()
+    expect(statusTool).toBeDefined()
+
+    const saveResult = await saveTool!.execute(
+      'tool-call',
+      {
+        cycleId: 'cycle-1',
+        baseRevision: 0,
+        facts: {
+          preferredName: {
+            value: 'Adam',
+            status: 'confirmed',
+          },
+        },
+        renderCommonMd: true,
+      },
+      undefined,
+      undefined,
+      undefined as any,
+    )
+    const statusResult = await statusTool!.execute(
+      'tool-call',
+      {
+        status: 'completed',
+        cycleId: 'cycle-1',
+        baseRevision: 1,
+        renderCommonMd: true,
+      },
+      undefined,
+      undefined,
+      undefined as any,
+    )
+
+    expect(host.saveCalls).toBe(1)
+    expect(host.statusCalls).toBe(1)
+    expect(saveResult.details).toMatchObject({
+      ok: true,
+      snapshot: {
+        revision: 1,
+      },
+    })
+    expect(statusResult.details).toMatchObject({
+      ok: true,
+      snapshot: {
+        revision: 2,
+      },
+    })
+  })
 })
