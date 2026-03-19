@@ -1606,6 +1606,79 @@ describe('SwarmManager', () => {
     expect(manager.isOnboardingMode('cortex')).toBe(false)
   })
 
+  it('does not recursively recycle the Cortex runtime when onboarding completion flips prompt mode', async () => {
+    const config = await makeTempConfig()
+
+    class ReentrantRecycleRuntime extends FakeRuntime {
+      constructor(
+        descriptor: AgentDescriptor,
+        private readonly manager: TestSwarmManager,
+        private readonly runtimeToken: number,
+      ) {
+        super(descriptor)
+      }
+
+      override async recycle(): Promise<void> {
+        this.recycleCalls += 1
+
+        const state = this.manager as unknown as {
+          handleRuntimeStatus: (
+            runtimeToken: number,
+            agentId: string,
+            status: AgentDescriptor['status'],
+            pendingCount: number,
+            contextUsage?: AgentContextUsage,
+          ) => Promise<void>
+        }
+
+        await state.handleRuntimeStatus(this.runtimeToken, this.descriptor.agentId, 'idle', 0)
+      }
+    }
+
+    class ReentrantRecycleTestSwarmManager extends TestSwarmManager {
+      protected override async createRuntimeForDescriptor(
+        descriptor: AgentDescriptor,
+        systemPrompt: string,
+        runtimeToken?: number,
+      ): Promise<SwarmAgentRuntime> {
+        if (runtimeToken === undefined) {
+          throw new Error('Expected runtime token for recycle test runtime')
+        }
+
+        const runtime =
+          descriptor.agentId === 'cortex'
+            ? new ReentrantRecycleRuntime(descriptor, this, runtimeToken)
+            : new FakeRuntime(descriptor)
+        this.createdRuntimeIds.push(descriptor.agentId)
+        this.runtimeByAgentId.set(descriptor.agentId, runtime)
+        this.systemPromptByAgentId.set(descriptor.agentId, systemPrompt)
+        return runtime as unknown as SwarmAgentRuntime
+      }
+    }
+
+    const manager = new ReentrantRecycleTestSwarmManager(config)
+    await manager.boot()
+    await manager.handleUserMessage('Hello Cortex', { targetAgentId: 'cortex' })
+
+    const activeSnapshot = await getOnboardingSnapshot(config.paths.dataDir)
+    const completed = await manager.setOnboardingStatus('cortex', {
+      status: 'completed',
+      cycleId: activeSnapshot.cycleId,
+      baseRevision: activeSnapshot.revision,
+    })
+    expect(completed.ok).toBe(true)
+
+    const state = manager as unknown as {
+      runtimes: Map<string, SwarmAgentRuntime>
+      pendingManagerRuntimeRecycleAgentIds: Set<string>
+    }
+
+    expect(manager.runtimeByAgentId.get('cortex')?.recycleCalls).toBe(1)
+    expect(state.runtimes.has('cortex')).toBe(false)
+    expect(state.pendingManagerRuntimeRecycleAgentIds.has('cortex')).toBe(false)
+    expect(manager.isOnboardingMode('cortex')).toBe(false)
+  })
+
   it('auto-resolves onboarding cycleId/baseRevision for Cortex save tools when omitted', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)

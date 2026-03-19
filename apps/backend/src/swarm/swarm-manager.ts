@@ -2585,9 +2585,16 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     const runtimeToken = this.runtimeTokensByAgentId.get(descriptor.agentId);
-    await runtime.recycle();
-    this.detachRuntime(descriptor.agentId, runtimeToken);
     this.pendingManagerRuntimeRecycleAgentIds.delete(descriptor.agentId);
+
+    try {
+      await runtime.recycle();
+    } catch (error) {
+      this.pendingManagerRuntimeRecycleAgentIds.add(descriptor.agentId);
+      throw error;
+    }
+
+    this.detachRuntime(descriptor.agentId, runtimeToken);
 
     if (descriptor.contextUsage) {
       descriptor.contextUsage = undefined;
