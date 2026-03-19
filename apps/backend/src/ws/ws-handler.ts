@@ -1018,6 +1018,16 @@ export class WsHandler {
       return;
     }
 
+    const socketIntegrity = this.validateSocketSendPath(socket);
+    if (!socketIntegrity.ok) {
+      console.warn("[swarm] ws:drop_event:invalid_socket", {
+        eventType: event.type,
+        reason: socketIntegrity.reason
+      });
+      this.dropSocket(socket);
+      return;
+    }
+
     if (socket.bufferedAmount > MAX_WS_BUFFERED_AMOUNT_BYTES) {
       console.warn("[swarm] ws:drop_event:backpressure", {
         eventType: event.type,
@@ -1048,7 +1058,59 @@ export class WsHandler {
       return;
     }
 
-    socket.send(serialized);
+    try {
+      socket.send(serialized, (error) => {
+        if (!error) {
+          return;
+        }
+
+        console.warn("[swarm] ws:drop_event:send_failed", {
+          eventType: event.type,
+          message: error.message
+        });
+        this.dropSocket(socket);
+      });
+    } catch (error) {
+      console.warn("[swarm] ws:drop_event:send_failed", {
+        eventType: event.type,
+        message: error instanceof Error ? error.message : String(error)
+      });
+      this.dropSocket(socket);
+    }
+  }
+
+  private validateSocketSendPath(
+    socket: WebSocket
+  ): { ok: true } | { ok: false; reason: "missing_underlying_socket" | "missing_underlying_socket_write" | "socket_self_reference" | "socket_write_recurses_into_websocket_send" } {
+    const rawSocket = (socket as WebSocket & { _socket?: unknown })._socket;
+    if (!rawSocket || typeof rawSocket !== "object") {
+      return { ok: false, reason: "missing_underlying_socket" };
+    }
+
+    if (rawSocket === socket) {
+      return { ok: false, reason: "socket_self_reference" };
+    }
+
+    const rawSocketWrite = (rawSocket as { write?: unknown }).write;
+    if (typeof rawSocketWrite !== "function") {
+      return { ok: false, reason: "missing_underlying_socket_write" };
+    }
+
+    if (rawSocketWrite === socket.send) {
+      return { ok: false, reason: "socket_write_recurses_into_websocket_send" };
+    }
+
+    return { ok: true };
+  }
+
+  private dropSocket(socket: WebSocket): void {
+    this.subscriptions.delete(socket);
+
+    try {
+      socket.terminate();
+    } catch {
+      // best effort
+    }
   }
 }
 
