@@ -8,7 +8,6 @@ import {
   Edit3,
   EyeOff,
   GitFork,
-  Merge,
   MonitorPlay,
   Pause,
   Play,
@@ -99,7 +98,6 @@ interface AgentSidebarProps {
   onDeleteSession?: (agentId: string) => void
   onRenameSession?: (agentId: string, label: string) => void
   onForkSession?: (sourceAgentId: string, name?: string) => void
-  onMergeSessionMemory?: (agentId: string) => void
   onMarkUnread?: (agentId: string) => void
   onUpdateManagerModel?: (managerId: string, model: ManagerModelPreset, reasoningLevel?: ManagerReasoningLevel) => void
   onRequestSessionWorkers?: (sessionId: string) => void
@@ -475,7 +473,6 @@ function SessionRowItem({
   onDelete,
   onRename,
   onFork,
-  onMergeMemory,
   onMarkUnread,
   onStopWorker,
   onResumeWorker,
@@ -497,7 +494,6 @@ function SessionRowItem({
   onDelete?: () => void
   onRename?: () => void
   onFork?: () => void
-  onMergeMemory?: () => void
   onMarkUnread?: () => void
   onStopWorker?: (agentId: string) => void
   onResumeWorker?: (agentId: string) => void
@@ -612,12 +608,6 @@ function SessionRowItem({
             <ContextMenuItem onClick={onResume}>
               <Play className="mr-2 size-3.5" />
               Resume
-            </ContextMenuItem>
-          ) : null}
-          {onMergeMemory ? (
-            <ContextMenuItem onClick={onMergeMemory}>
-              <Merge className="mr-2 size-3.5" />
-              Merge Memory
             </ContextMenuItem>
           ) : null}
           {onMarkUnread ? (
@@ -752,7 +742,6 @@ function ProfileGroup({
   onDeleteSession,
   onRequestRenameSession,
   onForkSession,
-  onMergeSessionMemory,
   onMarkUnread,
   onChangeModel,
   highlightQuery,
@@ -782,7 +771,6 @@ function ProfileGroup({
   onDeleteSession?: (agentId: string) => void
   onRequestRenameSession?: (agentId: string) => void
   onForkSession?: (sourceAgentId: string) => void
-  onMergeSessionMemory?: (agentId: string) => void
   onMarkUnread?: (agentId: string) => void
   onChangeModel?: (profileId: string) => void
   highlightQuery?: string
@@ -1007,7 +995,6 @@ function ProfileGroup({
                         onDelete={onDeleteSession ? () => onDeleteSession(session.sessionAgent.agentId) : undefined}
                         onRename={onRequestRenameSession ? () => onRequestRenameSession(session.sessionAgent.agentId) : undefined}
                         onFork={onForkSession ? () => onForkSession(session.sessionAgent.agentId) : undefined}
-                        onMergeMemory={onMergeSessionMemory ? () => onMergeSessionMemory(session.sessionAgent.agentId) : undefined}
                         onMarkUnread={onMarkUnread ? () => onMarkUnread(session.sessionAgent.agentId) : undefined}
                         onStopWorker={onStopSession}
                         onResumeWorker={onResumeSession}
@@ -1399,7 +1386,6 @@ function CortexSection({
   onDeleteSession,
   onRequestRenameSession,
   onForkSession,
-  onMergeSessionMemory,
   onMarkUnread,
   onChangeModel,
   highlightQuery,
@@ -1428,7 +1414,6 @@ function CortexSection({
   onDeleteSession?: (agentId: string) => void
   onRequestRenameSession?: (agentId: string) => void
   onForkSession?: (sourceAgentId: string) => void
-  onMergeSessionMemory?: (agentId: string) => void
   onMarkUnread?: (agentId: string) => void
   onChangeModel?: (profileId: string) => void
   highlightQuery?: string
@@ -1683,7 +1668,6 @@ function CortexSection({
                         onDelete={!session.isDefault && onDeleteSession ? () => onDeleteSession(session.sessionAgent.agentId) : undefined}
                         onRename={onRequestRenameSession ? () => onRequestRenameSession(session.sessionAgent.agentId) : undefined}
                         onFork={onForkSession ? () => onForkSession(session.sessionAgent.agentId) : undefined}
-                        onMergeMemory={onMergeSessionMemory ? () => onMergeSessionMemory(session.sessionAgent.agentId) : undefined}
                         onMarkUnread={onMarkUnread ? () => onMarkUnread(session.sessionAgent.agentId) : undefined}
                         onStopWorker={onStopSession}
                         onResumeWorker={onResumeSession}
@@ -1803,7 +1787,6 @@ export function AgentSidebar({
   onDeleteSession,
   onRenameSession,
   onForkSession,
-  onMergeSessionMemory,
   onMarkUnread,
   onUpdateManagerModel,
   onRequestSessionWorkers,
@@ -2169,7 +2152,6 @@ export function AgentSidebar({
               onDeleteSession={handleRequestDelete}
               onRequestRenameSession={handleRequestRename}
               onForkSession={onForkSession ? (sourceAgentId: string) => setForkTarget({ sourceAgentId }) : undefined}
-              onMergeSessionMemory={onMergeSessionMemory}
               onMarkUnread={onMarkUnread}
               onChangeModel={onUpdateManagerModel ? handleRequestChangeModel : undefined}
               highlightQuery={isSearchActive ? parsedSearch.term : undefined}
@@ -2228,7 +2210,6 @@ export function AgentSidebar({
               onDeleteSession={handleRequestDelete}
               onRequestRenameSession={handleRequestRename}
               onForkSession={onForkSession ? (sourceAgentId: string) => setForkTarget({ sourceAgentId }) : undefined}
-              onMergeSessionMemory={onMergeSessionMemory}
               onMarkUnread={onMarkUnread}
               onChangeModel={onUpdateManagerModel ? handleRequestChangeModel : undefined}
               highlightQuery={isSearchActive ? parsedSearch.term : undefined}

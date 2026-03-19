@@ -647,30 +647,6 @@ export function IndexPage() {
     })()
   }, [clientRef, navigateToRoute, setState])
 
-  const handleMergeSessionMemory = useCallback((agentId: string) => {
-    const client = clientRef.current
-    if (!client) return
-
-    void (async () => {
-      try {
-        const result = await client.mergeSessionMemory(agentId)
-        setState((prev) => ({
-          ...prev,
-          lastSuccess:
-            result.status === 'applied'
-              ? 'Session memory promoted into profile summary successfully.'
-              : `Session memory merge skipped (${result.strategy.replace(/_/g, ' ')}).`,
-          lastError: null,
-        }))
-      } catch (error) {
-        setState((prev) => ({
-          ...prev,
-          lastError: `Failed to merge session memory: ${error instanceof Error ? error.message : 'Unknown error'}`,
-          lastSuccess: null,
-        }))
-      }
-    })()
-  }, [clientRef, setState])
 
   const handleRequestSessionWorkers = useCallback((sessionAgentId: string) => {
     const client = clientRef.current
@@ -850,7 +826,6 @@ export function IndexPage() {
           onDeleteSession={handleDeleteSession}
           onRenameSession={handleRenameSession}
           onForkSession={handleForkSession}
-          onMergeSessionMemory={handleMergeSessionMemory}
           onMarkUnread={handleMarkUnread}
           onUpdateManagerModel={handleUpdateManagerModel}
           onRequestSessionWorkers={handleRequestSessionWorkers}
