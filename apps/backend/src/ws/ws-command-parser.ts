@@ -487,6 +487,32 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
     };
   }
 
+  if (maybe.type === "reorder_profiles") {
+    const profileIds = (maybe as { profileIds?: unknown }).profileIds;
+    const requestId = (maybe as { requestId?: unknown }).requestId;
+
+    if (!Array.isArray(profileIds) || profileIds.length === 0) {
+      return { ok: false, error: "reorder_profiles.profileIds must be a non-empty array" };
+    }
+    for (let i = 0; i < profileIds.length; i++) {
+      if (typeof profileIds[i] !== "string" || (profileIds[i] as string).trim().length === 0) {
+        return { ok: false, error: `reorder_profiles.profileIds[${i}] must be a non-empty string` };
+      }
+    }
+    if (requestId !== undefined && typeof requestId !== "string") {
+      return { ok: false, error: "reorder_profiles.requestId must be a string when provided" };
+    }
+
+    return {
+      ok: true,
+      command: {
+        type: "reorder_profiles",
+        profileIds: profileIds.map((id: string) => id.trim()),
+        requestId
+      }
+    };
+  }
+
   if (maybe.type === "user_message") {
     if (typeof maybe.text !== "string") {
       return { ok: false, error: "user_message.text must be a string" };
@@ -573,6 +599,7 @@ export function extractRequestId(command: ClientCommand): string | undefined {
     case "merge_session_memory":
     case "get_session_workers":
     case "stop_all_agents":
+    case "reorder_profiles":
     case "list_directories":
     case "validate_directory":
     case "pick_directory":

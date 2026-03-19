@@ -2373,12 +2373,22 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       sessionFile: getSessionFilePath(this.config.paths.dataDir, managerId, managerId)
     };
 
+    // Canonicalize sortOrder for all existing profiles if any lack it,
+    // so the new profile's sortOrder correctly places it at the bottom.
+    this.materializeSortOrder();
+
+    const maxSortOrder = Array.from(this.profiles.values()).reduce(
+      (max, p) => Math.max(max, p.sortOrder ?? -1),
+      -1
+    );
+
     const profile: ManagerProfile = {
       profileId: descriptor.agentId,
       displayName: descriptor.displayName,
       defaultSessionAgentId: descriptor.agentId,
       createdAt: descriptor.createdAt,
-      updatedAt: descriptor.createdAt
+      updatedAt: descriptor.createdAt,
+      sortOrder: maxSortOrder + 1
     };
 
     this.descriptors.set(descriptor.agentId, descriptor);
@@ -4316,12 +4326,77 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     });
   }
 
+  /**
+   * Ensures every profile has an explicit sortOrder.
+   * Called on first profile creation after upgrade so legacy profiles
+   * (which have sortOrder: undefined) get values matching their current
+   * visible order, preventing new profiles from sorting before them.
+   */
+  private materializeSortOrder(): void {
+    const needsMaterialization = Array.from(this.profiles.values()).some(
+      (p) => p.sortOrder === undefined || p.sortOrder === null
+    );
+    if (!needsMaterialization) return;
+
+    const sorted = this.sortedProfiles();
+    for (let i = 0; i < sorted.length; i++) {
+      const profile = this.profiles.get(sorted[i].profileId);
+      if (profile) {
+        profile.sortOrder = i;
+        this.profiles.set(profile.profileId, profile);
+      }
+    }
+  }
+
+  async reorderProfiles(profileIds: string[]): Promise<void> {
+    // Validate: profileIds must contain exactly the current non-Cortex profile IDs
+    const currentProfiles = Array.from(this.profiles.values());
+
+    const reorderableIds = new Set(
+      currentProfiles
+        .filter((p) => p.profileId !== CORTEX_PROFILE_ID)
+        .map((p) => p.profileId)
+    );
+
+    const incomingIds = new Set(profileIds);
+    if (incomingIds.size !== profileIds.length) {
+      throw new Error("Duplicate profile IDs in reorder request");
+    }
+    if (incomingIds.size !== reorderableIds.size) {
+      throw new Error("Profile ID count mismatch: expected " + reorderableIds.size + " but got " + incomingIds.size);
+    }
+    for (const id of profileIds) {
+      if (!reorderableIds.has(id)) {
+        throw new Error("Unknown or non-reorderable profile ID: " + id);
+      }
+    }
+
+    // Assign sortOrder values
+    for (let i = 0; i < profileIds.length; i++) {
+      const profile = this.profiles.get(profileIds[i]);
+      if (profile) {
+        profile.sortOrder = i;
+        this.profiles.set(profile.profileId, profile);
+      }
+    }
+
+    await this.saveStore();
+    this.emitProfilesSnapshot();
+  }
+
   private sortedProfiles(): ManagerProfile[] {
     const configuredManagerId = this.getConfiguredManagerId();
     return Array.from(this.profiles.values()).sort((a, b) => {
       if (configuredManagerId) {
         if (a.profileId === configuredManagerId) return -1;
         if (b.profileId === configuredManagerId) return 1;
+      }
+
+      // Sort by explicit sortOrder first (when present)
+      const aOrder = a.sortOrder ?? Number.MAX_SAFE_INTEGER;
+      const bOrder = b.sortOrder ?? Number.MAX_SAFE_INTEGER;
+      if (aOrder !== bOrder) {
+        return aOrder - bOrder;
       }
 
       if (a.createdAt !== b.createdAt) {

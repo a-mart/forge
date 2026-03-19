@@ -138,5 +138,31 @@ export async function handleManagerCommand(context: ManagerCommandRouteContext):
     return true;
   }
 
+  if (command.type === "reorder_profiles") {
+    const managerContextId = resolveManagerContextAgentId(subscribedAgentId);
+    if (!managerContextId) {
+      send(socket, {
+        type: "error",
+        code: "UNKNOWN_AGENT",
+        message: `Agent ${subscribedAgentId} does not exist.`,
+        requestId: command.requestId
+      });
+      return true;
+    }
+
+    try {
+      await swarmManager.reorderProfiles(command.profileIds);
+    } catch (error) {
+      send(socket, {
+        type: "error",
+        code: "REORDER_PROFILES_FAILED",
+        message: error instanceof Error ? error.message : String(error),
+        requestId: command.requestId
+      });
+    }
+
+    return true;
+  }
+
   return false;
 }

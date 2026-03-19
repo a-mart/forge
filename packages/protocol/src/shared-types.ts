@@ -24,6 +24,7 @@ export interface ManagerProfile {
   defaultSessionAgentId: string
   createdAt: string
   updatedAt: string
+  sortOrder?: number
 }
 
 export type AgentSessionPurpose = 'cortex_review'

@@ -26,6 +26,24 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  DragOverlay,
+} from '@dnd-kit/core'
+import {
+  SortableContext,
+  useSortable,
+  verticalListSortingStrategy,
+  sortableKeyboardCoordinates,
+  arrayMove,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import {
   Select,
@@ -42,6 +60,7 @@ import {
   type SessionRow,
 } from '@/lib/agent-hierarchy'
 import { inferModelPreset } from '@/lib/model-preset'
+import { resolveApiEndpoint } from '@/lib/api-endpoint'
 import { cn } from '@/lib/utils'
 import {
   MANAGER_MODEL_PRESETS,
@@ -56,6 +75,7 @@ import {
 
 interface AgentSidebarProps {
   connected: boolean
+  wsUrl?: string
   agents: AgentDescriptor[]
   profiles: ManagerProfile[]
   statuses: Record<string, { status: AgentStatus; pendingCount: number; contextUsage?: AgentContextUsage }>
@@ -83,11 +103,20 @@ interface AgentSidebarProps {
   onMarkUnread?: (agentId: string) => void
   onUpdateManagerModel?: (managerId: string, model: ManagerModelPreset, reasoningLevel?: ManagerReasoningLevel) => void
   onRequestSessionWorkers?: (sessionId: string) => void
+  onReorderProfiles?: (profileIds: string[]) => void
 }
 
 type AgentLiveStatus = {
   status: AgentStatus
   pendingCount: number
+}
+
+interface CortexScanBadgeResponse {
+  scan?: {
+    summary?: {
+      needsReview?: number
+    }
+  }
 }
 
 function getAgentLiveStatus(
@@ -727,6 +756,8 @@ function ProfileGroup({
   onMarkUnread,
   onChangeModel,
   highlightQuery,
+  dragHandleRef,
+  dragHandleListeners,
 }: {
   treeRow: ProfileTreeRow
   statuses: Record<string, { status: AgentStatus; pendingCount: number; contextUsage?: AgentContextUsage }>
@@ -755,6 +786,8 @@ function ProfileGroup({
   onMarkUnread?: (agentId: string) => void
   onChangeModel?: (profileId: string) => void
   highlightQuery?: string
+  dragHandleRef?: (element: HTMLElement | null) => void
+  dragHandleListeners?: Record<string, any> | undefined
 }) {
   const { profile, sessions } = treeRow
   const hasAnySessions = sessions.length > 0
@@ -774,7 +807,7 @@ function ProfileGroup({
   const representativeAgent = defaultSession?.sessionAgent ?? sessions[0]?.sessionAgent
 
   return (
-    <li>
+    <>
       {/* Profile header */}
       <ContextMenu>
         <ContextMenuTrigger asChild>
@@ -819,6 +852,8 @@ function ProfileGroup({
 
             <button
               type="button"
+              ref={dragHandleRef}
+              {...dragHandleListeners}
               onClick={() => {
                 // Click profile header → select default session
                 const targetId = defaultSession?.sessionAgent.agentId ?? sessions[0]?.sessionAgent.agentId
@@ -828,8 +863,10 @@ function ProfileGroup({
                 'flex min-w-0 flex-1 items-center gap-1.5 rounded-md py-2.5 pl-7 pr-1.5 text-left transition-colors md:py-1.5',
                 'hover:bg-sidebar-accent/50',
                 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
+                dragHandleListeners ? 'cursor-grab active:cursor-grabbing' : '',
               )}
               title={profile.displayName}
+              style={dragHandleListeners ? { touchAction: 'none' } : undefined}
             >
               {isCollapsed && totalStreamingWorkers > 0 ? (
                 <AgentActivitySlot isActive={false} isSelected={false} streamingWorkerCount={totalStreamingWorkers} />
@@ -1007,7 +1044,7 @@ function ProfileGroup({
           })()}
         </div>
       ) : null}
-    </li>
+    </>
   )
 }
 
@@ -1355,6 +1392,7 @@ function CortexSection({
   onDeleteAgent,
   onOpenSettings,
   onOpenCortexReview,
+  outstandingReviewCount,
   onCreateSession,
   onStopSession,
   onResumeSession,
@@ -1383,6 +1421,7 @@ function CortexSection({
   onDeleteAgent: (agentId: string) => void
   onOpenSettings: () => void
   onOpenCortexReview?: (agentId: string) => void
+  outstandingReviewCount?: number | null
   onCreateSession?: (profileId: string) => void
   onStopSession?: (agentId: string) => void
   onResumeSession?: (agentId: string) => void
@@ -1509,9 +1548,9 @@ function CortexSection({
                   {activeSessionCount}/{visibleSessions.length}
                 </span>
               ) : null}
-              {reviewRunSessions.length > 0 && !isSearchActive ? (
+              {typeof outstandingReviewCount === 'number' && outstandingReviewCount > 0 && !isSearchActive ? (
                 <span className="shrink-0 rounded-full border border-border/60 px-1.5 py-0.5 text-[9px] text-muted-foreground">
-                  Review {reviewRunSessions.length}
+                  Review {outstandingReviewCount}
                 </span>
               ) : null}
               {activeReviewRunCount > 0 ? (
@@ -1704,10 +1743,43 @@ function CortexSection({
   )
 }
 
+// ── Sortable profile wrapper ──
+
+function SortableProfileGroup({
+  treeRow,
+  children,
+}: {
+  treeRow: ProfileTreeRow
+  children: (dragHandleRef: (element: HTMLElement | null) => void, dragHandleListeners: Record<string, any> | undefined) => React.ReactNode
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    setActivatorNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: treeRow.profile.profileId })
+
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : undefined,
+  }
+
+  return (
+    <li ref={setNodeRef} style={style} {...attributes}>
+      {children(setActivatorNodeRef, listeners)}
+    </li>
+  )
+}
+
 // ── Main sidebar ──
 
 export function AgentSidebar({
   connected,
+  wsUrl,
   agents,
   profiles,
   statuses,
@@ -1735,8 +1807,18 @@ export function AgentSidebar({
   onMarkUnread,
   onUpdateManagerModel,
   onRequestSessionWorkers,
+  onReorderProfiles,
 }: AgentSidebarProps) {
   const treeRows = buildProfileTreeRows(agents, profiles)
+  const hasCortexProfile = profiles.some((profile) => profile.profileId === 'cortex')
+
+  // DnD sensors
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  )
+  const [activeDragId, setActiveDragId] = useState<string | null>(null)
+  const [cortexOutstandingReviewCount, setCortexOutstandingReviewCount] = useState<number | null>(null)
 
   const [searchQuery, setSearchQuery] = useState('')
   const searchInputRef = useRef<HTMLInputElement>(null)
@@ -1757,13 +1839,54 @@ export function AgentSidebar({
   const parsedSearch = useMemo(() => parseSearchQuery(searchQuery), [searchQuery])
   const isSearchActive = parsedSearch.term.length > 0
 
+  useEffect(() => {
+    if (!connected || !hasCortexProfile) {
+      setCortexOutstandingReviewCount(null)
+      return
+    }
+
+    const controller = new AbortController()
+    const endpoint = resolveApiEndpoint(wsUrl, '/api/cortex/scan')
+
+    void fetch(endpoint, { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`Cortex scan failed (${response.status})`)
+        }
+        return response.json() as Promise<CortexScanBadgeResponse>
+      })
+      .then((payload) => {
+        if (controller.signal.aborted) return
+        setCortexOutstandingReviewCount(
+          typeof payload.scan?.summary?.needsReview === 'number' ? payload.scan.summary.needsReview : 0,
+        )
+      })
+      .catch(() => {
+        if (controller.signal.aborted) return
+        setCortexOutstandingReviewCount(null)
+      })
+
+    return () => controller.abort()
+  }, [connected, hasCortexProfile, wsUrl])
+
   // Filter tree rows when search is active
   const { filtered: filteredTreeRows, matchCount } = useMemo(
     () => filterTreeRows(treeRows, searchQuery),
     [treeRows, searchQuery],
   )
 
-  const [collapsedProfileIds, setCollapsedProfileIds] = useState<Set<string>>(() => new Set())
+  const [collapsedProfileIds, setCollapsedProfileIds] = useState<Set<string>>(() => {
+    try {
+      const stored = localStorage.getItem('forge-sidebar-collapsed-profiles')
+      if (stored) {
+        const parsed = JSON.parse(stored)
+        if (Array.isArray(parsed)) return new Set(parsed)
+      }
+    } catch {
+      // Ignore corrupt/missing localStorage
+    }
+    return new Set()
+  })
   // Track explicitly expanded sessions — everything defaults to collapsed
   const [expandedSessionIds, setExpandedSessionIds] = useState<Set<string>>(() => new Set())
   // Track which profiles have their full session list expanded (default: collapsed to MAX_VISIBLE)
@@ -1830,6 +1953,18 @@ export function AgentSidebar({
       return next
     })
   }, [onRequestSessionWorkers])
+
+  // Persist profile collapse state to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        'forge-sidebar-collapsed-profiles',
+        JSON.stringify([...collapsedProfileIds]),
+      )
+    } catch {
+      // Ignore localStorage write failures (quota, etc.)
+    }
+  }, [collapsedProfileIds])
 
   const handleSelectAgent = useCallback((agentId: string) => {
     onSelectAgent(agentId)
@@ -1911,6 +2046,22 @@ export function AgentSidebar({
     onUpdateManagerModel?.(profileId, model, reasoningLevel)
     setChangeModelTarget(null)
   }, [onUpdateManagerModel])
+
+  const handleDragEnd = useCallback((event: DragEndEvent) => {
+    setActiveDragId(null)
+    const { active, over } = event
+    if (!over || active.id === over.id || !onReorderProfiles) return
+
+    const sourceRows = isSearchActive ? filteredTreeRows : treeRows
+    const regularRows = sourceRows.filter((row) => !isCortexProfile(row))
+    const currentIds = regularRows.map((r) => r.profile.profileId)
+    const oldIndex = currentIds.indexOf(active.id as string)
+    const newIndex = currentIds.indexOf(over.id as string)
+    if (oldIndex === -1 || newIndex === -1) return
+
+    const newOrder = arrayMove(currentIds, oldIndex, newIndex)
+    onReorderProfiles(newOrder)
+  }, [onReorderProfiles, treeRows, filteredTreeRows, isSearchActive])
 
   const sidebarContent = (
     <aside
@@ -2011,6 +2162,7 @@ export function AgentSidebar({
               onDeleteAgent={onDeleteAgent}
               onOpenSettings={handleOpenSettings}
               onOpenCortexReview={handleOpenCortexReview}
+              outstandingReviewCount={cortexOutstandingReviewCount}
               onCreateSession={onCreateSession ? handleRequestCreateSession : undefined}
               onStopSession={onStopSession}
               onResumeSession={onResumeSession}
@@ -2051,39 +2203,81 @@ export function AgentSidebar({
             )
           }
 
+          const profileGroupContent = (treeRow: ProfileTreeRow, dragHandleRef?: (element: HTMLElement | null) => void, dragHandleListeners?: Record<string, any>) => (
+            <ProfileGroup
+              treeRow={treeRow}
+              statuses={statuses}
+              unreadCounts={unreadCounts}
+              selectedAgentId={selectedAgentId}
+              isSettingsActive={isSettingsActive}
+              isCollapsed={isSearchActive ? false : collapsedProfileIds.has(treeRow.profile.profileId)}
+              collapsedSessionIds={expandedSessionIds}
+              isSessionListExpanded={isSearchActive || expandedSessionListProfileIds.has(treeRow.profile.profileId)}
+              expandedWorkerListSessionIds={expandedWorkerListSessionIds}
+              onToggleProfileCollapsed={() => toggleProfileCollapsed(treeRow.profile.profileId)}
+              onToggleSessionCollapsed={toggleSessionCollapsed}
+              onToggleSessionListExpanded={() => toggleSessionListExpanded(treeRow.profile.profileId)}
+              onToggleWorkerListExpanded={toggleWorkerListExpanded}
+              onSelect={handleSelectAgent}
+              onDeleteAgent={onDeleteAgent}
+              onDeleteManager={onDeleteManager}
+              onOpenSettings={handleOpenSettings}
+              onCreateSession={onCreateSession ? handleRequestCreateSession : undefined}
+              onStopSession={onStopSession}
+              onResumeSession={onResumeSession}
+              onDeleteSession={handleRequestDelete}
+              onRequestRenameSession={handleRequestRename}
+              onForkSession={onForkSession ? (sourceAgentId: string) => setForkTarget({ sourceAgentId }) : undefined}
+              onMergeSessionMemory={onMergeSessionMemory}
+              onMarkUnread={onMarkUnread}
+              onChangeModel={onUpdateManagerModel ? handleRequestChangeModel : undefined}
+              highlightQuery={isSearchActive ? parsedSearch.term : undefined}
+              dragHandleRef={dragHandleRef}
+              dragHandleListeners={dragHandleListeners}
+            />
+          )
+
+          const dndEnabled = !isSearchActive && onReorderProfiles && regularRows.length > 1
+          const sortableIds = regularRows.map((r) => r.profile.profileId)
+          const activeDragRow = activeDragId ? regularRows.find((r) => r.profile.profileId === activeDragId) : null
+
+          if (dndEnabled) {
+            return (
+              <DndContext
+                sensors={sensors}
+                collisionDetection={closestCenter}
+                onDragStart={(event) => setActiveDragId(event.active.id as string)}
+                onDragCancel={() => setActiveDragId(null)}
+                onDragEnd={handleDragEnd}
+              >
+                <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
+                  <ul className="space-y-0.5">
+                    {regularRows.map((treeRow) => (
+                      <SortableProfileGroup key={treeRow.profile.profileId} treeRow={treeRow}>
+                        {(dragHandleRef, dragHandleListeners) => profileGroupContent(treeRow, dragHandleRef, dragHandleListeners)}
+                      </SortableProfileGroup>
+                    ))}
+                  </ul>
+                </SortableContext>
+                <DragOverlay>
+                  {activeDragRow ? (
+                    <div className="rounded-md border border-sidebar-border bg-sidebar shadow-lg">
+                      <div className="flex items-center gap-1.5 px-3 py-2">
+                        <span className="text-sm font-semibold">{activeDragRow.profile.displayName}</span>
+                      </div>
+                    </div>
+                  ) : null}
+                </DragOverlay>
+              </DndContext>
+            )
+          }
+
           return (
             <ul className="space-y-0.5">
               {regularRows.map((treeRow) => (
-                <ProfileGroup
-                  key={treeRow.profile.profileId}
-                  treeRow={treeRow}
-                  statuses={statuses}
-                  unreadCounts={unreadCounts}
-                  selectedAgentId={selectedAgentId}
-                  isSettingsActive={isSettingsActive}
-                  isCollapsed={isSearchActive ? false : collapsedProfileIds.has(treeRow.profile.profileId)}
-                  collapsedSessionIds={expandedSessionIds}
-                  isSessionListExpanded={isSearchActive || expandedSessionListProfileIds.has(treeRow.profile.profileId)}
-                  expandedWorkerListSessionIds={expandedWorkerListSessionIds}
-                  onToggleProfileCollapsed={() => toggleProfileCollapsed(treeRow.profile.profileId)}
-                  onToggleSessionCollapsed={toggleSessionCollapsed}
-                  onToggleSessionListExpanded={() => toggleSessionListExpanded(treeRow.profile.profileId)}
-                  onToggleWorkerListExpanded={toggleWorkerListExpanded}
-                  onSelect={handleSelectAgent}
-                  onDeleteAgent={onDeleteAgent}
-                  onDeleteManager={onDeleteManager}
-                  onOpenSettings={handleOpenSettings}
-                  onCreateSession={onCreateSession ? handleRequestCreateSession : undefined}
-                  onStopSession={onStopSession}
-                  onResumeSession={onResumeSession}
-                  onDeleteSession={handleRequestDelete}
-                  onRequestRenameSession={handleRequestRename}
-                  onForkSession={onForkSession ? (sourceAgentId: string) => setForkTarget({ sourceAgentId }) : undefined}
-                  onMergeSessionMemory={onMergeSessionMemory}
-                  onMarkUnread={onMarkUnread}
-                  onChangeModel={onUpdateManagerModel ? handleRequestChangeModel : undefined}
-                  highlightQuery={isSearchActive ? parsedSearch.term : undefined}
-                />
+                <li key={treeRow.profile.profileId}>
+                  {profileGroupContent(treeRow)}
+                </li>
               ))}
             </ul>
           )

@@ -167,8 +167,15 @@ export function buildProfileTreeRows(
     treeRows.push({ profile, sessions: sessionRows })
   }
 
-  // Sort profiles by createdAt
-  treeRows.sort((a, b) => a.profile.createdAt.localeCompare(b.profile.createdAt))
+  // Sort profiles by sortOrder first, then createdAt, then profileId for determinism
+  treeRows.sort((a, b) => {
+    const aOrder = a.profile.sortOrder ?? Number.MAX_SAFE_INTEGER
+    const bOrder = b.profile.sortOrder ?? Number.MAX_SAFE_INTEGER
+    if (aOrder !== bOrder) return aOrder - bOrder
+    const createdOrder = a.profile.createdAt.localeCompare(b.profile.createdAt)
+    if (createdOrder !== 0) return createdOrder
+    return a.profile.profileId.localeCompare(b.profile.profileId)
+  })
 
   // Handle legacy managers without profiles — create synthetic profile rows
   for (const manager of legacyManagers) {

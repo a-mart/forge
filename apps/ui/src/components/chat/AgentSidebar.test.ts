@@ -49,6 +49,10 @@ let root: Root | null = null
 beforeEach(() => {
   container = document.createElement('div')
   document.body.appendChild(container)
+  vi.stubGlobal('fetch', vi.fn(async () => ({
+    ok: true,
+    json: async () => ({ scan: { summary: { needsReview: 0 } } }),
+  })))
 })
 
 afterEach(() => {
@@ -58,6 +62,7 @@ afterEach(() => {
     })
   }
 
+  vi.unstubAllGlobals()
   root = null
   container.remove()
 })

@@ -36,4 +36,5 @@ export type ClientCommand =
   | { type: 'list_directories'; path?: string; requestId?: string }
   | { type: 'validate_directory'; path: string; requestId?: string }
   | { type: 'pick_directory'; defaultPath?: string; requestId?: string }
+  | { type: 'reorder_profiles'; profileIds: string[]; requestId?: string }
   | { type: 'ping' }

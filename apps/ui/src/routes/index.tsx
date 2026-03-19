@@ -706,6 +706,10 @@ export function IndexPage() {
     }
   }, [clientRef, setState])
 
+  const handleReorderProfiles = useCallback((profileIds: string[]) => {
+    clientRef.current?.reorderProfiles(profileIds)
+  }, [clientRef])
+
   const handleSelectAgent = (agentId: string) => {
     navigateToRoute({ view: 'chat', agentId })
     clientRef.current?.subscribeToAgent(agentId)
@@ -822,6 +826,7 @@ export function IndexPage() {
       <div className="flex h-dvh w-full min-w-0 overflow-hidden bg-background">
         <AgentSidebar
           connected={state.connected}
+          wsUrl={wsUrl}
           agents={state.agents}
           profiles={state.profiles}
           statuses={state.statuses}
@@ -849,6 +854,7 @@ export function IndexPage() {
           onMarkUnread={handleMarkUnread}
           onUpdateManagerModel={handleUpdateManagerModel}
           onRequestSessionWorkers={handleRequestSessionWorkers}
+          onReorderProfiles={handleReorderProfiles}
         />
 
         <div

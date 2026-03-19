@@ -152,6 +152,93 @@ describe('ws command parser session commands', () => {
     }
   })
 
+  it('parses reorder_profiles with valid payload', () => {
+    const parsed = parseJsonCommand({
+      type: 'reorder_profiles',
+      profileIds: ['profile-b', 'profile-a', 'profile-c'],
+      requestId: 'req-reorder',
+    })
+
+    expect(parsed).toEqual({
+      ok: true,
+      command: {
+        type: 'reorder_profiles',
+        profileIds: ['profile-b', 'profile-a', 'profile-c'],
+        requestId: 'req-reorder',
+      },
+    })
+  })
+
+  it('parses reorder_profiles without requestId', () => {
+    const parsed = parseJsonCommand({
+      type: 'reorder_profiles',
+      profileIds: ['profile-a'],
+    })
+
+    expect(parsed).toEqual({
+      ok: true,
+      command: {
+        type: 'reorder_profiles',
+        profileIds: ['profile-a'],
+        requestId: undefined,
+      },
+    })
+  })
+
+  it('parses reorder_profiles and trims profile ids', () => {
+    const parsed = parseJsonCommand({
+      type: 'reorder_profiles',
+      profileIds: ['  profile-a  ', ' profile-b '],
+    })
+
+    expect(parsed).toEqual({
+      ok: true,
+      command: {
+        type: 'reorder_profiles',
+        profileIds: ['profile-a', 'profile-b'],
+        requestId: undefined,
+      },
+    })
+  })
+
+  it('rejects reorder_profiles with invalid payloads', () => {
+    const invalidPayloads: Array<{ payload: unknown; message: string }> = [
+      {
+        payload: { type: 'reorder_profiles', profileIds: [] },
+        message: 'reorder_profiles.profileIds must be a non-empty array',
+      },
+      {
+        payload: { type: 'reorder_profiles' },
+        message: 'reorder_profiles.profileIds must be a non-empty array',
+      },
+      {
+        payload: { type: 'reorder_profiles', profileIds: 'not-array' },
+        message: 'reorder_profiles.profileIds must be a non-empty array',
+      },
+      {
+        payload: { type: 'reorder_profiles', profileIds: ['valid', ''] },
+        message: 'reorder_profiles.profileIds[1] must be a non-empty string',
+      },
+      {
+        payload: { type: 'reorder_profiles', profileIds: ['valid', 42] },
+        message: 'reorder_profiles.profileIds[1] must be a non-empty string',
+      },
+      {
+        payload: { type: 'reorder_profiles', profileIds: ['valid', '  '] },
+        message: 'reorder_profiles.profileIds[1] must be a non-empty string',
+      },
+      {
+        payload: { type: 'reorder_profiles', profileIds: ['a', 'b'], requestId: 123 },
+        message: 'reorder_profiles.requestId must be a string when provided',
+      },
+    ]
+
+    for (const testCase of invalidPayloads) {
+      const parsed = parseJsonCommand(testCase.payload)
+      expect(parsed).toEqual({ ok: false, error: testCase.message })
+    }
+  })
+
   it('extracts request ids for new session commands', () => {
     const commands = [
       { type: 'api_proxy', requestId: 'req-proxy', method: 'GET', path: '/api/slash-commands' },
@@ -168,5 +255,12 @@ describe('ws command parser session commands', () => {
     for (const command of commands) {
       expect(extractRequestId(command)).toBe(command.requestId)
     }
+
+    // reorder_profiles tested separately (readonly array incompatibility with `as const`)
+    expect(extractRequestId({
+      type: 'reorder_profiles',
+      profileIds: ['a', 'b'],
+      requestId: 'req-reorder',
+    })).toBe('req-reorder')
   })
 })

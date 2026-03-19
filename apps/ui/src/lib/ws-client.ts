@@ -394,6 +394,14 @@ export class ManagerWsClient {
       }))
   }
 
+  reorderProfiles(profileIds: string[]): boolean {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return false
+    return this.send({
+      type: 'reorder_profiles',
+      profileIds,
+    })
+  }
+
   async listDirectories(path?: string): Promise<DirectoriesListedResult> {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
       throw new Error('WebSocket is disconnected. Reconnecting...')
