@@ -183,7 +183,7 @@ describe("onboarding-state", () => {
     await mkdir(dirname(commonKnowledgePath), { recursive: true });
     await writeFile(
       commonKnowledgePath,
-      "# Common Knowledge\n<!-- Maintained by Cortex. Last updated: 2026-03-18T00:00:00.000Z -->\n\n## Interaction Defaults\n\nManual content stays here.\n",
+      "# Common Knowledge\n<!-- Maintained by Cortex. Last updated: {ISO timestamp} -->\n\n## Interaction Defaults\n\nManual content stays here.\n",
       "utf8"
     );
 
@@ -207,6 +207,12 @@ describe("onboarding-state", () => {
     expect(firstRender).toContain("<!-- BEGIN MANAGED:ONBOARDING -->");
     expect(firstRender).toContain("Preferred name (promoted): Ada");
     expect(firstRender).toContain("Manual content stays here.");
+    expect(firstRender).toMatch(/<!-- Maintained by Cortex\. Last updated: \d{4}-\d{2}-\d{2}T.*Z -->/);
+    expect(firstRender).not.toContain("{ISO timestamp}");
+
+    const renderedState = await loadOnboardingState(dataDir);
+    expect(renderedState.renderState.lastRenderedRevision).toBe(saved.snapshot.revision);
+    expect(renderedState.renderState.lastRenderedAt).toMatch(/T/);
 
     const updatedSnapshot: OnboardingState = {
       ...saved.snapshot,

@@ -607,7 +607,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
           ),
           facts: onboardingFactsPatchSchema,
           renderCommonMd: Type.Optional(
-            Type.Boolean({ description: "Render the managed onboarding block in common.md after a successful save." })
+            Type.Boolean({ description: "Render the managed onboarding block in common.md after a successful save. Defaults to true." })
           )
         }),
         async execute(_toolCallId, params) {
@@ -622,7 +622,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
             cycleId: parsed.cycleId,
             baseRevision: parsed.baseRevision,
             facts: parsed.facts,
-            renderCommonMd: parsed.renderCommonMd
+            renderCommonMd: parsed.renderCommonMd ?? true
           });
 
           return {
@@ -651,7 +651,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
             Type.Integer({ minimum: 0, description: "Optional onboarding revision for CAS. Omit to use the current revision automatically." })
           ),
           renderCommonMd: Type.Optional(
-            Type.Boolean({ description: "Render the managed onboarding block in common.md after a successful status change." })
+            Type.Boolean({ description: "Render the managed onboarding block in common.md after a successful status change. Defaults to true." })
           )
         }),
         async execute(_toolCallId, params) {
@@ -668,7 +668,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
             reason: parsed.reason,
             cycleId: parsed.cycleId,
             baseRevision: parsed.baseRevision,
-            renderCommonMd: parsed.renderCommonMd
+            renderCommonMd: parsed.renderCommonMd ?? true
           });
 
           return {

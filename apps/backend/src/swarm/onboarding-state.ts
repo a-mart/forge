@@ -282,6 +282,7 @@ export async function renderOnboardingCommonKnowledge(
 ): Promise<{ path: string; content: string }> {
   const commonKnowledgePath = getCommonKnowledgePath(dataDir);
   const managedBlock = buildManagedOnboardingBlock(snapshot);
+  const renderedAt = nowIso();
 
   let existing = "";
   try {
@@ -292,12 +293,15 @@ export async function renderOnboardingCommonKnowledge(
     }
   }
 
-  const nextContent = upsertManagedOnboardingBlock(existing, managedBlock);
-  await writeTextAtomic(commonKnowledgePath, ensureTrailingNewline(nextContent));
+  const nextContent = ensureTrailingNewline(
+    upsertCommonKnowledgeHeader(upsertManagedOnboardingBlock(existing, managedBlock), renderedAt)
+  );
+  await writeTextAtomic(commonKnowledgePath, nextContent);
+  await persistOnboardingRenderState(dataDir, snapshot, renderedAt);
 
   return {
     path: commonKnowledgePath,
-    content: ensureTrailingNewline(nextContent)
+    content: nextContent
   };
 }
 
@@ -496,6 +500,48 @@ function upsertManagedOnboardingBlock(existing: string, block: string): string {
   }
 
   return `${normalizedExisting.trimEnd()}\n\n${block}`.trimEnd();
+}
+
+function upsertCommonKnowledgeHeader(content: string, renderedAt: string): string {
+  const normalizedContent = content.replace(/\r\n/g, "\n").trimEnd();
+  const headerLine = `<!-- Maintained by Cortex. Last updated: ${renderedAt} -->`;
+  const headerPattern = /^# Common Knowledge(?:\n<!-- Maintained by Cortex\.(?: Last updated: .*?)? -->)?/;
+
+  if (!normalizedContent) {
+    return `# Common Knowledge\n${headerLine}`;
+  }
+
+  if (headerPattern.test(normalizedContent)) {
+    return normalizedContent.replace(headerPattern, `# Common Knowledge\n${headerLine}`);
+  }
+
+  return `# Common Knowledge\n${headerLine}\n\n${normalizedContent}`;
+}
+
+async function persistOnboardingRenderState(
+  dataDir: string,
+  snapshot: OnboardingState,
+  renderedAt: string
+): Promise<void> {
+  const current = await loadOnboardingState(dataDir);
+  if (current.cycleId !== snapshot.cycleId || current.revision !== snapshot.revision) {
+    return;
+  }
+
+  if (
+    current.renderState.lastRenderedAt === renderedAt &&
+    current.renderState.lastRenderedRevision === snapshot.revision
+  ) {
+    return;
+  }
+
+  const next = cloneOnboardingState(current);
+  next.renderState = {
+    lastRenderedAt: renderedAt,
+    lastRenderedRevision: snapshot.revision
+  };
+
+  await writeJsonAtomic(getOnboardingStatePath(dataDir), next);
 }
 
 function ensureTrailingNewline(content: string): string {

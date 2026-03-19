@@ -830,7 +830,7 @@ describe('buildSwarmTools', () => {
             status: 'confirmed',
           },
         },
-        renderCommonMd: undefined,
+        renderCommonMd: true,
       },
     ])
     expect(statusInputs).toEqual([
@@ -839,7 +839,7 @@ describe('buildSwarmTools', () => {
         reason: undefined,
         cycleId: undefined,
         baseRevision: undefined,
-        renderCommonMd: undefined,
+        renderCommonMd: true,
       },
     ])
   })
