@@ -68,11 +68,12 @@ export async function saveOnboardingPreferences(
 }
 
 export async function skipOnboarding(dataDir: string): Promise<OnboardingState> {
+  const currentState = await loadOnboardingState(dataDir);
   const state: OnboardingState = {
     status: "skipped",
-    completedAt: null,
+    completedAt: currentState.preferences ? currentState.completedAt : null,
     skippedAt: nowIso(),
-    preferences: null
+    preferences: currentState.preferences
   };
 
   await writeJsonAtomic(getOnboardingStatePath(dataDir), state);
@@ -143,9 +144,10 @@ function normalizeStoredOnboardingState(raw: string | null): { state: Onboarding
     };
   }
 
+  const coerced = coerceSimpleOnboardingState(parsed);
   return {
-    state: coerceSimpleOnboardingState(parsed),
-    shouldPersist: true
+    state: coerced.state,
+    shouldPersist: coerced.wasRepaired
   };
 }
 
@@ -158,16 +160,26 @@ function createDefaultOnboardingState(): OnboardingState {
   };
 }
 
-function coerceSimpleOnboardingState(value: Record<string, unknown>): OnboardingState {
+function coerceSimpleOnboardingState(value: Record<string, unknown>): { state: OnboardingState; wasRepaired: boolean } {
   const status = coerceEnumValue(value.status, ONBOARDING_STATUSES) ?? "pending";
   const preferences = isRecord(value.preferences) ? coercePreferences(value.preferences) : null;
+  const completedAt = normalizeOptionalString(value.completedAt) ?? null;
+  const skippedAt = normalizeOptionalString(value.skippedAt) ?? null;
 
-  return {
+  const state: OnboardingState = {
     status,
-    completedAt: normalizeOptionalString(value.completedAt) ?? null,
-    skippedAt: normalizeOptionalString(value.skippedAt) ?? null,
+    completedAt,
+    skippedAt,
     preferences
   };
+
+  const wasRepaired =
+    value.status !== status ||
+    !sameOptionalString(value.completedAt, completedAt) ||
+    !sameOptionalString(value.skippedAt, skippedAt) ||
+    !samePreferences(value.preferences, preferences);
+
+  return { state, wasRepaired };
 }
 
 function coercePreferences(value: Record<string, unknown>): OnboardingPreferences | null {
@@ -401,6 +413,30 @@ function normalizeOptionalString(value: unknown): string | undefined {
 
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function sameOptionalString(raw: unknown, normalized: string | null): boolean {
+  return (normalizeOptionalString(raw) ?? null) === normalized;
+}
+
+function samePreferences(raw: unknown, normalized: OnboardingPreferences | null): boolean {
+  if (!isRecord(raw)) {
+    return normalized === null;
+  }
+
+  const rawPreferredName = normalizeOptionalString(raw.preferredName) ?? null;
+  const rawTechnicalLevel = coerceEnumValue(raw.technicalLevel, ONBOARDING_TECHNICAL_LEVEL_VALUES) ?? null;
+  const rawAdditionalPreferences = normalizeOptionalString(raw.additionalPreferences) ?? null;
+
+  if (normalized === null) {
+    return !rawPreferredName && !rawTechnicalLevel && !rawAdditionalPreferences;
+  }
+
+  return (
+    rawPreferredName === normalized.preferredName &&
+    rawTechnicalLevel === normalized.technicalLevel &&
+    rawAdditionalPreferences === normalized.additionalPreferences
+  );
 }
 
 function coerceEnumValue<T extends readonly string[]>(value: unknown, allowed: T): T[number] | undefined {

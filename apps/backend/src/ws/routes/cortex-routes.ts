@@ -32,6 +32,8 @@ const ONBOARDING_STATE_ENDPOINT_PATH = "/api/onboarding/state";
 const ONBOARDING_STATE_METHODS = "GET, OPTIONS";
 const ONBOARDING_PREFERENCES_ENDPOINT_PATH = "/api/onboarding/preferences";
 const ONBOARDING_PREFERENCES_METHODS = "POST, OPTIONS";
+const ONBOARDING_PREFERRED_NAME_MAX_LENGTH = 200;
+const ONBOARDING_ADDITIONAL_PREFERENCES_MAX_LENGTH = 2000;
 
 export function createCortexRoutes(options: { swarmManager: SwarmManager }): HttpRoute[] {
   const { swarmManager } = options;
@@ -108,7 +110,8 @@ export function createCortexRoutes(options: { swarmManager: SwarmManager }): Htt
           if (
             message.includes("Request body must be valid JSON") ||
             message.includes("preferredName") ||
-            message.includes("technicalLevel")
+            message.includes("technicalLevel") ||
+            message.includes("additionalPreferences")
           ) {
             sendJson(response, 400, { error: message });
             return;
@@ -358,6 +361,10 @@ function parseOnboardingPreferencesPayload(
   const preferredName = typeof (payload as { preferredName?: unknown }).preferredName === "string"
     ? (payload as { preferredName: string }).preferredName.trim()
     : "";
+  if (preferredName.length > ONBOARDING_PREFERRED_NAME_MAX_LENGTH) {
+    throw new Error(`preferredName must be ${ONBOARDING_PREFERRED_NAME_MAX_LENGTH} characters or fewer.`);
+  }
+
   const technicalLevel = typeof (payload as { technicalLevel?: unknown }).technicalLevel === "string"
     ? ((payload as { technicalLevel: string }).technicalLevel.trim() as OnboardingTechnicalLevel)
     : null;
@@ -365,6 +372,12 @@ function parseOnboardingPreferencesPayload(
   const additionalPreferences = typeof additionalPreferencesValue === "string" && additionalPreferencesValue.trim().length > 0
     ? additionalPreferencesValue.trim()
     : null;
+
+  if (additionalPreferences && additionalPreferences.length > ONBOARDING_ADDITIONAL_PREFERENCES_MAX_LENGTH) {
+    throw new Error(
+      `additionalPreferences must be ${ONBOARDING_ADDITIONAL_PREFERENCES_MAX_LENGTH} characters or fewer.`
+    );
+  }
 
   if (!preferredName || !technicalLevel || !ONBOARDING_TECHNICAL_LEVEL_VALUES.includes(technicalLevel)) {
     return null;

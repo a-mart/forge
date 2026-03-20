@@ -133,6 +133,7 @@ export function OnboardingCallout({
                 value={preferredName}
                 onChange={(event) => setPreferredName(event.target.value)}
                 placeholder="Your name"
+                maxLength={200}
                 disabled={isBusy}
                 required
               />
@@ -165,6 +166,7 @@ export function OnboardingCallout({
                 value={additionalPreferences}
                 onChange={(event) => setAdditionalPreferences(event.target.value)}
                 placeholder="Any preferences for how you'd like responses? For example: concise vs detailed, how much explanation you want, etc."
+                maxLength={2000}
                 disabled={isBusy}
                 rows={5}
               />

@@ -1849,16 +1849,71 @@ describe('SwarmWebSocketServer', () => {
       const skippedPayload = (await skipResponse.json()) as {
         state: {
           status: string
+          completedAt: string | null
           skippedAt: string | null
-          preferences: null
+          preferences: {
+            preferredName: string | null
+            technicalLevel: string | null
+            additionalPreferences: string | null
+          } | null
         }
       }
       expect(skippedPayload.state.status).toBe('skipped')
+      expect(skippedPayload.state.completedAt).toBe(savedPayload.state.completedAt)
       expect(skippedPayload.state.skippedAt).toMatch(/T/)
-      expect(skippedPayload.state.preferences).toBeNull()
+      expect(skippedPayload.state.preferences).toEqual(savedPayload.state.preferences)
 
       const snapshot = await loadOnboardingState(config.paths.dataDir)
       expect(snapshot.status).toBe('skipped')
+      expect(snapshot.preferences).toEqual(savedPayload.state.preferences)
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('rejects onboarding preferences that exceed field length limits', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port)
+
+    const manager = new TestSwarmManager(config)
+    await manager.boot()
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    try {
+      const longNameResponse = await fetch(`http://${config.host}:${config.port}/api/onboarding/preferences`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          preferredName: 'a'.repeat(201),
+          technicalLevel: 'developer',
+        }),
+      })
+      expect(longNameResponse.status).toBe(400)
+      expect(await longNameResponse.json()).toEqual({
+        error: 'preferredName must be 200 characters or fewer.',
+      })
+
+      const longPreferencesResponse = await fetch(`http://${config.host}:${config.port}/api/onboarding/preferences`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          preferredName: 'Ada',
+          technicalLevel: 'developer',
+          additionalPreferences: 'b'.repeat(2001),
+        }),
+      })
+      expect(longPreferencesResponse.status).toBe(400)
+      expect(await longPreferencesResponse.json()).toEqual({
+        error: 'additionalPreferences must be 2000 characters or fewer.',
+      })
     } finally {
       await server.stop()
     }

@@ -60,6 +60,46 @@ describe('onboarding-state', () => {
     })
   })
 
+  it('does not rewrite an already-valid simplified onboarding state', async () => {
+    const dataDir = await createTempDataDir()
+    const statePath = join(getSharedKnowledgeDir(dataDir), ONBOARDING_STATE_FILE_NAME)
+    await mkdir(dirname(statePath), { recursive: true })
+
+    const raw = '{"status":"completed","completedAt":"2026-03-20T12:00:00.000Z","skippedAt":null,"preferences":{"preferredName":"Ada","technicalLevel":"developer","additionalPreferences":"Keep responses concise."}}\n'
+    await writeFile(statePath, raw, 'utf8')
+
+    const state = await loadOnboardingState(dataDir)
+    const stored = await readFile(statePath, 'utf8')
+
+    expect(state).toEqual({
+      status: 'completed',
+      completedAt: '2026-03-20T12:00:00.000Z',
+      skippedAt: null,
+      preferences: {
+        preferredName: 'Ada',
+        technicalLevel: 'developer',
+        additionalPreferences: 'Keep responses concise.',
+      },
+    })
+    expect(stored).toBe(raw)
+  })
+
+  it('preserves saved preferences when skipping after completion', async () => {
+    const dataDir = await createTempDataDir()
+
+    const completed = await saveOnboardingPreferences(dataDir, {
+      preferredName: 'Ada',
+      technicalLevel: 'developer',
+      additionalPreferences: 'Keep responses concise.',
+    })
+    const skipped = await skipOnboarding(dataDir)
+
+    expect(skipped.status).toBe('skipped')
+    expect(skipped.completedAt).toBe(completed.completedAt)
+    expect(skipped.skippedAt).toMatch(/T/)
+    expect(skipped.preferences).toEqual(completed.preferences)
+  })
+
   it('renders the managed onboarding block into common knowledge', async () => {
     const dataDir = await createTempDataDir()
     const commonKnowledgePath = getCommonKnowledgePath(dataDir)

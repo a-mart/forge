@@ -1509,7 +1509,7 @@ describe('SwarmManager', () => {
     expect(workerPrompt).toContain('Follow the memory skill workflow before editing the memory file')
   })
 
-            it('injects confirmed onboarding defaults into newly created manager runtime memory', async () => {
+  it('injects confirmed onboarding defaults into newly created manager runtime memory', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
 
