@@ -22,3 +22,6 @@ AGENTS-REVIEW.md
 README-REVIEW.md
 REPO-HYGIENE-AUDIT.md
 docs-reorg-plan.md
+
+# TanStack Router codegen
+routeTree.gen.ts
