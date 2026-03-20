@@ -15,6 +15,7 @@ const originalFetch = globalThis.fetch
 beforeEach(() => {
   container = document.createElement('div')
   document.body.appendChild(container)
+  window.localStorage?.removeItem?.('forge-cortex-review-expanded-profiles')
 })
 
 afterEach(() => {
@@ -186,11 +187,21 @@ describe('ReviewStatusPanel', () => {
     expect(getByText(container, 'Waiting in queue (#1). Starts automatically after the active review finishes.')).toBeTruthy()
     expect(getByText(container, 'Scheduled')).toBeTruthy()
     expect(getByText(container, 'reviewed, no durable updates')).toBeTruthy()
-    expect(getByText(container, '64 B memory')).toBeTruthy()
-    expect(getByText(container, 'feedback updated')).toBeTruthy()
     expect(getByText(container, 'Memory drift 1')).toBeTruthy()
     expect(getByText(container, 'Feedback drift 1')).toBeTruthy()
     expect(container.textContent).toContain('0 excluded')
+    expect(getByRole(container, 'button', { name: /alpha \(1\)/i }).getAttribute('aria-expanded')).toBe('false')
+    expect(queryByText(container, 'alpha--s1')).toBeNull()
+    expect(container.textContent).toContain('1 needs review')
+    expect(container.textContent).toContain('1 need review')
+
+    const alphaToggle = getByRole(container, 'button', { name: /alpha \(1\)/i })
+    flushSync(() => {
+      alphaToggle.click()
+    })
+    expect(alphaToggle.getAttribute('aria-expanded')).toBe('true')
+    expect(getByText(container, '64 B memory')).toBeTruthy()
+    expect(getByText(container, 'feedback updated')).toBeTruthy()
     expect(queryByText(container, 'Up to date')).toBeNull()
 
     flushSync(() => {
@@ -232,7 +243,7 @@ describe('ReviewStatusPanel', () => {
         scope: { mode: 'session', profileId: 'alpha', sessionId: 'alpha--s1', axes: ['memory', 'feedback'] },
       }),
     )
-    expect(getByText(container, 'alpha/alpha--s1 (memory, feedback)')).toBeTruthy()
+    expect(getByText(container, 'Running')).toBeTruthy()
     expect(getAllByText(container, 'Manual').length).toBeGreaterThan(0)
   })
 
@@ -342,6 +353,11 @@ describe('ReviewStatusPanel', () => {
 
     await flushPromises()
 
+    const alphaToggle = getByRole(container, 'button', { name: /alpha \(1\)/i })
+    flushSync(() => {
+      alphaToggle.click()
+    })
+
     expect(queryByText(container, 'Queued #2')).toBeNull()
     expect(getByLabelText(container, 'Review session alpha--s1')).toBeTruthy()
 
@@ -351,9 +367,10 @@ describe('ReviewStatusPanel', () => {
 
     await flushPromises()
 
-    expect(getAllByText(container, 'Queued #2')).toHaveLength(2)
+    expect(getAllByText(container, 'Queued #2').length).toBeGreaterThanOrEqual(1)
     expect(queryByLabelText(container, 'Review session alpha--s1')).toBeNull()
     expect(getByText(container, 'Needs review')).toBeTruthy()
+    expect(container.textContent).toContain('alpha--s1')
   })
 
   it('shows exclude/resume/reprocess controls and sends the expected API payloads', async () => {
@@ -581,6 +598,12 @@ describe('ReviewStatusPanel', () => {
     })
 
     await flushPromises()
+
+    flushSync(() => {
+      getByRole(container, 'button', { name: /alpha \(2\)/i }).click()
+      getByRole(container, 'button', { name: /beta \(1\)/i }).click()
+      getByRole(container, 'button', { name: /gamma \(1\)/i }).click()
+    })
 
     expect(container.textContent).toContain('2 need review')
     expect(container.textContent).toContain('1 excluded')

@@ -16,7 +16,6 @@ import type { CortexReviewControlAction, CortexReviewRunAxis, CortexReviewRunRec
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Separator } from '@/components/ui/separator'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
 import { cn } from '@/lib/utils'
 
@@ -77,6 +76,8 @@ interface CortexReviewRunsResponse {
 
 type ScanState = 'idle' | 'loading' | 'error'
 type ReviewDisplayStatus = 'needs-review' | 'never-reviewed' | 'up-to-date' | 'compacted' | 'excluded'
+
+const PROFILE_GROUP_STORAGE_KEY = 'forge-cortex-review-expanded-profiles'
 
 function formatBytes(bytes: number): string {
   const absoluteBytes = Math.abs(bytes)
@@ -273,6 +274,67 @@ function groupByProfile(results: ScanSession[]): Map<string, ScanSession[]> {
   return groups
 }
 
+function summarizeProfileGroup(sessions: ScanSession[]) {
+  return sessions.reduce(
+    (summary, session) => {
+      summary.total += 1
+      const status = getSessionStatus(session)
+      switch (status) {
+        case 'never-reviewed':
+          summary.neverReviewed += 1
+          break
+        case 'needs-review':
+          summary.needsReview += 1
+          break
+        case 'compacted':
+          summary.compacted += 1
+          break
+        case 'up-to-date':
+          summary.upToDate += 1
+          break
+        case 'excluded':
+          summary.excluded += 1
+          break
+      }
+      return summary
+    },
+    {
+      total: 0,
+      neverReviewed: 0,
+      needsReview: 0,
+      compacted: 0,
+      upToDate: 0,
+      excluded: 0,
+    },
+  )
+}
+
+function buildProfileGroupSummaryText(summary: ReturnType<typeof summarizeProfileGroup>): string {
+  const parts: string[] = []
+
+  if (summary.neverReviewed > 0) {
+    parts.push(`${summary.neverReviewed} never reviewed`)
+  }
+  if (summary.needsReview > 0) {
+    parts.push(`${summary.needsReview} ${summary.needsReview === 1 ? 'needs review' : 'need review'}`)
+  }
+  if (summary.compacted > 0) {
+    parts.push(`${summary.compacted} ${summary.compacted === 1 ? 'needs re-review' : 'need re-review'}`)
+  }
+  if (summary.upToDate > 0) {
+    parts.push(`${summary.upToDate} up to date`)
+  }
+  if (summary.excluded > 0) {
+    parts.push(`${summary.excluded} excluded`)
+  }
+
+  return parts.join(' · ')
+}
+
+function getProfileGroupContentId(profileId: string): string {
+  return `cortex-review-profile-${profileId.replace(/[^a-zA-Z0-9_-]+/g, '-')}`
+}
+
 function compareReviewRuns(a: CortexReviewRunRecord, b: CortexReviewRunRecord): number {
   const statusPriority: Record<CortexReviewRunRecord['status'], number> = {
     running: 0,
@@ -363,6 +425,26 @@ export function ReviewStatusPanel({ wsUrl, refreshKey = 0, onOpenSession }: Revi
   const [launchError, setLaunchError] = useState<string | null>(null)
   const [launchingKey, setLaunchingKey] = useState<string | null>(null)
   const [recentRunsExpanded, setRecentRunsExpanded] = useState(true)
+  const [expandedProfileIds, setExpandedProfileIds] = useState<Set<string>>(() => {
+    if (typeof window === 'undefined') {
+      return new Set()
+    }
+
+    try {
+      const stored = window.localStorage.getItem(PROFILE_GROUP_STORAGE_KEY)
+      if (!stored) {
+        return new Set()
+      }
+      const parsed = JSON.parse(stored)
+      if (Array.isArray(parsed)) {
+        return new Set(parsed.filter((value): value is string => typeof value === 'string'))
+      }
+    } catch {
+      // Ignore invalid localStorage contents
+    }
+
+    return new Set()
+  })
   const abortRef = useRef<AbortController | null>(null)
 
   const doScan = useCallback(() => {
@@ -407,6 +489,30 @@ export function ReviewStatusPanel({ wsUrl, refreshKey = 0, onOpenSession }: Revi
       window.clearInterval(timer)
     }
   }, [doScan])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    try {
+      window.localStorage.setItem(PROFILE_GROUP_STORAGE_KEY, JSON.stringify([...expandedProfileIds]))
+    } catch {
+      // Ignore localStorage write failures
+    }
+  }, [expandedProfileIds])
+
+  const toggleProfileExpanded = useCallback((profileId: string) => {
+    setExpandedProfileIds((current) => {
+      const next = new Set(current)
+      if (next.has(profileId)) {
+        next.delete(profileId)
+      } else {
+        next.add(profileId)
+      }
+      return next
+    })
+  }, [])
 
   const handleLaunchReview = useCallback(
     async (scope: CortexReviewRunScope, launchKey: string) => {
@@ -680,118 +786,147 @@ export function ReviewStatusPanel({ wsUrl, refreshKey = 0, onOpenSession }: Revi
                 ) : null}
               </section>
 
-              <section>
+              <section className="space-y-2">
                 {allSessions.length === 0 ? (
                   <div className="flex flex-col items-center justify-center px-4 py-8 text-center">
                     <CheckCircle2 className="mb-2 size-8 text-muted-foreground/40" aria-hidden="true" />
                     <p className="text-xs text-muted-foreground">No sessions found</p>
                   </div>
                 ) : (
-                  Array.from(grouped.entries()).map(([profileId, sessions]) => (
-                    <div key={profileId}>
-                      <div className="px-2 pb-1 pt-2">
-                        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
-                          {profileId}
-                        </p>
-                      </div>
-                      {sessions.map((session) => {
-                        const status = getSessionStatus(session)
-                        const activeReviewRun = getActiveReviewRunForSession(session, reviewRuns)
-                        const reasonPills = buildSessionReasonPills(session)
-                        const reviewActionKey = `${session.profileId}/${session.sessionId}:review`
-                        const excludeActionKey = `${session.profileId}/${session.sessionId}:exclude`
-                        const resumeActionKey = `${session.profileId}/${session.sessionId}:resume`
-                        const isReviewedSession =
-                          session.reviewedAt !== null || session.memoryReviewedAt !== null || session.feedbackReviewedAt !== null
-                        const hasPendingReview = activeReviewRun !== null
-                        const canReview =
-                          !hasPendingReview && (status === 'needs-review' || status === 'never-reviewed' || status === 'compacted')
-                        const canExclude =
-                          !hasPendingReview && (status === 'needs-review' || status === 'never-reviewed' || status === 'compacted')
-                        const canResume = status === 'excluded'
-                        const canReprocess = !hasPendingReview && status === 'up-to-date' && isReviewedSession
+                  Array.from(grouped.entries()).map(([profileId, sessions]) => {
+                    const isExpanded = expandedProfileIds.has(profileId)
+                    const contentId = getProfileGroupContentId(profileId)
+                    const summary = summarizeProfileGroup(sessions)
+                    const summaryText = buildProfileGroupSummaryText(summary)
 
-                        return (
-                          <div
-                            key={`${session.profileId}/${session.sessionId}`}
-                            className={cn(
-                              'group flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-accent/50',
-                              status === 'excluded' && 'opacity-80',
-                            )}
-                          >
-                            <div className="min-w-0 flex-1 space-y-1">
-                              <p className="truncate text-xs font-medium text-foreground">
-                                {session.sessionId}
-                              </p>
-                              <div className="flex flex-wrap items-center gap-1.5">
-                                {activeReviewRun ? <ReviewRunStatusBadge run={activeReviewRun} /> : null}
-                                <StatusBadge status={status} />
-                                {reasonPills.map((reason) => (
-                                  <span
-                                    key={reason}
-                                    className="rounded-sm bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                    return (
+                      <section key={profileId} className="overflow-hidden rounded-md border border-border/60 bg-card/40">
+                        <button
+                          type="button"
+                          className="flex w-full items-start gap-2 px-2 py-2 text-left transition-colors hover:text-foreground"
+                          onClick={() => toggleProfileExpanded(profileId)}
+                          aria-expanded={isExpanded}
+                          aria-controls={contentId}
+                        >
+                          {isExpanded ? (
+                            <ChevronDown className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+                          ) : (
+                            <ChevronRight className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+                          )}
+                          <div className="min-w-0 flex-1">
+                            <h4 className="truncate text-[10px] font-semibold uppercase tracking-wider text-foreground">
+                              {profileId} ({sessions.length})
+                            </h4>
+                            {summaryText ? (
+                              <p className="mt-0.5 truncate text-[10px] text-muted-foreground">{summaryText}</p>
+                            ) : null}
+                          </div>
+                        </button>
+
+                        {isExpanded ? (
+                          <div id={contentId} className="border-t border-border/50 px-2 py-2">
+                            <div className="space-y-1">
+                              {sessions.map((session) => {
+                                const status = getSessionStatus(session)
+                                const activeReviewRun = getActiveReviewRunForSession(session, reviewRuns)
+                                const reasonPills = buildSessionReasonPills(session)
+                                const reviewActionKey = `${session.profileId}/${session.sessionId}:review`
+                                const excludeActionKey = `${session.profileId}/${session.sessionId}:exclude`
+                                const resumeActionKey = `${session.profileId}/${session.sessionId}:resume`
+                                const isReviewedSession =
+                                  session.reviewedAt !== null || session.memoryReviewedAt !== null || session.feedbackReviewedAt !== null
+                                const hasPendingReview = activeReviewRun !== null
+                                const canReview =
+                                  !hasPendingReview && (status === 'needs-review' || status === 'never-reviewed' || status === 'compacted')
+                                const canExclude =
+                                  !hasPendingReview && (status === 'needs-review' || status === 'never-reviewed' || status === 'compacted')
+                                const canResume = status === 'excluded'
+                                const canReprocess = !hasPendingReview && status === 'up-to-date' && isReviewedSession
+
+                                return (
+                                  <div
+                                    key={`${session.profileId}/${session.sessionId}`}
+                                    className={cn(
+                                      'group flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-accent/50',
+                                      status === 'excluded' && 'opacity-80',
+                                    )}
                                   >
-                                    {reason}
-                                  </span>
-                                ))}
-                              </div>
-                            </div>
-                            <div className="flex shrink-0 items-center gap-1">
-                              {canReview ? (
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="size-6 text-muted-foreground opacity-100 transition-opacity hover:text-primary md:opacity-0 md:group-hover:opacity-100"
-                                  onClick={() => handleReviewSession(session, reviewActionKey)}
-                                  disabled={launchingKey !== null}
-                                  aria-label={`Review session ${session.sessionId}`}
-                                >
-                                  {launchingKey === reviewActionKey ? <Loader2 className="size-3 animate-spin" /> : <Send className="size-3" />}
-                                </Button>
-                              ) : null}
-                              {canExclude ? (
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  className="h-6 px-2 text-[10px]"
-                                  onClick={() => void handleReviewControl(session, 'exclude')}
-                                  disabled={launchingKey !== null}
-                                  aria-label={`Exclude session ${session.sessionId} from review`}
-                                >
-                                  {launchingKey === excludeActionKey ? <Loader2 className="size-3 animate-spin" /> : 'Exclude'}
-                                </Button>
-                              ) : null}
-                              {canResume ? (
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  className="h-6 px-2 text-[10px]"
-                                  onClick={() => void handleReviewControl(session, 'resume')}
-                                  disabled={launchingKey !== null}
-                                  aria-label={`Resume review for session ${session.sessionId}`}
-                                >
-                                  {launchingKey === resumeActionKey ? <Loader2 className="size-3 animate-spin" /> : 'Resume review'}
-                                </Button>
-                              ) : null}
-                              {canReprocess ? (
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  className="h-6 px-2 text-[10px]"
-                                  onClick={() => handleReviewSession(session, reviewActionKey)}
-                                  disabled={launchingKey !== null}
-                                  aria-label={`Reprocess session ${session.sessionId}`}
-                                >
-                                  {launchingKey === reviewActionKey ? <Loader2 className="size-3 animate-spin" /> : 'Reprocess'}
-                                </Button>
-                              ) : null}
+                                    <div className="min-w-0 flex-1 space-y-1">
+                                      <p className="truncate text-xs font-medium text-foreground">
+                                        {session.sessionId}
+                                      </p>
+                                      <div className="flex flex-wrap items-center gap-1.5">
+                                        {activeReviewRun ? <ReviewRunStatusBadge run={activeReviewRun} /> : null}
+                                        <StatusBadge status={status} />
+                                        {reasonPills.map((reason) => (
+                                          <span
+                                            key={reason}
+                                            className="rounded-sm bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                                          >
+                                            {reason}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    </div>
+                                    <div className="flex shrink-0 items-center gap-1">
+                                      {canReview ? (
+                                        <Button
+                                          variant="ghost"
+                                          size="icon"
+                                          className="size-6 text-muted-foreground opacity-100 transition-opacity hover:text-primary md:opacity-0 md:group-hover:opacity-100"
+                                          onClick={() => handleReviewSession(session, reviewActionKey)}
+                                          disabled={launchingKey !== null}
+                                          aria-label={`Review session ${session.sessionId}`}
+                                        >
+                                          {launchingKey === reviewActionKey ? <Loader2 className="size-3 animate-spin" /> : <Send className="size-3" />}
+                                        </Button>
+                                      ) : null}
+                                      {canExclude ? (
+                                        <Button
+                                          variant="outline"
+                                          size="sm"
+                                          className="h-6 px-2 text-[10px]"
+                                          onClick={() => void handleReviewControl(session, 'exclude')}
+                                          disabled={launchingKey !== null}
+                                          aria-label={`Exclude session ${session.sessionId} from review`}
+                                        >
+                                          {launchingKey === excludeActionKey ? <Loader2 className="size-3 animate-spin" /> : 'Exclude'}
+                                        </Button>
+                                      ) : null}
+                                      {canResume ? (
+                                        <Button
+                                          variant="outline"
+                                          size="sm"
+                                          className="h-6 px-2 text-[10px]"
+                                          onClick={() => void handleReviewControl(session, 'resume')}
+                                          disabled={launchingKey !== null}
+                                          aria-label={`Resume review for session ${session.sessionId}`}
+                                        >
+                                          {launchingKey === resumeActionKey ? <Loader2 className="size-3 animate-spin" /> : 'Resume review'}
+                                        </Button>
+                                      ) : null}
+                                      {canReprocess ? (
+                                        <Button
+                                          variant="outline"
+                                          size="sm"
+                                          className="h-6 px-2 text-[10px]"
+                                          onClick={() => handleReviewSession(session, reviewActionKey)}
+                                          disabled={launchingKey !== null}
+                                          aria-label={`Reprocess session ${session.sessionId}`}
+                                        >
+                                          {launchingKey === reviewActionKey ? <Loader2 className="size-3 animate-spin" /> : 'Reprocess'}
+                                        </Button>
+                                      ) : null}
+                                    </div>
+                                  </div>
+                                )
+                              })}
                             </div>
                           </div>
-                        )
-                      })}
-                      <Separator className="my-1 bg-border/40" />
-                    </div>
-                  ))
+                        ) : null}
+                      </section>
+                    )
+                  })
                 )}
               </section>
             </div>
