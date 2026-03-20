@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertCircle,
   CheckCircle2,
@@ -273,6 +273,23 @@ function groupByProfile(results: ScanSession[]): Map<string, ScanSession[]> {
   return groups
 }
 
+function compareReviewRuns(a: CortexReviewRunRecord, b: CortexReviewRunRecord): number {
+  const statusPriority: Record<CortexReviewRunRecord['status'], number> = {
+    running: 0,
+    blocked: 1,
+    queued: 2,
+    stopped: 3,
+    completed: 4,
+  }
+
+  const priorityDiff = statusPriority[a.status] - statusPriority[b.status]
+  if (priorityDiff !== 0) {
+    return priorityDiff
+  }
+
+  return new Date(b.requestedAt).getTime() - new Date(a.requestedAt).getTime()
+}
+
 async function fetchScanData(wsUrl: string, signal: AbortSignal): Promise<CortexScanResponse> {
   const endpoint = resolveApiEndpoint(wsUrl, '/api/cortex/scan')
   const response = await fetch(endpoint, { signal })
@@ -452,6 +469,7 @@ export function ReviewStatusPanel({ wsUrl, refreshKey = 0, onOpenSession }: Revi
   const attentionBytes = scanData?.scan.summary.attentionBytes ?? 0
   const runningRunCount = reviewRuns.filter((run) => run.status === 'running').length
   const queuedRunCount = reviewRuns.filter((run) => run.status === 'queued').length
+  const recentRuns = useMemo(() => reviewRuns.slice().sort(compareReviewRuns).slice(0, 8), [reviewRuns])
 
   return (
     <div className="flex h-full flex-col">
@@ -605,8 +623,16 @@ export function ReviewStatusPanel({ wsUrl, refreshKey = 0, onOpenSession }: Revi
                       <p className="text-[11px] text-muted-foreground">No review runs recorded yet.</p>
                     ) : (
                       <div className="space-y-2">
-                        {reviewRuns.slice(0, 8).map((run) => (
-                          <div key={run.runId} className="rounded-md border border-border/50 bg-background/70 px-2 py-2">
+                        {recentRuns.map((run) => (
+                          <div
+                            key={run.runId}
+                            className={cn(
+                              'rounded-md border px-2 py-2',
+                              run.status === 'running'
+                                ? 'border-blue-500/40 bg-blue-500/5 shadow-[0_0_0_1px_rgba(59,130,246,0.08)]'
+                                : 'border-border/50 bg-background/70',
+                            )}
+                          >
                             <div className="flex items-start justify-between gap-2">
                               <div className="min-w-0 flex-1">
                                 <div className="flex flex-wrap items-center gap-1.5">
@@ -622,6 +648,10 @@ export function ReviewStatusPanel({ wsUrl, refreshKey = 0, onOpenSession }: Revi
                                 <p className="mt-0.5 text-[10px] text-muted-foreground">Started {formatTimestamp(run.requestedAt)}</p>
                                 {run.blockedReason ? (
                                   <p className="mt-1 text-[10px] text-amber-500">{run.blockedReason}</p>
+                                ) : run.status === 'running' ? (
+                                  <p className="mt-1 text-[10px] text-blue-500">
+                                    Actively reviewing now{run.activeWorkerCount > 0 ? ` with ${run.activeWorkerCount} active worker${run.activeWorkerCount === 1 ? '' : 's'}.` : '.'}
+                                  </p>
                                 ) : run.status === 'queued' ? (
                                   <p className="mt-1 text-[10px] text-muted-foreground">
                                     {run.queuePosition ? `Waiting in queue (#${run.queuePosition}).` : 'Waiting in queue.'} Starts automatically after the active review finishes.
