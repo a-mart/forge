@@ -2643,6 +2643,7 @@ describe('SwarmManager', () => {
     await secondBoot.boot()
 
     const persistedRuns = await secondBoot.listCortexReviewRuns()
+    expect(persistedRuns).toHaveLength(1)
     expect(persistedRuns[0]).toMatchObject({
       runId: run.runId,
       sessionAgentId: run.sessionAgentId,
@@ -2652,6 +2653,83 @@ describe('SwarmManager', () => {
     })
 
     expect(secondBoot.getAgent(run.sessionAgentId!)?.sessionPurpose).toBe('cortex_review')
+  })
+
+  it('reconciles interrupted Cortex review runs on boot and requeues them as fresh entries', async () => {
+    const config = await makeTempConfig()
+    const firstBoot = new TestSwarmManager(config)
+    await firstBoot.boot()
+
+    const run = await firstBoot.startCortexReviewRun({
+      scope: { mode: 'session', profileId: 'alpha', sessionId: 'alpha--s1', axes: ['memory'] },
+      trigger: 'manual',
+      sourceContext: { channel: 'web' },
+    })
+
+    expect(run.sessionAgentId).toMatch(/^cortex--s\d+$/)
+
+    const firstBootState = firstBoot as unknown as {
+      descriptors: Map<string, AgentDescriptor>
+      saveStore: () => Promise<void>
+    }
+    const persistedReviewSession = firstBootState.descriptors.get(run.sessionAgentId!)
+    expect(persistedReviewSession).toBeDefined()
+    persistedReviewSession!.status = 'streaming'
+    firstBootState.descriptors.set(run.sessionAgentId!, persistedReviewSession!)
+    await firstBootState.saveStore()
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    try {
+      const secondBoot = new TestSwarmManager(config)
+      await secondBoot.boot()
+
+      await waitForCondition(async () => {
+        const runs = await secondBoot.listCortexReviewRuns()
+        return runs.some(
+          (entry) =>
+            entry.runId !== run.runId &&
+            entry.scope.mode === 'session' &&
+            entry.scope.profileId === 'alpha' &&
+            entry.scope.sessionId === 'alpha--s1' &&
+            entry.sessionAgentId !== null,
+        )
+      })
+
+      const persistedRuns = await secondBoot.listCortexReviewRuns()
+      const interruptedRun = persistedRuns.find((entry) => entry.runId === run.runId)
+      const resumedRun = persistedRuns.find(
+        (entry) =>
+          entry.runId !== run.runId &&
+          entry.scope.mode === 'session' &&
+          entry.scope.profileId === 'alpha' &&
+          entry.scope.sessionId === 'alpha--s1',
+      )
+
+      expect(interruptedRun).toMatchObject({
+        runId: run.runId,
+        sessionAgentId: run.sessionAgentId,
+        status: 'interrupted',
+        interruptionReason: 'Interrupted by backend restart; request requeued automatically.',
+        scope: { mode: 'session', profileId: 'alpha', sessionId: 'alpha--s1', axes: ['memory'] },
+      })
+      expect(resumedRun).toMatchObject({
+        trigger: 'manual',
+        status: 'completed',
+        requestText: 'Review session alpha/alpha--s1 (memory freshness)',
+        scope: { mode: 'session', profileId: 'alpha', sessionId: 'alpha--s1', axes: ['memory'] },
+      })
+      expect(resumedRun?.runId).not.toBe(run.runId)
+      expect(resumedRun?.sessionAgentId).toMatch(/^cortex--s\d+$/)
+      expect(resumedRun?.sessionAgentId).not.toBe(run.sessionAgentId)
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('cortex:review_runs:reconciled_interrupted'),
+        expect.objectContaining({ count: 1 }),
+      )
+    } finally {
+      warnSpy.mockRestore()
+    }
   })
 
   it('routes scheduled review envelopes into the same review-run path with schedule metadata', async () => {

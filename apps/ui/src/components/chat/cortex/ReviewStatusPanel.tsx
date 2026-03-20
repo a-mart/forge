@@ -243,6 +243,13 @@ function ReviewRunStatusBadge({ run }: { run: CortexReviewRunRecord }) {
           Stopped
         </Badge>
       )
+    case 'interrupted':
+      return (
+        <Badge variant="outline" className="h-5 gap-1 border-orange-500/30 bg-orange-500/10 px-1.5 text-[10px] font-medium text-orange-500">
+          <AlertCircle className="size-2.5" />
+          Interrupted
+        </Badge>
+      )
     case 'completed':
       return (
         <Badge variant="outline" className="h-5 gap-1 border-emerald-500/30 bg-emerald-500/10 px-1.5 text-[10px] font-medium text-emerald-500">
@@ -340,8 +347,9 @@ function compareReviewRuns(a: CortexReviewRunRecord, b: CortexReviewRunRecord): 
     running: 0,
     blocked: 1,
     queued: 2,
-    stopped: 3,
-    completed: 4,
+    interrupted: 3,
+    stopped: 4,
+    completed: 5,
   }
 
   const priorityDiff = statusPriority[a.status] - statusPriority[b.status]
@@ -761,6 +769,10 @@ export function ReviewStatusPanel({ wsUrl, refreshKey = 0, onOpenSession }: Revi
                                 ) : run.status === 'queued' ? (
                                   <p className="mt-1 text-[10px] text-muted-foreground">
                                     {run.queuePosition ? `Waiting in queue (#${run.queuePosition}).` : 'Waiting in queue.'} Starts automatically after the active review finishes.
+                                  </p>
+                                ) : run.status === 'interrupted' ? (
+                                  <p className="mt-1 text-[10px] text-orange-500">
+                                    {run.interruptionReason ?? 'Interrupted by backend restart. A new run was queued automatically.'}
                                   </p>
                                 ) : run.latestCloseout ? (
                                   <p className="mt-1 text-[10px] text-muted-foreground">{truncateMiddle(run.latestCloseout)}</p>

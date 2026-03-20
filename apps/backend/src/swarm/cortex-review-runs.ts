@@ -31,6 +31,8 @@ export interface StoredCortexReviewRun {
   sessionAgentId: string | null;
   sourceContext?: MessageSourceContext | null;
   blockedReason?: string | null;
+  interruptedAt?: string | null;
+  interruptionReason?: string | null;
   scheduleName?: string | null;
 }
 
@@ -169,6 +171,8 @@ export function buildLiveCortexReviewRunRecord(options: {
     latestCloseout,
     queuePosition: options.queuePosition ?? null,
     blockedReason: options.stored.blockedReason ?? null,
+    interruptedAt: options.stored.interruptedAt ?? null,
+    interruptionReason: options.stored.interruptionReason ?? null,
     scheduleName: options.stored.scheduleName ?? null
   };
 }
@@ -194,13 +198,17 @@ async function readCortexReviewRunsFile(dataDir: string): Promise<StoredCortexRe
   }
 }
 
-function deriveLiveStatus(
+export function deriveLiveStatus(
   stored: StoredCortexReviewRun,
   sessionDescriptor: ProtocolAgentDescriptor | undefined,
   activeWorkerCount: number
 ): CortexReviewRunStatus {
   if (stored.blockedReason) {
     return "blocked";
+  }
+
+  if (stored.interruptedAt || stored.interruptionReason) {
+    return "interrupted";
   }
 
   if (!stored.sessionAgentId) {
@@ -275,6 +283,8 @@ function isStoredCortexReviewRun(value: unknown): value is StoredCortexReviewRun
     (candidate.sessionAgentId === null || typeof candidate.sessionAgentId === "string") &&
     (candidate.sourceContext === undefined || candidate.sourceContext === null || isMessageSourceContext(candidate.sourceContext)) &&
     (candidate.blockedReason === undefined || candidate.blockedReason === null || typeof candidate.blockedReason === "string") &&
+    (candidate.interruptedAt === undefined || candidate.interruptedAt === null || typeof candidate.interruptedAt === "string") &&
+    (candidate.interruptionReason === undefined || candidate.interruptionReason === null || typeof candidate.interruptionReason === "string") &&
     (candidate.scheduleName === undefined || candidate.scheduleName === null || typeof candidate.scheduleName === "string")
   );
 }

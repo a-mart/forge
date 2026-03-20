@@ -51,6 +51,7 @@ import {
   buildCortexReviewRunScopeLabel,
   buildLiveCortexReviewRunRecord,
   createCortexReviewRunId,
+  deriveLiveStatus,
   parseCortexReviewRunScopeFromText,
   parseScheduledTaskEnvelope,
   readStoredCortexReviewRuns,
@@ -1294,6 +1295,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     await this.ensureCortexProfile();
     await loadOnboardingState(this.config.paths.dataDir);
     await this.ensureLegacyProfileKnowledgeReferenceDocs();
+    await this.reconcileInterruptedCortexReviewRunsForBoot();
     this.normalizeStreamingStatusesForBoot();
     await this.recoverMissingWorkerDescriptorsForBoot();
 
@@ -1347,6 +1349,66 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   listProfiles(): ManagerProfile[] {
     return this.sortedProfiles().map((profile) => ({ ...profile }));
+  }
+
+  private async reconcileInterruptedCortexReviewRunsForBoot(): Promise<void> {
+    const storedRuns = await readStoredCortexReviewRuns(this.config.paths.dataDir);
+    const interruptedRuns = storedRuns
+      .slice()
+      .reverse()
+      .filter((stored) => {
+        if (!stored.sessionAgentId) {
+          return false;
+        }
+
+        const sessionDescriptor = this.descriptors.get(stored.sessionAgentId);
+        const activeWorkerCount = this.getWorkersForManager(stored.sessionAgentId)
+          .filter((worker) => worker.status === "streaming")
+          .length;
+
+        return deriveLiveStatus(stored, sessionDescriptor, activeWorkerCount) === "running";
+      });
+
+    if (interruptedRuns.length === 0) {
+      return;
+    }
+
+    const reconciledAt = this.now();
+    const interruptionReason = "Interrupted by backend restart; request requeued automatically.";
+    const reconciledPairs: Array<{ interruptedRunId: string; requeuedRunId: string; sessionAgentId: string | null }> = [];
+
+    for (const stored of interruptedRuns) {
+      const requeuedRunId = createCortexReviewRunId();
+
+      await appendCortexReviewRun(this.config.paths.dataDir, {
+        ...stored,
+        interruptedAt: reconciledAt,
+        interruptionReason
+      });
+
+      await appendCortexReviewRun(this.config.paths.dataDir, {
+        runId: requeuedRunId,
+        trigger: stored.trigger,
+        scope: stored.scope,
+        scopeLabel: stored.scopeLabel,
+        requestText: stored.requestText,
+        requestedAt: reconciledAt,
+        sessionAgentId: null,
+        sourceContext: stored.sourceContext ?? { channel: "web" },
+        scheduleName: stored.scheduleName ?? null
+      });
+
+      reconciledPairs.push({
+        interruptedRunId: stored.runId,
+        requeuedRunId,
+        sessionAgentId: stored.sessionAgentId
+      });
+    }
+
+    console.warn(`[swarm][${reconciledAt}] cortex:review_runs:reconciled_interrupted`, {
+      count: reconciledPairs.length,
+      runs: reconciledPairs
+    });
   }
 
   async listCortexReviewRuns(): Promise<CortexReviewRunRecord[]> {

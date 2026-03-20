@@ -7,6 +7,7 @@ import { getCortexReviewRunsPath } from "../data-paths.js";
 import {
   buildCortexReviewRunRequestText,
   buildCortexReviewRunScopeLabel,
+  buildLiveCortexReviewRunRecord,
   parseCortexReviewRunScopeFromText,
   parseScheduledTaskEnvelope,
   readStoredCortexReviewRuns
@@ -44,6 +45,35 @@ describe("cortex-review-runs", () => {
     const scope: CortexReviewRunScope = { mode: "session", profileId: "alpha", sessionId: "alpha--s1", axes: ["memory", "feedback"] };
     expect(buildCortexReviewRunScopeLabel(scope)).toBe("alpha/alpha--s1 (memory, feedback)");
     expect(buildCortexReviewRunRequestText(scope)).toBe("Review session alpha/alpha--s1 (memory, feedback freshness)");
+  });
+
+  it("surfaces interrupted runs without misclassifying them as completed", () => {
+    expect(buildLiveCortexReviewRunRecord({
+      stored: {
+        runId: "review-interrupted",
+        trigger: "manual",
+        scope: { mode: "session", profileId: "alpha", sessionId: "alpha--s1", axes: ["memory"] },
+        scopeLabel: "alpha/alpha--s1 (memory)",
+        requestText: "Review session alpha/alpha--s1 (memory freshness)",
+        requestedAt: "2026-03-17T01:00:00.000Z",
+        sessionAgentId: "cortex--s2",
+        interruptedAt: "2026-03-17T01:05:00.000Z",
+        interruptionReason: "Interrupted by backend restart; request requeued automatically."
+      },
+      sessionDescriptor: {
+        agentId: "cortex--s2",
+        managerId: "cortex--s2",
+        displayName: "Review Run",
+        role: "manager",
+        status: "idle",
+        createdAt: "2026-03-17T01:00:00.000Z",
+        updatedAt: "2026-03-17T01:05:00.000Z",
+        cwd: "/tmp",
+        model: { provider: "openai", modelId: "gpt-test", thinkingLevel: "medium" },
+        sessionFile: "/tmp/cortex--s2.jsonl"
+      },
+      activeWorkerCount: 0
+    }).status).toBe("interrupted");
   });
 
   it("filters malformed stored runs when reading the ledger", async () => {
