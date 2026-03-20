@@ -5,7 +5,12 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogOverlay, DialogPortal, DialogTitle } from '@/components/ui/dialog'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import type { ArtifactReference } from '@/lib/artifacts'
-import { toVscodeInsidersHref } from '@/lib/artifacts'
+import { toEditorHref } from '@/lib/artifacts'
+import {
+  EDITOR_LABELS,
+  EDITOR_URL_SCHEMES,
+  readStoredEditorPreference,
+} from '@/lib/editor-preference'
 import { cn } from '@/lib/utils'
 import { MarkdownMessage } from './MarkdownMessage'
 
@@ -33,6 +38,10 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
   const [content, setContent] = useState('')
   const [resolvedPath, setResolvedPath] = useState<string | null>(null)
   const closingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const editorPreference = readStoredEditorPreference()
+  const editorScheme = EDITOR_URL_SCHEMES[editorPreference]
+  const editorLabel = EDITOR_LABELS[editorPreference]
 
   const artifactPath = artifact?.path ?? null
 
@@ -158,6 +167,7 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
   return (
     <Dialog
       open={isOpen}
+      modal={false}
       onOpenChange={(open) => {
         if (!open) {
           handleAnimatedClose()
@@ -167,12 +177,12 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
       <DialogPortal>
         <DialogOverlay
           className={cn(
-            'fixed inset-0 z-50',
+            'fixed inset-0 z-50 pointer-events-none',
             'transition-[backdrop-filter,background-color] duration-300 ease-out',
             isVisible
               ? 'bg-background/60 backdrop-blur-[2px]'
-              : 'pointer-events-none bg-transparent backdrop-blur-0',
-            isClosing && !isVisible && 'pointer-events-none',
+              : 'bg-transparent backdrop-blur-0',
+            isClosing && !isVisible && 'bg-transparent backdrop-blur-0',
           )}
         />
         <DialogPrimitive.Content
@@ -190,6 +200,10 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
             event.preventDefault()
             handleAnimatedClose()
           }}
+          onInteractOutside={(event) => {
+            // Allow interaction with elements outside the panel (e.g. chat input)
+            event.preventDefault()
+          }}
         >
           <DialogTitle className="sr-only">{artifact ? `Artifact: ${artifact.fileName}` : 'Artifact panel'}</DialogTitle>
           {/* Header */}
@@ -206,7 +220,7 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
 
             <div className="flex shrink-0 items-center gap-1.5">
               <a
-                href={toVscodeInsidersHref(displayPath || artifact?.path || '')}
+                href={toEditorHref(displayPath || artifact?.path || '', editorScheme)}
                 target="_blank"
                 rel="noopener noreferrer"
                 className={cn(
@@ -216,8 +230,8 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
                 )}
               >
                 <ExternalLink className="size-3" aria-hidden="true" />
-                <span className="hidden sm:inline">Open in VS Code</span>
-                <span className="sm:hidden">VS Code</span>
+                <span className="hidden sm:inline">Open in {editorLabel}</span>
+                <span className="sm:hidden">{editorLabel}</span>
               </a>
 
               <div className="mx-0.5 h-4 w-px bg-border/60" aria-hidden="true" />

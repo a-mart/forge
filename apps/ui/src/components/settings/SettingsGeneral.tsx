@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Monitor, Moon, RotateCcw, Sun } from 'lucide-react'
+import { Code, Monitor, Moon, RotateCcw, Sun } from 'lucide-react'
 import { OnboardingCallout } from '@/components/chat/cortex/OnboardingCallout'
 import { useOnboardingState } from '@/hooks/use-onboarding-state'
 import {
@@ -17,6 +17,12 @@ import {
   readStoredThemePreference,
   type ThemePreference,
 } from '@/lib/theme'
+import {
+  EDITOR_LABELS,
+  readStoredEditorPreference,
+  storeEditorPreference,
+  type EditorPreference,
+} from '@/lib/editor-preference'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
 import {
   fetchPlaywrightSettings,
@@ -40,6 +46,9 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
   const [onboardingSuccess, setOnboardingSuccess] = useState<string | null>(null)
   const [themePreference, setThemePreference] = useState<ThemePreference>(() =>
     readStoredThemePreference(),
+  )
+  const [editorPreference, setEditorPreference] = useState<EditorPreference>(() =>
+    readStoredEditorPreference(),
   )
   const [playwrightSettings, setPlaywrightSettings] = useState<PlaywrightDiscoverySettings | null>(null)
   const [playwrightError, setPlaywrightError] = useState<string | null>(null)
@@ -92,6 +101,11 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
     applyThemePreference(nextPreference)
   }, [])
 
+  const handleEditorPreferenceChange = useCallback((nextPreference: EditorPreference) => {
+    setEditorPreference(nextPreference)
+    storeEditorPreference(nextPreference)
+  }, [])
+
   const handleOnboardingSave = useCallback(async (input: import('@/lib/onboarding-api').SaveOnboardingPreferencesInput) => {
     const nextState = await savePreferences(input)
     if (nextState) {
@@ -139,6 +153,34 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
                   System
                 </span>
               </SelectItem>
+            </SelectContent>
+          </Select>
+        </SettingsWithCTA>
+
+        <SettingsWithCTA
+          label="Preferred Editor"
+          description="Choose which editor to open artifact files in"
+        >
+          <Select
+            value={editorPreference}
+            onValueChange={(value) => {
+              if (value === 'vscode-insiders' || value === 'vscode' || value === 'cursor') {
+                handleEditorPreferenceChange(value)
+              }
+            }}
+          >
+            <SelectTrigger className="w-full sm:w-48">
+              <SelectValue placeholder="Select editor" />
+            </SelectTrigger>
+            <SelectContent>
+              {(Object.entries(EDITOR_LABELS) as [EditorPreference, string][]).map(([value, label]) => (
+                <SelectItem key={value} value={value}>
+                  <span className="inline-flex items-center gap-2">
+                    <Code className="size-3.5" />
+                    {label}
+                  </span>
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </SettingsWithCTA>

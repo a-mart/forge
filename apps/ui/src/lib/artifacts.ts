@@ -101,14 +101,18 @@ export function toSwarmFileHref(path: string): string {
 }
 
 export function toVscodeInsidersHref(path: string): string {
+  return toEditorHref(path, 'vscode-insiders')
+}
+
+export function toEditorHref(path: string, scheme: string): string {
   const normalizedPath = normalizeArtifactPath(path)
   if (!normalizedPath) {
-    return 'vscode-insiders://file'
+    return `${scheme}://file`
   }
 
   const prefixedPath = normalizedPath.startsWith('/') ? normalizedPath : `/${normalizedPath}`
 
-  return `vscode-insiders://file${encodeURI(prefixedPath)}`
+  return `${scheme}://file${encodeURI(prefixedPath)}`
 }
 
 function createArtifactReference(
