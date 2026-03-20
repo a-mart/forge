@@ -1,86 +1,190 @@
-import { Compass, PlayCircle, SkipForward, Sparkles } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import type { OnboardingTechnicalLevel } from '@forge/protocol'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import type { OnboardingStatus } from '@forge/protocol'
-import { onboardingNeedsAttention, onboardingShowsPostSetupCta } from '@/lib/onboarding-ui'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { Textarea } from '@/components/ui/textarea'
+import type { OnboardingStateSummary, SaveOnboardingPreferencesInput } from '@/lib/onboarding-api'
 
 interface OnboardingCalloutProps {
-  status: OnboardingStatus
-  hasProjectManagers: boolean
+  mode: 'first-launch' | 'ready' | 'settings'
+  state?: OnboardingStateSummary | null
   isBusy?: boolean
   error?: string | null
+  success?: string | null
+  onSave?: (input: SaveOnboardingPreferencesInput) => void | Promise<void>
   onSkipForNow?: () => void
   onCreateManager?: () => void
-  onResumeOnboarding?: () => void
 }
 
+const TECHNICAL_LEVEL_OPTIONS: Array<{ value: OnboardingTechnicalLevel; label: string }> = [
+  { value: 'developer', label: 'Developer' },
+  { value: 'technical_non_developer', label: 'Technical (non-developer)' },
+  { value: 'semi_technical', label: 'Semi-technical' },
+  { value: 'non_technical', label: 'Non-technical' },
+]
+
 export function OnboardingCallout({
-  status,
-  hasProjectManagers,
+  mode,
+  state = null,
   isBusy = false,
   error = null,
+  success = null,
+  onSave,
   onSkipForNow,
   onCreateManager,
-  onResumeOnboarding,
 }: OnboardingCalloutProps) {
-  if (!(onboardingNeedsAttention(status) || onboardingShowsPostSetupCta(status))) {
-    return null
+  const [preferredName, setPreferredName] = useState(state?.preferences?.preferredName ?? '')
+  const [technicalLevel, setTechnicalLevel] = useState<OnboardingTechnicalLevel | ''>(state?.preferences?.technicalLevel ?? '')
+  const [additionalPreferences, setAdditionalPreferences] = useState(state?.preferences?.additionalPreferences ?? '')
+  const [validationError, setValidationError] = useState<string | null>(null)
+
+  useEffect(() => {
+    setPreferredName(state?.preferences?.preferredName ?? '')
+    setTechnicalLevel(state?.preferences?.technicalLevel ?? '')
+    setAdditionalPreferences(state?.preferences?.additionalPreferences ?? '')
+    setValidationError(null)
+  }, [state?.preferences?.additionalPreferences, state?.preferences?.preferredName, state?.preferences?.technicalLevel])
+
+  const copy = useMemo(() => {
+    switch (mode) {
+      case 'settings':
+        return {
+          title: 'Welcome preferences',
+          description: 'Update the basics future managers inherit across sessions.',
+          submitLabel: 'Save preferences',
+        }
+      case 'ready':
+        return {
+          title: 'You’re ready to create your first manager',
+          description: 'Your welcome preferences are set. Start a manager when you’re ready to begin.',
+        }
+      default:
+        return {
+          title: 'Welcome to Forge',
+          description: 'Tell Forge a little about yourself so future managers can respond more naturally from the start.',
+          submitLabel: 'Save & Continue',
+        }
+    }
+  }, [mode])
+
+  const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+
+    const trimmedName = preferredName.trim()
+    if (!trimmedName) {
+      setValidationError('Name is required.')
+      return
+    }
+
+    if (!technicalLevel) {
+      setValidationError('Technical level is required.')
+      return
+    }
+
+    setValidationError(null)
+    void onSave?.({
+      preferredName: trimmedName,
+      technicalLevel,
+      additionalPreferences: additionalPreferences.trim() || null,
+    })
   }
 
-  const showSkipButton = onboardingNeedsAttention(status)
-  const showCreateManager = onboardingShowsPostSetupCta(status) && !hasProjectManagers
-  const showResume = status === 'deferred'
+  if (mode === 'ready') {
+    return (
+      <div className="px-3 py-6 md:px-4">
+        <Card className="mx-auto max-w-2xl border-border/70">
+          <CardHeader>
+            <CardTitle>{copy.title}</CardTitle>
+            <CardDescription>{copy.description}</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button type="button" onClick={onCreateManager} disabled={isBusy}>
+              Create your first manager
+            </Button>
+            {error ? <p className="mt-3 text-sm text-destructive">{error}</p> : null}
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
 
   return (
-    <div className="border-b border-border/70 bg-background px-3 py-3 md:px-4">
-      <Card className="gap-3 border-border/70 bg-muted/20 py-4 shadow-none">
-        <CardHeader className="gap-1 px-4 pb-0">
-          <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
-            <Sparkles className="size-3.5" />
-            Cortex onboarding
-          </div>
-          <CardTitle className="text-sm font-semibold text-foreground">
-            {onboardingNeedsAttention(status)
-              ? 'Meet Cortex — it can learn your defaults so future managers start smarter.'
-              : status === 'deferred'
-                ? 'Ready when you are — create your first manager now or resume onboarding later.'
-                : 'You’re ready to create your first manager.'}
-          </CardTitle>
+    <div className={mode === 'settings' ? '' : 'px-3 py-6 md:px-4'}>
+      <Card className={mode === 'settings' ? 'border-border/70' : 'mx-auto max-w-2xl border-border/70'}>
+        <CardHeader>
+          <CardTitle>{copy.title}</CardTitle>
+          <CardDescription>{copy.description}</CardDescription>
         </CardHeader>
+        <CardContent>
+          <form className="space-y-4" onSubmit={handleSubmit}>
+            <div className="space-y-2">
+              <Label htmlFor={`onboarding-name-${mode}`}>Name</Label>
+              <Input
+                id={`onboarding-name-${mode}`}
+                value={preferredName}
+                onChange={(event) => setPreferredName(event.target.value)}
+                placeholder="Your name"
+                disabled={isBusy}
+                required
+              />
+            </div>
 
-        <CardContent className="space-y-3 px-4 pt-0">
-          <p className="text-sm text-muted-foreground">
-            {onboardingNeedsAttention(status)
-              ? 'This is a lightweight first-launch chat. Cortex can capture a few cross-project preferences, or you can skip straight to work.'
-              : status === 'deferred'
-                ? 'Future managers will stay project-focused until you decide to add more personal defaults.'
-                : 'Use the normal manager creation flow whenever you’re ready to start a project-specific session.'}
-          </p>
+            <div className="space-y-2">
+              <Label htmlFor={`onboarding-technical-level-${mode}`}>Technical Level</Label>
+              <Select
+                value={technicalLevel || undefined}
+                onValueChange={(value) => setTechnicalLevel(value as OnboardingTechnicalLevel)}
+                disabled={isBusy}
+              >
+                <SelectTrigger id={`onboarding-technical-level-${mode}`}>
+                  <SelectValue placeholder="Select your technical level" />
+                </SelectTrigger>
+                <SelectContent>
+                  {TECHNICAL_LEVEL_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            {showCreateManager ? (
-              <Button type="button" size="sm" onClick={onCreateManager} disabled={isBusy}>
-                <Compass className="mr-1.5 size-3.5" />
-                Create your first manager
+            <div className="space-y-2">
+              <Label htmlFor={`onboarding-additional-preferences-${mode}`}>Additional preferences</Label>
+              <Textarea
+                id={`onboarding-additional-preferences-${mode}`}
+                value={additionalPreferences}
+                onChange={(event) => setAdditionalPreferences(event.target.value)}
+                placeholder="Any preferences for how you'd like responses? For example: concise vs detailed, how much explanation you want, etc."
+                disabled={isBusy}
+                rows={5}
+              />
+            </div>
+
+            {validationError ? <p className="text-sm text-destructive">{validationError}</p> : null}
+            {error ? <p className="text-sm text-destructive">{error}</p> : null}
+            {success ? <p className="text-sm text-emerald-600 dark:text-emerald-400">{success}</p> : null}
+
+            <div className="flex flex-wrap gap-2">
+              <Button type="submit" disabled={isBusy}>
+                {copy.submitLabel}
               </Button>
-            ) : null}
-
-            {showSkipButton ? (
-              <Button type="button" size="sm" variant="outline" onClick={onSkipForNow} disabled={isBusy}>
-                <SkipForward className="mr-1.5 size-3.5" />
-                Skip for now
-              </Button>
-            ) : null}
-
-            {showResume ? (
-              <Button type="button" size="sm" variant="outline" onClick={onResumeOnboarding} disabled={isBusy}>
-                <PlayCircle className="mr-1.5 size-3.5" />
-                Resume onboarding
-              </Button>
-            ) : null}
-          </div>
-
-          {error ? <p className="text-xs text-destructive">{error}</p> : null}
+              {mode === 'first-launch' ? (
+                <Button type="button" variant="outline" onClick={onSkipForNow} disabled={isBusy}>
+                  Skip for now
+                </Button>
+              ) : null}
+            </div>
+          </form>
         </CardContent>
       </Card>
     </div>

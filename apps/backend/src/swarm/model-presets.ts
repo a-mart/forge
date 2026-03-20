@@ -1,10 +1,7 @@
-import { AuthStorage } from "@mariozechner/pi-coding-agent";
-import { ensureCanonicalAuthFilePath } from "./auth-storage-paths.js";
-import type { AgentModelDescriptor, SwarmConfig, SwarmModelPreset, SwarmReasoningLevel } from "./types.js";
+import type { AgentModelDescriptor, SwarmModelPreset, SwarmReasoningLevel } from "./types.js";
 import { SWARM_MODEL_PRESETS, SWARM_REASONING_LEVELS } from "./types.js";
 
 export const DEFAULT_SWARM_MODEL_PRESET: SwarmModelPreset = "pi-codex";
-export const ONBOARDING_MANAGER_MODEL_PRESET_PRIORITY = ["pi-opus", "pi-5.4"] as const satisfies readonly SwarmModelPreset[];
 
 const MODEL_PRESET_DESCRIPTORS: Record<SwarmModelPreset, AgentModelDescriptor> = {
   "pi-codex": {
@@ -86,19 +83,6 @@ export function resolveModelDescriptorFromPreset(preset: SwarmModelPreset): Agen
   };
 }
 
-export async function resolveOnboardingManagerModelDescriptor(
-  config: Pick<SwarmConfig, "paths">
-): Promise<AgentModelDescriptor> {
-  const authFilePath = await ensureCanonicalAuthFilePath(config);
-  const authStorage = AuthStorage.create(authFilePath);
-
-  if (hasConfiguredAuthCredential(authStorage.get("anthropic"))) {
-    return resolveModelDescriptorFromPreset("pi-opus");
-  }
-
-  return resolveModelDescriptorFromPreset("pi-5.4");
-}
-
 export function inferSwarmModelPresetFromDescriptor(
   descriptor: Pick<AgentModelDescriptor, "provider" | "modelId"> | undefined
 ): SwarmModelPreset | undefined {
@@ -136,19 +120,3 @@ export function normalizeSwarmModelDescriptor(
   return resolveModelDescriptorFromPreset(preset);
 }
 
-function hasConfiguredAuthCredential(credential: unknown): boolean {
-  if (!credential || typeof credential !== "object") {
-    return false;
-  }
-
-  const candidate = credential as {
-    key?: string;
-    access?: string;
-    accessToken?: string;
-    token?: string;
-  };
-
-  return [candidate.key, candidate.access, candidate.accessToken, candidate.token].some(
-    (value) => typeof value === "string" && value.trim().length > 0
-  );
-}

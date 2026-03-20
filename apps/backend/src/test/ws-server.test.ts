@@ -31,7 +31,7 @@ import {
   getProfileReferencePath,
 } from '../swarm/data-paths.js'
 import { scanCortexReviewStatus } from '../swarm/scripts/cortex-scan.js'
-import { loadOnboardingState, saveOnboardingFacts, setOnboardingStatus } from '../swarm/onboarding-state.js'
+import { loadOnboardingState, saveOnboardingPreferences } from '../swarm/onboarding-state.js'
 import { SwarmWebSocketServer } from '../ws/server.js'
 import type { ServerEvent } from '@forge/protocol'
 
@@ -1740,54 +1740,6 @@ describe('SwarmWebSocketServer', () => {
     }
   })
 
-  it('queues the first Cortex onboarding greeting when the client subscribes to the root Cortex session', async () => {
-    const port = await getAvailablePort()
-    const config = await makeTempConfig(port, true)
-
-    const manager = new TestSwarmManager(config)
-    await manager.boot()
-
-    const server = new SwarmWebSocketServer({
-      swarmManager: manager,
-      host: config.host,
-      port: config.port,
-      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
-    })
-
-    await server.start()
-
-    try {
-      const client = new WebSocket(`ws://${config.host}:${config.port}`)
-      const events: ServerEvent[] = []
-
-      client.on('message', (raw) => {
-        events.push(JSON.parse(raw.toString()) as ServerEvent)
-      })
-
-      await once(client, 'open')
-      client.send(JSON.stringify({ type: 'subscribe', agentId: 'cortex' }))
-
-      await waitForEvent(events, (event) => event.type === 'ready' && event.subscribedAgentId === 'cortex')
-      await waitForEvent(
-        events,
-        (event) =>
-          event.type === 'conversation_message' &&
-          event.agentId === 'cortex' &&
-          event.source === 'speak_to_user' &&
-          event.text ===
-            "Hey - I'm Cortex, the persistent layer across your Forge sessions. Before we get started, what's your name? And are you coming at this as a developer, or more from a non-technical angle?\n\nThat'll help me calibrate how all your future managers communicate with you. If you'd rather skip this and jump straight into a manager, that's totally fine too.",
-      )
-
-      const snapshot = await loadOnboardingState(config.paths.dataDir)
-      expect(snapshot.status).toBe('active')
-      expect(snapshot.firstPromptSentAt).toMatch(/T/)
-
-      client.close()
-    } finally {
-      await server.stop()
-    }
-  })
-
   it('returns onboarding state through GET /api/onboarding/state', async () => {
     const port = await getAvailablePort()
     const config = await makeTempConfig(port)
@@ -1795,32 +1747,11 @@ describe('SwarmWebSocketServer', () => {
     const manager = new TestSwarmManager(config)
     await manager.boot()
 
-    const initial = await loadOnboardingState(config.paths.dataDir)
-    const saved = await saveOnboardingFacts(
-      config.paths.dataDir,
-      {
-        preferredName: { value: 'Ada', status: 'confirmed' },
-        autonomyDefault: { value: 'autonomous', status: 'promoted' },
-      },
-      initial.cycleId,
-      initial.revision,
-    )
-    expect(saved.ok).toBe(true)
-    if (!saved.ok) {
-      throw new Error('expected onboarding fact save to succeed')
-    }
-
-    const completed = await setOnboardingStatus(
-      config.paths.dataDir,
-      'completed',
-      'enough signal',
-      saved.snapshot.cycleId,
-      saved.snapshot.revision,
-    )
-    expect(completed.ok).toBe(true)
-    if (!completed.ok) {
-      throw new Error('expected onboarding completion to succeed')
-    }
+    await saveOnboardingPreferences(config.paths.dataDir, {
+      preferredName: 'Ada',
+      technicalLevel: 'developer',
+      additionalPreferences: 'Keep responses concise.',
+    })
 
     const server = new SwarmWebSocketServer({
       swarmManager: manager,
@@ -1838,28 +1769,30 @@ describe('SwarmWebSocketServer', () => {
       const payload = (await response.json()) as {
         state: {
           status: string
-          cycleId: string
-          revision: number
           completedAt: string | null
-          captured: {
-            preferredName: { value: string | null; status: string }
-            autonomyDefault: { value: string | null; status: string }
-          }
+          skippedAt: string | null
+          preferences: {
+            preferredName: string | null
+            technicalLevel: string | null
+            additionalPreferences: string | null
+          } | null
         }
       }
 
       expect(payload.state.status).toBe('completed')
-      expect(payload.state.cycleId).toBe(completed.snapshot.cycleId)
-      expect(payload.state.revision).toBe(completed.snapshot.revision)
       expect(payload.state.completedAt).toMatch(/T/)
-      expect(payload.state.captured.preferredName).toMatchObject({ value: 'Ada', status: 'confirmed' })
-      expect(payload.state.captured.autonomyDefault).toMatchObject({ value: 'autonomous', status: 'promoted' })
+      expect(payload.state.skippedAt).toBeNull()
+      expect(payload.state.preferences).toEqual({
+        preferredName: 'Ada',
+        technicalLevel: 'developer',
+        additionalPreferences: 'Keep responses concise.',
+      })
     } finally {
       await server.stop()
     }
   })
 
-  it('updates onboarding status through POST /api/onboarding/state', async () => {
+  it('saves onboarding preferences and skip state through POST /api/onboarding/preferences', async () => {
     const port = await getAvailablePort()
     const config = await makeTempConfig(port)
 
@@ -1876,44 +1809,56 @@ describe('SwarmWebSocketServer', () => {
     await server.start()
 
     try {
-      const deferResponse = await fetch(`http://${config.host}:${config.port}/api/onboarding/state`, {
+      const saveResponse = await fetch(`http://${config.host}:${config.port}/api/onboarding/preferences`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ status: 'deferred', reason: 'Skipped from UI' }),
+        body: JSON.stringify({
+          preferredName: 'Ada',
+          technicalLevel: 'semi_technical',
+          additionalPreferences: 'Prefer plain language.',
+        }),
       })
-      expect(deferResponse.status).toBe(200)
+      expect(saveResponse.status).toBe(200)
 
-      const deferredPayload = (await deferResponse.json()) as {
+      const savedPayload = (await saveResponse.json()) as {
         state: {
           status: string
-          revision: number
-          deferredAt: string | null
+          completedAt: string | null
+          preferences: {
+            preferredName: string | null
+            technicalLevel: string | null
+            additionalPreferences: string | null
+          } | null
         }
       }
-      expect(deferredPayload.state.status).toBe('deferred')
-      expect(deferredPayload.state.revision).toBeGreaterThan(0)
-      expect(deferredPayload.state.deferredAt).toMatch(/T/)
+      expect(savedPayload.state.status).toBe('completed')
+      expect(savedPayload.state.completedAt).toMatch(/T/)
+      expect(savedPayload.state.preferences).toEqual({
+        preferredName: 'Ada',
+        technicalLevel: 'semi_technical',
+        additionalPreferences: 'Prefer plain language.',
+      })
 
-      const resumeResponse = await fetch(`http://${config.host}:${config.port}/api/onboarding/state`, {
+      const skipResponse = await fetch(`http://${config.host}:${config.port}/api/onboarding/preferences`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ status: 'active', reason: 'Resume from UI' }),
+        body: JSON.stringify({ status: 'skipped' }),
       })
-      expect(resumeResponse.status).toBe(200)
+      expect(skipResponse.status).toBe(200)
 
-      const resumedPayload = (await resumeResponse.json()) as {
+      const skippedPayload = (await skipResponse.json()) as {
         state: {
           status: string
-          revision: number
-          startedAt: string | null
+          skippedAt: string | null
+          preferences: null
         }
       }
-      expect(resumedPayload.state.status).toBe('active')
-      expect(resumedPayload.state.revision).toBeGreaterThan(deferredPayload.state.revision)
-      expect(resumedPayload.state.startedAt).toMatch(/T/)
+      expect(skippedPayload.state.status).toBe('skipped')
+      expect(skippedPayload.state.skippedAt).toMatch(/T/)
+      expect(skippedPayload.state.preferences).toBeNull()
 
       const snapshot = await loadOnboardingState(config.paths.dataDir)
-      expect(snapshot.status).toBe('active')
+      expect(snapshot.status).toBe('skipped')
     } finally {
       await server.stop()
     }

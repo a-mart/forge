@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { AgentDescriptor } from '@forge/protocol'
-import { DEFAULT_MANAGER_AGENT_ID } from '@/hooks/index-page/use-route-state'
-import { ROOT_CORTEX_AGENT_ID, shouldAutoRouteToCortexOnboarding } from './onboarding-ui'
+import { hasProjectManagers } from './onboarding-ui'
 
 function manager(agentId: string, overrides: Partial<AgentDescriptor> = {}): AgentDescriptor {
   return {
@@ -23,49 +22,21 @@ function manager(agentId: string, overrides: Partial<AgentDescriptor> = {}): Age
   }
 }
 
-describe('shouldAutoRouteToCortexOnboarding', () => {
-  const agents = [
-    manager(ROOT_CORTEX_AGENT_ID, { profileId: ROOT_CORTEX_AGENT_ID, archetypeId: 'cortex' }),
-    manager('project-alpha', { profileId: 'project-alpha' }),
-  ]
-
-  it('routes default first-launch chat selection to Cortex when onboarding is needed', () => {
+describe('hasProjectManagers', () => {
+  it('ignores the root cortex manager', () => {
     expect(
-      shouldAutoRouteToCortexOnboarding({
-        routeState: { view: 'chat', agentId: DEFAULT_MANAGER_AGENT_ID },
-        onboardingState: { status: 'active' },
-        hasExplicitSelection: false,
-        agents,
-      }),
-    ).toBe(true)
-
-    expect(
-      shouldAutoRouteToCortexOnboarding({
-        routeState: { view: 'chat', agentId: DEFAULT_MANAGER_AGENT_ID },
-        onboardingState: { status: 'not_started' },
-        hasExplicitSelection: false,
-        agents,
-      }),
-    ).toBe(true)
+      hasProjectManagers([
+        manager('cortex', { profileId: 'cortex', archetypeId: 'cortex' }),
+      ]),
+    ).toBe(false)
   })
 
-  it('keeps normal routing once onboarding is completed or migrated', () => {
+  it('returns true when a non-cortex manager exists', () => {
     expect(
-      shouldAutoRouteToCortexOnboarding({
-        routeState: { view: 'chat', agentId: DEFAULT_MANAGER_AGENT_ID },
-        onboardingState: { status: 'completed' },
-        hasExplicitSelection: false,
-        agents,
-      }),
-    ).toBe(false)
-
-    expect(
-      shouldAutoRouteToCortexOnboarding({
-        routeState: { view: 'chat', agentId: DEFAULT_MANAGER_AGENT_ID },
-        onboardingState: { status: 'migrated' },
-        hasExplicitSelection: false,
-        agents,
-      }),
-    ).toBe(false)
+      hasProjectManagers([
+        manager('cortex', { profileId: 'cortex', archetypeId: 'cortex' }),
+        manager('project-alpha', { profileId: 'project-alpha', archetypeId: 'manager' }),
+      ]),
+    ).toBe(true)
   })
 })

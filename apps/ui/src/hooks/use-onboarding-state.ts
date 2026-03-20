@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
-import { fetchOnboardingState, type OnboardingStateSummary, updateOnboardingStatus } from '@/lib/onboarding-api'
+import {
+  fetchOnboardingState,
+  type OnboardingStateSummary,
+  saveOnboardingPreferences,
+  skipOnboarding,
+  type SaveOnboardingPreferencesInput,
+} from '@/lib/onboarding-api'
 
 interface UseOnboardingStateResult {
   onboardingState: OnboardingStateSummary | null
@@ -8,8 +14,8 @@ interface UseOnboardingStateResult {
   isMutating: boolean
   error: string | null
   refresh: () => Promise<OnboardingStateSummary | null>
-  deferOnboarding: () => Promise<OnboardingStateSummary | null>
-  resumeOnboarding: () => Promise<OnboardingStateSummary | null>
+  savePreferences: (input: SaveOnboardingPreferencesInput) => Promise<OnboardingStateSummary | null>
+  skip: () => Promise<OnboardingStateSummary | null>
 }
 
 export function useOnboardingState(wsUrl: string): UseOnboardingStateResult {
@@ -64,36 +70,32 @@ export function useOnboardingState(wsUrl: string): UseOnboardingStateResult {
     }
   }, [wsUrl])
 
-  const deferOnboarding = useCallback(async (): Promise<OnboardingStateSummary | null> => {
+  const savePreferencesAction = useCallback(async (
+    input: SaveOnboardingPreferencesInput,
+  ): Promise<OnboardingStateSummary | null> => {
     setIsMutating(true)
     try {
-      const nextState = await updateOnboardingStatus(wsUrl, {
-        status: 'deferred',
-        reason: 'Skipped from first-launch UI',
-      })
+      const nextState = await saveOnboardingPreferences(wsUrl, input)
       setOnboardingState(nextState)
       setError(null)
       return nextState
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to defer onboarding.')
+      setError(err instanceof Error ? err.message : 'Failed to save onboarding preferences.')
       return null
     } finally {
       setIsMutating(false)
     }
   }, [wsUrl])
 
-  const resumeOnboarding = useCallback(async (): Promise<OnboardingStateSummary | null> => {
+  const skipAction = useCallback(async (): Promise<OnboardingStateSummary | null> => {
     setIsMutating(true)
     try {
-      const nextState = await updateOnboardingStatus(wsUrl, {
-        status: 'active',
-        reason: 'Resumed from first-launch UI',
-      })
+      const nextState = await skipOnboarding(wsUrl)
       setOnboardingState(nextState)
       setError(null)
       return nextState
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to resume onboarding.')
+      setError(err instanceof Error ? err.message : 'Failed to skip onboarding.')
       return null
     } finally {
       setIsMutating(false)
@@ -107,7 +109,7 @@ export function useOnboardingState(wsUrl: string): UseOnboardingStateResult {
     isMutating,
     error,
     refresh,
-    deferOnboarding,
-    resumeOnboarding,
+    savePreferences: savePreferencesAction,
+    skip: skipAction,
   }
 }

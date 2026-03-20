@@ -87,22 +87,6 @@ export const PROMPT_METADATA: PromptMetadataEntry[] = [
   },
   {
     category: 'operational',
-    promptId: 'cortex-onboarding',
-    displayName: 'Cortex Onboarding Prompt',
-    description: 'Dedicated Cortex first-launch onboarding mode prompt.',
-    profileScope: 'cortex',
-    variables: [],
-  },
-  {
-    category: 'operational',
-    promptId: 'onboarding-extractor',
-    displayName: 'Onboarding Extractor Prompt',
-    description: 'Backend-only post-turn onboarding extractor prompt used for safety-net fact recovery.',
-    profileScope: 'cortex',
-    variables: [],
-  },
-  {
-    category: 'operational',
     promptId: 'memory-merge',
     displayName: 'Memory Merge System Prompt',
     description:

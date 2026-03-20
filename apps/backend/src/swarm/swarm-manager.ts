@@ -3,14 +3,13 @@ import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
 import { appendFile, copyFile, mkdir, open, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
-import { complete, getModel, type Api, type AssistantMessage, type Model } from "@mariozechner/pi-ai";
+import { getModel, type Api, type AssistantMessage, type Model } from "@mariozechner/pi-ai";
 import { AuthStorage, ModelRegistry } from "@mariozechner/pi-coding-agent";
 import type {
   CortexReviewRunRecord,
   CortexReviewRunScope,
   CortexReviewRunTrigger,
   OnboardingState,
-  OnboardingStatus,
   ServerEvent,
   SessionMemoryMergeAttemptStatus,
   SessionMemoryMergeFailureStage,
@@ -98,19 +97,9 @@ import {
   normalizeSwarmModelDescriptor,
   parseSwarmModelPreset,
   parseSwarmReasoningLevel,
-  resolveModelDescriptorFromPreset,
-  resolveOnboardingManagerModelDescriptor
+  resolveModelDescriptorFromPreset
 } from "./model-presets.js";
-import {
-  activateOnboardingForEligibleTurn,
-  getOnboardingSnapshot,
-  loadOnboardingState,
-  markOnboardingFirstPromptSent,
-  renderOnboardingCommonKnowledge,
-  saveOnboardingFacts,
-  setOnboardingStatus
-} from "./onboarding-state.js";
-import type { OnboardingFactsPatch, OnboardingMutationResult } from "./onboarding-state.js";
+import { getOnboardingSnapshot, loadOnboardingState } from "./onboarding-state.js";
 import {
   isNonRunningAgentStatus,
   normalizeAgentStatus,
@@ -176,7 +165,7 @@ const CORTEX_REVIEW_RUN_QUEUE_RETRY_MS = 250;
 const INTERNAL_MODEL_MESSAGE_PREFIX = "SYSTEM: ";
 const MANAGER_BOOTSTRAP_INTERVIEW_MESSAGE = `You are a newly created manager agent for this specific project/profile.
 
-Cortex may already have captured durable cross-project user defaults such as preferred name, technical comfort, response style, explanation depth, update cadence, autonomy default, and risk escalation preference.
+Cortex may already have captured durable cross-project user defaults such as preferred name, technical level, and response preferences.
 If an onboarding snapshot or onboarding-derived summary is present in injected context, treat that as authoritative over any rendered natural-language copy.
 
 Do NOT re-run a generic user onboarding interview.
@@ -189,7 +178,7 @@ unless that information is truly missing and directly necessary for the immediat
 
 Important honesty rule:
 - If onboarding defaults are actually present, you may briefly acknowledge that you already have a baseline sense of how they like to work.
-- If onboarding was skipped, deferred, or is effectively empty, do NOT imply that you already know their preferences.
+- If onboarding was skipped, is still pending, or is effectively empty, do NOT imply that you already know their preferences.
 - In that case, stay project-focused and let Cortex handle cross-project preferences later.
 
 Your first job is to orient to THIS project.
@@ -225,9 +214,6 @@ Useful first-message shapes:
 
 Do not include the old generic "how do you like to work" interview.
 This manager's onboarding is about the project, not the person.`;
-const CORTEX_ONBOARDING_STATIC_GREETING = `Hey - I'm Cortex, the persistent layer across your Forge sessions. Before we get started, what's your name? And are you coming at this as a developer, or more from a non-technical angle?
-
-That'll help me calibrate how all your future managers communicate with you. If you'd rather skip this and jump straight into a manager, that's totally fine too.`;
 const COMMON_KNOWLEDGE_MEMORY_HEADER =
   "# Common Knowledge (maintained by Cortex — read-only reference)";
 const ONBOARDING_SNAPSHOT_MEMORY_HEADER =
@@ -890,116 +876,49 @@ interface ModelCapacityBlock {
   reason: string;
 }
 
-type ManagerPromptMode = "default" | "cortex_onboarding";
-
-interface PendingOnboardingTurn {
-  userMessage: string;
-  sourceContext: MessageSourceContext;
-  recordedAt: string;
-}
-
-interface OnboardingExtractorPatch {
-  action: "patch";
-  cycleId: string;
-  baseRevision: number;
-  facts?: OnboardingFactsPatch;
-  status?: OnboardingStatus | null;
-  renderCommonMd?: boolean;
-  reason?: string;
-}
-
-function nowIso(): string {
-  return new Date().toISOString();
-}
-
-function errorToMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function normalizeMemoryTemplateLines(content: string): string[] {
-  return content
-    .replace(/\r\n/g, "\n")
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
-}
-
-function isInjectableOnboardingFactStatus(status: string | null | undefined): boolean {
-  return status === "confirmed" || status === "promoted";
+function hasOnboardingPreferenceValue(value: string | null | undefined): boolean {
+  return typeof value === "string" && value.trim().length > 0;
 }
 
 function shouldInjectOnboardingSnapshot(snapshot: OnboardingState): boolean {
   return (
-    (typeof snapshot.captured.preferredName.value === "string" &&
-      isInjectableOnboardingFactStatus(snapshot.captured.preferredName.status)) ||
-    (snapshot.captured.technicalComfort.value !== null &&
-      isInjectableOnboardingFactStatus(snapshot.captured.technicalComfort.status)) ||
-    (snapshot.captured.responseVerbosity.value !== null &&
-      isInjectableOnboardingFactStatus(snapshot.captured.responseVerbosity.status)) ||
-    (snapshot.captured.explanationDepth.value !== null &&
-      isInjectableOnboardingFactStatus(snapshot.captured.explanationDepth.status)) ||
-    (snapshot.captured.updateCadence.value !== null &&
-      isInjectableOnboardingFactStatus(snapshot.captured.updateCadence.status)) ||
-    (snapshot.captured.autonomyDefault.value !== null &&
-      isInjectableOnboardingFactStatus(snapshot.captured.autonomyDefault.status)) ||
-    (snapshot.captured.riskEscalationPreference.value !== null &&
-      isInjectableOnboardingFactStatus(snapshot.captured.riskEscalationPreference.status)) ||
-    ((snapshot.captured.primaryUseCases.value?.length ?? 0) > 0 &&
-      isInjectableOnboardingFactStatus(snapshot.captured.primaryUseCases.status))
+    snapshot.status === "completed" &&
+    (
+      hasOnboardingPreferenceValue(snapshot.preferences?.preferredName) ||
+      snapshot.preferences?.technicalLevel !== null ||
+      hasOnboardingPreferenceValue(snapshot.preferences?.additionalPreferences)
+    )
   );
+}
+
+function humanizeOnboardingTechnicalLevel(value: NonNullable<NonNullable<OnboardingState["preferences"]>["technicalLevel"]>): string {
+  switch (value) {
+    case "developer":
+      return "developer";
+    case "technical_non_developer":
+      return "technical (non-developer)";
+    case "semi_technical":
+      return "semi-technical";
+    case "non_technical":
+      return "non-technical";
+    default:
+      return value;
+  }
 }
 
 function buildOnboardingSnapshotMemoryBlock(snapshot: OnboardingState): string {
   const lines = [ONBOARDING_SNAPSHOT_MEMORY_HEADER, "", `- status: ${snapshot.status}`];
 
-  if (
-    snapshot.captured.preferredName.value &&
-    isInjectableOnboardingFactStatus(snapshot.captured.preferredName.status)
-  ) {
-    lines.push(`- preferred name: ${snapshot.captured.preferredName.value}`);
+  if (snapshot.preferences?.preferredName) {
+    lines.push(`- preferred name: ${snapshot.preferences.preferredName}`);
   }
-  if (
-    snapshot.captured.technicalComfort.value &&
-    isInjectableOnboardingFactStatus(snapshot.captured.technicalComfort.status)
-  ) {
-    lines.push(`- technical comfort: ${snapshot.captured.technicalComfort.value}`);
+
+  if (snapshot.preferences?.technicalLevel) {
+    lines.push(`- technical level: ${humanizeOnboardingTechnicalLevel(snapshot.preferences.technicalLevel)}`);
   }
-  if (
-    snapshot.captured.responseVerbosity.value &&
-    isInjectableOnboardingFactStatus(snapshot.captured.responseVerbosity.status)
-  ) {
-    lines.push(`- response verbosity: ${snapshot.captured.responseVerbosity.value}`);
-  }
-  if (
-    snapshot.captured.explanationDepth.value &&
-    isInjectableOnboardingFactStatus(snapshot.captured.explanationDepth.status)
-  ) {
-    lines.push(`- explanation depth: ${snapshot.captured.explanationDepth.value}`);
-  }
-  if (
-    snapshot.captured.updateCadence.value &&
-    isInjectableOnboardingFactStatus(snapshot.captured.updateCadence.status)
-  ) {
-    lines.push(`- update cadence: ${snapshot.captured.updateCadence.value}`);
-  }
-  if (
-    snapshot.captured.autonomyDefault.value &&
-    isInjectableOnboardingFactStatus(snapshot.captured.autonomyDefault.status)
-  ) {
-    lines.push(`- autonomy default: ${snapshot.captured.autonomyDefault.value}`);
-  }
-  if (
-    snapshot.captured.riskEscalationPreference.value &&
-    isInjectableOnboardingFactStatus(snapshot.captured.riskEscalationPreference.status)
-  ) {
-    lines.push(`- risk escalation preference: ${snapshot.captured.riskEscalationPreference.value}`);
-  }
-  const primaryUseCases = snapshot.captured.primaryUseCases.value ?? [];
-  if (
-    primaryUseCases.length > 0 &&
-    isInjectableOnboardingFactStatus(snapshot.captured.primaryUseCases.status)
-  ) {
-    lines.push(`- primary use cases: ${primaryUseCases.join(", ")}`);
+
+  if (snapshot.preferences?.additionalPreferences) {
+    lines.push(`- additional preferences: ${snapshot.preferences.additionalPreferences.replace(/\s+/g, " ").trim()}`);
   }
 
   return `${lines.join("\n")}\n`;
@@ -1156,9 +1075,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private integrationContextProvider: ((profileId: string) => string) | undefined;
   private readonly versioningService: VersioningMutationSink | undefined;
   private readonly trackedToolPathsByAgentId = new Map<string, Map<string, { toolName: string; path: string }>>();
-  private readonly managerPromptModesByAgentId = new Map<string, ManagerPromptMode>();
-  private readonly pendingOnboardingTurnsByAgentId = new Map<string, PendingOnboardingTurn[]>();
-  private cortexOnboardingAutoGreetingPromise: Promise<void> | null = null;
 
   constructor(config: SwarmConfig, options?: { now?: () => string; versioningService?: VersioningMutationSink }) {
     super();
@@ -3544,286 +3460,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     };
   }
 
-  isOnboardingMode(agentId: string): boolean {
-    return this.managerPromptModesByAgentId.get(agentId) === "cortex_onboarding";
-  }
-
-  async ensureCortexOnboardingAutoGreeting(sourceContext?: MessageSourceContext): Promise<void> {
-    const inFlight = this.cortexOnboardingAutoGreetingPromise;
-    if (inFlight) {
-      await inFlight;
-      return;
-    }
-
-    const operation = this.ensureCortexOnboardingAutoGreetingInternal(sourceContext);
-    this.cortexOnboardingAutoGreetingPromise = operation;
-
-    try {
-      await operation;
-    } finally {
-      if (this.cortexOnboardingAutoGreetingPromise === operation) {
-        this.cortexOnboardingAutoGreetingPromise = null;
-      }
-    }
-  }
-
-  private async ensureCortexOnboardingAutoGreetingInternal(sourceContext?: MessageSourceContext): Promise<void> {
-    const descriptor = this.descriptors.get(CORTEX_PROFILE_ID);
-    if (!descriptor || !this.isCortexRootInteractiveSession(descriptor) || isNonRunningAgentStatus(descriptor.status)) {
-      return;
-    }
-
-    const snapshot = await getOnboardingSnapshot(this.config.paths.dataDir);
-    if ((snapshot.status !== "not_started" && snapshot.status !== "active") || snapshot.firstPromptSentAt) {
-      return;
-    }
-
-    const hasConversationHistory = this.getConversationHistory(descriptor.agentId).some(
-      (entry) => entry.type === "conversation_message"
-    );
-    if (hasConversationHistory) {
-      return;
-    }
-
-    await activateOnboardingForEligibleTurn(this.config.paths.dataDir);
-    await this.applyCortexOnboardingModelPreference(descriptor);
-    await this.syncManagerPromptMode(descriptor, { recycleIfChanged: true });
-
-    const resolvedSourceContext = normalizeMessageSourceContext(sourceContext ?? { channel: "web" });
-
-    await this.publishToUser(descriptor.agentId, CORTEX_ONBOARDING_STATIC_GREETING, "speak_to_user", {
-      channel: resolvedSourceContext.channel,
-      channelId: resolvedSourceContext.channelId,
-      userId: resolvedSourceContext.userId,
-      threadTs: resolvedSourceContext.threadTs,
-      integrationProfileId: resolvedSourceContext.integrationProfileId
-    });
-    await markOnboardingFirstPromptSent(this.config.paths.dataDir);
-
-    this.logDebug("onboarding:auto_greeting:sent", {
-      agentId: descriptor.agentId,
-      sourceContext: resolvedSourceContext,
-      mode: "static"
-    });
-  }
-
-  private async applyCortexOnboardingModelPreference(descriptor: AgentDescriptor): Promise<void> {
-    if (!this.isCortexRootInteractiveSession(descriptor)) {
-      return;
-    }
-
-    const preferredModel = await resolveOnboardingManagerModelDescriptor(this.config);
-    const modelChanged =
-      descriptor.model.provider !== preferredModel.provider ||
-      descriptor.model.modelId !== preferredModel.modelId ||
-      descriptor.model.thinkingLevel !== preferredModel.thinkingLevel;
-
-    if (!modelChanged) {
-      return;
-    }
-
-    descriptor.model = { ...preferredModel };
-    this.descriptors.set(descriptor.agentId, descriptor);
-    await this.applyManagerRuntimeRecyclePolicy(descriptor.agentId, "model_change");
-    await this.saveStore();
-    this.emitAgentsSnapshot();
-
-    this.logDebug("onboarding:model_preference:applied", {
-      agentId: descriptor.agentId,
-      model: descriptor.model
-    });
-  }
-
-  private async resolveManagerPromptMode(descriptor: AgentDescriptor): Promise<ManagerPromptMode> {
-    if (descriptor.role !== "manager") {
-      return "default";
-    }
-
-    if (!this.isCortexRootInteractiveSession(descriptor)) {
-      return "default";
-    }
-
-    const snapshot = await getOnboardingSnapshot(this.config.paths.dataDir);
-    return snapshot.status === "not_started" || snapshot.status === "active"
-      ? "cortex_onboarding"
-      : "default";
-  }
-
-  private async syncManagerPromptMode(
-    descriptor: AgentDescriptor,
-    options?: { recycleIfChanged?: boolean }
-  ): Promise<ManagerPromptMode> {
-    const nextMode = await this.resolveManagerPromptMode(descriptor);
-    const previousMode = this.managerPromptModesByAgentId.get(descriptor.agentId) ?? "default";
-    this.managerPromptModesByAgentId.set(descriptor.agentId, nextMode);
-
-    if (
-      options?.recycleIfChanged &&
-      descriptor.role === "manager" &&
-      previousMode !== nextMode &&
-      this.runtimes.has(descriptor.agentId)
-    ) {
-      this.pendingManagerRuntimeRecycleAgentIds.add(descriptor.agentId);
-      await this.applyManagerRuntimeRecyclePolicy(descriptor.agentId, "prompt_mode_change");
-    }
-
-    return nextMode;
-  }
-
-  private queuePendingOnboardingTurn(agentId: string, turn: PendingOnboardingTurn): void {
-    const existing = this.pendingOnboardingTurnsByAgentId.get(agentId) ?? [];
-    existing.push(turn);
-    this.pendingOnboardingTurnsByAgentId.set(agentId, existing);
-  }
-
-  private takePendingOnboardingTurns(agentId: string): PendingOnboardingTurn[] {
-    const pending = this.pendingOnboardingTurnsByAgentId.get(agentId) ?? [];
-    this.pendingOnboardingTurnsByAgentId.delete(agentId);
-    return pending;
-  }
-
-  private async resolveOnboardingMutationBase(input: {
-    cycleId?: string;
-    baseRevision?: number;
-  }): Promise<{ cycleId: string; baseRevision: number; autoResolved: boolean }> {
-    if (typeof input.cycleId === "string" && Number.isInteger(input.baseRevision)) {
-      return {
-        cycleId: input.cycleId,
-        baseRevision: input.baseRevision!,
-        autoResolved: false
-      };
-    }
-
-    const snapshot = await getOnboardingSnapshot(this.config.paths.dataDir);
-    return {
-      cycleId: snapshot.cycleId,
-      baseRevision: snapshot.revision,
-      autoResolved: true
-    };
-  }
-
-  async saveOnboardingFacts(
-    callerAgentId: string,
-    input: {
-      cycleId?: string;
-      baseRevision?: number;
-      facts: OnboardingFactsPatch;
-      renderCommonMd?: boolean;
-    }
-  ): Promise<OnboardingMutationResult> {
-    this.assertCortexRootInteractiveManager(callerAgentId, "save onboarding facts");
-
-    let lastResult: OnboardingMutationResult | undefined;
-    const maxAttempts = input.cycleId !== undefined && input.baseRevision !== undefined ? 1 : 2;
-
-    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-      const mutationBase = await this.resolveOnboardingMutationBase(input);
-      const result = await saveOnboardingFacts(
-        this.config.paths.dataDir,
-        input.facts,
-        mutationBase.cycleId,
-        mutationBase.baseRevision
-      );
-
-      if (!result.ok && mutationBase.autoResolved && attempt + 1 < maxAttempts) {
-        lastResult = result;
-        continue;
-      }
-
-      if (result.ok && input.renderCommonMd) {
-        await renderOnboardingCommonKnowledge(this.config.paths.dataDir, result.snapshot);
-      }
-
-      return result;
-    }
-
-    return lastResult ?? {
-      ok: false,
-      reason: "stale_revision",
-      snapshot: await getOnboardingSnapshot(this.config.paths.dataDir)
-    };
-  }
-
-  async setOnboardingStatus(
-    callerAgentId: string,
-    input: {
-      status: OnboardingStatus;
-      reason?: string | null;
-      cycleId?: string;
-      baseRevision?: number;
-      renderCommonMd?: boolean;
-    }
-  ): Promise<OnboardingMutationResult> {
-    this.assertCortexRootInteractiveManager(callerAgentId, "set onboarding status");
-
-    let lastResult: OnboardingMutationResult | undefined;
-    const maxAttempts = input.cycleId !== undefined && input.baseRevision !== undefined ? 1 : 2;
-
-    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-      const mutationBase = await this.resolveOnboardingMutationBase(input);
-      const result = await setOnboardingStatus(
-        this.config.paths.dataDir,
-        input.status,
-        input.reason ?? null,
-        mutationBase.cycleId,
-        mutationBase.baseRevision
-      );
-
-      if (!result.ok && mutationBase.autoResolved && attempt + 1 < maxAttempts) {
-        lastResult = result;
-        continue;
-      }
-
-      if (result.ok && input.renderCommonMd) {
-        await renderOnboardingCommonKnowledge(this.config.paths.dataDir, result.snapshot);
-      }
-
-      if (result.ok) {
-        const descriptor = this.descriptors.get(callerAgentId);
-        if (descriptor) {
-          await this.syncManagerPromptMode(descriptor, { recycleIfChanged: true });
-        }
-      }
-
-      return result;
-    }
-
-    return lastResult ?? {
-      ok: false,
-      reason: "stale_revision",
-      snapshot: await getOnboardingSnapshot(this.config.paths.dataDir)
-    };
-  }
-
-  async updateOnboardingStatusFromUi(
-    input: {
-      status: Extract<OnboardingStatus, "active" | "deferred">;
-      reason?: string | null;
-    }
-  ): Promise<OnboardingMutationResult> {
-    const snapshot = await getOnboardingSnapshot(this.config.paths.dataDir);
-    const result = await setOnboardingStatus(
-      this.config.paths.dataDir,
-      input.status,
-      input.reason ?? null,
-      snapshot.cycleId,
-      snapshot.revision
-    );
-
-    if (result.ok && input.status === "deferred") {
-      await renderOnboardingCommonKnowledge(this.config.paths.dataDir, result.snapshot);
-    }
-
-    if (result.ok) {
-      const descriptor = this.descriptors.get(CORTEX_PROFILE_ID);
-      if (descriptor && this.isCortexRootInteractiveSession(descriptor)) {
-        await this.syncManagerPromptMode(descriptor, { recycleIfChanged: true });
-      }
-    }
-
-    return result;
-  }
-
   async compactAgentContext(
     agentId: string,
     options?: {
@@ -4088,19 +3724,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.emitConversationMessage(userEvent);
     this.markSessionActivity(targetAgentId, receivedAt);
 
-    let pendingOnboardingTurn: PendingOnboardingTurn | undefined;
-    if (target.role === "manager" && trimmed.length > 0 && this.isCortexRootInteractiveSession(target)) {
-      const onboardingSnapshot = await getOnboardingSnapshot(this.config.paths.dataDir);
-      if (onboardingSnapshot.status === "not_started" || onboardingSnapshot.status === "active") {
-        await activateOnboardingForEligibleTurn(this.config.paths.dataDir);
-        await this.syncManagerPromptMode(target, { recycleIfChanged: true });
-        pendingOnboardingTurn = {
-          userMessage: trimmed,
-          sourceContext,
-          recordedAt: receivedAt
-        };
-      }
-    }
 
     if (target.role !== "manager") {
       const requestedDelivery = options?.delivery ?? "auto";
@@ -4212,9 +3835,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         attachmentCount: persistedAttachments.length
       });
 
-      if (pendingOnboardingTurn) {
-        this.queuePendingOnboardingTurn(target.agentId, pendingOnboardingTurn);
-      }
     } catch (error) {
       this.logDebug("manager:user_message_dispatch_error", {
         managerContextId,
@@ -4622,21 +4242,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
   }
 
-  private async resolveOnboardingOperationalPrompt(fileName: string, fallback: string): Promise<string> {
-    const promptPath = new URL(`./operational/${fileName}`, import.meta.url);
-
-    try {
-      return await readFile(promptPath, "utf8");
-    } catch (error) {
-      this.logDebug("prompt:resolve:onboarding_fallback", {
-        fileName,
-        path: String(promptPath),
-        message: error instanceof Error ? error.message : String(error)
-      });
-      return fallback;
-    }
-  }
-
   private reconcileProfilesOnBoot(): void {
     const managerDescriptorsById = new Map<string, AgentDescriptor>();
 
@@ -4721,7 +4326,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       createdAt,
       updatedAt: createdAt,
       cwd: this.config.defaultCwd,
-      model: await resolveOnboardingManagerModelDescriptor(this.config),
+      model: resolveModelDescriptorFromPreset(this.defaultModelPreset),
       sessionFile: getSessionFilePath(this.config.paths.dataDir, CORTEX_PROFILE_ID, CORTEX_PROFILE_ID)
     };
 
@@ -5401,14 +5006,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       const managerArchetypeId = descriptor.archetypeId
         ? normalizeArchetypeId(descriptor.archetypeId) || MANAGER_ARCHETYPE_ID
         : MANAGER_ARCHETYPE_ID;
-      const promptMode = await this.syncManagerPromptMode(descriptor);
-      let prompt =
-        promptMode === "cortex_onboarding"
-          ? await this.resolveOnboardingOperationalPrompt(
-              "cortex-onboarding.md",
-              await this.promptRegistry.resolve("archetype", managerArchetypeId, profileId)
-            )
-          : await this.promptRegistry.resolve("archetype", managerArchetypeId, profileId);
+      let prompt = await this.promptRegistry.resolve("archetype", managerArchetypeId, profileId);
 
       if (this.integrationContextProvider) {
         try {
@@ -5936,7 +5534,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     if (descriptor.role === "manager") {
       if (nextStatus === "idle" && pendingCount === 0) {
         this.scheduleCortexCloseoutReminder(descriptor.agentId);
-        this.launchPendingOnboardingExtractors(descriptor);
         const recycleDisposition = await this.applyManagerRuntimeRecyclePolicy(descriptor.agentId, "idle_transition");
         if (recycleDisposition === "recycled") {
           await this.saveStore();
@@ -5946,184 +5543,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         this.clearCortexCloseoutReminder(descriptor.agentId);
       }
     }
-  }
-
-  private launchPendingOnboardingExtractors(descriptor: AgentDescriptor): void {
-    if (!this.isCortexRootInteractiveSession(descriptor)) {
-      this.pendingOnboardingTurnsByAgentId.delete(descriptor.agentId);
-      return;
-    }
-
-    const pendingTurns = this.takePendingOnboardingTurns(descriptor.agentId);
-    if (pendingTurns.length === 0) {
-      return;
-    }
-
-    for (const turn of pendingTurns) {
-      void this.captureOnboardingFactsFromTurn(descriptor, turn).catch((error) => {
-        this.logDebug("onboarding:extractor:error", {
-          agentId: descriptor.agentId,
-          recordedAt: turn.recordedAt,
-          sourceContext: turn.sourceContext,
-          message: error instanceof Error ? error.message : String(error)
-        });
-      });
-    }
-  }
-
-  private async captureOnboardingFactsFromTurn(
-    descriptor: AgentDescriptor,
-    turn: PendingOnboardingTurn
-  ): Promise<void> {
-    const snapshot = await getOnboardingSnapshot(this.config.paths.dataDir);
-    if (snapshot.status !== "active" && snapshot.status !== "not_started") {
-      return;
-    }
-
-    const extractorPatch = await this.executeOnboardingExtractorPrompt(snapshot, turn.userMessage);
-    if (!extractorPatch) {
-      return;
-    }
-
-    await this.applyOnboardingExtractorPatch(extractorPatch, descriptor);
-  }
-
-  private async applyOnboardingExtractorPatch(
-    patch: OnboardingExtractorPatch,
-    descriptor: AgentDescriptor
-  ): Promise<void> {
-    const dataDir = this.config.paths.dataDir;
-
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      let currentPatch = patch;
-      if (attempt > 0) {
-        const latestSnapshot = await getOnboardingSnapshot(dataDir);
-        currentPatch = {
-          ...patch,
-          cycleId: latestSnapshot.cycleId,
-          baseRevision: latestSnapshot.revision
-        };
-      }
-
-      let currentRevision = currentPatch.baseRevision;
-      let latestSnapshot: OnboardingState | undefined;
-
-      if (currentPatch.facts && Object.keys(currentPatch.facts).length > 0) {
-        const factResult = await saveOnboardingFacts(
-          dataDir,
-          currentPatch.facts,
-          currentPatch.cycleId,
-          currentRevision
-        );
-
-        if (!factResult.ok) {
-          if (factResult.reason === "stale_revision" && attempt === 0) {
-            continue;
-          }
-
-          this.logDebug("onboarding:extractor:fact_save_failed", {
-            agentId: descriptor.agentId,
-            reason: factResult.reason,
-            cycleId: currentPatch.cycleId,
-            baseRevision: currentRevision,
-            patchReason: currentPatch.reason
-          });
-          return;
-        }
-
-        latestSnapshot = factResult.snapshot;
-        currentRevision = factResult.snapshot.revision;
-      }
-
-      if (currentPatch.status) {
-        const statusResult = await setOnboardingStatus(
-          dataDir,
-          currentPatch.status,
-          currentPatch.reason ?? null,
-          currentPatch.cycleId,
-          currentRevision
-        );
-
-        if (!statusResult.ok) {
-          if (statusResult.reason === "stale_revision" && attempt === 0) {
-            continue;
-          }
-
-          this.logDebug("onboarding:extractor:status_save_failed", {
-            agentId: descriptor.agentId,
-            reason: statusResult.reason,
-            cycleId: currentPatch.cycleId,
-            baseRevision: currentRevision,
-            status: currentPatch.status,
-            patchReason: currentPatch.reason
-          });
-          return;
-        }
-
-        latestSnapshot = statusResult.snapshot;
-      }
-
-      if (currentPatch.renderCommonMd && latestSnapshot) {
-        await renderOnboardingCommonKnowledge(dataDir, latestSnapshot);
-      }
-
-      await this.syncManagerPromptMode(descriptor, { recycleIfChanged: true });
-      return;
-    }
-  }
-
-  protected async executeOnboardingExtractorPrompt(
-    snapshot: OnboardingState,
-    userMessage: string
-  ): Promise<OnboardingExtractorPatch | null> {
-    const extractorPrompt = await this.resolveOnboardingOperationalPrompt(
-      "onboarding-extractor.md",
-      [
-        "You are the onboarding post-turn extractor.",
-        "Return NOOP or a minimal JSON patch.",
-        "Only extract explicit durable cross-project onboarding facts.",
-        "Do not include prose or code fences."
-      ].join("\n")
-    );
-
-    const onboardingModelDescriptor = await resolveOnboardingManagerModelDescriptor(this.config);
-    const authFilePath = await ensureCanonicalAuthFilePath(this.config);
-    const authStorage = AuthStorage.create(authFilePath);
-    const modelRegistry = new ModelRegistry(authStorage);
-    const model = resolveModel(modelRegistry, onboardingModelDescriptor);
-
-    if (!model) {
-      throw new Error(
-        `Unable to resolve model ${onboardingModelDescriptor.provider}/${onboardingModelDescriptor.modelId} for onboarding extraction.`
-      );
-    }
-
-    const apiKey = await modelRegistry.getApiKey(model);
-    const response = await complete(
-      model,
-      {
-        systemPrompt: extractorPrompt,
-        messages: [
-          {
-            role: "user",
-            timestamp: Date.now(),
-            content: [
-              {
-                type: "text",
-                text: [
-                  `current onboarding snapshot: ${JSON.stringify(snapshot)}`,
-                  "",
-                  `user message: ${userMessage}`
-                ].join("\n")
-              }
-            ]
-          }
-        ]
-      },
-      apiKey ? { apiKey } : undefined
-    );
-
-    return parseOnboardingExtractorPatch(response);
   }
 
   private scheduleCortexCloseoutReminder(agentId: string): void {
@@ -8431,58 +7850,6 @@ function stripOuterCodeFence(content: string): string {
   return fencedMatch ? fencedMatch[1].trim() : trimmed;
 }
 
-function parseOnboardingExtractorPatch(message: AssistantMessage): OnboardingExtractorPatch | null {
-  const raw = stripOuterCodeFence(extractAssistantMessageText(message));
-  if (raw.length === 0 || raw.toUpperCase() === "NOOP") {
-    return null;
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return null;
-  }
-
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return null;
-  }
-
-  const candidate = parsed as Record<string, unknown>;
-  if (candidate.action !== "patch") {
-    return null;
-  }
-
-  if (typeof candidate.cycleId !== "string" || !Number.isInteger(candidate.baseRevision)) {
-    return null;
-  }
-
-  const facts =
-    candidate.facts && typeof candidate.facts === "object" && !Array.isArray(candidate.facts)
-      ? (candidate.facts as OnboardingFactsPatch)
-      : undefined;
-  const status =
-    typeof candidate.status === "string" || candidate.status === null
-      ? (candidate.status as OnboardingStatus | null)
-      : undefined;
-  const renderCommonMd = candidate.renderCommonMd === true;
-  const reason = typeof candidate.reason === "string" ? candidate.reason : undefined;
-
-  if ((!facts || Object.keys(facts).length === 0) && !status) {
-    return null;
-  }
-
-  return {
-    action: "patch",
-    cycleId: candidate.cycleId,
-    baseRevision: candidate.baseRevision as number,
-    ...(facts ? { facts } : {}),
-    ...(status !== undefined ? { status } : {}),
-    ...(renderCommonMd ? { renderCommonMd: true } : {}),
-    ...(reason ? { reason } : {})
-  };
-}
-
 function formatInboundUserMessageForManager(text: string, sourceContext: MessageSourceContext): string {
   const sourceMetadataLine = `[sourceContext] ${JSON.stringify(sourceContext)}`;
   const trimmed = text.trim();
@@ -8543,6 +7910,23 @@ function normalizeMessageSourceContext(input: MessageSourceContext): MessageSour
         : undefined,
     teamId: normalizeOptionalMetadataValue(input.teamId)
   };
+}
+
+function normalizeMemoryTemplateLines(content: string): string[] {
+  return content
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .filter((line, index, lines) => line.length > 0 || index < lines.length - 1)
+    .filter((line) => line.length > 0)
+}
+
+function errorToMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function nowIso(): string {
+  return new Date().toISOString()
 }
 
 function normalizeOptionalMetadataValue(value: string | undefined): string | undefined {

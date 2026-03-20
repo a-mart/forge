@@ -26,7 +26,7 @@ import { SettingsPanel } from '@/components/chat/SettingsDialog'
 import { chooseFallbackAgentId } from '@/lib/agent-hierarchy'
 import type { ArtifactReference } from '@/lib/artifacts'
 import { collectArtifactsFromMessages } from '@/lib/collect-artifacts'
-import { hasProjectManagers, onboardingShowsPostSetupCta, ROOT_CORTEX_AGENT_ID, shouldAutoRouteToCortexOnboarding } from '@/lib/onboarding-ui'
+import { hasProjectManagers } from '@/lib/onboarding-ui'
 import { useFeedback } from '@/lib/use-feedback'
 import {
   DEFAULT_MANAGER_AGENT_ID,
@@ -87,12 +87,10 @@ export function IndexPage() {
   })
   const {
     onboardingState,
-    hasLoaded: hasLoadedOnboardingState,
     isMutating: isMutatingOnboardingState,
     error: onboardingError,
-    refresh: refreshOnboardingState,
-    deferOnboarding,
-    resumeOnboarding,
+    savePreferences: saveOnboardingPreferences,
+    skip: skipOnboarding,
   } = useOnboardingState(wsUrl)
 
   const [activeArtifact, setActiveArtifact] = useState<ArtifactReference | null>(null)
@@ -118,15 +116,14 @@ export function IndexPage() {
 
   const hasCreatedProjectManager = useMemo(() => hasProjectManagers(state.agents), [state.agents])
 
-  const isCortexChatActive = routeState.view === 'chat' && activeAgent?.agentId === ROOT_CORTEX_AGENT_ID
-  const shouldShowOnboardingCallout =
-    isCortexChatActive &&
-    Boolean(
-      onboardingState &&
-      (onboardingState.status === 'not_started' ||
-        onboardingState.status === 'active' ||
-        onboardingShowsPostSetupCta(onboardingState.status)),
-    )
+  const shouldShowWelcomeForm =
+    routeState.view === 'chat' &&
+    !hasCreatedProjectManager &&
+    onboardingState?.status === 'pending'
+  const shouldShowCreateManagerState =
+    routeState.view === 'chat' &&
+    !hasCreatedProjectManager &&
+    Boolean(onboardingState && onboardingState.status !== 'pending')
 
   const activeAgentProfileName = useMemo(() => {
     if (!activeAgent?.profileId || !activeAgent.sessionLabel) return undefined
@@ -420,25 +417,6 @@ export function IndexPage() {
       return
     }
 
-    if (!hasExplicitSelection && routeState.agentId === DEFAULT_MANAGER_AGENT_ID && !hasLoadedOnboardingState) {
-      return
-    }
-
-    if (
-      shouldAutoRouteToCortexOnboarding({
-        routeState,
-        onboardingState,
-        hasExplicitSelection,
-        agents: state.agents,
-      })
-    ) {
-      if (currentAgentId !== ROOT_CORTEX_AGENT_ID) {
-        clientRef.current?.subscribeToAgent(ROOT_CORTEX_AGENT_ID, { explicit: false })
-      }
-      navigateToRoute({ view: 'chat', agentId: ROOT_CORTEX_AGENT_ID }, true)
-      return
-    }
-
     if (currentAgentId === routeState.agentId) {
       return
     }
@@ -460,9 +438,7 @@ export function IndexPage() {
     clientRef.current?.subscribeToAgent(fallbackAgentId, { explicit: false })
   }, [
     clientRef,
-    hasLoadedOnboardingState,
     navigateToRoute,
-    onboardingState,
     routeState,
     state.agents,
     state.hasReceivedAgentsSnapshot,
@@ -475,22 +451,6 @@ export function IndexPage() {
       state.agents.map((agent) => [agent.agentId, agent]),
     )
   }, [state.agents])
-
-  useEffect(() => {
-    if (!isCortexChatActive) {
-      return
-    }
-
-    if (!onboardingState || (onboardingState.status !== 'not_started' && onboardingState.status !== 'active')) {
-      return
-    }
-
-    const timer = setTimeout(() => {
-      void refreshOnboardingState()
-    }, 250)
-
-    return () => clearTimeout(timer)
-  }, [isCortexChatActive, onboardingState, refreshOnboardingState, state.messages.length])
 
   const handleSend = (text: string, attachments?: ConversationAttachment[]) => {
     if (!activeAgentId) {
@@ -758,28 +718,25 @@ export function IndexPage() {
     navigateToRoute({ view: 'playwright' })
   }
 
+  const handleSaveOnboarding = useCallback((input: import('@/lib/onboarding-api').SaveOnboardingPreferencesInput) => {
+    void (async () => {
+      const nextState = await saveOnboardingPreferences(input)
+      if (!nextState) {
+        return
+      }
+      navigateToRoute({ view: 'chat', agentId: DEFAULT_MANAGER_AGENT_ID }, true)
+    })()
+  }, [navigateToRoute, saveOnboardingPreferences])
+
   const handleSkipOnboarding = useCallback(() => {
     void (async () => {
-      const nextState = await deferOnboarding()
+      const nextState = await skipOnboarding()
       if (!nextState) {
         return
       }
-      navigateToRoute({ view: 'chat', agentId: ROOT_CORTEX_AGENT_ID }, true)
-      clientRef.current?.subscribeToAgent(ROOT_CORTEX_AGENT_ID, { explicit: false })
+      navigateToRoute({ view: 'chat', agentId: DEFAULT_MANAGER_AGENT_ID }, true)
     })()
-  }, [clientRef, deferOnboarding, navigateToRoute])
-
-  const handleResumeOnboarding = useCallback(() => {
-    void (async () => {
-      const nextState = await resumeOnboarding()
-      if (!nextState) {
-        return
-      }
-      navigateToRoute({ view: 'chat', agentId: ROOT_CORTEX_AGENT_ID }, true)
-      clientRef.current?.subscribeToAgent(ROOT_CORTEX_AGENT_ID, { explicit: false })
-      void refreshOnboardingState()
-    })()
-  }, [clientRef, navigateToRoute, refreshOnboardingState, resumeOnboarding])
+  }, [navigateToRoute, skipOnboarding])
 
   const handlePlaywrightViewStateChange = useCallback(
     (sessionId: string | null, mode: import('@/hooks/index-page/use-route-state').PlaywrightViewMode) => {
@@ -969,47 +926,56 @@ export function IndexPage() {
                   </div>
                 ) : null}
 
-                {shouldShowOnboardingCallout && onboardingState ? (
+                {shouldShowWelcomeForm && onboardingState ? (
                   <OnboardingCallout
-                    status={onboardingState.status}
-                    hasProjectManagers={hasCreatedProjectManager}
+                    mode="first-launch"
+                    state={onboardingState}
                     isBusy={isMutatingOnboardingState}
                     error={onboardingError}
+                    onSave={handleSaveOnboarding}
                     onSkipForNow={handleSkipOnboarding}
-                    onCreateManager={handleOpenCreateManagerDialog}
-                    onResumeOnboarding={handleResumeOnboarding}
                   />
-                ) : null}
+                ) : shouldShowCreateManagerState ? (
+                  <OnboardingCallout
+                    mode="ready"
+                    state={onboardingState}
+                    isBusy={isMutatingOnboardingState}
+                    error={onboardingError}
+                    onCreateManager={handleOpenCreateManagerDialog}
+                  />
+                ) : (
+                  <>
+                    <MessageList
+                      ref={messageListRef}
+                      messages={visibleMessages}
+                      isLoading={isLoading}
+                      wsUrl={wsUrl}
+                      activeAgentId={activeAgentId}
+                      onSuggestionClick={handleSuggestionClick}
+                      onArtifactClick={handleOpenArtifact}
+                      onForkFromMessage={activeAgentId ? handleForkFromMessage : undefined}
+                      getVote={feedbackProfileId ? getVote : undefined}
+                      hasComment={feedbackProfileId ? hasComment : undefined}
+                      onFeedbackVote={feedbackProfileId ? submitVote : undefined}
+                      onFeedbackComment={feedbackProfileId ? submitComment : undefined}
+                      onFeedbackClearComment={feedbackProfileId ? clearComment : undefined}
+                      isFeedbackSubmitting={isFeedbackSubmitting}
+                    />
 
-                <MessageList
-                  ref={messageListRef}
-                  messages={visibleMessages}
-                  isLoading={isLoading}
-                  wsUrl={wsUrl}
-                  activeAgentId={activeAgentId}
-                  onSuggestionClick={handleSuggestionClick}
-                  onArtifactClick={handleOpenArtifact}
-                  onForkFromMessage={activeAgentId ? handleForkFromMessage : undefined}
-                  getVote={feedbackProfileId ? getVote : undefined}
-                  hasComment={feedbackProfileId ? hasComment : undefined}
-                  onFeedbackVote={feedbackProfileId ? submitVote : undefined}
-                  onFeedbackComment={feedbackProfileId ? submitComment : undefined}
-                  onFeedbackClearComment={feedbackProfileId ? clearComment : undefined}
-                  isFeedbackSubmitting={isFeedbackSubmitting}
-                />
-
-                <MessageInput
-                  ref={messageInputRef}
-                  onSend={handleSend}
-                  onSubmitted={handleMessageInputSubmitted}
-                  isLoading={isLoading}
-                  disabled={!state.connected || !activeAgentId}
-                  allowWhileLoading
-                  agentLabel={activeAgentLabel}
-                  wsUrl={wsUrl}
-                  agentId={activeAgentId ?? undefined}
-                  slashCommands={slashCommands}
-                />
+                    <MessageInput
+                      ref={messageInputRef}
+                      onSend={handleSend}
+                      onSubmitted={handleMessageInputSubmitted}
+                      isLoading={isLoading}
+                      disabled={!state.connected || !activeAgentId}
+                      allowWhileLoading
+                      agentLabel={activeAgentLabel}
+                      wsUrl={wsUrl}
+                      agentId={activeAgentId ?? undefined}
+                      slashCommands={slashCommands}
+                    />
+                  </>
+                )}
               </>
             )}
           </div>

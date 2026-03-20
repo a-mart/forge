@@ -1,6 +1,7 @@
 import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
-import type { CortexReviewControlAction, CortexReviewRunAxis, CortexReviewRunScope, OnboardingState, OnboardingStatus } from "@forge/protocol";
+import type { CortexReviewControlAction, CortexReviewRunAxis, CortexReviewRunScope, OnboardingState, OnboardingTechnicalLevel } from "@forge/protocol";
+import { ONBOARDING_TECHNICAL_LEVEL_VALUES } from "@forge/protocol";
 import {
   getCommonKnowledgePath,
   getCortexNotesPath,
@@ -14,7 +15,7 @@ import {
   getProfileMergeAuditLogPath,
   getProfileReferencePath
 } from "../../swarm/data-paths.js";
-import { getOnboardingSnapshot } from "../../swarm/onboarding-state.js";
+import { getOnboardingSnapshot, renderOnboardingCommonKnowledge, saveOnboardingPreferences, skipOnboarding } from "../../swarm/onboarding-state.js";
 import { scanCortexReviewStatus } from "../../swarm/scripts/cortex-scan.js";
 import { readSessionMeta, writeSessionMeta } from "../../swarm/session-manifest.js";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
@@ -28,7 +29,9 @@ const CORTEX_REVIEW_RUNS_METHODS = "GET, POST, OPTIONS";
 const CORTEX_REVIEW_CONTROLS_ENDPOINT_PATH = "/api/cortex/review-controls";
 const CORTEX_REVIEW_CONTROLS_METHODS = "POST, OPTIONS";
 const ONBOARDING_STATE_ENDPOINT_PATH = "/api/onboarding/state";
-const ONBOARDING_STATE_METHODS = "GET, POST, OPTIONS";
+const ONBOARDING_STATE_METHODS = "GET, OPTIONS";
+const ONBOARDING_PREFERENCES_ENDPOINT_PATH = "/api/onboarding/preferences";
+const ONBOARDING_PREFERENCES_METHODS = "POST, OPTIONS";
 
 export function createCortexRoutes(options: { swarmManager: SwarmManager }): HttpRoute[] {
   const { swarmManager } = options;
@@ -45,55 +48,77 @@ export function createCortexRoutes(options: { swarmManager: SwarmManager }): Htt
           return;
         }
 
+        if (request.method !== "GET") {
+          applyCorsHeaders(request, response, ONBOARDING_STATE_METHODS);
+          response.setHeader("Allow", ONBOARDING_STATE_METHODS);
+          sendJson(response, 405, { error: "Method Not Allowed" });
+          return;
+        }
+
         applyCorsHeaders(request, response, ONBOARDING_STATE_METHODS);
 
-        if (request.method === "GET") {
-          try {
-            const snapshot = await getOnboardingSnapshot(swarmManager.getConfig().paths.dataDir);
-            sendJson(response, 200, { state: buildOnboardingStateResponse(snapshot) });
-          } catch (error) {
-            const message = error instanceof Error ? error.message : "Unable to load onboarding state.";
-            sendJson(response, 500, { error: message });
-          }
+        try {
+          const snapshot = await getOnboardingSnapshot(swarmManager.getConfig().paths.dataDir);
+          sendJson(response, 200, { state: buildOnboardingStateResponse(snapshot) });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Unable to load onboarding state.";
+          sendJson(response, 500, { error: message });
+        }
+      }
+    },
+    {
+      methods: ONBOARDING_PREFERENCES_METHODS,
+      matches: (pathname) => pathname === ONBOARDING_PREFERENCES_ENDPOINT_PATH,
+      handle: async (request, response) => {
+        if (request.method === "OPTIONS") {
+          applyCorsHeaders(request, response, ONBOARDING_PREFERENCES_METHODS);
+          response.statusCode = 204;
+          response.end();
           return;
         }
 
-        if (request.method === "POST") {
-          try {
-            const payload = await parseJsonBody(request, 8 * 1024);
-            const mutation = parseOnboardingStateMutationPayload(payload);
-            if (!mutation) {
-              sendJson(response, 400, { error: "Request body must include status: \"active\" or \"deferred\"." });
-              return;
-            }
-
-            const result = await swarmManager.updateOnboardingStatusFromUi(mutation);
-            if (!result.ok) {
-              sendJson(response, 409, {
-                error: result.reason === "stale_cycle" ? "Onboarding cycle changed." : "Onboarding revision changed.",
-                state: buildOnboardingStateResponse(result.snapshot)
-              });
-              return;
-            }
-
-            sendJson(response, 200, { state: buildOnboardingStateResponse(result.snapshot) });
-          } catch (error) {
-            const message = error instanceof Error ? error.message : "Unable to update onboarding state.";
-            if (message.includes("Request body must be valid JSON")) {
-              sendJson(response, 400, { error: message });
-              return;
-            }
-            if (message.includes("Request body exceeds")) {
-              sendJson(response, 413, { error: message });
-              return;
-            }
-            sendJson(response, 500, { error: message });
-          }
+        if (request.method !== "POST") {
+          applyCorsHeaders(request, response, ONBOARDING_PREFERENCES_METHODS);
+          response.setHeader("Allow", ONBOARDING_PREFERENCES_METHODS);
+          sendJson(response, 405, { error: "Method Not Allowed" });
           return;
         }
 
-        response.setHeader("Allow", ONBOARDING_STATE_METHODS);
-        sendJson(response, 405, { error: "Method Not Allowed" });
+        applyCorsHeaders(request, response, ONBOARDING_PREFERENCES_METHODS);
+
+        try {
+          const payload = await parseJsonBody(request, 8 * 1024);
+          const mutation = parseOnboardingPreferencesPayload(payload);
+          if (!mutation) {
+            sendJson(response, 400, {
+              error:
+                'Request body must include either { status: "skipped" } or completed onboarding preferences with preferredName and technicalLevel.'
+            });
+            return;
+          }
+
+          const dataDir = swarmManager.getConfig().paths.dataDir;
+          const snapshot = 'status' in mutation
+            ? await skipOnboarding(dataDir)
+            : await saveOnboardingPreferences(dataDir, mutation);
+          await renderOnboardingCommonKnowledge(dataDir, snapshot);
+          sendJson(response, 200, { state: buildOnboardingStateResponse(snapshot) });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Unable to save onboarding preferences.";
+          if (
+            message.includes("Request body must be valid JSON") ||
+            message.includes("preferredName") ||
+            message.includes("technicalLevel")
+          ) {
+            sendJson(response, 400, { error: message });
+            return;
+          }
+          if (message.includes("Request body exceeds")) {
+            sendJson(response, 413, { error: message });
+            return;
+          }
+          sendJson(response, 500, { error: message });
+        }
       }
     },
     {
@@ -307,21 +332,18 @@ export function createCortexRoutes(options: { swarmManager: SwarmManager }): Htt
 function buildOnboardingStateResponse(snapshot: OnboardingState) {
   return {
     status: snapshot.status,
-    cycleId: snapshot.cycleId,
-    revision: snapshot.revision,
-    firstPromptSentAt: snapshot.firstPromptSentAt,
-    startedAt: snapshot.startedAt,
     completedAt: snapshot.completedAt,
-    deferredAt: snapshot.deferredAt,
-    migratedAt: snapshot.migratedAt,
-    lastUpdatedAt: snapshot.lastUpdatedAt,
-    captured: snapshot.captured
+    skippedAt: snapshot.skippedAt,
+    preferences: snapshot.preferences
   };
 }
 
-function parseOnboardingStateMutationPayload(
+function parseOnboardingPreferencesPayload(
   payload: unknown
-): { status: Extract<OnboardingStatus, "active" | "deferred">; reason?: string | null } | null {
+):
+  | { status: "skipped" }
+  | { preferredName: string; technicalLevel: OnboardingTechnicalLevel; additionalPreferences?: string | null }
+  | null {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     return null;
   }
@@ -329,18 +351,29 @@ function parseOnboardingStateMutationPayload(
   const status = typeof (payload as { status?: unknown }).status === "string"
     ? (payload as { status: string }).status.trim()
     : "";
-  const reasonValue = (payload as { reason?: unknown }).reason;
-  const reason = typeof reasonValue === "string" && reasonValue.trim().length > 0
-    ? reasonValue.trim()
+  if (status === "skipped") {
+    return { status: "skipped" };
+  }
+
+  const preferredName = typeof (payload as { preferredName?: unknown }).preferredName === "string"
+    ? (payload as { preferredName: string }).preferredName.trim()
+    : "";
+  const technicalLevel = typeof (payload as { technicalLevel?: unknown }).technicalLevel === "string"
+    ? ((payload as { technicalLevel: string }).technicalLevel.trim() as OnboardingTechnicalLevel)
+    : null;
+  const additionalPreferencesValue = (payload as { additionalPreferences?: unknown }).additionalPreferences;
+  const additionalPreferences = typeof additionalPreferencesValue === "string" && additionalPreferencesValue.trim().length > 0
+    ? additionalPreferencesValue.trim()
     : null;
 
-  if (status !== "active" && status !== "deferred") {
+  if (!preferredName || !technicalLevel || !ONBOARDING_TECHNICAL_LEVEL_VALUES.includes(technicalLevel)) {
     return null;
   }
 
   return {
-    status,
-    reason
+    preferredName,
+    technicalLevel,
+    additionalPreferences
   };
 }
 

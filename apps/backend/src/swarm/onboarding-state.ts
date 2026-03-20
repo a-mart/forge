@@ -1,72 +1,22 @@
-import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type {
-  OnboardingAutonomyDefault,
-  OnboardingCaptured,
-  OnboardingExplanationDepth,
-  OnboardingFact,
-  OnboardingFactStatus,
-  OnboardingResponseVerbosity,
-  OnboardingRiskEscalationPreference,
-  OnboardingState,
-  OnboardingStatus,
-  OnboardingTechnicalComfort,
-  OnboardingUpdateCadence
-} from "@forge/protocol";
-import {
-  ONBOARDING_AUTONOMY_DEFAULT_VALUES,
-  ONBOARDING_EXPLANATION_DEPTH_VALUES,
-  ONBOARDING_FACT_STATUSES,
-  ONBOARDING_RESPONSE_VERBOSITY_VALUES,
-  ONBOARDING_RISK_ESCALATION_PREFERENCE_VALUES,
-  ONBOARDING_STATUSES,
-  ONBOARDING_TECHNICAL_COMFORT_VALUES,
-  ONBOARDING_UPDATE_CADENCE_VALUES
-} from "@forge/protocol";
-import { getCommonKnowledgePath, getProfileMemoryPath, getProfilesDir, getSessionFilePath, getSharedKnowledgeDir } from "./data-paths.js";
+import type { OnboardingPreferences, OnboardingState, OnboardingStatus, OnboardingTechnicalLevel } from "@forge/protocol";
+import { ONBOARDING_STATUSES, ONBOARDING_TECHNICAL_LEVEL_VALUES } from "@forge/protocol";
+import { getCommonKnowledgePath, getSharedKnowledgeDir } from "./data-paths.js";
 import { renameWithRetry } from "./retry-rename.js";
 
-const ONBOARDING_SCHEMA_VERSION = 2;
-const ONBOARDING_OWNER_ID = "primary";
-const ONBOARDING_SOURCE_SESSION_ID = "cortex";
 export const ONBOARDING_STATE_FILE_NAME = "onboarding-state.json";
 export const ONBOARDING_COMMON_BLOCK_START = "<!-- BEGIN MANAGED:ONBOARDING -->";
 export const ONBOARDING_COMMON_BLOCK_END = "<!-- END MANAGED:ONBOARDING -->";
 
-type OnboardingFactPatch<T> = Pick<OnboardingFact<T>, "value" | "status"> & {
-  updatedAt?: string | null;
-};
-
-export interface OnboardingFactsPatch {
-  preferredName?: OnboardingFactPatch<string>;
-  technicalComfort?: OnboardingFactPatch<OnboardingTechnicalComfort>;
-  responseVerbosity?: OnboardingFactPatch<OnboardingResponseVerbosity>;
-  explanationDepth?: OnboardingFactPatch<OnboardingExplanationDepth>;
-  updateCadence?: OnboardingFactPatch<OnboardingUpdateCadence>;
-  autonomyDefault?: OnboardingFactPatch<OnboardingAutonomyDefault>;
-  riskEscalationPreference?: OnboardingFactPatch<OnboardingRiskEscalationPreference>;
-  primaryUseCases?: OnboardingFactPatch<string[]>;
-}
-
-export type OnboardingMutationResult =
-  | {
-      ok: true;
-      snapshot: OnboardingState;
-    }
-  | {
-      ok: false;
-      reason: "stale_revision" | "stale_cycle";
-      snapshot: OnboardingState;
-    };
-
-export interface OnboardingMigrationDetectionResult {
-  migrated: boolean;
-  reason: string | null;
+export interface SaveOnboardingPreferencesInput {
+  preferredName: string;
+  technicalLevel: OnboardingTechnicalLevel;
+  additionalPreferences?: string | null;
 }
 
 export async function loadOnboardingState(dataDir: string): Promise<OnboardingState> {
   const onboardingStatePath = getOnboardingStatePath(dataDir);
-  const now = nowIso();
 
   let raw: string | null = null;
   try {
@@ -77,203 +27,56 @@ export async function loadOnboardingState(dataDir: string): Promise<OnboardingSt
     }
   }
 
-  if (raw === null) {
-    const migration = await detectOnboardingMigration(dataDir);
-    const initialState = createDefaultOnboardingState(now, {
-      status: migration.migrated ? "migrated" : "not_started",
-      migratedAt: migration.migrated ? now : null,
-      migrationReason: migration.reason,
-      lastUpdatedAt: migration.migrated ? now : null
-    });
-    await writeJsonAtomic(onboardingStatePath, initialState);
-    return initialState;
+  const normalized = normalizeStoredOnboardingState(raw);
+  if (raw === null || normalized.shouldPersist) {
+    await writeJsonAtomic(onboardingStatePath, normalized.state);
   }
 
-  const state = coerceOnboardingState(raw);
-  const migration = await detectOnboardingMigration(dataDir);
-  if (!migration.migrated || state.status !== "not_started") {
-    return state;
-  }
-
-  const migratedState: OnboardingState = {
-    ...state,
-    status: "migrated",
-    revision: state.revision + 1,
-    migratedAt: state.migratedAt ?? now,
-    migrationReason: migration.reason,
-    lastUpdatedAt: now
-  };
-  await writeJsonAtomic(onboardingStatePath, migratedState);
-  return migratedState;
+  return normalized.state;
 }
 
 export async function getOnboardingSnapshot(dataDir: string): Promise<OnboardingState> {
   return loadOnboardingState(dataDir);
 }
 
-export async function activateOnboardingForEligibleTurn(dataDir: string): Promise<OnboardingState> {
-  const current = await loadOnboardingState(dataDir);
-
-  if (current.status !== "not_started" && current.status !== "active") {
-    return current;
+export async function saveOnboardingPreferences(
+  dataDir: string,
+  input: SaveOnboardingPreferencesInput
+): Promise<OnboardingState> {
+  const preferredName = normalizeOptionalString(input.preferredName);
+  if (!preferredName) {
+    throw new Error("preferredName is required.");
   }
 
-  if (current.status === "active") {
-    return current;
+  if (!ONBOARDING_TECHNICAL_LEVEL_VALUES.includes(input.technicalLevel)) {
+    throw new Error("technicalLevel is invalid.");
   }
 
-  const now = nowIso();
-  const next: OnboardingState = {
-    ...cloneOnboardingState(current),
-    status: "active",
-    startedAt: current.startedAt ?? now,
-    lastUpdatedAt: now,
-    revision: current.revision + 1
+  const state: OnboardingState = {
+    status: "completed",
+    completedAt: nowIso(),
+    skippedAt: null,
+    preferences: {
+      preferredName,
+      technicalLevel: input.technicalLevel,
+      additionalPreferences: normalizeOptionalString(input.additionalPreferences) ?? null
+    }
   };
 
-  await writeJsonAtomic(getOnboardingStatePath(dataDir), next);
-  return next;
+  await writeJsonAtomic(getOnboardingStatePath(dataDir), state);
+  return state;
 }
 
-export async function markOnboardingFirstPromptSent(dataDir: string): Promise<OnboardingState> {
-  for (;;) {
-    const current = await loadOnboardingState(dataDir);
+export async function skipOnboarding(dataDir: string): Promise<OnboardingState> {
+  const state: OnboardingState = {
+    status: "skipped",
+    completedAt: null,
+    skippedAt: nowIso(),
+    preferences: null
+  };
 
-    if (current.status !== "not_started" && current.status !== "active") {
-      return current;
-    }
-
-    if (current.firstPromptSentAt) {
-      return current;
-    }
-
-    const result = await mutateOnboardingState(dataDir, current.cycleId, current.revision, (state, now) => ({
-      ...state,
-      status: "active",
-      firstPromptSentAt: state.firstPromptSentAt ?? now,
-      startedAt: state.startedAt ?? now
-    }));
-
-    if (result.ok) {
-      return result.snapshot;
-    }
-  }
-}
-
-export async function saveOnboardingFacts(
-  dataDir: string,
-  patch: OnboardingFactsPatch,
-  cycleId: string,
-  baseRevision: number
-): Promise<OnboardingMutationResult> {
-  return mutateOnboardingState(dataDir, cycleId, baseRevision, (current, now) => {
-    const captured: OnboardingCaptured = {
-      ...current.captured,
-      preferredName: cloneFact(current.captured.preferredName),
-      technicalComfort: cloneFact(current.captured.technicalComfort),
-      responseVerbosity: cloneFact(current.captured.responseVerbosity),
-      explanationDepth: cloneFact(current.captured.explanationDepth),
-      updateCadence: cloneFact(current.captured.updateCadence),
-      autonomyDefault: cloneFact(current.captured.autonomyDefault),
-      riskEscalationPreference: cloneFact(current.captured.riskEscalationPreference),
-      primaryUseCases: cloneFact(current.captured.primaryUseCases)
-    };
-
-    if (patch.preferredName) {
-      captured.preferredName = {
-        value: cloneFactValue(patch.preferredName.value),
-        status: patch.preferredName.status,
-        updatedAt: patch.preferredName.updatedAt ?? now
-      };
-    }
-
-    if (patch.technicalComfort) {
-      captured.technicalComfort = {
-        value: cloneFactValue(patch.technicalComfort.value),
-        status: patch.technicalComfort.status,
-        updatedAt: patch.technicalComfort.updatedAt ?? now
-      };
-    }
-
-    if (patch.responseVerbosity) {
-      captured.responseVerbosity = {
-        value: cloneFactValue(patch.responseVerbosity.value),
-        status: patch.responseVerbosity.status,
-        updatedAt: patch.responseVerbosity.updatedAt ?? now
-      };
-    }
-
-    if (patch.explanationDepth) {
-      captured.explanationDepth = {
-        value: cloneFactValue(patch.explanationDepth.value),
-        status: patch.explanationDepth.status,
-        updatedAt: patch.explanationDepth.updatedAt ?? now
-      };
-    }
-
-    if (patch.updateCadence) {
-      captured.updateCadence = {
-        value: cloneFactValue(patch.updateCadence.value),
-        status: patch.updateCadence.status,
-        updatedAt: patch.updateCadence.updatedAt ?? now
-      };
-    }
-
-    if (patch.autonomyDefault) {
-      captured.autonomyDefault = {
-        value: cloneFactValue(patch.autonomyDefault.value),
-        status: patch.autonomyDefault.status,
-        updatedAt: patch.autonomyDefault.updatedAt ?? now
-      };
-    }
-
-    if (patch.riskEscalationPreference) {
-      captured.riskEscalationPreference = {
-        value: cloneFactValue(patch.riskEscalationPreference.value),
-        status: patch.riskEscalationPreference.status,
-        updatedAt: patch.riskEscalationPreference.updatedAt ?? now
-      };
-    }
-
-    if (patch.primaryUseCases) {
-      captured.primaryUseCases = {
-        value: cloneFactValue(patch.primaryUseCases.value),
-        status: patch.primaryUseCases.status,
-        updatedAt: patch.primaryUseCases.updatedAt ?? now
-      };
-    }
-
-    const nextStatus = current.status === "not_started" ? "active" : current.status;
-
-    return {
-      ...current,
-      captured,
-      status: nextStatus,
-      startedAt: nextStatus === "active" ? current.startedAt ?? now : current.startedAt
-    };
-  });
-}
-
-export async function setOnboardingStatus(
-  dataDir: string,
-  status: OnboardingStatus,
-  reason: string | null,
-  cycleId: string,
-  baseRevision: number
-): Promise<OnboardingMutationResult> {
-  return mutateOnboardingState(dataDir, cycleId, baseRevision, (current, now) => {
-    const normalizedReason = normalizeOptionalString(reason) ?? null;
-
-    return {
-      ...current,
-      status,
-      startedAt: status === "active" ? current.startedAt ?? now : current.startedAt,
-      completedAt: status === "completed" ? now : current.completedAt,
-      deferredAt: status === "deferred" ? now : current.deferredAt,
-      migratedAt: status === "migrated" ? now : current.migratedAt,
-      migrationReason: status === "migrated" ? normalizedReason : current.migrationReason
-    };
-  });
+  await writeJsonAtomic(getOnboardingStatePath(dataDir), state);
+  return state;
 }
 
 export async function renderOnboardingCommonKnowledge(
@@ -297,7 +100,6 @@ export async function renderOnboardingCommonKnowledge(
     upsertCommonKnowledgeHeader(upsertManagedOnboardingBlock(existing, managedBlock), renderedAt)
   );
   await writeTextAtomic(commonKnowledgePath, nextContent);
-  await persistOnboardingRenderState(dataDir, snapshot, renderedAt);
 
   return {
     path: commonKnowledgePath,
@@ -305,118 +107,192 @@ export async function renderOnboardingCommonKnowledge(
   };
 }
 
-export async function detectOnboardingMigration(dataDir: string): Promise<OnboardingMigrationDetectionResult> {
-  const reasons: string[] = [];
-
-  if (await hasNonCortexProfiles(dataDir)) {
-    reasons.push("existing non-Cortex profiles detected");
-  }
-
-  if (await hasMeaningfulSessionHistory(dataDir)) {
-    reasons.push("existing session history detected");
-  }
-
-  if (await hasMeaningfulCommonKnowledge(dataDir)) {
-    reasons.push("existing common knowledge content detected");
-  }
-
-  return {
-    migrated: reasons.length > 0,
-    reason: reasons.length > 0 ? reasons.join("; ") : null
-  };
-}
-
 function getOnboardingStatePath(dataDir: string): string {
   return join(getSharedKnowledgeDir(dataDir), ONBOARDING_STATE_FILE_NAME);
 }
 
-async function mutateOnboardingState(
-  dataDir: string,
-  cycleId: string,
-  baseRevision: number,
-  mutator: (state: OnboardingState, now: string) => OnboardingState
-): Promise<OnboardingMutationResult> {
-  const current = await loadOnboardingState(dataDir);
-
-  if (current.cycleId !== cycleId) {
+function normalizeStoredOnboardingState(raw: string | null): { state: OnboardingState; shouldPersist: boolean } {
+  if (raw === null) {
     return {
-      ok: false,
-      reason: "stale_cycle",
-      snapshot: current
+      state: createDefaultOnboardingState(),
+      shouldPersist: true
     };
   }
 
-  if (current.revision !== baseRevision) {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
     return {
-      ok: false,
-      reason: "stale_revision",
-      snapshot: current
+      state: createDefaultOnboardingState(),
+      shouldPersist: true
     };
   }
 
-  const now = nowIso();
-  const next = mutator(cloneOnboardingState(current), now);
-  next.revision = current.revision + 1;
-  next.lastUpdatedAt = now;
+  if (!isRecord(parsed)) {
+    return {
+      state: createDefaultOnboardingState(),
+      shouldPersist: true
+    };
+  }
 
-  await writeJsonAtomic(getOnboardingStatePath(dataDir), next);
+  if (isLegacyOnboardingShape(parsed)) {
+    return {
+      state: coerceLegacyOnboardingState(parsed),
+      shouldPersist: true
+    };
+  }
 
   return {
-    ok: true,
-    snapshot: next
+    state: coerceSimpleOnboardingState(parsed),
+    shouldPersist: true
   };
 }
 
-function createDefaultOnboardingState(
-  now: string,
-  overrides?: Partial<Pick<OnboardingState, "status" | "migratedAt" | "migrationReason" | "lastUpdatedAt">>
-): OnboardingState {
+function createDefaultOnboardingState(): OnboardingState {
   return {
-    schemaVersion: ONBOARDING_SCHEMA_VERSION,
-    owner: {
-      ownerId: ONBOARDING_OWNER_ID,
-      authUserId: null,
-      displayName: null
-    },
-    status: overrides?.status ?? "not_started",
-    cycleId: createCycleId(),
-    revision: 0,
-    firstPromptSentAt: null,
-    startedAt: null,
+    status: "pending",
     completedAt: null,
-    deferredAt: null,
-    migratedAt: overrides?.migratedAt ?? null,
-    lastUpdatedAt: overrides?.lastUpdatedAt ?? null,
-    sourceSessionId: ONBOARDING_SOURCE_SESSION_ID,
-    firstManagerCreatedAt: null,
-    migrationReason: overrides?.migrationReason ?? null,
-    captured: createEmptyCaptured(),
-    renderState: {
-      lastRenderedAt: null,
-      lastRenderedRevision: 0
-    }
+    skippedAt: null,
+    preferences: null
   };
 }
 
-function createEmptyCaptured(): OnboardingCaptured {
+function coerceSimpleOnboardingState(value: Record<string, unknown>): OnboardingState {
+  const status = coerceEnumValue(value.status, ONBOARDING_STATUSES) ?? "pending";
+  const preferences = isRecord(value.preferences) ? coercePreferences(value.preferences) : null;
+
   return {
-    preferredName: createEmptyFact<string>(null),
-    technicalComfort: createEmptyFact<OnboardingTechnicalComfort>(null),
-    responseVerbosity: createEmptyFact<OnboardingResponseVerbosity>(null),
-    explanationDepth: createEmptyFact<OnboardingExplanationDepth>(null),
-    updateCadence: createEmptyFact<OnboardingUpdateCadence>(null),
-    autonomyDefault: createEmptyFact<OnboardingAutonomyDefault>(null),
-    riskEscalationPreference: createEmptyFact<OnboardingRiskEscalationPreference>(null),
-    primaryUseCases: createEmptyFact<string[]>([])
+    status,
+    completedAt: normalizeOptionalString(value.completedAt) ?? null,
+    skippedAt: normalizeOptionalString(value.skippedAt) ?? null,
+    preferences
   };
 }
 
-function createEmptyFact<T>(value: T | null): OnboardingFact<T> {
+function coercePreferences(value: Record<string, unknown>): OnboardingPreferences | null {
+  const preferredName = normalizeOptionalString(value.preferredName) ?? null;
+  const technicalLevel = coerceEnumValue(value.technicalLevel, ONBOARDING_TECHNICAL_LEVEL_VALUES) ?? null;
+  const additionalPreferences = normalizeOptionalString(value.additionalPreferences) ?? null;
+
+  if (!preferredName && !technicalLevel && !additionalPreferences) {
+    return null;
+  }
+
   return {
-    value,
-    status: "unknown",
-    updatedAt: null
+    preferredName,
+    technicalLevel,
+    additionalPreferences
   };
+}
+
+function isLegacyOnboardingShape(value: Record<string, unknown>): boolean {
+  return "captured" in value || "cycleId" in value || "schemaVersion" in value || "migratedAt" in value;
+}
+
+function coerceLegacyOnboardingState(value: Record<string, unknown>): OnboardingState {
+  const statusRaw = normalizeOptionalString(value.status) ?? "pending";
+  const captured = isRecord(value.captured) ? value.captured : null;
+  const preferences = captured ? buildLegacyPreferences(captured) : null;
+
+  let status: OnboardingStatus = "pending";
+  if (statusRaw === "completed" || statusRaw === "migrated") {
+    status = "completed";
+  } else if (statusRaw === "deferred" || statusRaw === "skipped") {
+    status = "skipped";
+  }
+
+  return {
+    status,
+    completedAt: normalizeOptionalString(value.completedAt) ?? normalizeOptionalString(value.migratedAt) ?? null,
+    skippedAt: normalizeOptionalString(value.deferredAt) ?? null,
+    preferences
+  };
+}
+
+function buildLegacyPreferences(captured: Record<string, unknown>): OnboardingPreferences | null {
+  const preferredName = getLegacyFactString(captured.preferredName);
+  const technicalLevel = mapLegacyTechnicalLevel(getLegacyFactString(captured.technicalComfort));
+  const additionalPreferences = buildLegacyAdditionalPreferences(captured);
+
+  if (!preferredName && !technicalLevel && !additionalPreferences) {
+    return null;
+  }
+
+  return {
+    preferredName: preferredName ?? null,
+    technicalLevel,
+    additionalPreferences
+  };
+}
+
+function buildLegacyAdditionalPreferences(captured: Record<string, unknown>): string | null {
+  const parts: string[] = [];
+
+  const responseVerbosity = getLegacyFactString(captured.responseVerbosity);
+  if (responseVerbosity) {
+    parts.push(`Response verbosity: ${humanizeValue(responseVerbosity)}`);
+  }
+
+  const explanationDepth = getLegacyFactString(captured.explanationDepth);
+  if (explanationDepth) {
+    parts.push(`Explanation depth: ${humanizeValue(explanationDepth)}`);
+  }
+
+  const updateCadence = getLegacyFactString(captured.updateCadence);
+  if (updateCadence) {
+    parts.push(`Update cadence: ${humanizeValue(updateCadence)}`);
+  }
+
+  const autonomyDefault = getLegacyFactString(captured.autonomyDefault);
+  if (autonomyDefault) {
+    parts.push(`Autonomy: ${humanizeValue(autonomyDefault)}`);
+  }
+
+  const riskEscalationPreference = getLegacyFactString(captured.riskEscalationPreference);
+  if (riskEscalationPreference) {
+    parts.push(`Risk escalation: ${humanizeValue(riskEscalationPreference)}`);
+  }
+
+  const primaryUseCases = getLegacyFactStringArray(captured.primaryUseCases);
+  if (primaryUseCases.length > 0) {
+    parts.push(`Primary use cases: ${primaryUseCases.join(", ")}`);
+  }
+
+  return parts.length > 0 ? parts.join("; ") : null;
+}
+
+function getLegacyFactString(value: unknown): string | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  return normalizeOptionalString(value.value) ?? null;
+}
+
+function getLegacyFactStringArray(value: unknown): string[] {
+  if (!isRecord(value) || !Array.isArray(value.value)) {
+    return [];
+  }
+
+  return value.value
+    .map((entry) => normalizeOptionalString(entry))
+    .filter((entry): entry is string => typeof entry === "string");
+}
+
+function mapLegacyTechnicalLevel(value: string | null): OnboardingTechnicalLevel | null {
+  switch (value) {
+    case "advanced":
+      return "developer";
+    case "technical":
+      return "technical_non_developer";
+    case "mixed":
+      return "semi_technical";
+    case "non_technical":
+      return "non_technical";
+    default:
+      return null;
+  }
 }
 
 function buildManagedOnboardingBlock(snapshot: OnboardingState): string {
@@ -426,52 +302,34 @@ function buildManagedOnboardingBlock(snapshot: OnboardingState): string {
 
 function buildManagedOnboardingLines(snapshot: OnboardingState): string[] {
   const lines = [`- Onboarding status: ${humanizeValue(snapshot.status)}`];
+  const preferences = snapshot.preferences;
 
-  if (snapshot.status === "migrated" && snapshot.migrationReason) {
-    lines.push(`- Migration reason: ${snapshot.migrationReason}`);
+  if (preferences?.preferredName) {
+    lines.push(`- Preferred name: ${preferences.preferredName}`);
   }
 
-  appendFactLine(lines, "Preferred name", snapshot.captured.preferredName.value, snapshot.captured.preferredName.status);
-  appendFactLine(lines, "Technical comfort", snapshot.captured.technicalComfort.value, snapshot.captured.technicalComfort.status);
-  appendFactLine(lines, "Response verbosity", snapshot.captured.responseVerbosity.value, snapshot.captured.responseVerbosity.status);
-  appendFactLine(lines, "Explanation depth", snapshot.captured.explanationDepth.value, snapshot.captured.explanationDepth.status);
-  appendFactLine(lines, "Update cadence", snapshot.captured.updateCadence.value, snapshot.captured.updateCadence.status);
-  appendFactLine(lines, "Autonomy default", snapshot.captured.autonomyDefault.value, snapshot.captured.autonomyDefault.status);
-  appendFactLine(
-    lines,
-    "Risk escalation preference",
-    snapshot.captured.riskEscalationPreference.value,
-    snapshot.captured.riskEscalationPreference.status
-  );
+  if (preferences?.technicalLevel) {
+    lines.push(`- Technical level: ${humanizeTechnicalLevel(preferences.technicalLevel)}`);
+  }
 
-  const primaryUseCases = snapshot.captured.primaryUseCases.value ?? [];
-  if (primaryUseCases.length > 0) {
-    lines.push(
-      `- Primary use cases (${humanizeValue(snapshot.captured.primaryUseCases.status)}): ${primaryUseCases.join(", ")}`
-    );
+  if (preferences?.additionalPreferences) {
+    lines.push(`- Additional preferences: ${preferences.additionalPreferences}`);
   }
 
   return lines;
 }
 
-function appendFactLine(lines: string[], label: string, value: unknown, status: OnboardingFactStatus): void {
-  if (value === null || value === undefined) {
-    return;
+function humanizeTechnicalLevel(value: OnboardingTechnicalLevel): string {
+  switch (value) {
+    case "developer":
+      return "Developer";
+    case "technical_non_developer":
+      return "Technical (non-developer)";
+    case "semi_technical":
+      return "Semi-technical";
+    case "non_technical":
+      return "Non-technical";
   }
-
-  if (typeof value === "string" && value.trim().length === 0) {
-    return;
-  }
-
-  lines.push(`- ${label} (${humanizeValue(status)}): ${humanizeFactValue(value)}`);
-}
-
-function humanizeFactValue(value: unknown): string {
-  if (Array.isArray(value)) {
-    return value.join(", ");
-  }
-
-  return humanizeValue(String(value));
 }
 
 function humanizeValue(value: string): string {
@@ -518,335 +376,8 @@ function upsertCommonKnowledgeHeader(content: string, renderedAt: string): strin
   return `# Common Knowledge\n${headerLine}\n\n${normalizedContent}`;
 }
 
-async function persistOnboardingRenderState(
-  dataDir: string,
-  snapshot: OnboardingState,
-  renderedAt: string
-): Promise<void> {
-  const current = await loadOnboardingState(dataDir);
-  if (current.cycleId !== snapshot.cycleId || current.revision !== snapshot.revision) {
-    return;
-  }
-
-  if (
-    current.renderState.lastRenderedAt === renderedAt &&
-    current.renderState.lastRenderedRevision === snapshot.revision
-  ) {
-    return;
-  }
-
-  const next = cloneOnboardingState(current);
-  next.renderState = {
-    lastRenderedAt: renderedAt,
-    lastRenderedRevision: snapshot.revision
-  };
-
-  await writeJsonAtomic(getOnboardingStatePath(dataDir), next);
-}
-
 function ensureTrailingNewline(content: string): string {
   return content.endsWith("\n") ? content : `${content}\n`;
-}
-
-function cloneOnboardingState(state: OnboardingState): OnboardingState {
-  return {
-    ...state,
-    owner: { ...state.owner },
-    captured: {
-      preferredName: cloneFact(state.captured.preferredName),
-      technicalComfort: cloneFact(state.captured.technicalComfort),
-      responseVerbosity: cloneFact(state.captured.responseVerbosity),
-      explanationDepth: cloneFact(state.captured.explanationDepth),
-      updateCadence: cloneFact(state.captured.updateCadence),
-      autonomyDefault: cloneFact(state.captured.autonomyDefault),
-      riskEscalationPreference: cloneFact(state.captured.riskEscalationPreference),
-      primaryUseCases: cloneFact(state.captured.primaryUseCases)
-    },
-    renderState: { ...state.renderState }
-  };
-}
-
-function cloneFact<T>(fact: OnboardingFact<T>): OnboardingFact<T> {
-  return {
-    value: cloneFactValue(fact.value),
-    status: fact.status,
-    updatedAt: fact.updatedAt
-  };
-}
-
-function cloneFactValue<T>(value: T | null): T | null {
-  if (Array.isArray(value)) {
-    return [...value] as T;
-  }
-
-  return value;
-}
-
-function coerceOnboardingState(raw: string): OnboardingState {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return createDefaultOnboardingState(nowIso());
-  }
-
-  if (!isRecord(parsed)) {
-    return createDefaultOnboardingState(nowIso());
-  }
-
-  const fallback = createDefaultOnboardingState(nowIso());
-
-  return {
-    schemaVersion: normalizePositiveInteger(parsed.schemaVersion) ?? ONBOARDING_SCHEMA_VERSION,
-    owner: isRecord(parsed.owner)
-      ? {
-          ownerId: normalizeOptionalString(parsed.owner.ownerId) ?? fallback.owner.ownerId,
-          authUserId: normalizeOptionalString(parsed.owner.authUserId) ?? null,
-          displayName: normalizeOptionalString(parsed.owner.displayName) ?? null
-        }
-      : fallback.owner,
-    status: coerceEnumValue(parsed.status, ONBOARDING_STATUSES) ?? fallback.status,
-    cycleId: normalizeOptionalString(parsed.cycleId) ?? fallback.cycleId,
-    revision: normalizePositiveInteger(parsed.revision) ?? 0,
-    firstPromptSentAt: normalizeOptionalString(parsed.firstPromptSentAt) ?? null,
-    startedAt: normalizeOptionalString(parsed.startedAt) ?? null,
-    completedAt: normalizeOptionalString(parsed.completedAt) ?? null,
-    deferredAt: normalizeOptionalString(parsed.deferredAt) ?? null,
-    migratedAt: normalizeOptionalString(parsed.migratedAt) ?? null,
-    lastUpdatedAt: normalizeOptionalString(parsed.lastUpdatedAt) ?? null,
-    sourceSessionId: normalizeOptionalString(parsed.sourceSessionId) ?? ONBOARDING_SOURCE_SESSION_ID,
-    firstManagerCreatedAt: normalizeOptionalString(parsed.firstManagerCreatedAt) ?? null,
-    migrationReason: normalizeOptionalString(parsed.migrationReason) ?? null,
-    captured: coerceCaptured(parsed.captured, fallback.captured),
-    renderState: isRecord(parsed.renderState)
-      ? {
-          lastRenderedAt: normalizeOptionalString(parsed.renderState.lastRenderedAt) ?? null,
-          lastRenderedRevision: normalizePositiveInteger(parsed.renderState.lastRenderedRevision) ?? 0
-        }
-      : fallback.renderState
-  };
-}
-
-function coerceCaptured(value: unknown, fallback: OnboardingCaptured): OnboardingCaptured {
-  if (!isRecord(value)) {
-    return fallback;
-  }
-
-  return {
-    preferredName: coerceFact(value.preferredName, fallback.preferredName),
-    technicalComfort: coerceFact(
-      value.technicalComfort,
-      fallback.technicalComfort,
-      (candidate) => coerceEnumValue(candidate, ONBOARDING_TECHNICAL_COMFORT_VALUES) ?? null
-    ),
-    responseVerbosity: coerceFact(
-      value.responseVerbosity,
-      fallback.responseVerbosity,
-      (candidate) => coerceEnumValue(candidate, ONBOARDING_RESPONSE_VERBOSITY_VALUES) ?? null
-    ),
-    explanationDepth: coerceFact(
-      value.explanationDepth,
-      fallback.explanationDepth,
-      (candidate) => coerceEnumValue(candidate, ONBOARDING_EXPLANATION_DEPTH_VALUES) ?? null
-    ),
-    updateCadence: coerceFact(
-      value.updateCadence,
-      fallback.updateCadence,
-      (candidate) => coerceEnumValue(candidate, ONBOARDING_UPDATE_CADENCE_VALUES) ?? null
-    ),
-    autonomyDefault: coerceFact(
-      value.autonomyDefault,
-      fallback.autonomyDefault,
-      (candidate) => coerceEnumValue(candidate, ONBOARDING_AUTONOMY_DEFAULT_VALUES) ?? null
-    ),
-    riskEscalationPreference: coerceFact(
-      value.riskEscalationPreference,
-      fallback.riskEscalationPreference,
-      (candidate) => coerceEnumValue(candidate, ONBOARDING_RISK_ESCALATION_PREFERENCE_VALUES) ?? null
-    ),
-    primaryUseCases: coerceFact(value.primaryUseCases, fallback.primaryUseCases, coerceStringArray)
-  };
-}
-
-function coerceFact<T>(
-  value: unknown,
-  fallback: OnboardingFact<T>,
-  coerceValue: (candidate: unknown) => T | null = (candidate) => normalizeOptionalString(candidate) as T | null
-): OnboardingFact<T> {
-  if (!isRecord(value)) {
-    return cloneFact(fallback);
-  }
-
-  const factValue = coerceValue(value.value);
-  return {
-    value: factValue === null && Array.isArray(fallback.value) ? cloneFactValue(fallback.value) : factValue,
-    status: coerceEnumValue(value.status, ONBOARDING_FACT_STATUSES) ?? fallback.status,
-    updatedAt: normalizeOptionalString(value.updatedAt) ?? null
-  };
-}
-
-async function hasNonCortexProfiles(dataDir: string): Promise<boolean> {
-  const profilesDir = getProfilesDir(dataDir);
-
-  let entries;
-  try {
-    entries = await readdir(profilesDir, { withFileTypes: true });
-  } catch (error) {
-    if (isEnoentError(error)) {
-      return false;
-    }
-
-    throw error;
-  }
-
-  for (const entry of entries) {
-    if (!entry.isDirectory() || entry.name === ONBOARDING_SOURCE_SESSION_ID) {
-      continue;
-    }
-
-    if (await hasMeaningfulProfileContent(dataDir, entry.name)) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-async function hasMeaningfulProfileContent(dataDir: string, profileId: string): Promise<boolean> {
-  if (await hasMeaningfulFileContent(getProfileMemoryPath(dataDir, profileId))) {
-    return true;
-  }
-
-  const sessionsDir = join(getProfilesDir(dataDir), profileId, "sessions");
-  let sessionEntries;
-  try {
-    sessionEntries = await readdir(sessionsDir, { withFileTypes: true });
-  } catch (error) {
-    if (isEnoentError(error)) {
-      return false;
-    }
-
-    throw error;
-  }
-
-  for (const sessionEntry of sessionEntries) {
-    if (!sessionEntry.isDirectory()) {
-      continue;
-    }
-
-    const sessionFilePath = getSessionFilePath(dataDir, profileId, sessionEntry.name);
-    if (await hasMeaningfulFileContent(sessionFilePath)) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-async function hasMeaningfulSessionHistory(dataDir: string): Promise<boolean> {
-  const profilesDir = getProfilesDir(dataDir);
-
-  let profileEntries;
-  try {
-    profileEntries = await readdir(profilesDir, { withFileTypes: true });
-  } catch (error) {
-    if (isEnoentError(error)) {
-      return false;
-    }
-
-    throw error;
-  }
-
-  for (const profileEntry of profileEntries) {
-    if (!profileEntry.isDirectory()) {
-      continue;
-    }
-
-    const sessionsDir = join(profilesDir, profileEntry.name, "sessions");
-    let sessionEntries;
-    try {
-      sessionEntries = await readdir(sessionsDir, { withFileTypes: true });
-    } catch (error) {
-      if (isEnoentError(error)) {
-        continue;
-      }
-
-      throw error;
-    }
-
-    for (const sessionEntry of sessionEntries) {
-      if (!sessionEntry.isDirectory()) {
-        continue;
-      }
-
-      if (
-        profileEntry.name === ONBOARDING_SOURCE_SESSION_ID &&
-        sessionEntry.name === ONBOARDING_SOURCE_SESSION_ID
-      ) {
-        continue;
-      }
-
-      const sessionFilePath = getSessionFilePath(dataDir, profileEntry.name, sessionEntry.name);
-      if (!(await hasMeaningfulFileContent(sessionFilePath))) {
-        continue;
-      }
-
-      return true;
-    }
-  }
-
-  return false;
-}
-
-async function hasMeaningfulCommonKnowledge(dataDir: string): Promise<boolean> {
-  const commonKnowledgePath = getCommonKnowledgePath(dataDir);
-  let raw: string;
-
-  try {
-    raw = await readFile(commonKnowledgePath, "utf8");
-  } catch (error) {
-    if (isEnoentError(error)) {
-      return false;
-    }
-
-    throw error;
-  }
-
-  const strippedManaged = raw.replace(
-    new RegExp(`${escapeRegExp(ONBOARDING_COMMON_BLOCK_START)}[\\s\\S]*?${escapeRegExp(ONBOARDING_COMMON_BLOCK_END)}\\n?`, "g"),
-    ""
-  );
-  const meaningful = strippedManaged
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0)
-    .filter((line) => line !== "# Common Knowledge")
-    .filter((line) => !line.startsWith("<!-- Maintained by Cortex."))
-    .filter((line) => line !== "## User Snapshot")
-    .filter((line) => line !== "## Interaction Defaults")
-    .filter((line) => line !== "## Workflow Defaults")
-    .filter((line) => line !== "## Cross-Project Technical Standards")
-    .filter((line) => line !== "## Cross-Project Gotchas");
-
-  return meaningful.length > 0;
-}
-
-async function hasMeaningfulFileContent(path: string): Promise<boolean> {
-  try {
-    const fileStats = await stat(path);
-    if (fileStats.size === 0) {
-      return false;
-    }
-
-    const raw = await readFile(path, "utf8");
-    return raw.trim().length > 0;
-  } catch (error) {
-    if (isEnoentError(error)) {
-      return false;
-    }
-
-    throw error;
-  }
 }
 
 async function writeJsonAtomic(path: string, payload: unknown): Promise<void> {
@@ -863,16 +394,6 @@ async function writeTextAtomic(path: string, content: string): Promise<void> {
   await renameWithRetry(tmpPath, path, { retries: 8, baseDelayMs: 15 });
 }
 
-function coerceStringArray(value: unknown): string[] | null {
-  if (!Array.isArray(value)) {
-    return null;
-  }
-
-  return value
-    .map((entry) => normalizeOptionalString(entry))
-    .filter((entry): entry is string => typeof entry === "string");
-}
-
 function normalizeOptionalString(value: unknown): string | undefined {
   if (typeof value !== "string") {
     return undefined;
@@ -882,25 +403,8 @@ function normalizeOptionalString(value: unknown): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function normalizePositiveInteger(value: unknown): number | undefined {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return undefined;
-  }
-
-  const normalized = Math.floor(value);
-  return normalized >= 0 ? normalized : undefined;
-}
-
 function coerceEnumValue<T extends readonly string[]>(value: unknown, allowed: T): T[number] | undefined {
   return typeof value === "string" && allowed.includes(value) ? (value as T[number]) : undefined;
-}
-
-function createCycleId(): string {
-  return `onb_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function nowIso(): string {

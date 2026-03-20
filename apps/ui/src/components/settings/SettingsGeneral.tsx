@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Monitor, Moon, RotateCcw, Sun } from 'lucide-react'
+import { OnboardingCallout } from '@/components/chat/cortex/OnboardingCallout'
+import { useOnboardingState } from '@/hooks/use-onboarding-state'
 import {
   Select,
   SelectContent,
@@ -29,6 +31,13 @@ interface SettingsGeneralProps {
 }
 
 export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrightSettingsLoaded }: SettingsGeneralProps) {
+  const {
+    onboardingState,
+    isMutating: isSavingOnboarding,
+    error: onboardingError,
+    savePreferences,
+  } = useOnboardingState(wsUrl)
+  const [onboardingSuccess, setOnboardingSuccess] = useState<string | null>(null)
   const [themePreference, setThemePreference] = useState<ThemePreference>(() =>
     readStoredThemePreference(),
   )
@@ -82,6 +91,13 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
     setThemePreference(nextPreference)
     applyThemePreference(nextPreference)
   }, [])
+
+  const handleOnboardingSave = useCallback(async (input: import('@/lib/onboarding-api').SaveOnboardingPreferencesInput) => {
+    const nextState = await savePreferences(input)
+    if (nextState) {
+      setOnboardingSuccess('Preferences saved.')
+    }
+  }, [savePreferences])
 
   return (
     <div className="flex flex-col gap-8">
@@ -188,6 +204,20 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
             ) : null}
           </div>
         </SettingsWithCTA>
+      </SettingsSection>
+
+      <SettingsSection
+        label="Welcome Preferences"
+        description="Edit the default preferences Forge shares with future managers"
+      >
+        <OnboardingCallout
+          mode="settings"
+          state={onboardingState}
+          isBusy={isSavingOnboarding}
+          error={onboardingError}
+          success={onboardingSuccess}
+          onSave={handleOnboardingSave}
+        />
       </SettingsSection>
 
       <SettingsSection
