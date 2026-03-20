@@ -60,7 +60,7 @@ These are briefly described for orientation. Most have both backend and UI compo
 |-----------|---------|-----|---------|
 | **Prompt system** | `swarm/prompt-registry.ts`, `swarm/archetypes/` | Settings UI | Prompt templates, archetypes, and resolution (profile → repo → builtin) |
 | **Memory system** | `swarm/memory-merge.ts`, `swarm/memory-paths.ts` | Chat UI | Per-session and per-profile persistent memory with merge lifecycle |
-| **Cortex** | `swarm/operational/` | `components/chat/cortex/` | AI self-improvement and knowledge management |
+| **Cortex** | `swarm/operational/` | `components/chat/cortex/` | AI self-improvement, first-launch welcome preferences, and knowledge management |
 | **Playwright dashboard** | `playwright/*` | `components/playwright/*` | Live browser preview and automation dashboard |
 | **Codex runtime** | `swarm/codex-agent-runtime.ts`, `swarm/codex-*.ts` | — | OpenAI Codex agent runtime integration |
 | **Mobile push** | `mobile/*` | — | Expo push notification service for mobile companion app |
@@ -98,7 +98,8 @@ All runtime state lives in `~/.forge` (or `%LOCALAPPDATA%\forge` on Windows), ov
 │   ├── secrets.json                       # Encrypted secrets
 │   ├── integrations/                      # Slack/Telegram integration configs
 │   ├── knowledge/                         # Knowledge base
-│   │   ├── common.md                      #   Common knowledge (cross-profile)
+│   │   ├── common.md                      #   Common knowledge (cross-profile, including a managed onboarding preferences block)
+│   │   ├── onboarding-state.json          #   First-launch user preferences
 │   │   └── profiles/<profileId>.md        #   Per-profile knowledge
 │   ├── slash-commands.json                # Global slash commands
 │   ├── playwright-dashboard.json          # Playwright dashboard settings

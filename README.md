@@ -27,13 +27,13 @@ pnpm prod:daemon
 
 Default configuration works out of the box. See [Configuration](#configuration) to customize.
 
-Open the UI at [http://127.0.0.1:47189](http://127.0.0.1:47189), go to **Settings**, and sign in with your OpenAI or Anthropic account (OAuth or API key). Create a manager, point it at your project directory, and start chatting.
+Open the UI at [http://127.0.0.1:47189](http://127.0.0.1:47189), go to **Settings**, and sign in with your OpenAI or Anthropic account (OAuth or API key). On first launch, Forge shows a short welcome form to capture basic preferences before you create your first manager. Then create a manager, point it at your project directory, and start chatting.
 
 > **Windows users:** See [docs/WINDOWS_SETUP.md](docs/WINDOWS_SETUP.md) for platform-specific setup notes.
 
 ## Features
 
-- **Persistent managers** — Onboard once, work for days. Managers remember your preferences, workflow, and project context across sessions via compacting memory.
+- **Persistent managers** — First-launch setup captures your name and preferences, then every new manager inherits those defaults while staying focused on your project.
 - **Worker dispatch** — The manager spawns workers and routes tasks between them. Describe work at a high level; it handles the breakdown.
 - **Parallel execution** — Dump a list of tasks and the manager figures out what can run concurrently. Stream-of-thought voice dumps welcome.
 - **Dashboard UI** — Real-time web interface for watching agents work, chatting with your manager, and managing settings.
