@@ -1295,6 +1295,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     await this.ensureCortexProfile();
     await loadOnboardingState(this.config.paths.dataDir);
     await this.ensureLegacyProfileKnowledgeReferenceDocs();
+    // IMPORTANT: reconcileInterruptedCortexReviewRunsForBoot MUST precede
+    // normalizeStreamingStatusesForBoot — reconciliation relies on descriptors
+    // still having status "streaming" to detect interrupted review runs.
+    // Reordering these calls will silently break interrupted-run detection.
     await this.reconcileInterruptedCortexReviewRunsForBoot();
     this.normalizeStreamingStatusesForBoot();
     await this.recoverMissingWorkerDescriptorsForBoot();
