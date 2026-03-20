@@ -552,7 +552,7 @@ export class ManagerWsClient {
     }))
   }
 
-  async forkSession(sourceAgentId: string, label?: string): Promise<SessionForkedResult> {
+  async forkSession(sourceAgentId: string, label?: string, fromMessageId?: string): Promise<SessionForkedResult> {
     const trimmed = sourceAgentId.trim()
     if (!trimmed) {
       throw new Error('Source agent id is required.')
@@ -566,6 +566,7 @@ export class ManagerWsClient {
       type: 'fork_session',
       sourceAgentId: trimmed,
       label: label?.trim() || undefined,
+      fromMessageId: fromMessageId?.trim() || undefined,
       requestId,
     }))
   }

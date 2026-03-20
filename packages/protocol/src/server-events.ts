@@ -153,6 +153,7 @@ export interface SessionForkedEvent {
   sourceAgentId: string
   newSessionAgent: AgentDescriptor
   profile: ManagerProfile
+  fromMessageId?: string
   requestId?: string
 }
 

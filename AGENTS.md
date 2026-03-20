@@ -118,6 +118,9 @@ All runtime state lives in `~/.forge` (or `%LOCALAPPDATA%\forge` on Windows), ov
         └── workers/<workerId>.jsonl       # Worker conversation logs
 ```
 
+Session forks now support a **partial fork** from a specific message: the forked `session.jsonl` is copied up to that message only.
+The forked session memory header also records that truncation point so the parent history boundary is explicit.
+
 See `apps/backend/src/swarm/data-paths.ts` for the canonical path resolution logic.
 
 ## Development Commands

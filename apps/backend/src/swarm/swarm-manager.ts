@@ -754,7 +754,7 @@ const LEGACY_CORTEX_WORKER_PROMPTS_SIGNATURES = [
 const FORKED_SESSION_MEMORY_HEADER_TEMPLATE = [
   "# Session Memory",
   '> Forked from session "${SOURCE_LABEL}" (${SOURCE_AGENT_ID}) on ${FORK_TIMESTAMP}',
-  "> Parent session conversation history was duplicated at fork time.",
+  "> ${FORK_HISTORY_NOTE}",
   ""
 ].join("\n");
 
@@ -2072,16 +2072,17 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   async forkSession(
     sourceAgentId: string,
-    options?: { label?: string }
+    options?: { label?: string; fromMessageId?: string }
   ): Promise<{ profile: ManagerProfile; sessionAgent: AgentDescriptor }> {
     const sourceDescriptor = this.getRequiredSessionDescriptor(sourceAgentId);
     const profile = this.profiles.get(sourceDescriptor.profileId);
+    const normalizedFromMessageId = options?.fromMessageId?.trim() || undefined;
     if (!profile) {
       throw new Error(`Unknown profile: ${sourceDescriptor.profileId}`);
     }
 
     const prepared = this.prepareSessionCreation(profile.profileId, {
-      ...options,
+      label: options?.label,
       name: options?.label
     });
     const forkedDescriptor = prepared.sessionDescriptor;
@@ -2091,8 +2092,16 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     await this.writeInitialSessionMeta(forkedDescriptor);
 
     try {
-      await this.copySessionHistoryForFork(sourceDescriptor.sessionFile, forkedDescriptor.sessionFile);
-      await this.writeForkedSessionMemoryHeader(sourceDescriptor, forkedDescriptor.agentId);
+      await this.copySessionHistoryForFork(
+        sourceDescriptor.sessionFile,
+        forkedDescriptor.sessionFile,
+        normalizedFromMessageId
+      );
+      await this.writeForkedSessionMemoryHeader(
+        sourceDescriptor,
+        forkedDescriptor.agentId,
+        normalizedFromMessageId
+      );
 
       const runtime = await this.getOrCreateRuntimeForDescriptor(forkedDescriptor);
       forkedDescriptor.contextUsage = runtime.getContextUsage();
@@ -3082,37 +3091,116 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return { terminatedWorkerIds };
   }
 
-  private async copySessionHistoryForFork(sourceSessionFile: string, targetSessionFile: string): Promise<void> {
+  private async copySessionHistoryForFork(
+    sourceSessionFile: string,
+    targetSessionFile: string,
+    fromMessageId?: string
+  ): Promise<void> {
     await mkdir(dirname(targetSessionFile), { recursive: true });
 
-    try {
-      await copyFile(sourceSessionFile, targetSessionFile);
-    } catch (error) {
-      if (!isEnoentError(error)) {
-        throw error;
-      }
+    if (!fromMessageId) {
+      try {
+        await copyFile(sourceSessionFile, targetSessionFile);
+      } catch (error) {
+        if (!isEnoentError(error)) {
+          throw error;
+        }
 
-      await writeFile(targetSessionFile, "", "utf8");
+        await writeFile(targetSessionFile, "", "utf8");
+      }
+      return;
     }
+
+    const sourceHandle = await open(sourceSessionFile, "r").catch((error: unknown) => {
+      if (isEnoentError(error)) {
+        throw new Error("Message not found in session history");
+      }
+      throw error;
+    });
+
+    const targetHandle = await open(targetSessionFile, "w");
+    let foundForkPoint = false;
+
+    try {
+      for await (const line of sourceHandle.readLines()) {
+        await targetHandle.write(`${line}\n`);
+
+        if (this.isForkTargetConversationEntryLine(line, fromMessageId)) {
+          foundForkPoint = true;
+          break;
+        }
+      }
+    } finally {
+      await Promise.allSettled([sourceHandle.close(), targetHandle.close()]);
+    }
+
+    if (!foundForkPoint) {
+      throw new Error("Message not found in session history");
+    }
+  }
+
+  private isForkTargetConversationEntryLine(line: string, fromMessageId: string): boolean {
+    const trimmedLine = line.trim();
+    if (trimmedLine.length === 0) {
+      return false;
+    }
+
+    let parsedEntry: unknown;
+    try {
+      parsedEntry = JSON.parse(trimmedLine);
+    } catch {
+      return false;
+    }
+
+    if (!isRecord(parsedEntry)) {
+      return false;
+    }
+
+    if (
+      parsedEntry.type !== "custom" ||
+      parsedEntry.customType !== "swarm_conversation_entry"
+    ) {
+      return false;
+    }
+
+    if (parsedEntry.id === fromMessageId) {
+      return true;
+    }
+
+    if (!isRecord(parsedEntry.data)) {
+      return false;
+    }
+
+    return parsedEntry.data.id === fromMessageId;
   }
 
   private async writeForkedSessionMemoryHeader(
     sourceDescriptor: AgentDescriptor,
-    forkedSessionAgentId: string
+    forkedSessionAgentId: string,
+    fromMessageId?: string
   ): Promise<void> {
     const sourceLabel = sourceDescriptor.sessionLabel ?? sourceDescriptor.agentId;
     const profileId = sourceDescriptor.profileId ?? sourceDescriptor.agentId;
+    const forkHistoryNote = fromMessageId
+      ? `Parent session conversation history was copied through message ${fromMessageId} at fork time.`
+      : "Parent session conversation history was duplicated at fork time.";
     const headerTemplate = await this.resolvePromptWithFallback(
       "operational",
       "forked-session-header",
       profileId,
       FORKED_SESSION_MEMORY_HEADER_TEMPLATE
     );
-    const header = resolvePromptVariables(headerTemplate, {
+    let header = resolvePromptVariables(headerTemplate, {
       SOURCE_LABEL: sourceLabel,
       SOURCE_AGENT_ID: sourceDescriptor.agentId,
-      FORK_TIMESTAMP: this.now()
+      FORK_TIMESTAMP: this.now(),
+      FORK_HISTORY_NOTE: forkHistoryNote,
+      FROM_MESSAGE_ID: fromMessageId ?? ""
     });
+
+    if (fromMessageId && !header.includes(fromMessageId)) {
+      header = `${header.trimEnd()}\n> ${forkHistoryNote}\n`;
+    }
 
     const forkedMemoryPath = this.getAgentMemoryPath(forkedSessionAgentId);
     await mkdir(dirname(forkedMemoryPath), { recursive: true });

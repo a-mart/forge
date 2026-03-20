@@ -357,6 +357,7 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
   if (maybe.type === "fork_session") {
     const sourceAgentId = (maybe as { sourceAgentId?: unknown }).sourceAgentId;
     const label = (maybe as { label?: unknown }).label;
+    const fromMessageId = (maybe as { fromMessageId?: unknown }).fromMessageId;
     const requestId = (maybe as { requestId?: unknown }).requestId;
 
     if (typeof sourceAgentId !== "string" || sourceAgentId.trim().length === 0) {
@@ -365,11 +366,15 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
     if (label !== undefined && typeof label !== "string") {
       return { ok: false, error: "fork_session.label must be a string when provided" };
     }
+    if (fromMessageId !== undefined && typeof fromMessageId !== "string") {
+      return { ok: false, error: "fork_session.fromMessageId must be a string when provided" };
+    }
     if (requestId !== undefined && typeof requestId !== "string") {
       return { ok: false, error: "fork_session.requestId must be a string when provided" };
     }
 
     const normalizedLabel = label?.trim();
+    const normalizedFromMessageId = fromMessageId?.trim();
 
     return {
       ok: true,
@@ -377,6 +382,7 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
         type: "fork_session",
         sourceAgentId: sourceAgentId.trim(),
         label: normalizedLabel ? normalizedLabel : undefined,
+        fromMessageId: normalizedFromMessageId ? normalizedFromMessageId : undefined,
         requestId
       }
     };

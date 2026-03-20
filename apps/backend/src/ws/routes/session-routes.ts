@@ -228,7 +228,8 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
   if (command.type === "fork_session") {
     try {
       const forked = await swarmManager.forkSession(command.sourceAgentId, {
-        label: command.label
+        label: command.label,
+        fromMessageId: command.fromMessageId
       });
 
       send(socket, {
@@ -236,6 +237,7 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
         sourceAgentId: command.sourceAgentId,
         newSessionAgent: forked.sessionAgent,
         profile: forked.profile,
+        fromMessageId: command.fromMessageId,
         requestId: command.requestId
       });
     } catch (error) {

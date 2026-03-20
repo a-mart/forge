@@ -18,6 +18,7 @@ import { OnboardingCallout } from '@/components/chat/cortex/OnboardingCallout'
 import { ChatHeader, type ChannelView } from '@/components/chat/ChatHeader'
 import { CreateManagerDialog } from '@/components/chat/CreateManagerDialog'
 import { DeleteManagerDialog } from '@/components/chat/DeleteManagerDialog'
+import { ForkSessionDialog } from '@/components/chat/ForkSessionDialog'
 import { MessageInput, type MessageInputHandle } from '@/components/chat/MessageInput'
 import { MessageList, type MessageListHandle } from '@/components/chat/MessageList'
 import { PlaywrightDashboardView } from '@/components/playwright/PlaywrightDashboardView'
@@ -647,6 +648,39 @@ export function IndexPage() {
     })()
   }, [clientRef, navigateToRoute, setState])
 
+  const [messageForkTarget, setMessageForkTarget] = useState<{ messageId: string; messageTimestamp?: string } | null>(null)
+
+  const handleForkFromMessage = useCallback((messageId: string) => {
+    if (!activeAgentId) return
+    // Find the message timestamp for display in the dialog
+    const msg = visibleMessages.find(
+      (m) => m.type === 'conversation_message' && ((m.id?.trim() || m.timestamp) === messageId),
+    )
+    const timestamp = msg?.timestamp
+    setMessageForkTarget({ messageId, messageTimestamp: timestamp })
+  }, [activeAgentId, visibleMessages])
+
+  const handleConfirmMessageFork = useCallback((name?: string) => {
+    const client = clientRef.current
+    if (!client || !activeAgentId || !messageForkTarget) return
+
+    const { messageId } = messageForkTarget
+    setMessageForkTarget(null)
+
+    void (async () => {
+      try {
+        const result = await client.forkSession(activeAgentId, name, messageId)
+        navigateToRoute({ view: 'chat', agentId: result.newSessionAgent.agentId })
+        client.subscribeToAgent(result.newSessionAgent.agentId)
+      } catch (error) {
+        setState((prev) => ({
+          ...prev,
+          lastError: `Failed to fork session from message: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        }))
+      }
+    })()
+  }, [clientRef, activeAgentId, messageForkTarget, navigateToRoute, setState])
+
 
   const handleRequestSessionWorkers = useCallback((sessionAgentId: string) => {
     const client = clientRef.current
@@ -955,6 +989,7 @@ export function IndexPage() {
                   activeAgentId={activeAgentId}
                   onSuggestionClick={handleSuggestionClick}
                   onArtifactClick={handleOpenArtifact}
+                  onForkFromMessage={activeAgentId ? handleForkFromMessage : undefined}
                   getVote={feedbackProfileId ? getVote : undefined}
                   hasComment={feedbackProfileId ? hasComment : undefined}
                   onFeedbackVote={feedbackProfileId ? submitVote : undefined}
@@ -1043,6 +1078,16 @@ export function IndexPage() {
           void handleConfirmDeleteManager()
         }}
       />
+
+      {messageForkTarget ? (
+        <ForkSessionDialog
+          onConfirm={handleConfirmMessageFork}
+          onClose={() => setMessageForkTarget(null)}
+          fromMessageTimestamp={messageForkTarget.messageTimestamp
+            ? new Date(messageForkTarget.messageTimestamp).toLocaleString()
+            : undefined}
+        />
+      ) : null}
     </main>
   )
 }

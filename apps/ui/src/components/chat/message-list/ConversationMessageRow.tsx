@@ -1,5 +1,5 @@
 import { memo, useState, useCallback } from 'react'
-import { Copy, Check } from 'lucide-react'
+import { Copy, Check, GitFork } from 'lucide-react'
 import { MarkdownMessage } from '@/components/chat/MarkdownMessage'
 import type { ArtifactReference } from '@/lib/artifacts'
 import { cn } from '@/lib/utils'
@@ -36,12 +36,27 @@ function CopyButton({ text }: { text: string }) {
   )
 }
 
+function ForkButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="inline-flex size-5 items-center justify-center rounded-sm text-muted-foreground/50 transition-colors hover:text-muted-foreground"
+      aria-label="Fork from this message"
+      title="Fork from this message"
+    >
+      <GitFork className="size-3" />
+    </button>
+  )
+}
+
 interface ConversationMessageRowProps {
   message: ConversationMessageEntry
   wsUrl?: string
   feedbackTargetId?: string
   feedbackLegacyTargetId?: string
   onArtifactClick?: (artifact: ArtifactReference) => void
+  onForkFromMessage?: (messageId: string) => void
   feedbackVote?: 'up' | 'down' | null
   feedbackHasComment?: boolean
   onFeedbackVote?: (
@@ -72,6 +87,7 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
   feedbackTargetId,
   feedbackLegacyTargetId,
   onArtifactClick,
+  onForkFromMessage,
   feedbackVote,
   feedbackHasComment,
   onFeedbackVote,
@@ -115,6 +131,7 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
   }
 
   if (message.role === 'user') {
+    const forkMessageId = message.id?.trim() || message.timestamp
     return (
       <div className="flex justify-end">
         <div className="max-w-[85%] rounded-lg rounded-tr-sm bg-primary px-3 py-2 text-primary-foreground">
@@ -126,13 +143,24 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
               </p>
             ) : null}
           </div>
-          {timestampLabel || sourceContext ? (
+          {timestampLabel || sourceContext || onForkFromMessage ? (
             <div className="mt-1 flex items-center justify-end gap-1.5">
               <SourceBadge sourceContext={sourceContext} isUser />
               {timestampLabel ? (
                 <p className="text-right text-[10px] leading-none text-primary-foreground/70">
                   {timestampLabel}
                 </p>
+              ) : null}
+              {onForkFromMessage ? (
+                <button
+                  type="button"
+                  onClick={() => onForkFromMessage(forkMessageId)}
+                  className="inline-flex size-5 items-center justify-center rounded-sm text-primary-foreground/50 transition-colors hover:text-primary-foreground"
+                  aria-label="Fork from this message"
+                  title="Fork from this message"
+                >
+                  <GitFork className="size-3" />
+                </button>
               ) : null}
             </div>
           ) : null}
@@ -145,6 +173,7 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
   const resolvedFeedbackTargetId =
     feedbackTargetId?.trim() || message.id?.trim() || message.timestamp
   const resolvedFeedbackLegacyTargetId = feedbackLegacyTargetId?.trim()
+  const assistantForkMessageId = message.id?.trim() || message.timestamp
 
   return (
     <div className="min-w-0 space-y-2 text-foreground">
@@ -156,11 +185,14 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
         />
       ) : null}
       <MessageAttachments attachments={attachments} isUser={false} wsUrl={wsUrl} />
-      {timestampLabel || sourceContext || showFeedback ? (
+      {timestampLabel || sourceContext || showFeedback || onForkFromMessage ? (
         <div className="flex items-center gap-1.5 text-[11px] leading-none text-muted-foreground/70">
           <SourceBadge sourceContext={sourceContext} />
           {timestampLabel ? <span>{timestampLabel}</span> : null}
           {hasText ? <CopyButton text={normalizedText} /> : null}
+          {onForkFromMessage ? (
+            <ForkButton onClick={() => onForkFromMessage(assistantForkMessageId)} />
+          ) : null}
           {showFeedback ? (
             <MessageFeedback
               targetId={resolvedFeedbackTargetId}

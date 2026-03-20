@@ -29,7 +29,13 @@ export type ClientCommand =
   | { type: 'resume_session'; agentId: string; requestId?: string }
   | { type: 'delete_session'; agentId: string; requestId?: string }
   | { type: 'rename_session'; agentId: string; label: string; requestId?: string }
-  | { type: 'fork_session'; sourceAgentId: string; label?: string; requestId?: string }
+  | {
+      type: 'fork_session'
+      sourceAgentId: string
+      label?: string
+      fromMessageId?: string
+      requestId?: string
+    }
   | { type: 'clear_session'; agentId: string; requestId?: string }
   | { type: 'merge_session_memory'; agentId: string; requestId?: string }
   | { type: 'get_session_workers'; sessionAgentId: string; requestId?: string }
