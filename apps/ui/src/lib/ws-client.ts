@@ -27,6 +27,7 @@ export type { ManagerWsState } from './ws-state'
 const INITIAL_CONNECT_DELAY_MS = 50
 const RECONNECT_MS = 1200
 const REQUEST_TIMEOUT_MS = 300_000
+const SESSION_WORKERS_REFETCH_DEBOUNCE_MS = 250
 // Keep client-side activity retention aligned with backend history retention.
 const MAX_CLIENT_CONVERSATION_HISTORY = 2000
 
@@ -129,6 +130,7 @@ export class ManagerWsClient {
     REQUEST_TIMEOUT_MS,
   )
   private readonly pendingWorkerFetches = new Map<string, Promise<SessionWorkersResult>>()
+  private readonly pendingSessionWorkerRefetchTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
   constructor(url: string, initialAgentId?: string | null) {
     const normalizedInitialAgentId = normalizeAgentId(initialAgentId)
@@ -191,6 +193,7 @@ export class ManagerWsClient {
 
     this.rejectAllPendingRequests('Client destroyed before request completed.')
     this.pendingWorkerFetches.clear()
+    this.clearQueuedSessionWorkerRefetches()
 
     if (this.socket) {
       this.socket.close()
@@ -676,6 +679,7 @@ export class ManagerWsClient {
         subscribedAgentId: null,
       })
 
+      this.clearQueuedSessionWorkerRefetches()
       this.rejectAllPendingRequests('WebSocket disconnected before request completed.')
       this.scheduleConnect(RECONNECT_MS)
     })
@@ -796,9 +800,11 @@ export class ManagerWsClient {
         let nextAgents = this.state.agents
         let nextLoadedSessionIds = this.state.loadedSessionIds
         if (event.managerId) {
-          if (!isKnownAgent && this.state.loadedSessionIds.has(event.managerId)) {
+          const managerSessionWasLoaded = this.state.loadedSessionIds.has(event.managerId)
+          if (!isKnownAgent && managerSessionWasLoaded) {
             nextLoadedSessionIds = new Set(this.state.loadedSessionIds)
             nextLoadedSessionIds.delete(event.managerId)
+            this.queueSessionWorkersRefetch(event.managerId)
           }
 
           nextAgents = this.state.agents.map((agent) => {
@@ -1065,6 +1071,7 @@ export class ManagerWsClient {
 
       if (nextLoadedSessionIds.has(manager.agentId) && cachedWorkers.length !== manager.workerCount) {
         nextLoadedSessionIds.delete(manager.agentId)
+        this.queueSessionWorkersRefetch(manager.agentId)
       }
     }
 
@@ -1227,6 +1234,7 @@ export class ManagerWsClient {
     }
     const nextLoadedSessionIds = new Set(this.state.loadedSessionIds)
     nextLoadedSessionIds.delete(managerId)
+    this.clearQueuedSessionWorkerRefetch(managerId)
 
     if (wasSelected) {
       const fallbackId = chooseFallbackAgentId(nextAgents)
@@ -1286,6 +1294,7 @@ export class ManagerWsClient {
     }
     const nextLoadedSessionIds = new Set(this.state.loadedSessionIds)
     nextLoadedSessionIds.delete(agentId)
+    this.clearQueuedSessionWorkerRefetch(agentId)
 
     if (wasSelected) {
       const fallbackId =
@@ -1314,6 +1323,47 @@ export class ManagerWsClient {
       statuses: nextStatuses,
       loadedSessionIds: nextLoadedSessionIds,
     })
+  }
+
+  private queueSessionWorkersRefetch(sessionAgentId: string): void {
+    const normalizedSessionAgentId = sessionAgentId.trim()
+    if (!normalizedSessionAgentId) {
+      return
+    }
+
+    this.clearQueuedSessionWorkerRefetch(normalizedSessionAgentId)
+
+    const timer = setTimeout(() => {
+      this.pendingSessionWorkerRefetchTimers.delete(normalizedSessionAgentId)
+      void this.getSessionWorkers(normalizedSessionAgentId).catch(() => {
+        // Best-effort refresh to keep worker cache in sync after session invalidation.
+      })
+    }, SESSION_WORKERS_REFETCH_DEBOUNCE_MS)
+
+    this.pendingSessionWorkerRefetchTimers.set(normalizedSessionAgentId, timer)
+  }
+
+  private clearQueuedSessionWorkerRefetch(sessionAgentId: string): void {
+    const normalizedSessionAgentId = sessionAgentId.trim()
+    if (!normalizedSessionAgentId) {
+      return
+    }
+
+    const timer = this.pendingSessionWorkerRefetchTimers.get(normalizedSessionAgentId)
+    if (!timer) {
+      return
+    }
+
+    clearTimeout(timer)
+    this.pendingSessionWorkerRefetchTimers.delete(normalizedSessionAgentId)
+  }
+
+  private clearQueuedSessionWorkerRefetches(): void {
+    for (const timer of this.pendingSessionWorkerRefetchTimers.values()) {
+      clearTimeout(timer)
+    }
+
+    this.pendingSessionWorkerRefetchTimers.clear()
   }
 
   private pushSystemMessage(text: string): void {
