@@ -1,5 +1,5 @@
-import { isValidElement, memo, useEffect, useId, useMemo, useState, type ReactNode } from 'react'
-import { AlertCircle, ChevronRight, FileCode2, FileText, ZoomIn } from 'lucide-react'
+import { isValidElement, memo, useCallback, useEffect, useId, useMemo, useState, type ReactNode } from 'react'
+import { AlertCircle, Check, ChevronRight, Copy, FileCode2, FileText, ZoomIn } from 'lucide-react'
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Button } from '@/components/ui/button'
@@ -291,12 +291,17 @@ export const MarkdownMessage = memo(function MarkdownMessage({
                 }
 
                 return (
-                  <div className={cn(isDocument ? 'my-5' : 'my-2')}>
+                  <div className={cn('group/code relative', isDocument ? 'my-5' : 'my-2')}>
                     {language ? (
-                      <div className="flex items-center rounded-t-lg border border-b-0 border-border/50 bg-muted/40 px-3 py-1.5">
+                      <div className="flex items-center justify-between rounded-t-lg border border-b-0 border-border/50 bg-muted/40 px-3 py-1.5">
                         <span className="font-mono text-[11px] font-medium text-muted-foreground">{language}</span>
+                        <CodeBlockCopyButton code={normalizedCode} />
                       </div>
-                    ) : null}
+                    ) : (
+                      <span className="absolute right-2 top-2 z-10 opacity-0 transition-opacity duration-150 group-hover/code:opacity-100">
+                        <CodeBlockCopyButton code={normalizedCode} />
+                      </span>
+                    )}
                     <div
                       className={cn(
                         'w-full border border-border/50 bg-muted/25',
@@ -392,6 +397,34 @@ export const MarkdownMessage = memo(function MarkdownMessage({
     </>
   )
 })
+
+function CodeBlockCopyButton({ code }: { code: string }) {
+  const [copied, setCopied] = useState(false)
+
+  const handleCopy = useCallback(() => {
+    void navigator.clipboard.writeText(code).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    })
+  }, [code])
+
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      className={cn(
+        'inline-flex size-6 items-center justify-center rounded-md transition-colors',
+        copied
+          ? 'text-emerald-600 dark:text-emerald-400'
+          : 'text-muted-foreground/50 hover:text-muted-foreground',
+      )}
+      aria-label={copied ? 'Copied' : 'Copy code'}
+      title={copied ? 'Copied' : 'Copy code'}
+    >
+      {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+    </button>
+  )
+}
 
 function ArtifactReferenceCard({
   artifact,
