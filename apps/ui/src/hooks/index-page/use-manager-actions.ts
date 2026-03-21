@@ -85,9 +85,13 @@ export function useManagerActions({
   const [deleteManagerError, setDeleteManagerError] = useState<string | null>(null)
   const [isDeletingManager, setIsDeletingManager] = useState(false)
 
-  const [isCompactingManager, setIsCompactingManager] = useState(false)
-  const [isSmartCompactingManager, setIsSmartCompactingManager] = useState(false)
+  const [compactingAgentId, setCompactingAgentId] = useState<string | null>(null)
+  const [smartCompactingAgentId, setSmartCompactingAgentId] = useState<string | null>(null)
   const [isStoppingAllAgents, setIsStoppingAllAgents] = useState(false)
+
+  // Only report compaction in-progress when viewing the session that triggered it
+  const isCompactingManager = compactingAgentId !== null && compactingAgentId === activeAgentId
+  const isSmartCompactingManager = smartCompactingAgentId !== null && smartCompactingAgentId === activeAgentId
 
   const handleNewManagerNameChange = useCallback((value: string) => {
     setNewManagerName(value)
@@ -108,7 +112,7 @@ export function useManagerActions({
       return
     }
 
-    setIsCompactingManager(true)
+    setCompactingAgentId(activeAgentId)
 
     try {
       await requestManagerCompaction(wsUrl, activeAgentId, customInstructions)
@@ -122,7 +126,7 @@ export function useManagerActions({
         lastError: `Failed to compact manager context: ${toErrorMessage(error)}`,
       }))
     } finally {
-      setIsCompactingManager(false)
+      setCompactingAgentId(null)
     }
   }, [activeAgentId, isActiveManager, setState, wsUrl])
 
@@ -131,7 +135,7 @@ export function useManagerActions({
       return
     }
 
-    setIsSmartCompactingManager(true)
+    setSmartCompactingAgentId(activeAgentId)
 
     try {
       await requestManagerSmartCompaction(wsUrl, activeAgentId)
@@ -145,7 +149,7 @@ export function useManagerActions({
         lastError: `Failed to smart compact manager context: ${toErrorMessage(error)}`,
       }))
     } finally {
-      setIsSmartCompactingManager(false)
+      setSmartCompactingAgentId(null)
     }
   }, [activeAgentId, isActiveManager, setState, wsUrl])
 
