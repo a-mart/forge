@@ -75,7 +75,7 @@ export function ContextWindowIndicator({
         </Button>
       </TooltipTrigger>
       <TooltipContent side="bottom" align="end" sideOffset={6} className="px-3 py-2 text-xs">
-        <p className="text-muted-foreground">Context window {percentFull}% full</p>
+        <p className="text-foreground">Context window {percentFull}% full</p>
         <p className="font-medium">
           {formatTokens(usedTokens)} / {formatTokens(contextWindow)} tokens used
         </p>
