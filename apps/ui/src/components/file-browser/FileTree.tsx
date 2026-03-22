@@ -4,17 +4,17 @@ import {
   useEffect,
   useImperativeHandle,
   useMemo,
-  useReducer,
   useRef,
   useState,
 } from 'react'
-import { useTree } from '@headless-tree/react'
 import {
+  createTree,
   asyncDataLoaderFeature,
   selectionFeature,
   hotkeysCoreFeature,
   searchFeature,
 } from '@headless-tree/core'
+import type { TreeConfig, TreeInstance, TreeState } from '@headless-tree/core'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { Search, X, Loader2, FileText } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -23,6 +23,48 @@ import { FileIcon } from './FileIcon'
 import type { FileListResult } from './use-file-browser-queries'
 import { useFileSearch } from './use-file-browser-queries'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
+
+/* ------------------------------------------------------------------ */
+/*  Stable useTree — fixes React 18+ Object.is setState bailout       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Drop-in replacement for `useTree` from `@headless-tree/react`.
+ *
+ * The upstream hook passes the same mutated state object reference to
+ * React's `setState`, which causes React 18+ to bail out (Object.is
+ * sees no change).  We shallow-clone in the `setState` wrapper so
+ * React always sees a new reference and re-renders.
+ */
+function useStableTree<T>(config: TreeConfig<T>): TreeInstance<T> {
+  const [treeRef] = useState(() => ({ current: createTree<T>(config) }))
+  const [state, setState] = useState(() => treeRef.current.getState())
+
+  useEffect(() => {
+    treeRef.current.setMounted(true)
+    treeRef.current.rebuildTree()
+    return () => {
+      treeRef.current.setMounted(false)
+    }
+  }, [treeRef])
+
+  treeRef.current.setConfig((prev) => ({
+    ...prev,
+    ...config,
+    state: { ...state, ...config.state },
+    // The library types config.setState as SetStateFn<Partial<TreeState<T>>>
+    // but at runtime always passes the full state object.  We cast through
+    // the broader type so the shallow-clone trick satisfies React's setState.
+    setState: ((newState: TreeState<T>) => {
+      // CRITICAL FIX: Shallow clone creates a new reference so React 18+
+      // Object.is() sees it as changed and doesn't bail out.
+      setState({ ...newState })
+      config.setState?.({ ...newState })
+    }) as TreeConfig<T>['setState'],
+  }))
+
+  return treeRef.current
+}
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -92,11 +134,6 @@ export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(
     const searchScrollRef = useRef<HTMLDivElement>(null)
     const filterInputRef = useRef<HTMLInputElement>(null)
 
-    // Force re-render counter — works around a React 18+ issue where
-    // headless-tree's internal setState passes the same object reference,
-    // causing React's Object.is bailout to skip re-renders after async loads.
-    const [, forceRender] = useReducer((c: number) => c + 1, 0)
-
     // Deep search hook
     const searchResult = useFileSearch(wsUrl, agentId, searchQuery)
 
@@ -164,7 +201,7 @@ export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(
       [loadAndCacheChildren],
     )
 
-    const tree = useTree<FileTreeItem>({
+    const tree = useStableTree<FileTreeItem>({
       rootItemId: ROOT_ID,
       getItemName: (item) => item.getItemData().name,
       isItemFolder: (item) => item.getItemData().type === 'directory',
@@ -180,13 +217,6 @@ export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(
         name: 'Loading…',
         type: 'file' as const,
       }),
-      // Force React re-render after async data loads.  The headless-tree
-      // library mutates its internal state object in place and passes the
-      // same reference to React's setState, which causes Object.is bailout
-      // in React 18+.  These callbacks queue a useReducer dispatch that
-      // guarantees the component re-renders after data is available.
-      onLoadedChildren: forceRender,
-      onLoadedItem: forceRender,
     })
 
     // Wire search feature to filter input (only when NOT in deep search mode)
