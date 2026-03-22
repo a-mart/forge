@@ -21,6 +21,7 @@ import { DeleteManagerDialog } from '@/components/chat/DeleteManagerDialog'
 import { ForkSessionDialog } from '@/components/chat/ForkSessionDialog'
 import { MessageInput, type MessageInputHandle } from '@/components/chat/MessageInput'
 import { MessageList, type MessageListHandle } from '@/components/chat/MessageList'
+import { WorkerPillBar } from '@/components/chat/WorkerPillBar'
 import { DiffViewerDialog } from '@/components/diff-viewer/DiffViewerDialog'
 import { FileBrowserSidebar } from '@/components/file-browser/FileBrowserSidebar'
 import { FileBrowserPanel } from '@/components/file-browser/FileBrowserPanel'
@@ -175,6 +176,20 @@ export function IndexPage() {
       DEFAULT_MANAGER_AGENT_ID
     )
   }, [activeAgent, state.agents])
+
+  // Workers belonging to the active manager session (for pill bar)
+  const sessionWorkers = useMemo(() => {
+    if (!activeManagerId) return []
+    return state.agents.filter(
+      (a) => a.role === 'worker' && a.managerId === activeManagerId,
+    )
+  }, [activeManagerId, state.agents])
+
+  // Proactively load workers when viewing a manager session
+  useEffect(() => {
+    if (!isActiveManager || !activeManagerId || !clientRef.current) return
+    void clientRef.current.getSessionWorkers(activeManagerId).catch(() => {})
+  }, [isActiveManager, activeManagerId, clientRef])
 
   // For settings, only show profile-level managers (default sessions or legacy managers without profileId)
   const settingsManagers = useMemo(() => {
@@ -1037,6 +1052,15 @@ export function IndexPage() {
                       onFeedbackClearComment={feedbackProfileId ? clearComment : undefined}
                       isFeedbackSubmitting={isFeedbackSubmitting}
                     />
+
+                    {isActiveManager ? (
+                      <WorkerPillBar
+                        workers={sessionWorkers}
+                        statuses={state.statuses}
+                        activityMessages={state.activityMessages}
+                        onNavigateToWorker={handleSelectAgent}
+                      />
+                    ) : null}
 
                     <MessageInput
                       ref={messageInputRef}

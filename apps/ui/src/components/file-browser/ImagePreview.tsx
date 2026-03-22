@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ImageOff } from 'lucide-react'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
+import '@/styles/file-browser.css'
 
 interface ImagePreviewProps {
   wsUrl: string
@@ -34,7 +35,7 @@ export function ImagePreview({ wsUrl, filePath, agentId }: ImagePreviewProps) {
   }
 
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-4 overflow-auto p-8">
+    <div className="file-browser-scroll flex h-full flex-col items-center justify-center gap-4 overflow-auto p-8">
       <img
         src={imageUrl}
         alt={fileName}

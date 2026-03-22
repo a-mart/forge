@@ -14,6 +14,7 @@ import {
   getLanguageDisplayName,
 } from '@/lib/syntax-highlight'
 import '@/styles/syntax-highlight.css'
+import '@/styles/file-browser.css'
 import { FileContentHeader } from './FileContentHeader'
 import { formatFileSize, isImageFile } from './file-browser-utils'
 import { ImagePreview } from './ImagePreview'
@@ -391,7 +392,7 @@ function CodeView({
   return (
     <div
       className={cn(
-        'syntax-highlight h-full overflow-auto font-mono text-[13px] leading-[21px]',
+        'syntax-highlight file-browser-scroll h-full overflow-auto font-mono text-[13px] leading-[21px]',
       )}
     >
       <table className="w-full border-collapse">

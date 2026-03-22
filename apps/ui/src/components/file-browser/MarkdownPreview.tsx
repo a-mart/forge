@@ -1,4 +1,5 @@
 import { MarkdownMessage } from '@/components/chat/MarkdownMessage'
+import '@/styles/file-browser.css'
 
 interface MarkdownPreviewProps {
   content: string
@@ -16,7 +17,7 @@ interface MarkdownPreviewProps {
  */
 export function MarkdownPreview({ content }: MarkdownPreviewProps) {
   return (
-    <div className="h-full overflow-auto">
+    <div className="file-browser-scroll h-full overflow-auto">
       <div className="mx-auto max-w-3xl px-8 py-6">
         <MarkdownMessage
           content={content}

@@ -1,0 +1,37 @@
+/*
+ * File browser scrollbar styles.
+ * Thin, subtle scrollbars matching the project's dark/light theme system.
+ */
+
+/* ── Webkit (Chrome, Edge, Safari) ──────────────────── */
+.file-browser-scroll::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.file-browser-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.file-browser-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+}
+.file-browser-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+/* ── Firefox ────────────────────────────────────────── */
+.file-browser-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
+}
+
+/* ── Light theme ────────────────────────────────────── */
+:root:not(.dark) .file-browser-scroll::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.12);
+}
+:root:not(.dark) .file-browser-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.22);
+}
+:root:not(.dark) .file-browser-scroll {
+  scrollbar-color: rgba(0, 0, 0, 0.12) transparent;
+}

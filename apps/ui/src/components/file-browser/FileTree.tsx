@@ -18,6 +18,7 @@ import type { TreeConfig, TreeInstance, TreeState } from '@headless-tree/core'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { Search, X, Loader2, FileText } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import '@/styles/file-browser.css'
 import { FileTreeNode } from './FileTreeNode'
 import { FileIcon } from './FileIcon'
 import type { FileListResult } from './use-file-browser-queries'
@@ -416,7 +417,7 @@ export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(
           <>
             <div
               ref={searchScrollRef}
-              className="min-h-0 flex-1 overflow-auto"
+              className="file-browser-scroll min-h-0 flex-1 overflow-auto"
             >
               {searchResult.isLoading ? (
                 <div className="flex items-center justify-center gap-2 py-8 text-xs text-muted-foreground">
@@ -469,7 +470,7 @@ export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(
                 setScrollEl(el)
                 tree.registerElement(el)
               }}
-              className="min-h-0 flex-1 overflow-auto focus:outline-none"
+              className="file-browser-scroll min-h-0 flex-1 overflow-auto focus:outline-none"
               tabIndex={0}
             >
               <div

@@ -47,9 +47,9 @@ export function FileBrowserPanel({
 
   const { width, isDragging, handleRef } = useResizablePanel({
     storageKey: 'forge-file-viewer-width',
-    defaultWidth: 600,
+    defaultWidth: 850,
     minWidth: 300,
-    maxWidth: 1200,
+    maxWidth: 1400,
     invertDelta: true,
   })
 
