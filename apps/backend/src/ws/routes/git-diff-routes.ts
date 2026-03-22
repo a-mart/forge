@@ -2,6 +2,7 @@ import type { SwarmManager } from "../../swarm/swarm-manager.js";
 import { applyCorsHeaders, sendJson } from "../http-utils.js";
 import { GitDiffService } from "./git-diff-service.js";
 import type { HttpRoute } from "./http-route.js";
+import { resolveCwdFromAgent } from "./route-utils.js";
 
 const SHA_PATTERN = /^[a-f0-9]{4,40}$/i;
 const GIT_GET_METHODS = "GET, OPTIONS";
@@ -78,23 +79,6 @@ export function createGitDiffRoutes(options: { swarmManager: SwarmManager }): Ht
       return service.getCommitFileDiff(cwd, sha, file);
     })
   ];
-}
-
-function resolveCwdFromAgent(swarmManager: SwarmManager, agentId: string): string {
-  const descriptor = swarmManager.getAgent(agentId);
-  if (!descriptor) {
-    throw new Error(`Unknown agent: ${agentId}`);
-  }
-
-  const effectiveDescriptor = descriptor.profileId
-    ? swarmManager.getAgent(descriptor.profileId) ?? descriptor
-    : descriptor;
-
-  if (!effectiveDescriptor.cwd || effectiveDescriptor.cwd.trim().length === 0) {
-    throw new Error("No CWD configured for this agent");
-  }
-
-  return effectiveDescriptor.cwd;
 }
 
 function requireNonEmptyQuery(searchParams: URLSearchParams, key: string): string {
