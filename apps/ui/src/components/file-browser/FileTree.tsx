@@ -52,12 +52,7 @@ function useStableTree<T>(config: TreeConfig<T>): TreeInstance<T> {
     ...prev,
     ...config,
     state: { ...state, ...config.state },
-    // The library types config.setState as SetStateFn<Partial<TreeState<T>>>
-    // but at runtime always passes the full state object.  We cast through
-    // the broader type so the shallow-clone trick satisfies React's setState.
     setState: ((newState: TreeState<T>) => {
-      // CRITICAL FIX: Shallow clone creates a new reference so React 18+
-      // Object.is() sees it as changed and doesn't bail out.
       setState({ ...newState })
       config.setState?.({ ...newState })
     }) as TreeConfig<T>['setState'],
@@ -130,7 +125,10 @@ export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(
     const [filterText, setFilterText] = useState('')
     const [searchQuery, setSearchQuery] = useState('')
     const [searchMode, setSearchMode] = useState(false)
-    const scrollRef = useRef<HTMLDivElement>(null)
+    // Use useState (not useRef) for the scroll container so that when the
+    // DOM element mounts via the callback ref, the re-render lets the
+    // virtualizer pick up the real element from getScrollElement().
+    const [scrollEl, setScrollEl] = useState<HTMLDivElement | null>(null)
     const searchScrollRef = useRef<HTMLDivElement>(null)
     const filterInputRef = useRef<HTMLInputElement>(null)
 
@@ -229,21 +227,15 @@ export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(
       tree.setSearch(trimmed.length > 0 ? trimmed : null)
     }, [filterText, searchMode, tree])
 
-    // Handle clicks — let the library manage expand/collapse for folders
+    // Handle clicks — only select files; the library's getProps() onClick
+    // already manages expand/collapse for folders.
     const handleItemClick = useCallback(
-      (itemId: string, isFolder: boolean, isExpanded: boolean) => {
-        if (isFolder) {
-          const item = tree.getItemInstance(itemId)
-          if (isExpanded) {
-            item.collapse()
-          } else {
-            item.expand()
-          }
-        } else {
+      (itemId: string, isFolder: boolean) => {
+        if (!isFolder) {
           onSelectFile(itemId)
         }
       },
-      [tree, onSelectFile],
+      [onSelectFile],
     )
 
     // Refresh: clear caches and rebuild the tree
@@ -330,7 +322,7 @@ export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(
     // Virtualizer
     const virtualizer = useVirtualizer({
       count: allItems.length,
-      getScrollElement: () => scrollRef.current,
+      getScrollElement: () => scrollEl,
       estimateSize: () => ROW_HEIGHT,
       overscan: 15,
     })
@@ -472,14 +464,12 @@ export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(
           <>
             {/* Tree */}
             <div
+              {...tree.getContainerProps('File tree')}
               ref={(el) => {
-                // Register both the scroll container ref and the tree element
-                ;(scrollRef as React.MutableRefObject<HTMLDivElement | null>).current =
-                  el
+                setScrollEl(el)
                 tree.registerElement(el)
               }}
               className="min-h-0 flex-1 overflow-auto focus:outline-none"
-              {...tree.getContainerProps('File tree')}
               tabIndex={0}
             >
               <div
@@ -525,7 +515,7 @@ export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(
                         isFocused={isFocused}
                         isLoading={isLoading}
                         onClick={() =>
-                          handleItemClick(itemId, isFolder, isExpanded)
+                          handleItemClick(itemId, isFolder)
                         }
                       />
                     </div>

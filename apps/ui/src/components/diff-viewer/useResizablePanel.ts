@@ -9,6 +9,8 @@ interface UseResizablePanelOptions {
   minWidth: number
   /** Maximum width in pixels */
   maxWidth: number
+  /** When true, dragging left increases width (for panels with handles on their left edge) */
+  invertDelta?: boolean
 }
 
 interface UseResizablePanelResult {
@@ -40,6 +42,7 @@ export function useResizablePanel({
   defaultWidth,
   minWidth,
   maxWidth,
+  invertDelta = false,
 }: UseResizablePanelOptions): UseResizablePanelResult {
   const [width, setWidth] = useState(() => {
     if (typeof window === 'undefined') return defaultWidth
@@ -61,6 +64,9 @@ export function useResizablePanel({
 
   // Keep widthRef in sync so the mousedown handler always reads current width
   widthRef.current = width
+
+  const invertRef = useRef(invertDelta)
+  invertRef.current = invertDelta
 
   const persistWidth = useCallback(
     (w: number) => {
@@ -99,7 +105,8 @@ export function useResizablePanel({
 
     const onMouseMove = (e: MouseEvent) => {
       const delta = e.clientX - startXRef.current
-      const newWidth = Math.min(maxWidth, Math.max(minWidth, startWidthRef.current + delta))
+      const adjustedDelta = invertRef.current ? -delta : delta
+      const newWidth = Math.min(maxWidth, Math.max(minWidth, startWidthRef.current + adjustedDelta))
       setWidth(newWidth)
     }
 

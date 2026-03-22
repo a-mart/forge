@@ -3,6 +3,7 @@ import { FolderOpen, GitBranch, RefreshCw, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
+import { useResizablePanel } from '@/components/diff-viewer/useResizablePanel'
 import { FileTree } from './FileTree'
 import type { FileTreeHandle } from './FileTree'
 import {
@@ -50,23 +51,47 @@ export function FileBrowserSidebar({
     fileTreeRef.current?.refresh()
   }, [])
 
+  const { width: sidebarWidth, isDragging: isSidebarDragging, handleRef: sidebarHandleRef } = useResizablePanel({
+    storageKey: 'forge-file-sidebar-width',
+    defaultWidth: 300,
+    minWidth: 200,
+    maxWidth: 500,
+    invertDelta: true,
+  })
+
   const repoName = rootList.data?.repoName ?? null
   const branch = rootList.data?.branch ?? null
   const isRefreshing = rootList.isLoading
 
   return (
-    <div
-      className={cn(
-        'flex h-full shrink-0 flex-col border-l border-border/80 bg-card/50',
-        'transition-[width,opacity] duration-200 ease-out',
-        isOpen
-          ? 'max-md:fixed max-md:inset-0 max-md:z-40 max-md:w-full max-md:border-l-0 md:w-[300px] md:opacity-100'
-          : 'w-0 opacity-0 overflow-hidden max-md:hidden',
-        isOpen && 'opacity-100',
+    <>
+      {/* Drag handle (left edge) */}
+      {isOpen && (
+        <div
+          ref={sidebarHandleRef}
+          className={cn(
+            'group relative h-full shrink-0 cursor-col-resize transition-colors',
+            isSidebarDragging ? 'bg-primary/40' : 'bg-transparent hover:bg-border',
+          )}
+          style={{ width: 6 }}
+        >
+          <div className="absolute left-1/2 top-1/2 h-8 w-0.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-foreground/0 transition-colors group-hover:bg-foreground/25" />
+        </div>
       )}
-      aria-label="File browser"
-      aria-hidden={!isOpen}
-    >
+
+      <div
+        className={cn(
+          'flex h-full shrink-0 flex-col border-l border-border/80 bg-card/50',
+          'transition-opacity duration-200 ease-out',
+          isOpen
+            ? 'max-md:fixed max-md:inset-0 max-md:z-40 max-md:w-full max-md:border-l-0 md:opacity-100'
+            : 'w-0 opacity-0 overflow-hidden max-md:hidden',
+          isOpen && 'opacity-100',
+        )}
+        style={isOpen ? { width: sidebarWidth } : undefined}
+        aria-label="File browser"
+        aria-hidden={!isOpen}
+      >
       {/* Header */}
       <div className="flex h-[62px] shrink-0 items-center gap-2 border-b border-border/80 px-3">
         <div className="flex min-w-0 flex-1 items-center gap-2">
@@ -155,5 +180,6 @@ export function FileBrowserSidebar({
         ) : null}
       </div>
     </div>
+    </>
   )
 }

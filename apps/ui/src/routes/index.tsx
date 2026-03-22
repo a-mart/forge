@@ -1078,6 +1078,15 @@ export function IndexPage() {
                   onArtifactClick={handleOpenArtifact}
                 />
               )}
+              {isFileBrowserOpen && selectedFileBrowserFile ? (
+                <FileBrowserPanel
+                  wsUrl={wsUrl}
+                  agentId={activeAgentId}
+                  filePath={selectedFileBrowserFile}
+                  onClose={handleFileBrowserClosePanel}
+                  onNavigateToDirectory={handleFileBrowserNavigateToDirectory}
+                />
+              ) : null}
               <FileBrowserSidebar
                 wsUrl={wsUrl}
                 agentId={activeAgentId}
@@ -1146,14 +1155,6 @@ export function IndexPage() {
         onOpenChange={setIsDiffViewerOpen}
         wsUrl={wsUrl}
         agentId={activeAgentId}
-      />
-
-      <FileBrowserPanel
-        wsUrl={wsUrl}
-        agentId={activeAgentId}
-        filePath={selectedFileBrowserFile}
-        onClose={handleFileBrowserClosePanel}
-        onNavigateToDirectory={handleFileBrowserNavigateToDirectory}
       />
     </main>
   )
