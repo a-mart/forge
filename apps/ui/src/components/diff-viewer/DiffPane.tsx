@@ -4,6 +4,7 @@ import { FileText, AlertTriangle, Loader2 } from 'lucide-react'
 import { useDiffTheme } from './diff-viewer-theme'
 import { detectLanguage, highlightCode } from '@/lib/syntax-highlight'
 import '@/styles/syntax-highlight.css'
+import './syntax-highlight.css'
 
 interface DiffPaneProps {
   oldContent: string | null
