@@ -22,6 +22,7 @@ import { createChromeCdpRoutes } from "./routes/chrome-cdp-routes.js";
 import { createCortexRoutes } from "./routes/cortex-routes.js";
 import { createFileRoutes } from "./routes/file-routes.js";
 import { createFeedbackRoutes } from "./routes/feedback-routes.js";
+import { createGitDiffRoutes } from "./routes/git-diff-routes.js";
 import { createHealthRoutes } from "./routes/health-routes.js";
 import type { HttpRoute } from "./routes/http-route.js";
 import { createIntegrationRoutes } from "./routes/integration-routes.js";
@@ -198,6 +199,7 @@ export class SwarmWebSocketServer {
         swarmManager: this.swarmManager,
         broadcastEvent: (event) => this.wsHandler.broadcastToSubscribed(event),
       }),
+      ...createGitDiffRoutes({ swarmManager: this.swarmManager }),
       ...createFeedbackRoutes({ swarmManager: this.swarmManager }),
       ...createCortexRoutes({ swarmManager: this.swarmManager }),
       ...createTranscriptionRoutes({ swarmManager: this.swarmManager }),

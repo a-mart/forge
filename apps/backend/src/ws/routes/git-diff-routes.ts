@@ -1,0 +1,161 @@
+import type { SwarmManager } from "../../swarm/swarm-manager.js";
+import { applyCorsHeaders, sendJson } from "../http-utils.js";
+import { GitDiffService } from "./git-diff-service.js";
+import type { HttpRoute } from "./http-route.js";
+
+const SHA_PATTERN = /^[a-f0-9]{4,40}$/i;
+const GIT_GET_METHODS = "GET, OPTIONS";
+const MAX_LOG_LIMIT = 200;
+
+export function createGitDiffRoutes(options: { swarmManager: SwarmManager }): HttpRoute[] {
+  const { swarmManager } = options;
+  const service = new GitDiffService();
+
+  const handleGet = (
+    endpoint: string,
+    handler: (requestUrl: URL) => Promise<unknown>
+  ): HttpRoute => ({
+    methods: GIT_GET_METHODS,
+    matches: (pathname) => pathname === endpoint,
+    handle: async (request, response, requestUrl) => {
+      if (request.method === "OPTIONS") {
+        applyCorsHeaders(request, response, GIT_GET_METHODS);
+        response.statusCode = 204;
+        response.end();
+        return;
+      }
+
+      if (request.method !== "GET") {
+        applyCorsHeaders(request, response, GIT_GET_METHODS);
+        response.setHeader("Allow", GIT_GET_METHODS);
+        sendJson(response, 405, { error: "Method Not Allowed" });
+        return;
+      }
+
+      applyCorsHeaders(request, response, GIT_GET_METHODS);
+
+      try {
+        const payload = await handler(requestUrl);
+        sendJson(response, 200, payload as Record<string, unknown>);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Git request failed.";
+        const statusCode = resolveHttpStatusCode(message);
+        sendJson(response, statusCode, { error: message });
+      }
+    }
+  });
+
+  return [
+    handleGet("/api/git/status", async (requestUrl) => {
+      const agentId = requireNonEmptyQuery(requestUrl.searchParams, "agentId");
+      const cwd = resolveCwdFromAgent(swarmManager, agentId);
+      return service.getStatus(cwd);
+    }),
+    handleGet("/api/git/diff", async (requestUrl) => {
+      const agentId = requireNonEmptyQuery(requestUrl.searchParams, "agentId");
+      const file = requireNonEmptyQuery(requestUrl.searchParams, "file");
+      const cwd = resolveCwdFromAgent(swarmManager, agentId);
+      return service.getFileDiff(cwd, file);
+    }),
+    handleGet("/api/git/log", async (requestUrl) => {
+      const agentId = requireNonEmptyQuery(requestUrl.searchParams, "agentId");
+      const limit = parseNumberParam(requestUrl.searchParams.get("limit"), 50, 1, MAX_LOG_LIMIT, "limit");
+      const offset = parseNumberParam(requestUrl.searchParams.get("offset"), 0, 0, Number.MAX_SAFE_INTEGER, "offset");
+      const cwd = resolveCwdFromAgent(swarmManager, agentId);
+      return service.getLog(cwd, limit, offset);
+    }),
+    handleGet("/api/git/commit", async (requestUrl) => {
+      const agentId = requireNonEmptyQuery(requestUrl.searchParams, "agentId");
+      const sha = requireValidSha(requestUrl.searchParams.get("sha"));
+      const cwd = resolveCwdFromAgent(swarmManager, agentId);
+      return service.getCommitDetail(cwd, sha);
+    }),
+    handleGet("/api/git/commit-diff", async (requestUrl) => {
+      const agentId = requireNonEmptyQuery(requestUrl.searchParams, "agentId");
+      const sha = requireValidSha(requestUrl.searchParams.get("sha"));
+      const file = requireNonEmptyQuery(requestUrl.searchParams, "file");
+      const cwd = resolveCwdFromAgent(swarmManager, agentId);
+      return service.getCommitFileDiff(cwd, sha, file);
+    })
+  ];
+}
+
+function resolveCwdFromAgent(swarmManager: SwarmManager, agentId: string): string {
+  const descriptor = swarmManager.getAgent(agentId);
+  if (!descriptor) {
+    throw new Error(`Unknown agent: ${agentId}`);
+  }
+
+  const effectiveDescriptor = descriptor.profileId
+    ? swarmManager.getAgent(descriptor.profileId) ?? descriptor
+    : descriptor;
+
+  if (!effectiveDescriptor.cwd || effectiveDescriptor.cwd.trim().length === 0) {
+    throw new Error("No CWD configured for this agent");
+  }
+
+  return effectiveDescriptor.cwd;
+}
+
+function requireNonEmptyQuery(searchParams: URLSearchParams, key: string): string {
+  const value = searchParams.get(key);
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`${key} must be a non-empty string.`);
+  }
+
+  return value.trim();
+}
+
+function requireValidSha(rawSha: string | null): string {
+  if (!rawSha || rawSha.trim().length === 0) {
+    throw new Error("sha must be a non-empty string.");
+  }
+
+  const sha = rawSha.trim();
+  if (!SHA_PATTERN.test(sha)) {
+    throw new Error("Invalid sha parameter.");
+  }
+
+  return sha;
+}
+
+function parseNumberParam(
+  rawValue: string | null,
+  fallback: number,
+  min: number,
+  max: number,
+  fieldName: string
+): number {
+  if (rawValue === null || rawValue.trim().length === 0) {
+    return fallback;
+  }
+
+  const parsed = Number.parseInt(rawValue, 10);
+  if (!Number.isFinite(parsed) || parsed < min || parsed > max) {
+    throw new Error(`${fieldName} must be an integer between ${min} and ${max}.`);
+  }
+
+  return parsed;
+}
+
+function resolveHttpStatusCode(message: string): number {
+  const normalized = message.toLowerCase();
+
+  if (
+    normalized.includes("must be") ||
+    normalized.includes("invalid") ||
+    normalized.includes("outside repository") ||
+    normalized.includes("no cwd") ||
+    normalized.includes("not a git repository") ||
+    normalized.includes("git was not found") ||
+    normalized.includes("fatal: bad object")
+  ) {
+    return 400;
+  }
+
+  if (normalized.includes("unknown agent") || normalized.includes("file not found") || normalized.includes("unknown revision")) {
+    return 404;
+  }
+
+  return 500;
+}
