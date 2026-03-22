@@ -4,6 +4,7 @@ import {
   useEffect,
   useImperativeHandle,
   useMemo,
+  useReducer,
   useRef,
   useState,
 } from 'react'
@@ -91,6 +92,11 @@ export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(
     const searchScrollRef = useRef<HTMLDivElement>(null)
     const filterInputRef = useRef<HTMLInputElement>(null)
 
+    // Force re-render counter — works around a React 18+ issue where
+    // headless-tree's internal setState passes the same object reference,
+    // causing React's Object.is bailout to skip re-renders after async loads.
+    const [, forceRender] = useReducer((c: number) => c + 1, 0)
+
     // Deep search hook
     const searchResult = useFileSearch(wsUrl, agentId, searchQuery)
 
@@ -174,6 +180,13 @@ export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(
         name: 'Loading…',
         type: 'file' as const,
       }),
+      // Force React re-render after async data loads.  The headless-tree
+      // library mutates its internal state object in place and passes the
+      // same reference to React's setState, which causes Object.is bailout
+      // in React 18+.  These callbacks queue a useReducer dispatch that
+      // guarantees the component re-renders after data is available.
+      onLoadedChildren: forceRender,
+      onLoadedItem: forceRender,
     })
 
     // Wire search feature to filter input (only when NOT in deep search mode)

@@ -22,7 +22,8 @@ import { ForkSessionDialog } from '@/components/chat/ForkSessionDialog'
 import { MessageInput, type MessageInputHandle } from '@/components/chat/MessageInput'
 import { MessageList, type MessageListHandle } from '@/components/chat/MessageList'
 import { DiffViewerDialog } from '@/components/diff-viewer/DiffViewerDialog'
-import { FileBrowserDialog } from '@/components/file-browser/FileBrowserDialog'
+import { FileBrowserSidebar } from '@/components/file-browser/FileBrowserSidebar'
+import { FileBrowserPanel } from '@/components/file-browser/FileBrowserPanel'
 import { PlaywrightDashboardView } from '@/components/playwright/PlaywrightDashboardView'
 import { SettingsPanel } from '@/components/chat/SettingsDialog'
 import { chooseFallbackAgentId } from '@/lib/agent-hierarchy'
@@ -105,6 +106,7 @@ export function IndexPage() {
   const slashCommandsFetchKeyRef = useRef(0)
   const [isDiffViewerOpen, setIsDiffViewerOpen] = useState(false)
   const [isFileBrowserOpen, setIsFileBrowserOpen] = useState(false)
+  const [selectedFileBrowserFile, setSelectedFileBrowserFile] = useState<string | null>(null)
 
   const activeAgentId = useMemo(() => {
     return state.targetAgentId ?? state.subscribedAgentId ?? chooseFallbackAgentId(state.agents)
@@ -328,6 +330,8 @@ export function IndexPage() {
   useEffect(() => {
     setActiveArtifact(null)
     setIsArtifactsPanelOpen(false)
+    setIsFileBrowserOpen(false)
+    setSelectedFileBrowserFile(null)
     setIsMobileSidebarOpen(false)
   }, [activeAgentId])
 
@@ -366,27 +370,6 @@ export function IndexPage() {
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'D' || e.key === 'd')) {
         e.preventDefault()
         setIsDiffViewerOpen((prev) => !prev)
-      }
-    }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
-  }, [])
-
-  // Keyboard shortcut: ⌘⇧E / Ctrl+Shift+E to toggle file browser
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement | null
-      if (
-        target?.tagName === 'INPUT' ||
-        target?.tagName === 'TEXTAREA' ||
-        target?.tagName === 'SELECT' ||
-        target?.isContentEditable
-      ) {
-        return
-      }
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'E' || e.key === 'e')) {
-        e.preventDefault()
-        setIsFileBrowserOpen((prev) => !prev)
       }
     }
     window.addEventListener('keydown', handler)
@@ -814,7 +797,60 @@ export function IndexPage() {
   }
 
   const handleToggleArtifactsPanel = useCallback(() => {
-    setIsArtifactsPanelOpen((previous) => !previous)
+    setIsArtifactsPanelOpen((previous) => {
+      if (!previous) {
+        // Opening artifacts → close file browser sidebar
+        setIsFileBrowserOpen(false)
+        setSelectedFileBrowserFile(null)
+      }
+      return !previous
+    })
+  }, [])
+
+  const handleToggleFileBrowser = useCallback(() => {
+    setIsFileBrowserOpen((previous) => {
+      if (!previous) {
+        // Opening file browser → close artifacts sidebar
+        setIsArtifactsPanelOpen(false)
+      } else {
+        // Closing file browser → also close file panel
+        setSelectedFileBrowserFile(null)
+      }
+      return !previous
+    })
+  }, [])
+
+  // Keyboard shortcut: ⌘⇧E / Ctrl+Shift+E to toggle file browser sidebar
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null
+      if (
+        target?.tagName === 'INPUT' ||
+        target?.tagName === 'TEXTAREA' ||
+        target?.tagName === 'SELECT' ||
+        target?.isContentEditable
+      ) {
+        return
+      }
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'E' || e.key === 'e')) {
+        e.preventDefault()
+        handleToggleFileBrowser()
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [handleToggleFileBrowser])
+
+  const handleFileBrowserSelectFile = useCallback((path: string) => {
+    setSelectedFileBrowserFile(path)
+  }, [])
+
+  const handleFileBrowserClosePanel = useCallback(() => {
+    setSelectedFileBrowserFile(null)
+  }, [])
+
+  const handleFileBrowserNavigateToDirectory = useCallback((_dirPath: string) => {
+    setSelectedFileBrowserFile(null)
   }, [])
 
   const handleOpenArtifact = useCallback((artifact: ArtifactReference) => {
@@ -935,7 +971,8 @@ export function IndexPage() {
                   isArtifactsPanelOpen={isArtifactsPanelOpen}
                   onToggleArtifactsPanel={handleToggleArtifactsPanel}
                   onOpenDiffViewer={() => setIsDiffViewerOpen(true)}
-                  onOpenFileBrowser={() => setIsFileBrowserOpen(true)}
+                  isFileBrowserOpen={isFileBrowserOpen}
+                  onToggleFileBrowser={handleToggleFileBrowser}
                   onToggleMobileSidebar={() =>
                     setIsMobileSidebarOpen((previous) => !previous)
                   }
@@ -1020,26 +1057,36 @@ export function IndexPage() {
           </div>
 
           {activeView === 'chat' ? (
-            activeAgent?.archetypeId === 'cortex' ? (
-              <CortexDashboardPanel
+            <>
+              {activeAgent?.archetypeId === 'cortex' ? (
+                <CortexDashboardPanel
+                  wsUrl={wsUrl}
+                  managerId={activeManagerId}
+                  isOpen={isArtifactsPanelOpen}
+                  onClose={() => setIsArtifactsPanelOpen(false)}
+                  onArtifactClick={handleOpenArtifact}
+                  onOpenSession={handleSelectAgent}
+                  requestedTab={cortexDashboardTabRequest}
+                />
+              ) : (
+                <ArtifactsSidebar
+                  wsUrl={wsUrl}
+                  managerId={activeManagerId}
+                  artifacts={collectedArtifacts}
+                  isOpen={isArtifactsPanelOpen}
+                  onClose={() => setIsArtifactsPanelOpen(false)}
+                  onArtifactClick={handleOpenArtifact}
+                />
+              )}
+              <FileBrowserSidebar
                 wsUrl={wsUrl}
-                managerId={activeManagerId}
-                isOpen={isArtifactsPanelOpen}
-                onClose={() => setIsArtifactsPanelOpen(false)}
-                onArtifactClick={handleOpenArtifact}
-                onOpenSession={handleSelectAgent}
-                requestedTab={cortexDashboardTabRequest}
+                agentId={activeAgentId}
+                isOpen={isFileBrowserOpen}
+                onClose={handleToggleFileBrowser}
+                onSelectFile={handleFileBrowserSelectFile}
+                selectedFile={selectedFileBrowserFile}
               />
-            ) : (
-              <ArtifactsSidebar
-                wsUrl={wsUrl}
-                managerId={activeManagerId}
-                artifacts={collectedArtifacts}
-                isOpen={isArtifactsPanelOpen}
-                onClose={() => setIsArtifactsPanelOpen(false)}
-                onArtifactClick={handleOpenArtifact}
-              />
-            )
+            </>
           ) : null}
         </div>
       </div>
@@ -1101,11 +1148,12 @@ export function IndexPage() {
         agentId={activeAgentId}
       />
 
-      <FileBrowserDialog
-        open={isFileBrowserOpen}
-        onOpenChange={setIsFileBrowserOpen}
+      <FileBrowserPanel
         wsUrl={wsUrl}
         agentId={activeAgentId}
+        filePath={selectedFileBrowserFile}
+        onClose={handleFileBrowserClosePanel}
+        onNavigateToDirectory={handleFileBrowserNavigateToDirectory}
       />
     </main>
   )

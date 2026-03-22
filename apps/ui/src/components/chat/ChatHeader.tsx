@@ -45,7 +45,8 @@ interface ChatHeaderProps {
   onToggleArtifactsPanel: () => void
   onOpenDiffViewer?: () => void
   diffViewerAvailable?: boolean
-  onOpenFileBrowser?: () => void
+  isFileBrowserOpen?: boolean
+  onToggleFileBrowser?: () => void
   fileBrowserAvailable?: boolean
   onToggleMobileSidebar?: () => void
   sessionFeedbackVote?: 'up' | 'down' | null
@@ -138,7 +139,8 @@ export function ChatHeader({
   onToggleArtifactsPanel,
   onOpenDiffViewer,
   diffViewerAvailable = true,
-  onOpenFileBrowser,
+  isFileBrowserOpen = false,
+  onToggleFileBrowser,
   fileBrowserAvailable = true,
   onToggleMobileSidebar,
   sessionFeedbackVote,
@@ -355,22 +357,28 @@ export function ChatHeader({
 
         {/* ── Inline: file browser + diff viewer + artifacts/dashboard toggle ── */}
         <div className="inline-flex items-center gap-0.5">
-          {onOpenFileBrowser && fileBrowserAvailable ? (
+          {onToggleFileBrowser && fileBrowserAvailable ? (
             <TooltipProvider delayDuration={200}>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="size-7 shrink-0 text-muted-foreground transition-colors hover:bg-accent/70 hover:text-foreground"
-                    onClick={onOpenFileBrowser}
-                    aria-label="Browse Files (⌘⇧E)"
+                    className={cn(
+                      'size-7 shrink-0 transition-colors',
+                      isFileBrowserOpen
+                        ? 'bg-accent text-foreground'
+                        : 'text-muted-foreground hover:bg-accent/70 hover:text-foreground',
+                    )}
+                    onClick={onToggleFileBrowser}
+                    aria-label={isFileBrowserOpen ? 'Close file browser' : 'Browse Files'}
+                    aria-pressed={isFileBrowserOpen}
                   >
                     <FolderOpen className="size-3.5" />
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent side="bottom" sideOffset={6}>
-                  Browse Files (⌘⇧E)
+                  {isFileBrowserOpen ? 'Close file browser' : 'Browse Files'}
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
