@@ -5,32 +5,32 @@
  */
 
 /* ── Thin, subtle scrollbars for the diff viewer ─────── */
-.diff-viewer ::-webkit-scrollbar {
+.diff-viewer *::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
-.diff-viewer ::-webkit-scrollbar-track {
+.diff-viewer *::-webkit-scrollbar-track {
   background: transparent;
 }
-.diff-viewer ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.15);
+.diff-viewer *::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
   border-radius: 4px;
 }
-.diff-viewer ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.25);
+.diff-viewer *::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.22);
 }
 /* Firefox scrollbar styling */
 .diff-viewer * {
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+  scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
 }
 /* Light theme */
-:root:not(.dark) .diff-viewer ::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.15);
+:root:not(.dark) .diff-viewer *::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.12);
 }
-:root:not(.dark) .diff-viewer ::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.25);
+:root:not(.dark) .diff-viewer *::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.22);
 }
 :root:not(.dark) .diff-viewer * {
-  scrollbar-color: rgba(0, 0, 0, 0.15) transparent;
+  scrollbar-color: rgba(0, 0, 0, 0.12) transparent;
 }
