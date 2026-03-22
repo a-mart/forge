@@ -1282,6 +1282,32 @@ describe('ManagerWsClient', () => {
     })
     expect(refetchPayload.requestId).not.toBe(initialFetchPayload.requestId)
 
+    // Simulate the agents_snapshot that the backend emits when a new worker spawns,
+    // updating the manager's advertised workerCount to match the actual worker count.
+    emitServerEvent(socket, {
+      type: 'agents_snapshot',
+      agents: [
+        {
+          agentId: 'manager',
+          managerId: 'manager',
+          displayName: 'Manager',
+          role: 'manager',
+          status: 'idle',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+          cwd: '/tmp',
+          workerCount: 2,
+          activeWorkerCount: 1,
+          model: {
+            provider: 'openai-codex',
+            modelId: 'gpt-5.3-codex',
+            thinkingLevel: 'medium',
+          },
+          sessionFile: '/tmp/manager.jsonl',
+        },
+      ],
+    })
+
     emitServerEvent(socket, {
       type: 'session_workers_snapshot',
       sessionAgentId: 'manager',

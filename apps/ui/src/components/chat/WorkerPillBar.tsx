@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import {
   Popover,
   PopoverContent,
@@ -27,7 +27,9 @@ interface WorkerPillBarProps {
 interface PillEntry {
   worker: AgentDescriptor
   status: AgentStatus
-  /** Epoch ms when the timer should freeze (worker left streaming). undefined = still counting. */
+  /** Epoch ms when this streaming run started (used for live timer). */
+  streamingStartMs: number
+  /** Frozen elapsed ms when worker left streaming. undefined = still counting. */
   frozenElapsedMs?: number
   /** Whether this entry is in its exit fade-out period */
   exiting: boolean
@@ -55,60 +57,91 @@ function getWorkerStatus(
   return statuses[worker.agentId]?.status ?? worker.status
 }
 
+/**
+ * Pre-filter activity messages into a Map keyed by worker agentId.
+ * agent_message entries are indexed by both fromAgentId and toAgentId.
+ */
+function buildActivityByWorker(
+  activityMessages: AgentActivityEntry[],
+): Map<string, AgentActivityEntry[]> {
+  const map = new Map<string, AgentActivityEntry[]>()
+
+  function push(id: string, entry: AgentActivityEntry) {
+    let arr = map.get(id)
+    if (!arr) {
+      arr = []
+      map.set(id, arr)
+    }
+    arr.push(entry)
+  }
+
+  for (const entry of activityMessages) {
+    if (entry.type === 'agent_tool_call') {
+      push(entry.actorAgentId, entry)
+    } else if (entry.type === 'agent_message') {
+      if (entry.fromAgentId) {
+        push(entry.fromAgentId, entry)
+      }
+      // Also index by toAgentId if different from fromAgentId
+      if (entry.toAgentId && entry.toAgentId !== entry.fromAgentId) {
+        push(entry.toAgentId, entry)
+      }
+    }
+  }
+
+  return map
+}
+
 // ─── Pill Component ───────────────────────────────────────────────────────────
 
+/** Debounce delay before removing a pill after a worker stops streaming (ms). */
 const REMOVE_DELAY_MS = 500
 
 const WorkerPill = memo(function WorkerPill({
   entry,
   tick,
-  activityMessages,
+  activityByWorkerRef,
   onNavigateToWorker,
 }: {
   entry: PillEntry
   tick: number
-  activityMessages: AgentActivityEntry[]
+  activityByWorkerRef: RefObject<Map<string, AgentActivityEntry[]>>
   onNavigateToWorker: (agentId: string) => void
 }) {
   const [popoverOpen, setPopoverOpen] = useState(false)
   const { worker, status, frozenElapsedMs, exiting } = entry
 
-  // Compute elapsed time
+  // Fix #8: Close popover gracefully when pill enters exit state
+  useEffect(() => {
+    if (exiting && popoverOpen) {
+      setPopoverOpen(false)
+    }
+  }, [exiting, popoverOpen])
+
+  // Compute elapsed time — driven by shared tick counter
   const elapsedMs = useMemo(() => {
     if (frozenElapsedMs !== undefined) return frozenElapsedMs
-    const createdEpoch = Date.parse(worker.createdAt)
-    if (!Number.isFinite(createdEpoch)) return 0
-    return Date.now() - createdEpoch
+    return Date.now() - entry.streamingStartMs
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [frozenElapsedMs, worker.createdAt, tick])
+  }, [frozenElapsedMs, entry.streamingStartMs, tick])
 
   const elapsedLabel = formatElapsed(elapsedMs)
 
-  // Filter activity messages for this worker
-  const workerActivity = useMemo(() => {
-    return activityMessages
-      .filter((entry) => {
-        if (entry.type === 'agent_tool_call') {
-          return entry.actorAgentId === worker.agentId
-        }
-        if (entry.type === 'agent_message') {
-          return entry.fromAgentId === worker.agentId || entry.toAgentId === worker.agentId
-        }
-        return false
-      })
-      .slice(-8)
-  }, [activityMessages, worker.agentId])
+  // Read activity from ref (avoids new array refs destabilising memo)
+  const workerActivity = activityByWorkerRef.current?.get(worker.agentId) ?? EMPTY_ACTIVITY
+
+  // Take last 8 entries for quick-look
+  const recentActivity = workerActivity.slice(-8)
 
   // Latest tool call summary for tooltip
-  const latestToolSummary = useMemo(() => {
-    for (let i = workerActivity.length - 1; i >= 0; i--) {
-      const entry = workerActivity[i]
-      if (entry.type === 'agent_tool_call' && entry.toolName) {
-        return entry.toolName
-      }
+  let latestToolSummary: string | null = null
+  for (let i = workerActivity.length - 1; i >= 0; i--) {
+    const act = workerActivity[i]
+    if (act.type === 'agent_tool_call' && act.toolName) {
+      latestToolSummary = act.toolName
+      break
     }
-    return null
-  }, [workerActivity])
+  }
 
   const modelLabel = worker.model?.modelId ?? 'unknown'
   const statusText = status === 'streaming' ? 'Working' : status === 'idle' ? 'Idle' : status
@@ -126,60 +159,59 @@ const WorkerPill = memo(function WorkerPill({
 
   return (
     <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
-      <TooltipProvider delayDuration={400}>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <PopoverTrigger asChild>
-              <button
-                type="button"
-                className={cn(
-                  'group inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium transition-all duration-200',
-                  'bg-emerald-500/10 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300',
-                  'hover:bg-emerald-500/20 dark:hover:bg-emerald-500/25',
-                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60',
-                  exiting && 'opacity-0',
-                )}
-              >
-                {/* Pulsing dot */}
-                <span className="relative flex size-2">
-                  <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-500 opacity-60" />
-                  <span className="relative inline-flex size-2 rounded-full bg-emerald-500" />
-                </span>
+      {/* Fix #3: Suppress tooltip while popover is open */}
+      <Tooltip open={popoverOpen ? false : undefined}>
+        <TooltipTrigger asChild>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              className={cn(
+                'group inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium transition-all duration-500',
+                'bg-emerald-500/10 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300',
+                'hover:bg-emerald-500/20 dark:hover:bg-emerald-500/25',
+                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60',
+                exiting && 'opacity-0',
+              )}
+            >
+              {/* Fix #4: Subtle pulse instead of aggressive ping */}
+              <span className="relative inline-flex size-2 animate-pulse rounded-full bg-emerald-500" />
 
-                {/* Worker name */}
-                <span className="truncate">{truncatedName}</span>
+              {/* Worker name */}
+              <span className="truncate">{truncatedName}</span>
 
-                {/* Elapsed timer */}
-                <span className="tabular-nums text-emerald-600/60 dark:text-emerald-400/60">
-                  {elapsedLabel}
-                </span>
-              </button>
-            </PopoverTrigger>
-          </TooltipTrigger>
+              {/* Elapsed timer */}
+              <span className="tabular-nums text-emerald-600/60 dark:text-emerald-400/60">
+                {elapsedLabel}
+              </span>
+            </button>
+          </PopoverTrigger>
+        </TooltipTrigger>
 
-          <TooltipContent side="top" sideOffset={6}>
-            <div className="space-y-0.5 text-xs">
-              <div className="font-medium">{worker.displayName ?? worker.agentId}</div>
-              <div className="opacity-80">{modelLabel}</div>
-              <div className="opacity-80">
-                {statusText}
-                {latestToolSummary ? ` · ${latestToolSummary}` : ''}
-              </div>
+        <TooltipContent side="top" sideOffset={6}>
+          <div className="space-y-0.5 text-xs">
+            <div className="font-medium">{worker.displayName ?? worker.agentId}</div>
+            <div className="opacity-80">{modelLabel}</div>
+            <div className="opacity-80">
+              {statusText}
+              {latestToolSummary ? ` · ${latestToolSummary}` : ''}
             </div>
-          </TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
+          </div>
+        </TooltipContent>
+      </Tooltip>
 
+      {/* Fix #1: Larger popover for desktop */}
       <PopoverContent
         side="top"
         sideOffset={8}
         align="start"
-        className="w-96 max-w-[calc(100vw-2rem)] p-0"
+        collisionPadding={16}
+        className="flex w-[min(48rem,_66vw)] max-w-[calc(100vw-2rem)] flex-col overflow-hidden p-0"
+        style={{ maxHeight: 'var(--radix-popper-available-height, 80vh)' }}
       >
         <WorkerQuickLook
           worker={worker}
           status={status}
-          recentActivity={workerActivity}
+          recentActivity={recentActivity}
           onViewFullConversation={handleViewConversation}
         />
       </PopoverContent>
@@ -199,6 +231,8 @@ export const WorkerPillBar = memo(function WorkerPillBar({
   const pillEntriesRef = useRef<Map<string, PillEntry>>(new Map())
   const exitTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
   const [, forceRender] = useState(0)
+  // Track whether we've ever had pills (for exit animation)
+  const hasEverHadPillsRef = useRef(false)
 
   // Derive which workers are currently streaming
   const streamingWorkerIds = useMemo(() => {
@@ -218,7 +252,18 @@ export const WorkerPillBar = memo(function WorkerPillBar({
     return map
   }, [workers])
 
-  // Reconcile pill entries: add new streaming workers, mark exiting ones
+  // Fix #7: Pre-filter activity messages by worker ID (O(M) once, not O(N×M) per tick)
+  // Store in a ref so pill components can read it without a prop change triggering re-render
+  const activityByWorkerRef = useRef<Map<string, AgentActivityEntry[]>>(new Map())
+  activityByWorkerRef.current = useMemo(
+    () => buildActivityByWorker(activityMessages),
+    [activityMessages],
+  )
+
+  // Reconcile pill entries: add new streaming workers, mark exiting ones.
+  // Note: This mutates pillEntriesRef.current (a Map in a ref) then triggers forceRender.
+  // Under StrictMode's double-execution, the idempotent Map.set() calls are safe,
+  // and exit timers are cleared before re-scheduling so no duplicates occur.
   useEffect(() => {
     const current = pillEntriesRef.current
     let changed = false
@@ -234,6 +279,7 @@ export const WorkerPillBar = memo(function WorkerPillBar({
         current.set(id, {
           worker,
           status: 'streaming',
+          streamingStartMs: Date.now(),
           exiting: false,
         })
         // Cancel any pending exit timer
@@ -244,9 +290,10 @@ export const WorkerPillBar = memo(function WorkerPillBar({
         }
         changed = true
       } else if (existing.exiting) {
-        // Worker came back to streaming — cancel exit
+        // Worker came back to streaming — reset timer for new run
         existing.exiting = false
         existing.frozenElapsedMs = undefined
+        existing.streamingStartMs = Date.now()
         existing.status = 'streaming'
         existing.worker = worker
         const timer = exitTimersRef.current.get(id)
@@ -267,11 +314,16 @@ export const WorkerPillBar = memo(function WorkerPillBar({
       if (!streamingWorkerIds.has(id) && !entry.exiting) {
         entry.exiting = true
         entry.status = getWorkerStatus(entry.worker, statuses)
-        // Freeze the timer
-        const createdEpoch = Date.parse(entry.worker.createdAt)
-        entry.frozenElapsedMs = Number.isFinite(createdEpoch) ? Date.now() - createdEpoch : 0
+        // Freeze the timer at current run duration
+        entry.frozenElapsedMs = Date.now() - entry.streamingStartMs
 
-        // Schedule removal
+        // Clear any existing timer for this ID before scheduling a new one
+        const existingTimer = exitTimersRef.current.get(id)
+        if (existingTimer) {
+          clearTimeout(existingTimer)
+        }
+
+        // Schedule removal after fade-out completes
         const timer = setTimeout(() => {
           current.delete(id)
           exitTimersRef.current.delete(id)
@@ -300,6 +352,10 @@ export const WorkerPillBar = memo(function WorkerPillBar({
   const pillEntries = Array.from(pillEntriesRef.current.values())
   const hasActivePills = pillEntries.some((e) => !e.exiting)
 
+  if (pillEntries.length > 0) {
+    hasEverHadPillsRef.current = true
+  }
+
   useEffect(() => {
     if (!hasActivePills) return
     const interval = setInterval(() => {
@@ -308,28 +364,45 @@ export const WorkerPillBar = memo(function WorkerPillBar({
     return () => clearInterval(interval)
   }, [hasActivePills])
 
-  if (pillEntries.length === 0) return null
+  // Fix #6: Don't unmount before exit animation completes.
+  // Render with grid-rows-[0fr] (collapsed) when empty, grid-rows-[1fr] when pills exist.
+  // Only fully bail if we've never had any pills at all.
+  if (!hasEverHadPillsRef.current && pillEntries.length === 0) return null
+
+  const isExpanded = pillEntries.length > 0
 
   return (
     <div
       className={cn(
         'grid transition-[grid-template-rows] duration-200 ease-out',
-        pillEntries.length > 0 ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]',
+        isExpanded ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]',
       )}
+      onTransitionEnd={() => {
+        // After collapse animation finishes, reset so the component can unmount cleanly
+        if (pillEntries.length === 0) {
+          hasEverHadPillsRef.current = false
+          forceRender((n) => n + 1)
+        }
+      }}
     >
       <div className="overflow-hidden">
-        <div className="flex items-center gap-1.5 overflow-x-auto border-t border-border/40 bg-background px-2 py-1.5 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
-          {pillEntries.map((entry) => (
-            <WorkerPill
-              key={entry.worker.agentId}
-              entry={entry}
-              tick={tick}
-              activityMessages={activityMessages}
-              onNavigateToWorker={onNavigateToWorker}
-            />
-          ))}
-        </div>
+        {/* Fix #15: Single TooltipProvider for all pills */}
+        <TooltipProvider delayDuration={400}>
+          <div className="flex items-center gap-1.5 overflow-x-auto border-t border-border/40 bg-background px-2 py-1.5 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+            {pillEntries.map((entry) => (
+              <WorkerPill
+                key={entry.worker.agentId}
+                entry={entry}
+                tick={tick}
+                activityByWorkerRef={activityByWorkerRef}
+                onNavigateToWorker={onNavigateToWorker}
+              />
+            ))}
+          </div>
+        </TooltipProvider>
       </div>
     </div>
   )
 })
+
+const EMPTY_ACTIVITY: AgentActivityEntry[] = []

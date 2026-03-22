@@ -21,6 +21,7 @@ import { DeleteManagerDialog } from '@/components/chat/DeleteManagerDialog'
 import { ForkSessionDialog } from '@/components/chat/ForkSessionDialog'
 import { MessageInput, type MessageInputHandle } from '@/components/chat/MessageInput'
 import { MessageList, type MessageListHandle } from '@/components/chat/MessageList'
+import { WorkerBackBar } from '@/components/chat/WorkerBackBar'
 import { WorkerPillBar } from '@/components/chat/WorkerPillBar'
 import { DiffViewerDialog } from '@/components/diff-viewer/DiffViewerDialog'
 import { FileBrowserSidebar } from '@/components/file-browser/FileBrowserSidebar'
@@ -190,6 +191,20 @@ export function IndexPage() {
     if (!isActiveManager || !activeManagerId || !clientRef.current) return
     void clientRef.current.getSessionWorkers(activeManagerId).catch(() => {})
   }, [isActiveManager, activeManagerId, clientRef])
+
+  // Resolve parent manager label for the worker back-bar
+  const parentManagerLabel = useMemo(() => {
+    if (activeAgent?.role !== 'worker' || !activeAgent.managerId) return null
+    const manager = state.agents.find((a) => a.agentId === activeAgent.managerId)
+    if (!manager) return activeAgent.managerId
+    // Prefer "Profile › Session" format matching activeAgentLabel logic
+    if (manager.profileId && manager.sessionLabel) {
+      const profile = state.profiles.find((p) => p.profileId === manager.profileId)
+      const profileName = profile?.displayName ?? manager.profileId
+      return `${profileName} › ${manager.sessionLabel}`
+    }
+    return manager.displayName ?? manager.agentId
+  }, [activeAgent, state.agents, state.profiles])
 
   // For settings, only show profile-level managers (default sessions or legacy managers without profileId)
   const settingsManagers = useMemo(() => {
@@ -1059,6 +1074,11 @@ export function IndexPage() {
                         statuses={state.statuses}
                         activityMessages={state.activityMessages}
                         onNavigateToWorker={handleSelectAgent}
+                      />
+                    ) : activeAgent?.role === 'worker' && activeAgent.managerId && parentManagerLabel ? (
+                      <WorkerBackBar
+                        managerLabel={parentManagerLabel}
+                        onNavigateBack={() => handleSelectAgent(activeAgent.managerId)}
                       />
                     ) : null}
 

@@ -598,9 +598,24 @@ export class ManagerWsClient {
     }
 
     if (this.state.loadedSessionIds.has(trimmed)) {
-      return {
-        sessionAgentId: trimmed,
-        workers: this.state.agents.filter((agent) => agent.role === 'worker' && agent.managerId === trimmed),
+      // Validate cache: if the manager's advertised workerCount doesn't match
+      // the number of cached workers, the cache is stale — bypass and re-fetch.
+      const cachedWorkers = this.state.agents.filter(
+        (agent) => agent.role === 'worker' && agent.managerId === trimmed,
+      )
+      const manager = this.state.agents.find(
+        (agent) => agent.role === 'manager' && agent.agentId === trimmed,
+      )
+      if (manager?.workerCount !== undefined && cachedWorkers.length !== manager.workerCount) {
+        const nextLoadedSessionIds = new Set(this.state.loadedSessionIds)
+        nextLoadedSessionIds.delete(trimmed)
+        this.updateState({ loadedSessionIds: nextLoadedSessionIds })
+        // Fall through to fetch fresh data below
+      } else {
+        return {
+          sessionAgentId: trimmed,
+          workers: cachedWorkers,
+        }
       }
     }
 
@@ -1203,6 +1218,19 @@ export class ManagerWsClient {
         sessionAgentId,
         workers,
       })
+    }
+
+    // Post-load consistency check: if the manager's advertised workerCount
+    // doesn't match the loaded count, the snapshot is stale (e.g., workers
+    // spawned between the request and response). Invalidate and re-fetch.
+    const managerDescriptor = this.state.agents.find(
+      (a) => a.role === 'manager' && a.agentId === sessionAgentId,
+    )
+    if (managerDescriptor?.workerCount !== undefined && workers.length !== managerDescriptor.workerCount) {
+      const staleFixupIds = new Set(this.state.loadedSessionIds)
+      staleFixupIds.delete(sessionAgentId)
+      this.updateState({ loadedSessionIds: staleFixupIds })
+      this.queueSessionWorkersRefetch(sessionAgentId)
     }
   }
 

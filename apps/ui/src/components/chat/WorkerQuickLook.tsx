@@ -5,12 +5,14 @@ import { cn } from '@/lib/utils'
 import type { AgentActivityEntry } from '@/lib/ws-state'
 import type { AgentDescriptor, AgentStatus } from '@forge/protocol'
 import { AgentMessageRow } from './message-list/AgentMessageRow'
+import {
+  hydrateToolDisplayEntry,
+  type ToolExecutionEvent,
+} from './message-list/tool-display-utils'
 import { ToolLogRow } from './message-list/ToolLogRow'
 import type {
   AgentMessageEntry,
-  AgentToolCallEntry,
   ToolExecutionDisplayEntry,
-  ToolExecutionLogEntry,
 } from './message-list/types'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -27,8 +29,6 @@ type QuickLookEntry =
   | { type: 'tool_execution'; id: string; entry: ToolExecutionDisplayEntry }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-type ToolExecutionEvent = ToolExecutionLogEntry | AgentToolCallEntry
 
 function buildQuickLookEntries(activities: AgentActivityEntry[]): QuickLookEntry[] {
   const entries: QuickLookEntry[] = []
@@ -82,36 +82,6 @@ function buildQuickLookEntries(activities: AgentActivityEntry[]): QuickLookEntry
   return entries
 }
 
-function hydrateToolDisplayEntry(
-  displayEntry: ToolExecutionDisplayEntry,
-  event: ToolExecutionEvent,
-): void {
-  const actorAgentId =
-    event.type === 'agent_tool_call' ? event.actorAgentId : event.agentId
-  displayEntry.actorAgentId = actorAgentId
-  displayEntry.toolName = event.toolName ?? displayEntry.toolName
-  displayEntry.toolCallId = event.toolCallId ?? displayEntry.toolCallId
-  displayEntry.timestamp = event.timestamp
-  displayEntry.latestKind = event.kind
-
-  if (event.kind === 'tool_execution_start') {
-    displayEntry.inputPayload = event.text
-    displayEntry.latestPayload = event.text
-    displayEntry.outputPayload = undefined
-    displayEntry.isError = false
-    return
-  }
-
-  if (event.kind === 'tool_execution_update') {
-    displayEntry.latestPayload = event.text
-    return
-  }
-
-  displayEntry.outputPayload = event.text
-  displayEntry.latestPayload = event.text
-  displayEntry.isError = event.isError
-}
-
 // ─── Status Dot ───────────────────────────────────────────────────────────────
 
 function StatusDot({ status }: { status: AgentStatus }) {
@@ -154,9 +124,9 @@ export const WorkerQuickLook = memo(function WorkerQuickLook({
             : status
 
   return (
-    <div className="flex flex-col">
+    <div className="flex min-h-0 flex-1 flex-col">
       {/* Header */}
-      <div className="flex items-center gap-2 border-b border-border/50 px-3 py-2">
+      <div className="flex shrink-0 items-center gap-2 border-b border-border/50 px-3 py-2">
         <StatusDot status={status} />
         <span className="min-w-0 flex-1 truncate text-sm font-medium">
           {worker.displayName ?? worker.agentId}
@@ -170,7 +140,7 @@ export const WorkerQuickLook = memo(function WorkerQuickLook({
       </div>
 
       {/* Activity feed */}
-      <div className="max-h-[300px] overflow-y-auto px-2 py-1.5">
+      <div className="min-h-0 flex-1 overflow-y-auto px-2 py-1.5 [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-white/12 hover:[&::-webkit-scrollbar-thumb]:bg-white/22 [scrollbar-color:rgba(255,255,255,0.12)_transparent]">
         {displayEntries.length === 0 ? (
           <p className="py-4 text-center text-xs italic text-muted-foreground">
             No recent activity
@@ -196,7 +166,7 @@ export const WorkerQuickLook = memo(function WorkerQuickLook({
       </div>
 
       {/* Footer */}
-      <div className="border-t border-border/50 px-3 py-1.5">
+      <div className="shrink-0 border-t border-border/50 px-3 py-1.5">
         <Button
           variant="ghost"
           size="sm"

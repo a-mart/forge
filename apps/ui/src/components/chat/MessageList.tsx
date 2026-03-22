@@ -15,12 +15,15 @@ import type { ConversationEntry } from '@forge/protocol'
 import { AgentMessageRow } from './message-list/AgentMessageRow'
 import { ConversationMessageRow } from './message-list/ConversationMessageRow'
 import { EmptyState } from './message-list/EmptyState'
+import {
+  hydrateToolDisplayEntry,
+  isToolExecutionEvent,
+  resolveToolExecutionEventActorAgentId,
+} from './message-list/tool-display-utils'
 import { ToolLogRow } from './message-list/ToolLogRow'
 import type {
   ConversationLogEntry,
   ToolExecutionDisplayEntry,
-  ToolExecutionEvent,
-  ToolExecutionLogEntry,
 } from './message-list/types'
 
 interface MessageListProps {
@@ -89,26 +92,6 @@ function isNearBottom(container: HTMLElement, threshold = AUTO_SCROLL_THRESHOLD_
   return distanceFromBottom <= threshold
 }
 
-function isToolExecutionLog(entry: ConversationLogEntry): entry is ToolExecutionLogEntry {
-  return (
-    entry.kind === 'tool_execution_start' ||
-    entry.kind === 'tool_execution_update' ||
-    entry.kind === 'tool_execution_end'
-  )
-}
-
-function isToolExecutionEvent(entry: ConversationEntry): entry is ToolExecutionEvent {
-  if (entry.type === 'agent_tool_call') {
-    return true
-  }
-
-  return entry.type === 'conversation_log' && isToolExecutionLog(entry)
-}
-
-function resolveToolExecutionEventActorAgentId(event: ToolExecutionEvent): string {
-  return event.type === 'agent_tool_call' ? event.actorAgentId : event.agentId
-}
-
 function resolveConversationMessageTargetId(
   message: Extract<ConversationEntry, { type: 'conversation_message' }>,
 ): string {
@@ -130,34 +113,6 @@ function resolveConversationMessageLegacyTargetId(
   }
 
   return timestampTargetId
-}
-
-function hydrateToolDisplayEntry(
-  displayEntry: ToolExecutionDisplayEntry,
-  event: ToolExecutionEvent,
-): void {
-  displayEntry.actorAgentId = resolveToolExecutionEventActorAgentId(event)
-  displayEntry.toolName = event.toolName ?? displayEntry.toolName
-  displayEntry.toolCallId = event.toolCallId ?? displayEntry.toolCallId
-  displayEntry.timestamp = event.timestamp
-  displayEntry.latestKind = event.kind
-
-  if (event.kind === 'tool_execution_start') {
-    displayEntry.inputPayload = event.text
-    displayEntry.latestPayload = event.text
-    displayEntry.outputPayload = undefined
-    displayEntry.isError = false
-    return
-  }
-
-  if (event.kind === 'tool_execution_update') {
-    displayEntry.latestPayload = event.text
-    return
-  }
-
-  displayEntry.outputPayload = event.text
-  displayEntry.latestPayload = event.text
-  displayEntry.isError = event.isError
 }
 
 function buildDisplayEntries(messages: ConversationEntry[]): DisplayEntry[] {
@@ -347,6 +302,22 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
   const handleScroll = () => {
     updateIsAtBottom()
   }
+
+  // Re-scroll to bottom when the scroll container resizes (e.g. WorkerPillBar
+  // appearing/disappearing changes flex layout) and the user was already at the bottom.
+  useEffect(() => {
+    const container = scrollContainerRef.current
+    if (!container) return
+
+    const observer = new ResizeObserver(() => {
+      if (isAtBottomRef.current) {
+        scrollToBottom('auto')
+      }
+    })
+
+    observer.observe(container)
+    return () => observer.disconnect()
+  }, [scrollToBottom])
 
   useEffect(() => {
     const nextAgentId = activeAgentId ?? null
