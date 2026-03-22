@@ -1,4 +1,4 @@
-import { GitBranch, Loader2, Menu, Minimize2, MoreHorizontal, PanelRight, Sparkles, Square, Trash2 } from 'lucide-react'
+import { FolderOpen, GitBranch, Loader2, Menu, Minimize2, MoreHorizontal, PanelRight, Sparkles, Square, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
@@ -45,6 +45,8 @@ interface ChatHeaderProps {
   onToggleArtifactsPanel: () => void
   onOpenDiffViewer?: () => void
   diffViewerAvailable?: boolean
+  onOpenFileBrowser?: () => void
+  fileBrowserAvailable?: boolean
   onToggleMobileSidebar?: () => void
   sessionFeedbackVote?: 'up' | 'down' | null
   sessionFeedbackHasComment?: boolean
@@ -136,6 +138,8 @@ export function ChatHeader({
   onToggleArtifactsPanel,
   onOpenDiffViewer,
   diffViewerAvailable = true,
+  onOpenFileBrowser,
+  fileBrowserAvailable = true,
   onToggleMobileSidebar,
   sessionFeedbackVote,
   sessionFeedbackHasComment,
@@ -349,8 +353,28 @@ export function ChatHeader({
           </>
         ) : null}
 
-        {/* ── Inline: diff viewer + artifacts/dashboard toggle ── */}
+        {/* ── Inline: file browser + diff viewer + artifacts/dashboard toggle ── */}
         <div className="inline-flex items-center gap-0.5">
+          {onOpenFileBrowser && fileBrowserAvailable ? (
+            <TooltipProvider delayDuration={200}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-7 shrink-0 text-muted-foreground transition-colors hover:bg-accent/70 hover:text-foreground"
+                    onClick={onOpenFileBrowser}
+                    aria-label="Browse Files (⌘⇧E)"
+                  >
+                    <FolderOpen className="size-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" sideOffset={6}>
+                  Browse Files (⌘⇧E)
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          ) : null}
           {onOpenDiffViewer && diffViewerAvailable ? (
             <TooltipProvider delayDuration={200}>
               <Tooltip>

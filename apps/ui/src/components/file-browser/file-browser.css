@@ -1,0 +1,30 @@
+/* ── Thin, subtle scrollbars for the file browser ─────── */
+.file-browser ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.file-browser ::-webkit-scrollbar-track {
+  background: transparent;
+}
+.file-browser ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+}
+.file-browser ::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+/* Firefox scrollbar styling */
+.file-browser * {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+}
+/* Light theme */
+:root:not(.dark) .file-browser ::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+}
+:root:not(.dark) .file-browser ::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.25);
+}
+:root:not(.dark) .file-browser * {
+  scrollbar-color: rgba(0, 0, 0, 0.15) transparent;
+}

@@ -22,6 +22,7 @@ import { ForkSessionDialog } from '@/components/chat/ForkSessionDialog'
 import { MessageInput, type MessageInputHandle } from '@/components/chat/MessageInput'
 import { MessageList, type MessageListHandle } from '@/components/chat/MessageList'
 import { DiffViewerDialog } from '@/components/diff-viewer/DiffViewerDialog'
+import { FileBrowserDialog } from '@/components/file-browser/FileBrowserDialog'
 import { PlaywrightDashboardView } from '@/components/playwright/PlaywrightDashboardView'
 import { SettingsPanel } from '@/components/chat/SettingsDialog'
 import { chooseFallbackAgentId } from '@/lib/agent-hierarchy'
@@ -103,6 +104,7 @@ export function IndexPage() {
   const [slashCommands, setSlashCommands] = useState<SlashCommand[]>([])
   const slashCommandsFetchKeyRef = useRef(0)
   const [isDiffViewerOpen, setIsDiffViewerOpen] = useState(false)
+  const [isFileBrowserOpen, setIsFileBrowserOpen] = useState(false)
 
   const activeAgentId = useMemo(() => {
     return state.targetAgentId ?? state.subscribedAgentId ?? chooseFallbackAgentId(state.agents)
@@ -364,6 +366,27 @@ export function IndexPage() {
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'D' || e.key === 'd')) {
         e.preventDefault()
         setIsDiffViewerOpen((prev) => !prev)
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [])
+
+  // Keyboard shortcut: ⌘⇧E / Ctrl+Shift+E to toggle file browser
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null
+      if (
+        target?.tagName === 'INPUT' ||
+        target?.tagName === 'TEXTAREA' ||
+        target?.tagName === 'SELECT' ||
+        target?.isContentEditable
+      ) {
+        return
+      }
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'E' || e.key === 'e')) {
+        e.preventDefault()
+        setIsFileBrowserOpen((prev) => !prev)
       }
     }
     window.addEventListener('keydown', handler)
@@ -912,6 +935,7 @@ export function IndexPage() {
                   isArtifactsPanelOpen={isArtifactsPanelOpen}
                   onToggleArtifactsPanel={handleToggleArtifactsPanel}
                   onOpenDiffViewer={() => setIsDiffViewerOpen(true)}
+                  onOpenFileBrowser={() => setIsFileBrowserOpen(true)}
                   onToggleMobileSidebar={() =>
                     setIsMobileSidebarOpen((previous) => !previous)
                   }
@@ -1073,6 +1097,13 @@ export function IndexPage() {
       <DiffViewerDialog
         open={isDiffViewerOpen}
         onOpenChange={setIsDiffViewerOpen}
+        wsUrl={wsUrl}
+        agentId={activeAgentId}
+      />
+
+      <FileBrowserDialog
+        open={isFileBrowserOpen}
+        onOpenChange={setIsFileBrowserOpen}
         wsUrl={wsUrl}
         agentId={activeAgentId}
       />
