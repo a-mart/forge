@@ -2,8 +2,8 @@ import { useMemo, type ReactElement } from 'react'
 import ReactDiffViewer, { DiffMethod } from 'react-diff-viewer-continued'
 import { FileText, AlertTriangle, Loader2 } from 'lucide-react'
 import { useDiffTheme } from './diff-viewer-theme'
-import { detectLanguage, highlightCode } from './syntax-highlight'
-import './syntax-highlight.css'
+import { detectLanguage, highlightCode } from '@/lib/syntax-highlight'
+import '@/styles/syntax-highlight.css'
 
 interface DiffPaneProps {
   oldContent: string | null
@@ -117,7 +117,7 @@ export function DiffPane({
   }
 
   return (
-    <div className="diff-viewer-syntax flex h-full flex-col overflow-hidden">
+    <div className="syntax-highlight flex h-full flex-col overflow-hidden">
       <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-border/60 bg-card px-3 py-1.5">
         <span className="font-mono text-xs text-muted-foreground">{fileName}</span>
       </div>
