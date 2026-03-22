@@ -21,6 +21,7 @@ import { DeleteManagerDialog } from '@/components/chat/DeleteManagerDialog'
 import { ForkSessionDialog } from '@/components/chat/ForkSessionDialog'
 import { MessageInput, type MessageInputHandle } from '@/components/chat/MessageInput'
 import { MessageList, type MessageListHandle } from '@/components/chat/MessageList'
+import { DiffViewerDialog } from '@/components/diff-viewer/DiffViewerDialog'
 import { PlaywrightDashboardView } from '@/components/playwright/PlaywrightDashboardView'
 import { SettingsPanel } from '@/components/chat/SettingsDialog'
 import { chooseFallbackAgentId } from '@/lib/agent-hierarchy'
@@ -101,6 +102,7 @@ export function IndexPage() {
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
   const [slashCommands, setSlashCommands] = useState<SlashCommand[]>([])
   const slashCommandsFetchKeyRef = useRef(0)
+  const [isDiffViewerOpen, setIsDiffViewerOpen] = useState(false)
 
   const activeAgentId = useMemo(() => {
     return state.targetAgentId ?? state.subscribedAgentId ?? chooseFallbackAgentId(state.agents)
@@ -355,6 +357,18 @@ export function IndexPage() {
       }
     })()
   }, [wsUrl, activeView])
+
+  // Keyboard shortcut: ⌘⇧D / Ctrl+Shift+D to toggle diff viewer
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'D' || e.key === 'd')) {
+        e.preventDefault()
+        setIsDiffViewerOpen((prev) => !prev)
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [])
 
   useEffect(() => {
     if (!state.lastSuccess) return
@@ -897,6 +911,7 @@ export function IndexPage() {
                   onNewChat={handleNewChat}
                   isArtifactsPanelOpen={isArtifactsPanelOpen}
                   onToggleArtifactsPanel={handleToggleArtifactsPanel}
+                  onOpenDiffViewer={() => setIsDiffViewerOpen(true)}
                   onToggleMobileSidebar={() =>
                     setIsMobileSidebarOpen((previous) => !previous)
                   }
@@ -1054,6 +1069,13 @@ export function IndexPage() {
             : undefined}
         />
       ) : null}
+
+      <DiffViewerDialog
+        open={isDiffViewerOpen}
+        onOpenChange={setIsDiffViewerOpen}
+        wsUrl={wsUrl}
+        agentId={activeAgentId}
+      />
     </main>
   )
 }

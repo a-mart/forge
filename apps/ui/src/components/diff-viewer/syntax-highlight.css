@@ -1,0 +1,224 @@
+/*
+ * Syntax highlighting for the diff viewer.
+ * Uses highlight.js token classes with Forge's dark/light theme system.
+ * Scoped to .diff-viewer-syntax to avoid conflicts with other highlight.js usage.
+ */
+
+/* ── Thin, subtle scrollbars for the diff viewer ─────── */
+.diff-viewer ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.diff-viewer ::-webkit-scrollbar-track {
+  background: transparent;
+}
+.diff-viewer ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+}
+.diff-viewer ::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+/* Firefox scrollbar styling */
+.diff-viewer * {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+}
+/* Light theme */
+:root:not(.dark) .diff-viewer ::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+}
+:root:not(.dark) .diff-viewer ::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.25);
+}
+:root:not(.dark) .diff-viewer * {
+  scrollbar-color: rgba(0, 0, 0, 0.15) transparent;
+}
+
+/* ── Dark theme (default) ─────────────────────────────── */
+.dark .diff-viewer-syntax .hljs-keyword,
+.dark .diff-viewer-syntax .hljs-selector-tag,
+.dark .diff-viewer-syntax .hljs-built_in,
+.dark .diff-viewer-syntax .hljs-type {
+  color: #c678dd;
+}
+
+.dark .diff-viewer-syntax .hljs-literal,
+.dark .diff-viewer-syntax .hljs-number {
+  color: #d19a66;
+}
+
+.dark .diff-viewer-syntax .hljs-string,
+.dark .diff-viewer-syntax .hljs-template-tag,
+.dark .diff-viewer-syntax .hljs-addition {
+  color: #98c379;
+}
+
+.dark .diff-viewer-syntax .hljs-subst,
+.dark .diff-viewer-syntax .hljs-template-variable {
+  color: #e06c75;
+}
+
+.dark .diff-viewer-syntax .hljs-comment,
+.dark .diff-viewer-syntax .hljs-quote {
+  color: #7f848e;
+  font-style: italic;
+}
+
+.dark .diff-viewer-syntax .hljs-meta,
+.dark .diff-viewer-syntax .hljs-meta .hljs-keyword {
+  color: #61afef;
+}
+
+.dark .diff-viewer-syntax .hljs-function,
+.dark .diff-viewer-syntax .hljs-title,
+.dark .diff-viewer-syntax .hljs-title.function_ {
+  color: #61afef;
+}
+
+.dark .diff-viewer-syntax .hljs-attr,
+.dark .diff-viewer-syntax .hljs-attribute {
+  color: #d19a66;
+}
+
+.dark .diff-viewer-syntax .hljs-variable,
+.dark .diff-viewer-syntax .hljs-params {
+  color: #e06c75;
+}
+
+.dark .diff-viewer-syntax .hljs-regexp {
+  color: #56b6c2;
+}
+
+.dark .diff-viewer-syntax .hljs-tag {
+  color: #e06c75;
+}
+
+.dark .diff-viewer-syntax .hljs-name {
+  color: #e06c75;
+}
+
+.dark .diff-viewer-syntax .hljs-selector-id,
+.dark .diff-viewer-syntax .hljs-selector-class {
+  color: #d19a66;
+}
+
+.dark .diff-viewer-syntax .hljs-section,
+.dark .diff-viewer-syntax .hljs-title.class_ {
+  color: #e5c07b;
+}
+
+.dark .diff-viewer-syntax .hljs-deletion {
+  color: #e06c75;
+}
+
+.dark .diff-viewer-syntax .hljs-symbol,
+.dark .diff-viewer-syntax .hljs-bullet {
+  color: #56b6c2;
+}
+
+.dark .diff-viewer-syntax .hljs-property {
+  color: #e06c75;
+}
+
+.dark .diff-viewer-syntax .hljs-operator {
+  color: #56b6c2;
+}
+
+.dark .diff-viewer-syntax .hljs-punctuation {
+  color: #abb2bf;
+}
+
+/* ── Light theme ─────────────────────────────────────── */
+:root:not(.dark) .diff-viewer-syntax .hljs-keyword,
+:root:not(.dark) .diff-viewer-syntax .hljs-selector-tag,
+:root:not(.dark) .diff-viewer-syntax .hljs-built_in,
+:root:not(.dark) .diff-viewer-syntax .hljs-type {
+  color: #a626a4;
+}
+
+:root:not(.dark) .diff-viewer-syntax .hljs-literal,
+:root:not(.dark) .diff-viewer-syntax .hljs-number {
+  color: #986801;
+}
+
+:root:not(.dark) .diff-viewer-syntax .hljs-string,
+:root:not(.dark) .diff-viewer-syntax .hljs-template-tag,
+:root:not(.dark) .diff-viewer-syntax .hljs-addition {
+  color: #50a14f;
+}
+
+:root:not(.dark) .diff-viewer-syntax .hljs-subst,
+:root:not(.dark) .diff-viewer-syntax .hljs-template-variable {
+  color: #e45649;
+}
+
+:root:not(.dark) .diff-viewer-syntax .hljs-comment,
+:root:not(.dark) .diff-viewer-syntax .hljs-quote {
+  color: #a0a1a7;
+  font-style: italic;
+}
+
+:root:not(.dark) .diff-viewer-syntax .hljs-meta,
+:root:not(.dark) .diff-viewer-syntax .hljs-meta .hljs-keyword {
+  color: #4078f2;
+}
+
+:root:not(.dark) .diff-viewer-syntax .hljs-function,
+:root:not(.dark) .diff-viewer-syntax .hljs-title,
+:root:not(.dark) .diff-viewer-syntax .hljs-title.function_ {
+  color: #4078f2;
+}
+
+:root:not(.dark) .diff-viewer-syntax .hljs-attr,
+:root:not(.dark) .diff-viewer-syntax .hljs-attribute {
+  color: #986801;
+}
+
+:root:not(.dark) .diff-viewer-syntax .hljs-variable,
+:root:not(.dark) .diff-viewer-syntax .hljs-params {
+  color: #e45649;
+}
+
+:root:not(.dark) .diff-viewer-syntax .hljs-regexp {
+  color: #0184bc;
+}
+
+:root:not(.dark) .diff-viewer-syntax .hljs-tag {
+  color: #e45649;
+}
+
+:root:not(.dark) .diff-viewer-syntax .hljs-name {
+  color: #e45649;
+}
+
+:root:not(.dark) .diff-viewer-syntax .hljs-selector-id,
+:root:not(.dark) .diff-viewer-syntax .hljs-selector-class {
+  color: #986801;
+}
+
+:root:not(.dark) .diff-viewer-syntax .hljs-section,
+:root:not(.dark) .diff-viewer-syntax .hljs-title.class_ {
+  color: #c18401;
+}
+
+:root:not(.dark) .diff-viewer-syntax .hljs-deletion {
+  color: #e45649;
+}
+
+:root:not(.dark) .diff-viewer-syntax .hljs-symbol,
+:root:not(.dark) .diff-viewer-syntax .hljs-bullet {
+  color: #0184bc;
+}
+
+:root:not(.dark) .diff-viewer-syntax .hljs-property {
+  color: #e45649;
+}
+
+:root:not(.dark) .diff-viewer-syntax .hljs-operator {
+  color: #0184bc;
+}
+
+:root:not(.dark) .diff-viewer-syntax .hljs-punctuation {
+  color: #383a42;
+}

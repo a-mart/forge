@@ -1,4 +1,4 @@
-import { Loader2, Menu, Minimize2, MoreHorizontal, PanelRight, Sparkles, Square, Trash2 } from 'lucide-react'
+import { GitBranch, Loader2, Menu, Minimize2, MoreHorizontal, PanelRight, Sparkles, Square, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
@@ -43,6 +43,8 @@ interface ChatHeaderProps {
   onNewChat: () => void
   isArtifactsPanelOpen: boolean
   onToggleArtifactsPanel: () => void
+  onOpenDiffViewer?: () => void
+  diffViewerAvailable?: boolean
   onToggleMobileSidebar?: () => void
   sessionFeedbackVote?: 'up' | 'down' | null
   sessionFeedbackHasComment?: boolean
@@ -132,6 +134,8 @@ export function ChatHeader({
   onNewChat,
   isArtifactsPanelOpen,
   onToggleArtifactsPanel,
+  onOpenDiffViewer,
+  diffViewerAvailable = true,
   onToggleMobileSidebar,
   sessionFeedbackVote,
   sessionFeedbackHasComment,
@@ -345,8 +349,28 @@ export function ChatHeader({
           </>
         ) : null}
 
-        {/* ── Inline: artifacts/dashboard toggle ── */}
-        <div className="inline-flex">
+        {/* ── Inline: diff viewer + artifacts/dashboard toggle ── */}
+        <div className="inline-flex items-center gap-0.5">
+          {onOpenDiffViewer && diffViewerAvailable ? (
+            <TooltipProvider delayDuration={200}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-7 shrink-0 text-muted-foreground transition-colors hover:bg-accent/70 hover:text-foreground"
+                    onClick={onOpenDiffViewer}
+                    aria-label="View Changes (⌘⇧D)"
+                  >
+                    <GitBranch className="size-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" sideOffset={6}>
+                  View Changes (⌘⇧D)
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          ) : null}
           <TooltipProvider delayDuration={200}>
             <Tooltip>
               <TooltipTrigger asChild>
