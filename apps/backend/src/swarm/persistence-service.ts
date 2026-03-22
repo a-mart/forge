@@ -187,7 +187,7 @@ export class PersistenceService {
     };
 
     const target = this.deps.config.paths.agentsStoreFile;
-    const tmp = `${target}.${process.pid}.${Date.now()}.tmp`;
+    const tmp = `${target}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2, 10)}.tmp`;
     await mkdir(dirname(target), { recursive: true });
     await writeFile(tmp, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
     await renameWithRetry(tmp, target, { retries: 8, baseDelayMs: 15 });
