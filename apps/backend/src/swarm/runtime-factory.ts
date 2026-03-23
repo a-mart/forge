@@ -4,7 +4,8 @@ import {
   DefaultResourceLoader,
   createAgentSession,
   ModelRegistry,
-  type AgentSession
+  type AgentSession,
+  type ExtensionFactory
 } from "@mariozechner/pi-coding-agent";
 import { AgentRuntime } from "./agent-runtime.js";
 import { ensureCanonicalAuthFilePath } from "./auth-storage-paths.js";
@@ -105,6 +106,7 @@ export class RuntimeFactory {
       })
     });
 
+    const extensionFactories = this.buildExtensionFactories(descriptor);
     const resourceLoader =
       descriptor.role === "manager"
         ? new DefaultResourceLoader({
@@ -112,6 +114,7 @@ export class RuntimeFactory {
             agentDir: runtimeAgentDir,
             additionalSkillPaths: memoryResources.additionalSkillPaths,
             agentsFilesOverride: applyRuntimeContext,
+            extensionFactories,
             // Manager prompt comes from the archetype prompt registry.
             systemPrompt,
             appendSystemPromptOverride: () => []
@@ -121,9 +124,18 @@ export class RuntimeFactory {
             agentDir: runtimeAgentDir,
             additionalSkillPaths: memoryResources.additionalSkillPaths,
             agentsFilesOverride: applyRuntimeContext,
+            extensionFactories,
             appendSystemPromptOverride: (base) => [...base, systemPrompt]
           });
-    await resourceLoader.reload();
+
+    try {
+      await resourceLoader.reload();
+    } catch (error) {
+      this.deps.logDebug("runtime:resource_loader:reload_error", {
+        agentId: descriptor.agentId,
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
 
     const model = this.resolveModel(modelRegistry, descriptor.model);
     if (!model) {
@@ -167,6 +179,25 @@ export class RuntimeFactory {
       resourceLoader,
       customTools: swarmTools
     });
+
+    try {
+      await session.bindExtensions({
+        onError: (error) => {
+          this.deps.logDebug("extension:error", {
+            agentId: descriptor.agentId,
+            extensionPath: error.extensionPath,
+            event: error.event,
+            message: error.error,
+            stack: error.stack
+          });
+        }
+      });
+    } catch (error) {
+      this.deps.logDebug("extension:bind_error", {
+        agentId: descriptor.agentId,
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
 
     const activeToolNames = new Set(session.getActiveToolNames());
     for (const tool of swarmTools) {
@@ -279,6 +310,28 @@ export class RuntimeFactory {
     return swarmTools.filter((tool) => !CORTEX_DISABLED_TOOL_NAMES.has(tool.name));
   }
 
+  private buildExtensionFactories(descriptor: AgentDescriptor): ExtensionFactory[] {
+    const factories: ExtensionFactory[] = [];
+
+    if (process.env.FORGE_DEBUG === "true") {
+      factories.push((pi) => {
+        pi.on("tool_call", (event) => {
+          try {
+            this.deps.logDebug("extension:tool_call", {
+              agentId: descriptor.agentId,
+              toolName: event.toolName,
+              inputPreview: previewJsonForLog(event.input, 200)
+            });
+          } catch {
+            // Extension handler errors must not propagate into tool execution
+          }
+        });
+      });
+    }
+
+    return factories;
+  }
+
   private buildCodexRuntimeSystemPrompt(
     baseSystemPrompt: string,
     options: {
@@ -350,4 +403,16 @@ function previewForLog(text: string, maxLength = 160): string {
   const normalized = text.replace(/\s+/g, " ").trim();
   if (normalized.length <= maxLength) return normalized;
   return `${normalized.slice(0, maxLength)}...`;
+}
+
+function previewJsonForLog(value: unknown, maxLength = 160): string {
+  try {
+    const serialized = JSON.stringify(value);
+    if (!serialized) {
+      return "<unserializable>";
+    }
+    return previewForLog(serialized, maxLength);
+  } catch {
+    return "<unserializable>";
+  }
 }

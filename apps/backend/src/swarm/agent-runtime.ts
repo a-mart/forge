@@ -186,7 +186,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
       }
     }
 
-    this.disposeSessionResources();
+    await this.disposeSessionResources();
     this.status = transitionAgentStatus(this.status, "terminated");
     this.descriptor.status = this.status;
     this.descriptor.updatedAt = this.now();
@@ -213,7 +213,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
     this.guardAbortController?.abort();
     this.guardAbortController = undefined;
     this.lastContextBudgetCheckAtMs = 0;
-    this.disposeSessionResources();
+    await this.disposeSessionResources();
   }
 
   async stopInFlight(options?: { abort?: boolean; shutdownTimeoutMs?: number }): Promise<void> {
@@ -253,7 +253,18 @@ export class AgentRuntime implements SwarmAgentRuntime {
     await this.updateStatus("idle");
   }
 
-  private disposeSessionResources(): void {
+  private async disposeSessionResources(): Promise<void> {
+    try {
+      // NOTE: _extensionRunner is a private property on AgentSession.
+      // Verified against @mariozechner/pi-coding-agent@0.55.0.
+      // The try/catch ensures this is safe against Pi version changes.
+      await (this.session as any)._extensionRunner?.emit({ type: "session_shutdown" });
+    } catch (error) {
+      this.logRuntimeError("interrupt", error, {
+        stage: "dispose_session_shutdown_emit_failed"
+      });
+    }
+
     this.unsubscribe?.();
     this.unsubscribe = undefined;
     this.session.dispose();

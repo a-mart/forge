@@ -1,0 +1,264 @@
+# Pi Extensions & Packages in Forge
+
+Forge uses [Pi](https://github.com/badlogic/pi-mono) as its agent runtime. Pi's extension and package systems are available to Forge users, allowing you to add custom tools, event handlers, skills, and more to your agent sessions.
+
+> **Important:** Extensions and packages run with **full system access**. They can execute arbitrary code, read/write files, and run shell commands. Only install extensions and packages you trust.
+
+## Overview
+
+Pi extensions are TypeScript/JavaScript modules that hook into the agent lifecycle. They can:
+
+- **Register custom tools** callable by the LLM
+- **Intercept events** like `tool_call`, `tool_result`, and `context` to block, modify, or log agent behavior
+- **Add skills and prompt templates** via the package system
+- **Register custom model providers**
+
+Forge runs Pi in headless/library mode (no terminal UI), so TUI-specific features like custom rendering, keyboard shortcuts, and interactive dialogs are not available. Extensions should check `ctx.hasUI` and adapt accordingly.
+
+## Extension Auto-Discovery
+
+Pi automatically discovers extensions and skills from well-known directories. Forge creates these directories on startup:
+
+| Path | Scope | Affects |
+|------|-------|---------|
+| `~/.forge/agent/extensions/` | Global | All workers |
+| `~/.forge/agent/manager/extensions/` | Global | All managers |
+| `~/.forge/agent/skills/` | Global | All workers |
+| `~/.forge/agent/manager/skills/` | Global | All managers |
+| `<cwd>/.pi/extensions/` | Project-local | Agents with that CWD |
+| `<cwd>/.pi/skills/` | Project-local | Agents with that CWD |
+
+**Extension file formats:**
+- Single file: `extensions/my-ext.ts` or `extensions/my-ext.js`
+- Directory with index: `extensions/my-ext/index.ts`
+- Directory with package.json: `extensions/my-ext/package.json` (with `pi.extensions` manifest)
+
+Discovery is shallow — top-level files and one-level subdirectories only.
+
+## Writing an Extension
+
+An extension is a TypeScript file that exports a default function receiving Pi's `ExtensionAPI`:
+
+```typescript
+import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { Type } from "@sinclair/typebox";
+
+export default function (pi: ExtensionAPI) {
+  // Run setup on session start
+  pi.on("session_start", async (_event, ctx) => {
+    console.log("[my-ext] Session started, headless:", !ctx.hasUI);
+  });
+
+  // Register a custom tool
+  pi.registerTool({
+    name: "lookup_ticket",
+    label: "Lookup Ticket",
+    description: "Look up a ticket by ID from the issue tracker",
+    parameters: Type.Object({
+      ticketId: Type.String({ description: "The ticket ID to look up" }),
+    }),
+    async execute(_toolCallId, params) {
+      // Your implementation here
+      const result = await fetchTicket(params.ticketId);
+      return {
+        content: [{ type: "text", text: JSON.stringify(result) }],
+      };
+    },
+  });
+}
+```
+
+Save this to `~/.forge/agent/extensions/my-ext.ts` and it will be loaded for all worker sessions. Extensions are loaded via [jiti](https://github.com/nicolo-ribaudo/jiti) — TypeScript works without a build step.
+
+### Headless Mode
+
+Forge runs without a terminal UI. Extensions must handle this:
+
+```typescript
+pi.on("session_start", async (_event, ctx) => {
+  if (ctx.hasUI) {
+    // This won't run in Forge — ctx.hasUI is always false
+    ctx.ui.notify("Extension loaded!", "info");
+  }
+  // This runs fine in Forge
+  console.log("Extension loaded");
+});
+```
+
+UI methods return safe defaults when called in headless mode: `select()` returns `undefined`, `confirm()` returns `false`, `notify()` is a no-op, etc. Command helpers like `ctx.waitForIdle()`, `ctx.newSession()`, and `ctx.fork()` are stubs.
+
+### Event Interception
+
+Extensions can intercept and modify agent behavior at key points:
+
+```typescript
+export default function (pi: ExtensionAPI) {
+  // Block dangerous tool calls
+  pi.on("tool_call", async (event) => {
+    if (event.toolName === "bash" && event.input?.command?.includes("rm -rf /")) {
+      return { block: true, reason: "Blocked dangerous command" };
+    }
+  });
+
+  // Modify context before each LLM call
+  pi.on("context", async (messages) => {
+    // Add a system reminder to every turn
+    return [
+      ...messages,
+      { role: "user", content: "Remember: always explain your reasoning." },
+    ];
+  });
+
+  // Log all tool results
+  pi.on("tool_result", async (event) => {
+    console.log(`[audit] ${event.toolName} completed, error: ${event.isError}`);
+  });
+}
+```
+
+### Available Events
+
+| Event | When | Can Modify? |
+|-------|------|-------------|
+| `session_start` | Session begins | No |
+| `session_shutdown` | Session ending | No |
+| `before_agent_start` | Before each agent turn | Yes (inject messages, modify system prompt) |
+| `context` | Before each LLM API call | Yes (modify message array) |
+| `tool_call` | Before tool execution | Yes (block with `{ block: true }`) |
+| `tool_result` | After tool execution | Yes (modify content/isError) |
+| `input` | User message received | Yes (transform or handle) |
+| `agent_start` / `agent_end` | Agent turn lifecycle | No |
+| `turn_start` / `turn_end` | Individual turn boundaries | No |
+| `message_start` / `message_update` / `message_end` | Streaming message events | No |
+
+### Available Imports
+
+| Package | Purpose |
+|---------|---------|
+| `@mariozechner/pi-coding-agent` | Extension types (`ExtensionAPI`, events, tool helpers) |
+| `@sinclair/typebox` | Schema definitions for tool parameters |
+| `@mariozechner/pi-ai` | AI utilities (e.g., `StringEnum` for Google-compatible enums) |
+| Node.js built-ins | `node:fs`, `node:path`, `node:child_process`, etc. |
+
+> **Note:** Use `StringEnum` from `@mariozechner/pi-ai` instead of `Type.Union(Type.Literal(...))` for string enum parameters — Google's API requires it.
+
+## Pi Packages
+
+Pi packages bundle extensions, skills, prompt templates, and themes into distributable units. They can be installed from npm, git, or local paths.
+
+### Configuring Packages
+
+Create or edit `settings.json` at the appropriate scope:
+
+- **Workers (global):** `~/.forge/agent/settings.json`
+- **Managers (global):** `~/.forge/agent/manager/settings.json`
+- **Project-local:** `<cwd>/.pi/settings.json`
+
+Example `settings.json`:
+
+```json
+{
+  "packages": [
+    "npm:@example/pi-tools",
+    "npm:@example/pi-tools@1.2.3",
+    "git:github.com/user/pi-extension",
+    "/absolute/path/to/local/package"
+  ]
+}
+```
+
+These files do not need to exist by default — Pi handles missing settings files gracefully. Create them only when you want to configure packages.
+
+### Package Source Formats
+
+| Format | Example | Notes |
+|--------|---------|-------|
+| npm | `npm:@scope/name` | Installed globally via `npm install -g` |
+| npm (pinned) | `npm:@scope/name@1.2.3` | Pinned version, skipped by updates |
+| git (HTTPS) | `git:github.com/user/repo` | Cloned to `~/.forge/agent/git/` |
+| git (tag) | `git:github.com/user/repo@v1` | Pinned to tag/commit |
+| git (SSH) | `git:git@github.com:user/repo` | SSH authentication |
+| Local path | `/absolute/path/to/package` | Referenced in place, no copy |
+
+### Package Filtering
+
+You can selectively control what loads from a package:
+
+```json
+{
+  "packages": [
+    "npm:simple-pkg",
+    {
+      "source": "npm:@example/big-package",
+      "extensions": ["extensions/useful.ts"],
+      "skills": [],
+      "prompts": ["prompts/review.md"]
+    }
+  ]
+}
+```
+
+- Omit a key → load everything of that type
+- `[]` → load nothing of that type
+- `!pattern` → exclude matching paths
+- `+path` → force-include
+- `-path` → force-exclude
+
+### Creating a Package
+
+Add a `pi` manifest to your `package.json`:
+
+```json
+{
+  "name": "my-forge-tools",
+  "keywords": ["pi-package"],
+  "pi": {
+    "extensions": ["./extensions"],
+    "skills": ["./skills"]
+  }
+}
+```
+
+Without a manifest, Pi auto-discovers from conventional directories: `extensions/`, `skills/`, `prompts/`, `themes/`.
+
+### Package Deduplication
+
+If the same package appears in both global and project settings, the **project version wins**. Identity is determined by:
+- npm: package name
+- git: repository URL (without ref)
+- Local: resolved absolute path
+
+## Skills via Pi Discovery
+
+Pi discovers skills from `agentDir/skills/` and `<cwd>/.pi/skills/` directories, as well as from packages. These are separate from Forge's built-in skill system (`~/.forge/skills/`).
+
+Both Pi-discovered skills and Forge skills end up in the agent's context. Pi deduplicates skills by path, so the same skill at different absolute paths could appear twice. Avoid placing identical skills in both `~/.forge/skills/` and `~/.forge/agent/skills/`.
+
+## Reserved Tool Names
+
+Forge registers these tools for swarm orchestration. They **cannot be overridden** by extensions — Forge's implementations silently take precedence:
+
+- `list_agents` — List agents in the swarm
+- `send_message_to_agent` — Send a message to another agent
+- `spawn_agent` — Create a new worker agent
+- `kill_agent` — Terminate an agent
+- `speak_to_user` — Send a message to the end user (managers only)
+
+If an extension registers a tool with one of these names, the extension's version will be silently replaced. Choose unique names for your extension tools.
+
+## Troubleshooting
+
+### Extension not loading?
+
+1. Check the file is in the right directory for the agent role (worker vs manager)
+2. Verify the file exports a default function: `export default function(pi: ExtensionAPI) { ... }`
+3. Check backend logs for extension loading errors
+4. For packages, verify `settings.json` contains valid JSON
+
+### Tool not appearing?
+
+Extension tools are sent to the model via the API tool schema but are **not** listed in Pi's system prompt "selected tools" section. The model can still call them — they just won't appear in the human-readable tool listing within the prompt.
+
+### Headless UI calls returning defaults?
+
+This is expected. Forge runs in headless mode. Check `ctx.hasUI` and provide non-interactive fallbacks.

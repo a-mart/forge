@@ -50,7 +50,13 @@ export class PersistenceService {
 
       this.deps.config.paths.uploadsDir,
       this.deps.config.paths.agentDir,
-      this.deps.config.paths.managerAgentDir
+      this.deps.config.paths.managerAgentDir,
+
+      // Pi extension/skill discovery directories (auto-discovered by Pi's DefaultPackageManager)
+      resolve(this.deps.config.paths.agentDir, "extensions"),
+      resolve(this.deps.config.paths.agentDir, "skills"),
+      resolve(this.deps.config.paths.managerAgentDir, "extensions"),
+      resolve(this.deps.config.paths.managerAgentDir, "skills"),
     ];
 
     for (const dir of dirs) {
