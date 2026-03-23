@@ -183,7 +183,7 @@ export interface SessionMeta {
 export type DeliveryMode = 'auto' | 'followUp' | 'steer'
 export type AcceptedDeliveryMode = 'prompt' | 'followUp' | 'steer'
 
-export type MessageChannel = 'web' | 'slack' | 'telegram'
+export type MessageChannel = 'web' | 'telegram'
 
 export interface MessageSourceContext {
   channel: MessageChannel

@@ -7,8 +7,6 @@ import type {
   SettingsAuthProviderId,
   SettingsAuthProvider,
   SettingsAuthOAuthFlowState,
-  SlackSettingsConfig,
-  SlackChannelDescriptor,
   TelegramSettingsConfig,
   SkillInfo,
   ChromeCdpConfig,
@@ -16,7 +14,7 @@ import type {
   ChromeCdpProfile,
   ChromeCdpPreviewTab,
 } from './settings-types'
-import type { SlackStatusEvent, TelegramStatusEvent } from '@forge/protocol'
+import type { TelegramStatusEvent } from '@forge/protocol'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
 
 /* ------------------------------------------------------------------ */
@@ -106,27 +104,6 @@ function parseSettingsAuthProvider(value: unknown): SettingsAuthProvider | null 
     authType: provider.authType,
     maskedValue: typeof provider.maskedValue === 'string' ? provider.maskedValue : undefined,
   }
-}
-
-function isSlackSettingsConfig(value: unknown): value is SlackSettingsConfig {
-  if (!value || typeof value !== 'object') return false
-  const config = value as Partial<SlackSettingsConfig>
-  return (
-    typeof config.profileId === 'string' && typeof config.enabled === 'boolean' &&
-    config.mode === 'socket' && typeof config.hasAppToken === 'boolean' &&
-    typeof config.hasBotToken === 'boolean' && Boolean(config.listen) &&
-    Boolean(config.response) && Boolean(config.attachments)
-  )
-}
-
-function isSlackChannelDescriptor(value: unknown): value is SlackChannelDescriptor {
-  if (!value || typeof value !== 'object') return false
-  const channel = value as Partial<SlackChannelDescriptor>
-  return (
-    typeof channel.id === 'string' && channel.id.trim().length > 0 &&
-    typeof channel.name === 'string' && channel.name.trim().length > 0 &&
-    typeof channel.isPrivate === 'boolean' && typeof channel.isMember === 'boolean'
-  )
 }
 
 function isTelegramSettingsConfig(value: unknown): value is TelegramSettingsConfig {
@@ -285,60 +262,15 @@ export async function submitSettingsAuthOAuthPrompt(wsUrl: string, provider: Set
 }
 
 /* ------------------------------------------------------------------ */
-/*  Slack API                                                         */
+/*  Integrations API                                                  */
 /* ------------------------------------------------------------------ */
 
-function resolveManagerIntegrationEndpoint(wsUrl: string, managerId: string, provider: 'slack' | 'telegram', suffix = ''): string {
+function resolveManagerIntegrationEndpoint(wsUrl: string, managerId: string, provider: 'telegram', suffix = ''): string {
   const normalizedManagerId = managerId.trim()
   if (!normalizedManagerId) {
     throw new Error('managerId is required.')
   }
   return resolveApiEndpoint(wsUrl, `/api/managers/${encodeURIComponent(normalizedManagerId)}/integrations/${provider}${suffix}`)
-}
-
-export async function fetchSlackSettings(wsUrl: string, managerId: string): Promise<{ config: SlackSettingsConfig; status: SlackStatusEvent | null }> {
-  const endpoint = resolveManagerIntegrationEndpoint(wsUrl, managerId, 'slack')
-  const response = await fetch(endpoint)
-  if (!response.ok) throw new Error(await readApiError(response))
-  const payload = (await response.json()) as { config?: unknown; status?: SlackStatusEvent }
-  if (!isSlackSettingsConfig(payload.config)) throw new Error('Invalid Slack settings response from backend.')
-  return { config: payload.config, status: payload.status ?? null }
-}
-
-export async function updateSlackSettings(wsUrl: string, managerId: string, patch: Record<string, unknown>): Promise<{ config: SlackSettingsConfig; status: SlackStatusEvent | null }> {
-  const endpoint = resolveManagerIntegrationEndpoint(wsUrl, managerId, 'slack')
-  const response = await fetch(endpoint, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(patch) })
-  if (!response.ok) throw new Error(await readApiError(response))
-  const payload = (await response.json()) as { config?: unknown; status?: SlackStatusEvent }
-  if (!isSlackSettingsConfig(payload.config)) throw new Error('Invalid Slack settings response from backend.')
-  return { config: payload.config, status: payload.status ?? null }
-}
-
-export async function disableSlackSettings(wsUrl: string, managerId: string): Promise<{ config: SlackSettingsConfig; status: SlackStatusEvent | null }> {
-  const endpoint = resolveManagerIntegrationEndpoint(wsUrl, managerId, 'slack')
-  const response = await fetch(endpoint, { method: 'DELETE' })
-  if (!response.ok) throw new Error(await readApiError(response))
-  const payload = (await response.json()) as { config?: unknown; status?: SlackStatusEvent }
-  if (!isSlackSettingsConfig(payload.config)) throw new Error('Invalid Slack settings response from backend.')
-  return { config: payload.config, status: payload.status ?? null }
-}
-
-export async function testSlackConnection(wsUrl: string, managerId: string, patch?: Record<string, unknown>): Promise<{ teamName?: string; teamId?: string; botUserId?: string }> {
-  const endpoint = resolveManagerIntegrationEndpoint(wsUrl, managerId, 'slack', '/test')
-  const response = await fetch(endpoint, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(patch ?? {}) })
-  if (!response.ok) throw new Error(await readApiError(response))
-  const payload = (await response.json()) as { result?: { teamName?: string; teamId?: string; botUserId?: string } }
-  return payload.result ?? {}
-}
-
-export async function fetchSlackChannels(wsUrl: string, managerId: string, includePrivateChannels: boolean): Promise<SlackChannelDescriptor[]> {
-  const endpoint = new URL(resolveManagerIntegrationEndpoint(wsUrl, managerId, 'slack', '/channels'))
-  endpoint.searchParams.set('includePrivateChannels', includePrivateChannels ? 'true' : 'false')
-  const response = await fetch(endpoint.toString())
-  if (!response.ok) throw new Error(await readApiError(response))
-  const payload = (await response.json()) as { channels?: unknown }
-  if (!Array.isArray(payload.channels)) return []
-  return payload.channels.filter(isSlackChannelDescriptor)
 }
 
 /* ------------------------------------------------------------------ */

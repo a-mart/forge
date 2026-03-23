@@ -11,21 +11,6 @@ import {
   isSharedIntegrationManagerId
 } from "./shared-config.js";
 import {
-  hasSlackOverrideConfig,
-  loadSlackConfig,
-  maskSlackConfig,
-  mergeSlackConfig,
-  saveSlackConfig
-} from "./slack/slack-config.js";
-import { SlackWebApiClient, testSlackAppToken } from "./slack/slack-client.js";
-import { SlackIntegrationService } from "./slack/slack-integration.js";
-import type { SlackStatusEvent } from "./slack/slack-status.js";
-import type {
-  SlackChannelDescriptor,
-  SlackConnectionTestResult,
-  SlackIntegrationConfigPublic
-} from "./slack/slack-types.js";
-import {
   hasTelegramOverrideConfig,
   loadTelegramConfig,
   maskTelegramConfig,
@@ -41,7 +26,7 @@ import type {
   TelegramIntegrationConfigPublic
 } from "./telegram/telegram-types.js";
 
-type IntegrationProvider = "slack" | "telegram";
+type IntegrationProvider = "telegram";
 
 const LEGACY_INTEGRATIONS_DIR_NAME = "integrations";
 const LEGACY_INTEGRATIONS_MANAGERS_DIR_NAME = "managers";
@@ -50,15 +35,10 @@ export class IntegrationRegistryService extends EventEmitter {
   private readonly swarmManager: SwarmManager;
   private readonly dataDir: string;
   private readonly defaultManagerId: string | undefined;
-  private readonly slackProfiles = new Map<string, SlackIntegrationService>();
   private readonly telegramProfiles = new Map<string, TelegramIntegrationService>();
   private readonly telegramPollingPool = new TelegramPollingPool();
   private started = false;
   private lifecycle: Promise<void> = Promise.resolve();
-
-  private readonly forwardSlackStatus = (event: SlackStatusEvent): void => {
-    this.emit("slack_status", event);
-  };
 
   private readonly forwardTelegramStatus = (event: TelegramStatusEvent): void => {
     this.emit("telegram_status", event);
@@ -87,7 +67,6 @@ export class IntegrationRegistryService extends EventEmitter {
 
       const managerIds = await this.discoverKnownManagerIds();
       for (const managerId of managerIds) {
-        await this.startProfileInternal(managerId, "slack");
         await this.startProfileInternal(managerId, "telegram");
       }
     });
@@ -99,17 +78,11 @@ export class IntegrationRegistryService extends EventEmitter {
         return;
       }
 
-      for (const profile of this.slackProfiles.values()) {
-        await profile.stop();
-        profile.off("slack_status", this.forwardSlackStatus);
-      }
-
       for (const profile of this.telegramProfiles.values()) {
         await profile.stop();
         profile.off("telegram_status", this.forwardTelegramStatus);
       }
 
-      this.slackProfiles.clear();
       this.telegramProfiles.clear();
       await this.telegramPollingPool.stop();
       this.started = false;
@@ -128,15 +101,10 @@ export class IntegrationRegistryService extends EventEmitter {
     });
   }
 
-  async stopProfile(managerId: string, provider: IntegrationProvider): Promise<void> {
+  async stopProfile(managerId: string, _provider: IntegrationProvider): Promise<void> {
     return this.runExclusive(async () => {
       const normalizedManagerId = this.resolveProfileId(managerId);
       if (isSharedIntegrationManagerId(normalizedManagerId)) {
-        return;
-      }
-
-      if (provider === "slack") {
-        await this.slackProfiles.get(normalizedManagerId)?.stop();
         return;
       }
 
@@ -144,27 +112,8 @@ export class IntegrationRegistryService extends EventEmitter {
     });
   }
 
-  getStatus(managerId: string, provider: "slack"): SlackStatusEvent;
-  getStatus(managerId: string, provider: "telegram"): TelegramStatusEvent;
-  getStatus(managerId: string, provider: IntegrationProvider): SlackStatusEvent | TelegramStatusEvent {
+  getStatus(managerId: string, _provider: "telegram"): TelegramStatusEvent {
     const normalizedManagerId = this.resolveProfileId(managerId);
-
-    if (provider === "slack") {
-      const profile = this.slackProfiles.get(normalizedManagerId);
-      if (profile) {
-        return profile.getStatus();
-      }
-
-      return {
-        type: "slack_status",
-        managerId: normalizedManagerId,
-        integrationProfileId: `slack:${normalizedManagerId}`,
-        state: "disabled",
-        enabled: false,
-        updatedAt: new Date().toISOString(),
-        message: "Slack integration disabled"
-      };
-    }
 
     const profile = this.telegramProfiles.get(normalizedManagerId);
     if (profile) {
@@ -186,10 +135,7 @@ export class IntegrationRegistryService extends EventEmitter {
     const normalizedManagerId = this.resolveProfileId(managerId);
 
     const telegramProfile = this.telegramProfiles.get(normalizedManagerId);
-    const slackProfile = this.slackProfiles.get(normalizedManagerId);
-
     const telegramKnownChatIds = telegramProfile?.getKnownChatIds() ?? [];
-    const slackKnownChannelIds = slackProfile?.getKnownChannelIds() ?? [];
 
     return {
       telegram:
@@ -199,78 +145,8 @@ export class IntegrationRegistryService extends EventEmitter {
               botUsername: telegramProfile.getBotUsername(),
               knownChatIds: telegramKnownChatIds
             }
-          : undefined,
-      slack:
-        slackProfile && (slackProfile.isEnabled() || slackKnownChannelIds.length > 0)
-          ? {
-              connected: slackProfile.isConnected(),
-              knownChannelIds: slackKnownChannelIds
-            }
           : undefined
     };
-  }
-
-  async getSlackSnapshot(
-    managerId: string
-  ): Promise<{ config: SlackIntegrationConfigPublic; status: SlackStatusEvent }> {
-    const normalizedManagerId = this.resolveProfileId(managerId);
-    if (isSharedIntegrationManagerId(normalizedManagerId)) {
-      return this.getSharedSlackSnapshot();
-    }
-
-    const profile = await this.ensureSlackProfileStarted(normalizedManagerId);
-    return {
-      config: profile.getMaskedConfig(),
-      status: profile.getStatus()
-    };
-  }
-
-  async updateSlackConfig(
-    managerId: string,
-    patch: unknown
-  ): Promise<{ config: SlackIntegrationConfigPublic; status: SlackStatusEvent }> {
-    const normalizedManagerId = this.resolveProfileId(managerId);
-    if (isSharedIntegrationManagerId(normalizedManagerId)) {
-      return this.updateSharedSlackConfig(patch);
-    }
-
-    const profile = await this.ensureSlackProfileStarted(normalizedManagerId);
-    return profile.updateConfig(patch);
-  }
-
-  async disableSlack(
-    managerId: string
-  ): Promise<{ config: SlackIntegrationConfigPublic; status: SlackStatusEvent }> {
-    const normalizedManagerId = this.resolveProfileId(managerId);
-    if (isSharedIntegrationManagerId(normalizedManagerId)) {
-      return this.updateSharedSlackConfig({ enabled: false });
-    }
-
-    const profile = await this.ensureSlackProfileStarted(normalizedManagerId);
-    return profile.disable();
-  }
-
-  async testSlackConnection(managerId: string, patch?: unknown): Promise<SlackConnectionTestResult> {
-    const normalizedManagerId = this.resolveProfileId(managerId);
-    if (isSharedIntegrationManagerId(normalizedManagerId)) {
-      return this.testSharedSlackConnection(patch);
-    }
-
-    const profile = await this.ensureSlackProfileStarted(normalizedManagerId);
-    return profile.testConnection(patch);
-  }
-
-  async listSlackChannels(
-    managerId: string,
-    options?: { includePrivateChannels?: boolean }
-  ): Promise<SlackChannelDescriptor[]> {
-    const normalizedManagerId = this.resolveProfileId(managerId);
-    if (isSharedIntegrationManagerId(normalizedManagerId)) {
-      return this.listSharedSlackChannels(options);
-    }
-
-    const profile = await this.ensureSlackProfileStarted(normalizedManagerId);
-    return profile.listChannels(options);
   }
 
   async getTelegramSnapshot(
@@ -324,139 +200,6 @@ export class IntegrationRegistryService extends EventEmitter {
 
     const profile = await this.ensureTelegramProfileStarted(normalizedManagerId);
     return profile.testConnection(patch);
-  }
-
-  private async getSharedSlackSnapshot(): Promise<{
-    config: SlackIntegrationConfigPublic;
-    status: SlackStatusEvent;
-  }> {
-    const config = await loadSlackConfig({
-      dataDir: this.dataDir,
-      managerId: SHARED_INTEGRATION_MANAGER_ID
-    });
-
-    return {
-      config: maskSlackConfig(config),
-      status: this.buildSharedSlackStatus({
-        enabled: config.enabled,
-        integrationProfileId: config.profileId
-      })
-    };
-  }
-
-  private async updateSharedSlackConfig(
-    patch: unknown
-  ): Promise<{ config: SlackIntegrationConfigPublic; status: SlackStatusEvent }> {
-    return this.runExclusive(async () => {
-      const current = await loadSlackConfig({
-        dataDir: this.dataDir,
-        managerId: SHARED_INTEGRATION_MANAGER_ID
-      });
-      const next = mergeSlackConfig(current, patch);
-
-      await saveSlackConfig({
-        dataDir: this.dataDir,
-        managerId: SHARED_INTEGRATION_MANAGER_ID,
-        config: next
-      });
-
-      await this.restartSlackProfilesUsingSharedConfig();
-
-      const status = this.buildSharedSlackStatus({
-        enabled: next.enabled,
-        integrationProfileId: next.profileId,
-        message: "Shared Slack configuration updated"
-      });
-
-      return {
-        config: maskSlackConfig(next),
-        status
-      };
-    });
-  }
-
-  private async testSharedSlackConnection(patch?: unknown): Promise<SlackConnectionTestResult> {
-    const config = await loadSlackConfig({
-      dataDir: this.dataDir,
-      managerId: SHARED_INTEGRATION_MANAGER_ID
-    });
-    const effectiveConfig = patch ? mergeSlackConfig(config, patch) : config;
-
-    const appToken = effectiveConfig.appToken.trim();
-    const botToken = effectiveConfig.botToken.trim();
-
-    if (!appToken) {
-      throw new Error("Slack app token is required");
-    }
-
-    if (!botToken) {
-      throw new Error("Slack bot token is required");
-    }
-
-    const client = new SlackWebApiClient(botToken);
-    const auth = await client.testAuth();
-    await testSlackAppToken(appToken);
-
-    return {
-      ok: true,
-      teamId: auth.teamId,
-      teamName: auth.teamName,
-      botUserId: auth.botUserId
-    };
-  }
-
-  private async listSharedSlackChannels(options?: {
-    includePrivateChannels?: boolean;
-  }): Promise<SlackChannelDescriptor[]> {
-    const config = await loadSlackConfig({
-      dataDir: this.dataDir,
-      managerId: SHARED_INTEGRATION_MANAGER_ID
-    });
-
-    const includePrivateChannels =
-      options?.includePrivateChannels ?? config.listen.includePrivateChannels;
-
-    const token = config.botToken.trim();
-    if (!token) {
-      throw new Error("Slack bot token is required before listing channels");
-    }
-
-    const client = new SlackWebApiClient(token);
-    return client.listChannels({ includePrivateChannels });
-  }
-
-  private async restartSlackProfilesUsingSharedConfig(): Promise<void> {
-    for (const [managerId, profile] of this.slackProfiles.entries()) {
-      if (isSharedIntegrationManagerId(managerId)) {
-        continue;
-      }
-
-      if (await hasSlackOverrideConfig({ dataDir: this.dataDir, managerId })) {
-        continue;
-      }
-
-      await profile.restart();
-    }
-  }
-
-  private buildSharedSlackStatus(options: {
-    enabled: boolean;
-    integrationProfileId: string;
-    message?: string;
-  }): SlackStatusEvent {
-    return {
-      type: "slack_status",
-      managerId: SHARED_INTEGRATION_MANAGER_ID,
-      integrationProfileId: options.integrationProfileId,
-      state: options.enabled ? "disconnected" : "disabled",
-      enabled: options.enabled,
-      updatedAt: new Date().toISOString(),
-      message:
-        options.message ??
-        (options.enabled
-          ? "Shared Slack configuration enabled (applies to managers without overrides)"
-          : "Shared Slack configuration disabled")
-    };
   }
 
   private async getSharedTelegramSnapshot(): Promise<{
@@ -567,16 +310,6 @@ export class IntegrationRegistryService extends EventEmitter {
     };
   }
 
-  private async ensureSlackProfileStarted(managerId: string): Promise<SlackIntegrationService> {
-    const normalizedManagerId = this.resolveProfileId(managerId);
-    if (isSharedIntegrationManagerId(normalizedManagerId)) {
-      throw new Error("Shared Slack config does not have a runtime profile");
-    }
-
-    await this.startProfile(normalizedManagerId, "slack");
-    return this.getOrCreateSlackProfile(normalizedManagerId);
-  }
-
   private async ensureTelegramProfileStarted(managerId: string): Promise<TelegramIntegrationService> {
     const normalizedManagerId = this.resolveProfileId(managerId);
     if (isSharedIntegrationManagerId(normalizedManagerId)) {
@@ -587,37 +320,14 @@ export class IntegrationRegistryService extends EventEmitter {
     return this.getOrCreateTelegramProfile(normalizedManagerId);
   }
 
-  private async startProfileInternal(managerId: string, provider: IntegrationProvider): Promise<void> {
+  private async startProfileInternal(managerId: string, _provider: IntegrationProvider): Promise<void> {
     const normalizedManagerId = normalizeManagerId(managerId);
     if (isSharedIntegrationManagerId(normalizedManagerId)) {
       return;
     }
 
-    if (provider === "slack") {
-      const profile = this.getOrCreateSlackProfile(normalizedManagerId);
-      await profile.start();
-      return;
-    }
-
     const profile = this.getOrCreateTelegramProfile(normalizedManagerId);
     await profile.start();
-  }
-
-  private getOrCreateSlackProfile(managerId: string): SlackIntegrationService {
-    const normalizedManagerId = normalizeManagerId(managerId);
-    const existing = this.slackProfiles.get(normalizedManagerId);
-    if (existing) {
-      return existing;
-    }
-
-    const profile = new SlackIntegrationService({
-      swarmManager: this.swarmManager,
-      dataDir: this.dataDir,
-      managerId: normalizedManagerId
-    });
-    profile.on("slack_status", this.forwardSlackStatus);
-    this.slackProfiles.set(normalizedManagerId, profile);
-    return profile;
   }
 
   private getOrCreateTelegramProfile(managerId: string): TelegramIntegrationService {
@@ -749,6 +459,7 @@ export class IntegrationRegistryService extends EventEmitter {
 
     return managerIds;
   }
+
   private async runExclusive<T>(action: () => Promise<T>): Promise<T> {
     const next = this.lifecycle.then(action, action);
     this.lifecycle = next.then(

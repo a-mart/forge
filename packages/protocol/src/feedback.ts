@@ -15,7 +15,7 @@ export interface FeedbackEvent {
   value: FeedbackValue;
   reasonCodes: string[];
   comment: string;
-  channel: "web" | "telegram" | "slack";
+  channel: "web" | "telegram";
   actor: "user";
 }
 

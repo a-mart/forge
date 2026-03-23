@@ -41,54 +41,6 @@ export interface SettingsAuthOAuthFlowState {
   isSubmittingCode: boolean
 }
 
-export interface SlackSettingsConfig {
-  profileId: string
-  enabled: boolean
-  mode: 'socket'
-  appToken: string | null
-  botToken: string | null
-  hasAppToken: boolean
-  hasBotToken: boolean
-  listen: {
-    dm: boolean
-    channelIds: string[]
-    includePrivateChannels: boolean
-  }
-  response: {
-    respondInThread: boolean
-    replyBroadcast: boolean
-    wakeWords: string[]
-  }
-  attachments: {
-    maxFileBytes: number
-    allowImages: boolean
-    allowText: boolean
-    allowBinary: boolean
-  }
-}
-
-export interface SlackChannelDescriptor {
-  id: string
-  name: string
-  isPrivate: boolean
-  isMember: boolean
-}
-
-export interface SlackDraft {
-  enabled: boolean
-  appToken: string
-  botToken: string
-  listenDm: boolean
-  channelIds: string[]
-  includePrivateChannels: boolean
-  respondInThread: boolean
-  replyBroadcast: boolean
-  maxFileBytes: string
-  allowImages: boolean
-  allowText: boolean
-  allowBinary: boolean
-}
-
 export interface TelegramSettingsConfig {
   profileId: string
   enabled: boolean

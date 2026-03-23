@@ -119,7 +119,7 @@ export class WsHandler {
         }
       }
 
-      if (event.type === "slack_status" || event.type === "telegram_status") {
+      if (event.type === "telegram_status") {
         if (event.managerId) {
           const subscribedProfileId = this.resolveProfileIdForAgent(subscribedAgent);
           if (subscribedProfileId !== event.managerId) {
@@ -609,14 +609,14 @@ export class WsHandler {
 
     const normalizedChannel = normalizeOptionalString(maybe.channel)?.toLowerCase();
     const channel =
-      normalizedChannel === "telegram" || normalizedChannel === "slack"
+      normalizedChannel === "telegram"
         ? normalizedChannel
         : normalizedChannel === "web" || normalizedChannel === "mobile" || !normalizedChannel
           ? "web"
           : undefined;
 
     if (!channel) {
-      throw new Error("channel must be one of: web, telegram, slack.");
+      throw new Error("channel must be one of: web, telegram.");
     }
 
     return {
@@ -898,7 +898,6 @@ export class WsHandler {
 
     const managerContextId = this.resolveManagerContextAgentId(targetAgentId);
     if (this.integrationRegistry && managerContextId) {
-      this.send(socket, this.integrationRegistry.getStatus(managerContextId, "slack"));
       this.send(socket, this.integrationRegistry.getStatus(managerContextId, "telegram"));
     }
   }

@@ -1083,10 +1083,6 @@ export class ManagerWsClient {
         break
       }
 
-      case 'slack_status':
-        this.updateState({ slackStatus: event })
-        break
-
       case 'telegram_status':
         this.updateState({ telegramStatus: event })
         break

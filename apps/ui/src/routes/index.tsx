@@ -953,7 +953,6 @@ export function IndexPage() {
                 wsUrl={wsUrl}
                 managers={settingsManagers}
                 profiles={state.profiles}
-                slackStatus={state.slackStatus}
                 telegramStatus={state.telegramStatus}
                 promptChangeKey={state.promptChangeKey}
                 onBack={() =>

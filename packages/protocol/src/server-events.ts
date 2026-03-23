@@ -230,20 +230,6 @@ export interface DirectoryPickedEvent {
   requestId?: string
 }
 
-export type SlackConnectionState = 'disabled' | 'connecting' | 'connected' | 'disconnected' | 'error'
-
-export interface SlackStatusEvent {
-  type: 'slack_status'
-  managerId?: string
-  integrationProfileId?: string
-  state: SlackConnectionState
-  enabled: boolean
-  updatedAt: string
-  message?: string
-  teamId?: string
-  botUserId?: string
-}
-
 export type TelegramConnectionState =
   | 'disabled'
   | 'connecting'
@@ -376,7 +362,6 @@ export type ServerEvent =
   | DirectoriesListedEvent
   | DirectoryValidatedEvent
   | DirectoryPickedEvent
-  | SlackStatusEvent
   | TelegramStatusEvent
   | PlaywrightDiscoverySnapshotEvent
   | PlaywrightDiscoveryUpdatedEvent

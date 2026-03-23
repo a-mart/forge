@@ -425,7 +425,7 @@ function requireFeedbackSubmitValue(value: unknown, fieldName: string): Feedback
 
 function requireFeedbackChannel(value: unknown, fieldName: string): FeedbackEvent["channel"] {
   if (!isFeedbackChannel(value)) {
-    throw new Error(`${fieldName} must be one of: web, telegram, slack.`);
+    throw new Error(`${fieldName} must be one of: web, telegram.`);
   }
 
   return value;
@@ -453,7 +453,7 @@ function isFeedbackSubmitValue(value: unknown): value is FeedbackSubmitValue {
 }
 
 function isFeedbackChannel(value: unknown): value is FeedbackEvent["channel"] {
-  return value === "web" || value === "telegram" || value === "slack";
+  return value === "web" || value === "telegram";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

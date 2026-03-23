@@ -45,7 +45,7 @@ See the [README](README.md) for full setup instructions, including Windows-speci
 - HTTP + WebSocket server in `apps/backend/src/ws/server.ts`.
 - Route handlers in `apps/backend/src/ws/routes/*` (one file per domain: agents, sessions, settings, etc.).
 - Agent orchestration and runtime logic in `apps/backend/src/swarm/*`.
-- Integrations (Slack, Telegram) in `apps/backend/src/integrations/*`.
+- Integrations (Telegram) in `apps/backend/src/integrations/*`.
 - Scheduler in `apps/backend/src/scheduler/*`.
 
 ### Protocol
@@ -98,7 +98,7 @@ All runtime state lives in `~/.forge` (or `%LOCALAPPDATA%\forge` on Windows), ov
 ├── shared/
 │   ├── auth/auth.json                     # Authentication credentials
 │   ├── secrets.json                       # Encrypted secrets
-│   ├── integrations/                      # Slack/Telegram integration configs
+│   ├── integrations/                      # Telegram integration configs
 │   ├── knowledge/                         # Knowledge base
 │   │   ├── common.md                      #   Common knowledge (cross-profile, including a managed onboarding preferences block)
 │   │   ├── onboarding-state.json          #   First-launch user preferences

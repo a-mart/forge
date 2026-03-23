@@ -4,10 +4,6 @@ export interface IntegrationContextInfo {
     botUsername?: string;
     knownChatIds: string[];
   };
-  slack?: {
-    connected: boolean;
-    knownChannelIds: string[];
-  };
 }
 
 export function formatIntegrationContext(info: IntegrationContextInfo): string {
@@ -26,23 +22,6 @@ export function formatIntegrationContext(info: IntegrationContextInfo): string {
     }
     lines.push(
       '- You can proactively message Telegram via speak_to_user with target: { channel: "telegram", channelId: "<chat_id>" }'
-    );
-  }
-
-  if (info.slack) {
-    if (lines.length > 0) {
-      lines.push("");
-    }
-
-    lines.push("## Slack");
-    lines.push(`- Status: ${info.slack.connected ? "connected" : "disconnected"}`);
-    if (info.slack.knownChannelIds.length > 0) {
-      lines.push(`- Known channel IDs: ${info.slack.knownChannelIds.join(", ")}`);
-    } else {
-      lines.push("- Known channel IDs: (none yet)");
-    }
-    lines.push(
-      '- You can proactively message Slack via speak_to_user with target: { channel: "slack", channelId: "<channel_id>" }'
     );
   }
 

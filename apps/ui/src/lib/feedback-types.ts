@@ -10,7 +10,7 @@ export interface FeedbackEvent {
   value: 'up' | 'down' | 'comment' | 'clear'
   reasonCodes: string[]
   comment: string
-  channel: 'web' | 'telegram' | 'slack'
+  channel: 'web' | 'telegram'
   actor: 'user'
 }
 

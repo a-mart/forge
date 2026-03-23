@@ -64,7 +64,7 @@ export function isMessageSourceContext(value: unknown): value is MessageSourceCo
 
   const maybe = value as Partial<MessageSourceContext>;
 
-  if (maybe.channel !== "web" && maybe.channel !== "slack" && maybe.channel !== "telegram") {
+  if (maybe.channel !== "web" && maybe.channel !== "telegram") {
     return false;
   }
 

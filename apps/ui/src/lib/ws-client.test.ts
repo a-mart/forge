@@ -257,37 +257,6 @@ describe('ManagerWsClient', () => {
     client.destroy()
   })
 
-  it('stores slack_status events from the backend', () => {
-    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
-
-    client.start()
-    vi.advanceTimersByTime(60)
-
-    const socket = FakeWebSocket.instances[0]
-    socket.emit('open')
-
-    emitServerEvent(socket, {
-      type: 'ready',
-      serverTime: new Date().toISOString(),
-      subscribedAgentId: 'manager',
-    })
-
-    emitServerEvent(socket, {
-      type: 'slack_status',
-      state: 'connected',
-      enabled: true,
-      updatedAt: new Date().toISOString(),
-      message: 'Slack connected',
-      teamId: 'T123',
-      botUserId: 'U123',
-    })
-
-    expect(client.getState().slackStatus?.state).toBe('connected')
-    expect(client.getState().slackStatus?.enabled).toBe(true)
-
-    client.destroy()
-  })
-
   it('stores telegram_status events from the backend', () => {
     const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
 

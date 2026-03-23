@@ -759,9 +759,9 @@ const CORTEX_USER_CLOSEOUT_REMINDER_MESSAGE = `SYSTEM: Before ending this direct
 // Retain recent non-web activity while preserving the full user-facing web transcript.
 const SWARM_CONTEXT_FILE_NAME = "SWARM.md";
 const AGENTS_CONTEXT_FILE_NAME = "AGENTS.md";
-// Integration services add ~3 event listeners per profile (Telegram conversation_message,
-// Slack conversation_message, Telegram session_lifecycle). Keep this limit above
-// base listeners + (3 × expected maximum profiles).
+// Integration services add ~2 event listeners per profile (Telegram conversation_message,
+// Telegram session_lifecycle). Keep this limit above base listeners +
+// (2 × expected maximum profiles).
 const SWARM_MANAGER_MAX_EVENT_LISTENERS = 64;
 const IDLE_WORKER_WATCHDOG_GRACE_MS = 3_000;
 const WATCHDOG_BATCH_WINDOW_MS = 750;
@@ -5344,13 +5344,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     const normalizedExplicitTarget = normalizeMessageTargetContext(explicitTargetContext);
 
-    if (
-      (normalizedExplicitTarget.channel === "slack" ||
-        normalizedExplicitTarget.channel === "telegram") &&
-      !normalizedExplicitTarget.channelId
-    ) {
+    if (normalizedExplicitTarget.channel === "telegram" && !normalizedExplicitTarget.channelId) {
       throw new Error(
-        'speak_to_user target.channelId is required when target.channel is "slack" or "telegram"'
+        'speak_to_user target.channelId is required when target.channel is "telegram"'
       );
     }
 
@@ -8341,10 +8337,7 @@ function parseCompactSlashCommand(text: string): { customInstructions?: string }
 
 function normalizeMessageTargetContext(input: MessageTargetContext): MessageTargetContext {
   return {
-    channel:
-      input.channel === "slack" || input.channel === "telegram"
-        ? input.channel
-        : "web",
+    channel: input.channel === "telegram" ? input.channel : "web",
     channelId: normalizeOptionalMetadataValue(input.channelId),
     userId: normalizeOptionalMetadataValue(input.userId),
     threadTs: normalizeOptionalMetadataValue(input.threadTs),
@@ -8354,10 +8347,7 @@ function normalizeMessageTargetContext(input: MessageTargetContext): MessageTarg
 
 function normalizeMessageSourceContext(input: MessageSourceContext): MessageSourceContext {
   return {
-    channel:
-      input.channel === "slack" || input.channel === "telegram"
-        ? input.channel
-        : "web",
+    channel: input.channel === "telegram" ? input.channel : "web",
     channelId: normalizeOptionalMetadataValue(input.channelId),
     userId: normalizeOptionalMetadataValue(input.userId),
     messageId: normalizeOptionalMetadataValue(input.messageId),

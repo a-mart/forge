@@ -2621,38 +2621,38 @@ describe('SwarmManager', () => {
     }
   })
 
-  it('includes full sourceContext annotation when forwarding slack user messages to manager runtime', async () => {
+  it('includes full sourceContext annotation when forwarding telegram user messages to manager runtime', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
 
-    await manager.handleUserMessage('reply in slack thread', {
+    await manager.handleUserMessage('reply in telegram thread', {
       sourceContext: {
-        channel: 'slack',
-        channelId: 'C123',
-        userId: 'U456',
+        channel: 'telegram',
+        channelId: '123456',
+        userId: '456789',
         threadTs: '173.456',
-        channelType: 'channel',
+        channelType: 'group',
         teamId: 'T789',
       },
     })
 
     const managerRuntime = manager.runtimeByAgentId.get('manager')
     expect(managerRuntime?.sendCalls.at(-1)?.message).toBe(
-      '[sourceContext] {"channel":"slack","channelId":"C123","userId":"U456","threadTs":"173.456","channelType":"channel","teamId":"T789"}\n\nreply in slack thread',
+      '[sourceContext] {"channel":"telegram","channelId":"123456","userId":"456789","threadTs":"173.456","channelType":"group","teamId":"T789"}\n\nreply in telegram thread',
     )
   })
 
-  it('defaults speak_to_user routing to web when target is omitted, even after slack input', async () => {
+  it('defaults speak_to_user routing to web when target is omitted, even after telegram input', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
 
-    await manager.handleUserMessage('reply in slack thread', {
+    await manager.handleUserMessage('reply in telegram thread', {
       sourceContext: {
-        channel: 'slack',
-        channelId: 'C123',
-        userId: 'U456',
+        channel: 'telegram',
+        channelId: '123456',
+        userId: '456789',
         threadTs: '173.456',
       },
     })
@@ -2675,19 +2675,19 @@ describe('SwarmManager', () => {
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
 
-    await manager.handleUserMessage('reply in slack thread', {
+    await manager.handleUserMessage('reply in telegram thread', {
       sourceContext: {
-        channel: 'slack',
-        channelId: 'C123',
-        userId: 'U456',
+        channel: 'telegram',
+        channelId: '123456',
+        userId: '456789',
         threadTs: '173.456',
       },
     })
 
     await manager.publishToUser('manager', 'ack from manager', 'speak_to_user', {
-      channel: 'slack',
-      channelId: 'C999',
-      userId: 'U000',
+      channel: 'telegram',
+      channelId: '999000',
+      userId: '000111',
       threadTs: '999.000',
     })
 
@@ -2699,25 +2699,25 @@ describe('SwarmManager', () => {
     expect(assistantEvent).toBeDefined()
     if (assistantEvent?.type === 'conversation_message') {
       expect(assistantEvent.sourceContext).toEqual({
-        channel: 'slack',
-        channelId: 'C999',
-        userId: 'U000',
+        channel: 'telegram',
+        channelId: '999000',
+        userId: '000111',
         threadTs: '999.000',
       })
     }
   })
 
-  it('requires channelId for explicit slack speak_to_user targets', async () => {
+  it('requires channelId for explicit telegram speak_to_user targets', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
 
     await expect(
       manager.publishToUser('manager', 'ack from manager', 'speak_to_user', {
-        channel: 'slack',
+        channel: 'telegram',
       }),
     ).rejects.toThrow(
-      'speak_to_user target.channelId is required when target.channel is "slack" or "telegram"',
+      'speak_to_user target.channelId is required when target.channel is "telegram"',
     )
   })
 

@@ -123,11 +123,6 @@ export class SwarmWebSocketServer {
     this.wsHandler.broadcastToSubscribed(event);
   };
 
-  private readonly onSlackStatus = (event: ServerEvent): void => {
-    if (event.type !== "slack_status") return;
-    this.wsHandler.broadcastToSubscribed(event);
-  };
-
   private readonly onTelegramStatus = (event: ServerEvent): void => {
     if (event.type !== "telegram_status") return;
     this.wsHandler.broadcastToSubscribed(event);
@@ -299,7 +294,6 @@ export class SwarmWebSocketServer {
     this.swarmManager.on("agent_status", this.onAgentStatus);
     this.swarmManager.on("agents_snapshot", this.onAgentsSnapshot);
     this.swarmManager.on("profiles_snapshot", this.onProfilesSnapshot);
-    this.integrationRegistry?.on("slack_status", this.onSlackStatus);
     this.integrationRegistry?.on("telegram_status", this.onTelegramStatus);
     this.playwrightDiscovery?.on("playwright_discovery_snapshot", this.onPlaywrightDiscoverySnapshot);
     this.playwrightDiscovery?.on("playwright_discovery_updated", this.onPlaywrightDiscoveryUpdated);
@@ -317,7 +311,6 @@ export class SwarmWebSocketServer {
     this.swarmManager.off("agent_status", this.onAgentStatus);
     this.swarmManager.off("agents_snapshot", this.onAgentsSnapshot);
     this.swarmManager.off("profiles_snapshot", this.onProfilesSnapshot);
-    this.integrationRegistry?.off("slack_status", this.onSlackStatus);
     this.integrationRegistry?.off("telegram_status", this.onTelegramStatus);
     this.playwrightDiscovery?.off("playwright_discovery_snapshot", this.onPlaywrightDiscoverySnapshot);
     this.playwrightDiscovery?.off("playwright_discovery_updated", this.onPlaywrightDiscoveryUpdated);

@@ -7,13 +7,12 @@ import { SettingsIntegrations } from '@/components/settings/SettingsIntegrations
 import { SettingsSkills } from '@/components/settings/SettingsSkills'
 import { SettingsPrompts } from '@/components/settings/SettingsPrompts'
 import { SettingsSlashCommands } from '@/components/settings/SettingsSlashCommands'
-import type { AgentDescriptor, ManagerProfile, PlaywrightDiscoverySettings, PlaywrightDiscoverySnapshot, SlackStatusEvent, TelegramStatusEvent } from '@forge/protocol'
+import type { AgentDescriptor, ManagerProfile, PlaywrightDiscoverySettings, PlaywrightDiscoverySnapshot, TelegramStatusEvent } from '@forge/protocol'
 
 interface SettingsPanelProps {
   wsUrl: string
   managers: AgentDescriptor[]
   profiles: ManagerProfile[]
-  slackStatus?: SlackStatusEvent | null
   telegramStatus?: TelegramStatusEvent | null
   promptChangeKey: number
   onBack?: () => void
@@ -25,7 +24,6 @@ export function SettingsPanel({
   wsUrl,
   managers,
   profiles,
-  slackStatus,
   telegramStatus,
   promptChangeKey,
   onBack,
@@ -43,7 +41,6 @@ export function SettingsPanel({
         <SettingsIntegrations
           wsUrl={wsUrl}
           managers={managers}
-          slackStatus={slackStatus}
           telegramStatus={telegramStatus}
         />
       )}

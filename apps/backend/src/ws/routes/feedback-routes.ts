@@ -346,8 +346,8 @@ function parseClearKindValue(value: unknown, fieldName: string): "vote" | "comme
 }
 
 function parseChannelValue(value: unknown, fieldName: string): FeedbackEvent["channel"] {
-  if (value !== "web" && value !== "telegram" && value !== "slack") {
-    throw new Error(`${fieldName} must be one of: web, telegram, slack.`);
+  if (value !== "web" && value !== "telegram") {
+    throw new Error(`${fieldName} must be one of: web, telegram.`);
   }
 
   return value;

@@ -6,7 +6,6 @@ import type {
   ManagerProfile,
   PlaywrightDiscoverySettings,
   PlaywrightDiscoverySnapshot,
-  SlackStatusEvent,
   TelegramStatusEvent,
 } from '@forge/protocol'
 
@@ -33,7 +32,6 @@ export interface ManagerWsState {
   statuses: Record<string, { status: AgentStatus; pendingCount: number; contextUsage?: AgentContextUsage; contextRecoveryInProgress?: boolean; streamingStartedAt?: number }>
   lastError: string | null
   lastSuccess: string | null
-  slackStatus: SlackStatusEvent | null
   telegramStatus: TelegramStatusEvent | null
   playwrightSnapshot: PlaywrightDiscoverySnapshot | null
   playwrightSettings: PlaywrightDiscoverySettings | null
@@ -57,7 +55,6 @@ export function createInitialManagerWsState(targetAgentId: string | null): Manag
     statuses: {},
     lastError: null,
     lastSuccess: null,
-    slackStatus: null,
     telegramStatus: null,
     playwrightSnapshot: null,
     playwrightSettings: null,

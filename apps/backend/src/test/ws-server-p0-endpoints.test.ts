@@ -180,11 +180,6 @@ async function makeTempConfig(options?: { port?: number; managerId?: string }): 
 
 function createIntegrationRegistryMock() {
   return Object.assign(new EventEmitter(), {
-    getSlackSnapshot: vi.fn(async () => ({ config: { enabled: false }, status: { state: 'disabled' } })),
-    updateSlackConfig: vi.fn(async () => ({ config: { enabled: true }, status: { state: 'connected' } })),
-    disableSlack: vi.fn(async () => ({ config: { enabled: false }, status: { state: 'disabled' } })),
-    testSlackConnection: vi.fn(async () => ({ ok: true })),
-    listSlackChannels: vi.fn(async () => [{ id: 'C123', name: 'alerts' }]),
     getTelegramSnapshot: vi.fn(async () => ({ config: { enabled: false }, status: { state: 'disabled' } })),
     updateTelegramConfig: vi.fn(async () => ({ config: { enabled: true }, status: { state: 'connected' } })),
     disableTelegram: vi.fn(async () => ({ config: { enabled: false }, status: { state: 'disabled' } })),
@@ -659,7 +654,7 @@ describe('SwarmWebSocketServer P0 endpoints', () => {
     }
   })
 
-  it('handles manager-scoped Slack/Telegram routes and validates methods/payloads', async () => {
+  it('handles manager-scoped Telegram routes and validates methods/payloads', async () => {
     const config = await makeTempConfig({ managerId: 'manager' })
     const manager = new FakeSwarmManager(config, [createManagerDescriptor(config.paths.rootDir, 'manager')])
     const integrationRegistry = createIntegrationRegistryMock()
@@ -676,30 +671,30 @@ describe('SwarmWebSocketServer P0 endpoints', () => {
 
     try {
       const unknownManagerResponse = await fetch(
-        `http://${config.host}:${config.port}/api/managers/ghost/integrations/slack`,
+        `http://${config.host}:${config.port}/api/managers/ghost/integrations/telegram`,
       )
       const unknownManager = await parseJsonResponse(unknownManagerResponse)
       expect(unknownManager.status).toBe(404)
       expect(unknownManager.json.error).toBe('Unknown manager: ghost')
 
-      const sharedSlackResponse = await fetch(
-        `http://${config.host}:${config.port}/api/managers/${encodeURIComponent(SHARED_INTEGRATION_MANAGER_ID)}/integrations/slack`,
+      const sharedTelegramResponse = await fetch(
+        `http://${config.host}:${config.port}/api/managers/${encodeURIComponent(SHARED_INTEGRATION_MANAGER_ID)}/integrations/telegram`,
       )
-      const sharedSlack = await parseJsonResponse(sharedSlackResponse)
-      expect(sharedSlack.status).toBe(200)
-      expect(integrationRegistry.getSlackSnapshot).toHaveBeenCalledWith(SHARED_INTEGRATION_MANAGER_ID)
+      const sharedTelegram = await parseJsonResponse(sharedTelegramResponse)
+      expect(sharedTelegram.status).toBe(200)
+      expect(integrationRegistry.getTelegramSnapshot).toHaveBeenCalledWith(SHARED_INTEGRATION_MANAGER_ID)
 
-      const slackTestResponse = await fetch(
-        `http://${config.host}:${config.port}/api/managers/manager/integrations/slack/test`,
+      const telegramTestResponse = await fetch(
+        `http://${config.host}:${config.port}/api/managers/manager/integrations/telegram/test`,
         {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ dryRun: true }),
         },
       )
-      const slackTest = await parseJsonResponse(slackTestResponse)
-      expect(slackTest.status).toBe(200)
-      expect(integrationRegistry.testSlackConnection).toHaveBeenCalledWith('manager', { dryRun: true })
+      const telegramTest = await parseJsonResponse(telegramTestResponse)
+      expect(telegramTest.status).toBe(200)
+      expect(integrationRegistry.testTelegramConnection).toHaveBeenCalledWith('manager', { dryRun: true })
 
       const telegramWrongMethodResponse = await fetch(
         `http://${config.host}:${config.port}/api/managers/manager/integrations/telegram`,
@@ -872,7 +867,7 @@ describe('SwarmWebSocketServer P0 endpoints', () => {
     }
   })
 
-  it('does not expose legacy Slack integration routes', async () => {
+  it('does not expose legacy integration routes', async () => {
     const config = await makeTempConfig({ managerId: undefined })
     const manager = new FakeSwarmManager(config, [])
     const integrationRegistry = createIntegrationRegistryMock()
@@ -888,7 +883,7 @@ describe('SwarmWebSocketServer P0 endpoints', () => {
     await server.start()
 
     try {
-      const response = await fetch(`http://${config.host}:${config.port}/api/integrations/slack`)
+      const response = await fetch(`http://${config.host}:${config.port}/api/integrations/telegram`)
       expect(response.status).toBe(404)
     } finally {
       await server.stop()
