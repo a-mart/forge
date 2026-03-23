@@ -811,7 +811,7 @@ export class ManagerWsClient {
             pendingCount: event.pendingCount,
             contextUsage: event.contextUsage,
             contextRecoveryInProgress: event.contextRecoveryInProgress,
-            streamingStartedAt: resolveStreamingStartedAt(prevEntry, event.status),
+            streamingStartedAt: resolveStreamingStartedAt(prevEntry, event.status, event.streamingStartedAt),
           },
         }
 
@@ -1112,7 +1112,7 @@ export class ManagerWsClient {
               pendingCount: previous && previous.status === status ? previous.pendingCount : 0,
               contextUsage: agent.contextUsage,
               contextRecoveryInProgress: previous?.contextRecoveryInProgress,
-              streamingStartedAt: resolveStreamingStartedAt(previous, status),
+              streamingStartedAt: resolveStreamingStartedAt(previous, status, agent.streamingStartedAt),
             },
           ]
         }),
@@ -1208,7 +1208,7 @@ export class ManagerWsClient {
         pendingCount: previous && previous.status === worker.status ? previous.pendingCount : 0,
         contextUsage: worker.contextUsage,
         contextRecoveryInProgress: previous?.contextRecoveryInProgress,
-        streamingStartedAt: resolveStreamingStartedAt(previous, worker.status),
+        streamingStartedAt: resolveStreamingStartedAt(previous, worker.status, worker.streamingStartedAt),
       }
     }
 
@@ -1481,9 +1481,15 @@ export class ManagerWsClient {
 function resolveStreamingStartedAt(
   previous: ManagerWsState['statuses'][string] | undefined,
   nextStatus: AgentDescriptor['status'],
+  serverTimestamp?: number,
 ): number | undefined {
   if (nextStatus !== 'streaming') {
     return previous?.streamingStartedAt
+  }
+
+  // Prefer server-provided timestamp (survives reconnect/reload)
+  if (serverTimestamp != null) {
+    return serverTimestamp
   }
 
   if (previous?.status === 'streaming' && previous.streamingStartedAt !== undefined) {

@@ -49,6 +49,7 @@ export interface AgentDescriptor {
   mergedAt?: string;
   workerCount?: number;
   activeWorkerCount?: number;
+  streamingStartedAt?: number;
 }
 
 export interface AgentsStoreFile {
@@ -279,6 +280,7 @@ export interface AgentStatusEvent {
   pendingCount: number;
   contextUsage?: AgentContextUsage;
   contextRecoveryInProgress?: boolean;
+  streamingStartedAt?: number;
 }
 
 export interface AgentsSnapshotEvent {

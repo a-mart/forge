@@ -48,6 +48,7 @@ export interface AgentDescriptor {
   mergedAt?: string
   workerCount?: number
   activeWorkerCount?: number
+  streamingStartedAt?: number
 }
 
 export type CortexReviewRunTrigger = 'manual' | 'scheduled'

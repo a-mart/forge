@@ -5497,11 +5497,17 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       descriptor.contextUsage = normalizedContextUsage;
     }
 
-    const nextStatus = transitionAgentStatus(descriptor.status, status);
-    const statusChanged = descriptor.status !== nextStatus;
+    const previousStatus = descriptor.status;
+    const nextStatus = transitionAgentStatus(previousStatus, status);
+    const statusChanged = previousStatus !== nextStatus;
     if (statusChanged) {
       descriptor.status = nextStatus;
       descriptor.updatedAt = this.now();
+      shouldPersist = true;
+    }
+
+    if (previousStatus !== "streaming" && nextStatus === "streaming") {
+      descriptor.streamingStartedAt = Date.now();
       shouldPersist = true;
     }
 
@@ -5850,7 +5856,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       status,
       pendingCount,
       ...(resolvedContextUsage ? { contextUsage: resolvedContextUsage } : {}),
-      ...(contextRecoveryInProgress ? { contextRecoveryInProgress } : {})
+      ...(contextRecoveryInProgress ? { contextRecoveryInProgress } : {}),
+      ...(descriptor?.streamingStartedAt != null ? { streamingStartedAt: descriptor.streamingStartedAt } : {})
     };
 
     this.emit("agent_status", payload satisfies ServerEvent);

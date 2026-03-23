@@ -266,6 +266,7 @@ export interface AgentStatusEvent {
   pendingCount: number
   contextUsage?: AgentContextUsage
   contextRecoveryInProgress?: boolean
+  streamingStartedAt?: number
 }
 
 export interface AgentsSnapshotEvent {
