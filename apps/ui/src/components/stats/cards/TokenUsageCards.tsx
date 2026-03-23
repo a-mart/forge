@@ -47,7 +47,7 @@ export function TokenUsageCards({ tokens }: TokenUsageCardsProps) {
         title="All Time"
         value={abbreviateNumber(tokens.allTime)}
         unit="tokens"
-        subtitle={`Total ${formatTokenCount(tokens.allTime)}`}
+        subtitle=""
         variant="accent"
       />
     </div>
