@@ -1,15 +1,13 @@
 import type { StatsRange } from "@forge/protocol";
-import type { SwarmManager } from "../../swarm/swarm-manager.js";
-import { StatsService } from "../../stats/stats-service.js";
+import type { StatsService } from "../../stats/stats-service.js";
 import { applyCorsHeaders, sendJson } from "../http-utils.js";
 import type { HttpRoute } from "./http-route.js";
 
 const STATS_ENDPOINT_PATH = "/api/stats";
 const STATS_REFRESH_ENDPOINT_PATH = "/api/stats/refresh";
 
-export function createStatsRoutes(options: { swarmManager: SwarmManager }): HttpRoute[] {
-  const { swarmManager } = options;
-  const statsService = new StatsService(swarmManager);
+export function createStatsRoutes(options: { statsService: StatsService }): HttpRoute[] {
+  const { statsService } = options;
 
   return [
     {
@@ -65,7 +63,6 @@ export function createStatsRoutes(options: { swarmManager: SwarmManager }): Http
         }
 
         applyCorsHeaders(request, response, methods);
-        statsService.clearCache();
         const range = parseRange(requestUrl.searchParams.get("range"));
 
         try {

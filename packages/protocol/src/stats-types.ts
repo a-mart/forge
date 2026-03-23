@@ -63,6 +63,13 @@ export interface ModelDistributionEntry {
   displayName: string;
   percentage: number;
   tokenCount: number;
+  reasoningBreakdown?: ModelReasoningBreakdownEntry[];
+}
+
+export interface ModelReasoningBreakdownEntry {
+  level: string;
+  tokenCount: number;
+  percentage: number;
 }
 
 export interface DailyUsageBucket {

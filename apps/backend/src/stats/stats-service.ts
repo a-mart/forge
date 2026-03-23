@@ -57,10 +57,21 @@ interface PersistedStatsCache {
 
 export class StatsService {
   private readonly cache = new Map<string, CacheEntry>();
+  private readonly inFlightComputations = new Map<string, Promise<StatsSnapshot>>();
+  private readonly cacheFilePath: string;
 
-  constructor(private readonly swarmManager: SwarmManager) {}
+  private persistentCacheLoaded = false;
+  private persistQueue: Promise<void> = Promise.resolve();
+  private refreshAllPromise: Promise<void> | null = null;
+
+  constructor(private readonly swarmManager: SwarmManager) {
+    const dataDir = this.swarmManager.getConfig().paths.dataDir;
+    this.cacheFilePath = join(getSharedDir(dataDir), STATS_CACHE_FILE_NAME);
+  }
 
   async getSnapshot(range: StatsRange, options: { forceRefresh?: boolean } = {}): Promise<StatsSnapshot> {
+    await this.ensurePersistentCacheLoaded();
+
     const key = this.getCacheKey(range);
     const nowMs = Date.now();
 
@@ -69,23 +80,141 @@ export class StatsService {
       if (cached && cached.expiresAt > nowMs) {
         return cached.snapshot;
       }
+
+      if (cached) {
+        void this.refreshRangeInBackground(range);
+        return cached.snapshot;
+      }
     }
 
-    const snapshot = await this.computeSnapshot(range, nowMs);
-    this.cache.set(key, {
-      expiresAt: nowMs + CACHE_TTL_MS,
-      snapshot
-    });
+    const inFlight = this.inFlightComputations.get(key);
+    if (inFlight) {
+      return inFlight;
+    }
 
-    return snapshot;
+    const computePromise = this.computeSnapshot(range, nowMs)
+      .then((snapshot) => {
+        this.cache.set(key, {
+          expiresAt: Date.now() + STATS_CACHE_TTL_MS,
+          snapshot
+        });
+        this.queuePersistCacheWrite();
+        return snapshot;
+      })
+      .finally(() => {
+        this.inFlightComputations.delete(key);
+      });
+
+    this.inFlightComputations.set(key, computePromise);
+    return computePromise;
   }
 
   clearCache(): void {
     this.cache.clear();
   }
 
+  async refreshAllRangesInBackground(): Promise<void> {
+    if (this.refreshAllPromise) {
+      return this.refreshAllPromise;
+    }
+
+    this.refreshAllPromise = (async () => {
+      const ranges: StatsRange[] = ["7d", "30d", "all"];
+      for (const range of ranges) {
+        try {
+          await this.getSnapshot(range, { forceRefresh: true });
+        } catch {
+          // keep refreshing other ranges even if one fails
+        }
+      }
+    })()
+      .catch(() => {
+        // best-effort background refresh
+      })
+      .finally(() => {
+        this.refreshAllPromise = null;
+      });
+
+    return this.refreshAllPromise;
+  }
+
+  private refreshRangeInBackground(range: StatsRange): void {
+    void this.getSnapshot(range, { forceRefresh: true }).catch(() => {
+      // best-effort stale-while-revalidate refresh
+    });
+  }
+
   private getCacheKey(range: StatsRange): string {
     return `stats:${range}`;
+  }
+
+  private async ensurePersistentCacheLoaded(): Promise<void> {
+    if (this.persistentCacheLoaded) {
+      return;
+    }
+    this.persistentCacheLoaded = true;
+
+    try {
+      const raw = await readFile(this.cacheFilePath, "utf8");
+      const parsed = JSON.parse(raw) as PersistedStatsCache;
+      if (!isRecord(parsed) || parsed.version !== 1 || !isRecord(parsed.entries)) {
+        return;
+      }
+
+      const ranges: StatsRange[] = ["7d", "30d", "all"];
+      for (const range of ranges) {
+        const entry = parsed.entries[range];
+        if (!entry || !isRecord(entry)) {
+          continue;
+        }
+
+        const expiresAt = toSafeNumber(entry.expiresAt);
+        if (expiresAt <= 0 || !entry.snapshot || !isRecord(entry.snapshot)) {
+          continue;
+        }
+
+        this.cache.set(this.getCacheKey(range), {
+          expiresAt,
+          snapshot: entry.snapshot as StatsSnapshot
+        });
+      }
+    } catch (error) {
+      if (isEnoentError(error)) {
+        return;
+      }
+      return;
+    }
+  }
+
+  private queuePersistCacheWrite(): void {
+    this.persistQueue = this.persistQueue
+      .then(async () => {
+        const entries: Partial<Record<StatsRange, CacheEntry>> = {};
+        const entry7d = this.cache.get(this.getCacheKey("7d"));
+        const entry30d = this.cache.get(this.getCacheKey("30d"));
+        const entryAll = this.cache.get(this.getCacheKey("all"));
+
+        if (entry7d) {
+          entries["7d"] = entry7d;
+        }
+        if (entry30d) {
+          entries["30d"] = entry30d;
+        }
+        if (entryAll) {
+          entries.all = entryAll;
+        }
+
+        const payload: PersistedStatsCache = {
+          version: 1,
+          entries
+        };
+
+        await mkdir(dirname(this.cacheFilePath), { recursive: true });
+        await writeFile(this.cacheFilePath, JSON.stringify(payload), "utf8");
+      })
+      .catch(() => {
+        // best-effort persistent cache write
+      });
   }
 
   private async computeSnapshot(range: StatsRange, nowMs: number): Promise<StatsSnapshot> {
@@ -114,12 +243,15 @@ export class StatsService {
     const rangeTotals = this.sumDailyEntries(dailyEntriesInRange.map((entry) => entry.totals));
 
     const workerRunsInRange = scanResult.workerRuns.filter((run) => run.createdAtMs >= rangeStartMs);
-    const workerDurations = workerRunsInRange
-      .map((run) => run.durationMs)
-      .filter((duration): duration is number => typeof duration === "number" && duration >= 0);
+    const completedWorkerRunsInRange = workerRunsInRange.filter(
+      (run) => run.terminatedAtMs !== null && typeof run.durationMs === "number" && run.durationMs >= 0
+    );
 
-    const totalDurationMs = workerDurations.reduce((sum, duration) => sum + duration, 0);
-    const averageRuntimeMs = workerDurations.length > 0 ? Math.round(totalDurationMs / workerDurations.length) : 0;
+    const totalDurationMs = completedWorkerRunsInRange.reduce((sum, run) => sum + (run.durationMs ?? 0), 0);
+    const averageRuntimeMs =
+      completedWorkerRunsInRange.length > 0 ? Math.round(totalDurationMs / completedWorkerRunsInRange.length) : 0;
+
+    const completedWorkerTokensTotal = completedWorkerRunsInRange.reduce((sum, run) => sum + run.totalTokens, 0);
 
     const activeDays = dailyEntriesInRange.filter((entry) => entry.totals.total > 0).map((entry) => entry.day);
     const longestStreak = computeLongestStreak(activeDays);
@@ -159,7 +291,9 @@ export class StatsService {
         totalWorkersRun: workerRunsInRange.length,
         totalWorkersRunPeriod: rangePeriodLabel(range),
         averageTokensPerRun:
-          workerRunsInRange.length > 0 ? Math.round(rangeTotals.total / workerRunsInRange.length) : 0,
+          completedWorkerRunsInRange.length > 0
+            ? Math.round(completedWorkerTokensTotal / completedWorkerRunsInRange.length)
+            : 0,
         averageRuntimeMs,
         currentlyActive: scanResult.activeWorkerCount
       },
@@ -239,9 +373,12 @@ export class StatsService {
         const sessionFile = join(sessionDir, "session.jsonl");
         const metaFile = join(sessionDir, "meta.json");
         const workersDir = join(sessionDir, "workers");
+        const workerTokenTotalsByRunKey = new Map<string, number>();
 
-        await this.scanJsonlFile(sessionFile, (entry) => {
-          this.collectUsageAndMessages(entry, usageRecords, dailyUsage, userMessages);
+        await this.scanJsonlFile(sessionFile, (entry, context) => {
+          this.collectUsageAndMessages(entry, usageRecords, dailyUsage, userMessages, {
+            fallbackThinkingLevel: context.thinkingLevel
+          });
         });
 
         const workerFiles = (await this.listFileNames(workersDir)).filter(
@@ -249,27 +386,43 @@ export class StatsService {
         );
 
         for (const workerFileName of workerFiles) {
-          await this.scanJsonlFile(join(workersDir, workerFileName), (entry) => {
-            this.collectUsageAndMessages(entry, usageRecords, dailyUsage, userMessages);
+          const workerId = workerFileName.slice(0, -".jsonl".length);
+          const workerRunKey = toWorkerRunKey(profileId, sessionId, workerId);
+          let totalTokensForWorker = 0;
+
+          await this.scanJsonlFile(join(workersDir, workerFileName), (entry, context) => {
+            totalTokensForWorker += this.collectUsageAndMessages(entry, usageRecords, dailyUsage, userMessages, {
+              fallbackThinkingLevel: context.thinkingLevel
+            });
           });
+
+          workerTokenTotalsByRunKey.set(workerRunKey, totalTokensForWorker);
         }
 
         const meta = await this.readSessionMeta(metaFile);
         if (meta) {
           for (const worker of meta.workers ?? []) {
+            if (typeof worker.id === "string" && worker.id.endsWith(".conversation")) {
+              continue;
+            }
+
             const createdAtMs = toTimestampMs(worker.createdAt);
             if (createdAtMs === null) {
               continue;
             }
 
             const terminatedAtMs = toTimestampMs(worker.terminatedAt);
-            const durationMs = terminatedAtMs !== null && terminatedAtMs >= createdAtMs
-              ? terminatedAtMs - createdAtMs
-              : null;
+            const durationMs =
+              terminatedAtMs !== null && terminatedAtMs >= createdAtMs ? terminatedAtMs - createdAtMs : null;
+            const workerId = typeof worker.id === "string" && worker.id.trim().length > 0 ? worker.id : "unknown";
+            const workerRunKey = toWorkerRunKey(profileId, sessionId, workerId);
 
             workerRuns.push({
+              workerId,
               createdAtMs,
-              durationMs
+              terminatedAtMs,
+              durationMs,
+              totalTokens: workerTokenTotalsByRunKey.get(workerRunKey) ?? 0
             });
           }
         }
@@ -305,10 +458,11 @@ export class StatsService {
     entry: unknown,
     usageRecords: UsageRecord[],
     dailyUsage: Map<string, DailyTotals>,
-    userMessages: number[]
-  ): void {
+    userMessages: number[],
+    options: { fallbackThinkingLevel: string | null }
+  ): number {
     if (!isRecord(entry)) {
-      return;
+      return 0;
     }
 
     if (entry.type === "message" && isRecord(entry.message)) {
@@ -321,6 +475,7 @@ export class StatsService {
       if (usage) {
         const modelId = extractModelId(entry.message);
         const day = toDayKey(timestampMs);
+        const reasoningLevel = extractReasoningLevel(entry.message, options.fallbackThinkingLevel);
 
         usageRecords.push({
           timestampMs,
@@ -329,7 +484,8 @@ export class StatsService {
           cacheRead: usage.cacheRead,
           cacheWrite: usage.cacheWrite,
           total: usage.total,
-          modelId
+          modelId,
+          reasoningLevel
         });
 
         const existing = dailyUsage.get(day) ?? emptyDailyTotals();
@@ -340,9 +496,11 @@ export class StatsService {
           cacheWrite: existing.cacheWrite + usage.cacheWrite,
           total: existing.total + usage.total
         });
+
+        return usage.total;
       }
 
-      return;
+      return 0;
     }
 
     if (
@@ -358,15 +516,21 @@ export class StatsService {
         userMessages.push(ts);
       }
     }
+
+    return 0;
   }
 
-  private async scanJsonlFile(path: string, onEntry: (entry: unknown) => void): Promise<void> {
+  private async scanJsonlFile(
+    path: string,
+    onEntry: (entry: unknown, context: { thinkingLevel: string | null }) => void
+  ): Promise<void> {
     try {
       const stream = createReadStream(path, { encoding: "utf8" });
       const reader = createInterface({
         input: stream,
         crlfDelay: Number.POSITIVE_INFINITY
       });
+      let thinkingLevel: string | null = null;
 
       try {
         for await (const line of reader) {
@@ -376,7 +540,15 @@ export class StatsService {
           }
 
           try {
-            onEntry(JSON.parse(trimmed) as unknown);
+            const parsed = JSON.parse(trimmed) as unknown;
+            if (isRecord(parsed)) {
+              const thinkingLevelChange = extractThinkingLevelChange(parsed);
+              if (thinkingLevelChange !== null) {
+                thinkingLevel = thinkingLevelChange;
+              }
+            }
+
+            onEntry(parsed, { thinkingLevel });
           } catch {
             // ignore malformed lines
           }
@@ -469,10 +641,16 @@ export class StatsService {
 
   private computeModelDistribution(usageRecords: UsageRecord[]): ModelDistributionEntry[] {
     const totalsByModel = new Map<string, number>();
+    const reasoningTotalsByModel = new Map<string, Map<string, number>>();
 
     for (const record of usageRecords) {
       const current = totalsByModel.get(record.modelId) ?? 0;
       totalsByModel.set(record.modelId, current + record.total);
+
+      const byReasoning = reasoningTotalsByModel.get(record.modelId) ?? new Map<string, number>();
+      const reasoningCurrent = byReasoning.get(record.reasoningLevel) ?? 0;
+      byReasoning.set(record.reasoningLevel, reasoningCurrent + record.total);
+      reasoningTotalsByModel.set(record.modelId, byReasoning);
     }
 
     const grandTotal = Array.from(totalsByModel.values()).reduce((sum, value) => sum + value, 0);
@@ -481,12 +659,24 @@ export class StatsService {
     }
 
     return Array.from(totalsByModel.entries())
-      .map(([modelId, tokenCount]) => ({
-        modelId,
-        displayName: modelId,
-        percentage: round2((tokenCount / grandTotal) * 100),
-        tokenCount
-      }))
+      .map(([modelId, tokenCount]) => {
+        const reasoningBreakdownRaw = reasoningTotalsByModel.get(modelId) ?? new Map<string, number>();
+        const reasoningBreakdown = Array.from(reasoningBreakdownRaw.entries())
+          .map(([level, levelTokenCount]) => ({
+            level,
+            tokenCount: levelTokenCount,
+            percentage: tokenCount > 0 ? round2((levelTokenCount / tokenCount) * 100) : 0
+          }))
+          .sort((left, right) => right.tokenCount - left.tokenCount);
+
+        return {
+          modelId,
+          displayName: modelId,
+          percentage: round2((tokenCount / grandTotal) * 100),
+          tokenCount,
+          reasoningBreakdown
+        };
+      })
       .sort((left, right) => right.tokenCount - left.tokenCount)
       .slice(0, 10);
   }
@@ -543,6 +733,46 @@ function extractModelId(message: unknown): string {
   }
 
   return modelId || provider || "unknown";
+}
+
+function extractReasoningLevel(message: unknown, fallbackThinkingLevel: string | null): string {
+  if (!isRecord(message)) {
+    return fallbackThinkingLevel ?? "default";
+  }
+
+  const explicit =
+    normalizeReasoningLevel(message.reasoningLevel) ??
+    normalizeReasoningLevel(message.thinkingLevel) ??
+    normalizeReasoningLevel(message.reasoning_effort) ??
+    normalizeReasoningLevel(message.reasoningEffort) ??
+    normalizeReasoningLevel(message.reasoning);
+
+  return explicit ?? fallbackThinkingLevel ?? "default";
+}
+
+function normalizeReasoningLevel(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function extractThinkingLevelChange(entry: Record<string, unknown>): string | null {
+  if (entry.type === "thinking_level_change") {
+    return normalizeReasoningLevel(entry.thinkingLevel);
+  }
+
+  if (entry.type === "reasoning_level_change") {
+    return normalizeReasoningLevel(entry.reasoningLevel);
+  }
+
+  return null;
+}
+
+function toWorkerRunKey(profileId: string, sessionId: string, workerId: string): string {
+  return `${profileId}/${sessionId}/${workerId}`;
 }
 
 function toSafeNumber(value: unknown, fallback = 0): number {

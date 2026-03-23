@@ -35,6 +35,7 @@ import { createSchedulerRoutes } from "./routes/scheduler-routes.js";
 import { createSettingsRoutes, type SettingsRouteBundle } from "./routes/settings-routes.js";
 import { createSlashCommandRoutes } from "./routes/slash-command-routes.js";
 import { createTranscriptionRoutes } from "./routes/transcription-routes.js";
+import { STATS_CACHE_TTL_MS, StatsService } from "../stats/stats-service.js";
 import { createStatsRoutes } from "./routes/stats-routes.js";
 import { WsHandler } from "./ws-handler.js";
 
@@ -55,9 +56,12 @@ export class SwarmWebSocketServer {
   private readonly wsHandler: WsHandler;
   private readonly mobilePushService: MobilePushService;
   private readonly settingsRoutes: SettingsRouteBundle;
+  private readonly statsService: StatsService;
   private readonly httpRoutes: HttpRoute[];
   private readonly controlPidFile: string;
   private readonly shouldManageControlPid: boolean;
+
+  private statsRefreshInterval: NodeJS.Timeout | null = null;
 
   private ownsControlPidFile = false;
 
@@ -200,6 +204,7 @@ export class SwarmWebSocketServer {
     wsHandlerRef = this.wsHandler;
 
     this.settingsRoutes = createSettingsRoutes({ swarmManager: this.swarmManager });
+    this.statsService = new StatsService(this.swarmManager);
     this.httpRoutes = [
       ...createHealthRoutes({
         resolveControlPidFile: () => this.controlPidFile
@@ -213,7 +218,7 @@ export class SwarmWebSocketServer {
       ...createFeedbackRoutes({ swarmManager: this.swarmManager }),
       ...createCortexRoutes({ swarmManager: this.swarmManager }),
       ...createTranscriptionRoutes({ swarmManager: this.swarmManager }),
-      ...createStatsRoutes({ swarmManager: this.swarmManager }),
+      ...createStatsRoutes({ statsService: this.statsService }),
       ...createSchedulerRoutes({ swarmManager: this.swarmManager }),
       ...createSlashCommandRoutes({ swarmManager: this.swarmManager }),
       ...createMobileRoutes({ mobilePushService: this.mobilePushService }),
@@ -301,9 +306,20 @@ export class SwarmWebSocketServer {
     this.playwrightDiscovery?.on("playwright_discovery_updated", this.onPlaywrightDiscoveryUpdated);
     this.playwrightDiscovery?.on("playwright_discovery_settings_updated", this.onPlaywrightDiscoverySettingsUpdated);
     await this.mobilePushService.start();
+
+    void this.statsService.refreshAllRangesInBackground();
+    this.statsRefreshInterval = setInterval(() => {
+      void this.statsService.refreshAllRangesInBackground();
+    }, STATS_CACHE_TTL_MS);
+    this.statsRefreshInterval.unref?.();
   }
 
   async stop(): Promise<void> {
+    if (this.statsRefreshInterval) {
+      clearInterval(this.statsRefreshInterval);
+      this.statsRefreshInterval = null;
+    }
+
     this.swarmManager.off("conversation_message", this.onConversationMessage);
     this.swarmManager.off("conversation_log", this.onConversationLog);
     this.swarmManager.off("agent_message", this.onAgentMessage);
