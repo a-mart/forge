@@ -1,13 +1,12 @@
 import { StatCard } from './StatCard'
 import { abbreviateNumber, formatTokenCount } from '../charts/chart-utils'
-import type { TokenStats, CacheStats } from '@forge/protocol'
+import type { TokenStats } from '@forge/protocol'
 
 interface TokenUsageCardsProps {
   tokens: TokenStats
-  cache: CacheStats
 }
 
-export function TokenUsageCards({ tokens, cache }: TokenUsageCardsProps) {
+export function TokenUsageCards({ tokens }: TokenUsageCardsProps) {
   const avgPerDayLast30 = Math.round(tokens.last30Days / 30)
   const avgPerWeekLast30 = Math.round(tokens.last30Days * 7 / 30)
 
@@ -45,10 +44,10 @@ export function TokenUsageCards({ tokens, cache }: TokenUsageCardsProps) {
         variant="accent"
       />
       <StatCard
-        title="Cache Hit Rate"
-        value={`${cache.hitRate.toFixed(1)}`}
-        unit="%"
-        subtitle={cache.hitRatePeriod}
+        title="All Time"
+        value={abbreviateNumber(tokens.allTime)}
+        unit="tokens"
+        subtitle={`Total ${formatTokenCount(tokens.allTime)}`}
         variant="accent"
       />
     </div>

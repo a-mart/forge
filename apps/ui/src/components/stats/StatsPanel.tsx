@@ -128,7 +128,7 @@ export function StatsPanel({ wsUrl, onBack }: StatsPanelProps) {
       ) : stats ? (
         <div className={cn('space-y-4 transition-opacity duration-200', isUpdating && 'opacity-60')}>
           {/* Token usage: 4-card row */}
-          <TokenUsageCards tokens={stats.tokens} cache={stats.cache} />
+          <TokenUsageCards tokens={stats.tokens} />
 
           {/* Secondary metrics: 3-card row */}
           <CacheMetricsCards
