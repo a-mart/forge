@@ -1121,6 +1121,7 @@ export class ManagerWsClient {
               pendingCount: previous && previous.status === status ? previous.pendingCount : 0,
               contextUsage: agent.contextUsage,
               contextRecoveryInProgress: previous?.contextRecoveryInProgress,
+              streamingStartedAt: previous?.streamingStartedAt,
             },
           ]
         }),
@@ -1216,6 +1217,7 @@ export class ManagerWsClient {
         pendingCount: previous && previous.status === worker.status ? previous.pendingCount : 0,
         contextUsage: worker.contextUsage,
         contextRecoveryInProgress: previous?.contextRecoveryInProgress,
+        streamingStartedAt: previous?.streamingStartedAt,
       }
     }
 
