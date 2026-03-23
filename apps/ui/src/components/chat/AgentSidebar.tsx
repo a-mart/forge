@@ -2215,53 +2215,70 @@ export function AgentSidebar({
         })()}
       </div>
 
-      <div className="shrink-0 border-t border-sidebar-border p-2">
-        <div className="space-y-1">
-          {showPlaywrightNav ? (
-            <button
-              type="button"
-              onClick={handleOpenPlaywright}
-              className={cn(
-                'flex min-h-[44px] w-full items-center gap-2 rounded-md px-2 py-2 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
-                isPlaywrightActive
-                  ? 'bg-sidebar-accent text-sidebar-accent-foreground'
-                  : 'text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground',
-              )}
-              aria-pressed={isPlaywrightActive}
-            >
-              <MonitorPlay aria-hidden="true" className="size-4" />
-              <span>Playwright</span>
-            </button>
-          ) : null}
-          <button
-            type="button"
-            onClick={handleOpenStats}
-            className={cn(
-              'flex min-h-[44px] w-full items-center gap-2 rounded-md px-2 py-2 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
-              isStatsActive
-                ? 'bg-sidebar-accent text-sidebar-accent-foreground'
-                : 'text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground',
-            )}
-            aria-pressed={isStatsActive}
-          >
-            <BarChart3 aria-hidden="true" className="size-4" />
-            <span>Stats</span>
-          </button>
-          <button
-            type="button"
-            onClick={handleOpenSettings}
-            className={cn(
-              'flex min-h-[44px] w-full items-center gap-2 rounded-md px-2 py-2 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
-              isSettingsActive
-                ? 'bg-sidebar-accent text-sidebar-accent-foreground'
-                : 'text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground',
-            )}
-            aria-pressed={isSettingsActive}
-          >
-            <Settings aria-hidden="true" className="size-4" />
-            <span>Settings</span>
-          </button>
-        </div>
+      <div className="shrink-0 border-t border-sidebar-border px-2 py-1.5">
+        <TooltipProvider delayDuration={200}>
+          <div className="flex items-center justify-center gap-1">
+            {showPlaywrightNav ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={handleOpenPlaywright}
+                    className={cn(
+                      'inline-flex size-8 items-center justify-center rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
+                      isPlaywrightActive
+                        ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+                        : 'text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground',
+                    )}
+                    aria-label="Playwright"
+                    aria-pressed={isPlaywrightActive}
+                  >
+                    <MonitorPlay aria-hidden="true" className="size-4" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="top" sideOffset={6}>Playwright</TooltipContent>
+              </Tooltip>
+            ) : null}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={handleOpenStats}
+                  className={cn(
+                    'inline-flex size-8 items-center justify-center rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
+                    isStatsActive
+                      ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+                      : 'text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground',
+                  )}
+                  aria-label="Stats"
+                  aria-pressed={isStatsActive}
+                >
+                  <BarChart3 aria-hidden="true" className="size-4" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top" sideOffset={6}>Stats</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={handleOpenSettings}
+                  className={cn(
+                    'inline-flex size-8 items-center justify-center rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
+                    isSettingsActive
+                      ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+                      : 'text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground',
+                  )}
+                  aria-label="Settings"
+                  aria-pressed={isSettingsActive}
+                >
+                  <Settings aria-hidden="true" className="size-4" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top" sideOffset={6}>Settings</TooltipContent>
+            </Tooltip>
+          </div>
+        </TooltipProvider>
       </div>
     </aside>
   )
