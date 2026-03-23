@@ -2,19 +2,53 @@
 
 A local-first multi-agent orchestration platform. One manager, many workers, zero tab-juggling.
 
-If you're using agentic coding tools, you've probably hit this wall: you start with one agent, then two, then five. You're branching, worktree-ing, reviewing, merging, context-switching. The agents are cranking out code. But your entire day is spent *managing them* — sequencing work, checking output, nudging things along.
+If you're using agentic coding tools, you've probably hit this wall: you start with one agent, then two, then five. You're branching, worktree-ing, reviewing, merging, context-switching. The agents are cranking out code, but your entire day is spent *managing them*. Sequencing work, checking output, nudging things along.
 
 You're not an IC anymore. You've become a project manager. You need a middle manager.
 
-**Forge gives you one.** You talk to a single persistent manager agent per project. You describe what needs to be done — a feature, a batch of bug fixes, a refactor — and the manager dispatches workers, parallelizes where it makes sense, and surfaces only the things that need your attention.
+Forge gives you one.
+
+---
+
+### Contents
+
+- [Why Forge?](#why-forge)
+- [Quick Start](#quick-start)
+- [Core Concepts](#core-concepts)
+- [Dashboard](#dashboard)
+- [Skills](#skills)
+- [Integrations](#integrations)
+- [Getting the Most Out of Forge](#getting-the-most-out-of-forge)
+- [Architecture](#architecture)
+- [Configuration](#configuration)
+- [Development](#development)
+- [Platform Notes](#platform-notes)
+
+---
+
+You talk to a single persistent manager agent per project. Describe what needs to happen (a feature, a batch of bug fixes, a refactor) and the manager dispatches workers, parallelizes where it makes sense, and surfaces only the things that need your attention. If you're spending more time managing AI agents than doing your work, Forge is the next step.
+
+## Why Forge?
+
+There are plenty of good coding agents. Forge isn't trying to replace them. It orchestrates them, learns from you, and gets better over time.
+
+**Your manager writes better prompts than you do at 2am.** We're all mediocre prompt writers, especially when tired or frustrated. Forge's manager agent sits between you and the workers. Your rough instructions become precise, well-structured worker prompts. It's the "write a prompt to write a prompt" workflow you were doing manually, except automatic.
+
+**Parallelism kills latency.** Waiting 5 minutes for a model response is painful. Waiting 5 minutes while ten things run simultaneously? You barely notice. Dump a list of tasks and move on. Plan the next thing while the first one builds. You might have five sessions active with fifty workers running concurrently. That's fifty terminal windows you don't have to manage.
+
+**It remembers things.** Most AI tools reset every session. Forge's Cortex reviews your conversations, learns your preferences, and builds persistent knowledge over time. After a few weeks, it knows your review process, your naming conventions, your code style.
+
+**Context doesn't die.** When Claude Code compacts, you get amnesia. Forge's smart compaction writes structured handoff files, retains the most recent context, and summarizes the rest. Conversations that have compacted 50+ times still maintain coherence.
+
+**Forge builds Forge.** Every feature you see was built using Forge itself. It's been the primary development tool for this project since day one.
 
 ## Quick Start
 
 ### Prerequisites
 
-- **Node.js 22+**
-- **pnpm** (`npm install -g pnpm`)
-- An **OpenAI** or **Anthropic** account (OAuth or API key)
+- Node.js 22+
+- pnpm (`npm install -g pnpm`)
+- An OpenAI or Anthropic account (OAuth or API key)
 
 ### Install & Run
 
@@ -27,20 +61,131 @@ pnpm prod:daemon
 
 Default configuration works out of the box. See [Configuration](#configuration) to customize.
 
-Open the UI at [http://127.0.0.1:47189](http://127.0.0.1:47189), go to **Settings**, and sign in with your OpenAI or Anthropic account (OAuth or API key). On first launch, Forge shows a short welcome form to capture basic preferences before you create your first manager. Then create a manager, point it at your project directory, and start chatting.
+Open the UI at [http://127.0.0.1:47189](http://127.0.0.1:47189), go to Settings, and sign in with your OpenAI or Anthropic account (OAuth or API key). On first launch, Forge walks you through a short welcome conversation that captures your name, technical level, and workflow preferences. This is Cortex learning about you from the start.
+
+Then create a manager, point it at your project directory, and start chatting. For a full walkthrough of everything Forge can do, see the [Getting Started Guide](docs/GETTING_STARTED.md).
 
 > **Windows users:** See [docs/WINDOWS_SETUP.md](docs/WINDOWS_SETUP.md) for platform-specific setup notes.
 
-## Features
+### Your First Session
 
-- **Persistent managers** — First-launch setup captures your name and preferences, then every new manager inherits those defaults while staying focused on your project.
-- **Worker dispatch** — The manager spawns workers and routes tasks between them. Describe work at a high level; it handles the breakdown.
-- **Parallel execution** — Dump a list of tasks and the manager figures out what can run concurrently. Stream-of-thought voice dumps welcome.
-- **Dashboard UI** — Real-time web interface for watching agents work, chatting with your manager, and managing settings.
-- **Multi-session** — Run multiple sessions per manager for different workstreams, each with their own context and memory.
-- **Integrations** — Chat with your manager from Telegram or Slack. See [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md).
-- **Built-in skills** — Web search, image generation, browser automation, cron scheduling, and persistent memory. See [Skills](#skills).
-- **Cortex review queue** — Scan backlog, launch review runs, track queued/running/completed work, and open backing review sessions without cluttering the main sidebar. See [docs/CORTEX_REVIEW_RUNS.md](docs/CORTEX_REVIEW_RUNS.md).
+Before you start throwing tasks at Forge, take five minutes to have a conceptual conversation with your manager. Tell it how you like to work: your review process, your branching strategy, how you think about testing. This isn't small talk. It's calibration. The more your manager understands your style, the better it orchestrates workers on your behalf.
+
+Then start rating messages. Thumbs up when the manager nails it, thumbs down when it misses, comments when you notice patterns. This feedback feeds directly into Cortex's learning cycle.
+
+## Core Concepts
+
+### Manager & Workers
+
+Every Forge manager is tied to a project directory. You talk to the manager; the manager talks to the workers. Describe work at a high level ("implement the search feature," "fix these three bugs," "refactor the auth module") and the manager breaks it down, spawns workers, and coordinates the results.
+
+Workers run in isolated worktrees so they don't step on each other. The manager tracks status, handles merging, and reports back. You can watch it all happen in real time from the dashboard, or walk away and check in later.
+
+Need to run unrelated tasks at the same time? Just tell the manager. It'll figure out what can run concurrently and spin up workers in parallel.
+
+### Sessions & Forking
+
+Each manager supports multiple named sessions. These are independent workstreams with their own conversation history, context, and memory. Working on a backend refactor and a UI redesign at the same time? Separate sessions under the same manager.
+
+Session forking lets you run discovery in one conversation, gather context, narrow down an approach, then fork into parallel workstreams that all inherit that context. You can fork from the current point or from any earlier message, carrying forward only the relevant context. It's branching for conversations.
+
+### Cortex
+
+Cortex is a dedicated subsystem that reviews your sessions and improves Forge's behavior over time. It maintains two layers of persistent knowledge:
+
+- **Common knowledge** — cross-project preferences and habits that apply everywhere. How you like code reviewed, your naming conventions, your communication style. Injected into every session's context.
+- **Project knowledge** — per-project learned guidance. Architecture patterns, testing conventions, deployment quirks specific to each codebase. Updated more frequently.
+
+Cortex keeps internal notes, reviews its own review process, and refines how it identifies patterns. All changes are versioned in git, so you can see exactly what changed and roll back anything that went wrong.
+
+You can trigger reviews manually, queue up batch reviews, or schedule them on a cron. Sessions can be excluded from review if they contain sensitive or one-off work. Cortex detects both transcript drift (new conversation content) and feedback drift (new ratings since last review) to know when a session needs re-analysis.
+
+### Smart Compaction
+
+Every AI tool hits context limits. Most just truncate and hope for the best.
+
+When a session reaches ~85% context capacity, Forge pauses and writes a structured markdown handoff file capturing the current operational state, then compacts. The compacted context retains the most recent ~20,000 tokens verbatim and summarizes everything older. The handoff file ensures no critical context is lost.
+
+Sessions can run indefinitely. Conversations that have compacted 50+ times still maintain full coherence. No amnesia, no confusion about what was decided three hours ago.
+
+### Worker Safeguards
+
+Agents hang. Models stall. Workers finish their work and forget to report back. Forge handles all of this:
+
+- **Idle detection** — if a worker completes a task but doesn't report to the manager, Forge detects the idle state and notifies the manager, which can nudge or re-engage the worker.
+- **Stall detection** — workers stuck in a streaming state with no progress for five minutes get flagged. The manager is notified and can intervene.
+- **Auto-kill** — if a stalled worker doesn't recover after a second five-minute window, it's terminated and reported to the manager.
+
+You can also manually stop any agent from the UI, but you'll rarely need to.
+
+### Feedback
+
+Every message has a thumbs up, thumbs down, and comment button. These aren't decorative. Your ratings feed into Cortex's review cycle to identify what's working and what isn't.
+
+You don't need to rate every message. Focus on the meaningful moments: when the manager does something clever, when a worker produces garbage, when you notice a recurring pattern. Sessions can also be rated holistically.
+
+## Dashboard
+
+The web UI is designed to be the only window you need open.
+
+- **Chat** — real-time conversation with your manager. Stream worker activity or filter to just the messages directed at you.
+- **File browser** — full repository file browser with click-to-open in your editor (configurable: VS Code, Cursor, etc.).
+- **Git view** — diff and commit history view, built into the dashboard.
+- **Worker pills** — green indicators show active workers. Click for a quick peek at what each worker is doing.
+- **Plans & artifacts** — working files, plans, and non-repo artifacts surfaced in the sidebar and inline in chat.
+- **Schedules** — view and manage scheduled jobs per session.
+- **Context meter** — visual indicator of context utilization with manual smart-compact trigger.
+- **Session search** — search across session names and message content with highlighted results.
+- **Notifications** — per-session notification customization with custom sound uploads. (Pro tip: turn off notifications for Cortex. It gets noisy during review runs.)
+- **Prompt preview** — view the full effective system prompt being sent, including memory, knowledge, and skills.
+
+## Skills
+
+Managers and workers have access to built-in skills:
+
+| Skill | Description | Requires |
+|-------|-------------|----------|
+| Web Search | Search the web via Brave Search API | `BRAVE_API_KEY` |
+| Image Generation | Generate images with Google Gemini | `GEMINI_API_KEY` |
+| Browser | Interactive web browsing and extraction | [`agent-browser`](https://github.com/vercel-labs/agent-browser) CLI |
+| Chrome CDP | Inspect and interact with local Chrome tabs via DevTools Protocol | Local Chrome instance |
+| Playwright | Browser automation with real-time dashboard and live preview (macOS/Linux) | `FORGE_PLAYWRIGHT_DASHBOARD_ENABLED=true` |
+| Cron Scheduling | Persistent scheduled tasks with cron expressions | — |
+| Slash Commands | Create and manage prompt auto-expansion commands | — |
+| Memory | Persistent agent memory across sessions | — |
+
+Skill API keys can be configured in the dashboard under Settings → Environment Variables, or via `.env` / shell environment.
+
+Forge also supports custom skills. Place them in `${FORGE_DATA_DIR}/skills` (default: `~/.forge/skills`) using the standard `SKILL.md` frontmatter format and they'll be available to all agents. You can even have agents create new skills for you. See [docs/CONFIGURATION.md](docs/CONFIGURATION.md#machine-local-skills).
+
+## Integrations
+
+- **Telegram** — create a bot via [@BotFather](https://t.me/botfather), add the token in Settings. Full bidirectional messaging with your manager, including code blocks and file attachments.
+- **Mobile app** — iOS and Android companion app with push notifications. Get notified when workers finish, reply to your manager from anywhere. Currently in TestFlight beta.
+
+See [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) for setup instructions.
+
+## Getting the Most Out of Forge
+
+### Teach It How You Work
+
+Don't just assign tasks. Have conversations about your process. If you have a review methodology, explain it. If you prefer certain models for certain tasks (one model for backend, another for frontend), tell the manager. If you have a multi-phase workflow (brainstorm, plan with review, implement, code review), describe it.
+
+Forge is deliberately un-opinionated. It doesn't ship with a baked-in workflow because everyone works differently.
+
+### The Prompt Quality Multiplier
+
+When you set up a review cycle (plan gets written, reviewed by a separate model, remediated before implementation) you get compounding prompt quality. The manager writes a better prompt than you would for the review worker, which catches things a tired human wouldn't, which produces a better implementation prompt.
+
+This is how people one-shot features that span thousands of lines of code.
+
+### Use It for More Than Code
+
+Forge doesn't have to be a coding tool. Feed it a meeting transcript and ask it to extract action items and build a plan. Use it for research, documentation, whatever. The manager-worker model works for any task that benefits from delegation and parallel execution.
+
+### Run It Continuously
+
+Forge is designed to run 24/7. With the mobile app and push notifications, you can fire off a complex task, close your laptop, and check in from your phone when it's done. Smart compaction means sessions don't degrade over time.
 
 ## Architecture
 
@@ -48,11 +193,33 @@ Forge runs three layers on your machine:
 
 | Layer | Description |
 |-------|-------------|
-| **Dashboard UI** (`apps/ui`) | TanStack Start + Vite SPA. Real-time agent monitoring, chat, settings, artifacts. |
+| **Dashboard UI** (`apps/ui`) | TanStack Start + Vite SPA. Real-time agent monitoring, chat, file browser, settings. |
 | **Backend Daemon** (`apps/backend`) | Node.js HTTP + WebSocket server. Agent orchestration, message routing, persistence, scheduler. |
 | **Agents** | Manager and worker agents powered by [pi](https://github.com/badlogic/pi-mono). Each worker runs in its own worktree. |
 
 Communication between UI and backend is over WebSocket. The backend spawns and manages agent processes, persists all state to disk, and handles integrations and scheduling.
+
+All runtime data lives locally. No cloud, no database. Just JSON, JSONL, and markdown files under `~/.forge` (or `%LOCALAPPDATA%\forge` on Windows). Backup means copying a folder. Recovery means pasting it back. See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for the full data layout.
+
+## Configuration
+
+Copy the example environment file and edit as needed:
+
+```bash
+cp .env.example .env
+```
+
+The `.env.example` file documents all available options with comments. Key categories:
+
+- **Core** — host, port, data directory, debug mode
+- **UI** — WebSocket URL override (dev only, production auto-resolves)
+- **Skills** — API keys for Brave Search, Gemini image generation
+- **Agent Runtimes** — Codex API key and binary path
+- **Playwright** — dashboard toggle (macOS/Linux only)
+
+API keys for LLM providers (OpenAI, Anthropic) are configured in the dashboard UI under Settings, not in `.env`.
+
+See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for the full configuration reference.
 
 ## Development
 
@@ -92,7 +259,7 @@ Production defaults:
 
 ## Platform Notes
 
-Forge runs on **macOS**, **Linux**, and **Windows**.
+Forge runs on macOS, Linux, and Windows.
 
 | | macOS | Linux | Windows |
 |---|---|---|---|
@@ -119,60 +286,15 @@ forge/
 └── .env               # Environment config (copy from .env.example)
 ```
 
-## Configuration
-
-Copy the example environment file and edit as needed:
-
-```bash
-cp .env.example .env
-```
-
-The `.env.example` file documents all available options with comments. Key categories:
-
-- **Core** — Host, port, data directory, debug mode
-- **UI** — WebSocket URL override (dev only — production auto-resolves)
-- **Skills** — API keys for Brave Search, Gemini image generation
-- **Agent Runtimes** — Codex API key and binary path
-- **Playwright** — Dashboard toggle (macOS/Linux only)
-
-**API keys** for LLM providers (OpenAI, Anthropic) are configured in the dashboard UI under **Settings**, not in `.env`.
-
-See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for the full configuration reference.
-
-## Integrations
-
-Forge supports messaging integrations so you can chat with your manager from mobile or desktop messaging apps:
-
-- **Telegram** — Create a bot via [@BotFather](https://t.me/botfather), add the token in Settings.
-- **Slack** — Create a Slack app with Socket Mode, add the bot and app tokens in Settings.
-
-Both integrations support bidirectional messaging: send tasks to your manager and receive responses, including formatted code blocks and file attachments.
-
-See [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) for detailed setup instructions.
-
-## Skills
-
-Managers and workers have access to built-in skills:
-
-| Skill | Description | Requires |
-|-------|-------------|----------|
-| **Web Search** | Search the web via Brave Search API | `BRAVE_API_KEY` |
-| **Image Generation** | Generate images with Google Gemini | `GEMINI_API_KEY` |
-| **Browser** | Interactive web browsing and extraction | [`agent-browser`](https://github.com/vercel-labs/agent-browser) CLI |
-| **Chrome CDP** | Inspect and interact with a local Chrome session via DevTools Protocol | Local Chrome instance |
-| **Cron Scheduling** | Persistent scheduled tasks with cron expressions | — |
-| **Slash Commands** | Create and manage global slash commands | — |
-| **Memory** | Persistent agent memory across sessions | — |
-
-Skill API keys can be configured in the dashboard under **Settings → Environment Variables**. `.env` (or shell env vars) is still supported as a fallback.
-
-For machine-local extensions, Forge also scans `${FORGE_DATA_DIR}/skills` (default: `~/.forge/skills` on macOS/Linux, `%LOCALAPPDATA%\forge\skills` on Windows) before repo-local `.swarm/skills` overrides and built-ins. Skills there use the normal `SKILL.md` frontmatter format and are injected into all agent/runtime sessions. See [docs/CONFIGURATION.md](docs/CONFIGURATION.md#machine-local-skills).
-
 ## A Note
 
 Forge is built on [Middleman](https://github.com/SawyerHood/middleman) by Sawyer Hood.
 
-This project started as a personal tool and is shared in that spirit. It's functional, actively used in production, and being improved continuously — but it prioritizes practical utility over enterprise polish. Fork it, tear it apart, or use it as a starting point to build your own middle manager.
+This project started as a personal tool and is shared in that spirit. It's functional, actively used in production, and being improved continuously. Forge is the primary tool used to develop itself. The system you see today will probably be unrecognizable in a month. It prioritizes practical utility over enterprise polish.
+
+These are powerful tools with broad system access. Agents can create files, run commands, and modify your environment. Use version control, keep backups, and be thoughtful about what you let agents do unsupervised.
+
+Fork it, tear it apart, or use it as a starting point to build your own middle manager.
 
 ## License
 
