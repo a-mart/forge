@@ -70,6 +70,7 @@ These are briefly described for orientation. Most have both backend and UI compo
 | **Reference docs** | `swarm/reference-docs.ts` | Settings UI | Profile-scoped reference documents |
 | **Worker stall detector** | `swarm/swarm-manager.ts` (WorkerStallState, checkForStalledWorkers) | — | Periodic wall-clock detection of workers stuck mid-tool-execution; two-stage nudge then auto-kill |
 | **Choice Picker** | `swarm/swarm-manager.ts` (pending registry), `swarm/swarm-tools.ts` (present_choices tool) | `components/chat/message-list/ChoiceRequestCard.tsx`, `components/chat/message-list/ChoiceAnsweredRow.tsx` | Interactive structured choice picker for agent-user decision points |
+| **Pi extensions** | Agent runtime (Pi extension/package loading) | — | Custom tools, event handlers, and packages via Pi's extension system. See [`docs/PI_EXTENSIONS.md`](docs/PI_EXTENSIONS.md) |
 
 Backend paths above are relative to `apps/backend/src/`. UI paths are relative to `apps/ui/src/`.
 
@@ -94,6 +95,12 @@ All runtime state lives in `~/.forge` (or `%LOCALAPPDATA%\forge` on Windows), ov
 ~/.forge/
 ├── swarm/
 │   └── agents.json                        # Global agent registry
+├── agent/                                 # Pi agent runtime config
+│   ├── extensions/                        #   Global worker extensions
+│   ├── manager/extensions/                #   Global manager extensions
+│   ├── skills/                            #   Global worker skills (Pi-discovered)
+│   ├── manager/skills/                    #   Global manager skills (Pi-discovered)
+│   └── settings.json                      #   Global worker package config (optional)
 ├── uploads/                               # User-uploaded files
 ├── shared/
 │   ├── auth/auth.json                     # Authentication credentials
@@ -180,7 +187,7 @@ Copy `.env.example` to `.env` and uncomment/set values as needed. Key variables:
 | `FORGE_HOST` | `127.0.0.1` | Backend bind address |
 | `FORGE_PORT` | `47187` | Backend port (production uses `47287`) |
 | `FORGE_DATA_DIR` | `~/.forge` | Data storage root |
-| `FORGE_DEBUG` | `false` | Enable debug logging |
+| `FORGE_DEBUG` | `false` | Enable debug logging (also enables extension tool-call logging) |
 | `VITE_FORGE_WS_URL` | auto-detected | WebSocket URL override (dev mode only) |
 | `BRAVE_API_KEY` | — | Brave Search skill |
 | `GEMINI_API_KEY` | — | Image generation skill |

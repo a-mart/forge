@@ -474,6 +474,12 @@ This enables an "always-on" workflow. Dump tasks before bed, wake up to complete
 
 If you don't have the mobile app, Telegram works for remote access. Create a bot via [@BotFather](https://t.me/botfather), add the token in **Settings → Integrations → Telegram**, and you can chat with your manager directly from Telegram with full bidirectional messaging.
 
+### Pi Extensions
+
+For power users who want to go beyond skills and built-in tools: Forge exposes the full [Pi extension system](PI_EXTENSIONS.md). Extensions can register custom tools the LLM can call, intercept tool calls to block or modify them, inject context before each LLM call, and more. Drop a TypeScript file into `~/.forge/agent/extensions/` and it's available to all workers. No build step required.
+
+You can also install community packages from npm or git. See the [Pi Extensions guide](PI_EXTENSIONS.md) for details.
+
 ### The Data Directory
 
 All of Forge's state lives in a single directory:

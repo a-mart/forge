@@ -158,6 +158,10 @@ Skill API keys can be configured in the dashboard under Settings → Environment
 
 Forge also supports custom skills. Place them in `${FORGE_DATA_DIR}/skills` (default: `~/.forge/skills`) using the standard `SKILL.md` frontmatter format and they'll be available to all agents. You can even have agents create new skills for you. See [docs/CONFIGURATION.md](docs/CONFIGURATION.md#machine-local-skills).
 
+### Pi Extensions
+
+Beyond skills, Forge exposes the full [Pi extension and package system](docs/PI_EXTENSIONS.md). Extensions can register custom tools callable by the LLM, intercept and modify agent events (tool calls, context, etc.), and bundle reusable packages from npm, git, or local paths. Drop a TypeScript file into `~/.forge/agent/extensions/` and it's loaded for all workers — no build step required.
+
 ## Integrations
 
 - **Telegram** — create a bot via [@BotFather](https://t.me/botfather), add the token in Settings. Full bidirectional messaging with your manager, including code blocks and file attachments.

@@ -81,6 +81,12 @@ All persistent state lives in a single data directory:
 │       └── workers/           # Worker session logs
 ├── swarm/
 │   └── agents.json            # Agent registry
+├── agent/                     # Pi agent runtime config (extensions, skills, packages)
+│   ├── extensions/            #   Global worker extensions
+│   ├── manager/extensions/    #   Global manager extensions
+│   ├── skills/                #   Global worker skills (Pi-discovered)
+│   ├── manager/skills/        #   Global manager skills (Pi-discovered)
+│   └── settings.json          #   Global worker package config (optional)
 ├── skills/                    # Machine-local skills (optional, station-specific)
 │   └── <skillName>/SKILL.md
 └── uploads/                   # File uploads
@@ -119,6 +125,12 @@ On a default macOS/Linux install this becomes:
 ```text
 ~/.forge/skills/<skillName>/SKILL.md
 ```
+
+### Pi Extensions & Packages
+
+Forge exposes Pi's extension and package system for deeper customization — custom tools, event interception, context modification, and more. Extensions are auto-discovered from `${FORGE_DATA_DIR}/agent/extensions/` (workers) and `${FORGE_DATA_DIR}/agent/manager/extensions/` (managers), as well as project-local `<cwd>/.pi/extensions/`.
+
+See [PI_EXTENSIONS.md](PI_EXTENSIONS.md) for the full guide, including package installation, event hooks, and headless mode caveats.
 
 ## Ports
 
