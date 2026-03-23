@@ -1,4 +1,4 @@
-import { ArrowLeft, RefreshCw } from 'lucide-react'
+import { ArrowLeft, Loader2, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { timeAgo } from './charts/chart-utils'
@@ -14,6 +14,7 @@ interface StatsLayoutProps {
   onBack?: () => void
   computedAt?: string
   isRefreshing?: boolean
+  isSwitchingRange?: boolean
   onRefresh?: () => void
   range: StatsRange
   onRangeChange: (range: StatsRange) => void
@@ -24,6 +25,7 @@ export function StatsLayout({
   onBack,
   computedAt,
   isRefreshing,
+  isSwitchingRange,
   onRefresh,
   range,
   onRangeChange,
@@ -77,21 +79,30 @@ export function StatsLayout({
         <span className="mr-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
           View
         </span>
-        {RANGE_OPTIONS.map((option) => (
-          <button
-            key={option.value}
-            type="button"
-            onClick={() => onRangeChange(option.value)}
-            className={cn(
-              'rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
-              range === option.value
-                ? 'bg-muted text-foreground'
-                : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground',
-            )}
-          >
-            {option.label}
-          </button>
-        ))}
+        {RANGE_OPTIONS.map((option) => {
+          const isActive = range === option.value
+          const isLoadingThis = isActive && isSwitchingRange
+          return (
+            <button
+              key={option.value}
+              type="button"
+              onClick={() => onRangeChange(option.value)}
+              disabled={isSwitchingRange}
+              className={cn(
+                'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+                isActive
+                  ? 'bg-muted text-foreground'
+                  : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground',
+                isSwitchingRange && !isActive && 'opacity-50',
+              )}
+            >
+              {isLoadingThis && (
+                <Loader2 className="size-3 animate-spin" />
+              )}
+              {option.label}
+            </button>
+          )
+        })}
       </div>
 
       {/* Scrollable content */}

@@ -108,13 +108,15 @@ function isEmptyStats(tokens: { today: number; last7Days: number; allTime: numbe
 
 export function StatsPanel({ wsUrl, onBack }: StatsPanelProps) {
   const [range, setRange] = useState<StatsRange>('7d')
-  const { stats, isLoading, error, isRefreshing, refresh } = useStats(wsUrl, range)
+  const { stats, isLoading, error, isRefreshing, isSwitchingRange, refresh } = useStats(wsUrl, range)
+  const isUpdating = isRefreshing || isSwitchingRange
 
   return (
     <StatsLayout
       onBack={onBack}
       computedAt={stats?.computedAt}
       isRefreshing={isRefreshing}
+      isSwitchingRange={isSwitchingRange}
       onRefresh={refresh}
       range={range}
       onRangeChange={setRange}
@@ -126,7 +128,7 @@ export function StatsPanel({ wsUrl, onBack }: StatsPanelProps) {
       ) : stats && isEmptyStats(stats.tokens) ? (
         <EmptyState />
       ) : stats ? (
-        <div className={cn('space-y-6', isRefreshing && 'opacity-70 transition-opacity')}>
+        <div className={cn('space-y-6 transition-opacity duration-200', isUpdating && 'opacity-60')}>
           {/* Token usage: 4-card row */}
           <TokenUsageCards tokens={stats.tokens} cache={stats.cache} />
 

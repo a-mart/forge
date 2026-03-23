@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { fetchStats, refreshStats } from './stats-api'
 import type { StatsSnapshot, StatsRange } from '@forge/protocol'
 
@@ -7,10 +7,21 @@ export function useStats(wsUrl: string, range: StatsRange = '7d') {
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const [isSwitchingRange, setIsSwitchingRange] = useState(false)
+  const prevRangeRef = useRef(range)
 
   useEffect(() => {
     let cancelled = false
-    setIsLoading(true)
+    const rangeChanged = prevRangeRef.current !== range
+    prevRangeRef.current = range
+
+    // If we already have stats and the range changed, show switching indicator
+    // instead of full loading skeleton
+    if (stats && rangeChanged) {
+      setIsSwitchingRange(true)
+    } else {
+      setIsLoading(true)
+    }
     setError(null)
 
     fetchStats(wsUrl, range)
@@ -28,13 +39,14 @@ export function useStats(wsUrl: string, range: StatsRange = '7d') {
       .finally(() => {
         if (!cancelled) {
           setIsLoading(false)
+          setIsSwitchingRange(false)
         }
       })
 
     return () => {
       cancelled = true
     }
-  }, [wsUrl, range])
+  }, [wsUrl, range]) // eslint-disable-line react-hooks/exhaustive-deps -- intentionally using stats ref
 
   const refresh = useCallback(async () => {
     setIsRefreshing(true)
@@ -49,5 +61,5 @@ export function useStats(wsUrl: string, range: StatsRange = '7d') {
     }
   }, [wsUrl, range])
 
-  return { stats, isLoading, error, isRefreshing, refresh }
+  return { stats, isLoading, error, isRefreshing, isSwitchingRange, refresh }
 }
