@@ -1250,10 +1250,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.scheduleCortexReviewRunQueueCheck(0);
 
     if (!this.stallCheckInterval) {
-      console.error("[STALL-DEBUG] Starting stall check interval");
       this.stallCheckInterval = setInterval(() => {
         void this.checkForStalledWorkers().catch((error) => {
-          console.error("[STALL-DEBUG] check error:", error);
           this.logDebug("stall:check:error", {
             message: error instanceof Error ? error.message : String(error)
           });
@@ -5539,16 +5537,18 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       shouldPersist = true;
     }
 
+    // NOTE: The Pi/Anthropic runtime directly mutates descriptor.status before calling
+    // this callback, so previousStatus/nextStatus may both be the target status already.
+    // We use idempotent presence checks instead of transition detection.
     if (descriptor.role === "worker") {
-      if (previousStatus !== "streaming" && nextStatus === "streaming") {
-        console.error(`[STALL-DEBUG] init stall state for ${agentId} (${previousStatus} -> ${nextStatus})`);
+      const effectiveStatus = descriptor.status;
+      if (effectiveStatus === "streaming" && !this.workerStallState.has(agentId)) {
         this.workerStallState.set(agentId, {
           lastProgressAt: Date.now(),
           nudgeSent: false,
           nudgeSentAt: null
         });
-      } else if (previousStatus === "streaming" && nextStatus !== "streaming") {
-        console.error(`[STALL-DEBUG] cleanup stall state for ${agentId} (${previousStatus} -> ${nextStatus})`);
+      } else if (effectiveStatus !== "streaming" && this.workerStallState.has(agentId)) {
         this.workerStallState.delete(agentId);
       }
     }
@@ -6291,7 +6291,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private async runStalledWorkerCheck(): Promise<void> {
     const now = Date.now();
     const stallEntries = Array.from(this.workerStallState.entries());
-    console.error(`[STALL-DEBUG] check running. descriptors=${this.descriptors.size}, stallState entries=${stallEntries.length}, entries=${stallEntries.map(([id, s]) => `${id}:elapsed=${Math.round((now - s.lastProgressAt)/1000)}s,nudged=${s.nudgeSent}`).join(", ")}`);
 
     for (const [agentId, descriptor] of this.descriptors.entries()) {
       if (descriptor.role !== "worker" || descriptor.status !== "streaming") {
@@ -6300,12 +6299,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
       const stallState = this.workerStallState.get(agentId);
       if (!stallState) {
-        console.error(`[STALL-DEBUG] ${agentId}: streaming but no stall state`);
         continue;
       }
 
       if (this.isRuntimeInContextRecovery(agentId)) {
-        console.error(`[STALL-DEBUG] ${agentId}: in context recovery, skipping`);
         continue;
       }
 
