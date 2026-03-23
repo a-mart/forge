@@ -19,7 +19,6 @@ export function TokenUsageCards({ tokens, cache }: TokenUsageCardsProps) {
         unit="tokens"
         subtitle={
           <div>
-            {tokens.todayDate}
             <div>{formatTokenCount(tokens.todayInputTokens)} in</div>
             <div>{formatTokenCount(tokens.todayOutputTokens)} out</div>
           </div>
@@ -37,7 +36,12 @@ export function TokenUsageCards({ tokens, cache }: TokenUsageCardsProps) {
         title="Last 30 Days"
         value={abbreviateNumber(tokens.last30Days)}
         unit="tokens"
-        subtitle={`Avg ${abbreviateNumber(avgPerDayLast30)}/day · Avg ${abbreviateNumber(avgPerWeekLast30)}/week`}
+        subtitle={
+          <div>
+            <div>Avg {abbreviateNumber(avgPerDayLast30)}/day</div>
+            <div>Avg {abbreviateNumber(avgPerWeekLast30)}/week</div>
+          </div>
+        }
         variant="accent"
       />
       <StatCard
