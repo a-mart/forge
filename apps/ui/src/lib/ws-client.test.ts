@@ -1355,6 +1355,237 @@ describe('ManagerWsClient', () => {
     client.destroy()
   })
 
+  it('hydrates streamingStartedAt from snapshots and preserves it across snapshot refreshes', () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    emitServerEvent(socket, {
+      type: 'agents_snapshot',
+      agents: [
+        {
+          agentId: 'manager',
+          managerId: 'manager',
+          displayName: 'Manager',
+          role: 'manager',
+          status: 'idle',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+          cwd: '/tmp',
+          workerCount: 1,
+          activeWorkerCount: 1,
+          model: {
+            provider: 'openai-codex',
+            modelId: 'gpt-5.3-codex',
+            thinkingLevel: 'medium',
+          },
+          sessionFile: '/tmp/manager.jsonl',
+        },
+      ],
+    })
+
+    const snapshotStartedAt = Date.parse('2026-01-01T00:00:05.000Z')
+    vi.setSystemTime(snapshotStartedAt)
+
+    emitServerEvent(socket, {
+      type: 'session_workers_snapshot',
+      sessionAgentId: 'manager',
+      workers: [
+        {
+          agentId: 'worker-1',
+          managerId: 'manager',
+          displayName: 'Worker 1',
+          role: 'worker',
+          status: 'streaming',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:05.000Z',
+          cwd: '/tmp',
+          model: {
+            provider: 'openai-codex',
+            modelId: 'gpt-5.3-codex',
+            thinkingLevel: 'medium',
+          },
+          sessionFile: '/tmp/worker-1.jsonl',
+        },
+      ],
+    })
+
+    expect(client.getState().statuses['worker-1']?.streamingStartedAt).toBe(snapshotStartedAt)
+
+    vi.setSystemTime(Date.parse('2026-01-01T00:00:10.000Z'))
+    emitServerEvent(socket, {
+      type: 'agents_snapshot',
+      agents: [
+        {
+          agentId: 'manager',
+          managerId: 'manager',
+          displayName: 'Manager',
+          role: 'manager',
+          status: 'idle',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:10.000Z',
+          cwd: '/tmp',
+          workerCount: 1,
+          activeWorkerCount: 1,
+          model: {
+            provider: 'openai-codex',
+            modelId: 'gpt-5.3-codex',
+            thinkingLevel: 'medium',
+          },
+          sessionFile: '/tmp/manager.jsonl',
+        },
+      ],
+    })
+
+    expect(client.getState().statuses['worker-1']?.streamingStartedAt).toBe(snapshotStartedAt)
+
+    vi.setSystemTime(Date.parse('2026-01-01T00:00:15.000Z'))
+    emitServerEvent(socket, {
+      type: 'session_workers_snapshot',
+      sessionAgentId: 'manager',
+      workers: [
+        {
+          agentId: 'worker-1',
+          managerId: 'manager',
+          displayName: 'Worker 1',
+          role: 'worker',
+          status: 'streaming',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:15.000Z',
+          cwd: '/tmp',
+          model: {
+            provider: 'openai-codex',
+            modelId: 'gpt-5.3-codex',
+            thinkingLevel: 'medium',
+          },
+          sessionFile: '/tmp/worker-1.jsonl',
+        },
+      ],
+    })
+
+    expect(client.getState().statuses['worker-1']?.streamingStartedAt).toBe(snapshotStartedAt)
+
+    client.destroy()
+  })
+
+  it('resets streamingStartedAt when a snapshot shows a new streaming run after idle', () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    emitServerEvent(socket, {
+      type: 'agents_snapshot',
+      agents: [
+        {
+          agentId: 'manager',
+          managerId: 'manager',
+          displayName: 'Manager',
+          role: 'manager',
+          status: 'idle',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+          cwd: '/tmp',
+          workerCount: 1,
+          activeWorkerCount: 0,
+          model: {
+            provider: 'openai-codex',
+            modelId: 'gpt-5.3-codex',
+            thinkingLevel: 'medium',
+          },
+          sessionFile: '/tmp/manager.jsonl',
+        },
+      ],
+    })
+
+    const firstRunStartedAt = Date.parse('2026-01-01T00:00:05.000Z')
+    vi.setSystemTime(firstRunStartedAt)
+    emitServerEvent(socket, {
+      type: 'session_workers_snapshot',
+      sessionAgentId: 'manager',
+      workers: [
+        {
+          agentId: 'worker-1',
+          managerId: 'manager',
+          displayName: 'Worker 1',
+          role: 'worker',
+          status: 'streaming',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:05.000Z',
+          cwd: '/tmp',
+          model: {
+            provider: 'openai-codex',
+            modelId: 'gpt-5.3-codex',
+            thinkingLevel: 'medium',
+          },
+          sessionFile: '/tmp/worker-1.jsonl',
+        },
+      ],
+    })
+
+    expect(client.getState().statuses['worker-1']?.streamingStartedAt).toBe(firstRunStartedAt)
+
+    emitServerEvent(socket, {
+      type: 'agent_status',
+      agentId: 'worker-1',
+      managerId: 'manager',
+      status: 'idle',
+      pendingCount: 0,
+    })
+    expect(client.getState().statuses['worker-1']?.status).toBe('idle')
+
+    const secondRunStartedAt = Date.parse('2026-01-01T00:00:20.000Z')
+    vi.setSystemTime(secondRunStartedAt)
+    emitServerEvent(socket, {
+      type: 'session_workers_snapshot',
+      sessionAgentId: 'manager',
+      workers: [
+        {
+          agentId: 'worker-1',
+          managerId: 'manager',
+          displayName: 'Worker 1',
+          role: 'worker',
+          status: 'streaming',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:20.000Z',
+          cwd: '/tmp',
+          model: {
+            provider: 'openai-codex',
+            modelId: 'gpt-5.3-codex',
+            thinkingLevel: 'medium',
+          },
+          sessionFile: '/tmp/worker-1.jsonl',
+        },
+      ],
+    })
+
+    expect(client.getState().statuses['worker-1']).toMatchObject({
+      status: 'streaming',
+      streamingStartedAt: secondRunStartedAt,
+    })
+
+    client.destroy()
+  })
+
   it('preserves unloaded worker statuses across agents snapshots for stable active-worker deltas', () => {
     const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
 

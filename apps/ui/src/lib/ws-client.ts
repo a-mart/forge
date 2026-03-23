@@ -804,15 +804,6 @@ export class ManagerWsClient {
         const prevStatus = prevEntry?.status
         const isKnownAgent = this.state.agents.some((agent) => agent.agentId === event.agentId)
 
-        // Track when a worker enters streaming state so the pill timer
-        // persists across component mount/unmount cycles (e.g. navigation).
-        let streamingStartedAt = prevEntry?.streamingStartedAt
-        if (event.status === 'streaming' && prevStatus !== 'streaming') {
-          // Transitioning TO streaming — record start time
-          streamingStartedAt = Date.now()
-        }
-        // When staying streaming or leaving streaming, keep existing value
-
         const statuses = {
           ...this.state.statuses,
           [event.agentId]: {
@@ -820,7 +811,7 @@ export class ManagerWsClient {
             pendingCount: event.pendingCount,
             contextUsage: event.contextUsage,
             contextRecoveryInProgress: event.contextRecoveryInProgress,
-            streamingStartedAt,
+            streamingStartedAt: resolveStreamingStartedAt(prevEntry, event.status),
           },
         }
 
@@ -1121,7 +1112,7 @@ export class ManagerWsClient {
               pendingCount: previous && previous.status === status ? previous.pendingCount : 0,
               contextUsage: agent.contextUsage,
               contextRecoveryInProgress: previous?.contextRecoveryInProgress,
-              streamingStartedAt: previous?.streamingStartedAt,
+              streamingStartedAt: resolveStreamingStartedAt(previous, status),
             },
           ]
         }),
@@ -1217,7 +1208,7 @@ export class ManagerWsClient {
         pendingCount: previous && previous.status === worker.status ? previous.pendingCount : 0,
         contextUsage: worker.contextUsage,
         contextRecoveryInProgress: previous?.contextRecoveryInProgress,
-        streamingStartedAt: previous?.streamingStartedAt,
+        streamingStartedAt: resolveStreamingStartedAt(previous, worker.status),
       }
     }
 
@@ -1485,6 +1476,21 @@ export class ManagerWsClient {
   private rejectAllPendingRequests(reason: string): void {
     this.requestTracker.rejectAll(new Error(reason))
   }
+}
+
+function resolveStreamingStartedAt(
+  previous: ManagerWsState['statuses'][string] | undefined,
+  nextStatus: AgentDescriptor['status'],
+): number | undefined {
+  if (nextStatus !== 'streaming') {
+    return previous?.streamingStartedAt
+  }
+
+  if (previous?.status === 'streaming' && previous.streamingStartedAt !== undefined) {
+    return previous.streamingStartedAt
+  }
+
+  return Date.now()
 }
 
 function chooseMostRecentSessionAgentId(
