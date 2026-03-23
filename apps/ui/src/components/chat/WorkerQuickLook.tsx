@@ -1,4 +1,4 @@
-import { memo, useMemo } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useMemo } from 'react'
 import { ExternalLink } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -106,10 +106,38 @@ export const WorkerQuickLook = memo(function WorkerQuickLook({
   recentActivity,
   onViewFullConversation,
 }: WorkerQuickLookProps) {
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const isAtBottomRef = useRef(true)
+
   const displayEntries = useMemo(
     () => buildQuickLookEntries(recentActivity),
     [recentActivity],
   )
+
+  // Check if user has scrolled away from the bottom
+  const handleScroll = useCallback(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const threshold = 40
+    isAtBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < threshold
+  }, [])
+
+  // Scroll to bottom on initial open
+  useLayoutEffect(() => {
+    const el = scrollRef.current
+    if (el) {
+      el.scrollTop = el.scrollHeight
+      isAtBottomRef.current = true
+    }
+  }, [])
+
+  // Auto-scroll to bottom when new entries arrive (if user hasn't scrolled up)
+  useEffect(() => {
+    const el = scrollRef.current
+    if (el && isAtBottomRef.current) {
+      el.scrollTop = el.scrollHeight
+    }
+  }, [displayEntries])
 
   const modelLabel = worker.model?.modelId ?? null
   const thinkingLevel = worker.model?.thinkingLevel
@@ -145,7 +173,7 @@ export const WorkerQuickLook = memo(function WorkerQuickLook({
       </div>
 
       {/* Activity feed */}
-      <div className="max-h-[min(36rem,_70vh)] overflow-y-auto px-2 py-1.5 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-white/15 hover:[&::-webkit-scrollbar-thumb]:bg-white/30 [scrollbar-color:rgba(255,255,255,0.15)_transparent] [scrollbar-width:thin]">
+      <div ref={scrollRef} onScroll={handleScroll} className="max-h-[min(36rem,_70vh)] overflow-y-auto px-2 py-1.5 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-white/15 hover:[&::-webkit-scrollbar-thumb]:bg-white/30 [scrollbar-color:rgba(255,255,255,0.15)_transparent] [scrollbar-width:thin]">
         {displayEntries.length === 0 ? (
           <p className="py-4 text-center text-xs italic text-muted-foreground">
             No recent activity
