@@ -1,11 +1,12 @@
 import { Card } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
+import type { ReactNode } from 'react'
 
 interface StatCardProps {
   title: string
   value: string
   unit?: string
-  subtitle?: string
+  subtitle?: ReactNode
   className?: string
   variant?: 'default' | 'accent'
 }
