@@ -765,6 +765,9 @@ const WATCHDOG_BATCH_PREVIEW_LIMIT = 10;
 const WATCHDOG_BACKOFF_BASE_MS = 15_000;
 const WATCHDOG_BACKOFF_MAX_MS = 5 * 60_000;
 const WATCHDOG_MAX_CONSECUTIVE_NOTIFICATIONS = 3;
+const STALL_CHECK_INTERVAL_MS = 60_000;
+const STALL_NUDGE_THRESHOLD_MS = 5 * 60_000;
+const STALL_KILL_AFTER_NUDGE_MS = 5 * 60_000;
 const RUNTIME_SHUTDOWN_TIMEOUT_MS = 1_500;
 const RUNTIME_SHUTDOWN_DRAIN_TIMEOUT_MS = 500;
 const MODEL_CAPACITY_BLOCK_DEFAULT_MS = 10 * 60_000;
@@ -859,6 +862,12 @@ interface WorkerWatchdogState {
   consecutiveNotifications: number;
   suppressedUntilMs: number;
   circuitOpen: boolean;
+}
+
+interface WorkerStallState {
+  lastProgressAt: number;
+  nudgeSent: boolean;
+  nudgeSentAt: number | null;
 }
 
 interface PromptPreviewSection {
@@ -1056,7 +1065,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly pendingManagerRuntimeRecycleAgentIds = new Set<string>();
   private readonly conversationEntriesByAgentId = new Map<string, ConversationEntryEvent[]>();
   private readonly workerWatchdogState = new Map<string, WorkerWatchdogState>();
+  private readonly workerStallState = new Map<string, WorkerStallState>();
   private readonly watchdogTimers = new Map<string, NodeJS.Timeout>();
+  private stallCheckInterval: NodeJS.Timeout | null = null;
+  private stallCheckPromise: Promise<void> | null = null;
   private readonly watchdogTimerTokens = new Map<string, number>();
   private readonly watchdogBatchQueueByManager = new Map<string, Set<string>>();
   private readonly watchdogBatchTimersByManager = new Map<string, NodeJS.Timeout>();
@@ -1236,6 +1248,19 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.emitAgentsSnapshot();
     this.emitProfilesSnapshot();
     this.scheduleCortexReviewRunQueueCheck(0);
+
+    if (!this.stallCheckInterval) {
+      console.error("[STALL-DEBUG] Starting stall check interval");
+      this.stallCheckInterval = setInterval(() => {
+        void this.checkForStalledWorkers().catch((error) => {
+          console.error("[STALL-DEBUG] check error:", error);
+          this.logDebug("stall:check:error", {
+            message: error instanceof Error ? error.message : String(error)
+          });
+        });
+      }, STALL_CHECK_INTERVAL_MS);
+      this.stallCheckInterval.unref();
+    }
 
     this.logDebug("boot:ready", {
       managerId: managerDescriptor?.agentId,
@@ -2166,6 +2191,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     if (descriptor.role === "worker") {
       this.clearWatchdogState(agentId);
+      this.workerStallState.delete(agentId);
       this.lastWorkerCompletionReportTimestampByAgentId.delete(agentId);
     }
 
@@ -2260,6 +2286,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       }
 
       this.clearWatchdogState(descriptor.agentId);
+      this.workerStallState.delete(descriptor.agentId);
 
       if (isNonRunningAgentStatus(descriptor.status)) {
         continue;
@@ -5209,6 +5236,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   ): Promise<void> {
     if (descriptor.role === "worker") {
       this.clearWatchdogState(descriptor.agentId);
+      this.workerStallState.delete(descriptor.agentId);
       this.lastWorkerCompletionReportTimestampByAgentId.delete(descriptor.agentId);
     }
 
@@ -5511,6 +5539,20 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       shouldPersist = true;
     }
 
+    if (descriptor.role === "worker") {
+      if (previousStatus !== "streaming" && nextStatus === "streaming") {
+        console.error(`[STALL-DEBUG] init stall state for ${agentId} (${previousStatus} -> ${nextStatus})`);
+        this.workerStallState.set(agentId, {
+          lastProgressAt: Date.now(),
+          nudgeSent: false,
+          nudgeSentAt: null
+        });
+      } else if (previousStatus === "streaming" && nextStatus !== "streaming") {
+        console.error(`[STALL-DEBUG] cleanup stall state for ${agentId} (${previousStatus} -> ${nextStatus})`);
+        this.workerStallState.delete(agentId);
+      }
+    }
+
     if (isNonRunningAgentStatus(nextStatus) && descriptor.contextUsage) {
       descriptor.contextUsage = undefined;
       shouldPersist = true;
@@ -5640,6 +5682,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.maybeRecordVersionedToolMutation(agentId, event);
 
     const descriptor = this.descriptors.get(agentId);
+    if (descriptor?.role === "worker") {
+      this.trackWorkerStallProgressEvent(descriptor.agentId, event);
+    }
+
     if (
       descriptor?.role === "worker" &&
       event.type === "message_end" &&
@@ -5707,6 +5753,58 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       case "auto_retry_end":
         return;
     }
+  }
+
+  private trackWorkerStallProgressEvent(agentId: string, event: RuntimeSessionEvent): void {
+    const stallState = this.workerStallState.get(agentId);
+    if (!stallState) {
+      return;
+    }
+
+    switch (event.type) {
+      case "tool_execution_end":
+      case "turn_end":
+        this.recordWorkerStallProgress(agentId);
+        return;
+
+      case "message_update":
+      case "message_end": {
+        const role = extractRole(event.message);
+        if (role === "assistant" || role === "system") {
+          this.recordWorkerStallProgress(agentId);
+        }
+        return;
+      }
+
+      case "auto_compaction_start":
+      case "auto_compaction_end":
+      case "auto_retry_start":
+      case "auto_retry_end":
+        // Context recovery is legitimate system activity — fully reset stall tracking
+        // including nudge state. Without this, a nudge sent before context recovery
+        // could trigger a false auto-kill immediately after recovery ends, because the
+        // kill threshold is measured from nudgeSentAt (which may be stale).
+        this.recordWorkerStallProgress(agentId);
+        return;
+
+      default:
+        return;
+    }
+  }
+
+  private recordWorkerStallProgress(agentId: string): void {
+    const stallState = this.workerStallState.get(agentId);
+    if (!stallState) {
+      return;
+    }
+
+    stallState.lastProgressAt = Date.now();
+    if (stallState.nudgeSent) {
+      stallState.nudgeSent = false;
+      stallState.nudgeSentAt = null;
+    }
+
+    this.workerStallState.set(agentId, stallState);
   }
 
   private maybeRecordVersionedToolMutation(agentId: string, event: RuntimeSessionEvent): void {
@@ -6173,6 +6271,213 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private isRuntimeInContextRecovery(agentId: string): boolean {
     const runtime = this.runtimes.get(agentId);
     return Boolean(runtime?.isContextRecoveryInProgress?.());
+  }
+
+  private async checkForStalledWorkers(): Promise<void> {
+    if (this.stallCheckPromise) {
+      return this.stallCheckPromise;
+    }
+
+    const run = this.runStalledWorkerCheck().finally(() => {
+      if (this.stallCheckPromise === run) {
+        this.stallCheckPromise = null;
+      }
+    });
+
+    this.stallCheckPromise = run;
+    return run;
+  }
+
+  private async runStalledWorkerCheck(): Promise<void> {
+    const now = Date.now();
+    const stallEntries = Array.from(this.workerStallState.entries());
+    console.error(`[STALL-DEBUG] check running. descriptors=${this.descriptors.size}, stallState entries=${stallEntries.length}, entries=${stallEntries.map(([id, s]) => `${id}:elapsed=${Math.round((now - s.lastProgressAt)/1000)}s,nudged=${s.nudgeSent}`).join(", ")}`);
+
+    for (const [agentId, descriptor] of this.descriptors.entries()) {
+      if (descriptor.role !== "worker" || descriptor.status !== "streaming") {
+        continue;
+      }
+
+      const stallState = this.workerStallState.get(agentId);
+      if (!stallState) {
+        console.error(`[STALL-DEBUG] ${agentId}: streaming but no stall state`);
+        continue;
+      }
+
+      if (this.isRuntimeInContextRecovery(agentId)) {
+        console.error(`[STALL-DEBUG] ${agentId}: in context recovery, skipping`);
+        continue;
+      }
+
+      const elapsedSinceProgressMs = now - stallState.lastProgressAt;
+      if (stallState.nudgeSent && stallState.nudgeSentAt !== null) {
+        const elapsedSinceNudgeMs = now - stallState.nudgeSentAt;
+        if (elapsedSinceNudgeMs >= STALL_KILL_AFTER_NUDGE_MS) {
+          await this.handleStallAutoKill(agentId, elapsedSinceProgressMs);
+          continue;
+        }
+      }
+
+      if (!stallState.nudgeSent && elapsedSinceProgressMs >= STALL_NUDGE_THRESHOLD_MS) {
+        await this.handleStallNudge(agentId, elapsedSinceProgressMs);
+      }
+    }
+  }
+
+  private async handleStallNudge(agentId: string, elapsedMs: number): Promise<void> {
+    const descriptor = this.descriptors.get(agentId);
+    if (!descriptor || descriptor.role !== "worker") {
+      this.workerStallState.delete(agentId);
+      return;
+    }
+
+    if (descriptor.status !== "streaming" || this.isRuntimeInContextRecovery(agentId)) {
+      return;
+    }
+
+    const stallState = this.workerStallState.get(agentId);
+    if (!stallState || stallState.nudgeSent) {
+      return;
+    }
+
+    const managerId = normalizeOptionalAgentId(descriptor.managerId);
+    if (!managerId) {
+      return;
+    }
+
+    const managerDescriptor = this.descriptors.get(managerId);
+    if (!managerDescriptor || managerDescriptor.role !== "manager" || isNonRunningAgentStatus(managerDescriptor.status)) {
+      return;
+    }
+
+    const elapsedText = this.formatDuration(elapsedMs);
+    const managerMessage = `SYSTEM: ⚠️ [WORKER STALL DETECTED]\nWorker \`${agentId}\` has made no progress for ${elapsedText}.\nIt may be stuck in a long-running tool call or hung process.\nConsider: send_message_to_agent to check on it, or kill_agent(\"${agentId}\") to terminate.`;
+
+    try {
+      await this.sendMessage(managerId, managerId, managerMessage, "auto", { origin: "internal" });
+      stallState.nudgeSent = true;
+      stallState.nudgeSentAt = Date.now();
+      this.workerStallState.set(agentId, stallState);
+    } catch (error) {
+      this.logDebug("stall:nudge:send_message:error", {
+        agentId,
+        managerId,
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
+
+    try {
+      await this.publishToUser(
+        managerId,
+        `⚠️ Worker \`${agentId}\` appears stalled — no progress for ${elapsedText}.`,
+        "system"
+      );
+    } catch (error) {
+      this.logDebug("stall:nudge:publish_to_user:error", {
+        agentId,
+        managerId,
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  private async handleStallAutoKill(agentId: string, elapsedMs: number): Promise<void> {
+    const descriptor = this.descriptors.get(agentId);
+    if (!descriptor || descriptor.role !== "worker") {
+      this.workerStallState.delete(agentId);
+      return;
+    }
+
+    if (descriptor.status !== "streaming" || this.isRuntimeInContextRecovery(agentId)) {
+      if (descriptor.status !== "streaming") {
+        this.workerStallState.delete(agentId);
+      }
+      return;
+    }
+
+    const managerId = normalizeOptionalAgentId(descriptor.managerId);
+    const elapsedText = this.formatDuration(elapsedMs);
+
+    try {
+      await this.terminateDescriptor(descriptor, { abort: true, emitStatus: true });
+      await this.saveStore();
+      this.emitAgentsSnapshot();
+    } catch (error) {
+      this.logDebug("stall:auto_kill:error", {
+        agentId,
+        managerId,
+        message: error instanceof Error ? error.message : String(error)
+      });
+
+      if (managerId) {
+        try {
+          await this.publishToUser(
+            managerId,
+            `⚠️ Failed to auto-terminate stalled worker \`${agentId}\` — manual intervention needed.`,
+            "system"
+          );
+        } catch (publishError) {
+          this.logDebug("stall:auto_kill:publish_to_user:error", {
+            agentId,
+            managerId,
+            message: publishError instanceof Error ? publishError.message : String(publishError)
+          });
+        }
+      }
+      return;
+    }
+
+    if (!managerId) {
+      return;
+    }
+
+    const managerDescriptor = this.descriptors.get(managerId);
+    if (!managerDescriptor || managerDescriptor.role !== "manager" || isNonRunningAgentStatus(managerDescriptor.status)) {
+      return;
+    }
+
+    const managerMessage = `SYSTEM: 🛑 [STALLED WORKER AUTO-TERMINATED]\nWorker \`${agentId}\` was automatically terminated after ${elapsedText} with no progress.\nThe worker was stuck in a tool execution that never completed.\nYou may need to spawn a replacement worker or handle the incomplete task.`;
+
+    try {
+      await this.sendMessage(managerId, managerId, managerMessage, "auto", { origin: "internal" });
+    } catch (error) {
+      this.logDebug("stall:auto_kill:send_message:error", {
+        agentId,
+        managerId,
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
+
+    try {
+      await this.publishToUser(
+        managerId,
+        `🛑 Worker \`${agentId}\` auto-terminated after ${elapsedText} stall.`,
+        "system"
+      );
+    } catch (error) {
+      this.logDebug("stall:auto_kill:publish_to_user:error", {
+        agentId,
+        managerId,
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  private formatDuration(ms: number): string {
+    const totalSeconds = Math.max(0, Math.floor(ms / 1_000));
+    const hours = Math.floor(totalSeconds / 3_600);
+    const minutes = Math.floor((totalSeconds % 3_600) / 60);
+    const seconds = totalSeconds % 60;
+
+    if (hours > 0) {
+      return `${hours}h ${minutes}m ${seconds}s`;
+    }
+
+    if (minutes > 0) {
+      return `${minutes}m ${seconds}s`;
+    }
+
+    return `${seconds}s`;
   }
 
   private async handleRuntimeAgentEnd(runtimeTokenOrAgentId: number | string, maybeAgentId?: string): Promise<void> {

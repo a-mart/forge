@@ -68,6 +68,7 @@ These are briefly described for orientation. Most have both backend and UI compo
 | **Feedback** | `swarm/feedback-service.ts` | `lib/feedback-client.ts` | User feedback collection |
 | **Daemon management** | `reboot/`, `scripts/prod-daemon*.mjs` | — | Production process lifecycle (start, restart, PID tracking) |
 | **Reference docs** | `swarm/reference-docs.ts` | Settings UI | Profile-scoped reference documents |
+| **Worker stall detector** | `swarm/swarm-manager.ts` (WorkerStallState, checkForStalledWorkers) | — | Periodic wall-clock detection of workers stuck mid-tool-execution; two-stage nudge then auto-kill |
 
 Backend paths above are relative to `apps/backend/src/`. UI paths are relative to `apps/ui/src/`.
 
