@@ -511,7 +511,7 @@ function SessionRowItem({
   const streamingWorkerCount = isCollapsed
     ? workers.filter((w) => getAgentLiveStatus(w, statuses).status === 'streaming').length || sessionAgent.activeWorkerCount || 0
     : 0
-  const showUnread = unreadCount > 0 && !isSelected
+  const showUnread = unreadCount > 0
 
   return (
     <li>
@@ -1384,7 +1384,7 @@ function CortexSection({
   )
   const rootUnread = targetId ? (unreadCounts[targetId] ?? 0) : 0
   const displayUnread = isCollapsed ? totalUnread : rootUnread
-  const showUnread = displayUnread > 0 && !isHeaderSelected
+  const showUnread = displayUnread > 0
 
   // Activity
   const totalStreamingWorkers = visibleSessions.reduce(
