@@ -1,5 +1,5 @@
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
-import type { StatsSnapshot, StatsRange } from './stats-types'
+import type { StatsSnapshot, StatsRange } from '@forge/protocol'
 
 export async function fetchStats(wsUrl: string, range: StatsRange = '7d'): Promise<StatsSnapshot> {
   const endpoint = resolveApiEndpoint(wsUrl, `/api/stats?range=${range}`)

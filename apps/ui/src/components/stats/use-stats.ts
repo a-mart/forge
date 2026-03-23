@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { fetchStats, refreshStats } from './stats-api'
-import type { StatsSnapshot, StatsRange } from './stats-types'
+import type { StatsSnapshot, StatsRange } from '@forge/protocol'
 
 export function useStats(wsUrl: string, range: StatsRange = '7d') {
   const [stats, setStats] = useState<StatsSnapshot | null>(null)

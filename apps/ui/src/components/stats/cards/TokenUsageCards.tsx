@@ -1,6 +1,6 @@
 import { StatCard } from './StatCard'
 import { abbreviateNumber, formatTokenCount } from '../charts/chart-utils'
-import type { TokenStats, CacheStats } from '../stats-types'
+import type { TokenStats, CacheStats } from '@forge/protocol'
 
 interface TokenUsageCardsProps {
   tokens: TokenStats
@@ -28,7 +28,7 @@ export function TokenUsageCards({ tokens, cache }: TokenUsageCardsProps) {
         title="Last 30 Days"
         value={abbreviateNumber(tokens.last30Days)}
         unit="tokens"
-        subtitle={`Total ${formatTokenCount(tokens.last30DaysTotal)}`}
+        subtitle={`Total ${formatTokenCount(tokens.last30Days)}`}
         variant="accent"
       />
       <StatCard

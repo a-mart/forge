@@ -1,11 +1,11 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts'
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { abbreviateNumber } from './chart-utils'
-import type { DailyUsageBucket } from '../stats-types'
+import type { DailyUsageBucket } from '@forge/protocol'
 
 const PAGE_SIZE = 7
 
@@ -27,6 +27,10 @@ interface DailyUsageChartProps {
 export function DailyUsageChart({ data }: DailyUsageChartProps) {
   const totalPages = Math.max(1, Math.ceil(data.length / PAGE_SIZE))
   const [page, setPage] = useState(totalPages - 1) // Start at the latest page
+
+  useEffect(() => {
+    setPage(Math.max(0, Math.ceil(data.length / PAGE_SIZE) - 1))
+  }, [data.length])
 
   const pageData = useMemo(() => {
     const start = page * PAGE_SIZE

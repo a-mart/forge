@@ -1,6 +1,6 @@
 import { Card } from '@/components/ui/card'
 import { StatCard } from '../cards/StatCard'
-import type { ProviderUsageStats } from '../stats-types'
+import type { ProviderUsageStats } from '@forge/protocol'
 
 interface ProviderUsageProps {
   providers: ProviderUsageStats

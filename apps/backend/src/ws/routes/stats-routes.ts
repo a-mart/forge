@@ -1,5 +1,6 @@
+import type { StatsRange } from "@forge/protocol";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
-import { StatsService, type StatsRange } from "../../stats/stats-service.js";
+import { StatsService } from "../../stats/stats-service.js";
 import { applyCorsHeaders, sendJson } from "../http-utils.js";
 import type { HttpRoute } from "./http-route.js";
 
@@ -33,8 +34,14 @@ export function createStatsRoutes(options: { swarmManager: SwarmManager }): Http
 
         applyCorsHeaders(request, response, methods);
         const range = parseRange(requestUrl.searchParams.get("range"));
-        const stats = await statsService.getSnapshot(range);
-        sendJson(response, 200, stats as unknown as Record<string, unknown>);
+
+        try {
+          const stats = await statsService.getSnapshot(range);
+          sendJson(response, 200, stats as unknown as Record<string, unknown>);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Internal server error";
+          sendJson(response, 500, { error: message });
+        }
       }
     },
     {
@@ -60,8 +67,14 @@ export function createStatsRoutes(options: { swarmManager: SwarmManager }): Http
         applyCorsHeaders(request, response, methods);
         statsService.clearCache();
         const range = parseRange(requestUrl.searchParams.get("range"));
-        const stats = await statsService.getSnapshot(range, { forceRefresh: true });
-        sendJson(response, 200, stats as unknown as Record<string, unknown>);
+
+        try {
+          const stats = await statsService.getSnapshot(range, { forceRefresh: true });
+          sendJson(response, 200, stats as unknown as Record<string, unknown>);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Internal server error";
+          sendJson(response, 500, { error: message });
+        }
       }
     }
   ];

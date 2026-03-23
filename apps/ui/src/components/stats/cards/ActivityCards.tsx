@@ -1,5 +1,5 @@
 import { StatCard } from './StatCard'
-import type { ActivityStats } from '../stats-types'
+import type { ActivityStats } from '@forge/protocol'
 
 interface ActivityCardsProps {
   activity: ActivityStats

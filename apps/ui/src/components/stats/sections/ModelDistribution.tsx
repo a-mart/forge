@@ -1,5 +1,5 @@
 import { Badge } from '@/components/ui/badge'
-import type { ModelDistributionEntry } from '../stats-types'
+import type { ModelDistributionEntry } from '@forge/protocol'
 
 interface ModelDistributionProps {
   models: ModelDistributionEntry[]

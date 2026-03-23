@@ -1,6 +1,6 @@
 import { StatCard } from './StatCard'
 import { abbreviateNumber, formatTokenCount } from '../charts/chart-utils'
-import type { CacheStats, WorkerStats, ActivityStats } from '../stats-types'
+import type { CacheStats, WorkerStats, ActivityStats } from '@forge/protocol'
 
 interface CacheMetricsCardsProps {
   cache: CacheStats
@@ -15,7 +15,7 @@ export function CacheMetricsCards({ cache, workers, activity }: CacheMetricsCard
         title="Cached Tokens"
         value={abbreviateNumber(cache.cachedTokensSaved)}
         unit="saved"
-        subtitle={`${cache.cachedTokensPercentOfPrompt.toFixed(1)}% of prompt tokens`}
+        subtitle={`${cache.hitRate.toFixed(1)}% hit rate in ${cache.hitRatePeriod.toLowerCase()}`}
       />
       <StatCard
         title="Avg / Run"

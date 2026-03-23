@@ -2,7 +2,7 @@ import { ArrowLeft, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { timeAgo } from './charts/chart-utils'
-import type { StatsRange } from './stats-types'
+import type { StatsRange } from '@forge/protocol'
 
 const RANGE_OPTIONS: { value: StatsRange; label: string }[] = [
   { value: '7d', label: '7 days' },

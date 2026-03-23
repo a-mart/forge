@@ -1,114 +1,13 @@
+import { createReadStream } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { createInterface } from "node:readline";
+import type { ModelDistributionEntry, StatsRange, StatsSnapshot } from "@forge/protocol";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import { getAgentsStoreFilePath, getProfilesDir } from "../swarm/data-paths.js";
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
-
-export type StatsRange = "7d" | "30d" | "all";
-
-export interface StatsSnapshot {
-  computedAt: string;
-  uptimeMs: number;
-  tokens: TokenStats;
-  cache: CacheStats;
-  workers: WorkerStats;
-  sessions: SessionStats;
-  activity: ActivityStats;
-  models: ModelDistribution[];
-  dailyUsage: DailyUsageBucket[];
-  providers: ProviderUsageStats;
-  system: SystemStats;
-}
-
-export interface TokenStats {
-  today: number;
-  todayDate: string;
-  todayInputTokens: number;
-  todayOutputTokens: number;
-  last7Days: number;
-  last7DaysAvgPerDay: number;
-  last30Days: number;
-  last30DaysTotal: number;
-  allTime: number;
-}
-
-export interface CacheStats {
-  hitRate: number;
-  hitRatePeriod: string;
-  cachedTokensSaved: number;
-  cachedTokensPercentOfPrompt: number;
-}
-
-export interface WorkerStats {
-  totalWorkersRun: number;
-  totalWorkersRunPeriod: string;
-  averageTokensPerRun: number;
-  averageRuntimeMs: number;
-  currentlyActive: number;
-}
-
-export interface SessionStats {
-  totalSessions: number;
-  activeSessions: number;
-  totalMessagesSent: number;
-  totalMessagesPeriod: string;
-}
-
-export interface ActivityStats {
-  longestStreak: number;
-  streakLabel: string;
-  activeDays: number;
-  activeDaysInRange: number;
-  totalDaysInRange: number;
-  peakDay: string;
-  peakDayTokens: number;
-}
-
-export interface ModelDistribution {
-  modelId: string;
-  displayName: string;
-  percentage: number;
-  tokenCount: number;
-}
-
-export interface DailyUsageBucket {
-  date: string;
-  dateLabel: string;
-  tokens: number;
-  inputTokens: number;
-  outputTokens: number;
-  cachedTokens: number;
-}
-
-export interface ProviderUsageStats {
-  anthropic?: ProviderAccountUsage;
-  openai?: ProviderAccountUsage;
-}
-
-export interface ProviderAccountUsage {
-  provider: string;
-  accountEmail?: string;
-  plan?: string;
-  sessionUsage?: {
-    percent: number;
-    resetInfo: string;
-  };
-  weeklyUsage?: {
-    percent: number;
-    resetInfo: string;
-  };
-  available: boolean;
-  error?: string;
-}
-
-export interface SystemStats {
-  uptimeFormatted: string;
-  totalProfiles: number;
-  serverVersion: string;
-  nodeVersion: string;
-}
 
 interface SessionMetaLite {
   workers?: Array<{
@@ -234,16 +133,16 @@ export class StatsService {
         last7Days: last7.total,
         last7DaysAvgPerDay: Math.round(last7.total / 7),
         last30Days: last30.total,
-        last30DaysTotal: last30.total,
         allTime: allTime.total
       },
       cache: {
-        hitRate: round2(last7.input + last7.cacheRead > 0 ? (last7.cacheRead / (last7.input + last7.cacheRead)) * 100 : 0),
-        hitRatePeriod: "Last 7 days",
-        cachedTokensSaved: last7.cacheRead,
-        cachedTokensPercentOfPrompt: round2(
-          last7.input + last7.cacheRead > 0 ? (last7.cacheRead / (last7.input + last7.cacheRead)) * 100 : 0
-        )
+        hitRate: round2(
+          rangeTotals.input + rangeTotals.cacheRead > 0
+            ? (rangeTotals.cacheRead / (rangeTotals.input + rangeTotals.cacheRead)) * 100
+            : 0
+        ),
+        hitRatePeriod: rangePeriodLabel(range),
+        cachedTokensSaved: rangeTotals.cacheRead
       },
       workers: {
         totalWorkersRun: workerRunsInRange.length,
@@ -277,6 +176,7 @@ export class StatsService {
         outputTokens: entry.totals.output,
         cachedTokens: entry.totals.cacheRead
       })),
+      // TODO(stats): Replace placeholder provider usage with real account/subscription data.
       providers: {
         anthropic: {
           provider: "anthropic",
@@ -450,27 +350,34 @@ export class StatsService {
   }
 
   private async scanJsonlFile(path: string, onEntry: (entry: unknown) => void): Promise<void> {
-    let raw: string;
     try {
-      raw = await readFile(path, "utf8");
+      const stream = createReadStream(path, { encoding: "utf8" });
+      const reader = createInterface({
+        input: stream,
+        crlfDelay: Number.POSITIVE_INFINITY
+      });
+
+      try {
+        for await (const line of reader) {
+          const trimmed = line.trim();
+          if (!trimmed) {
+            continue;
+          }
+
+          try {
+            onEntry(JSON.parse(trimmed) as unknown);
+          } catch {
+            // ignore malformed lines
+          }
+        }
+      } finally {
+        reader.close();
+      }
     } catch (error) {
       if (isEnoentError(error)) {
         return;
       }
       return;
-    }
-
-    for (const line of raw.split("\n")) {
-      const trimmed = line.trim();
-      if (!trimmed) {
-        continue;
-      }
-
-      try {
-        onEntry(JSON.parse(trimmed) as unknown);
-      } catch {
-        // ignore malformed lines
-      }
     }
   }
 
@@ -549,7 +456,7 @@ export class StatsService {
     );
   }
 
-  private computeModelDistribution(usageRecords: UsageRecord[]): ModelDistribution[] {
+  private computeModelDistribution(usageRecords: UsageRecord[]): ModelDistributionEntry[] {
     const totalsByModel = new Map<string, number>();
 
     for (const record of usageRecords) {

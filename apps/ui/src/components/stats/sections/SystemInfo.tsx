@@ -1,6 +1,6 @@
 import { Card } from '@/components/ui/card'
 import { Server, Clock, Users, Code } from 'lucide-react'
-import type { SystemStats } from '../stats-types'
+import type { SystemStats } from '@forge/protocol'
 
 interface SystemInfoProps {
   system: SystemStats

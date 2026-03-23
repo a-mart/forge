@@ -9,11 +9,11 @@ import { TokenUsageCards } from './cards/TokenUsageCards'
 import { CacheMetricsCards } from './cards/CacheMetricsCards'
 import { ActivityCards } from './cards/ActivityCards'
 import { SessionStatsCards } from './cards/SessionStatsCards'
+import { WorkerStatsCards } from './cards/WorkerStatsCards'
 import { DailyUsageChart } from './charts/DailyUsageChart'
 import { ModelDistribution } from './sections/ModelDistribution'
-import { ProviderUsage } from './sections/ProviderUsage'
 import { SystemInfo } from './sections/SystemInfo'
-import type { StatsRange } from './stats-types'
+import type { StatsRange } from '@forge/protocol'
 import { cn } from '@/lib/utils'
 
 interface StatsPanelProps {
@@ -143,14 +143,14 @@ export function StatsPanel({ wsUrl, onBack }: StatsPanelProps) {
           {/* Activity cards: 2-card row */}
           <ActivityCards activity={stats.activity} />
 
-          {/* Session & worker stats */}
-          <SessionStatsCards sessions={stats.sessions} workers={stats.workers} />
+          {/* Session stats */}
+          <SessionStatsCards sessions={stats.sessions} />
+
+          {/* Worker stats */}
+          <WorkerStatsCards workers={stats.workers} />
 
           {/* Model distribution badges */}
           <ModelDistribution models={stats.models} />
-
-          {/* Provider usage / account limits */}
-          <ProviderUsage providers={stats.providers} />
 
           {/* System info footer */}
           <SystemInfo system={stats.system} />
