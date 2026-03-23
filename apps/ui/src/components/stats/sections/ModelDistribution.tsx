@@ -125,7 +125,8 @@ export function ModelDistribution({ models }: ModelDistributionProps) {
                             key={segment.level}
                             className="text-muted-foreground"
                           >
-                            {segment.level}: {formatTokens(segment.tokenCount)}
+                            {segment.level}: {formatTokens(segment.tokenCount)} (
+                            {((segment.tokenCount / model.tokenCount) * 100).toFixed(1)}%)
                           </p>
                         ))}
                       </TooltipContent>
