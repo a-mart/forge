@@ -111,7 +111,10 @@ export function ModelDistribution({ models }: ModelDistributionProps) {
                           )}
                         </div>
                       </TooltipTrigger>
-                      <TooltipContent side="bottom" className="text-xs">
+                      <TooltipContent 
+                        side="bottom" 
+                        className="bg-background text-foreground border border-border/50 shadow-xl text-xs"
+                      >
                         <p className="font-medium">{model.displayName}</p>
                         <p className="text-muted-foreground">
                           {model.percentage.toFixed(1)}% ·{' '}
