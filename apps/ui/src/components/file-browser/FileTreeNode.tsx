@@ -1,9 +1,17 @@
-import { ChevronRight } from 'lucide-react'
+import { useCallback } from 'react'
+import { ChevronRight, Copy } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { FileIcon } from './FileIcon'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu'
 
 interface FileTreeNodeProps {
   name: string
+  path: string
   type: 'file' | 'directory'
   depth: number
   isExpanded: boolean
@@ -15,6 +23,7 @@ interface FileTreeNodeProps {
 
 export function FileTreeNode({
   name,
+  path,
   type,
   depth,
   isExpanded,
@@ -23,18 +32,24 @@ export function FileTreeNode({
   isLoading,
   onClick,
 }: FileTreeNodeProps) {
+  const handleCopyPath = useCallback(() => {
+    navigator.clipboard.writeText(path)
+  }, [path])
+
   return (
-    <div
-      className={cn(
-        'flex h-7 cursor-pointer items-center gap-1 pr-2 text-[13px] leading-7 select-none',
-        'hover:bg-accent/50 transition-colors',
-        isSelected && 'bg-accent text-accent-foreground',
-        isFocused && !isSelected && 'outline outline-1 outline-ring/50 -outline-offset-1',
-      )}
-      style={{ paddingLeft: `${depth * 16 + 4}px` }}
-      onClick={onClick}
-      title={name}
-    >
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <div
+          className={cn(
+            'flex h-7 cursor-pointer items-center gap-1 pr-2 text-[13px] leading-7 select-none',
+            'hover:bg-accent/50 transition-colors',
+            isSelected && 'bg-accent text-accent-foreground',
+            isFocused && !isSelected && 'outline outline-1 outline-ring/50 -outline-offset-1',
+          )}
+          style={{ paddingLeft: `${depth * 16 + 4}px` }}
+          onClick={onClick}
+          title={name}
+        >
       {type === 'directory' ? (
         <ChevronRight
           className={cn(
@@ -54,6 +69,14 @@ export function FileTreeNode({
       />
 
       <span className="min-w-0 truncate">{name}</span>
-    </div>
+        </div>
+      </ContextMenuTrigger>
+      <ContextMenuContent className="min-w-[160px]">
+        <ContextMenuItem onClick={handleCopyPath} className="gap-2 text-xs">
+          <Copy className="size-3.5" />
+          Copy Path
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   )
 }

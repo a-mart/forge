@@ -509,6 +509,7 @@ export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(
                     >
                       <FileTreeNode
                         name={itemData.name}
+                        path={itemId}
                         type={itemData.type}
                         depth={meta.level - 1}
                         isExpanded={isExpanded}
