@@ -4,12 +4,13 @@ import { useCallback, useMemo } from 'react'
 // The WS client will resolve this to the actual primary manager on connect.
 export const DEFAULT_MANAGER_AGENT_ID = '__default__'
 
-export type ActiveView = 'chat' | 'settings' | 'playwright'
+export type ActiveView = 'chat' | 'settings' | 'playwright' | 'stats'
 export type PlaywrightViewMode = 'split' | 'focus' | 'tiles'
 export type AppRouteState =
   | { view: 'chat'; agentId: string }
   | { view: 'settings' }
   | { view: 'playwright'; playwrightSession?: string; playwrightMode?: PlaywrightViewMode }
+  | { view: 'stats' }
 
 type AppRouteSearch = {
   view?: string
@@ -61,6 +62,10 @@ function parseRouteStateFromLocation(pathname: string, search: unknown): AppRout
     return { view: 'settings' }
   }
 
+  if (view === 'stats') {
+    return { view: 'stats' }
+  }
+
   if (view === 'playwright') {
     const playwrightSession = typeof routeSearch.playwrightSession === 'string' ? routeSearch.playwrightSession : undefined
     const playwrightMode = typeof routeSearch.playwrightMode === 'string' && ['split', 'focus', 'tiles'].includes(routeSearch.playwrightMode)
@@ -84,6 +89,10 @@ function normalizeRouteState(routeState: AppRouteState): AppRouteState {
     return { view: 'settings' }
   }
 
+  if (routeState.view === 'stats') {
+    return { view: 'stats' }
+  }
+
   if (routeState.view === 'playwright') {
     return { view: 'playwright', playwrightSession: routeState.playwrightSession, playwrightMode: routeState.playwrightMode }
   }
@@ -97,6 +106,10 @@ function normalizeRouteState(routeState: AppRouteState): AppRouteState {
 function toRouteSearch(routeState: AppRouteState): AppRouteSearch {
   if (routeState.view === 'settings') {
     return { view: 'settings' }
+  }
+
+  if (routeState.view === 'stats') {
+    return { view: 'stats' }
   }
 
   if (routeState.view === 'playwright') {
@@ -116,6 +129,10 @@ function toRouteSearch(routeState: AppRouteState): AppRouteSearch {
 
 function routeStatesEqual(left: AppRouteState, right: AppRouteState): boolean {
   if (left.view === 'settings' && right.view === 'settings') {
+    return true
+  }
+
+  if (left.view === 'stats' && right.view === 'stats') {
     return true
   }
 

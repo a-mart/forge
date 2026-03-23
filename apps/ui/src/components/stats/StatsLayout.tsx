@@ -1,0 +1,105 @@
+import { ArrowLeft, RefreshCw } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
+import { timeAgo } from './charts/chart-utils'
+import type { StatsRange } from '@forge/protocol'
+
+const RANGE_OPTIONS: { value: StatsRange; label: string }[] = [
+  { value: '7d', label: '7 days' },
+  { value: '30d', label: '30 days' },
+  { value: 'all', label: 'All time' },
+]
+
+interface StatsLayoutProps {
+  onBack?: () => void
+  computedAt?: string
+  isRefreshing?: boolean
+  onRefresh?: () => void
+  range: StatsRange
+  onRangeChange: (range: StatsRange) => void
+  children: React.ReactNode
+}
+
+export function StatsLayout({
+  onBack,
+  computedAt,
+  isRefreshing,
+  onRefresh,
+  range,
+  onRangeChange,
+  children,
+}: StatsLayoutProps) {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
+      {/* Header */}
+      <header className="flex h-[62px] shrink-0 items-center border-b border-border/80 bg-card/80 px-2 backdrop-blur md:px-4">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          {onBack ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9 shrink-0 text-muted-foreground hover:bg-accent/70 hover:text-foreground"
+              onClick={onBack}
+              aria-label="Back to chat"
+            >
+              <ArrowLeft className="size-4" />
+            </Button>
+          ) : null}
+          <h1 className="truncate text-sm font-semibold text-foreground">
+            Stats
+          </h1>
+        </div>
+        <div className="flex items-center gap-2">
+          {computedAt ? (
+            <span className="hidden text-xs text-muted-foreground sm:block">
+              Updated {timeAgo(computedAt)}
+            </span>
+          ) : null}
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-9 w-9 text-muted-foreground hover:bg-accent/70 hover:text-foreground"
+            onClick={onRefresh}
+            disabled={isRefreshing}
+            aria-label="Refresh stats"
+          >
+            <RefreshCw
+              className={cn('size-4', isRefreshing && 'animate-spin')}
+            />
+          </Button>
+        </div>
+      </header>
+
+      {/* Range selector */}
+      <div className="flex shrink-0 items-center gap-1 border-b border-border/60 bg-card/30 px-3 py-2 md:px-5">
+        <span className="mr-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+          View
+        </span>
+        {RANGE_OPTIONS.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            onClick={() => onRangeChange(option.value)}
+            className={cn(
+              'rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+              range === option.value
+                ? 'bg-muted text-foreground'
+                : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground',
+            )}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Scrollable content */}
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto max-w-5xl px-4 py-5 md:px-6">
+          {children}
+        </div>
+      </div>
+    </div>
+  )
+}
