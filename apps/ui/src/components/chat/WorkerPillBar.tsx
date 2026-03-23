@@ -130,8 +130,8 @@ const WorkerPill = memo(function WorkerPill({
   // Read activity from ref (avoids new array refs destabilising memo)
   const workerActivity = activityByWorkerRef.current?.get(worker.agentId) ?? EMPTY_ACTIVITY
 
-  // Take last 8 entries for quick-look
-  const recentActivity = workerActivity.slice(-8)
+  // Take last 30 entries for quick-look
+  const recentActivity = workerActivity.slice(-30)
 
   // Latest tool call summary for tooltip
   let latestToolSummary: string | null = null
@@ -204,9 +204,9 @@ const WorkerPill = memo(function WorkerPill({
         side="top"
         sideOffset={8}
         align="start"
-        collisionPadding={16}
+        avoidCollisions={false}
         className="flex w-[min(48rem,_66vw)] max-w-[calc(100vw-2rem)] flex-col overflow-hidden p-0"
-        style={{ maxHeight: 'var(--radix-popper-available-height, 80vh)' }}
+        style={{ maxHeight: 'min(80vh, calc(100vh - 6rem))' }}
       >
         <WorkerQuickLook
           worker={worker}
