@@ -1,8 +1,11 @@
 import { Type } from "@sinclair/typebox";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { parseSwarmModelPreset, parseSwarmReasoningLevel } from "./model-presets.js";
+import { ChoiceRequestCancelledError } from "./swarm-manager.js";
 import {
   type AgentDescriptor,
+  type ChoiceAnswer,
+  type ChoiceQuestion,
   type MessageChannel,
   type MessageSourceContext,
   type MessageTargetContext,
@@ -27,6 +30,10 @@ export interface SwarmToolHost {
     source?: "speak_to_user" | "system",
     targetContext?: MessageTargetContext
   ): Promise<{ targetContext: MessageSourceContext }>;
+  requestUserChoice(
+    agentId: string,
+    questions: ChoiceQuestion[],
+  ): Promise<ChoiceAnswer[]>;
 }
 
 const deliveryModeSchema = Type.Union([
@@ -453,6 +460,112 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
           }
         };
       }
+    },
+    {
+      name: "present_choices",
+      label: "Present Choices",
+      description:
+        "Present structured choices to the user and wait for their response. " +
+        "Use this when you want the user to select from specific options instead of typing freeform. " +
+        "The user sees an interactive card with clickable buttons. " +
+        "Returns the user's selections and any freeform text they provided. " +
+        "The tool blocks until the user responds or cancels.",
+      parameters: Type.Object({
+        questions: Type.Array(
+          Type.Object({
+            id: Type.String({ description: "Unique question identifier." }),
+            header: Type.Optional(
+              Type.String({ description: "Bold header text above the question." })
+            ),
+            question: Type.String({ description: "The question text." }),
+            options: Type.Optional(
+              Type.Array(
+                Type.Object({
+                  id: Type.String({ description: "Unique option identifier." }),
+                  label: Type.String({ description: "Button label." }),
+                  description: Type.Optional(
+                    Type.String({ description: "Description shown below the label." })
+                  ),
+                  recommended: Type.Optional(
+                    Type.Boolean({ description: "If true, visually marked as recommended." })
+                  ),
+                }),
+                { description: "Clickable options. Omit for free-text only." }
+              )
+            ),
+            isOther: Type.Optional(
+              Type.Boolean({
+                description: "If true, show only a free-text input (no option buttons)."
+              })
+            ),
+            placeholder: Type.Optional(
+              Type.String({ description: "Placeholder text for the free-text input area." })
+            ),
+          }),
+          { description: "One or more questions to present to the user.", minItems: 1 }
+        ),
+      }),
+      async execute(_toolCallId, params) {
+        const parsed = params as {
+          questions: Array<{
+            id: string;
+            header?: string;
+            question: string;
+            options?: Array<{
+              id: string;
+              label: string;
+              description?: string;
+              recommended?: boolean;
+            }>;
+            isOther?: boolean;
+            placeholder?: string;
+          }>;
+        };
+
+        try {
+          const answers = await host.requestUserChoice(
+            descriptor.agentId,
+            parsed.questions,
+          );
+
+          const details = {
+            status: "answered",
+            answers: answers.map((a) => ({
+              questionId: a.questionId,
+              selectedOptions: a.selectedOptionIds,
+              text: a.text ?? null,
+            })),
+          };
+
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(details),
+              },
+            ],
+            details,
+          };
+        } catch (error) {
+          if (error instanceof ChoiceRequestCancelledError) {
+            const details = {
+              status: "cancelled",
+              reason: error.reason,
+            };
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify(details),
+                },
+              ],
+              details,
+            };
+          }
+
+          throw error;
+        }
+      },
     }
   ];
 

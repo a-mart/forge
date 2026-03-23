@@ -1,5 +1,5 @@
 import type { ConversationAttachment } from './attachments.js'
-import type { DeliveryMode, ManagerModelPreset, ManagerReasoningLevel } from './shared-types.js'
+import type { ChoiceAnswer, DeliveryMode, ManagerModelPreset, ManagerReasoningLevel } from './shared-types.js'
 
 export interface ApiProxyCommand {
   type: 'api_proxy'
@@ -43,4 +43,6 @@ export type ClientCommand =
   | { type: 'validate_directory'; path: string; requestId?: string }
   | { type: 'pick_directory'; defaultPath?: string; requestId?: string }
   | { type: 'reorder_profiles'; profileIds: string[]; requestId?: string }
+  | { type: 'choice_response'; agentId: string; choiceId: string; answers: ChoiceAnswer[] }
+  | { type: 'choice_cancel'; agentId: string; choiceId: string }
   | { type: 'ping' }

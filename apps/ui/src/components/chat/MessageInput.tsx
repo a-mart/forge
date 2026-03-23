@@ -96,6 +96,7 @@ interface MessageInputProps {
   onSubmitted?: () => void
   isLoading: boolean
   disabled?: boolean
+  placeholderOverride?: string
   agentLabel?: string
   allowWhileLoading?: boolean
   wsUrl?: string
@@ -172,6 +173,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
     onSubmitted,
     isLoading,
     disabled = false,
+    placeholderOverride,
     agentLabel = 'agent',
     allowWhileLoading = false,
     wsUrl,
@@ -621,11 +623,13 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
 
   const hasContent = input.trim().length > 0 || attachedFiles.length > 0
   const canSubmit = hasContent && !disabled && !blockedByLoading && !isRecording && !isTranscribingVoice
-  const placeholder = disabled
-    ? 'Waiting for connection...'
-    : allowWhileLoading && isLoading
-      ? `Send another message to ${agentLabel}...`
-      : `Message ${agentLabel}...`
+  const placeholder = placeholderOverride ?? (
+    disabled
+      ? 'Waiting for connection...'
+      : allowWhileLoading && isLoading
+        ? `Send another message to ${agentLabel}...`
+        : `Message ${agentLabel}...`
+  )
 
   const activeWaveformBars = useMemo(
     () => stretchWaveformBars(recordingWaveformBars, ACTIVE_WAVEFORM_BAR_COUNT),

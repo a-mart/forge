@@ -66,6 +66,9 @@ function makeHost(spawnImpl: (callerAgentId: string, input: SpawnAgentInput) => 
         targetContext: { channel: 'web' },
       }
     },
+    async requestUserChoice() {
+      return []
+    },
   }
 }
 
@@ -87,6 +90,9 @@ function makeHostWithAgents(agents: AgentDescriptor[]): SwarmToolHost {
       return {
         targetContext: { channel: 'web' },
       }
+    },
+    async requestUserChoice() {
+      return []
     },
   }
 }
@@ -675,6 +681,7 @@ describe('buildSwarmTools', () => {
           },
         }
       },
+      requestUserChoice: async () => [],
     }
 
     const tools = buildSwarmTools(host, makeManagerDescriptor())

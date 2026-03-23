@@ -91,6 +91,18 @@ export class SwarmWebSocketServer {
     this.wsHandler.broadcastToSubscribed(event);
   };
 
+  private readonly onChoiceRequest = (event: ServerEvent): void => {
+    if (event.type !== "choice_request") return;
+    this.wsHandler.broadcastToSubscribed(event);
+
+    if (event.status === "pending") {
+      this.wsHandler.broadcastToSubscribed({
+        type: "unread_notification",
+        agentId: event.agentId,
+      });
+    }
+  };
+
   private readonly onConversationReset = (event: ServerEvent): void => {
     if (event.type !== "conversation_reset") return;
     this.wsHandler.broadcastToSubscribed(event);
@@ -282,6 +294,7 @@ export class SwarmWebSocketServer {
     this.swarmManager.on("conversation_log", this.onConversationLog);
     this.swarmManager.on("agent_message", this.onAgentMessage);
     this.swarmManager.on("agent_tool_call", this.onAgentToolCall);
+    this.swarmManager.on("choice_request", this.onChoiceRequest);
     this.swarmManager.on("conversation_reset", this.onConversationReset);
     this.swarmManager.on("agent_status", this.onAgentStatus);
     this.swarmManager.on("agents_snapshot", this.onAgentsSnapshot);
@@ -299,6 +312,7 @@ export class SwarmWebSocketServer {
     this.swarmManager.off("conversation_log", this.onConversationLog);
     this.swarmManager.off("agent_message", this.onAgentMessage);
     this.swarmManager.off("agent_tool_call", this.onAgentToolCall);
+    this.swarmManager.off("choice_request", this.onChoiceRequest);
     this.swarmManager.off("conversation_reset", this.onConversationReset);
     this.swarmManager.off("agent_status", this.onAgentStatus);
     this.swarmManager.off("agents_snapshot", this.onAgentsSnapshot);

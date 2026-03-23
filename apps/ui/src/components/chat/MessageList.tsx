@@ -11,8 +11,10 @@ import { ChevronDown } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { ArtifactReference } from '@/lib/artifacts'
 import { cn } from '@/lib/utils'
-import type { ConversationEntry } from '@forge/protocol'
+import type { ChoiceAnswer, ConversationEntry } from '@forge/protocol'
 import { AgentMessageRow } from './message-list/AgentMessageRow'
+import { ChoiceAnsweredRow } from './message-list/ChoiceAnsweredRow'
+import { ChoiceRequestCard } from './message-list/ChoiceRequestCard'
 import { ConversationMessageRow } from './message-list/ConversationMessageRow'
 import { EmptyState } from './message-list/EmptyState'
 import {
@@ -22,6 +24,7 @@ import {
 } from './message-list/tool-display-utils'
 import { ToolLogRow } from './message-list/ToolLogRow'
 import type {
+  ChoiceRequestDisplayEntry,
   ConversationLogEntry,
   ToolExecutionDisplayEntry,
 } from './message-list/types'
@@ -56,6 +59,9 @@ interface MessageListProps {
     fallbackTargetId?: string,
   ) => Promise<void>
   isFeedbackSubmitting?: boolean
+  onChoiceSubmit?: (agentId: string, choiceId: string, answers: ChoiceAnswer[]) => void
+  onChoiceCancel?: (agentId: string, choiceId: string) => void
+  pendingChoiceIds: Set<string>
 }
 
 export interface MessageListHandle {
@@ -79,6 +85,11 @@ type DisplayEntry =
       type: 'tool_execution'
       id: string
       entry: ToolExecutionDisplayEntry
+    }
+  | {
+      type: 'choice_request'
+      id: string
+      entry: ChoiceRequestDisplayEntry
     }
   | {
       type: 'runtime_error_log'
@@ -118,6 +129,7 @@ function resolveConversationMessageLegacyTargetId(
 function buildDisplayEntries(messages: ConversationEntry[]): DisplayEntry[] {
   const displayEntries: DisplayEntry[] = []
   const toolEntriesByCallId = new Map<string, ToolExecutionDisplayEntry>()
+  const choiceEntriesByChoiceId = new Map<string, ChoiceRequestDisplayEntry>()
 
   for (const [index, message] of messages.entries()) {
     if (message.type === 'conversation_message') {
@@ -136,6 +148,32 @@ function buildDisplayEntries(messages: ConversationEntry[]): DisplayEntry[] {
         id: `agent-message-${message.timestamp}-${index}`,
         message,
       })
+      continue
+    }
+
+    if (message.type === 'choice_request') {
+      const existing = choiceEntriesByChoiceId.get(message.choiceId)
+      if (existing) {
+        existing.status = message.status
+        existing.answers = message.answers
+        existing.timestamp = message.timestamp
+      } else {
+        const entry: ChoiceRequestDisplayEntry = {
+          choiceId: message.choiceId,
+          agentId: message.agentId,
+          questions: message.questions,
+          status: message.status,
+          answers: message.answers,
+          timestamp: message.timestamp,
+        }
+
+        choiceEntriesByChoiceId.set(message.choiceId, entry)
+        displayEntries.push({
+          type: 'choice_request',
+          id: `choice-${message.choiceId}`,
+          entry,
+        })
+      }
       continue
     }
 
@@ -232,6 +270,9 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
   onFeedbackComment,
   onFeedbackClearComment,
   isFeedbackSubmitting,
+  onChoiceSubmit,
+  onChoiceCancel,
+  pendingChoiceIds,
 }, ref) {
   const scrollContainerRef = useRef<HTMLDivElement | null>(null)
   const bottomRef = useRef<HTMLDivElement | null>(null)
@@ -243,6 +284,20 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
   const [showScrollButton, setShowScrollButton] = useState(false)
 
   const displayEntries = useMemo(() => buildDisplayEntries(messages), [messages])
+
+  const handleChoiceSubmit = useCallback(
+    (agentId: string, choiceId: string, answers: ChoiceAnswer[]) => {
+      onChoiceSubmit?.(agentId, choiceId, answers)
+    },
+    [onChoiceSubmit],
+  )
+
+  const handleChoiceCancel = useCallback(
+    (agentId: string, choiceId: string) => {
+      onChoiceCancel?.(agentId, choiceId)
+    },
+    [onChoiceCancel],
+  )
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = 'auto', force = false) => {
     const container = scrollContainerRef.current
@@ -411,6 +466,37 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
                     onFeedbackClearComment={isAssistant ? onFeedbackClearComment : undefined}
                     isFeedbackSubmitting={isFeedbackSubmitting}
                   />
+                </div>
+              )
+            }
+
+            if (entry.type === 'choice_request') {
+              const isLive =
+                entry.entry.status === 'pending' &&
+                pendingChoiceIds.has(entry.entry.choiceId)
+
+              return (
+                <div
+                  key={entry.id}
+                  className="[content-visibility:auto] [contain-intrinsic-size:auto_200px]"
+                >
+                  {isLive ? (
+                    <ChoiceRequestCard
+                      choiceId={entry.entry.choiceId}
+                      agentId={entry.entry.agentId}
+                      questions={entry.entry.questions}
+                      onSubmit={handleChoiceSubmit}
+                      onCancel={handleChoiceCancel}
+                    />
+                  ) : (
+                    <ChoiceAnsweredRow
+                      choiceId={entry.entry.choiceId}
+                      questions={entry.entry.questions}
+                      answers={entry.entry.answers ?? []}
+                      status={entry.entry.status === 'pending' ? 'expired' : entry.entry.status}
+                      timestamp={entry.entry.timestamp}
+                    />
+                  )}
                 </div>
               )
             }

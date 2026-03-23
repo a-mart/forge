@@ -12,7 +12,7 @@ import type {
 
 export type ConversationHistoryEntry = Extract<
   ConversationEntry,
-  { type: 'conversation_message' | 'conversation_log' }
+  { type: 'conversation_message' | 'conversation_log' | 'choice_request' }
 >
 export type AgentActivityEntry = Extract<
   ConversationEntry,
@@ -25,6 +25,8 @@ export interface ManagerWsState {
   subscribedAgentId: string | null
   messages: ConversationHistoryEntry[]
   activityMessages: AgentActivityEntry[]
+  /** Choice IDs with pending status for the current session */
+  pendingChoiceIds: Set<string>
   agents: AgentDescriptor[]
   loadedSessionIds: Set<string>
   profiles: ManagerProfile[]
@@ -48,6 +50,7 @@ export function createInitialManagerWsState(targetAgentId: string | null): Manag
     subscribedAgentId: null,
     messages: [],
     activityMessages: [],
+    pendingChoiceIds: new Set(),
     agents: [],
     loadedSessionIds: new Set(),
     profiles: [],

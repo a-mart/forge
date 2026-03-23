@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
 import { appendFile, copyFile, mkdir, open, readdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -6,6 +6,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { getModel, type Api, type AssistantMessage, type Model } from "@mariozechner/pi-ai";
 import { AuthStorage, ModelRegistry } from "@mariozechner/pi-coding-agent";
 import type {
+  ChoiceRequestEvent,
   CortexReviewRunRecord,
   CortexReviewRunScope,
   CortexReviewRunTrigger,
@@ -122,6 +123,9 @@ import type {
   AgentModelDescriptor,
   AgentStatus,
   AgentStatusEvent,
+  ChoiceAnswer,
+  ChoiceQuestion,
+  ChoiceRequestStatus,
   AgentsSnapshotEvent,
   AgentsStoreFile,
   ConversationAttachment,
@@ -850,6 +854,13 @@ class SessionMemoryMergeFailure extends Error {
   }
 }
 
+export class ChoiceRequestCancelledError extends Error {
+  constructor(public readonly reason: "cancelled" | "expired") {
+    super(`Choice request ${reason}`);
+    this.name = "ChoiceRequestCancelledError";
+  }
+}
+
 interface SessionRenameHistoryEntry {
   from: string;
   to: string;
@@ -1063,6 +1074,15 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly runtimeTokensByAgentId = new Map<string, number>();
   private nextRuntimeToken = 1;
   private readonly pendingManagerRuntimeRecycleAgentIds = new Set<string>();
+  private readonly pendingChoiceRequests = new Map<string, {
+    choiceId: string;
+    agentId: string;
+    sessionAgentId: string;
+    questions: ChoiceQuestion[];
+    resolve: (answers: ChoiceAnswer[]) => void;
+    reject: (reason: Error) => void;
+    createdAt: string;
+  }>();
   private readonly conversationEntriesByAgentId = new Map<string, ConversationEntryEvent[]>();
   private readonly workerWatchdogState = new Map<string, WorkerWatchdogState>();
   private readonly workerStallState = new Map<string, WorkerStallState>();
@@ -1551,6 +1571,129 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return this.conversationProjector.getConversationHistory(resolvedAgentId);
   }
 
+  async requestUserChoice(
+    agentId: string,
+    questions: ChoiceQuestion[],
+  ): Promise<ChoiceAnswer[]> {
+    const descriptor = this.descriptors.get(agentId);
+    if (!descriptor) throw new Error(`Agent not found: ${agentId}`);
+
+    const sessionAgentId = descriptor.role === "manager"
+      ? agentId
+      : descriptor.managerId;
+
+    const choiceId = randomUUID().slice(0, 12);
+
+    const pendingEvent: ChoiceRequestEvent = {
+      type: "choice_request",
+      agentId,
+      choiceId,
+      questions,
+      status: "pending",
+      timestamp: this.now(),
+    };
+    this.emitChoiceRequest(pendingEvent);
+
+    return new Promise<ChoiceAnswer[]>((resolve, reject) => {
+      this.pendingChoiceRequests.set(choiceId, {
+        choiceId,
+        agentId,
+        sessionAgentId,
+        questions,
+        resolve,
+        reject,
+        createdAt: this.now(),
+      });
+    });
+  }
+
+  resolveChoiceRequest(choiceId: string, answers: ChoiceAnswer[]): void {
+    const pending = this.pendingChoiceRequests.get(choiceId);
+    if (!pending) return;
+
+    this.pendingChoiceRequests.delete(choiceId);
+
+    const answeredEvent: ChoiceRequestEvent = {
+      type: "choice_request",
+      agentId: pending.agentId,
+      choiceId,
+      questions: pending.questions,
+      status: "answered",
+      answers,
+      timestamp: this.now(),
+    };
+    this.emitChoiceRequest(answeredEvent);
+
+    pending.resolve(answers);
+  }
+
+  cancelChoiceRequest(choiceId: string, reason: Extract<ChoiceRequestStatus, "cancelled" | "expired">): void {
+    const pending = this.pendingChoiceRequests.get(choiceId);
+    if (!pending) return;
+
+    this.pendingChoiceRequests.delete(choiceId);
+
+    const cancelledEvent: ChoiceRequestEvent = {
+      type: "choice_request",
+      agentId: pending.agentId,
+      choiceId,
+      questions: pending.questions,
+      status: reason,
+      timestamp: this.now(),
+    };
+    this.emitChoiceRequest(cancelledEvent);
+
+    pending.reject(new ChoiceRequestCancelledError(reason));
+  }
+
+  cancelAllPendingChoicesForAgent(agentId: string): void {
+    for (const [choiceId, pending] of this.pendingChoiceRequests) {
+      if (pending.agentId === agentId || pending.sessionAgentId === agentId) {
+        this.cancelChoiceRequest(choiceId, "cancelled");
+      }
+    }
+  }
+
+  hasPendingChoicesForSession(sessionAgentId: string): boolean {
+    for (const pending of this.pendingChoiceRequests.values()) {
+      if (pending.sessionAgentId === sessionAgentId) return true;
+    }
+    return false;
+  }
+
+  getPendingChoiceIdsForSession(sessionAgentId: string): string[] {
+    const ids: string[] = [];
+    for (const pending of this.pendingChoiceRequests.values()) {
+      if (pending.sessionAgentId === sessionAgentId) {
+        ids.push(pending.choiceId);
+      }
+    }
+    return ids;
+  }
+
+  getPendingChoiceOwner(choiceId: string): { agentId: string; sessionAgentId: string } | undefined {
+    const pending = this.pendingChoiceRequests.get(choiceId);
+    if (!pending) return undefined;
+    return { agentId: pending.agentId, sessionAgentId: pending.sessionAgentId };
+  }
+
+  getPendingChoice(choiceId: string): {
+    agentId: string;
+    sessionAgentId: string;
+    questions: ChoiceQuestion[];
+  } | undefined {
+    const pending = this.pendingChoiceRequests.get(choiceId);
+    if (!pending) {
+      return undefined;
+    }
+
+    return {
+      agentId: pending.agentId,
+      sessionAgentId: pending.sessionAgentId,
+      questions: pending.questions,
+    };
+  }
+
   async createSession(
     profileId: string,
     options?: { label?: string; name?: string; sessionPurpose?: AgentDescriptor["sessionPurpose"] }
@@ -1689,6 +1832,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   async clearSessionConversation(agentId: string): Promise<void> {
+    this.cancelAllPendingChoicesForAgent(agentId);
+
     const descriptor = this.getRequiredSessionDescriptor(agentId);
 
     // Truncate the session JSONL file on disk
@@ -2273,6 +2418,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     const stoppedWorkerIds: string[] = [];
+
+    this.cancelAllPendingChoicesForAgent(targetManagerId);
 
     for (const descriptor of Array.from(this.descriptors.values())) {
       if (descriptor.role !== "worker") {
@@ -4007,6 +4154,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.conversationProjector.emitAgentMessage(event);
   }
 
+  private emitChoiceRequest(event: ChoiceRequestEvent): void {
+    this.conversationProjector.emitChoiceRequest(event);
+  }
+
   private emitConversationReset(agentId: string, reason: "user_new_command" | "api_reset"): void {
     this.conversationProjector.emitConversationReset(agentId, reason);
   }
@@ -5232,6 +5383,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     descriptor: AgentDescriptor,
     options: { abort: boolean; emitStatus: boolean }
   ): Promise<void> {
+    this.cancelAllPendingChoicesForAgent(descriptor.agentId);
+
     if (descriptor.role === "worker") {
       this.clearWatchdogState(descriptor.agentId);
       this.workerStallState.delete(descriptor.agentId);

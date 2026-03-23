@@ -8,6 +8,9 @@ import type {
   AgentContextUsage,
   AgentDescriptor,
   AgentStatus,
+  ChoiceAnswer,
+  ChoiceQuestion,
+  ChoiceRequestStatus,
   DeliveryMode,
   DirectoryItem,
   ManagerModelPreset,
@@ -82,6 +85,16 @@ export interface AgentToolCallEvent {
   toolCallId?: string
   text: string
   isError?: boolean
+}
+
+export interface ChoiceRequestEvent {
+  type: 'choice_request'
+  agentId: string
+  choiceId: string
+  questions: ChoiceQuestion[]
+  status: ChoiceRequestStatus
+  answers?: ChoiceAnswer[]
+  timestamp: string
 }
 
 export interface ManagerCreatedEvent {
@@ -255,6 +268,7 @@ export type ConversationEntry =
   | ConversationLogEvent
   | AgentMessageEvent
   | AgentToolCallEvent
+  | ChoiceRequestEvent
 
 export type ConversationEntryEvent = ConversationEntry
 
@@ -338,6 +352,7 @@ export type ServerEvent =
       agentId: string
       messages: ConversationEntry[]
     }
+  | { type: 'pending_choices_snapshot'; agentId: string; choiceIds: string[] }
   | ConversationEntry
   | AgentStatusEvent
   | AgentsSnapshotEvent

@@ -46,7 +46,12 @@ export function useResizablePanel({
 }: UseResizablePanelOptions): UseResizablePanelResult {
   const [width, setWidth] = useState(() => {
     if (typeof window === 'undefined') return defaultWidth
-    const stored = localStorage.getItem(storageKey)
+    const storage = globalThis.localStorage
+    if (!storage || typeof storage.getItem !== 'function') {
+      return defaultWidth
+    }
+
+    const stored = storage.getItem(storageKey)
     if (stored) {
       const parsed = parseInt(stored, 10)
       if (!isNaN(parsed) && parsed >= minWidth && parsed <= maxWidth) {
@@ -70,7 +75,12 @@ export function useResizablePanel({
 
   const persistWidth = useCallback(
     (w: number) => {
-      localStorage.setItem(storageKey, String(w))
+      const storage = globalThis.localStorage
+      if (!storage || typeof storage.setItem !== 'function') {
+        return
+      }
+
+      storage.setItem(storageKey, String(w))
     },
     [storageKey],
   )

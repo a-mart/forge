@@ -1,4 +1,9 @@
-import type { ConversationEntry } from '@forge/protocol'
+import type {
+  ChoiceAnswer,
+  ChoiceQuestion,
+  ChoiceRequestStatus,
+  ConversationEntry,
+} from '@forge/protocol'
 
 export type ConversationMessageEntry = Extract<
   ConversationEntry,
@@ -37,4 +42,13 @@ export interface ToolExecutionDisplayEntry {
   timestamp: string
   latestKind: ToolExecutionEvent['kind']
   isError?: boolean
+}
+
+export interface ChoiceRequestDisplayEntry {
+  choiceId: string
+  agentId: string
+  questions: ChoiceQuestion[]
+  status: ChoiceRequestStatus
+  answers?: ChoiceAnswer[]
+  timestamp: string
 }

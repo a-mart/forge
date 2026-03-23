@@ -1,6 +1,30 @@
-import type { ClientCommand, ServerEvent } from "@forge/protocol";
+import type { ChoiceAnswer, ChoiceQuestion, ClientCommand, ServerEvent } from "@forge/protocol";
 import type { WebSocket } from "ws";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
+
+function validateAnswersAgainstQuestions(
+  questions: ChoiceQuestion[],
+  answers: ChoiceAnswer[],
+): string | null {
+  const questionMap = new Map(questions.map((q) => [q.id, q]));
+  const seen = new Set<string>();
+
+  for (const answer of answers) {
+    const question = questionMap.get(answer.questionId);
+    if (!question) return `Unknown questionId: ${answer.questionId}`;
+    if (seen.has(answer.questionId)) return `Duplicate answer for questionId: ${answer.questionId}`;
+    seen.add(answer.questionId);
+
+    if (question.options) {
+      const allowed = new Set(question.options.map((o) => o.id));
+      for (const optionId of answer.selectedOptionIds) {
+        if (!allowed.has(optionId)) return `Unknown optionId ${optionId} for question ${answer.questionId}`;
+      }
+    }
+  }
+
+  return null;
+}
 
 export interface ConversationCommandRouteContext {
   command: ClientCommand;
@@ -24,6 +48,61 @@ export async function handleConversationCommand(context: ConversationCommandRout
     logDebug,
     resolveConfiguredManagerId
   } = context;
+
+  if (command.type === "choice_response" || command.type === "choice_cancel") {
+    const { agentId, choiceId } = command;
+
+    if (subscribedAgentId !== agentId) {
+      logDebug("choice:rejected:subscription_mismatch", { choiceId, agentId, subscribedAgentId });
+      send(socket, {
+        type: "error",
+        code: "CHOICE_SUBSCRIPTION_MISMATCH",
+        message: `Choice response rejected: not subscribed to agent ${agentId}`,
+      });
+      return true;
+    }
+
+    const pendingChoice = swarmManager.getPendingChoice(choiceId);
+    if (!pendingChoice) {
+      logDebug("choice:rejected:not_found", { choiceId });
+      send(socket, {
+        type: "error",
+        code: "CHOICE_NOT_PENDING",
+        message: `Choice ${choiceId} is not pending`,
+      });
+      return true;
+    }
+
+    if (pendingChoice.agentId !== agentId && pendingChoice.sessionAgentId !== agentId) {
+      logDebug("choice:rejected:owner_mismatch", { choiceId, agentId, pendingOwner: pendingChoice });
+      send(socket, {
+        type: "error",
+        code: "CHOICE_OWNER_MISMATCH",
+        message: `Choice ${choiceId} does not belong to agent ${agentId}`,
+      });
+      return true;
+    }
+
+    if (command.type === "choice_response") {
+      const validationError = validateAnswersAgainstQuestions(pendingChoice.questions, command.answers);
+      if (validationError) {
+        logDebug("choice:rejected:invalid_response", { choiceId, agentId, validationError });
+        send(socket, {
+          type: "error",
+          code: "CHOICE_INVALID_RESPONSE",
+          message: `Invalid choice response: ${validationError}`,
+        });
+        return true;
+      }
+
+      logDebug("choice_response:received", { choiceId });
+      swarmManager.resolveChoiceRequest(choiceId, command.answers);
+    } else {
+      logDebug("choice_cancel:received", { choiceId });
+      swarmManager.cancelChoiceRequest(choiceId, "cancelled");
+    }
+    return true;
+  }
 
   if (command.type !== "user_message") {
     return false;

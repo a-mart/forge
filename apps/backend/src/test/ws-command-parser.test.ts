@@ -82,6 +82,36 @@ describe('ws command parser session commands', () => {
     })
   })
 
+  it('parses choice_response and choice_cancel commands', () => {
+    expect(parseJsonCommand({
+      type: 'choice_response',
+      agentId: 'manager',
+      choiceId: 'choice-1',
+      answers: [{ questionId: 'q1', selectedOptionIds: ['opt-a'], text: 'notes' }],
+    })).toEqual({
+      ok: true,
+      command: {
+        type: 'choice_response',
+        agentId: 'manager',
+        choiceId: 'choice-1',
+        answers: [{ questionId: 'q1', selectedOptionIds: ['opt-a'], text: 'notes' }],
+      },
+    })
+
+    expect(parseJsonCommand({
+      type: 'choice_cancel',
+      agentId: 'manager',
+      choiceId: 'choice-1',
+    })).toEqual({
+      ok: true,
+      command: {
+        type: 'choice_cancel',
+        agentId: 'manager',
+        choiceId: 'choice-1',
+      },
+    })
+  })
+
   it('rejects invalid session command payloads', () => {
     const invalidPayloads: Array<{ payload: unknown; message: string }> = [
       {
@@ -143,6 +173,38 @@ describe('ws command parser session commands', () => {
       {
         payload: { type: 'subscribe', messageCount: Infinity },
         message: 'subscribe.messageCount must be a positive finite integer',
+      },
+      {
+        payload: { type: 'choice_response', agentId: '', choiceId: 'choice-1', answers: [] },
+        message: 'choice_response.agentId must be a non-empty string',
+      },
+      {
+        payload: { type: 'choice_response', agentId: 'manager', choiceId: '', answers: [] },
+        message: 'choice_response.choiceId must be a non-empty string',
+      },
+      {
+        payload: { type: 'choice_response', agentId: 'manager', choiceId: 'choice-1', answers: 'bad' },
+        message: 'choice_response.answers must be an array of valid ChoiceAnswer objects',
+      },
+      {
+        payload: { type: 'choice_response', agentId: 'manager', choiceId: 'choice-1', answers: [{}] },
+        message: 'choice_response.answers must be an array of valid ChoiceAnswer objects',
+      },
+      {
+        payload: { type: 'choice_response', agentId: 'manager', choiceId: 'choice-1', answers: [{ questionId: 'q1', selectedOptionIds: [''] }] },
+        message: 'choice_response.answers must be an array of valid ChoiceAnswer objects',
+      },
+      {
+        payload: { type: 'choice_response', agentId: 'manager', choiceId: 'choice-1', answers: [{ questionId: 'q1', selectedOptionIds: [], text: 42 }] },
+        message: 'choice_response.answers must be an array of valid ChoiceAnswer objects',
+      },
+      {
+        payload: { type: 'choice_cancel', agentId: '', choiceId: 'choice-1' },
+        message: 'choice_cancel.agentId must be a non-empty string',
+      },
+      {
+        payload: { type: 'choice_cancel', agentId: 'manager', choiceId: '' },
+        message: 'choice_cancel.choiceId must be a non-empty string',
       },
     ]
 
@@ -262,5 +324,18 @@ describe('ws command parser session commands', () => {
       profileIds: ['a', 'b'],
       requestId: 'req-reorder',
     })).toBe('req-reorder')
+
+    expect(extractRequestId({
+      type: 'choice_response',
+      agentId: 'manager',
+      choiceId: 'choice-1',
+      answers: [],
+    })).toBeUndefined()
+
+    expect(extractRequestId({
+      type: 'choice_cancel',
+      agentId: 'manager',
+      choiceId: 'choice-1',
+    })).toBeUndefined()
   })
 })

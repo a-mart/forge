@@ -51,6 +51,10 @@ class FakeSwarmManager extends EventEmitter {
   getConversationHistory(): [] {
     return []
   }
+
+  getPendingChoiceIdsForSession(): string[] {
+    return []
+  }
 }
 
 class FakePlaywrightDiscovery extends EventEmitter {

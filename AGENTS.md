@@ -69,6 +69,7 @@ These are briefly described for orientation. Most have both backend and UI compo
 | **Daemon management** | `reboot/`, `scripts/prod-daemon*.mjs` | — | Production process lifecycle (start, restart, PID tracking) |
 | **Reference docs** | `swarm/reference-docs.ts` | Settings UI | Profile-scoped reference documents |
 | **Worker stall detector** | `swarm/swarm-manager.ts` (WorkerStallState, checkForStalledWorkers) | — | Periodic wall-clock detection of workers stuck mid-tool-execution; two-stage nudge then auto-kill |
+| **Choice Picker** | `swarm/swarm-manager.ts` (pending registry), `swarm/swarm-tools.ts` (present_choices tool) | `components/chat/message-list/ChoiceRequestCard.tsx`, `components/chat/message-list/ChoiceAnsweredRow.tsx` | Interactive structured choice picker for agent-user decision points |
 
 Backend paths above are relative to `apps/backend/src/`. UI paths are relative to `apps/ui/src/`.
 

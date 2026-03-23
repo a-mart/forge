@@ -1,6 +1,7 @@
 import type {
   AgentMessageEvent,
   AgentToolCallEvent,
+  ChoiceRequestEvent,
   ConversationAttachment,
   ConversationAttachmentMetadata,
   ConversationBinaryAttachment,
@@ -18,7 +19,8 @@ export function isConversationEntryEvent(value: unknown): value is ConversationE
     isConversationMessageEvent(value) ||
     isConversationLogEvent(value) ||
     isAgentMessageEvent(value) ||
-    isAgentToolCallEvent(value)
+    isAgentToolCallEvent(value) ||
+    isChoiceRequestEvent(value)
   );
 }
 
@@ -312,6 +314,19 @@ export function isAgentMessageEvent(value: unknown): value is AgentMessageEvent 
     return false;
   }
 
+  return true;
+}
+
+export function isChoiceRequestEvent(value: unknown): value is ChoiceRequestEvent {
+  if (!value || typeof value !== "object") return false;
+  const maybe = value as Partial<ChoiceRequestEvent>;
+  if (maybe.type !== "choice_request") return false;
+  if (typeof maybe.agentId !== "string" || maybe.agentId.length === 0) return false;
+  if (typeof maybe.choiceId !== "string" || maybe.choiceId.length === 0) return false;
+  if (!Array.isArray(maybe.questions) || maybe.questions.length === 0) return false;
+  if (maybe.status !== "pending" && maybe.status !== "answered" && maybe.status !== "cancelled" && maybe.status !== "expired") return false;
+  if (typeof maybe.timestamp !== "string") return false;
+  if (maybe.status === "answered" && !Array.isArray(maybe.answers)) return false;
   return true;
 }
 

@@ -62,6 +62,10 @@ class FakeSwarmManager extends EventEmitter {
   getAgent(agentId: string): AgentDescriptor | undefined {
     return this.agents.find((agent) => agent.agentId === agentId)
   }
+
+  getPendingChoiceIdsForSession(): string[] {
+    return []
+  }
 }
 
 function createManagerDescriptor(rootDir: string, managerId = 'manager'): AgentDescriptor {

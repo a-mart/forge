@@ -1,4 +1,4 @@
-import type { ManagerProfile } from "@forge/protocol";
+import type { ChoiceRequestEvent, ManagerProfile } from "@forge/protocol";
 import type { AgentStatus } from "./agent-state-machine.js";
 
 export type AgentRole = "manager" | "worker";
@@ -7,6 +7,12 @@ export type AgentArchetypeId = string;
 
 export type { AgentStatus };
 export type { ManagerProfile };
+export type {
+  ChoiceAnswer,
+  ChoiceQuestion,
+  ChoiceRequestEvent,
+  ChoiceRequestStatus,
+} from "@forge/protocol";
 
 export const SWARM_MODEL_PRESETS = ["pi-codex", "pi-5.4", "pi-opus", "codex-app"] as const;
 
@@ -270,7 +276,8 @@ export type ConversationEntryEvent =
   | ConversationMessageEvent
   | ConversationLogEvent
   | AgentMessageEvent
-  | AgentToolCallEvent;
+  | AgentToolCallEvent
+  | ChoiceRequestEvent;
 
 export interface AgentStatusEvent {
   type: "agent_status";

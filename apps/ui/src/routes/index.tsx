@@ -47,6 +47,7 @@ import { useOnboardingState } from '@/hooks/use-onboarding-state'
 import { useDynamicFavicon } from '@/hooks/use-dynamic-favicon'
 import type {
   AgentDescriptor,
+  ChoiceAnswer,
   ConversationAttachment,
   ManagerModelPreset,
   ManagerReasoningLevel,
@@ -256,6 +257,7 @@ export function IndexPage() {
   })
 
   const isLoading = activeAgentStatus === 'streaming' || isAwaitingResponseStart
+  const hasActivePendingChoice = state.pendingChoiceIds.size > 0
   const canStopAllAgents =
     isActiveManager &&
     (activeAgentStatus === 'idle' || activeAgentStatus === 'streaming')
@@ -529,6 +531,14 @@ export function IndexPage() {
   const handleMessageInputSubmitted = useCallback(() => {
     messageListRef.current?.scrollToBottom('smooth')
   }, [])
+
+  const handleChoiceSubmit = useCallback((agentId: string, choiceId: string, answers: ChoiceAnswer[]) => {
+    clientRef.current?.sendChoiceResponse(agentId, choiceId, answers)
+  }, [clientRef])
+
+  const handleChoiceCancel = useCallback((agentId: string, choiceId: string) => {
+    clientRef.current?.sendChoiceCancel(agentId, choiceId)
+  }, [clientRef])
 
   const handleNewChat = () => {
     if (!isActiveManager || !activeAgentId || !activeAgent) {
@@ -1066,6 +1076,9 @@ export function IndexPage() {
                       onFeedbackComment={feedbackProfileId ? submitComment : undefined}
                       onFeedbackClearComment={feedbackProfileId ? clearComment : undefined}
                       isFeedbackSubmitting={isFeedbackSubmitting}
+                      onChoiceSubmit={handleChoiceSubmit}
+                      onChoiceCancel={handleChoiceCancel}
+                      pendingChoiceIds={state.pendingChoiceIds}
                     />
 
                     {isActiveManager ? (
@@ -1087,7 +1100,12 @@ export function IndexPage() {
                       onSend={handleSend}
                       onSubmitted={handleMessageInputSubmitted}
                       isLoading={isLoading}
-                      disabled={!state.connected || !activeAgentId}
+                      disabled={!state.connected || !activeAgentId || hasActivePendingChoice}
+                      placeholderOverride={
+                        hasActivePendingChoice
+                          ? 'Respond to the choice above or click Skip…'
+                          : undefined
+                      }
                       allowWhileLoading
                       agentLabel={activeAgentLabel}
                       wsUrl={wsUrl}

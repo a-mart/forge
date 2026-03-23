@@ -11,6 +11,7 @@ import {
   MANAGER_MODEL_PRESETS,
   MANAGER_REASONING_LEVELS,
   type AgentDescriptor,
+  type ChoiceAnswer,
   type ClientCommand,
   type ConversationAttachment,
   type ConversationEntry,
@@ -216,6 +217,7 @@ export class ManagerWsClient {
       targetAgentId: trimmed,
       messages: [],
       activityMessages: [],
+      pendingChoiceIds: new Set(),
       lastError: null,
       unreadCounts: nextUnread,
     })
@@ -284,6 +286,23 @@ export class ManagerWsClient {
       attachments: attachments.length > 0 ? attachments : undefined,
       agentId,
       delivery: options?.delivery,
+    })
+  }
+
+  sendChoiceResponse(agentId: string, choiceId: string, answers: ChoiceAnswer[]): void {
+    this.send({
+      type: 'choice_response',
+      agentId,
+      choiceId,
+      answers,
+    })
+  }
+
+  sendChoiceCancel(agentId: string, choiceId: string): void {
+    this.send({
+      type: 'choice_cancel',
+      agentId,
+      choiceId,
     })
   }
 
@@ -750,6 +769,34 @@ export class ManagerWsClient {
         break
       }
 
+      case 'choice_request': {
+        if (event.agentId !== this.state.targetAgentId) {
+          break
+        }
+
+        const existingIdx = this.state.messages.findIndex(
+          (message) => message.type === 'choice_request' && message.choiceId === event.choiceId,
+        )
+
+        let nextMessages: ConversationHistoryEntry[]
+        if (existingIdx >= 0) {
+          nextMessages = [...this.state.messages]
+          nextMessages[existingIdx] = event
+        } else {
+          nextMessages = [...this.state.messages, event]
+        }
+
+        const nextPendingChoiceIds = new Set(this.state.pendingChoiceIds)
+        if (event.status === 'pending') {
+          nextPendingChoiceIds.add(event.choiceId)
+        } else {
+          nextPendingChoiceIds.delete(event.choiceId)
+        }
+
+        this.updateState({ messages: nextMessages, pendingChoiceIds: nextPendingChoiceIds })
+        break
+      }
+
       case 'unread_notification': {
         if (event.agentId !== this.state.targetAgentId) {
           const prev = this.state.unreadCounts[event.agentId] ?? 0
@@ -787,6 +834,14 @@ export class ManagerWsClient {
         }
         break
 
+      case 'pending_choices_snapshot':
+        if (event.agentId !== this.state.targetAgentId) {
+          break
+        }
+
+        this.updateState({ pendingChoiceIds: new Set(event.choiceIds) })
+        break
+
       case 'conversation_reset':
         if (event.agentId !== this.state.targetAgentId) {
           break
@@ -795,6 +850,7 @@ export class ManagerWsClient {
         this.updateState({
           messages: [],
           activityMessages: [],
+          pendingChoiceIds: new Set(),
           lastError: null,
         })
         break
@@ -1157,6 +1213,7 @@ export class ManagerWsClient {
       patch.targetAgentId = fallbackTarget
       patch.messages = []
       patch.activityMessages = []
+      patch.pendingChoiceIds = new Set()
     }
 
     if (nextSubscribedAgentId !== this.state.subscribedAgentId) {
@@ -1285,6 +1342,7 @@ export class ManagerWsClient {
           subscribedAgentId: fallbackId,
           messages: [],
           activityMessages: [],
+          pendingChoiceIds: new Set(),
         })
         return
       }
@@ -1300,6 +1358,7 @@ export class ManagerWsClient {
         subscribedAgentId: null,
         messages: [],
         activityMessages: [],
+        pendingChoiceIds: new Set(),
       })
       return
     }
@@ -1346,6 +1405,7 @@ export class ManagerWsClient {
           subscribedAgentId: fallbackId,
           messages: [],
           activityMessages: [],
+          pendingChoiceIds: new Set(),
         })
         return
       }

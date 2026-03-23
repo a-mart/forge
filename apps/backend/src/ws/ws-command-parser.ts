@@ -12,6 +12,16 @@ export type ParsedClientCommand =
   | { ok: true; command: ClientCommand }
   | { ok: false; error: string };
 
+function isValidChoiceAnswer(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  const maybe = value as Record<string, unknown>;
+  if (typeof maybe.questionId !== "string" || maybe.questionId.trim().length === 0) return false;
+  if (!Array.isArray(maybe.selectedOptionIds)) return false;
+  if (maybe.selectedOptionIds.some((id: unknown) => typeof id !== "string" || id.trim().length === 0)) return false;
+  if (maybe.text !== undefined && typeof maybe.text !== "string") return false;
+  return true;
+}
+
 export function parseClientCommand(raw: RawData): ParsedClientCommand {
   const text = typeof raw === "string" ? raw : raw.toString("utf8");
 
@@ -565,6 +575,53 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
     };
   }
 
+  if (maybe.type === "choice_response") {
+    const agentId = (maybe as { agentId?: unknown }).agentId;
+    const choiceId = (maybe as { choiceId?: unknown }).choiceId;
+    const answers = (maybe as { answers?: unknown }).answers;
+
+    if (typeof agentId !== "string" || agentId.trim().length === 0) {
+      return { ok: false, error: "choice_response.agentId must be a non-empty string" };
+    }
+    if (typeof choiceId !== "string" || choiceId.trim().length === 0) {
+      return { ok: false, error: "choice_response.choiceId must be a non-empty string" };
+    }
+    if (!Array.isArray(answers) || !answers.every(isValidChoiceAnswer)) {
+      return { ok: false, error: "choice_response.answers must be an array of valid ChoiceAnswer objects" };
+    }
+
+    return {
+      ok: true,
+      command: {
+        type: "choice_response",
+        agentId: agentId.trim(),
+        choiceId: choiceId.trim(),
+        answers,
+      }
+    };
+  }
+
+  if (maybe.type === "choice_cancel") {
+    const agentId = (maybe as { agentId?: unknown }).agentId;
+    const choiceId = (maybe as { choiceId?: unknown }).choiceId;
+
+    if (typeof agentId !== "string" || agentId.trim().length === 0) {
+      return { ok: false, error: "choice_cancel.agentId must be a non-empty string" };
+    }
+    if (typeof choiceId !== "string" || choiceId.trim().length === 0) {
+      return { ok: false, error: "choice_cancel.choiceId must be a non-empty string" };
+    }
+
+    return {
+      ok: true,
+      command: {
+        type: "choice_cancel",
+        agentId: agentId.trim(),
+        choiceId: choiceId.trim(),
+      }
+    };
+  }
+
   return { ok: false, error: "Unknown command type" };
 }
 
@@ -614,6 +671,8 @@ export function extractRequestId(command: ClientCommand): string | undefined {
     case "subscribe":
     case "user_message":
     case "kill_agent":
+    case "choice_response":
+    case "choice_cancel":
     case "ping":
       return undefined;
   }

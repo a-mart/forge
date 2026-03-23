@@ -111,7 +111,8 @@ export class WsHandler {
         event.type === "conversation_log" ||
         event.type === "agent_message" ||
         event.type === "agent_tool_call" ||
-        event.type === "conversation_reset"
+        event.type === "conversation_reset" ||
+        event.type === "choice_request"
       ) {
         if (subscribedAgent !== event.agentId) {
           continue;
@@ -888,6 +889,13 @@ export class WsHandler {
       messages: conversationHistory
     });
 
+    const pendingChoiceIds = this.swarmManager.getPendingChoiceIdsForSession(targetAgentId);
+    this.send(socket, {
+      type: "pending_choices_snapshot",
+      agentId: targetAgentId,
+      choiceIds: pendingChoiceIds,
+    });
+
     const managerContextId = this.resolveManagerContextAgentId(targetAgentId);
     if (this.integrationRegistry && managerContextId) {
       this.send(socket, this.integrationRegistry.getStatus(managerContextId, "slack"));
@@ -953,7 +961,10 @@ export class WsHandler {
     }
 
     const conversationEntries = requestedHistory.filter(
-      (entry) => entry.type === "conversation_message" || entry.type === "conversation_log",
+      (entry) =>
+        entry.type === "conversation_message" ||
+        entry.type === "conversation_log" ||
+        entry.type === "choice_request",
     );
     const activityEntries = requestedHistory.filter(
       (entry) => entry.type === "agent_message" || entry.type === "agent_tool_call",

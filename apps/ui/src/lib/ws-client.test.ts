@@ -108,7 +108,126 @@ describe('ManagerWsClient', () => {
       source: 'speak_to_user',
     })
 
-    expect(snapshots.at(-1)?.messages.at(-1)?.text).toBe('hello from manager')
+    const latestManagerMessage = snapshots.at(-1)?.messages.at(-1)
+    expect(latestManagerMessage?.type === 'conversation_message' ? latestManagerMessage.text : undefined).toBe('hello from manager')
+
+    client.destroy()
+  })
+
+  it('sends choice response and cancel commands', () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    client.sendChoiceResponse('manager', 'choice-1', [
+      {
+        questionId: 'q1',
+        selectedOptionIds: ['option-a'],
+        text: 'Because it is safer',
+      },
+    ])
+
+    expect(JSON.parse(socket.sentPayloads.at(-1) ?? '')).toEqual({
+      type: 'choice_response',
+      agentId: 'manager',
+      choiceId: 'choice-1',
+      answers: [
+        {
+          questionId: 'q1',
+          selectedOptionIds: ['option-a'],
+          text: 'Because it is safer',
+        },
+      ],
+    })
+
+    client.sendChoiceCancel('manager', 'choice-1')
+
+    expect(JSON.parse(socket.sentPayloads.at(-1) ?? '')).toEqual({
+      type: 'choice_cancel',
+      agentId: 'manager',
+      choiceId: 'choice-1',
+    })
+
+    client.destroy()
+  })
+
+  it('tracks pending choice ids from live events and bootstrap snapshots', () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    emitServerEvent(socket, {
+      type: 'pending_choices_snapshot',
+      agentId: 'manager',
+      choiceIds: ['choice-1'],
+    })
+    expect(client.getState().pendingChoiceIds.has('choice-1')).toBe(true)
+
+    emitServerEvent(socket, {
+      type: 'choice_request',
+      agentId: 'manager',
+      choiceId: 'choice-2',
+      questions: [
+        {
+          id: 'q1',
+          question: 'Which path should I take?',
+          options: [{ id: 'option-a', label: 'Option A' }],
+        },
+      ],
+      status: 'pending',
+      timestamp: new Date().toISOString(),
+    })
+    expect(client.getState().pendingChoiceIds.has('choice-2')).toBe(true)
+
+    emitServerEvent(socket, {
+      type: 'choice_request',
+      agentId: 'manager',
+      choiceId: 'choice-2',
+      questions: [
+        {
+          id: 'q1',
+          question: 'Which path should I take?',
+          options: [{ id: 'option-a', label: 'Option A' }],
+        },
+      ],
+      status: 'answered',
+      answers: [
+        {
+          questionId: 'q1',
+          selectedOptionIds: ['option-a'],
+        },
+      ],
+      timestamp: new Date().toISOString(),
+    })
+    expect(client.getState().pendingChoiceIds.has('choice-2')).toBe(false)
+
+    emitServerEvent(socket, {
+      type: 'conversation_reset',
+      agentId: 'manager',
+      timestamp: new Date().toISOString(),
+      reason: 'user_new_command',
+    })
+    expect(client.getState().pendingChoiceIds.size).toBe(0)
 
     client.destroy()
   })
@@ -383,7 +502,11 @@ describe('ManagerWsClient', () => {
       source: 'speak_to_user',
     })
 
-    expect(snapshots.at(-1)?.messages.some((message) => message.text === 'manager output')).toBe(false)
+    expect(
+      snapshots.at(-1)?.messages.some(
+        (message) => message.type === 'conversation_message' && message.text === 'manager output',
+      ),
+    ).toBe(false)
 
     emitServerEvent(socket, {
       type: 'conversation_message',
@@ -394,7 +517,8 @@ describe('ManagerWsClient', () => {
       source: 'system',
     })
 
-    expect(snapshots.at(-1)?.messages.at(-1)?.text).toBe('worker output')
+    const latestWorkerMessage = snapshots.at(-1)?.messages.at(-1)
+    expect(latestWorkerMessage?.type === 'conversation_message' ? latestWorkerMessage.text : undefined).toBe('worker output')
     expect(snapshots.at(-1)?.targetAgentId).toBe('worker-1')
     expect(snapshots.at(-1)?.subscribedAgentId).toBe('worker-1')
 

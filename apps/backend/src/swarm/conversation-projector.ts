@@ -21,6 +21,7 @@ import type {
   AgentDescriptor,
   AgentMessageEvent,
   AgentToolCallEvent,
+  ChoiceRequestEvent,
   ConversationEntryEvent,
   ConversationLogEvent,
   ConversationMessageEvent
@@ -39,7 +40,8 @@ type ConversationEventName =
   | "conversation_log"
   | "agent_message"
   | "agent_tool_call"
-  | "conversation_reset";
+  | "conversation_reset"
+  | "choice_request";
 
 interface ConversationProjectorDependencies {
   descriptors: Map<string, AgentDescriptor>;
@@ -109,6 +111,11 @@ export class ConversationProjector {
   emitAgentMessage(event: AgentMessageEvent): void {
     this.emitConversationEntry(event);
     this.deps.emitServerEvent("agent_message", event satisfies ServerEvent);
+  }
+
+  emitChoiceRequest(event: ChoiceRequestEvent): void {
+    this.emitConversationEntry(event);
+    this.deps.emitServerEvent("choice_request", event satisfies ServerEvent);
   }
 
   emitAgentToolCall(event: AgentToolCallEvent): void {

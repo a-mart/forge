@@ -3096,7 +3096,7 @@ describe('SwarmWebSocketServer', () => {
     const historyEvent = await waitForEvent(eventsB, (event) => event.type === 'conversation_history')
     expect(historyEvent.type).toBe('conversation_history')
     if (historyEvent.type === 'conversation_history') {
-      expect(historyEvent.messages.some((message) => message.text === 'remember this')).toBe(true)
+      expect(historyEvent.messages.some((message) => 'text' in message && message.text === 'remember this')).toBe(true)
     }
 
     clientB.close()
@@ -3179,7 +3179,7 @@ describe('SwarmWebSocketServer', () => {
 
     expect(historyEvent.type).toBe('conversation_history')
     if (historyEvent.type === 'conversation_history') {
-      expect(historyEvent.messages.some((message) => message.text === 'keep this')).toBe(true)
+      expect(historyEvent.messages.some((message) => 'text' in message && message.text === 'keep this')).toBe(true)
     }
 
     clientB.send(JSON.stringify({ type: 'subscribe', agentId: 'manager--s2' }))

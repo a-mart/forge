@@ -3500,7 +3500,7 @@ describe('SwarmManager', () => {
     expect(manager.getLoadedConversationAgentIdsForTest()).toEqual([])
 
     const terminatedHistory = manager.getConversationHistory('worker-terminated')
-    expect(terminatedHistory.some((entry) => entry.text === 'terminated-worker-history')).toBe(true)
+    expect(terminatedHistory.some((entry) => 'text' in entry && entry.text === 'terminated-worker-history')).toBe(true)
     expect(manager.getLoadedConversationAgentIdsForTest()).toEqual(['worker-terminated'])
   })
 
@@ -3934,7 +3934,7 @@ describe('SwarmManager', () => {
     await bootWithDefaultManager(manager, config)
 
     await manager.handleUserMessage('before reset')
-    expect(manager.getConversationHistory('manager').some((message) => message.text === 'before reset')).toBe(true)
+    expect(manager.getConversationHistory('manager').some((message) => 'text' in message && message.text === 'before reset')).toBe(true)
 
     const firstRuntime = manager.runtimeByAgentId.get('manager')
     expect(firstRuntime).toBeDefined()
@@ -3951,13 +3951,13 @@ describe('SwarmManager', () => {
     expect(forkedSession?.agentId).toBe('manager--s2')
     expect(forkedSession?.profileId).toBe('manager')
     expect(forkedSession?.sessionLabel).toBe('New chat')
-    expect(manager.getConversationHistory('manager').some((message) => message.text === 'before reset')).toBe(true)
+    expect(manager.getConversationHistory('manager').some((message) => 'text' in message && message.text === 'before reset')).toBe(true)
     expect(manager.getConversationHistory('manager--s2')).toHaveLength(0)
 
     const rebooted = new TestSwarmManager(config)
     await bootWithDefaultManager(rebooted, config)
 
-    expect(rebooted.getConversationHistory('manager').some((message) => message.text === 'before reset')).toBe(true)
+    expect(rebooted.getConversationHistory('manager').some((message) => 'text' in message && message.text === 'before reset')).toBe(true)
     expect(rebooted.getConversationHistory('manager--s2')).toHaveLength(0)
   })
 

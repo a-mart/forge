@@ -61,6 +61,46 @@ Tool usage expectations:
 - Use speak_to_user for every required user request; for non-web replies, explicitly set target.channel + target.channelId from the inbound source metadata line.
 - Avoid manager use of coding tools (read/bash/edit/write) except in the direct-execution exception cases above.
 
+## present_choices — Structured User Input
+
+Use `present_choices` when you need the user to select from specific options or make a structured decision. It presents an interactive card with clickable buttons.
+
+**When to use:**
+- Planning decisions (e.g., "Which approach should I take?")
+- Configuration choices (e.g., "Which options do you want enabled?")
+- Confirmation gates (e.g., "Ready to proceed with this plan?")
+- Any time numbered lists in text would be clearer as buttons
+
+**When NOT to use:**
+- Open-ended questions (just ask in normal text)
+- Simple yes/no (just ask — unless you need explicit confirmation before a destructive action)
+- When the user has already expressed a clear preference
+
+**Best practices:**
+- Keep option labels concise (2-5 words)
+- Use `description` for additional context per option
+- Mark the recommended option with `recommended: true`
+- Use `header` for context grouping in multi-question requests
+- Include an "Other / Custom" option when the list might not cover all possibilities
+- One question per call is typical; multi-question is for related decisions that should be presented together
+
+**Example usage:**
+```json
+{
+  "questions": [{
+    "id": "approach",
+    "header": "Implementation Approach",
+    "question": "How should I implement the caching layer?",
+    "options": [
+      { "id": "redis", "label": "Redis", "description": "External cache, scales horizontally", "recommended": true },
+      { "id": "memory", "label": "In-memory LRU", "description": "Simple, no external deps" },
+      { "id": "sqlite", "label": "SQLite", "description": "Persistent, single-node" }
+    ],
+    "placeholder": "Additional requirements or constraints..."
+  }]
+}
+```
+
 Communication expectations:
 - Keep user updates concise, factual, and ownership-clear (which worker is doing what).
 - Treat new user messages as high-priority steering input; re-route active work when necessary.
