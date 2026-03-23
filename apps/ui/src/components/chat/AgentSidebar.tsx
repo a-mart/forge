@@ -1,4 +1,5 @@
 import {
+  BarChart3,
   Brain,
   ChevronDown,
   ChevronRight,
@@ -83,6 +84,7 @@ interface AgentSidebarProps {
   selectedAgentId: string | null
   isSettingsActive: boolean
   isPlaywrightActive?: boolean
+  isStatsActive?: boolean
   showPlaywrightNav?: boolean
   isMobileOpen?: boolean
   onMobileClose?: () => void
@@ -93,6 +95,7 @@ interface AgentSidebarProps {
   onOpenSettings: () => void
   onOpenCortexReview?: (agentId: string) => void
   onOpenPlaywright?: () => void
+  onOpenStats?: () => void
   onCreateSession?: (profileId: string, name?: string) => void
   onStopSession?: (agentId: string) => void
   onResumeSession?: (agentId: string) => void
@@ -1711,6 +1714,7 @@ export function AgentSidebar({
   selectedAgentId,
   isSettingsActive,
   isPlaywrightActive = false,
+  isStatsActive = false,
   showPlaywrightNav = false,
   isMobileOpen = false,
   onMobileClose,
@@ -1721,6 +1725,7 @@ export function AgentSidebar({
   onOpenSettings,
   onOpenCortexReview,
   onOpenPlaywright,
+  onOpenStats,
   onCreateSession,
   onStopSession,
   onResumeSession,
@@ -1908,6 +1913,11 @@ export function AgentSidebar({
     onOpenPlaywright?.()
     onMobileClose?.()
   }, [onOpenPlaywright, onMobileClose])
+
+  const handleOpenStats = useCallback(() => {
+    onOpenStats?.()
+    onMobileClose?.()
+  }, [onOpenStats, onMobileClose])
 
   const handleRequestCreateSession = useCallback((profileId: string) => {
     const profile = profiles.find((entry) => entry.profileId === profileId)
@@ -2223,6 +2233,20 @@ export function AgentSidebar({
               <span>Playwright</span>
             </button>
           ) : null}
+          <button
+            type="button"
+            onClick={handleOpenStats}
+            className={cn(
+              'flex min-h-[44px] w-full items-center gap-2 rounded-md px-2 py-2 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
+              isStatsActive
+                ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+                : 'text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground',
+            )}
+            aria-pressed={isStatsActive}
+          >
+            <BarChart3 aria-hidden="true" className="size-4" />
+            <span>Stats</span>
+          </button>
           <button
             type="button"
             onClick={handleOpenSettings}

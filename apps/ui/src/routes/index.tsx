@@ -28,6 +28,7 @@ import { FileBrowserSidebar } from '@/components/file-browser/FileBrowserSidebar
 import { FileBrowserPanel } from '@/components/file-browser/FileBrowserPanel'
 import { PlaywrightDashboardView } from '@/components/playwright/PlaywrightDashboardView'
 import { SettingsPanel } from '@/components/chat/SettingsDialog'
+import { StatsPanel } from '@/components/stats/StatsPanel'
 import { chooseFallbackAgentId } from '@/lib/agent-hierarchy'
 import type { ArtifactReference } from '@/lib/artifacts'
 import { collectArtifactsFromMessages } from '@/lib/collect-artifacts'
@@ -778,6 +779,10 @@ export function IndexPage() {
     navigateToRoute({ view: 'playwright' })
   }
 
+  const handleOpenStats = () => {
+    navigateToRoute({ view: 'stats' })
+  }
+
   const handleSaveOnboarding = useCallback((input: import('@/lib/onboarding-api').SaveOnboardingPreferencesInput) => {
     void (async () => {
       const nextState = await saveOnboardingPreferences(input)
@@ -914,6 +919,7 @@ export function IndexPage() {
           selectedAgentId={activeAgentId}
           isSettingsActive={activeView === 'settings'}
           isPlaywrightActive={activeView === 'playwright'}
+          isStatsActive={activeView === 'stats'}
           showPlaywrightNav={showPlaywrightNav}
           isMobileOpen={isMobileSidebarOpen}
           onMobileClose={() => setIsMobileSidebarOpen(false)}
@@ -924,6 +930,7 @@ export function IndexPage() {
           onOpenSettings={handleOpenSettingsPanel}
           onOpenCortexReview={handleOpenCortexReview}
           onOpenPlaywright={handleOpenPlaywright}
+          onOpenStats={handleOpenStats}
           onCreateSession={handleCreateSession}
           onStopSession={handleStopSession}
           onResumeSession={handleResumeSession}
@@ -973,6 +980,16 @@ export function IndexPage() {
                 selectedSessionId={routeState.view === 'playwright' ? routeState.playwrightSession ?? null : null}
                 viewMode={routeState.view === 'playwright' ? routeState.playwrightMode ?? 'tiles' : 'tiles'}
                 onViewStateChange={handlePlaywrightViewStateChange}
+                onBack={() =>
+                  navigateToRoute({
+                    view: 'chat',
+                    agentId: activeAgentId ?? DEFAULT_MANAGER_AGENT_ID,
+                  })
+                }
+              />
+            ) : activeView === 'stats' ? (
+              <StatsPanel
+                wsUrl={wsUrl}
                 onBack={() =>
                   navigateToRoute({
                     view: 'chat',

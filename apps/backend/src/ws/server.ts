@@ -35,6 +35,7 @@ import { createSchedulerRoutes } from "./routes/scheduler-routes.js";
 import { createSettingsRoutes, type SettingsRouteBundle } from "./routes/settings-routes.js";
 import { createSlashCommandRoutes } from "./routes/slash-command-routes.js";
 import { createTranscriptionRoutes } from "./routes/transcription-routes.js";
+import { createStatsRoutes } from "./routes/stats-routes.js";
 import { WsHandler } from "./ws-handler.js";
 
 export class SwarmWebSocketServer {
@@ -212,6 +213,7 @@ export class SwarmWebSocketServer {
       ...createFeedbackRoutes({ swarmManager: this.swarmManager }),
       ...createCortexRoutes({ swarmManager: this.swarmManager }),
       ...createTranscriptionRoutes({ swarmManager: this.swarmManager }),
+      ...createStatsRoutes({ swarmManager: this.swarmManager }),
       ...createSchedulerRoutes({ swarmManager: this.swarmManager }),
       ...createSlashCommandRoutes({ swarmManager: this.swarmManager }),
       ...createMobileRoutes({ mobilePushService: this.mobilePushService }),
