@@ -57,10 +57,10 @@ export function ModelDistribution({ models }: ModelDistributionProps) {
 
   return (
     <div>
-      <h3 className="mb-3 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+      <h3 className="mb-2.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
         Top Models
       </h3>
-      <Card className="border-border/50 bg-card/80 p-4 backdrop-blur-sm">
+      <Card className="border-border/50 bg-card/80 p-3 backdrop-blur-sm">
         {/* Stacked bar */}
         <TooltipProvider delayDuration={100}>
           <div className="flex h-8 w-full overflow-hidden rounded-md">
@@ -149,7 +149,7 @@ export function ModelDistribution({ models }: ModelDistributionProps) {
         </TooltipProvider>
 
         {/* Legend */}
-        <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1.5">
+        <div className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1.5">
           {sortedModels.map((model, i) => (
             <div key={model.modelId} className="flex items-center gap-1.5">
               <div

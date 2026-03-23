@@ -1,16 +1,18 @@
 import { createReadStream } from "node:fs";
-import { readdir, readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import type { ModelDistributionEntry, StatsRange, StatsSnapshot } from "@forge/protocol";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
-import { getAgentsStoreFilePath, getProfilesDir } from "../swarm/data-paths.js";
+import { getAgentsStoreFilePath, getProfilesDir, getSharedDir } from "../swarm/data-paths.js";
 
-const CACHE_TTL_MS = 5 * 60 * 1000;
+export const STATS_CACHE_TTL_MS = 2 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
+const STATS_CACHE_FILE_NAME = "stats-cache.json";
 
 interface SessionMetaLite {
   workers?: Array<{
+    id?: string;
     createdAt?: string;
     terminatedAt?: string | null;
   }>;
@@ -24,6 +26,7 @@ interface UsageRecord {
   cacheWrite: number;
   total: number;
   modelId: string;
+  reasoningLevel: string;
 }
 
 interface DailyTotals {
@@ -35,13 +38,21 @@ interface DailyTotals {
 }
 
 interface WorkerRun {
+  workerId: string;
   createdAtMs: number;
+  terminatedAtMs: number | null;
   durationMs: number | null;
+  totalTokens: number;
 }
 
 interface CacheEntry {
   expiresAt: number;
   snapshot: StatsSnapshot;
+}
+
+interface PersistedStatsCache {
+  version: number;
+  entries: Partial<Record<StatsRange, CacheEntry>>;
 }
 
 export class StatsService {

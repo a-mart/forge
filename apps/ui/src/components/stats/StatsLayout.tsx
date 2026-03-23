@@ -107,7 +107,7 @@ export function StatsLayout({
 
       {/* Scrollable content */}
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-5xl px-4 py-5 md:px-6">
+        <div className="mx-auto max-w-5xl px-4 py-4 md:px-6">
           {children}
         </div>
       </div>

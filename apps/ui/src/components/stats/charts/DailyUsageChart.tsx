@@ -48,7 +48,7 @@ export function DailyUsageChart({ data }: DailyUsageChartProps) {
 
   if (data.length === 0) {
     return (
-      <Card className="border-border/50 bg-card/80 p-4 backdrop-blur-sm">
+      <Card className="border-border/50 bg-card/80 p-3 backdrop-blur-sm">
         <div className="flex h-[200px] items-center justify-center text-sm text-muted-foreground">
           No daily usage data available
         </div>
@@ -57,8 +57,8 @@ export function DailyUsageChart({ data }: DailyUsageChartProps) {
   }
 
   return (
-    <Card className="border-border/50 bg-card/80 p-4 backdrop-blur-sm">
-      <div className="mb-4 flex items-center justify-between">
+    <Card className="border-border/50 bg-card/80 p-3 backdrop-blur-sm">
+      <div className="mb-3 flex items-center justify-between">
         <span className="text-sm text-muted-foreground">{dateRange}</span>
         <div className="flex items-center gap-1">
           <Button

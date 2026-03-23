@@ -21,7 +21,7 @@ export function StatCard({
   return (
     <Card
       className={cn(
-        'border-border/50 bg-card/80 p-4 backdrop-blur-sm',
+        'border-border/50 bg-card/80 p-3 backdrop-blur-sm',
         variant === 'accent' && 'border-l-2 border-l-primary/50',
         className,
       )}
@@ -29,7 +29,7 @@ export function StatCard({
       <div className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
         {title}
       </div>
-      <div className="mt-1.5 flex items-baseline gap-1.5">
+      <div className="mt-1 flex items-baseline gap-1.5">
         <span className="font-mono text-2xl font-bold leading-none text-foreground">
           {value}
         </span>
@@ -40,7 +40,7 @@ export function StatCard({
         ) : null}
       </div>
       {subtitle ? (
-        <div className="mt-1.5 text-xs text-muted-foreground/80">{subtitle}</div>
+        <div className="mt-1 text-xs text-muted-foreground/80">{subtitle}</div>
       ) : null}
     </Card>
   )

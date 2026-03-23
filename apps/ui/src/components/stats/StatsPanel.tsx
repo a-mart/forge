@@ -23,13 +23,13 @@ interface StatsPanelProps {
 
 function StatsSkeleton() {
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* Token usage row */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {Array.from({ length: 4 }).map((_, i) => (
-          <Card key={i} className="border-border/50 bg-card/80 p-4">
+          <Card key={i} className="border-border/50 bg-card/80 p-3">
             <Skeleton className="mb-2 h-3 w-20" />
-            <Skeleton className="mb-1.5 h-7 w-16" />
+            <Skeleton className="mb-1 h-7 w-16" />
             <Skeleton className="h-3 w-32" />
           </Card>
         ))}
@@ -37,24 +37,24 @@ function StatsSkeleton() {
       {/* Secondary row */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         {Array.from({ length: 3 }).map((_, i) => (
-          <Card key={i} className="border-border/50 bg-card/80 p-4">
+          <Card key={i} className="border-border/50 bg-card/80 p-3">
             <Skeleton className="mb-2 h-3 w-24" />
-            <Skeleton className="mb-1.5 h-7 w-14" />
+            <Skeleton className="mb-1 h-7 w-14" />
             <Skeleton className="h-3 w-28" />
           </Card>
         ))}
       </div>
       {/* Chart skeleton */}
-      <Card className="border-border/50 bg-card/80 p-4">
-        <Skeleton className="mb-4 h-4 w-36" />
+      <Card className="border-border/50 bg-card/80 p-3">
+        <Skeleton className="mb-3 h-4 w-36" />
         <Skeleton className="h-[200px] w-full rounded-md" />
       </Card>
       {/* Activity row */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         {Array.from({ length: 2 }).map((_, i) => (
-          <Card key={i} className="border-border/50 bg-card/80 p-4">
+          <Card key={i} className="border-border/50 bg-card/80 p-3">
             <Skeleton className="mb-2 h-3 w-28" />
-            <Skeleton className="mb-1.5 h-7 w-20" />
+            <Skeleton className="mb-1 h-7 w-20" />
             <Skeleton className="h-3 w-36" />
           </Card>
         ))}
@@ -128,7 +128,7 @@ export function StatsPanel({ wsUrl, onBack }: StatsPanelProps) {
       ) : stats && isEmptyStats(stats.tokens) ? (
         <EmptyState />
       ) : stats ? (
-        <div className={cn('space-y-6 transition-opacity duration-200', isUpdating && 'opacity-60')}>
+        <div className={cn('space-y-4 transition-opacity duration-200', isUpdating && 'opacity-60')}>
           {/* Token usage: 4-card row */}
           <TokenUsageCards tokens={stats.tokens} cache={stats.cache} />
 

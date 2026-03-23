@@ -26,8 +26,8 @@ function InfoItem({
 
 export function SystemInfo({ system }: SystemInfoProps) {
   return (
-    <Card className="border-border/50 bg-card/60 p-4 backdrop-blur-sm">
-      <h3 className="mb-3 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+    <Card className="border-border/50 bg-card/60 p-3 backdrop-blur-sm">
+      <h3 className="mb-2.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
         System
       </h3>
       <div className="flex flex-wrap gap-x-6 gap-y-2">
