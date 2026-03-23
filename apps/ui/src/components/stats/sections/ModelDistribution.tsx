@@ -6,12 +6,10 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import type { ModelDistributionEntry } from '@forge/protocol'
-
-// Extend the entry type to handle optional reasoning breakdown from backend
-interface ModelEntryWithReasoning extends ModelDistributionEntry {
-  reasoningBreakdown?: Record<string, number>
-}
+import type {
+  ModelDistributionEntry,
+  ModelReasoningBreakdownEntry,
+} from '@forge/protocol'
 
 interface ModelDistributionProps {
   models: ModelDistributionEntry[]
@@ -41,6 +39,14 @@ function formatTokens(count: number): string {
   return count.toLocaleString()
 }
 
+function getReasoningBreakdown(
+  model: ModelDistributionEntry,
+): ModelReasoningBreakdownEntry[] {
+  return Array.isArray(model.reasoningBreakdown)
+    ? model.reasoningBreakdown
+    : []
+}
+
 export function ModelDistribution({ models }: ModelDistributionProps) {
   const sortedModels = useMemo(
     () => [...models].sort((a, b) => b.percentage - a.percentage),
@@ -52,7 +58,7 @@ export function ModelDistribution({ models }: ModelDistributionProps) {
   }
 
   const hasReasoning = sortedModels.some(
-    (m) => (m as ModelEntryWithReasoning).reasoningBreakdown != null,
+    (model) => getReasoningBreakdown(model).length > 0,
   )
 
   return (
@@ -63,45 +69,31 @@ export function ModelDistribution({ models }: ModelDistributionProps) {
       <Card className="border-border/50 bg-card/80 p-3 backdrop-blur-sm">
         {/* Stacked bar */}
         <TooltipProvider delayDuration={100}>
-          <div className="flex h-8 w-full overflow-hidden rounded-md">
+          <div className="flex h-8 w-full overflow-hidden rounded-md bg-muted/40">
             {sortedModels.map((model, i) => {
               const color = SEGMENT_COLORS[i % SEGMENT_COLORS.length]
-              const entry = model as ModelEntryWithReasoning
-              const breakdown = entry.reasoningBreakdown
+              const breakdown = getReasoningBreakdown(model)
 
-              if (hasReasoning && breakdown) {
-                // Sub-stack for reasoning levels within this model segment
-                const totalForModel = Object.values(breakdown).reduce(
-                  (s, v) => s + v,
-                  0,
-                )
+              if (hasReasoning && breakdown.length > 0) {
                 return (
                   <Tooltip key={model.modelId}>
                     <TooltipTrigger asChild>
                       <div
-                        className="flex h-full cursor-default"
+                        className="flex h-full min-w-0 cursor-default"
                         style={{ width: `${model.percentage}%` }}
                       >
-                        {Object.entries(breakdown).map(
-                          ([level, tokens]) => {
-                            const subPct =
-                              totalForModel > 0
-                                ? (tokens / totalForModel) * 100
-                                : 0
-                            return (
-                              <div
-                                key={level}
-                                className="h-full transition-all duration-300"
-                                style={{
-                                  width: `${subPct}%`,
-                                  backgroundColor: color,
-                                  opacity:
-                                    REASONING_OPACITY[level] ?? 0.8,
-                                }}
-                              />
-                            )
-                          },
-                        )}
+                        {breakdown.map((segment) => (
+                          <div
+                            key={segment.level}
+                            className="h-full transition-all duration-300"
+                            style={{
+                              width: `${segment.percentage}%`,
+                              backgroundColor: color,
+                              opacity:
+                                REASONING_OPACITY[segment.level] ?? 0.8,
+                            }}
+                          />
+                        ))}
                       </div>
                     </TooltipTrigger>
                     <TooltipContent side="bottom" className="text-xs">
@@ -110,12 +102,12 @@ export function ModelDistribution({ models }: ModelDistributionProps) {
                         {model.percentage.toFixed(1)}% ·{' '}
                         {formatTokens(model.tokenCount)} tokens
                       </p>
-                      {Object.entries(breakdown).map(([level, tokens]) => (
+                      {breakdown.map((segment) => (
                         <p
-                          key={level}
+                          key={segment.level}
                           className="text-muted-foreground"
                         >
-                          {level}: {formatTokens(tokens)}
+                          {segment.level}: {formatTokens(segment.tokenCount)}
                         </p>
                       ))}
                     </TooltipContent>
@@ -123,7 +115,6 @@ export function ModelDistribution({ models }: ModelDistributionProps) {
                 )
               }
 
-              // Simple single-color segment
               return (
                 <Tooltip key={model.modelId}>
                   <TooltipTrigger asChild>

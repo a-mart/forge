@@ -9,6 +9,7 @@ import { getAgentsStoreFilePath, getProfilesDir, getSharedDir } from "../swarm/d
 export const STATS_CACHE_TTL_MS = 2 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const STATS_CACHE_FILE_NAME = "stats-cache.json";
+const STATS_CACHE_VERSION = 2;
 
 interface SessionMetaLite {
   workers?: Array<{
@@ -42,7 +43,7 @@ interface WorkerRun {
   createdAtMs: number;
   terminatedAtMs: number | null;
   durationMs: number | null;
-  totalTokens: number;
+  billableTokens: number;
 }
 
 interface CacheEntry {
@@ -157,7 +158,7 @@ export class StatsService {
     try {
       const raw = await readFile(this.cacheFilePath, "utf8");
       const parsed = JSON.parse(raw) as PersistedStatsCache;
-      if (!isRecord(parsed) || parsed.version !== 1 || !isRecord(parsed.entries)) {
+      if (!isRecord(parsed) || parsed.version !== STATS_CACHE_VERSION || !isRecord(parsed.entries)) {
         return;
       }
 
@@ -205,7 +206,7 @@ export class StatsService {
         }
 
         const payload: PersistedStatsCache = {
-          version: 1,
+          version: STATS_CACHE_VERSION,
           entries
         };
 
@@ -247,11 +248,13 @@ export class StatsService {
       (run) => run.terminatedAtMs !== null && typeof run.durationMs === "number" && run.durationMs >= 0
     );
 
-    const totalDurationMs = completedWorkerRunsInRange.reduce((sum, run) => sum + (run.durationMs ?? 0), 0);
-    const averageRuntimeMs =
-      completedWorkerRunsInRange.length > 0 ? Math.round(totalDurationMs / completedWorkerRunsInRange.length) : 0;
+    const medianRuntimeMs = computeMedian(
+      completedWorkerRunsInRange
+        .map((run) => run.durationMs)
+        .filter((durationMs): durationMs is number => typeof durationMs === "number" && durationMs >= 0)
+    );
 
-    const completedWorkerTokensTotal = completedWorkerRunsInRange.reduce((sum, run) => sum + run.totalTokens, 0);
+    const medianTokensPerRun = computeMedian(completedWorkerRunsInRange.map((run) => run.billableTokens));
 
     const activeDays = dailyEntriesInRange.filter((entry) => entry.totals.total > 0).map((entry) => entry.day);
     const longestStreak = computeLongestStreak(activeDays);
@@ -290,11 +293,8 @@ export class StatsService {
       workers: {
         totalWorkersRun: workerRunsInRange.length,
         totalWorkersRunPeriod: rangePeriodLabel(range),
-        averageTokensPerRun:
-          completedWorkerRunsInRange.length > 0
-            ? Math.round(completedWorkerTokensTotal / completedWorkerRunsInRange.length)
-            : 0,
-        averageRuntimeMs,
+        averageTokensPerRun: medianTokensPerRun,
+        averageRuntimeMs: medianRuntimeMs,
         currentlyActive: scanResult.activeWorkerCount
       },
       sessions: {
@@ -373,7 +373,7 @@ export class StatsService {
         const sessionFile = join(sessionDir, "session.jsonl");
         const metaFile = join(sessionDir, "meta.json");
         const workersDir = join(sessionDir, "workers");
-        const workerTokenTotalsByRunKey = new Map<string, number>();
+        const workerBillableTokenTotalsByRunKey = new Map<string, number>();
 
         await this.scanJsonlFile(sessionFile, (entry, context) => {
           this.collectUsageAndMessages(entry, usageRecords, dailyUsage, userMessages, {
@@ -388,15 +388,15 @@ export class StatsService {
         for (const workerFileName of workerFiles) {
           const workerId = workerFileName.slice(0, -".jsonl".length);
           const workerRunKey = toWorkerRunKey(profileId, sessionId, workerId);
-          let totalTokensForWorker = 0;
+          let billableTokensForWorker = 0;
 
           await this.scanJsonlFile(join(workersDir, workerFileName), (entry, context) => {
-            totalTokensForWorker += this.collectUsageAndMessages(entry, usageRecords, dailyUsage, userMessages, {
+            billableTokensForWorker += this.collectUsageAndMessages(entry, usageRecords, dailyUsage, userMessages, {
               fallbackThinkingLevel: context.thinkingLevel
             });
           });
 
-          workerTokenTotalsByRunKey.set(workerRunKey, totalTokensForWorker);
+          workerBillableTokenTotalsByRunKey.set(workerRunKey, billableTokensForWorker);
         }
 
         const meta = await this.readSessionMeta(metaFile);
@@ -422,7 +422,7 @@ export class StatsService {
               createdAtMs,
               terminatedAtMs,
               durationMs,
-              totalTokens: workerTokenTotalsByRunKey.get(workerRunKey) ?? 0
+              billableTokens: workerBillableTokenTotalsByRunKey.get(workerRunKey) ?? 0
             });
           }
         }
@@ -497,7 +497,7 @@ export class StatsService {
           total: existing.total + usage.total
         });
 
-        return usage.total;
+        return usage.input + usage.output;
       }
 
       return 0;
@@ -924,6 +924,24 @@ function formatUptime(uptimeMs: number): string {
   parts.push(`${minutes}m`);
 
   return parts.join(" ");
+}
+
+function computeMedian(values: number[]): number {
+  const normalized = values
+    .filter((value) => Number.isFinite(value) && value >= 0)
+    .map((value) => Math.round(value))
+    .sort((left, right) => left - right);
+
+  if (normalized.length === 0) {
+    return 0;
+  }
+
+  const middleIndex = Math.floor(normalized.length / 2);
+  if (normalized.length % 2 === 0) {
+    return Math.round((normalized[middleIndex - 1] + normalized[middleIndex]) / 2);
+  }
+
+  return normalized[middleIndex] ?? 0;
 }
 
 function round2(value: number): number {

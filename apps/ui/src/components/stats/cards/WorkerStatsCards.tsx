@@ -31,15 +31,15 @@ export function WorkerStatsCards({ workers }: WorkerStatsCardsProps) {
         subtitle={workers.totalWorkersRunPeriod}
       />
       <StatCard
-        title="Avg Tokens / Run"
+        title="Median Tokens / Run"
         value={abbreviateNumber(workers.averageTokensPerRun)}
         unit="tokens"
-        subtitle="Per worker execution"
+        subtitle="Per completed worker run"
       />
       <StatCard
-        title="Avg Runtime"
+        title="Median Runtime"
         value={formatRuntime(workers.averageRuntimeMs)}
-        subtitle="Worker duration"
+        subtitle="Completed worker duration"
       />
       <StatCard
         title="Currently Active"

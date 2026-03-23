@@ -7,8 +7,7 @@ import { useStats } from './use-stats'
 import { StatsLayout } from './StatsLayout'
 import { TokenUsageCards } from './cards/TokenUsageCards'
 import { CacheMetricsCards } from './cards/CacheMetricsCards'
-import { ActivityCards } from './cards/ActivityCards'
-import { SessionStatsCards } from './cards/SessionStatsCards'
+import { StatCard } from './cards/StatCard'
 import { WorkerStatsCards } from './cards/WorkerStatsCards'
 import { DailyUsageChart } from './charts/DailyUsageChart'
 import { ModelDistribution } from './sections/ModelDistribution'
@@ -142,11 +141,29 @@ export function StatsPanel({ wsUrl, onBack }: StatsPanelProps) {
           {/* Daily usage chart: full width */}
           <DailyUsageChart data={stats.dailyUsage} />
 
-          {/* Activity cards: 2-card row */}
-          <ActivityCards activity={stats.activity} />
-
-          {/* Session stats */}
-          <SessionStatsCards sessions={stats.sessions} />
+          {/* Activity + session overview: 4-card row */}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <StatCard
+              title="Longest Streak"
+              value={`${stats.activity.longestStreak} days`}
+              subtitle={stats.activity.streakLabel}
+            />
+            <StatCard
+              title="Active Days"
+              value={`${stats.activity.activeDays} / ${stats.activity.totalDaysInRange}`}
+              subtitle={`${stats.activity.activeDaysInRange} / ${stats.activity.totalDaysInRange} in current range`}
+            />
+            <StatCard
+              title="Sessions"
+              value={String(stats.sessions.totalSessions)}
+              subtitle={`${stats.sessions.activeSessions} active`}
+            />
+            <StatCard
+              title="Messages Sent"
+              value={stats.sessions.totalMessagesSent.toLocaleString()}
+              subtitle={stats.sessions.totalMessagesPeriod}
+            />
+          </div>
 
           {/* Worker stats */}
           <WorkerStatsCards workers={stats.workers} />
