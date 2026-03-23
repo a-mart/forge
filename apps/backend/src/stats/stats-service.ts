@@ -248,13 +248,15 @@ export class StatsService {
       (run) => run.terminatedAtMs !== null && typeof run.durationMs === "number" && run.durationMs >= 0
     );
 
-    const medianRuntimeMs = computeMedian(
+    const averageRuntimeMs = trimmedMean(
       completedWorkerRunsInRange
         .map((run) => run.durationMs)
         .filter((durationMs): durationMs is number => typeof durationMs === "number" && durationMs >= 0)
     );
 
-    const medianTokensPerRun = computeMedian(completedWorkerRunsInRange.map((run) => run.billableTokens));
+    const averageTokensPerRun = trimmedMean(
+      completedWorkerRunsInRange.map((run) => run.billableTokens).filter((tokens) => Number.isFinite(tokens) && tokens >= 0)
+    );
 
     const activeDays = dailyEntriesInRange.filter((entry) => entry.totals.total > 0).map((entry) => entry.day);
     const longestStreak = computeLongestStreak(activeDays);
@@ -293,8 +295,8 @@ export class StatsService {
       workers: {
         totalWorkersRun: workerRunsInRange.length,
         totalWorkersRunPeriod: rangePeriodLabel(range),
-        averageTokensPerRun: medianTokensPerRun,
-        averageRuntimeMs: medianRuntimeMs,
+        averageTokensPerRun: averageTokensPerRun,
+        averageRuntimeMs: averageRuntimeMs,
         currentlyActive: scanResult.activeWorkerCount
       },
       sessions: {
@@ -926,22 +928,28 @@ function formatUptime(uptimeMs: number): string {
   return parts.join(" ");
 }
 
-function computeMedian(values: number[]): number {
-  const normalized = values
-    .filter((value) => Number.isFinite(value) && value >= 0)
-    .map((value) => Math.round(value))
-    .sort((left, right) => left - right);
+function trimmedMean(values: number[]): number {
+  const normalized = values.filter((value) => Number.isFinite(value) && value >= 0).map((value) => Math.round(value)).sort((left, right) => left - right);
 
   if (normalized.length === 0) {
     return 0;
   }
 
-  const middleIndex = Math.floor(normalized.length / 2);
-  if (normalized.length % 2 === 0) {
-    return Math.round((normalized[middleIndex - 1] + normalized[middleIndex]) / 2);
+  const q1Index = Math.floor((normalized.length - 1) * 0.25);
+  const q3Index = Math.floor((normalized.length - 1) * 0.75);
+  const q1 = normalized[q1Index] ?? normalized[0];
+  const q3 = normalized[q3Index] ?? normalized[normalized.length - 1];
+  const iqr = q3 - q1;
+  const lower = q1 - 1.5 * iqr;
+  const upper = q3 + 1.5 * iqr;
+
+  const filtered = normalized.filter((value) => value >= lower && value <= upper);
+  if (filtered.length === 0) {
+    return 0;
   }
 
-  return normalized[middleIndex] ?? 0;
+  const sum = filtered.reduce((runningTotal, value) => runningTotal + value, 0);
+  return Math.round(sum / filtered.length);
 }
 
 function round2(value: number): number {

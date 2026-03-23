@@ -18,7 +18,7 @@ export function CacheMetricsCards({ cache, workers, activity }: CacheMetricsCard
         subtitle={`${cache.hitRate.toFixed(1)}% hit rate in ${cache.hitRatePeriod.toLowerCase()}`}
       />
       <StatCard
-        title="Median / Run"
+        title="Avg / Run"
         value={abbreviateNumber(workers.averageTokensPerRun)}
         unit="tokens"
         subtitle={`${workers.totalWorkersRun} runs in ${workers.totalWorkersRunPeriod.toLowerCase()}`}
