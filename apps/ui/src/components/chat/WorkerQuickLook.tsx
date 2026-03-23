@@ -145,7 +145,7 @@ export const WorkerQuickLook = memo(function WorkerQuickLook({
       </div>
 
       {/* Activity feed */}
-      <div className="min-h-0 flex-1 overflow-y-auto px-2 py-1.5 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-white/15 hover:[&::-webkit-scrollbar-thumb]:bg-white/30 [scrollbar-color:rgba(255,255,255,0.15)_transparent] [scrollbar-width:thin]">
+      <div className="max-h-[min(36rem,_70vh)] overflow-y-auto px-2 py-1.5 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-white/15 hover:[&::-webkit-scrollbar-thumb]:bg-white/30 [scrollbar-color:rgba(255,255,255,0.15)_transparent] [scrollbar-width:thin]">
         {displayEntries.length === 0 ? (
           <p className="py-4 text-center text-xs italic text-muted-foreground">
             No recent activity
