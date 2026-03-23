@@ -1,0 +1,6 @@
+# Build artifacts (build outputs to dist/ via tsconfig.build.json)
+src/**/*.js
+src/**/*.js.map
+src/**/*.d.ts
+src/**/*.d.ts.map
+tsconfig.tsbuildinfo
