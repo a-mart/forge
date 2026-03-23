@@ -720,6 +720,7 @@ function SessionRowItem({
 // ── Profile group ──
 
 const MAX_VISIBLE_SESSIONS = 8
+const SESSION_PAGE_SIZE = 15
 const MAX_VISIBLE_WORKERS = 15
 
 function ProfileGroup({
@@ -730,11 +731,12 @@ function ProfileGroup({
   isSettingsActive,
   isCollapsed,
   collapsedSessionIds,
-  isSessionListExpanded,
+  visibleSessionLimit,
   expandedWorkerListSessionIds,
   onToggleProfileCollapsed,
   onToggleSessionCollapsed,
-  onToggleSessionListExpanded,
+  onShowMoreSessions,
+  onShowLessSessions,
   onToggleWorkerListExpanded,
   onSelect,
   onDeleteAgent,
@@ -759,11 +761,12 @@ function ProfileGroup({
   isSettingsActive: boolean
   isCollapsed: boolean
   collapsedSessionIds: Set<string>
-  isSessionListExpanded: boolean
+  visibleSessionLimit: number
   expandedWorkerListSessionIds: Set<string>
   onToggleProfileCollapsed: () => void
   onToggleSessionCollapsed: (sessionId: string) => void
-  onToggleSessionListExpanded: () => void
+  onShowMoreSessions: () => void
+  onShowLessSessions: () => void
   onToggleWorkerListExpanded: (sessionId: string) => void
   onSelect: (agentId: string) => void
   onDeleteAgent: (agentId: string) => void
@@ -940,15 +943,16 @@ function ProfileGroup({
         <div className="relative mt-0.5">
           <div className="absolute bottom-1 left-3.5 top-0 w-px bg-sidebar-border/40" />
           {(() => {
-            const needsTruncation = sessions.length > MAX_VISIBLE_SESSIONS
+            const hasMore = sessions.length > visibleSessionLimit
+            const isExpanded = visibleSessionLimit > MAX_VISIBLE_SESSIONS
             let visibleSessions: SessionRow[]
             let hiddenCount = 0
 
-            if (isSessionListExpanded || !needsTruncation) {
+            if (!hasMore) {
               visibleSessions = sessions
             } else {
-              // Take the top MAX_VISIBLE_SESSIONS, but guarantee the selected session is visible
-              const topSessions = sessions.slice(0, MAX_VISIBLE_SESSIONS)
+              // Take the top visibleSessionLimit, but guarantee the selected session is visible
+              const topSessions = sessions.slice(0, visibleSessionLimit)
               const selectedSessionInTop = !selectedAgentId || isSettingsActive || topSessions.some(
                 (s) =>
                   s.sessionAgent.agentId === selectedAgentId ||
@@ -965,7 +969,7 @@ function ProfileGroup({
                     s.workers.some((w) => w.agentId === selectedAgentId),
                 )
                 if (selectedSession) {
-                  visibleSessions = [...topSessions.slice(0, MAX_VISIBLE_SESSIONS - 1), selectedSession]
+                  visibleSessions = [...topSessions.slice(0, visibleSessionLimit - 1), selectedSession]
                 } else {
                   visibleSessions = topSessions
                 }
@@ -1007,28 +1011,37 @@ function ProfileGroup({
                     )
                   })}
                 </ul>
-                {needsTruncation ? (
-                  <button
-                    type="button"
-                    onClick={onToggleSessionListExpanded}
-                    className={cn(
-                      'relative z-10 mt-0.5 flex w-full items-center gap-1 rounded-md py-1 pl-5 pr-1.5 text-left text-[11px] text-muted-foreground/70 transition-colors',
-                      'hover:text-muted-foreground hover:bg-sidebar-accent/30',
-                      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
-                    )}
-                  >
-                    {isSessionListExpanded ? (
-                      <>
-                        <ChevronUp className="size-3 shrink-0" aria-hidden="true" />
-                        <span>Show less</span>
-                      </>
-                    ) : (
-                      <>
+                {hasMore || isExpanded ? (
+                  <div className="relative z-10 mt-0.5 flex items-center gap-2 pl-5 pr-1.5">
+                    {hasMore ? (
+                      <button
+                        type="button"
+                        onClick={onShowMoreSessions}
+                        className={cn(
+                          'flex items-center gap-1 rounded-md py-1 text-left text-[11px] text-muted-foreground/70 transition-colors',
+                          'hover:text-muted-foreground',
+                          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
+                        )}
+                      >
                         <ChevronDown className="size-3 shrink-0" aria-hidden="true" />
                         <span>Show {hiddenCount} more</span>
-                      </>
-                    )}
-                  </button>
+                      </button>
+                    ) : null}
+                    {isExpanded ? (
+                      <button
+                        type="button"
+                        onClick={onShowLessSessions}
+                        className={cn(
+                          'flex items-center gap-1 rounded-md py-1 text-left text-[11px] text-muted-foreground/70 transition-colors',
+                          'hover:text-muted-foreground',
+                          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
+                        )}
+                      >
+                        <ChevronUp className="size-3 shrink-0" aria-hidden="true" />
+                        <span>Show less</span>
+                      </button>
+                    ) : null}
+                  </div>
                 ) : null}
               </>
             )
@@ -1312,11 +1325,12 @@ function CortexSection({
   isSettingsActive,
   isCollapsed,
   collapsedSessionIds,
-  isSessionListExpanded,
+  visibleSessionLimit,
   expandedWorkerListSessionIds,
   onToggleCollapsed,
   onToggleSessionCollapsed,
-  onToggleSessionListExpanded,
+  onShowMoreSessions,
+  onShowLessSessions,
   onToggleWorkerListExpanded,
   onSelect,
   onDeleteAgent,
@@ -1340,11 +1354,12 @@ function CortexSection({
   isSettingsActive: boolean
   isCollapsed: boolean
   collapsedSessionIds: Set<string>
-  isSessionListExpanded: boolean
+  visibleSessionLimit: number
   expandedWorkerListSessionIds: Set<string>
   onToggleCollapsed: () => void
   onToggleSessionCollapsed: (sessionId: string) => void
-  onToggleSessionListExpanded: () => void
+  onShowMoreSessions: () => void
+  onShowLessSessions: () => void
   onToggleWorkerListExpanded: (sessionId: string) => void
   onSelect: (agentId: string) => void
   onDeleteAgent: (agentId: string) => void
@@ -1555,14 +1570,15 @@ function CortexSection({
         <div className="relative mt-0.5">
           <div className="absolute bottom-1 left-3.5 top-0 w-px bg-sidebar-border/40" />
           {(() => {
-            const needsTruncation = visibleSessions.length > MAX_VISIBLE_SESSIONS
+            const hasMore = visibleSessions.length > visibleSessionLimit
+            const isExpanded = visibleSessionLimit > MAX_VISIBLE_SESSIONS
             let renderedSessions: SessionRow[]
             let hiddenCount = 0
 
-            if (isSessionListExpanded || !needsTruncation) {
+            if (!hasMore) {
               renderedSessions = visibleSessions
             } else {
-              const topSessions = visibleSessions.slice(0, MAX_VISIBLE_SESSIONS)
+              const topSessions = visibleSessions.slice(0, visibleSessionLimit)
               const selectedSessionInTop = !selectedAgentId || isSettingsActive || topSessions.some(
                 (s) =>
                   s.sessionAgent.agentId === selectedAgentId ||
@@ -1578,7 +1594,7 @@ function CortexSection({
                     s.workers.some((w) => w.agentId === selectedAgentId),
                 )
                 if (selectedSession) {
-                  renderedSessions = [...topSessions.slice(0, MAX_VISIBLE_SESSIONS - 1), selectedSession]
+                  renderedSessions = [...topSessions.slice(0, visibleSessionLimit - 1), selectedSession]
                 } else {
                   renderedSessions = topSessions
                 }
@@ -1619,28 +1635,37 @@ function CortexSection({
                     )
                   })}
                 </ul>
-                {needsTruncation ? (
-                  <button
-                    type="button"
-                    onClick={onToggleSessionListExpanded}
-                    className={cn(
-                      'relative z-10 mt-0.5 flex w-full items-center gap-1 rounded-md py-1 pl-5 pr-1.5 text-left text-[11px] text-muted-foreground/70 transition-colors',
-                      'hover:text-muted-foreground hover:bg-sidebar-accent/30',
-                      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
-                    )}
-                  >
-                    {isSessionListExpanded ? (
-                      <>
-                        <ChevronUp className="size-3 shrink-0" aria-hidden="true" />
-                        <span>Show less</span>
-                      </>
-                    ) : (
-                      <>
+                {hasMore || isExpanded ? (
+                  <div className="relative z-10 mt-0.5 flex items-center gap-2 pl-5 pr-1.5">
+                    {hasMore ? (
+                      <button
+                        type="button"
+                        onClick={onShowMoreSessions}
+                        className={cn(
+                          'flex items-center gap-1 rounded-md py-1 text-left text-[11px] text-muted-foreground/70 transition-colors',
+                          'hover:text-muted-foreground',
+                          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
+                        )}
+                      >
                         <ChevronDown className="size-3 shrink-0" aria-hidden="true" />
                         <span>Show {hiddenCount} more</span>
-                      </>
-                    )}
-                  </button>
+                      </button>
+                    ) : null}
+                    {isExpanded ? (
+                      <button
+                        type="button"
+                        onClick={onShowLessSessions}
+                        className={cn(
+                          'flex items-center gap-1 rounded-md py-1 text-left text-[11px] text-muted-foreground/70 transition-colors',
+                          'hover:text-muted-foreground',
+                          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
+                        )}
+                      >
+                        <ChevronUp className="size-3 shrink-0" aria-hidden="true" />
+                        <span>Show less</span>
+                      </button>
+                    ) : null}
+                  </div>
                 ) : null}
                 {reviewRunSessions.length > 0 && !selectedReviewRunSession ? (
                   onOpenCortexReview && targetId ? (
@@ -1817,8 +1842,8 @@ export function AgentSidebar({
   })
   // Track explicitly expanded sessions — everything defaults to collapsed
   const [expandedSessionIds, setExpandedSessionIds] = useState<Set<string>>(() => new Set())
-  // Track which profiles have their full session list expanded (default: collapsed to MAX_VISIBLE)
-  const [expandedSessionListProfileIds, setExpandedSessionListProfileIds] = useState<Set<string>>(() => new Set())
+  // Track how many sessions are visible per profile (default: MAX_VISIBLE_SESSIONS, increments by SESSION_PAGE_SIZE)
+  const [sessionListLimits, setSessionListLimits] = useState<Record<string, number>>({})
   // Track which sessions have their full worker list expanded (default: collapsed to MAX_VISIBLE_WORKERS)
   const [expandedWorkerListSessionIds, setExpandedWorkerListSessionIds] = useState<Set<string>>(() => new Set())
   const [createTarget, setCreateTarget] = useState<{ profileId: string; profileLabel: string } | null>(null)
@@ -1857,14 +1882,17 @@ export function AgentSidebar({
     })
   }, [onRequestSessionWorkers])
 
-  const toggleSessionListExpanded = useCallback((profileId: string) => {
-    setExpandedSessionListProfileIds((prev) => {
-      const next = new Set(prev)
-      if (next.has(profileId)) {
-        next.delete(profileId)
-      } else {
-        next.add(profileId)
-      }
+  const showMoreSessions = useCallback((profileId: string) => {
+    setSessionListLimits((prev) => ({
+      ...prev,
+      [profileId]: (prev[profileId] ?? MAX_VISIBLE_SESSIONS) + SESSION_PAGE_SIZE,
+    }))
+  }, [])
+
+  const showLessSessions = useCallback((profileId: string) => {
+    setSessionListLimits((prev) => {
+      const next = { ...prev }
+      delete next[profileId]
       return next
     })
   }, [])
@@ -2085,11 +2113,12 @@ export function AgentSidebar({
               isSettingsActive={isSettingsActive}
               isCollapsed={isSearchActive ? false : collapsedProfileIds.has('cortex')}
               collapsedSessionIds={expandedSessionIds}
-              isSessionListExpanded={isSearchActive || expandedSessionListProfileIds.has('cortex')}
+              visibleSessionLimit={isSearchActive ? Infinity : (sessionListLimits['cortex'] ?? MAX_VISIBLE_SESSIONS)}
               expandedWorkerListSessionIds={expandedWorkerListSessionIds}
               onToggleCollapsed={() => toggleProfileCollapsed('cortex')}
               onToggleSessionCollapsed={toggleSessionCollapsed}
-              onToggleSessionListExpanded={() => toggleSessionListExpanded('cortex')}
+              onShowMoreSessions={() => showMoreSessions('cortex')}
+              onShowLessSessions={() => showLessSessions('cortex')}
               onToggleWorkerListExpanded={toggleWorkerListExpanded}
               onSelect={handleSelectAgent}
               onDeleteAgent={onDeleteAgent}
@@ -2144,11 +2173,12 @@ export function AgentSidebar({
               isSettingsActive={isSettingsActive}
               isCollapsed={isSearchActive ? false : collapsedProfileIds.has(treeRow.profile.profileId)}
               collapsedSessionIds={expandedSessionIds}
-              isSessionListExpanded={isSearchActive || expandedSessionListProfileIds.has(treeRow.profile.profileId)}
+              visibleSessionLimit={isSearchActive ? Infinity : (sessionListLimits[treeRow.profile.profileId] ?? MAX_VISIBLE_SESSIONS)}
               expandedWorkerListSessionIds={expandedWorkerListSessionIds}
               onToggleProfileCollapsed={() => toggleProfileCollapsed(treeRow.profile.profileId)}
               onToggleSessionCollapsed={toggleSessionCollapsed}
-              onToggleSessionListExpanded={() => toggleSessionListExpanded(treeRow.profile.profileId)}
+              onShowMoreSessions={() => showMoreSessions(treeRow.profile.profileId)}
+              onShowLessSessions={() => showLessSessions(treeRow.profile.profileId)}
               onToggleWorkerListExpanded={toggleWorkerListExpanded}
               onSelect={handleSelectAgent}
               onDeleteAgent={onDeleteAgent}
