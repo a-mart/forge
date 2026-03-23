@@ -82,6 +82,7 @@ export interface FileTreeHandle {
 interface FileTreeProps {
   wsUrl: string
   agentId: string
+  cwd: string
   selectedFile: string | null
   onSelectFile: (path: string) => void
   fileCount: number | null
@@ -120,7 +121,7 @@ const ROW_HEIGHT = 28
 
 export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(
   function FileTree(
-    { wsUrl, agentId, selectedFile, onSelectFile, fileCount, fileCountMethod },
+    { wsUrl, agentId, cwd, selectedFile, onSelectFile, fileCount, fileCountMethod },
     ref,
   ) {
     const [filterText, setFilterText] = useState('')
@@ -510,6 +511,7 @@ export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(
                       <FileTreeNode
                         name={itemData.name}
                         path={itemId}
+                        cwd={cwd}
                         type={itemData.type}
                         depth={meta.level - 1}
                         isExpanded={isExpanded}

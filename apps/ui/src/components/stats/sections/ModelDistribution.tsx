@@ -23,11 +23,11 @@ const SEGMENT_COLORS = [
   'var(--chart-5)',
 ]
 
-// Slightly lighter/darker variants for reasoning sub-segments
+// Opacity levels for reasoning sub-segments within each bar
 const REASONING_OPACITY: Record<string, number> = {
-  none: 0.5,
-  low: 0.7,
-  medium: 0.85,
+  none: 0.4,
+  low: 0.6,
+  medium: 0.8,
   high: 1.0,
   xhigh: 1.0,
 }
@@ -57,9 +57,8 @@ export function ModelDistribution({ models }: ModelDistributionProps) {
     return null
   }
 
-  const hasReasoning = sortedModels.some(
-    (model) => getReasoningBreakdown(model).length > 0,
-  )
+  // Find the max percentage to scale bars relatively
+  const maxPercentage = sortedModels[0]?.percentage ?? 100
 
   return (
     <div>
@@ -67,98 +66,78 @@ export function ModelDistribution({ models }: ModelDistributionProps) {
         Top Models
       </h3>
       <Card className="border-border/50 bg-card/80 p-3 backdrop-blur-sm">
-        {/* Stacked bar */}
         <TooltipProvider delayDuration={100}>
-          <div className="flex h-8 w-full overflow-hidden rounded-md bg-muted/40">
+          <div className="space-y-2">
             {sortedModels.map((model, i) => {
               const color = SEGMENT_COLORS[i % SEGMENT_COLORS.length]
               const breakdown = getReasoningBreakdown(model)
-
-              if (hasReasoning && breakdown.length > 0) {
-                return (
-                  <Tooltip key={model.modelId}>
-                    <TooltipTrigger asChild>
-                      <div
-                        className="flex h-full min-w-0 cursor-default"
-                        style={{ width: `${model.percentage}%` }}
-                      >
-                        {breakdown.map((segment) => (
-                          <div
-                            key={segment.level}
-                            className="h-full transition-all duration-300"
-                            style={{
-                              width: `${segment.percentage}%`,
-                              backgroundColor: color,
-                              opacity:
-                                REASONING_OPACITY[segment.level] ?? 0.8,
-                            }}
-                          />
-                        ))}
-                      </div>
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom" className="text-xs">
-                      <p className="font-medium">{model.displayName}</p>
-                      <p className="text-muted-foreground">
-                        {model.percentage.toFixed(1)}% ·{' '}
-                        {formatTokens(model.tokenCount)} tokens
-                      </p>
-                      {breakdown.map((segment) => (
-                        <p
-                          key={segment.level}
-                          className="text-muted-foreground"
-                        >
-                          {segment.level}: {formatTokens(segment.tokenCount)}
-                        </p>
-                      ))}
-                    </TooltipContent>
-                  </Tooltip>
-                )
-              }
+              const barWidth = (model.percentage / maxPercentage) * 100
 
               return (
-                <Tooltip key={model.modelId}>
-                  <TooltipTrigger asChild>
-                    <div
-                      className="h-full cursor-default transition-all duration-300"
-                      style={{
-                        width: `${model.percentage}%`,
-                        backgroundColor: color,
-                      }}
-                    />
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom" className="text-xs">
-                    <p className="font-medium">{model.displayName}</p>
-                    <p className="text-muted-foreground">
-                      {model.percentage.toFixed(1)}% ·{' '}
-                      {formatTokens(model.tokenCount)} tokens
-                    </p>
-                  </TooltipContent>
-                </Tooltip>
+                <div key={model.modelId} className="flex items-center gap-2">
+                  {/* Model name */}
+                  <div className="w-32 shrink-0 truncate text-xs text-foreground/90">
+                    {model.displayName}
+                  </div>
+
+                  {/* Horizontal bar */}
+                  <div className="flex min-w-0 flex-1 items-center gap-2">
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div
+                          className="flex h-6 min-w-0 overflow-hidden rounded-md transition-all duration-300"
+                          style={{ width: `${barWidth}%` }}
+                        >
+                          {breakdown.length > 0 ? (
+                            // Show reasoning breakdown as sub-segments
+                            breakdown.map((segment) => (
+                              <div
+                                key={segment.level}
+                                className="h-full transition-all duration-300"
+                                style={{
+                                  width: `${segment.percentage}%`,
+                                  backgroundColor: color,
+                                  opacity:
+                                    REASONING_OPACITY[segment.level] ?? 0.8,
+                                }}
+                              />
+                            ))
+                          ) : (
+                            // Single solid bar if no reasoning breakdown
+                            <div
+                              className="h-full w-full transition-all duration-300"
+                              style={{ backgroundColor: color }}
+                            />
+                          )}
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom" className="text-xs">
+                        <p className="font-medium">{model.displayName}</p>
+                        <p className="text-muted-foreground">
+                          {model.percentage.toFixed(1)}% ·{' '}
+                          {formatTokens(model.tokenCount)} tokens
+                        </p>
+                        {breakdown.map((segment) => (
+                          <p
+                            key={segment.level}
+                            className="text-muted-foreground"
+                          >
+                            {segment.level}: {formatTokens(segment.tokenCount)}
+                          </p>
+                        ))}
+                      </TooltipContent>
+                    </Tooltip>
+
+                    {/* Percentage label */}
+                    <div className="w-12 shrink-0 text-right text-xs text-muted-foreground">
+                      {model.percentage.toFixed(1)}%
+                    </div>
+                  </div>
+                </div>
               )
             })}
           </div>
         </TooltipProvider>
-
-        {/* Legend */}
-        <div className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1.5">
-          {sortedModels.map((model, i) => (
-            <div key={model.modelId} className="flex items-center gap-1.5">
-              <div
-                className="size-2.5 shrink-0 rounded-[3px]"
-                style={{
-                  backgroundColor:
-                    SEGMENT_COLORS[i % SEGMENT_COLORS.length],
-                }}
-              />
-              <span className="text-xs text-foreground/90">
-                {model.displayName}
-              </span>
-              <span className="text-xs text-muted-foreground">
-                {model.percentage.toFixed(1)}%
-              </span>
-            </div>
-          ))}
-        </div>
       </Card>
     </div>
   )

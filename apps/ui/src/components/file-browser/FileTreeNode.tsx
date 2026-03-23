@@ -12,6 +12,7 @@ import {
 interface FileTreeNodeProps {
   name: string
   path: string
+  cwd: string
   type: 'file' | 'directory'
   depth: number
   isExpanded: boolean
@@ -24,6 +25,7 @@ interface FileTreeNodeProps {
 export function FileTreeNode({
   name,
   path,
+  cwd,
   type,
   depth,
   isExpanded,
@@ -33,8 +35,8 @@ export function FileTreeNode({
   onClick,
 }: FileTreeNodeProps) {
   const handleCopyPath = useCallback(() => {
-    navigator.clipboard.writeText(path)
-  }, [path])
+    navigator.clipboard.writeText(cwd ? `${cwd.replace(/\/+$/, '')}/${path}` : path)
+  }, [cwd, path])
 
   return (
     <ContextMenu>

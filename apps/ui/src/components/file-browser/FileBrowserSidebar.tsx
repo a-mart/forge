@@ -172,6 +172,7 @@ export function FileBrowserSidebar({
             ref={fileTreeRef}
             wsUrl={wsUrl}
             agentId={gatedAgentId}
+            cwd={rootList.data?.cwd ?? ''}
             selectedFile={selectedFile}
             onSelectFile={onSelectFile}
             fileCount={fileCount.data?.count ?? null}
