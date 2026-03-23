@@ -800,8 +800,19 @@ export class ManagerWsClient {
         break
 
       case 'agent_status': {
-        const prevStatus = this.state.statuses[event.agentId]?.status
+        const prevEntry = this.state.statuses[event.agentId]
+        const prevStatus = prevEntry?.status
         const isKnownAgent = this.state.agents.some((agent) => agent.agentId === event.agentId)
+
+        // Track when a worker enters streaming state so the pill timer
+        // persists across component mount/unmount cycles (e.g. navigation).
+        let streamingStartedAt = prevEntry?.streamingStartedAt
+        if (event.status === 'streaming' && prevStatus !== 'streaming') {
+          // Transitioning TO streaming — record start time
+          streamingStartedAt = Date.now()
+        }
+        // When staying streaming or leaving streaming, keep existing value
+
         const statuses = {
           ...this.state.statuses,
           [event.agentId]: {
@@ -809,6 +820,7 @@ export class ManagerWsClient {
             pendingCount: event.pendingCount,
             contextUsage: event.contextUsage,
             contextRecoveryInProgress: event.contextRecoveryInProgress,
+            streamingStartedAt,
           },
         }
 

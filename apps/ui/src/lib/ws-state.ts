@@ -28,7 +28,7 @@ export interface ManagerWsState {
   agents: AgentDescriptor[]
   loadedSessionIds: Set<string>
   profiles: ManagerProfile[]
-  statuses: Record<string, { status: AgentStatus; pendingCount: number; contextUsage?: AgentContextUsage; contextRecoveryInProgress?: boolean }>
+  statuses: Record<string, { status: AgentStatus; pendingCount: number; contextUsage?: AgentContextUsage; contextRecoveryInProgress?: boolean; streamingStartedAt?: number }>
   lastError: string | null
   lastSuccess: string | null
   slackStatus: SlackStatusEvent | null

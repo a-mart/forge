@@ -19,7 +19,7 @@ import { WorkerQuickLook } from './WorkerQuickLook'
 
 interface WorkerPillBarProps {
   workers: AgentDescriptor[]
-  statuses: Record<string, { status: AgentStatus }>
+  statuses: Record<string, { status: AgentStatus; streamingStartedAt?: number }>
   activityMessages: AgentActivityEntry[]
   onNavigateToWorker: (agentId: string) => void
 }
@@ -27,8 +27,8 @@ interface WorkerPillBarProps {
 interface PillEntry {
   worker: AgentDescriptor
   status: AgentStatus
-  /** Epoch ms when this streaming run started (used for live timer). */
-  streamingStartMs: number
+  /** Epoch ms when this streaming run started (from ws-client state, persists across navigation). */
+  streamingStartedAt: number
   /** Frozen elapsed ms when worker left streaming. undefined = still counting. */
   frozenElapsedMs?: number
   /** Whether this entry is in its exit fade-out period */
@@ -121,9 +121,9 @@ const WorkerPill = memo(function WorkerPill({
   // Compute elapsed time — driven by shared tick counter
   const elapsedMs = useMemo(() => {
     if (frozenElapsedMs !== undefined) return frozenElapsedMs
-    return Date.now() - entry.streamingStartMs
+    return Date.now() - entry.streamingStartedAt
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [frozenElapsedMs, entry.streamingStartMs, tick])
+  }, [frozenElapsedMs, entry.streamingStartedAt, tick])
 
   const elapsedLabel = formatElapsed(elapsedMs)
 
@@ -274,12 +274,14 @@ export const WorkerPillBar = memo(function WorkerPillBar({
       if (!worker) continue
 
       const existing = current.get(id)
+      // Use the persistent timestamp from ws-client state; fall back to now
+      const startedAt = statuses[id]?.streamingStartedAt ?? Date.now()
       if (!existing) {
         // New streaming worker — add pill
         current.set(id, {
           worker,
           status: 'streaming',
-          streamingStartMs: Date.now(),
+          streamingStartedAt: startedAt,
           exiting: false,
         })
         // Cancel any pending exit timer
@@ -293,7 +295,7 @@ export const WorkerPillBar = memo(function WorkerPillBar({
         // Worker came back to streaming — reset timer for new run
         existing.exiting = false
         existing.frozenElapsedMs = undefined
-        existing.streamingStartMs = Date.now()
+        existing.streamingStartedAt = startedAt
         existing.status = 'streaming'
         existing.worker = worker
         const timer = exitTimersRef.current.get(id)
@@ -315,7 +317,7 @@ export const WorkerPillBar = memo(function WorkerPillBar({
         entry.exiting = true
         entry.status = getWorkerStatus(entry.worker, statuses)
         // Freeze the timer at current run duration
-        entry.frozenElapsedMs = Date.now() - entry.streamingStartMs
+        entry.frozenElapsedMs = Date.now() - entry.streamingStartedAt
 
         // Clear any existing timer for this ID before scheduling a new one
         const existingTimer = exitTimersRef.current.get(id)
