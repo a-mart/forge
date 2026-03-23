@@ -11,7 +11,6 @@ import { StatCard } from './cards/StatCard'
 import { WorkerStatsCards } from './cards/WorkerStatsCards'
 import { DailyUsageChart } from './charts/DailyUsageChart'
 import { ModelDistribution } from './sections/ModelDistribution'
-import { SystemInfo } from './sections/SystemInfo'
 import type { StatsRange } from '@forge/protocol'
 import { cn } from '@/lib/utils'
 
@@ -170,9 +169,6 @@ export function StatsPanel({ wsUrl, onBack }: StatsPanelProps) {
 
           {/* Model distribution badges */}
           <ModelDistribution models={stats.models} />
-
-          {/* System info footer */}
-          <SystemInfo system={stats.system} />
         </div>
       ) : null}
     </StatsLayout>
