@@ -112,6 +112,11 @@ export const WorkerQuickLook = memo(function WorkerQuickLook({
   )
 
   const modelLabel = worker.model?.modelId ?? null
+  const thinkingLevel = worker.model?.thinkingLevel
+  const modelWithThinking =
+    modelLabel && thinkingLevel && thinkingLevel !== 'none'
+      ? `${modelLabel} · ${thinkingLevel}`
+      : modelLabel
   const statusLabel =
     status === 'streaming'
       ? 'Working'
@@ -131,16 +136,16 @@ export const WorkerQuickLook = memo(function WorkerQuickLook({
         <span className="min-w-0 flex-1 truncate text-sm font-medium">
           {worker.displayName ?? worker.agentId}
         </span>
-        {modelLabel ? (
+        {modelWithThinking ? (
           <span className="shrink-0 rounded border border-border/60 bg-muted/50 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-            {modelLabel}
+            {modelWithThinking}
           </span>
         ) : null}
         <span className="shrink-0 text-[10px] text-muted-foreground">{statusLabel}</span>
       </div>
 
       {/* Activity feed */}
-      <div className="min-h-0 flex-1 overflow-y-auto px-2 py-1.5 [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-white/12 hover:[&::-webkit-scrollbar-thumb]:bg-white/22 [scrollbar-color:rgba(255,255,255,0.12)_transparent]">
+      <div className="min-h-0 flex-1 overflow-y-auto px-2 py-1.5 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-white/15 hover:[&::-webkit-scrollbar-thumb]:bg-white/30 [scrollbar-color:rgba(255,255,255,0.15)_transparent] [scrollbar-width:thin]">
         {displayEntries.length === 0 ? (
           <p className="py-4 text-center text-xs italic text-muted-foreground">
             No recent activity

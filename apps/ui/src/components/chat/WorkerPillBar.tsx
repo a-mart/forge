@@ -143,7 +143,12 @@ const WorkerPill = memo(function WorkerPill({
     }
   }
 
-  const modelLabel = worker.model?.modelId ?? 'unknown'
+  const modelId = worker.model?.modelId ?? 'unknown'
+  const thinkingLevel = worker.model?.thinkingLevel
+  const modelLabel =
+    thinkingLevel && thinkingLevel !== 'none'
+      ? `${modelId} · ${thinkingLevel}`
+      : modelId
   const statusText = status === 'streaming' ? 'Working' : status === 'idle' ? 'Idle' : status
 
   const handleViewConversation = useCallback(() => {
