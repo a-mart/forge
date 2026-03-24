@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { SHARED_INTEGRATION_MANAGER_ID } from '../integrations/shared-config.js'
 import { getScheduleFilePath } from '../scheduler/schedule-storage.js'
 import {
+  getProfilePiExtensionsDir,
   getSharedMobileDevicesPath,
   getSharedMobileNotificationPreferencesPath,
 } from '../swarm/data-paths.js'
@@ -873,8 +874,24 @@ describe('SwarmWebSocketServer P0 endpoints', () => {
     }
   })
 
-  it('exposes runtime extension snapshots via /api/settings/extensions', async () => {
+  it('exposes discovered extensions and runtime snapshots via /api/settings/extensions', async () => {
     const config = await makeTempConfig({ managerId: 'manager' })
+
+    const globalWorkerExtensionsDir = join(config.paths.agentDir, 'extensions')
+    const globalManagerExtensionsDir = join(config.paths.managerAgentDir, 'extensions')
+    const profileExtensionsDir = getProfilePiExtensionsDir(config.paths.dataDir, 'manager')
+    const projectExtensionsDir = join(config.paths.rootDir, '.pi', 'extensions')
+
+    await mkdir(globalWorkerExtensionsDir, { recursive: true })
+    await mkdir(globalManagerExtensionsDir, { recursive: true })
+    await mkdir(profileExtensionsDir, { recursive: true })
+    await mkdir(join(projectExtensionsDir, 'project-pack'), { recursive: true })
+
+    await writeFile(join(globalWorkerExtensionsDir, 'worker-ext.ts'), 'export default () => {}\n', 'utf8')
+    await writeFile(join(globalManagerExtensionsDir, 'manager-ext.js'), 'module.exports = () => {}\n', 'utf8')
+    await writeFile(join(profileExtensionsDir, 'profile-ext.ts'), 'export default () => {}\n', 'utf8')
+    await writeFile(join(projectExtensionsDir, 'project-pack', 'index.ts'), 'export default () => {}\n', 'utf8')
+
     const manager = new FakeSwarmManager(
       config,
       [createManagerDescriptor(config.paths.rootDir, 'manager')],
@@ -888,9 +905,9 @@ describe('SwarmWebSocketServer P0 endpoints', () => {
             loadedAt: '2026-03-24T00:00:00.000Z',
             extensions: [
               {
-                displayName: 'protected-paths.ts',
-                path: '/tmp/protected-paths.ts',
-                resolvedPath: '/tmp/protected-paths.ts',
+                displayName: 'project-pack',
+                path: join(projectExtensionsDir, 'project-pack', 'index.ts'),
+                resolvedPath: join(projectExtensionsDir, 'project-pack', 'index.ts'),
                 source: 'project-local',
                 events: ['tool_call'],
                 tools: [],
@@ -898,7 +915,7 @@ describe('SwarmWebSocketServer P0 endpoints', () => {
             ],
             loadErrors: [
               {
-                path: '/tmp/broken.ts',
+                path: join(profileExtensionsDir, 'profile-ext.ts'),
                 error: 'Failed to load extension: boom',
               },
             ],
@@ -923,6 +940,34 @@ describe('SwarmWebSocketServer P0 endpoints', () => {
       expect(payload.status).toBe(200)
       expect(typeof payload.json.generatedAt).toBe('string')
       expect(payload.json.snapshots).toHaveLength(1)
+
+      const discovered = payload.json.discovered as Array<Record<string, unknown>>
+      expect(discovered).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            displayName: 'worker-ext.ts',
+            path: join(globalWorkerExtensionsDir, 'worker-ext.ts'),
+            source: 'global-worker',
+          }),
+          expect.objectContaining({
+            displayName: 'manager-ext.js',
+            path: join(globalManagerExtensionsDir, 'manager-ext.js'),
+            source: 'global-manager',
+          }),
+          expect.objectContaining({
+            displayName: 'profile-ext.ts',
+            path: join(profileExtensionsDir, 'profile-ext.ts'),
+            source: 'profile',
+            profileId: 'manager',
+          }),
+          expect.objectContaining({
+            displayName: 'project-pack',
+            path: join(projectExtensionsDir, 'project-pack', 'index.ts'),
+            source: 'project-local',
+            cwd: config.paths.rootDir,
+          }),
+        ]),
+      )
 
       const [snapshot] = payload.json.snapshots as Array<Record<string, unknown>>
       expect(snapshot).toMatchObject({

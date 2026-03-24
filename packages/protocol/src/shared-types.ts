@@ -54,10 +54,24 @@ export interface AgentDescriptor {
 export type RuntimeExtensionSource =
   | 'global-worker'
   | 'global-manager'
-  | 'profile-overlay'
+  | 'profile'
   | 'project-local'
   | 'package'
   | 'unknown'
+
+export type DiscoveredExtensionSource =
+  | 'global-worker'
+  | 'global-manager'
+  | 'profile'
+  | 'project-local'
+
+export interface DiscoveredExtensionMetadata {
+  displayName: string
+  path: string
+  source: DiscoveredExtensionSource
+  profileId?: string
+  cwd?: string
+}
 
 export interface RuntimeExtensionMetadata {
   displayName: string
@@ -85,6 +99,7 @@ export interface AgentRuntimeExtensionSnapshot {
 
 export interface SettingsExtensionsResponse {
   generatedAt: string
+  discovered: DiscoveredExtensionMetadata[]
   snapshots: AgentRuntimeExtensionSnapshot[]
   directories: {
     globalWorker: string

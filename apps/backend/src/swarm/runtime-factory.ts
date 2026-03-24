@@ -589,7 +589,7 @@ function classifyRuntimeExtensionSource(options: {
     }
 
     if (isProfileOverlayExtensionPath(candidate, profilesDir)) {
-      return "profile-overlay";
+      return "profile";
     }
 
     if (isPathInside(candidate, projectLocalExtensionsDir)) {

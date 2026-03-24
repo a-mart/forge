@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   AlertTriangle,
   Copy,
@@ -10,23 +10,27 @@ import {
 } from 'lucide-react'
 import type {
   SettingsExtensionsResponse,
-  AgentRuntimeExtensionSnapshot,
-  RuntimeExtensionMetadata,
-  RuntimeExtensionLoadError,
   RuntimeExtensionSource,
+  DiscoveredExtensionMetadata,
+  DiscoveredExtensionSource,
 } from '@forge/protocol'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { SettingsSection } from './settings-row'
 import { fetchSettingsExtensions, toErrorMessage } from './settings-api'
 
-/* ------------------------------------------------------------------ */
-/*  Source badge colors                                                */
-/* ------------------------------------------------------------------ */
-
 const DOCS_URL = 'https://github.com/a-mart/forge/blob/main/docs/PI_EXTENSIONS.md'
 
-const SOURCE_STYLES: Record<RuntimeExtensionSource, { label: string; className: string }> = {
+const DISCOVERY_SOURCE_ORDER: DiscoveredExtensionSource[] = [
+  'global-worker',
+  'global-manager',
+  'profile',
+  'project-local',
+]
+
+type SourceBadgeValue = RuntimeExtensionSource | DiscoveredExtensionSource
+
+const SOURCE_STYLES: Record<SourceBadgeValue, { label: string; className: string }> = {
   'global-worker': {
     label: 'Global Worker',
     className: 'border-blue-500/30 bg-blue-500/10 text-blue-600 dark:text-blue-400',
@@ -35,7 +39,7 @@ const SOURCE_STYLES: Record<RuntimeExtensionSource, { label: string; className: 
     label: 'Global Manager',
     className: 'border-purple-500/30 bg-purple-500/10 text-purple-600 dark:text-purple-400',
   },
-  'profile-overlay': {
+  profile: {
     label: 'Profile',
     className: 'border-teal-500/30 bg-teal-500/10 text-teal-600 dark:text-teal-400',
   },
@@ -53,9 +57,26 @@ const SOURCE_STYLES: Record<RuntimeExtensionSource, { label: string; className: 
   },
 }
 
-/* ------------------------------------------------------------------ */
-/*  Copy button                                                       */
-/* ------------------------------------------------------------------ */
+interface RuntimeOverlayBinding {
+  agentId: string
+  role: 'manager' | 'worker'
+  profileId?: string
+  loadedAt: string
+  events: string[]
+  tools: string[]
+}
+
+interface RuntimeOverlayError {
+  agentId: string
+  role: 'manager' | 'worker'
+  path: string
+  error: string
+}
+
+interface RuntimeOverlay {
+  bindings: RuntimeOverlayBinding[]
+  errors: RuntimeOverlayError[]
+}
 
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false)
@@ -82,11 +103,7 @@ function CopyButton({ text }: { text: string }) {
   )
 }
 
-/* ------------------------------------------------------------------ */
-/*  Source badge                                                      */
-/* ------------------------------------------------------------------ */
-
-function SourceBadge({ source }: { source: RuntimeExtensionSource }) {
+function SourceBadge({ source }: { source: SourceBadgeValue }) {
   const style = SOURCE_STYLES[source] ?? SOURCE_STYLES.unknown
   return (
     <Badge variant="outline" className={`px-1.5 py-0 text-[10px] font-medium ${style.className}`}>
@@ -94,10 +111,6 @@ function SourceBadge({ source }: { source: RuntimeExtensionSource }) {
     </Badge>
   )
 }
-
-/* ------------------------------------------------------------------ */
-/*  Role badge                                                        */
-/* ------------------------------------------------------------------ */
 
 function RoleBadge({ role }: { role: 'manager' | 'worker' }) {
   const isManager = role === 'manager'
@@ -114,10 +127,6 @@ function RoleBadge({ role }: { role: 'manager' | 'worker' }) {
     </Badge>
   )
 }
-
-/* ------------------------------------------------------------------ */
-/*  Pill list (for tools/events)                                      */
-/* ------------------------------------------------------------------ */
 
 function PillList({ items, label }: { items: string[]; label: string }) {
   if (items.length === 0) return null
@@ -136,96 +145,104 @@ function PillList({ items, label }: { items: string[]; label: string }) {
   )
 }
 
-/* ------------------------------------------------------------------ */
-/*  Extension card                                                    */
-/* ------------------------------------------------------------------ */
-
-function ExtensionItem({ ext }: { ext: RuntimeExtensionMetadata }) {
-  return (
-    <div className="rounded-md border border-border/60 bg-card/40 p-3 space-y-2">
-      <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-sm font-medium text-foreground">{ext.displayName}</span>
-        <SourceBadge source={ext.source} />
-      </div>
-      <div className="flex items-center gap-1.5 min-w-0">
-        <code className="truncate text-[11px] text-muted-foreground font-mono">{ext.path}</code>
-        <CopyButton text={ext.resolvedPath || ext.path} />
-      </div>
-      {(ext.tools.length > 0 || ext.events.length > 0) && (
-        <div className="space-y-1">
-          <PillList items={ext.tools} label="Tools" />
-          <PillList items={ext.events} label="Events" />
-        </div>
-      )}
-    </div>
-  )
-}
-
-/* ------------------------------------------------------------------ */
-/*  Load error row                                                    */
-/* ------------------------------------------------------------------ */
-
-function LoadErrorItem({ err }: { err: RuntimeExtensionLoadError }) {
+function RuntimeErrorItem({ error }: { error: RuntimeOverlayError }) {
   return (
     <div className="flex items-start gap-2 rounded-md border border-amber-500/20 bg-amber-500/5 px-3 py-2">
       <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-500" />
       <div className="min-w-0 space-y-0.5">
-        <code className="block truncate text-[11px] font-mono text-amber-600 dark:text-amber-400">
-          {err.path}
-        </code>
-        <p className="text-xs text-muted-foreground">{err.error}</p>
+        <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+          <span className="font-mono text-amber-600 dark:text-amber-400">{error.agentId}</span>
+          <RoleBadge role={error.role} />
+        </div>
+        <p className="text-xs text-muted-foreground">{error.error}</p>
       </div>
     </div>
   )
 }
 
-/* ------------------------------------------------------------------ */
-/*  Runtime snapshot card                                             */
-/* ------------------------------------------------------------------ */
+function DiscoveredExtensionCard({
+  extension,
+  overlay,
+}: {
+  extension: DiscoveredExtensionMetadata
+  overlay?: RuntimeOverlay
+}) {
+  const boundTools = useMemo(() => {
+    if (!overlay) return []
+    return dedupeAndSort(overlay.bindings.flatMap((binding) => binding.tools))
+  }, [overlay])
 
-function SnapshotCard({ snapshot }: { snapshot: AgentRuntimeExtensionSnapshot }) {
+  const boundEvents = useMemo(() => {
+    if (!overlay) return []
+    return dedupeAndSort(overlay.bindings.flatMap((binding) => binding.events))
+  }, [overlay])
+
+  const activeBindings = overlay?.bindings ?? []
+  const runtimeErrors = overlay?.errors ?? []
+
   return (
-    <div className="rounded-lg border border-border bg-card/50 p-4 space-y-4">
-      {/* Header */}
+    <div className="rounded-md border border-border/60 bg-card/40 p-3 space-y-3">
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-sm font-semibold text-foreground font-mono">{snapshot.agentId}</span>
-        <RoleBadge role={snapshot.role} />
-        {snapshot.profileId && (
+        <span className="text-sm font-medium text-foreground">{extension.displayName}</span>
+        <SourceBadge source={extension.source} />
+        {extension.profileId && (
           <span className="text-[11px] text-muted-foreground">
-            profile: <span className="font-mono">{snapshot.profileId}</span>
+            profile: <span className="font-mono">{extension.profileId}</span>
           </span>
         )}
       </div>
 
-      {/* Extensions */}
-      {snapshot.extensions.length > 0 && (
-        <div className="space-y-2">
-          {snapshot.extensions.map((ext) => (
-            <ExtensionItem key={ext.resolvedPath || ext.path} ext={ext} />
-          ))}
+      <div className="flex items-center gap-1.5 min-w-0">
+        <code className="truncate text-[11px] text-muted-foreground font-mono">{extension.path}</code>
+        <CopyButton text={extension.path} />
+      </div>
+
+      {extension.cwd && (
+        <div className="text-[11px] text-muted-foreground">
+          cwd: <code className="font-mono">{extension.cwd}</code>
         </div>
       )}
 
-      {snapshot.extensions.length === 0 && snapshot.loadErrors.length === 0 && (
-        <p className="text-xs text-muted-foreground/60 italic">No extensions loaded</p>
+      {activeBindings.length === 0 && runtimeErrors.length === 0 && (
+        <p className="text-xs italic text-muted-foreground/70">Not loaded in active runtimes</p>
       )}
 
-      {/* Load errors */}
-      {snapshot.loadErrors.length > 0 && (
+      {activeBindings.length > 0 && (
+        <div className="space-y-2 rounded-md border border-border/50 bg-background/30 p-2.5">
+          <p className="text-xs text-muted-foreground">
+            Loaded by {activeBindings.length} runtime{activeBindings.length !== 1 ? 's' : ''}
+          </p>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {activeBindings.map((binding) => (
+              <span
+                key={`${binding.agentId}:${binding.loadedAt}`}
+                className="inline-flex items-center gap-1 rounded-md border border-border/70 bg-card/50 px-1.5 py-0.5"
+              >
+                <span className="text-[10px] font-mono text-foreground">{binding.agentId}</span>
+                <RoleBadge role={binding.role} />
+              </span>
+            ))}
+          </div>
+          {(boundTools.length > 0 || boundEvents.length > 0) && (
+            <div className="space-y-1">
+              <PillList items={boundTools} label="Tools" />
+              <PillList items={boundEvents} label="Events" />
+            </div>
+          )}
+        </div>
+      )}
+
+      {runtimeErrors.length > 0 && (
         <div className="space-y-2">
-          <h4 className="text-xs font-semibold text-amber-600 dark:text-amber-400">Load Errors</h4>
-          {snapshot.loadErrors.map((err) => (
-            <LoadErrorItem key={err.path} err={err} />
+          <h4 className="text-xs font-semibold text-amber-600 dark:text-amber-400">Runtime Load Errors</h4>
+          {runtimeErrors.map((error) => (
+            <RuntimeErrorItem key={`${error.agentId}:${error.path}:${error.error}`} error={error} />
           ))}
         </div>
       )}
     </div>
   )
 }
-
-/* ------------------------------------------------------------------ */
-/*  Directory path row                                                */
-/* ------------------------------------------------------------------ */
 
 function DirectoryRow({ label, path }: { label: string; path: string }) {
   return (
@@ -238,18 +255,14 @@ function DirectoryRow({ label, path }: { label: string; path: string }) {
   )
 }
 
-/* ------------------------------------------------------------------ */
-/*  Empty state                                                       */
-/* ------------------------------------------------------------------ */
-
 function EmptyState({ directories }: { directories?: SettingsExtensionsResponse['directories'] }) {
   return (
     <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-12 text-center">
       <Puzzle className="mb-3 size-10 text-muted-foreground/30" />
-      <p className="text-sm font-medium text-muted-foreground">No active extensions</p>
+      <p className="text-sm font-medium text-muted-foreground">No extensions found on disk</p>
       <p className="mt-1.5 max-w-md text-xs leading-relaxed text-muted-foreground/70">
-        Extensions are loaded when agent runtimes start. Drop extension files into the directories
-        below and restart a session to see them here.
+        Drop extension files into the directories below. Forge supports single .ts/.js files and
+        folders with index.ts or index.js.
       </p>
       <a
         href={DOCS_URL}
@@ -272,10 +285,6 @@ function EmptyState({ directories }: { directories?: SettingsExtensionsResponse[
     </div>
   )
 }
-
-/* ------------------------------------------------------------------ */
-/*  Main component                                                    */
-/* ------------------------------------------------------------------ */
 
 interface SettingsExtensionsProps {
   wsUrl: string
@@ -303,21 +312,44 @@ export function SettingsExtensions({ wsUrl }: SettingsExtensionsProps) {
     void load()
   }, [load])
 
-  const visibleSnapshots =
-    data?.snapshots?.filter((snapshot) => snapshot.extensions.length > 0 || snapshot.loadErrors.length > 0) ?? []
-  const hasSnapshots = visibleSnapshots.length > 0
-  const totalExtensions = visibleSnapshots.reduce((sum, snapshot) => sum + snapshot.extensions.length, 0)
-  const totalErrors = visibleSnapshots.reduce((sum, snapshot) => sum + snapshot.loadErrors.length, 0)
+  const runtimeOverlayByPath = useMemo(() => {
+    return buildRuntimeOverlayMap(data?.snapshots ?? [])
+  }, [data?.snapshots])
+
+  const discoveredExtensions = data?.discovered ?? []
+  const hasDiscoveredExtensions = discoveredExtensions.length > 0
+
+  const groupedDiscoveredExtensions = useMemo(() => {
+    const grouped = new Map<DiscoveredExtensionSource, DiscoveredExtensionMetadata[]>()
+    for (const source of DISCOVERY_SOURCE_ORDER) {
+      grouped.set(source, [])
+    }
+
+    for (const extension of discoveredExtensions) {
+      grouped.get(extension.source)?.push(extension)
+    }
+
+    return grouped
+  }, [discoveredExtensions])
+
+  const extensionsWithBindings = discoveredExtensions.filter((extension) => {
+    const overlay = runtimeOverlayByPath.get(normalizePathKey(extension.path))
+    return Boolean(overlay && overlay.bindings.length > 0)
+  }).length
+
+  const extensionsWithErrors = discoveredExtensions.filter((extension) => {
+    const overlay = runtimeOverlayByPath.get(normalizePathKey(extension.path))
+    return Boolean(overlay && overlay.errors.length > 0)
+  }).length
 
   return (
     <div className="flex flex-col gap-8">
-      {/* Active Runtime Snapshots */}
       <SettingsSection
-        label="Active Runtime Extensions"
+        label="Discovered Extensions"
         description={
-          hasSnapshots
-            ? `${totalExtensions} extension${totalExtensions !== 1 ? 's' : ''} across ${visibleSnapshots.length} runtime${visibleSnapshots.length !== 1 ? 's' : ''}${totalErrors > 0 ? ` · ${totalErrors} error${totalErrors !== 1 ? 's' : ''}` : ''}`
-            : 'Extensions loaded by currently active agent runtimes'
+          hasDiscoveredExtensions
+            ? `${discoveredExtensions.length} extension${discoveredExtensions.length !== 1 ? 's' : ''} on disk${extensionsWithBindings > 0 ? ` · ${extensionsWithBindings} loaded in active runtimes` : ''}${extensionsWithErrors > 0 ? ` · ${extensionsWithErrors} with runtime errors` : ''}`
+            : 'Extensions discovered from disk'
         }
         cta={
           <Button
@@ -346,16 +378,42 @@ export function SettingsExtensions({ wsUrl }: SettingsExtensionsProps) {
           </div>
         )}
 
-        {!isLoading && data && !hasSnapshots && <EmptyState directories={data.directories} />}
+        {!isLoading && data && !hasDiscoveredExtensions && <EmptyState directories={data.directories} />}
 
-        {hasSnapshots && (
-          <div className="space-y-3">
-            <p className="text-[11px] text-muted-foreground/60">
-              Reflects currently active runtimes. Runtimes without extensions or load errors are not shown.
+        {hasDiscoveredExtensions && (
+          <div className="space-y-4">
+            <p className="text-[11px] text-muted-foreground/70">
+              Runtime details are overlaid when matching active sessions have loaded an extension.
             </p>
-            {visibleSnapshots.map((snapshot) => (
-              <SnapshotCard key={snapshot.agentId} snapshot={snapshot} />
-            ))}
+
+            {DISCOVERY_SOURCE_ORDER.map((source) => {
+              const entries = groupedDiscoveredExtensions.get(source) ?? []
+              if (entries.length === 0) {
+                return null
+              }
+
+              return (
+                <div key={source} className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <SourceBadge source={source} />
+                    <p className="text-xs text-muted-foreground">
+                      {entries.length} extension{entries.length !== 1 ? 's' : ''}
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    {entries.map((extension) => (
+                      <DiscoveredExtensionCard
+                        key={`${source}:${extension.path}:${extension.profileId ?? ''}:${extension.cwd ?? ''}`}
+                        extension={extension}
+                        overlay={runtimeOverlayByPath.get(normalizePathKey(extension.path))}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )
+            })}
+
             <div className="pt-1">
               <a
                 href={DOCS_URL}
@@ -370,8 +428,7 @@ export function SettingsExtensions({ wsUrl }: SettingsExtensionsProps) {
         )}
       </SettingsSection>
 
-      {/* Discovery Directories */}
-      {data?.directories && hasSnapshots && (
+      {data?.directories && (
         <SettingsSection
           label="Discovery Directories"
           description="Where Forge looks for extension files"
@@ -386,4 +443,95 @@ export function SettingsExtensions({ wsUrl }: SettingsExtensionsProps) {
       )}
     </div>
   )
+}
+
+function normalizePathKey(path: string): string {
+  return path.trim().replace(/\\/g, '/').toLowerCase()
+}
+
+function dedupeAndSort(values: string[]): string[] {
+  return Array.from(new Set(values)).sort((left, right) => left.localeCompare(right))
+}
+
+function buildRuntimeOverlayMap(
+  snapshots: SettingsExtensionsResponse['snapshots']
+): Map<string, RuntimeOverlay> {
+  const map = new Map<string, RuntimeOverlay>()
+
+  for (const snapshot of snapshots) {
+    for (const extension of snapshot.extensions) {
+      const key = normalizePathKey(extension.resolvedPath || extension.path)
+      if (!key) {
+        continue
+      }
+
+      const overlay = getOrCreateOverlay(map, key)
+      overlay.bindings.push({
+        agentId: snapshot.agentId,
+        role: snapshot.role,
+        profileId: snapshot.profileId,
+        loadedAt: snapshot.loadedAt,
+        events: extension.events,
+        tools: extension.tools,
+      })
+    }
+
+    for (const loadError of snapshot.loadErrors) {
+      const key = normalizePathKey(loadError.path)
+      if (!key) {
+        continue
+      }
+
+      const overlay = getOrCreateOverlay(map, key)
+      overlay.errors.push({
+        agentId: snapshot.agentId,
+        role: snapshot.role,
+        path: loadError.path,
+        error: loadError.error,
+      })
+    }
+  }
+
+  for (const overlay of map.values()) {
+    overlay.bindings = dedupeBindings(overlay.bindings)
+    overlay.errors = dedupeErrors(overlay.errors)
+  }
+
+  return map
+}
+
+function getOrCreateOverlay(map: Map<string, RuntimeOverlay>, key: string): RuntimeOverlay {
+  const existing = map.get(key)
+  if (existing) {
+    return existing
+  }
+
+  const created: RuntimeOverlay = {
+    bindings: [],
+    errors: [],
+  }
+  map.set(key, created)
+  return created
+}
+
+function dedupeBindings(bindings: RuntimeOverlayBinding[]): RuntimeOverlayBinding[] {
+  const unique = new Map<string, RuntimeOverlayBinding>()
+  for (const binding of bindings) {
+    const key = `${binding.agentId}::${binding.loadedAt}::${binding.role}`
+    if (!unique.has(key)) {
+      unique.set(key, binding)
+    }
+  }
+  return Array.from(unique.values())
+}
+
+function dedupeErrors(errors: RuntimeOverlayError[]): RuntimeOverlayError[] {
+  const unique = new Map<string, RuntimeOverlayError>()
+  for (const error of errors) {
+    const key = `${error.agentId}::${error.path}::${error.error}`
+    if (!unique.has(key)) {
+      unique.set(key, error)
+    }
+  }
+  return Array.from(unique.values())
 }
