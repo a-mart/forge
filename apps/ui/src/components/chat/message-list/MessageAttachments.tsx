@@ -1,7 +1,7 @@
-import { useState } from 'react'
 import { File, FileText, ImageIcon, ZoomIn } from 'lucide-react'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
 import { cn } from '@/lib/utils'
+import { usePeekPreview } from '@/hooks/use-peek-preview'
 import { ContentZoomDialog } from '../ContentZoomDialog'
 import type {
   ConversationImageAttachment,
@@ -105,7 +105,7 @@ function MessageImageAttachments({
   isUser: boolean
   wsUrl?: string
 }) {
-  const [zoomTarget, setZoomTarget] = useState<{ src: string; alt: string } | null>(null)
+  const { target: zoomTarget, clearTarget, bind } = usePeekPreview<{ src: string; alt: string }>()
 
   if (attachments.length === 0) {
     return null
@@ -125,12 +125,13 @@ function MessageImageAttachments({
             : `${attachment.mimeType}-${attachment.fileRef}-${index}`
 
           const altText = attachment.fileName || `Attached image ${index + 1}`
+          const peek = bind({ src, alt: altText })
 
           return (
             <button
               key={imageKey}
               type="button"
-              onClick={() => setZoomTarget({ src, alt: altText })}
+              {...peek}
               className="group/zoom relative cursor-zoom-in overflow-hidden rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
               aria-label={`View full size: ${altText}`}
             >
@@ -164,7 +165,7 @@ function MessageImageAttachments({
       <ContentZoomDialog
         open={zoomTarget !== null}
         onOpenChange={(open) => {
-          if (!open) setZoomTarget(null)
+          if (!open) clearTarget()
         }}
         title="Expanded image preview"
       >

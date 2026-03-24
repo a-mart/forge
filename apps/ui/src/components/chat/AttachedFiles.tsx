@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { File, FileText, X, ZoomIn } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -6,6 +5,7 @@ import {
   isPendingTextAttachment,
   type PendingAttachment,
 } from '@/lib/file-attachments'
+import { usePeekPreview } from '@/hooks/use-peek-preview'
 import { ContentZoomDialog } from './ContentZoomDialog'
 
 interface AttachedFilesProps {
@@ -14,7 +14,7 @@ interface AttachedFilesProps {
 }
 
 export function AttachedFiles({ attachments, onRemove }: AttachedFilesProps) {
-  const [zoomTarget, setZoomTarget] = useState<{ src: string; alt: string } | null>(null)
+  const { target: zoomTarget, clearTarget, bind } = usePeekPreview<{ src: string; alt: string }>()
 
   if (attachments.length === 0) {
     return null
@@ -30,12 +30,10 @@ export function AttachedFiles({ attachments, onRemove }: AttachedFilesProps) {
             {isImage ? (
               <button
                 type="button"
-                onClick={() =>
-                  setZoomTarget({
-                    src: attachment.dataUrl,
-                    alt: attachment.fileName || 'Attached image',
-                  })
-                }
+                {...bind({
+                  src: attachment.dataUrl,
+                  alt: attachment.fileName || 'Attached image',
+                })}
                 className="group/zoom relative cursor-zoom-in overflow-hidden rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
                 aria-label={`View full size: ${attachment.fileName || 'Attached image'}`}
               >
@@ -82,7 +80,7 @@ export function AttachedFiles({ attachments, onRemove }: AttachedFilesProps) {
       <ContentZoomDialog
         open={zoomTarget !== null}
         onOpenChange={(open) => {
-          if (!open) setZoomTarget(null)
+          if (!open) clearTarget()
         }}
         title="Expanded image preview"
       >
