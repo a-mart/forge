@@ -45,6 +45,9 @@ export function hydrateToolDisplayEntry(
   displayEntry.latestKind = event.kind
 
   if (event.kind === 'tool_execution_start') {
+    if (!displayEntry.startTimestamp) {
+      displayEntry.startTimestamp = event.timestamp
+    }
     displayEntry.inputPayload = event.text
     displayEntry.latestPayload = event.text
     displayEntry.outputPayload = undefined

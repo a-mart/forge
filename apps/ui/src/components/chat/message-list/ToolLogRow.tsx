@@ -1,4 +1,4 @@
-import { useId, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import {
   AlertCircle,
   Check,
@@ -12,6 +12,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { formatElapsed } from '@/lib/format-utils'
 import { cn } from '@/lib/utils'
 import { formatTimestamp } from './message-row-utils'
 import type {
@@ -198,6 +199,34 @@ function getFriendlyToolMessage(
   return detail ? `${baseLabel}: ${detail}` : baseLabel
 }
 
+function useElapsedTimer(
+  startTimestamp: string | undefined,
+  isActive: boolean,
+): string | null {
+  const [, setTick] = useState(0)
+
+  useEffect(() => {
+    if (!isActive || !startTimestamp) return
+    const interval = setInterval(() => setTick((t) => t + 1), 1_000)
+    return () => clearInterval(interval)
+  }, [isActive, startTimestamp])
+
+  if (!startTimestamp || !isActive) return null
+  const elapsed = Date.now() - new Date(startTimestamp).getTime()
+  return formatElapsed(elapsed)
+}
+
+function computeStaticDuration(
+  startTimestamp: string | undefined,
+  endTimestamp: string,
+): string | null {
+  if (!startTimestamp) return null
+  const ms = new Date(endTimestamp).getTime() - new Date(startTimestamp).getTime()
+  if (ms < 0) return null
+  if (ms < 1_000) return '<1s'
+  return formatElapsed(ms)
+}
+
 function ToolPayloadBlock({
   label,
   value,
@@ -228,7 +257,13 @@ function ToolPayloadBlock({
   )
 }
 
-function ToolExecutionLogRow({ entry }: { entry: ToolExecutionDisplayEntry }) {
+function ToolExecutionLogRow({
+  entry,
+  isActive,
+}: {
+  entry: ToolExecutionDisplayEntry
+  isActive: boolean
+}) {
   const [isExpanded, setIsExpanded] = useState(false)
   const contentId = useId()
 
@@ -240,6 +275,13 @@ function ToolExecutionLogRow({ entry }: { entry: ToolExecutionDisplayEntry }) {
     displayStatus,
   )
   const actorLabel = entry.actorAgentId?.trim()
+
+  const isTimerActive = isActive && displayStatus === 'pending'
+  const elapsedLabel = useElapsedTimer(entry.startTimestamp, isTimerActive)
+  const staticDuration =
+    displayStatus !== 'pending'
+      ? computeStaticDuration(entry.startTimestamp, entry.timestamp)
+      : null
 
   const config = entry.toolName ? TOOL_CONFIG[entry.toolName] : undefined
   const ToolIcon = config?.icon
@@ -302,6 +344,16 @@ function ToolExecutionLogRow({ entry }: { entry: ToolExecutionDisplayEntry }) {
             </span>
           ) : null}
           {friendlyMessage}
+          {elapsedLabel ? (
+            <span className="ml-1.5 text-xs tabular-nums not-italic text-muted-foreground/60">
+              {elapsedLabel}
+            </span>
+          ) : null}
+          {staticDuration ? (
+            <span className="ml-1.5 text-[11px] tabular-nums not-italic text-muted-foreground/40">
+              · {staticDuration}
+            </span>
+          ) : null}
         </span>
 
         <ChevronRight
@@ -361,13 +413,20 @@ function RuntimeErrorLog({ entry }: { entry: ConversationLogEntry }) {
 export function ToolLogRow({
   type,
   entry,
+  isActive = false,
 }: {
   type: 'tool_execution' | 'runtime_error_log'
   entry: ToolExecutionDisplayEntry | ConversationLogEntry
+  isActive?: boolean
 }) {
   if (type === 'runtime_error_log') {
     return <RuntimeErrorLog entry={entry as ConversationLogEntry} />
   }
 
-  return <ToolExecutionLogRow entry={entry as ToolExecutionDisplayEntry} />
+  return (
+    <ToolExecutionLogRow
+      entry={entry as ToolExecutionDisplayEntry}
+      isActive={isActive}
+    />
+  )
 }

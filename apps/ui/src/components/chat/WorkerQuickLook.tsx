@@ -191,6 +191,7 @@ export const WorkerQuickLook = memo(function WorkerQuickLook({
                   key={entry.id}
                   type="tool_execution"
                   entry={entry.entry}
+                  isActive={status === 'streaming'}
                 />
               )
             })}

@@ -520,6 +520,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
                 <ToolLogRow
                   type={entry.type}
                   entry={entry.entry}
+                  isActive={isLoading}
                 />
               </div>
             )

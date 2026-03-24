@@ -113,7 +113,7 @@ The left sidebar shows all your sessions across all managers. You can switch ses
 
 ### Worker Pills
 
-When workers are active, small green pills appear at the bottom of the chat window. Each pill represents a running worker. Click a pill to see what that worker is doing: commands it's running, files it's editing.
+When workers are active, small green pills appear at the bottom of the chat window. Each pill represents a running worker and shows an elapsed timer. Click a pill to see what that worker is doing: commands it's running, files it's editing, with elapsed time on each tool call.
 
 Quick at-a-glance view of parallel work in progress.
 

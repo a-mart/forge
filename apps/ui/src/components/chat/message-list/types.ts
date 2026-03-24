@@ -40,6 +40,7 @@ export interface ToolExecutionDisplayEntry {
   latestPayload?: string
   outputPayload?: string
   timestamp: string
+  startTimestamp?: string
   latestKind: ToolExecutionEvent['kind']
   isError?: boolean
 }
