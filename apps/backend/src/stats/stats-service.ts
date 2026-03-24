@@ -9,7 +9,8 @@ import { getAgentsStoreFilePath, getProfilesDir, getSharedDir } from "../swarm/d
 export const STATS_CACHE_TTL_MS = 2 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const STATS_CACHE_FILE_NAME = "stats-cache.json";
-const STATS_CACHE_VERSION = 2;
+const STATS_CACHE_VERSION = 3;
+const SERVER_TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 interface SessionMetaLite {
   workers?: Array<{
@@ -48,6 +49,7 @@ interface WorkerRun {
 
 interface CacheEntry {
   expiresAt: number;
+  timezone: string;
   snapshot: StatsSnapshot;
 }
 
@@ -70,43 +72,49 @@ export class StatsService {
     this.cacheFilePath = join(getSharedDir(dataDir), STATS_CACHE_FILE_NAME);
   }
 
-  async getSnapshot(range: StatsRange, options: { forceRefresh?: boolean } = {}): Promise<StatsSnapshot> {
+  async getSnapshot(
+    range: StatsRange,
+    options: { forceRefresh?: boolean; timezone?: string | null } = {}
+  ): Promise<StatsSnapshot> {
     await this.ensurePersistentCacheLoaded();
 
-    const key = this.getCacheKey(range);
+    const timezone = normalizeTimezone(options.timezone);
+    const cacheKey = this.getCacheKey(range);
+    const inFlightKey = this.getInFlightKey(range, timezone);
     const nowMs = Date.now();
 
     if (!options.forceRefresh) {
-      const cached = this.cache.get(key);
-      if (cached && cached.expiresAt > nowMs) {
+      const cached = this.cache.get(cacheKey);
+      if (cached && cached.timezone === timezone && cached.expiresAt > nowMs) {
         return cached.snapshot;
       }
 
-      if (cached) {
-        void this.refreshRangeInBackground(range);
+      if (cached && cached.timezone === timezone) {
+        void this.refreshRangeInBackground(range, timezone);
         return cached.snapshot;
       }
     }
 
-    const inFlight = this.inFlightComputations.get(key);
+    const inFlight = this.inFlightComputations.get(inFlightKey);
     if (inFlight) {
       return inFlight;
     }
 
-    const computePromise = this.computeSnapshot(range, nowMs)
+    const computePromise = this.computeSnapshot(range, nowMs, timezone)
       .then((snapshot) => {
-        this.cache.set(key, {
+        this.cache.set(cacheKey, {
           expiresAt: Date.now() + STATS_CACHE_TTL_MS,
+          timezone,
           snapshot
         });
         this.queuePersistCacheWrite();
         return snapshot;
       })
       .finally(() => {
-        this.inFlightComputations.delete(key);
+        this.inFlightComputations.delete(inFlightKey);
       });
 
-    this.inFlightComputations.set(key, computePromise);
+    this.inFlightComputations.set(inFlightKey, computePromise);
     return computePromise;
   }
 
@@ -121,9 +129,10 @@ export class StatsService {
 
     this.refreshAllPromise = (async () => {
       const ranges: StatsRange[] = ["7d", "30d", "all"];
+      const timezone = SERVER_TIMEZONE;
       for (const range of ranges) {
         try {
-          await this.getSnapshot(range, { forceRefresh: true });
+          await this.getSnapshot(range, { forceRefresh: true, timezone });
         } catch {
           // keep refreshing other ranges even if one fails
         }
@@ -139,14 +148,18 @@ export class StatsService {
     return this.refreshAllPromise;
   }
 
-  private refreshRangeInBackground(range: StatsRange): void {
-    void this.getSnapshot(range, { forceRefresh: true }).catch(() => {
+  private refreshRangeInBackground(range: StatsRange, timezone: string): void {
+    void this.getSnapshot(range, { forceRefresh: true, timezone }).catch(() => {
       // best-effort stale-while-revalidate refresh
     });
   }
 
   private getCacheKey(range: StatsRange): string {
     return `stats:${range}`;
+  }
+
+  private getInFlightKey(range: StatsRange, timezone: string): string {
+    return `stats:${range}:${timezone}`;
   }
 
   private async ensurePersistentCacheLoaded(): Promise<void> {
@@ -170,12 +183,14 @@ export class StatsService {
         }
 
         const expiresAt = toSafeNumber(entry.expiresAt);
+        const timezone = normalizeTimezone(entry.timezone);
         if (expiresAt <= 0 || !entry.snapshot || !isRecord(entry.snapshot)) {
           continue;
         }
 
         this.cache.set(this.getCacheKey(range), {
           expiresAt,
+          timezone,
           snapshot: entry.snapshot as StatsSnapshot
         });
       }
@@ -218,32 +233,35 @@ export class StatsService {
       });
   }
 
-  private async computeSnapshot(range: StatsRange, nowMs: number): Promise<StatsSnapshot> {
+  private async computeSnapshot(range: StatsRange, nowMs: number, timezone: string): Promise<StatsSnapshot> {
     const dataDir = this.swarmManager.getConfig().paths.dataDir;
     const profilesDir = getProfilesDir(dataDir);
 
     const profileIds = await this.listDirectoryNames(profilesDir);
-    const scanResult = await this.scanProfilesData(dataDir, profileIds);
+    const scanResult = await this.scanProfilesData(dataDir, profileIds, timezone);
 
-    const todayKey = toDayKey(nowMs);
-    const rangeStartMs = getRangeStartMs(range, nowMs, scanResult.earliestUsageDayMs);
+    const todayKey = toDayKey(nowMs, timezone);
+    const rangeStartMs = getRangeStartMs(range, nowMs, scanResult.earliestUsageDayKey, timezone);
+    const rangeStartDayKey = toDayKey(rangeStartMs, timezone);
 
     const dailyEntriesInRange = Array.from(scanResult.dailyUsage.entries())
-      .map(([day, totals]) => ({ day, totals, dayMs: dayKeyToMs(day) }))
-      .filter((entry) => entry.dayMs >= rangeStartMs)
+      .map(([day, totals]) => ({ day, totals }))
+      .filter((entry) => entry.day >= rangeStartDayKey)
       .sort((left, right) => left.day.localeCompare(right.day));
 
     const totalToday = scanResult.dailyUsage.get(todayKey) ?? emptyDailyTotals();
 
-    const last7 = this.sumDailyWindow(scanResult.dailyUsage, nowMs, 7);
-    const last30 = this.sumDailyWindow(scanResult.dailyUsage, nowMs, 30);
+    const last7 = this.sumDailyWindow(scanResult.dailyUsage, todayKey, 7);
+    const last30 = this.sumDailyWindow(scanResult.dailyUsage, todayKey, 30);
     const allTime = this.sumDailyEntries(Array.from(scanResult.dailyUsage.values()));
 
-    const rangeUsageRecords = scanResult.usageRecords.filter((record) => record.timestampMs >= rangeStartMs);
+    const rangeUsageRecords = scanResult.usageRecords.filter(
+      (record) => toDayKey(record.timestampMs, timezone) >= rangeStartDayKey
+    );
     const models = this.computeModelDistribution(rangeUsageRecords);
     const rangeTotals = this.sumDailyEntries(dailyEntriesInRange.map((entry) => entry.totals));
 
-    const workerRunsInRange = scanResult.workerRuns.filter((run) => run.createdAtMs >= rangeStartMs);
+    const workerRunsInRange = scanResult.workerRuns.filter((run) => toDayKey(run.createdAtMs, timezone) >= rangeStartDayKey);
     const completedWorkerRunsInRange = workerRunsInRange.filter(
       (run) => run.terminatedAtMs !== null && typeof run.durationMs === "number" && run.durationMs >= 0
     );
@@ -268,7 +286,10 @@ export class StatsService {
       return best;
     }, null);
 
-    const rangeDayCount = computeRangeDayCount(range, nowMs, rangeStartMs);
+    const totalMessagesInRange = scanResult.userMessages.filter(
+      (messageMs) => toDayKey(messageMs, timezone) >= rangeStartDayKey
+    ).length;
+    const rangeDayCount = computeRangeDayCount(range, todayKey, rangeStartDayKey);
 
     const snapshot: StatsSnapshot = {
       computedAt: new Date(nowMs).toISOString(),
@@ -302,7 +323,7 @@ export class StatsService {
       sessions: {
         totalSessions: scanResult.totalSessionCount,
         activeSessions: scanResult.activeSessionCount,
-        totalMessagesSent: scanResult.userMessages.filter((messageMs) => messageMs >= rangeStartMs).length,
+        totalMessagesSent: totalMessagesInRange,
         totalMessagesPeriod: rangePeriodLabel(range)
       },
       activity: {
@@ -347,7 +368,7 @@ export class StatsService {
     return snapshot;
   }
 
-  private async scanProfilesData(dataDir: string, profileIds: string[]): Promise<{
+  private async scanProfilesData(dataDir: string, profileIds: string[], timezone: string): Promise<{
     usageRecords: UsageRecord[];
     dailyUsage: Map<string, DailyTotals>;
     workerRuns: WorkerRun[];
@@ -355,7 +376,7 @@ export class StatsService {
     totalSessionCount: number;
     activeSessionCount: number;
     userMessages: number[];
-    earliestUsageDayMs: number | null;
+    earliestUsageDayKey: string | null;
   }> {
     const usageRecords: UsageRecord[] = [];
     const dailyUsage = new Map<string, DailyTotals>();
@@ -363,7 +384,6 @@ export class StatsService {
     const userMessages: number[] = [];
 
     let totalSessionCount = 0;
-    let earliestUsageDayMs: number | null = null;
 
     for (const profileId of profileIds) {
       const sessionsDir = join(getProfilesDir(dataDir), profileId, "sessions");
@@ -379,7 +399,8 @@ export class StatsService {
 
         await this.scanJsonlFile(sessionFile, (entry, context) => {
           this.collectUsageAndMessages(entry, usageRecords, dailyUsage, userMessages, {
-            fallbackThinkingLevel: context.thinkingLevel
+            fallbackThinkingLevel: context.thinkingLevel,
+            timezone
           });
         });
 
@@ -394,7 +415,8 @@ export class StatsService {
 
           await this.scanJsonlFile(join(workersDir, workerFileName), (entry, context) => {
             billableTokensForWorker += this.collectUsageAndMessages(entry, usageRecords, dailyUsage, userMessages, {
-              fallbackThinkingLevel: context.thinkingLevel
+              fallbackThinkingLevel: context.thinkingLevel,
+              timezone
             });
           });
 
@@ -431,10 +453,10 @@ export class StatsService {
       }
     }
 
+    let earliestUsageDayKey: string | null = null;
     for (const day of dailyUsage.keys()) {
-      const dayMs = dayKeyToMs(day);
-      if (earliestUsageDayMs === null || dayMs < earliestUsageDayMs) {
-        earliestUsageDayMs = dayMs;
+      if (earliestUsageDayKey === null || day < earliestUsageDayKey) {
+        earliestUsageDayKey = day;
       }
     }
 
@@ -452,7 +474,7 @@ export class StatsService {
       totalSessionCount,
       activeSessionCount,
       userMessages,
-      earliestUsageDayMs
+      earliestUsageDayKey
     };
   }
 
@@ -461,7 +483,7 @@ export class StatsService {
     usageRecords: UsageRecord[],
     dailyUsage: Map<string, DailyTotals>,
     userMessages: number[],
-    options: { fallbackThinkingLevel: string | null }
+    options: { fallbackThinkingLevel: string | null; timezone: string }
   ): number {
     if (!isRecord(entry)) {
       return 0;
@@ -476,7 +498,7 @@ export class StatsService {
       const usage = extractUsage((entry.message as Record<string, unknown>).usage);
       if (usage) {
         const modelId = extractModelId(entry.message);
-        const day = toDayKey(timestampMs);
+        const day = toDayKey(timestampMs, options.timezone);
         const reasoningLevel = extractReasoningLevel(entry.message, options.fallbackThinkingLevel);
 
         usageRecords.push({
@@ -618,12 +640,11 @@ export class StatsService {
     }
   }
 
-  private sumDailyWindow(daily: Map<string, DailyTotals>, nowMs: number, days: number): DailyTotals {
-    const startMs = startOfDayMs(nowMs) - (days - 1) * DAY_MS;
+  private sumDailyWindow(daily: Map<string, DailyTotals>, todayDayKey: string, days: number): DailyTotals {
+    const startDayKey = shiftDayKey(todayDayKey, -(days - 1));
     const values = Array.from(daily.entries())
-      .map(([day, totals]) => ({ dayMs: dayKeyToMs(day), totals }))
-      .filter((entry) => entry.dayMs >= startMs)
-      .map((entry) => entry.totals);
+      .filter(([day]) => day >= startDayKey)
+      .map(([, totals]) => totals);
 
     return this.sumDailyEntries(values);
   }
@@ -784,20 +805,26 @@ function toSafeNumber(value: unknown, fallback = 0): number {
   return fallback;
 }
 
-function getRangeStartMs(range: StatsRange, nowMs: number, earliestUsageDayMs: number | null): number {
-  const todayStart = startOfDayMs(nowMs);
+function getRangeStartMs(
+  range: StatsRange,
+  nowMs: number,
+  earliestUsageDayKey: string | null,
+  timezone: string
+): number {
+  const todayKey = toDayKey(nowMs, timezone);
+
   if (range === "7d") {
-    return todayStart - 6 * DAY_MS;
+    return dayKeyToStartMs(shiftDayKey(todayKey, -6), timezone);
   }
 
   if (range === "30d") {
-    return todayStart - 29 * DAY_MS;
+    return dayKeyToStartMs(shiftDayKey(todayKey, -29), timezone);
   }
 
-  return earliestUsageDayMs ?? todayStart;
+  return dayKeyToStartMs(earliestUsageDayKey ?? todayKey, timezone);
 }
 
-function computeRangeDayCount(range: StatsRange, nowMs: number, rangeStartMs: number): number {
+function computeRangeDayCount(range: StatsRange, todayDayKey: string, rangeStartDayKey: string): number {
   if (range === "7d") {
     return 7;
   }
@@ -806,7 +833,13 @@ function computeRangeDayCount(range: StatsRange, nowMs: number, rangeStartMs: nu
     return 30;
   }
 
-  const count = Math.floor((startOfDayMs(nowMs) - startOfDayMs(rangeStartMs)) / DAY_MS) + 1;
+  const todayOrdinal = dayKeyToOrdinal(todayDayKey);
+  const rangeStartOrdinal = dayKeyToOrdinal(rangeStartDayKey);
+  if (todayOrdinal === null || rangeStartOrdinal === null) {
+    return 1;
+  }
+
+  const count = todayOrdinal - rangeStartOrdinal + 1;
   return Math.max(1, count);
 }
 
@@ -872,17 +905,164 @@ function toTimestampMs(value: unknown): number | null {
   return null;
 }
 
-function toDayKey(timestampMs: number): string {
-  const date = new Date(timestampMs);
+function normalizeTimezone(value: unknown): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return SERVER_TIMEZONE;
+  }
+
+  const timezone = value.trim();
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: timezone }).format(new Date());
+    return timezone;
+  } catch {
+    return SERVER_TIMEZONE;
+  }
+}
+
+const dayKeyFormatters = new Map<string, Intl.DateTimeFormat>();
+
+function toDayKey(timestampMs: number, timezone: string): string {
+  const formatter = getDayKeyFormatter(timezone);
+  const parts = formatter.formatToParts(new Date(timestampMs));
+
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  const day = parts.find((part) => part.type === "day")?.value;
+
+  if (!year || !month || !day) {
+    const fallbackDate = new Date(timestampMs);
+    const fallbackYear = fallbackDate.getUTCFullYear();
+    const fallbackMonth = `${fallbackDate.getUTCMonth() + 1}`.padStart(2, "0");
+    const fallbackDay = `${fallbackDate.getUTCDate()}`.padStart(2, "0");
+    return `${fallbackYear}-${fallbackMonth}-${fallbackDay}`;
+  }
+
+  return `${year}-${month}-${day}`;
+}
+
+function getDayKeyFormatter(timezone: string): Intl.DateTimeFormat {
+  const existing = dayKeyFormatters.get(timezone);
+  if (existing) {
+    return existing;
+  }
+
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  });
+
+  dayKeyFormatters.set(timezone, formatter);
+  return formatter;
+}
+
+function startOfDayMs(timestampMs: number, timezone: string): number {
+  return dayKeyToStartMs(toDayKey(timestampMs, timezone), timezone);
+}
+
+function dayKeyToStartMs(dayKey: string, timezone: string): number {
+  const baseMs = dayKeyToMs(dayKey);
+  if (baseMs <= 0) {
+    return 0;
+  }
+
+  const [yearRaw, monthRaw, dayRaw] = dayKey.split("-");
+  const year = Number.parseInt(yearRaw ?? "", 10);
+  const month = Number.parseInt(monthRaw ?? "", 10);
+  const day = Number.parseInt(dayRaw ?? "", 10);
+
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) {
+    return 0;
+  }
+
+  const localMidnightAsUtc = Date.UTC(year, month - 1, day, 0, 0, 0, 0);
+  let adjusted = localMidnightAsUtc;
+
+  for (let index = 0; index < 3; index += 1) {
+    const offsetMs = getTimeZoneOffsetMs(adjusted, timezone);
+    const next = localMidnightAsUtc - offsetMs;
+    if (next === adjusted) {
+      break;
+    }
+    adjusted = next;
+  }
+
+  return adjusted;
+}
+
+const dateTimePartFormatters = new Map<string, Intl.DateTimeFormat>();
+
+function getTimeZoneOffsetMs(timestampMs: number, timezone: string): number {
+  const formatter = getDateTimePartFormatter(timezone);
+  const parts = formatter.formatToParts(new Date(timestampMs));
+
+  const year = Number.parseInt(parts.find((part) => part.type === "year")?.value ?? "", 10);
+  const month = Number.parseInt(parts.find((part) => part.type === "month")?.value ?? "", 10);
+  const day = Number.parseInt(parts.find((part) => part.type === "day")?.value ?? "", 10);
+  const hour = Number.parseInt(parts.find((part) => part.type === "hour")?.value ?? "", 10);
+  const minute = Number.parseInt(parts.find((part) => part.type === "minute")?.value ?? "", 10);
+  const second = Number.parseInt(parts.find((part) => part.type === "second")?.value ?? "", 10);
+
+  if (
+    !Number.isFinite(year) ||
+    !Number.isFinite(month) ||
+    !Number.isFinite(day) ||
+    !Number.isFinite(hour) ||
+    !Number.isFinite(minute) ||
+    !Number.isFinite(second)
+  ) {
+    return 0;
+  }
+
+  const utcEquivalent = Date.UTC(year, month - 1, day, hour, minute, second, 0);
+  const roundedTimestampMs = Math.floor(timestampMs / 1000) * 1000;
+  return utcEquivalent - roundedTimestampMs;
+}
+
+function getDateTimePartFormatter(timezone: string): Intl.DateTimeFormat {
+  const existing = dateTimePartFormatters.get(timezone);
+  if (existing) {
+    return existing;
+  }
+
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23"
+  });
+
+  dateTimePartFormatters.set(timezone, formatter);
+  return formatter;
+}
+
+function shiftDayKey(dayKey: string, offsetDays: number): string {
+  const ms = dayKeyToMs(dayKey);
+  if (!Number.isFinite(ms) || ms <= 0) {
+    return dayKey;
+  }
+
+  const date = new Date(ms);
+  date.setUTCDate(date.getUTCDate() + offsetDays);
+
   const year = date.getUTCFullYear();
   const month = `${date.getUTCMonth() + 1}`.padStart(2, "0");
   const day = `${date.getUTCDate()}`.padStart(2, "0");
   return `${year}-${month}-${day}`;
 }
 
-function startOfDayMs(timestampMs: number): number {
-  const date = new Date(timestampMs);
-  return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
+function dayKeyToOrdinal(dayKey: string): number | null {
+  const dayMs = dayKeyToMs(dayKey);
+  if (!Number.isFinite(dayMs) || dayMs <= 0) {
+    return null;
+  }
+
+  return Math.floor(dayMs / DAY_MS);
 }
 
 function dayKeyToMs(dayKey: string): number {

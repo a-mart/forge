@@ -32,9 +32,10 @@ export function createStatsRoutes(options: { statsService: StatsService }): Http
 
         applyCorsHeaders(request, response, methods);
         const range = parseRange(requestUrl.searchParams.get("range"));
+        const timezone = parseTimezone(requestUrl.searchParams.get("tz"));
 
         try {
-          const stats = await statsService.getSnapshot(range);
+          const stats = await statsService.getSnapshot(range, { timezone });
           sendJson(response, 200, stats as unknown as Record<string, unknown>);
         } catch (error) {
           const message = error instanceof Error ? error.message : "Internal server error";
@@ -64,9 +65,10 @@ export function createStatsRoutes(options: { statsService: StatsService }): Http
 
         applyCorsHeaders(request, response, methods);
         const range = parseRange(requestUrl.searchParams.get("range"));
+        const timezone = parseTimezone(requestUrl.searchParams.get("tz"));
 
         try {
-          const stats = await statsService.getSnapshot(range, { forceRefresh: true });
+          const stats = await statsService.getSnapshot(range, { forceRefresh: true, timezone });
           sendJson(response, 200, stats as unknown as Record<string, unknown>);
         } catch (error) {
           const message = error instanceof Error ? error.message : "Internal server error";
@@ -83,4 +85,13 @@ function parseRange(value: string | null): StatsRange {
   }
 
   return "7d";
+}
+
+function parseTimezone(value: string | null): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const timezone = value.trim();
+  return timezone.length > 0 ? timezone : null;
 }
