@@ -1,8 +1,9 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useRef, useMemo } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useMemo, useState } from 'react'
 import { ExternalLink } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import type { AgentActivityEntry } from '@/lib/ws-state'
+import { formatElapsed } from '@/lib/format-utils'
 import type { AgentDescriptor, AgentStatus } from '@forge/protocol'
 import { AgentMessageRow } from './message-list/AgentMessageRow'
 import {
@@ -22,6 +23,7 @@ interface WorkerQuickLookProps {
   status: AgentStatus
   recentActivity: AgentActivityEntry[]
   onViewFullConversation: () => void
+  streamingStartedAt?: number
 }
 
 type QuickLookEntry =
@@ -105,6 +107,7 @@ export const WorkerQuickLook = memo(function WorkerQuickLook({
   status,
   recentActivity,
   onViewFullConversation,
+  streamingStartedAt,
 }: WorkerQuickLookProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const isAtBottomRef = useRef(true)
@@ -139,13 +142,27 @@ export const WorkerQuickLook = memo(function WorkerQuickLook({
     }
   }, [displayEntries])
 
+  const [, setTick] = useState(0)
+  const isStreaming = status === 'streaming'
+
+  useEffect(() => {
+    if (!isStreaming || !streamingStartedAt) return
+    const interval = setInterval(() => setTick((t) => t + 1), 1_000)
+    return () => clearInterval(interval)
+  }, [isStreaming, streamingStartedAt])
+
+  const elapsedLabel =
+    isStreaming && streamingStartedAt
+      ? formatElapsed(Date.now() - streamingStartedAt)
+      : null
+
   const modelLabel = worker.model?.modelId ?? null
   const thinkingLevel = worker.model?.thinkingLevel
   const modelWithThinking =
     modelLabel && thinkingLevel && thinkingLevel !== 'none'
       ? `${modelLabel} · ${thinkingLevel}`
       : modelLabel
-  const statusLabel =
+  const statusText =
     status === 'streaming'
       ? 'Working'
       : status === 'idle'
@@ -169,7 +186,10 @@ export const WorkerQuickLook = memo(function WorkerQuickLook({
             {modelWithThinking}
           </span>
         ) : null}
-        <span className="shrink-0 text-[10px] text-muted-foreground">{statusLabel}</span>
+        <span className="shrink-0 text-[10px] text-muted-foreground">
+          {statusText}
+          {elapsedLabel ? <span className="tabular-nums"> · {elapsedLabel}</span> : null}
+        </span>
       </div>
 
       {/* Activity feed */}

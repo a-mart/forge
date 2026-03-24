@@ -1105,6 +1105,7 @@ export function IndexPage() {
                       onChoiceSubmit={handleChoiceSubmit}
                       onChoiceCancel={handleChoiceCancel}
                       pendingChoiceIds={state.pendingChoiceIds}
+                      streamingStartedAt={activeAgentStatus === 'streaming' ? state.statuses[activeAgentId ?? '']?.streamingStartedAt : undefined}
                     />
 
                     {isActiveManager ? (

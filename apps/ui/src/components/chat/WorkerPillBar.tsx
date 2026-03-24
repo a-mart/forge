@@ -206,6 +206,7 @@ const WorkerPill = memo(function WorkerPill({
           status={status}
           recentActivity={recentActivity}
           onViewFullConversation={handleViewConversation}
+          streamingStartedAt={entry.streamingStartedAt}
         />
       </PopoverContent>
     </Popover>

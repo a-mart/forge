@@ -10,6 +10,7 @@ import {
 import { ChevronDown } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { ArtifactReference } from '@/lib/artifacts'
+import { formatElapsed } from '@/lib/format-utils'
 import { cn } from '@/lib/utils'
 import type { ChoiceAnswer, ConversationEntry } from '@forge/protocol'
 import { AgentMessageRow } from './message-list/AgentMessageRow'
@@ -62,6 +63,7 @@ interface MessageListProps {
   onChoiceSubmit?: (agentId: string, choiceId: string, answers: ChoiceAnswer[]) => void
   onChoiceCancel?: (agentId: string, choiceId: string) => void
   pendingChoiceIds: Set<string>
+  streamingStartedAt?: number
 }
 
 export interface MessageListHandle {
@@ -239,7 +241,19 @@ function buildDisplayEntries(messages: ConversationEntry[]): DisplayEntry[] {
   return displayEntries
 }
 
-function LoadingIndicator() {
+function LoadingIndicator({ streamingStartedAt }: { streamingStartedAt?: number }) {
+  const [, setTick] = useState(0)
+
+  useEffect(() => {
+    if (!streamingStartedAt) return
+    const interval = setInterval(() => setTick((t) => t + 1), 1_000)
+    return () => clearInterval(interval)
+  }, [streamingStartedAt])
+
+  const elapsedLabel = streamingStartedAt
+    ? formatElapsed(Date.now() - streamingStartedAt)
+    : null
+
   return (
     <div
       className="mt-3 flex justify-start"
@@ -247,10 +261,15 @@ function LoadingIndicator() {
       aria-live="polite"
       aria-label="Assistant is working"
     >
-      <div className="flex items-center gap-0.5">
-        <div className="size-1.5 animate-bounce rounded-full bg-foreground/40 [animation-duration:900ms]" />
-        <div className="size-1.5 animate-bounce rounded-full bg-foreground/40 [animation-delay:150ms] [animation-duration:900ms]" />
-        <div className="size-1.5 animate-bounce rounded-full bg-foreground/40 [animation-delay:300ms] [animation-duration:900ms]" />
+      <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-0.5">
+          <div className="size-1.5 animate-bounce rounded-full bg-foreground/40 [animation-duration:900ms]" />
+          <div className="size-1.5 animate-bounce rounded-full bg-foreground/40 [animation-delay:150ms] [animation-duration:900ms]" />
+          <div className="size-1.5 animate-bounce rounded-full bg-foreground/40 [animation-delay:300ms] [animation-duration:900ms]" />
+        </div>
+        {elapsedLabel ? (
+          <span className="text-xs tabular-nums text-muted-foreground">{elapsedLabel}</span>
+        ) : null}
       </div>
     </div>
   )
@@ -273,6 +292,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
   onChoiceSubmit,
   onChoiceCancel,
   pendingChoiceIds,
+  streamingStartedAt,
 }, ref) {
   const scrollContainerRef = useRef<HTMLDivElement | null>(null)
   const bottomRef = useRef<HTMLDivElement | null>(null)
@@ -525,7 +545,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
               </div>
             )
           })}
-          {isLoading ? <LoadingIndicator /> : null}
+          {isLoading ? <LoadingIndicator streamingStartedAt={streamingStartedAt} /> : null}
           <div ref={bottomRef} />
         </div>
       </div>
