@@ -46,8 +46,28 @@ Pi automatically discovers extensions and skills from well-known directories. Fo
 | `~/.forge/agent/manager/skills/` | Global | All managers |
 | `<cwd>/.pi/extensions/` | Project-local | Agents with that CWD |
 | `<cwd>/.pi/skills/` | Project-local | Agents with that CWD |
+| `~/.forge/profiles/<id>/pi/extensions/` | Profile | Agents in that profile |
+| `~/.forge/profiles/<id>/pi/skills/` | Profile | Agents in that profile |
+| `~/.forge/profiles/<id>/pi/prompts/` | Profile | Agents in that profile |
+| `~/.forge/profiles/<id>/pi/themes/` | Profile | Agents in that profile |
 
 All global directories (`~/.forge/agent/extensions/`, `~/.forge/agent/manager/extensions/`, etc.) are **auto-created on startup**, so you can start dropping files in immediately.
+
+### Profile Overlay Directories
+
+Each Forge profile can have its own Pi resource directories under `~/.forge/profiles/<profileId>/pi/`. These are **additive** — they add to the global and project-local directories, they do not replace them.
+
+Profile overlay directories are auto-created when a profile is created. Use them to scope extensions, skills, prompts, or themes to a specific profile without affecting other profiles.
+
+```text
+~/.forge/profiles/my-profile/pi/
+  extensions/     # Extensions loaded only for this profile's sessions
+  skills/         # Skills available only to this profile
+  prompts/        # Prompt templates scoped to this profile
+  themes/         # Themes scoped to this profile
+```
+
+**Precedence note:** Profile overlays are additive only in this release. If the same extension identity appears in both global and profile directories, Pi's own discovery and merge behavior determines which wins. To avoid surprises, keep resource names unique across global, profile, and project scopes.
 
 **Extension file formats:**
 - Single file: `extensions/my-ext.ts` or `extensions/my-ext.js`
@@ -266,6 +286,39 @@ Forge registers these tools for swarm orchestration. They **cannot be overridden
 - `speak_to_user` — Send a message to the end user (managers only)
 
 If an extension registers a tool with one of these names, the extension's version will be silently replaced. Choose unique names for your extension tools.
+
+## Extensions in the Settings UI
+
+Forge provides a read-only **Extensions** tab in Settings that shows which extensions are currently loaded in active agent runtimes. This view reflects live runtime state — it shows extensions that are actually loaded, not a scan of what's on disk.
+
+The Extensions tab does not install, remove, enable, or disable extensions. The filesystem is the configuration surface: drop files into the appropriate directory and start a new session. The Settings tab is for visibility and debugging.
+
+Extension handler errors are surfaced as system messages in the chat conversation, so you'll see them inline when something goes wrong.
+
+## Example Extensions
+
+Forge ships example extensions in [`docs/examples/pi-extensions/`](examples/pi-extensions/) that demonstrate common patterns. Copy any of these into your extension directory to use them.
+
+### `protected-paths.ts` — Tool Call Interception
+
+Blocks `write` and `edit` tool calls targeting sensitive paths (`.env`, `.git/`, SSH keys). Demonstrates:
+- Returning `{ block: true, reason }` from a `tool_call` handler
+- Configurable protection rules
+- The `ctx.hasUI` pattern for headless-safe notifications
+
+### `failure-memory.ts` — File-Backed State and Recall
+
+Records tool errors to a local JSON file and injects a summary of recent failures into the agent's context before each turn. Demonstrates:
+- Using `tool_result` to observe outcomes
+- Using `before_agent_start` to inject context
+- Bounded append-only file patterns with safe JSON parsing
+
+### `session-shutdown-cleanup.ts` — Lifecycle Hooks
+
+Tracks session metrics (duration, tool call count) and writes a JSONL summary when the session shuts down. Demonstrates:
+- The `session_start` / `session_shutdown` lifecycle pair
+- Accumulating in-memory state across events
+- Defensive shutdown handlers that never throw
 
 ## Troubleshooting
 

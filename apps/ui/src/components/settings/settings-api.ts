@@ -14,7 +14,7 @@ import type {
   ChromeCdpProfile,
   ChromeCdpPreviewTab,
 } from './settings-types'
-import type { TelegramStatusEvent } from '@forge/protocol'
+import type { TelegramStatusEvent, SettingsExtensionsResponse } from '@forge/protocol'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
 
 /* ------------------------------------------------------------------ */
@@ -429,4 +429,16 @@ export async function fetchChromeCdpPreview(
   const totalFiltered = typeof payload.totalFiltered === 'number' ? payload.totalFiltered : 0
   const totalUnfiltered = typeof payload.totalUnfiltered === 'number' ? payload.totalUnfiltered : 0
   return { tabs, totalFiltered, totalUnfiltered }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Extensions API                                                    */
+/* ------------------------------------------------------------------ */
+
+export async function fetchSettingsExtensions(wsUrl: string): Promise<SettingsExtensionsResponse> {
+  const endpoint = resolveApiEndpoint(wsUrl, '/api/settings/extensions')
+  const response = await fetch(endpoint)
+  if (!response.ok) throw new Error(await readApiError(response))
+  const payload = (await response.json()) as SettingsExtensionsResponse
+  return payload
 }
