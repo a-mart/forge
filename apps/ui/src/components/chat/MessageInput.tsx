@@ -11,7 +11,7 @@ import {
   type FormEvent,
   type KeyboardEvent,
 } from 'react'
-import { ArrowUp, Loader2, Mic, Paperclip, Square } from 'lucide-react'
+import { ALargeSmall, ArrowUp, List, ListOrdered, Loader2, Mic, Paperclip, Square } from 'lucide-react'
 import { AttachedFiles } from '@/components/chat/AttachedFiles'
 import { Button } from '@/components/ui/button'
 import { MAX_VOICE_RECORDING_DURATION_MS, useVoiceRecorder } from '@/hooks/use-voice-recorder'
@@ -29,6 +29,128 @@ const TEXTAREA_MAX_HEIGHT = 186
 const ACTIVE_WAVEFORM_BAR_COUNT = 16
 const OPENAI_KEY_REQUIRED_MESSAGE = 'OpenAI API key required \u2014 add it in Settings.'
 const DRAFTS_STORAGE_KEY = 'forge-chat-drafts'
+const FORMAT_MODE_STORAGE_KEY = 'forge-chat-format-mode'
+
+// --- Format mode helpers ---
+
+function loadFormatMode(): boolean {
+  try {
+    return localStorage.getItem(FORMAT_MODE_STORAGE_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
+
+function persistFormatMode(value: boolean): void {
+  try {
+    localStorage.setItem(FORMAT_MODE_STORAGE_KEY, String(value))
+  } catch {
+    // localStorage full or unavailable — silently ignore
+  }
+}
+
+/** Returns the line containing the cursor and its start/end offsets within the full text. */
+function getCurrentLine(text: string, cursorPos: number): { line: string; lineStart: number; lineEnd: number } {
+  const lineStart = text.lastIndexOf('\n', cursorPos - 1) + 1
+  let lineEnd = text.indexOf('\n', cursorPos)
+  if (lineEnd === -1) lineEnd = text.length
+  return { line: text.slice(lineStart, lineEnd), lineStart, lineEnd }
+}
+
+const BULLET_RE = /^- /
+const NUMBERED_RE = /^(\d+)\. /
+
+/**
+ * Toggle a bullet-list prefix (`- `) on the current line.
+ * Returns the updated text and new cursor position.
+ */
+function toggleBulletList(
+  text: string,
+  cursorPos: number,
+): { text: string; cursor: number } {
+  const { line, lineStart, lineEnd } = getCurrentLine(text, cursorPos)
+
+  if (BULLET_RE.test(line)) {
+    // Remove bullet prefix
+    const newLine = line.slice(2)
+    return {
+      text: text.slice(0, lineStart) + newLine + text.slice(lineEnd),
+      cursor: Math.max(lineStart, cursorPos - 2),
+    }
+  }
+
+  // If it has a numbered prefix, replace it
+  const numMatch = NUMBERED_RE.exec(line)
+  if (numMatch) {
+    const prefixLen = numMatch[0].length
+    const newLine = '- ' + line.slice(prefixLen)
+    return {
+      text: text.slice(0, lineStart) + newLine + text.slice(lineEnd),
+      cursor: lineStart + 2 + Math.max(0, cursorPos - lineStart - prefixLen),
+    }
+  }
+
+  // Add bullet prefix
+  const newLine = '- ' + line
+  return {
+    text: text.slice(0, lineStart) + newLine + text.slice(lineEnd),
+    cursor: cursorPos + 2,
+  }
+}
+
+/**
+ * Toggle a numbered-list prefix (`N. `) on the current line.
+ * Auto-numbers based on preceding numbered lines.
+ */
+function toggleNumberedList(
+  text: string,
+  cursorPos: number,
+): { text: string; cursor: number } {
+  const { line, lineStart, lineEnd } = getCurrentLine(text, cursorPos)
+
+  const numMatch = NUMBERED_RE.exec(line)
+  if (numMatch) {
+    // Remove numbered prefix
+    const prefixLen = numMatch[0].length
+    const newLine = line.slice(prefixLen)
+    return {
+      text: text.slice(0, lineStart) + newLine + text.slice(lineEnd),
+      cursor: Math.max(lineStart, cursorPos - prefixLen),
+    }
+  }
+
+  // Determine the next number by looking at preceding lines
+  let nextNumber = 1
+  const textBefore = text.slice(0, lineStart)
+  const linesBefore = textBefore.split('\n')
+  for (let i = linesBefore.length - 1; i >= 0; i--) {
+    const prevMatch = NUMBERED_RE.exec(linesBefore[i]!)
+    if (prevMatch) {
+      nextNumber = Number(prevMatch[1]) + 1
+      break
+    }
+    // Stop if the previous line is non-empty and not a numbered list
+    if (linesBefore[i]!.trim() !== '') break
+  }
+
+  const prefix = `${nextNumber}. `
+
+  // If it has a bullet prefix, replace it
+  if (BULLET_RE.test(line)) {
+    const newLine = prefix + line.slice(2)
+    return {
+      text: text.slice(0, lineStart) + newLine + text.slice(lineEnd),
+      cursor: lineStart + prefix.length + Math.max(0, cursorPos - lineStart - 2),
+    }
+  }
+
+  // Add numbered prefix
+  const newLine = prefix + line
+  return {
+    text: text.slice(0, lineStart) + newLine + text.slice(lineEnd),
+    cursor: cursorPos + prefix.length,
+  }
+}
 
 function loadDrafts(): Record<string, string> {
   try {
@@ -186,6 +308,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
   const [attachedFiles, setAttachedFiles] = useState<PendingAttachment[]>([])
   const [isTranscribingVoice, setIsTranscribingVoice] = useState(false)
   const [voiceError, setVoiceError] = useState<string | null>(null)
+  const [formatMode, setFormatMode] = useState(loadFormatMode)
 
   // --- Slash command autocomplete ---
   const [isSlashMenuOpen, setIsSlashMenuOpen] = useState(false)
@@ -342,7 +465,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
 
   useEffect(() => {
     resizeTextarea()
-  }, [input, resizeTextarea])
+  }, [input, formatMode, resizeTextarea])
 
   useEffect(() => {
     if (!disabled && !blockedByLoading && !isRecording) {
@@ -499,6 +622,30 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
     stopAndTranscribeRecording,
   ])
 
+  const toggleFormatMode = useCallback(() => {
+    setFormatMode((prev) => {
+      const next = !prev
+      persistFormatMode(next)
+      return next
+    })
+    requestAnimationFrame(() => textareaRef.current?.focus())
+  }, [])
+
+  const applyListFormatting = useCallback(
+    (formatter: (text: string, cursor: number) => { text: string; cursor: number }) => {
+      const textarea = textareaRef.current
+      if (!textarea) return
+      const cursorPos = textarea.selectionStart
+      const result = formatter(input, cursorPos)
+      setInputWithDraft(result.text)
+      requestAnimationFrame(() => {
+        textarea.focus()
+        textarea.setSelectionRange(result.cursor, result.cursor)
+      })
+    },
+    [input, setInputWithDraft],
+  )
+
   const submitMessage = useCallback(() => {
     const trimmed = input.trim()
     const hasContent = trimmed.length > 0 || attachedFiles.length > 0
@@ -597,9 +744,19 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
       return
     }
 
-    if (event.key === 'Enter' && !event.shiftKey) {
-      event.preventDefault()
-      submitMessage()
+    if (formatMode) {
+      // Format mode: Enter inserts newline (default), Ctrl/Cmd+Enter sends
+      if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+        event.preventDefault()
+        submitMessage()
+      }
+      // Plain Enter: let the default textarea behavior insert a newline
+    } else {
+      // Quick-send mode: Enter sends, Shift+Enter inserts newline
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault()
+        submitMessage()
+      }
     }
   }
 
@@ -680,6 +837,33 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
         <AttachedFiles attachments={attachedFiles} onRemove={removeAttachment} />
 
         <div className="group flex flex-col">
+          {formatMode && !isRecording ? (
+            <div className="flex items-center gap-0.5 border-b border-border/40 px-2 py-1">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-7 rounded-md text-muted-foreground hover:text-foreground"
+                onClick={() => applyListFormatting(toggleBulletList)}
+                disabled={disabled}
+                aria-label="Bullet list"
+              >
+                <List className="size-3.5" />
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-7 rounded-md text-muted-foreground hover:text-foreground"
+                onClick={() => applyListFormatting(toggleNumberedList)}
+                disabled={disabled}
+                aria-label="Numbered list"
+              >
+                <ListOrdered className="size-3.5" />
+              </Button>
+            </div>
+          ) : null}
+
           {isRecording ? (
             <div className="flex min-h-[48px] items-center gap-2 border-b border-border/60 bg-red-500/[0.05] px-3 py-2">
               <div className="flex h-7 flex-1 items-center gap-px py-1" aria-hidden>
@@ -721,7 +905,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
               rows={1}
               className={cn(
                 'w-full resize-none border-0 bg-transparent text-sm leading-normal text-foreground shadow-none focus:outline-none',
-                'min-h-[44px]',
+                formatMode ? 'min-h-[120px]' : 'min-h-[44px]',
                 'px-4 pt-3 pb-2',
                 '[&::-webkit-scrollbar]:w-1.5',
                 '[&::-webkit-scrollbar-track]:bg-transparent',
@@ -743,6 +927,24 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
 
           <div className="flex items-center justify-between px-1.5 pb-1.5 pt-1">
             <div className="flex items-center gap-0.5">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className={cn(
+                  'size-7 rounded-full transition-colors',
+                  formatMode
+                    ? 'bg-primary/10 text-primary hover:bg-primary/20 hover:text-primary'
+                    : 'text-muted-foreground/60 hover:text-foreground',
+                )}
+                onClick={toggleFormatMode}
+                disabled={disabled || isRecording}
+                aria-label={formatMode ? 'Switch to quick-send mode' : 'Switch to format mode'}
+                title={formatMode ? 'Quick-send mode (Enter to send)' : 'Format mode (Enter for new line)'}
+              >
+                <ALargeSmall className="size-3.5" />
+              </Button>
+
               <Button
                 type="button"
                 variant="ghost"
@@ -777,6 +979,12 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
                   <Mic className="size-3.5" />
                 )}
               </Button>
+
+              {formatMode ? (
+                <span className="ml-1 select-none text-[11px] text-muted-foreground/50">
+                  {navigator.platform?.toLowerCase().includes('mac') ? '⌘' : 'Ctrl'}+Enter to send
+                </span>
+              ) : null}
             </div>
 
             <Button
