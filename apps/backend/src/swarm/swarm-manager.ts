@@ -882,6 +882,15 @@ interface WorkerStallState {
   nudgeSentAt: number | null;
 }
 
+interface WorkerActivityState {
+  currentToolName: string | null;
+  currentToolStartedAt: number | null;
+  lastProgressAt: number;
+  toolCallCount: number;
+  errorCount: number;
+  turnCount: number;
+}
+
 interface PromptPreviewSection {
   label: string;
   content: string;
@@ -1088,6 +1097,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly conversationEntriesByAgentId = new Map<string, ConversationEntryEvent[]>();
   private readonly workerWatchdogState = new Map<string, WorkerWatchdogState>();
   private readonly workerStallState = new Map<string, WorkerStallState>();
+  private readonly workerActivityState = new Map<string, WorkerActivityState>();
   private readonly watchdogTimers = new Map<string, NodeJS.Timeout>();
   private stallCheckInterval: NodeJS.Timeout | null = null;
   private stallCheckPromise: Promise<void> | null = null;
@@ -1299,6 +1309,37 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   listAgents(): AgentDescriptor[] {
     return this.sortedDescriptors().map((descriptor) => cloneDescriptor(descriptor));
+  }
+
+  getWorkerActivity(agentId: string): {
+    currentTool: string | null;
+    currentToolElapsedSec: number;
+    toolCalls: number;
+    errors: number;
+    turns: number;
+    idleSec: number;
+  } | undefined {
+    const state = this.workerActivityState.get(agentId);
+    if (!state) {
+      return undefined;
+    }
+
+    const now = Date.now();
+    const currentToolElapsedSec = state.currentToolStartedAt !== null
+      ? Math.round((now - state.currentToolStartedAt) / 1000)
+      : 0;
+    const idleSec = state.currentToolName !== null
+      ? 0
+      : Math.round((now - state.lastProgressAt) / 1000);
+
+    return {
+      currentTool: state.currentToolName,
+      currentToolElapsedSec,
+      toolCalls: state.toolCallCount,
+      errors: state.errorCount,
+      turns: state.turnCount,
+      idleSec
+    };
   }
 
   listBootstrapAgents(): AgentDescriptor[] {
@@ -2308,6 +2349,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
       this.clearWatchdogState(agentId);
       this.workerStallState.delete(agentId);
+      this.workerActivityState.delete(agentId);
       this.lastWorkerCompletionReportTimestampByAgentId.delete(agentId);
 
       this.descriptors.delete(agentId);
@@ -2377,6 +2419,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     if (descriptor.role === "worker") {
       this.clearWatchdogState(agentId);
       this.workerStallState.delete(agentId);
+      this.workerActivityState.delete(agentId);
       this.lastWorkerCompletionReportTimestampByAgentId.delete(agentId);
     }
 
@@ -2474,6 +2517,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
       this.clearWatchdogState(descriptor.agentId);
       this.workerStallState.delete(descriptor.agentId);
+      this.workerActivityState.delete(descriptor.agentId);
 
       if (isNonRunningAgentStatus(descriptor.status)) {
         continue;
@@ -5442,6 +5486,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     if (descriptor.role === "worker") {
       this.clearWatchdogState(descriptor.agentId);
       this.workerStallState.delete(descriptor.agentId);
+      this.workerActivityState.delete(descriptor.agentId);
       this.lastWorkerCompletionReportTimestampByAgentId.delete(descriptor.agentId);
     }
 
@@ -5778,6 +5823,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         });
       } else if (effectiveStatus !== "streaming" && this.workerStallState.has(agentId)) {
         this.workerStallState.delete(agentId);
+        this.workerActivityState.delete(agentId);
       }
     }
 
@@ -5912,6 +5958,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const descriptor = this.descriptors.get(agentId);
     if (descriptor?.role === "worker") {
       this.trackWorkerStallProgressEvent(descriptor.agentId, event);
+      this.updateWorkerActivity(descriptor.agentId, event);
     }
 
     if (
@@ -6017,6 +6064,56 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
       default:
         return;
+    }
+  }
+
+  private updateWorkerActivity(agentId: string, event: RuntimeSessionEvent): void {
+    let state = this.workerActivityState.get(agentId);
+    if (!state) {
+      state = {
+        currentToolName: null,
+        currentToolStartedAt: null,
+        lastProgressAt: Date.now(),
+        toolCallCount: 0,
+        errorCount: 0,
+        turnCount: 0
+      };
+      this.workerActivityState.set(agentId, state);
+    }
+
+    switch (event.type) {
+      case "tool_execution_start":
+        state.currentToolName = event.toolName;
+        state.currentToolStartedAt = Date.now();
+        state.toolCallCount++;
+        state.lastProgressAt = Date.now();
+        break;
+
+      case "tool_execution_end":
+        state.currentToolName = null;
+        state.currentToolStartedAt = null;
+        if (event.isError) {
+          state.errorCount++;
+        }
+        state.lastProgressAt = Date.now();
+        break;
+
+      case "turn_end":
+        state.turnCount++;
+        state.lastProgressAt = Date.now();
+        break;
+
+      case "message_update":
+      case "message_end":
+      case "auto_compaction_start":
+      case "auto_compaction_end":
+      case "auto_retry_start":
+      case "auto_retry_end":
+        state.lastProgressAt = Date.now();
+        break;
+
+      default:
+        break;
     }
   }
 
@@ -6563,6 +6660,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const descriptor = this.descriptors.get(agentId);
     if (!descriptor || descriptor.role !== "worker") {
       this.workerStallState.delete(agentId);
+      this.workerActivityState.delete(agentId);
       return;
     }
 
@@ -6620,12 +6718,14 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const descriptor = this.descriptors.get(agentId);
     if (!descriptor || descriptor.role !== "worker") {
       this.workerStallState.delete(agentId);
+      this.workerActivityState.delete(agentId);
       return;
     }
 
     if (descriptor.status !== "streaming" || this.isRuntimeInContextRecovery(agentId)) {
       if (descriptor.status !== "streaming") {
         this.workerStallState.delete(agentId);
+        this.workerActivityState.delete(agentId);
       }
       return;
     }

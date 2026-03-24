@@ -52,6 +52,9 @@ function makeHost(spawnImpl: (callerAgentId: string, input: SpawnAgentInput) => 
     listAgents(): AgentDescriptor[] {
       return [makeManagerDescriptor()]
     },
+    getWorkerActivity() {
+      return undefined
+    },
     spawnAgent: spawnImpl,
     async killAgent(): Promise<void> {},
     async sendMessage(): Promise<SendMessageReceipt> {
@@ -76,6 +79,9 @@ function makeHostWithAgents(agents: AgentDescriptor[]): SwarmToolHost {
   return {
     listAgents(): AgentDescriptor[] {
       return agents
+    },
+    getWorkerActivity() {
+      return undefined
     },
     spawnAgent: async () => makeWorkerDescriptor('worker'),
     async killAgent(): Promise<void> {},
@@ -663,6 +669,7 @@ describe('buildSwarmTools', () => {
 
     const host: SwarmToolHost = {
       listAgents: () => [makeManagerDescriptor()],
+      getWorkerActivity: () => undefined,
       spawnAgent: async () => makeWorkerDescriptor('worker'),
       killAgent: async () => {},
       sendMessage: async () => ({

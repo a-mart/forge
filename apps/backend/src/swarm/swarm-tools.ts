@@ -16,6 +16,14 @@ import {
 
 export interface SwarmToolHost {
   listAgents(): AgentDescriptor[];
+  getWorkerActivity(agentId: string): {
+    currentTool: string | null;
+    currentToolElapsedSec: number;
+    toolCalls: number;
+    errors: number;
+    turns: number;
+    idleSec: number;
+  } | undefined;
   spawnAgent(callerAgentId: string, input: SpawnAgentInput): Promise<AgentDescriptor>;
   killAgent(callerAgentId: string, targetAgentId: string): Promise<void>;
   sendMessage(
@@ -226,6 +234,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
 
         const compactAgents = selectedAgents.map((agent) => {
           const isExternalManager = agent.role === "manager" && agent.agentId !== visibleManagerId;
+          const activity = agent.role === "worker" ? host.getWorkerActivity(agent.agentId) : undefined;
           return {
             agentId: agent.agentId,
             role: agent.role,
@@ -234,6 +243,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
             model: `${agent.model.provider}/${agent.model.modelId}`,
             cwd: compactPath(agent.cwd),
             updatedAt: agent.updatedAt,
+            ...(activity ? { activity } : {}),
             ...(isExternalManager ? { isExternal: true } : {}),
             ...(isExternalManager && agent.profileId ? { profileId: agent.profileId } : {}),
             ...(isExternalManager && agent.sessionLabel ? { sessionLabel: agent.sessionLabel } : {})
@@ -241,6 +251,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
         });
 
         const verboseAgents = selectedAgents.map((agent) => {
+          const activity = agent.role === "worker" ? host.getWorkerActivity(agent.agentId) : undefined;
           if (agent.role === "manager" && agent.agentId !== visibleManagerId) {
             const { sessionFile: _sessionFile, ...safeExternalManager } = agent;
             return {
@@ -249,7 +260,10 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
             };
           }
 
-          return agent;
+          return {
+            ...agent,
+            ...(activity ? { activity } : {})
+          };
         });
 
         const nextPageParams = [
