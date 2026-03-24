@@ -4357,6 +4357,37 @@ describe('SwarmManager', () => {
     })
   })
 
+  it('formats extension runtime errors with extension basename and event details', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', {
+      agentId: 'Extension Error Worker',
+    })
+
+    await (manager as any).handleRuntimeError(worker.agentId, {
+      phase: 'extension',
+      message: 'blocked write outside allowed roots',
+      details: {
+        extensionPath: '/tmp/protected-paths.ts',
+        event: 'tool_call',
+      },
+    })
+
+    const history = manager.getConversationHistory(worker.agentId)
+    const systemEvent = [...history]
+      .reverse()
+      .find((entry) => entry.type === 'conversation_message' && entry.role === 'system')
+
+    expect(systemEvent).toBeDefined()
+    if (systemEvent?.type === 'conversation_message') {
+      expect(systemEvent.text).toBe(
+        '⚠️ Extension error (protected-paths.ts · tool_call): blocked write outside allowed roots',
+      )
+    }
+  })
+
   it('reroutes spawn_agent model from spark to codex when spark is temporarily quota-blocked', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)

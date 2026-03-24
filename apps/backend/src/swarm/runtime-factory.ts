@@ -1,3 +1,9 @@
+import { basename, join, relative, resolve, sep } from "node:path";
+import type {
+  AgentRuntimeExtensionSnapshot,
+  RuntimeExtensionMetadata,
+  RuntimeExtensionSource
+} from "@forge/protocol";
 import { getModel, type Model } from "@mariozechner/pi-ai";
 import {
   AuthStorage,
@@ -5,7 +11,8 @@ import {
   createAgentSession,
   ModelRegistry,
   type AgentSession,
-  type ExtensionFactory
+  type ExtensionFactory,
+  type LoadExtensionsResult
 } from "@mariozechner/pi-coding-agent";
 import { AgentRuntime } from "./agent-runtime.js";
 import { ensureCanonicalAuthFilePath } from "./auth-storage-paths.js";
@@ -57,6 +64,11 @@ interface RuntimeFactoryDependencies {
     onSessionEvent: (runtimeToken: number, agentId: string, event: RuntimeSessionEvent) => Promise<void>;
     onAgentEnd: (runtimeToken: number, agentId: string) => Promise<void>;
     onRuntimeError: (runtimeToken: number, agentId: string, error: RuntimeErrorEvent) => Promise<void>;
+    onRuntimeExtensionSnapshot: (
+      runtimeToken: number,
+      agentId: string,
+      snapshot: AgentRuntimeExtensionSnapshot
+    ) => Promise<void>;
   };
 }
 
@@ -191,7 +203,7 @@ export class RuntimeFactory {
       throw new Error(`Unable to open session file for agent ${descriptor.agentId}: ${descriptor.sessionFile}`);
     }
 
-    const { session } = await createAgentSession({
+    const { session, extensionsResult } = await createAgentSession({
       cwd: descriptor.cwd,
       agentDir: runtimeAgentDir,
       authStorage,
@@ -203,6 +215,22 @@ export class RuntimeFactory {
       customTools: swarmTools
     });
 
+    const extensionSnapshot = buildRuntimeExtensionSnapshot({
+      descriptor,
+      loadedAt: this.deps.now(),
+      extensionsResult,
+      pathMetadata: resourceLoader.getPathMetadata(),
+      config: this.deps.config
+    });
+    try {
+      await this.deps.callbacks.onRuntimeExtensionSnapshot(runtimeToken, descriptor.agentId, extensionSnapshot);
+    } catch (error) {
+      this.deps.logDebug("runtime:extension_snapshot:error", {
+        agentId: descriptor.agentId,
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
+
     try {
       await session.bindExtensions({
         onError: (error) => {
@@ -213,6 +241,26 @@ export class RuntimeFactory {
             message: error.error,
             stack: error.stack
           });
+
+          const message = error.error.trim().length > 0 ? error.error.trim() : "Extension handler failed";
+          void this.deps.callbacks
+            .onRuntimeError(runtimeToken, descriptor.agentId, {
+              phase: "extension",
+              message,
+              stack: error.stack,
+              details: {
+                extensionPath: error.extensionPath,
+                event: error.event
+              }
+            })
+            .catch((bridgeError) => {
+              this.deps.logDebug("extension:error_bridge_failed", {
+                agentId: descriptor.agentId,
+                extensionPath: error.extensionPath,
+                event: error.event,
+                message: bridgeError instanceof Error ? bridgeError.message : String(bridgeError)
+              });
+            });
         }
       });
     } catch (error) {
@@ -308,6 +356,23 @@ export class RuntimeFactory {
         await this.deps.onSessionFileRotated?.(descriptor, sessionFile);
       }
     });
+
+    try {
+      await this.deps.callbacks.onRuntimeExtensionSnapshot(runtimeToken, descriptor.agentId, {
+        agentId: descriptor.agentId,
+        role: descriptor.role,
+        managerId: descriptor.managerId,
+        profileId: descriptor.profileId,
+        loadedAt: this.deps.now(),
+        extensions: [],
+        loadErrors: []
+      });
+    } catch (error) {
+      this.deps.logDebug("runtime:extension_snapshot:error", {
+        agentId: descriptor.agentId,
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
 
     this.deps.logDebug("runtime:create:ready", {
       runtime: "codex-app-server",
@@ -409,6 +474,198 @@ export class RuntimeFactory {
 
     return modelRegistry.getAll()[0];
   }
+}
+
+interface BuildRuntimeExtensionSnapshotOptions {
+  descriptor: AgentDescriptor;
+  loadedAt: string;
+  extensionsResult: LoadExtensionsResult;
+  pathMetadata: Map<string, ExtensionPathMetadata>;
+  config: SwarmConfig;
+}
+
+interface ExtensionPathMetadata {
+  source: string;
+  scope: string;
+  origin: "package" | "top-level";
+  baseDir?: string;
+}
+
+function buildRuntimeExtensionSnapshot(options: BuildRuntimeExtensionSnapshotOptions): AgentRuntimeExtensionSnapshot {
+  const extensions: RuntimeExtensionMetadata[] = options.extensionsResult.extensions
+    .filter(
+      (extension) =>
+        !isInternalInlineExtensionPath(extension.path) && !isInternalInlineExtensionPath(extension.resolvedPath)
+    )
+    .map((extension) => {
+      const metadata = resolveExtensionPathMetadata(options.pathMetadata, extension.path, extension.resolvedPath);
+      const resolvedPath = extension.resolvedPath || extension.path;
+
+      return {
+        displayName: normalizeExtensionDisplayName(extension.path, resolvedPath),
+        path: extension.path,
+        resolvedPath,
+        source: classifyRuntimeExtensionSource({
+          path: extension.path,
+          resolvedPath,
+          metadata,
+          descriptor: options.descriptor,
+          config: options.config
+        }),
+        events: Array.from(extension.handlers.keys()).sort((left, right) => left.localeCompare(right)),
+        tools: Array.from(extension.tools.keys()).sort((left, right) => left.localeCompare(right))
+      } satisfies RuntimeExtensionMetadata;
+    })
+    .sort((left, right) => {
+      const byDisplay = left.displayName.localeCompare(right.displayName);
+      if (byDisplay !== 0) return byDisplay;
+      return left.path.localeCompare(right.path);
+    });
+
+  const loadErrors = options.extensionsResult.errors
+    .filter((entry) => !isInternalInlineExtensionPath(entry.path))
+    .map((entry) => ({
+      path: entry.path,
+      error: entry.error
+    }))
+    .sort((left, right) => left.path.localeCompare(right.path));
+
+  return {
+    agentId: options.descriptor.agentId,
+    role: options.descriptor.role,
+    managerId: options.descriptor.managerId,
+    profileId: options.descriptor.profileId,
+    loadedAt: options.loadedAt,
+    extensions,
+    loadErrors
+  };
+}
+
+function isInternalInlineExtensionPath(pathValue: string | undefined): boolean {
+  const normalized = pathValue?.trim() ?? "";
+  return normalized.startsWith("<inline");
+}
+
+function resolveExtensionPathMetadata(
+  pathMetadata: Map<string, ExtensionPathMetadata>,
+  pathValue: string,
+  resolvedPathValue: string
+): ExtensionPathMetadata | undefined {
+  const candidates = [pathValue, resolvedPathValue];
+
+  for (const candidate of candidates) {
+    if (!candidate || isInternalInlineExtensionPath(candidate)) {
+      continue;
+    }
+
+    const direct = pathMetadata.get(candidate);
+    if (direct) {
+      return direct;
+    }
+
+    const resolvedCandidate = resolve(candidate);
+    const resolved = pathMetadata.get(resolvedCandidate);
+    if (resolved) {
+      return resolved;
+    }
+  }
+
+  return undefined;
+}
+
+function classifyRuntimeExtensionSource(options: {
+  path: string;
+  resolvedPath: string;
+  metadata: ExtensionPathMetadata | undefined;
+  descriptor: AgentDescriptor;
+  config: SwarmConfig;
+}): RuntimeExtensionSource {
+  const globalWorkerExtensionsDir = join(options.config.paths.agentDir, "extensions");
+  const globalManagerExtensionsDir = join(options.config.paths.managerAgentDir, "extensions");
+  const profilesDir = join(options.config.paths.dataDir, "profiles");
+  const projectLocalExtensionsDir = join(options.descriptor.cwd, ".pi", "extensions");
+
+  for (const candidate of [options.resolvedPath, options.path]) {
+    if (!candidate || isInternalInlineExtensionPath(candidate)) {
+      continue;
+    }
+
+    if (isPathInside(candidate, globalWorkerExtensionsDir)) {
+      return "global-worker";
+    }
+
+    if (isPathInside(candidate, globalManagerExtensionsDir)) {
+      return "global-manager";
+    }
+
+    if (isProfileOverlayExtensionPath(candidate, profilesDir)) {
+      return "profile-overlay";
+    }
+
+    if (isPathInside(candidate, projectLocalExtensionsDir)) {
+      return "project-local";
+    }
+  }
+
+  if (options.metadata?.origin === "package") {
+    return "package";
+  }
+
+  if (
+    options.metadata?.source &&
+    options.metadata.source !== "local" &&
+    options.metadata.source !== "auto" &&
+    options.metadata.source !== "cli"
+  ) {
+    return "package";
+  }
+
+  return "unknown";
+}
+
+function isProfileOverlayExtensionPath(pathValue: string, profilesDir: string): boolean {
+  if (!isPathInside(pathValue, profilesDir)) {
+    return false;
+  }
+
+  const relativePath = relative(resolve(profilesDir), resolve(pathValue));
+  if (!relativePath || relativePath.startsWith("..")) {
+    return false;
+  }
+
+  const segments = relativePath.split(/[\\/]+/).filter((segment) => segment.length > 0);
+  if (segments.length < 3) {
+    return false;
+  }
+
+  return segments[1]?.toLowerCase() === "pi" && segments[2]?.toLowerCase() === "extensions";
+}
+
+function isPathInside(targetPath: string, rootPath: string): boolean {
+  const normalizedTarget = toComparablePath(targetPath);
+  const normalizedRoot = toComparablePath(rootPath);
+
+  if (normalizedTarget === normalizedRoot) {
+    return true;
+  }
+
+  const prefix = normalizedRoot.endsWith(sep) ? normalizedRoot : `${normalizedRoot}${sep}`;
+  return normalizedTarget.startsWith(prefix);
+}
+
+function toComparablePath(pathValue: string): string {
+  const normalized = resolve(pathValue);
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
+function normalizeExtensionDisplayName(pathValue: string, resolvedPathValue: string): string {
+  const candidate = (resolvedPathValue || pathValue).trim();
+  if (!candidate) {
+    return "extension";
+  }
+
+  const normalizedBase = basename(candidate);
+  return normalizedBase || candidate;
 }
 
 const CORTEX_ARCHETYPE_ID = "cortex";

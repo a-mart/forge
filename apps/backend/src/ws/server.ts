@@ -24,6 +24,7 @@ import { createFileRoutes } from "./routes/file-routes.js";
 import { createFeedbackRoutes } from "./routes/feedback-routes.js";
 import { createFileBrowserRoutes } from "./routes/file-browser-routes.js";
 import { createGitDiffRoutes } from "./routes/git-diff-routes.js";
+import { createExtensionRoutes } from "./routes/extension-routes.js";
 import { createHealthRoutes } from "./routes/health-routes.js";
 import type { HttpRoute } from "./routes/http-route.js";
 import { createIntegrationRoutes } from "./routes/integration-routes.js";
@@ -224,6 +225,7 @@ export class SwarmWebSocketServer {
       ...createMobileRoutes({ mobilePushService: this.mobilePushService }),
       ...createAgentHttpRoutes({ swarmManager: this.swarmManager }),
       ...this.settingsRoutes.routes,
+      ...createExtensionRoutes({ swarmManager: this.swarmManager }),
       ...createChromeCdpRoutes({ swarmManager: this.swarmManager }),
       ...createPlaywrightRoutes({
         discoveryService: this.playwrightDiscovery,

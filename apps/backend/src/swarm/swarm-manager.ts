@@ -6,6 +6,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { getModel, type Api, type AssistantMessage, type Model } from "@mariozechner/pi-ai";
 import { AuthStorage, ModelRegistry } from "@mariozechner/pi-coding-agent";
 import type {
+  AgentRuntimeExtensionSnapshot,
   ChoiceRequestEvent,
   CortexReviewRunRecord,
   CortexReviewRunScope,
@@ -1072,6 +1073,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly runtimes = new Map<string, SwarmAgentRuntime>();
   private readonly runtimeCreationPromisesByAgentId = new Map<string, Promise<SwarmAgentRuntime>>();
   private readonly runtimeTokensByAgentId = new Map<string, number>();
+  private readonly runtimeExtensionSnapshotsByAgentId = new Map<string, AgentRuntimeExtensionSnapshot>();
   private nextRuntimeToken = 1;
   private readonly pendingManagerRuntimeRecycleAgentIds = new Set<string>();
   private readonly pendingChoiceRequests = new Map<string, {
@@ -1184,6 +1186,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         },
         onRuntimeError: async (runtimeToken, agentId, error) => {
           await this.handleRuntimeError(runtimeToken, agentId, error);
+        },
+        onRuntimeExtensionSnapshot: async (runtimeToken, agentId, snapshot) => {
+          this.handleRuntimeExtensionSnapshot(runtimeToken, agentId, snapshot);
         }
       }
     });
@@ -4097,6 +4102,20 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return this.versioningService;
   }
 
+  listRuntimeExtensionSnapshots(): AgentRuntimeExtensionSnapshot[] {
+    return Array.from(this.runtimeExtensionSnapshotsByAgentId.values())
+      .map((snapshot) => ({
+        ...snapshot,
+        extensions: snapshot.extensions.map((extension) => ({
+          ...extension,
+          events: [...extension.events],
+          tools: [...extension.tools]
+        })),
+        loadErrors: snapshot.loadErrors.map((error) => ({ ...error }))
+      }))
+      .sort(compareRuntimeExtensionSnapshots);
+  }
+
   setIntegrationContextProvider(provider?: (profileId: string) => string): void {
     this.integrationContextProvider = provider;
   }
@@ -5582,6 +5601,27 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     this.runtimeTokensByAgentId.delete(agentId);
+    this.runtimeExtensionSnapshotsByAgentId.delete(agentId);
+  }
+
+  private handleRuntimeExtensionSnapshot(
+    runtimeToken: number,
+    agentId: string,
+    snapshot: AgentRuntimeExtensionSnapshot
+  ): void {
+    if (!this.isCurrentRuntimeToken(agentId, runtimeToken)) {
+      return;
+    }
+
+    this.runtimeExtensionSnapshotsByAgentId.set(agentId, {
+      ...snapshot,
+      extensions: snapshot.extensions.map((extension) => ({
+        ...extension,
+        events: [...extension.events],
+        tools: [...extension.tools]
+      })),
+      loadErrors: snapshot.loadErrors.map((error) => ({ ...error }))
+    });
   }
 
   private detachRuntime(agentId: string, runtimeToken?: number): boolean {
@@ -6057,6 +6097,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const retryLabel =
       attempt && maxAttempts && maxAttempts > 1 ? ` (attempt ${attempt}/${maxAttempts})` : "";
 
+    const extensionPath = readStringDetail(error.details, "extensionPath");
+    const extensionEvent = readStringDetail(error.details, "event");
+    const extensionBaseName = extensionPath ? basename(extensionPath) : undefined;
+
     const text =
       error.phase === "compaction"
         ? recoveryStage === "auto_compaction_succeeded"
@@ -6068,9 +6112,15 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
           ? recoveryStage === "guard_started"
             ? `📋 ${message}.`
             : `⚠️ Context guard error${retryLabel}: ${message}.`
-          : droppedPendingCount && droppedPendingCount > 0
-            ? `⚠️ Agent error${retryLabel}: ${message}. ${droppedPendingCount} queued message${droppedPendingCount === 1 ? "" : "s"} could not be delivered and were dropped. Please resend.`
-            : `⚠️ Agent error${retryLabel}: ${message}. Message may need to be resent.`;
+          : error.phase === "extension"
+            ? extensionBaseName && extensionEvent
+              ? `⚠️ Extension error (${extensionBaseName} · ${extensionEvent}): ${message}`
+              : extensionBaseName
+                ? `⚠️ Extension error (${extensionBaseName}): ${message}`
+                : `⚠️ Extension error: ${message}`
+            : droppedPendingCount && droppedPendingCount > 0
+              ? `⚠️ Agent error${retryLabel}: ${message}. ${droppedPendingCount} queued message${droppedPendingCount === 1 ? "" : "s"} could not be delivered and were dropped. Please resend.`
+              : `⚠️ Agent error${retryLabel}: ${message}. Message may need to be resent.`;
 
     this.emitConversationMessage({
       type: "conversation_message",
@@ -7495,6 +7545,31 @@ const VALID_PERSISTED_AGENT_STATUSES = new Set([
   "error",
   "stopped_on_restart"
 ]);
+
+function compareRuntimeExtensionSnapshots(
+  left: AgentRuntimeExtensionSnapshot,
+  right: AgentRuntimeExtensionSnapshot
+): number {
+  const leftRoleRank = left.role === "manager" ? 0 : 1;
+  const rightRoleRank = right.role === "manager" ? 0 : 1;
+  if (leftRoleRank !== rightRoleRank) {
+    return leftRoleRank - rightRoleRank;
+  }
+
+  const leftProfileOrSession = left.profileId ?? left.managerId;
+  const rightProfileOrSession = right.profileId ?? right.managerId;
+  const byProfileOrSession = leftProfileOrSession.localeCompare(rightProfileOrSession);
+  if (byProfileOrSession !== 0) {
+    return byProfileOrSession;
+  }
+
+  const byManager = left.managerId.localeCompare(right.managerId);
+  if (byManager !== 0) {
+    return byManager;
+  }
+
+  return left.agentId.localeCompare(right.agentId);
+}
 
 function validateAgentDescriptor(value: unknown): AgentDescriptor | string {
   if (!isRecord(value)) {

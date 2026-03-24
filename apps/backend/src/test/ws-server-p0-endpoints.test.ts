@@ -40,11 +40,13 @@ interface SseEvent {
 class FakeSwarmManager extends EventEmitter {
   private readonly config: SwarmConfig
   private readonly agents: AgentDescriptor[]
+  private readonly runtimeExtensionSnapshots: unknown[]
 
-  constructor(config: SwarmConfig, agents: AgentDescriptor[]) {
+  constructor(config: SwarmConfig, agents: AgentDescriptor[], options?: { runtimeExtensionSnapshots?: unknown[] }) {
     super()
     this.config = config
     this.agents = agents
+    this.runtimeExtensionSnapshots = options?.runtimeExtensionSnapshots ?? []
   }
 
   getConfig(): SwarmConfig {
@@ -61,6 +63,10 @@ class FakeSwarmManager extends EventEmitter {
 
   getAgent(agentId: string): AgentDescriptor | undefined {
     return this.agents.find((agent) => agent.agentId === agentId)
+  }
+
+  listRuntimeExtensionSnapshots(): unknown[] {
+    return this.runtimeExtensionSnapshots.map((snapshot) => ({ ...(snapshot as Record<string, unknown>) }))
   }
 
   getPendingChoiceIdsForSession(): string[] {
@@ -862,6 +868,76 @@ describe('SwarmWebSocketServer P0 endpoints', () => {
       const unregisterPayload = await parseJsonResponse(unregisterResponse)
       expect(unregisterPayload.status).toBe(200)
       expect(unregisterPayload.json).toEqual({ ok: true, removed: true })
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('exposes runtime extension snapshots via /api/settings/extensions', async () => {
+    const config = await makeTempConfig({ managerId: 'manager' })
+    const manager = new FakeSwarmManager(
+      config,
+      [createManagerDescriptor(config.paths.rootDir, 'manager')],
+      {
+        runtimeExtensionSnapshots: [
+          {
+            agentId: 'manager',
+            role: 'manager',
+            managerId: 'manager',
+            profileId: 'manager',
+            loadedAt: '2026-03-24T00:00:00.000Z',
+            extensions: [
+              {
+                displayName: 'protected-paths.ts',
+                path: '/tmp/protected-paths.ts',
+                resolvedPath: '/tmp/protected-paths.ts',
+                source: 'project-local',
+                events: ['tool_call'],
+                tools: [],
+              },
+            ],
+            loadErrors: [
+              {
+                path: '/tmp/broken.ts',
+                error: 'Failed to load extension: boom',
+              },
+            ],
+          },
+        ],
+      },
+    )
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager as unknown as never,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: false,
+    })
+
+    await server.start()
+
+    try {
+      const response = await fetch(`http://${config.host}:${config.port}/api/settings/extensions`)
+      const payload = await parseJsonResponse(response)
+
+      expect(payload.status).toBe(200)
+      expect(typeof payload.json.generatedAt).toBe('string')
+      expect(payload.json.snapshots).toHaveLength(1)
+
+      const [snapshot] = payload.json.snapshots as Array<Record<string, unknown>>
+      expect(snapshot).toMatchObject({
+        agentId: 'manager',
+        role: 'manager',
+        managerId: 'manager',
+        profileId: 'manager',
+      })
+
+      expect(payload.json.directories).toMatchObject({
+        globalWorker: join(config.paths.agentDir, 'extensions'),
+        globalManager: join(config.paths.managerAgentDir, 'extensions'),
+        profileTemplate: join(config.paths.dataDir, 'profiles', '<profileId>', 'pi', 'extensions'),
+        projectLocalRelative: '.pi/extensions',
+      })
     } finally {
       await server.stop()
     }

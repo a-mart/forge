@@ -82,6 +82,7 @@ export interface RuntimeErrorEvent {
     | "steer_delivery"
     | "compaction"
     | "context_guard"
+    | "extension"
     | "interrupt"
     | "thread_resume"
     | "startup"
