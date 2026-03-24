@@ -1,10 +1,12 @@
-import { File, FileText, X } from 'lucide-react'
+import { useState } from 'react'
+import { File, FileText, X, ZoomIn } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   isPendingImageAttachment,
   isPendingTextAttachment,
   type PendingAttachment,
 } from '@/lib/file-attachments'
+import { ContentZoomDialog } from './ContentZoomDialog'
 
 interface AttachedFilesProps {
   attachments: PendingAttachment[]
@@ -12,6 +14,8 @@ interface AttachedFilesProps {
 }
 
 export function AttachedFiles({ attachments, onRemove }: AttachedFilesProps) {
+  const [zoomTarget, setZoomTarget] = useState<{ src: string; alt: string } | null>(null)
+
   if (attachments.length === 0) {
     return null
   }
@@ -24,11 +28,29 @@ export function AttachedFiles({ attachments, onRemove }: AttachedFilesProps) {
         return (
           <div key={attachment.id} className="group relative">
             {isImage ? (
-              <img
-                src={attachment.dataUrl}
-                alt={attachment.fileName || 'Attached image'}
-                className="size-16 rounded border border-border object-cover"
-              />
+              <button
+                type="button"
+                onClick={() =>
+                  setZoomTarget({
+                    src: attachment.dataUrl,
+                    alt: attachment.fileName || 'Attached image',
+                  })
+                }
+                className="group/zoom relative cursor-zoom-in overflow-hidden rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+                aria-label={`View full size: ${attachment.fileName || 'Attached image'}`}
+              >
+                <img
+                  src={attachment.dataUrl}
+                  alt={attachment.fileName || 'Attached image'}
+                  className="size-16 rounded border border-border object-cover"
+                />
+                <span
+                  className="pointer-events-none absolute inset-0 flex items-center justify-center rounded bg-black/40 text-white/90 opacity-0 transition-opacity duration-150 group-hover/zoom:opacity-100 group-focus-visible/zoom:opacity-100"
+                  aria-hidden="true"
+                >
+                  <ZoomIn className="size-3.5" />
+                </span>
+              </button>
             ) : (
               <div className="flex h-16 w-52 items-center gap-2 rounded border border-border bg-muted/40 px-2 py-1.5">
                 <div className="rounded bg-muted p-1.5 text-muted-foreground">
@@ -56,6 +78,22 @@ export function AttachedFiles({ attachments, onRemove }: AttachedFilesProps) {
           </div>
         )
       })}
+
+      <ContentZoomDialog
+        open={zoomTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setZoomTarget(null)
+        }}
+        title="Expanded image preview"
+      >
+        {zoomTarget ? (
+          <img
+            src={zoomTarget.src}
+            alt={zoomTarget.alt}
+            className="h-auto max-h-full w-auto max-w-full rounded-md"
+          />
+        ) : null}
+      </ContentZoomDialog>
     </div>
   )
 }

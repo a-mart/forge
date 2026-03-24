@@ -222,31 +222,17 @@ export const MarkdownMessage = memo(function MarkdownMessage({
 
               const imageAlt = alt ?? title ?? 'Image preview'
 
-              if (!canExpandContent) {
-                return (
-                  <img
-                    src={imageSrc}
-                    alt={alt ?? ''}
-                    title={title}
-                    loading="lazy"
-                    className={cn(
-                      'h-auto max-w-full rounded-lg border border-border/50 bg-muted/20',
-                      isDocument ? 'my-5' : 'my-2',
-                    )}
-                  />
-                )
-              }
-
               return (
                 <Button
                   type="button"
                   variant="ghost"
                   onClick={() => setZoomTarget({ type: 'image', src: imageSrc, alt: imageAlt })}
                   className={cn(
-                    'group/zoom relative my-5 inline-block h-auto w-full cursor-zoom-in overflow-hidden rounded-lg border border-border/55 p-0 text-left',
+                    'group/zoom relative inline-block h-auto w-full cursor-zoom-in overflow-hidden rounded-lg border border-border/55 p-0 text-left',
                     'bg-muted/15 text-left transition-all duration-150',
                     'hover:scale-[1.005] hover:border-primary/35',
                     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35',
+                    isDocument ? 'my-5' : 'my-2',
                   )}
                   aria-label={`Expand image: ${imageAlt}`}
                 >

@@ -1,6 +1,8 @@
-import { File, FileText, ImageIcon } from 'lucide-react'
+import { useState } from 'react'
+import { File, FileText, ImageIcon, ZoomIn } from 'lucide-react'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
 import { cn } from '@/lib/utils'
+import { ContentZoomDialog } from '../ContentZoomDialog'
 import type {
   ConversationImageAttachment,
   ConversationMessageAttachment,
@@ -103,38 +105,78 @@ function MessageImageAttachments({
   isUser: boolean
   wsUrl?: string
 }) {
+  const [zoomTarget, setZoomTarget] = useState<{ src: string; alt: string } | null>(null)
+
   if (attachments.length === 0) {
     return null
   }
 
   return (
-    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-      {attachments.map((attachment, index) => {
-        const src = resolveMessageImageSrc(attachment, wsUrl)
-        if (!src) {
-          return null
-        }
+    <>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+        {attachments.map((attachment, index) => {
+          const src = resolveMessageImageSrc(attachment, wsUrl)
+          if (!src) {
+            return null
+          }
 
-        const imageKey = isInlineImageAttachment(attachment)
-          ? `${attachment.mimeType}-${attachment.data.slice(0, 32)}-${index}`
-          : `${attachment.mimeType}-${attachment.fileRef}-${index}`
+          const imageKey = isInlineImageAttachment(attachment)
+            ? `${attachment.mimeType}-${attachment.data.slice(0, 32)}-${index}`
+            : `${attachment.mimeType}-${attachment.fileRef}-${index}`
 
-        return (
+          const altText = attachment.fileName || `Attached image ${index + 1}`
+
+          return (
+            <button
+              key={imageKey}
+              type="button"
+              onClick={() => setZoomTarget({ src, alt: altText })}
+              className="group/zoom relative cursor-zoom-in overflow-hidden rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+              aria-label={`View full size: ${altText}`}
+            >
+              <img
+                src={src}
+                alt={altText}
+                className={cn(
+                  'max-h-56 w-full rounded-lg object-cover transition-transform duration-150 group-hover/zoom:scale-[1.02]',
+                  isUser
+                    ? 'border border-primary-foreground/25'
+                    : 'border border-border',
+                )}
+                loading="lazy"
+              />
+              <span
+                className={cn(
+                  'pointer-events-none absolute right-2 top-2 inline-flex size-7 items-center justify-center rounded-md',
+                  'bg-black/55 text-white/85 shadow-sm backdrop-blur-sm',
+                  'opacity-0 transition-opacity duration-150',
+                  'group-hover/zoom:opacity-100 group-focus-visible/zoom:opacity-100',
+                )}
+                aria-hidden="true"
+              >
+                <ZoomIn className="size-3.5" />
+              </span>
+            </button>
+          )
+        })}
+      </div>
+
+      <ContentZoomDialog
+        open={zoomTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setZoomTarget(null)
+        }}
+        title="Expanded image preview"
+      >
+        {zoomTarget ? (
           <img
-            key={imageKey}
-            src={src}
-            alt={attachment.fileName || `Attached image ${index + 1}`}
-            className={cn(
-              'max-h-56 w-full rounded-lg object-cover',
-              isUser
-                ? 'border border-primary-foreground/25'
-                : 'border border-border',
-            )}
-            loading="lazy"
+            src={zoomTarget.src}
+            alt={zoomTarget.alt}
+            className="h-auto max-h-full w-auto max-w-full rounded-md"
           />
-        )
-      })}
-    </div>
+        ) : null}
+      </ContentZoomDialog>
+    </>
   )
 }
 
