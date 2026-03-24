@@ -188,11 +188,21 @@ export function IndexPage() {
     )
   }, [activeManagerId, state.agents])
 
-  // Proactively load workers when viewing a manager session
+  // Track the active manager's workerCount so the effect re-fires when workers spawn/despawn
+  const activeManagerWorkerCount = useMemo(() => {
+    if (!activeManagerId) return 0
+    const manager = state.agents.find(
+      (a) => a.role === 'manager' && a.agentId === activeManagerId,
+    )
+    return manager?.workerCount ?? 0
+  }, [activeManagerId, state.agents])
+
+  // Proactively load workers when viewing a manager session or when workerCount changes
   useEffect(() => {
     if (!isActiveManager || !activeManagerId || !clientRef.current) return
     void clientRef.current.getSessionWorkers(activeManagerId).catch(() => {})
-  }, [isActiveManager, activeManagerId, clientRef])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isActiveManager, activeManagerId, clientRef, activeManagerWorkerCount])
 
   // Resolve parent manager label for the worker back-bar
   const parentManagerLabel = useMemo(() => {
