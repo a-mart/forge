@@ -104,6 +104,17 @@ Tips for WSL2:
 - Keep the repo and data directory **inside the WSL filesystem** (`/home/...`) for best performance. Cross-filesystem access between Windows and WSL is slower.
 - Windows Defender can increase I/O latency — consider adding exclusions for your WSL filesystem or the Forge data directory.
 
+## Pi Extensions
+
+Pi extensions work fully on Windows. Extension and skill auto-discovery directories are created at startup under `%LOCALAPPDATA%\forge\agent\`:
+
+- `%LOCALAPPDATA%\forge\agent\extensions\` — global worker extensions
+- `%LOCALAPPDATA%\forge\agent\manager\extensions\` — global manager extensions
+- `%LOCALAPPDATA%\forge\agent\skills\` — global worker skills
+- `%LOCALAPPDATA%\forge\agent\manager\skills\` — global manager skills
+
+Project-local extensions at `<cwd>\.pi\extensions\` also work. See [PI_EXTENSIONS.md](PI_EXTENSIONS.md) for the full guide.
+
 ## Environment Variables
 
 These are the most relevant environment variables for Windows:

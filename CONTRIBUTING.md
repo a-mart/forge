@@ -65,4 +65,8 @@ pnpm dlx shadcn@latest add <component-name>
 3. Open a PR against `main`
 4. Ensure tests and typechecks pass
 
+## Extensions
+
+Forge supports Pi extensions for custom tools, event interception, and packages. See [docs/PI_EXTENSIONS.md](docs/PI_EXTENSIONS.md) for how to write extensions. The internal architecture is documented in [apps/backend/src/swarm/EXTENSIONS.md](apps/backend/src/swarm/EXTENSIONS.md).
+
 Thanks for helping improve Forge!

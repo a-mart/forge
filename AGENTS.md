@@ -70,7 +70,7 @@ These are briefly described for orientation. Most have both backend and UI compo
 | **Reference docs** | `swarm/reference-docs.ts` | Settings UI | Profile-scoped reference documents |
 | **Worker stall detector** | `swarm/swarm-manager.ts` (WorkerStallState, checkForStalledWorkers) | — | Periodic wall-clock detection of workers stuck mid-tool-execution; two-stage nudge then auto-kill |
 | **Choice Picker** | `swarm/swarm-manager.ts` (pending registry), `swarm/swarm-tools.ts` (present_choices tool) | `components/chat/message-list/ChoiceRequestCard.tsx`, `components/chat/message-list/ChoiceAnsweredRow.tsx` | Interactive structured choice picker for agent-user decision points |
-| **Pi extensions** | Agent runtime (Pi extension/package loading) | — | Custom tools, event handlers, and packages via Pi's extension system. See [`docs/PI_EXTENSIONS.md`](docs/PI_EXTENSIONS.md) |
+| **Pi extensions** | Agent runtime (`pi-agent-runtime.ts`: `bindExtensions()`, `session_shutdown`, auto-discovery) | — | In-process custom tools, event interception, context modification, and packages via Pi's extension system. Auto-discovered from `~/.forge/agent/extensions/` (workers), `~/.forge/agent/manager/extensions/` (managers), and `<cwd>/.pi/extensions/` (project-local). See [`docs/PI_EXTENSIONS.md`](docs/PI_EXTENSIONS.md) |
 
 Backend paths above are relative to `apps/backend/src/`. UI paths are relative to `apps/ui/src/`.
 
@@ -96,11 +96,12 @@ All runtime state lives in `~/.forge` (or `%LOCALAPPDATA%\forge` on Windows), ov
 ├── swarm/
 │   └── agents.json                        # Global agent registry
 ├── agent/                                 # Pi agent runtime config
-│   ├── extensions/                        #   Global worker extensions
-│   ├── manager/extensions/                #   Global manager extensions
-│   ├── skills/                            #   Global worker skills (Pi-discovered)
-│   ├── manager/skills/                    #   Global manager skills (Pi-discovered)
-│   └── settings.json                      #   Global worker package config (optional)
+│   ├── extensions/                        #   Global worker extensions (auto-created)
+│   ├── manager/extensions/                #   Global manager extensions (auto-created)
+│   ├── skills/                            #   Global worker skills (Pi-discovered, auto-created)
+│   ├── manager/skills/                    #   Global manager skills (Pi-discovered, auto-created)
+│   ├── settings.json                      #   Global worker package config (optional)
+│   └── manager/settings.json             #   Global manager package config (optional)
 ├── uploads/                               # User-uploaded files
 ├── shared/
 │   ├── auth/auth.json                     # Authentication credentials

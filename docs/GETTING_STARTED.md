@@ -476,9 +476,29 @@ If you don't have the mobile app, Telegram works for remote access. Create a bot
 
 ### Pi Extensions
 
-For power users who want to go beyond skills and built-in tools: Forge exposes the full [Pi extension system](PI_EXTENSIONS.md). Extensions can register custom tools the LLM can call, intercept tool calls to block or modify them, inject context before each LLM call, and more. Drop a TypeScript file into `~/.forge/agent/extensions/` and it's available to all workers. No build step required.
+For power users who want to go beyond skills and built-in tools: Forge exposes the full [Pi extension system](PI_EXTENSIONS.md). Extensions are TypeScript modules that hook into the agent lifecycle and can:
 
-You can also install community packages from npm or git. See the [Pi Extensions guide](PI_EXTENSIONS.md) for details.
+- **Register custom tools** — Give agents access to your ticket tracker, internal APIs, databases, or any external service
+- **Intercept tool calls** — Block dangerous commands (`rm -rf /`), prevent writes to sensitive files (`.env`, `.git/`), or require approval for specific operations
+- **Modify context** — Inject project-specific instructions, redact secrets from output, or add reminders before each LLM call
+- **Audit behavior** — Log every tool call for compliance or debugging
+
+**Quick start:** Save a `.ts` file to `~/.forge/agent/extensions/` and it's loaded for all workers. No build step, no restart — extensions load per-session.
+
+```typescript
+// ~/.forge/agent/extensions/protected-paths.ts
+import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+
+export default function (pi: ExtensionAPI) {
+  pi.on("tool_call", async (event) => {
+    if (event.toolName === "write" && event.input?.path?.includes(".env")) {
+      return { block: true, reason: "Blocked: .env writes are protected" };
+    }
+  });
+}
+```
+
+There's a growing ecosystem of community Pi packages you can install from npm or git — security guardrails, usage tracking, code intelligence tools, and more. See the [Pi Extensions guide](PI_EXTENSIONS.md) for the full reference including package installation, available events, and headless mode caveats.
 
 ### The Data Directory
 
@@ -575,6 +595,7 @@ Once you're comfortable with the basics:
 4. **Experiment with parallel execution** — Give your manager multiple tasks and watch it coordinate workers.
 5. **Set up a review schedule** — Once you've seen how reviews work, ask Cortex to auto-review on a cron schedule.
 6. **Explore multi-model routing** — If you have both OpenAI and Anthropic configured, teach your manager which models to use for which kinds of work.
+7. **Try Pi extensions** — Drop a TypeScript file into `~/.forge/agent/extensions/` to add custom tools or safety guardrails. See the [Pi Extensions guide](PI_EXTENSIONS.md).
 
 > "Forge builds Forge. When I'm working on other projects, as soon as I run into something that's either a bug or a little feature I want, I just pop down, click the conversation with Forge, tell it, and then it chews on it, plans it, whatever."
 

@@ -11,6 +11,7 @@ Forge is configured through environment variables, a `.env` file, and the dashbo
 | `FORGE_HOST` | `127.0.0.1` | Backend bind address. Set to `0.0.0.0` for network/remote access. |
 | `FORGE_PORT` | `47187` (dev) / `47287` (prod) | Backend HTTP + WebSocket port. |
 | `FORGE_DATA_DIR` | `~/.forge` (macOS/Linux) or `%LOCALAPPDATA%\forge` (Windows) | Data directory for all persistent state. |
+| `FORGE_DEBUG` | `false` | Enable debug logging. Also enables extension tool-call logging, which surfaces tool invocations from Pi extensions in the backend logs. |
 
 ### UI
 
@@ -82,11 +83,12 @@ All persistent state lives in a single data directory:
 ├── swarm/
 │   └── agents.json            # Agent registry
 ├── agent/                     # Pi agent runtime config (extensions, skills, packages)
-│   ├── extensions/            #   Global worker extensions
-│   ├── manager/extensions/    #   Global manager extensions
-│   ├── skills/                #   Global worker skills (Pi-discovered)
-│   ├── manager/skills/        #   Global manager skills (Pi-discovered)
-│   └── settings.json          #   Global worker package config (optional)
+│   ├── extensions/            #   Global worker extensions (auto-created at startup)
+│   ├── manager/extensions/    #   Global manager extensions (auto-created at startup)
+│   ├── skills/                #   Global worker skills (Pi-discovered, auto-created)
+│   ├── manager/skills/        #   Global manager skills (Pi-discovered, auto-created)
+│   ├── settings.json          #   Global worker package config (optional)
+│   └── manager/settings.json  #   Global manager package config (optional)
 ├── skills/                    # Machine-local skills (optional, station-specific)
 │   └── <skillName>/SKILL.md
 └── uploads/                   # File uploads
@@ -128,9 +130,37 @@ On a default macOS/Linux install this becomes:
 
 ### Pi Extensions & Packages
 
-Forge exposes Pi's extension and package system for deeper customization — custom tools, event interception, context modification, and more. Extensions are auto-discovered from `${FORGE_DATA_DIR}/agent/extensions/` (workers) and `${FORGE_DATA_DIR}/agent/manager/extensions/` (managers), as well as project-local `<cwd>/.pi/extensions/`.
+Forge exposes Pi's extension and package system for deeper customization — custom tools, event interception, context modification, and more.
 
-See [PI_EXTENSIONS.md](PI_EXTENSIONS.md) for the full guide, including package installation, event hooks, and headless mode caveats.
+**Extension auto-discovery directories** (created automatically on startup):
+
+| Path | Scope |
+|------|-------|
+| `${FORGE_DATA_DIR}/agent/extensions/` | All workers |
+| `${FORGE_DATA_DIR}/agent/manager/extensions/` | All managers |
+| `<cwd>/.pi/extensions/` | Project-local (agents with that CWD) |
+
+**Skill auto-discovery directories** (created automatically on startup):
+
+| Path | Scope |
+|------|-------|
+| `${FORGE_DATA_DIR}/agent/skills/` | All workers |
+| `${FORGE_DATA_DIR}/agent/manager/skills/` | All managers |
+| `<cwd>/.pi/skills/` | Project-local (agents with that CWD) |
+
+**Package configuration** via optional `settings.json` files:
+
+| Path | Scope |
+|------|-------|
+| `${FORGE_DATA_DIR}/agent/settings.json` | Worker packages |
+| `${FORGE_DATA_DIR}/agent/manager/settings.json` | Manager packages |
+| `<cwd>/.pi/settings.json` | Project-local packages |
+
+Packages can be installed from npm (`npm:@scope/name`), git (`git:github.com/user/repo`), or local paths. These files do not need to exist — create them only when you want to install packages.
+
+Drop a `.ts` or `.js` file into the appropriate extensions directory and it's loaded for all sessions of that role. TypeScript works without a build step via [jiti](https://github.com/nicolo-ribaudo/jiti). Extensions load per-session, so new extensions are picked up without restarting the backend.
+
+See [PI_EXTENSIONS.md](PI_EXTENSIONS.md) for the full guide, including writing extensions, event hooks, package filtering, and headless mode caveats.
 
 ## Ports
 

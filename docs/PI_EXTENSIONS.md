@@ -4,6 +4,25 @@ Forge uses [Pi](https://github.com/badlogic/pi-mono) as its agent runtime. Pi's 
 
 > **Important:** Extensions and packages run with **full system access**. They can execute arbitrary code, read/write files, and run shell commands. Only install extensions and packages you trust.
 
+## Quick Start
+
+Drop a TypeScript file into `~/.forge/agent/extensions/` and it's loaded for all worker sessions:
+
+```typescript
+// ~/.forge/agent/extensions/protected-paths.ts
+import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+
+export default function (pi: ExtensionAPI) {
+  pi.on("tool_call", async (event) => {
+    if (event.toolName === "write" && event.input?.path?.includes(".env")) {
+      return { block: true, reason: "Blocked: .env files are protected" };
+    }
+  });
+}
+```
+
+No build step. No restart. Extensions load per-session via [jiti](https://github.com/nicolo-ribaudo/jiti), so new extensions are picked up the next time an agent session starts.
+
 ## Overview
 
 Pi extensions are TypeScript/JavaScript modules that hook into the agent lifecycle. They can:
@@ -27,6 +46,8 @@ Pi automatically discovers extensions and skills from well-known directories. Fo
 | `~/.forge/agent/manager/skills/` | Global | All managers |
 | `<cwd>/.pi/extensions/` | Project-local | Agents with that CWD |
 | `<cwd>/.pi/skills/` | Project-local | Agents with that CWD |
+
+All global directories (`~/.forge/agent/extensions/`, `~/.forge/agent/manager/extensions/`, etc.) are **auto-created on startup**, so you can start dropping files in immediately.
 
 **Extension file formats:**
 - Single file: `extensions/my-ext.ts` or `extensions/my-ext.js`
@@ -262,3 +283,27 @@ Extension tools are sent to the model via the API tool schema but are **not** li
 ### Headless UI calls returning defaults?
 
 This is expected. Forge runs in headless mode. Check `ctx.hasUI` and provide non-interactive fallbacks.
+
+### Debug logging
+
+Set `FORGE_DEBUG=true` in your `.env` to enable extension tool-call logging. This surfaces tool invocations from extensions in the backend logs, which is useful for verifying that your extension is being called.
+
+## Ecosystem
+
+Pi has a growing community of extensions and packages. Some highlights relevant to Forge:
+
+| Package | What It Does |
+|---------|-------------|
+| Security / permission-gate patterns | Block dangerous bash commands, protect sensitive paths, redact secrets from output |
+| Usage tracking (`@marckrenn/pi-sub-core`) | Token and cost tracking across providers via event bus |
+| Tool auditing (`toolwatch`) | SQLite-backed audit log of every tool call |
+| Subagent delegation (`pi-subagents`) | Advanced agent delegation with chains and parallel execution |
+| LSP integration | Language Server Protocol access for type errors and diagnostics |
+| Custom providers | Connect to enterprise proxies, Ollama, or novel model APIs |
+
+**Discovering packages:**
+- **Gallery:** [shittycodingagent.ai/packages](https://shittycodingagent.ai/packages) — packages tagged with `pi-package` on npm
+- **Community list:** [awesome-pi-agent](https://github.com/qualisero/awesome-pi-agent) — curated extensions and resources
+- **npm search:** Search for `keywords:pi-package` on [npmjs.com](https://www.npmjs.com)
+
+Most community extensions work in Forge out of the box. Extensions that use TUI features (interactive prompts, widgets, keyboard shortcuts) will gracefully degrade — `ctx.hasUI` returns `false` in Forge's headless environment, and UI methods return safe defaults.

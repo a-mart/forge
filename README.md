@@ -158,9 +158,18 @@ Skill API keys can be configured in the dashboard under Settings → Environment
 
 Forge also supports custom skills. Place them in `${FORGE_DATA_DIR}/skills` (default: `~/.forge/skills`) using the standard `SKILL.md` frontmatter format and they'll be available to all agents. You can even have agents create new skills for you. See [docs/CONFIGURATION.md](docs/CONFIGURATION.md#machine-local-skills).
 
-### Pi Extensions
+### Pi Extensions & Packages
 
-Beyond skills, Forge exposes the full [Pi extension and package system](docs/PI_EXTENSIONS.md). Extensions can register custom tools callable by the LLM, intercept and modify agent events (tool calls, context, etc.), and bundle reusable packages from npm, git, or local paths. Drop a TypeScript file into `~/.forge/agent/extensions/` and it's loaded for all workers — no build step required.
+Beyond skills, Forge exposes the full [Pi extension and package system](docs/PI_EXTENSIONS.md). Extensions let you deeply customize agent behavior:
+
+- **Custom tools** — Register new tools the LLM can call (ticket lookups, API integrations, internal databases)
+- **Event interception** — Block dangerous commands, redact secrets from output, audit every tool call
+- **Context injection** — Modify system prompts or message history before each LLM call
+- **Custom model providers** — Connect to enterprise proxies, self-hosted models, or novel APIs
+
+Drop a TypeScript file into `~/.forge/agent/extensions/` and it's loaded for all workers — no build step, no restart required. Extensions load per-session via [jiti](https://github.com/nicolo-ribaudo/jiti) with full TypeScript support.
+
+There's also a growing ecosystem of community Pi packages available from npm and git. Install them by adding a `settings.json` to your agent config directory. See the [Pi Extensions guide](docs/PI_EXTENSIONS.md) for the full reference.
 
 ## Integrations
 
@@ -201,7 +210,7 @@ Forge runs three layers on your machine:
 | **Backend Daemon** (`apps/backend`) | Node.js HTTP + WebSocket server. Agent orchestration, message routing, persistence, scheduler. |
 | **Agents** | Manager and worker agents powered by [pi](https://github.com/badlogic/pi-mono). Each worker runs in its own worktree. |
 
-Communication between UI and backend is over WebSocket. The backend spawns and manages agent processes, persists all state to disk, and handles integrations and scheduling.
+Communication between UI and backend is over WebSocket. The backend spawns and manages agent processes, persists all state to disk, and handles integrations and scheduling. Agents are extensible through Pi's [extension system](docs/PI_EXTENSIONS.md) — custom tools, event handlers, and model providers loaded in-process at session start.
 
 All runtime data lives locally. No cloud, no database. Just JSON, JSONL, and markdown files under `~/.forge` (or `%LOCALAPPDATA%\forge` on Windows). Backup means copying a folder. Recovery means pasting it back. See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for the full data layout.
 
