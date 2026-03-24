@@ -744,6 +744,13 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
       return
     }
 
+    // Toggle format mode: Shift+Cmd+X (Mac) / Shift+Ctrl+X (Windows/Linux)
+    if (event.key.toLowerCase() === 'x' && event.shiftKey && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault()
+      toggleFormatMode()
+      return
+    }
+
     if (formatMode) {
       // Format mode: Enter inserts newline (default), Ctrl/Cmd+Enter sends
       if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
