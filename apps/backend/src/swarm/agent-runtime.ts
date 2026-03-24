@@ -255,10 +255,13 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
   private async disposeSessionResources(): Promise<void> {
     try {
-      // NOTE: _extensionRunner is a private property on AgentSession.
-      // Verified against @mariozechner/pi-coding-agent@0.55.0.
-      // The try/catch ensures this is safe against Pi version changes.
-      await (this.session as any)._extensionRunner?.emit({ type: "session_shutdown" });
+      // NOTE: Uses the public AgentSession.extensionRunner API
+      // (verified against @mariozechner/pi-coding-agent@0.55.0).
+      // The try/catch ensures this remains safe against Pi version changes.
+      const runner = this.session.extensionRunner;
+      if (runner?.hasHandlers("session_shutdown")) {
+        await runner.emit({ type: "session_shutdown" });
+      }
     } catch (error) {
       this.logRuntimeError("interrupt", error, {
         stage: "dispose_session_shutdown_emit_failed"

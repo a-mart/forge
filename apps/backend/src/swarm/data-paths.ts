@@ -27,6 +27,26 @@ export function getSharedDir(dataDir: string): string {
 
 // ── Profile-level paths ────────────────────────────────────────────────────────
 
+export function getProfilePiDir(dataDir: string, profileId: string): string {
+  return join(getProfileDir(dataDir, profileId), "pi");
+}
+
+export function getProfilePiExtensionsDir(dataDir: string, profileId: string): string {
+  return join(getProfilePiDir(dataDir, profileId), "extensions");
+}
+
+export function getProfilePiSkillsDir(dataDir: string, profileId: string): string {
+  return join(getProfilePiDir(dataDir, profileId), "skills");
+}
+
+export function getProfilePiPromptsDir(dataDir: string, profileId: string): string {
+  return join(getProfilePiDir(dataDir, profileId), "prompts");
+}
+
+export function getProfilePiThemesDir(dataDir: string, profileId: string): string {
+  return join(getProfilePiDir(dataDir, profileId), "themes");
+}
+
 export function getProfileMemoryPath(dataDir: string, profileId: string): string {
   return join(getProfileDir(dataDir, profileId), "memory.md");
 }

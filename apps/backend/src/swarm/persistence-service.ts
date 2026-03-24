@@ -3,7 +3,16 @@ import { homedir } from "node:os";
 import { dirname, resolve, sep } from "node:path";
 import { getScheduleFilePath } from "../scheduler/schedule-storage.js";
 import { getConversationHistoryCacheFilePath } from "./conversation-history-cache.js";
-import { getProfileKnowledgeDir, getProfileMemoryPath, getSharedKnowledgeDir, resolveMemoryFilePath } from "./data-paths.js";
+import {
+  getProfileKnowledgeDir,
+  getProfileMemoryPath,
+  getProfilePiExtensionsDir,
+  getProfilePiPromptsDir,
+  getProfilePiSkillsDir,
+  getProfilePiThemesDir,
+  getSharedKnowledgeDir,
+  resolveMemoryFilePath
+} from "./data-paths.js";
 import { renameWithRetry } from "./retry-rename.js";
 import type { AgentDescriptor, AgentsStoreFile, ManagerProfile, SwarmConfig } from "./types.js";
 
@@ -68,15 +77,16 @@ export class PersistenceService {
     resolveMemoryTemplateContent?: (profileId: string) => Promise<string>;
   }): Promise<void> {
     const memoryFilePaths = new Map<string, string>();
+    const knownProfileIds = new Set<string>();
     const configuredManagerId = this.deps.getConfiguredManagerId();
     if (configuredManagerId) {
       const configuredDescriptor = this.deps.descriptors.get(configuredManagerId);
       if (configuredDescriptor?.role === "manager") {
-        memoryFilePaths.set(
-          this.getAgentMemoryPath(configuredDescriptor),
-          configuredDescriptor.profileId ?? configuredDescriptor.agentId
-        );
+        const profileId = configuredDescriptor.profileId ?? configuredDescriptor.agentId;
+        knownProfileIds.add(profileId);
+        memoryFilePaths.set(this.getAgentMemoryPath(configuredDescriptor), profileId);
       } else {
+        knownProfileIds.add(configuredManagerId);
         memoryFilePaths.set(
           this.getAgentMemoryPath({
             agentId: configuredManagerId,
@@ -89,14 +99,23 @@ export class PersistenceService {
       }
     }
 
+    for (const profile of this.deps.sortedProfiles()) {
+      knownProfileIds.add(profile.profileId);
+    }
+
     for (const descriptor of this.deps.descriptors.values()) {
       if (descriptor.role !== "manager") {
         continue;
       }
 
       const profileId = descriptor.profileId ?? descriptor.agentId;
+      knownProfileIds.add(profileId);
       memoryFilePaths.set(this.getAgentMemoryPath(descriptor), profileId);
       memoryFilePaths.set(getProfileMemoryPath(this.deps.config.paths.dataDir, profileId), profileId);
+    }
+
+    for (const profileId of knownProfileIds) {
+      await this.ensureProfilePiDirectories(profileId);
     }
 
     for (const [memoryFilePath, profileId] of memoryFilePaths.entries()) {
@@ -197,6 +216,20 @@ export class PersistenceService {
     await mkdir(dirname(target), { recursive: true });
     await writeFile(tmp, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
     await renameWithRetry(tmp, target, { retries: 8, baseDelayMs: 15 });
+  }
+
+  private async ensureProfilePiDirectories(profileId: string): Promise<void> {
+    const dataDir = this.deps.config.paths.dataDir;
+    const profilePiDirs = [
+      getProfilePiExtensionsDir(dataDir, profileId),
+      getProfilePiSkillsDir(dataDir, profileId),
+      getProfilePiPromptsDir(dataDir, profileId),
+      getProfilePiThemesDir(dataDir, profileId)
+    ];
+
+    for (const dir of profilePiDirs) {
+      await mkdir(dir, { recursive: true });
+    }
   }
 
   private getAgentMemoryPath(

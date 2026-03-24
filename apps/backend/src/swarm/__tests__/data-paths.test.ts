@@ -14,6 +14,11 @@ import {
   getProfileIntegrationsDir,
   getProfileMemoryPath,
   getProfileMergeAuditLogPath,
+  getProfilePiDir,
+  getProfilePiExtensionsDir,
+  getProfilePiSkillsDir,
+  getProfilePiPromptsDir,
+  getProfilePiThemesDir,
   getProfileKnowledgeDir,
   getProfileKnowledgePath,
   getProfileReferenceDir,
@@ -68,6 +73,13 @@ describe("data-paths", () => {
     expect(getProfileReferencePath(DATA_DIR, PROFILE_ID, "index.md")).toBe(
       join(DATA_DIR, "profiles", PROFILE_ID, "reference", "index.md")
     );
+    expect(getProfilePiDir(DATA_DIR, PROFILE_ID)).toBe(join(DATA_DIR, "profiles", PROFILE_ID, "pi"));
+    expect(getProfilePiExtensionsDir(DATA_DIR, PROFILE_ID)).toBe(
+      join(DATA_DIR, "profiles", PROFILE_ID, "pi", "extensions")
+    );
+    expect(getProfilePiSkillsDir(DATA_DIR, PROFILE_ID)).toBe(join(DATA_DIR, "profiles", PROFILE_ID, "pi", "skills"));
+    expect(getProfilePiPromptsDir(DATA_DIR, PROFILE_ID)).toBe(join(DATA_DIR, "profiles", PROFILE_ID, "pi", "prompts"));
+    expect(getProfilePiThemesDir(DATA_DIR, PROFILE_ID)).toBe(join(DATA_DIR, "profiles", PROFILE_ID, "pi", "themes"));
 
     expect(getSessionsDir(DATA_DIR, PROFILE_ID)).toBe(join(DATA_DIR, "profiles", PROFILE_ID, "sessions"));
     expect(getSessionDir(DATA_DIR, PROFILE_ID, NON_ROOT_SESSION_ID)).toBe(

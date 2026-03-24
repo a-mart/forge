@@ -14,6 +14,12 @@ import { CodexAgentRuntime } from "./codex-agent-runtime.js";
 import type { RuntimeErrorEvent, RuntimeSessionEvent, SwarmAgentRuntime } from "./runtime-types.js";
 import { buildSwarmTools, type SwarmToolHost } from "./swarm-tools.js";
 import { normalizeArchetypeId } from "./prompt-registry.js";
+import {
+  getProfilePiExtensionsDir,
+  getProfilePiPromptsDir,
+  getProfilePiSkillsDir,
+  getProfilePiThemesDir
+} from "./data-paths.js";
 import type {
   AgentContextUsage,
   AgentDescriptor,
@@ -79,6 +85,11 @@ export class RuntimeFactory {
     const runtimeAgentDir =
       descriptor.role === "manager" ? this.deps.config.paths.managerAgentDir : this.deps.config.paths.agentDir;
     const memoryResources = await this.deps.getMemoryRuntimeResources(descriptor);
+    const profileId = descriptor.profileId ?? descriptor.agentId;
+    const profilePiExtensionsDir = getProfilePiExtensionsDir(this.deps.config.paths.dataDir, profileId);
+    const profilePiSkillsDir = getProfilePiSkillsDir(this.deps.config.paths.dataDir, profileId);
+    const profilePiPromptsDir = getProfilePiPromptsDir(this.deps.config.paths.dataDir, profileId);
+    const profilePiThemesDir = getProfilePiThemesDir(this.deps.config.paths.dataDir, profileId);
 
     const authFilePath = await ensureCanonicalAuthFilePath(this.deps.config);
 
@@ -92,6 +103,11 @@ export class RuntimeFactory {
       authFile: authFilePath,
       agentDir: runtimeAgentDir,
       memoryFile: memoryResources.memoryContextFile.path,
+      profileId,
+      profilePiExtensionsDir,
+      profilePiSkillsDir,
+      profilePiPromptsDir,
+      profilePiThemesDir,
       managerSystemPromptSource:
         descriptor.role === "manager" ? "archetype:manager" : undefined
     });
@@ -107,12 +123,16 @@ export class RuntimeFactory {
     });
 
     const extensionFactories = this.buildExtensionFactories(descriptor);
+    const additionalSkillPaths = [...memoryResources.additionalSkillPaths, profilePiSkillsDir];
     const resourceLoader =
       descriptor.role === "manager"
         ? new DefaultResourceLoader({
             cwd: descriptor.cwd,
             agentDir: runtimeAgentDir,
-            additionalSkillPaths: memoryResources.additionalSkillPaths,
+            additionalExtensionPaths: [profilePiExtensionsDir],
+            additionalSkillPaths,
+            additionalPromptTemplatePaths: [profilePiPromptsDir],
+            additionalThemePaths: [profilePiThemesDir],
             agentsFilesOverride: applyRuntimeContext,
             extensionFactories,
             // Manager prompt comes from the archetype prompt registry.
@@ -122,7 +142,10 @@ export class RuntimeFactory {
         : new DefaultResourceLoader({
             cwd: descriptor.cwd,
             agentDir: runtimeAgentDir,
-            additionalSkillPaths: memoryResources.additionalSkillPaths,
+            additionalExtensionPaths: [profilePiExtensionsDir],
+            additionalSkillPaths,
+            additionalPromptTemplatePaths: [profilePiPromptsDir],
+            additionalThemePaths: [profilePiThemesDir],
             agentsFilesOverride: applyRuntimeContext,
             extensionFactories,
             appendSystemPromptOverride: (base) => [...base, systemPrompt]
