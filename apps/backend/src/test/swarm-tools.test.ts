@@ -75,14 +75,15 @@ function makeHost(spawnImpl: (callerAgentId: string, input: SpawnAgentInput) => 
   }
 }
 
-function makeHostWithAgents(agents: AgentDescriptor[]): SwarmToolHost {
+function makeHostWithAgents(
+  agents: AgentDescriptor[],
+  getWorkerActivity: SwarmToolHost['getWorkerActivity'] = () => undefined,
+): SwarmToolHost {
   return {
     listAgents(): AgentDescriptor[] {
       return agents
     },
-    getWorkerActivity() {
-      return undefined
-    },
+    getWorkerActivity,
     spawnAgent: async () => makeWorkerDescriptor('worker'),
     async killAgent(): Promise<void> {},
     async sendMessage(): Promise<SendMessageReceipt> {
@@ -549,6 +550,116 @@ describe('buildSwarmTools', () => {
       profileId: 'alpha',
       sessionLabel: 'Planning',
     })
+  })
+
+  it('list_agents includes worker activity when host reports active worker state', async () => {
+    const worker = makeWorkerDescriptor('worker-active', 'manager', {
+      status: 'streaming',
+      updatedAt: '2026-01-03T00:00:00.000Z',
+    })
+    const activity = {
+      currentTool: 'bash',
+      currentToolElapsedSec: 12,
+      toolCalls: 5,
+      errors: 1,
+      turns: 3,
+      idleSec: 0,
+    }
+
+    const host = makeHostWithAgents([
+      makeManagerDescriptor(),
+      worker,
+    ], (agentId) => (agentId === worker.agentId ? activity : undefined))
+
+    const tools = buildSwarmTools(host, makeManagerDescriptor())
+    const listTool = tools.find((tool) => tool.name === 'list_agents')
+    expect(listTool).toBeDefined()
+
+    const result = await listTool!.execute('tool-call', {}, undefined, undefined, undefined as any)
+    const details = result.details as {
+      agents: Array<{
+        agentId: string
+        activity?: typeof activity
+      }>
+    }
+    const workerEntry = details.agents.find((agent) => agent.agentId === worker.agentId)
+
+    expect(workerEntry).toBeDefined()
+    expect(workerEntry?.activity).toEqual(activity)
+  })
+
+  it('list_agents omits worker activity when no activity state exists', async () => {
+    const worker = makeWorkerDescriptor('worker-idle')
+    const host = makeHostWithAgents([
+      makeManagerDescriptor(),
+      worker,
+    ])
+
+    const tools = buildSwarmTools(host, makeManagerDescriptor())
+    const listTool = tools.find((tool) => tool.name === 'list_agents')
+    expect(listTool).toBeDefined()
+
+    const result = await listTool!.execute('tool-call', {}, undefined, undefined, undefined as any)
+    const details = result.details as {
+      agents: Array<{
+        agentId: string
+        activity?: unknown
+      }>
+    }
+    const workerEntry = details.agents.find((agent) => agent.agentId === worker.agentId)
+
+    expect(workerEntry).toBeDefined()
+    expect(workerEntry).not.toHaveProperty('activity')
+  })
+
+  it('list_agents activity payload includes the expected field shape', async () => {
+    const worker = makeWorkerDescriptor('worker-shape', 'manager', {
+      status: 'streaming',
+      updatedAt: '2026-01-03T00:00:00.000Z',
+    })
+    const activity = {
+      currentTool: 'read',
+      currentToolElapsedSec: 4,
+      toolCalls: 2,
+      errors: 0,
+      turns: 1,
+      idleSec: 0,
+    }
+
+    const host = makeHostWithAgents([
+      makeManagerDescriptor(),
+      worker,
+    ], (agentId) => (agentId === worker.agentId ? activity : undefined))
+
+    const tools = buildSwarmTools(host, makeManagerDescriptor())
+    const listTool = tools.find((tool) => tool.name === 'list_agents')
+    expect(listTool).toBeDefined()
+
+    const result = await listTool!.execute(
+      'tool-call',
+      {
+        verbose: true,
+      },
+      undefined,
+      undefined,
+      undefined as any,
+    )
+
+    const details = result.details as {
+      agents: Array<{
+        agentId: string
+        activity?: typeof activity
+      }>
+    }
+    const workerEntry = details.agents.find((agent) => agent.agentId === worker.agentId)
+
+    expect(workerEntry?.activity).toBeDefined()
+    expect(workerEntry?.activity).toHaveProperty('currentTool', 'read')
+    expect(workerEntry?.activity).toHaveProperty('currentToolElapsedSec', 4)
+    expect(workerEntry?.activity).toHaveProperty('toolCalls', 2)
+    expect(workerEntry?.activity).toHaveProperty('errors', 0)
+    expect(workerEntry?.activity).toHaveProperty('turns', 1)
+    expect(workerEntry?.activity).toHaveProperty('idleSec', 0)
   })
 
   it('propagates spawn_agent model preset to host.spawnAgent', async () => {

@@ -6068,6 +6068,14 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   private updateWorkerActivity(agentId: string, event: RuntimeSessionEvent): void {
+    // Activity metrics are only meaningful while stall state exists (active streaming).
+    // Late runtime events can arrive after idle transitions; ignore those and avoid
+    // recreating stale activity entries.
+    if (!this.workerStallState.has(agentId)) {
+      this.workerActivityState.delete(agentId);
+      return;
+    }
+
     let state = this.workerActivityState.get(agentId);
     if (!state) {
       state = {

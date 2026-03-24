@@ -1997,6 +1997,31 @@ describe('SwarmManager', () => {
     ).toBe(true)
   })
 
+  it('does not recreate worker activity state when workers are no longer streaming', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', { agentId: 'Late Event Worker' })
+
+    const state = manager as unknown as {
+      workerStallState: Map<string, unknown>
+      workerActivityState: Map<string, unknown>
+      updateWorkerActivity: (agentId: string, event: any) => void
+    }
+
+    expect(state.workerStallState.has(worker.agentId)).toBe(false)
+    expect(state.workerActivityState.has(worker.agentId)).toBe(false)
+
+    state.updateWorkerActivity(worker.agentId, {
+      type: 'turn_end',
+      toolResults: [],
+    })
+
+    expect(state.workerActivityState.has(worker.agentId)).toBe(false)
+    expect(manager.getWorkerActivity(worker.agentId)).toBeUndefined()
+  })
+
   it('records versioning mutations for successful agent write/edit tool events on tracked data-dir files', async () => {
     const config = await makeTempConfig()
     const recordMutation = vi.fn(async () => true)
