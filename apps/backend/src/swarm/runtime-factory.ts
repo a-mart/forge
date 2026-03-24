@@ -1,4 +1,4 @@
-import { basename, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import type {
   AgentRuntimeExtensionSnapshot,
   RuntimeExtensionMetadata,
@@ -357,23 +357,6 @@ export class RuntimeFactory {
       }
     });
 
-    try {
-      await this.deps.callbacks.onRuntimeExtensionSnapshot(runtimeToken, descriptor.agentId, {
-        agentId: descriptor.agentId,
-        role: descriptor.role,
-        managerId: descriptor.managerId,
-        profileId: descriptor.profileId,
-        loadedAt: this.deps.now(),
-        extensions: [],
-        loadErrors: []
-      });
-    } catch (error) {
-      this.deps.logDebug("runtime:extension_snapshot:error", {
-        agentId: descriptor.agentId,
-        message: error instanceof Error ? error.message : String(error)
-      });
-    }
-
     this.deps.logDebug("runtime:create:ready", {
       runtime: "codex-app-server",
       agentId: descriptor.agentId,
@@ -665,6 +648,15 @@ function normalizeExtensionDisplayName(pathValue: string, resolvedPathValue: str
   }
 
   const normalizedBase = basename(candidate);
+  const normalizedBaseLower = normalizedBase.toLowerCase();
+
+  if (normalizedBaseLower === "index.ts" || normalizedBaseLower === "index.js") {
+    const parentDirName = basename(dirname(candidate));
+    if (parentDirName && parentDirName !== "." && parentDirName !== sep) {
+      return parentDirName;
+    }
+  }
+
   return normalizedBase || candidate;
 }
 

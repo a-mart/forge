@@ -24,6 +24,8 @@ import { fetchSettingsExtensions, toErrorMessage } from './settings-api'
 /*  Source badge colors                                                */
 /* ------------------------------------------------------------------ */
 
+const DOCS_URL = 'https://github.com/a-mart/forge/blob/main/docs/PI_EXTENSIONS.md'
+
 const SOURCE_STYLES: Record<RuntimeExtensionSource, { label: string; className: string }> = {
   'global-worker': {
     label: 'Global Worker',
@@ -250,7 +252,7 @@ function EmptyState({ directories }: { directories?: SettingsExtensionsResponse[
         below and restart a session to see them here.
       </p>
       <a
-        href="https://github.com/a-mart/forge/blob/main/docs/PI_EXTENSIONS.md"
+        href={DOCS_URL}
         target="_blank"
         rel="noreferrer"
         className="mt-3 text-xs text-primary hover:underline"
@@ -301,9 +303,11 @@ export function SettingsExtensions({ wsUrl }: SettingsExtensionsProps) {
     void load()
   }, [load])
 
-  const hasSnapshots = (data?.snapshots?.length ?? 0) > 0
-  const totalExtensions = data?.snapshots?.reduce((sum, s) => sum + s.extensions.length, 0) ?? 0
-  const totalErrors = data?.snapshots?.reduce((sum, s) => sum + s.loadErrors.length, 0) ?? 0
+  const visibleSnapshots =
+    data?.snapshots?.filter((snapshot) => snapshot.extensions.length > 0 || snapshot.loadErrors.length > 0) ?? []
+  const hasSnapshots = visibleSnapshots.length > 0
+  const totalExtensions = visibleSnapshots.reduce((sum, snapshot) => sum + snapshot.extensions.length, 0)
+  const totalErrors = visibleSnapshots.reduce((sum, snapshot) => sum + snapshot.loadErrors.length, 0)
 
   return (
     <div className="flex flex-col gap-8">
@@ -312,7 +316,7 @@ export function SettingsExtensions({ wsUrl }: SettingsExtensionsProps) {
         label="Active Runtime Extensions"
         description={
           hasSnapshots
-            ? `${totalExtensions} extension${totalExtensions !== 1 ? 's' : ''} across ${data!.snapshots.length} runtime${data!.snapshots.length !== 1 ? 's' : ''}${totalErrors > 0 ? ` · ${totalErrors} error${totalErrors !== 1 ? 's' : ''}` : ''}`
+            ? `${totalExtensions} extension${totalExtensions !== 1 ? 's' : ''} across ${visibleSnapshots.length} runtime${visibleSnapshots.length !== 1 ? 's' : ''}${totalErrors > 0 ? ` · ${totalErrors} error${totalErrors !== 1 ? 's' : ''}` : ''}`
             : 'Extensions loaded by currently active agent runtimes'
         }
         cta={
@@ -347,11 +351,21 @@ export function SettingsExtensions({ wsUrl }: SettingsExtensionsProps) {
         {hasSnapshots && (
           <div className="space-y-3">
             <p className="text-[11px] text-muted-foreground/60">
-              Reflects currently active runtimes. Runtimes without extensions are not shown.
+              Reflects currently active runtimes. Runtimes without extensions or load errors are not shown.
             </p>
-            {data!.snapshots.map((snapshot) => (
+            {visibleSnapshots.map((snapshot) => (
               <SnapshotCard key={snapshot.agentId} snapshot={snapshot} />
             ))}
+            <div className="pt-1">
+              <a
+                href={DOCS_URL}
+                target="_blank"
+                rel="noreferrer"
+                className="text-xs text-primary hover:underline"
+              >
+                Extension documentation →
+              </a>
+            </div>
           </div>
         )}
       </SettingsSection>

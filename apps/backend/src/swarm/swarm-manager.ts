@@ -2562,6 +2562,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.descriptors.set(descriptor.agentId, descriptor);
     this.profiles.set(profile.profileId, profile);
 
+    await this.ensureProfilePiDirectories(profile.profileId);
     await this.ensureSessionFileParentDirectory(descriptor.sessionFile);
     await this.ensureAgentMemoryFile(this.getAgentMemoryPath(descriptor.agentId), profile.profileId);
     await this.ensureAgentMemoryFile(getProfileMemoryPath(this.config.paths.dataDir, profile.profileId), profile.profileId);
@@ -4536,6 +4537,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.descriptors.set(descriptor.agentId, descriptor);
     this.profiles.set(profile.profileId, profile);
 
+    await this.ensureProfilePiDirectories(profile.profileId);
     await this.ensureSessionFileParentDirectory(descriptor.sessionFile);
     await this.ensureAgentMemoryFile(this.getAgentMemoryPath(descriptor.agentId), profile.profileId);
     await this.ensureAgentMemoryFile(getProfileMemoryPath(this.config.paths.dataDir, profile.profileId), profile.profileId);
@@ -7513,6 +7515,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const memoryTemplateContent = await this.resolveMemoryTemplateContent(resolvedProfileId);
 
     await this.persistenceService.ensureAgentMemoryFile(memoryFilePath, memoryTemplateContent);
+  }
+
+  private async ensureProfilePiDirectories(profileId: string): Promise<void> {
+    await this.persistenceService.ensureProfilePiDirectories(profileId);
   }
 
   private async deleteManagerSessionFile(sessionFile: string): Promise<void> {

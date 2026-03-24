@@ -119,6 +119,11 @@ All runtime state lives in `~/.forge` (or `%LOCALAPPDATA%\forge` on Windows), ov
     ├── memory.md                          # Profile-level memory
     ├── reference/                         # Profile reference documents
     ├── integrations/                      # Profile integration configs
+    ├── pi/                                # Profile-scoped Pi runtime resources
+    │   ├── extensions/                    #   Profile extensions (auto-created)
+    │   ├── skills/                        #   Profile skills (auto-created)
+    │   ├── prompts/                       #   Profile prompts (auto-created)
+    │   └── themes/                        #   Profile themes (auto-created)
     ├── schedules/schedules.json           # Scheduled tasks
     ├── slash-commands.json                # Profile slash commands
     └── sessions/<sessionId>/

@@ -218,7 +218,7 @@ export class PersistenceService {
     await renameWithRetry(tmp, target, { retries: 8, baseDelayMs: 15 });
   }
 
-  private async ensureProfilePiDirectories(profileId: string): Promise<void> {
+  async ensureProfilePiDirectories(profileId: string): Promise<void> {
     const dataDir = this.deps.config.paths.dataDir;
     const profilePiDirs = [
       getProfilePiExtensionsDir(dataDir, profileId),

@@ -26,11 +26,16 @@
  */
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import * as path from "node:path";
+
+function normalizeForMatch(value: string): string {
+	return path.normalize(value).replace(/\\/g, "/").toLowerCase();
+}
 
 export default function (pi: ExtensionAPI) {
 	// ── Configuration ──────────────────────────────────────────────────
-	// Add or remove path patterns here. Any tool_call whose `path` input
-	// contains one of these substrings will be blocked.
+	// Add or remove path patterns here. Any tool_call whose normalized `path`
+	// input contains one of these normalized substrings will be blocked.
 	const protectedPaths = [
 		".env", // Environment variables / secrets
 		".git/", // Git internals (hooks, config, objects)
@@ -38,6 +43,11 @@ export default function (pi: ExtensionAPI) {
 		"id_rsa", // SSH private keys by common name
 		"id_ed25519", // SSH private keys (ed25519)
 	];
+
+	const normalizedPatterns = protectedPaths.map((pattern) => ({
+		original: pattern,
+		normalized: normalizeForMatch(pattern),
+	}));
 
 	// ── Interception ───────────────────────────────────────────────────
 	// The `tool_call` event fires before every tool execution. Returning
@@ -49,16 +59,20 @@ export default function (pi: ExtensionAPI) {
 			return undefined; // Allow all other tools to proceed
 		}
 
-		const filePath = event.input.path as string;
-		if (!filePath) return undefined;
+		const rawFilePath = event.input.path;
+		if (typeof rawFilePath !== "string" || rawFilePath.trim().length === 0) {
+			return undefined;
+		}
+
+		const normalizedFilePath = normalizeForMatch(rawFilePath);
 
 		// Check if the target path matches any protected pattern
-		const matchedPattern = protectedPaths.find((pattern) =>
-			filePath.includes(pattern),
+		const matchedPattern = normalizedPatterns.find(({ normalized }) =>
+			normalizedFilePath.includes(normalized),
 		);
 
 		if (matchedPattern) {
-			const reason = `Blocked: "${filePath}" matches protected pattern "${matchedPattern}"`;
+			const reason = `Blocked: "${rawFilePath}" matches protected pattern "${matchedPattern.original}"`;
 
 			// Log to backend console for debugging/auditing
 			console.warn(`[protected-paths] ${reason}`);
