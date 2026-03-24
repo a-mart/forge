@@ -1,3 +1,4 @@
+import { readdirSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import type {
   AgentRuntimeExtensionSnapshot,
@@ -135,16 +136,22 @@ export class RuntimeFactory {
     });
 
     const extensionFactories = this.buildExtensionFactories(descriptor);
-    const additionalSkillPaths = [...memoryResources.additionalSkillPaths, profilePiSkillsDir];
+    const additionalSkillPaths = [
+      ...memoryResources.additionalSkillPaths,
+      ...(dirHasFiles(profilePiSkillsDir) ? [profilePiSkillsDir] : [])
+    ];
+    const additionalExtensionPaths = dirHasFiles(profilePiExtensionsDir) ? [profilePiExtensionsDir] : [];
+    const additionalPromptTemplatePaths = dirHasFiles(profilePiPromptsDir) ? [profilePiPromptsDir] : [];
+    const additionalThemePaths = dirHasFiles(profilePiThemesDir) ? [profilePiThemesDir] : [];
     const resourceLoader =
       descriptor.role === "manager"
         ? new DefaultResourceLoader({
             cwd: descriptor.cwd,
             agentDir: runtimeAgentDir,
-            additionalExtensionPaths: [profilePiExtensionsDir],
+            additionalExtensionPaths,
             additionalSkillPaths,
-            additionalPromptTemplatePaths: [profilePiPromptsDir],
-            additionalThemePaths: [profilePiThemesDir],
+            additionalPromptTemplatePaths,
+            additionalThemePaths,
             agentsFilesOverride: applyRuntimeContext,
             extensionFactories,
             // Manager prompt comes from the archetype prompt registry.
@@ -154,10 +161,10 @@ export class RuntimeFactory {
         : new DefaultResourceLoader({
             cwd: descriptor.cwd,
             agentDir: runtimeAgentDir,
-            additionalExtensionPaths: [profilePiExtensionsDir],
+            additionalExtensionPaths,
             additionalSkillPaths,
-            additionalPromptTemplatePaths: [profilePiPromptsDir],
-            additionalThemePaths: [profilePiThemesDir],
+            additionalPromptTemplatePaths,
+            additionalThemePaths,
             agentsFilesOverride: applyRuntimeContext,
             extensionFactories,
             appendSystemPromptOverride: (base) => [...base, systemPrompt]
@@ -669,6 +676,14 @@ function isCodexAppServerModelDescriptor(descriptor: Pick<AgentModelDescriptor, 
 
 function normalizeThinkingLevel(level: string): string {
   return level === "x-high" ? "xhigh" : level;
+}
+
+function dirHasFiles(dirPath: string): boolean {
+  try {
+    return readdirSync(dirPath).length > 0;
+  } catch {
+    return false;
+  }
 }
 
 function previewForLog(text: string, maxLength = 160): string {
