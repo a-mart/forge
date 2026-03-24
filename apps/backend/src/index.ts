@@ -46,38 +46,38 @@ async function main(): Promise<void> {
   });
   await swarmManager.boot();
 
-  const schedulersByManagerId = new Map<string, CronSchedulerService>();
+  const schedulersByProfileId = new Map<string, CronSchedulerService>();
   let schedulerLifecycle: Promise<void> = Promise.resolve();
 
-  const syncSchedulers = async (managerIds: Set<string>): Promise<void> => {
-    for (const managerId of managerIds) {
-      if (schedulersByManagerId.has(managerId)) {
+  const syncSchedulers = async (profileIds: Set<string>): Promise<void> => {
+    for (const profileId of profileIds) {
+      if (schedulersByProfileId.has(profileId)) {
         continue;
       }
 
       const scheduler = new CronSchedulerService({
         swarmManager,
-        schedulesFile: getScheduleFilePath(config.paths.dataDir, managerId),
-        managerId
+        schedulesFile: getScheduleFilePath(config.paths.dataDir, profileId),
+        managerId: profileId
       });
       await scheduler.start();
-      schedulersByManagerId.set(managerId, scheduler);
+      schedulersByProfileId.set(profileId, scheduler);
     }
 
-    for (const [managerId, scheduler] of schedulersByManagerId.entries()) {
-      if (managerIds.has(managerId)) {
+    for (const [profileId, scheduler] of schedulersByProfileId.entries()) {
+      if (profileIds.has(profileId)) {
         continue;
       }
 
       await scheduler.stop();
-      schedulersByManagerId.delete(managerId);
+      schedulersByProfileId.delete(profileId);
     }
   };
 
-  const queueSchedulerSync = (managerIds: Set<string>): Promise<void> => {
+  const queueSchedulerSync = (profileIds: Set<string>): Promise<void> => {
     const next = schedulerLifecycle.then(
-      () => syncSchedulers(managerIds),
-      () => syncSchedulers(managerIds)
+      () => syncSchedulers(profileIds),
+      () => syncSchedulers(profileIds)
     );
     schedulerLifecycle = next.then(
       () => undefined,
@@ -86,7 +86,7 @@ async function main(): Promise<void> {
     return next;
   };
 
-  await queueSchedulerSync(collectManagerIds(swarmManager.listAgents(), config.managerId));
+  await queueSchedulerSync(collectSchedulerProfileIds(swarmManager.listAgents(), config.managerId));
 
   const handleAgentsSnapshot = (event: unknown): void => {
     if (!event || typeof event !== "object") {
@@ -98,8 +98,8 @@ async function main(): Promise<void> {
       return;
     }
 
-    const managerIds = collectManagerIds(payload.agents, config.managerId);
-    void queueSchedulerSync(managerIds).catch((error) => {
+    const profileIds = collectSchedulerProfileIds(payload.agents, config.managerId);
+    void queueSchedulerSync(profileIds).catch((error) => {
       const message = error instanceof Error ? error.message : String(error);
       console.error(`[scheduler] Failed to sync scheduler instances: ${message}`);
     });
@@ -254,7 +254,7 @@ async function main(): Promise<void> {
  * Collect unique profile IDs from manager agents for scheduler instantiation.
  * Schedules are profile-scoped, so we create one scheduler per profile, not per session.
  */
-function collectManagerIds(agents: unknown[], fallbackManagerId?: string): Set<string> {
+function collectSchedulerProfileIds(agents: unknown[], fallbackManagerId?: string): Set<string> {
   const profileIds = new Set<string>();
 
   for (const agent of agents) {

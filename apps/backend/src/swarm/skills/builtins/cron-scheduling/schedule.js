@@ -14,8 +14,8 @@ function resolveDataDir() {
   return process.env.SWARM_DATA_DIR || resolve(homedir(), ".forge");
 }
 
-function resolveSchedulesFilePath(dataDir, managerId) {
-  return resolve(dataDir, "profiles", managerId, "schedules", "schedules.json");
+function resolveSchedulesFilePath(dataDir, profileId) {
+  return resolve(dataDir, "profiles", profileId, "schedules", "schedules.json");
 }
 
 function resolveLegacySchedulesFilePath(dataDir, managerId) {
@@ -31,7 +31,7 @@ function normalizeOptionalManagerId(rawValue) {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-async function loadManagerIdsFromAgentsStore(dataDir) {
+async function loadAgentsStoreManagers(dataDir) {
   const agentsStoreFile = resolve(dataDir, AGENTS_STORE_RELATIVE_PATH);
 
   let raw;
@@ -52,7 +52,7 @@ async function loadManagerIdsFromAgentsStore(dataDir) {
     parsed = {};
   }
 
-  const managerIds = new Set();
+  const managers = [];
   const agents = Array.isArray(parsed?.agents) ? parsed.agents : [];
   for (const agent of agents) {
     if (!isObject(agent)) {
@@ -68,10 +68,27 @@ async function loadManagerIdsFromAgentsStore(dataDir) {
       continue;
     }
 
-    managerIds.add(managerId);
+    const profileId = normalizeOptionalManagerId(agent.profileId) ?? managerId;
+    managers.push({ managerId, profileId });
   }
 
-  return [...managerIds];
+  return managers;
+}
+
+async function loadManagerIdsFromAgentsStore(dataDir) {
+  const managers = await loadAgentsStoreManagers(dataDir);
+  return managers.map((manager) => manager.managerId);
+}
+
+async function resolveProfileIdForManagerId(dataDir, managerId) {
+  const normalizedManagerId = normalizeOptionalManagerId(managerId);
+  if (!normalizedManagerId) {
+    return managerId;
+  }
+
+  const managers = await loadAgentsStoreManagers(dataDir);
+  const matchedManager = managers.find((candidate) => candidate.managerId === normalizedManagerId);
+  return matchedManager?.profileId ?? normalizedManagerId;
 }
 
 async function resolveManagerId(flags, dataDir) {
@@ -376,7 +393,8 @@ async function main() {
 
   const dataDir = resolveDataDir();
   const managerId = await resolveManagerId(flags, dataDir);
-  const schedulesFilePath = resolveSchedulesFilePath(dataDir, managerId);
+  const profileId = await resolveProfileIdForManagerId(dataDir, managerId);
+  const schedulesFilePath = resolveSchedulesFilePath(dataDir, profileId);
   const legacySchedulesFilePath = resolveLegacySchedulesFilePath(dataDir, managerId);
 
   switch (command) {

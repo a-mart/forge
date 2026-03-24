@@ -5,6 +5,7 @@ export default defineConfig({
     environment: "node",
     include: [
       "src/test/**/*.test.ts",
+      "src/scheduler/**/*.test.ts",
       "src/swarm/__tests__/**/*.test.ts",
       "src/versioning/__tests__/**/*.test.ts",
       "../../scripts/__tests__/**/*.test.mjs"
