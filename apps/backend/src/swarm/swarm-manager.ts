@@ -2258,6 +2258,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     await this.ensureSessionFileParentDirectory(descriptor.sessionFile);
     await this.updateSessionMetaForWorkerDescriptor(descriptor);
     await this.saveStore();
+    // Emit early snapshot so the UI sees the updated workerCount immediately,
+    // before the potentially slow runtime creation.
+    this.emitAgentsSnapshot();
 
     this.logDebug("agent:spawn", {
       callerAgentId,
@@ -2269,26 +2272,60 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       cwd: descriptor.cwd
     });
 
-    const explicitSystemPrompt = input.systemPrompt?.trim();
-    const baseSystemPrompt =
-      explicitSystemPrompt && explicitSystemPrompt.length > 0
-        ? explicitSystemPrompt
-        : await this.resolveSystemPromptForDescriptor(descriptor);
+    try {
+      const explicitSystemPrompt = input.systemPrompt?.trim();
+      const baseSystemPrompt =
+        explicitSystemPrompt && explicitSystemPrompt.length > 0
+          ? explicitSystemPrompt
+          : await this.resolveSystemPromptForDescriptor(descriptor);
 
-    const runtimeSystemPrompt = this.injectWorkerIdentityContext(descriptor, baseSystemPrompt);
+      const runtimeSystemPrompt = this.injectWorkerIdentityContext(descriptor, baseSystemPrompt);
 
-    const runtime = await this.createRuntimeForDescriptor(descriptor, runtimeSystemPrompt);
-    this.runtimes.set(agentId, runtime);
-    this.seedWorkerCompletionReportTimestamp(agentId);
+      const runtime = await this.createRuntimeForDescriptor(descriptor, runtimeSystemPrompt);
+      this.runtimes.set(agentId, runtime);
+      this.seedWorkerCompletionReportTimestamp(agentId);
 
-    const contextUsage = runtime.getContextUsage();
-    descriptor.contextUsage = contextUsage;
-    this.descriptors.set(agentId, descriptor);
-    await this.updateSessionMetaForWorkerDescriptor(descriptor);
-    await this.refreshSessionMetaStatsBySessionId(descriptor.managerId);
+      const contextUsage = runtime.getContextUsage();
+      descriptor.contextUsage = contextUsage;
+      this.descriptors.set(agentId, descriptor);
+      await this.updateSessionMetaForWorkerDescriptor(descriptor);
+      await this.refreshSessionMetaStatsBySessionId(descriptor.managerId);
 
-    this.emitStatus(agentId, descriptor.status, runtime.getPendingCount(), contextUsage);
-    this.emitAgentsSnapshot();
+      this.emitStatus(agentId, descriptor.status, runtime.getPendingCount(), contextUsage);
+      this.emitAgentsSnapshot();
+    } catch (error) {
+      try {
+        if (this.runtimes.has(agentId)) {
+          const shutdown = await this.runRuntimeShutdown(descriptor, "terminate", { abort: true });
+          this.detachRuntime(agentId, shutdown.runtimeToken);
+        }
+      } catch (shutdownError) {
+        this.logDebug("agent:spawn:rollback_runtime_error", {
+          agentId,
+          error: String(shutdownError)
+        });
+      }
+
+      this.clearWatchdogState(agentId);
+      this.workerStallState.delete(agentId);
+      this.lastWorkerCompletionReportTimestampByAgentId.delete(agentId);
+
+      this.descriptors.delete(agentId);
+      this.emitAgentsSnapshot();
+      await this.saveStore();
+
+      try {
+        await this.refreshSessionMetaStatsBySessionId(descriptor.managerId);
+      } catch (metaError) {
+        this.logDebug("agent:spawn:rollback_meta_error", {
+          agentId,
+          managerId: descriptor.managerId,
+          error: String(metaError)
+        });
+      }
+
+      throw error;
+    }
 
     if (input.initialMessage && input.initialMessage.trim().length > 0) {
       await this.sendMessage(callerAgentId, agentId, input.initialMessage, "auto", { origin: "internal" });
