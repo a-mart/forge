@@ -198,7 +198,7 @@ const WorkerPill = memo(function WorkerPill({
         sideOffset={8}
         align="start"
         avoidCollisions={false}
-        className="flex w-[min(48rem,_66vw)] max-w-[calc(100vw-2rem)] flex-col overflow-hidden p-0"
+        className="flex w-[min(62rem,_85vw)] max-w-[calc(100vw-2rem)] flex-col overflow-hidden p-0"
         style={{ maxHeight: 'min(80vh, calc(100vh - 6rem))' }}
       >
         <WorkerQuickLook
