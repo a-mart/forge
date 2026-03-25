@@ -31,7 +31,10 @@ async function main() {
   await run(pnpmCommand, ['--dir', electronDir, 'build'])
   const backendNodeModulesDir = path.join(backendStageDir, 'node_modules')
 
-  await run(pnpmCommand, ['--dir', repoRoot, '--filter', '@forge/backend', 'deploy', '--prod', '--legacy', backendStageDir])
+  // --shamefully-hoist produces a flat node_modules layout compatible with Electron packaging.
+  // Without it, pnpm's isolated .pnpm store + symlinks breaks Node.js ESM resolution
+  // after symlink dereferencing (packages can't find their sibling dependencies).
+  await run(pnpmCommand, ['--dir', repoRoot, '--filter', '@forge/backend', 'deploy', '--prod', '--legacy', '--shamefully-hoist', backendStageDir])
   await removeExternalWorkspaceLinks()
   await dereferenceDirectoryInPlace(backendNodeModulesDir)
   await pruneNodeModules(backendNodeModulesDir)
