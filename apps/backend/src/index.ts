@@ -25,7 +25,14 @@ async function main(): Promise<void> {
   const config = createConfig();
   await waitForRestartParentToExit(config.isDesktop);
 
-  const server = await startServer({ config });
+  const server = await startServer({
+    config,
+    onReady: ({ port }) => {
+      if (config.isDesktop) {
+        process.send?.({ type: "ready", port });
+      }
+    },
+  });
   console.log(`Forge backend listening on ws://${server.host}:${server.port}`);
 
   registerProcessLifecycle(server, config.isDesktop);

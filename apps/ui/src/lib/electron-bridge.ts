@@ -11,6 +11,10 @@ export interface ElectronBridge {
   backendUrl: string
   /** WebSocket base URL for the backend, e.g. "ws://127.0.0.1:47187" */
   backendWsUrl: string
+  /** Returns the Electron app version from the main process. */
+  getVersion(): string
+  /** Host platform for desktop-specific renderer behavior. */
+  platform: string
 }
 
 declare global {

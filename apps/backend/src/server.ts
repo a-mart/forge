@@ -185,12 +185,12 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
     });
 
     await playwrightLivePreviewService.start();
-    await wsServer.start();
+    await server.startListening();
 
     activeServer = server;
     await options.onReady?.({
-      host: config.host,
-      port: config.port,
+      host: server.host,
+      port: server.port,
       config,
     });
     return server;
@@ -217,7 +217,7 @@ export async function stopServer(): Promise<void> {
 
 class BackendServer implements StartedServer {
   readonly host: string;
-  readonly port: number;
+  port: number;
   readonly config: SwarmConfig;
 
   private readonly swarmManager: SwarmManager;
@@ -262,6 +262,7 @@ class BackendServer implements StartedServer {
     }
 
     await this.wsServer.start();
+    this.port = this.wsServer.getPort();
     this.listening = true;
   }
 

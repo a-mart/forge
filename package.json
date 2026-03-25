@@ -10,12 +10,14 @@
   "workspaces": [
     "apps/backend",
     "apps/ui",
+    "apps/electron",
     "packages/protocol"
   ],
   "scripts": {
     "dev": "concurrently --kill-others-on-fail --names backend,ui \"pnpm --filter @forge/backend dev\" \"pnpm --filter @forge/ui dev\"",
     "dev:backend": "pnpm --filter @forge/backend dev",
     "dev:ui": "pnpm --filter @forge/ui dev",
+    "dev:electron": "concurrently --kill-others-on-fail -n backend,ui,electron -c blue,green,magenta \"pnpm dev:backend\" \"pnpm dev:ui\" \"wait-on http://127.0.0.1:47187/api/health tcp:127.0.0.1:47188 && cd apps/electron && pnpm dev\"",
     "build": "pnpm --filter @forge/protocol build && pnpm --filter @forge/backend build && pnpm --filter @forge/ui build",
     "prod": "pnpm build && pnpm prod:start",
     "prod:start": "node scripts/check-data-migration.mjs && concurrently --kill-others-on-fail --names backend,ui \"cross-env NODE_ENV=production FORGE_PORT=47287 pnpm --filter @forge/backend start\" \"pnpm --filter @forge/ui preview\"",
@@ -35,11 +37,13 @@
     },
     "onlyBuiltDependencies": [
       "sharp",
-      "esbuild"
+      "esbuild",
+      "electron"
     ]
   },
   "devDependencies": {
     "concurrently": "^9.2.1",
-    "cross-env": "^7.0.3"
+    "cross-env": "^7.0.3",
+    "wait-on": "^8.0.5"
   }
 }

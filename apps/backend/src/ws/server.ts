@@ -44,6 +44,7 @@ export class SwarmWebSocketServer {
   private readonly swarmManager: SwarmManager;
   private readonly host: string;
   private readonly port: number;
+  private actualPort: number | null = null;
   private readonly integrationRegistry: IntegrationRegistryService | null;
   private readonly playwrightDiscovery: PlaywrightDiscoveryService | null;
   private readonly playwrightLivePreviewService: PlaywrightLivePreviewService;
@@ -274,6 +275,7 @@ export class SwarmWebSocketServer {
     await new Promise<void>((resolve, reject) => {
       const onListening = (): void => {
         cleanup();
+        this.actualPort = resolveListeningPort(httpServer, this.port);
         resolve();
       };
 
@@ -318,6 +320,10 @@ export class SwarmWebSocketServer {
     this.statsRefreshInterval.unref?.();
   }
 
+  getPort(): number {
+    return this.actualPort ?? this.port;
+  }
+
   async stop(): Promise<void> {
     if (this.statsRefreshInterval) {
       clearInterval(this.statsRefreshInterval);
@@ -343,6 +349,7 @@ export class SwarmWebSocketServer {
 
     this.wss = null;
     this.httpServer = null;
+    this.actualPort = null;
 
     this.wsHandler.reset();
     this.settingsRoutes.cancelActiveSettingsAuthLoginFlows();
@@ -366,7 +373,7 @@ export class SwarmWebSocketServer {
       return;
     }
 
-    const requestUrl = resolveRequestUrl(request, `${this.host}:${this.port}`);
+    const requestUrl = resolveRequestUrl(request, `${this.host}:${this.getPort()}`);
     if (this.playwrightLivePreviewProxy.canHandleUpgrade(requestUrl.pathname)) {
       const handled = this.playwrightLivePreviewProxy.handleUpgrade(request, socket, head, requestUrl.pathname);
       if (handled) {
@@ -380,7 +387,7 @@ export class SwarmWebSocketServer {
   }
 
   private async handleHttpRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
-    const requestUrl = resolveRequestUrl(request, `${this.host}:${this.port}`);
+    const requestUrl = resolveRequestUrl(request, `${this.host}:${this.getPort()}`);
     const route = this.httpRoutes.find((candidate) => candidate.matches(requestUrl.pathname));
 
     if (!route) {
@@ -478,4 +485,13 @@ async function closeHttpServer(server: HttpServer): Promise<void> {
       resolve();
     });
   });
+}
+
+function resolveListeningPort(server: HttpServer, fallbackPort: number): number {
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    return fallbackPort;
+  }
+
+  return address.port;
 }

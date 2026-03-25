@@ -1,0 +1,27 @@
+{
+  "name": "@forge/electron",
+  "version": "0.1.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "commonjs",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "dev": "electronmon .",
+    "start": "electron .",
+    "pack": "pnpm build && electron-builder --dir",
+    "dist": "pnpm build && electron-builder"
+  },
+  "dependencies": {
+    "@forge/protocol": "workspace:*",
+    "electron-builder": "^26.0.12"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "electron": "^37.2.5",
+    "electronmon": "^2.0.2",
+    "esbuild": "^0.25.9",
+    "tsx": "^4.20.3",
+    "typescript": "^5.9.2"
+  }
+}
