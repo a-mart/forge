@@ -1,6 +1,6 @@
 import gracefulFs from 'graceful-fs'
 import fs, { existsSync } from 'node:fs'
-import { cp, mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { cp, mkdir, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawn } from 'node:child_process'
@@ -20,6 +20,7 @@ const useShell = process.platform === 'win32'
 const declarationSuffixes = ['.d.ts', '.d.mts', '.d.cts']
 const declarationMapSuffixes = ['.d.ts.map', '.d.mts.map', '.d.cts.map']
 const docsPrefixes = ['license', 'changelog', 'readme']
+const docsPrunableExtensions = new Set(['', '.md', '.mdx', '.markdown', '.txt', '.rst', '.adoc', '.rtf'])
 
 async function main() {
   await rm(stageDir, { recursive: true, force: true })
@@ -37,6 +38,7 @@ async function main() {
   await run(pnpmCommand, ['--dir', repoRoot, '--filter', '@forge/backend', 'deploy', '--prod', '--legacy', '--shamefully-hoist', backendStageDir])
   await removeExternalWorkspaceLinks()
   await dereferenceDirectoryInPlace(backendNodeModulesDir)
+  await overwritePatchedPackagesFromBackend()
   await pruneNodeModules(backendNodeModulesDir)
 
   await stageRendererAssets()
@@ -45,6 +47,91 @@ async function main() {
   await assertExists(path.join(backendStageDir, 'dist', 'index.js'), 'staged backend dist entry')
   await assertExists(path.join(uiStageDir, 'index.html'), 'staged renderer entry')
   await assertExists(path.join(forgeResourcesDir, 'apps', 'backend', 'src', 'swarm', 'skills', 'builtins'), 'staged built-in skills')
+}
+
+
+async function overwritePatchedPackagesFromBackend() {
+  const backendNodeModulesDir = path.join(repoRoot, 'apps', 'backend', 'node_modules')
+  const stagedNodeModulesDir = path.join(backendStageDir, 'node_modules')
+
+  if (!existsSync(backendNodeModulesDir)) {
+    throw new Error(`Missing backend node_modules: ${backendNodeModulesDir}`)
+  }
+
+  const packagePaths = await collectTopLevelPackagePaths(backendNodeModulesDir)
+
+  for (const packagePath of packagePaths) {
+    const sourcePackagePath = path.join(backendNodeModulesDir, packagePath)
+    const resolvedSourcePath = await realpath(sourcePackagePath)
+
+    if (!resolvedSourcePath.includes('patch_hash=')) {
+      continue
+    }
+
+    const stagedPackagePath = path.join(stagedNodeModulesDir, packagePath)
+    await rm(stagedPackagePath, { recursive: true, force: true })
+    await mkdir(path.dirname(stagedPackagePath), { recursive: true })
+    await cp(sourcePackagePath, stagedPackagePath, { recursive: true, dereference: true })
+    await copyPnpmCellSiblingDependencies(sourcePackagePath, stagedPackagePath)
+  }
+}
+
+async function copyPnpmCellSiblingDependencies(sourcePackagePath, stagedPackagePath) {
+  const sourcePackageRealPath = await realpath(sourcePackagePath)
+  const sourcePackageCellNodeModulesDir = path.resolve(sourcePackageRealPath, '..', '..')
+
+  if (!sourcePackageCellNodeModulesDir.includes(`${path.sep}.pnpm${path.sep}`) || !existsSync(sourcePackageCellNodeModulesDir)) {
+    return
+  }
+
+  const siblingPackagePaths = await collectTopLevelPackagePaths(sourcePackageCellNodeModulesDir)
+
+  for (const siblingPackagePath of siblingPackagePaths) {
+    const siblingSourcePath = path.join(sourcePackageCellNodeModulesDir, siblingPackagePath)
+    const siblingRealPath = await realpath(siblingSourcePath)
+
+    if (siblingRealPath === sourcePackageRealPath) {
+      continue
+    }
+
+    const siblingTargetPath = path.join(stagedPackagePath, 'node_modules', siblingPackagePath)
+    await rm(siblingTargetPath, { recursive: true, force: true })
+    await mkdir(path.dirname(siblingTargetPath), { recursive: true })
+    await cp(siblingSourcePath, siblingTargetPath, { recursive: true, dereference: true })
+  }
+}
+
+async function collectTopLevelPackagePaths(nodeModulesDir) {
+  const packagePaths = []
+  const entries = await readdir(nodeModulesDir, { withFileTypes: true })
+
+  for (const entry of entries) {
+    if (entry.name === '.bin') {
+      continue
+    }
+
+    const entryPath = path.join(nodeModulesDir, entry.name)
+
+    if (entry.name.startsWith('@') && entry.isDirectory()) {
+      const scopedEntries = await readdir(entryPath, { withFileTypes: true })
+
+      for (const scopedEntry of scopedEntries) {
+        if (!scopedEntry.isDirectory() && !scopedEntry.isSymbolicLink()) {
+          continue
+        }
+
+        packagePaths.push(path.join(entry.name, scopedEntry.name))
+      }
+
+      continue
+    }
+
+    if (entry.isDirectory() || entry.isSymbolicLink()) {
+      packagePaths.push(entry.name)
+    }
+  }
+
+  return packagePaths
 }
 
 async function removeExternalWorkspaceLinks() {
@@ -87,7 +174,10 @@ function shouldPruneNodeModulesFile(fileName) {
   }
 
   if (docsPrefixes.some((prefix) => normalizedFileName.startsWith(prefix))) {
-    return true
+    const extension = path.extname(normalizedFileName)
+    if (docsPrunableExtensions.has(extension)) {
+      return true
+    }
   }
 
   return false
