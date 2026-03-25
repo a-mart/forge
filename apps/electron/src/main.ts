@@ -162,7 +162,7 @@ class BackendSupervisor {
           ...process.env,
           FORGE_DESKTOP: '1',
           FORGE_HOST: '127.0.0.1',
-          FORGE_PORT: '0',
+          FORGE_PORT: process.env.FORGE_PORT || '0',
           FORGE_RESOURCES_DIR: resourcesDir,
         },
         stdio: ['inherit', 'inherit', 'inherit', 'ipc'],
