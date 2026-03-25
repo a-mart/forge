@@ -11,7 +11,8 @@ const stageDir = path.join(electronDir, '.stage')
 const backendStageDir = path.join(stageDir, 'backend')
 const uiStageDir = path.join(stageDir, 'ui')
 const forgeResourcesDir = path.join(stageDir, 'forge-resources')
-const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
+const pnpmCommand = 'pnpm'
+const useShell = process.platform === 'win32'
 
 async function main() {
   await rm(stageDir, { recursive: true, force: true })
@@ -94,6 +95,7 @@ async function run(command, args) {
       cwd: repoRoot,
       stdio: 'inherit',
       env: process.env,
+      shell: useShell,
     })
 
     child.once('error', reject)
