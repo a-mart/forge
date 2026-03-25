@@ -211,7 +211,8 @@ export class SwarmWebSocketServer {
     this.httpRoutes = [
       ...createHealthRoutes({
         resolveControlPidFile: () => this.controlPidFile,
-        allowReboot: !this.swarmManager.getConfig().isDesktop
+        allowReboot: !this.swarmManager.getConfig().isDesktop,
+        swarmManager: this.swarmManager
       }),
       ...createFileRoutes({
         swarmManager: this.swarmManager,

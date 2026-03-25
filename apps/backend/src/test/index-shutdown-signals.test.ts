@@ -180,6 +180,17 @@ async function loadRegisteredSignals(
     }
   }));
 
+  vi.doMock("../server.js", () => ({
+    startServer: async () => ({
+      host: BASE_CONFIG.host,
+      port: BASE_CONFIG.port,
+      config: BASE_CONFIG,
+      stop: async () => {},
+      stopListening: async () => {},
+      startListening: async () => {},
+    }),
+  }));
+
   vi.doMock("../ws/server.js", () => ({
     SwarmWebSocketServer: class {
       async start(): Promise<void> {}

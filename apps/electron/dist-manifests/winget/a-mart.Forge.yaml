@@ -1,0 +1,13 @@
+PackageIdentifier: a-mart.Forge
+PackageVersion: 0.1.0
+PackageName: Forge
+Publisher: a-mart
+License: MIT
+ShortDescription: Local-first multi-agent orchestration platform
+InstallerType: nsis
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/a-mart/forge/releases/download/v0.1.0/Forge-Setup-0.1.0.exe
+    InstallerSha256: # To be filled per release
+ManifestType: singleton
+ManifestVersion: 1.6.0

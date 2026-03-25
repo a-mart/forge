@@ -1,8 +1,9 @@
-import { app, BrowserWindow, ipcMain, net, protocol } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol } from 'electron'
 import { fork, type ChildProcess, type ForkOptions } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { initAutoUpdater } from './auto-updater.js'
 import { fixPath } from './fix-path.js'
 
 const ELECTRON_DEV_SERVER_URL = 'http://127.0.0.1:47188'
@@ -102,12 +103,9 @@ class BackendSupervisor {
       }
 
       const timeout = setTimeout(() => {
-        try {
-          child.kill('SIGKILL')
-        } catch {
-          // Ignore kill failures during shutdown.
-        }
-        finish()
+        void this.forceTerminate(child).finally(() => {
+          finish()
+        })
       }, BACKEND_SHUTDOWN_TIMEOUT_MS)
 
       child.once('exit', () => {
@@ -119,14 +117,35 @@ class BackendSupervisor {
         child.send({ type: 'shutdown' })
       } catch {
         clearTimeout(timeout)
-        try {
-          child.kill('SIGKILL')
-        } catch {
-          // Ignore kill failures during shutdown.
-        }
-        finish()
+        void this.forceTerminate(child).finally(() => {
+          finish()
+        })
       }
     })
+  }
+
+  private async forceTerminate(child: ChildProcess): Promise<void> {
+    if (process.platform === 'win32') {
+      const pid = child.pid
+      if (typeof pid !== 'number') {
+        return
+      }
+
+      try {
+        const { taskkillProcessTree } = await import('./win-process.js')
+        await taskkillProcessTree(pid)
+      } catch {
+        // Ignore taskkill failures during shutdown.
+      }
+
+      return
+    }
+
+    try {
+      child.kill('SIGKILL')
+    } catch {
+      // Ignore kill failures during shutdown.
+    }
   }
 
   private async launch(isRestart: boolean): Promise<number> {
@@ -232,6 +251,13 @@ const backendSupervisor = new BackendSupervisor((port, isRestart) => {
   }
 })
 
+async function prepareQuitForUpdate(): Promise<void> {
+  if (!appIsQuitting) {
+    appIsQuitting = true
+    await backendSupervisor.stop()
+  }
+}
+
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 
 if (!hasSingleInstanceLock) {
@@ -255,11 +281,17 @@ if (!hasSingleInstanceLock) {
 
   app.whenReady().then(async () => {
     fixPath()
+    createApplicationMenu()
     if (app.isPackaged) {
       registerAppProtocol()
     }
     await backendSupervisor.start()
     mainWindow = createMainWindow()
+    initAutoUpdater({
+      mainWindow,
+      getBackendBaseUrl: () => backendBootstrap?.backendUrl ?? null,
+      prepareQuitForUpdate,
+    })
     await loadRenderer(mainWindow)
   }).catch((error) => {
     console.error('Electron app failed to initialize', error)
@@ -310,6 +342,97 @@ function createMainWindow(): BrowserWindow {
   })
 
   return window
+}
+
+function createApplicationMenu(): void {
+  const isMac = process.platform === 'darwin'
+
+  const template: Array<Electron.MenuItemConstructorOptions> = []
+
+  if (isMac) {
+    template.push({
+      label: app.name,
+      submenu: [
+        {
+          label: 'About Forge',
+          click: (): void => {
+            if (!mainWindow) {
+              return
+            }
+            dialog.showMessageBox(mainWindow, {
+              type: 'info',
+              title: 'About Forge',
+              message: 'Forge',
+              detail: `Version: ${app.getVersion()}\nElectron: ${process.versions.electron}\nChromium: ${process.versions.chrome}\nNode.js: ${process.versions.node}\nPlatform: ${process.platform} ${process.arch}`,
+            }).catch((error) => {
+              console.error('Failed to show About dialog', error)
+            })
+          },
+        },
+        { type: 'separator' },
+        { role: 'services' },
+        { type: 'separator' },
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        { type: 'separator' },
+        { role: 'quit' },
+      ],
+    })
+  }
+
+  template.push({
+    label: 'Edit',
+    submenu: [
+      { role: 'undo' },
+      { role: 'redo' },
+      { type: 'separator' },
+      { role: 'cut' },
+      { role: 'copy' },
+      { role: 'paste' },
+      ...(isMac ? [
+        { role: 'pasteAndMatchStyle' as const },
+        { role: 'delete' as const },
+        { role: 'selectAll' as const },
+      ] : [
+        { role: 'delete' as const },
+        { type: 'separator' as const },
+        { role: 'selectAll' as const },
+      ]),
+    ],
+  })
+
+  template.push({
+    label: 'View',
+    submenu: [
+      { role: 'reload' },
+      { role: 'forceReload' },
+      { role: 'toggleDevTools' },
+      { type: 'separator' },
+      { role: 'resetZoom' },
+      { role: 'zoomIn' },
+      { role: 'zoomOut' },
+      { type: 'separator' },
+      { role: 'togglefullscreen' },
+    ],
+  })
+
+  template.push({
+    label: 'Window',
+    submenu: [
+      { role: 'minimize' },
+      { role: 'zoom' },
+      ...(isMac ? [
+        { type: 'separator' as const },
+        { role: 'front' as const },
+      ] : [
+        { role: 'close' as const },
+      ]),
+    ],
+  })
+
+  const menu = Menu.buildFromTemplate(template)
+  Menu.setApplicationMenu(menu)
 }
 
 async function loadRenderer(window: BrowserWindow): Promise<void> {

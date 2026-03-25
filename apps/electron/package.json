@@ -3,6 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "license": "Apache-2.0",
+  "description": "Local-first multi-agent orchestration platform",
+  "author": {
+    "name": "a-mart"
+  },
+  "homepage": "https://github.com/a-mart/forge",
   "type": "commonjs",
   "main": "dist/main.js",
   "scripts": {
@@ -15,7 +20,8 @@
     "dist": "pnpm run package"
   },
   "dependencies": {
-    "@forge/protocol": "workspace:*"
+    "@forge/protocol": "workspace:*",
+    "electron-updater": "^6.8.3"
   },
   "devDependencies": {
     "@types/node": "^24.3.0",

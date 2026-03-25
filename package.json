@@ -21,6 +21,7 @@
     "build": "pnpm --filter @forge/protocol build && pnpm --filter @forge/backend build && pnpm --filter @forge/ui build",
     "build:electron": "pnpm --filter @forge/electron run build:all",
     "package:electron": "pnpm --filter @forge/electron run package",
+    "release:electron": "cd apps/electron && node scripts/release.mjs",
     "prod": "pnpm build && pnpm prod:start",
     "prod:start": "node scripts/check-data-migration.mjs && concurrently --kill-others-on-fail --names backend,ui \"cross-env NODE_ENV=production FORGE_PORT=47287 pnpm --filter @forge/backend start\" \"pnpm --filter @forge/ui preview\"",
     "prod:daemon": "node scripts/prod-daemon.mjs",

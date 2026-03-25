@@ -2,7 +2,7 @@ import { build } from 'esbuild'
 
 const sharedOptions = {
   bundle: true,
-  external: ['electron', 'tsx'],
+  external: ['electron', 'electron-updater', 'tsx'],
   format: 'cjs',
   platform: 'node',
   target: 'node22',
