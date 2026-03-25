@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Pre-commit hook: block commits containing internal/private files
+
+# Patterns that should never be committed
+BLOCKED_PATTERNS=(
+  '^\.internal/'
+  '^RESEARCH-.*\.md$'
+  '^SKILL-SYNTHESIS-DESIGN\.md$'
+  '^docs/upstream-review/'
+  '^project-docs/design/'
+  '.*-REPORT\.md$'
+  '\.events\.jsonl$'
+  '\.summary\.json$'
+  '\.snapshot-evidence\.json$'
+  '\.tsbuildinfo$'
+)
+
+# Check staged files against blocked patterns
+STAGED=$(git diff --cached --name-only --diff-filter=ACM)
+BLOCKED=""
+
+for file in $STAGED; do
+  for pattern in "${BLOCKED_PATTERNS[@]}"; do
+    if echo "$file" | grep -qE "$pattern"; then
+      BLOCKED="$BLOCKED\n  $file"
+      break
+    fi
+  done
+done
+
+if [ -n "$BLOCKED" ]; then
+  echo "🚫 Commit blocked — the following files match internal/private patterns:"
+  echo -e "$BLOCKED"
+  echo ""
+  echo "If this is intentional, use: git commit --no-verify"
+  exit 1
+fi

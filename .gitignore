@@ -27,3 +27,23 @@ docs-reorg-plan.md
 
 # TanStack Router codegen
 routeTree.gen.ts
+
+# Internal research/design docs
+/RESEARCH-*.md
+/SKILL-SYNTHESIS-DESIGN.md
+
+# Internal analysis and design directories
+/docs/upstream-review/
+/project-docs/design/
+
+# Root internal reports
+/*-REPORT.md
+
+# Generated build artifacts
+*.tsbuildinfo
+apps/backend/static/playwright-live/assets/
+
+# Raw evidence / scratch artifacts
+*.events.jsonl
+*.summary.json
+*.snapshot-evidence.json

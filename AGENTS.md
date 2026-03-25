@@ -216,6 +216,11 @@ See `.env.example` for the full reference.
 
 ## Working Conventions
 
+### Conventions
+
+- Review/design markdown artifacts (plans, review docs) should be kept in the `.internal/` directory locally. This directory is gitignored and must never be committed — it is strictly for local working documents.
+- A pre-commit hook is provided in `.githooks/pre-commit` to block accidental commits of internal files. Enable it with: `git config core.hooksPath .githooks`
+
 ### UI Components
 
 Use [shadcn/ui](https://ui.shadcn.com/) for all shared UI primitives. Prefer shadcn components over hand-rolled HTML elements.
