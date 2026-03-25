@@ -17,7 +17,7 @@
     "dev": "concurrently --kill-others-on-fail --names backend,ui \"pnpm --filter @forge/backend dev\" \"pnpm --filter @forge/ui dev\"",
     "dev:backend": "pnpm --filter @forge/backend dev",
     "dev:ui": "pnpm --filter @forge/ui dev",
-    "dev:electron": "concurrently --kill-others-on-fail -n backend,ui,electron -c blue,green,magenta \"pnpm dev:backend\" \"pnpm dev:ui\" \"wait-on http://127.0.0.1:47187/api/health tcp:127.0.0.1:47188 && cd apps/electron && pnpm dev\"",
+    "dev:electron": "concurrently --kill-others-on-fail -n ui,electron -c green,magenta \"pnpm dev:ui\" \"wait-on tcp:127.0.0.1:47188 && cd apps/electron && pnpm dev\"",
     "build": "pnpm --filter @forge/protocol build && pnpm --filter @forge/backend build && pnpm --filter @forge/ui build",
     "build:electron": "pnpm --filter @forge/electron run build:all",
     "package:electron": "pnpm --filter @forge/electron run package",

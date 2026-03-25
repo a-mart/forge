@@ -13,7 +13,7 @@
   "scripts": {
     "build": "node esbuild.config.mjs",
     "build:all": "node ./scripts/build-all.mjs",
-    "dev": "electronmon .",
+    "dev": "node esbuild.config.mjs && electron .",
     "start": "electron .",
     "pack": "pnpm build:all && electron-builder --dir",
     "package": "pnpm build:all && electron-builder --publish never",
