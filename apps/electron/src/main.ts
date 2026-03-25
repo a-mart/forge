@@ -670,7 +670,7 @@ function resolvePackagedRendererUrl(): string {
 
 function resolveBackendEntry(): string {
   if (app.isPackaged) {
-    const packagedBackendEntry = path.join(process.resourcesPath, PACKAGED_BACKEND_DIRNAME, 'dist', 'index.js')
+    const packagedBackendEntry = path.join(process.resourcesPath, PACKAGED_BACKEND_DIRNAME, 'dist', 'index.mjs')
     assertPathExists(packagedBackendEntry, 'Packaged backend entry')
     return packagedBackendEntry
   }

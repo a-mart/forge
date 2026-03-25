@@ -7,6 +7,7 @@ import type {
   PlaywrightDiscoveredSession,
   PlaywrightLivePreviewCandidate,
 } from '@forge/protocol'
+import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { dirname, extname, resolve } from 'node:path'
@@ -51,8 +52,26 @@ const PLAYWRIGHT_LIVE_BOOTSTRAP_PATH = /^\/playwright-live\/api\/previews\/([^/]
 const PLAYWRIGHT_LIVE_RELEASE_PATH = /^\/playwright-live\/api\/previews\/([^/]+)$/
 const PLAYWRIGHT_LIVE_PARENT_RELEASE_PATH = /^\/api\/playwright\/live-preview\/([^/]+)$/
 
-const STATIC_ASSET_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../../static/playwright-live')
+const STATIC_ASSET_ROOT = resolvePlaywrightLiveStaticRoot()
 const STATIC_ASSET_VENDORED_ROOT = resolve(STATIC_ASSET_ROOT, 'assets')
+
+function resolvePlaywrightLiveStaticRoot(): string {
+  const candidateRoots = [
+    resolve(process.cwd(), 'apps', 'backend', 'static', 'playwright-live'),
+    process.env.FORGE_RESOURCES_DIR?.trim()
+      ? resolve(process.env.FORGE_RESOURCES_DIR.trim(), 'apps', 'backend', 'static', 'playwright-live')
+      : null,
+    resolve(dirname(fileURLToPath(import.meta.url)), '../../../static/playwright-live'),
+  ]
+
+  for (const candidateRoot of candidateRoots) {
+    if (candidateRoot && existsSync(candidateRoot)) {
+      return candidateRoot
+    }
+  }
+
+  return resolve(dirname(fileURLToPath(import.meta.url)), '../../../static/playwright-live')
+}
 const DEVTOOLS_BUNDLE_JS = 'assets/index-BlUdtOgD.js'
 const DEVTOOLS_BUNDLE_CSS = 'assets/index-CcsbAkl3.css'
 

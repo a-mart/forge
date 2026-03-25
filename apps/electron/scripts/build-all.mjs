@@ -1,22 +1,48 @@
 import gracefulFs from 'graceful-fs'
 import fs, { existsSync } from 'node:fs'
-import { cp, mkdir, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises'
+import { cp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { spawn } from 'node:child_process'
+import { createRequire } from 'node:module'
+import { fileURLToPath } from 'node:url'
+import { build as esbuild } from 'esbuild'
 
 gracefulFs.gracefulify(fs)
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url))
 const electronDir = path.resolve(scriptDir, '..')
 const repoRoot = path.resolve(electronDir, '..', '..')
+const backendWorkspaceDir = path.join(repoRoot, 'apps', 'backend')
+const backendWorkspaceManifestPath = path.join(backendWorkspaceDir, 'package.json')
+const backendBuildEntry = path.join(backendWorkspaceDir, 'dist', 'index.js')
 const stageDir = path.join(electronDir, '.stage')
 const backendStageDir = path.join(stageDir, 'backend')
+const backendStageBundlePath = path.join(backendStageDir, 'dist', 'index.mjs')
+const backendStageNodeModulesDir = path.join(backendStageDir, 'node_modules')
 const uiStageDir = path.join(stageDir, 'ui')
 const forgeResourcesDir = path.join(stageDir, 'forge-resources')
 const pnpmCommand = 'pnpm'
 const useShell = process.platform === 'win32'
 
+const BACKEND_BUNDLE_EXTERNAL_PACKAGES = ['sharp', 'koffi', '@mariozechner/clipboard']
+const PACKAGE_METADATA_DIRS_TO_PRUNE = new Set([
+  '.github',
+  '.vscode',
+  '__tests__',
+  'benchmark',
+  'benchmarks',
+  'doc',
+  'docs',
+  'example',
+  'examples',
+  'node_modules',
+  'test',
+  'tests',
+])
+const PACKAGE_SPECIFIC_DIRS_TO_PRUNE = new Map([
+  ['koffi', new Set(['src', 'vendor'])],
+  ['sharp', new Set(['install', 'src'])],
+])
 const declarationSuffixes = ['.d.ts', '.d.mts', '.d.cts']
 const declarationMapSuffixes = ['.d.ts.map', '.d.mts.map', '.d.cts.map']
 const docsPrefixes = ['license', 'changelog', 'readme']
@@ -30,128 +56,218 @@ async function main() {
   await run(pnpmCommand, ['--dir', repoRoot, '--filter', '@forge/backend', 'build'])
   await run(pnpmCommand, ['--dir', repoRoot, '--filter', '@forge/ui', 'build'])
   await run(pnpmCommand, ['--dir', electronDir, 'build'])
-  const backendNodeModulesDir = path.join(backendStageDir, 'node_modules')
 
-  // --shamefully-hoist produces a flat node_modules layout compatible with Electron packaging.
-  // Without it, pnpm's isolated .pnpm store + symlinks breaks Node.js ESM resolution
-  // after symlink dereferencing (packages can't find their sibling dependencies).
-  await run(pnpmCommand, ['--dir', repoRoot, '--filter', '@forge/backend', 'deploy', '--prod', '--legacy', '--shamefully-hoist', backendStageDir])
-  await removeExternalWorkspaceLinks()
-  await dereferenceDirectoryInPlace(backendNodeModulesDir)
-  await overwritePatchedPackagesFromBackend()
-  await pruneNodeModules(backendNodeModulesDir)
-
+  await stageBundledBackend()
   await stageRendererAssets()
   await stageBackendResources()
 
-  await assertExists(path.join(backendStageDir, 'dist', 'index.js'), 'staged backend dist entry')
+  await assertExists(backendStageBundlePath, 'staged backend bundle entry')
   await assertExists(path.join(uiStageDir, 'index.html'), 'staged renderer entry')
-  await assertExists(path.join(forgeResourcesDir, 'apps', 'backend', 'src', 'swarm', 'skills', 'builtins'), 'staged built-in skills')
+  await assertExists(
+    path.join(forgeResourcesDir, 'apps', 'backend', 'src', 'swarm', 'skills', 'builtins'),
+    'staged built-in skills',
+  )
 }
 
+async function stageBundledBackend() {
+  await mkdir(path.dirname(backendStageBundlePath), { recursive: true })
 
-async function overwritePatchedPackagesFromBackend() {
-  const backendNodeModulesDir = path.join(repoRoot, 'apps', 'backend', 'node_modules')
-  const stagedNodeModulesDir = path.join(backendStageDir, 'node_modules')
+  await esbuild({
+    entryPoints: [backendBuildEntry],
+    outfile: backendStageBundlePath,
+    bundle: true,
+    platform: 'node',
+    format: 'esm',
+    target: ['node22'],
+    external: BACKEND_BUNDLE_EXTERNAL_PACKAGES,
+    define: {
+      'process.env.FORGE_BUNDLED_BACKEND': '"1"',
+    },
+    banner: {
+      js: "import { createRequire as __createRequire } from 'node:module'; const require = __createRequire(import.meta.url);",
+    },
+    logLevel: 'info',
+    legalComments: 'none',
+  })
 
-  if (!existsSync(backendNodeModulesDir)) {
-    throw new Error(`Missing backend node_modules: ${backendNodeModulesDir}`)
-  }
+  const runtimePackages = await collectRuntimePackageClosure(BACKEND_BUNDLE_EXTERNAL_PACKAGES)
+  await stageRuntimePackages(runtimePackages)
 
-  const packagePaths = await collectTopLevelPackagePaths(backendNodeModulesDir)
+  const fileCount = await countFiles(backendStageDir)
+  console.log(`[electron/build-all] Staged bundled backend with ${runtimePackages.length} runtime packages (${fileCount} files)`)
+}
 
-  for (const packagePath of packagePaths) {
-    const sourcePackagePath = path.join(backendNodeModulesDir, packagePath)
-    const resolvedSourcePath = await realpath(sourcePackagePath)
+async function collectRuntimePackageClosure(rootPackageNames) {
+  const queuedPackages = rootPackageNames.map((packageName) => ({
+    packageName,
+    resolveFromManifestPath: backendWorkspaceManifestPath,
+    optional: false,
+  }))
+  const discoveredPackages = new Map()
 
-    if (!resolvedSourcePath.includes('patch_hash=')) {
+  while (queuedPackages.length > 0) {
+    const next = queuedPackages.shift()
+    if (!next) {
       continue
     }
 
-    const stagedPackagePath = path.join(stagedNodeModulesDir, packagePath)
-    await rm(stagedPackagePath, { recursive: true, force: true })
-    await mkdir(path.dirname(stagedPackagePath), { recursive: true })
-    await cp(sourcePackagePath, stagedPackagePath, { recursive: true, dereference: true })
-    await copyPnpmCellSiblingDependencies(sourcePackagePath, stagedPackagePath)
+    const resolved = await resolveInstalledPackage(next.packageName, next.resolveFromManifestPath, next.optional)
+    if (!resolved || discoveredPackages.has(resolved.name)) {
+      continue
+    }
+
+    discoveredPackages.set(resolved.name, resolved)
+
+    for (const dependency of collectRuntimeDependencyDescriptors(resolved.manifest)) {
+      queuedPackages.push({
+        packageName: dependency.packageName,
+        resolveFromManifestPath: resolved.manifestPath,
+        optional: dependency.optional,
+      })
+    }
+  }
+
+  return Array.from(discoveredPackages.values()).sort((left, right) => left.name.localeCompare(right.name))
+}
+
+function collectRuntimeDependencyDescriptors(manifest) {
+  const descriptors = []
+
+  for (const packageName of Object.keys(manifest.dependencies ?? {})) {
+    descriptors.push({ packageName, optional: false })
+  }
+
+  for (const packageName of Object.keys(manifest.optionalDependencies ?? {})) {
+    descriptors.push({ packageName, optional: true })
+  }
+
+  return descriptors
+}
+
+async function resolveInstalledPackage(packageName, resolveFromManifestPath, optional) {
+  const packageRequire = createRequire(resolveFromManifestPath)
+  let resolvedEntryPath
+
+  try {
+    resolvedEntryPath = packageRequire.resolve(packageName)
+  } catch (error) {
+    const resolvedPackageRoot = await findInstalledPackageRoot(packageName, path.dirname(resolveFromManifestPath))
+    if (resolvedPackageRoot) {
+      return await findResolvedPackageInfo(packageName, resolvedPackageRoot)
+    }
+
+    if (optional && isModuleNotFoundError(error)) {
+      return null
+    }
+
+    throw new Error(
+      `Failed to resolve runtime package "${packageName}" from ${resolveFromManifestPath}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    )
+  }
+
+  return await findResolvedPackageInfo(packageName, resolvedEntryPath)
+}
+
+async function findResolvedPackageInfo(expectedPackageName, resolvedEntryPath) {
+  let currentPath = path.extname(resolvedEntryPath) ? path.dirname(resolvedEntryPath) : resolvedEntryPath
+
+  while (true) {
+    const manifestPath = path.join(currentPath, 'package.json')
+    if (existsSync(manifestPath)) {
+      const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+      if (manifest.name === expectedPackageName) {
+        return {
+          name: manifest.name,
+          manifest,
+          manifestPath,
+          packageRoot: currentPath,
+        }
+      }
+    }
+
+    const parentPath = path.dirname(currentPath)
+    if (parentPath === currentPath) {
+      throw new Error(`Unable to locate package root for ${expectedPackageName} from ${resolvedEntryPath}`)
+    }
+
+    currentPath = parentPath
   }
 }
 
-async function copyPnpmCellSiblingDependencies(sourcePackagePath, stagedPackagePath) {
-  const sourcePackageRealPath = await realpath(sourcePackagePath)
-  const sourcePackageCellNodeModulesDir = path.resolve(sourcePackageRealPath, '..', '..')
+async function findInstalledPackageRoot(packageName, startDirectory) {
+  const packageRelativePath = path.join('node_modules', ...packageName.split('/'))
+  let currentDirectory = startDirectory
 
-  if (!sourcePackageCellNodeModulesDir.includes(`${path.sep}.pnpm${path.sep}`) || !existsSync(sourcePackageCellNodeModulesDir)) {
+  while (true) {
+    const candidatePath = path.join(currentDirectory, packageRelativePath)
+    if (existsSync(candidatePath)) {
+      return await fs.promises.realpath(candidatePath)
+    }
+
+    const parentDirectory = path.dirname(currentDirectory)
+    if (parentDirectory === currentDirectory) {
+      return null
+    }
+
+    currentDirectory = parentDirectory
+  }
+}
+
+function isModuleNotFoundError(error) {
+  return Boolean(
+    error &&
+      typeof error === 'object' &&
+      'code' in error &&
+      (error.code === 'MODULE_NOT_FOUND' || error.code === 'ERR_MODULE_NOT_FOUND'),
+  )
+}
+
+async function stageRuntimePackages(runtimePackages) {
+  if (runtimePackages.length === 0) {
     return
   }
 
-  const siblingPackagePaths = await collectTopLevelPackagePaths(sourcePackageCellNodeModulesDir)
+  await mkdir(backendStageNodeModulesDir, { recursive: true })
 
-  for (const siblingPackagePath of siblingPackagePaths) {
-    const siblingSourcePath = path.join(sourcePackageCellNodeModulesDir, siblingPackagePath)
-    const siblingRealPath = await realpath(siblingSourcePath)
-
-    if (siblingRealPath === sourcePackageRealPath) {
-      continue
-    }
-
-    const siblingTargetPath = path.join(stagedPackagePath, 'node_modules', siblingPackagePath)
-    await rm(siblingTargetPath, { recursive: true, force: true })
-    await mkdir(path.dirname(siblingTargetPath), { recursive: true })
-    await cp(siblingSourcePath, siblingTargetPath, { recursive: true, dereference: true })
+  for (const runtimePackage of runtimePackages) {
+    const packageTargetDir = path.join(backendStageNodeModulesDir, ...runtimePackage.name.split('/'))
+    await copyRuntimePackage(runtimePackage, packageTargetDir)
   }
 }
 
-async function collectTopLevelPackagePaths(nodeModulesDir) {
-  const packagePaths = []
-  const entries = await readdir(nodeModulesDir, { withFileTypes: true })
-
-  for (const entry of entries) {
-    if (entry.name === '.bin') {
-      continue
-    }
-
-    const entryPath = path.join(nodeModulesDir, entry.name)
-
-    if (entry.name.startsWith('@') && entry.isDirectory()) {
-      const scopedEntries = await readdir(entryPath, { withFileTypes: true })
-
-      for (const scopedEntry of scopedEntries) {
-        if (!scopedEntry.isDirectory() && !scopedEntry.isSymbolicLink()) {
-          continue
-        }
-
-        packagePaths.push(path.join(entry.name, scopedEntry.name))
-      }
-
-      continue
-    }
-
-    if (entry.isDirectory() || entry.isSymbolicLink()) {
-      packagePaths.push(entry.name)
-    }
-  }
-
-  return packagePaths
-}
-
-async function removeExternalWorkspaceLinks() {
-  await rm(path.join(backendStageDir, 'node_modules', '.pnpm', 'node_modules', '@forge', 'backend'), {
-    force: true,
+async function copyRuntimePackage(runtimePackage, targetDir) {
+  await mkdir(path.dirname(targetDir), { recursive: true })
+  await cp(runtimePackage.packageRoot, targetDir, {
+    recursive: true,
+    dereference: true,
+    filter: (sourcePath) => shouldCopyRuntimePackagePath(runtimePackage.name, runtimePackage.packageRoot, sourcePath),
   })
 }
 
-async function dereferenceDirectoryInPlace(targetDir) {
-  if (!existsSync(targetDir)) {
-    return
+function shouldCopyRuntimePackagePath(packageName, packageRoot, sourcePath) {
+  const relativePath = path.relative(packageRoot, sourcePath)
+  if (relativePath.length === 0) {
+    return true
   }
 
-  const dereferencedDir = `${targetDir}-dereferenced`
+  const relativeSegments = relativePath.split(path.sep)
+  const topLevelSegment = relativeSegments[0]?.toLowerCase()
+  if (!topLevelSegment) {
+    return true
+  }
 
-  await rm(dereferencedDir, { recursive: true, force: true })
-  await cp(targetDir, dereferencedDir, { recursive: true, dereference: true })
-  await rm(targetDir, { recursive: true, force: true })
-  await cp(dereferencedDir, targetDir, { recursive: true })
-  await rm(dereferencedDir, { recursive: true, force: true })
+  if (PACKAGE_METADATA_DIRS_TO_PRUNE.has(topLevelSegment)) {
+    return false
+  }
+
+  const packageSpecificDirs = PACKAGE_SPECIFIC_DIRS_TO_PRUNE.get(packageName)
+  if (packageSpecificDirs?.has(topLevelSegment)) {
+    return false
+  }
+
+  return !shouldPruneNodeModulesFile(path.basename(sourcePath))
 }
 
 function shouldPruneNodeModulesFile(fileName) {
@@ -193,9 +309,9 @@ async function countFiles(rootDir) {
 
   while (directoriesToVisit.length > 0) {
     const currentDirectory = directoriesToVisit.pop()
-    const directoryEntries = await readdir(currentDirectory, { withFileTypes: true })
+    const entries = await fs.promises.readdir(currentDirectory, { withFileTypes: true })
 
-    for (const entry of directoryEntries) {
+    for (const entry of entries) {
       const entryPath = path.join(currentDirectory, entry.name)
 
       if (entry.isDirectory()) {
@@ -210,42 +326,6 @@ async function countFiles(rootDir) {
   }
 
   return fileCount
-}
-
-async function pruneNodeModules(nodeModulesDir) {
-  if (!existsSync(nodeModulesDir)) {
-    return
-  }
-
-  const fileCountBeforePrune = await countFiles(nodeModulesDir)
-  const directoriesToVisit = [nodeModulesDir]
-  let removedFileCount = 0
-
-  while (directoriesToVisit.length > 0) {
-    const currentDirectory = directoriesToVisit.pop()
-    const directoryEntries = await readdir(currentDirectory, { withFileTypes: true })
-
-    for (const entry of directoryEntries) {
-      const entryPath = path.join(currentDirectory, entry.name)
-
-      if (entry.isDirectory()) {
-        directoriesToVisit.push(entryPath)
-        continue
-      }
-
-      if (entry.isFile() && shouldPruneNodeModulesFile(entry.name)) {
-        await rm(entryPath, { force: true })
-        removedFileCount += 1
-      }
-    }
-  }
-
-  const fileCountAfterPrune = await countFiles(nodeModulesDir)
-  const effectiveRemovedCount = fileCountBeforePrune - fileCountAfterPrune
-
-  console.log(
-    `[electron/build-all] Pruned staged backend node_modules files: ${fileCountBeforePrune} -> ${fileCountAfterPrune} (${effectiveRemovedCount} removed, ${removedFileCount} delete operations)`
-  )
 }
 
 async function stageRendererAssets() {
@@ -277,6 +357,10 @@ async function stageBackendResources() {
   await copyDirectory(
     path.join(repoRoot, 'apps', 'backend', 'src', 'swarm', 'skills', 'builtins'),
     path.join(forgeResourcesDir, 'apps', 'backend', 'src', 'swarm', 'skills', 'builtins'),
+  )
+  await copyDirectory(
+    path.join(repoRoot, 'apps', 'backend', 'static'),
+    path.join(forgeResourcesDir, 'apps', 'backend', 'static'),
   )
 
   const repoSwarmDir = path.join(repoRoot, '.swarm')
