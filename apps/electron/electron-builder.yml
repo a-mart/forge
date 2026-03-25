@@ -1,5 +1,6 @@
 appId: com.forge.desktop
 productName: Forge
+icon: build/icon
 directories:
   output: release
   buildResources: build

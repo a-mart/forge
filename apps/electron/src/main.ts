@@ -5,6 +5,7 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { initAutoUpdater } from './auto-updater.js'
 import { fixPath } from './fix-path.js'
+import { showWhatsNewIfUpdated } from './whats-new.js'
 
 const ELECTRON_DEV_SERVER_URL = 'http://127.0.0.1:47188'
 const BACKEND_READY_CHANNEL = 'forge:get-backend-bootstrap'
@@ -285,7 +286,22 @@ if (!hasSingleInstanceLock) {
     if (app.isPackaged) {
       registerAppProtocol()
     }
-    await backendSupervisor.start()
+
+    try {
+      await backendSupervisor.start()
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      dialog.showErrorBox(
+        'Forge failed to start',
+        'The backend process exited unexpectedly.\n\n' +
+        'This might happen if another instance is running or if there\'s a configuration issue.\n\n' +
+        `${detail}\n\n` +
+        'Check the logs or try restarting the app.',
+      )
+      app.exit(1)
+      return
+    }
+
     mainWindow = createMainWindow()
     initAutoUpdater({
       mainWindow,
@@ -293,6 +309,11 @@ if (!hasSingleInstanceLock) {
       prepareQuitForUpdate,
     })
     await loadRenderer(mainWindow)
+
+    // Show "What's New" dialog if the app was just updated (non-blocking)
+    showWhatsNewIfUpdated(mainWindow).catch((error) => {
+      console.warn('Failed to show What\'s New dialog', error)
+    })
   }).catch((error) => {
     console.error('Electron app failed to initialize', error)
     app.exit(1)

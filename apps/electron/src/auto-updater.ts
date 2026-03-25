@@ -6,7 +6,14 @@ import {
   type UpdateInfo,
 } from 'electron-updater'
 
+/** Delay before first update check after app launch. */
 const UPDATE_STARTUP_DELAY_MS = 10_000
+
+/**
+ * Interval between periodic update checks: 4 hours.
+ * The first check runs after UPDATE_STARTUP_DELAY_MS, then repeats at this interval.
+ * If a downloaded update is pending, the periodic tick re-prompts the user instead of checking again.
+ */
 const UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1_000
 const GITHUB_FEED = {
   provider: 'github' as const,
