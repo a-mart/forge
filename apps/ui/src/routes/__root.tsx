@@ -54,17 +54,19 @@ function RootDocument({ children }: { children: React.ReactNode }) {
       <body className="overflow-hidden">
         <TooltipProvider>
           {children}
-          <TanStackDevtools
-            config={{
-              position: 'bottom-right',
-            }}
-            plugins={[
-              {
-                name: 'Tanstack Router',
-                render: <TanStackRouterDevtoolsPanel />,
-              },
-            ]}
-          />
+          {import.meta.env.DEV && !window.electronBridge && (
+            <TanStackDevtools
+              config={{
+                position: 'bottom-right',
+              }}
+              plugins={[
+                {
+                  name: 'Tanstack Router',
+                  render: <TanStackRouterDevtoolsPanel />,
+                },
+              ]}
+            />
+          )}
         </TooltipProvider>
         <Scripts />
       </body>
