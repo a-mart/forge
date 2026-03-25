@@ -411,6 +411,11 @@ if (!hasSingleInstanceLock) {
     event.returnValue = backendBootstrap ?? backendSupervisor.bootstrap
   })
 
+  ipcMain.handle('bridge:showOpenDialog', async (_event, options) => {
+    if (!mainWindow) return { canceled: true, filePaths: [] }
+    return dialog.showOpenDialog(mainWindow, options)
+  })
+
   app.whenReady().then(async () => {
     fixPath()
     createApplicationMenu()
