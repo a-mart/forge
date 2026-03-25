@@ -41,6 +41,10 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      - name: Increase file descriptor limit (macOS)
+        if: runner.os == 'macOS'
+        run: ulimit -n 65536
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
