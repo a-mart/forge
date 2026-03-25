@@ -75,7 +75,7 @@ The bundled backend runs in production mode. Port defaults to 47287, overridable
 
 ## Code Signing (macOS)
 
-To sign and notarize the macOS build, set these environment variables before running `pnpm package:electron`:
+To sign and notarize the macOS build, set these environment variables in your `.env` file before running `pnpm package:electron`:
 
 | Variable | Description |
 |----------|-------------|
@@ -89,20 +89,28 @@ Signing and notarization happen automatically during the build if the variables 
 
 ## Releasing
 
-To build and publish a new release to GitHub:
+Releases are built locally and uploaded to GitHub. The CI workflow (`.github/workflows/electron-build.yml`) remains available as a backup and validation path but is not the primary release mechanism.
 
-```bash
-pnpm release:electron
-```
+### Local Release Workflow
 
-This script (`scripts/release.mjs`) packages the app for all platforms and uploads the artifacts to GitHub Releases using `electron-builder`'s built-in publish mechanism.
+1. **Bump version**: Run `pnpm release:electron` to update version in `package.json` and commit, or manually update and commit
 
-You need a GitHub personal access token with `repo` scope set as `GH_TOKEN` in your environment:
+2. **Build macOS**: Run `pnpm package:electron` locally with signing environment variables set in `.env`. The signed and notarized app will be in `apps/electron/release/`
 
-```bash
-export GH_TOKEN=ghp_yourtoken
-pnpm release:electron
-```
+3. **Build Windows**: Build on a local Parallels Windows VM or use the CI workflow by pushing a `v*` tag
+
+4. **Create GitHub Release**:
+   ```bash
+   gh release create v1.2.3 --draft --generate-notes
+   ```
+
+5. **Upload artifacts**:
+   ```bash
+   gh release upload v1.2.3 apps/electron/release/*.dmg
+   gh release upload v1.2.3 apps/electron/release/*.exe
+   ```
+
+6. **Publish**: Review the draft release on GitHub, then publish
 
 The app includes auto-update support. Users will be notified when a new version is available and can update with one click. Updates are fetched from GitHub Releases.
 

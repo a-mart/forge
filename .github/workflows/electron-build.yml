@@ -1,9 +1,12 @@
+# Backup and validation workflow for Electron builds.
+# Primary releases are built locally (macOS on dev machine, Windows on Parallels VM) and uploaded via gh CLI.
+# This workflow provides CI validation for electron/* feature branches and serves as a fallback for tagged releases.
+
 name: Electron Build
 
 on:
   push:
     branches:
-      - 'main'
       - 'electron/*'
     tags:
       - 'v*'
