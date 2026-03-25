@@ -1,8 +1,11 @@
+import gracefulFs from 'graceful-fs'
+import fs, { existsSync } from 'node:fs'
 import { cp, mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises'
-import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawn } from 'node:child_process'
+
+gracefulFs.gracefulify(fs)
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url))
 const electronDir = path.resolve(scriptDir, '..')

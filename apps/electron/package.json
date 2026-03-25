@@ -29,6 +29,7 @@
     "electron-builder": "^26.0.12",
     "electronmon": "^2.0.2",
     "esbuild": "^0.25.9",
+    "graceful-fs": "^4.2.11",
     "tsx": "^4.20.3",
     "typescript": "^5.9.2"
   }

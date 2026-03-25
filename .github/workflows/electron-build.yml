@@ -1,7 +1,8 @@
 # Electron desktop app build workflow.
-# - Manual trigger (workflow_dispatch): builds both platforms, uploads artifacts for testing. No release created.
-# - Tag push (v*): builds both platforms, creates a draft GitHub Release with installers attached.
-# - Branch push (electron/*): validation builds only.
+# - Manual trigger (workflow_dispatch): builds Windows artifacts and uploads them for testing. No release created.
+# - Tag push (v*): builds Windows artifacts and creates a draft GitHub Release with installers attached.
+# - Branch push (electron/*): Windows validation build only.
+# - macOS builds (signed + notarized) are performed locally on a developer machine.
 
 name: Electron Build
 
@@ -26,8 +27,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-14
-            platform: macos-arm64
           - runner: windows-latest
             platform: windows-x64
 
@@ -52,23 +51,8 @@ jobs:
       - name: Build workspace
         run: pnpm build
 
-      - name: Package Electron (signed macOS tag build)
-        if: matrix.runner == 'macos-14' && startsWith(github.ref, 'refs/tags/v')
-        run: |
-          ulimit -n 65536 2>/dev/null || true
-          pnpm package:electron
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-
-      - name: Package Electron (unsigned)
-        if: matrix.runner != 'macos-14' || !startsWith(github.ref, 'refs/tags/v')
-        run: |
-          ulimit -n 65536 2>/dev/null || true
-          pnpm package:electron
+      - name: Package Electron
+        run: pnpm package:electron
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
