@@ -1,4 +1,4 @@
-import { cp, mkdir, rm, stat, writeFile } from 'node:fs/promises'
+import { cp, mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -14,6 +14,10 @@ const forgeResourcesDir = path.join(stageDir, 'forge-resources')
 const pnpmCommand = 'pnpm'
 const useShell = process.platform === 'win32'
 
+const declarationSuffixes = ['.d.ts', '.d.mts', '.d.cts']
+const declarationMapSuffixes = ['.d.ts.map', '.d.mts.map', '.d.cts.map']
+const docsPrefixes = ['license', 'changelog', 'readme']
+
 async function main() {
   await rm(stageDir, { recursive: true, force: true })
   await mkdir(stageDir, { recursive: true })
@@ -24,6 +28,7 @@ async function main() {
   await run(pnpmCommand, ['--dir', electronDir, 'build'])
   await run(pnpmCommand, ['--dir', repoRoot, '--filter', '@forge/backend', 'deploy', '--prod', '--legacy', backendStageDir])
   await removeExternalWorkspaceLinks()
+  await pruneNodeModules(path.join(backendStageDir, 'node_modules'))
 
   await stageRendererAssets()
   await stageBackendResources()
@@ -37,6 +42,97 @@ async function removeExternalWorkspaceLinks() {
   await rm(path.join(backendStageDir, 'node_modules', '.pnpm', 'node_modules', '@forge', 'backend'), {
     force: true,
   })
+}
+
+function shouldPruneNodeModulesFile(fileName) {
+  const normalizedFileName = fileName.toLowerCase()
+
+  if (declarationMapSuffixes.some((suffix) => normalizedFileName.endsWith(suffix))) {
+    return true
+  }
+
+  if (declarationSuffixes.some((suffix) => normalizedFileName.endsWith(suffix))) {
+    return true
+  }
+
+  if (normalizedFileName.endsWith('.md')) {
+    return true
+  }
+
+  if (normalizedFileName.endsWith('.ts') && !normalizedFileName.endsWith('.d.ts')) {
+    return true
+  }
+
+  if (docsPrefixes.some((prefix) => normalizedFileName.startsWith(prefix))) {
+    return true
+  }
+
+  return false
+}
+
+async function countFiles(rootDir) {
+  if (!existsSync(rootDir)) {
+    return 0
+  }
+
+  let fileCount = 0
+  const directoriesToVisit = [rootDir]
+
+  while (directoriesToVisit.length > 0) {
+    const currentDirectory = directoriesToVisit.pop()
+    const directoryEntries = await readdir(currentDirectory, { withFileTypes: true })
+
+    for (const entry of directoryEntries) {
+      const entryPath = path.join(currentDirectory, entry.name)
+
+      if (entry.isDirectory()) {
+        directoriesToVisit.push(entryPath)
+        continue
+      }
+
+      if (entry.isFile()) {
+        fileCount += 1
+      }
+    }
+  }
+
+  return fileCount
+}
+
+async function pruneNodeModules(nodeModulesDir) {
+  if (!existsSync(nodeModulesDir)) {
+    return
+  }
+
+  const fileCountBeforePrune = await countFiles(nodeModulesDir)
+  const directoriesToVisit = [nodeModulesDir]
+  let removedFileCount = 0
+
+  while (directoriesToVisit.length > 0) {
+    const currentDirectory = directoriesToVisit.pop()
+    const directoryEntries = await readdir(currentDirectory, { withFileTypes: true })
+
+    for (const entry of directoryEntries) {
+      const entryPath = path.join(currentDirectory, entry.name)
+
+      if (entry.isDirectory()) {
+        directoriesToVisit.push(entryPath)
+        continue
+      }
+
+      if (entry.isFile() && shouldPruneNodeModulesFile(entry.name)) {
+        await rm(entryPath, { force: true })
+        removedFileCount += 1
+      }
+    }
+  }
+
+  const fileCountAfterPrune = await countFiles(nodeModulesDir)
+  const effectiveRemovedCount = fileCountBeforePrune - fileCountAfterPrune
+
+  console.log(
+    `[electron/build-all] Pruned staged backend node_modules files: ${fileCountBeforePrune} -> ${fileCountAfterPrune} (${effectiveRemovedCount} removed, ${removedFileCount} delete operations)`
+  )
 }
 
 async function stageRendererAssets() {
