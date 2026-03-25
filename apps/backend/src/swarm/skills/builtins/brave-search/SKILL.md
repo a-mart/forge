@@ -30,13 +30,13 @@ Requires a Brave Search API account with a free subscription. A credit card is r
 ## Search
 
 ```bash
-./search.js "query"                         # Basic search (5 results)
-./search.js "query" -n 10                   # More results (max 20)
-./search.js "query" --content               # Include page content as markdown
-./search.js "query" --freshness pw          # Results from last week
-./search.js "query" --freshness 2024-01-01to2024-06-30  # Date range
-./search.js "query" --country DE            # Results from Germany
-./search.js "query" -n 3 --content          # Combined options
+node ./search.js "query"                         # Basic search (5 results)
+node ./search.js "query" -n 10                   # More results (max 20)
+node ./search.js "query" --content               # Include page content as markdown
+node ./search.js "query" --freshness pw          # Results from last week
+node ./search.js "query" --freshness 2024-01-01to2024-06-30  # Date range
+node ./search.js "query" --country DE            # Results from Germany
+node ./search.js "query" -n 3 --content          # Combined options
 ```
 
 ### Options
@@ -54,7 +54,7 @@ Requires a Brave Search API account with a free subscription. A credit card is r
 ## Extract Page Content
 
 ```bash
-./content.js https://example.com/article
+node ./content.js https://example.com/article
 ```
 
 Fetches a URL and extracts readable content as markdown.

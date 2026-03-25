@@ -3,6 +3,10 @@
   "private": true,
   "license": "Apache-2.0",
   "type": "module",
+  "files": [
+    "dist",
+    "static"
+  ],
   "scripts": {
     "dev": "tsx watch --exclude \"../../data/**\" --exclude \"data/**\" src/index.ts",
     "build": "tsc -p tsconfig.build.json",

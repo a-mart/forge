@@ -17,7 +17,7 @@ env:
 
 Lightweight Chrome DevTools Protocol CLI. Connects directly to a live local browser session over WebSocket (no Puppeteer dependency).
 
-All commands use `scripts/cdp.mjs` (path relative to this skill directory).
+All commands use `node ./scripts/cdp.mjs` (path relative to this skill directory).
 
 ## Prerequisites
 
@@ -29,7 +29,7 @@ All commands use `scripts/cdp.mjs` (path relative to this skill directory).
 
 1. List tabs:
    ```bash
-   scripts/cdp.mjs list
+   node ./scripts/cdp.mjs list
    ```
 2. Copy a target prefix from list output (for example `6BE827FA`).
 3. Use that target in commands below.
@@ -41,25 +41,25 @@ All commands use `scripts/cdp.mjs` (path relative to this skill directory).
 ### List open pages
 
 ```bash
-scripts/cdp.mjs list
+node ./scripts/cdp.mjs list
 ```
 
 ### Screenshot (viewport)
 
 ```bash
-scripts/cdp.mjs shot <target> [file]
+node ./scripts/cdp.mjs shot <target> [file]
 ```
 
 ### Accessibility snapshot
 
 ```bash
-scripts/cdp.mjs snap <target>
+node ./scripts/cdp.mjs snap <target>
 ```
 
 ### HTML extraction
 
 ```bash
-scripts/cdp.mjs html <target> [selector]
+node ./scripts/cdp.mjs html <target> [selector]
 ```
 
 - No selector: full page HTML
@@ -68,61 +68,61 @@ scripts/cdp.mjs html <target> [selector]
 ### Evaluate JavaScript
 
 ```bash
-scripts/cdp.mjs eval <target> <expr>
+node ./scripts/cdp.mjs eval <target> <expr>
 ```
 
 ### Navigate
 
 ```bash
-scripts/cdp.mjs nav <target> <url>
+node ./scripts/cdp.mjs nav <target> <url>
 ```
 
 ### Network timing summary
 
 ```bash
-scripts/cdp.mjs net <target>
+node ./scripts/cdp.mjs net <target>
 ```
 
 ### Click element by selector
 
 ```bash
-scripts/cdp.mjs click <target> <selector>
+node ./scripts/cdp.mjs click <target> <selector>
 ```
 
 ### Click by CSS pixel coordinates
 
 ```bash
-scripts/cdp.mjs clickxy <target> <x> <y>
+node ./scripts/cdp.mjs clickxy <target> <x> <y>
 ```
 
 ### Type into focused element
 
 ```bash
-scripts/cdp.mjs type <target> <text>
+node ./scripts/cdp.mjs type <target> <text>
 ```
 
 ### Repeated “load more” clicking
 
 ```bash
-scripts/cdp.mjs loadall <target> <selector> [ms]
+node ./scripts/cdp.mjs loadall <target> <selector> [ms]
 ```
 
 ### Raw CDP method call
 
 ```bash
-scripts/cdp.mjs evalraw <target> <method> [json]
+node ./scripts/cdp.mjs evalraw <target> <method> [json]
 ```
 
 ### Open new tab
 
 ```bash
-scripts/cdp.mjs open [url]
+node ./scripts/cdp.mjs open [url]
 ```
 
 ### Stop daemon(s)
 
 ```bash
-scripts/cdp.mjs stop [target]
+node ./scripts/cdp.mjs stop [target]
 ```
 
 - No target: stop all daemons

@@ -29,6 +29,7 @@ export function readPlaywrightDashboardEnvOverride(): boolean | undefined {
 
 export function createConfig(): SwarmConfig {
   const rootDir = detectRootDir();
+  const resourcesDir = resolveResourcesDir(rootDir);
   const dataDir = process.env.FORGE_DATA_DIR ?? process.env.MIDDLEMAN_DATA_DIR ?? resolveDefaultDataDir();
   const managerId = undefined;
 
@@ -52,9 +53,9 @@ export function createConfig(): SwarmConfig {
 
   const agentDir = resolve(dataDir, "agent");
   const managerAgentDir = resolve(agentDir, "manager");
-  const repoArchetypesDir = resolve(rootDir, ".swarm", "archetypes");
+  const repoArchetypesDir = resolve(resourcesDir, ".swarm", "archetypes");
   const memoryFile = undefined;
-  const repoMemorySkillFile = resolve(rootDir, ".swarm", "skills", "memory", "SKILL.md");
+  const repoMemorySkillFile = resolve(resourcesDir, ".swarm", "skills", "memory", "SKILL.md");
   const defaultCwd = rootDir;
 
   const cwdAllowlistRoots = normalizeAllowlistRoots([
@@ -62,10 +63,13 @@ export function createConfig(): SwarmConfig {
     resolve(homedir(), "worktrees")
   ]);
 
+  const isDesktop = parseBooleanEnv(process.env.FORGE_DESKTOP);
+
   return {
     host: process.env.FORGE_HOST ?? process.env.MIDDLEMAN_HOST ?? "127.0.0.1",
     port: Number.parseInt(process.env.FORGE_PORT ?? process.env.MIDDLEMAN_PORT ?? "47187", 10),
     debug: (process.env.FORGE_DEBUG ?? process.env.MIDDLEMAN_DEBUG ?? "false") === "true",
+    isDesktop,
     allowNonManagerSubscriptions: true,
     managerId,
     managerDisplayName: "Manager",
@@ -78,6 +82,7 @@ export function createConfig(): SwarmConfig {
     cwdAllowlistRoots,
     paths: {
       rootDir,
+      resourcesDir,
       dataDir,
       swarmDir,
       uploadsDir,
@@ -101,6 +106,17 @@ export function createConfig(): SwarmConfig {
       schedulesFile: undefined
     }
   };
+}
+
+function resolveResourcesDir(rootDir: string): string {
+  const configuredResourcesDir =
+    process.env.FORGE_RESOURCES_DIR ?? process.env.MIDDLEMAN_RESOURCES_DIR;
+
+  if (!configuredResourcesDir?.trim()) {
+    return rootDir;
+  }
+
+  return resolve(configuredResourcesDir.trim());
 }
 
 function resolveDefaultDataDir(): string {
@@ -173,6 +189,11 @@ function detectRootDir(): string {
 
 function isSwarmRepoRoot(path: string): boolean {
   return existsSync(resolve(path, "pnpm-workspace.yaml")) && existsSync(resolve(path, "apps"));
+}
+
+function parseBooleanEnv(value: string | undefined): boolean {
+  const normalized = value?.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
 }
 
 function parseOptionalBooleanEnv(value: string | undefined): boolean | undefined {

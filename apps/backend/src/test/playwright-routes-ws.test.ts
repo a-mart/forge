@@ -127,6 +127,7 @@ async function makeTempConfig(): Promise<SwarmConfig> {
     host: '127.0.0.1',
     port: await getAvailablePort(),
     debug: false,
+    isDesktop: false,
     allowNonManagerSubscriptions: false,
     managerId: 'manager',
     managerDisplayName: 'Manager',

@@ -5,6 +5,7 @@ const BASE_CONFIG: SwarmConfig = {
   host: "127.0.0.1",
   port: 47187,
   debug: true,
+  isDesktop: false,
   allowNonManagerSubscriptions: true,
   managerId: undefined,
   managerDisplayName: "Manager",
@@ -177,6 +178,17 @@ async function loadRegisteredSignals(
       async start(): Promise<void> {}
       async stop(): Promise<void> {}
     }
+  }));
+
+  vi.doMock("../server.js", () => ({
+    startServer: async () => ({
+      host: BASE_CONFIG.host,
+      port: BASE_CONFIG.port,
+      config: BASE_CONFIG,
+      stop: async () => {},
+      stopListening: async () => {},
+      startListening: async () => {},
+    }),
   }));
 
   vi.doMock("../ws/server.js", () => ({

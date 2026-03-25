@@ -5,6 +5,7 @@ import {
   RESTART_SIGNAL
 } from "../../reboot/control-pid.js";
 import { isPidAlive } from "../../swarm/platform.js";
+import type { SwarmManager } from "../../swarm/swarm-manager.js";
 import {
   applyCorsHeaders,
   sendJson
@@ -16,8 +17,10 @@ const REBOOT_ENDPOINT_PATH = "/api/reboot";
 
 export function createHealthRoutes(options: {
   resolveControlPidFile: () => string;
+  allowReboot?: boolean;
+  swarmManager?: SwarmManager;
 }): HttpRoute[] {
-  const { resolveControlPidFile } = options;
+  const { resolveControlPidFile, allowReboot = true, swarmManager } = options;
 
   return [
     {
@@ -33,7 +36,8 @@ export function createHealthRoutes(options: {
         sendJson(response, 200, {
           ok: true,
           version: "1.0.0",
-          timestamp: Date.now()
+          timestamp: Date.now(),
+          swarm: swarmManager ? summarizeSwarmActivity(swarmManager) : undefined
         });
       }
     },
@@ -55,6 +59,14 @@ export function createHealthRoutes(options: {
           return;
         }
 
+        if (!allowReboot) {
+          sendJson(response, 503, {
+            ok: false,
+            error: "Reboot disabled in desktop mode."
+          });
+          return;
+        }
+
         applyCorsHeaders(request, response, "POST, OPTIONS");
         sendJson(response, 200, { ok: true });
 
@@ -67,6 +79,40 @@ export function createHealthRoutes(options: {
       }
     }
   ];
+}
+
+function summarizeSwarmActivity(swarmManager: SwarmManager): {
+  totalAgents: number;
+  activeSessions: number;
+  activeWorkers: number;
+  hasActiveSessions: boolean;
+  hasActiveWorkers: boolean;
+} {
+  const agents = swarmManager.listAgents();
+  const activeSessionIds = new Set<string>();
+  let activeWorkers = 0;
+
+  for (const agent of agents) {
+    if (agent.role === "manager") {
+      if (agent.status === "streaming" || (agent.activeWorkerCount ?? 0) > 0) {
+        activeSessionIds.add(agent.agentId);
+      }
+      continue;
+    }
+
+    if (agent.status === "streaming") {
+      activeWorkers += 1;
+      activeSessionIds.add(agent.managerId);
+    }
+  }
+
+  return {
+    totalAgents: agents.length,
+    activeSessions: activeSessionIds.size,
+    activeWorkers,
+    hasActiveSessions: activeSessionIds.size > 0,
+    hasActiveWorkers: activeWorkers > 0
+  };
 }
 
 async function triggerRebootSignal(options: {

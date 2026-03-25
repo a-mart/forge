@@ -9,6 +9,7 @@ const MANAGED_ENV_KEYS = [
   'MIDDLEMAN_DATA_DIR',
   'FORGE_DAEMONIZED',
   'MIDDLEMAN_DAEMONIZED',
+  'FORGE_DESKTOP',
   'LOCALAPPDATA',
 ] as const
 
@@ -183,6 +184,28 @@ describe('checkDataDirMigration', () => {
         await withTTY(true, true, async () => {
           await checkDataDirMigration({ prompt })
           expect(process.env.FORGE_DATA_DIR).toBe(legacyPath)
+        })
+      })
+
+      expect(prompt).not.toHaveBeenCalled()
+    } finally {
+      await rm(fakeHome, { recursive: true, force: true })
+    }
+  })
+
+  it('auto-migrates when FORGE_DESKTOP=1 even without TTY or explicit confirmation', async () => {
+    const fakeHome = await mkdtemp(join(tmpdir(), 'startup-migration-home-desktop-'))
+    const legacyPath = resolve(fakeHome, '.middleman')
+    await mkdir(legacyPath, { recursive: true })
+
+    try {
+      const prompt = vi.fn(async () => false)
+      const { checkDataDirMigration } = await loadMigrationModule(fakeHome)
+
+      await withEnv({ FORGE_DESKTOP: '1' }, async () => {
+        await withTTY(false, false, async () => {
+          await checkDataDirMigration({ isDesktop: true, prompt })
+          expect(process.env.FORGE_DATA_DIR).toBe(resolve(fakeHome, '.forge'))
         })
       })
 

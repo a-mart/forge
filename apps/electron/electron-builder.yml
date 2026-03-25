@@ -1,0 +1,60 @@
+appId: com.forge.desktop
+productName: Forge
+directories:
+  output: release
+  buildResources: build
+files:
+  - dist/**/*
+  - package.json
+extraResources:
+  - from: .stage/backend/dist
+    to: backend/dist
+    filter:
+      - '**/*'
+  - from: .stage/backend/static
+    to: backend/static
+    filter:
+      - '**/*'
+  - from: .stage/backend/package.json
+    to: backend/package.json
+  - from: .stage/backend/node_modules
+    to: backend/node_modules
+    filter:
+      - '**/*'
+      - '.pnpm/**/*'
+  - from: .stage/ui
+    to: ui
+    filter:
+      - '**/*'
+  - from: .stage/forge-resources
+    to: forge-resources
+    filter:
+      - '**/*'
+publish:
+  - provider: github
+    owner: a-mart
+    repo: forge
+mac:
+  target:
+    - target: dmg
+  category: public.app-category.developer-tools
+  identity: ''
+  hardenedRuntime: true
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.inherit.plist
+  notarize: true
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+linux:
+  target:
+    - target: AppImage
+      arch:
+        - x64
+  category: Development

@@ -19,9 +19,15 @@ const DEFAULT_COMMAND = "pnpm prod";
 const DEFAULT_INSTALL_COMMAND = "pnpm i";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const isDesktop = parseBooleanEnv(process.env.FORGE_DESKTOP);
 
 function log(message) {
   console.log(`[prod-daemon] ${message}`);
+}
+
+function parseBooleanEnv(value) {
+  const normalized = value?.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
 }
 
 function parseEnvFile(filePath) {
@@ -165,6 +171,10 @@ function isChildRunning() {
 }
 
 function writePidFile() {
+  if (isDesktop) {
+    return;
+  }
+
   if (fs.existsSync(pidFile)) {
     const existingPid = Number.parseInt(fs.readFileSync(pidFile, "utf8").trim(), 10);
 
@@ -179,6 +189,10 @@ function writePidFile() {
 }
 
 function removePidFile() {
+  if (isDesktop) {
+    return;
+  }
+
   if (fs.existsSync(pidFile)) {
     const filePid = Number.parseInt(fs.readFileSync(pidFile, "utf8").trim(), 10);
     if (filePid === process.pid) {
@@ -190,6 +204,10 @@ function removePidFile() {
 }
 
 function consumeRestartFileIfPresent() {
+  if (isDesktop) {
+    return false;
+  }
+
   if (!fs.existsSync(restartFile)) {
     return false;
   }
@@ -259,7 +277,10 @@ function handleChildExit(code, signal) {
 
   if (shuttingDown) {
     removePidFile();
-    process.exit(code ?? 0);
+    if (!isDesktop) {
+      process.exit(code ?? 0);
+    }
+    return;
   }
 
   if (shouldRestart) {
@@ -338,23 +359,29 @@ function beginShutdown(signal) {
   }
 
   removePidFile();
-  process.exit(0);
+  if (!isDesktop) {
+    process.exit(0);
+  }
 }
 
 try {
   writePidFile();
 } catch (error) {
   console.error(`[prod-daemon] Failed to write pid file: ${error.message}`);
-  process.exit(1);
+  if (!isDesktop) {
+    process.exit(1);
+  }
 }
 
-setInterval(() => {
-  if (consumeRestartFileIfPresent()) {
-    requestRestart("restart-file");
-  }
-}, RESTART_FILE_POLL_MS).unref();
+if (!isDesktop) {
+  setInterval(() => {
+    if (consumeRestartFileIfPresent()) {
+      requestRestart("restart-file");
+    }
+  }, RESTART_FILE_POLL_MS).unref();
+}
 
-if (process.platform !== "win32") {
+if (!isDesktop && process.platform !== "win32") {
   process.on(RESTART_SIGNAL, () => requestRestart(RESTART_SIGNAL));
 }
 for (const signal of STOP_SIGNALS) {

@@ -12,11 +12,14 @@ const MANAGED_ENV_KEYS = [
   'FORGE_PORT',
   'FORGE_DATA_DIR',
   'FORGE_DEBUG',
+  'FORGE_RESOURCES_DIR',
+  'FORGE_DESKTOP',
   'FORGE_PLAYWRIGHT_DASHBOARD_ENABLED',
   'MIDDLEMAN_HOST',
   'MIDDLEMAN_PORT',
   'MIDDLEMAN_DATA_DIR',
   'MIDDLEMAN_DEBUG',
+  'MIDDLEMAN_RESOURCES_DIR',
   'MIDDLEMAN_PLAYWRIGHT_DASHBOARD_ENABLED',
   'LOCALAPPDATA',
 ] as const
@@ -116,6 +119,42 @@ describe('createConfig', () => {
         expect(config.port).toBe(9999)
         expect(config.debug).toBe(true)
         expect(config.paths.dataDir).toBe(dataDir)
+      }
+    )
+  })
+
+  it('uses FORGE_RESOURCES_DIR when set', async () => {
+    const resourcesDir = join(tmpdir(), 'forge-resources-dir')
+
+    await withEnv({ FORGE_RESOURCES_DIR: resourcesDir }, () => {
+      const config = createConfig()
+      expect(config.paths.resourcesDir).toBe(resourcesDir)
+      expect(config.paths.repoArchetypesDir).toBe(join(resourcesDir, '.swarm', 'archetypes'))
+      expect(config.paths.repoMemorySkillFile).toBe(join(resourcesDir, '.swarm', 'skills', 'memory', 'SKILL.md'))
+    })
+  })
+
+  it('supports legacy MIDDLEMAN_RESOURCES_DIR when FORGE_RESOURCES_DIR is absent', async () => {
+    const resourcesDir = join(tmpdir(), 'legacy-middleman-resources-dir')
+
+    await withEnv({ MIDDLEMAN_RESOURCES_DIR: resourcesDir }, () => {
+      const config = createConfig()
+      expect(config.paths.resourcesDir).toBe(resourcesDir)
+    })
+  })
+
+  it('FORGE_RESOURCES_DIR wins when both FORGE_RESOURCES_DIR and MIDDLEMAN_RESOURCES_DIR are set', async () => {
+    const forgeResourcesDir = join(tmpdir(), 'forge-resources-preferred')
+    const legacyResourcesDir = join(tmpdir(), 'middleman-resources-ignored')
+
+    await withEnv(
+      {
+        FORGE_RESOURCES_DIR: forgeResourcesDir,
+        MIDDLEMAN_RESOURCES_DIR: legacyResourcesDir,
+      },
+      () => {
+        const config = createConfig()
+        expect(config.paths.resourcesDir).toBe(forgeResourcesDir)
       }
     )
   })
@@ -268,5 +307,17 @@ describe('createConfig', () => {
     } finally {
       warnSpy.mockRestore()
     }
+  })
+
+  it('parses FORGE_DESKTOP as a boolean desktop flag', () => {
+    withEnv({ FORGE_DESKTOP: 'true' }, () => {
+      const config = createConfig()
+      expect(config.isDesktop).toBe(true)
+    })
+
+    withEnv({}, () => {
+      const config = createConfig()
+      expect(config.isDesktop).toBe(false)
+    })
   })
 })

@@ -54,32 +54,16 @@ import type {
   ManagerReasoningLevel,
 } from '@forge/protocol'
 import { fetchSlashCommands, type SlashCommand } from '@/components/settings/slash-commands-api'
+import { resolveBackendWsUrl } from '@/lib/backend-url'
 
 export const Route = createFileRoute('/')({
   component: IndexPage,
 })
 
 const DEFAULT_MANAGER_MODEL: ManagerModelPreset = 'pi-codex'
-const DEFAULT_DEV_WS_URL = 'ws://127.0.0.1:47187'
-
-function resolveDefaultWsUrl(): string {
-  if (typeof window === 'undefined') {
-    return DEFAULT_DEV_WS_URL
-  }
-
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const hostname = window.location.hostname
-  const uiPort =
-    Number(window.location.port) ||
-    (window.location.protocol === 'https:' ? 443 : 80)
-  // Dev UI runs on 47188 -> backend 47187, prod UI runs on 47189 -> backend 47287.
-  const wsPort = uiPort <= 47188 ? 47187 : 47287
-
-  return `${protocol}//${hostname}:${wsPort}`
-}
 
 export function IndexPage() {
-  const wsUrl = import.meta.env.VITE_FORGE_WS_URL ?? import.meta.env.VITE_MIDDLEMAN_WS_URL ?? resolveDefaultWsUrl()
+  const wsUrl = resolveBackendWsUrl()
   const messageInputRef = useRef<MessageInputHandle | null>(null)
   const messageListRef = useRef<MessageListHandle | null>(null)
   const previousAgentsByIdRef = useRef<Map<string, AgentDescriptor>>(new Map())

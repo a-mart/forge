@@ -1,0 +1,356 @@
+import { formatIntegrationContext } from "./integrations/integration-context.js";
+import { IntegrationRegistryService } from "./integrations/registry.js";
+import { PlaywrightDiscoveryService } from "./playwright/playwright-discovery-service.js";
+import { PlaywrightLivePreviewService } from "./playwright/playwright-live-preview-service.js";
+import { PlaywrightSettingsService } from "./playwright/playwright-settings-service.js";
+import { readPlaywrightDashboardEnvOverride, createConfig } from "./config.js";
+import { CronSchedulerService } from "./scheduler/cron-scheduler-service.js";
+import { getScheduleFilePath } from "./scheduler/schedule-storage.js";
+import { acquireRuntimeLock, type RuntimeLock } from "./runtime-lock.js";
+import { SwarmManager } from "./swarm/swarm-manager.js";
+import type { AgentDescriptor, SwarmConfig } from "./swarm/types.js";
+import { EmbeddedGitVersioningService } from "./versioning/embedded-git-versioning-service.js";
+import { SwarmWebSocketServer } from "./ws/server.js";
+
+export interface ServerLogger {
+  info(message: string): void;
+  warn(message: string): void;
+  error(message: string): void;
+}
+
+export interface ServerReadyInfo {
+  host: string;
+  port: number;
+  config: SwarmConfig;
+}
+
+export interface StartServerOptions {
+  config?: SwarmConfig;
+  logger?: Partial<ServerLogger>;
+  onReady?: (info: ServerReadyInfo) => Promise<void> | void;
+}
+
+export interface StartedServer extends ServerReadyInfo {
+  stop(): Promise<void>;
+  stopListening(): Promise<void>;
+  startListening(): Promise<void>;
+}
+
+let activeServer: BackendServer | null = null;
+
+export async function startServer(options: StartServerOptions = {}): Promise<StartedServer> {
+  if (activeServer) {
+    throw new Error("Server already started");
+  }
+
+  const config = options.config ?? createConfig();
+  const logger = createLogger(options.logger);
+
+  const runtimeLock = acquireRuntimeLock(config.paths.dataDir);
+
+  const versioningService = new EmbeddedGitVersioningService({
+    dataDir: config.paths.dataDir,
+    logger,
+  });
+  await versioningService.start();
+
+  const swarmManager = new SwarmManager(config, {
+    versioningService,
+  });
+
+  const schedulersByProfileId = new Map<string, CronSchedulerService>();
+  let schedulerLifecycle: Promise<void> = Promise.resolve();
+
+  const syncSchedulers = async (profileIds: Set<string>): Promise<void> => {
+    for (const profileId of profileIds) {
+      if (schedulersByProfileId.has(profileId)) {
+        continue;
+      }
+
+      const scheduler = new CronSchedulerService({
+        swarmManager,
+        schedulesFile: getScheduleFilePath(config.paths.dataDir, profileId),
+        managerId: profileId,
+      });
+      await scheduler.start();
+      schedulersByProfileId.set(profileId, scheduler);
+    }
+
+    for (const [profileId, scheduler] of schedulersByProfileId.entries()) {
+      if (profileIds.has(profileId)) {
+        continue;
+      }
+
+      await scheduler.stop();
+      schedulersByProfileId.delete(profileId);
+    }
+  };
+
+  const queueSchedulerSync = (profileIds: Set<string>): Promise<void> => {
+    const next = schedulerLifecycle.then(
+      () => syncSchedulers(profileIds),
+      () => syncSchedulers(profileIds),
+    );
+    schedulerLifecycle = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    return next;
+  };
+
+  const handleAgentsSnapshot = (event: unknown): void => {
+    if (!event || typeof event !== "object") {
+      return;
+    }
+
+    const payload = event as { type?: string; agents?: unknown };
+    if (payload.type !== "agents_snapshot" || !Array.isArray(payload.agents)) {
+      return;
+    }
+
+    const profileIds = collectSchedulerProfileIds(payload.agents, config.managerId);
+    void queueSchedulerSync(profileIds).catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error(`[scheduler] Failed to sync scheduler instances: ${message}`);
+    });
+  };
+
+  const integrationRegistry = new IntegrationRegistryService({
+    swarmManager,
+    dataDir: config.paths.dataDir,
+    defaultManagerId: config.managerId,
+  });
+  const playwrightSettingsService = new PlaywrightSettingsService({
+    dataDir: config.paths.dataDir,
+  });
+  const playwrightEnvEnabledOverride = readPlaywrightDashboardEnvOverride();
+
+  let playwrightDiscovery: PlaywrightDiscoveryService | null = null;
+  let playwrightLivePreviewService: PlaywrightLivePreviewService | null = null;
+  let server: BackendServer | null = null;
+
+  try {
+    await swarmManager.boot();
+    await queueSchedulerSync(collectSchedulerProfileIds(swarmManager.listAgents(), config.managerId));
+    swarmManager.on("agents_snapshot", handleAgentsSnapshot);
+
+    await integrationRegistry.start();
+    swarmManager.setIntegrationContextProvider((profileId) => {
+      const integrationContext = integrationRegistry.getIntegrationContext(profileId);
+      return formatIntegrationContext(integrationContext);
+    });
+
+    await playwrightSettingsService.load();
+
+    if (process.platform !== "win32") {
+      try {
+        playwrightDiscovery = new PlaywrightDiscoveryService({
+          swarmManager,
+          settingsService: playwrightSettingsService,
+          envEnabledOverride: playwrightEnvEnabledOverride,
+        });
+        await playwrightDiscovery.start();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.error(`[playwright] Failed to start discovery service: ${message}`);
+        playwrightDiscovery = null;
+      }
+    } else {
+      logger.info("[playwright] Playwright dashboard disabled on Windows");
+    }
+
+    playwrightLivePreviewService = new PlaywrightLivePreviewService({
+      discoveryService: playwrightDiscovery,
+    });
+    const wsServer = new SwarmWebSocketServer({
+      swarmManager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+      integrationRegistry,
+      playwrightDiscovery,
+      playwrightLivePreviewService,
+      playwrightSettingsService,
+      playwrightEnvEnabledOverride,
+      promptRegistry: swarmManager.promptRegistry,
+    });
+
+    server = new BackendServer({
+      config,
+      swarmManager,
+      versioningService,
+      integrationRegistry,
+      playwrightDiscovery,
+      playwrightLivePreviewService,
+      wsServer,
+      queueSchedulerSync,
+      handleAgentsSnapshot,
+      runtimeLock,
+    });
+
+    await playwrightLivePreviewService.start();
+    await server.startListening();
+
+    activeServer = server;
+    await options.onReady?.({
+      host: server.host,
+      port: server.port,
+      config,
+    });
+    return server;
+  } catch (error) {
+    if (server) {
+      await server.stop();
+    } else {
+      swarmManager.off("agents_snapshot", handleAgentsSnapshot);
+      await Promise.allSettled([
+        queueSchedulerSync(new Set<string>()),
+        integrationRegistry.stop(),
+        playwrightDiscovery?.stop(),
+        playwrightLivePreviewService?.stop(),
+        versioningService.stop(),
+      ]);
+      runtimeLock.release();
+    }
+    throw error;
+  }
+}
+
+export async function stopServer(): Promise<void> {
+  await activeServer?.stop();
+}
+
+class BackendServer implements StartedServer {
+  readonly host: string;
+  port: number;
+  readonly config: SwarmConfig;
+
+  private readonly swarmManager: SwarmManager;
+  private readonly versioningService: EmbeddedGitVersioningService;
+  private readonly integrationRegistry: IntegrationRegistryService;
+  private playwrightDiscovery: PlaywrightDiscoveryService | null;
+  private readonly playwrightLivePreviewService: PlaywrightLivePreviewService;
+  private readonly wsServer: SwarmWebSocketServer;
+  private readonly queueSchedulerSync: (profileIds: Set<string>) => Promise<void>;
+  private readonly handleAgentsSnapshot: (event: unknown) => void;
+  private readonly runtimeLock: RuntimeLock;
+
+  private listening = false;
+  private stopped = false;
+
+  constructor(options: {
+    config: SwarmConfig;
+    swarmManager: SwarmManager;
+    versioningService: EmbeddedGitVersioningService;
+    integrationRegistry: IntegrationRegistryService;
+    playwrightDiscovery: PlaywrightDiscoveryService | null;
+    playwrightLivePreviewService: PlaywrightLivePreviewService;
+    wsServer: SwarmWebSocketServer;
+    queueSchedulerSync: (profileIds: Set<string>) => Promise<void>;
+    handleAgentsSnapshot: (event: unknown) => void;
+    runtimeLock: RuntimeLock;
+  }) {
+    this.host = options.config.host;
+    this.port = options.config.port;
+    this.config = options.config;
+    this.swarmManager = options.swarmManager;
+    this.versioningService = options.versioningService;
+    this.integrationRegistry = options.integrationRegistry;
+    this.playwrightDiscovery = options.playwrightDiscovery;
+    this.playwrightLivePreviewService = options.playwrightLivePreviewService;
+    this.wsServer = options.wsServer;
+    this.queueSchedulerSync = options.queueSchedulerSync;
+    this.handleAgentsSnapshot = options.handleAgentsSnapshot;
+    this.runtimeLock = options.runtimeLock;
+  }
+
+  async startListening(): Promise<void> {
+    if (this.stopped || this.listening) {
+      return;
+    }
+
+    await this.wsServer.start();
+    this.port = this.wsServer.getPort();
+    this.listening = true;
+  }
+
+  async stopListening(): Promise<void> {
+    if (this.stopped || !this.listening) {
+      return;
+    }
+
+    this.listening = false;
+    await this.wsServer.stop();
+  }
+
+  async stop(): Promise<void> {
+    if (this.stopped) {
+      return;
+    }
+
+    this.stopped = true;
+    this.swarmManager.off("agents_snapshot", this.handleAgentsSnapshot);
+
+    const shouldStopWsServer = this.listening;
+    this.listening = false;
+
+    await Promise.allSettled([
+      this.queueSchedulerSync(new Set<string>()),
+      this.integrationRegistry.stop(),
+      this.playwrightDiscovery?.stop(),
+      this.playwrightLivePreviewService.stop(),
+      this.versioningService.stop(),
+      shouldStopWsServer ? this.wsServer.stop() : Promise.resolve(),
+    ]);
+
+    this.runtimeLock.release();
+
+    if (activeServer === this) {
+      activeServer = null;
+    }
+  }
+}
+
+function createLogger(logger: Partial<ServerLogger> | undefined): ServerLogger {
+  return {
+    info: logger?.info ?? ((message: string) => console.log(message)),
+    warn: logger?.warn ?? ((message: string) => console.warn(message)),
+    error: logger?.error ?? ((message: string) => console.error(message)),
+  };
+}
+
+/**
+ * Collect unique profile IDs from manager agents for scheduler instantiation.
+ * Schedules are profile-scoped, so we create one scheduler per profile, not per session.
+ */
+function collectSchedulerProfileIds(agents: unknown[], fallbackManagerId?: string): Set<string> {
+  const profileIds = new Set<string>();
+
+  for (const agent of agents) {
+    if (!agent || typeof agent !== "object" || Array.isArray(agent)) {
+      continue;
+    }
+
+    const descriptor = agent as Partial<AgentDescriptor>;
+    if (descriptor.role !== "manager") {
+      continue;
+    }
+
+    if (typeof descriptor.agentId !== "string" || descriptor.agentId.trim().length === 0) {
+      continue;
+    }
+
+    const id = (typeof descriptor.profileId === "string" && descriptor.profileId.trim().length > 0)
+      ? descriptor.profileId.trim()
+      : descriptor.agentId.trim();
+    profileIds.add(id);
+  }
+
+  const normalizedFallbackManagerId =
+    typeof fallbackManagerId === "string" ? fallbackManagerId.trim() : "";
+  if (profileIds.size === 0 && normalizedFallbackManagerId.length > 0) {
+    profileIds.add(normalizedFallbackManagerId);
+  }
+
+  return profileIds;
+}

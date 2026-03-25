@@ -1131,11 +1131,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     };
     this.now = options?.now ?? nowIso;
     this.versioningService = options?.versioningService;
+    const resourcesDir = this.config.paths.resourcesDir ?? this.config.paths.rootDir;
     this.promptRegistry = new FileBackedPromptRegistry({
       dataDir: this.config.paths.dataDir,
       repoDir: this.config.paths.rootDir,
-      builtinArchetypesDir: join(this.config.paths.rootDir, "apps", "backend", "src", "swarm", "archetypes", "builtins"),
-      builtinOperationalDir: join(this.config.paths.rootDir, "apps", "backend", "src", "swarm", "operational", "builtins"),
+      builtinArchetypesDir: join(resourcesDir, "apps", "backend", "src", "swarm", "archetypes", "builtins"),
+      builtinOperationalDir: join(resourcesDir, "apps", "backend", "src", "swarm", "operational", "builtins"),
       versioning: this.versioningService
     });
     this.persistenceService = new PersistenceService({

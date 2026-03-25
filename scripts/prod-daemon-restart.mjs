@@ -5,8 +5,19 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isPidAlive, resolveProdDaemonIpcPaths } from "./prod-daemon-ipc.mjs";
 
+function parseBooleanEnv(value) {
+  const normalized = value?.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
+}
+
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const { pidFile, restartFile } = resolveProdDaemonIpcPaths(repoRoot);
+const isDesktop = parseBooleanEnv(process.env.FORGE_DESKTOP);
+
+if (isDesktop) {
+  console.log("[prod-daemon] FORGE_DESKTOP is enabled. Skipping daemon restart request.");
+  process.exit(0);
+}
 
 if (!fs.existsSync(pidFile)) {
   console.error(`[prod-daemon] No daemon pid file found at ${pidFile}. Start it with \`pnpm prod:daemon\`.`);

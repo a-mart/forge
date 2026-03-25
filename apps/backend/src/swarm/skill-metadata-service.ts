@@ -164,9 +164,10 @@ export class SkillMetadataService {
   private async scanSkillPathCandidates(): Promise<SkillPathCandidate[]> {
     const candidates: SkillPathCandidate[] = [];
 
+    const resourcesDir = this.deps.config.paths.resourcesDir ?? this.deps.config.paths.rootDir;
     const localSkillsDir = resolve(this.deps.config.paths.dataDir, LOCAL_DATA_DIR_SKILLS_RELATIVE_DIR);
-    const repositorySkillsDir = resolve(this.deps.config.paths.rootDir, REPO_SKILLS_RELATIVE_DIR);
-    const repositoryBuiltInSkillsDir = resolve(this.deps.config.paths.rootDir, REPO_BUILT_IN_SKILLS_RELATIVE_DIR);
+    const repositorySkillsDir = resolve(resourcesDir, REPO_SKILLS_RELATIVE_DIR);
+    const repositoryBuiltInSkillsDir = resolve(resourcesDir, REPO_BUILT_IN_SKILLS_RELATIVE_DIR);
 
     candidates.push(...(await this.scanSkillFilesInDirectory(localSkillsDir)));
     candidates.push(...(await this.scanSkillFilesInDirectory(repositorySkillsDir)));

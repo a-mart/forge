@@ -1,19 +1,9 @@
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
+import { resolveBackendWsUrl } from '@/lib/backend-url'
 import type { FeedbackEvent, FeedbackState } from '@/lib/feedback-types'
 
-function resolveWsUrl(): string {
-  if (typeof window === 'undefined') return 'ws://127.0.0.1:47187'
-  const envUrl = (import.meta.env.VITE_FORGE_WS_URL as string | undefined) ?? (import.meta.env.VITE_MIDDLEMAN_WS_URL as string | undefined)
-  if (envUrl) return envUrl
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const hostname = window.location.hostname
-  const uiPort = Number(window.location.port) || (window.location.protocol === 'https:' ? 443 : 80)
-  const wsPort = uiPort <= 47188 ? 47187 : 47287
-  return `${protocol}//${hostname}:${wsPort}`
-}
-
 function apiUrl(path: string): string {
-  return resolveApiEndpoint(resolveWsUrl(), path)
+  return resolveApiEndpoint(resolveBackendWsUrl(), path)
 }
 
 async function readApiError(response: Response): Promise<string> {

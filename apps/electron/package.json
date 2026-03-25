@@ -1,0 +1,35 @@
+{
+  "name": "@forge/electron",
+  "version": "0.1.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "description": "Local-first multi-agent orchestration platform",
+  "author": {
+    "name": "a-mart"
+  },
+  "homepage": "https://github.com/a-mart/forge",
+  "type": "commonjs",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "build:all": "node ./scripts/build-all.mjs",
+    "dev": "electronmon .",
+    "start": "electron .",
+    "pack": "pnpm build:all && electron-builder --dir",
+    "package": "pnpm build:all && electron-builder --publish never",
+    "dist": "pnpm run package"
+  },
+  "dependencies": {
+    "@forge/protocol": "workspace:*",
+    "electron-updater": "^6.8.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "electron": "^37.2.5",
+    "electron-builder": "^26.0.12",
+    "electronmon": "^2.0.2",
+    "esbuild": "^0.25.9",
+    "tsx": "^4.20.3",
+    "typescript": "^5.9.2"
+  }
+}
