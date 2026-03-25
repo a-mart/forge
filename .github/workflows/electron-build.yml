@@ -3,6 +3,7 @@ name: Electron Build
 on:
   push:
     branches:
+      - 'main'
       - 'electron/*'
     tags:
       - 'v*'
