@@ -24,7 +24,11 @@ const forgeResourcesDir = path.join(stageDir, 'forge-resources')
 const pnpmCommand = 'pnpm'
 const useShell = process.platform === 'win32'
 
-const BACKEND_BUNDLE_EXTERNAL_PACKAGES = ['sharp', 'koffi', '@mariozechner/clipboard']
+const BACKEND_BUNDLE_EXTERNAL_PACKAGES = [
+  { name: 'sharp', optional: false },
+  { name: 'koffi', optional: true },
+  { name: '@mariozechner/clipboard', optional: true },
+]
 const PACKAGE_METADATA_DIRS_TO_PRUNE = new Set([
   '.github',
   '.vscode',
@@ -79,7 +83,7 @@ async function stageBundledBackend() {
     platform: 'node',
     format: 'esm',
     target: ['node22'],
-    external: BACKEND_BUNDLE_EXTERNAL_PACKAGES,
+    external: BACKEND_BUNDLE_EXTERNAL_PACKAGES.map((pkg) => pkg.name),
     define: {
       'process.env.FORGE_BUNDLED_BACKEND': '"1"',
     },
@@ -90,18 +94,20 @@ async function stageBundledBackend() {
     legalComments: 'none',
   })
 
-  const runtimePackages = await collectRuntimePackageClosure(BACKEND_BUNDLE_EXTERNAL_PACKAGES)
+  const runtimePackages = await collectRuntimePackageClosure(
+    BACKEND_BUNDLE_EXTERNAL_PACKAGES.map((pkg) => ({ packageName: pkg.name, optional: pkg.optional }))
+  )
   await stageRuntimePackages(runtimePackages)
 
   const fileCount = await countFiles(backendStageDir)
   console.log(`[electron/build-all] Staged bundled backend with ${runtimePackages.length} runtime packages (${fileCount} files)`)
 }
 
-async function collectRuntimePackageClosure(rootPackageNames) {
-  const queuedPackages = rootPackageNames.map((packageName) => ({
+async function collectRuntimePackageClosure(rootPackages) {
+  const queuedPackages = rootPackages.map(({ packageName, optional }) => ({
     packageName,
     resolveFromManifestPath: backendWorkspaceManifestPath,
-    optional: false,
+    optional,
   }))
   const discoveredPackages = new Map()
 
