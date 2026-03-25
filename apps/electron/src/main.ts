@@ -11,8 +11,7 @@ import { showWhatsNewIfUpdated } from './whats-new.js'
 loadDotEnv()
 
 const ELECTRON_DEV_SERVER_URL = 'http://127.0.0.1:47188'
-const DEFAULT_BACKEND_PORT_DEV = 47187
-const DEFAULT_BACKEND_PORT_PROD = 47287
+const DEFAULT_BACKEND_PORT = 47287
 const BACKEND_READY_CHANNEL = 'forge:get-backend-bootstrap'
 const BACKEND_SHUTDOWN_TIMEOUT_MS = 5_000
 const BACKEND_RESTART_DELAY_MS = 1_000
@@ -589,7 +588,7 @@ function assertPathExists(targetPath: string, label: string): void {
  * connectivity, so it's better to tell the user another instance is running.
  */
 function resolveDefaultBackendPort(): number {
-  return app.isPackaged ? DEFAULT_BACKEND_PORT_PROD : DEFAULT_BACKEND_PORT_DEV
+  return DEFAULT_BACKEND_PORT
 }
 
 function isBackendReadyMessage(value: unknown): value is BackendReadyMessage {
