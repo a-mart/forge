@@ -31,12 +31,16 @@ describe("runtime lock", () => {
     await expect(readFile(lockFile, "utf8")).rejects.toThrow();
   });
 
-  it("throws when another live process owns the lock", async () => {
+  it("throws when another live node process owns the lock", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "runtime-lock-"));
     tempRoots.push(dataDir);
     const lockFile = join(dataDir, "runtime.lock");
 
-    await writeFile(lockFile, `${process.pid}\n${new Date().toISOString()}\n`, "utf8");
+    // Use process.ppid — the parent Vitest node process is always alive
+    // and IS a node process, so the lock should be treated as live.
+    const livePid = process.ppid;
+
+    await writeFile(lockFile, `${livePid}\n${new Date().toISOString()}\n`, "utf8");
 
     expect(() => acquireRuntimeLock(dataDir)).toThrow(
       "Another Forge instance is using this data directory. Close it first or use FORGE_DATA_DIR to specify a different directory.",

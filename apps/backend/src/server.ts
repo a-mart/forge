@@ -48,6 +48,14 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
 
   const runtimeLock = acquireRuntimeLock(config.paths.dataDir);
 
+  // Ensure the lock is released even on unclean exits (Ctrl+C, crashes, SIGTERM)
+  const emergencyRelease = () => {
+    try { runtimeLock.release(); } catch { /* best effort */ }
+  };
+  process.once("exit", emergencyRelease);
+  process.once("SIGINT", emergencyRelease);
+  process.once("SIGTERM", emergencyRelease);
+
   const versioningService = new EmbeddedGitVersioningService({
     dataDir: config.paths.dataDir,
     logger,

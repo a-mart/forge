@@ -1,4 +1,5 @@
-import { mkdirSync, openSync, closeSync, writeFileSync, readFileSync, unlinkSync } from "node:fs";
+import { mkdirSync, openSync, closeSync, writeFileSync, readFileSync, unlinkSync, existsSync } from "node:fs";
+import { execSync } from "node:child_process";
 import { join } from "node:path";
 
 export interface RuntimeLock {
@@ -13,7 +14,11 @@ const LOCK_IN_USE_ERROR =
 
 /**
  * Acquire an exclusive lock on the Forge data directory.
- * Throws if another instance already holds the lock.
+ * If a stale lock is found (owner PID is dead or not a node process), it's
+ * automatically reclaimed. This prevents leftover lock files from blocking
+ * startup after crashes or unclean shutdowns.
+ *
+ * Throws if another live instance already holds the lock.
  */
 export function acquireRuntimeLock(dataDir: string): RuntimeLock {
   mkdirSync(dataDir, { recursive: true });
@@ -60,16 +65,66 @@ function isStaleRuntimeLock(lockFile: string): boolean {
     return true;
   }
 
+  // If it's our own PID (e.g. restart within same process), reclaim it
+  if (existingPid === process.pid) {
+    clearStaleRuntimeLock(lockFile);
+    return true;
+  }
+
+  // Check if the PID is alive at all
+  if (!isPidAlive(existingPid)) {
+    clearStaleRuntimeLock(lockFile);
+    return true;
+  }
+
+  // PID exists — but is it actually a Forge/node process?
+  // On macOS/Linux, a recycled PID could belong to an unrelated process.
+  if (!isNodeProcess(existingPid)) {
+    clearStaleRuntimeLock(lockFile);
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Check if a PID is alive. Handles both Unix and Windows.
+ */
+function isPidAlive(pid: number): boolean {
   try {
-    process.kill(existingPid, 0);
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    // Any error means the PID is not accessible to us — treat as dead
     return false;
-  } catch (error) {
-    if (isErrorWithCode(error, "ESRCH")) {
-      clearStaleRuntimeLock(lockFile);
-      return true;
+  }
+}
+
+/**
+ * Check if a PID belongs to a node process. This catches stale locks where
+ * the original node process died and the OS recycled the PID for something
+ * unrelated. Returns true if we can't determine (fail-open for safety on
+ * platforms where we can't inspect process names).
+ */
+function isNodeProcess(pid: number): boolean {
+  try {
+    if (process.platform === "win32") {
+      const out = execSync(`tasklist /FI "PID eq ${pid}" /FO CSV /NH`, {
+        encoding: "utf8",
+        timeout: 2000,
+      });
+      return out.toLowerCase().includes("node");
     }
 
-    return false;
+    // macOS / Linux: check the process command
+    const out = execSync(`ps -p ${pid} -o comm=`, {
+      encoding: "utf8",
+      timeout: 2000,
+    });
+    return out.toLowerCase().includes("node");
+  } catch {
+    // If we can't check, assume it's valid (fail-safe: don't steal a live lock)
+    return true;
   }
 }
 
