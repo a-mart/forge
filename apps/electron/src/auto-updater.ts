@@ -10,11 +10,11 @@ import {
 const UPDATE_STARTUP_DELAY_MS = 10_000
 
 /**
- * Interval between periodic update checks: 4 hours.
+ * Interval between periodic update checks: 2 hours.
  * The first check runs after UPDATE_STARTUP_DELAY_MS, then repeats at this interval.
  * If a downloaded update is pending, the periodic tick re-prompts the user instead of checking again.
  */
-const UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1_000
+const UPDATE_CHECK_INTERVAL_MS = 2 * 60 * 60 * 1_000
 const GITHUB_FEED = {
   provider: 'github' as const,
   owner: 'a-mart',
@@ -30,6 +30,9 @@ type BackendHealthResponse = {
     hasActiveWorkers?: boolean
   }
 }
+
+let manualUpdateCheck = false
+let triggerUpdateCheck: ((isManual: boolean) => Promise<void>) | null = null
 
 export function initAutoUpdater(options: {
   mainWindow: BrowserWindow
@@ -49,20 +52,26 @@ export function initAutoUpdater(options: {
   let restartPromptOpen = false
   let pendingDownloadedUpdate: UpdateDownloadedEvent | null = null
 
-  const checkForUpdates = async (): Promise<void> => {
+  const checkForUpdates = async (isManual = false): Promise<void> => {
     if (isCheckingForUpdates || isDownloadingUpdate || restartPromptOpen) {
       return
     }
 
     isCheckingForUpdates = true
+    manualUpdateCheck = isManual
     try {
       await autoUpdater.checkForUpdates()
     } catch (error) {
       console.warn('[auto-update] Update check failed', formatError(error))
     } finally {
       isCheckingForUpdates = false
+      if (isManual) {
+        manualUpdateCheck = false
+      }
     }
   }
+
+  triggerUpdateCheck = checkForUpdates
 
   const startUpdateTimers = (): void => {
     const startupTimer = setTimeout(() => {
@@ -73,6 +82,10 @@ export function initAutoUpdater(options: {
     const periodicTimer = setInterval(() => {
       if (pendingDownloadedUpdate) {
         void promptToInstallDownloadedUpdate(pendingDownloadedUpdate)
+        return
+      }
+
+      if (!isWithinUpdateWindow()) {
         return
       }
 
@@ -180,6 +193,21 @@ export function initAutoUpdater(options: {
     void promptToDownloadUpdate(info)
   })
 
+  autoUpdater.on('update-not-available', () => {
+    if (!manualUpdateCheck) {
+      return
+    }
+
+    void showMessageBox(options.mainWindow, {
+      type: 'info',
+      buttons: ['OK'],
+      defaultId: 0,
+      noLink: true,
+      title: 'No update available',
+      message: `You're up to date. Forge v${app.getVersion()} is the latest version.`,
+    })
+  })
+
   autoUpdater.on('download-progress', (progress: ProgressInfo) => {
     setWindowProgress(options.mainWindow, progress.percent / 100)
   })
@@ -204,6 +232,24 @@ export function initAutoUpdater(options: {
   })
 
   startUpdateTimers()
+}
+
+export function checkForUpdatesManually(): Promise<void> {
+  if (!triggerUpdateCheck || !app.isPackaged) {
+    return Promise.resolve()
+  }
+
+  return triggerUpdateCheck(true)
+}
+
+function isWithinUpdateWindow(): boolean {
+  const now = new Date()
+  const centralHour = parseInt(now.toLocaleString('en-US', {
+    timeZone: 'America/Chicago',
+    hour: 'numeric',
+    hour12: false,
+  }))
+  return centralHour >= 7 && centralHour < 20
 }
 
 async function showMessageBox(

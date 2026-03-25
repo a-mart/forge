@@ -3,7 +3,7 @@ import { fork, type ChildProcess, type ForkOptions } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { initAutoUpdater } from './auto-updater.js'
+import { checkForUpdatesManually, initAutoUpdater } from './auto-updater.js'
 import { fixPath } from './fix-path.js'
 import { showWhatsNewIfUpdated } from './whats-new.js'
 
@@ -395,6 +395,13 @@ function createApplicationMenu(): void {
           },
         },
         { type: 'separator' },
+        {
+          label: 'Check for Updates...',
+          click: (): void => {
+            void checkForUpdatesManually()
+          },
+        },
+        { type: 'separator' },
         { role: 'services' },
         { type: 'separator' },
         { role: 'hide' },
@@ -433,11 +440,22 @@ function createApplicationMenu(): void {
       { role: 'reload' },
       { role: 'forceReload' },
       { role: 'toggleDevTools' },
-      { type: 'separator' },
+      { type: 'separator' as const },
       { role: 'resetZoom' },
       { role: 'zoomIn' },
       { role: 'zoomOut' },
-      { type: 'separator' },
+      ...(isMac
+        ? []
+        : [
+            { type: 'separator' as const },
+            {
+              label: 'Check for Updates...',
+              click: (): void => {
+                void checkForUpdatesManually()
+              },
+            },
+          ]),
+      { type: 'separator' as const },
       { role: 'togglefullscreen' },
     ],
   })
