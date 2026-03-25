@@ -14,6 +14,7 @@ Forge gives you one.
 
 - [Why Forge?](#why-forge)
 - [Quick Start](#quick-start)
+- [Desktop App](#desktop-app)
 - [Core Concepts](#core-concepts)
 - [Dashboard](#dashboard)
 - [Skills](#skills)
@@ -72,6 +73,35 @@ Then create a manager, point it at your project directory, and start chatting. F
 Before you start throwing tasks at Forge, take five minutes to have a conceptual conversation with your manager. Tell it how you like to work: your review process, your branching strategy, how you think about testing. This isn't small talk. It's calibration. The more your manager understands your style, the better it orchestrates workers on your behalf.
 
 Then start rating messages. Thumbs up when the manager nails it, thumbs down when it misses, comments when you notice patterns. This feedback feeds directly into Cortex's learning cycle.
+
+## Desktop App
+
+Forge is also available as a standalone desktop application for macOS, Windows, and Linux. The desktop app bundles the backend, UI, and all dependencies—no Node.js or pnpm required for end users.
+
+### Download
+
+Get the latest release from the [GitHub Releases](https://github.com/a-mart/forge/releases) page:
+
+- **macOS**: `Forge-<version>.dmg`
+- **Windows**: `Forge-Setup-<version>.exe`
+- **Linux**: `Forge-<version>.AppImage`
+
+The desktop app includes auto-update support. When a new version is available, you'll be notified and can update with one click.
+
+### Build from Source
+
+If you want to build the desktop app yourself:
+
+```bash
+git clone https://github.com/a-mart/forge.git
+cd middleman
+pnpm install
+pnpm package:electron
+```
+
+The packaged app will be available in `apps/electron/release/`.
+
+The CLI setup instructions above still work if you prefer running Forge from source or need more control over the runtime environment. The desktop app is an additional option, not a replacement.
 
 ## Core Concepts
 

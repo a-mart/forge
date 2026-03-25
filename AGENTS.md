@@ -71,6 +71,7 @@ These are briefly described for orientation. Most have both backend and UI compo
 | **Worker stall detector** | `swarm/swarm-manager.ts` (WorkerStallState, checkForStalledWorkers) | — | Periodic wall-clock detection of workers stuck mid-tool-execution; two-stage nudge then auto-kill |
 | **Choice Picker** | `swarm/swarm-manager.ts` (pending registry), `swarm/swarm-tools.ts` (present_choices tool) | `components/chat/message-list/ChoiceRequestCard.tsx`, `components/chat/message-list/ChoiceAnsweredRow.tsx` | Interactive structured choice picker for agent-user decision points |
 | **Pi extensions** | Agent runtime (`pi-agent-runtime.ts`: `bindExtensions()`, `session_shutdown`, auto-discovery) | — | In-process custom tools, event interception, context modification, and packages via Pi's extension system. Auto-discovered from `~/.forge/agent/extensions/` (workers), `~/.forge/agent/manager/extensions/` (managers), and `<cwd>/.pi/extensions/` (project-local). See [`docs/PI_EXTENSIONS.md`](docs/PI_EXTENSIONS.md) |
+| **Electron desktop app** | `apps/electron/src/main.ts`, `auto-updater.ts`, `preload.ts` | — | Standalone desktop application wrapper for macOS, Windows, and Linux. Bundles backend, UI, and all dependencies. Supports auto-updates from GitHub Releases. |
 
 Backend paths above are relative to `apps/backend/src/`. UI paths are relative to `apps/ui/src/`.
 
@@ -80,7 +81,8 @@ Backend paths above are relative to `apps/backend/src/`. UI paths are relative t
 forge/
 ├── apps/
 │   ├── backend/           # Node.js daemon — orchestration, persistence, integrations
-│   └── ui/                # React SPA — dashboard, chat, settings
+│   ├── ui/                # React SPA — dashboard, chat, settings
+│   └── electron/          # Electron desktop app wrapper
 ├── packages/
 │   └── protocol/          # Shared TypeScript types and API message definitions
 ├── scripts/               # Production daemon scripts, test helpers, migration tools
@@ -147,11 +149,13 @@ See `apps/backend/src/swarm/data-paths.ts` for the canonical path resolution log
 pnpm dev                    # Start backend + UI in dev mode (with hot reload)
 pnpm dev:backend            # Start backend only
 pnpm dev:ui                 # Start UI only
+pnpm dev:electron           # Start Electron desktop app in dev mode
 ```
 
 Dev ports:
 - Backend HTTP + WS: `http://127.0.0.1:47187`
 - UI: `http://127.0.0.1:47188`
+- Electron: Launches desktop window (UI runs on port 47188)
 
 ### Production
 
@@ -159,6 +163,8 @@ Dev ports:
 pnpm prod                   # Build all packages, then start backend + UI
 pnpm prod:daemon            # Start as a background daemon (recommended for production)
 pnpm prod:restart           # Restart a running daemon
+pnpm package:electron       # Build standalone desktop app for distribution
+pnpm release:electron       # Package and publish new Electron release to GitHub
 ```
 
 > `pnpm prod` implicitly runs `pnpm build` before starting. The daemon commands in `scripts/` manage PID tracking and process lifecycle.
@@ -166,6 +172,7 @@ pnpm prod:restart           # Restart a running daemon
 Production ports:
 - Backend HTTP + WS: `http://127.0.0.1:47287`
 - UI preview: `http://127.0.0.1:47189`
+- Electron: Defaults to port 47287 for backend, configurable via `FORGE_PORT`
 
 ### Validation
 
@@ -200,6 +207,8 @@ Copy `.env.example` to `.env` and uncomment/set values as needed. Key variables:
 | `CODEX_API_KEY` | — | OpenAI Codex runtime |
 | `CODEX_BIN` | `codex` | Path to Codex binary |
 | `FORGE_PLAYWRIGHT_DASHBOARD_ENABLED` | `false` | Enable Playwright dashboard (macOS/Linux only) |
+| `FORGE_DESKTOP` | auto-detected | Set to `true` when running in Electron desktop app |
+| `FORGE_RESOURCES_DIR` | auto-detected | Path to bundled resources in Electron app |
 
 For compatibility, legacy `MIDDLEMAN_*` names are still accepted during startup.
 
