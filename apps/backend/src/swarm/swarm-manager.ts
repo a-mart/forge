@@ -772,7 +772,8 @@ const WATCHDOG_BACKOFF_MAX_MS = 5 * 60_000;
 const WATCHDOG_MAX_CONSECUTIVE_NOTIFICATIONS = 3;
 const STALL_CHECK_INTERVAL_MS = 60_000;
 const STALL_NUDGE_THRESHOLD_MS = 5 * 60_000;
-const STALL_KILL_AFTER_NUDGE_MS = 5 * 60_000;
+const STALL_DETAILED_REPORT_INTERVAL_MS = 10 * 60_000;
+const STALL_KILL_AFTER_NUDGE_MS = 25 * 60_000;
 const RUNTIME_SHUTDOWN_TIMEOUT_MS = 1_500;
 const RUNTIME_SHUTDOWN_DRAIN_TIMEOUT_MS = 500;
 const MODEL_CAPACITY_BLOCK_DEFAULT_MS = 10 * 60_000;
@@ -880,6 +881,10 @@ interface WorkerStallState {
   lastProgressAt: number;
   nudgeSent: boolean;
   nudgeSentAt: number | null;
+  lastToolName: string | null;
+  lastToolInput: string | null;
+  lastToolOutput: string | null;
+  lastDetailedReportAt: number | null;
 }
 
 interface WorkerActivityState {
@@ -5820,7 +5825,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         this.workerStallState.set(agentId, {
           lastProgressAt: Date.now(),
           nudgeSent: false,
-          nudgeSentAt: null
+          nudgeSentAt: null,
+          lastToolName: null,
+          lastToolInput: null,
+          lastToolOutput: null,
+          lastDetailedReportAt: null
         });
       } else if (effectiveStatus !== "streaming" && this.workerStallState.has(agentId)) {
         this.workerStallState.delete(agentId);
@@ -6038,6 +6047,23 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     switch (event.type) {
+      case "tool_execution_start": {
+        stallState.lastToolName = event.toolName;
+        stallState.lastToolInput = trimToMaxChars(formatToolExecutionPayload(event.args), 500);
+        stallState.lastToolOutput = null;
+        this.workerStallState.set(agentId, stallState);
+        return;
+      }
+
+      case "tool_execution_update": {
+        stallState.lastToolName = event.toolName;
+        const chunk = formatToolExecutionPayload(event.partialResult);
+        const mergedOutput = `${stallState.lastToolOutput ?? ""}${chunk}`;
+        stallState.lastToolOutput = trimToMaxCharsFromEnd(mergedOutput, 500);
+        this.workerStallState.set(agentId, stallState);
+        return;
+      }
+
       case "tool_execution_end":
       case "turn_end":
         this.recordWorkerStallProgress(agentId);
@@ -6133,6 +6159,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     stallState.lastProgressAt = Date.now();
+    stallState.lastDetailedReportAt = null;
+    stallState.lastToolName = null;
+    stallState.lastToolInput = null;
+    stallState.lastToolOutput = null;
+
     if (stallState.nudgeSent) {
       stallState.nudgeSent = false;
       stallState.nudgeSentAt = null;
@@ -6634,7 +6665,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   private async runStalledWorkerCheck(): Promise<void> {
     const now = Date.now();
-    const stallEntries = Array.from(this.workerStallState.entries());
 
     for (const [agentId, descriptor] of this.descriptors.entries()) {
       if (descriptor.role !== "worker" || descriptor.status !== "streaming") {
@@ -6655,6 +6685,18 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         const elapsedSinceNudgeMs = now - stallState.nudgeSentAt;
         if (elapsedSinceNudgeMs >= STALL_KILL_AFTER_NUDGE_MS) {
           await this.handleStallAutoKill(agentId, elapsedSinceProgressMs);
+          continue;
+        }
+
+        const detailedReportDue =
+          elapsedSinceProgressMs >= STALL_DETAILED_REPORT_INTERVAL_MS &&
+          (
+            stallState.lastDetailedReportAt === null ||
+            now - stallState.lastDetailedReportAt >= STALL_DETAILED_REPORT_INTERVAL_MS
+          );
+
+        if (detailedReportDue) {
+          await this.handleStallDetailedReport(agentId, elapsedSinceProgressMs);
           continue;
         }
       }
@@ -6699,6 +6741,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       await this.sendMessage(managerId, managerId, managerMessage, "auto", { origin: "internal" });
       stallState.nudgeSent = true;
       stallState.nudgeSentAt = Date.now();
+      stallState.lastDetailedReportAt = null;
       this.workerStallState.set(agentId, stallState);
     } catch (error) {
       this.logDebug("stall:nudge:send_message:error", {
@@ -6716,6 +6759,78 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       );
     } catch (error) {
       this.logDebug("stall:nudge:publish_to_user:error", {
+        agentId,
+        managerId,
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  private async handleStallDetailedReport(agentId: string, elapsedMs: number): Promise<void> {
+    const descriptor = this.descriptors.get(agentId);
+    if (!descriptor || descriptor.role !== "worker") {
+      this.workerStallState.delete(agentId);
+      this.workerActivityState.delete(agentId);
+      return;
+    }
+
+    if (descriptor.status !== "streaming" || this.isRuntimeInContextRecovery(agentId)) {
+      return;
+    }
+
+    const stallState = this.workerStallState.get(agentId);
+    if (!stallState || !stallState.nudgeSent) {
+      return;
+    }
+
+    const managerId = normalizeOptionalAgentId(descriptor.managerId);
+    if (!managerId) {
+      return;
+    }
+
+    const managerDescriptor = this.descriptors.get(managerId);
+    if (!managerDescriptor || managerDescriptor.role !== "manager" || isNonRunningAgentStatus(managerDescriptor.status)) {
+      return;
+    }
+
+    const elapsedText = this.formatDuration(elapsedMs);
+    const toolInfo = stallState.lastToolName
+      ? `Tool: ${toDisplayToolName(stallState.lastToolName)}`
+      : "Tool: unknown (no tool execution events received)";
+    const inputPreview = stallState.lastToolInput
+      ? `Input (truncated): ${trimToMaxChars(stallState.lastToolInput, 200)}`
+      : "Input: not available";
+    const outputPreview = stallState.lastToolOutput
+      ? `Last output (truncated): ${trimToMaxCharsFromEnd(stallState.lastToolOutput, 200)}`
+      : "Output: none received";
+
+    const managerMessage =
+      `SYSTEM: ⚠️ [WORKER STALL REPORT]\n` +
+      `Worker \`${agentId}\` has made no progress for ${elapsedText}.\n\n` +
+      `${toolInfo}\n${inputPreview}\n${outputPreview}\n\n` +
+      `If this looks like a hung process, terminate with: kill_agent("${agentId}")\n` +
+      "If it's a legitimate long-running operation, no action needed — auto-termination will occur at 30 minutes total.";
+
+    try {
+      await this.sendMessage(managerId, managerId, managerMessage, "auto", { origin: "internal" });
+      stallState.lastDetailedReportAt = Date.now();
+      this.workerStallState.set(agentId, stallState);
+    } catch (error) {
+      this.logDebug("stall:detailed_report:send_message:error", {
+        agentId,
+        managerId,
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
+
+    try {
+      await this.publishToUser(
+        managerId,
+        `⚠️ Worker \`${agentId}\` still appears stalled — no progress for ${elapsedText}.`,
+        "system"
+      );
+    } catch (error) {
+      this.logDebug("stall:detailed_report:publish_to_user:error", {
         agentId,
         managerId,
         message: error instanceof Error ? error.message : String(error)
@@ -8206,6 +8321,43 @@ function safeJson(value: unknown): string {
   } catch {
     return String(value);
   }
+}
+
+function formatToolExecutionPayload(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  return safeJson(value);
+}
+
+function trimToMaxChars(value: string, maxChars: number): string {
+  if (value.length <= maxChars) {
+    return value;
+  }
+
+  return value.slice(0, maxChars);
+}
+
+function trimToMaxCharsFromEnd(value: string, maxChars: number): string {
+  if (value.length <= maxChars) {
+    return value;
+  }
+
+  return value.slice(-maxChars);
+}
+
+function toDisplayToolName(toolName: string): string {
+  const normalized = toolName.trim();
+  if (normalized.length === 0) {
+    return "Unknown";
+  }
+
+  return normalized
+    .split(/[\s_-]+/)
+    .filter((part) => part.length > 0)
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(" ");
 }
 
 function readPositiveIntegerDetail(details: Record<string, unknown> | undefined, key: string): number | undefined {

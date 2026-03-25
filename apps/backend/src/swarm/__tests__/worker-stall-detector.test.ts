@@ -219,6 +219,16 @@ async function bootWithDefaultManager(manager: TestSwarmManager, config: SwarmCo
   });
 }
 
+type StallStateSnapshot = {
+  lastProgressAt: number;
+  nudgeSent: boolean;
+  nudgeSentAt: number | null;
+  lastToolName: string | null;
+  lastToolInput: string | null;
+  lastToolOutput: string | null;
+  lastDetailedReportAt: number | null;
+};
+
 async function setupManagerWithStreamingWorker() {
   const config = await makeTempConfig();
   const manager = new TestSwarmManager(config);
@@ -244,15 +254,11 @@ async function setupManagerWithStreamingWorker() {
     worker,
     workerRuntime,
     managerRuntime,
-    stallState: (state.workerStallState as Map<string, { lastProgressAt: number; nudgeSent: boolean; nudgeSentAt: number | null }>).get(worker.agentId)
+    stallState: (state.workerStallState as Map<string, StallStateSnapshot>).get(worker.agentId)
   };
 }
 
-function readWorkerStallState(manager: TestSwarmManager, workerId: string): {
-  lastProgressAt: number;
-  nudgeSent: boolean;
-  nudgeSentAt: number | null;
-} | undefined {
+function readWorkerStallState(manager: TestSwarmManager, workerId: string): StallStateSnapshot | undefined {
   return (manager as any).workerStallState.get(workerId);
 }
 
@@ -290,7 +296,7 @@ describe("worker stall detector", () => {
     expect(manager.publishedToUserCalls.some((call) => call.source === "system" && call.text.includes("appears stalled"))).toBe(true);
   });
 
-  it("auto-terminates a worker 5 minutes after a nudge if no progress occurs", async () => {
+  it("sends a detailed stall report at 10 minutes with tool context", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-03-22T12:00:00.000Z"));
 
@@ -301,6 +307,75 @@ describe("worker stall detector", () => {
     stallState!.lastProgressAt = Date.now() - 10 * 60_000;
     stallState!.nudgeSent = true;
     stallState!.nudgeSentAt = Date.now() - 5 * 60_000;
+    stallState!.lastToolName = "bash";
+    stallState!.lastToolInput = `echo ${"a".repeat(240)}`;
+    stallState!.lastToolOutput = `...${"z".repeat(240)}`;
+
+    await (manager as any).checkForStalledWorkers();
+
+    expect(workerRuntime.terminateCalls).toHaveLength(0);
+
+    const reportMessages = managerRuntime.sendCalls
+      .map((call) => call.message)
+      .filter((message): message is string => typeof message === "string")
+      .filter((message) => message.includes("[WORKER STALL REPORT]"));
+
+    expect(reportMessages).toHaveLength(1);
+    expect(reportMessages[0]).toContain("Tool: Bash");
+    expect(reportMessages[0]).toContain("Input (truncated):");
+    expect(reportMessages[0]).toContain("Last output (truncated):");
+    expect(reportMessages[0]).toContain(`kill_agent(\"${worker.agentId}\")`);
+    expect(readWorkerStallState(manager, worker.agentId)?.lastDetailedReportAt).toBe(Date.now());
+    expect(
+      manager.publishedToUserCalls.some(
+        (call) => call.source === "system" && call.text.includes("still appears stalled")
+      )
+    ).toBe(true);
+  });
+
+  it("repeats detailed stall reports every 10 minutes while still stalled", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-22T12:00:00.000Z"));
+
+    const { manager, worker, workerRuntime, managerRuntime } = await setupManagerWithStreamingWorker();
+    const stallState = readWorkerStallState(manager, worker.agentId);
+    expect(stallState).toBeDefined();
+
+    stallState!.lastProgressAt = Date.now() - 10 * 60_000;
+    stallState!.nudgeSent = true;
+    stallState!.nudgeSentAt = Date.now() - 5 * 60_000;
+    stallState!.lastToolName = "read";
+    stallState!.lastToolInput = "README.md";
+
+    await (manager as any).checkForStalledWorkers();
+    expect(workerRuntime.terminateCalls).toHaveLength(0);
+
+    vi.advanceTimersByTime(9 * 60_000);
+    await (manager as any).checkForStalledWorkers();
+
+    vi.advanceTimersByTime(60_000);
+    await (manager as any).checkForStalledWorkers();
+
+    const reportMessages = managerRuntime.sendCalls
+      .map((call) => call.message)
+      .filter((message): message is string => typeof message === "string")
+      .filter((message) => message.includes("[WORKER STALL REPORT]"));
+
+    expect(reportMessages).toHaveLength(2);
+    expect(workerRuntime.terminateCalls).toHaveLength(0);
+  });
+
+  it("auto-terminates a worker 25 minutes after a nudge if no progress occurs", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-22T12:00:00.000Z"));
+
+    const { manager, worker, workerRuntime, managerRuntime } = await setupManagerWithStreamingWorker();
+    const stallState = readWorkerStallState(manager, worker.agentId);
+    expect(stallState).toBeDefined();
+
+    stallState!.lastProgressAt = Date.now() - 30 * 60_000;
+    stallState!.nudgeSent = true;
+    stallState!.nudgeSentAt = Date.now() - 25 * 60_000;
 
     await (manager as any).checkForStalledWorkers();
 
@@ -316,7 +391,7 @@ describe("worker stall detector", () => {
     expect(manager.publishedToUserCalls.some((call) => call.source === "system" && call.text.includes("auto-terminated"))).toBe(true);
   });
 
-  it("does not treat tool_execution_update as progress", async () => {
+  it("tracks tool start/update details without resetting stall progress timer", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-03-22T12:00:00.000Z"));
 
@@ -328,13 +403,29 @@ describe("worker stall detector", () => {
     stallState!.lastProgressAt = baseline;
 
     await emitRuntimeEvent(manager, worker.agentId, {
+      type: "tool_execution_start",
+      toolName: "bash",
+      toolCallId: "call-1",
+      args: { command: "ls -la" }
+    });
+
+    const afterStart = readWorkerStallState(manager, worker.agentId);
+    expect(afterStart?.lastProgressAt).toBe(baseline);
+    expect(afterStart?.lastToolName).toBe("bash");
+    expect(afterStart?.lastToolInput).toContain("ls -la");
+    expect(afterStart?.lastToolOutput).toBeNull();
+
+    await emitRuntimeEvent(manager, worker.agentId, {
       type: "tool_execution_update",
       toolName: "bash",
       toolCallId: "call-1",
       partialResult: { line: "still running" }
     });
 
-    expect(readWorkerStallState(manager, worker.agentId)?.lastProgressAt).toBe(baseline);
+    const afterUpdate = readWorkerStallState(manager, worker.agentId);
+    expect(afterUpdate?.lastProgressAt).toBe(baseline);
+    expect(afterUpdate?.lastToolOutput).toContain("still running");
+    expect((afterUpdate?.lastToolOutput ?? "").length).toBeLessThanOrEqual(500);
   });
 
   it("treats tool_execution_end as progress and resets nudge state", async () => {
@@ -579,10 +670,10 @@ describe("worker stall detector", () => {
     const stallState = readWorkerStallState(manager, worker.agentId);
     expect(stallState).toBeDefined();
 
-    // Simulate: nudge was sent 6 minutes ago (past kill threshold)
-    stallState!.lastProgressAt = Date.now() - 7 * 60_000;
+    // Simulate: nudge was sent 26 minutes ago (past kill threshold)
+    stallState!.lastProgressAt = Date.now() - 27 * 60_000;
     stallState!.nudgeSent = true;
-    stallState!.nudgeSentAt = Date.now() - 6 * 60_000;
+    stallState!.nudgeSentAt = Date.now() - 26 * 60_000;
 
     // Worker enters context recovery — this should reset nudge state
     await emitRuntimeEvent(manager, worker.agentId, {
@@ -618,9 +709,9 @@ describe("worker stall detector", () => {
     const stallState = readWorkerStallState(manager, worker.agentId);
     expect(stallState).toBeDefined();
 
-    stallState!.lastProgressAt = Date.now() - 10 * 60_000;
+    stallState!.lastProgressAt = Date.now() - 30 * 60_000;
     stallState!.nudgeSent = true;
-    stallState!.nudgeSentAt = Date.now() - 5 * 60_000;
+    stallState!.nudgeSentAt = Date.now() - 25 * 60_000;
 
     // Make terminate fail
     workerRuntime.terminate = async () => {
