@@ -98,6 +98,7 @@ async function stageBundledBackend() {
   // that walk up the directory tree looking for package.json (e.g. pi-coding-agent
   // reads version and piConfig from it).
   await cp(backendWorkspaceManifestPath, path.join(backendStageDir, 'package.json'))
+  await stageBundledDependencyRuntimeAssets()
 
   const runtimePackages = await collectRuntimePackageClosure(
     BACKEND_BUNDLE_EXTERNAL_PACKAGES.map((pkg) => ({ packageName: pkg.name, optional: pkg.optional }))
@@ -106,6 +107,33 @@ async function stageBundledBackend() {
 
   const fileCount = await countFiles(backendStageDir)
   console.log(`[electron/build-all] Staged bundled backend with ${runtimePackages.length} runtime packages (${fileCount} files)`)
+}
+
+async function stageBundledDependencyRuntimeAssets() {
+  const piCodingAgent = await resolveInstalledPackage('@mariozechner/pi-coding-agent', backendWorkspaceManifestPath, false)
+  const photonNode = await resolveInstalledPackage('@silvia-odwyer/photon-node', backendWorkspaceManifestPath, false)
+
+  await copyRuntimeAsset(
+    path.join(piCodingAgent.packageRoot, 'dist', 'modes', 'interactive', 'theme'),
+    path.join(backendStageDir, 'dist', 'modes', 'interactive', 'theme'),
+  )
+  await copyRuntimeAsset(
+    path.join(piCodingAgent.packageRoot, 'dist', 'core', 'export-html'),
+    path.join(backendStageDir, 'dist', 'core', 'export-html'),
+  )
+  await copyRuntimeAsset(
+    path.join(photonNode.packageRoot, 'photon_rs_bg.wasm'),
+    path.join(backendStageDir, 'dist', 'photon_rs_bg.wasm'),
+  )
+}
+
+async function copyRuntimeAsset(from, to) {
+  if (!existsSync(from)) {
+    throw new Error(`Missing runtime asset source: ${from}`)
+  }
+
+  await mkdir(path.dirname(to), { recursive: true })
+  await cp(from, to, { recursive: true })
 }
 
 async function collectRuntimePackageClosure(rootPackages) {
