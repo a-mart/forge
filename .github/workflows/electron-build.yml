@@ -1,10 +1,12 @@
-# Backup and validation workflow for Electron builds.
-# Primary releases are built locally (macOS on dev machine, Windows on Parallels VM) and uploaded via gh CLI.
-# This workflow provides CI validation for electron/* feature branches and serves as a fallback for tagged releases.
+# Electron desktop app build workflow.
+# - Manual trigger (workflow_dispatch): builds both platforms, uploads artifacts for testing. No release created.
+# - Tag push (v*): builds both platforms, creates a draft GitHub Release with installers attached.
+# - Branch push (electron/*): validation builds only.
 
 name: Electron Build
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - 'electron/*'
