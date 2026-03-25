@@ -11,10 +11,10 @@ envVars:
 
 Generate images using Google Gemini (`gemini-3-pro-image-preview`).
 
-Run from the repository root:
+Run from this skill directory:
 
 ```bash
-node apps/backend/src/swarm/skills/builtins/image-generation/generate.js \
+node ./generate.js \
   --prompt "a cute robot bee in a garden" \
   --output "/path/to/output.png"
 ```

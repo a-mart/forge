@@ -21,10 +21,10 @@ If the request is ambiguous, ask a follow-up question before adding a schedule.
 
 ## Commands
 
-Run the scheduler CLI from the repository root:
+Run the scheduler CLI from this skill directory:
 
 ```bash
-node apps/backend/src/swarm/skills/builtins/cron-scheduling/schedule.js add \
+node ./schedule.js add \
   --manager "manager" \
   --name "Daily standup reminder" \
   --cron "0 9 * * 1-5" \
@@ -35,7 +35,7 @@ node apps/backend/src/swarm/skills/builtins/cron-scheduling/schedule.js add \
 One-shot schedule (fires once at the next matching cron time):
 
 ```bash
-node apps/backend/src/swarm/skills/builtins/cron-scheduling/schedule.js add \
+node ./schedule.js add \
   --manager "manager" \
   --name "One-time deployment check" \
   --cron "30 14 * * *" \
@@ -47,7 +47,7 @@ node apps/backend/src/swarm/skills/builtins/cron-scheduling/schedule.js add \
 Remove a schedule:
 
 ```bash
-node apps/backend/src/swarm/skills/builtins/cron-scheduling/schedule.js remove \
+node ./schedule.js remove \
   --manager "manager" \
   --id "<schedule-id>"
 ```
@@ -55,11 +55,11 @@ node apps/backend/src/swarm/skills/builtins/cron-scheduling/schedule.js remove \
 List schedules:
 
 ```bash
-node apps/backend/src/swarm/skills/builtins/cron-scheduling/schedule.js list --manager "manager"
+node ./schedule.js list --manager "manager"
+```
 
 `--manager` is optional. If omitted, the CLI will auto-select a manager when there is only one manager
 or when a known default manager is detected.
-```
 
 ## Output
 

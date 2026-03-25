@@ -6,6 +6,7 @@ import { PlaywrightSettingsService } from "./playwright/playwright-settings-serv
 import { readPlaywrightDashboardEnvOverride, createConfig } from "./config.js";
 import { CronSchedulerService } from "./scheduler/cron-scheduler-service.js";
 import { getScheduleFilePath } from "./scheduler/schedule-storage.js";
+import { acquireRuntimeLock, type RuntimeLock } from "./runtime-lock.js";
 import { SwarmManager } from "./swarm/swarm-manager.js";
 import type { AgentDescriptor, SwarmConfig } from "./swarm/types.js";
 import { EmbeddedGitVersioningService } from "./versioning/embedded-git-versioning-service.js";
@@ -44,6 +45,8 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
 
   const config = options.config ?? createConfig();
   const logger = createLogger(options.logger);
+
+  const runtimeLock = acquireRuntimeLock(config.paths.dataDir);
 
   const versioningService = new EmbeddedGitVersioningService({
     dataDir: config.paths.dataDir,
@@ -182,6 +185,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
       wsServer,
       queueSchedulerSync,
       handleAgentsSnapshot,
+      runtimeLock,
     });
 
     await playwrightLivePreviewService.start();
@@ -206,6 +210,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
         playwrightLivePreviewService?.stop(),
         versioningService.stop(),
       ]);
+      runtimeLock.release();
     }
     throw error;
   }
@@ -228,6 +233,7 @@ class BackendServer implements StartedServer {
   private readonly wsServer: SwarmWebSocketServer;
   private readonly queueSchedulerSync: (profileIds: Set<string>) => Promise<void>;
   private readonly handleAgentsSnapshot: (event: unknown) => void;
+  private readonly runtimeLock: RuntimeLock;
 
   private listening = false;
   private stopped = false;
@@ -242,6 +248,7 @@ class BackendServer implements StartedServer {
     wsServer: SwarmWebSocketServer;
     queueSchedulerSync: (profileIds: Set<string>) => Promise<void>;
     handleAgentsSnapshot: (event: unknown) => void;
+    runtimeLock: RuntimeLock;
   }) {
     this.host = options.config.host;
     this.port = options.config.port;
@@ -254,6 +261,7 @@ class BackendServer implements StartedServer {
     this.wsServer = options.wsServer;
     this.queueSchedulerSync = options.queueSchedulerSync;
     this.handleAgentsSnapshot = options.handleAgentsSnapshot;
+    this.runtimeLock = options.runtimeLock;
   }
 
   async startListening(): Promise<void> {
@@ -294,6 +302,8 @@ class BackendServer implements StartedServer {
       this.versioningService.stop(),
       shouldStopWsServer ? this.wsServer.stop() : Promise.resolve(),
     ]);
+
+    this.runtimeLock.release();
 
     if (activeServer === this) {
       activeServer = null;

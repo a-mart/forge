@@ -10,20 +10,20 @@ Use this skill when the user asks to manage reusable `/` commands.
 Slash commands are global (shared across profiles/sessions) and stored under:
 - `${SWARM_DATA_DIR}/shared/slash-commands.json`
 
-Run the CLI from the repository root.
+Run the CLI from this skill directory.
 
 ## Commands
 
 List all slash commands:
 
 ```bash
-node apps/backend/src/swarm/skills/builtins/slash-commands/slash-commands.js list
+node ./slash-commands.js list
 ```
 
 Create a command:
 
 ```bash
-node apps/backend/src/swarm/skills/builtins/slash-commands/slash-commands.js create \
+node ./slash-commands.js create \
   --name "summarize" \
   --prompt "Summarize the latest changes and open risks."
 ```
@@ -31,7 +31,7 @@ node apps/backend/src/swarm/skills/builtins/slash-commands/slash-commands.js cre
 Update by id:
 
 ```bash
-node apps/backend/src/swarm/skills/builtins/slash-commands/slash-commands.js update \
+node ./slash-commands.js update \
   --id "<command-id>" \
   --new-name "summary" \
   --prompt "Summarize the latest changes."
@@ -40,7 +40,7 @@ node apps/backend/src/swarm/skills/builtins/slash-commands/slash-commands.js upd
 Update by name:
 
 ```bash
-node apps/backend/src/swarm/skills/builtins/slash-commands/slash-commands.js update \
+node ./slash-commands.js update \
   --name "summarize" \
   --new-name "summary" \
   --prompt "Summarize the latest changes."
@@ -49,14 +49,14 @@ node apps/backend/src/swarm/skills/builtins/slash-commands/slash-commands.js upd
 Delete by id:
 
 ```bash
-node apps/backend/src/swarm/skills/builtins/slash-commands/slash-commands.js delete \
+node ./slash-commands.js delete \
   --id "<command-id>"
 ```
 
 Delete by name:
 
 ```bash
-node apps/backend/src/swarm/skills/builtins/slash-commands/slash-commands.js delete \
+node ./slash-commands.js delete \
   --name "summary"
 ```
 

@@ -454,6 +454,17 @@ export class ManagerWsClient {
   }
 
   async pickDirectory(defaultPath?: string): Promise<string | null> {
+    // Use native Electron dialog when available
+    const bridge = typeof window !== 'undefined' ? window.electronBridge : undefined
+    if (bridge?.showOpenDialog) {
+      const result = await bridge.showOpenDialog({
+        title: 'Select Directory',
+        defaultPath: defaultPath?.trim() || undefined,
+        properties: ['openDirectory'],
+      })
+      return result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0]
+    }
+
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
       throw new Error('WebSocket is disconnected. Reconnecting...')
     }

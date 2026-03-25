@@ -16,6 +16,8 @@ contextBridge.exposeInMainWorld('electronBridge', {
   backendWsUrl: bootstrap.backendWsUrl,
   getVersion: (): string => bootstrap.version,
   platform: bootstrap.platform,
+  showOpenDialog: (options: Electron.OpenDialogOptions): Promise<Electron.OpenDialogReturnValue> =>
+    ipcRenderer.invoke('bridge:showOpenDialog', options),
 })
 
 function readBootstrap(): BackendBootstrap {

@@ -15,6 +15,12 @@ export interface ElectronBridge {
   getVersion(): string
   /** Host platform for desktop-specific renderer behavior. */
   platform: string
+  /** Opens a native file dialog. Available only in Electron. */
+  showOpenDialog?(options: {
+    title?: string
+    defaultPath?: string
+    properties?: Array<'openFile' | 'openDirectory' | 'multiSelections' | 'showHiddenFiles'>
+  }): Promise<{ canceled: boolean; filePaths: string[] }>
 }
 
 declare global {

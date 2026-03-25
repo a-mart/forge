@@ -1,13 +1,19 @@
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain, net, protocol } from 'electron'
 import { fork, type ChildProcess, type ForkOptions } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { fixPath } from './fix-path.js'
 
 const ELECTRON_DEV_SERVER_URL = 'http://127.0.0.1:47188'
 const BACKEND_READY_CHANNEL = 'forge:get-backend-bootstrap'
 const BACKEND_SHUTDOWN_TIMEOUT_MS = 5_000
 const BACKEND_RESTART_DELAY_MS = 1_000
+const PACKAGED_BACKEND_DIRNAME = 'backend'
+const PACKAGED_RENDERER_DIRNAME = 'ui'
+const PACKAGED_RESOURCES_DIRNAME = 'forge-resources'
+const APP_PROTOCOL_SCHEME = 'app'
+const APP_PROTOCOL_HOST = 'forge'
 
 type BackendReadyMessage = {
   type: 'ready'
@@ -24,6 +30,19 @@ type BackendBootstrap = {
 let mainWindow: BrowserWindow | null = null
 let backendBootstrap: BackendBootstrap | null = null
 let appIsQuitting = false
+let appProtocolRegistered = false
+
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: APP_PROTOCOL_SCHEME,
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      stream: true,
+    },
+  },
+])
 
 class BackendSupervisor {
   private child: ChildProcess | null = null
@@ -48,6 +67,7 @@ class BackendSupervisor {
     }
 
     const isRestart = this.currentPort != null
+    this.stopping = false
     this.startPromise = this.launch(isRestart).finally(() => {
       this.startPromise = null
     })
@@ -111,13 +131,13 @@ class BackendSupervisor {
 
   private async launch(isRestart: boolean): Promise<number> {
     const backendEntry = resolveBackendEntry()
-    const repoRoot = resolveRepoRoot()
-    const resourcesDir = resolveBackendResourcesDir(repoRoot)
+    const runtimeRoot = resolveBackendRuntimeRoot()
+    const resourcesDir = resolveBackendResourcesDir()
     const execArgv = resolveBackendExecArgv(backendEntry)
 
     return await new Promise<number>((resolve, reject) => {
       const child = fork(backendEntry, [], {
-        cwd: repoRoot,
+        cwd: runtimeRoot,
         env: {
           ...process.env,
           FORGE_DESKTOP: '1',
@@ -235,6 +255,9 @@ if (!hasSingleInstanceLock) {
 
   app.whenReady().then(async () => {
     fixPath()
+    if (app.isPackaged) {
+      registerAppProtocol()
+    }
     await backendSupervisor.start()
     mainWindow = createMainWindow()
     await loadRenderer(mainWindow)
@@ -295,7 +318,7 @@ async function loadRenderer(window: BrowserWindow): Promise<void> {
     return
   }
 
-  await window.loadFile(resolvePackagedRendererEntry())
+  await window.loadURL(resolvePackagedRendererUrl())
 }
 
 function buildBackendBootstrap(port: number): BackendBootstrap {
@@ -311,21 +334,45 @@ function resolveRepoRoot(): string {
   return path.resolve(__dirname, '..', '..', '..')
 }
 
-function resolveBackendResourcesDir(repoRoot: string): string {
+function resolveBackendRuntimeRoot(): string {
   if (!app.isPackaged) {
-    return repoRoot
+    return resolveRepoRoot()
   }
 
-  return path.join(process.resourcesPath, 'forge-resources')
+  return resolveBackendResourcesDir()
+}
+
+function resolveBackendResourcesDir(): string {
+  if (!app.isPackaged) {
+    return resolveRepoRoot()
+  }
+
+  const resourcesDir = path.join(process.resourcesPath, PACKAGED_RESOURCES_DIRNAME)
+  assertPathExists(resourcesDir, 'Packaged backend resources directory')
+  return resourcesDir
+}
+
+function resolvePackagedRendererDir(): string {
+  const rendererDir = path.join(process.resourcesPath, PACKAGED_RENDERER_DIRNAME)
+  assertPathExists(rendererDir, 'Packaged renderer directory')
+  return rendererDir
 }
 
 function resolvePackagedRendererEntry(): string {
-  return path.join(process.resourcesPath, 'ui', 'index.html')
+  const rendererEntry = path.join(resolvePackagedRendererDir(), 'index.html')
+  assertPathExists(rendererEntry, 'Packaged renderer entry')
+  return rendererEntry
+}
+
+function resolvePackagedRendererUrl(): string {
+  return `${APP_PROTOCOL_SCHEME}://${APP_PROTOCOL_HOST}/index.html`
 }
 
 function resolveBackendEntry(): string {
   if (app.isPackaged) {
-    return path.join(process.resourcesPath, 'backend', 'index.js')
+    const packagedBackendEntry = path.join(process.resourcesPath, PACKAGED_BACKEND_DIRNAME, 'dist', 'index.js')
+    assertPathExists(packagedBackendEntry, 'Packaged backend entry')
+    return packagedBackendEntry
   }
 
   const repoRoot = resolveRepoRoot()
@@ -349,6 +396,37 @@ function resolveBackendExecArgv(backendEntry: string): string[] {
   }
 
   return [...process.execArgv]
+}
+
+function registerAppProtocol(): void {
+  if (appProtocolRegistered) {
+    return
+  }
+
+  const rendererDir = resolvePackagedRendererDir()
+  const rendererEntry = resolvePackagedRendererEntry()
+
+  protocol.handle(APP_PROTOCOL_SCHEME, (request) => {
+    const requestUrl = new URL(request.url)
+    const requestedPath = decodeURIComponent(requestUrl.pathname.replace(/^\/+/, ''))
+    const normalizedRelativePath = requestedPath.length > 0 ? path.normalize(requestedPath) : 'index.html'
+    const candidatePath = path.resolve(rendererDir, normalizedRelativePath)
+    const shouldServeRequestedFile =
+      candidatePath.startsWith(rendererDir) &&
+      existsSync(candidatePath) &&
+      path.extname(candidatePath).length > 0
+
+    const filePath = shouldServeRequestedFile ? candidatePath : rendererEntry
+    return net.fetch(pathToFileURL(filePath).toString())
+  })
+
+  appProtocolRegistered = true
+}
+
+function assertPathExists(targetPath: string, label: string): void {
+  if (!existsSync(targetPath)) {
+    throw new Error(`${label} was not found at ${targetPath}`)
+  }
 }
 
 function isBackendReadyMessage(value: unknown): value is BackendReadyMessage {

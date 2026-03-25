@@ -12,6 +12,9 @@ const config = defineConfig(({ mode }) => {
   const host = process.env.FORGE_HOST ?? process.env.MIDDLEMAN_HOST ?? env.MIDDLEMAN_HOST ?? '127.0.0.1'
 
   return {
+    // Electron packaged builds load the renderer from file://, which requires
+    // relative asset paths instead of the default absolute /assets/* URLs.
+    base: mode === 'production' ? './' : '/',
     server: {
       host,
     },
