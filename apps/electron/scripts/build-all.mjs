@@ -29,9 +29,12 @@ async function main() {
   await run(pnpmCommand, ['--dir', repoRoot, '--filter', '@forge/backend', 'build'])
   await run(pnpmCommand, ['--dir', repoRoot, '--filter', '@forge/ui', 'build'])
   await run(pnpmCommand, ['--dir', electronDir, 'build'])
+  const backendNodeModulesDir = path.join(backendStageDir, 'node_modules')
+
   await run(pnpmCommand, ['--dir', repoRoot, '--filter', '@forge/backend', 'deploy', '--prod', '--legacy', backendStageDir])
   await removeExternalWorkspaceLinks()
-  await pruneNodeModules(path.join(backendStageDir, 'node_modules'))
+  await dereferenceDirectoryInPlace(backendNodeModulesDir)
+  await pruneNodeModules(backendNodeModulesDir)
 
   await stageRendererAssets()
   await stageBackendResources()
@@ -45,6 +48,20 @@ async function removeExternalWorkspaceLinks() {
   await rm(path.join(backendStageDir, 'node_modules', '.pnpm', 'node_modules', '@forge', 'backend'), {
     force: true,
   })
+}
+
+async function dereferenceDirectoryInPlace(targetDir) {
+  if (!existsSync(targetDir)) {
+    return
+  }
+
+  const dereferencedDir = `${targetDir}-dereferenced`
+
+  await rm(dereferencedDir, { recursive: true, force: true })
+  await cp(targetDir, dereferencedDir, { recursive: true, dereference: true })
+  await rm(targetDir, { recursive: true, force: true })
+  await cp(dereferencedDir, targetDir, { recursive: true })
+  await rm(dereferencedDir, { recursive: true, force: true })
 }
 
 function shouldPruneNodeModulesFile(fileName) {
