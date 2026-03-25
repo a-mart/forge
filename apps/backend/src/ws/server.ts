@@ -193,7 +193,8 @@ export class SwarmWebSocketServer {
       this.swarmManager.getConfig().paths.rootDir,
       this.swarmManager.getConfig().port
     );
-    this.shouldManageControlPid = readDaemonizedEnv() !== "1";
+    this.shouldManageControlPid =
+      !this.swarmManager.getConfig().isDesktop && readDaemonizedEnv() !== "1";
 
     this.wsHandler = new WsHandler({
       swarmManager: this.swarmManager,
@@ -208,7 +209,8 @@ export class SwarmWebSocketServer {
     this.statsService = new StatsService(this.swarmManager);
     this.httpRoutes = [
       ...createHealthRoutes({
-        resolveControlPidFile: () => this.controlPidFile
+        resolveControlPidFile: () => this.controlPidFile,
+        allowReboot: !this.swarmManager.getConfig().isDesktop
       }),
       ...createFileRoutes({
         swarmManager: this.swarmManager,

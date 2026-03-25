@@ -16,8 +16,9 @@ const REBOOT_ENDPOINT_PATH = "/api/reboot";
 
 export function createHealthRoutes(options: {
   resolveControlPidFile: () => string;
+  allowReboot?: boolean;
 }): HttpRoute[] {
-  const { resolveControlPidFile } = options;
+  const { resolveControlPidFile, allowReboot = true } = options;
 
   return [
     {
@@ -52,6 +53,14 @@ export function createHealthRoutes(options: {
           applyCorsHeaders(request, response, "POST, OPTIONS");
           response.setHeader("Allow", "POST, OPTIONS");
           sendJson(response, 405, { error: "Method Not Allowed" });
+          return;
+        }
+
+        if (!allowReboot) {
+          sendJson(response, 503, {
+            ok: false,
+            error: "Reboot disabled in desktop mode."
+          });
           return;
         }
 

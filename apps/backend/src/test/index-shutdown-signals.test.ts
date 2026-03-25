@@ -5,6 +5,7 @@ const BASE_CONFIG: SwarmConfig = {
   host: "127.0.0.1",
   port: 47187,
   debug: true,
+  isDesktop: false,
   allowNonManagerSubscriptions: true,
   managerId: undefined,
   managerDisplayName: "Manager",

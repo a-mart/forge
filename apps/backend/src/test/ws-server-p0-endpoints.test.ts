@@ -148,6 +148,7 @@ async function makeTempConfig(options?: { port?: number; managerId?: string }): 
     host: '127.0.0.1',
     port,
     debug: false,
+    isDesktop: false,
     allowNonManagerSubscriptions: false,
     managerId: options?.managerId,
     managerDisplayName: 'Manager',

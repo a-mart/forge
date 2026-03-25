@@ -6,6 +6,7 @@ import readline from "node:readline/promises";
 interface StartupMigrationConfig {
   now?: () => number;
   prompt?: (question: string) => Promise<boolean>;
+  isDesktop?: boolean;
   logger?: {
     info: (message: string) => void;
     warn: (message: string) => void;
@@ -19,6 +20,8 @@ export async function checkDataDirMigration(config: StartupMigrationConfig = {})
     info: config.logger?.info ?? ((message: string) => console.log(message)),
     warn: config.logger?.warn ?? ((message: string) => console.warn(message))
   };
+
+  const isDesktop = config.isDesktop === true;
 
   if (process.env.FORGE_DATA_DIR || process.env.MIDDLEMAN_DATA_DIR) {
     return;
@@ -35,7 +38,7 @@ export async function checkDataDirMigration(config: StartupMigrationConfig = {})
     process.env.FORGE_DAEMONIZED === "1" ||
     process.env.MIDDLEMAN_DAEMONIZED === "1";
 
-  if (!process.stdin.isTTY || !process.stdout.isTTY || daemonized) {
+  if (!isDesktop && (!process.stdin.isTTY || !process.stdout.isTTY || daemonized)) {
     logger.warn(
       `[startup] Skipping interactive data-dir migration. Using legacy data dir: ${legacyPath}`
     );
@@ -71,6 +74,7 @@ export async function checkDataDirMigration(config: StartupMigrationConfig = {})
       legacyPath,
       newPath,
       prompt: config.prompt,
+      isDesktop,
       logger,
     });
 
@@ -141,8 +145,16 @@ async function askToMigrate(options: {
   legacyPath: string;
   newPath: string;
   prompt?: (question: string) => Promise<boolean>;
+  isDesktop: boolean;
   logger: { info: (message: string) => void };
 }): Promise<boolean> {
+  if (options.isDesktop) {
+    options.logger.info(
+      `[startup] FORGE_DESKTOP enabled. Auto-applying migration from ${options.legacyPath} to ${options.newPath}.`
+    );
+    return true;
+  }
+
   if (options.prompt) {
     return options.prompt(`Migrate data dir from ${options.legacyPath} to ${options.newPath}? [Y/n] `);
   }

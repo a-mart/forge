@@ -104,6 +104,7 @@ export interface SpawnAgentInput {
 
 export interface SwarmPaths {
   rootDir: string;
+  resourcesDir?: string;
   dataDir: string;
   swarmDir: string;
   uploadsDir: string;
@@ -160,6 +161,7 @@ export interface SwarmConfig {
   host: string;
   port: number;
   debug: boolean;
+  isDesktop: boolean;
   allowNonManagerSubscriptions: boolean;
   managerId?: string;
   managerDisplayName: string;
