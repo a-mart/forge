@@ -94,6 +94,11 @@ async function stageBundledBackend() {
     legalComments: 'none',
   })
 
+  // Stage backend package.json — needed at runtime by bundled dependencies
+  // that walk up the directory tree looking for package.json (e.g. pi-coding-agent
+  // reads version and piConfig from it).
+  await cp(backendWorkspaceManifestPath, path.join(backendStageDir, 'package.json'))
+
   const runtimePackages = await collectRuntimePackageClosure(
     BACKEND_BUNDLE_EXTERNAL_PACKAGES.map((pkg) => ({ packageName: pkg.name, optional: pkg.optional }))
   )
