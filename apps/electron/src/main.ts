@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol } from 'electron'
 import { fork, type ChildProcess, type ForkOptions } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { checkForUpdatesManually, initAutoUpdater } from './auto-updater.js'
@@ -15,6 +15,8 @@ const DEFAULT_BACKEND_PORT = 47287
 const BACKEND_READY_CHANNEL = 'forge:get-backend-bootstrap'
 const BACKEND_SHUTDOWN_TIMEOUT_MS = 5_000
 const BACKEND_RESTART_DELAY_MS = 1_000
+const BACKEND_LOG_TAIL_LINES = 40
+const BACKEND_LOG_FILENAME = 'backend.log'
 const PACKAGED_BACKEND_DIRNAME = 'backend'
 const PACKAGED_RENDERER_DIRNAME = 'ui'
 const PACKAGED_RESOURCES_DIRNAME = 'forge-resources'
@@ -56,6 +58,10 @@ class BackendSupervisor {
   private startPromise: Promise<number> | null = null
   private stopping = false
   private restartTimer: NodeJS.Timeout | null = null
+  private backendLogPath: string | null = null
+  private readonly recentOutputLines: string[] = []
+  private stdoutRemainder = ''
+  private stderrRemainder = ''
 
   constructor(private readonly onReady: (port: number, isRestart: boolean) => void) {}
 
@@ -65,6 +71,15 @@ class BackendSupervisor {
     }
 
     return buildBackendBootstrap(this.currentPort)
+  }
+
+  get logPath(): string | null {
+    return this.ensureBackendLogPath()
+  }
+
+  getRecentOutput(lines = BACKEND_LOG_TAIL_LINES): string {
+    const recentLines = this.recentOutputLines.slice(-lines)
+    return recentLines.join('\n')
   }
 
   async start(): Promise<number> {
@@ -159,6 +174,8 @@ class BackendSupervisor {
     const resourcesDir = resolveBackendResourcesDir()
     const execArgv = resolveBackendExecArgv(backendEntry)
 
+    this.initializeLaunchLogging()
+
     return await new Promise<number>((resolve, reject) => {
       const child = fork(backendEntry, [], {
         cwd: runtimeRoot,
@@ -169,11 +186,12 @@ class BackendSupervisor {
           FORGE_PORT: process.env.FORGE_PORT || String(resolveDefaultBackendPort()),
           FORGE_RESOURCES_DIR: resourcesDir,
         },
-        stdio: ['inherit', 'inherit', 'inherit', 'ipc'],
+        stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
         execArgv,
       } satisfies ForkOptions)
 
       this.child = child
+      this.attachOutputCapture(child)
 
       let ready = false
       let settled = false
@@ -215,19 +233,23 @@ class BackendSupervisor {
       }
 
       const handleError = (error: Error): void => {
-        finalizeReject(error)
+        finalizeReject(new Error(`${error.message}\n\n${this.describeRecentOutput()}`))
       }
 
       child.on('message', handleMessage)
       child.on('error', handleError)
       child.once('exit', (code, signal) => {
+        this.flushOutputRemainders()
+
         if (this.child === child) {
           this.child = null
         }
 
         if (!ready) {
           finalizeReject(
-            new Error(`Backend exited before signaling readiness (code=${code ?? 'null'}, signal=${signal ?? 'null'})`),
+            new Error(
+              `Backend exited before signaling readiness (code=${code ?? 'null'}, signal=${signal ?? 'null'}).\n\n${this.describeRecentOutput()}`,
+            ),
           )
           return
         }
@@ -245,6 +267,111 @@ class BackendSupervisor {
         }, BACKEND_RESTART_DELAY_MS)
       })
     })
+  }
+
+  private attachOutputCapture(child: ChildProcess): void {
+    child.stdout?.on('data', (chunk: Buffer | string) => {
+      this.captureOutputChunk('stdout', chunk)
+    })
+
+    child.stderr?.on('data', (chunk: Buffer | string) => {
+      this.captureOutputChunk('stderr', chunk)
+    })
+  }
+
+  private captureOutputChunk(stream: 'stdout' | 'stderr', chunk: Buffer | string): void {
+    const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8')
+    if (text.length === 0) {
+      return
+    }
+
+    const normalized = text.replace(/\r\n/g, '\n')
+
+    if (stream === 'stdout') {
+      const combined = `${this.stdoutRemainder}${normalized}`
+      const segments = combined.split('\n')
+      this.stdoutRemainder = segments.pop() ?? ''
+      for (const line of segments) {
+        this.recordOutputLine(stream, line)
+      }
+      return
+    }
+
+    const combined = `${this.stderrRemainder}${normalized}`
+    const segments = combined.split('\n')
+    this.stderrRemainder = segments.pop() ?? ''
+    for (const line of segments) {
+      this.recordOutputLine(stream, line)
+    }
+  }
+
+  private flushOutputRemainders(): void {
+    if (this.stdoutRemainder.length > 0) {
+      this.recordOutputLine('stdout', this.stdoutRemainder)
+      this.stdoutRemainder = ''
+    }
+
+    if (this.stderrRemainder.length > 0) {
+      this.recordOutputLine('stderr', this.stderrRemainder)
+      this.stderrRemainder = ''
+    }
+  }
+
+  private recordOutputLine(stream: 'stdout' | 'stderr', line: string): void {
+    const formatted = `[${stream}] ${line}`
+    this.recentOutputLines.push(formatted)
+
+    if (this.recentOutputLines.length > 200) {
+      this.recentOutputLines.splice(0, this.recentOutputLines.length - 200)
+    }
+
+    this.writeLogLine(formatted)
+  }
+
+  private initializeLaunchLogging(): void {
+    this.stdoutRemainder = ''
+    this.stderrRemainder = ''
+    this.recentOutputLines.length = 0
+    this.writeLogLine(`=== Backend launch ${new Date().toISOString()} ===`)
+  }
+
+  private describeRecentOutput(): string {
+    const output = this.getRecentOutput()
+    const outputSection = output.length > 0 ? output : '(no output captured)'
+    const logPath = this.logPath
+
+    if (!logPath) {
+      return `Recent backend output:\n${outputSection}`
+    }
+
+    return `Recent backend output:\n${outputSection}\n\nBackend log file: ${logPath}`
+  }
+
+  private writeLogLine(line: string): void {
+    const logPath = this.ensureBackendLogPath()
+    if (!logPath) {
+      return
+    }
+
+    try {
+      mkdirSync(path.dirname(logPath), { recursive: true })
+      appendFileSync(logPath, `${line}\n`, 'utf8')
+    } catch (error) {
+      console.warn('Failed to write backend log output', error)
+    }
+  }
+
+  private ensureBackendLogPath(): string | null {
+    if (this.backendLogPath) {
+      return this.backendLogPath
+    }
+
+    try {
+      this.backendLogPath = path.join(app.getPath('userData'), BACKEND_LOG_FILENAME)
+      return this.backendLogPath
+    } catch {
+      return null
+    }
   }
 }
 
@@ -295,12 +422,14 @@ if (!hasSingleInstanceLock) {
       await backendSupervisor.start()
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error)
+      const logPath = backendSupervisor.logPath
+      const logHint = logPath ? `\n\nBackend log: ${logPath}` : ''
       dialog.showErrorBox(
         'Forge failed to start',
         'The backend process exited unexpectedly.\n\n' +
         'This might happen if another instance is running or if there\'s a configuration issue.\n\n' +
         `${detail}\n\n` +
-        'Check the logs or try restarting the app.',
+        `Check the logs or try restarting the app.${logHint}`,
       )
       app.exit(1)
       return

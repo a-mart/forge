@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "license": "Apache-2.0",
-  "description": "Local-first multi-agent orchestration platform",
+  "description": "Forge Desktop",
   "author": {
     "name": "a-mart"
   },
