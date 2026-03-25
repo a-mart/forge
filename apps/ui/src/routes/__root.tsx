@@ -3,6 +3,7 @@ import { HeadContent, Scripts, createRootRoute } from '@tanstack/react-router'
 import { TanStackRouterDevtoolsPanel } from '@tanstack/react-router-devtools'
 import { TanStackDevtools } from '@tanstack/react-devtools'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { isElectron } from '@/lib/electron-bridge'
 import { preloadBuiltInSounds } from '@/lib/notification-service'
 import { THEME_INIT_SCRIPT, initializeThemePreference } from '@/lib/theme'
 import { IndexPage } from './index'
@@ -54,7 +55,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
       <body className="overflow-hidden">
         <TooltipProvider>
           {children}
-          {import.meta.env.DEV && !window.electronBridge && (
+          {import.meta.env.DEV && !isElectron() && (
             <TanStackDevtools
               config={{
                 position: 'bottom-right',
