@@ -430,20 +430,6 @@ if (!hasSingleInstanceLock) {
     }
   })
 
-  // Sync title bar overlay with system dark/light mode
-  if (process.platform !== 'darwin') {
-    const updateOverlayForTheme = (): void => {
-      const win = mainWindow
-      if (!win || win.isDestroyed()) return
-      const dark = nativeTheme.shouldUseDarkColors
-      win.setTitleBarOverlay({
-        color: dark ? '#242424' : '#f8f5f0',
-        symbolColor: dark ? '#f0ebe5' : '#3e2723',
-        height: 36,
-      })
-    }
-    nativeTheme.on('updated', updateOverlayForTheme)
-  }
 
   app.whenReady().then(async () => {
     fixPath()
@@ -511,18 +497,13 @@ function createMainWindow(): BrowserWindow {
     minWidth: 1100,
     minHeight: 720,
     show: false,
-    ...(process.platform !== 'darwin'
+    ...(process.platform === 'darwin'
       ? {
-          titleBarStyle: 'hidden',
-          titleBarOverlay: {
-            color: nativeTheme.shouldUseDarkColors ? '#242424' : '#f8f5f0',
-            symbolColor: nativeTheme.shouldUseDarkColors ? '#f0ebe5' : '#3e2723',
-            height: 36,
-          },
-        }
-      : {
           titleBarStyle: 'hiddenInset',
           trafficLightPosition: { x: 12, y: 12 },
+        }
+      : {
+          autoHideMenuBar: true,
         }),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -531,10 +512,6 @@ function createMainWindow(): BrowserWindow {
       nodeIntegration: false,
     },
   })
-
-  if (process.platform !== 'darwin') {
-    Menu.setApplicationMenu(null)
-  }
 
   window.once('ready-to-show', () => {
     window.show()

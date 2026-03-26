@@ -166,14 +166,14 @@ export function ChatHeader({
   const platform = electronPlatform || (typeof window !== 'undefined' ? (window.navigator.platform ?? '') : '')
   const normalizedPlatform = platform.toLowerCase()
   const isMacPlatform = normalizedPlatform.includes('mac') || normalizedPlatform.includes('darwin')
-  const isFramelessDesktop = electronPlatform === 'win32' || electronPlatform === 'linux'
+  const isFramelessDesktop = false // Windows uses native title bar; macOS uses hiddenInset (no drag region needed)
   const terminalShortcutLabel = isMacPlatform ? '⌘`' : 'Ctrl+`'
 
   return (
     <header
       className={cn(
         'sticky top-0 z-10 flex h-[62px] w-full shrink-0 items-center justify-between gap-2 overflow-hidden border-b border-border/80 bg-card/80 px-2 backdrop-blur md:px-4',
-        isFramelessDesktop && '[-webkit-app-region:drag] bg-card',
+        // Windows uses native title bar, macOS uses hiddenInset
       )}
     >
       <div className="flex min-w-0 flex-1 items-center gap-2 md:gap-3">
