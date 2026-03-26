@@ -54,6 +54,7 @@ nsis:
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
+  artifactName: "Forge-Setup-${version}.${ext}"
 linux:
   target:
     - target: AppImage
