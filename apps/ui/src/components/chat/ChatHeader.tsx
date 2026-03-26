@@ -173,7 +173,7 @@ export function ChatHeader({
     <header
       className={cn(
         'sticky top-0 z-10 flex h-[62px] w-full shrink-0 items-center justify-between gap-2 overflow-hidden border-b border-border/80 bg-card/80 px-2 backdrop-blur md:px-4',
-        isFramelessDesktop && '[-webkit-app-region:drag] bg-card pr-[140px]',
+        isFramelessDesktop && '[-webkit-app-region:drag] bg-card',
       )}
     >
       <div className="flex min-w-0 flex-1 items-center gap-2 md:gap-3">
@@ -490,6 +490,8 @@ export function ChatHeader({
           </TooltipProvider>
         </div>
       </div>
+      {/* Spacer for frameless window controls (minimize/maximize/close) */}
+      {isFramelessDesktop && <div className="w-[140px] shrink-0" />}
     </header>
   )
 }
