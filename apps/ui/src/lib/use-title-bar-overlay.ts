@@ -18,14 +18,16 @@ export function useTitleBarOverlay() {
       const cardColor = style.getPropertyValue('--card').trim()
       const foregroundColor = style.getPropertyValue('--foreground').trim()
 
-      // Convert HSL to hex for Electron API
-      const cardHex = hslToHex(cardColor)
-      const foregroundHex = hslToHex(foregroundColor)
+      // Convert to hex for Electron API (may already be hex, or HSL)
+      const cardHex = toHex(cardColor)
+      const foregroundHex = toHex(foregroundColor)
 
-      window.electronBridge?.updateTitleBarOverlay?.({
-        color: cardHex,
-        symbolColor: foregroundHex,
-      })
+      if (cardHex && foregroundHex) {
+        window.electronBridge?.updateTitleBarOverlay?.({
+          color: cardHex,
+          symbolColor: foregroundHex,
+        })
+      }
     }
 
     // Update immediately
@@ -53,59 +55,47 @@ export function useTitleBarOverlay() {
 }
 
 /**
- * Convert HSL color string to hex.
- * Tailwind CSS variables are in HSL format, but Electron's titleBarOverlay expects hex.
+ * Convert a CSS color value to hex. Handles:
+ * - Hex passthrough: "#f8f5f0" -> "#f8f5f0"
+ * - RGB: "rgb(248, 245, 240)" -> "#f8f5f0"
+ * - HSL string: "47.9 27.1% 95.9%" -> "#f8f5f0"
  */
-function hslToHex(hsl: string): string {
-  // Parse HSL string like "47.9 27.1% 95.9%"
-  const parts = hsl.split(/\s+/)
-  if (parts.length !== 3) {
-    // Fallback to a neutral color if parsing fails
-    return '#f8f5f0'
+function toHex(value: string): string | null {
+  if (!value) return null
+
+  // Already hex
+  if (value.startsWith('#')) return value
+
+  // rgb(r, g, b) or rgba(r, g, b, a)
+  const rgbMatch = value.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/)
+  if (rgbMatch) {
+    const r = parseInt(rgbMatch[1]).toString(16).padStart(2, '0')
+    const g = parseInt(rgbMatch[2]).toString(16).padStart(2, '0')
+    const b = parseInt(rgbMatch[3]).toString(16).padStart(2, '0')
+    return `#${r}${g}${b}`
   }
 
-  const h = parseFloat(parts[0])
-  const s = parseFloat(parts[1].replace('%', '')) / 100
-  const l = parseFloat(parts[2].replace('%', '')) / 100
-
-  const c = (1 - Math.abs(2 * l - 1)) * s
-  const x = c * (1 - Math.abs(((h / 60) % 2) - 1))
-  const m = l - c / 2
-
-  let r = 0
-  let g = 0
-  let b = 0
-
-  if (h >= 0 && h < 60) {
-    r = c
-    g = x
-    b = 0
-  } else if (h >= 60 && h < 120) {
-    r = x
-    g = c
-    b = 0
-  } else if (h >= 120 && h < 180) {
-    r = 0
-    g = c
-    b = x
-  } else if (h >= 180 && h < 240) {
-    r = 0
-    g = x
-    b = c
-  } else if (h >= 240 && h < 300) {
-    r = x
-    g = 0
-    b = c
-  } else if (h >= 300 && h < 360) {
-    r = c
-    g = 0
-    b = x
+  // HSL string "H S% L%"
+  const parts = value.split(/\s+/)
+  if (parts.length >= 3) {
+    const h = parseFloat(parts[0])
+    const s = parseFloat(parts[1].replace('%', '')) / 100
+    const l = parseFloat(parts[2].replace('%', '')) / 100
+    if (!isNaN(h) && !isNaN(s) && !isNaN(l)) {
+      const c = (1 - Math.abs(2 * l - 1)) * s
+      const x = c * (1 - Math.abs(((h / 60) % 2) - 1))
+      const m = l - c / 2
+      let r = 0, g = 0, b = 0
+      if (h < 60) { r = c; g = x }
+      else if (h < 120) { r = x; g = c }
+      else if (h < 180) { g = c; b = x }
+      else if (h < 240) { g = x; b = c }
+      else if (h < 300) { r = x; b = c }
+      else { r = c; b = x }
+      const toH = (n: number) => Math.round((n + m) * 255).toString(16).padStart(2, '0')
+      return `#${toH(r)}${toH(g)}${toH(b)}`
+    }
   }
 
-  const toHex = (n: number): string => {
-    const hex = Math.round((n + m) * 255).toString(16)
-    return hex.length === 1 ? `0${hex}` : hex
-  }
-
-  return `#${toHex(r)}${toHex(g)}${toHex(b)}`
+  return null
 }
