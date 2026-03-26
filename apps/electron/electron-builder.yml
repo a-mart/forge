@@ -38,6 +38,7 @@ publish:
 mac:
   target:
     - target: dmg
+    - target: zip
   category: public.app-category.developer-tools
   identity: ''
   hardenedRuntime: true
