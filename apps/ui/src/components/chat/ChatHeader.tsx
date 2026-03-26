@@ -166,7 +166,7 @@ export function ChatHeader({
   const platform = electronPlatform || (typeof window !== 'undefined' ? (window.navigator.platform ?? '') : '')
   const normalizedPlatform = platform.toLowerCase()
   const isMacPlatform = normalizedPlatform.includes('mac') || normalizedPlatform.includes('darwin')
-  const isFramelessDesktop = electronPlatform === 'darwin' // macOS hiddenInset needs drag region; Windows uses native title bar
+  const isFramelessDesktop = false
   const terminalShortcutLabel = isMacPlatform ? '⌘`' : 'Ctrl+`'
 
   return (

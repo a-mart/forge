@@ -2115,9 +2115,7 @@ export function AgentSidebar({
         'max-md:w-full md:w-[20rem] md:min-w-[20rem] md:shrink-0',
       )}
     >
-      <div className={cn("mb-2 flex h-[62px] shrink-0 items-center gap-2 border-b border-sidebar-border px-2",
-        typeof window !== 'undefined' && window.electronBridge?.platform === 'darwin' && 'pl-[76px]'
-      )}>
+      <div className="mb-2 flex h-[62px] shrink-0 items-center gap-2 border-b border-sidebar-border px-2">
         <button
           type="button"
           onClick={onAddManager}
