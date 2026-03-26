@@ -437,8 +437,8 @@ if (!hasSingleInstanceLock) {
       if (!win || win.isDestroyed()) return
       const dark = nativeTheme.shouldUseDarkColors
       win.setTitleBarOverlay({
-        color: dark ? '#1c1917' : '#f8f5f0',
-        symbolColor: dark ? '#e7e5e4' : '#3e2723',
+        color: dark ? '#242424' : '#f8f5f0',
+        symbolColor: dark ? '#f0ebe5' : '#3e2723',
         height: 36,
       })
     }
@@ -515,8 +515,8 @@ function createMainWindow(): BrowserWindow {
       ? {
           titleBarStyle: 'hidden',
           titleBarOverlay: {
-            color: nativeTheme.shouldUseDarkColors ? '#1c1917' : '#f8f5f0',
-            symbolColor: nativeTheme.shouldUseDarkColors ? '#e7e5e4' : '#3e2723',
+            color: nativeTheme.shouldUseDarkColors ? '#242424' : '#f8f5f0',
+            symbolColor: nativeTheme.shouldUseDarkColors ? '#f0ebe5' : '#3e2723',
             height: 36,
           },
         }
