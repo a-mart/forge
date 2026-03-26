@@ -486,6 +486,19 @@ function createMainWindow(): BrowserWindow {
     minWidth: 1100,
     minHeight: 720,
     show: false,
+    ...(process.platform !== 'darwin'
+      ? {
+          titleBarStyle: 'hidden',
+          titleBarOverlay: {
+            color: '#1a1a2e',
+            symbolColor: '#e0e0e0',
+            height: 36,
+          },
+        }
+      : {
+          titleBarStyle: 'hiddenInset',
+          trafficLightPosition: { x: 12, y: 12 },
+        }),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -493,6 +506,10 @@ function createMainWindow(): BrowserWindow {
       nodeIntegration: false,
     },
   })
+
+  if (process.platform !== 'darwin') {
+    Menu.setApplicationMenu(null)
+  }
 
   window.once('ready-to-show', () => {
     window.show()
@@ -534,6 +551,11 @@ function sendTerminalShortcut(action: 'toggle' | 'new' | 'next' | 'prev'): void 
 
 function createApplicationMenu(): void {
   const isMac = process.platform === 'darwin'
+
+  if (!isMac) {
+    Menu.setApplicationMenu(null)
+    return
+  }
 
   const template: Array<Electron.MenuItemConstructorOptions> = []
 

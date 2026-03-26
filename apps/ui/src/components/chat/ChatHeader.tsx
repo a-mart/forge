@@ -162,21 +162,30 @@ export function ChatHeader({
   const isCortex = activeAgentArchetypeId === 'cortex'
   const panelLabel = isCortex ? 'Dashboard' : 'Artifacts'
   const anyCompactionInProgress = compactInProgress || smartCompactInProgress || autoCompactionInProgress
-  const platform = typeof window !== 'undefined'
-    ? (window.electronBridge?.platform ?? window.navigator.platform ?? '')
-    : ''
-  const isMacPlatform = platform.toLowerCase().includes('mac') || platform.toLowerCase().includes('darwin')
+  const electronPlatform = typeof window !== 'undefined' ? (window.electronBridge?.platform ?? '') : ''
+  const platform = electronPlatform || (typeof window !== 'undefined' ? (window.navigator.platform ?? '') : '')
+  const normalizedPlatform = platform.toLowerCase()
+  const isMacPlatform = normalizedPlatform.includes('mac') || normalizedPlatform.includes('darwin')
+  const isFramelessDesktop = electronPlatform === 'win32' || electronPlatform === 'linux'
   const terminalShortcutLabel = isMacPlatform ? '⌘`' : 'Ctrl+`'
 
   return (
-    <header className="sticky top-0 z-10 flex h-[62px] w-full shrink-0 items-center justify-between gap-2 overflow-hidden border-b border-border/80 bg-card/80 px-2 backdrop-blur md:px-4">
+    <header
+      className={cn(
+        'sticky top-0 z-10 flex h-[62px] w-full shrink-0 items-center justify-between gap-2 overflow-hidden border-b border-border/80 bg-card/80 px-2 backdrop-blur md:px-4',
+        isFramelessDesktop && '[-webkit-app-region:drag]',
+      )}
+    >
       <div className="flex min-w-0 flex-1 items-center gap-2 md:gap-3">
         {/* Mobile hamburger */}
         {onToggleMobileSidebar ? (
           <Button
             variant="ghost"
             size="icon"
-            className="relative size-11 shrink-0 text-muted-foreground hover:bg-accent/70 hover:text-foreground md:hidden"
+            className={cn(
+              'relative size-11 shrink-0 text-muted-foreground hover:bg-accent/70 hover:text-foreground md:hidden',
+              isFramelessDesktop && '[-webkit-app-region:no-drag]',
+            )}
             onClick={onToggleMobileSidebar}
             aria-label="Open sidebar"
           >
@@ -240,7 +249,12 @@ export function ChatHeader({
             {statusLabel}
           </span>
           {activeAgentId && onSessionFeedbackVote ? (
-            <div className="hidden shrink-0 items-center gap-1.5 md:flex">
+            <div
+              className={cn(
+                'hidden shrink-0 items-center gap-1.5 md:flex',
+                isFramelessDesktop && '[-webkit-app-region:no-drag]',
+              )}
+            >
               <span aria-hidden="true" className="shrink-0 text-muted-foreground">
                 ·
               </span>
@@ -260,7 +274,12 @@ export function ChatHeader({
         </div>
       </div>
 
-      <div className="flex shrink-0 items-center gap-1.5">
+      <div
+        className={cn(
+          'flex shrink-0 items-center gap-1.5',
+          isFramelessDesktop && '[-webkit-app-region:no-drag]',
+        )}
+      >
         {/* ── Inline: channel toggle + context window ── */}
         <div className="hidden sm:inline-flex items-center gap-1">
           <div className="inline-flex h-7 items-center rounded-md border border-border/60 bg-muted/30 p-0.5">

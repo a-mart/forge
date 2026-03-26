@@ -26,6 +26,7 @@ const useShell = process.platform === 'win32'
 
 const BACKEND_BUNDLE_EXTERNAL_PACKAGES = [
   { name: 'sharp', optional: false },
+  { name: 'node-pty', optional: false },
   { name: 'koffi', optional: true },
   { name: '@mariozechner/clipboard', optional: true },
 ]
