@@ -1,4 +1,4 @@
-import { FolderOpen, GitBranch, Loader2, Menu, Minimize2, MoreHorizontal, PanelRight, Sparkles, Square, Trash2 } from 'lucide-react'
+import { FolderOpen, GitBranch, Loader2, Menu, Minimize2, MoreHorizontal, PanelRight, Sparkles, Square, SquareTerminal, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
@@ -43,6 +43,9 @@ interface ChatHeaderProps {
   onNewChat: () => void
   isArtifactsPanelOpen: boolean
   onToggleArtifactsPanel: () => void
+  isTerminalPanelOpen?: boolean
+  terminalCount?: number
+  onToggleTerminalPanel?: () => void
   onOpenDiffViewer?: () => void
   diffViewerAvailable?: boolean
   isFileBrowserOpen?: boolean
@@ -137,6 +140,9 @@ export function ChatHeader({
   onNewChat,
   isArtifactsPanelOpen,
   onToggleArtifactsPanel,
+  isTerminalPanelOpen = false,
+  terminalCount = 0,
+  onToggleTerminalPanel,
   onOpenDiffViewer,
   diffViewerAvailable = true,
   isFileBrowserOpen = false,
@@ -156,6 +162,11 @@ export function ChatHeader({
   const isCortex = activeAgentArchetypeId === 'cortex'
   const panelLabel = isCortex ? 'Dashboard' : 'Artifacts'
   const anyCompactionInProgress = compactInProgress || smartCompactInProgress || autoCompactionInProgress
+  const platform = typeof window !== 'undefined'
+    ? (window.electronBridge?.platform ?? window.navigator.platform ?? '')
+    : ''
+  const isMacPlatform = platform.toLowerCase().includes('mac') || platform.toLowerCase().includes('darwin')
+  const terminalShortcutLabel = isMacPlatform ? '⌘`' : 'Ctrl+`'
 
   return (
     <header className="sticky top-0 z-10 flex h-[62px] w-full shrink-0 items-center justify-between gap-2 overflow-hidden border-b border-border/80 bg-card/80 px-2 backdrop-blur md:px-4">
@@ -357,6 +368,37 @@ export function ChatHeader({
 
         {/* ── Inline: file browser + diff viewer + artifacts/dashboard toggle ── */}
         <div className="inline-flex items-center gap-0.5">
+          {onToggleTerminalPanel ? (
+            <TooltipProvider delayDuration={200}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className={cn(
+                      'relative size-7 shrink-0 transition-colors',
+                      isTerminalPanelOpen
+                        ? 'bg-accent text-foreground'
+                        : 'text-muted-foreground hover:bg-accent/70 hover:text-foreground',
+                    )}
+                    onClick={onToggleTerminalPanel}
+                    aria-label={isTerminalPanelOpen ? 'Hide terminal panel' : 'Open terminal panel'}
+                    aria-pressed={isTerminalPanelOpen}
+                  >
+                    <SquareTerminal className="size-3.5" />
+                    {!isTerminalPanelOpen && terminalCount > 0 ? (
+                      <span className="absolute -top-1 -right-1 min-w-4 rounded-full bg-primary px-1 text-[10px] font-semibold leading-4 text-primary-foreground">
+                        {terminalCount > 9 ? '9+' : terminalCount}
+                      </span>
+                    ) : null}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" sideOffset={6}>
+                  {isTerminalPanelOpen ? 'Hide terminal panel' : `Terminal (${terminalShortcutLabel})`}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          ) : null}
           {onToggleFileBrowser && fileBrowserAvailable ? (
             <TooltipProvider delayDuration={200}>
               <Tooltip>

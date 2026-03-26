@@ -14,11 +14,14 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@forge/protocol": "workspace:*",
     "@google/genai": "^1.42.0",
     "@mariozechner/pi-ai": "^0.56.2",
     "@mariozechner/pi-coding-agent": "^0.55.0",
     "@mozilla/readability": "^0.6.0",
     "@sinclair/typebox": "^0.34.41",
+    "@xterm/addon-serialize": "0.14.0",
+    "@xterm/headless": "6.0.0",
     "cron-parser": "^5.4.0",
     "dotenv": "^17.3.1",
     "jsdom": "^27.0.1",
@@ -26,8 +29,10 @@
     "sharp": "^0.34.5",
     "turndown": "^7.2.2",
     "turndown-plugin-gfm": "^1.0.2",
-    "ws": "^8.18.0",
-    "@forge/protocol": "workspace:*"
+    "ws": "^8.18.0"
+  },
+  "optionalDependencies": {
+    "node-pty": "^1.1.0"
   },
   "devDependencies": {
     "@types/node": "^24.3.0",

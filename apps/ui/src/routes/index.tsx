@@ -27,6 +27,7 @@ import { DiffViewerDialog } from '@/components/diff-viewer/DiffViewerDialog'
 import { FileBrowserSidebar } from '@/components/file-browser/FileBrowserSidebar'
 import { FileBrowserPanel } from '@/components/file-browser/FileBrowserPanel'
 import { PlaywrightDashboardView } from '@/components/playwright/PlaywrightDashboardView'
+import { TerminalPanel } from '@/components/terminal/TerminalPanel'
 import { SettingsPanel } from '@/components/chat/SettingsDialog'
 import { StatsPanel } from '@/components/stats/StatsPanel'
 import { chooseFallbackAgentId } from '@/lib/agent-hierarchy'
@@ -46,6 +47,8 @@ import { usePendingResponse } from '@/hooks/index-page/use-pending-response'
 import { useFileDrop } from '@/hooks/index-page/use-file-drop'
 import { useOnboardingState } from '@/hooks/use-onboarding-state'
 import { useDynamicFavicon } from '@/hooks/use-dynamic-favicon'
+import { useTerminalPanel } from '@/hooks/useTerminalPanel'
+import { cn } from '@/lib/utils'
 import type {
   AgentDescriptor,
   ChoiceAnswer,
@@ -163,6 +166,31 @@ export function IndexPage() {
       DEFAULT_MANAGER_AGENT_ID
     )
   }, [activeAgent, state.agents])
+
+  const terminalSessionAgentId = activeAgent ? activeManagerId : null
+  const terminalSessionAgent = useMemo(() => {
+    if (!terminalSessionAgentId) {
+      return null
+    }
+
+    return state.agents.find(
+      (agent) => agent.role === 'manager' && agent.agentId === terminalSessionAgentId,
+    ) ?? null
+  }, [state.agents, terminalSessionAgentId])
+
+  const terminalPanel = useTerminalPanel({
+    wsUrl,
+    sessionAgentId: terminalSessionAgentId,
+    sessionCwd: terminalSessionAgent?.cwd ?? activeAgent?.cwd ?? null,
+    terminals: state.terminals,
+    enabled: activeView === 'chat',
+    onError: (message) => {
+      setState((previous) => ({
+        ...previous,
+        lastError: message,
+      }))
+    },
+  })
 
   // Workers belonging to the active manager session (for pill bar)
   const sessionWorkers = useMemo(() => {
@@ -835,6 +863,10 @@ export function IndexPage() {
     messageInputRef.current?.setInput(prompt)
   }
 
+  const handleFocusChatInput = useCallback(() => {
+    messageInputRef.current?.focus()
+  }, [])
+
   const handleToggleArtifactsPanel = useCallback(() => {
     setIsArtifactsPanelOpen((previous) => {
       if (!previous) {
@@ -1020,6 +1052,9 @@ export function IndexPage() {
                   onNewChat={handleNewChat}
                   isArtifactsPanelOpen={isArtifactsPanelOpen}
                   onToggleArtifactsPanel={handleToggleArtifactsPanel}
+                  isTerminalPanelOpen={terminalPanel.isPanelVisible}
+                  terminalCount={state.terminals.length}
+                  onToggleTerminalPanel={terminalSessionAgentId ? terminalPanel.togglePanel : undefined}
                   onOpenDiffViewer={() => setIsDiffViewerOpen(true)}
                   isFileBrowserOpen={isFileBrowserOpen}
                   onToggleFileBrowser={handleToggleFileBrowser}
@@ -1071,26 +1106,33 @@ export function IndexPage() {
                   />
                 ) : (
                   <>
-                    <MessageList
-                      ref={messageListRef}
-                      messages={visibleMessages}
-                      isLoading={isLoading}
-                      wsUrl={wsUrl}
-                      activeAgentId={activeAgentId}
-                      onSuggestionClick={handleSuggestionClick}
-                      onArtifactClick={handleOpenArtifact}
-                      onForkFromMessage={activeAgentId ? handleForkFromMessage : undefined}
-                      getVote={feedbackProfileId ? getVote : undefined}
-                      hasComment={feedbackProfileId ? hasComment : undefined}
-                      onFeedbackVote={feedbackProfileId ? submitVote : undefined}
-                      onFeedbackComment={feedbackProfileId ? submitComment : undefined}
-                      onFeedbackClearComment={feedbackProfileId ? clearComment : undefined}
-                      isFeedbackSubmitting={isFeedbackSubmitting}
-                      onChoiceSubmit={handleChoiceSubmit}
-                      onChoiceCancel={handleChoiceCancel}
-                      pendingChoiceIds={state.pendingChoiceIds}
-                      streamingStartedAt={activeAgentStatus === 'streaming' ? state.statuses[activeAgentId ?? '']?.streamingStartedAt : undefined}
-                    />
+                    <div
+                      className={cn(
+                        'min-h-0 flex flex-1 flex-col overflow-hidden',
+                        terminalPanel.panelMode === 'maximized' && !terminalPanel.isMobile && terminalPanel.isPanelVisible && 'hidden',
+                      )}
+                    >
+                      <MessageList
+                        ref={messageListRef}
+                        messages={visibleMessages}
+                        isLoading={isLoading}
+                        wsUrl={wsUrl}
+                        activeAgentId={activeAgentId}
+                        onSuggestionClick={handleSuggestionClick}
+                        onArtifactClick={handleOpenArtifact}
+                        onForkFromMessage={activeAgentId ? handleForkFromMessage : undefined}
+                        getVote={feedbackProfileId ? getVote : undefined}
+                        hasComment={feedbackProfileId ? hasComment : undefined}
+                        onFeedbackVote={feedbackProfileId ? submitVote : undefined}
+                        onFeedbackComment={feedbackProfileId ? submitComment : undefined}
+                        onFeedbackClearComment={feedbackProfileId ? clearComment : undefined}
+                        isFeedbackSubmitting={isFeedbackSubmitting}
+                        onChoiceSubmit={handleChoiceSubmit}
+                        onChoiceCancel={handleChoiceCancel}
+                        pendingChoiceIds={state.pendingChoiceIds}
+                        streamingStartedAt={activeAgentStatus === 'streaming' ? state.statuses[activeAgentId ?? '']?.streamingStartedAt : undefined}
+                      />
+                    </div>
 
                     {isActiveManager ? (
                       <WorkerPillBar
@@ -1105,6 +1147,38 @@ export function IndexPage() {
                         onNavigateBack={() => handleSelectAgent(activeAgent.managerId)}
                       />
                     ) : null}
+
+                    <div className="px-3">
+                    <TerminalPanel
+                      wsUrl={wsUrl}
+                      sessionAgentId={terminalSessionAgentId}
+                      terminals={state.terminals}
+                      panelMode={terminalPanel.panelMode}
+                      activeTerminalId={terminalPanel.activeTerminalId}
+                      panelHeight={terminalPanel.panelHeight}
+                      isMobile={terminalPanel.isMobile}
+                      maxTerminalsPerSession={terminalPanel.maxTerminalsPerSession}
+                      editingTerminalId={terminalPanel.editingTerminalId}
+                      renameDraft={terminalPanel.renameDraft}
+                      initialTickets={terminalPanel.initialTickets}
+                      onSelectTerminal={terminalPanel.setActiveTerminalId}
+                      onCreateTerminal={() => {
+                        void terminalPanel.createTerminal()
+                      }}
+                      onCloseTerminal={terminalPanel.closeTerminal}
+                      onStartRenameTerminal={terminalPanel.startRenameTerminal}
+                      onRenameDraftChange={terminalPanel.setRenameDraft}
+                      onCommitRenameTerminal={terminalPanel.commitRenameTerminal}
+                      onCancelRenameTerminal={terminalPanel.cancelRenameTerminal}
+                      onCollapsePanel={terminalPanel.collapsePanel}
+                      onRestorePanel={terminalPanel.restorePanel}
+                      onMaximizePanel={terminalPanel.maximizePanel}
+                      onHidePanel={terminalPanel.hidePanel}
+                      onPanelHeightChange={terminalPanel.setPanelHeight}
+                      onFocusChatInput={handleFocusChatInput}
+                      issueTicket={terminalPanel.issueTicket}
+                    />
+                    </div>
 
                     <MessageInput
                       ref={messageInputRef}

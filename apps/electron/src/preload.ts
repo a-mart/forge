@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
 const BACKEND_READY_CHANNEL = 'forge:get-backend-bootstrap'
+const TERMINAL_SHORTCUT_CHANNEL = 'bridge:terminal-shortcut'
 
 type BackendBootstrap = {
   backendUrl: string
@@ -18,6 +19,15 @@ contextBridge.exposeInMainWorld('electronBridge', {
   platform: bootstrap.platform,
   showOpenDialog: (options: Electron.OpenDialogOptions): Promise<Electron.OpenDialogReturnValue> =>
     ipcRenderer.invoke('bridge:showOpenDialog', options),
+  onTerminalShortcut: (listener: (event: { action: 'toggle' | 'new' | 'next' | 'prev' }) => void): (() => void) => {
+    const wrapped = (_event: Electron.IpcRendererEvent, payload: { action: 'toggle' | 'new' | 'next' | 'prev' }) => {
+      listener(payload)
+    }
+    ipcRenderer.on(TERMINAL_SHORTCUT_CHANNEL, wrapped)
+    return () => {
+      ipcRenderer.removeListener(TERMINAL_SHORTCUT_CHANNEL, wrapped)
+    }
+  },
 })
 
 function readBootstrap(): BackendBootstrap {

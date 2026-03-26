@@ -23,6 +23,12 @@ import type {
   SessionMemoryMergeResult,
   SessionMemoryMergeStrategy,
 } from './shared-types.js'
+import type {
+  TerminalClosedEvent,
+  TerminalCreatedEvent,
+  TerminalsSnapshotEvent,
+  TerminalUpdatedEvent,
+} from './terminal-types.js'
 
 export interface ConversationMessageEvent {
   type: 'conversation_message'
@@ -368,5 +374,9 @@ export type ServerEvent =
   | PlaywrightDiscoverySettingsUpdatedEvent
   | PromptChangedEvent
   | CortexPromptSurfaceChangedEvent
+  | TerminalCreatedEvent
+  | TerminalUpdatedEvent
+  | TerminalClosedEvent
+  | TerminalsSnapshotEvent
   | ApiProxyResponseEvent
   | { type: 'error'; code: string; message: string; requestId?: string }

@@ -93,6 +93,41 @@ export function getSessionMetaPath(dataDir: string, profileId: string, sessionAg
   return join(getSessionDir(dataDir, profileId, sessionAgentId), "meta.json");
 }
 
+export function getSessionTerminalsDir(dataDir: string, profileId: string, sessionAgentId: string): string {
+  return join(getSessionDir(dataDir, profileId, sessionAgentId), "terminals");
+}
+
+function getTerminalDir(dataDir: string, profileId: string, sessionAgentId: string, terminalId: string): string {
+  return join(getSessionTerminalsDir(dataDir, profileId, sessionAgentId), sanitizePathSegment(terminalId));
+}
+
+export function getTerminalMetaPath(
+  dataDir: string,
+  profileId: string,
+  sessionAgentId: string,
+  terminalId: string
+): string {
+  return join(getTerminalDir(dataDir, profileId, sessionAgentId, terminalId), "meta.json");
+}
+
+export function getTerminalSnapshotPath(
+  dataDir: string,
+  profileId: string,
+  sessionAgentId: string,
+  terminalId: string
+): string {
+  return join(getTerminalDir(dataDir, profileId, sessionAgentId, terminalId), "snapshot.vt");
+}
+
+export function getTerminalLogPath(
+  dataDir: string,
+  profileId: string,
+  sessionAgentId: string,
+  terminalId: string
+): string {
+  return join(getTerminalDir(dataDir, profileId, sessionAgentId, terminalId), "delta.ndjson");
+}
+
 // ── Worker-level paths ─────────────────────────────────────────────────────────
 
 export function getWorkersDir(dataDir: string, profileId: string, sessionAgentId: string): string {

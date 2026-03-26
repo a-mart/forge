@@ -46,6 +46,8 @@ function RootDocument({ children }: { children: React.ReactNode }) {
     preloadBuiltInSounds()
   }, [])
 
+  const showTanStackDevtools = import.meta.env.VITE_FORGE_DISABLE_TANSTACK_DEVTOOLS !== 'true'
+
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
@@ -55,7 +57,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
       <body className="overflow-hidden">
         <TooltipProvider>
           {children}
-          {import.meta.env.DEV && !isElectron() && (
+          {showTanStackDevtools && import.meta.env.DEV && !isElectron() ? (
             <TanStackDevtools
               config={{
                 position: 'bottom-right',
@@ -67,7 +69,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
                 },
               ]}
             />
-          )}
+          ) : null}
         </TooltipProvider>
         <Scripts />
       </body>

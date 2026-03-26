@@ -7,6 +7,7 @@ import type {
   PlaywrightDiscoverySettings,
   PlaywrightDiscoverySnapshot,
   TelegramStatusEvent,
+  TerminalDescriptor,
 } from '@forge/protocol'
 
 export type ConversationHistoryEntry = Extract<
@@ -36,6 +37,8 @@ export interface ManagerWsState {
   playwrightSnapshot: PlaywrightDiscoverySnapshot | null
   playwrightSettings: PlaywrightDiscoverySettings | null
   unreadCounts: Record<string, number>
+  terminals: TerminalDescriptor[]
+  terminalSessionScopeId: string | null
   hasReceivedAgentsSnapshot: boolean
   /** Monotonically increasing counter bumped on prompt-related WS events */
   promptChangeKey: number
@@ -59,6 +62,8 @@ export function createInitialManagerWsState(targetAgentId: string | null): Manag
     playwrightSnapshot: null,
     playwrightSettings: null,
     unreadCounts: {},
+    terminals: [],
+    terminalSessionScopeId: null,
     hasReceivedAgentsSnapshot: false,
     promptChangeKey: 0,
   }

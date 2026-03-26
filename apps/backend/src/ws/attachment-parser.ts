@@ -9,7 +9,7 @@ export async function parseMultipartFormData(rawBody: Buffer, contentType: strin
     headers: {
       "content-type": contentType
     },
-    body: rawBody
+    body: new Uint8Array(rawBody)
   });
 
   try {

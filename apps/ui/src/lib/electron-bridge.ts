@@ -21,6 +21,8 @@ export interface ElectronBridge {
     defaultPath?: string
     properties?: Array<'openFile' | 'openDirectory' | 'multiSelections' | 'showHiddenFiles'>
   }): Promise<{ canceled: boolean; filePaths: string[] }>
+  /** Subscribe to Electron-delivered terminal shortcuts. */
+  onTerminalShortcut?(listener: (event: { action: 'toggle' | 'new' | 'next' | 'prev' }) => void): () => void
 }
 
 declare global {

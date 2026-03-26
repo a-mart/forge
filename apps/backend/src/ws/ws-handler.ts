@@ -4,7 +4,8 @@ import type {
   ApiProxyCommand,
   ApiProxyResponseEvent,
   FeedbackSubmitEvent,
-  ServerEvent
+  ServerEvent,
+  TerminalDescriptor,
 } from "@forge/protocol";
 import type { IntegrationRegistryService } from "../integrations/registry.js";
 import type { MobilePushService } from "../mobile/mobile-push-service.js";
@@ -49,6 +50,7 @@ export class WsHandler {
   private readonly playwrightDiscovery: PlaywrightDiscoveryService | null;
   private readonly allowNonManagerSubscriptions: boolean;
   private readonly feedbackService: FeedbackService;
+  private readonly listTerminalsForSession?: (sessionAgentId: string) => TerminalDescriptor[];
 
   private wss: WebSocketServer | null = null;
   private readonly subscriptions = new Map<WebSocket, string>();
@@ -59,6 +61,7 @@ export class WsHandler {
     mobilePushService: MobilePushService;
     playwrightDiscovery: PlaywrightDiscoveryService | null;
     allowNonManagerSubscriptions: boolean;
+    listTerminalsForSession?: (sessionAgentId: string) => TerminalDescriptor[];
   }) {
     this.swarmManager = options.swarmManager;
     this.integrationRegistry = options.integrationRegistry;
@@ -66,6 +69,7 @@ export class WsHandler {
     this.playwrightDiscovery = options.playwrightDiscovery;
     this.allowNonManagerSubscriptions = options.allowNonManagerSubscriptions;
     this.feedbackService = new FeedbackService(this.swarmManager.getConfig().paths.dataDir);
+    this.listTerminalsForSession = options.listTerminalsForSession;
   }
 
   attach(server: WebSocketServer): void {
@@ -126,6 +130,30 @@ export class WsHandler {
             continue;
           }
         }
+      }
+
+      this.send(client, event);
+    }
+  }
+
+  broadcastToSession(sessionAgentId: string, event: ServerEvent): void {
+    if (!this.wss) {
+      return;
+    }
+
+    for (const client of this.wss.clients) {
+      if (client.readyState !== WebSocket.OPEN) {
+        continue;
+      }
+
+      const subscribedAgent = this.subscriptions.get(client);
+      if (!subscribedAgent) {
+        continue;
+      }
+
+      const effectiveSessionAgentId = this.resolveManagerContextAgentId(subscribedAgent) ?? subscribedAgent;
+      if (effectiveSessionAgentId !== sessionAgentId) {
+        continue;
       }
 
       this.send(client, event);
@@ -894,6 +922,13 @@ export class WsHandler {
       type: "pending_choices_snapshot",
       agentId: targetAgentId,
       choiceIds: pendingChoiceIds,
+    });
+
+    const effectiveTerminalSessionId = this.resolveManagerContextAgentId(targetAgentId) ?? targetAgentId;
+    this.send(socket, {
+      type: "terminals_snapshot",
+      sessionAgentId: effectiveTerminalSessionId,
+      terminals: this.listTerminalsForSession?.(effectiveTerminalSessionId) ?? [],
     });
 
     const managerContextId = this.resolveManagerContextAgentId(targetAgentId);

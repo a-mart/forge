@@ -218,6 +218,8 @@ export class ManagerWsClient {
       messages: [],
       activityMessages: [],
       pendingChoiceIds: new Set(),
+      terminals: [],
+      terminalSessionScopeId: null,
       lastError: null,
       unreadCounts: nextUnread,
     })
@@ -866,6 +868,53 @@ export class ManagerWsClient {
         })
         break
 
+      case 'terminals_snapshot':
+        this.updateState({
+          terminals: event.terminals,
+          terminalSessionScopeId: event.sessionAgentId,
+        })
+        break
+
+      case 'terminal_created': {
+        if (event.sessionAgentId !== this.state.terminalSessionScopeId) {
+          break
+        }
+
+        const existingIndex = this.state.terminals.findIndex(
+          (terminal) => terminal.terminalId === event.terminal.terminalId,
+        )
+        const terminals = existingIndex >= 0
+          ? this.state.terminals.map((terminal, index) => index === existingIndex ? event.terminal : terminal)
+          : [...this.state.terminals, event.terminal]
+        this.updateState({ terminals })
+        break
+      }
+
+      case 'terminal_updated': {
+        if (event.sessionAgentId !== this.state.terminalSessionScopeId) {
+          break
+        }
+
+        const existingIndex = this.state.terminals.findIndex(
+          (terminal) => terminal.terminalId === event.terminal.terminalId,
+        )
+        const terminals = existingIndex >= 0
+          ? this.state.terminals.map((terminal, index) => index === existingIndex ? event.terminal : terminal)
+          : [...this.state.terminals, event.terminal]
+        this.updateState({ terminals })
+        break
+      }
+
+      case 'terminal_closed': {
+        if (event.sessionAgentId !== this.state.terminalSessionScopeId) {
+          break
+        }
+
+        const terminals = this.state.terminals.filter((terminal) => terminal.terminalId !== event.terminalId)
+        this.updateState({ terminals })
+        break
+      }
+
       case 'agent_status': {
         const prevEntry = this.state.statuses[event.agentId]
         const prevStatus = prevEntry?.status
@@ -1221,6 +1270,8 @@ export class ManagerWsClient {
       patch.messages = []
       patch.activityMessages = []
       patch.pendingChoiceIds = new Set()
+      patch.terminals = []
+      patch.terminalSessionScopeId = null
     }
 
     if (nextSubscribedAgentId !== this.state.subscribedAgentId) {
@@ -1350,6 +1401,8 @@ export class ManagerWsClient {
           messages: [],
           activityMessages: [],
           pendingChoiceIds: new Set(),
+          terminals: [],
+          terminalSessionScopeId: null,
         })
         return
       }
@@ -1366,6 +1419,8 @@ export class ManagerWsClient {
         messages: [],
         activityMessages: [],
         pendingChoiceIds: new Set(),
+        terminals: [],
+        terminalSessionScopeId: null,
       })
       return
     }
@@ -1413,6 +1468,8 @@ export class ManagerWsClient {
           messages: [],
           activityMessages: [],
           pendingChoiceIds: new Set(),
+          terminals: [],
+          terminalSessionScopeId: null,
         })
         return
       }

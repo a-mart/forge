@@ -45,8 +45,20 @@ See the [README](README.md) for full setup instructions, including Windows-speci
 - HTTP + WebSocket server in `apps/backend/src/ws/server.ts`.
 - Route handlers in `apps/backend/src/ws/routes/*` (one file per domain: agents, sessions, settings, etc.).
 - Agent orchestration and runtime logic in `apps/backend/src/swarm/*`.
+- Integrated terminal system in `apps/backend/src/terminal/*`.
 - Integrations (Telegram) in `apps/backend/src/integrations/*`.
 - Scheduler in `apps/backend/src/scheduler/*`.
+
+### Terminals
+
+Per-session integrated terminals backed by `node-pty` (backend) and `xterm.js` (frontend). Each terminal gets a dedicated WebSocket for raw I/O, separate from the main app WebSocket. A headless `xterm.js` instance on the backend tracks terminal state for snapshot/restore.
+
+- **Persistence:** Periodic VT state snapshots + an output journal (`delta.ndjson`). On server restart, terminals are restored from the most recent snapshot plus any subsequent journal entries, preserving scrollback and screen state.
+- **Session scoping:** Terminals belong to a manager session and are cleaned up when the session is deleted.
+- **Cross-platform:** macOS/Linux use the user's default shell; Windows uses ConPTY. Shell can be overridden via `FORGE_TERMINAL_DEFAULT_SHELL`.
+- **Access control:** Terminal WebSocket connections use short-lived tickets issued over the authenticated main WebSocket.
+
+For design details, see `.internal/research/integrated-terminals/`.
 
 ### Protocol
 
@@ -71,6 +83,7 @@ These are briefly described for orientation. Most have both backend and UI compo
 | **Worker stall detector** | `swarm/swarm-manager.ts` (WorkerStallState, checkForStalledWorkers) | — | Periodic wall-clock detection of workers stuck mid-tool-execution; two-stage nudge then auto-kill |
 | **Choice Picker** | `swarm/swarm-manager.ts` (pending registry), `swarm/swarm-tools.ts` (present_choices tool) | `components/chat/message-list/ChoiceRequestCard.tsx`, `components/chat/message-list/ChoiceAnsweredRow.tsx` | Interactive structured choice picker for agent-user decision points |
 | **Pi extensions** | Agent runtime (`pi-agent-runtime.ts`: `bindExtensions()`, `session_shutdown`, auto-discovery) | — | In-process custom tools, event interception, context modification, and packages via Pi's extension system. Auto-discovered from `~/.forge/agent/extensions/` (workers), `~/.forge/agent/manager/extensions/` (managers), and `<cwd>/.pi/extensions/` (project-local). See [`docs/PI_EXTENSIONS.md`](docs/PI_EXTENSIONS.md) |
+| **Integrated terminals** | `terminal/` | `components/terminal/` | Per-session PTY terminals with persistence and state restoration |
 | **Electron desktop app** | `apps/electron/src/main.ts`, `auto-updater.ts`, `preload.ts` | — | Standalone desktop application wrapper for macOS, Windows, and Linux. Bundles backend, UI, and all dependencies. Supports auto-updates from GitHub Releases. |
 
 Backend paths above are relative to `apps/backend/src/`. UI paths are relative to `apps/ui/src/`.
@@ -133,7 +146,11 @@ All runtime state lives in `~/.forge` (or `%LOCALAPPDATA%\forge` on Windows), ov
         ├── memory.md                      # Session working memory
         ├── meta.json                      # Session metadata
         ├── feedback.jsonl                 # User feedback
-        └── workers/<workerId>.jsonl       # Worker conversation logs
+        ├── workers/<workerId>.jsonl       # Worker conversation logs
+        └── terminals/<terminalId>/
+            ├── meta.json                  # Terminal metadata (shell, cwd, title, cols/rows)
+            ├── snapshot.vt                # Serialized terminal state (xterm.js headless)
+            └── delta.ndjson               # Raw output journal for replay between snapshots
 ```
 
 Session forks now support a **partial fork** from a specific message: the forked `session.jsonl` is copied up to that message only.
@@ -206,6 +223,11 @@ Copy `.env.example` to `.env` and uncomment/set values as needed. Key variables:
 | `GEMINI_API_KEY` | — | Image generation skill |
 | `CODEX_API_KEY` | — | OpenAI Codex runtime |
 | `CODEX_BIN` | `codex` | Path to Codex binary |
+| `FORGE_TERMINAL_ENABLED` | `true` | Enable integrated terminal subsystem |
+| `FORGE_TERMINAL_MAX_PER_SESSION` | `10` | Max terminals per session |
+| `FORGE_TERMINAL_SNAPSHOT_INTERVAL_MS` | `30000` | Terminal state snapshot interval |
+| `FORGE_TERMINAL_SCROLLBACK_LINES` | `5000` | Max scrollback lines per terminal |
+| `FORGE_TERMINAL_DEFAULT_SHELL` | auto-detected | Override default shell |
 | `FORGE_PLAYWRIGHT_DASHBOARD_ENABLED` | `false` | Enable Playwright dashboard (macOS/Linux only) |
 | `FORGE_DESKTOP` | auto-detected | Set to `true` when running in Electron desktop app |
 | `FORGE_RESOURCES_DIR` | auto-detected | Path to bundled resources in Electron app |

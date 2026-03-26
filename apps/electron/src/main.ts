@@ -13,6 +13,7 @@ loadDotEnv()
 const ELECTRON_DEV_SERVER_URL = 'http://127.0.0.1:47188'
 const DEFAULT_BACKEND_PORT = 47287
 const BACKEND_READY_CHANNEL = 'forge:get-backend-bootstrap'
+const TERMINAL_SHORTCUT_CHANNEL = 'bridge:terminal-shortcut'
 const BACKEND_SHUTDOWN_TIMEOUT_MS = 5_000
 const BACKEND_RESTART_DELAY_MS = 1_000
 const BACKEND_LOG_TAIL_LINES = 40
@@ -411,9 +412,12 @@ if (!hasSingleInstanceLock) {
     event.returnValue = backendBootstrap ?? backendSupervisor.bootstrap
   })
 
-  ipcMain.handle('bridge:showOpenDialog', async (_event, options) => {
-    if (!mainWindow) return { canceled: true, filePaths: [] }
-    return dialog.showOpenDialog(mainWindow, options)
+  ipcMain.handle('bridge:showOpenDialog', async (_event, options: Electron.OpenDialogOptions) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      return dialog.showOpenDialog(mainWindow, options)
+    }
+
+    return dialog.showOpenDialog(options)
   })
 
   app.whenReady().then(async () => {
@@ -520,6 +524,14 @@ function createMainWindow(): BrowserWindow {
   return window
 }
 
+function sendTerminalShortcut(action: 'toggle' | 'new' | 'next' | 'prev'): void {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return
+  }
+
+  mainWindow.webContents.send(TERMINAL_SHORTCUT_CHANNEL, { action })
+}
+
 function createApplicationMenu(): void {
   const isMac = process.platform === 'darwin'
 
@@ -608,6 +620,33 @@ function createApplicationMenu(): void {
           ]),
       { type: 'separator' as const },
       { role: 'togglefullscreen' },
+    ],
+  })
+
+  template.push({
+    label: 'Terminal',
+    submenu: [
+      {
+        label: 'Toggle Terminal Panel',
+        accelerator: 'CmdOrCtrl+`',
+        click: (): void => sendTerminalShortcut('toggle'),
+      },
+      {
+        label: 'New Terminal',
+        accelerator: 'CmdOrCtrl+Shift+`',
+        click: (): void => sendTerminalShortcut('new'),
+      },
+      { type: 'separator' as const },
+      {
+        label: 'Previous Terminal',
+        accelerator: 'Alt+Shift+[',
+        click: (): void => sendTerminalShortcut('prev'),
+      },
+      {
+        label: 'Next Terminal',
+        accelerator: 'Alt+Shift+]',
+        click: (): void => sendTerminalShortcut('next'),
+      },
     ],
   })
 

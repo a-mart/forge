@@ -1,0 +1,45 @@
+@import "@xterm/xterm/css/xterm.css";
+
+.forge-terminal-panel {
+  --forge-terminal-bg: #141726;
+}
+
+.forge-terminal-surface {
+  background: var(--forge-terminal-bg);
+}
+
+.forge-terminal-host,
+.forge-terminal-host .xterm,
+.forge-terminal-host .xterm-screen,
+.forge-terminal-host .xterm-viewport {
+  height: 100%;
+}
+
+.forge-terminal-host .xterm {
+  padding: 0;
+}
+
+.forge-terminal-host .xterm-viewport {
+  background: var(--forge-terminal-bg) !important;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+
+.forge-terminal-host .xterm-viewport::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.forge-terminal-host .xterm-viewport::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.forge-terminal-host .xterm-viewport::-webkit-scrollbar-thumb {
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.forge-terminal-host .xterm-helpers,
+.forge-terminal-host .xterm-helper-textarea {
+  background: transparent;
+}

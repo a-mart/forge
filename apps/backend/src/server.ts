@@ -8,7 +8,12 @@ import { CronSchedulerService } from "./scheduler/cron-scheduler-service.js";
 import { getScheduleFilePath } from "./scheduler/schedule-storage.js";
 import { acquireRuntimeLock, type RuntimeLock } from "./runtime-lock.js";
 import { SwarmManager } from "./swarm/swarm-manager.js";
-import type { AgentDescriptor, SwarmConfig } from "./swarm/types.js";
+import type { AgentDescriptor, SessionLifecycleEvent, SwarmConfig } from "./swarm/types.js";
+import { readTerminalRuntimeConfig } from "./terminal/terminal-config.js";
+import { TerminalPersistence } from "./terminal/terminal-persistence.js";
+import { NodePtyRuntime } from "./terminal/terminal-pty-runtime.js";
+import type { TerminalSessionResolver } from "./terminal/terminal-session-resolver.js";
+import { TerminalService } from "./terminal/terminal-service.js";
 import { EmbeddedGitVersioningService } from "./versioning/embedded-git-versioning-service.js";
 import { SwarmWebSocketServer } from "./ws/server.js";
 
@@ -135,12 +140,86 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
 
   let playwrightDiscovery: PlaywrightDiscoveryService | null = null;
   let playwrightLivePreviewService: PlaywrightLivePreviewService | null = null;
+  let terminalService: TerminalService | null = null;
+  let handleTerminalSessionLifecycle: (event: SessionLifecycleEvent) => void = () => undefined;
+  let handleTerminalAgentsSnapshot: () => void = () => undefined;
   let server: BackendServer | null = null;
 
   try {
     await swarmManager.boot();
     await queueSchedulerSync(collectSchedulerProfileIds(swarmManager.listAgents(), config.managerId));
     swarmManager.on("agents_snapshot", handleAgentsSnapshot);
+
+    const terminalRuntimeConfig = readTerminalRuntimeConfig();
+    const terminalSessionResolver: TerminalSessionResolver = {
+      resolveSession: (sessionAgentId) => {
+        const descriptor = swarmManager.getAgent(sessionAgentId);
+        if (!descriptor || descriptor.role !== "manager") {
+          return undefined;
+        }
+
+        return {
+          sessionAgentId: descriptor.agentId,
+          profileId: descriptor.profileId ?? descriptor.agentId,
+          cwd: descriptor.cwd,
+        };
+      },
+      listSessions: () => swarmManager.listAgents()
+        .filter((descriptor) => descriptor.role === "manager")
+        .map((descriptor) => ({
+          sessionAgentId: descriptor.agentId,
+          profileId: descriptor.profileId ?? descriptor.agentId,
+          cwd: descriptor.cwd,
+        })),
+    };
+    const terminalPersistence = new TerminalPersistence({
+      dataDir: config.paths.dataDir,
+      scrollbackLines: terminalRuntimeConfig.scrollbackLines,
+      journalMaxBytes: terminalRuntimeConfig.journalMaxBytes,
+    });
+    const terminalPtyRuntime = new NodePtyRuntime({
+      outputBatchIntervalMs: terminalRuntimeConfig.outputBatchIntervalMs,
+      defaultShell: terminalRuntimeConfig.defaultShell,
+    });
+    terminalService = new TerminalService({
+      dataDir: config.paths.dataDir,
+      runtimeConfig: terminalRuntimeConfig,
+      sessionResolver: terminalSessionResolver,
+      ptyRuntime: terminalPtyRuntime,
+      persistence: terminalPersistence,
+      cwdPolicy: {
+        rootDir: config.paths.rootDir,
+        allowlistRoots: config.cwdAllowlistRoots,
+      },
+    });
+    handleTerminalSessionLifecycle = (event: SessionLifecycleEvent): void => {
+      if (event.action !== "deleted") {
+        return;
+      }
+
+      void terminalService?.cleanupSession(event.sessionAgentId, "session_deleted").catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.error(`[terminal] Failed to cleanup deleted session terminals: ${message}`);
+      });
+    };
+    handleTerminalAgentsSnapshot = (): void => {
+      void terminalService?.reconcileSessions().catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.error(`[terminal] Failed to reconcile session terminals: ${message}`);
+      });
+    };
+    swarmManager.on("session_lifecycle", handleTerminalSessionLifecycle);
+    swarmManager.on("agents_snapshot", handleTerminalAgentsSnapshot);
+    try {
+      const terminalInit = await terminalService.initialize();
+      logger.info(
+        `[terminal] initialized restoredRunning=${terminalInit.restoredRunning} restoredExited=${terminalInit.restoredExited} restoreFailed=${terminalInit.restoreFailed} cleanedOrphans=${terminalInit.cleanedOrphans} skipped=${terminalInit.skipped}`,
+      );
+    } catch (error) {
+      swarmManager.off("session_lifecycle", handleTerminalSessionLifecycle);
+      swarmManager.off("agents_snapshot", handleTerminalAgentsSnapshot);
+      throw error;
+    }
 
     await integrationRegistry.start();
     swarmManager.setIntegrationContextProvider((profileId) => {
@@ -180,6 +259,8 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
       playwrightLivePreviewService,
       playwrightSettingsService,
       playwrightEnvEnabledOverride,
+      terminalService,
+      terminalRuntimeConfig,
       promptRegistry: swarmManager.promptRegistry,
     });
 
@@ -193,6 +274,9 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
       wsServer,
       queueSchedulerSync,
       handleAgentsSnapshot,
+      terminalService,
+      handleTerminalSessionLifecycle,
+      handleTerminalAgentsSnapshot,
       runtimeLock,
     });
 
@@ -211,11 +295,16 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
       await server.stop();
     } else {
       swarmManager.off("agents_snapshot", handleAgentsSnapshot);
+      if (terminalService) {
+        swarmManager.off("session_lifecycle", handleTerminalSessionLifecycle);
+        swarmManager.off("agents_snapshot", handleTerminalAgentsSnapshot);
+      }
       await Promise.allSettled([
         queueSchedulerSync(new Set<string>()),
         integrationRegistry.stop(),
         playwrightDiscovery?.stop(),
         playwrightLivePreviewService?.stop(),
+        terminalService?.shutdown(),
         versioningService.stop(),
       ]);
       runtimeLock.release();
@@ -241,6 +330,9 @@ class BackendServer implements StartedServer {
   private readonly wsServer: SwarmWebSocketServer;
   private readonly queueSchedulerSync: (profileIds: Set<string>) => Promise<void>;
   private readonly handleAgentsSnapshot: (event: unknown) => void;
+  private readonly terminalService: TerminalService | null;
+  private readonly handleTerminalSessionLifecycle: (event: SessionLifecycleEvent) => void;
+  private readonly handleTerminalAgentsSnapshot: () => void;
   private readonly runtimeLock: RuntimeLock;
 
   private listening = false;
@@ -256,6 +348,9 @@ class BackendServer implements StartedServer {
     wsServer: SwarmWebSocketServer;
     queueSchedulerSync: (profileIds: Set<string>) => Promise<void>;
     handleAgentsSnapshot: (event: unknown) => void;
+    terminalService: TerminalService | null;
+    handleTerminalSessionLifecycle: (event: SessionLifecycleEvent) => void;
+    handleTerminalAgentsSnapshot: () => void;
     runtimeLock: RuntimeLock;
   }) {
     this.host = options.config.host;
@@ -269,6 +364,9 @@ class BackendServer implements StartedServer {
     this.wsServer = options.wsServer;
     this.queueSchedulerSync = options.queueSchedulerSync;
     this.handleAgentsSnapshot = options.handleAgentsSnapshot;
+    this.terminalService = options.terminalService;
+    this.handleTerminalSessionLifecycle = options.handleTerminalSessionLifecycle;
+    this.handleTerminalAgentsSnapshot = options.handleTerminalAgentsSnapshot;
     this.runtimeLock = options.runtimeLock;
   }
 
@@ -298,17 +396,23 @@ class BackendServer implements StartedServer {
 
     this.stopped = true;
     this.swarmManager.off("agents_snapshot", this.handleAgentsSnapshot);
+    this.swarmManager.off("session_lifecycle", this.handleTerminalSessionLifecycle);
+    this.swarmManager.off("agents_snapshot", this.handleTerminalAgentsSnapshot);
 
     const shouldStopWsServer = this.listening;
     this.listening = false;
+
+    if (shouldStopWsServer) {
+      await this.wsServer.stop();
+    }
 
     await Promise.allSettled([
       this.queueSchedulerSync(new Set<string>()),
       this.integrationRegistry.stop(),
       this.playwrightDiscovery?.stop(),
       this.playwrightLivePreviewService.stop(),
+      this.terminalService?.shutdown(),
       this.versioningService.stop(),
-      shouldStopWsServer ? this.wsServer.stop() : Promise.resolve(),
     ]);
 
     this.runtimeLock.release();
