@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, net, protocol, shell } from 'electron'
 import { fork, type ChildProcess, type ForkOptions } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
@@ -430,6 +430,21 @@ if (!hasSingleInstanceLock) {
     }
   })
 
+  // Sync title bar overlay with system dark/light mode
+  if (process.platform !== 'darwin') {
+    const updateOverlayForTheme = (): void => {
+      const win = mainWindow
+      if (!win || win.isDestroyed()) return
+      const dark = nativeTheme.shouldUseDarkColors
+      win.setTitleBarOverlay({
+        color: dark ? '#1c1917' : '#f8f5f0',
+        symbolColor: dark ? '#e7e5e4' : '#3e2723',
+        height: 36,
+      })
+    }
+    nativeTheme.on('updated', updateOverlayForTheme)
+  }
+
   app.whenReady().then(async () => {
     fixPath()
     createApplicationMenu()
@@ -500,8 +515,8 @@ function createMainWindow(): BrowserWindow {
       ? {
           titleBarStyle: 'hidden',
           titleBarOverlay: {
-            color: '#f8f5f0',
-            symbolColor: '#3e2723',
+            color: nativeTheme.shouldUseDarkColors ? '#1c1917' : '#f8f5f0',
+            symbolColor: nativeTheme.shouldUseDarkColors ? '#e7e5e4' : '#3e2723',
             height: 36,
           },
         }
