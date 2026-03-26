@@ -492,13 +492,9 @@ function createMainWindow(): BrowserWindow {
     minWidth: 1100,
     minHeight: 720,
     show: false,
-    ...(process.platform === 'darwin'
-      ? {
-          titleBarStyle: 'hiddenInset',
-        }
-      : {
-          autoHideMenuBar: true,
-        }),
+    ...(process.platform !== 'darwin' && {
+      autoHideMenuBar: true,
+    }),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
