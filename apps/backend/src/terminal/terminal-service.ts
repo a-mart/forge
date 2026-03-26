@@ -867,15 +867,21 @@ export class TerminalService extends EventEmitter {
     sessionAgentId: string,
     reason: Extract<TerminalCloseReason, "session_deleted" | "manager_deleted" | "orphan_cleanup">,
   ): Promise<number> {
-    const terminalIds = Array.from(this.terminals.values())
-      .filter((runtime) => runtime.meta.sessionAgentId === sessionAgentId)
-      .map((runtime) => runtime.meta.terminalId);
-
-    for (const terminalId of terminalIds) {
-      await this.closeTerminal({ terminalId, sessionAgentId, reason });
+    const targetScopeIds = new Set<string>([sessionAgentId]);
+    if (reason === "manager_deleted") {
+      const resolvedScope = this.sessionResolver.resolveSession(sessionAgentId)?.sessionAgentId;
+      if (resolvedScope) {
+        targetScopeIds.add(resolvedScope);
+      }
     }
 
-    return terminalIds.length;
+    const stale = Array.from(this.terminals.values()).filter((runtime) => targetScopeIds.has(runtime.meta.sessionAgentId));
+
+    for (const runtime of stale) {
+      await this.closeTerminal({ terminalId: runtime.meta.terminalId, sessionAgentId: runtime.meta.sessionAgentId, reason });
+    }
+
+    return stale.length;
   }
 
   async reconcileSessions(): Promise<{ removed: number }> {
@@ -1207,7 +1213,7 @@ export class TerminalService extends EventEmitter {
       (runtime) => runtime.meta.sessionAgentId === scopeSessionAgentId && !runtime.closed,
     ).length;
 
-    if (count >= this.runtimeConfig.maxTerminalsPerSession) {
+    if (count >= this.runtimeConfig.maxTerminalsPerManager) {
       throw new TerminalServiceError(
         "TERMINAL_LIMIT_REACHED",
         `Manager ${scopeSessionAgentId} already has ${count} terminals.`,

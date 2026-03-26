@@ -1,6 +1,6 @@
 export interface TerminalRuntimeConfig {
   enabled: boolean;
-  maxTerminalsPerSession: number;
+  maxTerminalsPerManager: number;
   defaultCols: number;
   defaultRows: number;
   scrollbackLines: number;
@@ -16,7 +16,7 @@ export interface TerminalRuntimeConfig {
 
 const DEFAULTS: TerminalRuntimeConfig = {
   enabled: true,
-  maxTerminalsPerSession: 10,
+  maxTerminalsPerManager: 10,
   defaultCols: 120,
   defaultRows: 30,
   scrollbackLines: 5000,
@@ -32,7 +32,7 @@ const DEFAULTS: TerminalRuntimeConfig = {
 export function readTerminalRuntimeConfig(env: NodeJS.ProcessEnv = process.env): TerminalRuntimeConfig {
   return {
     enabled: readBooleanEnv(env, "TERMINAL_ENABLED", DEFAULTS.enabled),
-    maxTerminalsPerSession: readIntegerEnv(env, "TERMINAL_MAX_PER_SESSION", DEFAULTS.maxTerminalsPerSession, 1),
+    maxTerminalsPerManager: readIntegerEnv(env, "TERMINAL_MAX_PER_SESSION", DEFAULTS.maxTerminalsPerManager, 1),
     defaultCols: readIntegerEnv(env, "TERMINAL_DEFAULT_COLS", DEFAULTS.defaultCols, 20),
     defaultRows: readIntegerEnv(env, "TERMINAL_DEFAULT_ROWS", DEFAULTS.defaultRows, 5),
     scrollbackLines: readIntegerEnv(env, "TERMINAL_SCROLLBACK_LINES", DEFAULTS.scrollbackLines, 100),

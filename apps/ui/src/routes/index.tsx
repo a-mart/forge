@@ -1187,7 +1187,7 @@ export function IndexPage() {
                       activeTerminalId={terminalPanel.activeTerminalId}
                       panelHeight={terminalPanel.panelHeight}
                       isMobile={terminalPanel.isMobile}
-                      maxTerminalsPerSession={terminalPanel.maxTerminalsPerSession}
+                      maxTerminalsPerManager={terminalPanel.maxTerminalsPerManager}
                       editingTerminalId={terminalPanel.editingTerminalId}
                       renameDraft={terminalPanel.renameDraft}
                       initialTickets={terminalPanel.initialTickets}

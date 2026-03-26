@@ -238,9 +238,11 @@ describe('TerminalPersistence', () => {
 
     await persistence.moveTerminalScope(meta, 'profile-1')
 
-    await expect(
-      readFile(getTerminalMetaPath(dataDir, meta.profileId, 'profile-1', meta.terminalId), 'utf8'),
-    ).resolves.toContain('terminal-move')
+    const movedMetaRaw = await readFile(getTerminalMetaPath(dataDir, meta.profileId, 'profile-1', meta.terminalId), 'utf8')
+    const movedMeta = JSON.parse(movedMetaRaw) as TerminalMeta
+
+    expect(movedMeta.terminalId).toBe('terminal-move')
+    expect(movedMeta.sessionAgentId).toBe('profile-1')
     await expect(
       readFile(getTerminalSnapshotPath(dataDir, meta.profileId, 'profile-1', meta.terminalId), 'utf8'),
     ).resolves.toBe('snapshot-content')

@@ -17,7 +17,7 @@ const DEFAULT_PANEL_HEIGHT = 250
 const MIN_PANEL_HEIGHT = 120
 const TABS_ONLY_HEIGHT = 36
 const MOBILE_MEDIA_QUERY = '(max-width: 767px)'
-const MAX_TERMINALS_PER_SESSION = 10
+const MAX_TERMINALS_PER_MANAGER = 10
 
 /**
  * Panel modes:
@@ -50,7 +50,7 @@ interface UseTerminalPanelResult {
   initialTickets: Record<string, TerminalTicketCacheEntry>
   editingTerminalId: string | null
   renameDraft: string
-  maxTerminalsPerSession: number
+  maxTerminalsPerManager: number
   isPanelVisible: boolean
   activeTerminal: TerminalDescriptor | null
   setPanelHeight: (height: number) => void
@@ -214,8 +214,8 @@ export function useTerminalPanel({
       return null
     }
 
-    if (terminals.length >= MAX_TERMINALS_PER_SESSION) {
-      handleError(`Maximum ${MAX_TERMINALS_PER_SESSION} terminals per manager.`)
+    if (terminals.length >= MAX_TERMINALS_PER_MANAGER) {
+      handleError(`Maximum ${MAX_TERMINALS_PER_MANAGER} terminals per manager.`)
       return null
     }
 
@@ -476,7 +476,7 @@ export function useTerminalPanel({
     initialTickets,
     editingTerminalId,
     renameDraft,
-    maxTerminalsPerSession: MAX_TERMINALS_PER_SESSION,
+    maxTerminalsPerManager: MAX_TERMINALS_PER_MANAGER,
     isPanelVisible: panelMode !== 'hidden',
     activeTerminal,
     setPanelHeight,

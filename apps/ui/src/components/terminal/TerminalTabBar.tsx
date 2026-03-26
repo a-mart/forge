@@ -18,7 +18,7 @@ interface TerminalTabBarProps {
   activeTerminalId: string | null
   panelMode: TerminalPanelMode
   isMobile: boolean
-  maxTerminalsPerSession: number
+  maxTerminalsPerManager: number
   editingTerminalId: string | null
   renameDraft: string
   onSelectTerminal: (terminalId: string) => void
@@ -58,7 +58,7 @@ export function TerminalTabBar({
   activeTerminalId,
   panelMode,
   isMobile,
-  maxTerminalsPerSession,
+  maxTerminalsPerManager,
   editingTerminalId,
   renameDraft,
   onSelectTerminal,
@@ -75,7 +75,7 @@ export function TerminalTabBar({
 }: TerminalTabBarProps) {
   const [restoredIndicators, setRestoredIndicators] = useState<Record<string, boolean>>({})
   const terminalCount = terminals.length
-  const createDisabled = terminalCount >= maxTerminalsPerSession
+  const createDisabled = terminalCount >= maxTerminalsPerManager
   const isViewportOpen = panelMode === 'open' || panelMode === 'maximized'
 
   useEffect(() => {
@@ -257,7 +257,7 @@ export function TerminalTabBar({
             </TooltipTrigger>
             <TooltipContent side="bottom" sideOffset={6}>
               {createDisabled
-                ? `Maximum ${maxTerminalsPerSession} terminals per manager.`
+                ? `Maximum ${maxTerminalsPerManager} terminals per manager.`
                 : 'New terminal'}
             </TooltipContent>
           </Tooltip>

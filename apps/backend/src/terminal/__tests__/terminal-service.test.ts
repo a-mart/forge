@@ -140,7 +140,7 @@ interface Harness {
 const harnesses: Harness[] = []
 
 async function createHarness(options: {
-  maxTerminalsPerSession?: number
+  maxTerminalsPerManager?: number
   enabled?: boolean
 } = {}): Promise<Harness> {
   const dataDir = await mkdtemp(join(tmpdir(), 'terminal-service-'))
@@ -177,7 +177,7 @@ async function createHarness(options: {
     dataDir,
     runtimeConfig: {
       enabled: options.enabled ?? true,
-      maxTerminalsPerSession: options.maxTerminalsPerSession ?? 10,
+      maxTerminalsPerManager: options.maxTerminalsPerManager ?? 10,
       defaultCols: 120,
       defaultRows: 30,
       scrollbackLines: 5_000,
@@ -217,7 +217,7 @@ function createRequest(overrides: Partial<TerminalCreateRequest> = {}): Terminal
 }
 
 async function createAndInitializeHarness(options: {
-  maxTerminalsPerSession?: number
+  maxTerminalsPerManager?: number
   enabled?: boolean
 } = {}): Promise<Harness> {
   const harness = await createHarness(options)
@@ -270,7 +270,7 @@ describe('TerminalService', () => {
       dataDir: first.dataDir,
       runtimeConfig: {
         enabled: true,
-        maxTerminalsPerSession: 10,
+        maxTerminalsPerManager: 10,
         defaultCols: 120,
         defaultRows: 30,
         scrollbackLines: 5_000,
@@ -391,7 +391,7 @@ describe('TerminalService', () => {
   })
 
   it('enforces the per-session terminal limit', async () => {
-    const { service } = await createAndInitializeHarness({ maxTerminalsPerSession: 1 })
+    const { service } = await createAndInitializeHarness({ maxTerminalsPerManager: 1 })
 
     await service.create(createRequest({ name: 'One' }))
     await expectTerminalServiceError(service.create(createRequest({ name: 'Two' })), 'TERMINAL_LIMIT_REACHED')
@@ -460,6 +460,24 @@ describe('TerminalService', () => {
     expect(service.getTerminal(third.terminal.terminalId)).toBeDefined()
     expect(service.listTerminals('session-b')).toHaveLength(3)
     expect(closedReasons).toEqual([])
+  })
+
+  it('cleans all terminals when manager scope is deleted', async () => {
+    const { service } = await createAndInitializeHarness()
+    const first = await service.create(createRequest({ name: 'One' }))
+    const second = await service.create(createRequest({ sessionAgentId: 'session-b', name: 'Two' }))
+
+    const closedReasons: TerminalCloseReason[] = []
+    service.on('terminal_closed', (event: { reason: TerminalCloseReason }) => {
+      closedReasons.push(event.reason)
+    })
+
+    const removed = await service.cleanupSession('profile-a', 'manager_deleted')
+
+    expect(removed).toBe(2)
+    expect(service.getTerminal(first.terminal.terminalId)).toBeUndefined()
+    expect(service.getTerminal(second.terminal.terminalId)).toBeUndefined()
+    expect(closedReasons).toEqual(['manager_deleted', 'manager_deleted'])
   })
 
   it('transitions running terminals to exited and emits lifecycle events when the PTY exits', async () => {

@@ -14,7 +14,7 @@ interface TerminalPanelProps {
   activeTerminalId: string | null
   panelHeight: number
   isMobile: boolean
-  maxTerminalsPerSession: number
+  maxTerminalsPerManager: number
   editingTerminalId: string | null
   renameDraft: string
   initialTickets: Record<string, { ticket: string; ticketExpiresAt: string }>
@@ -45,7 +45,7 @@ export function TerminalPanel({
   activeTerminalId,
   panelHeight,
   isMobile,
-  maxTerminalsPerSession,
+  maxTerminalsPerManager,
   editingTerminalId,
   renameDraft,
   initialTickets,
@@ -220,7 +220,7 @@ export function TerminalPanel({
         activeTerminalId={activeTerminal?.terminalId ?? null}
         panelMode={panelMode}
         isMobile={isMobile}
-        maxTerminalsPerSession={maxTerminalsPerSession}
+        maxTerminalsPerManager={maxTerminalsPerManager}
         editingTerminalId={editingTerminalId}
         renameDraft={renameDraft}
         onSelectTerminal={onSelectTerminal}

@@ -280,6 +280,12 @@ export class TerminalPersistence {
     await mkdir(dirname(nextTerminalDir), { recursive: true });
     await rm(nextTerminalDir, { recursive: true, force: true });
     await rename(currentTerminalDir, nextTerminalDir);
+
+    const updatedMeta: TerminalMeta = {
+      ...meta,
+      sessionAgentId: nextSessionAgentId,
+    };
+    await this.saveMeta(updatedMeta);
   }
 
   disposeMirror(terminalId: string): void {
