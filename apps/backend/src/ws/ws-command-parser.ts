@@ -364,6 +364,32 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
     };
   }
 
+  if (maybe.type === "rename_profile") {
+    const profileId = (maybe as { profileId?: unknown }).profileId;
+    const displayName = (maybe as { displayName?: unknown }).displayName;
+    const requestId = (maybe as { requestId?: unknown }).requestId;
+
+    if (typeof profileId !== "string" || profileId.trim().length === 0) {
+      return { ok: false, error: "rename_profile.profileId must be a non-empty string" };
+    }
+    if (typeof displayName !== "string" || displayName.trim().length === 0) {
+      return { ok: false, error: "rename_profile.displayName must be a non-empty string" };
+    }
+    if (requestId !== undefined && typeof requestId !== "string") {
+      return { ok: false, error: "rename_profile.requestId must be a string when provided" };
+    }
+
+    return {
+      ok: true,
+      command: {
+        type: "rename_profile",
+        profileId: profileId.trim(),
+        displayName: displayName.trim(),
+        requestId
+      }
+    };
+  }
+
   if (maybe.type === "fork_session") {
     const sourceAgentId = (maybe as { sourceAgentId?: unknown }).sourceAgentId;
     const label = (maybe as { label?: unknown }).label;
@@ -679,6 +705,7 @@ export function extractRequestId(command: ClientCommand): string | undefined {
     case "delete_session":
     case "clear_session":
     case "rename_session":
+    case "rename_profile":
     case "fork_session":
     case "merge_session_memory":
     case "get_session_workers":
