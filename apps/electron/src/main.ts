@@ -495,7 +495,6 @@ function createMainWindow(): BrowserWindow {
     ...(process.platform === 'darwin'
       ? {
           titleBarStyle: 'hiddenInset',
-          trafficLightPosition: { x: 12, y: 12 },
         }
       : {
           autoHideMenuBar: true,
