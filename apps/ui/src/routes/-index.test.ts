@@ -113,6 +113,7 @@ let root: Root | null = null
 
 const originalWebSocket = globalThis.WebSocket
 const originalScrollIntoView = HTMLElement.prototype.scrollIntoView
+const originalMatchMedia = window.matchMedia
 
 beforeEach(() => {
   FakeWebSocket.instances = []
@@ -123,6 +124,20 @@ beforeEach(() => {
     configurable: true,
     writable: true,
     value: vi.fn(),
+  })
+  Object.defineProperty(window, 'matchMedia', {
+    configurable: true,
+    writable: true,
+    value: vi.fn().mockImplementation((query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(() => false),
+    })),
   })
 
   container = document.createElement('div')
@@ -145,6 +160,11 @@ afterEach(() => {
     configurable: true,
     writable: true,
     value: originalScrollIntoView,
+  })
+  Object.defineProperty(window, 'matchMedia', {
+    configurable: true,
+    writable: true,
+    value: originalMatchMedia,
   })
 })
 

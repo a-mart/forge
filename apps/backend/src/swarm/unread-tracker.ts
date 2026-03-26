@@ -1,6 +1,7 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
-import { getProfileUnreadStatePath } from "./data-paths.js";
+import type { Dirent } from "node:fs";
+import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { getProfileUnreadStatePath, getProfilesDir } from "./data-paths.js";
 import { renameWithRetry } from "./retry-rename.js";
 
 const DEFAULT_DEBOUNCE_MS = 3000;
@@ -67,6 +68,8 @@ export class UnreadTracker {
         this.dirtyProfiles.add(profileId);
       }
     }
+
+    await this.pruneOrphanProfileFiles(new Set(profileIds));
 
     if (this.dirtyProfiles.size > 0) {
       await this.flushDirtyProfiles();
@@ -219,10 +222,12 @@ export class UnreadTracker {
 
     const pendingProfileIds = Array.from(this.dirtyProfiles);
     for (const profileId of pendingProfileIds) {
+      this.dirtyProfiles.delete(profileId);
+
       try {
         await this.persistProfile(profileId);
-        this.dirtyProfiles.delete(profileId);
       } catch (error) {
+        this.dirtyProfiles.add(profileId);
         console.warn(`[swarm] unread:failed_to_persist profile=${profileId}`, {
           message: error instanceof Error ? error.message : String(error)
         });
@@ -271,6 +276,38 @@ export class UnreadTracker {
         console.warn(`[swarm] unread:failed_to_mark_corrupt path=${path}`, {
           message: error instanceof Error ? error.message : String(error)
         });
+      }
+    }
+  }
+
+  private async pruneOrphanProfileFiles(knownProfileIds: Set<string>): Promise<void> {
+    const profilesDir = getProfilesDir(this.dataDir);
+
+    let entries: Dirent[];
+    try {
+      entries = await readdir(profilesDir, { withFileTypes: true });
+    } catch (error) {
+      if (isEnoent(error)) {
+        return;
+      }
+
+      throw error;
+    }
+
+    for (const entry of entries) {
+      if (!entry.isDirectory() || knownProfileIds.has(entry.name)) {
+        continue;
+      }
+
+      const orphanPath = join(profilesDir, entry.name, "unread-state.json");
+      try {
+        await rm(orphanPath, { force: true });
+      } catch (error) {
+        if (!isEnoent(error)) {
+          console.warn(`[swarm] unread:failed_to_prune_orphan profile=${entry.name} path=${orphanPath}`, {
+            message: error instanceof Error ? error.message : String(error)
+          });
+        }
       }
     }
   }

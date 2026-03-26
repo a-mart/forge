@@ -48,6 +48,7 @@ import type { TerminalService } from "../terminal/terminal-service.js";
 import { TerminalWsProxy } from "../terminal/terminal-ws-proxy.js";
 import { createStatsRoutes } from "./routes/stats-routes.js";
 import { createTerminalRoutes } from "./routes/terminal-routes.js";
+import { resolveSessionAgentIdForUnread } from "./unread-utils.js";
 import { WsHandler } from "./ws-handler.js";
 
 export class SwarmWebSocketServer {
@@ -95,7 +96,7 @@ export class SwarmWebSocketServer {
         agentId: event.agentId,
       });
 
-      const sessionAgentId = this.resolveSessionAgentIdForUnread(event.agentId);
+      const sessionAgentId = resolveSessionAgentIdForUnread(this.swarmManager, event.agentId);
       if (sessionAgentId) {
         const { profileId } = this.resolveUnreadContext(sessionAgentId);
         if (profileId) {
@@ -131,7 +132,7 @@ export class SwarmWebSocketServer {
         agentId: event.agentId,
       });
 
-      const sessionAgentId = this.resolveSessionAgentIdForUnread(event.agentId);
+      const sessionAgentId = resolveSessionAgentIdForUnread(this.swarmManager, event.agentId);
       if (sessionAgentId) {
         const { profileId } = this.resolveUnreadContext(sessionAgentId);
         if (profileId) {
@@ -197,19 +198,6 @@ export class SwarmWebSocketServer {
   private isUnreadNotificationSuppressed(agentId: string): boolean {
     const descriptor = this.swarmManager.getAgent(agentId);
     return descriptor?.role === "manager" && descriptor.sessionPurpose === "cortex_review";
-  }
-
-  private resolveSessionAgentIdForUnread(agentId: string): string | null {
-    const descriptor = this.swarmManager.getAgent(agentId);
-    if (!descriptor) {
-      return null;
-    }
-
-    if (descriptor.role === "manager") {
-      return descriptor.agentId;
-    }
-
-    return descriptor.managerId;
   }
 
   private resolveUnreadContext(sessionAgentId: string): { profileId: string | null } {

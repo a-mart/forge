@@ -22,6 +22,7 @@ import { handleConversationCommand } from "./routes/conversation-routes.js";
 import { handleManagerCommand } from "./routes/manager-routes.js";
 import { handleSessionCommand } from "./routes/session-routes.js";
 import { resolveReadFileContentType } from "./http-utils.js";
+import { resolveSessionAgentIdForUnread } from "./unread-utils.js";
 
 const BOOTSTRAP_SUBSCRIPTION_AGENT_ID = "__bootstrap_manager__";
 const DEFAULT_SUBSCRIBE_MESSAGE_COUNT = 200;
@@ -237,14 +238,21 @@ export class WsHandler {
     }
 
     if (command.type === "mark_unread") {
-      if (this.unreadTracker) {
-        const sessionAgentId = this.resolveSessionAgentIdForUnread(command.agentId) ?? command.agentId;
-        const profileId = this.resolveProfileIdForAgent(sessionAgentId);
-        if (profileId) {
-          this.unreadTracker.markUnread(profileId, sessionAgentId);
-          this.broadcastUnreadCountUpdate(sessionAgentId, 1);
-        }
+      if (!this.unreadTracker) {
+        return;
       }
+
+      const descriptor = this.swarmManager.getAgent(command.agentId);
+      if (!descriptor || descriptor.role !== "manager") {
+        return;
+      }
+
+      const profileId = this.resolveProfileIdFromDescriptor(descriptor);
+      this.unreadTracker.markUnread(profileId, descriptor.agentId);
+      this.broadcastUnreadCountUpdate(
+        descriptor.agentId,
+        this.unreadTracker.getCount(profileId, descriptor.agentId),
+      );
       return;
     }
 
@@ -291,6 +299,7 @@ export class WsHandler {
       send: (targetSocket, event) => this.send(targetSocket, event),
       handleDeletedAgentSubscriptions: (deletedAgentIds) => this.handleDeletedAgentSubscriptions(deletedAgentIds),
       unreadTracker: this.unreadTracker ?? undefined,
+      broadcastUnreadCountUpdate: (sessionAgentId, count) => this.broadcastUnreadCountUpdate(sessionAgentId, count),
     });
     if (sessionHandled) {
       return;
@@ -841,7 +850,8 @@ export class WsHandler {
 
     this.subscriptions.set(socket, targetAgentId);
 
-    const readSessionAgentId = this.resolveSessionAgentIdForUnread(targetAgentId) ?? targetAgentId;
+    const readSessionAgentId =
+      resolveSessionAgentIdForUnread(this.swarmManager, targetAgentId) ?? targetAgentId;
     const readProfileId = this.resolveProfileIdForAgent(readSessionAgentId);
     if (readProfileId && this.unreadTracker) {
       const previousCount = this.unreadTracker.markRead(readProfileId, readSessionAgentId);
@@ -905,15 +915,6 @@ export class WsHandler {
     }
 
     return descriptor.managerId;
-  }
-
-  private resolveSessionAgentIdForUnread(agentId: string): string | undefined {
-    const descriptor = this.swarmManager.getAgent(agentId);
-    if (!descriptor) {
-      return undefined;
-    }
-
-    return descriptor.role === "manager" ? descriptor.agentId : descriptor.managerId;
   }
 
   private resolveProfileIdForAgent(agentId: string): string | undefined {

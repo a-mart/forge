@@ -265,4 +265,71 @@ describe("UnreadTracker", () => {
       await cleanupHarness(harness);
     }
   });
+
+  it("re-flushes profiles that are dirtied during an in-flight persist", async () => {
+    const harness = await createHarness({
+      profiles: ["profile-a"],
+      sessionsByProfile: { "profile-a": ["session-a"] },
+      debounceMs: 20,
+    });
+
+    const statePath = harness.statePath("profile-a");
+
+    try {
+      await harness.tracker.load();
+      harness.tracker.increment("profile-a", "session-a");
+
+      let persistCalls = 0;
+      (harness.tracker as any).persistProfile = async (profileId: string): Promise<void> => {
+        persistCalls += 1;
+        const countAtStart = harness.tracker.getCount(profileId, "session-a");
+
+        if (persistCalls === 1) {
+          harness.tracker.increment(profileId, "session-a");
+        }
+
+        await mkdir(dirname(statePath), { recursive: true });
+        await writeFile(
+          statePath,
+          `${JSON.stringify({ counts: { "session-a": countAtStart } }, null, 2)}\n`,
+          "utf8"
+        );
+      };
+
+      await harness.tracker.flush();
+      await sleep(80);
+
+      expect(persistCalls).toBe(2);
+      const persisted = JSON.parse(await readFile(statePath, "utf8")) as { counts: Record<string, number> };
+      expect(persisted).toEqual({ counts: { "session-a": 2 } });
+    } finally {
+      await cleanupHarness(harness);
+    }
+  });
+
+  it("prunes orphan unread files for deleted profiles during load", async () => {
+    const harness = await createHarness({
+      profiles: ["profile-a"],
+      sessionsByProfile: { "profile-a": ["session-a"] },
+    });
+
+    const statePath = harness.statePath("profile-a");
+    const orphanStatePath = harness.statePath("orphan-profile");
+
+    await mkdir(dirname(statePath), { recursive: true });
+    await writeFile(statePath, `${JSON.stringify({ counts: { "session-a": 1 } }, null, 2)}\n`, "utf8");
+
+    await mkdir(dirname(orphanStatePath), { recursive: true });
+    await writeFile(orphanStatePath, `${JSON.stringify({ counts: { "ghost-session": 9 } }, null, 2)}\n`, "utf8");
+
+    try {
+      await harness.tracker.load();
+
+      await expect(readFile(orphanStatePath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+      const persisted = JSON.parse(await readFile(statePath, "utf8")) as { counts: Record<string, number> };
+      expect(persisted).toEqual({ counts: { "session-a": 1 } });
+    } finally {
+      await cleanupHarness(harness);
+    }
+  });
 });

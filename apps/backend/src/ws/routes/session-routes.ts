@@ -17,6 +17,7 @@ export interface SessionCommandRouteContext {
   send: (socket: WebSocket, event: ServerEvent) => void;
   handleDeletedAgentSubscriptions: (deletedAgentIds: Set<string>) => void;
   unreadTracker?: UnreadTracker;
+  broadcastUnreadCountUpdate?: (sessionAgentId: string, count: number) => void;
 }
 
 export async function handleSessionCommand(context: SessionCommandRouteContext): Promise<boolean> {
@@ -28,7 +29,8 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
     resolveManagerContextAgentId,
     send,
     handleDeletedAgentSubscriptions,
-    unreadTracker
+    unreadTracker,
+    broadcastUnreadCountUpdate
   } = context;
 
   if (
@@ -166,6 +168,7 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
       const { terminatedWorkerIds } = await swarmManager.deleteSession(command.agentId);
       handleDeletedAgentSubscriptions(new Set([command.agentId, ...terminatedWorkerIds]));
       unreadTracker?.clearSession(profileId, command.agentId);
+      broadcastUnreadCountUpdate?.(command.agentId, 0);
 
       send(socket, {
         type: "session_deleted",
@@ -191,6 +194,7 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
       await swarmManager.clearSessionConversation(command.agentId);
       const profileId = resolveSessionProfileId(swarmManager, command.agentId);
       unreadTracker?.clearSession(profileId, command.agentId);
+      broadcastUnreadCountUpdate?.(command.agentId, 0);
 
       send(socket, {
         type: "session_cleared",

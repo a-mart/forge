@@ -494,7 +494,7 @@ describe('ManagerWsClient', () => {
     client.destroy()
   })
 
-  it('tracks unread counts from unread_notification events for non-selected agents', () => {
+  it('treats unread_notification as sound-only and does not mutate unread counts', () => {
     const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
 
     client.start()
@@ -524,11 +524,147 @@ describe('ManagerWsClient', () => {
       agentId: 'manager',
     })
 
-    expect(client.getState().unreadCounts['worker-1']).toBe(2)
+    expect(client.getState().unreadCounts['worker-1']).toBeUndefined()
     expect(client.getState().unreadCounts['manager']).toBeUndefined()
 
-    client.subscribeToAgent('worker-1')
-    expect(client.getState().unreadCounts['worker-1']).toBeUndefined()
+    client.destroy()
+  })
+
+  it('replaces unread counts from unread_counts_snapshot events', () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    emitServerEvent(socket, {
+      type: 'unread_counts_snapshot',
+      counts: {
+        'session-a': 2,
+        'session-b': 1,
+      },
+    })
+
+    expect(client.getState().unreadCounts).toEqual({
+      'session-a': 2,
+      'session-b': 1,
+    })
+
+    emitServerEvent(socket, {
+      type: 'unread_counts_snapshot',
+      counts: {
+        'session-b': 5,
+      },
+    })
+
+    expect(client.getState().unreadCounts).toEqual({
+      'session-b': 5,
+    })
+
+    client.destroy()
+  })
+
+  it('applies unread_count_update deltas and removes entries at count=0', () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    emitServerEvent(socket, {
+      type: 'unread_count_update',
+      agentId: 'session-a',
+      count: 3,
+    })
+
+    emitServerEvent(socket, {
+      type: 'unread_count_update',
+      agentId: 'session-b',
+      count: 1,
+    })
+
+    expect(client.getState().unreadCounts).toEqual({
+      'session-a': 3,
+      'session-b': 1,
+    })
+
+    emitServerEvent(socket, {
+      type: 'unread_count_update',
+      agentId: 'session-a',
+      count: 0,
+    })
+
+    expect(client.getState().unreadCounts).toEqual({
+      'session-b': 1,
+    })
+
+    client.destroy()
+  })
+
+  it('ignores unread_count_update for the currently selected target agent', () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    emitServerEvent(socket, {
+      type: 'unread_count_update',
+      agentId: 'manager',
+      count: 7,
+    })
+
+    expect(client.getState().unreadCounts['manager']).toBeUndefined()
+
+    client.destroy()
+  })
+
+  it('sends mark_unread commands to the server', () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    client.markUnread('manager--s2')
+
+    expect(client.getState().unreadCounts['manager--s2']).toBe(1)
+    expect(JSON.parse(socket.sentPayloads.at(-1) ?? '')).toEqual({
+      type: 'mark_unread',
+      agentId: 'manager--s2',
+    })
 
     client.destroy()
   })
