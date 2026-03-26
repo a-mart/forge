@@ -8,6 +8,7 @@ import { CronSchedulerService } from "./scheduler/cron-scheduler-service.js";
 import { getScheduleFilePath } from "./scheduler/schedule-storage.js";
 import { acquireRuntimeLock, type RuntimeLock } from "./runtime-lock.js";
 import { SwarmManager } from "./swarm/swarm-manager.js";
+import { UnreadTracker } from "./swarm/unread-tracker.js";
 import type { AgentDescriptor, SessionLifecycleEvent, SwarmConfig } from "./swarm/types.js";
 import { readTerminalRuntimeConfig } from "./terminal/terminal-config.js";
 import { TerminalPersistence } from "./terminal/terminal-persistence.js";
@@ -147,6 +148,17 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
 
   try {
     await swarmManager.boot();
+
+    const unreadTracker = new UnreadTracker({
+      dataDir: config.paths.dataDir,
+      getProfileIds: () => swarmManager.listProfiles().map((profile) => profile.profileId),
+      getSessionAgentIds: (profileId) =>
+        swarmManager
+          .listAgents()
+          .filter((descriptor) => descriptor.role === "manager" && (descriptor.profileId ?? descriptor.agentId) === profileId)
+          .map((descriptor) => descriptor.agentId),
+    });
+
     await queueSchedulerSync(collectSchedulerProfileIds(swarmManager.listAgents(), config.managerId));
     swarmManager.on("agents_snapshot", handleAgentsSnapshot);
 
@@ -274,6 +286,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
       terminalService,
       terminalRuntimeConfig,
       promptRegistry: swarmManager.promptRegistry,
+      unreadTracker,
     });
 
     server = new BackendServer({

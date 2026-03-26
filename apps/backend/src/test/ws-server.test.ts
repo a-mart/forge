@@ -29,6 +29,7 @@ import {
   getProfileMemoryPath,
   getProfileMergeAuditLogPath,
   getProfileReferencePath,
+  getProfileUnreadStatePath,
 } from '../swarm/data-paths.js'
 import { scanCortexReviewStatus } from '../swarm/scripts/cortex-scan.js'
 import { loadOnboardingState, saveOnboardingPreferences } from '../swarm/onboarding-state.js'
@@ -616,6 +617,326 @@ describe('SwarmWebSocketServer', () => {
     managerClient.close()
     await once(managerClient, 'close')
     await server.stop()
+  })
+
+  it('includes unread snapshot in bootstrap and marks subscribed session as read', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const { sessionAgent: secondarySession } = await manager.createSession('manager', {
+      label: 'Secondary',
+    })
+
+    const unreadStatePath = getProfileUnreadStatePath(config.paths.dataDir, 'manager')
+    await mkdir(dirname(unreadStatePath), { recursive: true })
+    await writeFile(
+      unreadStatePath,
+      `${JSON.stringify({ counts: { manager: 3, [secondarySession.agentId]: 2 } }, null, 2)}\n`,
+      'utf8',
+    )
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    const client = new WebSocket(`ws://${config.host}:${config.port}`)
+    const events: ServerEvent[] = []
+    client.on('message', (raw) => {
+      events.push(JSON.parse(raw.toString()) as ServerEvent)
+    })
+
+    await once(client, 'open')
+    client.send(JSON.stringify({ type: 'subscribe', agentId: 'manager' }))
+
+    await waitForEvent(
+      events,
+      (event) => event.type === 'ready' && event.subscribedAgentId === 'manager',
+    )
+
+    await waitForEvent(
+      events,
+      (event) => event.type === 'unread_count_update' && event.agentId === 'manager' && event.count === 0,
+    )
+
+    const snapshot = await waitForEvent(events, (event) => event.type === 'unread_counts_snapshot')
+    expect(snapshot.type).toBe('unread_counts_snapshot')
+    if (snapshot.type === 'unread_counts_snapshot') {
+      expect(snapshot.counts[secondarySession.agentId]).toBe(2)
+      expect(snapshot.counts.manager).toBeUndefined()
+    }
+
+    client.close()
+    await once(client, 'close')
+    await server.stop()
+
+    const persisted = JSON.parse(await readFile(unreadStatePath, 'utf8')) as { counts: Record<string, number> }
+    expect(persisted).toEqual({ counts: { [secondarySession.agentId]: 2 } })
+  })
+
+  it('increments unread counts for worker activity and choice requests on the owning session', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const worker = await manager.spawnAgent('manager', { agentId: 'Unread Worker' })
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    const client = new WebSocket(`ws://${config.host}:${config.port}`)
+    const events: ServerEvent[] = []
+    client.on('message', (raw) => {
+      events.push(JSON.parse(raw.toString()) as ServerEvent)
+    })
+
+    await once(client, 'open')
+    client.send(JSON.stringify({ type: 'subscribe', agentId: 'manager' }))
+    await waitForEvent(
+      events,
+      (event) => event.type === 'ready' && event.subscribedAgentId === 'manager',
+    )
+
+    manager.emit(
+      'conversation_message',
+      {
+        type: 'conversation_message',
+        agentId: worker.agentId,
+        role: 'assistant',
+        text: 'worker update',
+        timestamp: new Date().toISOString(),
+        source: 'speak_to_user',
+      } satisfies ServerEvent,
+    )
+
+    await waitForEvent(
+      events,
+      (event) => event.type === 'unread_notification' && event.agentId === worker.agentId,
+    )
+    await waitForEvent(
+      events,
+      (event) => event.type === 'unread_count_update' && event.agentId === 'manager' && event.count === 1,
+    )
+
+    manager.emit(
+      'choice_request',
+      {
+        type: 'choice_request',
+        agentId: worker.agentId,
+        choiceId: 'choice-1',
+        status: 'pending',
+        questions: [{ id: 'q1', question: 'Pick one' }],
+        timestamp: new Date().toISOString(),
+      } satisfies ServerEvent,
+    )
+
+    await waitForEvent(
+      events,
+      (event) => event.type === 'unread_count_update' && event.agentId === 'manager' && event.count === 2,
+    )
+
+    client.close()
+    await once(client, 'close')
+    await server.stop()
+  })
+
+  it('routes mark_unread before subscription checks and broadcasts unread updates', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    const observer = new WebSocket(`ws://${config.host}:${config.port}`)
+    const observerEvents: ServerEvent[] = []
+    observer.on('message', (raw) => {
+      observerEvents.push(JSON.parse(raw.toString()) as ServerEvent)
+    })
+
+    await once(observer, 'open')
+    observer.send(JSON.stringify({ type: 'subscribe', agentId: 'manager' }))
+    await waitForEvent(
+      observerEvents,
+      (event) => event.type === 'ready' && event.subscribedAgentId === 'manager',
+    )
+
+    const actor = new WebSocket(`ws://${config.host}:${config.port}`)
+    const actorEvents: ServerEvent[] = []
+    actor.on('message', (raw) => {
+      actorEvents.push(JSON.parse(raw.toString()) as ServerEvent)
+    })
+
+    await once(actor, 'open')
+    actor.send(JSON.stringify({ type: 'mark_unread', agentId: 'manager', requestId: 'req-mark' }))
+
+    await waitForEvent(
+      observerEvents,
+      (event) => event.type === 'unread_count_update' && event.agentId === 'manager' && event.count === 1,
+    )
+
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(actorEvents.some((event) => event.type === 'error' && event.code === 'NOT_SUBSCRIBED')).toBe(false)
+
+    actor.close()
+    await once(actor, 'close')
+    observer.close()
+    await once(observer, 'close')
+    await server.stop()
+  })
+
+  it('cleans unread counts when sessions are cleared or deleted', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const { sessionAgent: sessionToClear } = await manager.createSession('manager', {
+      label: 'Clear me',
+    })
+    const { sessionAgent: sessionToDelete } = await manager.createSession('manager', {
+      label: 'Delete me',
+    })
+
+    const unreadStatePath = getProfileUnreadStatePath(config.paths.dataDir, 'manager')
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    const client = new WebSocket(`ws://${config.host}:${config.port}`)
+    const events: ServerEvent[] = []
+    client.on('message', (raw) => {
+      events.push(JSON.parse(raw.toString()) as ServerEvent)
+    })
+
+    await once(client, 'open')
+    client.send(JSON.stringify({ type: 'subscribe', agentId: 'manager' }))
+    await waitForEvent(
+      events,
+      (event) => event.type === 'ready' && event.subscribedAgentId === 'manager',
+    )
+
+    client.send(JSON.stringify({ type: 'mark_unread', agentId: sessionToClear.agentId }))
+    await waitForEvent(
+      events,
+      (event) => event.type === 'unread_count_update' && event.agentId === sessionToClear.agentId && event.count === 1,
+    )
+
+    client.send(JSON.stringify({ type: 'mark_unread', agentId: sessionToDelete.agentId }))
+    await waitForEvent(
+      events,
+      (event) => event.type === 'unread_count_update' && event.agentId === sessionToDelete.agentId && event.count === 1,
+    )
+
+    client.send(JSON.stringify({ type: 'clear_session', agentId: sessionToClear.agentId, requestId: 'req-clear' }))
+    await waitForEvent(
+      events,
+      (event) => event.type === 'session_cleared' && event.agentId === sessionToClear.agentId,
+    )
+
+    client.send(JSON.stringify({ type: 'delete_session', agentId: sessionToDelete.agentId, requestId: 'req-delete' }))
+    await waitForEvent(
+      events,
+      (event) => event.type === 'session_deleted' && event.agentId === sessionToDelete.agentId,
+    )
+
+    client.close()
+    await once(client, 'close')
+    await server.stop()
+
+    const persisted = JSON.parse(await readFile(unreadStatePath, 'utf8')) as { counts: Record<string, number> }
+    expect(persisted).toEqual({ counts: {} })
+  })
+
+  it('cleans unread counts for deleted manager profiles', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const secondaryManager = await manager.createManager('manager', {
+      name: 'Secondary Profile',
+      cwd: config.defaultCwd,
+    })
+
+    const secondaryUnreadStatePath = getProfileUnreadStatePath(config.paths.dataDir, secondaryManager.agentId)
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    const client = new WebSocket(`ws://${config.host}:${config.port}`)
+    const events: ServerEvent[] = []
+    client.on('message', (raw) => {
+      events.push(JSON.parse(raw.toString()) as ServerEvent)
+    })
+
+    await once(client, 'open')
+    client.send(JSON.stringify({ type: 'subscribe', agentId: 'manager' }))
+    await waitForEvent(
+      events,
+      (event) => event.type === 'ready' && event.subscribedAgentId === 'manager',
+    )
+
+    client.send(JSON.stringify({ type: 'mark_unread', agentId: secondaryManager.agentId }))
+    await waitForEvent(
+      events,
+      (event) =>
+        event.type === 'unread_count_update' &&
+        event.agentId === secondaryManager.agentId &&
+        event.count === 1,
+    )
+
+    client.send(
+      JSON.stringify({
+        type: 'delete_manager',
+        managerId: secondaryManager.agentId,
+        requestId: 'req-delete-manager',
+      }),
+    )
+
+    await waitForEvent(
+      events,
+      (event) => event.type === 'manager_deleted' && event.managerId === secondaryManager.agentId,
+    )
+
+    client.close()
+    await once(client, 'close')
+    await server.stop()
+
+    await expect(readFile(secondaryUnreadStatePath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('writes and removes its control pid file across start/stop', async () => {

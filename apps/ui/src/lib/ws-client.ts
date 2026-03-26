@@ -158,6 +158,8 @@ export class ManagerWsClient {
         unreadCounts: { ...this.state.unreadCounts, [agentId]: 1 },
       })
     }
+    // Persist to server
+    this.send({ type: 'mark_unread', agentId })
   }
 
   hasExplicitSelection(): boolean {
@@ -867,14 +869,32 @@ export class ManagerWsClient {
       }
 
       case 'unread_notification': {
-        if (event.agentId !== this.state.targetAgentId) {
-          const prev = this.state.unreadCounts[event.agentId] ?? 0
-          this.updateState({
-            unreadCounts: { ...this.state.unreadCounts, [event.agentId]: prev + 1 },
-          })
-        }
-        // Trigger notification sounds (respects per-agent prefs, debounce, tab-focus)
+        // Sound/notification side-effects only.
+        // Count is managed by unread_count_update from server.
         handleUnreadNotification(event.agentId, this.state)
+        break
+      }
+
+      case 'unread_counts_snapshot': {
+        // Authoritative replace — server is source of truth
+        this.updateState({
+          unreadCounts: { ...event.counts },
+        })
+        break
+      }
+
+      case 'unread_count_update': {
+        // Skip update for the currently-viewed session
+        if (event.agentId === this.state.targetAgentId) {
+          break
+        }
+        const nextUnread = { ...this.state.unreadCounts }
+        if (event.count > 0) {
+          nextUnread[event.agentId] = event.count
+        } else {
+          delete nextUnread[event.agentId]
+        }
+        this.updateState({ unreadCounts: nextUnread })
         break
       }
 
@@ -1443,9 +1463,13 @@ export class ManagerWsClient {
     )
     const nextStatuses = { ...this.state.statuses }
     delete nextStatuses[managerId]
-    for (const worker of this.state.agents) {
-      if (worker.role === 'worker' && worker.managerId === managerId) {
-        delete nextStatuses[worker.agentId]
+    // Clean up unread counts for deleted manager and all its sessions/workers
+    const nextUnread = { ...this.state.unreadCounts }
+    delete nextUnread[managerId]
+    for (const agent of this.state.agents) {
+      if (agent.managerId === managerId) {
+        delete nextStatuses[agent.agentId]
+        delete nextUnread[agent.agentId]
       }
     }
     const nextLoadedSessionIds = new Set(this.state.loadedSessionIds)
@@ -1463,6 +1487,7 @@ export class ManagerWsClient {
         this.updateState({
           agents: nextAgents,
           statuses: nextStatuses,
+          unreadCounts: nextUnread,
           loadedSessionIds: nextLoadedSessionIds,
           targetAgentId: fallbackId,
           subscribedAgentId: fallbackId,
@@ -1481,6 +1506,7 @@ export class ManagerWsClient {
       this.updateState({
         agents: nextAgents,
         statuses: nextStatuses,
+        unreadCounts: nextUnread,
         loadedSessionIds: nextLoadedSessionIds,
         targetAgentId: null,
         subscribedAgentId: null,
@@ -1496,6 +1522,7 @@ export class ManagerWsClient {
     this.updateState({
       agents: nextAgents,
       statuses: nextStatuses,
+      unreadCounts: nextUnread,
       loadedSessionIds: nextLoadedSessionIds,
     })
   }
@@ -1509,6 +1536,9 @@ export class ManagerWsClient {
     )
     const nextStatuses = { ...this.state.statuses }
     delete nextStatuses[agentId]
+    // Clean up unread count for the deleted session
+    const nextUnread = { ...this.state.unreadCounts }
+    delete nextUnread[agentId]
     for (const worker of this.state.agents) {
       if (worker.role === 'worker' && worker.managerId === agentId) {
         delete nextStatuses[worker.agentId]
@@ -1534,6 +1564,7 @@ export class ManagerWsClient {
         this.updateState({
           agents: nextAgents,
           statuses: nextStatuses,
+          unreadCounts: nextUnread,
           loadedSessionIds: nextLoadedSessionIds,
           targetAgentId: fallbackId,
           subscribedAgentId: fallbackId,
@@ -1551,6 +1582,7 @@ export class ManagerWsClient {
     this.updateState({
       agents: nextAgents,
       statuses: nextStatuses,
+      unreadCounts: nextUnread,
       loadedSessionIds: nextLoadedSessionIds,
     })
   }

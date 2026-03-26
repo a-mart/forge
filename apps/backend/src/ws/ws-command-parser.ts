@@ -622,6 +622,27 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
     };
   }
 
+  if (maybe.type === "mark_unread") {
+    const agentId = (maybe as { agentId?: unknown }).agentId;
+    const requestId = (maybe as { requestId?: unknown }).requestId;
+
+    if (typeof agentId !== "string" || agentId.trim().length === 0) {
+      return { ok: false, error: "mark_unread.agentId must be a non-empty string" };
+    }
+    if (requestId !== undefined && typeof requestId !== "string") {
+      return { ok: false, error: "mark_unread.requestId must be a string when provided" };
+    }
+
+    return {
+      ok: true,
+      command: {
+        type: "mark_unread",
+        agentId: agentId.trim(),
+        requestId,
+      }
+    };
+  }
+
   return { ok: false, error: "Unknown command type" };
 }
 
@@ -666,6 +687,7 @@ export function extractRequestId(command: ClientCommand): string | undefined {
     case "list_directories":
     case "validate_directory":
     case "pick_directory":
+    case "mark_unread":
       return command.requestId;
 
     case "subscribe":

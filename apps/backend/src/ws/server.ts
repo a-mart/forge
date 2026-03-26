@@ -21,6 +21,7 @@ import {
 } from "../reboot/control-pid.js";
 import { isPidAlive } from "../swarm/platform.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
+import { UnreadTracker } from "../swarm/unread-tracker.js";
 import { applyCorsHeaders, resolveRequestUrl, sendJson } from "./http-utils.js";
 import { createAgentHttpRoutes } from "./routes/agent-routes.js";
 import { createChromeCdpRoutes } from "./routes/chrome-cdp-routes.js";
@@ -63,6 +64,7 @@ export class SwarmWebSocketServer {
   private readonly terminalService: TerminalService | null;
   private readonly terminalRuntimeConfig: TerminalRuntimeConfig | null;
   private readonly terminalWsProxy: TerminalWsProxy | null;
+  private readonly unreadTracker: UnreadTracker;
 
   private httpServer: HttpServer | null = null;
   private wss: WebSocketServer | null = null;
@@ -92,6 +94,15 @@ export class SwarmWebSocketServer {
         type: "unread_notification",
         agentId: event.agentId,
       });
+
+      const sessionAgentId = this.resolveSessionAgentIdForUnread(event.agentId);
+      if (sessionAgentId) {
+        const { profileId } = this.resolveUnreadContext(sessionAgentId);
+        if (profileId) {
+          const newCount = this.unreadTracker.increment(profileId, sessionAgentId);
+          this.wsHandler.broadcastUnreadCountUpdate(sessionAgentId, newCount);
+        }
+      }
     }
   };
 
@@ -119,6 +130,15 @@ export class SwarmWebSocketServer {
         type: "unread_notification",
         agentId: event.agentId,
       });
+
+      const sessionAgentId = this.resolveSessionAgentIdForUnread(event.agentId);
+      if (sessionAgentId) {
+        const { profileId } = this.resolveUnreadContext(sessionAgentId);
+        if (profileId) {
+          const newCount = this.unreadTracker.increment(profileId, sessionAgentId);
+          this.wsHandler.broadcastUnreadCountUpdate(sessionAgentId, newCount);
+        }
+      }
     }
   };
 
@@ -179,6 +199,28 @@ export class SwarmWebSocketServer {
     return descriptor?.role === "manager" && descriptor.sessionPurpose === "cortex_review";
   }
 
+  private resolveSessionAgentIdForUnread(agentId: string): string | null {
+    const descriptor = this.swarmManager.getAgent(agentId);
+    if (!descriptor) {
+      return null;
+    }
+
+    if (descriptor.role === "manager") {
+      return descriptor.agentId;
+    }
+
+    return descriptor.managerId;
+  }
+
+  private resolveUnreadContext(sessionAgentId: string): { profileId: string | null } {
+    const descriptor = this.swarmManager.getAgent(sessionAgentId);
+    if (!descriptor || descriptor.role !== "manager") {
+      return { profileId: null };
+    }
+
+    return { profileId: descriptor.profileId ?? descriptor.agentId };
+  }
+
   constructor(options: {
     swarmManager: SwarmManager;
     host: string;
@@ -192,6 +234,7 @@ export class SwarmWebSocketServer {
     terminalService?: TerminalService | null;
     terminalRuntimeConfig?: TerminalRuntimeConfig | null;
     promptRegistry?: PromptRegistryForRoutes;
+    unreadTracker?: UnreadTracker;
   }) {
     this.swarmManager = options.swarmManager;
     this.host = options.host;
@@ -217,6 +260,17 @@ export class SwarmWebSocketServer {
             runtimeConfig: this.terminalRuntimeConfig,
           })
         : null;
+    this.unreadTracker =
+      options.unreadTracker ??
+      new UnreadTracker({
+        dataDir: this.swarmManager.getConfig().paths.dataDir,
+        getProfileIds: () => this.swarmManager.listProfiles?.().map((profile) => profile.profileId) ?? [],
+        getSessionAgentIds: (profileId) =>
+          this.swarmManager
+            .listAgents?.()
+            .filter((descriptor) => descriptor.role === "manager" && (descriptor.profileId ?? descriptor.agentId) === profileId)
+            .map((descriptor) => descriptor.agentId) ?? [],
+      });
 
     let wsHandlerRef: WsHandler | null = null;
 
@@ -241,6 +295,7 @@ export class SwarmWebSocketServer {
       listTerminalsForSession: this.terminalService
         ? (sessionAgentId) => this.terminalService?.listTerminals(sessionAgentId) ?? []
         : undefined,
+      unreadTracker: this.unreadTracker,
     });
     wsHandlerRef = this.wsHandler;
 
@@ -298,6 +353,8 @@ export class SwarmWebSocketServer {
     if (this.httpServer || this.wss) {
       return;
     }
+
+    await this.unreadTracker.load();
 
     const httpServer = createServer((request, response) => {
       void this.handleHttpRequest(request, response);
@@ -402,6 +459,7 @@ export class SwarmWebSocketServer {
 
     await Promise.allSettled([
       this.mobilePushService.stop(),
+      this.unreadTracker.flush(),
       this.terminalWsProxy?.stop() ?? Promise.resolve(),
       this.playwrightLivePreviewProxy.stop(),
       currentWss ? closeWebSocketServer(currentWss) : Promise.resolve(),

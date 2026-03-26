@@ -55,6 +55,10 @@ export function getProfileMergeAuditLogPath(dataDir: string, profileId: string):
   return join(getProfileDir(dataDir, profileId), "merge-audit.log");
 }
 
+export function getProfileUnreadStatePath(dataDir: string, profileId: string): string {
+  return join(getProfileDir(dataDir, profileId), "unread-state.json");
+}
+
 export function getProfileReferenceDir(dataDir: string, profileId: string): string {
   return join(getProfileDir(dataDir, profileId), "reference");
 }

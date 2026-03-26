@@ -11,6 +11,7 @@ import type { IntegrationRegistryService } from "../integrations/registry.js";
 import type { MobilePushService } from "../mobile/mobile-push-service.js";
 import type { PlaywrightDiscoveryService } from "../playwright/playwright-discovery-service.js";
 import { getGlobalSlashCommandsPath } from "../swarm/data-paths.js";
+import type { UnreadTracker } from "../swarm/unread-tracker.js";
 import { isPathWithinRoots, normalizeAllowlistRoots, resolveDirectoryPath } from "../swarm/cwd-policy.js";
 import { FeedbackService } from "../swarm/feedback-service.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
@@ -51,6 +52,7 @@ export class WsHandler {
   private readonly allowNonManagerSubscriptions: boolean;
   private readonly feedbackService: FeedbackService;
   private readonly listTerminalsForSession?: (sessionAgentId: string) => TerminalDescriptor[];
+  private readonly unreadTracker: UnreadTracker | null;
 
   private wss: WebSocketServer | null = null;
   private readonly subscriptions = new Map<WebSocket, string>();
@@ -62,6 +64,7 @@ export class WsHandler {
     playwrightDiscovery: PlaywrightDiscoveryService | null;
     allowNonManagerSubscriptions: boolean;
     listTerminalsForSession?: (sessionAgentId: string) => TerminalDescriptor[];
+    unreadTracker?: UnreadTracker;
   }) {
     this.swarmManager = options.swarmManager;
     this.integrationRegistry = options.integrationRegistry;
@@ -70,6 +73,7 @@ export class WsHandler {
     this.allowNonManagerSubscriptions = options.allowNonManagerSubscriptions;
     this.feedbackService = new FeedbackService(this.swarmManager.getConfig().paths.dataDir);
     this.listTerminalsForSession = options.listTerminalsForSession;
+    this.unreadTracker = options.unreadTracker ?? null;
   }
 
   attach(server: WebSocketServer): void {
@@ -160,6 +164,30 @@ export class WsHandler {
     }
   }
 
+  broadcastUnreadCountUpdate(sessionAgentId: string, count: number): void {
+    if (!this.wss) {
+      return;
+    }
+
+    const event: ServerEvent = {
+      type: "unread_count_update",
+      agentId: sessionAgentId,
+      count,
+    };
+
+    for (const client of this.wss.clients) {
+      if (client.readyState !== WebSocket.OPEN) {
+        continue;
+      }
+
+      if (!this.subscriptions.has(client)) {
+        continue;
+      }
+
+      this.send(client, event);
+    }
+  }
+
   hasActiveSubscription(agentId: string): boolean {
     for (const [socket, subscribedAgentId] of this.subscriptions.entries()) {
       if (socket.readyState !== WebSocket.OPEN) {
@@ -208,6 +236,18 @@ export class WsHandler {
       return;
     }
 
+    if (command.type === "mark_unread") {
+      if (this.unreadTracker) {
+        const sessionAgentId = this.resolveSessionAgentIdForUnread(command.agentId) ?? command.agentId;
+        const profileId = this.resolveProfileIdForAgent(sessionAgentId);
+        if (profileId) {
+          this.unreadTracker.markUnread(profileId, sessionAgentId);
+          this.broadcastUnreadCountUpdate(sessionAgentId, 1);
+        }
+      }
+      return;
+    }
+
     const subscribedAgentId = this.resolveSubscribedAgentId(socket);
     if (!subscribedAgentId) {
       this.logDebug("command:rejected:not_subscribed", {
@@ -235,7 +275,8 @@ export class WsHandler {
       resolveManagerContextAgentId: (agentId) => this.resolveManagerContextAgentId(agentId),
       send: (targetSocket, event) => this.send(targetSocket, event),
       broadcastToSubscribed: (event) => this.broadcastToSubscribed(event),
-      handleDeletedAgentSubscriptions: (deletedAgentIds) => this.handleDeletedAgentSubscriptions(deletedAgentIds)
+      handleDeletedAgentSubscriptions: (deletedAgentIds) => this.handleDeletedAgentSubscriptions(deletedAgentIds),
+      unreadTracker: this.unreadTracker ?? undefined,
     });
     if (managerHandled) {
       return;
@@ -248,7 +289,8 @@ export class WsHandler {
       swarmManager: this.swarmManager,
       resolveManagerContextAgentId: (agentId) => this.resolveManagerContextAgentId(agentId),
       send: (targetSocket, event) => this.send(targetSocket, event),
-      handleDeletedAgentSubscriptions: (deletedAgentIds) => this.handleDeletedAgentSubscriptions(deletedAgentIds)
+      handleDeletedAgentSubscriptions: (deletedAgentIds) => this.handleDeletedAgentSubscriptions(deletedAgentIds),
+      unreadTracker: this.unreadTracker ?? undefined,
     });
     if (sessionHandled) {
       return;
@@ -798,6 +840,16 @@ export class WsHandler {
     }
 
     this.subscriptions.set(socket, targetAgentId);
+
+    const readSessionAgentId = this.resolveSessionAgentIdForUnread(targetAgentId) ?? targetAgentId;
+    const readProfileId = this.resolveProfileIdForAgent(readSessionAgentId);
+    if (readProfileId && this.unreadTracker) {
+      const previousCount = this.unreadTracker.markRead(readProfileId, readSessionAgentId);
+      if (previousCount > 0) {
+        this.broadcastUnreadCountUpdate(readSessionAgentId, 0);
+      }
+    }
+
     this.sendSubscriptionBootstrap(socket, targetAgentId, messageCount);
   }
 
@@ -853,6 +905,15 @@ export class WsHandler {
     }
 
     return descriptor.managerId;
+  }
+
+  private resolveSessionAgentIdForUnread(agentId: string): string | undefined {
+    const descriptor = this.swarmManager.getAgent(agentId);
+    if (!descriptor) {
+      return undefined;
+    }
+
+    return descriptor.role === "manager" ? descriptor.agentId : descriptor.managerId;
   }
 
   private resolveProfileIdForAgent(agentId: string): string | undefined {
@@ -951,6 +1012,13 @@ export class WsHandler {
       sessionAgentId: effectiveTerminalSessionId,
       terminals: this.listTerminalsForSession?.(effectiveTerminalSessionId) ?? [],
     });
+
+    if (this.unreadTracker) {
+      this.send(socket, {
+        type: "unread_counts_snapshot",
+        counts: this.unreadTracker.getSnapshot(),
+      });
+    }
 
     const managerContextId = this.resolveManagerContextAgentId(targetAgentId);
     if (this.integrationRegistry && managerContextId) {

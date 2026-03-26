@@ -82,6 +82,33 @@ describe('ws command parser session commands', () => {
     })
   })
 
+  it('parses mark_unread commands', () => {
+    expect(parseJsonCommand({
+      type: 'mark_unread',
+      agentId: 'manager--s2',
+      requestId: 'req-unread',
+    })).toEqual({
+      ok: true,
+      command: {
+        type: 'mark_unread',
+        agentId: 'manager--s2',
+        requestId: 'req-unread',
+      },
+    })
+
+    expect(parseJsonCommand({
+      type: 'mark_unread',
+      agentId: '  manager--s3  ',
+    })).toEqual({
+      ok: true,
+      command: {
+        type: 'mark_unread',
+        agentId: 'manager--s3',
+        requestId: undefined,
+      },
+    })
+  })
+
   it('parses choice_response and choice_cancel commands', () => {
     expect(parseJsonCommand({
       type: 'choice_response',
@@ -161,6 +188,18 @@ describe('ws command parser session commands', () => {
       {
         payload: { type: 'api_proxy', requestId: 'proxy-1', method: 'GET', path: 'api/slash-commands' },
         message: 'api_proxy.path must be a non-empty string starting with /',
+      },
+      {
+        payload: { type: 'mark_unread', requestId: 'req-unread' },
+        message: 'mark_unread.agentId must be a non-empty string',
+      },
+      {
+        payload: { type: 'mark_unread', agentId: '  ' },
+        message: 'mark_unread.agentId must be a non-empty string',
+      },
+      {
+        payload: { type: 'mark_unread', agentId: 'manager--s2', requestId: 123 },
+        message: 'mark_unread.requestId must be a string when provided',
       },
       {
         payload: { type: 'subscribe', messageCount: 0 },
@@ -312,6 +351,7 @@ describe('ws command parser session commands', () => {
       { type: 'fork_session', sourceAgentId: 'manager--s2', requestId: 'req-fork' },
       { type: 'merge_session_memory', agentId: 'manager--s2', requestId: 'req-merge' },
       { type: 'get_session_workers', sessionAgentId: 'manager--s2', requestId: 'req-workers' },
+      { type: 'mark_unread', agentId: 'manager--s2', requestId: 'req-mark-unread' },
     ] as const
 
     for (const command of commands) {

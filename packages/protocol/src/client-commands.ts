@@ -46,4 +46,5 @@ export type ClientCommand =
   | { type: 'reorder_profiles'; profileIds: string[]; requestId?: string }
   | { type: 'choice_response'; agentId: string; choiceId: string; answers: ChoiceAnswer[] }
   | { type: 'choice_cancel'; agentId: string; choiceId: string }
+  | { type: 'mark_unread'; agentId: string; requestId?: string }
   | { type: 'ping' }

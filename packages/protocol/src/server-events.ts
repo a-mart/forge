@@ -304,6 +304,20 @@ export interface UnreadNotificationEvent {
   agentId: string
 }
 
+/** Sent during bootstrap — full authoritative state for all profiles. */
+export interface UnreadCountsSnapshotEvent {
+  type: 'unread_counts_snapshot'
+  /** sessionAgentId → count (sparse: only entries with count > 0) */
+  counts: Record<string, number>
+}
+
+/** Sent live after any mutation — single session update. */
+export interface UnreadCountUpdateEvent {
+  type: 'unread_count_update'
+  agentId: string   // sessionAgentId
+  count: number
+}
+
 export interface PlaywrightDiscoverySnapshotEvent {
   type: 'playwright_discovery_snapshot'
   snapshot: PlaywrightDiscoverySnapshot
@@ -358,6 +372,8 @@ export type ServerEvent =
   | SessionWorkersSnapshotEvent
   | ProfilesSnapshotEvent
   | UnreadNotificationEvent
+  | UnreadCountsSnapshotEvent
+  | UnreadCountUpdateEvent
   | ManagerCreatedEvent
   | ManagerDeletedEvent
   | ManagerModelUpdatedEvent

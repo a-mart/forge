@@ -1,6 +1,7 @@
 import { MANAGER_MODEL_PRESETS, type ClientCommand, type ManagerModelPreset, type ServerEvent } from "@forge/protocol";
 import type { WebSocket } from "ws";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
+import type { UnreadTracker } from "../../swarm/unread-tracker.js";
 import type { SwarmModelPreset, SwarmReasoningLevel } from "../../swarm/types.js";
 
 export interface ManagerCommandRouteContext {
@@ -12,6 +13,7 @@ export interface ManagerCommandRouteContext {
   send: (socket: WebSocket, event: ServerEvent) => void;
   broadcastToSubscribed: (event: ServerEvent) => void;
   handleDeletedAgentSubscriptions: (deletedAgentIds: Set<string>) => void;
+  unreadTracker?: UnreadTracker;
 }
 
 export async function handleManagerCommand(context: ManagerCommandRouteContext): Promise<boolean> {
@@ -23,7 +25,8 @@ export async function handleManagerCommand(context: ManagerCommandRouteContext):
     resolveManagerContextAgentId,
     send,
     broadcastToSubscribed,
-    handleDeletedAgentSubscriptions
+    handleDeletedAgentSubscriptions,
+    unreadTracker
   } = context;
 
   if (command.type === "create_manager") {
@@ -77,6 +80,7 @@ export async function handleManagerCommand(context: ManagerCommandRouteContext):
     try {
       const deleted = await swarmManager.deleteManager(managerContextId, command.managerId);
       handleDeletedAgentSubscriptions(new Set([deleted.managerId, ...deleted.terminatedWorkerIds]));
+      unreadTracker?.clearProfile(deleted.managerId);
 
       broadcastToSubscribed({
         type: "manager_deleted",

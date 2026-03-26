@@ -6,6 +6,7 @@ import type {
 } from "@forge/protocol";
 import type { WebSocket } from "ws";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
+import type { UnreadTracker } from "../../swarm/unread-tracker.js";
 
 export interface SessionCommandRouteContext {
   command: ClientCommand;
@@ -15,6 +16,7 @@ export interface SessionCommandRouteContext {
   resolveManagerContextAgentId: (subscribedAgentId: string) => string | undefined;
   send: (socket: WebSocket, event: ServerEvent) => void;
   handleDeletedAgentSubscriptions: (deletedAgentIds: Set<string>) => void;
+  unreadTracker?: UnreadTracker;
 }
 
 export async function handleSessionCommand(context: SessionCommandRouteContext): Promise<boolean> {
@@ -25,7 +27,8 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
     swarmManager,
     resolveManagerContextAgentId,
     send,
-    handleDeletedAgentSubscriptions
+    handleDeletedAgentSubscriptions,
+    unreadTracker
   } = context;
 
   if (
@@ -162,6 +165,7 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
     try {
       const { terminatedWorkerIds } = await swarmManager.deleteSession(command.agentId);
       handleDeletedAgentSubscriptions(new Set([command.agentId, ...terminatedWorkerIds]));
+      unreadTracker?.clearSession(profileId, command.agentId);
 
       send(socket, {
         type: "session_deleted",
@@ -185,6 +189,8 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
   if (command.type === "clear_session") {
     try {
       await swarmManager.clearSessionConversation(command.agentId);
+      const profileId = resolveSessionProfileId(swarmManager, command.agentId);
+      unreadTracker?.clearSession(profileId, command.agentId);
 
       send(socket, {
         type: "session_cleared",
