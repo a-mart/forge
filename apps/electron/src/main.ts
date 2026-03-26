@@ -426,6 +426,7 @@ if (!hasSingleInstanceLock) {
 
 
   app.whenReady().then(async () => {
+    nativeTheme.themeSource = 'dark'
     fixPath()
     createApplicationMenu()
     if (app.isPackaged) {
