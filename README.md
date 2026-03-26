@@ -13,8 +13,7 @@ Forge gives you one.
 ### Contents
 
 - [Why Forge?](#why-forge)
-- [Quick Start](#quick-start)
-- [Desktop App](#desktop-app)
+- [Installation](#installation)
 - [Core Concepts](#core-concepts)
 - [Dashboard](#dashboard)
 - [Skills](#skills)
@@ -43,65 +42,58 @@ There are plenty of good coding agents. Forge isn't trying to replace them. It o
 
 **Forge builds Forge.** Every feature you see was built using Forge itself. It's been the primary development tool for this project since day one.
 
-## Quick Start
+## Installation
 
-### Prerequisites
+### Desktop App (Recommended)
 
+Download the native installer for your platform from [GitHub Releases](https://github.com/a-mart/forge/releases):
+
+| Platform | Download | Notes |
+|----------|----------|-------|
+| **macOS** (Apple Silicon) | `Forge-<version>.dmg` | Signed and notarized |
+| **Windows** (x64) | `Forge-Setup-<version>.exe` | Unsigned (SmartScreen warning expected) |
+| **Linux** | `Forge-<version>.AppImage` | |
+
+No Node.js or pnpm required. The desktop app bundles everything, including automatic updates.
+
+On first launch, go to Settings and sign in with your OpenAI or Anthropic account (OAuth or API key). Forge will walk you through a short welcome conversation to learn your preferences.
+
+Then create a manager, point it at a project directory, and start chatting. See the [Getting Started Guide](docs/GETTING_STARTED.md) for a full walkthrough.
+
+### Building from Source
+
+If you need more control over the runtime environment or want to contribute to development:
+
+**Prerequisites:**
 - Node.js 22+
 - pnpm (`npm install -g pnpm`)
 - An OpenAI or Anthropic account (OAuth or API key)
 
-### Install & Run
-
+**Setup:**
 ```bash
 git clone https://github.com/a-mart/forge.git
 cd middleman
-pnpm i
-pnpm prod:daemon
+cp .env.example .env          # Review and set any needed env vars
+pnpm install
+pnpm prod:daemon              # Run as background daemon
 ```
 
-Default configuration works out of the box. See [Configuration](#configuration) to customize.
-
-Open the UI at [http://127.0.0.1:47189](http://127.0.0.1:47189), go to Settings, and sign in with your OpenAI or Anthropic account (OAuth or API key). On first launch, Forge walks you through a short welcome conversation that captures your name, technical level, and workflow preferences. This is Cortex learning about you from the start.
-
-Then create a manager, point it at your project directory, and start chatting. For a full walkthrough of everything Forge can do, see the [Getting Started Guide](docs/GETTING_STARTED.md).
+Open the UI at [http://127.0.0.1:47189](http://127.0.0.1:47189) and configure your API credentials in Settings.
 
 > **Windows users:** See [docs/WINDOWS_SETUP.md](docs/WINDOWS_SETUP.md) for platform-specific setup notes.
+
+**Build the desktop app:**
+```bash
+pnpm package:electron
+```
+
+The packaged app will be available in `apps/electron/release/`.
 
 ### Your First Session
 
 Before you start throwing tasks at Forge, take five minutes to have a conceptual conversation with your manager. Tell it how you like to work: your review process, your branching strategy, how you think about testing. This isn't small talk. It's calibration. The more your manager understands your style, the better it orchestrates workers on your behalf.
 
 Then start rating messages. Thumbs up when the manager nails it, thumbs down when it misses, comments when you notice patterns. This feedback feeds directly into Cortex's learning cycle.
-
-## Desktop App
-
-Forge is also available as a standalone desktop application for macOS, Windows, and Linux. The desktop app bundles the backend, UI, and all dependencies—no Node.js or pnpm required for end users.
-
-### Download
-
-Get the latest release from the [GitHub Releases](https://github.com/a-mart/forge/releases) page:
-
-- **macOS**: `Forge-<version>.dmg`
-- **Windows**: `Forge-Setup-<version>.exe`
-- **Linux**: `Forge-<version>.AppImage`
-
-The desktop app includes auto-update support. When a new version is available, you'll be notified and can update with one click.
-
-### Build from Source
-
-If you want to build the desktop app yourself:
-
-```bash
-git clone https://github.com/a-mart/forge.git
-cd middleman
-pnpm install
-pnpm package:electron
-```
-
-The packaged app will be available in `apps/electron/release/`.
-
-The CLI setup instructions above still work if you prefer running Forge from source or need more control over the runtime environment. The desktop app is an additional option, not a replacement.
 
 ## Core Concepts
 

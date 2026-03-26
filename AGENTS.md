@@ -10,9 +10,10 @@ Forge is a local-first multi-agent orchestration platform. It provides:
 
 1. A **Node.js backend** for manager/worker agent orchestration, persistence, and integrations.
 2. A **React SPA** (TanStack Start + Vite) for dashboard, chat, settings, and artifacts.
-3. **Real-time updates** over WebSocket.
+3. An **Electron desktop app** that bundles backend, UI, and all dependencies for macOS and Windows.
+4. **Real-time updates** over WebSocket.
 
-**Stack:** TypeScript, React 19, TanStack Start, Radix UI/shadcn, Tailwind v4, Vitest, pnpm monorepo
+**Stack:** TypeScript, React 19, TanStack Start, Radix UI/shadcn, Tailwind v4, Vitest, Electron, pnpm monorepo
 
 ## Prerequisites
 
