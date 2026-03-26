@@ -111,7 +111,6 @@ async function stageBundledBackend() {
 
 async function stageBundledDependencyRuntimeAssets() {
   const piCodingAgent = await resolveInstalledPackage('@mariozechner/pi-coding-agent', backendWorkspaceManifestPath, false)
-  const photonNode = await resolveInstalledPackage('@silvia-odwyer/photon-node', backendWorkspaceManifestPath, false)
 
   await copyRuntimeAsset(
     path.join(piCodingAgent.packageRoot, 'dist', 'modes', 'interactive', 'theme'),
@@ -121,15 +120,21 @@ async function stageBundledDependencyRuntimeAssets() {
     path.join(piCodingAgent.packageRoot, 'dist', 'core', 'export-html'),
     path.join(backendStageDir, 'dist', 'core', 'export-html'),
   )
-  await copyRuntimeAsset(
-    path.join(photonNode.packageRoot, 'photon_rs_bg.wasm'),
-    path.join(backendStageDir, 'dist', 'photon_rs_bg.wasm'),
-  )
+
+  // photon-node is optional (platform-specific WASM) — skip if not installed
+  const photonNode = await resolveInstalledPackage('@silvia-odwyer/photon-node', backendWorkspaceManifestPath, true)
+  if (photonNode) {
+    await copyRuntimeAsset(
+      path.join(photonNode.packageRoot, 'photon_rs_bg.wasm'),
+      path.join(backendStageDir, 'dist', 'photon_rs_bg.wasm'),
+    )
+  }
 }
 
 async function copyRuntimeAsset(from, to) {
   if (!existsSync(from)) {
-    throw new Error(`Missing runtime asset source: ${from}`)
+    console.warn(`[electron/build-all] Warning: runtime asset not found (skipping): ${from}`)
+    return
   }
 
   await mkdir(path.dirname(to), { recursive: true })
