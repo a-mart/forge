@@ -420,6 +420,16 @@ if (!hasSingleInstanceLock) {
     return dialog.showOpenDialog(options)
   })
 
+  ipcMain.on('update-title-bar-overlay', (_event, colors: { color: string; symbolColor: string }) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.setTitleBarOverlay({
+        color: colors.color,
+        symbolColor: colors.symbolColor,
+        height: 36,
+      })
+    }
+  })
+
   app.whenReady().then(async () => {
     fixPath()
     createApplicationMenu()
@@ -490,8 +500,8 @@ function createMainWindow(): BrowserWindow {
       ? {
           titleBarStyle: 'hidden',
           titleBarOverlay: {
-            color: '#1a1a2e',
-            symbolColor: '#e0e0e0',
+            color: '#f8f5f0',
+            symbolColor: '#3e2723',
             height: 36,
           },
         }

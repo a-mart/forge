@@ -6,6 +6,7 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import { isElectron } from '@/lib/electron-bridge'
 import { preloadBuiltInSounds } from '@/lib/notification-service'
 import { THEME_INIT_SCRIPT, initializeThemePreference } from '@/lib/theme'
+import { useTitleBarOverlay } from '@/lib/use-title-bar-overlay'
 import { IndexPage } from './index'
 
 import appCss from '../styles.css?url'
@@ -45,6 +46,8 @@ function RootDocument({ children }: { children: React.ReactNode }) {
     initializeThemePreference()
     preloadBuiltInSounds()
   }, [])
+
+  useTitleBarOverlay()
 
   const showTanStackDevtools = import.meta.env.VITE_FORGE_DISABLE_TANSTACK_DEVTOOLS !== 'true'
 

@@ -23,6 +23,8 @@ export interface ElectronBridge {
   }): Promise<{ canceled: boolean; filePaths: string[] }>
   /** Subscribe to Electron-delivered terminal shortcuts. */
   onTerminalShortcut?(listener: (event: { action: 'toggle' | 'new' | 'next' | 'prev' }) => void): () => void
+  /** Update the title bar overlay colors (Windows/Linux only). */
+  updateTitleBarOverlay?(colors: { color: string; symbolColor: string }): void
 }
 
 declare global {

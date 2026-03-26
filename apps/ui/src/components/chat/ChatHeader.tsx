@@ -174,6 +174,7 @@ export function ChatHeader({
       className={cn(
         'sticky top-0 z-10 flex h-[62px] w-full shrink-0 items-center justify-between gap-2 overflow-hidden border-b border-border/80 bg-card/80 px-2 backdrop-blur md:px-4',
         isFramelessDesktop && '[-webkit-app-region:drag]',
+        isFramelessDesktop && 'pr-[140px]',
       )}
     >
       <div className="flex min-w-0 flex-1 items-center gap-2 md:gap-3">

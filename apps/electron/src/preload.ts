@@ -28,6 +28,9 @@ contextBridge.exposeInMainWorld('electronBridge', {
       ipcRenderer.removeListener(TERMINAL_SHORTCUT_CHANNEL, wrapped)
     }
   },
+  updateTitleBarOverlay: (colors: { color: string; symbolColor: string }): void => {
+    ipcRenderer.send('update-title-bar-overlay', colors)
+  },
 })
 
 function readBootstrap(): BackendBootstrap {
