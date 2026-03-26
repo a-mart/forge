@@ -167,6 +167,13 @@ export interface SessionRenamedEvent {
   requestId?: string
 }
 
+export interface ProfileRenamedEvent {
+  type: 'profile_renamed'
+  profileId: string
+  displayName: string
+  requestId?: string
+}
+
 export interface SessionForkedEvent {
   type: 'session_forked'
   sourceAgentId: string
@@ -360,6 +367,7 @@ export type ServerEvent =
   | SessionDeletedEvent
   | SessionClearedEvent
   | SessionRenamedEvent
+  | ProfileRenamedEvent
   | SessionForkedEvent
   | SessionMemoryMergeStartedEvent
   | SessionMemoryMergedEvent

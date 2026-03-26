@@ -101,6 +101,7 @@ interface AgentSidebarProps {
   onResumeSession?: (agentId: string) => void
   onDeleteSession?: (agentId: string) => void
   onRenameSession?: (agentId: string, label: string) => void
+  onRenameProfile?: (profileId: string, displayName: string) => void
   onForkSession?: (sourceAgentId: string, name?: string) => void
   onMarkUnread?: (agentId: string) => void
   onUpdateManagerModel?: (managerId: string, model: ManagerModelPreset, reasoningLevel?: ManagerReasoningLevel) => void
@@ -747,6 +748,7 @@ function ProfileGroup({
   onResumeSession,
   onDeleteSession,
   onRequestRenameSession,
+  onRequestRenameProfile,
   onForkSession,
   onMarkUnread,
   onChangeModel,
@@ -777,6 +779,7 @@ function ProfileGroup({
   onResumeSession?: (agentId: string) => void
   onDeleteSession?: (agentId: string) => void
   onRequestRenameSession?: (agentId: string) => void
+  onRequestRenameProfile?: (profileId: string) => void
   onForkSession?: (sourceAgentId: string) => void
   onMarkUnread?: (agentId: string) => void
   onChangeModel?: (profileId: string) => void
@@ -914,6 +917,12 @@ function ProfileGroup({
             <ContextMenuItem onClick={() => onCreateSession(profile.profileId)}>
               <Plus className="mr-2 size-3.5" />
               New Session
+            </ContextMenuItem>
+          ) : null}
+          {onRequestRenameProfile ? (
+            <ContextMenuItem onClick={() => onRequestRenameProfile(profile.profileId)}>
+              <Edit3 className="mr-2 size-3.5" />
+              Rename
             </ContextMenuItem>
           ) : null}
           {onChangeModel ? (
@@ -1172,6 +1181,57 @@ function RenameSessionDialog({
   )
 }
 
+// ── Rename profile dialog ──
+
+function RenameProfileDialog({
+  profileId,
+  currentName,
+  onConfirm,
+  onClose,
+}: {
+  profileId: string
+  currentName: string
+  onConfirm: (profileId: string, displayName: string) => void
+  onClose: () => void
+}) {
+  const [name, setName] = useState(currentName)
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    const trimmed = name.trim()
+    if (trimmed) {
+      onConfirm(profileId, trimmed)
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open) onClose() }}>
+      <DialogContent className="max-w-sm p-4">
+        <DialogHeader className="mb-3">
+          <DialogTitle>Rename Profile</DialogTitle>
+          <DialogDescription>Enter a new display name for this profile.</DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <Input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Profile name"
+            autoFocus
+          />
+          <div className="flex items-center justify-end gap-2">
+            <Button type="button" variant="outline" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={!name.trim()}>
+              Rename
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 // ── Delete session confirmation dialog ──
 
 function DeleteSessionDialog({
@@ -1342,6 +1402,7 @@ function CortexSection({
   onResumeSession,
   onDeleteSession,
   onRequestRenameSession,
+  onRequestRenameProfile,
   onForkSession,
   onMarkUnread,
   onChangeModel,
@@ -1371,6 +1432,7 @@ function CortexSection({
   onResumeSession?: (agentId: string) => void
   onDeleteSession?: (agentId: string) => void
   onRequestRenameSession?: (agentId: string) => void
+  onRequestRenameProfile?: (profileId: string) => void
   onForkSession?: (sourceAgentId: string) => void
   onMarkUnread?: (agentId: string) => void
   onChangeModel?: (profileId: string) => void
@@ -1544,6 +1606,12 @@ function CortexSection({
             <ContextMenuItem onClick={() => onCreateSession(profile.profileId)}>
               <Plus className="mr-2 size-3.5" />
               New Session
+            </ContextMenuItem>
+          ) : null}
+          {onRequestRenameProfile ? (
+            <ContextMenuItem onClick={() => onRequestRenameProfile(profile.profileId)}>
+              <Edit3 className="mr-2 size-3.5" />
+              Rename
             </ContextMenuItem>
           ) : null}
           {onChangeModel ? (
@@ -1756,6 +1824,7 @@ export function AgentSidebar({
   onResumeSession,
   onDeleteSession,
   onRenameSession,
+  onRenameProfile,
   onForkSession,
   onMarkUnread,
   onUpdateManagerModel,
@@ -1848,6 +1917,7 @@ export function AgentSidebar({
   const [expandedWorkerListSessionIds, setExpandedWorkerListSessionIds] = useState<Set<string>>(() => new Set())
   const [createTarget, setCreateTarget] = useState<{ profileId: string; profileLabel: string } | null>(null)
   const [renameTarget, setRenameTarget] = useState<{ agentId: string; label: string } | null>(null)
+  const [renameProfileTarget, setRenameProfileTarget] = useState<{ profileId: string; displayName: string } | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<{ agentId: string; label: string } | null>(null)
   const [forkTarget, setForkTarget] = useState<{ sourceAgentId: string } | null>(null)
   const [changeModelTarget, setChangeModelTarget] = useState<{
@@ -1973,6 +2043,20 @@ export function AgentSidebar({
     onRenameSession?.(agentId, label)
     setRenameTarget(null)
   }, [onRenameSession])
+
+  const handleRequestRenameProfile = useCallback((profileId: string) => {
+    const profile = profiles.find((p) => p.profileId === profileId)
+    if (!profile) return
+    setRenameProfileTarget({
+      profileId,
+      displayName: profile.displayName,
+    })
+  }, [profiles])
+
+  const handleConfirmRenameProfile = useCallback((profileId: string, displayName: string) => {
+    onRenameProfile?.(profileId, displayName)
+    setRenameProfileTarget(null)
+  }, [onRenameProfile])
 
   const handleRequestDelete = useCallback((agentId: string) => {
     const agent = agents.find((a) => a.agentId === agentId)
@@ -2130,6 +2214,7 @@ export function AgentSidebar({
               onResumeSession={onResumeSession}
               onDeleteSession={handleRequestDelete}
               onRequestRenameSession={handleRequestRename}
+              onRequestRenameProfile={onRenameProfile ? handleRequestRenameProfile : undefined}
               onForkSession={onForkSession ? (sourceAgentId: string) => setForkTarget({ sourceAgentId }) : undefined}
               onMarkUnread={onMarkUnread}
               onChangeModel={onUpdateManagerModel ? handleRequestChangeModel : undefined}
@@ -2189,6 +2274,7 @@ export function AgentSidebar({
               onResumeSession={onResumeSession}
               onDeleteSession={handleRequestDelete}
               onRequestRenameSession={handleRequestRename}
+              onRequestRenameProfile={onRenameProfile ? handleRequestRenameProfile : undefined}
               onForkSession={onForkSession ? (sourceAgentId: string) => setForkTarget({ sourceAgentId }) : undefined}
               onMarkUnread={onMarkUnread}
               onChangeModel={onUpdateManagerModel ? handleRequestChangeModel : undefined}
@@ -2355,13 +2441,23 @@ export function AgentSidebar({
         />
       ) : null}
 
-      {/* Rename dialog */}
+      {/* Rename session dialog */}
       {renameTarget ? (
         <RenameSessionDialog
           agentId={renameTarget.agentId}
           currentLabel={renameTarget.label}
           onConfirm={handleConfirmRename}
           onClose={() => setRenameTarget(null)}
+        />
+      ) : null}
+
+      {/* Rename profile dialog */}
+      {renameProfileTarget ? (
+        <RenameProfileDialog
+          profileId={renameProfileTarget.profileId}
+          currentName={renameProfileTarget.displayName}
+          onConfirm={handleConfirmRenameProfile}
+          onClose={() => setRenameProfileTarget(null)}
         />
       ) : null}
 

@@ -138,6 +138,28 @@ export async function handleManagerCommand(context: ManagerCommandRouteContext):
     return true;
   }
 
+  if (command.type === "rename_profile") {
+    try {
+      await swarmManager.renameProfile(command.profileId, command.displayName);
+
+      broadcastToSubscribed({
+        type: "profile_renamed",
+        profileId: command.profileId,
+        displayName: command.displayName.trim(),
+        requestId: command.requestId
+      });
+    } catch (error) {
+      send(socket, {
+        type: "error",
+        code: "RENAME_PROFILE_FAILED",
+        message: error instanceof Error ? error.message : String(error),
+        requestId: command.requestId
+      });
+    }
+
+    return true;
+  }
+
   if (command.type === "reorder_profiles") {
     const managerContextId = resolveManagerContextAgentId(subscribedAgentId);
     if (!managerContextId) {

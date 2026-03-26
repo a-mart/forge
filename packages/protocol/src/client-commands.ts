@@ -42,6 +42,7 @@ export type ClientCommand =
   | { type: 'list_directories'; path?: string; requestId?: string }
   | { type: 'validate_directory'; path: string; requestId?: string }
   | { type: 'pick_directory'; defaultPath?: string; requestId?: string }
+  | { type: 'rename_profile'; profileId: string; displayName: string; requestId?: string }
   | { type: 'reorder_profiles'; profileIds: string[]; requestId?: string }
   | { type: 'choice_response'; agentId: string; choiceId: string; answers: ChoiceAnswer[] }
   | { type: 'choice_cancel'; agentId: string; choiceId: string }

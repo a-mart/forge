@@ -673,6 +673,22 @@ export function IndexPage() {
     })()
   }, [clientRef, setState])
 
+  const handleRenameProfile = useCallback((profileId: string, displayName: string) => {
+    const client = clientRef.current
+    if (!client) return
+
+    void (async () => {
+      try {
+        await client.renameProfile(profileId, displayName)
+      } catch (error) {
+        setState((prev) => ({
+          ...prev,
+          lastError: `Failed to rename profile: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        }))
+      }
+    })()
+  }, [clientRef, setState])
+
   const handleForkSession = useCallback((sourceAgentId: string, name?: string) => {
     const client = clientRef.current
     if (!client) return
@@ -962,6 +978,7 @@ export function IndexPage() {
           onResumeSession={handleResumeSession}
           onDeleteSession={handleDeleteSession}
           onRenameSession={handleRenameSession}
+          onRenameProfile={handleRenameProfile}
           onForkSession={handleForkSession}
           onMarkUnread={handleMarkUnread}
           onUpdateManagerModel={handleUpdateManagerModel}

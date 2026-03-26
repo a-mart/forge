@@ -61,6 +61,7 @@ type WsRequestResultMap = {
   delete_session: SessionActionResult
   clear_session: SessionActionResult
   rename_session: SessionActionResult
+  rename_profile: { profileId: string }
   fork_session: SessionForkedResult
   merge_session_memory: SessionMemoryMergeResult
   get_session_workers: { sessionAgentId: string; workers: AgentDescriptor[] }
@@ -81,6 +82,7 @@ const WS_REQUEST_TYPES: WsRequestType[] = [
   'delete_session',
   'clear_session',
   'rename_session',
+  'rename_profile',
   'fork_session',
   'merge_session_memory',
   'get_session_workers',
@@ -100,6 +102,7 @@ const WS_REQUEST_ERROR_HINTS: Array<{ requestType: WsRequestType; codeFragment: 
   { requestType: 'delete_session', codeFragment: 'delete_session' },
   { requestType: 'clear_session', codeFragment: 'clear_session' },
   { requestType: 'rename_session', codeFragment: 'rename_session' },
+  { requestType: 'rename_profile', codeFragment: 'rename_profile' },
   { requestType: 'fork_session', codeFragment: 'fork_session' },
   { requestType: 'merge_session_memory', codeFragment: 'merge_session_memory' },
   { requestType: 'get_session_workers', codeFragment: 'get_session_workers' },
@@ -583,6 +586,29 @@ export class ManagerWsClient {
       type: 'rename_session',
       agentId: trimmed,
       label: trimmedLabel,
+      requestId,
+    }))
+  }
+
+  async renameProfile(profileId: string, displayName: string): Promise<{ profileId: string }> {
+    const trimmedId = profileId.trim()
+    const trimmedName = displayName.trim()
+    if (!trimmedId) {
+      throw new Error('Profile id is required.')
+    }
+
+    if (!trimmedName) {
+      throw new Error('Profile display name is required.')
+    }
+
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+      throw new Error('WebSocket is disconnected. Reconnecting...')
+    }
+
+    return this.enqueueRequest('rename_profile', (requestId) => ({
+      type: 'rename_profile',
+      profileId: trimmedId,
+      displayName: trimmedName,
       requestId,
     }))
   }
@@ -1071,6 +1097,13 @@ export class ManagerWsClient {
       case 'session_renamed': {
         this.requestTracker.resolve('rename_session', event.requestId, {
           agentId: event.agentId,
+        })
+        break
+      }
+
+      case 'profile_renamed': {
+        this.requestTracker.resolve('rename_profile', event.requestId, {
+          profileId: event.profileId,
         })
         break
       }

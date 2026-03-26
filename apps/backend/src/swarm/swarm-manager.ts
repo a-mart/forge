@@ -1936,6 +1936,23 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.emitProfilesSnapshot();
   }
 
+  async renameProfile(profileId: string, displayName: string): Promise<void> {
+    const profile = this.profiles.get(profileId);
+    if (!profile) {
+      throw new Error(`Profile not found: ${profileId}`);
+    }
+    const normalizedName = displayName.trim();
+    if (!normalizedName) {
+      throw new Error("Profile display name must be non-empty");
+    }
+    profile.displayName = normalizedName;
+    profile.updatedAt = this.now();
+    this.profiles.set(profileId, profile);
+    await this.saveStore();
+    this.emitProfilesSnapshot();
+    this.emitAgentsSnapshot();
+  }
+
   async mergeSessionMemory(agentId: string): Promise<SessionMemoryMergeResult> {
     const descriptor = this.getRequiredSessionDescriptor(agentId);
     const profileId = descriptor.profileId ?? descriptor.agentId;
