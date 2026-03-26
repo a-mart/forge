@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, shell } from 'electron'
 import { fork, type ChildProcess, type ForkOptions } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
@@ -497,6 +497,23 @@ function createMainWindow(): BrowserWindow {
   window.on('closed', () => {
     if (mainWindow === window) {
       mainWindow = null
+    }
+  })
+
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    shell.openExternal(url).catch((error) => {
+      console.error('Failed to open external URL', url, error)
+    })
+    return { action: 'deny' }
+  })
+
+  window.webContents.on('will-navigate', (event, url) => {
+    const appOrigins = ['http://127.0.0.1', 'http://localhost']
+
+    const isAppOrigin = appOrigins.some((origin) => url.startsWith(origin)) || url.startsWith(`${APP_PROTOCOL_SCHEME}://`)
+    if (!isAppOrigin) {
+      event.preventDefault()
+      void shell.openExternal(url)
     }
   })
 
