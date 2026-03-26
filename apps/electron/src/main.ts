@@ -420,15 +420,9 @@ if (!hasSingleInstanceLock) {
     return dialog.showOpenDialog(options)
   })
 
-  ipcMain.on('update-title-bar-overlay', (_event, colors: { color: string; symbolColor: string }) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.setTitleBarOverlay({
-        color: colors.color,
-        symbolColor: colors.symbolColor,
-        height: 36,
-      })
-    }
-  })
+  // No-op: overlay is not used on Windows (native title bar), but keep
+  // the handler registered so the renderer doesn't throw on send.
+  ipcMain.on('update-title-bar-overlay', () => {})
 
 
   app.whenReady().then(async () => {
