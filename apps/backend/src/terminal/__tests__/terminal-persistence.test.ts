@@ -220,6 +220,38 @@ describe('TerminalPersistence', () => {
     expect(loaded).toEqual(meta)
   })
 
+  it('moves persisted terminal data to a new manager scope', async () => {
+    const { dataDir, persistence } = await createPersistence()
+    const meta = createMeta({ terminalId: 'terminal-move', sessionAgentId: 'session-2' })
+
+    await persistence.saveMeta(meta)
+    await writeFile(
+      getTerminalSnapshotPath(dataDir, meta.profileId, meta.sessionAgentId, meta.terminalId),
+      'snapshot-content',
+      'utf8',
+    )
+    await writeFile(
+      getTerminalLogPath(dataDir, meta.profileId, meta.sessionAgentId, meta.terminalId),
+      '{"seq":1,"dataBase64":"YQ=="}\n',
+      'utf8',
+    )
+
+    await persistence.moveTerminalScope(meta, 'profile-1')
+
+    await expect(
+      readFile(getTerminalMetaPath(dataDir, meta.profileId, 'profile-1', meta.terminalId), 'utf8'),
+    ).resolves.toContain('terminal-move')
+    await expect(
+      readFile(getTerminalSnapshotPath(dataDir, meta.profileId, 'profile-1', meta.terminalId), 'utf8'),
+    ).resolves.toBe('snapshot-content')
+    await expect(
+      readFile(getTerminalLogPath(dataDir, meta.profileId, 'profile-1', meta.terminalId), 'utf8'),
+    ).resolves.toContain('"seq":1')
+    await expect(
+      readFile(getTerminalMetaPath(dataDir, meta.profileId, meta.sessionAgentId, meta.terminalId), 'utf8'),
+    ).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
   it('serializes large scrollback snapshots without pathological slowdown', async () => {
     const { persistence } = await createPersistence()
     const meta = createMeta({ terminalId: 'terminal-big', cols: 120, rows: 40 })

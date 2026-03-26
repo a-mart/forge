@@ -209,8 +209,13 @@ export class TerminalService extends EventEmitter {
           }
 
           try {
+            if (storedMeta.sessionAgentId !== session.sessionAgentId) {
+              await this.persistence.moveTerminalScope(storedMeta, session.sessionAgentId);
+            }
+
             const meta: TerminalMeta = {
               ...storedMeta,
+              sessionAgentId: session.sessionAgentId,
               profileId: session.profileId,
               recoveredFromPersistence: true,
             };
@@ -520,8 +525,9 @@ export class TerminalService extends EventEmitter {
   }
 
   listTerminals(sessionAgentId: string): TerminalDescriptor[] {
+    const scopeSessionAgentId = this.resolveScopeSessionAgentId(sessionAgentId);
     return Array.from(this.terminals.values())
-      .filter((runtime) => runtime.meta.sessionAgentId === sessionAgentId && !runtime.closed)
+      .filter((runtime) => runtime.meta.sessionAgentId === scopeSessionAgentId && !runtime.closed)
       .map((runtime) => cloneDescriptor(runtime.descriptor))
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   }
@@ -537,7 +543,7 @@ export class TerminalService extends EventEmitter {
       return undefined;
     }
 
-    if (typeof input !== "string" && runtime.meta.sessionAgentId !== input.sessionAgentId) {
+    if (typeof input !== "string" && runtime.meta.sessionAgentId !== this.resolveScopeSessionAgentId(input.sessionAgentId)) {
       return undefined;
     }
 
@@ -890,11 +896,14 @@ export class TerminalService extends EventEmitter {
   }
 
   async snapshotNow(input?: { sessionAgentId?: string; terminalId?: string }): Promise<number> {
+    const scopeSessionAgentId = input?.sessionAgentId
+      ? this.resolveScopeSessionAgentId(input.sessionAgentId)
+      : undefined;
     const runtimes = Array.from(this.terminals.values()).filter((runtime) => {
       if (input?.terminalId && runtime.meta.terminalId !== input.terminalId) {
         return false;
       }
-      if (input?.sessionAgentId && runtime.meta.sessionAgentId !== input.sessionAgentId) {
+      if (scopeSessionAgentId && runtime.meta.sessionAgentId !== scopeSessionAgentId) {
         return false;
       }
       return !runtime.closed;
@@ -1154,6 +1163,10 @@ export class TerminalService extends EventEmitter {
     this.transport?.publish({ type: "terminal_state", terminal: cloned });
   }
 
+  private resolveScopeSessionAgentId(sessionAgentId: string): string {
+    return this.sessionResolver.resolveSession(sessionAgentId)?.sessionAgentId ?? sessionAgentId;
+  }
+
   private requireSession(sessionAgentId: string): ResolvedTerminalSession {
     const session = this.sessionResolver.resolveSession(sessionAgentId);
     if (!session) {
@@ -1164,7 +1177,8 @@ export class TerminalService extends EventEmitter {
 
   private requireRuntime(terminalId: string, sessionAgentId: string): ActiveTerminalRuntime {
     const runtime = this.requireRuntimeById(terminalId);
-    if (runtime.meta.sessionAgentId !== sessionAgentId) {
+    const scopeSessionAgentId = this.resolveScopeSessionAgentId(sessionAgentId);
+    if (runtime.meta.sessionAgentId !== scopeSessionAgentId) {
       throw new TerminalServiceError(
         "TERMINAL_SESSION_MISMATCH",
         `Terminal ${terminalId} does not belong to session ${sessionAgentId}`,
@@ -1188,14 +1202,15 @@ export class TerminalService extends EventEmitter {
   }
 
   private assertTerminalLimit(sessionAgentId: string): void {
+    const scopeSessionAgentId = this.resolveScopeSessionAgentId(sessionAgentId);
     const count = Array.from(this.terminals.values()).filter(
-      (runtime) => runtime.meta.sessionAgentId === sessionAgentId && !runtime.closed,
+      (runtime) => runtime.meta.sessionAgentId === scopeSessionAgentId && !runtime.closed,
     ).length;
 
     if (count >= this.runtimeConfig.maxTerminalsPerSession) {
       throw new TerminalServiceError(
         "TERMINAL_LIMIT_REACHED",
-        `Session ${sessionAgentId} already has ${count} terminals.`,
+        `Manager ${scopeSessionAgentId} already has ${count} terminals.`,
       );
     }
   }
@@ -1239,8 +1254,9 @@ export class TerminalService extends EventEmitter {
       return trimmed;
     }
 
+    const scopeSessionAgentId = this.resolveScopeSessionAgentId(sessionAgentId);
     const nextIndex = Array.from(this.terminals.values()).filter(
-      (runtime) => runtime.meta.sessionAgentId === sessionAgentId,
+      (runtime) => runtime.meta.sessionAgentId === scopeSessionAgentId,
     ).length + 1;
     return `Terminal ${nextIndex}`;
   }

@@ -119,7 +119,13 @@ class MapSessionResolver implements TerminalSessionResolver {
   }
 
   listSessions(): ResolvedTerminalSession[] {
-    return Array.from(this.sessions.values())
+    const scopes = new Map<string, ResolvedTerminalSession>()
+    for (const session of this.sessions.values()) {
+      if (!scopes.has(session.sessionAgentId)) {
+        scopes.set(session.sessionAgentId, session)
+      }
+    }
+    return Array.from(scopes.values())
   }
 }
 
@@ -146,14 +152,19 @@ async function createHarness(options: {
   await mkdir(join(rootDir, 'session-b'), { recursive: true })
 
   resolver.sessions.set('session-a', {
-    sessionAgentId: 'session-a',
+    sessionAgentId: 'profile-a',
     profileId: 'profile-a',
     cwd: join(rootDir, 'session-a'),
   })
   resolver.sessions.set('session-b', {
-    sessionAgentId: 'session-b',
+    sessionAgentId: 'profile-a',
     profileId: 'profile-a',
     cwd: join(rootDir, 'session-b'),
+  })
+  resolver.sessions.set('profile-a', {
+    sessionAgentId: 'profile-a',
+    profileId: 'profile-a',
+    cwd: join(rootDir, 'session-a'),
   })
 
   const persistence = new TerminalPersistence({
@@ -309,14 +320,14 @@ describe('TerminalService', () => {
     }
   })
 
-  it('creates terminals, lists them by session, renames, resizes, and closes them', async () => {
+  it('creates terminals, shares them across sessions in the same manager, renames, resizes, and closes them', async () => {
     const { dataDir, service, ptyRuntime } = await createAndInitializeHarness()
 
     const created = await service.create(createRequest({ name: 'Build shell', cols: 100, rows: 40 }))
     const terminalId = created.terminal.terminalId
 
     expect(created.terminal).toMatchObject({
-      sessionAgentId: 'session-a',
+      sessionAgentId: 'profile-a',
       profileId: 'profile-a',
       name: 'Build shell',
       cols: 100,
@@ -326,7 +337,8 @@ describe('TerminalService', () => {
     })
     expect(typeof created.ticket).toBe('string')
     expect(service.listTerminals('session-a')).toHaveLength(1)
-    expect(service.listTerminals('session-b')).toEqual([])
+    expect(service.listTerminals('session-b')).toHaveLength(1)
+    expect(service.listTerminals('profile-a')).toHaveLength(1)
 
     const renamed = await service.renameTerminal({
       terminalId,
@@ -336,17 +348,17 @@ describe('TerminalService', () => {
 
     const resized = await service.resizeTerminal({
       terminalId,
-      request: { sessionAgentId: 'session-a', cols: 132, rows: 48 },
+      request: { sessionAgentId: 'session-b', cols: 132, rows: 48 },
     })
     expect(resized.cols).toBe(132)
     expect(resized.rows).toBe(48)
     expect(ptyRuntime.handles[0]?.resizeCalls).toEqual([{ cols: 132, rows: 48 }])
 
-    await service.closeTerminal({ terminalId, sessionAgentId: 'session-a', reason: 'user_closed' })
+    await service.closeTerminal({ terminalId, sessionAgentId: 'session-b', reason: 'user_closed' })
 
     expect(service.getTerminal(terminalId)).toBeUndefined()
     await expect(
-      stat(getTerminalMetaPath(dataDir, 'profile-a', 'session-a', terminalId)),
+      stat(getTerminalMetaPath(dataDir, 'profile-a', 'profile-a', terminalId)),
     ).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
@@ -356,7 +368,7 @@ describe('TerminalService', () => {
     await mkdir(outsideCwd, { recursive: true })
 
     resolver.sessions.set('session-a', {
-      sessionAgentId: 'session-a',
+      sessionAgentId: 'profile-a',
       profileId: 'profile-a',
       cwd: outsideCwd,
     })
@@ -369,7 +381,7 @@ describe('TerminalService', () => {
     const { resolver, service } = await createAndInitializeHarness()
 
     resolver.sessions.set('session-a', {
-      sessionAgentId: 'session-a',
+      sessionAgentId: 'profile-a',
       profileId: 'profile-a',
       cwd: join(tmpdir(), `missing-terminal-cwd-${Date.now()}`),
     })
@@ -429,11 +441,11 @@ describe('TerminalService', () => {
     ).toBe(false)
   })
 
-  it('cleans up terminals when a session is deleted', async () => {
+  it('does not clean up manager-scoped terminals when a non-root session is deleted', async () => {
     const { service } = await createAndInitializeHarness()
     const first = await service.create(createRequest({ name: 'One' }))
     const second = await service.create(createRequest({ name: 'Two' }))
-    await service.create(createRequest({ sessionAgentId: 'session-b', name: 'Other session' }))
+    const third = await service.create(createRequest({ sessionAgentId: 'session-b', name: 'Other session' }))
 
     const closedReasons: TerminalCloseReason[] = []
     service.on('terminal_closed', (event: { reason: TerminalCloseReason }) => {
@@ -442,11 +454,12 @@ describe('TerminalService', () => {
 
     const removed = await service.cleanupSession('session-a', 'session_deleted')
 
-    expect(removed).toBe(2)
-    expect(service.getTerminal(first.terminal.terminalId)).toBeUndefined()
-    expect(service.getTerminal(second.terminal.terminalId)).toBeUndefined()
-    expect(service.listTerminals('session-b')).toHaveLength(1)
-    expect(closedReasons).toEqual(['session_deleted', 'session_deleted'])
+    expect(removed).toBe(0)
+    expect(service.getTerminal(first.terminal.terminalId)).toBeDefined()
+    expect(service.getTerminal(second.terminal.terminalId)).toBeDefined()
+    expect(service.getTerminal(third.terminal.terminalId)).toBeDefined()
+    expect(service.listTerminals('session-b')).toHaveLength(3)
+    expect(closedReasons).toEqual([])
   })
 
   it('transitions running terminals to exited and emits lifecycle events when the PTY exits', async () => {
@@ -555,11 +568,13 @@ describe('TerminalService', () => {
     )
   })
 
-  it('reconciles stale sessions by closing orphaned terminals', async () => {
+  it('reconciles stale manager scopes by closing orphaned terminals', async () => {
     const { resolver, service } = await createAndInitializeHarness()
     const created = await service.create(createRequest())
 
     resolver.sessions.delete('session-a')
+    resolver.sessions.delete('session-b')
+    resolver.sessions.delete('profile-a')
     const result = await service.reconcileSessions()
 
     expect(result).toEqual({ removed: 1 })

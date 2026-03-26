@@ -258,6 +258,30 @@ export class TerminalPersistence {
     this.disposeMirror(meta.terminalId);
   }
 
+  async moveTerminalScope(meta: TerminalMeta, nextSessionAgentId: string): Promise<void> {
+    if (meta.sessionAgentId === nextSessionAgentId) {
+      return;
+    }
+
+    const currentMetaPath = getTerminalMetaPath(this.dataDir, meta.profileId, meta.sessionAgentId, meta.terminalId);
+    const nextMetaPath = getTerminalMetaPath(this.dataDir, meta.profileId, nextSessionAgentId, meta.terminalId);
+    const currentTerminalDir = dirname(currentMetaPath);
+    const nextTerminalDir = dirname(nextMetaPath);
+
+    try {
+      await stat(currentTerminalDir);
+    } catch (error) {
+      if (isErrnoCode(error, "ENOENT")) {
+        return;
+      }
+      throw error;
+    }
+
+    await mkdir(dirname(nextTerminalDir), { recursive: true });
+    await rm(nextTerminalDir, { recursive: true, force: true });
+    await rename(currentTerminalDir, nextTerminalDir);
+  }
+
   disposeMirror(terminalId: string): void {
     const mirror = this.mirrors.get(terminalId);
     mirror?.terminal.dispose();

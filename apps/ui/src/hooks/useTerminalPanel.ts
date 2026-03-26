@@ -215,7 +215,7 @@ export function useTerminalPanel({
     }
 
     if (terminals.length >= MAX_TERMINALS_PER_SESSION) {
-      handleError(`Maximum ${MAX_TERMINALS_PER_SESSION} terminals per session.`)
+      handleError(`Maximum ${MAX_TERMINALS_PER_SESSION} terminals per manager.`)
       return null
     }
 

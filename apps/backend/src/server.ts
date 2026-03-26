@@ -159,18 +159,30 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
         }
 
         return {
-          sessionAgentId: descriptor.agentId,
+          sessionAgentId: descriptor.profileId ?? descriptor.agentId,
           profileId: descriptor.profileId ?? descriptor.agentId,
           cwd: descriptor.cwd,
         };
       },
-      listSessions: () => swarmManager.listAgents()
-        .filter((descriptor) => descriptor.role === "manager")
-        .map((descriptor) => ({
-          sessionAgentId: descriptor.agentId,
-          profileId: descriptor.profileId ?? descriptor.agentId,
-          cwd: descriptor.cwd,
-        })),
+      listSessions: () => {
+        const scopes = new Map<string, { sessionAgentId: string; profileId: string; cwd: string }>();
+        for (const descriptor of swarmManager.listAgents()) {
+          if (descriptor.role !== "manager") {
+            continue;
+          }
+
+          const scopeAgentId = descriptor.profileId ?? descriptor.agentId;
+          if (!scopes.has(scopeAgentId)) {
+            scopes.set(scopeAgentId, {
+              sessionAgentId: scopeAgentId,
+              profileId: descriptor.profileId ?? descriptor.agentId,
+              cwd: descriptor.cwd,
+            });
+          }
+        }
+
+        return Array.from(scopes.values());
+      },
     };
     const terminalPersistence = new TerminalPersistence({
       dataDir: config.paths.dataDir,

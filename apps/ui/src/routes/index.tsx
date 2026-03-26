@@ -167,21 +167,32 @@ export function IndexPage() {
     )
   }, [activeAgent, state.agents])
 
-  const terminalSessionAgentId = activeAgent ? activeManagerId : null
-  const terminalSessionAgent = useMemo(() => {
-    if (!terminalSessionAgentId) {
+  const activeManagerAgent = useMemo(() => {
+    if (!activeManagerId) {
       return null
     }
 
     return state.agents.find(
-      (agent) => agent.role === 'manager' && agent.agentId === terminalSessionAgentId,
+      (agent) => agent.role === 'manager' && agent.agentId === activeManagerId,
     ) ?? null
-  }, [state.agents, terminalSessionAgentId])
+  }, [activeManagerId, state.agents])
+
+  const terminalSessionAgentId = useMemo(() => {
+    if (!activeAgent) {
+      return null
+    }
+
+    if (activeAgent.role === 'manager') {
+      return activeAgent.profileId ?? activeAgent.agentId
+    }
+
+    return activeManagerAgent?.profileId ?? activeManagerAgent?.agentId ?? activeAgent.managerId ?? null
+  }, [activeAgent, activeManagerAgent])
 
   const terminalPanel = useTerminalPanel({
     wsUrl,
     sessionAgentId: terminalSessionAgentId,
-    sessionCwd: terminalSessionAgent?.cwd ?? activeAgent?.cwd ?? null,
+    sessionCwd: activeManagerAgent?.cwd ?? activeAgent?.cwd ?? null,
     terminals: state.terminals,
     enabled: activeView === 'chat',
     onError: (message) => {
@@ -958,6 +969,8 @@ export function IndexPage() {
           profiles={state.profiles}
           statuses={state.statuses}
           unreadCounts={state.unreadCounts}
+          terminalScopeId={state.terminalSessionScopeId}
+          terminalCount={state.terminals.length}
           selectedAgentId={activeAgentId}
           isSettingsActive={activeView === 'settings'}
           isPlaywrightActive={activeView === 'playwright'}

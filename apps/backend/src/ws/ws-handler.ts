@@ -151,7 +151,7 @@ export class WsHandler {
         continue;
       }
 
-      const effectiveSessionAgentId = this.resolveManagerContextAgentId(subscribedAgent) ?? subscribedAgent;
+      const effectiveSessionAgentId = this.resolveTerminalScopeAgentId(subscribedAgent) ?? subscribedAgent;
       if (effectiveSessionAgentId !== sessionAgentId) {
         continue;
       }
@@ -834,6 +834,27 @@ export class WsHandler {
     return descriptor.role === "manager" ? descriptor.agentId : descriptor.managerId;
   }
 
+  private resolveTerminalScopeAgentId(subscribedAgentId: string): string | undefined {
+    const descriptor = this.swarmManager.getAgent(subscribedAgentId);
+    if (!descriptor) {
+      if (!this.hasRunningManagers()) {
+        return this.resolveConfiguredManagerId() ?? subscribedAgentId;
+      }
+      return undefined;
+    }
+
+    if (descriptor.role === "manager") {
+      return descriptor.profileId ?? descriptor.agentId;
+    }
+
+    const managerDescriptor = this.swarmManager.getAgent(descriptor.managerId);
+    if (managerDescriptor?.role === "manager") {
+      return managerDescriptor.profileId ?? managerDescriptor.agentId;
+    }
+
+    return descriptor.managerId;
+  }
+
   private resolveProfileIdForAgent(agentId: string): string | undefined {
     const descriptor = this.swarmManager.getAgent(agentId);
     if (!descriptor) {
@@ -924,7 +945,7 @@ export class WsHandler {
       choiceIds: pendingChoiceIds,
     });
 
-    const effectiveTerminalSessionId = this.resolveManagerContextAgentId(targetAgentId) ?? targetAgentId;
+    const effectiveTerminalSessionId = this.resolveTerminalScopeAgentId(targetAgentId) ?? targetAgentId;
     this.send(socket, {
       type: "terminals_snapshot",
       sessionAgentId: effectiveTerminalSessionId,

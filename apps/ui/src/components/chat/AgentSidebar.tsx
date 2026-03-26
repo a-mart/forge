@@ -17,6 +17,7 @@ import {
   Search,
   Settings,
   SquarePen,
+  SquareTerminal,
   Trash2,
   UserStar,
   X,
@@ -81,6 +82,8 @@ interface AgentSidebarProps {
   profiles: ManagerProfile[]
   statuses: Record<string, { status: AgentStatus; pendingCount: number; contextUsage?: AgentContextUsage }>
   unreadCounts: Record<string, number>
+  terminalScopeId?: string | null
+  terminalCount?: number
   selectedAgentId: string | null
   isSettingsActive: boolean
   isPlaywrightActive?: boolean
@@ -294,6 +297,28 @@ function RuntimeBadge({ agent, isSelected }: { agent: AgentDescriptor; isSelecte
           {agent.model.thinkingLevel && (
             <p className="opacity-60">reasoning: {agent.model.thinkingLevel}</p>
           )}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  )
+}
+
+function TerminalCountBadge({ count }: { count: number }) {
+  if (count <= 0) {
+    return null
+  }
+
+  return (
+    <TooltipProvider delayDuration={200}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="ml-1 inline-flex h-5 shrink-0 items-center gap-1 rounded-sm border border-sidebar-border/80 bg-sidebar-accent/40 px-1.5 text-[10px] font-medium text-muted-foreground">
+            <SquareTerminal className="size-3 shrink-0" />
+            <span className="tabular-nums">{count > 99 ? '99+' : count}</span>
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-[10px]">
+          {count} terminal{count !== 1 ? 's' : ''} open
         </TooltipContent>
       </Tooltip>
     </TooltipProvider>
@@ -728,6 +753,8 @@ function ProfileGroup({
   treeRow,
   statuses,
   unreadCounts,
+  terminalScopeId,
+  terminalCount,
   selectedAgentId,
   isSettingsActive,
   isCollapsed,
@@ -759,6 +786,8 @@ function ProfileGroup({
   treeRow: ProfileTreeRow
   statuses: Record<string, { status: AgentStatus; pendingCount: number; contextUsage?: AgentContextUsage }>
   unreadCounts: Record<string, number>
+  terminalScopeId?: string | null
+  terminalCount?: number
   selectedAgentId: string | null
   isSettingsActive: boolean
   isCollapsed: boolean
@@ -803,6 +832,7 @@ function ProfileGroup({
 
   // Use the default session agent for the runtime badge
   const representativeAgent = defaultSession?.sessionAgent ?? sessions[0]?.sessionAgent
+  const showTerminalCountBadge = (terminalCount ?? 0) > 0 && terminalScopeId === profile.profileId
 
   return (
     <>
@@ -876,6 +906,9 @@ function ProfileGroup({
                 <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
                   {activeSessionCount}/{sessions.length}
                 </span>
+              ) : null}
+              {showTerminalCountBadge ? (
+                <TerminalCountBadge count={terminalCount ?? 0} />
               ) : null}
               {representativeAgent ? (
                 <RuntimeBadge agent={representativeAgent} isSelected={false} />
@@ -1804,6 +1837,8 @@ export function AgentSidebar({
   profiles,
   statuses,
   unreadCounts,
+  terminalScopeId,
+  terminalCount = 0,
   selectedAgentId,
   isSettingsActive,
   isPlaywrightActive = false,
@@ -2254,6 +2289,8 @@ export function AgentSidebar({
               treeRow={treeRow}
               statuses={statuses}
               unreadCounts={unreadCounts}
+              terminalScopeId={terminalScopeId}
+              terminalCount={terminalCount}
               selectedAgentId={selectedAgentId}
               isSettingsActive={isSettingsActive}
               isCollapsed={isSearchActive ? false : collapsedProfileIds.has(treeRow.profile.profileId)}

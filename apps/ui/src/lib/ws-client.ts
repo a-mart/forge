@@ -168,6 +168,33 @@ export class ManagerWsClient {
     return this.explicitAgentSelectionAgentId
   }
 
+  private resolveTerminalScopeAgentId(
+    agentId: string | null | undefined,
+    agents: AgentDescriptor[] = this.state.agents,
+  ): string | null {
+    if (!agentId) {
+      return null
+    }
+
+    const descriptor = agents.find((agent) => agent.agentId === agentId)
+    if (!descriptor) {
+      return null
+    }
+
+    if (descriptor.role === 'manager') {
+      return descriptor.profileId ?? descriptor.agentId
+    }
+
+    const managerDescriptor = agents.find(
+      (agent) => agent.role === 'manager' && agent.agentId === descriptor.managerId,
+    )
+    if (managerDescriptor) {
+      return managerDescriptor.profileId ?? managerDescriptor.agentId
+    }
+
+    return descriptor.managerId
+  }
+
   subscribe(listener: Listener): () => void {
     this.listeners.add(listener)
     listener(this.state)
@@ -213,6 +240,10 @@ export class ManagerWsClient {
     this.hasExplicitAgentSelection = isExplicitSelection
     this.explicitAgentSelectionAgentId = isExplicitSelection ? trimmed : null
 
+    const previousTerminalScopeId = this.resolveTerminalScopeAgentId(this.state.targetAgentId)
+    const nextTerminalScopeId = this.resolveTerminalScopeAgentId(trimmed)
+    const shouldResetTerminals = previousTerminalScopeId !== nextTerminalScopeId
+
     this.desiredAgentId = trimmed
     const nextUnread = { ...this.state.unreadCounts }
     delete nextUnread[trimmed]
@@ -221,8 +252,7 @@ export class ManagerWsClient {
       messages: [],
       activityMessages: [],
       pendingChoiceIds: new Set(),
-      terminals: [],
-      terminalSessionScopeId: null,
+      ...(shouldResetTerminals ? { terminals: [], terminalSessionScopeId: null } : {}),
       lastError: null,
       unreadCounts: nextUnread,
     })
@@ -1303,8 +1333,13 @@ export class ManagerWsClient {
       patch.messages = []
       patch.activityMessages = []
       patch.pendingChoiceIds = new Set()
-      patch.terminals = []
-      patch.terminalSessionScopeId = null
+
+      const previousTerminalScopeId = this.resolveTerminalScopeAgentId(this.state.targetAgentId, this.state.agents)
+      const nextTerminalScopeId = this.resolveTerminalScopeAgentId(fallbackTarget, mergedAgents)
+      if (previousTerminalScopeId !== nextTerminalScopeId) {
+        patch.terminals = []
+        patch.terminalSessionScopeId = null
+      }
     }
 
     if (nextSubscribedAgentId !== this.state.subscribedAgentId) {
@@ -1492,6 +1527,10 @@ export class ManagerWsClient {
         this.explicitAgentSelectionAgentId = null
         this.desiredAgentId = fallbackId
         this.send({ type: 'subscribe', agentId: fallbackId })
+
+        const previousTerminalScopeId = this.resolveTerminalScopeAgentId(agentId, this.state.agents)
+        const nextTerminalScopeId = this.resolveTerminalScopeAgentId(fallbackId, nextAgents)
+
         this.updateState({
           agents: nextAgents,
           statuses: nextStatuses,
@@ -1501,8 +1540,9 @@ export class ManagerWsClient {
           messages: [],
           activityMessages: [],
           pendingChoiceIds: new Set(),
-          terminals: [],
-          terminalSessionScopeId: null,
+          ...(previousTerminalScopeId !== nextTerminalScopeId
+            ? { terminals: [], terminalSessionScopeId: null }
+            : {}),
         })
         return
       }

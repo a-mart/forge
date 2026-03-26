@@ -257,7 +257,7 @@ export function TerminalTabBar({
             </TooltipTrigger>
             <TooltipContent side="bottom" sideOffset={6}>
               {createDisabled
-                ? `Maximum ${maxTerminalsPerSession} terminals per session.`
+                ? `Maximum ${maxTerminalsPerSession} terminals per manager.`
                 : 'New terminal'}
             </TooltipContent>
           </Tooltip>
