@@ -770,7 +770,11 @@ function resolveBackendEntry(): string {
 
 function resolveBackendExecArgv(backendEntry: string): string[] {
   if (backendEntry.endsWith('.ts')) {
-    return [...process.execArgv, '--import', require.resolve('tsx')]
+    // On Windows, --import requires a file:// URL — raw drive-letter paths
+    // like T:\...\tsx are misinterpreted as URL schemes (protocol 't:').
+    const tsxPath = require.resolve('tsx')
+    const tsxUrl = pathToFileURL(tsxPath).href
+    return [...process.execArgv, '--import', tsxUrl]
   }
 
   return [...process.execArgv]
