@@ -169,6 +169,24 @@ export async function deleteSharedSpecialist(
   await requestOk(endpoint, { method: 'DELETE' })
 }
 
+export async function fetchSpecialistsEnabled(wsUrl: string | undefined): Promise<boolean> {
+  const endpoint = buildSpecialistEndpoint(wsUrl, undefined, '/enabled')
+  const payload = await requestJson<{ enabled?: unknown }>(endpoint, { cache: 'no-store' })
+  return typeof payload.enabled === 'boolean' ? payload.enabled : true
+}
+
+export async function setSpecialistsEnabledApi(
+  wsUrl: string | undefined,
+  enabled: boolean,
+): Promise<void> {
+  const endpoint = buildSpecialistEndpoint(wsUrl, undefined, '/enabled')
+  await requestOk(endpoint, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  })
+}
+
 export async function fetchWorkerTemplate(wsUrl: string | undefined): Promise<string> {
   const endpoint = buildSpecialistEndpoint(wsUrl, undefined, '/template')
   const payload = await requestJson<{ template?: unknown }>(endpoint, { cache: 'no-store' })

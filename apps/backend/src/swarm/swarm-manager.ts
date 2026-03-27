@@ -172,6 +172,8 @@ interface SpecialistRegistryModule {
   resolveRoster(profileId: string): Promise<ResolvedSpecialistDefinitionLike[]>;
   generateRosterBlock(roster: ResolvedSpecialistDefinitionLike[]): string;
   normalizeSpecialistHandle(value: string): string;
+  getSpecialistsEnabled(): Promise<boolean>;
+  legacyModelRoutingGuidance: string;
 }
 
 // AgentDescriptor now includes specialistId/specialistDisplayName/specialistColor directly.
@@ -5514,10 +5516,14 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
           resolveRoster?: (profileId: string, dataDir: string) => Promise<ResolvedSpecialistDefinitionLike[]>;
           generateRosterBlock?: (roster: ResolvedSpecialistDefinitionLike[]) => string;
           normalizeSpecialistHandle?: (value: string) => string;
+          getSpecialistsEnabled?: (dataDir: string) => Promise<boolean>;
+          LEGACY_MODEL_ROUTING_GUIDANCE?: string;
         };
         const rawResolveRoster = mod.resolveRoster;
         const generateRosterBlock = mod.generateRosterBlock;
         const normalizeSpecialistHandle = mod.normalizeSpecialistHandle;
+        const rawGetSpecialistsEnabled = mod.getSpecialistsEnabled;
+        const legacyModelRoutingGuidance = mod.LEGACY_MODEL_ROUTING_GUIDANCE;
 
         if (
           typeof rawResolveRoster !== "function" ||
@@ -5533,6 +5539,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
           resolveRoster: (profileId: string) => rawResolveRoster(profileId, dataDir),
           generateRosterBlock,
           normalizeSpecialistHandle,
+          getSpecialistsEnabled: typeof rawGetSpecialistsEnabled === "function"
+            ? () => rawGetSpecialistsEnabled(dataDir)
+            : () => Promise.resolve(true),
+          legacyModelRoutingGuidance: typeof legacyModelRoutingGuidance === "string"
+            ? legacyModelRoutingGuidance
+            : "",
         };
       });
     }
@@ -5562,18 +5574,21 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       : MANAGER_ARCHETYPE_ID;
 
     const specialistRegistry = await this.loadSpecialistRegistryModule();
-    const [promptTemplate, roster] = await Promise.all([
+    const [promptTemplate, roster, specialistsEnabled] = await Promise.all([
       this.promptRegistry.resolve("archetype", managerArchetypeId, profileId),
       specialistRegistry.resolveRoster(profileId),
+      specialistRegistry.getSpecialistsEnabled(),
     ]);
 
-    const rosterBlock = specialistRegistry.generateRosterBlock(roster);
+    const delegationBlock = specialistsEnabled
+      ? specialistRegistry.generateRosterBlock(roster)
+      : specialistRegistry.legacyModelRoutingGuidance;
     let prompt = resolvePromptVariables(promptTemplate, this.buildStandardPromptVariables(descriptor));
 
     if (prompt.includes("${SPECIALIST_ROSTER}")) {
-      prompt = prompt.replaceAll("${SPECIALIST_ROSTER}", rosterBlock);
+      prompt = prompt.replaceAll("${SPECIALIST_ROSTER}", delegationBlock);
     } else {
-      prompt = `${prompt.trimEnd()}\n\n${rosterBlock}`;
+      prompt = `${prompt.trimEnd()}\n\n${delegationBlock}`;
     }
 
     if (this.integrationContextProvider) {

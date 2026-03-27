@@ -7,8 +7,11 @@ import {
   resolveSharedRoster,
   generateRosterBlock,
   getWorkerTemplate,
+  getSpecialistsEnabled,
+  setSpecialistsEnabled,
   saveProfileSpecialist,
   saveSharedSpecialist,
+  invalidateSpecialistCache,
   type SaveSpecialistRequest,
 } from "../../swarm/specialists/specialist-registry.js";
 import { getModelPresetInfoList } from "../../swarm/model-presets.js";
@@ -21,9 +24,11 @@ import {
 import type { HttpRoute } from "./http-route.js";
 
 const SPECIALISTS_ENDPOINT_PATH = "/api/settings/specialists";
+const SPECIALISTS_ENABLED_ENDPOINT_PATH = "/api/settings/specialists/enabled";
 const SETTINGS_MODELS_ENDPOINT_PATH = "/api/settings/models";
 const ROSTER_PROMPT_SUFFIX = "/roster-prompt";
 const METHODS = "GET, PUT, DELETE, OPTIONS";
+const ENABLED_METHODS = "GET, PUT, OPTIONS";
 const SETTINGS_MODELS_METHODS = "GET, OPTIONS";
 
 export function createSpecialistRoutes(options: {
@@ -38,6 +43,13 @@ export function createSpecialistRoutes(options: {
       matches: (pathname) => pathname === SETTINGS_MODELS_ENDPOINT_PATH,
       handle: async (request, response, requestUrl) => {
         await handleSettingsModelsRequest(request, response, requestUrl);
+      },
+    },
+    {
+      methods: ENABLED_METHODS,
+      matches: (pathname) => pathname === SPECIALISTS_ENABLED_ENDPOINT_PATH,
+      handle: async (request, response, requestUrl) => {
+        await handleSpecialistsEnabledRequest(swarmManager, broadcastEvent, request, response, requestUrl);
       },
     },
     {
@@ -72,6 +84,75 @@ async function handleSettingsModelsRequest(
   }
 
   response.setHeader("Allow", SETTINGS_MODELS_METHODS);
+  sendJson(response, 405, { error: "Method Not Allowed" });
+}
+
+async function handleSpecialistsEnabledRequest(
+  swarmManager: SwarmManager,
+  broadcastEvent: (event: ServerEvent) => void,
+  request: IncomingMessage,
+  response: ServerResponse,
+  _requestUrl: URL,
+): Promise<void> {
+  if (request.method === "OPTIONS") {
+    applyCorsHeaders(request, response, ENABLED_METHODS);
+    response.statusCode = 204;
+    response.end();
+    return;
+  }
+
+  applyCorsHeaders(request, response, ENABLED_METHODS);
+
+  const dataDir = swarmManager.getConfig().paths.dataDir;
+
+  if (request.method === "GET") {
+    try {
+      const enabled = await getSpecialistsEnabled(dataDir);
+      sendJson(response, 200, { enabled });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      sendJson(response, 500, { error: message });
+    }
+    return;
+  }
+
+  if (request.method === "PUT") {
+    try {
+      const body = await readJsonBody(request);
+      if (!body || typeof body !== "object" || Array.isArray(body)) {
+        sendJson(response, 400, { error: "Request body must be a JSON object" });
+        return;
+      }
+
+      const obj = body as Record<string, unknown>;
+      if (typeof obj.enabled !== "boolean") {
+        sendJson(response, 400, { error: "enabled must be a boolean" });
+        return;
+      }
+
+      await setSpecialistsEnabled(dataDir, obj.enabled);
+      invalidateSpecialistCache();
+
+      // Broadcast change to all profiles and recycle managers
+      const profiles = swarmManager.listProfiles();
+      for (const profile of profiles) {
+        await notifySpecialistRosterMutation({
+          swarmManager,
+          broadcastEvent,
+          dataDir,
+          profileId: profile.profileId,
+        });
+      }
+
+      sendJson(response, 200, { ok: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      sendJson(response, 500, { error: message });
+    }
+    return;
+  }
+
+  response.setHeader("Allow", ENABLED_METHODS);
   sendJson(response, 405, { error: "Method Not Allowed" });
 }
 

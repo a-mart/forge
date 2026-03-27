@@ -28,6 +28,8 @@ import {
   fetchSharedSpecialists,
   fetchRosterPrompt,
   fetchWorkerTemplate,
+  fetchSpecialistsEnabled,
+  setSpecialistsEnabledApi,
   saveSpecialist,
   saveSharedSpecialist,
   deleteSpecialist,
@@ -297,6 +299,11 @@ export function SettingsSpecialists({ wsUrl, profiles, specialistChangeKey }: Se
   const loadRequestIdRef = useRef(0)
   const rosterRequestIdRef = useRef(0)
 
+  // Global specialists enabled toggle
+  const [specialistsEnabled, setSpecialistsEnabled] = useState(true)
+  const [enabledLoading, setEnabledLoading] = useState(true)
+  const [enabledToggling, setEnabledToggling] = useState(false)
+
   // Per-card edit states, keyed by specialistId
   const [editStates, setEditStates] = useState<Record<string, CardEditState>>({})
   const [editingIds, setEditingIds] = useState<Set<string>>(new Set())
@@ -372,6 +379,30 @@ export function SettingsSpecialists({ wsUrl, profiles, specialistChangeKey }: Se
   useEffect(() => {
     void loadSpecialists()
   }, [loadSpecialists, specialistChangeKey])
+
+  // Load global enabled state
+  useEffect(() => {
+    let cancelled = false
+    setEnabledLoading(true)
+    fetchSpecialistsEnabled(wsUrl)
+      .then((enabled) => { if (!cancelled) setSpecialistsEnabled(enabled) })
+      .catch(() => { /* default to true on error */ })
+      .finally(() => { if (!cancelled) setEnabledLoading(false) })
+    return () => { cancelled = true }
+  }, [wsUrl, specialistChangeKey])
+
+  const handleToggleEnabled = useCallback(async () => {
+    const next = !specialistsEnabled
+    setEnabledToggling(true)
+    try {
+      await setSpecialistsEnabledApi(wsUrl, next)
+      setSpecialistsEnabled(next)
+    } catch {
+      // Revert on failure — the WS event will correct if needed
+    } finally {
+      setEnabledToggling(false)
+    }
+  }, [wsUrl, specialistsEnabled])
 
   useEffect(() => {
     setEditingIds(new Set())
@@ -762,6 +793,31 @@ export function SettingsSpecialists({ wsUrl, profiles, specialistChangeKey }: Se
         </div>
       </SettingsSection>
 
+      {/* Global specialists enabled toggle */}
+      <SettingsSection
+        label="Specialist Workers"
+        description="When enabled, the manager uses named specialist workers with pre-configured models and prompts. When disabled, the manager falls back to legacy model routing guidance."
+      >
+        <div className="flex items-center gap-3">
+          <Switch
+            id="specialists-enabled-toggle"
+            checked={specialistsEnabled}
+            disabled={enabledLoading || enabledToggling}
+            onCheckedChange={handleToggleEnabled}
+            aria-label="Enable specialist workers"
+          />
+          <Label htmlFor="specialists-enabled-toggle" className="text-sm font-medium">
+            Enable specialist workers
+          </Label>
+          {enabledToggling && <Loader2 className="size-3.5 animate-spin text-muted-foreground" />}
+        </div>
+        {!specialistsEnabled && !enabledLoading && (
+          <p className="text-xs text-muted-foreground/70 italic mt-2">
+            Specialist workers are disabled. The manager will use legacy model routing guidance for worker delegation.
+          </p>
+        )}
+      </SettingsSection>
+
       {/* Loading / error states */}
       {loading && (
         <div className="flex items-center justify-center py-8">
@@ -779,6 +835,7 @@ export function SettingsSpecialists({ wsUrl, profiles, specialistChangeKey }: Se
         /* ============================================================ */
         /*  Global View                                                  */
         /* ============================================================ */
+        <div className={!specialistsEnabled ? 'opacity-50 pointer-events-none select-none' : undefined}>
         <SettingsSection
           label="Global Specialists"
           description="Shared specialist definitions inherited by all profiles. Builtins are editable but cannot be deleted."
@@ -833,10 +890,11 @@ export function SettingsSpecialists({ wsUrl, profiles, specialistChangeKey }: Se
             </div>
           )}
         </SettingsSection>
+        </div>
       )}
 
       {!loading && !error && !isGlobal && (
-        <>
+        <div className={!specialistsEnabled ? 'opacity-50 pointer-events-none select-none' : undefined}>
           {/* ============================================================ */}
           {/*  Profile View — Overrides                                     */}
           {/* ============================================================ */}
@@ -930,7 +988,7 @@ export function SettingsSpecialists({ wsUrl, profiles, specialistChangeKey }: Se
               </div>
             </SettingsSection>
           )}
-        </>
+        </div>
       )}
 
       {/* Roster prompt dialog */}

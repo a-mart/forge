@@ -19,6 +19,22 @@ import {
 const FRONTMATTER_BLOCK_PATTERN = /^---\s*\r?\n([\s\S]*?)\r?\n---\s*(?:\r?\n|$)/;
 const HEX_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
 const CACHE_KEY_SEPARATOR = "\u0000";
+const SPECIALISTS_ENABLED_FILENAME = "specialists-enabled.json";
+
+/**
+ * Legacy model routing guidance injected into the manager prompt when specialists are disabled.
+ * Extracted from the pre-specialists manager archetype.
+ */
+export const LEGACY_MODEL_ROUTING_GUIDANCE = `Model and reasoning selection for workers:
+- spawn_agent accepts optional \`model\`, \`modelId\`, and \`reasoningLevel\` to tune cost, speed, and capability per worker.
+- Available model presets: \`pi-codex\` (\`gpt-5.3-codex\`), \`pi-5.4\` (\`gpt-5.4\`), \`pi-opus\` (\`claude-opus-4-6\`), and \`codex-app\` (\`default\` on openai-codex-app-server).
+- Think in three tiers when assigning work:
+  1. **Quick/cheap** — file reads, searches, command runs, simple edits. Use \`modelId: "gpt-5.3-codex-spark"\` or \`modelId: "claude-haiku-4-5-20251001"\` with \`reasoningLevel: "low"\`. Fast, minimal cost.
+  2. **Standard** — normal implementation, moderate complexity. Use preset defaults with no overrides. This is the baseline and needs no tuning.
+  3. **Complex** — architecture, thorough code review, debugging subtle issues. Choose the model explicitly (e.g., \`model: "pi-5.4"\` for heavy coding tasks, \`model: "pi-opus"\` for nuanced review).
+- The primary optimization lever is **model selection**, not reasoning level. A haiku worker costs a fraction of opus; a spark worker is ultra-fast. Use cheaper models for sub-tasks and exploration.
+- Reasoning level defaults are already high for all presets. Lower it for quick tasks; raising it further is rarely needed.
+- Cross-provider strengths: Codex models tend to excel at backend/algorithmic work. Claude models shine at UI polish, nuanced code review, and writing. Mix them on the same project like specialists on a team.`;
 
 const rosterCache = new Map<string, ResolvedSpecialistDefinition[]>();
 
@@ -186,6 +202,15 @@ export function generateRosterBlock(roster: ResolvedSpecialistDefinition[]): str
     lines.push(`- \`${s.specialistId}\`: ${s.whenToUse} [${primary}${fallback}]`);
   }
 
+  lines.push(
+    "",
+    "Routing guidance:",
+    "- For dual-model code reviews, use both code-reviewer and code-reviewer-2 for complementary correctness + design perspectives.",
+    "- For quick investigations or simple tasks, prefer scout to avoid heavyweight model costs.",
+    "- For research or analysis fan-outs, mix specialists across different models for diverse perspectives.",
+    "- If no specialist fits the task, fall back to ad-hoc spawn_agent with explicit model/reasoning params.",
+  );
+
   return lines.join("\n");
 }
 
@@ -231,6 +256,40 @@ export async function seedBuiltins(dataDir: string): Promise<void> {
   }
 
   invalidateSpecialistCache();
+}
+
+export async function getSpecialistsEnabled(dataDir: string): Promise<boolean> {
+  const filePath = join(getSharedSpecialistsDir(dataDir), SPECIALISTS_ENABLED_FILENAME);
+  try {
+    const raw = await readFile(filePath, "utf8");
+    const parsed = JSON.parse(raw) as { enabled?: unknown };
+    return parsed.enabled !== false;
+  } catch (error) {
+    if (isEnoentError(error)) {
+      return true;
+    }
+
+    throw error;
+  }
+}
+
+export async function setSpecialistsEnabled(dataDir: string, enabled: boolean): Promise<void> {
+  const dir = getSharedSpecialistsDir(dataDir);
+  await mkdir(dir, { recursive: true });
+  const filePath = join(dir, SPECIALISTS_ENABLED_FILENAME);
+  const tempPath = `${filePath}.tmp-${randomUUID()}`;
+
+  try {
+    await writeFile(tempPath, JSON.stringify({ enabled }, null, 2) + "\n", "utf8");
+    await rename(tempPath, filePath);
+  } catch (error) {
+    try {
+      await unlink(tempPath);
+    } catch {
+      // Best-effort cleanup.
+    }
+    throw error;
+  }
 }
 
 export async function saveProfileSpecialist(
