@@ -288,6 +288,66 @@ export interface DirectoryItem {
   path: string
 }
 
+export type GitRepoTarget = 'workspace' | 'versioning'
+export type GitRepoKind = 'workspace' | 'versioning'
+
+export interface GitRepoMetadata {
+  repoName: string
+  repoRoot: string
+  repoKind: GitRepoKind
+  repoLabel: string
+}
+
+export interface GitFileStatus {
+  path: string
+  status: 'modified' | 'added' | 'deleted' | 'renamed' | 'copied' | 'untracked'
+  oldPath?: string
+  additions?: number
+  deletions?: number
+}
+
+export interface GitStatusResult extends GitRepoMetadata {
+  files: GitFileStatus[]
+  branch: string
+  summary: { filesChanged: number; insertions: number; deletions: number }
+  truncated?: boolean
+  totalFiles?: number
+  notInitialized?: boolean
+}
+
+export interface GitDiffResult {
+  oldContent: string
+  newContent: string
+  binary?: true
+  truncated?: true
+  reason?: 'file_too_large'
+  notInitialized?: boolean
+}
+
+export interface GitLogEntry {
+  sha: string
+  shortSha: string
+  message: string
+  author: string
+  date: string
+  filesChanged: number
+}
+
+export interface GitLogResult {
+  commits: GitLogEntry[]
+  hasMore: boolean
+  notInitialized?: boolean
+}
+
+export interface GitCommitDetail {
+  sha: string
+  message: string
+  author: string
+  date: string
+  files: GitFileStatus[]
+  notInitialized?: boolean
+}
+
 // ── Prompt Centralization ─────────────────────────────────
 
 export type PromptCategory = 'archetype' | 'operational'

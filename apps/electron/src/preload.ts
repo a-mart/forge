@@ -31,6 +31,18 @@ contextBridge.exposeInMainWorld('electronBridge', {
   updateTitleBarOverlay: (colors: { color: string; symbolColor: string }): void => {
     ipcRenderer.send('update-title-bar-overlay', colors)
   },
+  checkForUpdates: (): Promise<void> => ipcRenderer.invoke('check-for-updates'),
+  downloadUpdate: (): Promise<void> => ipcRenderer.invoke('download-update'),
+  installUpdate: (): Promise<void> => ipcRenderer.invoke('install-update'),
+  onUpdateStatus: (callback: (status: { type: string; version?: string; percent?: number; message?: string }) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, status: { type: string; version?: string; percent?: number; message?: string }) => {
+      callback(status)
+    }
+    ipcRenderer.on('update-status', handler)
+    return () => {
+      ipcRenderer.removeListener('update-status', handler)
+    }
+  },
 })
 
 function readBootstrap(): BackendBootstrap {

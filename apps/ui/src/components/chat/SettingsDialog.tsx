@@ -8,6 +8,7 @@ import { SettingsSkills } from '@/components/settings/SettingsSkills'
 import { SettingsPrompts } from '@/components/settings/SettingsPrompts'
 import { SettingsSlashCommands } from '@/components/settings/SettingsSlashCommands'
 import { SettingsExtensions } from '@/components/settings/SettingsExtensions'
+import { SettingsAbout } from '@/components/settings/SettingsAbout'
 import type { AgentDescriptor, ManagerProfile, PlaywrightDiscoverySettings, PlaywrightDiscoverySnapshot, TelegramStatusEvent } from '@forge/protocol'
 
 interface SettingsPanelProps {
@@ -59,6 +60,7 @@ export function SettingsPanel({
         />
       )}
       {activeTab === 'extensions' && <SettingsExtensions wsUrl={wsUrl} />}
+      {activeTab === 'about' && <SettingsAbout />}
     </SettingsLayout>
   )
 }
