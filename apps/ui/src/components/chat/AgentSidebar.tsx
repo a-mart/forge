@@ -803,7 +803,7 @@ function ProfileGroup({
 
       {/* Sessions list */}
       {!isCollapsed && hasAnySessions ? (
-        <div className="relative mt-0.5">
+        <div className="relative mt-1">
           {(() => {
             const hasMore = sessions.length > visibleSessionLimit
             const isExpanded = visibleSessionLimit > MAX_VISIBLE_SESSIONS
@@ -1478,7 +1478,7 @@ function CortexSection({
 
       {/* Sessions list (same pattern as ProfileGroup) */}
       {!isCollapsed && hasAnySessions ? (
-        <div className="relative mt-0.5">
+        <div className="relative mt-1">
           {(() => {
             const hasMore = visibleSessions.length > visibleSessionLimit
             const isExpanded = visibleSessionLimit > MAX_VISIBLE_SESSIONS
