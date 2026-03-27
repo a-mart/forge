@@ -162,6 +162,9 @@ export function createCortexRoutes(options: { swarmManager: SwarmManager }): Htt
               trigger: "manual",
               sourceContext: { channel: "web" }
             });
+            if (!run) {
+              throw new Error("Manual Cortex review run unexpectedly coalesced.");
+            }
             sendJson(response, 202, { run });
           } catch (error) {
             const message = error instanceof Error ? error.message : "Unable to start Cortex review run.";
