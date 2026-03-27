@@ -425,7 +425,7 @@ if (!hasSingleInstanceLock) {
   ipcMain.on('update-title-bar-overlay', () => {})
 
   ipcMain.handle('check-for-updates', async () => {
-    await checkForUpdatesManually()
+    await checkForUpdatesManually(mainWindow)
   })
 
   ipcMain.handle('download-update', async () => {

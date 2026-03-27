@@ -298,8 +298,14 @@ export function initAutoUpdater(options: {
   startUpdateTimers()
 }
 
-export function checkForUpdatesManually(): Promise<void> {
-  if (!triggerUpdateCheck || !app.isPackaged) {
+export function checkForUpdatesManually(mainWindow?: BrowserWindow | null): Promise<void> {
+  if (!app.isPackaged) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('update-status', { type: 'error', message: 'Update checks are not available in development mode. Build a packaged app to test auto-updates.' })
+    }
+    return Promise.resolve()
+  }
+  if (!triggerUpdateCheck) {
     return Promise.resolve()
   }
 
