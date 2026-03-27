@@ -359,7 +359,7 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
           description="How often Cortex checks for sessions that need review."
         >
           <Select
-            value={String(cortexSettings?.intervalMinutes ?? 60)}
+            value={String(cortexSettings?.intervalMinutes ?? 120)}
             onValueChange={(value) => {
               const minutes = parseInt(value, 10)
               if (!isNaN(minutes)) handleCortexIntervalChange(minutes)
