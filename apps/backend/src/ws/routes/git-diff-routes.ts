@@ -1,8 +1,9 @@
+import type { GitCommitDetail, GitDiffResult, GitLogResult, GitRepoTarget } from "@forge/protocol";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
 import { applyCorsHeaders, sendJson } from "../http-utils.js";
 import { GitDiffService } from "./git-diff-service.js";
 import type { HttpRoute } from "./http-route.js";
-import { resolveCwdFromAgent } from "./route-utils.js";
+import { resolveGitRepoContext } from "./route-utils.js";
 
 const SHA_PATTERN = /^[a-f0-9]{4,40}$/i;
 const GIT_GET_METHODS = "GET, OPTIONS";
@@ -49,34 +50,55 @@ export function createGitDiffRoutes(options: { swarmManager: SwarmManager }): Ht
   return [
     handleGet("/api/git/status", async (requestUrl) => {
       const agentId = requireNonEmptyQuery(requestUrl.searchParams, "agentId");
-      const cwd = resolveCwdFromAgent(swarmManager, agentId);
-      return service.getStatus(cwd);
+      const repoTarget = parseRepoTarget(requestUrl.searchParams.get("repoTarget"));
+      const repoContext = resolveGitRepoContext(swarmManager, agentId, repoTarget);
+      return service.getStatus(repoContext.cwd, repoContext);
     }),
     handleGet("/api/git/diff", async (requestUrl) => {
       const agentId = requireNonEmptyQuery(requestUrl.searchParams, "agentId");
       const file = requireNonEmptyQuery(requestUrl.searchParams, "file");
-      const cwd = resolveCwdFromAgent(swarmManager, agentId);
-      return service.getFileDiff(cwd, file);
+      const repoTarget = parseRepoTarget(requestUrl.searchParams.get("repoTarget"));
+      const repoContext = resolveGitRepoContext(swarmManager, agentId, repoTarget);
+      if (repoContext.notInitialized) {
+        return createNotInitializedDiffResult();
+      }
+
+      return service.getFileDiff(repoContext.cwd, file);
     }),
     handleGet("/api/git/log", async (requestUrl) => {
       const agentId = requireNonEmptyQuery(requestUrl.searchParams, "agentId");
       const limit = parseNumberParam(requestUrl.searchParams.get("limit"), 50, 1, MAX_LOG_LIMIT, "limit");
       const offset = parseNumberParam(requestUrl.searchParams.get("offset"), 0, 0, Number.MAX_SAFE_INTEGER, "offset");
-      const cwd = resolveCwdFromAgent(swarmManager, agentId);
-      return service.getLog(cwd, limit, offset);
+      const repoTarget = parseRepoTarget(requestUrl.searchParams.get("repoTarget"));
+      const repoContext = resolveGitRepoContext(swarmManager, agentId, repoTarget);
+      if (repoContext.notInitialized) {
+        return createNotInitializedLogResult();
+      }
+
+      return service.getLog(repoContext.cwd, limit, offset);
     }),
     handleGet("/api/git/commit", async (requestUrl) => {
       const agentId = requireNonEmptyQuery(requestUrl.searchParams, "agentId");
       const sha = requireValidSha(requestUrl.searchParams.get("sha"));
-      const cwd = resolveCwdFromAgent(swarmManager, agentId);
-      return service.getCommitDetail(cwd, sha);
+      const repoTarget = parseRepoTarget(requestUrl.searchParams.get("repoTarget"));
+      const repoContext = resolveGitRepoContext(swarmManager, agentId, repoTarget);
+      if (repoContext.notInitialized) {
+        return createNotInitializedCommitDetail(sha);
+      }
+
+      return service.getCommitDetail(repoContext.cwd, sha);
     }),
     handleGet("/api/git/commit-diff", async (requestUrl) => {
       const agentId = requireNonEmptyQuery(requestUrl.searchParams, "agentId");
       const sha = requireValidSha(requestUrl.searchParams.get("sha"));
       const file = requireNonEmptyQuery(requestUrl.searchParams, "file");
-      const cwd = resolveCwdFromAgent(swarmManager, agentId);
-      return service.getCommitFileDiff(cwd, sha, file);
+      const repoTarget = parseRepoTarget(requestUrl.searchParams.get("repoTarget"));
+      const repoContext = resolveGitRepoContext(swarmManager, agentId, repoTarget);
+      if (repoContext.notInitialized) {
+        return createNotInitializedDiffResult();
+      }
+
+      return service.getCommitFileDiff(repoContext.cwd, sha, file);
     })
   ];
 }
@@ -122,8 +144,52 @@ function parseNumberParam(
   return parsed;
 }
 
+function parseRepoTarget(rawValue: string | null): GitRepoTarget {
+  if (rawValue === null || rawValue.trim().length === 0) {
+    return "workspace";
+  }
+
+  const repoTarget = rawValue.trim();
+  if (repoTarget !== "workspace" && repoTarget !== "versioning") {
+    throw new Error("repoTarget must be one of: workspace, versioning.");
+  }
+
+  return repoTarget;
+}
+
+function createNotInitializedDiffResult(): GitDiffResult {
+  return {
+    oldContent: "",
+    newContent: "",
+    notInitialized: true
+  };
+}
+
+function createNotInitializedLogResult(): GitLogResult {
+  return {
+    commits: [],
+    hasMore: false,
+    notInitialized: true
+  };
+}
+
+function createNotInitializedCommitDetail(sha: string): GitCommitDetail {
+  return {
+    sha,
+    message: "",
+    author: "",
+    date: "",
+    files: [],
+    notInitialized: true
+  };
+}
+
 function resolveHttpStatusCode(message: string): number {
   const normalized = message.toLowerCase();
+
+  if (normalized.includes("forbidden") || normalized.includes("not allowed")) {
+    return 403;
+  }
 
   if (
     normalized.includes("must be") ||

@@ -572,6 +572,36 @@ describe('ManagerWsClient', () => {
     client.destroy()
   })
 
+  it('filters the currently viewed session from unread_counts_snapshot', () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    emitServerEvent(socket, {
+      type: 'unread_counts_snapshot',
+      counts: {
+        'manager': 4,
+        'session-b': 2,
+      },
+    })
+
+    expect(client.getState().unreadCounts).toEqual({
+      'session-b': 2,
+    })
+
+    client.destroy()
+  })
+
   it('applies unread_count_update deltas and removes entries at count=0', () => {
     const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
 

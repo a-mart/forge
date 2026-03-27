@@ -1,5 +1,6 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as DialogPrimitive from '@radix-ui/react-dialog'
+import type { GitRepoTarget } from '@forge/protocol'
 import { Dialog, DialogOverlay, DialogPortal, DialogTitle } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
 import { DiffDialogHeader, type DiffTab } from './DiffDialogHeader'
@@ -13,6 +14,15 @@ interface DiffViewerDialogProps {
   onOpenChange: (open: boolean) => void
   wsUrl: string
   agentId: string | null
+  isCortex: boolean
+}
+
+function getDefaultRepoTarget(isCortex: boolean): GitRepoTarget {
+  return isCortex ? 'versioning' : 'workspace'
+}
+
+function getDefaultTab(isCortex: boolean): DiffTab {
+  return isCortex ? 'history' : 'changes'
 }
 
 export function DiffViewerDialog({
@@ -20,22 +30,57 @@ export function DiffViewerDialog({
   onOpenChange,
   wsUrl,
   agentId,
+  isCortex,
 }: DiffViewerDialogProps) {
-  const [activeTab, setActiveTab] = useState<DiffTab>('changes')
+  const [activeTab, setActiveTab] = useState<DiffTab>(() => getDefaultTab(isCortex))
+  const [repoTarget, setRepoTarget] = useState<GitRepoTarget>(() => getDefaultRepoTarget(isCortex))
   const [historyStatus, setHistoryStatus] = useState<HistoryStatusInfo | null>(null)
+  const [refreshToken, setRefreshToken] = useState(0)
+  const prevOpenRef = useRef(open)
+  const prevContextKeyRef = useRef(`${agentId ?? ''}:${isCortex ? 'cortex' : 'workspace'}`)
 
-  const statusQuery = useGitStatus(wsUrl, open ? agentId : null)
+  const defaultTab = useMemo(() => getDefaultTab(isCortex), [isCortex])
+  const defaultRepoTarget = useMemo(() => getDefaultRepoTarget(isCortex), [isCortex])
+
+  useEffect(() => {
+    const contextKey = `${agentId ?? ''}:${isCortex ? 'cortex' : 'workspace'}`
+    const opened = open && !prevOpenRef.current
+    const contextChanged = contextKey !== prevContextKeyRef.current
+
+    if (opened || contextChanged) {
+      setActiveTab(defaultTab)
+      setRepoTarget(defaultRepoTarget)
+      setHistoryStatus(null)
+    }
+
+    prevOpenRef.current = open
+    prevContextKeyRef.current = contextKey
+  }, [agentId, defaultRepoTarget, defaultTab, isCortex, open])
+
+  useEffect(() => {
+    setHistoryStatus(null)
+  }, [repoTarget])
+
+  const statusQuery = useGitStatus(wsUrl, open ? agentId : null, repoTarget)
 
   const handleRefresh = useCallback(() => {
-    invalidateGitCaches()
+    invalidateGitCaches({ agentId, repoTarget })
+    setRefreshToken((previous) => previous + 1)
     statusQuery.refetch()
-  }, [statusQuery])
+  }, [agentId, repoTarget, statusQuery])
 
   const handleClose = useCallback(() => {
     onOpenChange(false)
   }, [onOpenChange])
 
+  const handleRepoTargetChange = useCallback((nextTarget: GitRepoTarget) => {
+    setRepoTarget(nextTarget)
+    setHistoryStatus(null)
+  }, [])
+
   const summary = statusQuery.data?.summary ?? { filesChanged: 0, insertions: 0, deletions: 0 }
+  const changesViewKey = `${agentId ?? 'none'}:${repoTarget}:changes`
+  const historyViewKey = `${agentId ?? 'none'}:${repoTarget}:history`
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -67,6 +112,10 @@ export function DiffViewerDialog({
           <DiffDialogHeader
             activeTab={activeTab}
             onTabChange={setActiveTab}
+            repoTarget={repoTarget}
+            onRepoTargetChange={handleRepoTargetChange}
+            showRepoSelector={isCortex}
+            repoLabel={statusQuery.data?.repoLabel ?? null}
             repoName={statusQuery.data?.repoName ?? null}
             branch={statusQuery.data?.branch ?? null}
             isRefreshing={statusQuery.isLoading}
@@ -78,17 +127,23 @@ export function DiffViewerDialog({
           <div className="min-h-0 flex-1">
             {activeTab === 'changes' ? (
               <ChangesView
+                key={changesViewKey}
                 wsUrl={wsUrl}
                 agentId={agentId}
+                repoTarget={repoTarget}
                 status={statusQuery.data}
                 isStatusLoading={statusQuery.isLoading}
                 statusError={statusQuery.error}
+                refreshToken={refreshToken}
               />
             ) : (
               <HistoryView
+                key={historyViewKey}
                 wsUrl={wsUrl}
                 agentId={open ? agentId : null}
+                repoTarget={repoTarget}
                 onStatusChange={setHistoryStatus}
+                refreshToken={refreshToken}
               />
             )}
           </div>

@@ -65,6 +65,15 @@ export const Route = createFileRoute('/')({
 
 const DEFAULT_MANAGER_MODEL: ManagerModelPreset = 'pi-codex'
 
+export function isCortexDiffViewerSession(agent: AgentDescriptor | null | undefined): boolean {
+  return Boolean(
+    agent &&
+      (agent.profileId === 'cortex' ||
+        agent.archetypeId === 'cortex' ||
+        agent.sessionPurpose === 'cortex_review'),
+  )
+}
+
 export function IndexPage() {
   const wsUrl = resolveBackendWsUrl()
   const messageInputRef = useRef<MessageInputHandle | null>(null)
@@ -188,6 +197,16 @@ export function IndexPage() {
 
     return activeManagerAgent?.profileId ?? activeManagerAgent?.agentId ?? activeAgent.managerId ?? null
   }, [activeAgent, activeManagerAgent])
+
+  const diffViewerSessionAgent = useMemo(() => {
+    if (!activeAgent) {
+      return null
+    }
+
+    return activeAgent.role === 'manager' ? activeAgent : activeManagerAgent ?? activeAgent
+  }, [activeAgent, activeManagerAgent])
+
+  const isDiffViewerCortexSession = isCortexDiffViewerSession(diffViewerSessionAgent)
 
   const terminalPanel = useTerminalPanel({
     wsUrl,
@@ -1333,6 +1352,7 @@ export function IndexPage() {
         onOpenChange={setIsDiffViewerOpen}
         wsUrl={wsUrl}
         agentId={activeAgentId}
+        isCortex={isDiffViewerCortexSession}
       />
     </main>
   )

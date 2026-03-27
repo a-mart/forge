@@ -876,9 +876,12 @@ export class ManagerWsClient {
       }
 
       case 'unread_counts_snapshot': {
-        // Authoritative replace — server is source of truth
+        const counts = { ...event.counts }
+        if (this.state.targetAgentId) {
+          delete counts[this.state.targetAgentId]
+        }
         this.updateState({
-          unreadCounts: { ...event.counts },
+          unreadCounts: counts,
         })
         break
       }

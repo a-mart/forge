@@ -6,6 +6,14 @@
  * port-based heuristic that assumes the renderer runs on a known HTTP port.
  */
 
+export type UpdateStatus =
+  | { type: 'checking' }
+  | { type: 'available'; version?: string }
+  | { type: 'not-available'; version?: string }
+  | { type: 'downloading'; percent?: number }
+  | { type: 'downloaded'; version?: string }
+  | { type: 'error'; message?: string }
+
 export interface ElectronBridge {
   /** HTTP base URL for the backend, e.g. "http://127.0.0.1:47187" */
   backendUrl: string
@@ -25,6 +33,14 @@ export interface ElectronBridge {
   onTerminalShortcut?(listener: (event: { action: 'toggle' | 'new' | 'next' | 'prev' }) => void): () => void
   /** Update the title bar overlay colors (Windows/Linux only). */
   updateTitleBarOverlay?(colors: { color: string; symbolColor: string }): void
+  /** Trigger a manual update check. */
+  checkForUpdates?(): Promise<void>
+  /** Start downloading a found update. */
+  downloadUpdate?(): Promise<void>
+  /** Quit and install a downloaded update. */
+  installUpdate?(): Promise<void>
+  /** Subscribe to update status events from the main process. Returns an unsubscribe function. */
+  onUpdateStatus?(callback: (status: UpdateStatus) => void): () => void
 }
 
 declare global {

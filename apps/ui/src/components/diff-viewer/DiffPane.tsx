@@ -1,8 +1,9 @@
 import { useMemo, type ReactElement } from 'react'
 import ReactDiffViewer, { DiffMethod } from 'react-diff-viewer-continued'
 import { FileText, AlertTriangle, Loader2 } from 'lucide-react'
-import { useDiffTheme } from './diff-viewer-theme'
 import { detectLanguage, highlightCode } from '@/lib/syntax-highlight'
+import { MarkdownDiffPane } from './MarkdownDiffPane'
+import { useDiffTheme } from './diff-viewer-theme'
 import '@/styles/syntax-highlight.css'
 import './syntax-highlight.css'
 
@@ -32,6 +33,7 @@ export function DiffPane({
   // to satisfy React's rules of hooks (error #310: "Rendered more hooks than
   // during the previous render").
   const language = useMemo(() => detectLanguage(fileName ?? ''), [fileName])
+  const isMarkdownFile = useMemo(() => isMarkdownDiffFile(fileName), [fileName])
 
   const renderContent = useMemo(() => {
     return (source: string): ReactElement => {
@@ -117,6 +119,16 @@ export function DiffPane({
     )
   }
 
+  if (isMarkdownFile) {
+    return (
+      <MarkdownDiffPane
+        fileName={fileName}
+        oldContent={oldContent ?? ''}
+        newContent={newContent ?? ''}
+      />
+    )
+  }
+
   return (
     <div className="syntax-highlight flex h-full flex-col overflow-hidden">
       <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-border/60 bg-card px-3 py-1.5">
@@ -147,4 +159,8 @@ export function DiffPane({
 function containsNullBytes(str: string): boolean {
   const check = str.slice(0, 8192)
   return check.includes('\0')
+}
+
+function isMarkdownDiffFile(fileName: string | null): boolean {
+  return fileName != null && /\.md$/iu.test(fileName)
 }

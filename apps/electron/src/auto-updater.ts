@@ -31,8 +31,26 @@ type BackendHealthResponse = {
   }
 }
 
+export type UpdateStatusType =
+  | 'checking'
+  | 'available'
+  | 'not-available'
+  | 'downloading'
+  | 'downloaded'
+  | 'error'
+
+export type UpdateStatus =
+  | { type: 'checking' }
+  | { type: 'available'; version: string }
+  | { type: 'not-available'; version: string }
+  | { type: 'downloading'; percent: number }
+  | { type: 'downloaded'; version: string }
+  | { type: 'error'; message: string }
+
 let manualUpdateCheck = false
 let triggerUpdateCheck: ((isManual: boolean) => Promise<void>) | null = null
+let triggerDownloadUpdate: (() => Promise<void>) | null = null
+let triggerInstallUpdate: (() => void) | null = null
 
 export function initAutoUpdater(options: {
   mainWindow: BrowserWindow
@@ -52,6 +70,12 @@ export function initAutoUpdater(options: {
   let restartPromptOpen = false
   let pendingDownloadedUpdate: UpdateDownloadedEvent | null = null
 
+  const sendStatus = (status: UpdateStatus): void => {
+    if (!options.mainWindow.isDestroyed()) {
+      options.mainWindow.webContents.send('update-status', status)
+    }
+  }
+
   const checkForUpdates = async (isManual = false): Promise<void> => {
     if (isCheckingForUpdates || isDownloadingUpdate || restartPromptOpen) {
       return
@@ -59,10 +83,12 @@ export function initAutoUpdater(options: {
 
     isCheckingForUpdates = true
     manualUpdateCheck = isManual
+    sendStatus({ type: 'checking' })
     try {
       await autoUpdater.checkForUpdates()
     } catch (error) {
       console.warn('[auto-update] Update check failed', formatError(error))
+      sendStatus({ type: 'error', message: formatError(error) })
     } finally {
       isCheckingForUpdates = false
       if (isManual) {
@@ -72,6 +98,37 @@ export function initAutoUpdater(options: {
   }
 
   triggerUpdateCheck = checkForUpdates
+
+  triggerDownloadUpdate = async (): Promise<void> => {
+    if (isDownloadingUpdate) {
+      return
+    }
+
+    isDownloadingUpdate = true
+    setWindowProgress(options.mainWindow, 0)
+    sendStatus({ type: 'downloading', percent: 0 })
+
+    try {
+      await autoUpdater.downloadUpdate()
+    } catch (error) {
+      isDownloadingUpdate = false
+      setWindowProgress(options.mainWindow, -1)
+      console.warn('[auto-update] Update download failed', formatError(error))
+      sendStatus({ type: 'error', message: formatError(error) })
+    }
+  }
+
+  triggerInstallUpdate = (): void => {
+    void (async () => {
+      try {
+        await options.prepareQuitForUpdate()
+        autoUpdater.quitAndInstall()
+      } catch (error) {
+        console.warn('[auto-update] Failed to prepare update install', formatError(error))
+        sendStatus({ type: 'error', message: formatError(error) })
+      }
+    })()
+  }
 
   const startUpdateTimers = (): void => {
     const startupTimer = setTimeout(() => {
@@ -189,11 +246,14 @@ export function initAutoUpdater(options: {
   }
 
   autoUpdater.on('update-available', (info) => {
+    sendStatus({ type: 'available', version: info.version })
     showDesktopNotification('Forge update available', `Version ${info.version} is ready to download.`)
     void promptToDownloadUpdate(info)
   })
 
   autoUpdater.on('update-not-available', () => {
+    sendStatus({ type: 'not-available', version: app.getVersion() })
+
     if (!manualUpdateCheck) {
       return
     }
@@ -210,17 +270,21 @@ export function initAutoUpdater(options: {
 
   autoUpdater.on('download-progress', (progress: ProgressInfo) => {
     setWindowProgress(options.mainWindow, progress.percent / 100)
+    sendStatus({ type: 'downloading', percent: Math.round(progress.percent) })
   })
 
   autoUpdater.on('update-downloaded', (event) => {
     isDownloadingUpdate = false
     setWindowProgress(options.mainWindow, -1)
     pendingDownloadedUpdate = event
+    sendStatus({ type: 'downloaded', version: event.version })
     showDesktopNotification('Forge update downloaded', `Version ${event.version} is ready to install.`)
     void promptToInstallDownloadedUpdate(event)
   })
 
   autoUpdater.on('error', (error) => {
+    sendStatus({ type: 'error', message: formatError(error) })
+
     if (!isDownloadingUpdate) {
       console.warn('[auto-update] Non-fatal updater error', formatError(error))
       return
@@ -234,12 +298,34 @@ export function initAutoUpdater(options: {
   startUpdateTimers()
 }
 
-export function checkForUpdatesManually(): Promise<void> {
-  if (!triggerUpdateCheck || !app.isPackaged) {
+export function checkForUpdatesManually(mainWindow?: BrowserWindow | null): Promise<void> {
+  if (!app.isPackaged) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('update-status', { type: 'error', message: 'Update checks are not available in development mode. Build a packaged app to test auto-updates.' })
+    }
+    return Promise.resolve()
+  }
+  if (!triggerUpdateCheck) {
     return Promise.resolve()
   }
 
   return triggerUpdateCheck(true)
+}
+
+export function downloadUpdateManually(): Promise<void> {
+  if (!triggerDownloadUpdate || !app.isPackaged) {
+    return Promise.resolve()
+  }
+
+  return triggerDownloadUpdate()
+}
+
+export function installUpdateManually(): void {
+  if (!triggerInstallUpdate || !app.isPackaged) {
+    return
+  }
+
+  triggerInstallUpdate()
 }
 
 function isWithinUpdateWindow(): boolean {

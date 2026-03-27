@@ -3,7 +3,7 @@ import { fork, type ChildProcess, type ForkOptions } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { checkForUpdatesManually, initAutoUpdater } from './auto-updater.js'
+import { checkForUpdatesManually, downloadUpdateManually, installUpdateManually, initAutoUpdater } from './auto-updater.js'
 import { fixPath } from './fix-path.js'
 import { showWhatsNewIfUpdated } from './whats-new.js'
 
@@ -423,6 +423,18 @@ if (!hasSingleInstanceLock) {
   // No-op: overlay is not used on Windows (native title bar), but keep
   // the handler registered so the renderer doesn't throw on send.
   ipcMain.on('update-title-bar-overlay', () => {})
+
+  ipcMain.handle('check-for-updates', async () => {
+    await checkForUpdatesManually(mainWindow)
+  })
+
+  ipcMain.handle('download-update', async () => {
+    await downloadUpdateManually()
+  })
+
+  ipcMain.handle('install-update', () => {
+    installUpdateManually()
+  })
 
 
   app.whenReady().then(async () => {

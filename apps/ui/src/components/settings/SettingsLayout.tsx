@@ -1,8 +1,8 @@
-import { ArrowLeft, Bell, Settings, KeyRound, Blocks, Wrench, FileText, Terminal, Puzzle, UserCog } from 'lucide-react'
+import { ArrowLeft, Bell, Settings, KeyRound, Blocks, Wrench, FileText, Terminal, Puzzle, UserCog, Info } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
-export type SettingsTab = 'general' | 'notifications' | 'auth' | 'integrations' | 'skills' | 'prompts' | 'specialists' | 'slash-commands' | 'extensions'
+export type SettingsTab = 'general' | 'notifications' | 'auth' | 'integrations' | 'skills' | 'prompts' | 'specialists' | 'slash-commands' | 'extensions' | 'about'
 
 interface NavItem {
   id: SettingsTab
@@ -20,6 +20,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'specialists', label: 'Specialists', icon: <UserCog className="size-4" /> },
   { id: 'slash-commands', label: 'Slash Commands', icon: <Terminal className="size-4" /> },
   { id: 'extensions', label: 'Extensions', icon: <Puzzle className="size-4" /> },
+  { id: 'about', label: 'About', icon: <Info className="size-4" /> },
 ]
 
 interface SettingsLayoutProps {

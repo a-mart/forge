@@ -1,53 +1,22 @@
+import type {
+  GitCommitDetail,
+  GitDiffResult,
+  GitLogResult,
+  GitRepoTarget,
+  GitStatusResult,
+} from '@forge/protocol'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
 
-/* ------------------------------------------------------------------ */
-/*  Types matching the backend git-diff-service                       */
-/* ------------------------------------------------------------------ */
-
-export interface GitFileStatus {
-  path: string
-  status: 'modified' | 'added' | 'deleted' | 'renamed' | 'copied' | 'untracked'
-  oldPath?: string
-  additions?: number
-  deletions?: number
-}
-
-export interface GitStatusResult {
-  files: GitFileStatus[]
-  branch: string
-  repoName: string
-  summary: { filesChanged: number; insertions: number; deletions: number }
-}
-
-export interface GitDiffResult {
-  oldContent: string
-  newContent: string
-  truncated?: boolean
-  reason?: string
-}
-
-export interface GitLogEntry {
-  sha: string
-  shortSha: string
-  message: string
-  author: string
-  date: string
-  filesChanged: number
-}
-
-export interface GitLogResult {
-  commits: GitLogEntry[]
-  hasMore: boolean
-}
-
-export interface GitCommitDetail {
-  sha: string
-  message: string
-  author: string
-  date: string
-  files: GitFileStatus[]
-}
+export type {
+  GitCommitDetail,
+  GitDiffResult,
+  GitFileStatus,
+  GitLogEntry,
+  GitLogResult,
+  GitRepoTarget,
+  GitStatusResult,
+} from '@forge/protocol'
 
 /* ------------------------------------------------------------------ */
 /*  Generic fetch wrapper                                             */
@@ -64,6 +33,56 @@ async function fetchGitApi<T>(wsUrl: string, path: string, params: Record<string
   }
 
   return response.json() as Promise<T>
+}
+
+function buildGitRequestParams(
+  agentId: string,
+  repoTarget: GitRepoTarget,
+  extraParams: Record<string, string | number | null | undefined> = {},
+): Record<string, string> {
+  const params: Record<string, string> = {
+    agentId,
+    repoTarget,
+  }
+
+  for (const [key, value] of Object.entries(extraParams)) {
+    if (value == null) continue
+    params[key] = String(value)
+  }
+
+  return params
+}
+
+function buildGitQueryKey(
+  scope: string,
+  agentId: string | null,
+  repoTarget: GitRepoTarget,
+  ...parts: Array<string | number | null>
+): string {
+  return JSON.stringify([scope, agentId ?? '', repoTarget, ...parts.map((part) => part ?? '')])
+}
+
+function parseGitQueryKey(
+  queryKey: string,
+): { scope: string; agentId: string; repoTarget: GitRepoTarget } | null {
+  try {
+    const parsed = JSON.parse(queryKey)
+    if (!Array.isArray(parsed) || parsed.length < 3) {
+      return null
+    }
+
+    const [scope, agentId, repoTarget] = parsed
+    if (typeof scope !== 'string' || typeof agentId !== 'string') {
+      return null
+    }
+    if (repoTarget !== 'workspace' && repoTarget !== 'versioning') {
+      return null
+    }
+
+    return { scope, agentId, repoTarget }
+  } catch {
+    return null
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -97,6 +116,26 @@ function useSimpleQuery<T>(
   const [error, setError] = useState<string | null>(null)
   const fetchKeyRef = useRef(0)
 
+  useEffect(() => {
+    if (!options.enabled) {
+      setData(null)
+      setError(null)
+      setIsLoading(false)
+      return
+    }
+
+    const cached = queryCache.get(queryKey)
+    if (cached && Date.now() - cached.fetchedAt < options.staleTime) {
+      setData(cached.data as T)
+      setError(null)
+      setIsLoading(false)
+      return
+    }
+
+    setData(null)
+    setError(null)
+  }, [queryKey, options.enabled, options.staleTime])
+
   const doFetch = useCallback(() => {
     if (!options.enabled) return
 
@@ -120,6 +159,7 @@ function useSimpleQuery<T>(
       })
       .catch((err: unknown) => {
         if (key !== fetchKeyRef.current) return
+        setData(null)
         setError(err instanceof Error ? err.message : 'Unknown error')
       })
       .finally(() => {
@@ -160,11 +200,11 @@ function useSimpleQuery<T>(
 /*  Public hooks                                                      */
 /* ------------------------------------------------------------------ */
 
-export function useGitStatus(wsUrl: string, agentId: string | null) {
-  const queryKey = `git:status:${agentId ?? ''}`
+export function useGitStatus(wsUrl: string, agentId: string | null, repoTarget: GitRepoTarget) {
+  const queryKey = buildGitQueryKey('git:status', agentId, repoTarget)
   const fetchFn = useCallback(
-    () => fetchGitApi<GitStatusResult>(wsUrl, '/api/git/status', { agentId: agentId! }),
-    [wsUrl, agentId],
+    () => fetchGitApi<GitStatusResult>(wsUrl, '/api/git/status', buildGitRequestParams(agentId!, repoTarget)),
+    [wsUrl, agentId, repoTarget],
   )
 
   return useSimpleQuery<GitStatusResult>(queryKey, fetchFn, {
@@ -174,11 +214,16 @@ export function useGitStatus(wsUrl: string, agentId: string | null) {
   })
 }
 
-export function useGitFileDiff(wsUrl: string, agentId: string | null, file: string | null) {
-  const queryKey = `git:diff:${agentId ?? ''}:${file ?? ''}`
+export function useGitDiff(wsUrl: string, agentId: string | null, repoTarget: GitRepoTarget, file: string | null) {
+  const queryKey = buildGitQueryKey('git:diff', agentId, repoTarget, file)
   const fetchFn = useCallback(
-    () => fetchGitApi<GitDiffResult>(wsUrl, '/api/git/diff', { agentId: agentId!, file: file! }),
-    [wsUrl, agentId, file],
+    () =>
+      fetchGitApi<GitDiffResult>(
+        wsUrl,
+        '/api/git/diff',
+        buildGitRequestParams(agentId!, repoTarget, { file: file! }),
+      ),
+    [wsUrl, agentId, repoTarget, file],
   )
 
   return useSimpleQuery<GitDiffResult>(queryKey, fetchFn, {
@@ -187,15 +232,25 @@ export function useGitFileDiff(wsUrl: string, agentId: string | null, file: stri
   })
 }
 
-export function useGitLog(wsUrl: string, agentId: string | null, limit: number, offset: number) {
-  const queryKey = `git:log:${agentId ?? ''}:${limit}:${offset}`
+export function useGitLog(
+  wsUrl: string,
+  agentId: string | null,
+  repoTarget: GitRepoTarget,
+  limit: number,
+  offset: number,
+) {
+  const queryKey = buildGitQueryKey('git:log', agentId, repoTarget, limit, offset)
   const fetchFn = useCallback(
-    () => fetchGitApi<GitLogResult>(wsUrl, '/api/git/log', {
-      agentId: agentId!,
-      limit: String(limit),
-      offset: String(offset),
-    }),
-    [wsUrl, agentId, limit, offset],
+    () =>
+      fetchGitApi<GitLogResult>(
+        wsUrl,
+        '/api/git/log',
+        buildGitRequestParams(agentId!, repoTarget, {
+          limit,
+          offset,
+        }),
+      ),
+    [wsUrl, agentId, repoTarget, limit, offset],
   )
 
   return useSimpleQuery<GitLogResult>(queryKey, fetchFn, {
@@ -204,11 +259,21 @@ export function useGitLog(wsUrl: string, agentId: string | null, limit: number, 
   })
 }
 
-export function useGitCommitDetail(wsUrl: string, agentId: string | null, sha: string | null) {
-  const queryKey = `git:commit:${agentId ?? ''}:${sha ?? ''}`
+export function useGitCommitDetail(
+  wsUrl: string,
+  agentId: string | null,
+  repoTarget: GitRepoTarget,
+  sha: string | null,
+) {
+  const queryKey = buildGitQueryKey('git:commit', agentId, repoTarget, sha)
   const fetchFn = useCallback(
-    () => fetchGitApi<GitCommitDetail>(wsUrl, '/api/git/commit', { agentId: agentId!, sha: sha! }),
-    [wsUrl, agentId, sha],
+    () =>
+      fetchGitApi<GitCommitDetail>(
+        wsUrl,
+        '/api/git/commit',
+        buildGitRequestParams(agentId!, repoTarget, { sha: sha! }),
+      ),
+    [wsUrl, agentId, repoTarget, sha],
   )
 
   return useSimpleQuery<GitCommitDetail>(queryKey, fetchFn, {
@@ -217,15 +282,25 @@ export function useGitCommitDetail(wsUrl: string, agentId: string | null, sha: s
   })
 }
 
-export function useGitCommitFileDiff(wsUrl: string, agentId: string | null, sha: string | null, file: string | null) {
-  const queryKey = `git:commit-diff:${agentId ?? ''}:${sha ?? ''}:${file ?? ''}`
+export function useGitCommitDiff(
+  wsUrl: string,
+  agentId: string | null,
+  repoTarget: GitRepoTarget,
+  sha: string | null,
+  file: string | null,
+) {
+  const queryKey = buildGitQueryKey('git:commit-diff', agentId, repoTarget, sha, file)
   const fetchFn = useCallback(
-    () => fetchGitApi<GitDiffResult>(wsUrl, '/api/git/commit-diff', {
-      agentId: agentId!,
-      sha: sha!,
-      file: file!,
-    }),
-    [wsUrl, agentId, sha, file],
+    () =>
+      fetchGitApi<GitDiffResult>(
+        wsUrl,
+        '/api/git/commit-diff',
+        buildGitRequestParams(agentId!, repoTarget, {
+          sha: sha!,
+          file: file!,
+        }),
+      ),
+    [wsUrl, agentId, repoTarget, sha, file],
   )
 
   return useSimpleQuery<GitDiffResult>(queryKey, fetchFn, {
@@ -234,17 +309,29 @@ export function useGitCommitFileDiff(wsUrl: string, agentId: string | null, sha:
   })
 }
 
-/** Invalidate all git caches (call on manual refresh) */
-export function invalidateGitCaches() {
+export const useGitFileDiff = useGitDiff
+export const useGitCommitFileDiff = useGitCommitDiff
+
+/** Invalidate mutable git caches. Commit caches remain immutable. */
+export function invalidateGitCaches(options?: { agentId?: string | null; repoTarget?: GitRepoTarget }) {
   for (const key of queryCache.keys()) {
-    if (
-      key.startsWith('git:status:') ||
-      key.startsWith('git:diff:') ||
-      key.startsWith('git:log:')
-    ) {
-      queryCache.delete(key)
+    const parsed = parseGitQueryKey(key)
+    if (!parsed) {
+      continue
     }
+
+    if (parsed.scope !== 'git:status' && parsed.scope !== 'git:diff' && parsed.scope !== 'git:log') {
+      continue
+    }
+
+    if (options?.agentId != null && parsed.agentId !== options.agentId) {
+      continue
+    }
+
+    if (options?.repoTarget != null && parsed.repoTarget !== options.repoTarget) {
+      continue
+    }
+
+    queryCache.delete(key)
   }
-  // Note: git:commit: and git:commit-diff: caches are NOT invalidated
-  // because committed data is immutable.
 }

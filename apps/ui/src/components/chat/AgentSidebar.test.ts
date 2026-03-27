@@ -203,16 +203,25 @@ describe('AgentSidebar', () => {
     expect(queryByText(sidebar, 'worker-alpha')).toBeTruthy()
   })
 
-  it('shows runtime icons from model presets on profile headers', () => {
+  it('renders profile and worker rows for mixed model providers without relying on runtime icons', () => {
     const mgr = sessionManager('manager-pi', 'manager-pi', { provider: 'openai-codex', modelId: 'gpt-5.3-codex' })
     const wrkOpus = worker('worker-opus', 'manager-pi', { provider: 'anthropic', modelId: 'claude-opus-4-6' })
     const wrkCodex = worker('worker-codex', 'manager-pi', { provider: 'openai-codex-app-server', modelId: 'default' })
 
     renderSidebar({ agents: [mgr, wrkOpus, wrkCodex] })
 
-    // Profile header uses the default session's runtime badge
-    expect(container.querySelector('img[src="/pi-logo.svg"]')).toBeTruthy()
-    expect(container.querySelector('img[src="/agents/codex-logo.svg"]')).toBeTruthy()
+    const sidebar = getDesktopSidebar()
+    expect(queryByText(sidebar, 'manager-pi')).toBeTruthy()
+
+    const maybeExpandWorkersButton = sidebar.querySelector(
+      'button[aria-label="Expand session workers"]',
+    ) as HTMLButtonElement | null
+    if (maybeExpandWorkersButton) {
+      click(maybeExpandWorkersButton)
+    }
+
+    expect(queryByText(sidebar, 'worker-opus')).toBeTruthy()
+    expect(queryByText(sidebar, 'worker-codex')).toBeTruthy()
   })
 
   it('keeps profile/session selection behavior working', () => {

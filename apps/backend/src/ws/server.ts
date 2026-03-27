@@ -98,7 +98,10 @@ export class SwarmWebSocketServer {
       });
 
       const sessionAgentId = resolveSessionAgentIdForUnread(this.swarmManager, event.agentId);
-      if (sessionAgentId) {
+      if (
+        sessionAgentId &&
+        !this.wsHandler.hasActiveSubscriptionForSession(sessionAgentId)
+      ) {
         const { profileId } = this.resolveUnreadContext(sessionAgentId);
         if (profileId) {
           const newCount = this.unreadTracker.increment(profileId, sessionAgentId);
@@ -134,7 +137,10 @@ export class SwarmWebSocketServer {
       });
 
       const sessionAgentId = resolveSessionAgentIdForUnread(this.swarmManager, event.agentId);
-      if (sessionAgentId) {
+      if (
+        sessionAgentId &&
+        !this.wsHandler.hasActiveSubscriptionForSession(sessionAgentId)
+      ) {
         const { profileId } = this.resolveUnreadContext(sessionAgentId);
         if (profileId) {
           const newCount = this.unreadTracker.increment(profileId, sessionAgentId);
