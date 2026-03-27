@@ -324,6 +324,18 @@ export interface GitDiffResult {
   notInitialized?: boolean
 }
 
+export interface GitCommitMetadata {
+  reason?: string
+  source?: string
+  sources?: string[]
+  profileId?: string
+  sessionId?: string
+  agentId?: string
+  promptCategory?: PromptCategory
+  promptId?: string
+  paths: string[]
+}
+
 export interface GitLogEntry {
   sha: string
   shortSha: string
@@ -331,6 +343,7 @@ export interface GitLogEntry {
   author: string
   date: string
   filesChanged: number
+  metadata?: GitCommitMetadata | null
 }
 
 export interface GitLogResult {
@@ -345,6 +358,7 @@ export interface GitCommitDetail {
   author: string
   date: string
   files: GitFileStatus[]
+  metadata?: GitCommitMetadata | null
   notInitialized?: boolean
 }
 
