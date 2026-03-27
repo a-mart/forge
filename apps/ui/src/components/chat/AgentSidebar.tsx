@@ -271,12 +271,11 @@ function WorkerRow({
   highlightQuery?: string
 }) {
   const name = agent.displayName || agent.agentId
-  const statusLabel = liveStatus.status === 'streaming' ? 'streaming' : liveStatus.status === 'idle' ? 'idle' : liveStatus.status
-  const title = [
-    `${name} (${statusLabel})`,
+  const tooltipLines = [
+    name,
     `${agent.model.provider}/${agent.model.modelId}`,
     ...(agent.model.thinkingLevel ? [`reasoning: ${agent.model.thinkingLevel}`] : []),
-  ].join('\n')
+  ]
   const isActive = liveStatus.status === 'streaming'
   const isRunning = liveStatus.status === 'streaming' || liveStatus.status === 'idle'
   const isStopped = liveStatus.status === 'terminated' || liveStatus.status === 'stopped'
@@ -294,23 +293,33 @@ function WorkerRow({
               : 'text-sidebar-foreground/90 hover:bg-sidebar-accent/50',
           )}
         >
-          <button
-            type="button"
-            onClick={onSelect}
-            className="flex min-w-0 flex-1 items-center gap-1.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60"
-            title={title}
-          >
-            <span
-              className={cn(
-                'inline-block size-1.5 shrink-0 rounded-full',
-                isActive ? 'bg-emerald-500' : 'bg-muted-foreground/40',
-              )}
-              aria-label={isActive ? 'Active' : 'Idle'}
-            />
-            <span className="min-w-0 flex-1 truncate text-sm leading-5">
-              {highlightQuery ? <HighlightedText text={name} query={highlightQuery} /> : name}
-            </span>
-          </button>
+          <TooltipProvider delayDuration={200}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={onSelect}
+                  className="flex min-w-0 flex-1 items-center gap-1.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60"
+                >
+                  <span
+                    className={cn(
+                      'inline-block size-1.5 shrink-0 rounded-full',
+                      isActive ? 'bg-emerald-500' : 'bg-muted-foreground/40',
+                    )}
+                    aria-label={isActive ? 'Active' : 'Idle'}
+                  />
+                  <span className="min-w-0 flex-1 truncate text-sm leading-5">
+                    {highlightQuery ? <HighlightedText text={name} query={highlightQuery} /> : name}
+                  </span>
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="right" sideOffset={6} className="px-2 py-1 text-[10px]">
+                {tooltipLines.map((line, i) => (
+                  <p key={i} className={i === 0 ? 'font-medium' : 'opacity-80'}>{line}</p>
+                ))}
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
         </div>
       </ContextMenuTrigger>
       <ContextMenuContent>
@@ -425,42 +434,50 @@ function SessionRowItem({
               </button>
             ) : null}
 
-            <button
-              type="button"
-              onClick={() => onSelect(sessionAgent.agentId)}
-              className={cn(
-                'flex min-w-0 flex-1 items-center gap-1.5 py-1.5 pr-1.5 text-left',
-                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
-                hasWorkers ? 'pl-7' : 'pl-5',
-              )}
-              title={[
-                `${label}${running ? ' (running)' : ' (idle)'}`,
-                `${sessionAgent.model.provider}/${sessionAgent.model.modelId}`,
-                ...(sessionAgent.model.thinkingLevel ? [`reasoning: ${sessionAgent.model.thinkingLevel}`] : []),
-              ].join('\n')}
-            >
-              {streamingWorkerCount > 0 ? (
-                <span
-                  className="inline-flex size-3.5 shrink-0 items-center justify-center rounded-full border-2 border-amber-500 bg-transparent"
-                  style={{ boxShadow: '0 0 6px rgba(245,158,11,0.5)' }}
-                  aria-label={`${streamingWorkerCount} worker${streamingWorkerCount !== 1 ? 's' : ''} active`}
-                >
-                  <span className="text-[8px] font-bold leading-none text-amber-500">
-                    {streamingWorkerCount}
-                  </span>
-                </span>
-              ) : (
-                <SessionStatusDot running={running} />
-              )}
-              <span className="min-w-0 flex-1 truncate text-sm leading-5">
-                {highlightQuery ? <HighlightedText text={label} query={highlightQuery} /> : label}
-              </span>
-              {showUnread ? (
-                <span className="inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-medium tabular-nums leading-none text-white">
-                  {unreadCount > 99 ? '99+' : unreadCount}
-                </span>
-              ) : null}
-            </button>
+            <TooltipProvider delayDuration={200}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={() => onSelect(sessionAgent.agentId)}
+                    className={cn(
+                      'flex min-w-0 flex-1 items-center gap-1.5 py-1.5 pr-1.5 text-left',
+                      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
+                      hasWorkers ? 'pl-7' : 'pl-5',
+                    )}
+                  >
+                    {streamingWorkerCount > 0 ? (
+                      <span
+                        className="inline-flex size-3.5 shrink-0 items-center justify-center rounded-full border-2 border-amber-500 bg-transparent"
+                        style={{ boxShadow: '0 0 6px rgba(245,158,11,0.5)' }}
+                        aria-label={`${streamingWorkerCount} worker${streamingWorkerCount !== 1 ? 's' : ''} active`}
+                      >
+                        <span className="text-[8px] font-bold leading-none text-amber-500">
+                          {streamingWorkerCount}
+                        </span>
+                      </span>
+                    ) : (
+                      <SessionStatusDot running={running} />
+                    )}
+                    <span className="min-w-0 flex-1 truncate text-sm leading-5">
+                      {highlightQuery ? <HighlightedText text={label} query={highlightQuery} /> : label}
+                    </span>
+                    {showUnread ? (
+                      <span className="inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-medium tabular-nums leading-none text-white">
+                        {unreadCount > 99 ? '99+' : unreadCount}
+                      </span>
+                    ) : null}
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="right" sideOffset={6} className="px-2 py-1 text-[10px]">
+                  <p className="font-medium">{label}</p>
+                  <p className="opacity-80">{sessionAgent.model.provider}/{sessionAgent.model.modelId}</p>
+                  {sessionAgent.model.thinkingLevel ? (
+                    <p className="opacity-80">reasoning: {sessionAgent.model.thinkingLevel}</p>
+                  ) : null}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           </div>
         </ContextMenuTrigger>
 
