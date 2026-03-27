@@ -2142,7 +2142,7 @@ export function AgentSidebar({
                 onDragEnd={handleDragEnd}
               >
                 <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
-                  <ul className="mt-2 space-y-0.5">
+                  <ul className="mt-2 space-y-1">
                     {regularRows.map((treeRow) => (
                       <SortableProfileGroup key={treeRow.profile.profileId} treeRow={treeRow}>
                         {(dragHandleRef, dragHandleListeners) => profileGroupContent(treeRow, dragHandleRef, dragHandleListeners)}
@@ -2164,7 +2164,7 @@ export function AgentSidebar({
           }
 
           return (
-            <ul className="mt-2 space-y-0.5">
+            <ul className="mt-2 space-y-1">
               {regularRows.map((treeRow) => (
                 <li key={treeRow.profile.profileId}>
                   {profileGroupContent(treeRow)}
