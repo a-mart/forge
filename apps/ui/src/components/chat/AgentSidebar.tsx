@@ -270,7 +270,13 @@ function WorkerRow({
   onResume?: () => void
   highlightQuery?: string
 }) {
-  const title = agent.displayName || agent.agentId
+  const name = agent.displayName || agent.agentId
+  const statusLabel = liveStatus.status === 'streaming' ? 'streaming' : liveStatus.status === 'idle' ? 'idle' : liveStatus.status
+  const title = [
+    `${name} (${statusLabel})`,
+    `${agent.model.provider}/${agent.model.modelId}`,
+    ...(agent.model.thinkingLevel ? [`reasoning: ${agent.model.thinkingLevel}`] : []),
+  ].join('\n')
   const isActive = liveStatus.status === 'streaming'
   const isRunning = liveStatus.status === 'streaming' || liveStatus.status === 'idle'
   const isStopped = liveStatus.status === 'terminated' || liveStatus.status === 'stopped'
@@ -302,7 +308,7 @@ function WorkerRow({
               aria-label={isActive ? 'Active' : 'Idle'}
             />
             <span className="min-w-0 flex-1 truncate text-sm leading-5">
-              {highlightQuery ? <HighlightedText text={title} query={highlightQuery} /> : title}
+              {highlightQuery ? <HighlightedText text={name} query={highlightQuery} /> : name}
             </span>
           </button>
         </div>
@@ -427,7 +433,11 @@ function SessionRowItem({
                 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
                 hasWorkers ? 'pl-7' : 'pl-5',
               )}
-              title={`${label}${running ? ' (running)' : ' (idle)'}`}
+              title={[
+                `${label}${running ? ' (running)' : ' (idle)'}`,
+                `${sessionAgent.model.provider}/${sessionAgent.model.modelId}`,
+                ...(sessionAgent.model.thinkingLevel ? [`reasoning: ${sessionAgent.model.thinkingLevel}`] : []),
+              ].join('\n')}
             >
               {streamingWorkerCount > 0 ? (
                 <span
