@@ -1,67 +1,45 @@
 import { readFile } from "node:fs/promises";
-import { resolve, sep } from "node:path";
+import { basename, resolve, sep } from "node:path";
+import type {
+  GitCommitDetail,
+  GitDiffResult,
+  GitFileStatus,
+  GitLogResult,
+  GitRepoKind,
+  GitStatusResult
+} from "@forge/protocol";
 import { GitCli } from "../../versioning/git-cli.js";
+import { parseVersioningCommitMetadata } from "../../versioning/versioning-commit-metadata.js";
 
 const MAX_DIFF_FILE_BYTES = 1 * 1024 * 1024;
 const MAX_STATUS_FILES = 500;
 const MAX_LOG_LIMIT = 200;
 const BINARY_SNIFF_BYTES = 8 * 1024;
+const FIELD_SEPARATOR = "\x1f";
+const RECORD_SEPARATOR = "\x1e";
 
-export type GitFileStatusKind = "modified" | "added" | "deleted" | "renamed" | "copied" | "untracked";
-
-export interface GitFileStatus {
-  path: string;
-  status: GitFileStatusKind;
-  oldPath?: string;
-  additions?: number;
-  deletions?: number;
-}
-
-export interface GitStatusResult {
-  files: GitFileStatus[];
-  branch: string;
-  summary: { filesChanged: number; insertions: number; deletions: number };
-  truncated?: boolean;
-  totalFiles?: number;
-}
-
-export interface GitDiffResult {
-  oldContent: string;
-  newContent: string;
-  binary?: true;
-  truncated?: true;
-  reason?: "file_too_large";
-}
-
-export interface GitLogEntry {
-  sha: string;
-  shortSha: string;
-  message: string;
-  author: string;
-  date: string;
-  filesChanged: number;
-}
-
-export interface GitLogResult {
-  commits: GitLogEntry[];
-  hasMore: boolean;
-}
-
-export interface GitCommitDetail {
-  sha: string;
-  message: string;
-  author: string;
-  date: string;
-  files: GitFileStatus[];
+interface GitStatusContext {
+  repoKind: GitRepoKind;
+  repoLabel: string;
+  notInitialized?: boolean;
 }
 
 export class GitDiffService {
-  async getStatus(cwd: string): Promise<GitStatusResult> {
+  async getStatus(cwd: string, context?: GitStatusContext): Promise<GitStatusResult> {
+    const repoKind = context?.repoKind ?? "workspace";
+    const repoLabel = context?.repoLabel ?? "Workspace";
+
+    if (context?.notInitialized) {
+      return createEmptyStatusResult(cwd, repoKind, repoLabel);
+    }
+
     const git = this.createGit(cwd);
-    const [branchResult, statusResult, numstatResult] = await Promise.all([
+    const [branchResult, statusResult, numstatResult, repoRoot, repoName] = await Promise.all([
       git.run(["rev-parse", "--abbrev-ref", "HEAD"], { allowFailure: true }),
       git.run(["status", "--porcelain=v1", "--untracked-files=all"]),
-      git.run(["diff", "--numstat", "HEAD", "--"], { allowFailure: true })
+      git.run(["diff", "--numstat", "HEAD", "--"], { allowFailure: true }),
+      this.getRepoRoot(cwd),
+      this.getRepoName(cwd)
     ]);
 
     const files = parsePorcelainStatus(statusResult.stdout);
@@ -96,6 +74,10 @@ export class GitDiffService {
         files: merged.slice(0, MAX_STATUS_FILES),
         branch,
         summary,
+        repoName,
+        repoRoot,
+        repoKind,
+        repoLabel,
         truncated: true,
         totalFiles: merged.length
       };
@@ -104,7 +86,11 @@ export class GitDiffService {
     return {
       files: merged,
       branch,
-      summary
+      summary,
+      repoName,
+      repoRoot,
+      repoKind,
+      repoLabel
     };
   }
 
@@ -167,8 +153,7 @@ export class GitDiffService {
     const boundedLimit = Math.min(Math.max(limit, 1), MAX_LOG_LIMIT);
     const boundedOffset = Math.max(offset, 0);
     const git = this.createGit(cwd);
-    const fieldSeparator = "\x1f";
-    const format = `%H${fieldSeparator}%h${fieldSeparator}%an${fieldSeparator}%aI${fieldSeparator}%s`;
+    const format = `%H${FIELD_SEPARATOR}%h${FIELD_SEPARATOR}%an${FIELD_SEPARATOR}%aI${FIELD_SEPARATOR}%s${FIELD_SEPARATOR}%b${RECORD_SEPARATOR}`;
 
     const result = await git.run([
       "log",
@@ -178,22 +163,20 @@ export class GitDiffService {
       String(boundedLimit + 1)
     ]);
 
-    const rows = result.stdout
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0);
+    const records = parseGitFormatRecords(result.stdout);
+    const hasMore = records.length > boundedLimit;
+    const selectedRecords = records.slice(0, boundedLimit);
 
-    const hasMore = rows.length > boundedLimit;
-    const selectedRows = rows.slice(0, boundedLimit);
-
-    const parsedBase = selectedRows.map((line) => {
-      const [sha, shortSha, author, date, ...messageParts] = line.split(fieldSeparator);
+    const parsedBase = selectedRecords.map((record) => {
+      const [sha, shortSha, author, date, message = "", ...bodyParts] = record.split(FIELD_SEPARATOR);
+      const body = bodyParts.join(FIELD_SEPARATOR);
       return {
         sha: sha ?? "",
         shortSha: shortSha ?? "",
         author: author ?? "",
         date: date ?? "",
-        message: messageParts.join(fieldSeparator).trim()
+        message: message.trim(),
+        metadata: parseVersioningCommitMetadata(body)
       };
     });
 
@@ -212,54 +195,48 @@ export class GitDiffService {
 
   async getCommitDetail(cwd: string, sha: string): Promise<GitCommitDetail> {
     const git = this.createGit(cwd);
-    const fieldSeparator = "\x1f";
-    const detailResult = await git.run([
-      "show",
-      "--name-status",
-      "--format=%H%x1f%an%x1f%aI%x1f%s",
-      sha
+    const format = `%H${FIELD_SEPARATOR}%an${FIELD_SEPARATOR}%aI${FIELD_SEPARATOR}%s${FIELD_SEPARATOR}%b${RECORD_SEPARATOR}`;
+    const [detailResult, numstatResult] = await Promise.all([
+      git.run([
+        "show",
+        "--name-status",
+        `--format=${format}`,
+        sha
+      ]),
+      git.run(["show", "--numstat", "--format=", sha])
     ]);
 
-    const lines = detailResult.stdout.split(/\r?\n/);
-    const metadataLine = lines.find((line) => line.trim().length > 0);
-
-    if (!metadataLine) {
+    const recordSeparatorIndex = detailResult.stdout.indexOf(RECORD_SEPARATOR);
+    if (recordSeparatorIndex === -1) {
       throw new Error(`Commit not found: ${sha}`);
     }
 
-    const [resolvedSha, author, date, ...messageParts] = metadataLine.split(fieldSeparator);
-    const files: GitFileStatus[] = [];
+    const headerRecord = detailResult.stdout.slice(0, recordSeparatorIndex);
+    const fileSection = detailResult.stdout.slice(recordSeparatorIndex + RECORD_SEPARATOR.length);
+    const [resolvedSha, author, date, message = "", ...bodyParts] = headerRecord.split(FIELD_SEPARATOR);
+    const body = bodyParts.join(FIELD_SEPARATOR);
 
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed === metadataLine.trim()) {
-        continue;
-      }
-
-      const parts = trimmed.split("\t");
-      if (parts.length < 2) {
-        continue;
-      }
-
-      const rawStatus = parts[0] ?? "";
-      const statusCode = rawStatus.charAt(0);
-      const status = mapStatusCode(statusCode);
-
-      if (status === "renamed" || status === "copied") {
-        const oldPath = parts[1] ?? "";
-        const newPath = parts[2] ?? oldPath;
-        files.push({ path: newPath, oldPath, status });
-      } else {
-        files.push({ path: parts[1] ?? "", status });
-      }
+    if (!resolvedSha?.trim()) {
+      throw new Error(`Commit not found: ${sha}`);
     }
 
+    const numstatByPath = parseNumstatByPath(numstatResult.stdout);
+    const files = parseCommitFiles(fileSection).map((file) => {
+      const stats = numstatByPath.get(file.path);
+      return {
+        ...file,
+        additions: stats?.additions,
+        deletions: stats?.deletions
+      } satisfies GitFileStatus;
+    });
+
     return {
-      sha: resolvedSha ?? sha,
-      message: messageParts.join(fieldSeparator).trim(),
+      sha: resolvedSha,
+      message: message.trim(),
       author: author ?? "",
       date: date ?? "",
-      files
+      files,
+      metadata: parseVersioningCommitMetadata(body)
     };
   }
 
@@ -310,12 +287,16 @@ export class GitDiffService {
   }
 
   async getRepoName(cwd: string): Promise<string> {
+    const topLevel = await this.getRepoRoot(cwd);
+    const normalized = topLevel.replace(/[\\/]+$/, "");
+    const name = basename(normalized);
+    return name || normalized;
+  }
+
+  private async getRepoRoot(cwd: string): Promise<string> {
     const git = this.createGit(cwd);
     const result = await git.run(["rev-parse", "--show-toplevel"]);
-    const topLevel = result.stdout.trim();
-    const normalized = topLevel.replace(/[\\/]+$/, "");
-    const parts = normalized.split(/[\\/]/);
-    return parts[parts.length - 1] ?? normalized;
+    return result.stdout.trim();
   }
 
   private createGit(cwd: string): GitCli {
@@ -366,6 +347,57 @@ export class GitDiffService {
     const parts = result.stdout.trim().split(/\s+/).filter((part) => part.length > 0);
     return parts.length > 1;
   }
+}
+
+function parseGitFormatRecords(output: string): string[] {
+  return output
+    .split(RECORD_SEPARATOR)
+    .map((record) => record.trim())
+    .filter((record) => record.length > 0);
+}
+
+function parseCommitFiles(output: string): GitFileStatus[] {
+  const files: GitFileStatus[] = [];
+
+  for (const line of output.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      continue;
+    }
+
+    const parts = trimmed.split("\t");
+    if (parts.length < 2) {
+      continue;
+    }
+
+    const rawStatus = parts[0] ?? "";
+    const status = mapStatusCode(rawStatus.charAt(0));
+
+    if (status === "renamed" || status === "copied") {
+      const oldPath = parts[1] ?? "";
+      const newPath = parts[2] ?? oldPath;
+      files.push({ path: newPath, oldPath, status });
+      continue;
+    }
+
+    files.push({ path: parts[1] ?? "", status });
+  }
+
+  return files;
+}
+
+function createEmptyStatusResult(cwd: string, repoKind: GitRepoKind, repoLabel: string): GitStatusResult {
+  const repoRoot = resolve(cwd);
+  return {
+    files: [],
+    branch: "HEAD",
+    summary: { filesChanged: 0, insertions: 0, deletions: 0 },
+    repoName: basename(repoRoot) || repoRoot,
+    repoRoot,
+    repoKind,
+    repoLabel,
+    notInitialized: true
+  };
 }
 
 function parsePorcelainStatus(output: string): GitFileStatus[] {
@@ -449,7 +481,7 @@ function normalizeNumstatPath(rawPath: string): string {
   return rawPath;
 }
 
-function mapStatusCode(code: string): GitFileStatusKind {
+function mapStatusCode(code: string): GitFileStatus["status"] {
   switch (code.toUpperCase()) {
     case "A":
       return "added";
