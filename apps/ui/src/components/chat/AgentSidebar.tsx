@@ -19,7 +19,6 @@ import {
   SquarePen,
   SquareTerminal,
   Trash2,
-  UserStar,
   X,
 } from 'lucide-react'
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from '@/components/ui/context-menu'
@@ -661,7 +660,6 @@ function SessionRowItem({
       {/* Workers nested under session */}
       {hasWorkers && !isCollapsed ? (
         <div className="relative mt-0.5">
-          <div className="absolute bottom-1 left-6 top-0 w-px bg-sidebar-border/40" />
           {(() => {
             const needsWorkerTruncation = workers.length > MAX_VISIBLE_WORKERS
             let visibleWorkers: AgentDescriptor[]
@@ -851,31 +849,11 @@ function ProfileGroup({
                 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
               )}
             >
-              <span className="relative flex h-3.5 w-3.5 items-center justify-center">
-                {isCollapsed ? (
-                  <>
-                    <UserStar
-                      aria-hidden="true"
-                      className="size-3.5 opacity-70 transition-opacity group-hover:opacity-0 group-focus-visible:opacity-0"
-                    />
-                    <ChevronRight
-                      aria-hidden="true"
-                      className="absolute size-3 opacity-0 transition-opacity group-hover:opacity-70 group-focus-visible:opacity-70"
-                    />
-                  </>
-                ) : (
-                  <>
-                    <UserStar
-                      aria-hidden="true"
-                      className="size-3.5 opacity-70 transition-opacity group-hover:opacity-0 group-focus-visible:opacity-0"
-                    />
-                    <ChevronDown
-                      aria-hidden="true"
-                      className="absolute size-3 opacity-0 transition-opacity group-hover:opacity-70 group-focus-visible:opacity-70"
-                    />
-                  </>
-                )}
-              </span>
+              {isCollapsed ? (
+                <ChevronRight className="size-3" aria-hidden="true" />
+              ) : (
+                <ChevronDown className="size-3" aria-hidden="true" />
+              )}
             </button>
 
             <button
@@ -888,7 +866,7 @@ function ProfileGroup({
                 if (targetId) onSelect(targetId)
               }}
               className={cn(
-                'flex min-w-0 flex-1 items-center gap-1.5 rounded-md py-2.5 pl-7 pr-1.5 text-left transition-colors md:py-1.5',
+                'flex min-w-0 flex-1 items-center gap-1.5 rounded-md py-2.5 pl-5.5 pr-1.5 text-left transition-colors md:py-1.5',
                 'hover:bg-sidebar-accent/50',
                 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
                 dragHandleListeners ? 'cursor-grab active:cursor-grabbing' : '',
@@ -983,7 +961,6 @@ function ProfileGroup({
       {/* Sessions list */}
       {!isCollapsed && hasAnySessions ? (
         <div className="relative mt-0.5">
-          <div className="absolute bottom-1 left-3.5 top-0 w-px bg-sidebar-border/40" />
           {(() => {
             const hasMore = sessions.length > visibleSessionLimit
             const isExpanded = visibleSessionLimit > MAX_VISIBLE_SESSIONS
@@ -1669,7 +1646,6 @@ function CortexSection({
       {/* Sessions list (same pattern as ProfileGroup) */}
       {!isCollapsed && hasAnySessions ? (
         <div className="relative mt-0.5">
-          <div className="absolute bottom-1 left-3.5 top-0 w-px bg-sidebar-border/40" />
           {(() => {
             const hasMore = visibleSessions.length > visibleSessionLimit
             const isExpanded = visibleSessionLimit > MAX_VISIBLE_SESSIONS
