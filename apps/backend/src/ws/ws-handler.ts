@@ -203,6 +203,21 @@ export class WsHandler {
     return false;
   }
 
+  hasActiveSubscriptionForSession(sessionAgentId: string): boolean {
+    for (const [socket, subscribedAgentId] of this.subscriptions.entries()) {
+      if (socket.readyState !== WebSocket.OPEN) {
+        continue;
+      }
+
+      const resolved = resolveSessionAgentIdForUnread(this.swarmManager, subscribedAgentId);
+      if (subscribedAgentId === sessionAgentId || resolved === sessionAgentId) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   private async handleSocketMessage(socket: WebSocket, raw: RawData): Promise<void> {
     const parsed = parseClientCommand(raw);
     if (!parsed.ok) {

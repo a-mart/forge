@@ -680,7 +680,7 @@ describe('SwarmWebSocketServer', () => {
     expect(persisted).toEqual({ counts: { [secondarySession.agentId]: 2 } })
   })
 
-  it('increments unread counts for worker activity and choice requests on the owning session', async () => {
+  it('suppresses unread counts while subscribed to the owning worker session', async () => {
     const port = await getAvailablePort()
     const config = await makeTempConfig(port, true)
 
@@ -704,10 +704,10 @@ describe('SwarmWebSocketServer', () => {
     })
 
     await once(client, 'open')
-    client.send(JSON.stringify({ type: 'subscribe', agentId: 'manager' }))
+    client.send(JSON.stringify({ type: 'subscribe', agentId: worker.agentId }))
     await waitForEvent(
       events,
-      (event) => event.type === 'ready' && event.subscribedAgentId === 'manager',
+      (event) => event.type === 'ready' && event.subscribedAgentId === worker.agentId,
     )
 
     manager.emit(
@@ -726,10 +726,8 @@ describe('SwarmWebSocketServer', () => {
       events,
       (event) => event.type === 'unread_notification' && event.agentId === worker.agentId,
     )
-    await waitForEvent(
-      events,
-      (event) => event.type === 'unread_count_update' && event.agentId === 'manager' && event.count === 1,
-    )
+    await new Promise((resolve) => setTimeout(resolve, 75))
+    expect(events.some((event) => event.type === 'unread_count_update' && event.agentId === 'manager')).toBe(false)
 
     manager.emit(
       'choice_request',
@@ -745,8 +743,10 @@ describe('SwarmWebSocketServer', () => {
 
     await waitForEvent(
       events,
-      (event) => event.type === 'unread_count_update' && event.agentId === 'manager' && event.count === 2,
+      (event) => event.type === 'unread_notification' && event.agentId === worker.agentId,
     )
+    await new Promise((resolve) => setTimeout(resolve, 75))
+    expect(events.some((event) => event.type === 'unread_count_update' && event.agentId === 'manager')).toBe(false)
 
     client.close()
     await once(client, 'close')
