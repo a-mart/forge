@@ -51,9 +51,8 @@ win:
       arch:
         - x64
 nsis:
-  oneClick: false
+  oneClick: true
   perMachine: false
-  allowToChangeInstallationDirectory: true
   artifactName: "Forge-Setup-${version}.${ext}"
 linux:
   target:
