@@ -13,6 +13,7 @@ export interface SaveSpecialistPayload {
   reasoningLevel?: ManagerReasoningLevel
   fallbackModelId?: string
   fallbackReasoningLevel?: ManagerReasoningLevel
+  pinned?: boolean
   promptBody: string
 }
 
@@ -88,6 +89,7 @@ function isResolvedSpecialistDefinition(value: unknown): value is ResolvedSpecia
     (specialist.fallbackProvider === undefined || typeof specialist.fallbackProvider === 'string') &&
     (specialist.fallbackReasoningLevel === undefined || typeof specialist.fallbackReasoningLevel === 'string') &&
     typeof specialist.builtin === 'boolean' &&
+    typeof specialist.pinned === 'boolean' &&
     typeof specialist.promptBody === 'string' &&
     (specialist.sourceKind === 'builtin' || specialist.sourceKind === 'global' || specialist.sourceKind === 'profile') &&
     typeof specialist.available === 'boolean' &&

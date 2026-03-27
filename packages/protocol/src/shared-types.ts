@@ -85,6 +85,7 @@ export interface ResolvedSpecialistDefinition {
   fallbackProvider?: string
   fallbackReasoningLevel?: string
   builtin: boolean
+  pinned: boolean
   promptBody: string
   sourceKind: SpecialistSourceKind
   sourcePath?: string

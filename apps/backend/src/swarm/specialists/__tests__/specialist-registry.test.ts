@@ -79,6 +79,34 @@ describe("specialist-registry", () => {
     expect(parsed?.body).toContain("backend specialist");
   });
 
+  it("parses pinned frontmatter when provided", async () => {
+    const root = await mkdtemp(join(tmpdir(), "specialist-registry-test-"));
+    const filePath = join(root, "pinned.md");
+
+    await writeFile(
+      filePath,
+      [
+        "---",
+        "displayName: Pinned Specialist",
+        "color: '#2563eb'",
+        "enabled: true",
+        "whenToUse: Keep customizations",
+        "modelId: gpt-5.3-codex",
+        "builtin: true",
+        "pinned: true",
+        "---",
+        "",
+        "Pinned body.",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const parsed = await parseSpecialistFile(filePath);
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.frontmatter.pinned).toBe(true);
+  });
+
   it("migrates legacy preset-based frontmatter to modelId", async () => {
     const root = await mkdtemp(join(tmpdir(), "specialist-registry-test-"));
     const filePath = join(root, "legacy.md");
@@ -103,6 +131,25 @@ describe("specialist-registry", () => {
     const parsed = await parseSpecialistFile(filePath);
     expect(parsed).not.toBeNull();
     expect(parsed?.frontmatter.modelId).toBe("gpt-5.3-codex");
+  });
+
+  it("serializes pinned frontmatter when saving", async () => {
+    const root = await mkdtemp(join(tmpdir(), "specialist-registry-test-"));
+    const dataDir = join(root, "data");
+    const specialistPath = join(dataDir, "shared", "specialists", "pinned-specialist.md");
+
+    await saveSharedSpecialist(dataDir, "pinned-specialist", {
+      displayName: "Pinned Specialist",
+      color: "#123abc",
+      enabled: true,
+      whenToUse: "Pinned tasks",
+      modelId: "gpt-5.4",
+      pinned: true,
+      promptBody: "Pinned prompt body",
+    });
+
+    const markdown = await readFile(specialistPath, "utf8");
+    expect(markdown).toContain("pinned: true");
   });
 
   it("resolves profile specialists over shared specialists and computes availability", async () => {
@@ -199,6 +246,7 @@ describe("specialist-registry", () => {
         provider: "openai-codex",
         reasoningLevel: "high",
         builtin: true,
+        pinned: false,
         promptBody: "Prompt",
         sourceKind: "builtin",
         available: true,
@@ -214,6 +262,7 @@ describe("specialist-registry", () => {
         modelId: "gpt-5.3-codex",
         provider: "openai-codex",
         builtin: false,
+        pinned: false,
         promptBody: "Prompt",
         sourceKind: "global",
         available: true,
@@ -229,6 +278,7 @@ describe("specialist-registry", () => {
         modelId: "unknown",
         provider: "unknown",
         builtin: false,
+        pinned: false,
         promptBody: "Prompt",
         sourceKind: "global",
         available: false,
@@ -246,7 +296,7 @@ describe("specialist-registry", () => {
     expect(markdown).not.toContain("`invalid`");
   });
 
-  it("seeds builtins and preserves enabled state for existing builtin files", async () => {
+  it("seeds builtins and preserves enabled and pinned state for non-pinned builtin files", async () => {
     const root = await mkdtemp(join(tmpdir(), "specialist-registry-test-"));
     const dataDir = join(root, "data");
     process.env.FORGE_DATA_DIR = dataDir;
@@ -264,6 +314,7 @@ describe("specialist-registry", () => {
         "whenToUse: Legacy",
         "modelId: gpt-5.3-codex",
         "builtin: true",
+        "pinned: false",
         "---",
         "",
         "Legacy backend body.",
@@ -296,11 +347,50 @@ describe("specialist-registry", () => {
     expect(backend?.frontmatter.displayName).toBe("Backend Engineer");
     expect(backend?.frontmatter.enabled).toBe(false);
     expect(backend?.frontmatter.builtin).toBe(true);
+    expect(backend?.frontmatter.pinned).toBe(false);
 
     expect(reviewerMarkdown).toContain("displayName: Custom Reviewer");
 
     const architect = await parseSpecialistFile(join(sharedDir, "architect.md"));
     expect(architect).not.toBeNull();
+  });
+
+  it("skips overwriting pinned builtin files during seeding", async () => {
+    const root = await mkdtemp(join(tmpdir(), "specialist-registry-test-"));
+    const dataDir = join(root, "data");
+    const sharedDir = join(dataDir, "shared", "specialists");
+    process.env.FORGE_DATA_DIR = dataDir;
+
+    await mkdir(sharedDir, { recursive: true });
+
+    await writeFile(
+      join(sharedDir, "backend.md"),
+      [
+        "---",
+        "displayName: My Pinned Backend",
+        "color: '#010203'",
+        "enabled: false",
+        "whenToUse: Keep my custom backend prompt",
+        "modelId: gpt-5.4",
+        "builtin: true",
+        "pinned: true",
+        "---",
+        "",
+        "Do not overwrite this body.",
+      ].join("\n"),
+      "utf8",
+    );
+
+    await seedBuiltins(dataDir);
+
+    const backend = await parseSpecialistFile(join(sharedDir, "backend.md"));
+
+    expect(backend).not.toBeNull();
+    expect(backend?.frontmatter.displayName).toBe("My Pinned Backend");
+    expect(backend?.frontmatter.modelId).toBe("gpt-5.4");
+    expect(backend?.frontmatter.enabled).toBe(false);
+    expect(backend?.frontmatter.pinned).toBe(true);
+    expect(backend?.body).toContain("Do not overwrite this body.");
   });
 
   it("repairs malformed builtin files during seeding", async () => {
@@ -608,6 +698,7 @@ describe("specialist-registry", () => {
         fallbackProvider: "anthropic",
         fallbackReasoningLevel: "medium",
         builtin: true,
+        pinned: false,
         promptBody: "Prompt",
         sourceKind: "builtin",
         available: true,

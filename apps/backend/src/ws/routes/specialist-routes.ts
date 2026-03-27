@@ -396,6 +396,7 @@ function parseSaveSpecialistBody(value: unknown): SaveSpecialistRequest {
     reasoningLevel: readOptionalStringField(obj, "reasoningLevel"),
     fallbackModelId: readOptionalStringField(obj, "fallbackModelId"),
     fallbackReasoningLevel: readOptionalStringField(obj, "fallbackReasoningLevel"),
+    pinned: readOptionalBooleanField(obj, "pinned"),
     promptBody: readRequiredStringField(obj, "promptBody"),
   };
 }
@@ -426,6 +427,19 @@ function readRequiredBooleanField(obj: Record<string, unknown>, key: string): bo
   const value = obj[key];
   if (typeof value !== "boolean") {
     throw new Error(`${key} must be a boolean`);
+  }
+
+  return value;
+}
+
+function readOptionalBooleanField(obj: Record<string, unknown>, key: string): boolean | undefined {
+  const value = obj[key];
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "boolean") {
+    throw new Error(`${key} must be a boolean when provided`);
   }
 
   return value;

@@ -48,6 +48,7 @@ export interface SpecialistFrontmatter {
   fallbackModelId?: string;
   fallbackReasoningLevel?: string;
   builtin: boolean;
+  pinned: boolean;
 }
 
 export interface SaveSpecialistRequest {
@@ -59,6 +60,7 @@ export interface SaveSpecialistRequest {
   reasoningLevel?: string;
   fallbackModelId?: string;
   fallbackReasoningLevel?: string;
+  pinned?: boolean;
   promptBody: string;
 }
 
@@ -247,9 +249,14 @@ export async function seedBuiltins(dataDir: string): Promise<void> {
       continue;
     }
 
+    if (existing.frontmatter.pinned === true) {
+      continue;
+    }
+
     const mergedFrontmatter: SpecialistFrontmatter = {
       ...source.frontmatter,
       enabled: existing.frontmatter.enabled,
+      pinned: existing.frontmatter.pinned,
     };
 
     await writeSpecialistFile(destinationPath, serializeSpecialistFile(mergedFrontmatter, source.body));
@@ -463,12 +470,17 @@ function parseSpecialistMarkdown(markdown: string): ParsedSpecialistFile | null 
 
   const enabled = parseOptionalBoolean(frontmatterValues.enabled);
   const builtin = parseOptionalBoolean(frontmatterValues.builtin);
+  const pinned = parseOptionalBoolean(frontmatterValues.pinned);
 
   if (frontmatterValues.enabled !== undefined && enabled === undefined) {
     return null;
   }
 
   if (frontmatterValues.builtin !== undefined && builtin === undefined) {
+    return null;
+  }
+
+  if (frontmatterValues.pinned !== undefined && pinned === undefined) {
     return null;
   }
 
@@ -499,6 +511,7 @@ function parseSpecialistMarkdown(markdown: string): ParsedSpecialistFile | null 
       fallbackModelId,
       fallbackReasoningLevel,
       builtin: builtin ?? false,
+      pinned: pinned ?? false,
     },
     body,
   };
@@ -564,6 +577,7 @@ function validateSaveRequest(data: SaveSpecialistRequest): SpecialistFrontmatter
     fallbackModelId: normalizedFallbackModelId,
     fallbackReasoningLevel: normalizedFallbackReasoningLevel,
     builtin: false,
+    pinned: data.pinned ?? false,
   };
 }
 
@@ -679,6 +693,7 @@ function toResolvedSpecialistDefinition(options: {
     fallbackProvider,
     fallbackReasoningLevel: options.frontmatter.fallbackReasoningLevel,
     builtin: options.frontmatter.builtin,
+    pinned: options.frontmatter.pinned,
     promptBody: options.body,
     sourceKind: options.sourceKind,
     sourcePath: options.sourcePath,
@@ -713,6 +728,10 @@ function serializeSpecialistFile(frontmatter: SpecialistFrontmatter, body: strin
 
   if (frontmatter.builtin) {
     lines.push("builtin: true");
+  }
+
+  if (frontmatter.pinned) {
+    lines.push("pinned: true");
   }
 
   lines.push("---", "", body.trim(), "");

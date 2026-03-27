@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, ChevronDown, ChevronUp, Eye, Loader2, Pencil, Plus, RotateCcw, Trash2 } from 'lucide-react'
+import { AlertTriangle, ChevronDown, ChevronUp, Eye, Loader2, Pencil, Pin, Plus, RotateCcw, Trash2 } from 'lucide-react'
 import {
   Select,
   SelectContent,
@@ -18,6 +18,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
@@ -106,6 +107,7 @@ interface CardEditState {
   reasoningLevel: string
   fallbackModelId: string
   fallbackReasoningLevel: string
+  pinned: boolean
   promptBody: string
 }
 
@@ -121,6 +123,7 @@ function specialistToEditState(
     reasoningLevel: specialist.reasoningLevel ?? 'high',
     fallbackModelId: specialist.fallbackModelId ?? '',
     fallbackReasoningLevel: specialist.fallbackReasoningLevel ?? '',
+    pinned: specialist.pinned,
     promptBody: specialist.promptBody,
   }
 }
@@ -156,6 +159,7 @@ function toSaveSpecialistPayload(state: CardEditState): SaveSpecialistPayload {
     fallbackModelId: normalizedFallbackModelId,
     // Strip fallback reasoning level when there's no fallback model.
     fallbackReasoningLevel: normalizedFallbackModelId ? normalizedFallbackReasoningLevel : undefined,
+    pinned: state.pinned,
     promptBody: state.promptBody,
   }
 }
@@ -312,6 +316,7 @@ export function SettingsSpecialists({ wsUrl, profiles, specialistChangeKey }: Se
   const [expandedPromptIds, setExpandedPromptIds] = useState<Set<string>>(new Set())
   const [expandedFallbackIds, setExpandedFallbackIds] = useState<Set<string>>(new Set())
   const [customizeInitiatedIds, setCustomizeInitiatedIds] = useState<Set<string>>(new Set())
+  const [pendingSaveId, setPendingSaveId] = useState<string | null>(null)
 
   // Roster prompt dialog
   const [rosterOpen, setRosterOpen] = useState(false)
@@ -348,6 +353,7 @@ export function SettingsSpecialists({ wsUrl, profiles, specialistChangeKey }: Se
     setRosterError(null)
     setShowNewForm(false)
     resetNewForm()
+    setPendingSaveId(null)
   }, [selectedScope])
 
   const loadSpecialists = useCallback(async (): Promise<ResolvedSpecialistDefinition[]> => {
@@ -500,6 +506,28 @@ export function SettingsSpecialists({ wsUrl, profiles, specialistChangeKey }: Se
     }, 'Save failed')
   }, [editStates, wsUrl, selectedScope, isGlobal, cancelEditing, loadSpecialists, withCardAction])
 
+  const requestSave = useCallback((id: string, isBuiltin: boolean) => {
+    const state = editStates[id]
+    if (!state) return
+
+    if (isBuiltin && !state.pinned) {
+      setPendingSaveId(id)
+      return
+    }
+
+    void handleSave(id)
+  }, [editStates, handleSave])
+
+  const confirmPendingSave = useCallback(() => {
+    const id = pendingSaveId
+    if (!id) return
+    setPendingSaveId(null)
+    void handleSave(id)
+  }, [handleSave, pendingSaveId])
+
+  const cancelPendingSave = useCallback(() => {
+    setPendingSaveId(null)
+  }, [])
   const handleCreateOverride = useCallback(async (s: ResolvedSpecialistDefinition) => {
     await withCardAction(s.specialistId, async () => {
       const payload = toSaveSpecialistPayload(specialistToEditState(s))
@@ -878,7 +906,7 @@ export function SettingsSpecialists({ wsUrl, profiles, specialistChangeKey }: Se
                   onExpand={() => startEditing(spec)}
                   onCancelEditing={() => cancelEditing(spec.specialistId)}
                   onUpdateField={(field, value) => updateEditField(spec.specialistId, field, value)}
-                  onSave={() => handleSave(spec.specialistId)}
+                  onSave={() => requestSave(spec.specialistId, spec.builtin)}
                   onDelete={() => handleDelete(spec.specialistId)}
                   onToggleEnabled={() => handleGlobalToggleEnabled(spec)}
                   onTogglePrompt={() => togglePromptExpand(spec.specialistId)}
@@ -940,7 +968,7 @@ export function SettingsSpecialists({ wsUrl, profiles, specialistChangeKey }: Se
                     onExpand={() => startEditing(spec)}
                     onCancelEditing={() => handleCancelProfileEditing(spec.specialistId)}
                     onUpdateField={(field, value) => updateEditField(spec.specialistId, field, value)}
-                    onSave={() => handleSave(spec.specialistId)}
+                    onSave={() => requestSave(spec.specialistId, spec.builtin)}
                     onRevert={() => handleRevert(spec.specialistId)}
                     onDelete={() => handleDelete(spec.specialistId)}
                     onToggleEnabled={() => handleProfileToggleEnabled(spec)}
@@ -1015,6 +1043,37 @@ export function SettingsSpecialists({ wsUrl, profiles, specialistChangeKey }: Se
               </pre>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={pendingSaveId !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPendingSaveId(null)
+          }
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Save without pinning?</DialogTitle>
+          </DialogHeader>
+          <DialogDescription>
+            Your changes will be saved, but they <strong>will be overwritten</strong> the next time Forge updates its builtin specialists. To keep your customizations permanently, enable <strong>Pin customizations</strong> before saving.
+          </DialogDescription>
+          <DialogFooter className="gap-2 pt-2">
+            <Button variant="outline" onClick={cancelPendingSave} disabled={pendingSaveId ? savingIds.has(pendingSaveId) : false}>
+              Go back
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={confirmPendingSave}
+              disabled={pendingSaveId ? savingIds.has(pendingSaveId) : false}
+            >
+              {pendingSaveId && savingIds.has(pendingSaveId) && <Loader2 className="size-3 animate-spin" />}
+              Save anyway
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
@@ -1293,6 +1352,12 @@ function SpecialistCard({
                   Builtin
                 </span>
               )}
+              {specialist.builtin && specialist.pinned && (
+                <span className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-muted/40 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                  <Pin className="size-2.5" />
+                  Pinned
+                </span>
+              )}
               {!specialist.available && (
                 <span className="inline-flex items-center gap-1 text-[10px] text-amber-600 dark:text-amber-400">
                   <AlertTriangle className="size-3" />
@@ -1378,6 +1443,12 @@ function SpecialistCard({
           {specialist.builtin && (
             <span className="inline-flex items-center rounded-full border border-border/60 bg-muted/50 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
               Builtin
+            </span>
+          )}
+          {specialist.builtin && currentValues.pinned && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-muted/40 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+              <Pin className="size-2.5" />
+              Pinned
             </span>
           )}
           {!specialist.available && (
@@ -1507,6 +1578,26 @@ function SpecialistCard({
           />
         )}
       </div>
+
+      {specialist.builtin && (
+        <div className="rounded-md border border-border/60 bg-muted/20 p-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="space-y-1">
+              <p className="text-xs font-medium text-foreground">Pin customizations</p>
+              <p className="text-[11px] text-muted-foreground">
+                Pinned specialists won&apos;t be updated by Forge. Unpin to restore automatic updates.
+              </p>
+            </div>
+            <Switch
+              size="sm"
+              checked={currentValues.pinned}
+              disabled={isSaving}
+              onCheckedChange={(checked) => onUpdateField('pinned', checked)}
+              aria-label={`Toggle pinned state for ${specialist.specialistId}`}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Error */}
       {cardError && (
