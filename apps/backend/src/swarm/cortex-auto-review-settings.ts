@@ -20,8 +20,7 @@ const CORTEX_AUTO_REVIEW_SCHEDULE_TIMEZONE = 'UTC'
 export const CORTEX_AUTO_REVIEW_SCHEDULE_ID = 'cortex-auto-review'
 export const DEFAULT_CORTEX_AUTO_REVIEW_ENABLED = true
 export const DEFAULT_CORTEX_AUTO_REVIEW_INTERVAL_MINUTES = 120
-export const MIN_CORTEX_AUTO_REVIEW_INTERVAL_MINUTES = 15
-export const MAX_CORTEX_AUTO_REVIEW_INTERVAL_MINUTES = 1440
+export const SUPPORTED_INTERVAL_MINUTES = [15, 30, 60, 120, 240, 480, 720, 1440] as const
 
 interface CortexAutoReviewSettingsFile {
   version: 1
@@ -53,6 +52,7 @@ export class CortexAutoReviewSettingsService {
   private readonly settingsPath: string
   private readonly now: () => Date
   private settings: CortexAutoReviewSettings = createDefaultCortexAutoReviewSettings()
+  private updateMutex: Promise<void> = Promise.resolve()
 
   constructor(options: { dataDir: string; now?: () => Date }) {
     this.dataDir = options.dataDir
@@ -73,11 +73,18 @@ export class CortexAutoReviewSettingsService {
       this.settings = createDefaultCortexAutoReviewSettings()
     }
 
-    await syncCortexAutoReviewSchedule({
-      dataDir: this.dataDir,
-      settings: this.settings,
-      now: this.now,
-    })
+    try {
+      await syncCortexAutoReviewSchedule({
+        dataDir: this.dataDir,
+        settings: this.settings,
+        now: this.now,
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.warn(
+        `[cortex-auto-review] Failed to sync schedule during load from ${this.dataDir}: ${message}`,
+      )
+    }
   }
 
   getSettings(): CortexAutoReviewSettings {
@@ -89,28 +96,46 @@ export class CortexAutoReviewSettingsService {
   }
 
   async update(patch: UpdateCortexAutoReviewSettingsRequest): Promise<CortexAutoReviewSettings> {
-    const next: CortexAutoReviewSettings = {
-      enabled:
-        patch.enabled === undefined
-          ? this.settings.enabled
-          : normalizeBoolean(patch.enabled, 'enabled'),
-      intervalMinutes:
-        patch.intervalMinutes === undefined
-          ? this.settings.intervalMinutes
-          : normalizeIntervalMinutes(patch.intervalMinutes),
-      updatedAt: this.now().toISOString(),
-    }
+    return this.withUpdateLock(async () => {
+      const next: CortexAutoReviewSettings = {
+        enabled:
+          patch.enabled === undefined
+            ? this.settings.enabled
+            : normalizeBoolean(patch.enabled, 'enabled'),
+        intervalMinutes:
+          patch.intervalMinutes === undefined
+            ? this.settings.intervalMinutes
+            : normalizeIntervalMinutes(patch.intervalMinutes),
+        updatedAt: this.now().toISOString(),
+      }
 
-    await writeSettingsFile(this.settingsPath, next)
-    this.settings = next
+      await syncCortexAutoReviewSchedule({
+        dataDir: this.dataDir,
+        settings: next,
+        now: this.now,
+      })
 
-    await syncCortexAutoReviewSchedule({
-      dataDir: this.dataDir,
-      settings: next,
-      now: this.now,
+      await writeSettingsFile(this.settingsPath, next)
+      this.settings = next
+
+      return this.getSettings()
+    })
+  }
+
+  private async withUpdateLock<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.updateMutex
+    let release: (() => void) | undefined
+    this.updateMutex = new Promise<void>((resolve) => {
+      release = resolve
     })
 
-    return this.getSettings()
+    await previous
+
+    try {
+      return await operation()
+    } finally {
+      release?.()
+    }
   }
 }
 
@@ -233,17 +258,14 @@ function normalizeBoolean(value: unknown, fieldName: string): boolean {
 function normalizeIntervalMinutes(value: unknown): number {
   if (!Number.isInteger(value)) {
     throw new CortexAutoReviewSettingsValidationError(
-      `intervalMinutes must be an integer between ${MIN_CORTEX_AUTO_REVIEW_INTERVAL_MINUTES} and ${MAX_CORTEX_AUTO_REVIEW_INTERVAL_MINUTES}`,
+      `intervalMinutes must be one of: ${SUPPORTED_INTERVAL_MINUTES.join(', ')}`,
     )
   }
 
   const normalized = value as number
-  if (
-    normalized < MIN_CORTEX_AUTO_REVIEW_INTERVAL_MINUTES ||
-    normalized > MAX_CORTEX_AUTO_REVIEW_INTERVAL_MINUTES
-  ) {
+  if (!SUPPORTED_INTERVAL_MINUTES.includes(normalized as (typeof SUPPORTED_INTERVAL_MINUTES)[number])) {
     throw new CortexAutoReviewSettingsValidationError(
-      `intervalMinutes must be between ${MIN_CORTEX_AUTO_REVIEW_INTERVAL_MINUTES} and ${MAX_CORTEX_AUTO_REVIEW_INTERVAL_MINUTES}`,
+      `intervalMinutes must be one of: ${SUPPORTED_INTERVAL_MINUTES.join(', ')}`,
     )
   }
 
@@ -256,10 +278,7 @@ function normalizeIntervalForLoad(value: unknown, fallback: number): number {
   }
 
   const normalized = value as number
-  if (
-    normalized < MIN_CORTEX_AUTO_REVIEW_INTERVAL_MINUTES ||
-    normalized > MAX_CORTEX_AUTO_REVIEW_INTERVAL_MINUTES
-  ) {
+  if (!SUPPORTED_INTERVAL_MINUTES.includes(normalized as (typeof SUPPORTED_INTERVAL_MINUTES)[number])) {
     return fallback
   }
 

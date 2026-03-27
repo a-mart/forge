@@ -1,7 +1,7 @@
 import { access, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   CORTEX_AUTO_REVIEW_SCHEDULE_ID,
   CortexAutoReviewSettingsService,
@@ -49,6 +49,38 @@ describe('CortexAutoReviewSettingsService', () => {
         nextFireAt: '2026-03-27T02:00:00.000Z',
       },
     ])
+  })
+
+  it('loads settings successfully even when the schedule file contains corrupt JSON', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'cortex-auto-review-settings-corrupt-schedule-'))
+    const settingsPath = getCortexAutoReviewSettingsPath(dataDir)
+    const schedulePath = getProfileScheduleFilePath(dataDir, 'cortex')
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    try {
+      await mkdir(dirname(settingsPath), { recursive: true })
+      await writeFile(
+        settingsPath,
+        `${JSON.stringify({ version: 1, enabled: false, intervalMinutes: 240, updatedAt: null }, null, 2)}\n`,
+        'utf8',
+      )
+      await mkdir(dirname(schedulePath), { recursive: true })
+      await writeFile(schedulePath, '{not-json', 'utf8')
+
+      const service = new CortexAutoReviewSettingsService({ dataDir })
+
+      await expect(service.load()).resolves.toBeUndefined()
+      expect(service.getSettings()).toEqual({
+        enabled: false,
+        intervalMinutes: 240,
+        updatedAt: null,
+      })
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('[cortex-auto-review] Failed to sync schedule during load'),
+      )
+    } finally {
+      warnSpy.mockRestore()
+    }
   })
 
   it('persists updates, merges partial patches, and removes the managed schedule when disabled', async () => {
@@ -103,7 +135,70 @@ describe('CortexAutoReviewSettingsService', () => {
     expect(scheduleAfterDisable.schedules).toEqual([])
   })
 
-  it('rejects invalid interval updates', async () => {
+  it('does not persist settings changes when schedule sync fails', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'cortex-auto-review-settings-atomic-'))
+    const schedulePath = getProfileScheduleFilePath(dataDir, 'cortex')
+    const service = new CortexAutoReviewSettingsService({
+      dataDir,
+      now: () => new Date('2026-03-27T12:00:00.000Z'),
+    })
+
+    await service.load()
+    await writeFile(schedulePath, '{not-json', 'utf8')
+
+    await expect(service.update({ intervalMinutes: 240 })).rejects.toThrow(SyntaxError)
+    expect(service.getSettings()).toEqual({
+      enabled: true,
+      intervalMinutes: 120,
+      updatedAt: null,
+    })
+    await expect(access(getCortexAutoReviewSettingsPath(dataDir))).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('serializes concurrent updates so both succeed without temp-file races', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'cortex-auto-review-settings-concurrent-'))
+    const service = new CortexAutoReviewSettingsService({
+      dataDir,
+      now: () => new Date('2026-03-27T12:00:00.000Z'),
+    })
+
+    await service.load()
+
+    const results = await Promise.all([
+      service.update({ enabled: false }),
+      service.update({ intervalMinutes: 240 }),
+    ])
+
+    expect(results).toEqual([
+      {
+        enabled: false,
+        intervalMinutes: 120,
+        updatedAt: '2026-03-27T12:00:00.000Z',
+      },
+      {
+        enabled: false,
+        intervalMinutes: 240,
+        updatedAt: '2026-03-27T12:00:00.000Z',
+      },
+    ])
+    expect(service.getSettings()).toEqual({
+      enabled: false,
+      intervalMinutes: 240,
+      updatedAt: '2026-03-27T12:00:00.000Z',
+    })
+
+    const storedSettings = JSON.parse(
+      await readFile(getCortexAutoReviewSettingsPath(dataDir), 'utf8'),
+    ) as Record<string, unknown>
+    expect(storedSettings).toEqual({
+      version: 1,
+      enabled: false,
+      intervalMinutes: 240,
+      updatedAt: '2026-03-27T12:00:00.000Z',
+    })
+  })
+
+  it('rejects unsupported interval updates', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'cortex-auto-review-settings-invalid-'))
     const service = new CortexAutoReviewSettingsService({ dataDir })
 
@@ -113,6 +208,15 @@ describe('CortexAutoReviewSettingsService', () => {
       CortexAutoReviewSettingsValidationError,
     )
     await expect(service.update({ intervalMinutes: 1441 })).rejects.toBeInstanceOf(
+      CortexAutoReviewSettingsValidationError,
+    )
+    await expect(service.update({ intervalMinutes: 45 })).rejects.toBeInstanceOf(
+      CortexAutoReviewSettingsValidationError,
+    )
+    await expect(service.update({ intervalMinutes: 90 })).rejects.toBeInstanceOf(
+      CortexAutoReviewSettingsValidationError,
+    )
+    await expect(service.update({ intervalMinutes: 100 })).rejects.toBeInstanceOf(
       CortexAutoReviewSettingsValidationError,
     )
   })
