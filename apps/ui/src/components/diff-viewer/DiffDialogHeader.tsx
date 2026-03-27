@@ -1,3 +1,4 @@
+import type { GitRepoTarget } from '@forge/protocol'
 import { GitBranch, RefreshCw, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -8,6 +9,10 @@ export type DiffTab = 'changes' | 'history'
 interface DiffDialogHeaderProps {
   activeTab: DiffTab
   onTabChange: (tab: DiffTab) => void
+  repoTarget: GitRepoTarget
+  onRepoTargetChange: (target: GitRepoTarget) => void
+  showRepoSelector: boolean
+  repoLabel: string | null
   repoName: string | null
   branch: string | null
   isRefreshing: boolean
@@ -18,12 +23,19 @@ interface DiffDialogHeaderProps {
 export function DiffDialogHeader({
   activeTab,
   onTabChange,
+  repoTarget,
+  onRepoTargetChange,
+  showRepoSelector,
+  repoLabel,
   repoName,
   branch,
   isRefreshing,
   onRefresh,
   onClose,
 }: DiffDialogHeaderProps) {
+  const workspaceLabel = repoTarget === 'workspace' ? (repoLabel ?? 'Workspace') : 'Workspace'
+  const versioningLabel = repoTarget === 'versioning' ? (repoLabel ?? 'Cortex Knowledge') : 'Cortex Knowledge'
+
   return (
     <div className="flex h-11 shrink-0 items-center gap-3 border-b border-border/60 bg-card px-3">
       {/* Tab switcher */}
@@ -40,8 +52,31 @@ export function DiffDialogHeader({
         />
       </div>
 
-      {/* Separator */}
-      <span className="text-muted-foreground/30" aria-hidden>·</span>
+      {showRepoSelector ? (
+        <>
+          <span className="text-muted-foreground/30" aria-hidden>·</span>
+          <div
+            className="inline-flex h-7 items-center rounded-md border border-border/60 bg-muted/30 p-0.5"
+            role="group"
+            aria-label="Repository target"
+          >
+            <TabButton
+              label={workspaceLabel}
+              active={repoTarget === 'workspace'}
+              onClick={() => onRepoTargetChange('workspace')}
+            />
+            <TabButton
+              label={versioningLabel}
+              active={repoTarget === 'versioning'}
+              onClick={() => onRepoTargetChange('versioning')}
+            />
+          </div>
+        </>
+      ) : null}
+
+      {(repoName || branch) ? (
+        <span className="text-muted-foreground/30" aria-hidden>·</span>
+      ) : null}
 
       {/* Repo info */}
       {repoName ? (

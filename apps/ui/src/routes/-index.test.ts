@@ -6,7 +6,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MANAGER_MODEL_PRESETS } from '@forge/protocol'
-import { IndexPage } from './index'
+import { IndexPage, isCortexDiffViewerSession } from './index'
 
 const CREATE_MANAGER_MODEL_PRESETS = MANAGER_MODEL_PRESETS.filter(
   (modelPreset) => modelPreset !== 'codex-app',
@@ -191,6 +191,19 @@ async function renderPage(): Promise<FakeWebSocket> {
 
   return socket
 }
+
+describe('isCortexDiffViewerSession', () => {
+  it('treats cortex review sessions as Cortex diff-viewer sessions', () => {
+    expect(
+      isCortexDiffViewerSession({
+        ...buildManager('review-run', '/tmp/review-run'),
+        sessionPurpose: 'cortex_review',
+      }),
+    ).toBe(true)
+
+    expect(isCortexDiffViewerSession(buildManager('alpha', '/tmp/alpha'))).toBe(false)
+  })
+})
 
 describe('IndexPage create manager model selection', () => {
   it('shows only allowed model presets and defaults to pi-codex', async () => {

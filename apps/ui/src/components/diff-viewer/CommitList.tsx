@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { Loader2 } from 'lucide-react'
+import type { GitRepoTarget } from '@forge/protocol'
 import { cn } from '@/lib/utils'
 import { Skeleton } from '@/components/ui/skeleton'
+import { CommitMetadataBadges } from './CommitMetadataBadges'
+import { formatCommitSummary } from './formatCommitSummary'
 import type { GitLogEntry } from './use-diff-queries'
 
 interface CommitListProps {
@@ -12,6 +15,8 @@ interface CommitListProps {
   hasMore: boolean
   onLoadMore: () => void
   isLoadingMore: boolean
+  repoTarget: GitRepoTarget
+  emptyMessage?: string
 }
 
 export function CommitList({
@@ -22,10 +27,12 @@ export function CommitList({
   hasMore,
   onLoadMore,
   isLoadingMore,
+  repoTarget,
+  emptyMessage = 'No commits found',
 }: CommitListProps) {
   const listRef = useRef<HTMLDivElement>(null)
+  const useEnhancedRendering = repoTarget === 'versioning'
 
-  // Keyboard navigation
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (commits.length === 0) return
@@ -46,7 +53,6 @@ export function CommitList({
     [commits, selectedSha, onSelectCommit],
   )
 
-  // Auto-scroll selected item into view on initial load
   useEffect(() => {
     if (selectedSha && listRef.current) {
       const idx = commits.findIndex((c) => c.sha === selectedSha)
@@ -71,8 +77,25 @@ export function CommitList({
 
   if (commits.length === 0) {
     return (
-      <div className="flex h-full items-center justify-center px-3 text-center text-xs text-muted-foreground">
-        No commits found
+      <div className="flex h-full flex-col items-center justify-center gap-3 px-3 text-center text-xs text-muted-foreground">
+        <span>{emptyMessage}</span>
+        {hasMore ? (
+          <button
+            type="button"
+            className="inline-flex items-center justify-center gap-1.5 rounded px-2 py-1.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground disabled:opacity-50"
+            onClick={onLoadMore}
+            disabled={isLoadingMore}
+          >
+            {isLoadingMore ? (
+              <>
+                <Loader2 className="size-3 animate-spin" />
+                Loading…
+              </>
+            ) : (
+              'Load more'
+            )}
+          </button>
+        ) : null}
       </div>
     )
   }
@@ -89,14 +112,14 @@ export function CommitList({
       >
         {commits.map((commit) => {
           const isSelected = selectedSha === commit.sha
-          const firstLine = commit.message.split('\n')[0]
+          const summary = useEnhancedRendering ? formatCommitSummary(commit) : commit.message.split('\n')[0]
 
           return (
             <button
               key={commit.sha}
               role="option"
               aria-selected={isSelected}
-              aria-label={`${firstLine}, by ${commit.author}, ${formatRelativeTime(commit.date)}`}
+              aria-label={`${summary}, by ${commit.author}, ${formatRelativeTime(commit.date)}`}
               className={cn(
                 'flex w-full flex-col gap-0.5 rounded px-2 py-1.5 text-left transition-colors',
                 isSelected
@@ -105,19 +128,17 @@ export function CommitList({
               )}
               onClick={() => onSelectCommit(commit.sha)}
             >
-              <span className="truncate text-xs font-medium leading-tight text-foreground">
-                {firstLine}
-              </span>
+              <span className="truncate text-xs font-medium leading-tight text-foreground">{summary}</span>
               <span className="flex items-center gap-1.5 text-[10px] leading-tight text-muted-foreground">
                 <span className="truncate">{commit.author}</span>
                 <span className="shrink-0 opacity-60">·</span>
                 <span className="shrink-0">{formatRelativeTime(commit.date)}</span>
               </span>
+              {useEnhancedRendering ? <CommitMetadataBadges metadata={commit.metadata} /> : null}
             </button>
           )
         })}
 
-        {/* Load more button */}
         {hasMore ? (
           <button
             type="button"
@@ -140,20 +161,12 @@ export function CommitList({
   )
 }
 
-/* ------------------------------------------------------------------ */
-/*  Helpers                                                           */
-/* ------------------------------------------------------------------ */
-
 function scrollItemIntoView(container: HTMLElement | null, index: number) {
   if (!container) return
   const items = container.querySelectorAll('[role="option"]')
   items[index]?.scrollIntoView({ block: 'nearest' })
 }
 
-/**
- * Format an ISO date string as a relative time string.
- * Examples: "just now", "2 min ago", "3 hours ago", "5 days ago"
- */
 function formatRelativeTime(isoDate: string): string {
   const now = Date.now()
   const then = new Date(isoDate).getTime()

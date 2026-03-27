@@ -1,11 +1,18 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { History } from 'lucide-react'
+import { cn } from '@/lib/utils'
 import { FileList } from './FileList'
 import { DiffPane } from './DiffPane'
 import { CommitList } from './CommitList'
-import { useGitLog, useGitCommitDetail, useGitCommitFileDiff } from './use-diff-queries'
+import {
+  KNOWLEDGE_QUICK_FILTERS,
+  commitMatchesKnowledgeQuickFilter,
+  matchesKnowledgeQuickFilter,
+  type KnowledgeQuickFilterId,
+} from './knowledge-surface'
+import { useGitLog, useGitCommitDetail, useGitCommitDiff } from './use-diff-queries'
 import { useResizablePanel } from './useResizablePanel'
-import type { GitLogEntry } from './use-diff-queries'
+import type { GitLogEntry, GitRepoTarget } from './use-diff-queries'
 
 const PAGE_SIZE = 50
 
@@ -22,34 +29,39 @@ export interface HistoryStatusInfo {
 interface HistoryViewProps {
   wsUrl: string
   agentId: string | null
+  repoTarget: GitRepoTarget
   onStatusChange?: (info: HistoryStatusInfo | null) => void
+  refreshToken?: number
 }
 
-export function HistoryView({ wsUrl, agentId, onStatusChange }: HistoryViewProps) {
+export function HistoryView({ wsUrl, agentId, repoTarget, onStatusChange, refreshToken = 0 }: HistoryViewProps) {
   const [selectedSha, setSelectedSha] = useState<string | null>(null)
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
   const [allCommits, setAllCommits] = useState<GitLogEntry[]>([])
   const [currentOffset, setCurrentOffset] = useState(0)
   const [hasMore, setHasMore] = useState(false)
   const [isLoadingMore, setIsLoadingMore] = useState(false)
-  const prevAgentIdRef = useRef(agentId)
+  const [quickFilter, setQuickFilter] = useState<KnowledgeQuickFilterId>('all')
+  const prevContextKeyRef = useRef(`${agentId ?? ''}:${repoTarget}`)
+  const prevRefreshTokenRef = useRef(refreshToken)
+  const isKnowledgeMode = repoTarget === 'versioning'
 
-  // Fetch the current page of commits
-  const logQuery = useGitLog(wsUrl, agentId, PAGE_SIZE, currentOffset)
+  const logQuery = useGitLog(wsUrl, agentId, repoTarget, PAGE_SIZE, currentOffset)
 
-  // Reset state when agentId changes
   useEffect(() => {
-    if (agentId !== prevAgentIdRef.current) {
-      prevAgentIdRef.current = agentId
+    const contextKey = `${agentId ?? ''}:${repoTarget}`
+    if (contextKey !== prevContextKeyRef.current) {
+      prevContextKeyRef.current = contextKey
       setAllCommits([])
       setCurrentOffset(0)
       setHasMore(false)
       setSelectedSha(null)
       setSelectedFile(null)
+      setQuickFilter('all')
+      onStatusChange?.(null)
     }
-  }, [agentId])
+  }, [agentId, onStatusChange, repoTarget])
 
-  // Accumulate commits from paginated results
   useEffect(() => {
     if (!logQuery.data) return
 
@@ -58,49 +70,90 @@ export function HistoryView({ wsUrl, agentId, onStatusChange }: HistoryViewProps
     setIsLoadingMore(false)
 
     if (currentOffset === 0) {
-      // First page — replace
       setAllCommits(newCommits)
     } else {
-      // Subsequent page — append (deduplicate by sha)
       setAllCommits((prev) => {
-        const existingShas = new Set(prev.map((c) => c.sha))
-        const unique = newCommits.filter((c) => !existingShas.has(c.sha))
+        const existingShas = new Set(prev.map((commit) => commit.sha))
+        const unique = newCommits.filter((commit) => !existingShas.has(commit.sha))
         return [...prev, ...unique]
       })
     }
   }, [logQuery.data, currentOffset])
 
-  // Auto-select first commit when commit list first loads
-  useEffect(() => {
-    if (allCommits.length > 0 && !selectedSha) {
-      setSelectedSha(allCommits[0].sha)
+  const filteredCommits = useMemo(() => {
+    if (!isKnowledgeMode) {
+      return allCommits
     }
-  }, [allCommits, selectedSha])
 
-  // Fetch details for selected commit
-  const commitDetailQuery = useGitCommitDetail(wsUrl, agentId, selectedSha)
+    return allCommits.filter((commit) => commitMatchesKnowledgeQuickFilter(commit.metadata, quickFilter))
+  }, [allCommits, isKnowledgeMode, quickFilter])
 
-  // Reset file selection when commit changes
-  const prevShaRef = useRef(selectedSha)
   useEffect(() => {
-    if (selectedSha !== prevShaRef.current) {
-      prevShaRef.current = selectedSha
+    if (filteredCommits.length === 0) {
+      if (selectedSha !== null) {
+        setSelectedSha(null)
+      }
+      return
+    }
+
+    if (!selectedSha || !filteredCommits.some((commit) => commit.sha === selectedSha)) {
+      setSelectedSha(filteredCommits[0].sha)
+    }
+  }, [filteredCommits, selectedSha])
+
+  const commitDetailQuery = useGitCommitDetail(wsUrl, agentId, repoTarget, selectedSha)
+  const commitFiles = commitDetailQuery.data?.files ?? []
+
+  const filteredCommitFiles = useMemo(() => {
+    if (!isKnowledgeMode) {
+      return commitFiles
+    }
+
+    return commitFiles.filter((file) => matchesKnowledgeQuickFilter(file.path, quickFilter))
+  }, [commitFiles, isKnowledgeMode, quickFilter])
+
+  useEffect(() => {
+    if (selectedSha == null) {
+      if (selectedFile !== null) {
+        setSelectedFile(null)
+      }
+      return
+    }
+
+    if (
+      filteredCommitFiles.length > 0 &&
+      (!selectedFile || !filteredCommitFiles.some((file) => file.path === selectedFile))
+    ) {
+      setSelectedFile(filteredCommitFiles[0].path)
+    } else if (filteredCommitFiles.length === 0) {
       setSelectedFile(null)
     }
-  }, [selectedSha])
+  }, [filteredCommitFiles, selectedFile, selectedSha])
 
-  // Auto-select first file when commit detail loads
-  const commitFiles = commitDetailQuery.data?.files ?? []
+  const fileDiffQuery = useGitCommitDiff(wsUrl, agentId, repoTarget, selectedSha, selectedFile)
+
   useEffect(() => {
-    if (commitFiles.length > 0 && !selectedFile) {
-      setSelectedFile(commitFiles[0].path)
+    if (refreshToken === prevRefreshTokenRef.current) {
+      return
     }
-  }, [commitFiles, selectedFile])
 
-  // Fetch diff for selected file in selected commit
-  const fileDiffQuery = useGitCommitFileDiff(wsUrl, agentId, selectedSha, selectedFile)
+    prevRefreshTokenRef.current = refreshToken
+    setAllCommits([])
+    setHasMore(false)
+    setIsLoadingMore(false)
+    setSelectedSha(null)
+    setSelectedFile(null)
 
-  // Report status info to parent
+    if (currentOffset !== 0) {
+      setCurrentOffset(0)
+      return
+    }
+
+    logQuery.refetch()
+    commitDetailQuery.refetch()
+    fileDiffQuery.refetch()
+  }, [commitDetailQuery, currentOffset, fileDiffQuery, logQuery, refreshToken])
+
   useEffect(() => {
     if (!onStatusChange) return
 
@@ -109,95 +162,116 @@ export function HistoryView({ wsUrl, agentId, onStatusChange }: HistoryViewProps
       return
     }
 
-    const commit = allCommits.find((c) => c.sha === selectedSha)
+    const commit = allCommits.find((entry) => entry.sha === selectedSha)
     const detail = commitDetailQuery.data
-    const summary = computeCommitSummary(detail.files)
+    const visibleFiles = isKnowledgeMode && quickFilter !== 'all' ? filteredCommitFiles : detail.files
+    const summary = computeCommitSummary(visibleFiles)
 
     onStatusChange({
       sha: detail.sha,
       shortSha: commit?.shortSha ?? detail.sha.slice(0, 7),
       author: detail.author,
       date: detail.date,
-      filesChanged: detail.files.length,
+      filesChanged: visibleFiles.length,
       insertions: summary.insertions,
       deletions: summary.deletions,
     })
-  }, [selectedSha, commitDetailQuery.data, allCommits, onStatusChange])
+  }, [selectedSha, commitDetailQuery.data, allCommits, filteredCommitFiles, isKnowledgeMode, onStatusChange, quickFilter])
 
-  // Load more handler
   const handleLoadMore = useCallback(() => {
     setIsLoadingMore(true)
     setCurrentOffset((prev) => prev + PAGE_SIZE)
   }, [])
 
-  // Handle commit selection
-  const handleSelectCommit = useCallback((sha: string) => {
-    setSelectedSha(sha)
-  }, [])
-
   const { width: commitListWidth, isDragging: isCommitListDragging, handleRef: commitListHandleRef } =
     useResizablePanel({
       storageKey: 'forge-diff-history-commits-width',
-      defaultWidth: 220,
-      minWidth: 150,
-      maxWidth: 400,
+      defaultWidth: 260,
+      minWidth: 190,
+      maxWidth: 420,
     })
 
   const { width: fileListWidth, isDragging: isFileListDragging, handleRef: fileListHandleRef } =
     useResizablePanel({
       storageKey: 'forge-diff-history-files-width',
-      defaultWidth: 200,
-      minWidth: 150,
-      maxWidth: 400,
+      defaultWidth: 220,
+      minWidth: 170,
+      maxWidth: 420,
     })
 
   const isInitialLoading = logQuery.isLoading && allCommits.length === 0
-
-  // Empty state — no commits at all.
-  // Also guard against the intermediate render where logQuery.data has arrived
-  // but allCommits hasn't been populated yet (it's set in a useEffect).
   const hasPendingData = !!logQuery.data?.commits?.length && allCommits.length === 0
   if (!isInitialLoading && !hasPendingData && allCommits.length === 0 && !logQuery.error) {
     return (
       <div className="flex h-full flex-col items-center justify-center text-muted-foreground">
         <History className="mb-3 size-12 opacity-25" />
         <span className="text-sm font-medium">No commits found</span>
-        <span className="mt-1 text-xs opacity-60">
-          This repository has no commit history
-        </span>
+        <span className="mt-1 text-xs opacity-60">This repository has no commit history</span>
       </div>
     )
   }
 
-  // Error state
   if (logQuery.error) {
     return (
       <div className="flex h-full flex-col items-center justify-center text-muted-foreground">
         <History className="mb-3 size-12 opacity-25" />
         <span className="text-sm font-medium">Unable to load history</span>
-        <span className="mt-1 max-w-sm text-center text-xs opacity-60">
-          {logQuery.error}
-        </span>
+        <span className="mt-1 max-w-sm text-center text-xs opacity-60">{logQuery.error}</span>
       </div>
     )
   }
 
+  const visibleFileSummary = {
+    filesChanged: filteredCommitFiles.length,
+    ...computeCommitSummary(filteredCommitFiles),
+  }
+
   return (
     <div className="flex h-full">
-      {/* Left panel — commit list */}
       <div className="shrink-0 border-r border-border/60" style={{ width: commitListWidth }}>
-        <CommitList
-          commits={allCommits}
-          selectedSha={selectedSha}
-          onSelectCommit={handleSelectCommit}
-          isLoading={isInitialLoading}
-          hasMore={hasMore}
-          onLoadMore={handleLoadMore}
-          isLoadingMore={isLoadingMore}
-        />
+        <div className="flex h-full flex-col">
+          {isKnowledgeMode ? (
+            <div className="border-b border-border/60 p-2">
+              <div className="flex flex-wrap gap-1">
+                {KNOWLEDGE_QUICK_FILTERS.map((option) => {
+                  const active = option.id === quickFilter
+                  return (
+                    <button
+                      key={option.id}
+                      type="button"
+                      title={option.pathLabel}
+                      className={cn(
+                        'inline-flex h-6 items-center rounded-full border px-2 text-[10px] font-medium transition-colors',
+                        active
+                          ? 'border-primary/40 bg-primary/10 text-primary'
+                          : 'border-border/60 bg-muted/30 text-muted-foreground hover:border-border hover:text-foreground',
+                      )}
+                      aria-pressed={active}
+                      onClick={() => setQuickFilter(option.id)}
+                    >
+                      {option.label}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          ) : null}
+          <div className="min-h-0 flex-1">
+            <CommitList
+              commits={filteredCommits}
+              selectedSha={selectedSha}
+              onSelectCommit={setSelectedSha}
+              isLoading={isInitialLoading}
+              hasMore={hasMore}
+              onLoadMore={handleLoadMore}
+              isLoadingMore={isLoadingMore}
+              repoTarget={repoTarget}
+              emptyMessage={isKnowledgeMode && quickFilter !== 'all' ? 'No commits match this filter' : 'No commits found'}
+            />
+          </div>
+        </div>
       </div>
 
-      {/* Drag handle */}
       <div
         ref={commitListHandleRef}
         className={`group relative h-full shrink-0 cursor-col-resize transition-colors ${
@@ -208,7 +282,6 @@ export function HistoryView({ wsUrl, agentId, onStatusChange }: HistoryViewProps
         <div className="absolute left-1/2 top-1/2 h-8 w-0.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-foreground/0 transition-colors group-hover:bg-foreground/25" />
       </div>
 
-      {/* Center panel — file list */}
       <div className="shrink-0 border-r border-border/60" style={{ width: fileListWidth }}>
         {selectedSha ? (
           <FileList
@@ -216,23 +289,18 @@ export function HistoryView({ wsUrl, agentId, onStatusChange }: HistoryViewProps
             selectedFile={selectedFile}
             onSelectFile={setSelectedFile}
             isLoading={commitDetailQuery.isLoading}
-            summary={
-              commitFiles.length > 0
-                ? {
-                    filesChanged: commitFiles.length,
-                    ...computeCommitSummary(commitFiles),
-                  }
-                : undefined
-            }
+            summary={visibleFileSummary}
+            repoTarget={repoTarget}
+            quickFilter={quickFilter}
+            onQuickFilterChange={setQuickFilter}
           />
         ) : (
           <div className="flex h-full items-center justify-center px-3 text-center text-xs text-muted-foreground">
-            Select a commit to view files
+            {isKnowledgeMode && quickFilter !== 'all' ? 'No commit matches the selected filter' : 'Select a commit to view files'}
           </div>
         )}
       </div>
 
-      {/* Drag handle */}
       <div
         ref={fileListHandleRef}
         className={`group relative h-full shrink-0 cursor-col-resize transition-colors ${
@@ -243,7 +311,6 @@ export function HistoryView({ wsUrl, agentId, onStatusChange }: HistoryViewProps
         <div className="absolute left-1/2 top-1/2 h-8 w-0.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-foreground/0 transition-colors group-hover:bg-foreground/25" />
       </div>
 
-      {/* Right panel — diff pane */}
       <div className="min-w-0 flex-1">
         <DiffPane
           fileName={selectedFile}
@@ -259,19 +326,15 @@ export function HistoryView({ wsUrl, agentId, onStatusChange }: HistoryViewProps
   )
 }
 
-/* ------------------------------------------------------------------ */
-/*  Helpers                                                           */
-/* ------------------------------------------------------------------ */
-
 function computeCommitSummary(files: { additions?: number; deletions?: number }[]): {
   insertions: number
   deletions: number
 } {
   let insertions = 0
   let deletions = 0
-  for (const f of files) {
-    insertions += f.additions ?? 0
-    deletions += f.deletions ?? 0
+  for (const file of files) {
+    insertions += file.additions ?? 0
+    deletions += file.deletions ?? 0
   }
   return { insertions, deletions }
 }
