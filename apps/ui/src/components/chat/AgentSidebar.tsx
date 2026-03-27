@@ -17,7 +17,6 @@ import {
   Search,
   Settings,
   SquarePen,
-  SquareTerminal,
   Trash2,
   X,
 } from 'lucide-react'
@@ -137,118 +136,7 @@ function getAgentLiveStatus(
 
 // ── Shared components ──
 
-function RuntimeIcon({ agent, className }: { agent: AgentDescriptor; className?: string }) {
-  const provider = agent.model.provider.toLowerCase()
-  const preset = inferModelPreset(agent)
 
-  if (preset === 'pi-opus') {
-    return (
-      <span className="inline-flex items-center gap-0.5" aria-hidden="true">
-        <img src="/pi-logo.svg" alt="" className={cn('size-3 shrink-0 object-contain dark:invert', className)} />
-        <img src="/agents/claude-logo.svg" alt="" className={cn('size-3 shrink-0 object-contain', className)} />
-      </span>
-    )
-  }
-
-  if (preset === 'pi-codex' || preset === 'pi-5.4') {
-    return (
-      <span className="inline-flex items-center gap-0.5" aria-hidden="true">
-        <img src="/pi-logo.svg" alt="" className={cn('size-3 shrink-0 object-contain dark:invert', className)} />
-        <img
-          src="/agents/codex-logo.svg"
-          alt=""
-          className={cn('size-3 shrink-0 object-contain dark:invert', className)}
-        />
-      </span>
-    )
-  }
-
-  if (preset === 'codex-app') {
-    return (
-      <span className="inline-flex items-center gap-0.5" aria-hidden="true">
-        <img src="/agents/codex-app-logo.svg" alt="" className={cn('size-3 shrink-0 object-contain dark:invert', className)} />
-        <img src="/agents/codex-logo.svg" alt="" className={cn('size-3 shrink-0 object-contain dark:invert', className)} />
-      </span>
-    )
-  }
-
-  if (provider.includes('anthropic') || provider.includes('claude')) {
-    return <img src="/agents/claude-logo.svg" alt="" aria-hidden="true" className={className} />
-  }
-
-  if (provider.includes('openai')) {
-    return <img src="/agents/codex-logo.svg" alt="" aria-hidden="true" className={cn('dark:invert', className)} />
-  }
-
-  return <span className={cn('inline-block size-1.5 rounded-full bg-current', className)} aria-hidden="true" />
-}
-
-function getModelLabel(agent: AgentDescriptor, preset: ManagerModelPreset | undefined): string {
-  if (preset === 'pi-opus') return 'opus'
-  if (preset === 'pi-codex' || preset === 'pi-5.4' || preset === 'codex-app') return 'codex'
-  const modelId = agent.model.modelId.trim().toLowerCase()
-  if (modelId.startsWith('claude-opus')) return 'opus'
-  if (modelId.includes('codex')) return 'codex'
-  return agent.model.modelId
-}
-
-function AgentActivitySlot({
-  isActive,
-  isSelected,
-  streamingWorkerCount,
-}: {
-  isActive: boolean
-  isSelected: boolean
-  streamingWorkerCount?: number
-}) {
-  if (streamingWorkerCount && streamingWorkerCount > 0) {
-    return (
-      <TooltipProvider delayDuration={200}>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span
-              className="relative inline-flex size-3.5 shrink-0 items-center justify-center"
-              aria-label={`${streamingWorkerCount} active worker${streamingWorkerCount !== 1 ? 's' : ''}`}
-            >
-              <CircleDashed
-                className={cn(
-                  'absolute inset-0 size-3.5 animate-spin',
-                  isSelected ? 'text-sidebar-accent-foreground/80' : 'text-muted-foreground',
-                )}
-                aria-hidden="true"
-              />
-              <span
-                className={cn(
-                  'relative text-[7px] font-bold leading-none',
-                  isSelected ? 'text-sidebar-accent-foreground' : 'text-muted-foreground',
-                )}
-              >
-                {streamingWorkerCount}
-              </span>
-            </span>
-          </TooltipTrigger>
-          <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-[10px]">
-            {streamingWorkerCount} worker{streamingWorkerCount !== 1 ? 's' : ''} active
-          </TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
-    )
-  }
-
-  if (!isActive) {
-    return <span className="inline-block size-3.5 shrink-0" aria-hidden="true" />
-  }
-
-  return (
-    <CircleDashed
-      className={cn(
-        'size-3.5 shrink-0 animate-spin',
-        isSelected ? 'text-sidebar-accent-foreground/80' : 'text-muted-foreground',
-      )}
-      aria-label="Active"
-    />
-  )
-}
 
 function SessionStatusDot({ running }: { running: boolean }) {
   return (
@@ -272,57 +160,9 @@ function slugifySessionName(name: string): string {
     .replace(/^-+|-+$/g, '')
 }
 
-function RuntimeBadge({ agent, isSelected }: { agent: AgentDescriptor; isSelected: boolean }) {
-  const preset = inferModelPreset(agent)
-  const modelLabel = getModelLabel(agent, preset)
-  const modelDescription = `${agent.model.provider}/${agent.model.modelId}`
 
-  return (
-    <TooltipProvider delayDuration={200}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span
-            className={cn(
-              'ml-1 inline-flex h-5 min-w-7 shrink-0 items-center justify-center rounded-sm border border-sidebar-border/80 bg-sidebar-accent/40 px-0.5',
-              isSelected ? 'border-sidebar-ring/60 bg-sidebar-accent-foreground/10' : '',
-            )}
-          >
-            <RuntimeIcon agent={agent} className="size-3 shrink-0 object-contain opacity-90" />
-          </span>
-        </TooltipTrigger>
-        <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-[10px]">
-          <p className="font-medium">{modelLabel}</p>
-          <p className="opacity-80">{modelDescription}</p>
-          {agent.model.thinkingLevel && (
-            <p className="opacity-60">reasoning: {agent.model.thinkingLevel}</p>
-          )}
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
-  )
-}
 
-function TerminalCountBadge({ count }: { count: number }) {
-  if (count <= 0) {
-    return null
-  }
 
-  return (
-    <TooltipProvider delayDuration={200}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span className="ml-1 inline-flex h-5 shrink-0 items-center gap-1 rounded-sm border border-sidebar-border/80 bg-sidebar-accent/40 px-1.5 text-[10px] font-medium text-muted-foreground">
-            <SquareTerminal className="size-3 shrink-0" />
-            <span className="tabular-nums">{count > 99 ? '99+' : count}</span>
-          </span>
-        </TooltipTrigger>
-        <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-[10px]">
-          {count} terminal{count !== 1 ? 's' : ''} open
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
-  )
-}
 
 // ── Search helpers ──
 
@@ -435,14 +275,16 @@ function WorkerRow({
   const isRunning = liveStatus.status === 'streaming' || liveStatus.status === 'idle'
   const isStopped = liveStatus.status === 'terminated' || liveStatus.status === 'stopped'
 
+  // TODO: Future — named specialist workers will get colored name pills here
+
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
         <div
           className={cn(
-            'flex w-full items-center gap-1 rounded-md py-2.5 pl-12 pr-1.5 transition-colors md:py-1',
+            'flex w-full items-center gap-1 rounded-md py-1.5 pl-12 pr-1.5 transition-colors',
             isSelected
-              ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+              ? 'bg-white/[0.04] text-sidebar-foreground ring-1 ring-sidebar-ring/30'
               : 'text-sidebar-foreground/90 hover:bg-sidebar-accent/50',
           )}
         >
@@ -452,11 +294,16 @@ function WorkerRow({
             className="flex min-w-0 flex-1 items-center gap-1.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60"
             title={title}
           >
-            <AgentActivitySlot isActive={isActive} isSelected={isSelected} />
+            <span
+              className={cn(
+                'inline-block size-1.5 shrink-0 rounded-full',
+                isActive ? 'bg-emerald-500' : 'bg-muted-foreground/40',
+              )}
+              aria-label={isActive ? 'Active' : 'Idle'}
+            />
             <span className="min-w-0 flex-1 truncate text-sm leading-5">
               {highlightQuery ? <HighlightedText text={title} query={highlightQuery} /> : title}
             </span>
-            <RuntimeBadge agent={agent} isSelected={isSelected} />
           </button>
         </div>
       </ContextMenuTrigger>
@@ -529,17 +376,15 @@ function SessionRowItem({
   highlightQuery?: string
 }) {
   const { sessionAgent, workers, isDefault } = session
-  const liveStatus = getAgentLiveStatus(sessionAgent, statuses)
   const running = isSessionRunning(sessionAgent)
   const isSelected = !isSettingsActive && selectedAgentId === sessionAgent.agentId
-  const isActive = liveStatus.status === 'streaming'
   const label = sessionAgent.sessionLabel || (isDefault ? 'Main' : sessionAgent.displayName || sessionAgent.agentId)
   const workerCount = session.sessionAgent.workerCount ?? workers.length
   const hasWorkers = workerCount > 0
-  const streamingWorkerCount = isCollapsed
-    ? workers.filter((w) => getAgentLiveStatus(w, statuses).status === 'streaming').length || sessionAgent.activeWorkerCount || 0
-    : 0
   const showUnread = unreadCount > 0
+  const streamingWorkerCount = workers.filter((w) => getAgentLiveStatus(w, statuses).status === 'streaming').length
+    || sessionAgent.activeWorkerCount
+    || 0
 
   return (
     <li>
@@ -549,7 +394,7 @@ function SessionRowItem({
             className={cn(
               'relative flex items-center rounded-md transition-colors',
               isSelected
-                ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+                ? 'bg-white/[0.04] text-sidebar-foreground ring-1 ring-sidebar-ring/30'
                 : 'text-sidebar-foreground/90 hover:bg-sidebar-accent/50',
             )}
           >
@@ -578,20 +423,25 @@ function SessionRowItem({
               type="button"
               onClick={() => onSelect(sessionAgent.agentId)}
               className={cn(
-                'flex min-w-0 flex-1 items-center gap-1.5 py-2.5 pr-1.5 text-left md:py-1.5',
+                'flex min-w-0 flex-1 items-center gap-1.5 py-1.5 pr-1.5 text-left',
                 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
                 hasWorkers ? 'pl-7' : 'pl-5',
               )}
               title={`${label}${running ? ' (running)' : ' (idle)'}`}
             >
-              <SessionStatusDot running={running} />
-              {isActive || streamingWorkerCount > 0 ? (
-                <AgentActivitySlot
-                  isActive={isActive}
-                  isSelected={isSelected}
-                  streamingWorkerCount={isCollapsed ? streamingWorkerCount : undefined}
-                />
-              ) : null}
+              {streamingWorkerCount > 0 ? (
+                <span
+                  className="inline-flex size-3.5 shrink-0 items-center justify-center rounded-full border-2 border-amber-500 bg-transparent"
+                  style={{ boxShadow: '0 0 6px rgba(245,158,11,0.5)' }}
+                  aria-label={`${streamingWorkerCount} worker${streamingWorkerCount !== 1 ? 's' : ''} active`}
+                >
+                  <span className="text-[8px] font-bold leading-none text-amber-500">
+                    {streamingWorkerCount}
+                  </span>
+                </span>
+              ) : (
+                <SessionStatusDot running={running} />
+              )}
               <span className="min-w-0 flex-1 truncate text-sm leading-5">
                 {highlightQuery ? <HighlightedText text={label} query={highlightQuery} /> : label}
               </span>
@@ -600,7 +450,6 @@ function SessionRowItem({
                   {unreadCount > 99 ? '99+' : unreadCount}
                 </span>
               ) : null}
-
             </button>
           </div>
         </ContextMenuTrigger>
@@ -751,8 +600,6 @@ function ProfileGroup({
   treeRow,
   statuses,
   unreadCounts,
-  terminalScopeId,
-  terminalCount,
   selectedAgentId,
   isSettingsActive,
   isCollapsed,
@@ -784,8 +631,6 @@ function ProfileGroup({
   treeRow: ProfileTreeRow
   statuses: Record<string, { status: AgentStatus; pendingCount: number; contextUsage?: AgentContextUsage }>
   unreadCounts: Record<string, number>
-  terminalScopeId?: string | null
-  terminalCount?: number
   selectedAgentId: string | null
   isSettingsActive: boolean
   isCollapsed: boolean
@@ -818,26 +663,26 @@ function ProfileGroup({
   const hasAnySessions = sessions.length > 0
   const defaultSession = sessions.find((s) => s.isDefault)
 
-  // Count active sessions for collapsed summary
-  const activeSessionCount = sessions.filter((s) => isSessionRunning(s.sessionAgent)).length
-  const totalStreamingWorkers = sessions.reduce(
-    (count, s) =>
-      count
-      + (s.sessionAgent.activeWorkerCount
-        ?? s.workers.filter((w) => getAgentLiveStatus(w, statuses).status === 'streaming').length),
-    0,
-  )
-
-  // Use the default session agent for the runtime badge
+  // Profile summary for tooltip
   const representativeAgent = defaultSession?.sessionAgent ?? sessions[0]?.sessionAgent
-  const showTerminalCountBadge = (terminalCount ?? 0) > 0 && terminalScopeId === profile.profileId
+
+  const profileTooltipLines: string[] = []
+  if (sessions.length > 0) {
+    profileTooltipLines.push(`${sessions.length} session${sessions.length !== 1 ? 's' : ''}`)
+  }
+  if (representativeAgent) {
+    profileTooltipLines.push(`${representativeAgent.model.provider}/${representativeAgent.model.modelId}`)
+    if (representativeAgent.model.thinkingLevel) {
+      profileTooltipLines.push(`reasoning: ${representativeAgent.model.thinkingLevel}`)
+    }
+  }
 
   return (
     <>
       {/* Profile header */}
       <ContextMenu>
         <ContextMenuTrigger asChild>
-          <div className="relative flex items-center">
+          <div className="relative flex items-center rounded-lg border border-white/[0.04] bg-white/[0.03]">
             <button
               type="button"
               onClick={onToggleProfileCollapsed}
@@ -856,42 +701,40 @@ function ProfileGroup({
               )}
             </button>
 
-            <button
-              type="button"
-              ref={dragHandleRef}
-              {...dragHandleListeners}
-              onClick={() => {
-                // Click profile header → select default session
-                const targetId = defaultSession?.sessionAgent.agentId ?? sessions[0]?.sessionAgent.agentId
-                if (targetId) onSelect(targetId)
-              }}
-              className={cn(
-                'flex min-w-0 flex-1 items-center gap-1.5 rounded-md py-2.5 pl-5.5 pr-1.5 text-left transition-colors md:py-1.5',
-                'hover:bg-sidebar-accent/50',
-                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
-                dragHandleListeners ? 'cursor-grab active:cursor-grabbing' : '',
-              )}
-              title={profile.displayName}
-              style={dragHandleListeners ? { touchAction: 'none' } : undefined}
-            >
-              {isCollapsed && totalStreamingWorkers > 0 ? (
-                <AgentActivitySlot isActive={false} isSelected={false} streamingWorkerCount={totalStreamingWorkers} />
-              ) : null}
-              <span className="min-w-0 flex-1 truncate text-sm font-semibold leading-5">
-                {profile.displayName}
-              </span>
-              {isCollapsed && hasAnySessions ? (
-                <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
-                  {activeSessionCount}/{sessions.length}
-                </span>
-              ) : null}
-              {showTerminalCountBadge ? (
-                <TerminalCountBadge count={terminalCount ?? 0} />
-              ) : null}
-              {representativeAgent ? (
-                <RuntimeBadge agent={representativeAgent} isSelected={false} />
-              ) : null}
-            </button>
+            <TooltipProvider delayDuration={400}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    ref={dragHandleRef}
+                    {...dragHandleListeners}
+                    onClick={() => {
+                      // Click profile header → select default session
+                      const targetId = sessions[0]?.sessionAgent.agentId
+                      if (targetId) onSelect(targetId)
+                    }}
+                    className={cn(
+                      'flex min-w-0 flex-1 items-center gap-1.5 rounded-md py-1.5 pl-5.5 pr-1.5 text-left transition-colors',
+                      'hover:bg-sidebar-accent/50',
+                      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
+                      dragHandleListeners ? 'cursor-grab active:cursor-grabbing' : '',
+                    )}
+                    style={dragHandleListeners ? { touchAction: 'none' } : undefined}
+                  >
+                    <span className="min-w-0 flex-1 truncate text-sm font-semibold leading-5">
+                      {profile.displayName}
+                    </span>
+                  </button>
+                </TooltipTrigger>
+                {profileTooltipLines.length > 0 ? (
+                  <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-[10px]">
+                    {profileTooltipLines.map((line, i) => (
+                      <p key={i} className={i === 0 ? 'font-medium' : 'opacity-80'}>{line}</p>
+                    ))}
+                  </TooltipContent>
+                ) : null}
+              </Tooltip>
+            </TooltipProvider>
 
             {/* Inline "new session" button on profile header */}
             {onCreateSession ? (
@@ -1464,7 +1307,7 @@ function CortexSection({
       : primarySessions
 
   const defaultSession = visibleSessions.find((s) => s.isDefault) ?? sessions.find((s) => s.isDefault)
-  const targetId = defaultSession?.sessionAgent.agentId ?? visibleSessions[0]?.sessionAgent.agentId ?? sessions[0]?.sessionAgent.agentId
+  const targetId = visibleSessions[0]?.sessionAgent.agentId ?? sessions[0]?.sessionAgent.agentId
   const isHeaderSelected = !isSettingsActive && selectedAgentId === targetId
   const hasAnySessions = visibleSessions.length > 0
 
@@ -1477,13 +1320,6 @@ function CortexSection({
   const showUnread = displayUnread > 0
 
   // Activity
-  const totalStreamingWorkers = visibleSessions.reduce(
-    (count, s) =>
-      count
-      + (s.sessionAgent.activeWorkerCount
-        ?? s.workers.filter((w) => getAgentLiveStatus(w, statuses).status === 'streaming').length),
-    0,
-  )
   const activeReviewRunCount = reviewRunSessions.filter((session) => {
     const reviewStatus = getAgentLiveStatus(session.sessionAgent, statuses).status
     return reviewStatus === 'streaming' || session.workers.some((worker) => getAgentLiveStatus(worker, statuses).status === 'streaming')
@@ -1500,7 +1336,7 @@ function CortexSection({
       {/* Cortex header */}
       <ContextMenu>
         <ContextMenuTrigger asChild>
-          <div className="relative flex items-center">
+          <div className="relative flex items-center rounded-lg border border-white/[0.04] bg-white/[0.03]">
             {hasAnySessions ? (
               <button
                 type="button"
@@ -1551,9 +1387,6 @@ function CortexSection({
             >
               {!hasAnySessions ? (
                 <Brain className={cn('size-4 shrink-0', isHeaderSelected ? 'text-blue-500' : 'text-blue-400')} aria-hidden="true" />
-              ) : null}
-              {isCollapsed && totalStreamingWorkers > 0 ? (
-                <AgentActivitySlot isActive={false} isSelected={false} streamingWorkerCount={totalStreamingWorkers} />
               ) : null}
               <span className="min-w-0 flex-1 truncate text-sm font-semibold leading-5">
                 {profile.displayName}
@@ -1813,8 +1646,6 @@ export function AgentSidebar({
   profiles,
   statuses,
   unreadCounts,
-  terminalScopeId,
-  terminalCount = 0,
   selectedAgentId,
   isSettingsActive,
   isPlaywrightActive = false,
@@ -2234,11 +2065,13 @@ export function AgentSidebar({
           )
         })()}
 
-        <div className="px-1 pb-1">
-          <h2 className="text-xs font-semibold text-muted-foreground">
-            {isSearchActive ? `${matchCount} match${matchCount !== 1 ? 'es' : ''}` : 'Agents'}
-          </h2>
-        </div>
+        {isSearchActive ? (
+          <div className="px-1 pb-1">
+            <h2 className="text-xs font-semibold text-muted-foreground">
+              {matchCount} match{matchCount !== 1 ? 'es' : ''}
+            </h2>
+          </div>
+        ) : null}
 
         {(() => {
           const sourceRows = isSearchActive ? filteredTreeRows : treeRows
@@ -2265,8 +2098,6 @@ export function AgentSidebar({
               treeRow={treeRow}
               statuses={statuses}
               unreadCounts={unreadCounts}
-              terminalScopeId={terminalScopeId}
-              terminalCount={terminalCount}
               selectedAgentId={selectedAgentId}
               isSettingsActive={isSettingsActive}
               isCollapsed={isSearchActive ? false : collapsedProfileIds.has(treeRow.profile.profileId)}
@@ -2311,7 +2142,7 @@ export function AgentSidebar({
                 onDragEnd={handleDragEnd}
               >
                 <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
-                  <ul className="space-y-0.5">
+                  <ul className="mt-2 space-y-0.5">
                     {regularRows.map((treeRow) => (
                       <SortableProfileGroup key={treeRow.profile.profileId} treeRow={treeRow}>
                         {(dragHandleRef, dragHandleListeners) => profileGroupContent(treeRow, dragHandleRef, dragHandleListeners)}
@@ -2333,7 +2164,7 @@ export function AgentSidebar({
           }
 
           return (
-            <ul className="space-y-0.5">
+            <ul className="mt-2 space-y-0.5">
               {regularRows.map((treeRow) => (
                 <li key={treeRow.profile.profileId}>
                   {profileGroupContent(treeRow)}
