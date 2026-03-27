@@ -492,6 +492,30 @@ export function SettingsSpecialists({ wsUrl, profiles, specialistChangeKey }: Se
     }, 'Failed to toggle')
   }, [wsUrl, selectedScope, loadSpecialists, withCardAction])
 
+  /** Toggle enabled on a global specialist — saves directly. */
+  const handleGlobalToggleEnabled = useCallback(async (s: ResolvedSpecialistDefinition) => {
+    await withCardAction(s.specialistId, async () => {
+      const payload = toSaveSpecialistPayload({
+        ...specialistToEditState(s),
+        enabled: !s.enabled,
+      })
+      await saveSharedSpecialist(wsUrl, s.specialistId, payload)
+      await loadSpecialists()
+    }, 'Failed to toggle')
+  }, [wsUrl, loadSpecialists, withCardAction])
+
+  /** Toggle enabled on a profile-override specialist — saves directly. */
+  const handleProfileToggleEnabled = useCallback(async (s: ResolvedSpecialistDefinition) => {
+    await withCardAction(s.specialistId, async () => {
+      const payload = toSaveSpecialistPayload({
+        ...specialistToEditState(s),
+        enabled: !s.enabled,
+      })
+      await saveSpecialist(wsUrl, selectedScope, s.specialistId, payload)
+      await loadSpecialists()
+    }, 'Failed to toggle')
+  }, [wsUrl, selectedScope, loadSpecialists, withCardAction])
+
   const handleCancelProfileEditing = useCallback(async (id: string) => {
     const wasCustomizeInitiated = customizeInitiatedIds.has(id)
     cancelEditing(id)
@@ -782,27 +806,31 @@ export function SettingsSpecialists({ wsUrl, profiles, specialistChangeKey }: Se
               No global specialists found.
             </p>
           ) : (
-            specialists.map((spec) => (
-              <GlobalSpecialistCard
-                key={spec.specialistId}
-                specialist={spec}
-                isEditing={editingIds.has(spec.specialistId)}
-                editState={editStates[spec.specialistId]}
-                isSaving={savingIds.has(spec.specialistId)}
-                cardError={cardErrors[spec.specialistId]}
-                isPromptExpanded={expandedPromptIds.has(spec.specialistId)}
-                isFallbackExpanded={expandedFallbackIds.has(spec.specialistId)}
-                onStartEditing={() => startEditing(spec)}
-                onCancelEditing={() => cancelEditing(spec.specialistId)}
-                onUpdateField={(field, value) => updateEditField(spec.specialistId, field, value)}
-                onSave={() => handleSave(spec.specialistId)}
-                onDelete={() => handleDelete(spec.specialistId)}
-                onTogglePrompt={() => togglePromptExpand(spec.specialistId)}
-                onToggleFallback={() => toggleFallbackExpand(spec.specialistId)}
-                modelPresets={modelPresets}
-                selectableModels={selectableModels}
-              />
-            ))
+            <div className="space-y-2">
+              {specialists.map((spec) => (
+                <SpecialistCard
+                  key={spec.specialistId}
+                  mode="global"
+                  specialist={spec}
+                  isEditing={editingIds.has(spec.specialistId)}
+                  editState={editStates[spec.specialistId]}
+                  isSaving={savingIds.has(spec.specialistId)}
+                  cardError={cardErrors[spec.specialistId]}
+                  isPromptExpanded={expandedPromptIds.has(spec.specialistId)}
+                  isFallbackExpanded={expandedFallbackIds.has(spec.specialistId)}
+                  onExpand={() => startEditing(spec)}
+                  onCancelEditing={() => cancelEditing(spec.specialistId)}
+                  onUpdateField={(field, value) => updateEditField(spec.specialistId, field, value)}
+                  onSave={() => handleSave(spec.specialistId)}
+                  onDelete={() => handleDelete(spec.specialistId)}
+                  onToggleEnabled={() => handleGlobalToggleEnabled(spec)}
+                  onTogglePrompt={() => togglePromptExpand(spec.specialistId)}
+                  onToggleFallback={() => toggleFallbackExpand(spec.specialistId)}
+                  modelPresets={modelPresets}
+                  selectableModels={selectableModels}
+                />
+              ))}
+            </div>
           )}
         </SettingsSection>
       )}
@@ -839,28 +867,32 @@ export function SettingsSpecialists({ wsUrl, profiles, specialistChangeKey }: Se
                 No profile customizations. Override a specialist below to customize it for this profile.
               </p>
             ) : (
-              profileOverrides.map((spec) => (
-                <ProfileOverrideCard
-                  key={spec.specialistId}
-                  specialist={spec}
-                  isEditing={editingIds.has(spec.specialistId)}
-                  editState={editStates[spec.specialistId]}
-                  isSaving={savingIds.has(spec.specialistId)}
-                  cardError={cardErrors[spec.specialistId]}
-                  isPromptExpanded={expandedPromptIds.has(spec.specialistId)}
-                  isFallbackExpanded={expandedFallbackIds.has(spec.specialistId)}
-                  onStartEditing={() => startEditing(spec)}
-                  onCancelEditing={() => handleCancelProfileEditing(spec.specialistId)}
-                  onUpdateField={(field, value) => updateEditField(spec.specialistId, field, value)}
-                  onSave={() => handleSave(spec.specialistId)}
-                  onRevert={() => handleRevert(spec.specialistId)}
-                  onDelete={() => handleDelete(spec.specialistId)}
-                  onTogglePrompt={() => togglePromptExpand(spec.specialistId)}
-                  onToggleFallback={() => toggleFallbackExpand(spec.specialistId)}
-                  modelPresets={modelPresets}
-                  selectableModels={selectableModels}
-                />
-              ))
+              <div className="space-y-2">
+                {profileOverrides.map((spec) => (
+                  <SpecialistCard
+                    key={spec.specialistId}
+                    mode="profileOverride"
+                    specialist={spec}
+                    isEditing={editingIds.has(spec.specialistId)}
+                    editState={editStates[spec.specialistId]}
+                    isSaving={savingIds.has(spec.specialistId)}
+                    cardError={cardErrors[spec.specialistId]}
+                    isPromptExpanded={expandedPromptIds.has(spec.specialistId)}
+                    isFallbackExpanded={expandedFallbackIds.has(spec.specialistId)}
+                    onExpand={() => startEditing(spec)}
+                    onCancelEditing={() => handleCancelProfileEditing(spec.specialistId)}
+                    onUpdateField={(field, value) => updateEditField(spec.specialistId, field, value)}
+                    onSave={() => handleSave(spec.specialistId)}
+                    onRevert={() => handleRevert(spec.specialistId)}
+                    onDelete={() => handleDelete(spec.specialistId)}
+                    onToggleEnabled={() => handleProfileToggleEnabled(spec)}
+                    onTogglePrompt={() => togglePromptExpand(spec.specialistId)}
+                    onToggleFallback={() => toggleFallbackExpand(spec.specialistId)}
+                    modelPresets={modelPresets}
+                    selectableModels={selectableModels}
+                  />
+                ))}
+              </div>
             )}
           </SettingsSection>
 
@@ -874,14 +906,25 @@ export function SettingsSpecialists({ wsUrl, profiles, specialistChangeKey }: Se
             >
               <div className="space-y-2">
                 {inheritedSpecialists.map((spec) => (
-                  <InheritedSpecialistCard
+                  <SpecialistCard
                     key={spec.specialistId}
+                    mode="inherited"
                     specialist={spec}
+                    isEditing={false}
+                    editState={undefined}
                     isSaving={savingIds.has(spec.specialistId)}
                     cardError={cardErrors[spec.specialistId]}
-                    onCreateOverride={() => handleCreateOverride(spec)}
+                    isPromptExpanded={false}
+                    isFallbackExpanded={false}
+                    onExpand={() => handleCreateOverride(spec)}
+                    onCancelEditing={() => {}}
+                    onUpdateField={() => {}}
+                    onSave={() => {}}
                     onToggleEnabled={() => handleInheritedToggleEnabled(spec)}
+                    onTogglePrompt={() => {}}
+                    onToggleFallback={() => {}}
                     modelPresets={modelPresets}
+                    selectableModels={selectableModels}
                   />
                 ))}
               </div>
@@ -1112,10 +1155,33 @@ function FallbackModelSection({
 }
 
 /* ------------------------------------------------------------------ */
-/*  Shared editable card props                                         */
+/*  Unified Specialist Card — collapsed (compact) / expanded (edit)    */
 /* ------------------------------------------------------------------ */
 
-interface EditableCardProps {
+type SpecialistCardMode = 'global' | 'profileOverride' | 'inherited'
+
+function SpecialistCard({
+  mode,
+  specialist,
+  isEditing,
+  editState,
+  isSaving,
+  cardError,
+  isPromptExpanded,
+  isFallbackExpanded,
+  onExpand,
+  onCancelEditing,
+  onUpdateField,
+  onSave,
+  onDelete,
+  onRevert,
+  onToggleEnabled,
+  onTogglePrompt,
+  onToggleFallback,
+  modelPresets,
+  selectableModels,
+}: {
+  mode: SpecialistCardMode
   specialist: ResolvedSpecialistDefinition
   isEditing: boolean
   editState: CardEditState | undefined
@@ -1123,45 +1189,205 @@ interface EditableCardProps {
   cardError?: string
   isPromptExpanded: boolean
   isFallbackExpanded: boolean
-  onStartEditing: () => void
+  onExpand: () => void
   onCancelEditing: () => void
   onUpdateField: (field: keyof CardEditState, value: string | boolean) => void
   onSave: () => void
+  onDelete?: () => void
+  onRevert?: () => void
+  onToggleEnabled: () => void
   onTogglePrompt: () => void
   onToggleFallback: () => void
   modelPresets: ModelPresetInfo[]
   selectableModels: SelectableModel[]
-}
-
-/* ------------------------------------------------------------------ */
-/*  Shared model/reasoning editing section                             */
-/* ------------------------------------------------------------------ */
-
-function ModelReasoningSection({
-  isEditing,
-  currentValues,
-  specialist,
-  onUpdateField,
-  modelPresets,
-  selectableModels,
-}: {
-  isEditing: boolean
-  currentValues: CardEditState
-  specialist: ResolvedSpecialistDefinition
-  onUpdateField: (field: keyof CardEditState, value: string | boolean) => void
-  modelPresets: ModelPresetInfo[]
-  selectableModels: SelectableModel[]
 }) {
-  const modelDisplay = getModelDisplayLabel(specialist.modelId, modelPresets)
-  const displayReasoningLevel = specialist.reasoningLevel ?? 'high'
+  const currentValues = isEditing && editState ? editState : specialistToEditState(specialist)
 
+  // Compact summary values (used in collapsed state)
+  const modelDisplay = getModelDisplayLabel(specialist.modelId, modelPresets)
+  const reasoningLabel = REASONING_LEVEL_LABELS[specialist.reasoningLevel ?? 'high'] ?? specialist.reasoningLevel ?? 'High'
+  const hasFallback = !!specialist.fallbackModelId
+  const fallbackLabel = hasFallback ? getModelDisplayLabel(specialist.fallbackModelId!, modelPresets) : null
+  const fallbackReasoningLabel = specialist.fallbackReasoningLevel
+    ? REASONING_LEVEL_LABELS[specialist.fallbackReasoningLevel] ?? specialist.fallbackReasoningLevel
+    : null
+
+  const stopPropagation = (e: React.MouseEvent) => e.stopPropagation()
+
+  /* ---- Collapsed state ---- */
+  if (!isEditing) {
+    return (
+      <div
+        className="rounded-lg border border-border/60 bg-muted/30 px-4 py-3 transition-colors hover:bg-muted/50 cursor-pointer"
+        onClick={onExpand}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onExpand() } }}
+      >
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          {/* Left: badge, handle, model summary */}
+          <div className="flex flex-col gap-1.5 min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <SpecialistBadge displayName={specialist.displayName} color={specialist.color} />
+              <span className="font-mono text-xs text-muted-foreground/70">{specialist.specialistId}.md</span>
+              {specialist.builtin && (
+                <span className="inline-flex items-center rounded-full border border-border/60 bg-muted/50 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                  Builtin
+                </span>
+              )}
+              {!specialist.available && (
+                <span className="inline-flex items-center gap-1 text-[10px] text-amber-600 dark:text-amber-400">
+                  <AlertTriangle className="size-3" />
+                  {specialist.availabilityMessage || 'Unavailable'}
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              <span>{modelDisplay}</span>
+              <span className="mx-1.5 text-muted-foreground/40">·</span>
+              <span>{reasoningLabel}</span>
+            </p>
+            {hasFallback && (
+              <p className="text-xs text-muted-foreground/70">
+                Fallback: {fallbackLabel}
+                {fallbackReasoningLabel && (
+                  <>
+                    <span className="mx-1.5 text-muted-foreground/40">·</span>
+                    {fallbackReasoningLabel}
+                  </>
+                )}
+              </p>
+            )}
+          </div>
+
+          {/* Right: toggle + optional action button */}
+          <div className="flex items-center gap-3 self-start shrink-0" onClick={stopPropagation}>
+            <div className="flex items-center gap-1.5">
+              <Label className="text-xs text-muted-foreground/70" htmlFor={`enabled-${specialist.specialistId}`}>
+                Enabled
+              </Label>
+              <Switch
+                id={`enabled-${specialist.specialistId}`}
+                size="sm"
+                checked={specialist.enabled}
+                disabled={isSaving}
+                onCheckedChange={onToggleEnabled}
+                aria-label={`Toggle ${specialist.specialistId} specialist`}
+              />
+            </div>
+            {mode === 'inherited' && (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={onExpand}
+                disabled={isSaving}
+                className="gap-1 text-xs text-muted-foreground hover:text-foreground h-7 px-2"
+              >
+                {isSaving ? <Loader2 className="size-3 animate-spin" /> : <Pencil className="size-3" />}
+                Customize
+              </Button>
+            )}
+          </div>
+        </div>
+
+        {/* When to use — compact with truncation */}
+        {specialist.whenToUse && (
+          <p className="mt-1.5 text-xs text-muted-foreground/70 line-clamp-2">
+            {specialist.whenToUse}
+          </p>
+        )}
+
+        {cardError && (
+          <div className="mt-2 rounded-md border border-destructive/20 bg-destructive/10 px-3 py-1.5">
+            <p className="text-xs text-destructive">{cardError}</p>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  /* ---- Expanded state (editing) ---- */
+  const promptLineCount = currentValues.promptBody.split('\n').length
   const supportedLevels = getSupportedReasoningLevelsForModelId(currentValues.modelId, modelPresets)
 
   return (
-    <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
-      <div className="flex flex-col gap-1.5 sm:w-52">
-        <Label className="text-xs font-medium text-muted-foreground">Model</Label>
-        {isEditing ? (
+    <div className="space-y-4 rounded-lg border bg-card p-4">
+      {/* Header */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex flex-wrap items-center gap-2">
+          <SpecialistBadge displayName={currentValues.displayName} color={currentValues.color} />
+          <span className="font-mono text-xs text-muted-foreground">{specialist.specialistId}.md</span>
+          {specialist.builtin && (
+            <span className="inline-flex items-center rounded-full border border-border/60 bg-muted/50 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+              Builtin
+            </span>
+          )}
+          {!specialist.available && (
+            <span className="inline-flex items-center gap-1 text-[10px] text-amber-600 dark:text-amber-400">
+              <AlertTriangle className="size-3" />
+              {specialist.availabilityMessage || 'Unavailable'}
+            </span>
+          )}
+        </div>
+
+        <div className="flex items-center gap-2 self-start">
+          <Label className="text-xs font-medium text-muted-foreground" htmlFor={`enabled-edit-${specialist.specialistId}`}>
+            Enabled
+          </Label>
+          <Switch
+            id={`enabled-edit-${specialist.specialistId}`}
+            size="sm"
+            checked={currentValues.enabled}
+            disabled={isSaving}
+            onCheckedChange={(checked) => onUpdateField('enabled', checked)}
+            aria-label={`Toggle ${specialist.specialistId} specialist`}
+          />
+        </div>
+      </div>
+
+      {/* Display name + badge color */}
+      <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_180px]">
+        <div className="flex flex-col gap-1.5">
+          <Label className="text-xs font-medium text-muted-foreground">Display name</Label>
+          <Input
+            value={currentValues.displayName}
+            onChange={(e) => onUpdateField('displayName', e.target.value)}
+            className="h-9 text-sm"
+          />
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label className="text-xs font-medium text-muted-foreground">Badge color</Label>
+          <div className="flex items-center gap-2">
+            <Input
+              value={currentValues.color}
+              onChange={(e) => onUpdateField('color', e.target.value)}
+              className="h-9 font-mono text-sm"
+              placeholder="#2563eb"
+            />
+            <span
+              className="size-6 shrink-0 rounded border"
+              style={{ backgroundColor: currentValues.color }}
+              aria-hidden="true"
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* When to use */}
+      <div className="space-y-1">
+        <Label className="text-xs font-medium text-muted-foreground">When to use</Label>
+        <Textarea
+          value={currentValues.whenToUse}
+          onChange={(e) => onUpdateField('whenToUse', e.target.value)}
+          rows={2}
+          className="resize-none text-xs"
+        />
+      </div>
+
+      {/* Model + reasoning */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
+        <div className="flex flex-col gap-1.5 sm:w-52">
+          <Label className="text-xs font-medium text-muted-foreground">Model</Label>
           <ModelIdSelect
             value={currentValues.modelId}
             onValueChange={(v) => onUpdateField('modelId', v)}
@@ -1169,13 +1395,9 @@ function ModelReasoningSection({
             presets={modelPresets}
             placeholder="Select model"
           />
-        ) : (
-          <span className="text-xs text-foreground/80">{modelDisplay}</span>
-        )}
-      </div>
-      <div className="flex flex-col gap-1.5 sm:w-40">
-        <Label className="text-xs font-medium text-muted-foreground">Reasoning level</Label>
-        {isEditing ? (
+        </div>
+        <div className="flex flex-col gap-1.5 sm:w-40">
+          <Label className="text-xs font-medium text-muted-foreground">Reasoning level</Label>
           <Select
             value={currentValues.reasoningLevel}
             onValueChange={(value) => onUpdateField('reasoningLevel', value)}
@@ -1191,143 +1413,12 @@ function ModelReasoningSection({
               ))}
             </SelectContent>
           </Select>
-        ) : (
-          <span className="text-xs text-foreground/80">
-            {REASONING_LEVEL_LABELS[displayReasoningLevel] ?? displayReasoningLevel}
-          </span>
-        )}
-      </div>
-    </div>
-  )
-}
-
-/* ------------------------------------------------------------------ */
-/*  Global Specialist Card — full editable card                        */
-/* ------------------------------------------------------------------ */
-
-function GlobalSpecialistCard({
-  specialist,
-  isEditing,
-  editState,
-  isSaving,
-  cardError,
-  isPromptExpanded,
-  isFallbackExpanded,
-  onStartEditing,
-  onCancelEditing,
-  onUpdateField,
-  onSave,
-  onDelete,
-  onTogglePrompt,
-  onToggleFallback,
-  modelPresets,
-  selectableModels,
-}: EditableCardProps & {
-  onDelete: () => void
-}) {
-  const currentValues = isEditing && editState ? editState : specialistToEditState(specialist)
-  const promptLineCount = currentValues.promptBody.split('\n').length
-
-  return (
-    <div className="space-y-4 rounded-lg border bg-card p-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="space-y-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <SpecialistBadge displayName={currentValues.displayName} color={currentValues.color} />
-            <span className="font-mono text-xs text-muted-foreground">{specialist.specialistId}.md</span>
-            {specialist.builtin && (
-              <span className="inline-flex items-center rounded-full border border-border/60 bg-muted/50 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-                Builtin
-              </span>
-            )}
-            {!specialist.available && (
-              <span className="inline-flex items-center gap-1 text-[10px] text-amber-600 dark:text-amber-400">
-                <AlertTriangle className="size-3" />
-                {specialist.availabilityMessage || 'Unavailable'}
-              </span>
-            )}
-          </div>
-          {!isEditing && (
-            <div className="space-y-1 text-xs text-muted-foreground">
-              <p>
-                Display name: <span className="text-foreground/80">{specialist.displayName}</span>
-              </p>
-              <p>
-                Badge color: <span className="font-mono text-foreground/80">{specialist.color}</span>
-              </p>
-            </div>
-          )}
-        </div>
-
-        <div className="flex items-center gap-2 self-start">
-          <Label className="text-xs font-medium text-muted-foreground" htmlFor={`enabled-${specialist.specialistId}`}>
-            Enabled
-          </Label>
-          <Switch
-            id={`enabled-${specialist.specialistId}`}
-            size="sm"
-            checked={isEditing ? currentValues.enabled : specialist.enabled}
-            disabled={!isEditing || isSaving}
-            onCheckedChange={(checked) => onUpdateField('enabled', checked)}
-            aria-label={`Toggle ${specialist.specialistId} specialist`}
-          />
         </div>
       </div>
 
-      {isEditing && (
-        <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_180px]">
-          <div className="flex flex-col gap-1.5">
-            <Label className="text-xs font-medium text-muted-foreground">Display name</Label>
-            <Input
-              value={currentValues.displayName}
-              onChange={(e) => onUpdateField('displayName', e.target.value)}
-              className="h-9 text-sm"
-            />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label className="text-xs font-medium text-muted-foreground">Badge color</Label>
-            <div className="flex items-center gap-2">
-              <Input
-                value={currentValues.color}
-                onChange={(e) => onUpdateField('color', e.target.value)}
-                className="h-9 font-mono text-sm"
-                placeholder="#2563eb"
-              />
-              <span
-                className="size-6 shrink-0 rounded border"
-                style={{ backgroundColor: currentValues.color }}
-                aria-hidden="true"
-              />
-            </div>
-          </div>
-        </div>
-      )}
-
-      <div className="space-y-1">
-        <Label className="text-xs font-medium text-muted-foreground">When to use</Label>
-        {isEditing ? (
-          <Textarea
-            value={currentValues.whenToUse}
-            onChange={(e) => onUpdateField('whenToUse', e.target.value)}
-            rows={2}
-            className="resize-none text-xs"
-          />
-        ) : (
-          <p className="text-xs text-foreground/80">{specialist.whenToUse}</p>
-        )}
-      </div>
-
-      <ModelReasoningSection
-        isEditing={isEditing}
-        currentValues={currentValues}
-        specialist={specialist}
-        onUpdateField={onUpdateField}
-        modelPresets={modelPresets}
-        selectableModels={selectableModels}
-      />
-
+      {/* Fallback */}
       <FallbackModelSection
-        isEditing={isEditing}
+        isEditing={true}
         isExpanded={isFallbackExpanded}
         onToggle={onToggleFallback}
         fallbackModelId={currentValues.fallbackModelId}
@@ -1337,6 +1428,7 @@ function GlobalSpecialistCard({
         selectableModels={selectableModels}
       />
 
+      {/* System prompt */}
       <div className="space-y-1">
         <button
           type="button"
@@ -1349,381 +1441,69 @@ function GlobalSpecialistCard({
           <span className="text-[10px] text-muted-foreground/60">({promptLineCount} lines)</span>
         </button>
         {isPromptExpanded && (
-          isEditing ? (
-            <Textarea
-              value={currentValues.promptBody}
-              onChange={(e) => onUpdateField('promptBody', e.target.value)}
-              rows={12}
-              className="resize-y font-mono text-xs"
-            />
-          ) : (
-            <div className="max-h-64 overflow-auto rounded-md border bg-muted/50 p-2">
-              <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-relaxed">
-                {specialist.promptBody}
-              </pre>
-            </div>
-          )
+          <Textarea
+            value={currentValues.promptBody}
+            onChange={(e) => onUpdateField('promptBody', e.target.value)}
+            rows={12}
+            className="resize-y font-mono text-xs"
+          />
         )}
       </div>
 
+      {/* Error */}
       {cardError && (
         <div className="rounded-md border border-destructive/20 bg-destructive/10 px-3 py-1.5">
           <p className="text-xs text-destructive">{cardError}</p>
         </div>
       )}
 
+      {/* Action buttons */}
       <div className="flex flex-wrap items-center gap-2 pt-1">
-        {isEditing ? (
-          <>
-            <Button size="sm" onClick={onSave} disabled={isSaving} className="gap-1">
-              {isSaving && <Loader2 className="size-3 animate-spin" />}
-              Save
-            </Button>
-            <Button size="sm" variant="outline" onClick={onCancelEditing} disabled={isSaving}>
-              Cancel
-            </Button>
-          </>
-        ) : (
-          <>
-            <Button size="sm" variant="outline" onClick={onStartEditing} disabled={isSaving}>
-              Edit
-            </Button>
-            {!specialist.builtin && (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={onDelete}
-                disabled={isSaving}
-                className="gap-1 text-destructive hover:text-destructive"
-              >
-                <Trash2 className="size-3" />
-                Delete
-              </Button>
-            )}
-          </>
-        )}
-      </div>
-    </div>
-  )
-}
-
-/* ------------------------------------------------------------------ */
-/*  Profile Override Card — full editable card                         */
-/* ------------------------------------------------------------------ */
-
-function ProfileOverrideCard({
-  specialist,
-  isEditing,
-  editState,
-  isSaving,
-  cardError,
-  isPromptExpanded,
-  isFallbackExpanded,
-  onStartEditing,
-  onCancelEditing,
-  onUpdateField,
-  onSave,
-  onRevert,
-  onDelete,
-  onTogglePrompt,
-  onToggleFallback,
-  modelPresets,
-  selectableModels,
-}: EditableCardProps & {
-  onRevert: () => void
-  onDelete: () => void
-}) {
-  const currentValues = isEditing && editState ? editState : specialistToEditState(specialist)
-  const promptLineCount = currentValues.promptBody.split('\n').length
-
-  return (
-    <div className="space-y-4 rounded-lg border bg-card p-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="space-y-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <SpecialistBadge displayName={currentValues.displayName} color={currentValues.color} />
-            <span className="font-mono text-xs text-muted-foreground">{specialist.specialistId}.md</span>
-            {!specialist.available ? (
-              <span className="inline-flex items-center gap-1 text-[10px] text-amber-600 dark:text-amber-400">
-                <AlertTriangle className="size-3" />
-                {specialist.availabilityMessage || 'Unavailable'}
-              </span>
-            ) : null}
-          </div>
-          {!isEditing ? (
-            <div className="space-y-1 text-xs text-muted-foreground">
-              <p>
-                Display name: <span className="text-foreground/80">{specialist.displayName}</span>
-              </p>
-              <p>
-                Badge color: <span className="font-mono text-foreground/80">{specialist.color}</span>
-              </p>
-            </div>
-          ) : null}
-        </div>
-
-        <div className="flex items-center gap-2 self-start">
-          <Label className="text-xs font-medium text-muted-foreground" htmlFor={`enabled-${specialist.specialistId}`}>
-            Enabled
-          </Label>
-          <Switch
-            id={`enabled-${specialist.specialistId}`}
-            size="sm"
-            checked={isEditing ? currentValues.enabled : specialist.enabled}
-            disabled={!isEditing || isSaving}
-            onCheckedChange={(checked) => onUpdateField('enabled', checked)}
-            aria-label={`Toggle ${specialist.specialistId} specialist`}
-          />
-        </div>
-      </div>
-
-      {isEditing ? (
-        <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_180px]">
-          <div className="flex flex-col gap-1.5">
-            <Label className="text-xs font-medium text-muted-foreground">Display name</Label>
-            <Input
-              value={currentValues.displayName}
-              onChange={(e) => onUpdateField('displayName', e.target.value)}
-              className="h-9 text-sm"
-            />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label className="text-xs font-medium text-muted-foreground">Badge color</Label>
-            <div className="flex items-center gap-2">
-              <Input
-                value={currentValues.color}
-                onChange={(e) => onUpdateField('color', e.target.value)}
-                className="h-9 font-mono text-sm"
-                placeholder="#2563eb"
-              />
-              <span
-                className="size-6 shrink-0 rounded border"
-                style={{ backgroundColor: currentValues.color }}
-                aria-hidden="true"
-              />
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      <div className="space-y-1">
-        <Label className="text-xs font-medium text-muted-foreground">When to use</Label>
-        {isEditing ? (
-          <Textarea
-            value={currentValues.whenToUse}
-            onChange={(e) => onUpdateField('whenToUse', e.target.value)}
-            rows={2}
-            className="resize-none text-xs"
-          />
-        ) : (
-          <p className="text-xs text-foreground/80">{specialist.whenToUse}</p>
-        )}
-      </div>
-
-      <ModelReasoningSection
-        isEditing={isEditing}
-        currentValues={currentValues}
-        specialist={specialist}
-        onUpdateField={onUpdateField}
-        modelPresets={modelPresets}
-        selectableModels={selectableModels}
-      />
-
-      <FallbackModelSection
-        isEditing={isEditing}
-        isExpanded={isFallbackExpanded}
-        onToggle={onToggleFallback}
-        fallbackModelId={currentValues.fallbackModelId}
-        fallbackReasoningLevel={currentValues.fallbackReasoningLevel}
-        onUpdateField={onUpdateField}
-        modelPresets={modelPresets}
-        selectableModels={selectableModels}
-      />
-
-      <div className="space-y-1">
-        <button
-          type="button"
-          onClick={onTogglePrompt}
-          className="flex items-center gap-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
-          aria-expanded={isPromptExpanded}
-        >
-          {isPromptExpanded ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />}
-          System prompt
-          <span className="text-[10px] text-muted-foreground/60">({promptLineCount} lines)</span>
-        </button>
-        {isPromptExpanded ? (
-          isEditing ? (
-            <Textarea
-              value={currentValues.promptBody}
-              onChange={(e) => onUpdateField('promptBody', e.target.value)}
-              rows={12}
-              className="resize-y font-mono text-xs"
-            />
-          ) : (
-            <div className="max-h-64 overflow-auto rounded-md border bg-muted/50 p-2">
-              <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-relaxed">
-                {specialist.promptBody}
-              </pre>
-            </div>
-          )
-        ) : null}
-      </div>
-
-      {cardError ? (
-        <div className="rounded-md border border-destructive/20 bg-destructive/10 px-3 py-1.5">
-          <p className="text-xs text-destructive">{cardError}</p>
-        </div>
-      ) : null}
-
-      <div className="flex flex-wrap items-center gap-2 pt-1">
-        {isEditing ? (
-          <>
-            <Button size="sm" onClick={onSave} disabled={isSaving} className="gap-1">
-              {isSaving ? <Loader2 className="size-3 animate-spin" /> : null}
-              Save
-            </Button>
-            <Button size="sm" variant="outline" onClick={onCancelEditing} disabled={isSaving}>
-              Cancel
-            </Button>
-          </>
-        ) : (
-          <>
-            <Button size="sm" variant="outline" onClick={onStartEditing} disabled={isSaving}>
-              Edit
-            </Button>
-            {specialist.shadowsGlobal ? (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={onRevert}
-                disabled={isSaving}
-                className="gap-1 text-muted-foreground"
-              >
-                <RotateCcw className="size-3" />
-                Revert to default
-              </Button>
-            ) : (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={onDelete}
-                disabled={isSaving}
-                className="gap-1 text-destructive hover:text-destructive"
-              >
-                <Trash2 className="size-3" />
-                Delete
-              </Button>
-            )}
-          </>
-        )}
-      </div>
-    </div>
-  )
-}
-
-/* ------------------------------------------------------------------ */
-/*  Inherited Specialist Card — compact read-only                      */
-/* ------------------------------------------------------------------ */
-
-function InheritedSpecialistCard({
-  specialist,
-  isSaving,
-  cardError,
-  onCreateOverride,
-  onToggleEnabled,
-  modelPresets,
-}: {
-  specialist: ResolvedSpecialistDefinition
-  isSaving: boolean
-  cardError?: string
-  onCreateOverride: () => void
-  onToggleEnabled: () => void
-  modelPresets: ModelPresetInfo[]
-}) {
-  const modelDisplay = getModelDisplayLabel(specialist.modelId, modelPresets)
-  const reasoningLabel = REASONING_LEVEL_LABELS[specialist.reasoningLevel ?? 'high'] ?? specialist.reasoningLevel ?? 'High'
-
-  const hasFallback = !!specialist.fallbackModelId
-  const fallbackLabel = hasFallback
-    ? getModelDisplayLabel(specialist.fallbackModelId!, modelPresets)
-    : null
-  const fallbackReasoningLabel = specialist.fallbackReasoningLevel
-    ? REASONING_LEVEL_LABELS[specialist.fallbackReasoningLevel] ?? specialist.fallbackReasoningLevel
-    : null
-
-  return (
-    <div className="rounded-lg border border-border/60 bg-muted/30 px-4 py-3 transition-colors hover:bg-muted/50">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        {/* Left: badge, handle, model summary */}
-        <div className="flex flex-col gap-1.5 min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <SpecialistBadge displayName={specialist.displayName} color={specialist.color} />
-            <span className="font-mono text-xs text-muted-foreground/70">{specialist.specialistId}.md</span>
-            {!specialist.available ? (
-              <span className="inline-flex items-center gap-1 text-[10px] text-amber-600 dark:text-amber-400">
-                <AlertTriangle className="size-3" />
-                {specialist.availabilityMessage || 'Unavailable'}
-              </span>
-            ) : null}
-          </div>
-          <p className="text-xs text-muted-foreground">
-            <span>{modelDisplay}</span>
-            <span className="mx-1.5 text-muted-foreground/40">·</span>
-            <span>{reasoningLabel}</span>
-          </p>
-          {hasFallback && (
-            <p className="text-xs text-muted-foreground/70">
-              Fallback: {fallbackLabel}
-              {fallbackReasoningLabel && (
-                <>
-                  <span className="mx-1.5 text-muted-foreground/40">·</span>
-                  {fallbackReasoningLabel}
-                </>
-              )}
-            </p>
-          )}
-        </div>
-
-        {/* Right: actions */}
-        <div className="flex items-center gap-3 self-start shrink-0">
-          <div className="flex items-center gap-1.5">
-            <Label className="text-xs text-muted-foreground/70" htmlFor={`inherited-enabled-${specialist.specialistId}`}>
-              Enabled
-            </Label>
-            <Switch
-              id={`inherited-enabled-${specialist.specialistId}`}
-              size="sm"
-              checked={specialist.enabled}
-              disabled={isSaving}
-              onCheckedChange={onToggleEnabled}
-              aria-label={`Toggle ${specialist.specialistId} specialist`}
-            />
-          </div>
+        <Button size="sm" onClick={onSave} disabled={isSaving} className="gap-1">
+          {isSaving && <Loader2 className="size-3 animate-spin" />}
+          Save
+        </Button>
+        <Button size="sm" variant="outline" onClick={onCancelEditing} disabled={isSaving}>
+          Cancel
+        </Button>
+        <div className="flex-1" />
+        {mode === 'global' && !specialist.builtin && onDelete && (
           <Button
             size="sm"
-            variant="ghost"
-            onClick={onCreateOverride}
+            variant="outline"
+            onClick={onDelete}
             disabled={isSaving}
-            className="gap-1 text-xs text-muted-foreground hover:text-foreground h-7 px-2"
+            className="gap-1 text-destructive hover:text-destructive"
           >
-            {isSaving ? <Loader2 className="size-3 animate-spin" /> : <Pencil className="size-3" />}
-            Customize
+            <Trash2 className="size-3" />
+            Delete
           </Button>
-        </div>
+        )}
+        {mode === 'profileOverride' && specialist.shadowsGlobal && onRevert && (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={onRevert}
+            disabled={isSaving}
+            className="gap-1 text-muted-foreground"
+          >
+            <RotateCcw className="size-3" />
+            Revert to default
+          </Button>
+        )}
+        {mode === 'profileOverride' && !specialist.shadowsGlobal && onDelete && (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={onDelete}
+            disabled={isSaving}
+            className="gap-1 text-destructive hover:text-destructive"
+          >
+            <Trash2 className="size-3" />
+            Delete
+          </Button>
+        )}
       </div>
-
-      {/* When to use — compact single-line with truncation */}
-      {specialist.whenToUse ? (
-        <p className="mt-1.5 text-xs text-muted-foreground/70 line-clamp-2">
-          {specialist.whenToUse}
-        </p>
-      ) : null}
-
-      {cardError ? (
-        <div className="mt-2 rounded-md border border-destructive/20 bg-destructive/10 px-3 py-1.5">
-          <p className="text-xs text-destructive">{cardError}</p>
-        </div>
-      ) : null}
     </div>
   )
 }
