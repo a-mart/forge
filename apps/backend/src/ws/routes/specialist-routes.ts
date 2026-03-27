@@ -2,11 +2,16 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ServerEvent } from "@forge/protocol";
 import {
   deleteProfileSpecialist,
+  deleteSharedSpecialist,
   resolveRoster,
+  resolveSharedRoster,
   generateRosterBlock,
+  getWorkerTemplate,
   saveProfileSpecialist,
+  saveSharedSpecialist,
   type SaveSpecialistRequest,
 } from "../../swarm/specialists/specialist-registry.js";
+import { getModelPresetInfoList } from "../../swarm/model-presets.js";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
 import {
   applyCorsHeaders,
@@ -16,8 +21,10 @@ import {
 import type { HttpRoute } from "./http-route.js";
 
 const SPECIALISTS_ENDPOINT_PATH = "/api/settings/specialists";
+const SETTINGS_MODELS_ENDPOINT_PATH = "/api/settings/models";
 const ROSTER_PROMPT_SUFFIX = "/roster-prompt";
 const METHODS = "GET, PUT, DELETE, OPTIONS";
+const SETTINGS_MODELS_METHODS = "GET, OPTIONS";
 
 export function createSpecialistRoutes(options: {
   swarmManager: SwarmManager;
@@ -26,6 +33,13 @@ export function createSpecialistRoutes(options: {
   const { swarmManager, broadcastEvent } = options;
 
   return [
+    {
+      methods: SETTINGS_MODELS_METHODS,
+      matches: (pathname) => pathname === SETTINGS_MODELS_ENDPOINT_PATH,
+      handle: async (request, response, requestUrl) => {
+        await handleSettingsModelsRequest(request, response, requestUrl);
+      },
+    },
     {
       methods: METHODS,
       matches: (pathname) =>
@@ -36,6 +50,29 @@ export function createSpecialistRoutes(options: {
       },
     },
   ];
+}
+
+async function handleSettingsModelsRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  requestUrl: URL,
+): Promise<void> {
+  if (request.method === "OPTIONS") {
+    applyCorsHeaders(request, response, SETTINGS_MODELS_METHODS);
+    response.statusCode = 204;
+    response.end();
+    return;
+  }
+
+  applyCorsHeaders(request, response, SETTINGS_MODELS_METHODS);
+
+  if (request.method === "GET" && requestUrl.pathname === SETTINGS_MODELS_ENDPOINT_PATH) {
+    sendJson(response, 200, { models: getModelPresetInfoList() });
+    return;
+  }
+
+  response.setHeader("Allow", SETTINGS_MODELS_METHODS);
+  sendJson(response, 405, { error: "Method Not Allowed" });
 }
 
 async function handleSpecialistRequest(
@@ -55,19 +92,91 @@ async function handleSpecialistRequest(
   applyCorsHeaders(request, response, METHODS);
 
   const dataDir = swarmManager.getConfig().paths.dataDir;
-  const profileId = requestUrl.searchParams.get("profileId")?.trim();
+  const profileId = requestUrl.searchParams.get("profileId")?.trim() || undefined;
+  const relativePath = requestUrl.pathname.slice(SPECIALISTS_ENDPOINT_PATH.length);
 
-  if (!profileId) {
-    sendJson(response, 400, { error: "profileId query parameter is required" });
+  // GET /api/settings/specialists/template — returns worker.md content (no profileId required)
+  if (request.method === "GET" && relativePath === "/template") {
+    try {
+      const template = await getWorkerTemplate();
+      sendJson(response, 200, { template });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      sendJson(response, 500, { error: message });
+    }
     return;
   }
 
-  if (!swarmManager.listProfiles().some((profile) => profile.profileId === profileId)) {
+  // If profileId is provided, validate it exists
+  if (profileId && !swarmManager.listProfiles().some((profile) => profile.profileId === profileId)) {
     sendJson(response, 404, { error: `Unknown profile: ${profileId}` });
     return;
   }
 
-  const relativePath = requestUrl.pathname.slice(SPECIALISTS_ENDPOINT_PATH.length);
+  // --- Global (no profileId) routes ---
+
+  if (!profileId) {
+    // GET /api/settings/specialists — returns shared/global specialists only
+    if (request.method === "GET" && relativePath === "") {
+      try {
+        const specialists = await resolveSharedRoster(dataDir);
+        const sanitized = specialists.map(({ sourcePath: _, ...rest }) => rest);
+        sendJson(response, 200, { specialists: sanitized });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        sendJson(response, 500, { error: message });
+      }
+      return;
+    }
+
+    let handle: string | null;
+    try {
+      handle = parseHandleFromRelativePath(relativePath);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      sendJson(response, getErrorStatusCode(message), { error: message });
+      return;
+    }
+
+    if (!handle) {
+      sendJson(response, 400, { error: "Missing specialist handle in URL path" });
+      return;
+    }
+
+    // PUT /api/settings/specialists/<handle> — saves to shared dir
+    if (request.method === "PUT") {
+      try {
+        const body = await readJsonBody(request);
+        const data = parseSaveSpecialistBody(body);
+        await saveSharedSpecialist(dataDir, handle, data);
+        await notifyGlobalSpecialistMutation({ swarmManager, broadcastEvent, dataDir });
+        sendJson(response, 200, { ok: true });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        sendJson(response, getErrorStatusCode(message), { error: message });
+      }
+      return;
+    }
+
+    // DELETE /api/settings/specialists/<handle> — deletes from shared dir (rejects builtins)
+    if (request.method === "DELETE") {
+      try {
+        await deleteSharedSpecialist(dataDir, handle);
+        await notifyGlobalSpecialistMutation({ swarmManager, broadcastEvent, dataDir });
+        sendJson(response, 200, { ok: true });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        sendJson(response, getErrorStatusCode(message), { error: message });
+      }
+      return;
+    }
+
+    response.setHeader("Allow", METHODS);
+    sendJson(response, 405, { error: "Method Not Allowed" });
+    return;
+  }
+
+  // --- Profile-scoped routes (profileId present) ---
 
   // GET /api/settings/specialists/roster-prompt?profileId=X
   if (request.method === "GET" && relativePath === ROSTER_PROMPT_SUFFIX) {
@@ -96,8 +205,15 @@ async function handleSpecialistRequest(
     return;
   }
 
-  // Extract handle from /<handle> segment
-  const handle = relativePath.startsWith("/") ? decodeURIComponent(relativePath.slice(1)) : "";
+  let handle: string | null;
+  try {
+    handle = parseHandleFromRelativePath(relativePath);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    sendJson(response, getErrorStatusCode(message), { error: message });
+    return;
+  }
+
   if (!handle) {
     sendJson(response, 400, { error: "Missing specialist handle in URL path" });
     return;
@@ -118,8 +234,7 @@ async function handleSpecialistRequest(
       sendJson(response, 200, { ok: true });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const statusCode = isBadRequestMessage(message) ? 400 : 500;
-      sendJson(response, statusCode, { error: message });
+      sendJson(response, getErrorStatusCode(message), { error: message });
     }
     return;
   }
@@ -137,8 +252,7 @@ async function handleSpecialistRequest(
       sendJson(response, 200, { ok: true });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const statusCode = isBadRequestMessage(message) ? 400 : 500;
-      sendJson(response, statusCode, { error: message });
+      sendJson(response, getErrorStatusCode(message), { error: message });
     }
     return;
   }
@@ -166,6 +280,25 @@ async function notifySpecialistRosterMutation(options: {
   await swarmManager.notifySpecialistRosterChanged(profileId);
 }
 
+/** Notify all profiles when a shared/global specialist changes. */
+async function notifyGlobalSpecialistMutation(options: {
+  swarmManager: SwarmManager;
+  broadcastEvent: (event: ServerEvent) => void;
+  dataDir: string;
+}): Promise<void> {
+  const { swarmManager, broadcastEvent, dataDir } = options;
+  const profiles = swarmManager.listProfiles();
+
+  for (const profile of profiles) {
+    await notifySpecialistRosterMutation({
+      swarmManager,
+      broadcastEvent,
+      dataDir,
+      profileId: profile.profileId,
+    });
+  }
+}
+
 function parseSaveSpecialistBody(value: unknown): SaveSpecialistRequest {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("Request body must be a JSON object");
@@ -178,8 +311,10 @@ function parseSaveSpecialistBody(value: unknown): SaveSpecialistRequest {
     color: readRequiredStringField(obj, "color"),
     enabled: readRequiredBooleanField(obj, "enabled"),
     whenToUse: readRequiredStringField(obj, "whenToUse"),
-    model: readRequiredStringField(obj, "model"),
+    modelId: readRequiredStringField(obj, "modelId"),
     reasoningLevel: readOptionalStringField(obj, "reasoningLevel"),
+    fallbackModelId: readOptionalStringField(obj, "fallbackModelId"),
+    fallbackReasoningLevel: readOptionalStringField(obj, "fallbackReasoningLevel"),
     promptBody: readRequiredStringField(obj, "promptBody"),
   };
 }
@@ -215,10 +350,48 @@ function readRequiredBooleanField(obj: Record<string, unknown>, key: string): bo
   return value;
 }
 
-function isBadRequestMessage(message: string): boolean {
-  return (
+function parseHandleFromRelativePath(relativePath: string): string | null {
+  if (!relativePath.startsWith("/")) {
+    return null;
+  }
+
+  const rawHandle = relativePath.slice(1);
+  if (!rawHandle) {
+    return null;
+  }
+
+  if (rawHandle.includes("/")) {
+    throw new Error("Malformed URL path");
+  }
+
+  try {
+    return decodeURIComponent(rawHandle);
+  } catch {
+    throw new Error("Malformed URL path");
+  }
+}
+
+function getErrorStatusCode(message: string): number {
+  if (message === "Malformed URL path") {
+    return 400;
+  }
+
+  if (message.startsWith("Unknown specialist:")) {
+    return 404;
+  }
+
+  if (message.startsWith("Cannot delete builtin specialist:")) {
+    return 409;
+  }
+
+  if (
+    message.includes("Request body") ||
     message.includes("is required") ||
     message.includes("must be") ||
     message.includes("Invalid")
-  );
+  ) {
+    return 400;
+  }
+
+  return 500;
 }

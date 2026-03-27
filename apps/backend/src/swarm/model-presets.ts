@@ -1,3 +1,4 @@
+import type { ModelPresetInfo, ModelVariantInfo } from "@forge/protocol";
 import type { AgentModelDescriptor, SwarmModelPreset, SwarmReasoningLevel } from "./types.js";
 import { SWARM_MODEL_PRESETS, SWARM_REASONING_LEVELS } from "./types.js";
 
@@ -28,8 +29,46 @@ export const MODEL_PRESET_DESCRIPTORS: Record<SwarmModelPreset, AgentModelDescri
   }
 };
 
+const MODEL_PRESET_DISPLAY_INFO: Record<SwarmModelPreset, {
+  displayName: string;
+  variants?: ModelVariantInfo[];
+}> = {
+  "pi-codex": {
+    displayName: "GPT-5.3 Codex",
+    variants: [
+      {
+        modelId: "gpt-5.3-codex-spark",
+        label: "GPT-5.3 Codex Spark"
+      }
+    ]
+  },
+  "pi-5.4": {
+    displayName: "GPT-5.4"
+  },
+  "pi-opus": {
+    displayName: "Claude Opus 4.6",
+    variants: [
+      {
+        modelId: "claude-sonnet-4-5-20250929",
+        label: "Claude Sonnet 4.5"
+      },
+      {
+        modelId: "claude-haiku-4-5-20251001",
+        label: "Claude Haiku 4.5"
+      }
+    ]
+  },
+  "codex-app": {
+    displayName: "Codex App Runtime"
+  }
+};
+
+const FULL_REASONING_LEVELS = [...SWARM_REASONING_LEVELS];
+const ANTHROPIC_REASONING_LEVELS: SwarmReasoningLevel[] = ["low", "medium", "high"];
+
 const VALID_SWARM_MODEL_PRESET_VALUES = new Set<string>(SWARM_MODEL_PRESETS);
 const VALID_SWARM_REASONING_LEVEL_VALUES = new Set<string>(SWARM_REASONING_LEVELS);
+const KNOWN_MODEL_IDS = buildKnownModelIdSet();
 
 export function describeSwarmModelPresets(): string {
   return SWARM_MODEL_PRESETS.join("|");
@@ -72,6 +111,54 @@ export function parseSwarmReasoningLevel(
   }
 
   return value;
+}
+
+export function inferProviderFromModelId(modelId: string): string | null {
+  const normalizedModelId = modelId.trim().toLowerCase();
+  if (!normalizedModelId) {
+    return null;
+  }
+
+  if (normalizedModelId === "default") {
+    return "openai-codex-app-server";
+  }
+
+  if (normalizedModelId.startsWith("gpt-")) {
+    return "openai-codex";
+  }
+
+  if (normalizedModelId.startsWith("claude-")) {
+    return "anthropic";
+  }
+
+  return null;
+}
+
+export function isKnownModelId(modelId: string): boolean {
+  const normalizedModelId = modelId.trim().toLowerCase();
+  return normalizedModelId.length > 0 && KNOWN_MODEL_IDS.has(normalizedModelId);
+}
+
+export function getModelPresetInfoList(): ModelPresetInfo[] {
+  return SWARM_MODEL_PRESETS.map((presetId) => {
+    const descriptor = MODEL_PRESET_DESCRIPTORS[presetId];
+    const displayInfo = MODEL_PRESET_DISPLAY_INFO[presetId];
+    const supportedReasoningLevels = getSupportedReasoningLevelsForPreset(presetId);
+    const defaultReasoningLevel = normalizeDefaultReasoningLevelForPreset(
+      presetId,
+      descriptor.thinkingLevel
+    );
+
+    return {
+      presetId,
+      displayName: displayInfo.displayName,
+      provider: descriptor.provider,
+      modelId: descriptor.modelId,
+      defaultReasoningLevel,
+      supportedReasoningLevels,
+      variants: displayInfo.variants?.map((variant) => ({ ...variant }))
+    };
+  });
 }
 
 export function resolveModelDescriptorFromPreset(preset: SwarmModelPreset): AgentModelDescriptor {
@@ -118,5 +205,52 @@ export function normalizeSwarmModelDescriptor(
 ): AgentModelDescriptor {
   const preset = inferSwarmModelPresetFromDescriptor(descriptor) ?? fallbackPreset;
   return resolveModelDescriptorFromPreset(preset);
+}
+
+function buildKnownModelIdSet(): Set<string> {
+  const knownModelIds = new Set<string>();
+
+  for (const descriptor of Object.values(MODEL_PRESET_DESCRIPTORS)) {
+    knownModelIds.add(descriptor.modelId.toLowerCase());
+  }
+
+  for (const presetInfo of getModelPresetInfoList()) {
+    knownModelIds.add(presetInfo.modelId.toLowerCase());
+
+    for (const variant of presetInfo.variants ?? []) {
+      knownModelIds.add(variant.modelId.toLowerCase());
+    }
+  }
+
+  return knownModelIds;
+}
+
+function getSupportedReasoningLevelsForPreset(presetId: SwarmModelPreset): SwarmReasoningLevel[] {
+  if (presetId === "pi-opus") {
+    return [...ANTHROPIC_REASONING_LEVELS];
+  }
+
+  return [...FULL_REASONING_LEVELS];
+}
+
+function normalizeDefaultReasoningLevelForPreset(
+  presetId: SwarmModelPreset,
+  rawLevel: string
+): SwarmReasoningLevel {
+  const normalizedLevel = isSwarmReasoningLevel(rawLevel) ? rawLevel : "high";
+
+  if (presetId !== "pi-opus") {
+    return normalizedLevel;
+  }
+
+  if (normalizedLevel === "none") {
+    return "low";
+  }
+
+  if (normalizedLevel === "xhigh") {
+    return "high";
+  }
+
+  return normalizedLevel;
 }
 

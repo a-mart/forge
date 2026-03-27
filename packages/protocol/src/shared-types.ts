@@ -6,6 +6,21 @@ export type ManagerModelPreset = (typeof MANAGER_MODEL_PRESETS)[number]
 export const MANAGER_REASONING_LEVELS = ['none', 'low', 'medium', 'high', 'xhigh'] as const
 export type ManagerReasoningLevel = (typeof MANAGER_REASONING_LEVELS)[number]
 
+export interface ModelVariantInfo {
+  modelId: string
+  label: string
+}
+
+export interface ModelPresetInfo {
+  presetId: ManagerModelPreset
+  displayName: string
+  provider: string
+  modelId: string
+  defaultReasoningLevel: ManagerReasoningLevel
+  supportedReasoningLevels: ManagerReasoningLevel[]
+  variants?: ModelVariantInfo[]
+}
+
 export interface AgentContextUsage {
   tokens: number
   contextWindow: number
@@ -63,8 +78,12 @@ export interface ResolvedSpecialistDefinition {
   color: string
   enabled: boolean
   whenToUse: string
-  model: string
+  modelId: string
+  provider: string
   reasoningLevel?: string
+  fallbackModelId?: string
+  fallbackProvider?: string
+  fallbackReasoningLevel?: string
   builtin: boolean
   promptBody: string
   sourceKind: SpecialistSourceKind

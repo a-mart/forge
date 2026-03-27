@@ -3,7 +3,7 @@ displayName: Backend Engineer
 color: "#2563eb"
 enabled: true
 whenToUse: Backend/core implementation, TypeScript refactors, debugging server routes, data model work, test fixes
-model: pi-codex
+modelId: gpt-5.3-codex
 reasoningLevel: high
 builtin: true
 ---

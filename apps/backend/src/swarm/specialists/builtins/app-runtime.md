@@ -3,7 +3,7 @@ displayName: App Runtime
 color: "#d97706"
 enabled: true
 whenToUse: Tasks that specifically need the Codex app-server sandboxed runtime
-model: codex-app
+modelId: default
 reasoningLevel: high
 builtin: true
 ---

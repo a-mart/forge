@@ -95,6 +95,7 @@ import {
 import { classifyRuntimeCapacityError } from "./runtime-utils.js";
 import {
   DEFAULT_SWARM_MODEL_PRESET,
+  inferProviderFromModelId,
   inferSwarmModelPresetFromDescriptor,
   normalizeSwarmModelDescriptor,
   parseSwarmModelPreset,
@@ -155,8 +156,12 @@ interface ResolvedSpecialistDefinitionLike {
   color: string;
   enabled: boolean;
   whenToUse: string;
-  model: SwarmModelPreset;
+  modelId: string;
+  provider: string;
   reasoningLevel?: SwarmReasoningLevel;
+  fallbackModelId?: string;
+  fallbackProvider?: string;
+  fallbackReasoningLevel?: SwarmReasoningLevel;
   promptBody: string;
   available: boolean;
   availabilityCode?: string;
@@ -2343,6 +2348,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     let model: AgentModelDescriptor;
     let archetypeId: string | undefined;
     let specialist: ResolvedSpecialistDefinitionLike | undefined;
+    let specialistFallbackModel: AgentModelDescriptor | undefined;
     let explicitSystemPrompt: string | undefined;
 
     if (requestedSpecialistId) {
@@ -2369,16 +2375,42 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         throw new Error(`Specialist "${requestedSpecialistId}" is currently unavailable: ${reason}`);
       }
 
-      model = resolveModelDescriptorFromPreset(specialist.model);
+      const inferredProvider = inferProviderFromModelId(specialist.modelId);
+      if (!inferredProvider) {
+        throw new Error(
+          `Specialist "${requestedSpecialistId}" has an unknown modelId provider mapping: ${specialist.modelId}`
+        );
+      }
+
       const reasoningLevelOverride = parseSwarmReasoningLevel(
         input.reasoningLevel,
         "spawn_agent.reasoningLevel"
       );
-      if (reasoningLevelOverride) {
-        model.thinkingLevel = reasoningLevelOverride;
-      }
+
+      model = {
+        provider: inferredProvider,
+        modelId: specialist.modelId,
+        thinkingLevel: reasoningLevelOverride ?? specialist.reasoningLevel ?? "xhigh"
+      };
       model.thinkingLevel = normalizeThinkingLevelForProvider(model.provider, model.thinkingLevel);
       model = this.resolveSpawnModelWithCapacityFallback(model);
+
+      if (specialist.fallbackModelId) {
+        const inferredFallbackProvider = inferProviderFromModelId(specialist.fallbackModelId);
+        if (inferredFallbackProvider) {
+          specialistFallbackModel = {
+            provider: inferredFallbackProvider,
+            modelId: specialist.fallbackModelId,
+            thinkingLevel: specialist.fallbackReasoningLevel ?? model.thinkingLevel
+          };
+          specialistFallbackModel.thinkingLevel = normalizeThinkingLevelForProvider(
+            specialistFallbackModel.provider,
+            specialistFallbackModel.thinkingLevel
+          );
+          specialistFallbackModel = this.resolveSpawnModelWithCapacityFallback(specialistFallbackModel);
+        }
+      }
+
       archetypeId = undefined;
       explicitSystemPrompt = specialist.promptBody;
     } else {
@@ -2441,7 +2473,30 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
       const runtimeSystemPrompt = this.injectWorkerIdentityContext(descriptor, baseSystemPrompt);
 
-      const runtime = await this.createRuntimeForDescriptor(descriptor, runtimeSystemPrompt);
+      let runtime: SwarmAgentRuntime;
+      try {
+        runtime = await this.createRuntimeForDescriptor(descriptor, runtimeSystemPrompt);
+      } catch (error) {
+        if (specialistFallbackModel && shouldRetrySpecialistSpawnWithFallback(error, descriptor.model)) {
+          const previousModel = { ...descriptor.model };
+          descriptor.model = { ...specialistFallbackModel };
+          this.descriptors.set(agentId, descriptor);
+          await this.saveStore();
+
+          this.logDebug("agent:spawn:specialist_fallback_retry", {
+            agentId,
+            specialistId: specialist?.specialistId,
+            previousModel,
+            fallbackModel: descriptor.model,
+            error: error instanceof Error ? error.message : String(error)
+          });
+
+          runtime = await this.createRuntimeForDescriptor(descriptor, runtimeSystemPrompt);
+        } else {
+          throw error;
+        }
+      }
+
       this.runtimes.set(agentId, runtime);
       this.seedWorkerCompletionReportTimestamp(agentId);
 
@@ -8296,6 +8351,41 @@ function resolveNextCapacityFallbackModelId(provider: string, modelId: string): 
   }
 
   return OPENAI_CODEX_CAPACITY_FALLBACK_CHAIN[index + 1];
+}
+
+function shouldRetrySpecialistSpawnWithFallback(
+  error: unknown,
+  attemptedModel: Pick<AgentModelDescriptor, "provider" | "modelId">
+): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  const capacity = classifyRuntimeCapacityError(message);
+  if (capacity.isQuotaOrRateLimit) {
+    return true;
+  }
+
+  const normalizedMessage = message.trim().toLowerCase();
+  const authIndicators = [
+    "authentication",
+    "unauthorized",
+    "invalid api key",
+    "api key",
+    "missing auth",
+    "no auth",
+    "forbidden",
+    "permission denied",
+    "access denied",
+    "oauth"
+  ];
+
+  const isAuthError = authIndicators.some((indicator) => normalizedMessage.includes(indicator));
+  if (isAuthError) {
+    return true;
+  }
+
+  const provider = attemptedModel.provider.trim().toLowerCase();
+  const modelId = attemptedModel.modelId.trim().toLowerCase();
+
+  return normalizedMessage.includes(provider) && normalizedMessage.includes(modelId) && normalizedMessage.includes("auth");
 }
 
 function clampModelCapacityBlockDurationMs(durationMs: number): number | undefined {

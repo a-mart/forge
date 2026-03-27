@@ -5,7 +5,8 @@ import type { Dirent } from "node:fs";
 import type { ResolvedSpecialistDefinition } from "@forge/protocol";
 import {
   MODEL_PRESET_DESCRIPTORS,
-  isSwarmModelPreset,
+  inferProviderFromModelId,
+  isKnownModelId,
   isSwarmReasoningLevel,
 } from "../model-presets.js";
 import { sanitizePathSegment } from "../data-paths.js";
@@ -26,8 +27,10 @@ export interface SpecialistFrontmatter {
   color: string;
   enabled: boolean;
   whenToUse: string;
-  model: string;
+  modelId: string;
   reasoningLevel?: string;
+  fallbackModelId?: string;
+  fallbackReasoningLevel?: string;
   builtin: boolean;
 }
 
@@ -36,8 +39,10 @@ export interface SaveSpecialistRequest {
   color: string;
   enabled: boolean;
   whenToUse: string;
-  model: string;
+  modelId: string;
   reasoningLevel?: string;
+  fallbackModelId?: string;
+  fallbackReasoningLevel?: string;
   promptBody: string;
 }
 
@@ -170,8 +175,15 @@ export function generateRosterBlock(roster: ResolvedSpecialistDefinition[]): str
   ];
 
   for (const s of available) {
-    const model = s.reasoningLevel ? `${s.model} ${s.reasoningLevel}` : s.model;
-    lines.push(`- \`${s.specialistId}\`: ${s.whenToUse} [${model}]`);
+    const primary = s.reasoningLevel
+      ? `${s.provider}/${s.modelId} ${s.reasoningLevel}`
+      : `${s.provider}/${s.modelId}`;
+    const fallback = s.fallbackModelId
+      ? ` -> fallback ${(s.fallbackProvider ?? "unknown")}/${s.fallbackModelId}${
+          s.fallbackReasoningLevel ? ` ${s.fallbackReasoningLevel}` : ""
+        }`
+      : "";
+    lines.push(`- \`${s.specialistId}\`: ${s.whenToUse} [${primary}${fallback}]`);
   }
 
   return lines.join("\n");
@@ -260,12 +272,89 @@ export async function deleteProfileSpecialist(dataDir: string, profileId: string
   try {
     await unlink(filePath);
   } catch (error) {
-    if (!isEnoentError(error)) {
-      throw error;
+    if (isEnoentError(error)) {
+      throw new Error(`Unknown specialist: ${specialistId}`);
     }
+
+    throw error;
   }
 
   invalidateSpecialistCache(normalizedProfileId);
+}
+
+export async function resolveSharedRoster(dataDir: string): Promise<ResolvedSpecialistDefinition[]> {
+  const sharedDir = getSharedSpecialistsDir(dataDir);
+  const byHandle = await resolveDirectorySpecialists(sharedDir, "shared");
+  const sorted = [...byHandle.values()].sort((a, b) => a.specialistId.localeCompare(b.specialistId));
+  return sorted;
+}
+
+export async function saveSharedSpecialist(
+  dataDir: string,
+  handle: string,
+  data: SaveSpecialistRequest,
+): Promise<void> {
+  const specialistId = normalizeSpecialistHandle(handle);
+
+  if (!specialistId) {
+    throw new Error(`Invalid specialist handle: ${handle}`);
+  }
+
+  const frontmatter = validateSaveRequest(data);
+  const sharedDir = getSharedSpecialistsDir(dataDir);
+  const filePath = join(sharedDir, `${sanitizePathSegment(specialistId)}.md`);
+
+  // Preserve builtin flag if the file already exists as a builtin
+  const existing = await parseSpecialistFile(filePath);
+  if (existing && existing.frontmatter.builtin) {
+    frontmatter.builtin = true;
+  }
+
+  await mkdir(sharedDir, { recursive: true });
+  await writeSpecialistFile(filePath, serializeSpecialistFile(frontmatter, data.promptBody));
+
+  invalidateSpecialistCache();
+}
+
+export async function deleteSharedSpecialist(dataDir: string, handle: string): Promise<void> {
+  const specialistId = normalizeSpecialistHandle(handle);
+
+  if (!specialistId) {
+    throw new Error(`Invalid specialist handle: ${handle}`);
+  }
+
+  const sharedDir = getSharedSpecialistsDir(dataDir);
+  const filePath = join(sharedDir, `${sanitizePathSegment(specialistId)}.md`);
+
+  const existing = await parseSpecialistFile(filePath);
+  if (!existing) {
+    throw new Error(`Unknown specialist: ${specialistId}`);
+  }
+
+  if (existing.frontmatter.builtin) {
+    throw new Error(`Cannot delete builtin specialist: ${specialistId}`);
+  }
+
+  await unlink(filePath);
+  invalidateSpecialistCache();
+}
+
+export async function getWorkerTemplate(): Promise<string> {
+  const builtinDir = getBuiltinSpecialistsDir();
+  // Go up from builtins to archetypes/builtins/worker.md
+  const workerMdPath = join(builtinDir, "..", "..", "archetypes", "builtins", "worker.md");
+  try {
+    return await readFile(workerMdPath, "utf8");
+  } catch {
+    // Fallback minimal template
+    return [
+      "You are a worker agent in a swarm.",
+      "- You can list agents and send messages to other agents.",
+      "- Use coding tools (read/bash/edit/write) to execute implementation tasks.",
+      "- Report progress and outcomes back to the manager using send_message_to_agent.",
+      "- You are not user-facing.",
+    ].join("\n");
+  }
 }
 
 export function invalidateSpecialistCache(profileId?: string): void {
@@ -290,12 +379,22 @@ function parseSpecialistMarkdown(markdown: string): ParsedSpecialistFile | null 
   }
 
   const frontmatterValues = parseFrontmatterValues(match[1]);
+
+  // Backward compatibility: migrate legacy preset-based frontmatter (`model`) to `modelId`.
+  const legacyModelPreset = parseOptionalString(frontmatterValues.model);
+  if (legacyModelPreset && !frontmatterValues.modelId) {
+    const preset = MODEL_PRESET_DESCRIPTORS[legacyModelPreset as keyof typeof MODEL_PRESET_DESCRIPTORS];
+    if (preset) {
+      frontmatterValues.modelId = preset.modelId;
+    }
+  }
+
   const displayName = parseRequiredString(frontmatterValues, "displayName");
   const color = parseRequiredString(frontmatterValues, "color");
   const whenToUse = parseRequiredString(frontmatterValues, "whenToUse");
-  const model = parseRequiredString(frontmatterValues, "model");
+  const modelId = parseRequiredString(frontmatterValues, "modelId");
 
-  if (!displayName || !color || !whenToUse || !model) {
+  if (!displayName || !color || !whenToUse || !modelId) {
     return null;
   }
 
@@ -319,6 +418,12 @@ function parseSpecialistMarkdown(markdown: string): ParsedSpecialistFile | null 
     return null;
   }
 
+  const fallbackModelId = parseOptionalString(frontmatterValues.fallbackModelId);
+  const fallbackReasoningLevel = parseOptionalString(frontmatterValues.fallbackReasoningLevel);
+  if (fallbackReasoningLevel && !isSwarmReasoningLevel(fallbackReasoningLevel)) {
+    return null;
+  }
+
   const body = normalizedMarkdown.slice(match[0].length).trim();
   if (!body) {
     return null;
@@ -330,8 +435,10 @@ function parseSpecialistMarkdown(markdown: string): ParsedSpecialistFile | null 
       color,
       enabled: enabled ?? true,
       whenToUse,
-      model,
+      modelId,
       reasoningLevel,
+      fallbackModelId,
+      fallbackReasoningLevel,
       builtin: builtin ?? false,
     },
     body,
@@ -342,7 +449,8 @@ function validateSaveRequest(data: SaveSpecialistRequest): SpecialistFrontmatter
   const displayName = data.displayName.trim();
   const color = data.color.trim();
   const whenToUse = data.whenToUse.trim();
-  const model = data.model.trim();
+  const modelId = data.modelId.trim();
+  const fallbackModelId = data.fallbackModelId?.trim();
   const promptBody = data.promptBody.trim();
 
   if (!displayName) {
@@ -357,12 +465,12 @@ function validateSaveRequest(data: SaveSpecialistRequest): SpecialistFrontmatter
     throw new Error("whenToUse is required");
   }
 
-  if (!promptBody) {
-    throw new Error("promptBody is required");
+  if (!modelId) {
+    throw new Error("modelId is required");
   }
 
-  if (!isSwarmModelPreset(model)) {
-    throw new Error(`model must be one of ${Object.keys(MODEL_PRESET_DESCRIPTORS).join("|")}`);
+  if (!promptBody) {
+    throw new Error("promptBody is required");
   }
 
   const reasoningLevel = data.reasoningLevel?.trim();
@@ -370,13 +478,32 @@ function validateSaveRequest(data: SaveSpecialistRequest): SpecialistFrontmatter
     throw new Error("reasoningLevel must be one of none|low|medium|high|xhigh");
   }
 
+  const normalizedFallbackModelId = fallbackModelId && fallbackModelId.length > 0 ? fallbackModelId : undefined;
+
+  const fallbackReasoningLevel = data.fallbackReasoningLevel?.trim();
+  if (
+    fallbackReasoningLevel !== undefined &&
+    fallbackReasoningLevel.length > 0 &&
+    !isSwarmReasoningLevel(fallbackReasoningLevel)
+  ) {
+    throw new Error("fallbackReasoningLevel must be one of none|low|medium|high|xhigh");
+  }
+
+  // Strip fallback reasoning level when there's no fallback model — it has no effect without one.
+  const normalizedFallbackReasoningLevel =
+    normalizedFallbackModelId && fallbackReasoningLevel && fallbackReasoningLevel.length > 0
+      ? fallbackReasoningLevel
+      : undefined;
+
   return {
     displayName,
     color,
     enabled: data.enabled,
     whenToUse,
-    model,
+    modelId,
     reasoningLevel: reasoningLevel && reasoningLevel.length > 0 ? reasoningLevel : undefined,
+    fallbackModelId: normalizedFallbackModelId,
+    fallbackReasoningLevel: normalizedFallbackReasoningLevel,
     builtin: false,
   };
 }
@@ -460,7 +587,25 @@ function toResolvedSpecialistDefinition(options: {
   sourcePath: string;
   shadowsGlobal: boolean;
 }): ResolvedSpecialistDefinition {
-  const knownModel = options.frontmatter.model in MODEL_PRESET_DESCRIPTORS;
+  const knownPrimaryModel = isKnownModelId(options.frontmatter.modelId);
+  const knownFallbackModel =
+    !options.frontmatter.fallbackModelId || isKnownModelId(options.frontmatter.fallbackModelId);
+
+  const provider = inferProviderFromModelId(options.frontmatter.modelId) ?? "unknown";
+  const fallbackProvider = options.frontmatter.fallbackModelId
+    ? (inferProviderFromModelId(options.frontmatter.fallbackModelId) ?? undefined)
+    : undefined;
+
+  let availabilityCode: "ok" | "invalid_model" = "ok";
+  let availabilityMessage: string | undefined;
+
+  if (!knownPrimaryModel) {
+    availabilityCode = "invalid_model";
+    availabilityMessage = `Unknown modelId: ${options.frontmatter.modelId}`;
+  } else if (!knownFallbackModel && options.frontmatter.fallbackModelId) {
+    availabilityCode = "invalid_model";
+    availabilityMessage = `Unknown fallbackModelId: ${options.frontmatter.fallbackModelId}`;
+  }
 
   return {
     specialistId: options.specialistId,
@@ -468,15 +613,19 @@ function toResolvedSpecialistDefinition(options: {
     color: options.frontmatter.color,
     enabled: options.frontmatter.enabled,
     whenToUse: options.frontmatter.whenToUse,
-    model: options.frontmatter.model,
+    modelId: options.frontmatter.modelId,
+    provider,
     reasoningLevel: options.frontmatter.reasoningLevel,
+    fallbackModelId: options.frontmatter.fallbackModelId,
+    fallbackProvider,
+    fallbackReasoningLevel: options.frontmatter.fallbackReasoningLevel,
     builtin: options.frontmatter.builtin,
     promptBody: options.body,
     sourceKind: options.sourceKind,
     sourcePath: options.sourcePath,
-    available: knownModel,
-    availabilityCode: knownModel ? "ok" : "invalid_model",
-    availabilityMessage: knownModel ? undefined : `Unknown model preset: ${options.frontmatter.model}`,
+    available: availabilityCode === "ok",
+    availabilityCode,
+    availabilityMessage,
     shadowsGlobal: options.shadowsGlobal,
   };
 }
@@ -488,11 +637,19 @@ function serializeSpecialistFile(frontmatter: SpecialistFrontmatter, body: strin
     `color: ${quoteYamlString(frontmatter.color)}`,
     `enabled: ${frontmatter.enabled ? "true" : "false"}`,
     `whenToUse: ${quoteYamlString(frontmatter.whenToUse)}`,
-    `model: ${quoteYamlString(frontmatter.model)}`,
+    `modelId: ${quoteYamlString(frontmatter.modelId)}`,
   ];
 
   if (frontmatter.reasoningLevel) {
     lines.push(`reasoningLevel: ${quoteYamlString(frontmatter.reasoningLevel)}`);
+  }
+
+  if (frontmatter.fallbackModelId) {
+    lines.push(`fallbackModelId: ${quoteYamlString(frontmatter.fallbackModelId)}`);
+
+    if (frontmatter.fallbackReasoningLevel) {
+      lines.push(`fallbackReasoningLevel: ${quoteYamlString(frontmatter.fallbackReasoningLevel)}`);
+    }
   }
 
   if (frontmatter.builtin) {

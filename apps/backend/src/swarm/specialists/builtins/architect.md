@@ -3,7 +3,7 @@ displayName: Architect
 color: "#7c3aed"
 enabled: true
 whenToUse: Complex architecture, deep debugging, high-risk multi-file refactors, thorny cross-cutting changes
-model: pi-5.4
+modelId: gpt-5.4
 reasoningLevel: high
 builtin: true
 ---

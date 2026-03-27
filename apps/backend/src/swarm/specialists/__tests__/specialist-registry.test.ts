@@ -4,12 +4,15 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   deleteProfileSpecialist,
+  deleteSharedSpecialist,
   generateRosterBlock,
   invalidateSpecialistCache,
   normalizeSpecialistHandle,
   parseSpecialistFile,
   resolveRoster,
+  resolveSharedRoster,
   saveProfileSpecialist,
+  saveSharedSpecialist,
   seedBuiltins,
 } from "../specialist-registry.js";
 
@@ -51,7 +54,7 @@ describe("specialist-registry", () => {
         "color: '#2563eb'",
         "enabled: true",
         "whenToUse: Backend tasks",
-        "model: pi-codex",
+        "modelId: gpt-5.3-codex",
         "reasoningLevel: high",
         "builtin: true",
         "---",
@@ -69,11 +72,37 @@ describe("specialist-registry", () => {
       color: "#2563eb",
       enabled: true,
       whenToUse: "Backend tasks",
-      model: "pi-codex",
+      modelId: "gpt-5.3-codex",
       reasoningLevel: "high",
       builtin: true,
     });
     expect(parsed?.body).toContain("backend specialist");
+  });
+
+  it("migrates legacy preset-based frontmatter to modelId", async () => {
+    const root = await mkdtemp(join(tmpdir(), "specialist-registry-test-"));
+    const filePath = join(root, "legacy.md");
+
+    await writeFile(
+      filePath,
+      [
+        "---",
+        "displayName: Legacy Specialist",
+        "color: '#2563eb'",
+        "enabled: true",
+        "whenToUse: Legacy tasks",
+        "model: pi-codex",
+        "reasoningLevel: high",
+        "---",
+        "",
+        "Legacy prompt body.",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const parsed = await parseSpecialistFile(filePath);
+    expect(parsed).not.toBeNull();
+    expect(parsed?.frontmatter.modelId).toBe("gpt-5.3-codex");
   });
 
   it("resolves profile specialists over shared specialists and computes availability", async () => {
@@ -95,7 +124,7 @@ describe("specialist-registry", () => {
         "color: '#2563eb'",
         "enabled: true",
         "whenToUse: Shared backend",
-        "model: pi-codex",
+        "modelId: gpt-5.3-codex",
         "---",
         "",
         "Shared backend body.",
@@ -111,7 +140,7 @@ describe("specialist-registry", () => {
         "color: '#111111'",
         "enabled: true",
         "whenToUse: Invalid model",
-        "model: made-up-model",
+        "modelId: made-up-model",
         "---",
         "",
         "Invalid specialist body.",
@@ -127,7 +156,7 @@ describe("specialist-registry", () => {
         "color: '#123456'",
         "enabled: true",
         "whenToUse: Profile backend",
-        "model: pi-5.4",
+        "modelId: gpt-5.4",
         "---",
         "",
         "Profile backend body.",
@@ -144,7 +173,7 @@ describe("specialist-registry", () => {
       displayName: "Profile Backend",
       sourceKind: "profile",
       shadowsGlobal: true,
-      model: "pi-5.4",
+      modelId: "gpt-5.4",
       availabilityCode: "ok",
       available: true,
     });
@@ -152,7 +181,7 @@ describe("specialist-registry", () => {
     expect(roster[1]).toMatchObject({
       specialistId: "invalid",
       sourceKind: "global",
-      model: "made-up-model",
+      modelId: "made-up-model",
       availabilityCode: "invalid_model",
       available: false,
     });
@@ -166,7 +195,8 @@ describe("specialist-registry", () => {
         color: "#2563eb",
         enabled: true,
         whenToUse: "Backend work",
-        model: "pi-codex",
+        modelId: "gpt-5.3-codex",
+        provider: "openai-codex",
         reasoningLevel: "high",
         builtin: true,
         promptBody: "Prompt",
@@ -181,7 +211,8 @@ describe("specialist-registry", () => {
         color: "#222222",
         enabled: false,
         whenToUse: "Should be omitted (disabled)",
-        model: "pi-codex",
+        modelId: "gpt-5.3-codex",
+        provider: "openai-codex",
         builtin: false,
         promptBody: "Prompt",
         sourceKind: "global",
@@ -195,13 +226,14 @@ describe("specialist-registry", () => {
         color: "#111111",
         enabled: true,
         whenToUse: "Should be omitted (unavailable)",
-        model: "unknown",
+        modelId: "unknown",
+        provider: "unknown",
         builtin: false,
         promptBody: "Prompt",
         sourceKind: "global",
         available: false,
         availabilityCode: "invalid_model",
-        availabilityMessage: "Unknown model preset",
+        availabilityMessage: "Unknown modelId: unknown",
         shadowsGlobal: false,
       },
     ]);
@@ -209,7 +241,7 @@ describe("specialist-registry", () => {
     expect(markdown).toContain("Named specialist workers");
     expect(markdown).toContain("`backend`");
     expect(markdown).toContain("Backend work");
-    expect(markdown).toContain("[pi-codex high]");
+    expect(markdown).toContain("[openai-codex/gpt-5.3-codex high]");
     expect(markdown).not.toContain("`disabled`");
     expect(markdown).not.toContain("`invalid`");
   });
@@ -230,7 +262,7 @@ describe("specialist-registry", () => {
         "color: '#000000'",
         "enabled: false",
         "whenToUse: Legacy",
-        "model: pi-codex",
+        "modelId: gpt-5.3-codex",
         "builtin: true",
         "---",
         "",
@@ -247,7 +279,7 @@ describe("specialist-registry", () => {
         "color: '#ffffff'",
         "enabled: true",
         "whenToUse: Custom",
-        "model: pi-opus",
+        "modelId: claude-opus-4-6",
         "---",
         "",
         "Custom reviewer body.",
@@ -304,7 +336,7 @@ describe("specialist-registry", () => {
         "color: '#2563eb'",
         "enabled: true",
         "whenToUse: Backend A",
-        "model: pi-codex",
+        "modelId: gpt-5.3-codex",
         "---",
         "",
         "Backend A body.",
@@ -320,7 +352,7 @@ describe("specialist-registry", () => {
         "color: '#059669'",
         "enabled: true",
         "whenToUse: Backend B",
-        "model: pi-5.4",
+        "modelId: gpt-5.4",
         "---",
         "",
         "Backend B body.",
@@ -333,11 +365,11 @@ describe("specialist-registry", () => {
 
     expect(rosterA[0]).toMatchObject({
       displayName: "Backend A",
-      model: "pi-codex",
+      modelId: "gpt-5.3-codex",
     });
     expect(rosterB[0]).toMatchObject({
       displayName: "Backend B",
-      model: "pi-5.4",
+      modelId: "gpt-5.4",
     });
   });
 
@@ -358,7 +390,7 @@ describe("specialist-registry", () => {
         "color: '#2563eb'",
         "enabled: true",
         "whenToUse: Shared backend",
-        "model: pi-codex",
+        "modelId: gpt-5.3-codex",
         "---",
         "",
         "Shared backend body.",
@@ -408,7 +440,7 @@ describe("specialist-registry", () => {
         "displayName: Missing Color",
         "enabled: true",
         "whenToUse: Test",
-        "model: pi-codex",
+        "modelId: gpt-5.3-codex",
         "---",
         "",
         "Body text.",
@@ -431,7 +463,7 @@ describe("specialist-registry", () => {
         "color: red",
         "enabled: true",
         "whenToUse: Test",
-        "model: pi-codex",
+        "modelId: gpt-5.3-codex",
         "---",
         "",
         "Body text.",
@@ -454,7 +486,7 @@ describe("specialist-registry", () => {
         "color: '#aabbcc'",
         "enabled: true",
         "whenToUse: Test",
-        "model: pi-codex",
+        "modelId: gpt-5.3-codex",
         "---",
         "",
       ].join("\n"),
@@ -474,7 +506,7 @@ describe("specialist-registry", () => {
       color: "#abcdef",
       enabled: true,
       whenToUse: "Custom tasks",
-      model: "pi-codex",
+      modelId: "gpt-5.3-codex",
       reasoningLevel: "high",
       promptBody: "Custom prompt body",
     });
@@ -486,5 +518,144 @@ describe("specialist-registry", () => {
 
     roster = await resolveRoster("profile-a", dataDir);
     expect(roster.some((entry) => entry.specialistId === "custom-worker")).toBe(false);
+  });
+
+  it("saves shared specialists and exposes them through the shared roster", async () => {
+    const root = await mkdtemp(join(tmpdir(), "specialist-registry-test-"));
+    const dataDir = join(root, "data");
+
+    await saveSharedSpecialist(dataDir, "global-worker", {
+      displayName: "Global Worker",
+      color: "#123abc",
+      enabled: true,
+      whenToUse: "Shared tasks",
+      modelId: "gpt-5.4",
+      reasoningLevel: "medium",
+      promptBody: "Shared prompt body",
+    });
+
+    const roster = await resolveSharedRoster(dataDir);
+    expect(roster).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          specialistId: "global-worker",
+          sourceKind: "global",
+          modelId: "gpt-5.4",
+          reasoningLevel: "medium",
+        }),
+      ]),
+    );
+  });
+
+  it("rejects deleting missing profile specialists", async () => {
+    const root = await mkdtemp(join(tmpdir(), "specialist-registry-test-"));
+    const dataDir = join(root, "data");
+
+    await expect(deleteProfileSpecialist(dataDir, "profile-a", "missing-worker")).rejects.toThrow(
+      "Unknown specialist: missing-worker",
+    );
+  });
+
+  it("marks specialist unavailable when fallback model is unknown", async () => {
+    const root = await mkdtemp(join(tmpdir(), "specialist-registry-test-"));
+    const dataDir = join(root, "data");
+    const sharedDir = join(dataDir, "shared", "specialists");
+    process.env.FORGE_DATA_DIR = dataDir;
+
+    await mkdir(sharedDir, { recursive: true });
+
+    await writeFile(
+      join(sharedDir, "worker.md"),
+      [
+        "---",
+        "displayName: Worker",
+        "color: '#2563eb'",
+        "enabled: true",
+        "whenToUse: General tasks",
+        "modelId: gpt-5.3-codex",
+        "fallbackModelId: nonexistent-model",
+        "fallbackReasoningLevel: high",
+        "---",
+        "",
+        "Worker body.",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const roster = await resolveRoster("profile-a", dataDir);
+
+    expect(roster).toHaveLength(1);
+    expect(roster[0]).toMatchObject({
+      specialistId: "worker",
+      available: false,
+      availabilityCode: "invalid_model",
+      availabilityMessage: "Unknown fallbackModelId: nonexistent-model",
+    });
+  });
+
+  it("generates roster block with fallback model info", () => {
+    const markdown = generateRosterBlock([
+      {
+        specialistId: "backend",
+        displayName: "Backend Engineer",
+        color: "#2563eb",
+        enabled: true,
+        whenToUse: "Backend work",
+        modelId: "gpt-5.3-codex",
+        provider: "openai-codex",
+        reasoningLevel: "high",
+        fallbackModelId: "claude-opus-4-6",
+        fallbackProvider: "anthropic",
+        fallbackReasoningLevel: "medium",
+        builtin: true,
+        promptBody: "Prompt",
+        sourceKind: "builtin",
+        available: true,
+        availabilityCode: "ok",
+        shadowsGlobal: false,
+      },
+    ]);
+
+    expect(markdown).toContain("`backend`");
+    expect(markdown).toContain("[openai-codex/gpt-5.3-codex high");
+    expect(markdown).toContain("-> fallback anthropic/claude-opus-4-6 medium]");
+  });
+
+  it("returns null for legacy migration with unknown preset name", async () => {
+    const root = await mkdtemp(join(tmpdir(), "specialist-registry-test-"));
+    const filePath = join(root, "unknown-preset.md");
+
+    await writeFile(
+      filePath,
+      [
+        "---",
+        "displayName: Unknown Preset",
+        "color: '#2563eb'",
+        "enabled: true",
+        "whenToUse: Unknown tasks",
+        "model: pi-nonexistent",
+        "reasoningLevel: high",
+        "---",
+        "",
+        "Unknown preset body.",
+      ].join("\n"),
+      "utf8",
+    );
+
+    expect(await parseSpecialistFile(filePath)).toBeNull();
+  });
+
+  it("rejects deleting builtins and missing shared specialists", async () => {
+    const root = await mkdtemp(join(tmpdir(), "specialist-registry-test-"));
+    const dataDir = join(root, "data");
+
+    await seedBuiltins(dataDir);
+
+    await expect(deleteSharedSpecialist(dataDir, "backend")).rejects.toThrow(
+      "Cannot delete builtin specialist: backend",
+    );
+    await expect(deleteSharedSpecialist(dataDir, "missing-worker")).rejects.toThrow(
+      "Unknown specialist: missing-worker",
+    );
   });
 });
