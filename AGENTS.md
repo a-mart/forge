@@ -85,6 +85,7 @@ These are briefly described for orientation. Most have both backend and UI compo
 | **Choice Picker** | `swarm/swarm-manager.ts` (pending registry), `swarm/swarm-tools.ts` (present_choices tool) | `components/chat/message-list/ChoiceRequestCard.tsx`, `components/chat/message-list/ChoiceAnsweredRow.tsx` | Interactive structured choice picker for agent-user decision points |
 | **Pi extensions** | Agent runtime (`pi-agent-runtime.ts`: `bindExtensions()`, `session_shutdown`, auto-discovery) | — | In-process custom tools, event interception, context modification, and packages via Pi's extension system. Auto-discovered from `~/.forge/agent/extensions/` (workers), `~/.forge/agent/manager/extensions/` (managers), and `<cwd>/.pi/extensions/` (project-local). See [`docs/PI_EXTENSIONS.md`](docs/PI_EXTENSIONS.md) |
 | **Integrated terminals** | `terminal/` | `components/terminal/` | Per-session PTY terminals with persistence and state restoration |
+| **Specialists** | `swarm/specialists/` | `components/settings/SettingsSpecialists.tsx` | Named worker spawn templates with model config, fallback, and per-profile overrides |
 | **Mermaid diagrams** | — | `components/chat/message-list/MermaidBlock.tsx` | Inline rendering of mermaid diagrams in chat with interactive toolbar (toggle, copy, SVG/PNG export, fullscreen) |
 | **Electron desktop app** | `apps/electron/src/main.ts`, `auto-updater.ts`, `preload.ts` | — | Standalone desktop application wrapper for macOS, Windows, and Linux. Bundles backend, UI, and all dependencies. Supports auto-updates from GitHub Releases. |
 
@@ -131,9 +132,11 @@ All runtime state lives in `~/.forge` (or `%LOCALAPPDATA%\forge` on Windows), ov
 │   ├── slash-commands.json                # Global slash commands
 │   ├── playwright-dashboard.json          # Playwright dashboard settings
 │   ├── mobile-devices.json                # Registered mobile devices
-│   └── mobile-notification-prefs.json     # Mobile push preferences
+│   ├── mobile-notification-prefs.json     # Mobile push preferences
+│   └── specialists/                       # Global specialist definitions (.md files)
 └── profiles/<profileId>/
     ├── memory.md                          # Profile-level memory
+    ├── specialists/                       # Profile-specific specialist overrides
     ├── reference/                         # Profile reference documents
     ├── integrations/                      # Profile integration configs
     ├── pi/                                # Profile-scoped Pi runtime resources
