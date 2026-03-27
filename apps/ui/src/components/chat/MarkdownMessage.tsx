@@ -1,22 +1,20 @@
-import { isValidElement, memo, useCallback, useEffect, useId, useMemo, useState, type ReactNode } from 'react'
-import { AlertCircle, Check, ChevronRight, Copy, FileCode2, FileText, ZoomIn } from 'lucide-react'
+import { isValidElement, memo, useCallback, useMemo, useState, type ReactNode } from 'react'
+import { Check, ChevronRight, Copy, FileCode2, FileText, ZoomIn } from 'lucide-react'
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Button } from '@/components/ui/button'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   normalizeArtifactShortcodes,
   parseArtifactReference,
   type ArtifactReference,
 } from '@/lib/artifacts'
 import { cn } from '@/lib/utils'
+import { MermaidBlock } from './message-list/MermaidBlock'
 import { ContentZoomDialog } from './ContentZoomDialog'
 
 const EXTRA_ALLOWED_PROTOCOLS = /^(vscode-insiders|vscode|swarm-file):\/\//i
 
 const MARKDOWN_EXTENSION_PATTERN = /\.(md|markdown|mdx)$/i
-
-let mermaidInitialized = false
 
 function urlTransform(url: string): string {
   if (EXTRA_ALLOWED_PROTOCOLS.test(url)) return url
@@ -31,16 +29,11 @@ interface MarkdownMessageProps {
   enableMermaid?: boolean
 }
 
-type ZoomTarget =
-  | {
-      type: 'image'
-      src: string
-      alt: string
-    }
-  | {
-      type: 'mermaid'
-      svg: string
-    }
+type ZoomTarget = {
+  type: 'image'
+  src: string
+  alt: string
+}
 
 export const MarkdownMessage = memo(function MarkdownMessage({
   content,
@@ -50,7 +43,6 @@ export const MarkdownMessage = memo(function MarkdownMessage({
   enableMermaid = false,
 }: MarkdownMessageProps) {
   const isDocument = variant === 'document'
-  const canExpandContent = isDocument && enableMermaid
   const normalizedContent = useMemo(() => normalizeArtifactShortcodes(content), [content])
   const [zoomTarget, setZoomTarget] = useState<ZoomTarget | null>(null)
 
@@ -268,10 +260,9 @@ export const MarkdownMessage = memo(function MarkdownMessage({
 
                 if (enableMermaid && language === 'mermaid') {
                   return (
-                    <MermaidDiagram
+                    <MermaidBlock
                       code={normalizedCode}
-                      expandable={canExpandContent}
-                      onExpand={(svg) => setZoomTarget({ type: 'mermaid', svg })}
+                      isDocument={isDocument}
                     />
                   )
                 }
@@ -362,21 +353,13 @@ export const MarkdownMessage = memo(function MarkdownMessage({
             setZoomTarget(null)
           }
         }}
-        title={zoomTarget?.type === 'mermaid' ? 'Expanded Mermaid diagram' : 'Expanded image preview'}
+        title="Expanded image preview"
       >
-        {zoomTarget?.type === 'image' ? (
+        {zoomTarget ? (
           <img
             src={zoomTarget.src}
             alt={zoomTarget.alt}
             className="h-auto max-h-full w-auto max-w-full rounded-md"
-          />
-        ) : zoomTarget?.type === 'mermaid' ? (
-          <div
-            className={cn(
-              'flex min-h-full min-w-full items-center justify-center',
-              '[&_svg]:h-auto [&_svg]:max-h-full [&_svg]:max-w-full',
-            )}
-            dangerouslySetInnerHTML={{ __html: zoomTarget.svg }}
           />
         ) : null}
       </ContentZoomDialog>
@@ -474,127 +457,6 @@ function flattenText(node: ReactNode): string {
   }
 
   return ''
-}
-
-function MermaidDiagram({
-  code,
-  expandable = false,
-  onExpand,
-}: {
-  code: string
-  expandable?: boolean
-  onExpand?: (svg: string) => void
-}) {
-  const [svg, setSvg] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const diagramId = useId().replace(/[:]/g, '-')
-
-  useEffect(() => {
-    let cancelled = false
-
-    setSvg(null)
-    setError(null)
-
-    void (async () => {
-      try {
-        const module = await import('mermaid')
-        const mermaidApi = module.default
-
-        if (!mermaidInitialized) {
-          mermaidApi.initialize({
-            startOnLoad: false,
-            securityLevel: 'strict',
-            theme: 'default',
-          })
-          mermaidInitialized = true
-        }
-
-        const renderId = `mermaid-${diagramId}-${Math.random().toString(16).slice(2, 8)}`
-        const { svg: renderedSvg } = await mermaidApi.render(renderId, code)
-
-        if (cancelled) {
-          return
-        }
-
-        setSvg(renderedSvg)
-      } catch (renderError) {
-        if (cancelled) {
-          return
-        }
-
-        setError(renderError instanceof Error ? renderError.message : 'Unable to render Mermaid diagram.')
-      }
-    })()
-
-    return () => {
-      cancelled = true
-    }
-  }, [code, diagramId])
-
-  const canExpand = expandable && !!svg && !error && typeof onExpand === 'function'
-
-  return (
-    <div className="my-5 overflow-hidden rounded-lg border border-border/50 bg-background">
-      <div className="flex items-center justify-between border-b border-border/40 bg-muted/30 px-3 py-1.5">
-        <span className="font-mono text-[11px] font-medium text-muted-foreground">mermaid</span>
-        {canExpand ? (
-          <span className="hidden items-center gap-1 text-[11px] text-muted-foreground sm:inline-flex">
-            <ZoomIn className="size-3" aria-hidden="true" />
-            <span>Click to expand</span>
-          </span>
-        ) : null}
-      </div>
-      {error ? (
-        <div className="p-4">
-          <div className="flex items-center gap-2 rounded-md border border-destructive/20 bg-destructive/5 px-3 py-2 text-xs text-destructive">
-            <AlertCircle className="size-3.5 shrink-0" />
-            <span>Mermaid render error: {error}</span>
-          </div>
-        </div>
-      ) : svg ? (
-        canExpand ? (
-          <Button
-            type="button"
-            variant="ghost"
-            onClick={() => onExpand(svg)}
-            className={cn(
-              'group/zoom relative block h-auto w-full cursor-zoom-in overflow-hidden p-0 text-left text-sm font-normal',
-              'transition-colors hover:bg-muted/20',
-              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35 focus-visible:ring-inset',
-            )}
-            aria-label="Expand Mermaid diagram"
-          >
-            <ScrollArea className="max-h-[70vh] w-full">
-              <div
-                className="flex justify-center p-4 [&_svg]:h-auto [&_svg]:max-w-full"
-                dangerouslySetInnerHTML={{ __html: svg }}
-              />
-            </ScrollArea>
-            <span
-              className={cn(
-                'pointer-events-none absolute right-3 top-3 inline-flex size-7 items-center justify-center rounded-md',
-                'bg-black/55 text-white/85 shadow-sm backdrop-blur-sm',
-                'opacity-0 transition-opacity duration-150',
-                'group-hover/zoom:opacity-100 group-focus-visible/zoom:opacity-100',
-              )}
-              aria-hidden="true"
-            >
-              <ZoomIn className="size-3.5" />
-            </span>
-          </Button>
-        ) : (
-          <ScrollArea className="max-h-[70vh]">
-            <div
-              className="flex justify-center p-4 [&_svg]:h-auto [&_svg]:max-w-full"
-              dangerouslySetInnerHTML={{ __html: svg }}
-            />
-          </ScrollArea>
-        )
-      ) : (
-        <p className="py-4 text-center text-xs text-muted-foreground">Rendering diagram…</p>
-      )}
-    </div>
-  )
 }
 
 function resolveCodeLanguage(className: string | undefined): string | null {

@@ -182,6 +182,7 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
           content={normalizedText}
           onArtifactClick={onArtifactClick}
           artifactSourceAgentId={message.agentId}
+          enableMermaid
         />
       ) : null}
       <MessageAttachments attachments={attachments} isUser={false} wsUrl={wsUrl} />

@@ -95,6 +95,8 @@ Two view modes, toggled at the top:
 - **Web** (default) — Shows only the messages between you and the manager. Clean, focused.
 - **All** — Shows everything: tool calls, worker spawning, agent-to-agent messages, reasoning traces. Useful when you want to see exactly what's happening under the hood.
 
+Agents can include Mermaid diagrams in their responses using standard markdown code fences (` ```mermaid ... ``` `). These render inline with an interactive toolbar for toggling between diagram and source, copying code, exporting as SVG or PNG, and viewing fullscreen.
+
 ### File Browser
 
 The left sidebar has a file browser pointed at your project directory. Currently read-only, but you can browse your entire codebase without leaving Forge. Click any file to view it. There's a button to open it directly in your editor.

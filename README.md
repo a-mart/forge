@@ -150,7 +150,7 @@ You don't need to rate every message. Focus on the meaningful moments: when the 
 
 The web UI is designed to be the only window you need open.
 
-- **Chat** — real-time conversation with your manager. Stream worker activity or filter to just the messages directed at you.
+- **Chat** — real-time conversation with your manager. Stream worker activity or filter to just the messages directed at you. Mermaid diagrams render inline with interactive controls.
 - **File browser** — full repository file browser with click-to-open in your editor (configurable: VS Code, Cursor, etc.).
 - **Git view** — diff and commit history view, built into the dashboard.
 - **Worker pills** — green indicators show active workers. Click for a quick peek at what each worker is doing.
