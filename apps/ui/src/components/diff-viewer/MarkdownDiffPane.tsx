@@ -167,16 +167,21 @@ export function MarkdownDiffPane({ oldContent, newContent, fileName }: MarkdownD
 
               {visibleSections.length > 0 ? (
                 <div className="space-y-3 p-3">
-                  {visibleSections.map((section) => (
-                    <MarkdownSectionCard
-                      key={`${section.id}:${section.changeKind}`}
-                      section={section}
-                      renderContent={renderContent}
-                      useDarkTheme={useDarkTheme}
-                      styles={styles}
-                      expandAll={expandAll || selectedSection != null}
-                    />
-                  ))}
+                  {visibleSections.map((section) => {
+                    const sectionExpanded = expandAll || selectedSection != null
+                    return (
+                      <MarkdownSectionCard
+                        // ReactDiffViewer keeps fold state internally, so force a remount when the
+                        // section switches between collapsed and fully expanded modes.
+                        key={`${section.id}:${section.changeKind}:${sectionExpanded ? 'expanded' : 'collapsed'}`}
+                        section={section}
+                        renderContent={renderContent}
+                        useDarkTheme={useDarkTheme}
+                        styles={styles}
+                        expandAll={sectionExpanded}
+                      />
+                    )
+                  })}
                 </div>
               ) : (
                 <div className="flex h-full flex-col items-center justify-center text-muted-foreground">

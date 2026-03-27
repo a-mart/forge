@@ -6,19 +6,35 @@ import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('react-diff-viewer-continued', () => ({
-  default: ({ oldValue, newValue }: { oldValue: string; newValue: string }) =>
-    createElement(
-      'div',
-      {
-        'data-testid': 'raw-diff-viewer',
-        'data-old': oldValue,
-        'data-new': newValue,
-      },
-      `${oldValue}=>${newValue}`,
-    ),
-  DiffMethod: { WORDS: 'WORDS' },
-}))
+vi.mock('react-diff-viewer-continued', async () => {
+  const React = await import('react')
+
+  return {
+    default: ({
+      oldValue,
+      newValue,
+      showDiffOnly,
+    }: {
+      oldValue: string
+      newValue: string
+      showDiffOnly?: boolean
+    }) => {
+      const [initialShowDiffOnly] = React.useState(showDiffOnly ?? true)
+
+      return createElement(
+        'div',
+        {
+          'data-testid': 'raw-diff-viewer',
+          'data-old': oldValue,
+          'data-new': newValue,
+          'data-mode': initialShowDiffOnly ? 'collapsed' : 'expanded',
+        },
+        `${oldValue}=>${newValue}`,
+      )
+    },
+    DiffMethod: { WORDS: 'WORDS' },
+  }
+})
 
 vi.mock('./diff-viewer-theme', () => ({
   useDiffTheme: () => ({ styles: {}, useDarkTheme: false }),
@@ -96,6 +112,40 @@ describe('MarkdownDiffPane', () => {
     expect(getByRole(document.body, 'heading', { name: 'Changed' })).toBeTruthy()
     expect(queryByRole(document.body, 'heading', { name: 'Stable' })).toBeNull()
     expect(queryByText(document.body, 'Hiding 1 unchanged section')).toBeTruthy()
+  })
+
+  it('shows an unchanged section on the first outline click', () => {
+    render(
+      createElement(MarkdownDiffPane, {
+        fileName: 'knowledge.md',
+        oldContent: '# Changed\nBefore\n## Stable\nSame',
+        newContent: '# Changed\nAfter\n## Stable\nSame',
+      }),
+    )
+
+    click(getByRole(document.body, 'button', { name: 'Stable' }))
+
+    expect(getByText(document.body, /Showing section/i)).toBeTruthy()
+    expect(getByRole(document.body, 'heading', { name: 'Stable' })).toBeTruthy()
+    expect(getByTestId(document.body, 'raw-diff-viewer').getAttribute('data-new')).toContain('## Stable\nSame')
+  })
+
+  it('expands the selected section on the first outline click', () => {
+    render(
+      createElement(MarkdownDiffPane, {
+        fileName: 'knowledge.md',
+        oldContent: '# Changed\nBefore\nContext',
+        newContent: '# Changed\nAfter\nContext',
+      }),
+    )
+
+    const diffViewer = getByTestId(document.body, 'raw-diff-viewer')
+    expect(diffViewer.getAttribute('data-mode')).toBe('collapsed')
+
+    click(getByRole(document.body, 'button', { name: 'Changed' }))
+
+    expect(getByText(document.body, /Showing section/i)).toBeTruthy()
+    expect(getByTestId(document.body, 'raw-diff-viewer').getAttribute('data-mode')).toBe('expanded')
   })
 
   it('opens the rendered preview pane without removing the raw diff', () => {
