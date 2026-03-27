@@ -3,7 +3,7 @@ import { SWARM_MODEL_PRESETS, SWARM_REASONING_LEVELS } from "./types.js";
 
 export const DEFAULT_SWARM_MODEL_PRESET: SwarmModelPreset = "pi-codex";
 
-const MODEL_PRESET_DESCRIPTORS: Record<SwarmModelPreset, AgentModelDescriptor> = {
+export const MODEL_PRESET_DESCRIPTORS: Record<SwarmModelPreset, AgentModelDescriptor> = {
   "pi-codex": {
     provider: "openai-codex",
     modelId: "gpt-5.3-codex",

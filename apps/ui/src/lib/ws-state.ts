@@ -42,6 +42,8 @@ export interface ManagerWsState {
   hasReceivedAgentsSnapshot: boolean
   /** Monotonically increasing counter bumped on prompt-related WS events */
   promptChangeKey: number
+  /** Monotonically increasing counter bumped on specialist_roster_changed WS events */
+  specialistChangeKey: number
 }
 
 export function createInitialManagerWsState(targetAgentId: string | null): ManagerWsState {
@@ -66,5 +68,6 @@ export function createInitialManagerWsState(targetAgentId: string | null): Manag
     terminalSessionScopeId: null,
     hasReceivedAgentsSnapshot: false,
     promptChangeKey: 0,
+    specialistChangeKey: 0,
   }
 }

@@ -49,6 +49,30 @@ export interface AgentDescriptor {
   workerCount?: number
   activeWorkerCount?: number
   streamingStartedAt?: number
+  specialistId?: string
+  specialistDisplayName?: string
+  specialistColor?: string
+}
+
+export type SpecialistSourceKind = 'builtin' | 'global' | 'profile'
+export type SpecialistAvailabilityCode = 'ok' | 'invalid_model' | 'missing_auth'
+
+export interface ResolvedSpecialistDefinition {
+  specialistId: string
+  displayName: string
+  color: string
+  enabled: boolean
+  whenToUse: string
+  model: string
+  reasoningLevel?: string
+  builtin: boolean
+  promptBody: string
+  sourceKind: SpecialistSourceKind
+  sourcePath?: string
+  available: boolean
+  availabilityCode: SpecialistAvailabilityCode
+  availabilityMessage?: string
+  shadowsGlobal: boolean
 }
 
 export type RuntimeExtensionSource =

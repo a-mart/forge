@@ -6,6 +6,7 @@ import { SettingsAuth } from '@/components/settings/SettingsAuth'
 import { SettingsIntegrations } from '@/components/settings/SettingsIntegrations'
 import { SettingsSkills } from '@/components/settings/SettingsSkills'
 import { SettingsPrompts } from '@/components/settings/SettingsPrompts'
+import { SettingsSpecialists } from '@/components/settings/SettingsSpecialists'
 import { SettingsSlashCommands } from '@/components/settings/SettingsSlashCommands'
 import { SettingsExtensions } from '@/components/settings/SettingsExtensions'
 import type { AgentDescriptor, ManagerProfile, PlaywrightDiscoverySettings, PlaywrightDiscoverySnapshot, TelegramStatusEvent } from '@forge/protocol'
@@ -16,6 +17,7 @@ interface SettingsPanelProps {
   profiles: ManagerProfile[]
   telegramStatus?: TelegramStatusEvent | null
   promptChangeKey: number
+  specialistChangeKey: number
   onBack?: () => void
   onPlaywrightSnapshotUpdate?: (snapshot: PlaywrightDiscoverySnapshot) => void
   onPlaywrightSettingsLoaded?: (settings: PlaywrightDiscoverySettings) => void
@@ -27,6 +29,7 @@ export function SettingsPanel({
   profiles,
   telegramStatus,
   promptChangeKey,
+  specialistChangeKey,
   onBack,
   onPlaywrightSnapshotUpdate,
   onPlaywrightSettingsLoaded,
@@ -51,6 +54,13 @@ export function SettingsPanel({
           wsUrl={wsUrl}
           profiles={profiles}
           promptChangeKey={promptChangeKey}
+        />
+      )}
+      {activeTab === 'specialists' && (
+        <SettingsSpecialists
+          wsUrl={wsUrl}
+          profiles={profiles}
+          specialistChangeKey={specialistChangeKey}
         />
       )}
       {activeTab === 'slash-commands' && (

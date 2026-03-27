@@ -8,6 +8,7 @@ import { CronSchedulerService } from "./scheduler/cron-scheduler-service.js";
 import { getScheduleFilePath } from "./scheduler/schedule-storage.js";
 import { acquireRuntimeLock, type RuntimeLock } from "./runtime-lock.js";
 import { SwarmManager } from "./swarm/swarm-manager.js";
+import { seedBuiltins } from "./swarm/specialists/specialist-registry.js";
 import { UnreadTracker } from "./swarm/unread-tracker.js";
 import type { AgentDescriptor, SessionLifecycleEvent, SwarmConfig } from "./swarm/types.js";
 import { readTerminalRuntimeConfig } from "./terminal/terminal-config.js";
@@ -67,6 +68,8 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
     logger,
   });
   await versioningService.start();
+
+  await seedBuiltins(config.paths.dataDir);
 
   const swarmManager = new SwarmManager(config, {
     versioningService,

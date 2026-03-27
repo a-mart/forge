@@ -1018,6 +1018,7 @@ export function IndexPage() {
                 profiles={state.profiles}
                 telegramStatus={state.telegramStatus}
                 promptChangeKey={state.promptChangeKey}
+                specialistChangeKey={state.specialistChangeKey}
                 onBack={() =>
                   navigateToRoute({
                     view: 'chat',

@@ -1252,6 +1252,10 @@ export class ManagerWsClient {
         this.updateState({ promptChangeKey: this.state.promptChangeKey + 1 })
         break
 
+      case 'specialist_roster_changed':
+        this.updateState({ specialistChangeKey: this.state.specialistChangeKey + 1 })
+        break
+
       case 'error':
         this.updateState({ lastError: event.message })
         this.pushSystemMessage(`${event.code}: ${event.message}`)

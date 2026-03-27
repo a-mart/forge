@@ -56,6 +56,9 @@ export interface AgentDescriptor {
   workerCount?: number;
   activeWorkerCount?: number;
   streamingStartedAt?: number;
+  specialistId?: string;
+  specialistDisplayName?: string;
+  specialistColor?: string;
 }
 
 export interface AgentsStoreFile {
@@ -93,6 +96,7 @@ export interface SendMessageReceipt {
 
 export interface SpawnAgentInput {
   agentId: string;
+  specialist?: string;
   archetypeId?: AgentArchetypeId;
   systemPrompt?: string;
   model?: SwarmModelPreset;

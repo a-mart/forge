@@ -149,6 +149,30 @@ import type {
   SwarmReasoningLevel
 } from "./types.js";
 
+interface ResolvedSpecialistDefinitionLike {
+  specialistId: string;
+  displayName: string;
+  color: string;
+  enabled: boolean;
+  whenToUse: string;
+  model: SwarmModelPreset;
+  reasoningLevel?: SwarmReasoningLevel;
+  promptBody: string;
+  available: boolean;
+  availabilityCode?: string;
+  availabilityMessage?: string;
+}
+
+interface SpecialistRegistryModule {
+  resolveRoster(profileId: string): Promise<ResolvedSpecialistDefinitionLike[]>;
+  generateRosterBlock(roster: ResolvedSpecialistDefinitionLike[]): string;
+  normalizeSpecialistHandle(value: string): string;
+}
+
+// AgentDescriptor now includes specialistId/specialistDisplayName/specialistColor directly.
+
+const SPECIALIST_REGISTRY_MODULE_PATH = "./specialists/specialist-registry.js";
+
 const DEFAULT_WORKER_SYSTEM_PROMPT = `You are a worker agent in a swarm.
 - You can list agents and send messages to other agents.
 - Use coding tools (read/bash/edit/write) to execute implementation tasks.
@@ -1124,6 +1148,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private integrationContextProvider: ((profileId: string) => string) | undefined;
   private readonly versioningService: VersioningMutationSink | undefined;
   private readonly trackedToolPathsByAgentId = new Map<string, Map<string, { toolName: string; path: string }>>();
+  private specialistRegistryModulePromise: Promise<SpecialistRegistryModule> | null = null;
 
   constructor(config: SwarmConfig, options?: { now?: () => string; versioningService?: VersioningMutationSink }) {
     super();
@@ -2292,11 +2317,76 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     const agentId = this.generateUniqueAgentId(requestedAgentId);
     const createdAt = this.now();
-
-    const requestedModel = this.resolveSpawnModel(input, manager.model);
-    const model = this.resolveSpawnModelWithCapacityFallback(requestedModel);
     const managerProfileId = manager.profileId ?? manager.agentId;
-    const archetypeId = await this.resolveSpawnWorkerArchetypeId(input, agentId, managerProfileId);
+    const rawSpecialist = input.specialist?.trim();
+    let requestedSpecialistId: string | undefined;
+
+    if (rawSpecialist) {
+      const specialistModule = await this.loadSpecialistRegistryModule();
+      requestedSpecialistId = specialistModule.normalizeSpecialistHandle(rawSpecialist) || undefined;
+    }
+
+    if (
+      requestedSpecialistId &&
+      (
+        input.model !== undefined ||
+        input.modelId !== undefined ||
+        input.systemPrompt !== undefined ||
+        input.archetypeId !== undefined
+      )
+    ) {
+      throw new Error(
+        "Cannot combine 'specialist' with model/prompt/archetype overrides. Use specialist mode or ad-hoc mode, not both. reasoningLevel is the only allowed override in specialist mode."
+      );
+    }
+
+    let model: AgentModelDescriptor;
+    let archetypeId: string | undefined;
+    let specialist: ResolvedSpecialistDefinitionLike | undefined;
+    let explicitSystemPrompt: string | undefined;
+
+    if (requestedSpecialistId) {
+      const roster = await this.resolveSpecialistRosterForProfile(managerProfileId);
+      specialist = roster.find((entry) => entry.specialistId === requestedSpecialistId);
+      if (!specialist) {
+        throw new Error(
+          `Unknown specialist: ${requestedSpecialistId}. See manager system prompt for available specialists.`
+        );
+      }
+
+      if (!specialist.enabled) {
+        throw new Error(
+          `Specialist "${requestedSpecialistId}" is disabled for this profile. Enable it before spawning.`
+        );
+      }
+
+      if (!specialist.available) {
+        const reason =
+          specialist.availabilityMessage?.trim() ||
+          (specialist.availabilityCode
+            ? `availability code: ${specialist.availabilityCode}`
+            : "unavailable with current auth/configuration");
+        throw new Error(`Specialist "${requestedSpecialistId}" is currently unavailable: ${reason}`);
+      }
+
+      model = resolveModelDescriptorFromPreset(specialist.model);
+      const reasoningLevelOverride = parseSwarmReasoningLevel(
+        input.reasoningLevel,
+        "spawn_agent.reasoningLevel"
+      );
+      if (reasoningLevelOverride) {
+        model.thinkingLevel = reasoningLevelOverride;
+      }
+      model.thinkingLevel = normalizeThinkingLevelForProvider(model.provider, model.thinkingLevel);
+      model = this.resolveSpawnModelWithCapacityFallback(model);
+      archetypeId = undefined;
+      explicitSystemPrompt = specialist.promptBody;
+    } else {
+      const requestedModel = this.resolveSpawnModel(input, manager.model);
+      model = this.resolveSpawnModelWithCapacityFallback(requestedModel);
+      archetypeId = await this.resolveSpawnWorkerArchetypeId(input, agentId, managerProfileId);
+      explicitSystemPrompt = input.systemPrompt?.trim();
+    }
 
     const descriptor: AgentDescriptor = {
       agentId,
@@ -2318,6 +2408,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       )
     };
 
+    if (specialist) {
+      descriptor.specialistId = specialist.specialistId;
+      descriptor.specialistDisplayName = specialist.displayName;
+      descriptor.specialistColor = specialist.color;
+    }
+
     this.descriptors.set(agentId, descriptor);
     await this.ensureSessionFileParentDirectory(descriptor.sessionFile);
     await this.updateSessionMetaForWorkerDescriptor(descriptor);
@@ -2332,12 +2428,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       managerId: descriptor.managerId,
       displayName: descriptor.displayName,
       archetypeId: descriptor.archetypeId,
+      specialistId: descriptor.specialistId,
       model: descriptor.model,
       cwd: descriptor.cwd
     });
 
     try {
-      const explicitSystemPrompt = input.systemPrompt?.trim();
       const baseSystemPrompt =
         explicitSystemPrompt && explicitSystemPrompt.length > 0
           ? explicitSystemPrompt
@@ -2816,9 +2912,82 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     });
   }
 
+  async notifySpecialistRosterChanged(profileId: string): Promise<void> {
+    try {
+      const roster = await this.resolveSpecialistRosterForProfile(profileId);
+      await this.syncWorkerSpecialistMetadata(profileId, roster);
+    } catch (error) {
+      this.logDebug("specialist:roster_change:sync:error", {
+        profileId,
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
+
+    const sessions = this.getSessionsForProfile(profileId);
+    // Specialist edits are already persisted on disk. Runtime refresh is best-effort.
+    const results = await Promise.allSettled(
+      sessions.map((session) => this.applyManagerRuntimeRecyclePolicy(session.agentId, "specialist_roster_change")),
+    );
+
+    results.forEach((result, index) => {
+      if (result.status === "rejected") {
+        this.logDebug("specialist:roster_change:recycle:error", {
+          profileId,
+          agentId: sessions[index]?.agentId,
+          message: result.reason instanceof Error ? result.reason.message : String(result.reason)
+        });
+      }
+    });
+  }
+
+  private async syncWorkerSpecialistMetadata(
+    profileId: string,
+    roster: ResolvedSpecialistDefinitionLike[]
+  ): Promise<void> {
+    const rosterById = new Map(roster.map((entry) => [entry.specialistId, entry]));
+    let changed = false;
+
+    for (const descriptor of this.descriptors.values()) {
+      if (descriptor.role !== "worker" || descriptor.profileId !== profileId) {
+        continue;
+      }
+
+      const specialistId = normalizeOptionalAgentId(descriptor.specialistId)?.toLowerCase();
+      if (!specialistId) {
+        continue;
+      }
+
+      const specialist = rosterById.get(specialistId);
+      if (!specialist) {
+        continue;
+      }
+
+      if (
+        descriptor.specialistId === specialist.specialistId &&
+        descriptor.specialistDisplayName === specialist.displayName &&
+        descriptor.specialistColor === specialist.color
+      ) {
+        continue;
+      }
+
+      descriptor.specialistId = specialist.specialistId;
+      descriptor.specialistDisplayName = specialist.displayName;
+      descriptor.specialistColor = specialist.color;
+      this.descriptors.set(descriptor.agentId, descriptor);
+      changed = true;
+    }
+
+    if (!changed) {
+      return;
+    }
+
+    await this.saveStore();
+    this.emitAgentsSnapshot();
+  }
+
   private async applyManagerRuntimeRecyclePolicy(
     agentId: string,
-    reason: "model_change" | "idle_transition" | "prompt_mode_change"
+    reason: "model_change" | "idle_transition" | "prompt_mode_change" | "specialist_roster_change"
   ): Promise<"recycled" | "deferred" | "none"> {
     const descriptor = this.descriptors.get(agentId);
     if (!descriptor || descriptor.role !== "manager") {
@@ -2861,7 +3030,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private async recycleManagerRuntime(
     descriptor: AgentDescriptor,
     runtime: SwarmAgentRuntime,
-    reason: "model_change" | "idle_transition" | "prompt_mode_change"
+    reason: "model_change" | "idle_transition" | "prompt_mode_change" | "specialist_roster_change"
   ): Promise<void> {
     if (descriptor.role !== "manager") {
       return;
@@ -2919,31 +3088,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       throw new Error(`Prompt not found: archetype/${archetypeId}`);
     }
 
-    let systemPrompt = archetypeEntry.content;
-    let integrationContextAdded = false;
-
-    if (this.integrationContextProvider) {
-      try {
-        const integrationContext = this.integrationContextProvider(resolvedProfileId).trim();
-        if (integrationContext) {
-          systemPrompt = `${systemPrompt}\n\n${integrationContext}`;
-          integrationContextAdded = true;
-        }
-      } catch (error) {
-        this.logDebug("manager:integration_context:error", {
-          agentId: descriptor.agentId,
-          profileId: resolvedProfileId,
-          message: error instanceof Error ? error.message : String(error)
-        });
-      }
-    }
+    const systemPrompt = await this.buildResolvedManagerPrompt(descriptor);
 
     const sections: PromptPreviewSection[] = [
       {
         label: "System Prompt",
-        source: integrationContextAdded
-          ? `${archetypeEntry.sourcePath} (+ integration context)`
-          : archetypeEntry.sourcePath,
+        source: archetypeEntry.sourcePath,
         content: systemPrompt
       }
     ];
@@ -5300,31 +5450,121 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return undefined;
   }
 
+  private async loadSpecialistRegistryModule(): Promise<SpecialistRegistryModule> {
+    if (!this.specialistRegistryModulePromise) {
+      const modulePath: string = SPECIALIST_REGISTRY_MODULE_PATH;
+      const dataDir = this.config.paths.dataDir;
+      this.specialistRegistryModulePromise = import(modulePath).then((moduleExports) => {
+        const mod = moduleExports as {
+          resolveRoster?: (profileId: string, dataDir: string) => Promise<ResolvedSpecialistDefinitionLike[]>;
+          generateRosterBlock?: (roster: ResolvedSpecialistDefinitionLike[]) => string;
+          normalizeSpecialistHandle?: (value: string) => string;
+        };
+        const rawResolveRoster = mod.resolveRoster;
+        const generateRosterBlock = mod.generateRosterBlock;
+        const normalizeSpecialistHandle = mod.normalizeSpecialistHandle;
+
+        if (
+          typeof rawResolveRoster !== "function" ||
+          typeof generateRosterBlock !== "function" ||
+          typeof normalizeSpecialistHandle !== "function"
+        ) {
+          throw new Error(
+            `Specialist registry module is missing required exports (resolveRoster, generateRosterBlock, normalizeSpecialistHandle): ${SPECIALIST_REGISTRY_MODULE_PATH}`
+          );
+        }
+
+        return {
+          resolveRoster: (profileId: string) => rawResolveRoster(profileId, dataDir),
+          generateRosterBlock,
+          normalizeSpecialistHandle,
+        };
+      });
+    }
+
+    return this.specialistRegistryModulePromise;
+  }
+
+  private async resolveSpecialistRosterForProfile(
+    profileId: string
+  ): Promise<ResolvedSpecialistDefinitionLike[]> {
+    const specialistRegistry = await this.loadSpecialistRegistryModule();
+    return specialistRegistry.resolveRoster(profileId);
+  }
+
+  private buildStandardPromptVariables(descriptor: AgentDescriptor): Record<string, string> {
+    return {
+      SWARM_DATA_DIR: this.config.paths.dataDir,
+      SWARM_MEMORY_FILE: this.getAgentMemoryPath(descriptor.agentId),
+      SWARM_SCRIPTS_DIR: join(this.config.paths.rootDir, "apps", "backend", "src", "swarm", "scripts")
+    };
+  }
+
+  private async buildResolvedManagerPrompt(descriptor: AgentDescriptor): Promise<string> {
+    const profileId = descriptor.profileId ?? descriptor.agentId;
+    const managerArchetypeId = descriptor.archetypeId
+      ? normalizeArchetypeId(descriptor.archetypeId) || MANAGER_ARCHETYPE_ID
+      : MANAGER_ARCHETYPE_ID;
+
+    const specialistRegistry = await this.loadSpecialistRegistryModule();
+    const [promptTemplate, roster] = await Promise.all([
+      this.promptRegistry.resolve("archetype", managerArchetypeId, profileId),
+      specialistRegistry.resolveRoster(profileId),
+    ]);
+
+    const rosterBlock = specialistRegistry.generateRosterBlock(roster);
+    let prompt = resolvePromptVariables(promptTemplate, this.buildStandardPromptVariables(descriptor));
+
+    if (prompt.includes("${SPECIALIST_ROSTER}")) {
+      prompt = prompt.replaceAll("${SPECIALIST_ROSTER}", rosterBlock);
+    } else {
+      prompt = `${prompt.trimEnd()}\n\n${rosterBlock}`;
+    }
+
+    if (this.integrationContextProvider) {
+      try {
+        const integrationContext = this.integrationContextProvider(profileId).trim();
+        if (integrationContext) {
+          prompt = `${prompt}\n\n${integrationContext}`;
+        }
+      } catch (error) {
+        this.logDebug("manager:integration_context:error", {
+          agentId: descriptor.agentId,
+          profileId,
+          message: error instanceof Error ? error.message : String(error)
+        });
+      }
+    }
+
+    return prompt;
+  }
+
   private async resolveSystemPromptForDescriptor(descriptor: AgentDescriptor): Promise<string> {
     const profileId = descriptor.profileId ?? descriptor.agentId;
 
     if (descriptor.role === "manager") {
-      const managerArchetypeId = descriptor.archetypeId
-        ? normalizeArchetypeId(descriptor.archetypeId) || MANAGER_ARCHETYPE_ID
-        : MANAGER_ARCHETYPE_ID;
-      let prompt = await this.promptRegistry.resolve("archetype", managerArchetypeId, profileId);
+      return this.buildResolvedManagerPrompt(descriptor);
+    }
 
-      if (this.integrationContextProvider) {
-        try {
-          const integrationContext = this.integrationContextProvider(profileId).trim();
-          if (integrationContext) {
-            prompt = `${prompt}\n\n${integrationContext}`;
-          }
-        } catch (error) {
-          this.logDebug("manager:integration_context:error", {
-            agentId: descriptor.agentId,
-            profileId,
-            message: error instanceof Error ? error.message : String(error)
-          });
+    const specialistId = normalizeOptionalAgentId(
+      descriptor.specialistId
+    )?.toLowerCase();
+    if (specialistId) {
+      try {
+        const roster = await this.resolveSpecialistRosterForProfile(profileId);
+        const specialist = roster.find((entry) => entry.specialistId === specialistId);
+        const specialistPrompt = specialist?.promptBody?.trim();
+        if (specialistPrompt) {
+          return specialistPrompt;
         }
+      } catch (error) {
+        this.logDebug("specialist:resolve:error", {
+          agentId: descriptor.agentId,
+          profileId,
+          specialistId,
+          message: error instanceof Error ? error.message : String(error)
+        });
       }
-
-      return prompt;
     }
 
     if (descriptor.archetypeId) {

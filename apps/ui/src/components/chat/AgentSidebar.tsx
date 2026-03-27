@@ -25,6 +25,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ForkSessionDialog } from './ForkSessionDialog'
+import { SpecialistBadge } from './SpecialistBadge'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   DndContext,
@@ -275,8 +276,6 @@ function WorkerRow({
   const isRunning = liveStatus.status === 'streaming' || liveStatus.status === 'idle'
   const isStopped = liveStatus.status === 'terminated' || liveStatus.status === 'stopped'
 
-  // TODO: Future — named specialist workers will get colored name pills here
-
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
@@ -304,6 +303,13 @@ function WorkerRow({
             <span className="min-w-0 flex-1 truncate text-sm leading-5">
               {highlightQuery ? <HighlightedText text={title} query={highlightQuery} /> : title}
             </span>
+            {agent.specialistId && agent.specialistDisplayName && agent.specialistColor ? (
+              <SpecialistBadge
+                displayName={agent.specialistDisplayName}
+                color={agent.specialistColor}
+                className="shrink-0"
+              />
+            ) : null}
           </button>
         </div>
       </ContextMenuTrigger>

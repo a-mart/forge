@@ -40,6 +40,7 @@ import { createPlaywrightRoutes } from "./routes/playwright-routes.js";
 import { createPromptRoutes, type PromptRegistryForRoutes } from "./routes/prompt-routes.js";
 import { createSchedulerRoutes } from "./routes/scheduler-routes.js";
 import { createSettingsRoutes, type SettingsRouteBundle } from "./routes/settings-routes.js";
+import { createSpecialistRoutes } from "./routes/specialist-routes.js";
 import { createSlashCommandRoutes } from "./routes/slash-command-routes.js";
 import { createTranscriptionRoutes } from "./routes/transcription-routes.js";
 import { STATS_CACHE_TTL_MS, StatsService } from "../stats/stats-service.js";
@@ -311,6 +312,10 @@ export class SwarmWebSocketServer {
       ...createAgentHttpRoutes({ swarmManager: this.swarmManager }),
       ...(this.terminalService ? createTerminalRoutes({ terminalService: this.terminalService }) : []),
       ...this.settingsRoutes.routes,
+      ...createSpecialistRoutes({
+        swarmManager: this.swarmManager,
+        broadcastEvent: (event) => this.wsHandler.broadcastToSubscribed(event),
+      }),
       ...createExtensionRoutes({ swarmManager: this.swarmManager }),
       ...createChromeCdpRoutes({ swarmManager: this.swarmManager }),
       ...createPlaywrightRoutes({

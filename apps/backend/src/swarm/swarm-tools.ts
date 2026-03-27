@@ -353,12 +353,18 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
       name: "spawn_agent",
       label: "Spawn Agent",
       description:
-        "Create and start a new worker agent. agentId is required and normalized to lowercase kebab-case; if taken, a numeric suffix (-2, -3, …) is appended. archetypeId, systemPrompt, model, modelId, reasoningLevel, cwd, and initialMessage are optional. model accepts pi-codex|pi-5.4|pi-opus|codex-app.",
+        "Create and start a new worker agent. Prefer specialist mode via `specialist` for standard delegation; use ad-hoc archetype/prompt/model overrides only when no specialist fits. agentId is required and normalized to lowercase kebab-case; if taken, a numeric suffix (-2, -3, …) is appended. archetypeId, systemPrompt, model, modelId, reasoningLevel, cwd, and initialMessage remain available in ad-hoc mode. model accepts pi-codex|pi-5.4|pi-opus|codex-app.",
       parameters: Type.Object({
         agentId: Type.String({
           description:
             "Required agent identifier. Normalized to lowercase kebab-case; collisions are suffixed numerically."
         }),
+        specialist: Type.Optional(
+          Type.String({
+            description:
+              "Specialist handle. See system prompt for available specialists. Omit to use ad-hoc model params instead."
+          })
+        ),
         archetypeId: Type.Optional(
           Type.String({ description: "Optional archetype id (for example: merger)." })
         ),
@@ -377,6 +383,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
       async execute(_toolCallId, params) {
         const parsed = params as {
           agentId: string;
+          specialist?: string;
           archetypeId?: string;
           systemPrompt?: string;
           model?: unknown;
@@ -386,8 +393,9 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
           initialMessage?: string;
         };
 
-        const spawned = await host.spawnAgent(descriptor.agentId, {
+        const spawnInput: SpawnAgentInput = {
           agentId: parsed.agentId,
+          specialist: parsed.specialist,
           archetypeId: parsed.archetypeId,
           systemPrompt: parsed.systemPrompt,
           model: parseSwarmModelPreset(parsed.model, "spawn_agent.model"),
@@ -395,7 +403,9 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
           reasoningLevel: parseSwarmReasoningLevel(parsed.reasoningLevel, "spawn_agent.reasoningLevel"),
           cwd: parsed.cwd,
           initialMessage: parsed.initialMessage
-        });
+        };
+
+        const spawned = await host.spawnAgent(descriptor.agentId, spawnInput);
 
         return {
           content: [

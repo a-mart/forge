@@ -349,6 +349,13 @@ export interface CortexPromptSurfaceChangedEvent {
   updatedAt: string
 }
 
+export interface SpecialistRosterChangedEvent {
+  type: 'specialist_roster_changed'
+  profileId: string
+  specialistIds: string[]
+  updatedAt: string
+}
+
 export interface ApiProxyResponseEvent {
   type: 'api_proxy_response'
   requestId: string
@@ -402,5 +409,6 @@ export type ServerEvent =
   | TerminalUpdatedEvent
   | TerminalClosedEvent
   | TerminalsSnapshotEvent
+  | SpecialistRosterChangedEvent
   | ApiProxyResponseEvent
   | { type: 'error'; code: string; message: string; requestId?: string }
