@@ -108,6 +108,7 @@ function isManagerReasoningLevel(value: string): value is ManagerReasoningLevel 
 }
 
 interface CardEditState {
+  handle: string
   displayName: string
   color: string
   enabled: boolean
@@ -124,6 +125,7 @@ function specialistToEditState(
   specialist: ResolvedSpecialistDefinition,
 ): CardEditState {
   return {
+    handle: specialist.specialistId,
     displayName: specialist.displayName,
     color: specialist.color,
     enabled: specialist.enabled,
@@ -563,18 +565,48 @@ export function SettingsSpecialists({ wsUrl, profiles, specialistChangeKey }: Se
   const handleSave = useCallback(async (id: string) => {
     const state = editStates[id]
     if (!state) return
+    const newHandle = normalizeHandle(state.handle)
+    const handleChanged = newHandle !== id
+
+    // Validate handle
+    if (!newHandle) {
+      setCardErrors((prev) => ({ ...prev, [id]: 'Handle cannot be empty' }))
+      return
+    }
+    if (handleChanged && specialists.some((s) => s.specialistId === newHandle)) {
+      setCardErrors((prev) => ({ ...prev, [id]: `A specialist with handle "${newHandle}" already exists` }))
+      return
+    }
+
     await withCardAction(id, async () => {
       const payload = toSaveSpecialistPayload(state)
+      const saveHandle = handleChanged ? newHandle : id
+
+      // Save with the (possibly new) handle
       if (isGlobal) {
-        await saveSharedSpecialist(wsUrl, id, payload)
+        await saveSharedSpecialist(wsUrl, saveHandle, payload)
       } else {
-        await saveSpecialist(wsUrl, selectedScope, id, payload)
+        await saveSpecialist(wsUrl, selectedScope, saveHandle, payload)
       }
+
+      // If handle changed, delete the old file
+      if (handleChanged) {
+        try {
+          if (isGlobal) {
+            await deleteSharedSpecialistApi(wsUrl, id)
+          } else {
+            await deleteSpecialist(wsUrl, selectedScope, id)
+          }
+        } catch {
+          // Best effort — new file already saved
+        }
+      }
+
       setCustomizeInitiatedIds((prev) => { const next = new Set(prev); next.delete(id); return next })
       cancelEditing(id)
       await loadSpecialists()
     }, 'Save failed')
-  }, [editStates, wsUrl, selectedScope, isGlobal, cancelEditing, loadSpecialists, withCardAction])
+  }, [editStates, wsUrl, selectedScope, isGlobal, specialists, cancelEditing, loadSpecialists, withCardAction])
 
   const requestSave = useCallback((id: string, isBuiltin: boolean) => {
     const state = editStates[id]
@@ -1030,6 +1062,7 @@ export function SettingsSpecialists({ wsUrl, profiles, specialistChangeKey }: Se
                   onToggleFallback={() => toggleFallbackExpand(spec.specialistId)}
                   modelPresets={modelPresets}
                   selectableModels={selectableModels}
+                  allSpecialists={specialists}
                 />
               ))}
             </div>
@@ -1095,6 +1128,7 @@ export function SettingsSpecialists({ wsUrl, profiles, specialistChangeKey }: Se
                     onToggleFallback={() => toggleFallbackExpand(spec.specialistId)}
                     modelPresets={modelPresets}
                     selectableModels={selectableModels}
+                    allSpecialists={specialists}
                   />
                 ))}
               </div>
@@ -1132,6 +1166,7 @@ export function SettingsSpecialists({ wsUrl, profiles, specialistChangeKey }: Se
                     onToggleFallback={() => {}}
                     modelPresets={modelPresets}
                     selectableModels={selectableModels}
+                    allSpecialists={specialists}
                   />
                 ))}
               </div>
@@ -1393,6 +1428,72 @@ function FallbackModelSection({
 }
 
 /* ------------------------------------------------------------------ */
+/*  Handle (filename) Field                                            */
+/* ------------------------------------------------------------------ */
+
+function HandleField({
+  value,
+  originalHandle,
+  isBuiltin,
+  isSaving,
+  allSpecialists,
+  onChange,
+}: {
+  value: string
+  originalHandle: string
+  isBuiltin: boolean
+  isSaving: boolean
+  allSpecialists: ResolvedSpecialistDefinition[]
+  onChange: (value: string) => void
+}) {
+  const normalized = normalizeHandle(value)
+  const isEmpty = normalized.length === 0
+  const isConflict =
+    normalized !== originalHandle &&
+    allSpecialists.some((s) => s.specialistId === normalized)
+
+  if (isBuiltin) {
+    return (
+      <div className="flex flex-col gap-1.5">
+        <Label className="text-xs font-medium text-muted-foreground">Handle</Label>
+        <p className="text-sm font-mono text-muted-foreground/70">{originalHandle}.md</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Label className="text-xs font-medium text-muted-foreground">Handle</Label>
+      <Input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="my-specialist"
+        className="h-9 text-sm font-mono"
+        disabled={isSaving}
+      />
+      {normalized && normalized !== value.trim() && !isEmpty && !isConflict && (
+        <p className="text-[11px] text-muted-foreground">
+          → <span className="font-mono">{normalized}.md</span>
+        </p>
+      )}
+      {normalized && normalized === value.trim() && !isEmpty && !isConflict && (
+        <p className="text-[11px] text-muted-foreground">
+          <span className="font-mono">{normalized}.md</span>
+        </p>
+      )}
+      {isEmpty && value.length > 0 && (
+        <p className="text-[11px] text-destructive">Handle cannot be empty.</p>
+      )}
+      {isConflict && (
+        <p className="text-[11px] text-destructive">
+          A specialist with handle &quot;{normalized}&quot; already exists.
+        </p>
+      )}
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
 /*  Unified Specialist Card — collapsed (compact) / expanded (edit)    */
 /* ------------------------------------------------------------------ */
 
@@ -1420,6 +1521,7 @@ function SpecialistCard({
   onToggleFallback,
   modelPresets,
   selectableModels,
+  allSpecialists,
 }: {
   mode: SpecialistCardMode
   specialist: ResolvedSpecialistDefinition
@@ -1442,6 +1544,7 @@ function SpecialistCard({
   onToggleFallback: () => void
   modelPresets: ModelPresetInfo[]
   selectableModels: SelectableModel[]
+  allSpecialists: ResolvedSpecialistDefinition[]
 }) {
   const currentValues = isEditing && editState ? editState : specialistToEditState(specialist)
 
@@ -1577,7 +1680,7 @@ function SpecialistCard({
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="flex flex-wrap items-center gap-2">
           <SpecialistBadge displayName={currentValues.displayName} color={currentValues.color} />
-          <span className="font-mono text-xs text-muted-foreground">{specialist.specialistId}.md</span>
+          <span className="font-mono text-xs text-muted-foreground">{normalizeHandle(currentValues.handle) || specialist.specialistId}.md</span>
           {specialist.builtin && (
             <span className="inline-flex items-center rounded-full border border-border/60 bg-muted/50 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
               Builtin
@@ -1611,6 +1714,16 @@ function SpecialistCard({
           />
         </div>
       </div>
+
+      {/* Handle (filename) */}
+      <HandleField
+        value={currentValues.handle}
+        originalHandle={specialist.specialistId}
+        isBuiltin={specialist.builtin}
+        isSaving={isSaving}
+        allSpecialists={allSpecialists}
+        onChange={(v) => onUpdateField('handle', v)}
+      />
 
       {/* Display name + badge color */}
       <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_180px]">
