@@ -51,7 +51,7 @@ function getTerminalIndicatorVariant(
     return { dotClassName: 'bg-zinc-500', label: 'Exited' }
   }
 
-  return { dotClassName: 'bg-emerald-500', label: 'Running' }
+  return { dotClassName: 'bg-blue-400', label: 'Running' }
 }
 
 export function TerminalTabBar({
@@ -152,10 +152,10 @@ export function TerminalTabBar({
                 className={cn(
                   'group flex h-6 min-w-0 max-w-[180px] shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-[11px] transition-colors cursor-pointer',
                   isActive && isViewportOpen
-                    ? 'border-primary/50 bg-primary/10 text-foreground'
+                    ? 'border-blue-500/50 bg-blue-500/10 text-foreground'
                     : isActive
-                      ? 'border-border/60 bg-accent/40 text-foreground'
-                      : 'border-transparent text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+                      ? 'border-blue-500/30 bg-blue-500/5 text-foreground'
+                      : 'border-transparent text-muted-foreground hover:bg-blue-500/10 hover:text-foreground',
                 )}
                 onClick={() => onSelectTerminal(terminal.terminalId)}
                 onDoubleClick={() => onStartRenameTerminal(terminal.terminalId)}
