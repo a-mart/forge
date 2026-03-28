@@ -9,7 +9,8 @@ import {
 } from '@/components/ui/sheet'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { ScrollArea } from '@/components/ui/scroll-area'
+// NOTE: We use overflow-y-auto with custom scrollbar styles instead of shadcn
+// ScrollArea to match the sidebar and message list scrollbar styling.
 import { useHelp } from './help-hooks'
 import { HelpSearch } from './HelpSearch'
 import { HelpArticle } from './HelpArticle'
@@ -27,9 +28,9 @@ import type { HelpArticle as HelpArticleType, HelpCategory } from './help-types'
 // ── Drawer resize ──
 
 const HELP_DRAWER_WIDTH_KEY = 'forge-help-drawer-width'
-const DEFAULT_DRAWER_WIDTH = 600
-const MIN_DRAWER_WIDTH = 400
-const MAX_DRAWER_WIDTH = 800
+const DEFAULT_DRAWER_WIDTH = 700
+const MIN_DRAWER_WIDTH = 450
+const MAX_DRAWER_WIDTH = 1000
 
 function loadDrawerWidth(): number {
   if (typeof window === 'undefined') return DEFAULT_DRAWER_WIDTH
@@ -228,8 +229,14 @@ export function HelpDrawer() {
 
             {/* Article list — hidden when search is active (HelpSearch renders its own results) */}
             {!searchQuery.trim() && (
-              <ScrollArea className="flex-1">
-                <div className="p-2">
+              <div
+                className={cn(
+                  'min-h-0 flex-1 overflow-y-auto p-2',
+                  '[&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent',
+                  '[&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border',
+                  '[scrollbar-width:thin] [scrollbar-color:var(--color-border)_transparent]',
+                )}
+              >
                   {articles.length === 0 ? (
                     <div className="flex flex-col items-center gap-2 py-12 text-center">
                       <BookOpen className="size-8 text-muted-foreground/30" />
@@ -248,8 +255,7 @@ export function HelpDrawer() {
                       ))}
                     </div>
                   )}
-                </div>
-              </ScrollArea>
+              </div>
             )}
 
             {/* Footer */}

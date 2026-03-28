@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Search, FileText } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
-import { ScrollArea } from '@/components/ui/scroll-area'
+// Uses overflow-y-auto with custom scrollbar to match sidebar/message list
 import { searchArticles } from './help-registry'
 import { formatCategory } from './help-utils'
 import { useHelp } from './help-hooks'
@@ -81,7 +81,14 @@ export function HelpSearch({ className }: HelpSearchProps) {
               </p>
             </div>
           ) : (
-            <ScrollArea className="max-h-[calc(100vh-240px)]">
+            <div
+              className={cn(
+                'max-h-[calc(100vh-240px)] overflow-y-auto',
+                '[&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent',
+                '[&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border',
+                '[scrollbar-width:thin] [scrollbar-color:var(--color-border)_transparent]',
+              )}
+            >
               <div className="space-y-1">
                 <p className="mb-2 text-xs text-muted-foreground">
                   {results.length} result{results.length !== 1 ? 's' : ''}
@@ -95,7 +102,7 @@ export function HelpSearch({ className }: HelpSearchProps) {
                   />
                 ))}
               </div>
-            </ScrollArea>
+            </div>
           )}
         </div>
       )}

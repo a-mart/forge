@@ -2,7 +2,7 @@ import { useMemo } from 'react'
 import { ArrowLeft, FileText } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { ScrollArea } from '@/components/ui/scroll-area'
+// Uses overflow-y-auto with custom scrollbar to match sidebar/message list
 import { MarkdownMessage } from '@/components/chat/MarkdownMessage'
 import { getArticle } from './help-registry'
 import { formatCategory } from './help-utils'
@@ -57,7 +57,14 @@ export function HelpArticle({ articleId, onBack }: HelpArticleProps) {
       </div>
 
       {/* Article body */}
-      <ScrollArea className="flex-1">
+      <div
+        className={cn(
+          'min-h-0 flex-1 overflow-y-auto',
+          '[&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent',
+          '[&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border',
+          '[scrollbar-width:thin] [scrollbar-color:var(--color-border)_transparent]',
+        )}
+      >
         <div className="px-4 py-4">
           <h2 className="mb-1.5 text-base font-semibold text-foreground">
             {article.title}
@@ -103,7 +110,7 @@ export function HelpArticle({ articleId, onBack }: HelpArticleProps) {
             </div>
           )}
         </div>
-      </ScrollArea>
+      </div>
     </div>
   )
 }
