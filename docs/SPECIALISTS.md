@@ -36,11 +36,18 @@ builtin: true                        # Internal — marks Forge-shipped speciali
 |---|---|---|---|
 | `gpt-5.3-codex` | GPT-5.3 Codex | OpenAI Codex | none, low, medium, high, xhigh |
 | `gpt-5.3-codex-spark` | GPT-5.3 Codex Spark | OpenAI Codex | none, low, medium, high, xhigh |
-| `gpt-5.4` | GPT-5.4 | OpenAI | none, low, medium, high, xhigh |
+| `gpt-5.4` | GPT-5.4 | OpenAI Codex | none, low, medium, high, xhigh |
+| `gpt-5.4-mini` | GPT-5.4 Mini | OpenAI Codex | none, low, medium, high, xhigh |
+| `gpt-5.4-nano` | GPT-5.4 Nano | OpenAI Codex | none, low, medium, high, xhigh |
 | `claude-opus-4-6` | Claude Opus 4.6 | Anthropic | low, medium, high |
 | `claude-sonnet-4-5-20250929` | Claude Sonnet 4.5 | Anthropic | low, medium, high |
 | `claude-haiku-4-5-20251001` | Claude Haiku 4.5 | Anthropic | low, medium, high |
+| `grok-4` | Grok 4 | xAI | none, low, medium, high, xhigh |
+| `grok-4-fast` | Grok 4 Fast | xAI | none, low, medium, high, xhigh |
+| `grok-3` | Grok 3 | xAI | none, low, medium, high, xhigh |
 | `default` | Codex App Runtime | Codex App | none, low, medium, high, xhigh |
+
+**Note:** `gpt-5.4-nano` is not yet available in the current Pi runtime and will error if selected.
 
 ## System Prompt
 
@@ -97,6 +104,8 @@ Click any specialist card to expand and edit it. Changes are saved per-file.
 ### Fallback Models
 
 Each specialist can optionally define a fallback model. If the primary model is unavailable (rate limited, auth error, capacity), the manager automatically retries with the fallback model and reasoning level.
+
+You can use a model from a different provider as your fallback (e.g., primary `grok-4`, fallback `claude-sonnet-4-5-20250929`). This is useful for provider outages.
 
 ### Resolution Order
 

@@ -230,6 +230,7 @@ Copy `.env.example` to `.env` and uncomment/set values as needed. Key variables:
 | `BRAVE_API_KEY` | — | Brave Search skill |
 | `GEMINI_API_KEY` | — | Image generation skill |
 | `CODEX_API_KEY` | — | OpenAI Codex runtime |
+| `XAI_API_KEY` | — | xAI/Grok API key |
 | `CODEX_BIN` | `codex` | Path to Codex binary |
 | `FORGE_TERMINAL_ENABLED` | `true` | Enable integrated terminal subsystem |
 | `FORGE_TERMINAL_MAX_PER_SESSION` | `10` | Max terminals per session |
