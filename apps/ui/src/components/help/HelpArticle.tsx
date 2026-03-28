@@ -40,7 +40,7 @@ export function HelpArticle({ articleId, onBack }: HelpArticleProps) {
   return (
     <div className="flex h-full flex-col">
       {/* Article header */}
-      <div className="flex items-center gap-2 border-b border-border/40 px-4 py-2.5">
+      <div className="flex items-center gap-2 border-b border-border/40 px-4 pr-12 py-2.5">
         <Button
           type="button"
           variant="ghost"
