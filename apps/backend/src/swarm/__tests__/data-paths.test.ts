@@ -34,6 +34,7 @@ import {
   getSessionMetaPath,
   getSessionsDir,
   getCommonKnowledgePath,
+  getCortexAutoReviewSettingsPath,
   getCortexNotesPath,
   getCortexPromotionManifestsDir,
   getCortexReviewLockPath,
@@ -131,6 +132,7 @@ describe("data-paths", () => {
     expect(getSharedAuthDir(DATA_DIR)).toBe(join(DATA_DIR, "shared", "auth"));
     expect(getSharedAuthFilePath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "auth", "auth.json"));
     expect(getSharedSecretsFilePath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "secrets.json"));
+    expect(getCortexAutoReviewSettingsPath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "cortex-auto-review.json"));
 
     expect(getUploadsDir(DATA_DIR)).toBe(join(DATA_DIR, "uploads"));
     expect(getSwarmDir(DATA_DIR)).toBe(join(DATA_DIR, "swarm"));

@@ -19,12 +19,16 @@ import {
   readControlPidFromFile,
   readDaemonizedEnv
 } from "../reboot/control-pid.js";
+import {
+  CortexAutoReviewSettingsService
+} from "../swarm/cortex-auto-review-settings.js";
 import { isPidAlive } from "../swarm/platform.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import { UnreadTracker } from "../swarm/unread-tracker.js";
 import { applyCorsHeaders, resolveRequestUrl, sendJson } from "./http-utils.js";
 import { createAgentHttpRoutes } from "./routes/agent-routes.js";
 import { createChromeCdpRoutes } from "./routes/chrome-cdp-routes.js";
+import { createCortexAutoReviewRoutes } from "./routes/cortex-auto-review-routes.js";
 import { createCortexRoutes } from "./routes/cortex-routes.js";
 import { createFileRoutes } from "./routes/file-routes.js";
 import { createFeedbackRoutes } from "./routes/feedback-routes.js";
@@ -62,6 +66,7 @@ export class SwarmWebSocketServer {
   private readonly playwrightLivePreviewService: PlaywrightLivePreviewService;
   private readonly playwrightLivePreviewProxy: PlaywrightLivePreviewProxy;
   private readonly playwrightSettingsService: PlaywrightSettingsService;
+  private readonly cortexAutoReviewSettingsService: CortexAutoReviewSettingsService;
   private readonly playwrightEnvEnabledOverride: boolean | undefined;
   private readonly terminalService: TerminalService | null;
   private readonly terminalRuntimeConfig: TerminalRuntimeConfig | null;
@@ -245,6 +250,9 @@ export class SwarmWebSocketServer {
     this.playwrightSettingsService =
       options.playwrightSettingsService ??
       new PlaywrightSettingsService({ dataDir: this.swarmManager.getConfig().paths.dataDir });
+    this.cortexAutoReviewSettingsService = new CortexAutoReviewSettingsService({
+      dataDir: this.swarmManager.getConfig().paths.dataDir,
+    });
     this.playwrightEnvEnabledOverride = options.playwrightEnvEnabledOverride;
     this.terminalService = options.terminalService ?? null;
     this.terminalRuntimeConfig = options.terminalRuntimeConfig ?? null;
@@ -310,6 +318,9 @@ export class SwarmWebSocketServer {
       ...createGitDiffRoutes({ swarmManager: this.swarmManager }),
       ...createFeedbackRoutes({ swarmManager: this.swarmManager }),
       ...createCortexRoutes({ swarmManager: this.swarmManager }),
+      ...createCortexAutoReviewRoutes({
+        settingsService: this.cortexAutoReviewSettingsService,
+      }),
       ...createTranscriptionRoutes({ swarmManager: this.swarmManager }),
       ...createStatsRoutes({ statsService: this.statsService }),
       ...createSchedulerRoutes({ swarmManager: this.swarmManager }),
@@ -353,6 +364,7 @@ export class SwarmWebSocketServer {
       return;
     }
 
+    await this.cortexAutoReviewSettingsService.load();
     await this.unreadTracker.load();
 
     const httpServer = createServer((request, response) => {

@@ -247,6 +247,41 @@ async function waitForCondition(
   throw new Error('Timed out waiting for async condition')
 }
 
+function expectStartedReviewRun<T>(run: T | null): T {
+  expect(run).not.toBeNull()
+  if (!run) {
+    throw new Error('Expected Cortex review run to be created')
+  }
+  return run
+}
+
+async function seedNeedsReviewSession(
+  config: SwarmConfig,
+  profileId = 'alpha',
+  sessionId = 'alpha--s1',
+): Promise<void> {
+  const sessionDir = getSessionDir(config.paths.dataDir, profileId, sessionId)
+  const sessionFileContent = '{"type":"message","role":"user","content":[{"type":"text","text":"needs review"}]}\n'
+
+  await mkdir(sessionDir, { recursive: true })
+  await writeFile(join(sessionDir, 'session.jsonl'), sessionFileContent, 'utf8')
+  await writeFile(
+    join(sessionDir, 'meta.json'),
+    `${JSON.stringify(
+      {
+        profileId,
+        sessionId,
+        stats: {
+          sessionFileSize: Buffer.byteLength(sessionFileContent, 'utf8'),
+        },
+      },
+      null,
+      2,
+    )}\n`,
+    'utf8',
+  )
+}
+
 function isEnoentError(error: unknown): boolean {
   return (
     typeof error === 'object' &&
@@ -2345,11 +2380,11 @@ describe('SwarmManager', () => {
     const manager = new TestSwarmManager(config)
     await manager.boot()
 
-    const run = await manager.startCortexReviewRun({
+    const run = expectStartedReviewRun(await manager.startCortexReviewRun({
       scope: { mode: 'session', profileId: 'alpha', sessionId: 'alpha--s1', axes: ['memory', 'feedback'] },
       trigger: 'manual',
       sourceContext: { channel: 'web' },
-    })
+    }))
 
     expect(run.status).toBe('completed')
     expect(run.scopeLabel).toBe('alpha/alpha--s1 (memory, feedback)')
@@ -2403,11 +2438,11 @@ describe('SwarmManager', () => {
     const firstBoot = new TestSwarmManager(config)
     await firstBoot.boot()
 
-    const run = await firstBoot.startCortexReviewRun({
+    const run = expectStartedReviewRun(await firstBoot.startCortexReviewRun({
       scope: { mode: 'session', profileId: 'alpha', sessionId: 'alpha--s1', axes: ['memory'] },
       trigger: 'manual',
       sourceContext: { channel: 'web' },
-    })
+    }))
 
     expect(run.sessionAgentId).toMatch(/^cortex--s\d+$/)
 
@@ -2442,11 +2477,11 @@ describe('SwarmManager', () => {
     const firstBoot = new TestSwarmManager(config)
     await firstBoot.boot()
 
-    const run = await firstBoot.startCortexReviewRun({
+    const run = expectStartedReviewRun(await firstBoot.startCortexReviewRun({
       scope: { mode: 'session', profileId: 'alpha', sessionId: 'alpha--s1', axes: ['memory'] },
       trigger: 'manual',
       sourceContext: { channel: 'web' },
-    })
+    }))
 
     expect(run.sessionAgentId).toMatch(/^cortex--s\d+$/)
 
@@ -2514,7 +2549,7 @@ describe('SwarmManager', () => {
     }
   })
 
-  it('routes scheduled review envelopes into the same review-run path with schedule metadata', async () => {
+  it('skips scheduled all-scope review envelopes when deterministic scan finds nothing to review', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await manager.boot()
@@ -2528,6 +2563,27 @@ describe('SwarmManager', () => {
     )
 
     const runs = await manager.listCortexReviewRuns()
+    expect(runs).toEqual([])
+    expect(manager.listAgents().some((descriptor) => descriptor.sessionPurpose === 'cortex_review')).toBe(false)
+  })
+
+  it('routes scheduled review envelopes into the same review-run path with schedule metadata when review is needed', async () => {
+    const config = await makeTempConfig()
+    await seedNeedsReviewSession(config)
+
+    const manager = new TestSwarmManager(config)
+    await manager.boot()
+
+    await manager.handleUserMessage(
+      '[Scheduled Task: Nightly Review]\n[scheduleContext] {"scheduleId":"sched-1"}\n\nReview all sessions that need attention',
+      {
+        targetAgentId: 'cortex',
+        sourceContext: { channel: 'web' },
+      },
+    )
+
+    const runs = await manager.listCortexReviewRuns()
+    expect(runs).toHaveLength(1)
     expect(runs[0]).toMatchObject({
       trigger: 'scheduled',
       scope: { mode: 'all' },
@@ -2535,6 +2591,190 @@ describe('SwarmManager', () => {
       requestText:
         '[Scheduled Task: Nightly Review]\n[scheduleContext] {"scheduleId":"sched-1"}\n\nReview all sessions that need attention',
     })
+  })
+
+  it('bypasses precheck and coalescing for scheduled session-scoped review envelopes', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await manager.boot()
+
+    const scheduledMessage =
+      '[Scheduled Task: Session Review]\n[scheduleContext] {"scheduleId":"sched-session"}\n\nReview session alpha/alpha--s1 (memory freshness)'
+
+    await manager.handleUserMessage(scheduledMessage, {
+      targetAgentId: 'cortex',
+      sourceContext: { channel: 'web' },
+    })
+
+    await manager.handleUserMessage(scheduledMessage, {
+      targetAgentId: 'cortex',
+      sourceContext: { channel: 'web' },
+    })
+
+    const runs = await manager.listCortexReviewRuns()
+    expect(runs.filter((entry) => entry.trigger === 'scheduled' && entry.scope.mode === 'session')).toHaveLength(2)
+    expect(runs[0]).toMatchObject({
+      trigger: 'scheduled',
+      scope: { mode: 'session', profileId: 'alpha', sessionId: 'alpha--s1', axes: ['memory'] },
+      scheduleName: 'Session Review',
+    })
+  })
+
+  it('coalesces scheduled all-scope review envelopes when an all-scope review is already active', async () => {
+    const config = await makeTempConfig()
+    await seedNeedsReviewSession(config)
+
+    class BlockingReviewRuntime extends FakeRuntime {
+      constructor(
+        descriptor: AgentDescriptor,
+        private readonly release: Promise<void>,
+      ) {
+        super(descriptor)
+      }
+
+      override async sendMessage(message: string | RuntimeUserMessage, delivery: RequestedDeliveryMode = 'auto'): Promise<SendMessageReceipt> {
+        if (this.descriptor.sessionPurpose === 'cortex_review') {
+          this.descriptor.status = 'streaming'
+          void this.release.then(() => {
+            this.descriptor.status = 'idle'
+          })
+        }
+        return super.sendMessage(message, delivery)
+      }
+    }
+
+    let releaseReview!: () => void
+    const releaseReviewPromise = new Promise<void>((resolve) => {
+      releaseReview = resolve
+    })
+
+    class BlockingReviewManager extends TestSwarmManager {
+      protected override async createRuntimeForDescriptor(
+        descriptor: AgentDescriptor,
+        systemPrompt: string,
+        _runtimeToken?: number,
+      ): Promise<SwarmAgentRuntime> {
+        const runtime = new BlockingReviewRuntime(descriptor, releaseReviewPromise)
+        this.createdRuntimeIds.push(descriptor.agentId)
+        this.runtimeByAgentId.set(descriptor.agentId, runtime)
+        this.systemPromptByAgentId.set(descriptor.agentId, systemPrompt)
+        return runtime as unknown as SwarmAgentRuntime
+      }
+    }
+
+    const manager = new BlockingReviewManager(config)
+    await manager.boot()
+
+    const scheduledMessage =
+      '[Scheduled Task: Nightly Review]\n[scheduleContext] {"scheduleId":"sched-1"}\n\nReview all sessions that need attention'
+
+    await manager.handleUserMessage(scheduledMessage, {
+      targetAgentId: 'cortex',
+      sourceContext: { channel: 'web' },
+    })
+
+    await waitForCondition(() => {
+      const activeReviewSession = manager
+        .listAgents()
+        .find((descriptor) => descriptor.sessionPurpose === 'cortex_review' && descriptor.status === 'streaming')
+      return Boolean(activeReviewSession)
+    })
+
+    await manager.handleUserMessage(scheduledMessage, {
+      targetAgentId: 'cortex',
+      sourceContext: { channel: 'web' },
+    })
+
+    const runs = await manager.listCortexReviewRuns()
+    expect(runs).toHaveLength(1)
+    expect(runs[0]).toMatchObject({
+      trigger: 'scheduled',
+      scope: { mode: 'all' },
+    })
+
+    releaseReview()
+  })
+
+  it('coalesces scheduled all-scope review envelopes when an all-scope run is already queued', async () => {
+    const config = await makeTempConfig()
+    await seedNeedsReviewSession(config)
+
+    class BlockingReviewRuntime extends FakeRuntime {
+      constructor(
+        descriptor: AgentDescriptor,
+        private readonly release: Promise<void>,
+      ) {
+        super(descriptor)
+      }
+
+      override async sendMessage(message: string | RuntimeUserMessage, delivery: RequestedDeliveryMode = 'auto'): Promise<SendMessageReceipt> {
+        if (this.descriptor.sessionPurpose === 'cortex_review') {
+          this.descriptor.status = 'streaming'
+          void this.release.then(() => {
+            this.descriptor.status = 'idle'
+          })
+        }
+        return super.sendMessage(message, delivery)
+      }
+    }
+
+    let releaseReview!: () => void
+    const releaseReviewPromise = new Promise<void>((resolve) => {
+      releaseReview = resolve
+    })
+
+    class BlockingReviewManager extends TestSwarmManager {
+      protected override async createRuntimeForDescriptor(
+        descriptor: AgentDescriptor,
+        systemPrompt: string,
+        _runtimeToken?: number,
+      ): Promise<SwarmAgentRuntime> {
+        const runtime = new BlockingReviewRuntime(descriptor, releaseReviewPromise)
+        this.createdRuntimeIds.push(descriptor.agentId)
+        this.runtimeByAgentId.set(descriptor.agentId, runtime)
+        this.systemPromptByAgentId.set(descriptor.agentId, systemPrompt)
+        return runtime as unknown as SwarmAgentRuntime
+      }
+    }
+
+    const manager = new BlockingReviewManager(config)
+    await manager.boot()
+
+    const activeRun = expectStartedReviewRun(await manager.startCortexReviewRun({
+      scope: { mode: 'session', profileId: 'alpha', sessionId: 'alpha--s1', axes: ['memory'] },
+      trigger: 'manual',
+      sourceContext: { channel: 'web' },
+    }))
+
+    await waitForCondition(() => {
+      const activeReviewSession = manager.getAgent(activeRun.sessionAgentId ?? '')
+      return activeReviewSession?.status === 'streaming'
+    })
+
+    const scheduledMessage =
+      '[Scheduled Task: Nightly Review]\n[scheduleContext] {"scheduleId":"sched-1"}\n\nReview all sessions that need attention'
+
+    await manager.handleUserMessage(scheduledMessage, {
+      targetAgentId: 'cortex',
+      sourceContext: { channel: 'web' },
+    })
+
+    let runs = await manager.listCortexReviewRuns()
+    const queuedAllScopeRun = runs.find((entry) => entry.trigger === 'scheduled' && entry.scope.mode === 'all')
+    expect(queuedAllScopeRun).toMatchObject({
+      status: 'queued',
+      sessionAgentId: null,
+    })
+
+    await manager.handleUserMessage(scheduledMessage, {
+      targetAgentId: 'cortex',
+      sourceContext: { channel: 'web' },
+    })
+
+    runs = await manager.listCortexReviewRuns()
+    expect(runs.filter((entry) => entry.trigger === 'scheduled' && entry.scope.mode === 'all')).toHaveLength(1)
+
+    releaseReview()
   })
 
   it('queues concurrent review starts FIFO and automatically launches the next run after the active one finishes', async () => {
@@ -2594,18 +2834,18 @@ describe('SwarmManager', () => {
       return Boolean(streamingReviewSession)
     })
 
-    const secondRun = await manager.startCortexReviewRun({
+    const secondRun = expectStartedReviewRun(await manager.startCortexReviewRun({
       scope: { mode: 'session', profileId: 'alpha', sessionId: 'alpha--s1', axes: ['memory'] },
       trigger: 'manual',
       sourceContext: { channel: 'web' },
-    })
+    }))
 
     expect(secondRun.status).toBe('queued')
     expect(secondRun.sessionAgentId).toBeNull()
     expect(secondRun.queuePosition).toBe(1)
 
     releaseFirstRun()
-    const firstRun = await firstRunPromise
+    const firstRun = expectStartedReviewRun(await firstRunPromise)
 
     let refreshedRuns = await manager.listCortexReviewRuns()
     let refreshedSecondRun = refreshedRuns.find((entry) => entry.runId === secondRun.runId)

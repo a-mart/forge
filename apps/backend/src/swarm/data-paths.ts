@@ -227,6 +227,10 @@ export function getSharedPlaywrightDashboardSettingsPath(dataDir: string): strin
   return join(getSharedDir(dataDir), "playwright-dashboard.json");
 }
 
+export function getCortexAutoReviewSettingsPath(dataDir: string): string {
+  return join(getSharedDir(dataDir), "cortex-auto-review.json");
+}
+
 export function getSharedMobileDevicesPath(dataDir: string): string {
   return join(getSharedDir(dataDir), "mobile-devices.json");
 }

@@ -75,6 +75,7 @@ These are briefly described for orientation. Most have both backend and UI compo
 | **Prompt system** | `swarm/prompt-registry.ts`, `swarm/archetypes/` | Settings UI | Prompt templates, archetypes, and resolution (profile → repo → builtin) |
 | **Memory system** | `swarm/memory-merge.ts`, `swarm/memory-paths.ts` | Chat UI | Per-session and per-profile persistent memory with merge lifecycle |
 | **Cortex** | `swarm/operational/` | `components/chat/cortex/` | AI self-improvement, first-launch welcome preferences, and knowledge management |
+| **Cortex auto-review** | `swarm/cortex-auto-review-settings.ts`, `ws/routes/cortex-auto-review-routes.ts` | `components/settings/SettingsGeneral.tsx`, `components/settings/cortex-auto-review-api.ts` | Periodic automated reviews that run only when sessions have changed (deterministic pre-check prevents unnecessary LLM sessions) |
 | **Playwright dashboard** | `playwright/*` | `components/playwright/*` | Live browser preview and automation dashboard |
 | **Codex runtime** | `swarm/codex-agent-runtime.ts`, `swarm/codex-*.ts` | — | OpenAI Codex agent runtime integration |
 | **Mobile push** | `mobile/*` | — | Expo push notification service for mobile companion app |
@@ -132,6 +133,7 @@ All runtime state lives in `~/.forge` (or `%LOCALAPPDATA%\forge` on Windows), ov
 │   │   └── profiles/<profileId>.md        #   Per-profile knowledge
 │   ├── slash-commands.json                # Global slash commands
 │   ├── playwright-dashboard.json          # Playwright dashboard settings
+│   ├── cortex-auto-review.json            # Cortex auto-review schedule settings
 │   ├── mobile-devices.json                # Registered mobile devices
 │   ├── mobile-notification-prefs.json     # Mobile push preferences
 │   └── specialists/                       # Global specialist definitions (.md files)

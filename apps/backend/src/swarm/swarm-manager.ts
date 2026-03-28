@@ -61,6 +61,7 @@ import {
 import { executeLLMMerge, MEMORY_MERGE_SYSTEM_PROMPT } from "./memory-merge.js";
 import { PersistenceService } from "./persistence-service.js";
 import { migrateLegacyProfileKnowledgeToReferenceDoc } from "./reference-docs.js";
+import { scanCortexReviewStatus } from "./scripts/cortex-scan.js";
 import { RuntimeFactory } from "./runtime-factory.js";
 import {
   computePromptFingerprint,
@@ -1492,10 +1493,47 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     sourceContext?: MessageSourceContext;
     requestText?: string;
     scheduleName?: string | null;
-  }): Promise<CortexReviewRunRecord> {
+  }): Promise<CortexReviewRunRecord | null> {
     const runId = createCortexReviewRunId();
+    let startedRunId: string | null = null;
 
     await this.withCortexReviewRunStartLock(async () => {
+      if (input.trigger === "scheduled" && input.scope.mode === "all") {
+        const storedRuns = await readStoredCortexReviewRuns(this.config.paths.dataDir);
+        const queuedAllScopeRun = storedRuns.find((stored) => (
+          !stored.blockedReason &&
+          !stored.interruptedAt &&
+          !stored.sessionAgentId &&
+          stored.scope.mode === "all"
+        ));
+
+        if (queuedAllScopeRun) {
+          this.logDebug("cortex:review_run:coalesced", {
+            reason: "all-scope run already queued",
+            existingRunId: queuedAllScopeRun.runId
+          });
+          return;
+        }
+
+        const activeReviewSession = this.getActiveCortexReviewSession();
+        if (activeReviewSession) {
+          const activeAllScopeRun = storedRuns.find((stored) => (
+            !stored.blockedReason &&
+            !stored.interruptedAt &&
+            stored.sessionAgentId === activeReviewSession.agentId &&
+            stored.scope.mode === "all"
+          ));
+
+          if (activeAllScopeRun) {
+            this.logDebug("cortex:review_run:coalesced", {
+              reason: "all-scope run already active",
+              activeRunId: activeAllScopeRun.runId
+            });
+            return;
+          }
+        }
+      }
+
       await this.ensureCortexProfile();
 
       await appendCortexReviewRun(this.config.paths.dataDir, {
@@ -1510,11 +1548,16 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         scheduleName: input.scheduleName ?? null
       });
 
+      startedRunId = runId;
       await this.startNextQueuedCortexReviewRun();
     });
 
+    if (!startedRunId) {
+      return null;
+    }
+
     this.scheduleCortexReviewRunQueueCheck();
-    return this.getCortexReviewRunByIdOrThrow(runId);
+    return this.getCortexReviewRunByIdOrThrow(startedRunId);
   }
 
   private async withCortexReviewRunStartLock<T>(operation: () => Promise<T>): Promise<T> {
@@ -4358,9 +4401,23 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return false;
     }
 
+    const trigger: CortexReviewRunTrigger = scheduledEnvelope ? "scheduled" : "manual";
+    if (trigger === "scheduled" && scope.mode === "all") {
+      const scanResult = await scanCortexReviewStatus(this.config.paths.dataDir);
+      if (scanResult.summary.needsReview === 0) {
+        this.logDebug("cortex:auto_review:skipped", {
+          reason: "nothing needs review",
+          upToDate: scanResult.summary.upToDate,
+          excluded: scanResult.summary.excluded,
+          scheduleName: scheduledEnvelope?.scheduleName ?? null
+        });
+        return true;
+      }
+    }
+
     await this.startCortexReviewRun({
       scope,
-      trigger: scheduledEnvelope ? "scheduled" : "manual",
+      trigger,
       sourceContext,
       requestText: text.trim(),
       scheduleName: scheduledEnvelope?.scheduleName ?? null

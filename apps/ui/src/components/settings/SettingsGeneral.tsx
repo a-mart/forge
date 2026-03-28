@@ -28,7 +28,11 @@ import {
   fetchPlaywrightSettings,
   updatePlaywrightSettings,
 } from '@/components/playwright/playwright-api'
-import type { PlaywrightDiscoverySettings } from '@forge/protocol'
+import {
+  fetchCortexAutoReviewSettings,
+  updateCortexAutoReviewSettings,
+} from '@/components/settings/cortex-auto-review-api'
+import type { PlaywrightDiscoverySettings, CortexAutoReviewSettings } from '@forge/protocol'
 
 interface SettingsGeneralProps {
   wsUrl: string
@@ -54,6 +58,11 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
   const [playwrightError, setPlaywrightError] = useState<string | null>(null)
   const [playwrightUpdating, setPlaywrightUpdating] = useState(false)
 
+  const [cortexSettings, setCortexSettings] = useState<CortexAutoReviewSettings | null>(null)
+  const [cortexError, setCortexError] = useState<string | null>(null)
+  const [cortexUpdating, setCortexUpdating] = useState(false)
+  const [cortexLoadFailed, setCortexLoadFailed] = useState(false)
+
   useEffect(() => {
     setThemePreference(readStoredThemePreference())
   }, [])
@@ -75,6 +84,20 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
       })
   }, [wsUrl, onPlaywrightSettingsLoaded])
 
+  // Fetch Cortex auto-review settings on mount
+  useEffect(() => {
+    setCortexLoadFailed(false)
+    void fetchCortexAutoReviewSettings(wsUrl)
+      .then((settings) => {
+        setCortexSettings(settings)
+        setCortexLoadFailed(false)
+      })
+      .catch((err) => {
+        setCortexLoadFailed(true)
+        setCortexError(err instanceof Error ? err.message : 'Could not load Cortex settings')
+      })
+  }, [wsUrl])
+
   const handlePlaywrightToggle = useCallback(
     (enabled: boolean) => {
       if (playwrightUpdating) return
@@ -94,6 +117,46 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
         })
     },
     [wsUrl, playwrightUpdating, onPlaywrightSnapshotUpdate],
+  )
+
+  const handleCortexToggle = useCallback(
+    (enabled: boolean) => {
+      if (cortexUpdating) return
+      setCortexUpdating(true)
+      setCortexError(null)
+
+      void updateCortexAutoReviewSettings(wsUrl, { enabled })
+        .then((settings) => {
+          setCortexSettings(settings)
+        })
+        .catch((err) => {
+          setCortexError(err instanceof Error ? err.message : 'Failed to update setting')
+        })
+        .finally(() => {
+          setCortexUpdating(false)
+        })
+    },
+    [wsUrl, cortexUpdating],
+  )
+
+  const handleCortexIntervalChange = useCallback(
+    (intervalMinutes: number) => {
+      if (cortexUpdating) return
+      setCortexUpdating(true)
+      setCortexError(null)
+
+      void updateCortexAutoReviewSettings(wsUrl, { intervalMinutes })
+        .then((settings) => {
+          setCortexSettings(settings)
+        })
+        .catch((err) => {
+          setCortexError(err instanceof Error ? err.message : 'Failed to update setting')
+        })
+        .finally(() => {
+          setCortexUpdating(false)
+        })
+    },
+    [wsUrl, cortexUpdating],
   )
 
   const handleThemePreferenceChange = useCallback((nextPreference: ThemePreference) => {
@@ -245,6 +308,80 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
               </div>
             ) : null}
           </div>
+        </SettingsWithCTA>
+      </SettingsSection>
+
+      <SettingsSection
+        label="Cortex"
+        description="Cortex is the self-improvement system that reviews sessions and maintains knowledge"
+      >
+        <SettingsWithCTA
+          label="Automatic Reviews"
+          description="Cortex periodically reviews active sessions and updates knowledge, memory, and reference docs."
+        >
+          <div className="flex flex-col items-end gap-1.5">
+            <Switch
+              checked={cortexSettings?.enabled ?? false}
+              onCheckedChange={handleCortexToggle}
+              disabled={!cortexSettings || cortexUpdating}
+            />
+            {cortexError ? (
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] text-destructive">{cortexError}</span>
+                {cortexLoadFailed ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCortexError(null)
+                      setCortexLoadFailed(false)
+                      void fetchCortexAutoReviewSettings(wsUrl)
+                        .then((s) => {
+                          setCortexSettings(s)
+                          setCortexLoadFailed(false)
+                        })
+                        .catch((err) => {
+                          setCortexLoadFailed(true)
+                          setCortexError(err instanceof Error ? err.message : 'Could not load Cortex settings')
+                        })
+                    }}
+                    className="text-[10px] text-primary underline hover:no-underline"
+                  >
+                    Retry
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        </SettingsWithCTA>
+
+        <SettingsWithCTA
+          label="Review Interval"
+          description="How often Cortex checks for sessions that need review."
+        >
+          <Select
+            value={String(cortexSettings?.intervalMinutes ?? 120)}
+            onValueChange={(value) => {
+              const minutes = parseInt(value, 10)
+              if (!isNaN(minutes)) handleCortexIntervalChange(minutes)
+            }}
+            disabled={!cortexSettings?.enabled || cortexUpdating}
+          >
+            <SelectTrigger
+              className={`w-full sm:w-48 ${!cortexSettings?.enabled ? 'opacity-50' : ''}`}
+            >
+              <SelectValue placeholder="Select interval" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="15">Every 15 minutes</SelectItem>
+              <SelectItem value="30">Every 30 minutes</SelectItem>
+              <SelectItem value="60">Every hour</SelectItem>
+              <SelectItem value="120">Every 2 hours</SelectItem>
+              <SelectItem value="240">Every 4 hours</SelectItem>
+              <SelectItem value="480">Every 8 hours</SelectItem>
+              <SelectItem value="720">Every 12 hours</SelectItem>
+              <SelectItem value="1440">Every 24 hours</SelectItem>
+            </SelectContent>
+          </Select>
         </SettingsWithCTA>
       </SettingsSection>
 
