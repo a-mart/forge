@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useHelpContext } from '@/components/help/help-hooks'
-import { AlertTriangle, ChevronDown, ChevronUp, Eye, Loader2, Pencil, Pin, Plus, RotateCcw, Trash2 } from 'lucide-react'
+import { AlertTriangle, ChevronDown, ChevronUp, Copy, Eye, Loader2, Pencil, Pin, Plus, RotateCcw, Trash2 } from 'lucide-react'
 import {
   Select,
   SelectContent,
@@ -173,6 +173,16 @@ function normalizeHandle(raw: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
+}
+
+/** Generate a unique clone handle that doesn't collide with existing specialist IDs. */
+function generateUniqueCloneHandle(baseHandle: string, existingIds: Set<string>): string {
+  const candidate = `${baseHandle}-copy`
+  if (!existingIds.has(candidate)) return candidate
+  for (let i = 2; ; i++) {
+    const numbered = `${baseHandle}-copy-${i}`
+    if (!existingIds.has(numbered)) return numbered
+  }
 }
 
 /** Pick the first color not already used by any existing specialist. */
@@ -614,6 +624,51 @@ export function SettingsSpecialists({ wsUrl, profiles, specialistChangeKey }: Se
     }, 'Delete failed')
   }, [wsUrl, selectedScope, isGlobal, cancelEditing, loadSpecialists, withCardAction])
 
+  const [cloningIds, setCloningIds] = useState<Set<string>>(new Set())
+
+  const handleClone = useCallback(async (source: ResolvedSpecialistDefinition) => {
+    const sourceId = source.specialistId
+    setCloningIds((prev) => new Set(prev).add(sourceId))
+    setCardErrors((prev) => { const next = { ...prev }; delete next[sourceId]; return next })
+    try {
+      const existingIds = new Set(specialists.map((s) => s.specialistId))
+      const newHandle = generateUniqueCloneHandle(source.specialistId, existingIds)
+
+      const payload: SaveSpecialistPayload = {
+        displayName: `${source.displayName} (Copy)`,
+        color: source.color,
+        enabled: true,
+        whenToUse: source.whenToUse,
+        modelId: source.modelId,
+        reasoningLevel: (source.reasoningLevel as ManagerReasoningLevel) ?? undefined,
+        fallbackModelId: source.fallbackModelId ?? undefined,
+        fallbackReasoningLevel: (source.fallbackReasoningLevel as ManagerReasoningLevel) ?? undefined,
+        pinned: false,
+        promptBody: source.promptBody,
+      }
+
+      if (isGlobal) {
+        await saveSharedSpecialist(wsUrl, newHandle, payload)
+      } else {
+        await saveSpecialist(wsUrl, selectedScope, newHandle, payload)
+      }
+
+      const updatedSpecialists = await loadSpecialists()
+      const created = updatedSpecialists.find((s) => s.specialistId === newHandle)
+      if (created) {
+        startEditing(created)
+        setExpandedPromptIds((prev) => new Set(prev).add(created.specialistId))
+      }
+    } catch (err) {
+      setCardErrors((prev) => ({
+        ...prev,
+        [sourceId]: err instanceof Error ? err.message : 'Clone failed',
+      }))
+    } finally {
+      setCloningIds((prev) => { const next = new Set(prev); next.delete(sourceId); return next })
+    }
+  }, [wsUrl, selectedScope, isGlobal, specialists, loadSpecialists, startEditing])
+
   const togglePromptExpand = useCallback((id: string) => {
     setExpandedPromptIds((prev) => {
       const next = new Set(prev)
@@ -904,6 +959,7 @@ export function SettingsSpecialists({ wsUrl, profiles, specialistChangeKey }: Se
                   isEditing={editingIds.has(spec.specialistId)}
                   editState={editStates[spec.specialistId]}
                   isSaving={savingIds.has(spec.specialistId)}
+                  isCloning={cloningIds.has(spec.specialistId)}
                   cardError={cardErrors[spec.specialistId]}
                   isPromptExpanded={expandedPromptIds.has(spec.specialistId)}
                   isFallbackExpanded={expandedFallbackIds.has(spec.specialistId)}
@@ -912,6 +968,7 @@ export function SettingsSpecialists({ wsUrl, profiles, specialistChangeKey }: Se
                   onUpdateField={(field, value) => updateEditField(spec.specialistId, field, value)}
                   onSave={() => requestSave(spec.specialistId, spec.builtin)}
                   onDelete={() => handleDelete(spec.specialistId)}
+                  onClone={() => handleClone(spec)}
                   onToggleEnabled={() => handleGlobalToggleEnabled(spec)}
                   onTogglePrompt={() => togglePromptExpand(spec.specialistId)}
                   onToggleFallback={() => toggleFallbackExpand(spec.specialistId)}
@@ -966,6 +1023,7 @@ export function SettingsSpecialists({ wsUrl, profiles, specialistChangeKey }: Se
                     isEditing={editingIds.has(spec.specialistId)}
                     editState={editStates[spec.specialistId]}
                     isSaving={savingIds.has(spec.specialistId)}
+                    isCloning={cloningIds.has(spec.specialistId)}
                     cardError={cardErrors[spec.specialistId]}
                     isPromptExpanded={expandedPromptIds.has(spec.specialistId)}
                     isFallbackExpanded={expandedFallbackIds.has(spec.specialistId)}
@@ -975,6 +1033,7 @@ export function SettingsSpecialists({ wsUrl, profiles, specialistChangeKey }: Se
                     onSave={() => requestSave(spec.specialistId, spec.builtin)}
                     onRevert={() => handleRevert(spec.specialistId)}
                     onDelete={() => handleDelete(spec.specialistId)}
+                    onClone={() => handleClone(spec)}
                     onToggleEnabled={() => handleProfileToggleEnabled(spec)}
                     onTogglePrompt={() => togglePromptExpand(spec.specialistId)}
                     onToggleFallback={() => toggleFallbackExpand(spec.specialistId)}
@@ -1003,6 +1062,7 @@ export function SettingsSpecialists({ wsUrl, profiles, specialistChangeKey }: Se
                     isEditing={false}
                     editState={undefined}
                     isSaving={savingIds.has(spec.specialistId)}
+                    isCloning={cloningIds.has(spec.specialistId)}
                     cardError={cardErrors[spec.specialistId]}
                     isPromptExpanded={false}
                     isFallbackExpanded={false}
@@ -1010,6 +1070,7 @@ export function SettingsSpecialists({ wsUrl, profiles, specialistChangeKey }: Se
                     onCancelEditing={() => {}}
                     onUpdateField={() => {}}
                     onSave={() => {}}
+                    onClone={() => handleClone(spec)}
                     onToggleEnabled={() => handleInheritedToggleEnabled(spec)}
                     onTogglePrompt={() => {}}
                     onToggleFallback={() => {}}
@@ -1287,6 +1348,7 @@ function SpecialistCard({
   isEditing,
   editState,
   isSaving,
+  isCloning,
   cardError,
   isPromptExpanded,
   isFallbackExpanded,
@@ -1296,6 +1358,7 @@ function SpecialistCard({
   onSave,
   onDelete,
   onRevert,
+  onClone,
   onToggleEnabled,
   onTogglePrompt,
   onToggleFallback,
@@ -1307,6 +1370,7 @@ function SpecialistCard({
   isEditing: boolean
   editState: CardEditState | undefined
   isSaving: boolean
+  isCloning?: boolean
   cardError?: string
   isPromptExpanded: boolean
   isFallbackExpanded: boolean
@@ -1316,6 +1380,7 @@ function SpecialistCard({
   onSave: () => void
   onDelete?: () => void
   onRevert?: () => void
+  onClone?: () => void
   onToggleEnabled: () => void
   onTogglePrompt: () => void
   onToggleFallback: () => void
@@ -1402,6 +1467,19 @@ function SpecialistCard({
                 aria-label={`Toggle ${specialist.specialistId} specialist`}
               />
             </div>
+            {onClone && (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={onClone}
+                disabled={isSaving || isCloning}
+                className="gap-1 text-xs text-muted-foreground hover:text-foreground h-7 px-2"
+                aria-label={`Clone ${specialist.specialistId} specialist`}
+              >
+                {isCloning ? <Loader2 className="size-3 animate-spin" /> : <Copy className="size-3" />}
+                Clone
+              </Button>
+            )}
             {mode === 'inherited' && (
               <Button
                 size="sm"
