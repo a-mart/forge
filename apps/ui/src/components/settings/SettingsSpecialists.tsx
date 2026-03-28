@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useHelpContext } from '@/components/help/help-hooks'
 import { AlertTriangle, ChevronDown, ChevronUp, Copy, Eye, Loader2, Pencil, Pin, Plus, RotateCcw, Trash2 } from 'lucide-react'
 import {
@@ -51,6 +52,7 @@ import {
   getSupportedReasoningLevelsForModelId,
   useModelPresets,
 } from '@/lib/model-preset'
+import { cn } from '@/lib/utils'
 import type { SelectableModel } from '@/lib/model-preset'
 
 const REASONING_LEVEL_LABELS: Record<string, string> = {
@@ -72,6 +74,11 @@ const SPECIALIST_COLORS = [
   '#0891b2', // cyan
   '#c026d3', // fuchsia
   '#65a30d', // lime
+  '#f97316', // orange
+  '#6b7280', // gray
+  '#ec4899', // pink
+  '#10b981', // green
+  '#f59e0b', // yellow
 ]
 
 const DEFAULT_WHEN_TO_USE = 'General-purpose worker for implementation tasks.'
@@ -164,6 +171,55 @@ function toSaveSpecialistPayload(state: CardEditState): SaveSpecialistPayload {
     pinned: state.pinned,
     promptBody: state.promptBody,
   }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Color Swatch Picker                                                */
+/* ------------------------------------------------------------------ */
+
+function ColorSwatchPicker({
+  value,
+  onChange,
+}: {
+  value: string
+  onChange: (color: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="size-6 shrink-0 rounded border cursor-pointer transition-shadow hover:ring-2 hover:ring-ring hover:ring-offset-1"
+          style={{ backgroundColor: value }}
+          aria-label="Pick badge color"
+        />
+      </PopoverTrigger>
+      <PopoverContent className="w-auto p-3" align="end">
+        <div className="grid grid-cols-5 gap-1.5">
+          {SPECIALIST_COLORS.map((color) => (
+            <button
+              key={color}
+              type="button"
+              className={cn(
+                'size-6 rounded-full border-2 cursor-pointer transition-transform hover:scale-110',
+                value.toLowerCase() === color.toLowerCase()
+                  ? 'border-foreground ring-2 ring-ring ring-offset-1'
+                  : 'border-transparent',
+              )}
+              style={{ backgroundColor: color }}
+              onClick={() => {
+                onChange(color)
+                setOpen(false)
+              }}
+              aria-label={`Select color ${color}`}
+            />
+          ))}
+        </div>
+      </PopoverContent>
+    </Popover>
+  )
 }
 
 /** Normalize a raw string into a kebab-case handle. */
@@ -636,7 +692,7 @@ export function SettingsSpecialists({ wsUrl, profiles, specialistChangeKey }: Se
 
       const payload: SaveSpecialistPayload = {
         displayName: `${source.displayName} (Copy)`,
-        color: source.color,
+        color: pickAvailableColor(specialists),
         enabled: true,
         whenToUse: source.whenToUse,
         modelId: source.modelId,
@@ -1575,10 +1631,9 @@ function SpecialistCard({
               className="h-9 font-mono text-sm"
               placeholder="#2563eb"
             />
-            <span
-              className="size-6 shrink-0 rounded border"
-              style={{ backgroundColor: currentValues.color }}
-              aria-hidden="true"
+            <ColorSwatchPicker
+              value={currentValues.color}
+              onChange={(color) => onUpdateField('color', color)}
             />
           </div>
         </div>
