@@ -69,11 +69,11 @@ export function ShortcutOverlay() {
     <Dialog open={isShortcutOverlayOpen} onOpenChange={handleOpenChange}>
       <DialogContent
         className={cn(
-          'max-h-[min(80vh,600px)] w-[min(95vw,480px)] gap-0 overflow-hidden p-0',
+          'flex max-h-[80vh] w-[min(95vw,480px)] flex-col gap-0 overflow-hidden p-0',
           'border-border/50 bg-background',
         )}
       >
-        <DialogHeader className="space-y-0 border-b border-border/40 px-5 py-4">
+        <DialogHeader className="shrink-0 space-y-0 border-b border-border/40 px-5 py-4">
           <DialogTitle className="flex items-center gap-2 text-sm font-semibold">
             <Keyboard className="size-4 text-muted-foreground" />
             Keyboard Shortcuts
@@ -81,7 +81,7 @@ export function ShortcutOverlay() {
         </DialogHeader>
 
         {/* Search */}
-        <div className="border-b border-border/40 px-5 py-3">
+        <div className="shrink-0 border-b border-border/40 px-5 py-3">
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -97,7 +97,7 @@ export function ShortcutOverlay() {
         </div>
 
         {/* Shortcuts list */}
-        <ScrollArea className="max-h-[min(56vh,420px)]">
+        <ScrollArea className="min-h-0 flex-1">
           <div className="px-5 py-3">
             {grouped.size === 0 ? (
               <div className="flex flex-col items-center gap-2 py-8 text-center">
@@ -125,7 +125,7 @@ export function ShortcutOverlay() {
         </ScrollArea>
 
         {/* Footer hint */}
-        <div className="border-t border-border/40 px-5 py-2.5">
+        <div className="shrink-0 border-t border-border/40 px-5 py-2.5">
           <p className="text-[11px] text-muted-foreground/60">
             Press <Kbd>?</Kbd> to toggle this overlay
           </p>

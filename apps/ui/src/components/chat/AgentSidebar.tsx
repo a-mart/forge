@@ -5,6 +5,7 @@ import {
   ChevronRight,
   ChevronUp,
   CircleDashed,
+  CircleHelp,
   Copy,
   Edit3,
   EyeOff,
@@ -26,6 +27,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ForkSessionDialog } from './ForkSessionDialog'
 import { SpecialistBadge } from './SpecialistBadge'
+import { useHelp } from '@/components/help/help-hooks'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   DndContext,
@@ -137,7 +139,32 @@ function getAgentLiveStatus(
 
 // ── Shared components ──
 
+function HelpButton() {
+  const { isDrawerOpen, openDrawer } = useHelp()
 
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          onClick={() => openDrawer('chat.main')}
+          className={cn(
+            'inline-flex size-8 items-center justify-center rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
+            isDrawerOpen
+              ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+              : 'text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground',
+          )}
+          aria-label="Help"
+          aria-pressed={isDrawerOpen}
+          data-tour="help-button"
+        >
+          <CircleHelp aria-hidden="true" className="size-4" />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="top" sideOffset={6}>Help (Ctrl+/)</TooltipContent>
+    </Tooltip>
+  )
+}
 
 function SessionStatusDot({ running }: { running: boolean }) {
   return (
@@ -2262,6 +2289,7 @@ export function AgentSidebar({
               </TooltipTrigger>
               <TooltipContent side="top" sideOffset={6}>Settings</TooltipContent>
             </Tooltip>
+            <HelpButton />
           </div>
         </TooltipProvider>
       </div>

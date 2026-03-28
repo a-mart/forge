@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { BookOpen, Compass, Keyboard } from 'lucide-react'
 import {
   Sheet,
@@ -23,6 +23,74 @@ import {
 import { formatCategory } from './help-utils'
 import { cn } from '@/lib/utils'
 import type { HelpArticle as HelpArticleType, HelpCategory } from './help-types'
+
+// ── Drawer resize ──
+
+const HELP_DRAWER_WIDTH_KEY = 'forge-help-drawer-width'
+const DEFAULT_DRAWER_WIDTH = 600
+const MIN_DRAWER_WIDTH = 400
+const MAX_DRAWER_WIDTH = 800
+
+function loadDrawerWidth(): number {
+  if (typeof window === 'undefined') return DEFAULT_DRAWER_WIDTH
+  try {
+    const stored = window.localStorage.getItem(HELP_DRAWER_WIDTH_KEY)
+    if (stored) {
+      const w = parseInt(stored, 10)
+      if (w >= MIN_DRAWER_WIDTH && w <= MAX_DRAWER_WIDTH) return w
+    }
+  } catch { /* ignore */ }
+  return DEFAULT_DRAWER_WIDTH
+}
+
+function persistDrawerWidth(width: number): void {
+  try {
+    window.localStorage.setItem(HELP_DRAWER_WIDTH_KEY, String(width))
+  } catch { /* ignore */ }
+}
+
+function useDrawerResize() {
+  const [width, setWidth] = useState(loadDrawerWidth)
+  const [isResizing, setIsResizing] = useState(false)
+  const widthRef = useRef(width)
+
+  useEffect(() => {
+    widthRef.current = width
+  }, [width])
+
+  const handleResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsResizing(true)
+    const startX = e.clientX
+    const startWidth = widthRef.current
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      // Dragging left = increasing width (handle is on left edge of right-side sheet)
+      const delta = startX - moveEvent.clientX
+      const newWidth = Math.min(MAX_DRAWER_WIDTH, Math.max(MIN_DRAWER_WIDTH, startWidth + delta))
+      setWidth(newWidth)
+    }
+
+    const handleMouseUp = () => {
+      setIsResizing(false)
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      persistDrawerWidth(widthRef.current)
+    }
+
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+  }, [])
+
+  return { width, isResizing, handleResizeStart }
+}
+
+// ── Categories ──
 
 const CATEGORIES: { key: HelpCategory; label: string }[] = [
   { key: 'getting-started', label: 'Start' },
@@ -75,6 +143,8 @@ export function HelpDrawer() {
     return getAllArticles()
   }, [searchQuery, activeCategory, contextKey])
 
+  const { width: drawerWidth, isResizing, handleResizeStart } = useDrawerResize()
+
   const handleBack = () => {
     // Clear article selection to go back to list
     openArticle(null)
@@ -85,8 +155,31 @@ export function HelpDrawer() {
       <SheetContent
         side="right"
         showCloseButton
-        className="w-[420px] gap-0 overflow-hidden p-0 sm:w-[420px] sm:max-w-[420px]"
+        className={cn(
+          'gap-0 overflow-hidden p-0',
+          // Mobile: full width
+          'w-full max-w-full',
+          // Desktop: use CSS custom property for resizable width
+          'sm:w-[var(--help-drawer-w)] sm:max-w-[var(--help-drawer-w)]',
+        )}
+        style={{ '--help-drawer-w': `${drawerWidth}px` } as React.CSSProperties}
       >
+        {/* Resize handle on left edge (desktop only) */}
+        <div
+          className={cn(
+            'absolute left-0 top-0 bottom-0 z-10 hidden w-1.5 cursor-col-resize select-none sm:block',
+            'hover:bg-primary/20',
+            isResizing && 'bg-primary/30',
+          )}
+          onMouseDown={handleResizeStart}
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize help panel"
+          aria-valuenow={drawerWidth}
+          aria-valuemin={MIN_DRAWER_WIDTH}
+          aria-valuemax={MAX_DRAWER_WIDTH}
+        />
+
         {/* Accessible description for screen readers */}
         <SheetDescription className="sr-only">
           Browse help articles, search documentation, and view keyboard shortcuts.
