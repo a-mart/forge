@@ -3,7 +3,7 @@ import { fork, type ChildProcess, type ForkOptions } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { checkForUpdatesManually, downloadUpdateManually, installUpdateManually, initAutoUpdater } from './auto-updater.js'
+import { checkForUpdatesManually, downloadUpdateManually, installUpdateManually, initAutoUpdater, getBetaChannel, setBetaChannel } from './auto-updater.js'
 import { fixPath } from './fix-path.js'
 import { showWhatsNewIfUpdated } from './whats-new.js'
 
@@ -434,6 +434,14 @@ if (!hasSingleInstanceLock) {
 
   ipcMain.handle('install-update', () => {
     installUpdateManually()
+  })
+
+  ipcMain.handle('get-beta-channel', () => {
+    return getBetaChannel()
+  })
+
+  ipcMain.handle('set-beta-channel', (_event, enabled: boolean) => {
+    setBetaChannel(enabled)
   })
 
 

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { CheckCircle2, Download, Loader2, RefreshCw, RotateCcw, AlertCircle, Globe } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Switch } from '@/components/ui/switch'
 import { SettingsSection } from './settings-row'
 import { isElectron, type UpdateStatus } from '@/lib/electron-bridge'
 
@@ -10,6 +11,8 @@ export function SettingsAbout() {
   const inElectron = isElectron()
   const version = bridge?.getVersion?.() ?? null
   const [status, setStatus] = useState<UpdateStatus | null>(null)
+  const [betaChannel, setBetaChannel] = useState(false)
+  const [betaLoaded, setBetaLoaded] = useState(false)
   const cleanupRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
@@ -27,6 +30,19 @@ export function SettingsAbout() {
     }
   }, [inElectron, bridge])
 
+  useEffect(() => {
+    if (!inElectron || !bridge?.getBetaChannel) {
+      return
+    }
+
+    bridge.getBetaChannel().then((enabled) => {
+      setBetaChannel(enabled)
+      setBetaLoaded(true)
+    }).catch(() => {
+      setBetaLoaded(true)
+    })
+  }, [inElectron, bridge])
+
   const handleCheckForUpdates = useCallback(() => {
     bridge?.checkForUpdates?.()
   }, [bridge])
@@ -37,6 +53,11 @@ export function SettingsAbout() {
 
   const handleInstall = useCallback(() => {
     bridge?.installUpdate?.()
+  }, [bridge])
+
+  const handleBetaToggle = useCallback((checked: boolean) => {
+    setBetaChannel(checked)
+    bridge?.setBetaChannel?.(checked)
   }, [bridge])
 
   return (
@@ -53,13 +74,29 @@ export function SettingsAbout() {
 
           {/* Updates */}
           {inElectron ? (
-            <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-4">
               <UpdateStatusDisplay
                 status={status}
                 onCheckForUpdates={handleCheckForUpdates}
                 onDownload={handleDownload}
                 onInstall={handleInstall}
               />
+
+              {/* Beta channel toggle */}
+              {betaLoaded && (
+                <div className="flex items-center justify-between gap-4 rounded-md border border-border px-4 py-3">
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-sm font-medium">Include beta updates</span>
+                    <span className="text-xs text-muted-foreground">
+                      Get early access to new features. Beta releases may be less stable.
+                    </span>
+                  </div>
+                  <Switch
+                    checked={betaChannel}
+                    onCheckedChange={handleBetaToggle}
+                  />
+                </div>
+              )}
             </div>
           ) : (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">

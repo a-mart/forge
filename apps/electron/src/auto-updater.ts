@@ -5,6 +5,7 @@ import {
   type UpdateDownloadedEvent,
   type UpdateInfo,
 } from 'electron-updater'
+import { readSettings, writeSettings } from './electron-settings.js'
 
 /** Delay before first update check after app launch. */
 const UPDATE_STARTUP_DELAY_MS = 10_000
@@ -61,8 +62,10 @@ export function initAutoUpdater(options: {
     return
   }
 
+  const settings = readSettings()
   autoUpdater.autoDownload = false
   autoUpdater.autoInstallOnAppQuit = true
+  autoUpdater.allowPrerelease = settings.betaChannel
   autoUpdater.setFeedURL(GITHUB_FEED)
 
   let isCheckingForUpdates = false
@@ -326,6 +329,21 @@ export function installUpdateManually(): void {
   }
 
   triggerInstallUpdate()
+}
+
+export function getBetaChannel(): boolean {
+  return readSettings().betaChannel
+}
+
+export function setBetaChannel(enabled: boolean): void {
+  const settings = readSettings()
+  settings.betaChannel = enabled
+  writeSettings(settings)
+  autoUpdater.allowPrerelease = enabled
+
+  if (enabled && triggerUpdateCheck) {
+    void triggerUpdateCheck(false)
+  }
 }
 
 function isWithinUpdateWindow(): boolean {

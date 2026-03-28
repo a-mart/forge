@@ -34,6 +34,8 @@ contextBridge.exposeInMainWorld('electronBridge', {
   checkForUpdates: (): Promise<void> => ipcRenderer.invoke('check-for-updates'),
   downloadUpdate: (): Promise<void> => ipcRenderer.invoke('download-update'),
   installUpdate: (): Promise<void> => ipcRenderer.invoke('install-update'),
+  getBetaChannel: (): Promise<boolean> => ipcRenderer.invoke('get-beta-channel'),
+  setBetaChannel: (enabled: boolean): Promise<void> => ipcRenderer.invoke('set-beta-channel', enabled),
   onUpdateStatus: (callback: (status: { type: string; version?: string; percent?: number; message?: string }) => void): (() => void) => {
     const handler = (_event: Electron.IpcRendererEvent, status: { type: string; version?: string; percent?: number; message?: string }) => {
       callback(status)

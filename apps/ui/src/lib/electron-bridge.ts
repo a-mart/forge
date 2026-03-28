@@ -39,6 +39,10 @@ export interface ElectronBridge {
   downloadUpdate?(): Promise<void>
   /** Quit and install a downloaded update. */
   installUpdate?(): Promise<void>
+  /** Get the current beta channel preference. */
+  getBetaChannel?(): Promise<boolean>
+  /** Set the beta channel preference and trigger an update check if enabled. */
+  setBetaChannel?(enabled: boolean): Promise<void>
   /** Subscribe to update status events from the main process. Returns an unsubscribe function. */
   onUpdateStatus?(callback: (status: UpdateStatus) => void): () => void
 }
