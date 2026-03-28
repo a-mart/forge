@@ -308,14 +308,14 @@ This meta-learning loop is subtle but effective. After a few weeks of usage, you
 
 The **Review** tab is where Cortex processes your sessions. Every session you work in appears here as a reviewable item. Cortex can analyze the conversation, your feedback, and the outcomes to extract learning.
 
-**Running reviews:**
+**Automatic reviews:** By default, Forge runs automatic Cortex reviews every 2 hours. These check all sessions for changes (transcript, memory, feedback) and only run reviews when something needs attention. If nothing changed, no tokens are spent. You can adjust the interval or turn this off in **Settings → General**.
+
+**Running reviews manually:**
 - **Review All** — Queues all pending sessions for review. They execute one at a time (single concurrency) so they don't overwhelm your system.
 - **Per-session review** — Hover over any row and click the send button to queue just that session.
 - **Exclude sessions** — Mark sessions you don't want reviewed (like test sessions) so Cortex skips them.
 
 **Drift detection:** If you keep working in a session after it's been reviewed, Cortex detects "transcript drift" and flags it for re-review. Same with "feedback drift" if you add ratings to messages in an already-reviewed session.
-
-**Review scheduling:** You can ask Cortex (in its main session) to set up a cron schedule for automatic reviews. For example: "Set up a cron to auto-review all sessions every night at midnight." Wait a day or two before setting this up though. Get familiar with what reviews look like manually first.
 
 > Toggle the "All" view in the Cortex chat to see the full tool call activity behind the scenes. The "Web" view shows just the summary messages.
 
@@ -592,10 +592,10 @@ If you can describe the task to a capable colleague, you can describe it to your
 Once you're comfortable with the basics:
 
 1. **Build your workflow preferences** — Have conversations with your manager about how you like to work. Let Cortex learn from them.
-2. **Run your first Cortex review** — Go to Cortex's review tab and queue up a session for analysis. See what it learns.
+2. **Run your first Cortex review** — Go to Cortex's review tab and queue up a session for analysis. See what it learns. (Automatic reviews run by default every 2 hours, but manually triggering one helps you understand the process.)
 3. **Try forking** — Next time you finish a discovery conversation, fork it into parallel workstreams and dispatch different tasks.
 4. **Experiment with parallel execution** — Give your manager multiple tasks and watch it coordinate workers.
-5. **Set up a review schedule** — Once you've seen how reviews work, ask Cortex to auto-review on a cron schedule.
+5. **Adjust review frequency** — Check **Settings → General** to configure how often automatic Cortex reviews run or turn them off if you prefer manual control.
 6. **Explore multi-model routing** — If you have both OpenAI and Anthropic configured, teach your manager which models to use for which kinds of work.
 7. **Try Pi extensions** — Drop a TypeScript file into `~/.forge/agent/extensions/` to add custom tools or safety guardrails. See the [Pi Extensions guide](PI_EXTENSIONS.md).
 
