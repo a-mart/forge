@@ -64,6 +64,7 @@ import {
 } from '@/lib/agent-hierarchy'
 import { inferModelPreset } from '@/lib/model-preset'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
+import { readSidebarModelIconsPref } from '@/lib/sidebar-prefs'
 import { cn } from '@/lib/utils'
 import {
   MANAGER_MODEL_PRESETS,
@@ -176,6 +177,42 @@ function SessionStatusDot({ running }: { running: boolean }) {
       aria-label={running ? 'Running' : 'Idle'}
     />
   )
+}
+
+function SidebarModelIcon({ agent }: { agent: AgentDescriptor }) {
+  const provider = agent.model.provider.toLowerCase()
+  const preset = inferModelPreset(agent)
+
+  if (preset === 'pi-opus' || preset === 'pi-codex' || preset === 'pi-5.4') {
+    return (
+      <span className="inline-flex items-center gap-0.5" aria-hidden="true">
+        <img src="/pi-logo.svg" alt="" className="size-3 shrink-0 object-contain opacity-70 dark:invert" />
+        {(preset === 'pi-opus')
+          ? <img src="/agents/claude-logo.svg" alt="" className="size-3 shrink-0 object-contain opacity-70" />
+          : <img src="/agents/codex-logo.svg" alt="" className="size-3 shrink-0 object-contain opacity-70 dark:invert" />
+        }
+      </span>
+    )
+  }
+
+  if (preset === 'codex-app') {
+    return (
+      <span className="inline-flex items-center gap-0.5" aria-hidden="true">
+        <img src="/agents/codex-app-logo.svg" alt="" className="size-3 shrink-0 object-contain opacity-70 dark:invert" />
+        <img src="/agents/codex-logo.svg" alt="" className="size-3 shrink-0 object-contain opacity-70 dark:invert" />
+      </span>
+    )
+  }
+
+  if (provider.includes('anthropic') || provider.includes('claude')) {
+    return <img src="/agents/claude-logo.svg" alt="" aria-hidden="true" className="size-3 shrink-0 object-contain opacity-70" />
+  }
+
+  if (provider.includes('openai')) {
+    return <img src="/agents/codex-logo.svg" alt="" aria-hidden="true" className="size-3 shrink-0 object-contain opacity-70 dark:invert" />
+  }
+
+  return <span className="inline-block size-1.5 rounded-full bg-muted-foreground/40" aria-hidden="true" />
 }
 
 function slugifySessionName(name: string): string {
@@ -683,6 +720,7 @@ function ProfileGroup({
   onForkSession,
   onMarkUnread,
   onChangeModel,
+  showModelIcons,
   highlightQuery,
   dragHandleRef,
   dragHandleListeners,
@@ -714,6 +752,7 @@ function ProfileGroup({
   onForkSession?: (sourceAgentId: string) => void
   onMarkUnread?: (agentId: string) => void
   onChangeModel?: (profileId: string) => void
+  showModelIcons?: boolean
   highlightQuery?: string
   dragHandleRef?: (element: HTMLElement | null) => void
   dragHandleListeners?: Record<string, any> | undefined
@@ -783,6 +822,11 @@ function ProfileGroup({
                     <span className="min-w-0 flex-1 truncate text-sm font-semibold leading-5">
                       {profile.displayName}
                     </span>
+                    {showModelIcons && representativeAgent ? (
+                      <span className="ml-1 shrink-0">
+                        <SidebarModelIcon agent={representativeAgent} />
+                      </span>
+                    ) : null}
                   </button>
                 </TooltipTrigger>
                 {profileTooltipLines.length > 0 ? (
@@ -1733,6 +1777,18 @@ export function AgentSidebar({
   )
   const [activeDragId, setActiveDragId] = useState<string | null>(null)
   const [cortexOutstandingReviewCount, setCortexOutstandingReviewCount] = useState<number | null>(null)
+  const [showModelIcons, setShowModelIcons] = useState(() => readSidebarModelIconsPref())
+
+  // Re-read pref on custom event (same-tab) and storage event (cross-tab)
+  useEffect(() => {
+    const update = () => setShowModelIcons(readSidebarModelIconsPref())
+    window.addEventListener('forge-sidebar-pref-change', update)
+    window.addEventListener('storage', update)
+    return () => {
+      window.removeEventListener('forge-sidebar-pref-change', update)
+      window.removeEventListener('storage', update)
+    }
+  }, [])
 
   const [searchQuery, setSearchQuery] = useState('')
   const searchInputRef = useRef<HTMLInputElement>(null)
@@ -2173,6 +2229,7 @@ export function AgentSidebar({
               onForkSession={onForkSession ? (sourceAgentId: string) => setForkTarget({ sourceAgentId }) : undefined}
               onMarkUnread={onMarkUnread}
               onChangeModel={onUpdateManagerModel ? handleRequestChangeModel : undefined}
+              showModelIcons={showModelIcons}
               highlightQuery={isSearchActive ? parsedSearch.term : undefined}
               dragHandleRef={dragHandleRef}
               dragHandleListeners={dragHandleListeners}

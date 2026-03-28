@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/select'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
+import { readSidebarModelIconsPref, storeSidebarModelIconsPref } from '@/lib/sidebar-prefs'
 import { SettingsSection, SettingsWithCTA } from './settings-row'
 import {
   applyThemePreference,
@@ -52,6 +53,7 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
     savePreferences,
   } = useOnboardingState(wsUrl)
   const [onboardingSuccess, setOnboardingSuccess] = useState<string | null>(null)
+  const [sidebarModelIcons, setSidebarModelIcons] = useState(() => readSidebarModelIconsPref())
   const [themePreference, setThemePreference] = useState<ThemePreference>(() =>
     readStoredThemePreference(),
   )
@@ -405,6 +407,24 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
           success={onboardingSuccess}
           onSave={handleOnboardingSave}
         />
+      </SettingsSection>
+
+      <SettingsSection
+        label="Sidebar"
+        description="Customize sidebar appearance"
+      >
+        <SettingsWithCTA
+          label="Show model icons"
+          description="Display model provider icons next to manager profiles in the sidebar"
+        >
+          <Switch
+            checked={sidebarModelIcons}
+            onCheckedChange={(checked) => {
+              setSidebarModelIcons(checked)
+              storeSidebarModelIconsPref(checked)
+            }}
+          />
+        </SettingsWithCTA>
       </SettingsSection>
 
       <SettingsSection
