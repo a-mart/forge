@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useHelpContext } from '@/components/help/help-hooks'
 import { AlertTriangle, ChevronDown, ChevronUp, Eye, Loader2, Pencil, Pin, Plus, RotateCcw, Trash2 } from 'lucide-react'
 import {
   Select,
@@ -292,6 +293,8 @@ function ModelIdSelect({
 /* ================================================================== */
 
 export function SettingsSpecialists({ wsUrl, profiles, specialistChangeKey }: SettingsSpecialistsProps) {
+  useHelpContext('settings.specialists')
+
   const [selectedScope, setSelectedScope] = useState<string>(SCOPE_GLOBAL)
   const isGlobal = selectedScope === SCOPE_GLOBAL
 

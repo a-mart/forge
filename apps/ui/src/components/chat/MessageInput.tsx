@@ -803,7 +803,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
   const voiceButtonDisabled = disabled || blockedByLoading || isRequestingMicrophone || isTranscribingVoice
 
   return (
-    <form onSubmit={handleSubmit} className="sticky bottom-0 shrink-0 bg-background p-2 md:p-3">
+    <form onSubmit={handleSubmit} className="sticky bottom-0 shrink-0 bg-background p-2 md:p-3" data-tour="chat-input">
       {/* Slash command autocomplete dropdown */}
       {isSlashMenuOpen && filteredSlashCommands.length > 0 ? (
         <div

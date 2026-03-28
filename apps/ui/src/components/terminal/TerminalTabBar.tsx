@@ -10,6 +10,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { HelpTrigger } from '@/components/help/HelpTrigger'
 import type { TerminalPanelMode } from '@/hooks/useTerminalPanel'
 import { cn } from '@/lib/utils'
 
@@ -330,6 +331,8 @@ export function TerminalTabBar({
             </Tooltip>
           </TooltipProvider>
         )}
+
+        <HelpTrigger contextKey="terminal.panel" size="sm" className="size-6" />
 
         <TooltipProvider delayDuration={200}>
           <Tooltip>

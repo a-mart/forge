@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
+import { useHelpContext } from '@/components/help/help-hooks'
+import { HelpTooltip } from '@/components/help/HelpTooltip'
 import { Code, Monitor, Moon, RotateCcw, Sun } from 'lucide-react'
 import { OnboardingCallout } from '@/components/chat/cortex/OnboardingCallout'
 import { useOnboardingState } from '@/hooks/use-onboarding-state'
@@ -41,6 +43,8 @@ interface SettingsGeneralProps {
 }
 
 export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrightSettingsLoaded }: SettingsGeneralProps) {
+  useHelpContext('settings.general')
+
   const {
     onboardingState,
     isMutating: isSavingOnboarding,
@@ -186,6 +190,7 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
           label="Theme"
           description="Choose between light, dark, or system theme"
         >
+          <HelpTooltip id="settings.theme" side="left">
           <Select
             value={themePreference}
             onValueChange={(value) => {
@@ -218,6 +223,7 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
               </SelectItem>
             </SelectContent>
           </Select>
+          </HelpTooltip>
         </SettingsWithCTA>
 
         <SettingsWithCTA
@@ -320,11 +326,13 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
           description="Cortex periodically reviews active sessions and updates knowledge, memory, and reference docs."
         >
           <div className="flex flex-col items-end gap-1.5">
+            <HelpTooltip id="settings.cortex-auto-review" side="left">
             <Switch
               checked={cortexSettings?.enabled ?? false}
               onCheckedChange={handleCortexToggle}
               disabled={!cortexSettings || cortexUpdating}
             />
+            </HelpTooltip>
             {cortexError ? (
               <div className="flex items-center gap-1.5">
                 <span className="text-[10px] text-destructive">{cortexError}</span>

@@ -3,6 +3,12 @@ import { HeadContent, Scripts, createRootRoute } from '@tanstack/react-router'
 import { TanStackRouterDevtoolsPanel } from '@tanstack/react-router-devtools'
 import { TanStackDevtools } from '@tanstack/react-devtools'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { HelpProvider } from '@/components/help/HelpProvider'
+import { HelpDrawer } from '@/components/help/HelpDrawer'
+import { GuidedTour } from '@/components/help/GuidedTour'
+import { ShortcutOverlay } from '@/components/help/ShortcutOverlay'
+import { useHelpHotkeys } from '@/components/help/help-hooks'
+import { initializeHelpContent } from '@/components/help/help-registry'
 import { isElectron } from '@/lib/electron-bridge'
 import { preloadBuiltInSounds } from '@/lib/notification-service'
 import { THEME_INIT_SCRIPT, initializeThemePreference } from '@/lib/theme'
@@ -41,6 +47,17 @@ export const Route = createRootRoute({
   shellComponent: RootDocument,
 })
 
+// Initialize help content eagerly so it's available before any render
+initializeHelpContent()
+
+/**
+ * Thin wrapper so useHelpHotkeys() is called inside HelpProvider.
+ */
+function HelpHotkeysRegistrar() {
+  useHelpHotkeys()
+  return null
+}
+
 function RootDocument({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     initializeThemePreference()
@@ -59,20 +76,26 @@ function RootDocument({ children }: { children: React.ReactNode }) {
       </head>
       <body className="overflow-hidden">
         <TooltipProvider>
-          {children}
-          {showTanStackDevtools && import.meta.env.DEV && !isElectron() ? (
-            <TanStackDevtools
-              config={{
-                position: 'bottom-right',
-              }}
-              plugins={[
-                {
-                  name: 'Tanstack Router',
-                  render: <TanStackRouterDevtoolsPanel />,
-                },
-              ]}
-            />
-          ) : null}
+          <HelpProvider>
+            <HelpHotkeysRegistrar />
+            {children}
+            <HelpDrawer />
+            <GuidedTour />
+            <ShortcutOverlay />
+            {showTanStackDevtools && import.meta.env.DEV && !isElectron() ? (
+              <TanStackDevtools
+                config={{
+                  position: 'bottom-right',
+                }}
+                plugins={[
+                  {
+                    name: 'Tanstack Router',
+                    render: <TanStackRouterDevtoolsPanel />,
+                  },
+                ]}
+              />
+            ) : null}
+          </HelpProvider>
         </TooltipProvider>
         <Scripts />
       </body>

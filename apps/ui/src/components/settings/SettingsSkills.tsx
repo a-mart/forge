@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useHelpContext } from '@/components/help/help-hooks'
 import {
   AlertTriangle,
   Check,
@@ -287,6 +288,8 @@ interface SettingsSkillsProps {
 }
 
 export function SettingsSkills({ wsUrl }: SettingsSkillsProps) {
+  useHelpContext('settings.skills')
+
   /* ---------- Skill list state ---------- */
   const [skills, setSkills] = useState<SkillInfo[]>([])
   const [selectedSkill, setSelectedSkill] = useState<string>(ALL_SKILLS_VALUE)
