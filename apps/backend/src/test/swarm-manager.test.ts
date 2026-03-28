@@ -1494,10 +1494,11 @@ describe('SwarmManager', () => {
     await bootWithDefaultManager(manager, config)
 
     const managerPrompt = manager.systemPromptByAgentId.get('manager')
+    const managerMemoryPath = getRootSessionMemoryPath(config.paths.dataDir, 'manager')
     expect(managerPrompt).toContain('You are the manager agent in a multi-agent swarm.')
     expect(managerPrompt).toContain('End users only see two things')
     expect(managerPrompt).toContain('prefixed with "SYSTEM:"')
-    expect(managerPrompt).toContain('${SWARM_MEMORY_FILE}')
+    expect(managerPrompt).toContain(managerMemoryPath)
 
     const worker = await manager.spawnAgent('manager', { agentId: 'Prompt Worker' })
     const workerPrompt = manager.systemPromptByAgentId.get(worker.agentId)
@@ -1795,7 +1796,7 @@ describe('SwarmManager', () => {
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
 
-    expect(manager.systemPromptByAgentId.get('manager')).toBe(managerOverride)
+    expect(manager.systemPromptByAgentId.get('manager')).toContain(managerOverride)
   })
 
   it('uses merger archetype prompt for merger workers', async () => {

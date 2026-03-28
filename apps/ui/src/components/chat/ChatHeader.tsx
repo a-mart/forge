@@ -1,4 +1,5 @@
-import { FolderOpen, GitBranch, Loader2, Menu, Minimize2, MoreHorizontal, PanelRight, Sparkles, Square, SquareTerminal, Trash2 } from 'lucide-react'
+import { useState } from 'react'
+import { FolderOpen, GitBranch, Loader2, Menu, Minimize2, MoreHorizontal, PanelRight, ScrollText, Sparkles, Square, SquareTerminal, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
@@ -10,6 +11,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { ContextWindowIndicator } from '@/components/chat/ContextWindowIndicator'
+import { SystemPromptDialog } from '@/components/chat/message-list/SystemPromptDialog'
 import { MessageFeedback } from '@/components/chat/message-list/MessageFeedback'
 import { cn } from '@/lib/utils'
 import type { AgentStatus } from '@forge/protocol'
@@ -20,6 +22,7 @@ interface ChatHeaderProps {
   connected: boolean
   activeAgentId: string | null
   activeAgentLabel: string
+  wsUrl?: string
   activeAgentProfileName?: string
   activeAgentSessionLabel?: string
   totalUnreadCount?: number
@@ -117,6 +120,7 @@ export function ChatHeader({
   connected,
   activeAgentId,
   activeAgentLabel,
+  wsUrl,
   activeAgentProfileName,
   activeAgentSessionLabel,
   totalUnreadCount = 0,
@@ -168,6 +172,7 @@ export function ChatHeader({
   const isMacPlatform = normalizedPlatform.includes('mac') || normalizedPlatform.includes('darwin')
   const isFramelessDesktop = false
   const terminalShortcutLabel = isMacPlatform ? '⌘`' : 'Ctrl+`'
+  const [promptOpen, setPromptOpen] = useState(false)
 
   return (
     <header
@@ -282,6 +287,27 @@ export function ChatHeader({
       >
         {/* ── Inline: channel toggle + context window ── */}
         <div className="hidden sm:inline-flex items-center gap-1">
+          {channelView === 'all' && activeAgentId ? (
+            <TooltipProvider delayDuration={200}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-7 shrink-0 text-muted-foreground transition-colors hover:bg-accent/70 hover:text-foreground"
+                    onClick={() => setPromptOpen(true)}
+                    aria-label="View system prompt"
+                  >
+                    <ScrollText className="size-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" sideOffset={6}>
+                  View system prompt
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          ) : null}
+
           <div className="inline-flex h-7 items-center rounded-md border border-border/60 bg-muted/30 p-0.5">
             <ChannelToggleButton
               label="Web"
@@ -492,6 +518,16 @@ export function ChatHeader({
       </div>
       {/* Spacer for frameless window controls (minimize/maximize/close) */}
       {isFramelessDesktop && <div className="w-[140px] shrink-0" />}
+
+      {activeAgentId ? (
+        <SystemPromptDialog
+          open={promptOpen}
+          onOpenChange={setPromptOpen}
+          agentId={activeAgentId}
+          agentLabel={activeAgentLabel}
+          wsUrl={wsUrl}
+        />
+      ) : null}
     </header>
   )
 }

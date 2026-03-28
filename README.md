@@ -54,7 +54,7 @@ Download the native installer for your platform from [GitHub Releases](https://g
 | **Windows** (x64) | `Forge-Setup-<version>.exe` | Unsigned (SmartScreen warning expected) |
 | **Linux** | `Forge-<version>.AppImage` | |
 
-No Node.js or pnpm required. The desktop app bundles everything, including automatic updates.
+No Node.js or pnpm required. The desktop app bundles everything and updates automatically. Check for updates manually in Settings → About, or toggle beta releases to get early access to new features.
 
 On first launch, go to Settings and sign in with your OpenAI or Anthropic account (OAuth or API key). Forge will walk you through a short welcome conversation to learn your preferences.
 

@@ -45,6 +45,7 @@ See the [README](README.md) for full setup instructions, including Windows-speci
 
 - HTTP + WebSocket server in `apps/backend/src/ws/server.ts`.
 - Route handlers in `apps/backend/src/ws/routes/*` (one file per domain: agents, sessions, settings, etc.).
+  - `agent-routes.ts` includes `GET /api/agents/:agentId/system-prompt` for retrieving persisted system prompts (used by the System Prompt Viewer UI).
 - Agent orchestration and runtime logic in `apps/backend/src/swarm/*`.
 - Integrated terminal system in `apps/backend/src/terminal/*`.
 - Integrations (Telegram) in `apps/backend/src/integrations/*`.
@@ -87,7 +88,7 @@ These are briefly described for orientation. Most have both backend and UI compo
 | **Integrated terminals** | `terminal/` | `components/terminal/` | Per-session PTY terminals with persistence and state restoration |
 | **Specialists** | `swarm/specialists/` | `components/settings/SettingsSpecialists.tsx` | Named worker spawn templates with model config, fallback, and per-profile overrides |
 | **Mermaid diagrams** | — | `components/chat/message-list/MermaidBlock.tsx` | Inline rendering of mermaid diagrams in chat with interactive toolbar (toggle, copy, SVG/PNG export, fullscreen) |
-| **Electron desktop app** | `apps/electron/src/main.ts`, `auto-updater.ts`, `preload.ts` | — | Standalone desktop application wrapper for macOS, Windows, and Linux. Bundles backend, UI, and all dependencies. Supports auto-updates from GitHub Releases. |
+| **Electron desktop app** | `apps/electron/src/main.ts`, `auto-updater.ts`, `preload.ts` | `components/settings/SettingsAbout.tsx` | Standalone desktop application for macOS and Windows. Bundles backend, UI, and dependencies. Auto-updates via GitHub Releases with beta channel support. Dark mode by default. Windows uses standard title bar with hidden menu (Alt to show); macOS uses standard title bar. |
 
 Backend paths above are relative to `apps/backend/src/`. UI paths are relative to `apps/ui/src/`.
 

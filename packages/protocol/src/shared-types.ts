@@ -221,6 +221,7 @@ export interface SessionWorkerMeta {
     input: number | null
     output: number | null
   }
+  systemPrompt?: string | null
 }
 
 export interface SessionMeta {
@@ -234,6 +235,7 @@ export interface SessionMeta {
   createdAt: string
   updatedAt: string
   cwd: string | null
+  resolvedSystemPrompt?: string | null
 
   promptFingerprint: string | null
   promptComponents:

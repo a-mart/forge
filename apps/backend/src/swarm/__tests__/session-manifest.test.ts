@@ -39,6 +39,7 @@ describe("session-manifest", () => {
       createdAt: "2026-03-01T00:00:00.000Z",
       updatedAt: "2026-03-01T00:00:00.000Z",
       cwd: "/tmp/project",
+      resolvedSystemPrompt: "You are the persisted manager prompt.",
       promptFingerprint: null,
       promptComponents: null,
       cortexReviewExcludedAt: "2026-03-01T00:10:00.000Z",
@@ -247,7 +248,8 @@ describe("session-manifest", () => {
         tokens: {
           input: 120,
           output: 15
-        }
+        },
+        systemPrompt: "You are the persisted worker prompt."
       },
       () => "2026-03-01T00:00:11.000Z"
     );
@@ -272,6 +274,7 @@ describe("session-manifest", () => {
     expect(updated?.workers).toHaveLength(1);
     expect(updated?.workers[0]?.status).toBe("terminated");
     expect(updated?.workers[0]?.terminatedAt).toBe("2026-03-01T00:00:20.000Z");
+    expect(updated?.workers[0]?.systemPrompt).toBe("You are the persisted worker prompt.");
     expect(updated?.stats.totalWorkers).toBe(1);
     expect(updated?.stats.activeWorkers).toBe(0);
     expect(updated?.stats.totalTokens).toEqual({ input: 180, output: 25 });

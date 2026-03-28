@@ -65,6 +65,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
   private readonly session: AgentSession;
   private readonly callbacks: SwarmRuntimeCallbacks;
   private readonly now: () => string;
+  private readonly systemPrompt: string;
   private pendingDeliveries: PendingDelivery[] = [];
   private readonly recoveryBufferedMessages: Array<{ deliveryId: string; message: RuntimeUserMessage }> = [];
   private status: AgentStatus;
@@ -87,11 +88,13 @@ export class AgentRuntime implements SwarmAgentRuntime {
     session: AgentSession;
     callbacks: SwarmRuntimeCallbacks;
     now?: () => string;
+    systemPrompt?: string;
   }) {
     this.descriptor = options.descriptor;
     this.session = options.session;
     this.callbacks = options.callbacks;
     this.now = options.now ?? (() => new Date().toISOString());
+    this.systemPrompt = options.systemPrompt ?? options.session.systemPrompt ?? "";
     this.status = options.descriptor.status;
 
     this.unsubscribe = this.session.subscribe((event) => {
@@ -109,6 +112,10 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
   getContextUsage(): AgentContextUsage | undefined {
     return this.refreshContextUsage();
+  }
+
+  getSystemPrompt(): string {
+    return this.systemPrompt;
   }
 
   isStreaming(): boolean {

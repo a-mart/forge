@@ -295,6 +295,7 @@ export class RuntimeFactory {
     return new AgentRuntime({
       descriptor,
       session: session as AgentSession,
+      systemPrompt,
       callbacks: {
         onStatusChange: async (agentId, status, pendingCount, contextUsage) => {
           await this.deps.callbacks.onStatusChange(runtimeToken, agentId, status, pendingCount, contextUsage);

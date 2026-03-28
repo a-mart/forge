@@ -64,6 +64,7 @@ export const AgentMessageRow = memo(function AgentMessageRow({
           {timestampLabel ? <span>{timestampLabel}</span> : null}
         </div>
       ) : null}
+
     </div>
   )
 })

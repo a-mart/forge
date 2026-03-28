@@ -27,6 +27,7 @@ export interface SessionMetaWorkerUpdate {
     input: number | null;
     output: number | null;
   };
+  systemPrompt?: string | null;
 }
 
 export interface SessionMetaStatsUpdateOptions {
@@ -104,11 +105,11 @@ export async function rebuildSessionMeta(options: RebuildSessionMetaOptions): Pr
       batch.map(async (sessionDescriptor): Promise<SessionMeta | null> => {
         try {
           const profileId = normalizeProfileId(sessionDescriptor);
-          const workers = (workerDescriptorsByManager.get(sessionDescriptor.agentId) ?? []).map((worker) =>
-            buildWorkerMeta(worker)
-          );
-
           const existingMeta = await readSessionMeta(options.dataDir, profileId, sessionDescriptor.agentId);
+          const existingWorkersById = new Map((existingMeta?.workers ?? []).map((worker) => [worker.id, worker]));
+          const workers = (workerDescriptorsByManager.get(sessionDescriptor.agentId) ?? []).map((worker) =>
+            buildWorkerMeta(worker, existingWorkersById.get(worker.agentId))
+          );
 
           const sessionFilePath =
             normalizeOptionalString(sessionDescriptor.sessionFile) ??
@@ -137,6 +138,7 @@ export async function rebuildSessionMeta(options: RebuildSessionMetaOptions): Pr
             createdAt: sessionDescriptor.createdAt,
             updatedAt: sessionDescriptor.updatedAt ?? now(),
             cwd: normalizeOptionalString(sessionDescriptor.cwd) ?? null,
+            resolvedSystemPrompt: existingMeta?.resolvedSystemPrompt ?? null,
             promptFingerprint: existingMeta?.promptFingerprint ?? null,
             promptComponents: existingMeta?.promptComponents ?? null,
             cortexReviewedAt: existingMeta?.cortexReviewedAt,
@@ -220,7 +222,11 @@ export async function updateSessionMetaWorker(
         : nextStatus === "terminated"
           ? existingWorker?.terminatedAt ?? now()
           : null,
-    tokens: normalizeWorkerTokens(update.tokens ?? existingWorker?.tokens)
+    tokens: normalizeWorkerTokens(update.tokens ?? existingWorker?.tokens),
+    systemPrompt:
+      update.systemPrompt !== undefined
+        ? update.systemPrompt
+        : existingWorker?.systemPrompt ?? null
   };
 
   if (existingIndex >= 0) {
@@ -321,6 +327,7 @@ function createEmptySessionMeta(profileId: string, sessionId: string, timestamp:
     createdAt: timestamp,
     updatedAt: timestamp,
     cwd: null,
+    resolvedSystemPrompt: null,
     promptFingerprint: null,
     promptComponents: null,
     cortexReviewExcludedAt: null,
@@ -358,7 +365,10 @@ function normalizeProfileId(descriptor: AgentDescriptor): string {
   return normalizeOptionalString(descriptor.profileId) ?? descriptor.agentId;
 }
 
-function buildWorkerMeta(descriptor: AgentDescriptor): SessionWorkerMeta {
+function buildWorkerMeta(
+  descriptor: AgentDescriptor,
+  existingWorker?: SessionWorkerMeta
+): SessionWorkerMeta {
   return {
     id: descriptor.agentId,
     model: buildWorkerModelString(descriptor),
@@ -371,7 +381,8 @@ function buildWorkerMeta(descriptor: AgentDescriptor): SessionWorkerMeta {
           ? Math.max(0, Math.round(descriptor.contextUsage.tokens))
           : null,
       output: null
-    }
+    },
+    systemPrompt: existingWorker?.systemPrompt ?? null
   };
 }
 
@@ -593,6 +604,7 @@ function coerceSessionMeta(value: unknown): SessionMeta | undefined {
     createdAt,
     updatedAt,
     cwd: normalizeOptionalString(value.cwd) ?? null,
+    resolvedSystemPrompt: normalizeOptionalNullableString(value.resolvedSystemPrompt),
     promptFingerprint: normalizeOptionalString(value.promptFingerprint) ?? null,
     promptComponents: promptComponentsRecord
       ? {
@@ -683,7 +695,8 @@ function coerceSessionWorkerMeta(value: unknown): SessionWorkerMeta | undefined 
     tokens: {
       input: coerceNullableTokenValue(tokensRecord.input),
       output: coerceNullableTokenValue(tokensRecord.output)
-    }
+    },
+    systemPrompt: normalizeOptionalNullableString(value.systemPrompt)
   };
 }
 

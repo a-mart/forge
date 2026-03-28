@@ -1079,6 +1079,7 @@ export function IndexPage() {
                   connected={state.connected}
                   activeAgentId={activeAgentId}
                   activeAgentLabel={activeAgentLabel}
+                  wsUrl={wsUrl}
                   activeAgentProfileName={activeAgentProfileName}
                   activeAgentSessionLabel={activeAgentSessionLabel}
                   totalUnreadCount={totalUnreadCount}

@@ -2502,10 +2502,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       this.runtimes.set(agentId, runtime);
       this.seedWorkerCompletionReportTimestamp(agentId);
 
+      const persistedSystemPrompt = runtime.getSystemPrompt?.() ?? runtimeSystemPrompt;
       const contextUsage = runtime.getContextUsage();
       descriptor.contextUsage = contextUsage;
       this.descriptors.set(agentId, descriptor);
-      await this.updateSessionMetaForWorkerDescriptor(descriptor);
+      await this.updateSessionMetaForWorkerDescriptor(descriptor, persistedSystemPrompt);
       await this.refreshSessionMetaStatsBySessionId(descriptor.managerId);
 
       this.emitStatus(agentId, descriptor.status, runtime.getPendingCount(), contextUsage);
@@ -2825,12 +2826,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     await this.ensureAgentMemoryFile(getProfileMemoryPath(this.config.paths.dataDir, profile.profileId), profile.profileId);
     await this.writeInitialSessionMeta(descriptor);
 
+    const systemPrompt = await this.resolveSystemPromptForDescriptor(descriptor);
     let runtime: SwarmAgentRuntime;
     try {
-      runtime = await this.createRuntimeForDescriptor(
-        descriptor,
-        await this.resolveSystemPromptForDescriptor(descriptor)
-      );
+      runtime = await this.createRuntimeForDescriptor(descriptor, systemPrompt);
     } catch (error) {
       this.descriptors.delete(descriptor.agentId);
       this.profiles.delete(profile.profileId);
@@ -2840,11 +2839,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     this.runtimes.set(managerId, runtime);
 
+    const persistedSystemPrompt = runtime.getSystemPrompt?.() ?? systemPrompt;
     const contextUsage = runtime.getContextUsage();
     descriptor.contextUsage = contextUsage;
     this.descriptors.set(managerId, descriptor);
 
-    await this.captureSessionRuntimePromptMeta(descriptor);
+    await this.captureSessionRuntimePromptMeta(descriptor, persistedSystemPrompt);
     await this.refreshSessionMetaStats(descriptor);
     await migrateLegacyProfileKnowledgeToReferenceDoc(this.config.paths.dataDir, profile.profileId, {
       versioning: this.versioningService
@@ -5243,6 +5243,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     const runtimeToken = this.allocateRuntimeToken(descriptor.agentId);
     const runtime = await this.createRuntimeForDescriptor(descriptor, systemPrompt, runtimeToken);
+    const persistedSystemPrompt = runtime.getSystemPrompt?.() ?? systemPrompt;
 
     const latestDescriptor = this.descriptors.get(descriptor.agentId);
     if (!latestDescriptor || isNonRunningAgentStatus(latestDescriptor.status)) {
@@ -5276,10 +5277,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.descriptors.set(descriptor.agentId, latestDescriptor);
 
     if (latestDescriptor.role === "manager") {
-      await this.captureSessionRuntimePromptMeta(latestDescriptor);
+      await this.captureSessionRuntimePromptMeta(latestDescriptor, persistedSystemPrompt);
       await this.refreshSessionMetaStats(latestDescriptor);
     } else {
-      await this.updateSessionMetaForWorkerDescriptor(latestDescriptor);
+      await this.updateSessionMetaForWorkerDescriptor(latestDescriptor, persistedSystemPrompt);
       await this.refreshSessionMetaStatsBySessionId(latestDescriptor.managerId);
     }
 
@@ -6740,7 +6741,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     await writeSessionMeta(this.config.paths.dataDir, next);
   }
 
-  private async captureSessionRuntimePromptMeta(descriptor: AgentDescriptor): Promise<void> {
+  private async captureSessionRuntimePromptMeta(
+    descriptor: AgentDescriptor,
+    resolvedSystemPrompt?: string | null
+  ): Promise<void> {
     if (descriptor.role !== "manager") {
       return;
     }
@@ -6762,6 +6766,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         profileMemoryFile: profileMemoryPath
       };
 
+      const resolvedSystemPromptForMeta =
+        resolvedSystemPrompt === undefined ? await this.resolveSystemPromptForDescriptor(descriptor) : resolvedSystemPrompt;
       const existingMeta = await readSessionMeta(this.config.paths.dataDir, profileId, descriptor.agentId);
       const base = existingMeta ?? this.createSessionMetaSkeleton(descriptor);
 
@@ -6775,6 +6781,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
           modelId: descriptor.model.modelId
         },
         cwd: descriptor.cwd,
+        resolvedSystemPrompt: resolvedSystemPromptForMeta,
         promptComponents,
         promptFingerprint: computePromptFingerprint(promptComponents),
         updatedAt: this.now()
@@ -6804,6 +6811,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       createdAt: descriptor.createdAt,
       updatedAt: timestamp,
       cwd: descriptor.cwd,
+      resolvedSystemPrompt: null,
       promptFingerprint: null,
       promptComponents: null,
       feedbackFileSize: null,
@@ -6859,7 +6867,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     };
   }
 
-  private async updateSessionMetaForWorkerDescriptor(descriptor: AgentDescriptor): Promise<void> {
+  private async updateSessionMetaForWorkerDescriptor(
+    descriptor: AgentDescriptor,
+    resolvedSystemPrompt?: string | null
+  ): Promise<void> {
     if (descriptor.role !== "worker") {
       return;
     }
@@ -6888,7 +6899,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
                 ? Math.max(0, Math.round(descriptor.contextUsage.tokens))
                 : null,
             output: null
-          }
+          },
+          systemPrompt: resolvedSystemPrompt
         },
         this.now
       );

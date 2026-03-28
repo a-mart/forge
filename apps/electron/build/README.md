@@ -2,27 +2,20 @@
 
 This directory contains application icons for electron-builder.
 
-## Required Icons
+## Current Icons
 
-### macOS
-- **icon.icns** — macOS icon bundle (created from PNG source)
-
-### Windows
-- **icon.ico** — Windows icon (created from PNG source, electron-builder auto-generates if PNG is provided)
-
-### Linux
-- **icon.png** — PNG icon (512x512 minimum, ideally 1024x1024)
+- **icon.png** — Source PNG (1024x1024)
+- **icon.icns** — macOS icon bundle (generated from PNG)
+- **icon.ico** — Windows icon (generated from PNG)
 
 ## Creating Icons
 
-1. Start with a high-resolution PNG (512x512 or larger)
-2. Place it as `icon.png` in this directory
-3. Use tools to generate platform-specific formats:
-   - **macOS**: Use `png2icns` or similar tool to create `.icns`
-   - **Windows**: electron-builder can auto-generate `.ico` from the PNG
+When updating the app icon:
 
-electron-builder will automatically use icons from this directory during packaging.
+1. Start with a high-resolution PNG (1024x1024 or larger)
+2. Save it as `icon.png` in this directory
+3. Generate platform-specific formats:
+   - **macOS**: Use `png2icns` or similar tool to create `icon.icns`
+   - **Windows**: Use `png2ico` or an online converter to create `icon.ico`
 
-## Placeholder
-
-For initial development/testing, a solid-color placeholder PNG is sufficient. Production builds should use the final branded icon design.
+electron-builder uses these icons automatically during packaging.

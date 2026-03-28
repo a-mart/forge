@@ -205,6 +205,10 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
     return undefined;
   }
 
+  getSystemPrompt(): string {
+    return this.systemPrompt;
+  }
+
   async sendMessage(
     input: RuntimeUserMessageInput,
     _requestedMode: RequestedDeliveryMode = "auto"
