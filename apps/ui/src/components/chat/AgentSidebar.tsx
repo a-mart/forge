@@ -647,7 +647,6 @@ function ProfileGroup({
   onSelect,
   onDeleteAgent,
   onDeleteManager,
-  onOpenSettings,
   onCreateSession,
   onStopSession,
   onResumeSession,
@@ -818,10 +817,6 @@ function ProfileGroup({
               Change Model
             </ContextMenuItem>
           ) : null}
-          <ContextMenuItem onClick={onOpenSettings}>
-            <Settings className="mr-2 size-3.5" />
-            Settings
-          </ContextMenuItem>
           {!isCortexProfile(treeRow) ? (
             <>
               <ContextMenuSeparator />
@@ -1280,7 +1275,6 @@ function CortexSection({
   onToggleWorkerListExpanded,
   onSelect,
   onDeleteAgent,
-  onOpenSettings,
   onOpenCortexReview,
   outstandingReviewCount,
   onCreateSession,
@@ -1496,10 +1490,6 @@ function CortexSection({
               Change Model
             </ContextMenuItem>
           ) : null}
-          <ContextMenuItem onClick={onOpenSettings}>
-            <Settings className="mr-2 size-3.5" />
-            Settings
-          </ContextMenuItem>
           {cortexRunning && onStopSession && targetId ? (
             <ContextMenuItem onClick={() => onStopSession(targetId)}>
               <Pause className="mr-2 size-3.5" />
