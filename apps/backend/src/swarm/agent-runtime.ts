@@ -606,7 +606,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
       return;
     }
 
-    if (event.type === "auto_compaction_start") {
+    if (event.type === "compaction_start" && event.reason !== "manual") {
       this.latestAutoCompactionReason = event.reason;
       if (!this.isContextRecoveryActive()) {
         this.beginAutoCompactionRecovery();
@@ -614,8 +614,10 @@ export class AgentRuntime implements SwarmAgentRuntime {
       return;
     }
 
-    if (event.type === "auto_compaction_end") {
-      await this.handleAutoCompactionEndEvent(event);
+    if (event.type === "compaction_end") {
+      if (event.reason !== "manual") {
+        await this.handleAutoCompactionEndEvent(event);
+      }
       return;
     }
 
@@ -927,7 +929,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
   }
 
   private async handleAutoCompactionEndEvent(
-    event: Extract<AgentSessionEvent, { type: "auto_compaction_end" }>
+    event: Extract<AgentSessionEvent, { type: "compaction_end" }>
   ): Promise<void> {
     const compactionReason = this.latestAutoCompactionReason;
 

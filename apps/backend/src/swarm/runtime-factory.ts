@@ -220,7 +220,6 @@ export class RuntimeFactory {
       descriptor,
       loadedAt: this.deps.now(),
       extensionsResult,
-      pathMetadata: resourceLoader.getPathMetadata(),
       config: this.deps.config
     });
     try {
@@ -472,15 +471,7 @@ interface BuildRuntimeExtensionSnapshotOptions {
   descriptor: AgentDescriptor;
   loadedAt: string;
   extensionsResult: LoadExtensionsResult;
-  pathMetadata: Map<string, ExtensionPathMetadata>;
   config: SwarmConfig;
-}
-
-interface ExtensionPathMetadata {
-  source: string;
-  scope: string;
-  origin: "package" | "top-level";
-  baseDir?: string;
 }
 
 function buildRuntimeExtensionSnapshot(options: BuildRuntimeExtensionSnapshotOptions): AgentRuntimeExtensionSnapshot {
@@ -490,7 +481,6 @@ function buildRuntimeExtensionSnapshot(options: BuildRuntimeExtensionSnapshotOpt
         !isInternalInlineExtensionPath(extension.path) && !isInternalInlineExtensionPath(extension.resolvedPath)
     )
     .map((extension) => {
-      const metadata = resolveExtensionPathMetadata(options.pathMetadata, extension.path, extension.resolvedPath);
       const resolvedPath = extension.resolvedPath || extension.path;
 
       return {
@@ -500,7 +490,7 @@ function buildRuntimeExtensionSnapshot(options: BuildRuntimeExtensionSnapshotOpt
         source: classifyRuntimeExtensionSource({
           path: extension.path,
           resolvedPath,
-          metadata,
+          sourceInfo: extension.sourceInfo,
           descriptor: options.descriptor,
           config: options.config
         }),
@@ -538,37 +528,17 @@ function isInternalInlineExtensionPath(pathValue: string | undefined): boolean {
   return normalized.startsWith("<inline");
 }
 
-function resolveExtensionPathMetadata(
-  pathMetadata: Map<string, ExtensionPathMetadata>,
-  pathValue: string,
-  resolvedPathValue: string
-): ExtensionPathMetadata | undefined {
-  const candidates = [pathValue, resolvedPathValue];
-
-  for (const candidate of candidates) {
-    if (!candidate || isInternalInlineExtensionPath(candidate)) {
-      continue;
-    }
-
-    const direct = pathMetadata.get(candidate);
-    if (direct) {
-      return direct;
-    }
-
-    const resolvedCandidate = resolve(candidate);
-    const resolved = pathMetadata.get(resolvedCandidate);
-    if (resolved) {
-      return resolved;
-    }
-  }
-
-  return undefined;
-}
-
 function classifyRuntimeExtensionSource(options: {
   path: string;
   resolvedPath: string;
-  metadata: ExtensionPathMetadata | undefined;
+  sourceInfo:
+    | {
+        source: string;
+        scope: string;
+        origin: "package" | "top-level";
+        baseDir?: string;
+      }
+    | undefined;
   descriptor: AgentDescriptor;
   config: SwarmConfig;
 }): RuntimeExtensionSource {
@@ -599,15 +569,15 @@ function classifyRuntimeExtensionSource(options: {
     }
   }
 
-  if (options.metadata?.origin === "package") {
+  if (options.sourceInfo?.origin === "package") {
     return "package";
   }
 
   if (
-    options.metadata?.source &&
-    options.metadata.source !== "local" &&
-    options.metadata.source !== "auto" &&
-    options.metadata.source !== "cli"
+    options.sourceInfo?.source &&
+    options.sourceInfo.source !== "local" &&
+    options.sourceInfo.source !== "auto" &&
+    options.sourceInfo.source !== "cli"
   ) {
     return "package";
   }

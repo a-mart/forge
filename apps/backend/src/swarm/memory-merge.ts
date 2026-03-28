@@ -20,6 +20,7 @@ export interface ExecuteLLMMergeOptions {
   promptRegistry?: Pick<PromptRegistry, "resolve">;
   profileId?: string;
   apiKey?: string;
+  headers?: Record<string, string>;
   now?: () => number;
   completeFn?: typeof complete;
 }
@@ -85,7 +86,12 @@ export async function executeLLMMerge(
         }
       ]
     },
-    options?.apiKey ? { apiKey: options.apiKey } : undefined
+    options?.apiKey || options?.headers
+      ? {
+          ...(options?.apiKey ? { apiKey: options.apiKey } : {}),
+          ...(options?.headers ? { headers: options.headers } : {})
+        }
+      : undefined
   );
 
   const mergedContent = stripWrappingCodeFence(extractMergedMemoryText(response));

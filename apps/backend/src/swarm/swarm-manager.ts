@@ -7865,7 +7865,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       );
     }
 
-    const apiKey = await modelRegistry.getApiKey(model);
+    const auth = await modelRegistry.getApiKeyAndHeaders(model);
+    if (!auth.ok) {
+      throw new Error(auth.error);
+    }
+
     const memoryMergePrompt = await this.resolvePromptWithFallback(
       "operational",
       "memory-merge",
@@ -7873,7 +7877,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       MEMORY_MERGE_SYSTEM_PROMPT
     );
     const mergedContent = await executeLLMMerge(model, profileMemoryContent, sessionMemoryContent, {
-      apiKey,
+      apiKey: auth.apiKey,
+      headers: auth.headers,
       systemPrompt: memoryMergePrompt
     });
 
