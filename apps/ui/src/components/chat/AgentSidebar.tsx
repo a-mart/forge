@@ -449,6 +449,7 @@ function SessionRowItem({
   const streamingWorkerCount = workers.filter((w) => getAgentLiveStatus(w, statuses).status === 'streaming').length
     || sessionAgent.activeWorkerCount
     || 0
+  const managerStreaming = getAgentLiveStatus(sessionAgent, statuses).status === 'streaming'
 
   return (
     <li>
@@ -505,6 +506,12 @@ function SessionRowItem({
                           {streamingWorkerCount}
                         </span>
                       </span>
+                    ) : managerStreaming ? (
+                      <span
+                        className="inline-flex size-3 shrink-0 rounded-full border-2 border-amber-500 bg-transparent"
+                        style={{ boxShadow: '0 0 6px rgba(245,158,11,0.5)' }}
+                        aria-label="Manager streaming"
+                      />
                     ) : (
                       <SessionStatusDot running={running} />
                     )}
