@@ -3345,6 +3345,96 @@ describe('SwarmWebSocketServer', () => {
     }
   })
 
+  it('filters model presets by configured provider credentials', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port)
+    const previousAnthropicApiKey = process.env.ANTHROPIC_API_KEY
+    const previousOpenaiApiKey = process.env.OPENAI_API_KEY
+    const previousXaiApiKey = process.env.XAI_API_KEY
+    delete process.env.ANTHROPIC_API_KEY
+    delete process.env.OPENAI_API_KEY
+    delete process.env.XAI_API_KEY
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    try {
+      const initialResponse = await fetch(`http://${config.host}:${config.port}/api/settings/models`)
+      expect(initialResponse.status).toBe(200)
+      const initialPayload = (await initialResponse.json()) as {
+        models: Array<{ presetId: string }>
+      }
+
+      expect(initialPayload.models.map((model) => model.presetId)).toEqual(['codex-app'])
+
+      const authUpdateResponse = await fetch(`http://${config.host}:${config.port}/api/settings/auth`, {
+        method: 'PUT',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          'openai-codex': 'sk-openai-test-5678',
+        }),
+      })
+      expect(authUpdateResponse.status).toBe(200)
+
+      const envUpdateResponse = await fetch(`http://${config.host}:${config.port}/api/settings/env`, {
+        method: 'PUT',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          values: {
+            XAI_API_KEY: 'xai-test-1234',
+          },
+        }),
+      })
+      expect(envUpdateResponse.status).toBe(200)
+
+      const updatedResponse = await fetch(`http://${config.host}:${config.port}/api/settings/models`)
+      expect(updatedResponse.status).toBe(200)
+      const updatedPayload = (await updatedResponse.json()) as {
+        models: Array<{ presetId: string }>
+      }
+      const updatedPresetIds = updatedPayload.models.map((model) => model.presetId)
+
+      expect(updatedPresetIds).toContain('pi-codex')
+      expect(updatedPresetIds).toContain('pi-5.4')
+      expect(updatedPresetIds).toContain('pi-grok')
+      expect(updatedPresetIds).toContain('codex-app')
+      expect(updatedPresetIds).not.toContain('pi-opus')
+    } finally {
+      if (previousAnthropicApiKey === undefined) {
+        delete process.env.ANTHROPIC_API_KEY
+      } else {
+        process.env.ANTHROPIC_API_KEY = previousAnthropicApiKey
+      }
+
+      if (previousOpenaiApiKey === undefined) {
+        delete process.env.OPENAI_API_KEY
+      } else {
+        process.env.OPENAI_API_KEY = previousOpenaiApiKey
+      }
+
+      if (previousXaiApiKey === undefined) {
+        delete process.env.XAI_API_KEY
+      } else {
+        process.env.XAI_API_KEY = previousXaiApiKey
+      }
+
+      await server.stop()
+    }
+  })
+
   it('accepts attachment-only user messages and broadcasts attachments', async () => {
     const port = await getAvailablePort()
     const config = await makeTempConfig(port)

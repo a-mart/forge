@@ -44,10 +44,15 @@ builtin: true                        # Internal — marks Forge-shipped speciali
 | `claude-haiku-4-5-20251001` | Claude Haiku 4.5 | Anthropic | low, medium, high |
 | `grok-4` | Grok 4 | xAI | none, low, medium, high, xhigh |
 | `grok-4-fast` | Grok 4 Fast | xAI | none, low, medium, high, xhigh |
-| `grok-3` | Grok 3 | xAI | none, low, medium, high, xhigh |
+| `grok-4.20-0309-reasoning` | Grok 4.20 Reasoning | xAI | none, low, medium, high, xhigh |
+| `grok-4.20-0309-non-reasoning` | Grok 4.20 Non-Reasoning | xAI | none, low, medium, high, xhigh |
+| `grok-4.20-multi-agent-0309` | Grok 4.20 Multi-Agent | xAI | none, low, medium, high, xhigh |
 | `default` | Codex App Runtime | Codex App | none, low, medium, high, xhigh |
 
-**Note:** `gpt-5.4-nano` is not yet available in the current Pi runtime and will error if selected.
+**Notes:**
+- `gpt-5.4-nano` is not yet available in the current Pi runtime and will error if selected.
+- `grok-4.20-multi-agent-0309` is not yet available in the current Pi runtime and will error if selected.
+- xAI models require `XAI_API_KEY` to be configured.
 
 ## System Prompt
 

@@ -3,7 +3,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { AuthStorage } from '@mariozechner/pi-coding-agent'
-import { SecretsEnvService } from '../swarm/secrets-env-service.js'
+import {
+  getManagedModelProviderCredentialAvailability,
+  SecretsEnvService,
+} from '../swarm/secrets-env-service.js'
 import type { SwarmConfig } from '../swarm/types.js'
 
 function createService(paths: {
@@ -132,5 +135,53 @@ describe('SecretsEnvService path migration', () => {
 
     expect(sharedOpenaiAfterDelete).toBeUndefined()
     expect(legacyOpenaiAfterDelete).toBeUndefined()
+  })
+
+  it('reports managed model provider availability from stored env, auth, and process env', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'secrets-env-service-availability-test-'))
+    const sharedSecretsFile = join(root, 'shared', 'secrets.json')
+    const legacySecretsFile = join(root, 'secrets.json')
+    const sharedAuthFile = join(root, 'shared', 'auth', 'auth.json')
+    const legacyAuthFile = join(root, 'auth', 'auth.json')
+
+    await mkdir(join(root, 'shared', 'auth'), { recursive: true })
+    await writeFile(sharedSecretsFile, JSON.stringify({ XAI_API_KEY: 'xai-secret-key' }, null, 2), 'utf8')
+
+    const sharedAuthStorage = AuthStorage.create(sharedAuthFile)
+    sharedAuthStorage.set('openai-codex', {
+      type: 'api_key',
+      key: 'sk-openai-secret',
+      access: 'sk-openai-secret',
+      refresh: '',
+      expires: '',
+    } as any)
+
+    const previousAnthropic = process.env.ANTHROPIC_API_KEY
+    delete process.env.ANTHROPIC_API_KEY
+
+    try {
+      process.env.ANTHROPIC_API_KEY = 'sk-ant-secret'
+
+      const config = {
+        paths: {
+          sharedAuthFile,
+          sharedSecretsFile,
+          authFile: legacyAuthFile,
+          secretsFile: legacySecretsFile,
+        },
+      } as unknown as SwarmConfig
+
+      const availability = await getManagedModelProviderCredentialAvailability(config)
+
+      expect(availability.get('openai-codex')).toBe(true)
+      expect(availability.get('xai')).toBe(true)
+      expect(availability.get('anthropic')).toBe(true)
+    } finally {
+      if (previousAnthropic === undefined) {
+        delete process.env.ANTHROPIC_API_KEY
+      } else {
+        process.env.ANTHROPIC_API_KEY = previousAnthropic
+      }
+    }
   })
 })

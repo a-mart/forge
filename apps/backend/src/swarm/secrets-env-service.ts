@@ -31,6 +31,12 @@ const SETTINGS_AUTH_PROVIDER_DEFINITIONS: Array<{
   }
 ];
 
+const MANAGED_MODEL_PROVIDER_ENV_VARS: Record<SettingsAuthProviderName, string[]> = {
+  anthropic: ["ANTHROPIC_API_KEY"],
+  "openai-codex": ["OPENAI_API_KEY"],
+  xai: ["XAI_API_KEY"]
+};
+
 interface SkillMetadataForSettings {
   skillName: string;
   env: ParsedSkillEnvDeclaration[];
@@ -215,27 +221,7 @@ export class SecretsEnvService {
   }
 
   private async readSecretsStore(): Promise<Record<string, string>> {
-    const preferredPath = this.deps.config.paths.sharedSecretsFile;
-    const legacyPath = this.deps.config.paths.secretsFile;
-    const candidatePaths = legacyPath === preferredPath ? [preferredPath] : [preferredPath, legacyPath];
-
-    for (const candidatePath of candidatePaths) {
-      let raw: string;
-
-      try {
-        raw = await readFile(candidatePath, "utf8");
-      } catch (error) {
-        if (isEnoentError(error)) {
-          continue;
-        }
-
-        throw error;
-      }
-
-      return parseSecretsStoreRaw(raw);
-    }
-
-    return {};
+    return readSecretsStoreFromConfig(this.deps.config);
   }
 
   private async saveSecretsStore(): Promise<void> {
@@ -248,17 +234,7 @@ export class SecretsEnvService {
   }
 
   private async resolveAuthFileForRead(): Promise<string> {
-    const preferredPath = this.deps.config.paths.sharedAuthFile;
-    if (await this.pathExists(preferredPath)) {
-      return preferredPath;
-    }
-
-    const legacyPath = this.deps.config.paths.authFile;
-    if (legacyPath !== preferredPath && (await this.pathExists(legacyPath))) {
-      return legacyPath;
-    }
-
-    return preferredPath;
+    return resolveAuthFileForReadFromConfig(this.deps.config);
   }
 
   private async resolveAuthFileForWrite(): Promise<string> {
@@ -296,16 +272,7 @@ export class SecretsEnvService {
   }
 
   private async pathExists(path: string): Promise<boolean> {
-    try {
-      await access(path);
-      return true;
-    } catch (error) {
-      if (isEnoentError(error)) {
-        return false;
-      }
-
-      throw error;
-    }
+    return pathExists(path);
   }
 
   private applySecretToProcessEnv(name: string, value: string): void {
@@ -326,6 +293,98 @@ export class SecretsEnvService {
 
     process.env[name] = original;
   }
+}
+
+export async function getManagedModelProviderCredentialAvailability(
+  config: SwarmConfig
+): Promise<Map<string, boolean>> {
+  const [configuredAuthProviders, secrets] = await Promise.all([
+    readConfiguredSettingsAuthProviders(config),
+    readSecretsStoreFromConfig(config)
+  ]);
+
+  const availability = new Map<string, boolean>();
+
+  for (const [provider, envVars] of Object.entries(MANAGED_MODEL_PROVIDER_ENV_VARS)) {
+    const hasStoredEnv = envVars.some((name) => resolveStoredOrProcessEnvValue(secrets, name) !== undefined);
+    const hasStoredAuth = configuredAuthProviders.has(provider as SettingsAuthProviderName);
+    availability.set(provider, hasStoredEnv || hasStoredAuth);
+  }
+
+  return availability;
+}
+
+async function readConfiguredSettingsAuthProviders(
+  config: SwarmConfig
+): Promise<Set<SettingsAuthProviderName>> {
+  const authFile = await resolveAuthFileForReadFromConfig(config);
+  const authStorage = AuthStorage.create(authFile);
+  const configuredProviders = new Set<SettingsAuthProviderName>();
+
+  for (const definition of SETTINGS_AUTH_PROVIDER_DEFINITIONS) {
+    const credential = authStorage.get(definition.storageProvider);
+    const resolvedToken = extractAuthCredentialToken(credential);
+    if (typeof resolvedToken === "string" && resolvedToken.length > 0) {
+      configuredProviders.add(definition.provider);
+    }
+  }
+
+  return configuredProviders;
+}
+
+async function readSecretsStoreFromConfig(config: SwarmConfig): Promise<Record<string, string>> {
+  const preferredPath = config.paths.sharedSecretsFile;
+  const legacyPath = config.paths.secretsFile;
+  const candidatePaths = legacyPath === preferredPath ? [preferredPath] : [preferredPath, legacyPath];
+
+  for (const candidatePath of candidatePaths) {
+    let raw: string;
+
+    try {
+      raw = await readFile(candidatePath, "utf8");
+    } catch (error) {
+      if (isEnoentError(error)) {
+        continue;
+      }
+
+      throw error;
+    }
+
+    return parseSecretsStoreRaw(raw);
+  }
+
+  return {};
+}
+
+async function resolveAuthFileForReadFromConfig(config: SwarmConfig): Promise<string> {
+  const preferredPath = config.paths.sharedAuthFile;
+  if (await pathExists(preferredPath)) {
+    return preferredPath;
+  }
+
+  const legacyPath = config.paths.authFile;
+  if (legacyPath !== preferredPath && (await pathExists(legacyPath))) {
+    return legacyPath;
+  }
+
+  return preferredPath;
+}
+
+function resolveStoredOrProcessEnvValue(
+  secrets: Readonly<Record<string, string>>,
+  name: string
+): string | undefined {
+  const secretValue = secrets[name];
+  if (typeof secretValue === "string" && secretValue.trim().length > 0) {
+    return secretValue;
+  }
+
+  const processValue = process.env[name];
+  if (typeof processValue !== "string" || processValue.trim().length === 0) {
+    return undefined;
+  }
+
+  return processValue;
 }
 
 function parseSecretsStoreRaw(raw: string): Record<string, string> {
@@ -439,6 +498,19 @@ function maskSettingsAuthValue(value: string): string {
   }
 
   return `${SETTINGS_AUTH_MASK}${suffix}`;
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch (error) {
+    if (isEnoentError(error)) {
+      return false;
+    }
+
+    throw error;
+  }
 }
 
 function isEnoentError(error: unknown): boolean {

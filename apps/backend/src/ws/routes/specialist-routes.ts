@@ -15,6 +15,7 @@ import {
   type SaveSpecialistRequest,
 } from "../../swarm/specialists/specialist-registry.js";
 import { getModelPresetInfoList } from "../../swarm/model-presets.js";
+import { getManagedModelProviderCredentialAvailability } from "../../swarm/secrets-env-service.js";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
 import {
   applyCorsHeaders,
@@ -42,7 +43,7 @@ export function createSpecialistRoutes(options: {
       methods: SETTINGS_MODELS_METHODS,
       matches: (pathname) => pathname === SETTINGS_MODELS_ENDPOINT_PATH,
       handle: async (request, response, requestUrl) => {
-        await handleSettingsModelsRequest(request, response, requestUrl);
+        await handleSettingsModelsRequest(swarmManager, request, response, requestUrl);
       },
     },
     {
@@ -65,6 +66,7 @@ export function createSpecialistRoutes(options: {
 }
 
 async function handleSettingsModelsRequest(
+  swarmManager: SwarmManager,
   request: IncomingMessage,
   response: ServerResponse,
   requestUrl: URL,
@@ -79,7 +81,17 @@ async function handleSettingsModelsRequest(
   applyCorsHeaders(request, response, SETTINGS_MODELS_METHODS);
 
   if (request.method === "GET" && requestUrl.pathname === SETTINGS_MODELS_ENDPOINT_PATH) {
-    sendJson(response, 200, { models: getModelPresetInfoList() });
+    const providerAvailability = await getManagedModelProviderCredentialAvailability(
+      swarmManager.getConfig()
+    );
+    const models = getModelPresetInfoList().filter((model) => {
+      // Providers without a managed credential check (for example codex-app, which can rely on
+      // external Codex login state) stay visible.
+      const isAvailable = providerAvailability.get(model.provider);
+      return isAvailable ?? true;
+    });
+
+    sendJson(response, 200, { models });
     return;
   }
 
