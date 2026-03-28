@@ -138,6 +138,14 @@ function getAgentLiveStatus(
   }
 }
 
+// Inject subtle glow pulse keyframes once
+if (typeof document !== 'undefined' && !document.getElementById('sidebar-glow-pulse')) {
+  const style = document.createElement('style')
+  style.id = 'sidebar-glow-pulse'
+  style.textContent = `@keyframes subtle-glow-pulse{0%,100%{box-shadow:0 0 6px rgba(245,158,11,0.5)}50%{box-shadow:0 0 10px rgba(245,158,11,0.7)}}`
+  document.head.appendChild(style)
+}
+
 // ── Shared components ──
 
 function HelpButton() {
@@ -499,7 +507,7 @@ function SessionRowItem({
                     {streamingWorkerCount > 0 ? (
                       <span
                         className="inline-flex size-3.5 shrink-0 items-center justify-center rounded-full border-2 border-amber-500 bg-transparent"
-                        style={{ boxShadow: '0 0 6px rgba(245,158,11,0.5)' }}
+                        style={{ animation: 'subtle-glow-pulse 2s ease-in-out infinite' }}
                         aria-label={`${streamingWorkerCount} worker${streamingWorkerCount !== 1 ? 's' : ''} active`}
                       >
                         <span className="text-[8px] font-bold leading-none text-amber-500">
@@ -509,7 +517,7 @@ function SessionRowItem({
                     ) : managerStreaming ? (
                       <span
                         className="inline-flex size-3 shrink-0 rounded-full border-2 border-amber-500 bg-transparent"
-                        style={{ boxShadow: '0 0 6px rgba(245,158,11,0.5)' }}
+                        style={{ animation: 'subtle-glow-pulse 2s ease-in-out infinite' }}
                         aria-label="Manager streaming"
                       />
                     ) : (
