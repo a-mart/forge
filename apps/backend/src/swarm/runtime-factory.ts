@@ -180,12 +180,6 @@ export class RuntimeFactory {
     }
 
     const model = this.resolveModel(modelRegistry, descriptor.model);
-    if (!model) {
-      throw new Error(
-        `Unable to resolve model ${descriptor.model.provider}/${descriptor.model.modelId}. ` +
-          "Install a model supported by @mariozechner/pi-ai."
-      );
-    }
 
     const sessionManager = openSessionManagerWithSizeGuard(descriptor.sessionFile, {
       context: `runtime:create:pi:${descriptor.agentId}`,
@@ -456,14 +450,21 @@ export class RuntimeFactory {
     return sections.join("\n\n");
   }
 
-  private resolveModel(modelRegistry: ModelRegistry, descriptor: AgentModelDescriptor): Model<any> | undefined {
+  private resolveModel(modelRegistry: ModelRegistry, descriptor: AgentModelDescriptor): Model<any> {
     const direct = modelRegistry.find(descriptor.provider, descriptor.modelId);
-    if (direct) return direct;
+    if (direct) {
+      return direct;
+    }
 
     const fromCatalog = getModel(descriptor.provider as any, descriptor.modelId as any);
-    if (fromCatalog) return fromCatalog;
+    if (fromCatalog) {
+      return fromCatalog;
+    }
 
-    return modelRegistry.getAll()[0];
+    throw new Error(
+      `Model "${descriptor.modelId}" not found for provider "${descriptor.provider}". ` +
+        "The model may not be available in the current Pi runtime version."
+    );
   }
 }
 
