@@ -97,7 +97,8 @@ export function isImageFile(file: File): boolean {
 }
 
 export function isPendingImageAttachment(attachment: PendingAttachment): attachment is PendingImageAttachment {
-  return (attachment as { type?: string }).type !== 'text' && (attachment as { type?: string }).type !== 'binary'
+  const t = (attachment as { type?: string }).type
+  return t === undefined || t === 'image'
 }
 
 export function isPendingTextAttachment(attachment: PendingAttachment): attachment is PendingTextAttachment {

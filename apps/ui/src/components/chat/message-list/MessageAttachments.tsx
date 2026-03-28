@@ -1,4 +1,5 @@
-import { File, FileText, ImageIcon, ZoomIn } from 'lucide-react'
+import { useState } from 'react'
+import { ChevronDown, ChevronRight, File, FileText, ImageIcon, TerminalSquare, ZoomIn } from 'lucide-react'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
 import { cn } from '@/lib/utils'
 import { usePeekPreview } from '@/hooks/use-peek-preview'
@@ -6,6 +7,7 @@ import { ContentZoomDialog } from '../ContentZoomDialog'
 import type {
   ConversationImageAttachment,
   ConversationMessageAttachment,
+  ConversationTextAttachment,
 } from '@forge/protocol'
 
 type PreviewableMessageImageAttachment =
@@ -181,6 +183,103 @@ function MessageImageAttachments({
   )
 }
 
+/** Detect terminal text attachments by checking for terminal content prefix. */
+function isTerminalTextAttachment(
+  attachment: ConversationMessageAttachment,
+): attachment is ConversationTextAttachment {
+  return (
+    attachment.type === 'text' &&
+    'text' in attachment &&
+    typeof attachment.text === 'string' &&
+    attachment.text.startsWith('Terminal: ')
+  )
+}
+
+/** Extract content from a terminal text attachment (strip the label/fence). */
+function extractTerminalContent(text: string): { label: string; code: string } {
+  const firstNewline = text.indexOf('\n')
+  const label = firstNewline > 0 ? text.slice('Terminal: '.length, firstNewline).trim() : ''
+  // Extract content between ``` fences
+  const fenceStart = text.indexOf('```\n')
+  const fenceEnd = text.lastIndexOf('\n```')
+  const code =
+    fenceStart >= 0 && fenceEnd > fenceStart
+      ? text.slice(fenceStart + 4, fenceEnd)
+      : text.slice(firstNewline + 1)
+  return { label, code }
+}
+
+function TerminalAttachmentCard({
+  attachment,
+  isUser,
+}: {
+  attachment: ConversationTextAttachment
+  isUser: boolean
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const { label, code } = extractTerminalContent(attachment.text)
+  const displayName = label || attachment.fileName || 'Terminal output'
+
+  return (
+    <div
+      className={cn(
+        'overflow-hidden rounded-md border',
+        isUser
+          ? 'border-blue-300/30 bg-blue-500/10'
+          : 'border-blue-500/20 bg-blue-500/5',
+      )}
+    >
+      <button
+        type="button"
+        onClick={() => setExpanded((prev) => !prev)}
+        className={cn(
+          'flex w-full items-center gap-2 px-2 py-1.5 text-left transition-colors',
+          isUser ? 'hover:bg-blue-400/10' : 'hover:bg-blue-500/10',
+        )}
+        aria-expanded={expanded}
+        aria-label={`${expanded ? 'Collapse' : 'Expand'} terminal output: ${displayName}`}
+      >
+        <TerminalSquare
+          className={cn(
+            'size-3.5 shrink-0',
+            isUser ? 'text-blue-200' : 'text-blue-400',
+          )}
+        />
+        <span className="min-w-0 flex-1">
+          <p className="truncate text-xs font-medium">{displayName}</p>
+        </span>
+        {expanded ? (
+          <ChevronDown
+            className={cn(
+              'size-3 shrink-0',
+              isUser ? 'text-primary-foreground/60' : 'text-muted-foreground',
+            )}
+          />
+        ) : (
+          <ChevronRight
+            className={cn(
+              'size-3 shrink-0',
+              isUser ? 'text-primary-foreground/60' : 'text-muted-foreground',
+            )}
+          />
+        )}
+      </button>
+      {expanded ? (
+        <div
+          className={cn(
+            'max-h-60 overflow-auto border-t px-3 py-2',
+            isUser ? 'border-blue-300/20' : 'border-blue-500/15',
+          )}
+        >
+          <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-relaxed">
+            {code}
+          </pre>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 function MessageFileAttachments({
   attachments,
   isUser,
@@ -195,6 +294,17 @@ function MessageFileAttachments({
   return (
     <div className="space-y-1.5">
       {attachments.map((attachment, index) => {
+        // Terminal text attachments get expandable rendering
+        if (isTerminalTextAttachment(attachment)) {
+          return (
+            <TerminalAttachmentCard
+              key={`terminal-${attachment.fileName}-${index}`}
+              attachment={attachment}
+              isUser={isUser}
+            />
+          )
+        }
+
         const fileName = attachment.fileName || `Attachment ${index + 1}`
         const subtitle = fileAttachmentSubtitle(attachment)
 

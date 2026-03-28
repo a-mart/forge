@@ -18,6 +18,12 @@ export function TerminalSelectionAction({ top, left, onAddToChat }: TerminalSele
         e.stopPropagation()
         onAddToChat()
       }}
+      onClick={(e) => {
+        // Keyboard activation (Enter/Space on focused button)
+        e.preventDefault()
+        e.stopPropagation()
+        onAddToChat()
+      }}
     >
       <MessageSquarePlus className="size-3" />
       Add to Chat

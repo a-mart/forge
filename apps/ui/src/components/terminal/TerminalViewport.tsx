@@ -81,17 +81,8 @@ export function TerminalViewport({
   const [showRestoredBanner, setShowRestoredBanner] = useState(terminal.recoveredFromPersistence)
   const [selectionButton, setSelectionButton] = useState<{ top: number; left: number } | null>(null)
 
-  // Extended ref that includes selection APIs we need
-  const xtermRef = useRef<{
-    hasSelection(): boolean
-    getSelection(): string
-    getSelectionPosition(): { start: { x: number; y: number }; end: { x: number; y: number } } | undefined
-    clearSelection(): void
-    buffer: { active: { viewportY: number } }
-    rows: number
-    cols: number
-    element?: HTMLElement
-  } | null>(null)
+  // Ref to the xterm Terminal instance for selection APIs
+  const xtermRef = useRef<import('@xterm/xterm').Terminal | null>(null)
   const cellDimsRef = useRef<{ width: number; height: number } | null>(null)
   const selectionShowTimerRef = useRef<number>(0)
 
@@ -123,6 +114,7 @@ export function TerminalViewport({
     if (!range) return null
 
     const viewportY = xterm.buffer.active.viewportY
+    // xterm's IBufferCellPosition documents x/y as 1-based
     const endRowViewport = range.end.y - 1 - viewportY
 
     // Selection is off-screen
@@ -179,6 +171,7 @@ export function TerminalViewport({
     const range = xterm.getSelectionPosition()
     let lineRange = ''
     if (range) {
+      // xterm's IBufferCellPosition is 1-based — use directly for display
       const startLine = range.start.y
       const endLine = range.end.y
       lineRange = startLine === endLine ? `line ${startLine}` : `lines ${startLine}–${endLine}`
@@ -201,24 +194,12 @@ export function TerminalViewport({
 
   useEffect(() => {
     let disposed = false
-    let terminalInstance: {
-      open(node: HTMLElement): void
-      focus(): void
-      write(data: string): void
-      dispose(): void
-      loadAddon(addon: unknown): void
-      attachCustomKeyEventHandler(handler: (event: KeyboardEvent) => boolean): void
-      onData(listener: (data: string) => void): { dispose(): void }
-      onResize(listener: (size: { cols: number; rows: number }) => void): { dispose(): void }
-      cols: number
-      rows: number
-      element?: HTMLElement
-    } | null = null
-    let fitAddon: { fit(): void } | null = null
+    let terminalInstance: import('@xterm/xterm').Terminal | null = null
+    let fitAddon: (import('@xterm/xterm').ITerminalAddon & { fit(): void }) | null = null
     let resizeObserver: ResizeObserver | null = null
     let dataDisposable: { dispose(): void } | null = null
     let resizeDisposable: { dispose(): void } | null = null
-    let webglAddon: { dispose(): void } | null = null
+    let webglAddon: import('@xterm/xterm').ITerminalAddon | null = null
     let resizeFrame = 0
     let selectionDisposable: { dispose(): void } | null = null
     let scrollDisposable: { dispose(): void } | null = null
@@ -251,11 +232,10 @@ export function TerminalViewport({
           fontFamily: TERMINAL_FONT_FAMILY,
           theme: TERMINAL_THEME,
           scrollback: 5_000,
-        }) as NonNullable<typeof terminalInstance>
+        })
         terminalInstance = xterm
         terminalInstanceRef.current = xterm
-        // Store extended ref for selection APIs
-        xtermRef.current = xterm as unknown as NonNullable<typeof xtermRef.current>
+        xtermRef.current = xterm
 
         xterm.loadAddon(fitAddon)
         xterm.loadAddon(new WebLinksAddon())
@@ -339,12 +319,12 @@ export function TerminalViewport({
         }
 
         // Selection change detection
-        selectionDisposable = (xterm as unknown as { onSelectionChange: (listener: () => void) => { dispose(): void } }).onSelectionChange(() => {
+        selectionDisposable = xterm.onSelectionChange(() => {
           updateSelectionButton()
         })
 
         // Hide/recompute button on scroll
-        scrollDisposable = (xterm as unknown as { onScroll: (listener: () => void) => { dispose(): void } }).onScroll(() => {
+        scrollDisposable = xterm.onScroll(() => {
           if (xtermRef.current?.hasSelection()) {
             const pos = computeSelectionButtonPosition()
             setSelectionButton(pos)
@@ -360,6 +340,14 @@ export function TerminalViewport({
           resizeFrame = requestAnimationFrame(() => {
             resizeFrame = 0
             runFit()
+            // Remeasure cells and recompute selection button after resize
+            if (hostRef.current) {
+              cellDimsRef.current = measureCellDimensions(hostRef.current)
+            }
+            if (xtermRef.current?.hasSelection()) {
+              const pos = computeSelectionButtonPosition()
+              setSelectionButton(pos)
+            }
           })
         })
         resizeObserver.observe(host)
