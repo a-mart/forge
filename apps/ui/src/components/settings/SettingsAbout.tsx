@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { CheckCircle2, Download, Loader2, RefreshCw, RotateCcw, AlertCircle, Globe } from 'lucide-react'
+import { CheckCircle2, Download, ExternalLink, Loader2, RefreshCw, RotateCcw, AlertCircle, Globe } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Switch } from '@/components/ui/switch'
@@ -71,6 +71,17 @@ export function SettingsAbout() {
               {version ? `v${version}` : 'Unknown'}
             </Badge>
           </div>
+
+          {/* Releases link */}
+          <a
+            href="https://github.com/a-mart/forge/releases"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
+          >
+            View releases on GitHub
+            <ExternalLink className="size-3.5" />
+          </a>
 
           {/* Updates */}
           {inElectron ? (
