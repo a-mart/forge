@@ -14,7 +14,7 @@ export type {
   ChoiceRequestStatus,
 } from "@forge/protocol";
 
-export const SWARM_MODEL_PRESETS = ["pi-codex", "pi-5.4", "pi-opus", "codex-app"] as const;
+export const SWARM_MODEL_PRESETS = ["pi-codex", "pi-5.4", "pi-opus", "pi-grok", "codex-app"] as const;
 
 export type SwarmModelPreset = (typeof SWARM_MODEL_PRESETS)[number];
 
@@ -152,7 +152,7 @@ export interface SkillEnvRequirement {
   maskedValue?: string;
 }
 
-export type SettingsAuthProviderName = "anthropic" | "openai-codex";
+export type SettingsAuthProviderName = "anthropic" | "openai-codex" | "xai";
 
 export interface SettingsAuthProvider {
   provider: SettingsAuthProviderName;

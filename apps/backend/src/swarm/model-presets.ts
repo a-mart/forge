@@ -15,6 +15,11 @@ export const MODEL_PRESET_DESCRIPTORS: Record<SwarmModelPreset, AgentModelDescri
     modelId: "gpt-5.4",
     thinkingLevel: "xhigh"
   },
+  "pi-grok": {
+    provider: "xai",
+    modelId: "grok-4",
+    thinkingLevel: "high"
+  },
   "pi-opus": {
     // Anthropic OAuth tokens trigger Claude Code auth headers in pi-ai,
     // matching the existing Claude Code integration path.
@@ -57,6 +62,9 @@ const MODEL_PRESET_DISPLAY_INFO: Record<SwarmModelPreset, {
         label: "Claude Haiku 4.5"
       }
     ]
+  },
+  "pi-grok": {
+    displayName: "Grok 4"
   },
   "codex-app": {
     displayName: "Codex App Runtime"
@@ -131,6 +139,10 @@ export function inferProviderFromModelId(modelId: string): string | null {
     return "anthropic";
   }
 
+  if (normalizedModelId.startsWith("grok-")) {
+    return "xai";
+  }
+
   return null;
 }
 
@@ -190,6 +202,10 @@ export function inferSwarmModelPresetFromDescriptor(
 
   if (provider === "anthropic" && modelId === "claude-opus-4-6") {
     return "pi-opus";
+  }
+
+  if (provider === "xai" && (modelId === "grok-4" || modelId === "grok-4-fast" || modelId === "grok-3")) {
+    return "pi-grok";
   }
 
   if (provider === "openai-codex-app-server" && modelId === "default") {

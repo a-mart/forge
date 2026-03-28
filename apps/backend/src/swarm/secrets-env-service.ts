@@ -24,6 +24,10 @@ const SETTINGS_AUTH_PROVIDER_DEFINITIONS: Array<{
   {
     provider: "openai-codex",
     storageProvider: "openai-codex"
+  },
+  {
+    provider: "xai",
+    storageProvider: "xai"
   }
 ];
 

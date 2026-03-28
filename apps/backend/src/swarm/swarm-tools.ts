@@ -54,6 +54,7 @@ const spawnModelPresetSchema = Type.Union([
   Type.Literal("pi-codex"),
   Type.Literal("pi-5.4"),
   Type.Literal("pi-opus"),
+  Type.Literal("pi-grok"),
   Type.Literal("codex-app")
 ]);
 
@@ -353,7 +354,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
       name: "spawn_agent",
       label: "Spawn Agent",
       description:
-        "Create and start a new worker agent. Prefer specialist mode via `specialist` for standard delegation; use ad-hoc archetype/prompt/model overrides only when no specialist fits. agentId is required and normalized to lowercase kebab-case; if taken, a numeric suffix (-2, -3, …) is appended. archetypeId, systemPrompt, model, modelId, reasoningLevel, cwd, and initialMessage remain available in ad-hoc mode. model accepts pi-codex|pi-5.4|pi-opus|codex-app.",
+        "Create and start a new worker agent. Prefer specialist mode via `specialist` for standard delegation; use ad-hoc archetype/prompt/model overrides only when no specialist fits. agentId is required and normalized to lowercase kebab-case; if taken, a numeric suffix (-2, -3, …) is appended. archetypeId, systemPrompt, model, modelId, reasoningLevel, cwd, and initialMessage remain available in ad-hoc mode. model accepts pi-codex|pi-5.4|pi-opus|pi-grok|codex-app.",
       parameters: Type.Object({
         agentId: Type.String({
           description:
@@ -373,7 +374,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
         modelId: Type.Optional(
           Type.String({
             description:
-              "Override model ID within the selected provider. For pi-codex: 'gpt-5.3-codex' (default), 'gpt-5.3-codex-spark' (fast/cheap), etc. For pi-5.4: 'gpt-5.4' (default). For pi-opus: 'claude-opus-4-6' (default), 'claude-sonnet-4-5-20250929' (balanced), 'claude-haiku-4-5-20251001' (fast/cheap). Leave empty for preset default."
+              "Override model ID within the selected provider. For pi-codex: 'gpt-5.3-codex' (default), 'gpt-5.3-codex-spark' (fast/cheap), etc. For pi-5.4: 'gpt-5.4' (default). For pi-opus: 'claude-opus-4-6' (default), 'claude-sonnet-4-5-20250929' (balanced), 'claude-haiku-4-5-20251001' (fast/cheap). For pi-grok: 'grok-4' (default), 'grok-4-fast' (faster), 'grok-3' (legacy). Leave empty for preset default."
           })
         ),
         reasoningLevel: Type.Optional(spawnReasoningLevelSchema),

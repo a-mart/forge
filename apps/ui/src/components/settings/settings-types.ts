@@ -12,7 +12,7 @@ export interface SettingsEnvVariable {
   maskedValue?: string
 }
 
-export type SettingsAuthProviderId = 'anthropic' | 'openai-codex'
+export type SettingsAuthProviderId = 'anthropic' | 'openai-codex' | 'xai'
 
 export interface SettingsAuthProvider {
   provider: SettingsAuthProviderId

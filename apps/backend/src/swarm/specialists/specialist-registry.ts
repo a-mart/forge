@@ -27,7 +27,7 @@ const SPECIALISTS_ENABLED_FILENAME = "specialists-enabled.json";
  */
 export const LEGACY_MODEL_ROUTING_GUIDANCE = `Model and reasoning selection for workers:
 - spawn_agent accepts optional \`model\`, \`modelId\`, and \`reasoningLevel\` to tune cost, speed, and capability per worker.
-- Available model presets: \`pi-codex\` (\`gpt-5.3-codex\`), \`pi-5.4\` (\`gpt-5.4\`), \`pi-opus\` (\`claude-opus-4-6\`), and \`codex-app\` (\`default\` on openai-codex-app-server).
+- Available model presets: \`pi-codex\` (\`gpt-5.3-codex\`), \`pi-5.4\` (\`gpt-5.4\`), \`pi-opus\` (\`claude-opus-4-6\`), \`pi-grok\` (\`grok-4\`), and \`codex-app\` (\`default\` on openai-codex-app-server).
 - Think in three tiers when assigning work:
   1. **Quick/cheap** — file reads, searches, command runs, simple edits. Use \`modelId: "gpt-5.3-codex-spark"\` or \`modelId: "claude-haiku-4-5-20251001"\` with \`reasoningLevel: "low"\`. Fast, minimal cost.
   2. **Standard** — normal implementation, moderate complexity. Use preset defaults with no overrides. This is the baseline and needs no tuning.

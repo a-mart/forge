@@ -23,23 +23,31 @@ import { resolveApiEndpoint } from '@/lib/api-endpoint'
 
 export const SETTINGS_AUTH_PROVIDER_META: Record<
   SettingsAuthProviderId,
-  { label: string; description: string; placeholder: string; helpUrl: string }
+  { label: string; description: string; placeholder: string; helpUrl: string; oauthSupported?: boolean }
 > = {
   anthropic: {
     label: 'Anthropic API key',
     description: 'Used by pi-opus and Anthropic-backed managers/workers.',
     placeholder: 'sk-ant-...',
     helpUrl: 'https://console.anthropic.com/settings/keys',
+    oauthSupported: true,
   },
   'openai-codex': {
     label: 'OpenAI API key',
     description: 'Used for Codex runtime sessions and voice transcription.',
     placeholder: 'sk-...',
     helpUrl: 'https://platform.openai.com/api-keys',
+    oauthSupported: true,
+  },
+  xai: {
+    label: 'xAI API key',
+    description: 'Used by pi-grok and xAI-backed managers/workers.',
+    placeholder: 'xai-...',
+    helpUrl: 'https://console.x.ai/',
   },
 }
 
-export const SETTINGS_AUTH_PROVIDER_ORDER: SettingsAuthProviderId[] = ['anthropic', 'openai-codex']
+export const SETTINGS_AUTH_PROVIDER_ORDER: SettingsAuthProviderId[] = ['anthropic', 'openai-codex', 'xai']
 
 export const SHARED_INTEGRATION_MANAGER_ID = '__shared__'
 
@@ -61,6 +69,7 @@ export function createIdleSettingsAuthOAuthFlowState(): SettingsAuthOAuthFlowSta
 function normalizeSettingsAuthProviderId(value: unknown): SettingsAuthProviderId | undefined {
   if (value === 'anthropic') return 'anthropic'
   if (value === 'openai-codex') return 'openai-codex'
+  if (value === 'xai') return 'xai'
   return undefined
 }
 

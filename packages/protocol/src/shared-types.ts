@@ -1,6 +1,6 @@
 export type AgentStatus = 'idle' | 'streaming' | 'terminated' | 'stopped' | 'error'
 
-export const MANAGER_MODEL_PRESETS = ['pi-codex', 'pi-5.4', 'pi-opus', 'codex-app'] as const
+export const MANAGER_MODEL_PRESETS = ['pi-codex', 'pi-5.4', 'pi-opus', 'pi-grok', 'codex-app'] as const
 export type ManagerModelPreset = (typeof MANAGER_MODEL_PRESETS)[number]
 
 export const MANAGER_REASONING_LEVELS = ['none', 'low', 'medium', 'high', 'xhigh'] as const

@@ -81,6 +81,7 @@ const DEFAULT_REASONING_LEVEL: ManagerReasoningLevel = 'xhigh'
 const PROVIDER_LABELS: Record<string, string> = {
   'openai-codex': 'OpenAI Codex',
   'anthropic': 'Anthropic',
+  xai: 'xAI',
   'openai-codex-app-server': 'Codex App',
 }
 
