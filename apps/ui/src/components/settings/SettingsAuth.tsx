@@ -77,6 +77,7 @@ function AuthProviderRow({
   onOAuthCodeChange,
   onSubmitOAuthCode,
   onResetOAuth,
+  oauthSupported,
 }: {
   provider: SettingsAuthProviderId
   authStatus: SettingsAuthProvider
@@ -93,6 +94,7 @@ function AuthProviderRow({
   onOAuthCodeChange: (value: string) => void
   onSubmitOAuthCode: () => void
   onResetOAuth: () => void
+  oauthSupported: boolean
 }) {
   const metadata = SETTINGS_AUTH_PROVIDER_META[provider]
   const busy = isSaving || isDeleting
@@ -100,6 +102,7 @@ function AuthProviderRow({
     oauthFlow.status === 'starting' ||
     oauthFlow.status === 'waiting_for_auth' ||
     oauthFlow.status === 'waiting_for_code'
+  const showOAuthControls = oauthSupported
 
   return (
     <div className="rounded-lg border border-border bg-card/50 p-4 transition-colors hover:bg-card/80">
@@ -181,112 +184,114 @@ function AuthProviderRow({
         ) : null}
       </div>
 
-      <div className="mt-4">
-        <Separator className="mb-3" />
+      {showOAuthControls ? (
+        <div className="mt-4">
+          <Separator className="mb-3" />
 
-        <div className="space-y-2 rounded-md border border-border/70 bg-background/40 p-3">
-          <div className="flex flex-wrap items-start justify-between gap-2">
-            <div className="space-y-1">
-              <p className="text-xs font-medium text-foreground">OAuth login</p>
-              <p className="text-[11px] text-muted-foreground">
-                Authorize in your browser and store refresh/access tokens automatically.
-              </p>
-            </div>
-
-            <div className="flex items-center gap-2">
-              {oauthFlow.status === 'complete' ? (
-                <Badge
-                  variant="outline"
-                  className="gap-1 border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-                >
-                  <Check className="size-3" />
-                  Connected
-                </Badge>
-              ) : null}
-
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={onStartOAuth}
-                disabled={busy || oauthInProgress || oauthFlow.isSubmittingCode}
-                className="gap-1.5"
-              >
-                {oauthInProgress ? <Loader2 className="size-3.5 animate-spin" /> : <Plug className="size-3.5" />}
-                {oauthInProgress ? 'Authorizing...' : 'Login with OAuth'}
-              </Button>
-            </div>
-          </div>
-
-          {oauthFlow.authUrl ? (
-            <a
-              href={oauthFlow.authUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-1 rounded-md border border-border/70 bg-muted/30 px-2 py-1 text-[11px] text-primary hover:bg-muted/50"
-            >
-              Open authorization URL
-              <ExternalLink className="size-3" />
-            </a>
-          ) : null}
-
-          {oauthFlow.instructions ? (
-            <p className="text-[11px] text-muted-foreground">{oauthFlow.instructions}</p>
-          ) : null}
-
-          {oauthFlow.progressMessage ? (
-            <p className="text-[11px] text-muted-foreground">{oauthFlow.progressMessage}</p>
-          ) : null}
-
-          {oauthFlow.status === 'waiting_for_code' ? (
-            <div className="space-y-2">
-              <p className="text-[11px] text-muted-foreground">
-                {oauthFlow.promptMessage ?? 'Paste the authorization code to continue.'}
-              </p>
+          <div className="space-y-2 rounded-md border border-border/70 bg-background/40 p-3">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div className="space-y-1">
+                <p className="text-xs font-medium text-foreground">OAuth login</p>
+                <p className="text-[11px] text-muted-foreground">
+                  Authorize in your browser and store refresh/access tokens automatically.
+                </p>
+              </div>
 
               <div className="flex items-center gap-2">
-                <Input
-                  type="text"
-                  placeholder={oauthFlow.promptPlaceholder ?? 'Paste authorization code or URL'}
-                  value={oauthFlow.codeValue}
-                  onChange={(event) => onOAuthCodeChange(event.target.value)}
-                  disabled={busy || oauthFlow.isSubmittingCode}
-                  autoComplete="off"
-                  spellCheck={false}
-                  className="font-mono text-xs"
-                />
+                {oauthFlow.status === 'complete' ? (
+                  <Badge
+                    variant="outline"
+                    className="gap-1 border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                  >
+                    <Check className="size-3" />
+                    Connected
+                  </Badge>
+                ) : null}
 
                 <Button
                   type="button"
+                  variant="outline"
                   size="sm"
-                  onClick={onSubmitOAuthCode}
-                  disabled={!oauthFlow.codeValue.trim() || busy || oauthFlow.isSubmittingCode}
+                  onClick={onStartOAuth}
+                  disabled={busy || oauthInProgress || oauthFlow.isSubmittingCode}
                   className="gap-1.5"
                 >
-                  {oauthFlow.isSubmittingCode ? (
-                    <Loader2 className="size-3.5 animate-spin" />
-                  ) : (
-                    <Save className="size-3.5" />
-                  )}
-                  {oauthFlow.isSubmittingCode ? 'Submitting...' : 'Submit'}
+                  {oauthInProgress ? <Loader2 className="size-3.5 animate-spin" /> : <Plug className="size-3.5" />}
+                  {oauthInProgress ? 'Authorizing...' : 'Login with OAuth'}
                 </Button>
               </div>
             </div>
-          ) : null}
 
-          {oauthFlow.errorMessage ? (
-            <p className="text-[11px] text-destructive">{oauthFlow.errorMessage}</p>
-          ) : null}
+            {oauthFlow.authUrl ? (
+              <a
+                href={oauthFlow.authUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 rounded-md border border-border/70 bg-muted/30 px-2 py-1 text-[11px] text-primary hover:bg-muted/50"
+              >
+                Open authorization URL
+                <ExternalLink className="size-3" />
+              </a>
+            ) : null}
 
-          {(oauthFlow.status === 'complete' || oauthFlow.status === 'error') && !oauthInProgress ? (
-            <div className="flex justify-end">
-              <Button type="button" variant="ghost" size="sm" onClick={onResetOAuth}>
-                Clear
-              </Button>
-            </div>
-          ) : null}
+            {oauthFlow.instructions ? (
+              <p className="text-[11px] text-muted-foreground">{oauthFlow.instructions}</p>
+            ) : null}
+
+            {oauthFlow.progressMessage ? (
+              <p className="text-[11px] text-muted-foreground">{oauthFlow.progressMessage}</p>
+            ) : null}
+
+            {oauthFlow.status === 'waiting_for_code' ? (
+              <div className="space-y-2">
+                <p className="text-[11px] text-muted-foreground">
+                  {oauthFlow.promptMessage ?? 'Paste the authorization code to continue.'}
+                </p>
+
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="text"
+                    placeholder={oauthFlow.promptPlaceholder ?? 'Paste authorization code or URL'}
+                    value={oauthFlow.codeValue}
+                    onChange={(event) => onOAuthCodeChange(event.target.value)}
+                    disabled={busy || oauthFlow.isSubmittingCode}
+                    autoComplete="off"
+                    spellCheck={false}
+                    className="font-mono text-xs"
+                  />
+
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={onSubmitOAuthCode}
+                    disabled={!oauthFlow.codeValue.trim() || busy || oauthFlow.isSubmittingCode}
+                    className="gap-1.5"
+                  >
+                    {oauthFlow.isSubmittingCode ? (
+                      <Loader2 className="size-3.5 animate-spin" />
+                    ) : (
+                      <Save className="size-3.5" />
+                    )}
+                    {oauthFlow.isSubmittingCode ? 'Submitting...' : 'Submit'}
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+
+            {oauthFlow.errorMessage ? (
+              <p className="text-[11px] text-destructive">{oauthFlow.errorMessage}</p>
+            ) : null}
+
+            {(oauthFlow.status === 'complete' || oauthFlow.status === 'error') && !oauthInProgress ? (
+              <div className="flex justify-end">
+                <Button type="button" variant="ghost" size="sm" onClick={onResetOAuth}>
+                  Clear
+                </Button>
+              </div>
+            ) : null}
+          </div>
         </div>
-      </div>
+      ) : null}
     </div>
   )
 }
@@ -638,6 +643,7 @@ export function SettingsAuth({ wsUrl }: SettingsAuthProps) {
                   }}
                   onSubmitOAuthCode={() => void handleSubmitOAuthPrompt(provider)}
                   onResetOAuth={() => handleResetOAuthFlow(provider)}
+                  oauthSupported={SETTINGS_AUTH_PROVIDER_META[provider].oauthSupported === true}
                 />
               )
             })}
