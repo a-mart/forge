@@ -10,6 +10,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { HelpTrigger } from '@/components/help/HelpTrigger'
 import { ContextWindowIndicator } from '@/components/chat/ContextWindowIndicator'
 import { SystemPromptDialog } from '@/components/chat/message-list/SystemPromptDialog'
 import { MessageFeedback } from '@/components/chat/message-list/MessageFeedback'
@@ -432,6 +433,9 @@ export function ChatHeader({
             </DropdownMenu>
           </>
         ) : null}
+
+        {/* ── Help trigger ── */}
+        <HelpTrigger contextKey="chat.main" size="sm" variant="ghost" className="inline-flex" data-tour="help-button" />
 
         {/* ── Inline: file browser + diff viewer + artifacts/dashboard toggle ── */}
         <div className="inline-flex items-center gap-0.5">

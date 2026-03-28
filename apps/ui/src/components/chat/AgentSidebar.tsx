@@ -1975,6 +1975,7 @@ export function AgentSidebar({
 
   const sidebarContent = (
     <aside
+      data-tour="sidebar"
       className={cn(
         'flex h-full flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground',
         'max-md:w-full md:w-[20rem] md:min-w-[20rem] md:shrink-0',
@@ -2254,6 +2255,7 @@ export function AgentSidebar({
                   )}
                   aria-label="Settings"
                   aria-pressed={isSettingsActive}
+                  data-tour="settings"
                 >
                   <Settings aria-hidden="true" className="size-4" />
                 </button>

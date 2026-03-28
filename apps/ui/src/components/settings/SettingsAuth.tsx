@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useHelpContext } from '@/components/help/help-hooks'
 import {
   AlertTriangle,
   Check,
@@ -305,6 +306,8 @@ interface SettingsAuthProps {
 }
 
 export function SettingsAuth({ wsUrl }: SettingsAuthProps) {
+  useHelpContext('settings.auth')
+
   const [authProviders, setAuthProviders] = useState<SettingsAuthProvider[]>([])
   const [authDraftByProvider, setAuthDraftByProvider] = useState<Partial<Record<SettingsAuthProviderId, string>>>({})
   const [authRevealByProvider, setAuthRevealByProvider] = useState<Partial<Record<SettingsAuthProviderId, boolean>>>({})

@@ -1,5 +1,6 @@
 import { ArrowLeft, Bell, Settings, KeyRound, Blocks, Wrench, FileText, Terminal, Puzzle, UserCog, Info } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { HelpTrigger } from '@/components/help/HelpTrigger'
 import { cn } from '@/lib/utils'
 
 export type SettingsTab = 'general' | 'notifications' | 'auth' | 'integrations' | 'skills' | 'prompts' | 'specialists' | 'slash-commands' | 'extensions' | 'about'
@@ -49,6 +50,7 @@ export function SettingsLayout({ activeTab, onTabChange, onBack, children }: Set
           ) : null}
           <h1 className="truncate text-sm font-semibold text-foreground">Settings</h1>
         </div>
+        <HelpTrigger contextKey={`settings.${activeTab}`} size="sm" variant="ghost" />
       </header>
 
       {/* Mobile: horizontal scrolling tab bar */}

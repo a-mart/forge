@@ -12,6 +12,7 @@ import {
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
 import type { ArtifactReference } from '@/lib/artifacts'
 import { cn } from '@/lib/utils'
+import { HelpTrigger } from '@/components/help/HelpTrigger'
 import { SchedulesPanel } from '../SchedulesPanel'
 import { KnowledgeFileViewer } from './KnowledgeFileViewer'
 import { ReviewStatusPanel } from './ReviewStatusPanel'
@@ -255,6 +256,8 @@ export function CortexDashboardPanel({
               Cron
             </TabsTrigger>
           </TabsList>
+
+          <HelpTrigger contextKey="cortex.dashboard" size="sm" className="h-7 w-7" />
 
           <Button
             variant="ghost"

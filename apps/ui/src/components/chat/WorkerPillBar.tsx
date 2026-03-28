@@ -369,6 +369,7 @@ export const WorkerPillBar = memo(function WorkerPillBar({
 
   return (
     <div
+      data-tour="workers"
       className={cn(
         'grid transition-[grid-template-rows] duration-200 ease-out',
         isExpanded ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]',

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useHelpContext } from '@/components/help/help-hooks'
 import {
   AlertTriangle,
   Copy,
@@ -291,6 +292,8 @@ interface SettingsExtensionsProps {
 }
 
 export function SettingsExtensions({ wsUrl }: SettingsExtensionsProps) {
+  useHelpContext('settings.extensions')
+
   const [data, setData] = useState<SettingsExtensionsResponse | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)

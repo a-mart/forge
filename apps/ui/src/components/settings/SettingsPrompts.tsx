@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useHelpContext } from '@/components/help/help-hooks'
 import { Eye, Loader2 } from 'lucide-react'
 import {
   Select,
@@ -67,6 +68,8 @@ interface SettingsPromptsProps {
 }
 
 export function SettingsPrompts({ wsUrl, profiles, promptChangeKey }: SettingsPromptsProps) {
+  useHelpContext('settings.prompts')
+
   const defaultProfileId = profiles.length > 0 ? profiles[0].profileId : ''
   const [selectedProfileId, setSelectedProfileId] = useState(defaultProfileId)
   const [selectedCategory, setSelectedCategory] = useState<SurfaceCategory>('archetype')
