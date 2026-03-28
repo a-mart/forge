@@ -28,9 +28,9 @@ import type { HelpArticle as HelpArticleType, HelpCategory } from './help-types'
 // ── Drawer resize ──
 
 const HELP_DRAWER_WIDTH_KEY = 'forge-help-drawer-width'
-const DEFAULT_DRAWER_WIDTH = 700
-const MIN_DRAWER_WIDTH = 450
-const MAX_DRAWER_WIDTH = 1000
+const DEFAULT_DRAWER_WIDTH = 720
+const MIN_DRAWER_WIDTH = 500
+const MAX_DRAWER_WIDTH = 1200
 
 function loadDrawerWidth(): number {
   if (typeof window === 'undefined') return DEFAULT_DRAWER_WIDTH
@@ -38,7 +38,9 @@ function loadDrawerWidth(): number {
     const stored = window.localStorage.getItem(HELP_DRAWER_WIDTH_KEY)
     if (stored) {
       const w = parseInt(stored, 10)
-      if (w >= MIN_DRAWER_WIDTH && w <= MAX_DRAWER_WIDTH) return w
+      // Only use cached width if it's within current bounds AND at least the default
+      // (so upgrading the default actually takes effect for users with old cached values)
+      if (w >= DEFAULT_DRAWER_WIDTH && w <= MAX_DRAWER_WIDTH) return w
     }
   } catch { /* ignore */ }
   return DEFAULT_DRAWER_WIDTH
@@ -156,14 +158,11 @@ export function HelpDrawer() {
       <SheetContent
         side="right"
         showCloseButton
-        className={cn(
-          'gap-0 overflow-hidden p-0',
-          // Mobile: full width
-          'w-full max-w-full',
-          // Desktop: use CSS custom property for resizable width
-          'sm:w-[var(--help-drawer-w)] sm:max-w-[var(--help-drawer-w)]',
-        )}
-        style={{ '--help-drawer-w': `${drawerWidth}px` } as React.CSSProperties}
+        className="gap-0 overflow-hidden p-0"
+        style={{
+          width: drawerWidth,
+          maxWidth: drawerWidth,
+        }}
       >
         {/* Resize handle on left edge (desktop only) */}
         <div
