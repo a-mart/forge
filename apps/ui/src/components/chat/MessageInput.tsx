@@ -18,7 +18,9 @@ import { MAX_VOICE_RECORDING_DURATION_MS, useVoiceRecorder } from '@/hooks/use-v
 import {
   fileToPendingAttachment,
   type PendingAttachment,
+  type PendingTerminalAttachment,
 } from '@/lib/file-attachments'
+import type { TerminalSelectionContext } from '@/components/terminal/TerminalViewport'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
 import { transcribeVoice } from '@/lib/voice-transcription-client'
 import { cn } from '@/lib/utils'
@@ -230,6 +232,7 @@ export interface MessageInputHandle {
   setInput: (value: string) => void
   focus: () => void
   addFiles: (files: File[]) => Promise<void>
+  addTerminalContext: (context: TerminalSelectionContext) => void
 }
 
 function formatDuration(durationMs: number): string {
@@ -489,6 +492,22 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
     [disabled, isRecording, setAttachedFilesWithDraft],
   )
 
+  const addTerminalContext = useCallback(
+    (context: TerminalSelectionContext) => {
+      const attachment: PendingTerminalAttachment = {
+        id: crypto.randomUUID(),
+        type: 'terminal',
+        terminalName: context.terminalName,
+        lineRange: context.lineRange,
+        content: context.text,
+        sizeBytes: new Blob([context.text]).size,
+      }
+      setAttachedFilesWithDraft([...attachedFilesRef.current, attachment])
+      requestAnimationFrame(() => textareaRef.current?.focus())
+    },
+    [setAttachedFilesWithDraft],
+  )
+
   useImperativeHandle(
     ref,
     () => ({
@@ -500,8 +519,9 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
         textareaRef.current?.focus()
       },
       addFiles,
+      addTerminalContext,
     }),
-    [addFiles, setInputWithDraft],
+    [addFiles, addTerminalContext, setInputWithDraft],
   )
 
   const handleFileSelect = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -657,6 +677,18 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
       trimmed,
       attachedFiles.length > 0
         ? attachedFiles.map((attachment) => {
+            if (attachment.type === 'terminal') {
+              const label = attachment.lineRange
+                ? `${attachment.terminalName} (${attachment.lineRange})`
+                : attachment.terminalName
+              return {
+                type: 'text' as const,
+                mimeType: 'text/plain' as const,
+                text: `Terminal: ${label}\n\n\`\`\`\n${attachment.content}\n\`\`\``,
+                fileName: `${label}.txt`,
+              }
+            }
+
             if (attachment.type === 'text') {
               return {
                 type: 'text' as const,

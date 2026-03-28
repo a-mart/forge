@@ -28,6 +28,7 @@ import { FileBrowserSidebar } from '@/components/file-browser/FileBrowserSidebar
 import { FileBrowserPanel } from '@/components/file-browser/FileBrowserPanel'
 import { PlaywrightDashboardView } from '@/components/playwright/PlaywrightDashboardView'
 import { TerminalPanel } from '@/components/terminal/TerminalPanel'
+import type { TerminalSelectionContext } from '@/components/terminal/TerminalViewport'
 import { SettingsPanel } from '@/components/chat/SettingsDialog'
 import { StatsPanel } from '@/components/stats/StatsPanel'
 import { chooseFallbackAgentId } from '@/lib/agent-hierarchy'
@@ -925,6 +926,10 @@ export function IndexPage() {
     messageInputRef.current?.focus()
   }, [])
 
+  const handleTerminalAddToChat = useCallback((context: TerminalSelectionContext) => {
+    messageInputRef.current?.addTerminalContext(context)
+  }, [])
+
   const handleToggleArtifactsPanel = useCallback(() => {
     setIsArtifactsPanelOpen((previous) => {
       if (!previous) {
@@ -1241,6 +1246,7 @@ export function IndexPage() {
                       onHidePanel={terminalPanel.hidePanel}
                       onPanelHeightChange={terminalPanel.setPanelHeight}
                       onFocusChatInput={handleFocusChatInput}
+                      onAddToChat={handleTerminalAddToChat}
                       issueTicket={terminalPanel.issueTicket}
                     />
                     </div>

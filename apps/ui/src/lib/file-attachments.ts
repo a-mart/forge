@@ -24,7 +24,16 @@ export interface PendingBinaryAttachment extends ConversationBinaryAttachment {
   sizeBytes: number
 }
 
-export type PendingAttachment = PendingImageAttachment | PendingTextAttachment | PendingBinaryAttachment
+export interface PendingTerminalAttachment {
+  id: string
+  type: 'terminal'
+  terminalName: string
+  lineRange: string
+  content: string
+  sizeBytes: number
+}
+
+export type PendingAttachment = PendingImageAttachment | PendingTextAttachment | PendingBinaryAttachment | PendingTerminalAttachment
 
 const TEXT_MIME_TYPES = new Set([
   'application/json',
@@ -97,6 +106,10 @@ export function isPendingTextAttachment(attachment: PendingAttachment): attachme
 
 export function isPendingBinaryAttachment(attachment: PendingAttachment): attachment is PendingBinaryAttachment {
   return (attachment as { type?: string }).type === 'binary'
+}
+
+export function isPendingTerminalAttachment(attachment: PendingAttachment): attachment is PendingTerminalAttachment {
+  return (attachment as { type?: string }).type === 'terminal'
 }
 
 export function isImageAttachment(attachment: ConversationAttachment): attachment is ConversationImageAttachment {

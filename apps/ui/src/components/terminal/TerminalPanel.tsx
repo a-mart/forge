@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { TerminalDescriptor, TerminalIssueTicketResponse } from '@forge/protocol'
 import { Button } from '@/components/ui/button'
 import { TerminalTabBar } from '@/components/terminal/TerminalTabBar'
-import { TerminalViewport } from '@/components/terminal/TerminalViewport'
+import { TerminalViewport, type TerminalSelectionContext } from '@/components/terminal/TerminalViewport'
 import type { TerminalPanelMode } from '@/hooks/useTerminalPanel'
 import { cn } from '@/lib/utils'
 
@@ -31,6 +31,7 @@ interface TerminalPanelProps {
   onHidePanel: () => void
   onPanelHeightChange: (height: number) => void
   onFocusChatInput: () => void
+  onAddToChat?: (context: TerminalSelectionContext) => void
   issueTicket: (terminalId: string, sessionAgentId: string) => Promise<TerminalIssueTicketResponse>
 }
 
@@ -62,6 +63,7 @@ export function TerminalPanel({
   onHidePanel,
   onPanelHeightChange,
   onFocusChatInput,
+  onAddToChat,
   issueTicket,
 }: TerminalPanelProps) {
   const [isDragging, setIsDragging] = useState(false)
@@ -249,6 +251,7 @@ export function TerminalPanel({
               terminal={activeTerminal}
               sessionAgentId={sessionAgentId}
               onFocusChatInput={handleEscapeFromTerminal}
+              onAddToChat={onAddToChat}
               issueTicket={issueTicket}
               initialTicket={initialTickets[activeTerminal.terminalId]}
             />

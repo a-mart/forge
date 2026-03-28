@@ -1,7 +1,8 @@
-import { File, FileText, X, ZoomIn } from 'lucide-react'
+import { File, FileText, TerminalSquare, X, ZoomIn } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   isPendingImageAttachment,
+  isPendingTerminalAttachment,
   isPendingTextAttachment,
   type PendingAttachment,
 } from '@/lib/file-attachments'
@@ -49,6 +50,15 @@ export function AttachedFiles({ attachments, onRemove }: AttachedFilesProps) {
                   <ZoomIn className="size-3.5" />
                 </span>
               </button>
+            ) : isPendingTerminalAttachment(attachment) ? (
+              <div className="flex h-10 items-center gap-2 rounded-lg border border-blue-500/30 bg-blue-500/10 px-2.5 py-1.5">
+                <TerminalSquare className="size-3.5 shrink-0 text-blue-400" />
+                <div className="min-w-0">
+                  <p className="truncate text-xs font-medium text-foreground">
+                    {attachment.terminalName}{attachment.lineRange ? ` (${attachment.lineRange})` : ''}
+                  </p>
+                </div>
+              </div>
             ) : (
               <div className="flex h-16 w-52 items-center gap-2 rounded border border-border bg-muted/40 px-2 py-1.5">
                 <div className="rounded bg-muted p-1.5 text-muted-foreground">
@@ -69,7 +79,7 @@ export function AttachedFiles({ attachments, onRemove }: AttachedFilesProps) {
               size="icon"
               onClick={() => onRemove(attachment.id)}
               className="absolute -right-1.5 -top-1.5 size-5 rounded-full bg-muted p-0.5 text-muted-foreground opacity-0 transition-colors hover:bg-red-600 hover:text-white focus:opacity-100 focus-visible:ring-red-300 group-hover:opacity-100"
-              aria-label={`Remove ${attachment.fileName || 'attachment'}`}
+              aria-label={`Remove ${'fileName' in attachment ? attachment.fileName || 'attachment' : 'terminalName' in attachment ? attachment.terminalName : 'attachment'}`}
             >
               <X className="size-3" />
             </Button>

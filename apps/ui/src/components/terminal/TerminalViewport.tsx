@@ -1,14 +1,22 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { TerminalDescriptor, TerminalIssueTicketResponse } from '@forge/protocol'
 import { Skeleton } from '@/components/ui/skeleton'
 import { TerminalOverlay } from '@/components/terminal/TerminalOverlay'
+import { TerminalSelectionAction } from '@/components/terminal/TerminalSelectionAction'
 import { TerminalWsClient, type TerminalWsState } from '@/lib/terminal-ws-client'
+
+export interface TerminalSelectionContext {
+  text: string
+  terminalName: string
+  lineRange: string
+}
 
 interface TerminalViewportProps {
   wsUrl: string
   terminal: TerminalDescriptor
   sessionAgentId: string
   onFocusChatInput: () => void
+  onAddToChat?: (context: TerminalSelectionContext) => void
   issueTicket: (terminalId: string, sessionAgentId: string) => Promise<TerminalIssueTicketResponse>
   initialTicket?: { ticket: string; ticketExpiresAt: string }
 }
@@ -38,21 +46,54 @@ const TERMINAL_THEME = {
   brightWhite: '#f9fafb',
 } as const
 
+/** Measure a single character's dimensions using the terminal font. */
+function measureCellDimensions(container: HTMLElement): { width: number; height: number } | null {
+  const span = document.createElement('span')
+  span.style.fontFamily = TERMINAL_FONT_FAMILY
+  span.style.fontSize = '13px'
+  span.style.position = 'absolute'
+  span.style.visibility = 'hidden'
+  span.style.whiteSpace = 'pre'
+  span.textContent = 'W' // monospace — any char works
+  container.appendChild(span)
+  const rect = span.getBoundingClientRect()
+  container.removeChild(span)
+  if (rect.width === 0 || rect.height === 0) return null
+  return { width: rect.width, height: rect.height }
+}
+
 export function TerminalViewport({
   wsUrl,
   terminal,
   sessionAgentId,
   onFocusChatInput,
+  onAddToChat,
   issueTicket,
   initialTicket,
 }: TerminalViewportProps) {
   const hostRef = useRef<HTMLDivElement | null>(null)
+  const surfaceRef = useRef<HTMLDivElement | null>(null)
   const clientRef = useRef<TerminalWsClient | null>(null)
   const terminalInstanceRef = useRef<{ focus(): void } | null>(null)
   const terminalStateRef = useRef(terminal.state)
   const [connectionState, setConnectionState] = useState<TerminalWsState | 'loading'>('loading')
   const [loadError, setLoadError] = useState<string | null>(null)
   const [showRestoredBanner, setShowRestoredBanner] = useState(terminal.recoveredFromPersistence)
+  const [selectionButton, setSelectionButton] = useState<{ top: number; left: number } | null>(null)
+
+  // Extended ref that includes selection APIs we need
+  const xtermRef = useRef<{
+    hasSelection(): boolean
+    getSelection(): string
+    getSelectionPosition(): { start: { x: number; y: number }; end: { x: number; y: number } } | undefined
+    clearSelection(): void
+    buffer: { active: { viewportY: number } }
+    rows: number
+    cols: number
+    element?: HTMLElement
+  } | null>(null)
+  const cellDimsRef = useRef<{ width: number; height: number } | null>(null)
+  const selectionShowTimerRef = useRef<number>(0)
 
   useEffect(() => {
     terminalStateRef.current = terminal.state
@@ -70,6 +111,88 @@ export function TerminalViewport({
 
     return () => window.clearTimeout(timer)
   }, [terminal.recoveredFromPersistence, terminal.terminalId])
+
+  const computeSelectionButtonPosition = useCallback(() => {
+    const xterm = xtermRef.current
+    const surface = surfaceRef.current
+    const cellDims = cellDimsRef.current
+    if (!xterm || !surface || !cellDims || !xterm.hasSelection()) {
+      return null
+    }
+    const range = xterm.getSelectionPosition()
+    if (!range) return null
+
+    const viewportY = xterm.buffer.active.viewportY
+    const endRowViewport = range.end.y - 1 - viewportY
+
+    // Selection is off-screen
+    if (endRowViewport < 0 || endRowViewport >= xterm.rows) return null
+
+    // Find the xterm viewport element inside the host to measure its offset
+    const host = hostRef.current
+    if (!host) return null
+    const xtermScreen = host.querySelector('.xterm-screen') as HTMLElement | null
+    const offsetLeft = xtermScreen?.offsetLeft ?? 0
+    const offsetTop = xtermScreen?.offsetTop ?? 0
+
+    const pixelX = offsetLeft + (range.end.x - 1) * cellDims.width
+    const pixelY = offsetTop + endRowViewport * cellDims.height
+
+    // Position above-right of selection end, clamped to surface bounds
+    const buttonWidth = 130 // approximate button width
+    const buttonHeight = 28
+    const surfaceRect = surface.getBoundingClientRect()
+    let left = Math.min(pixelX + 8, surfaceRect.width - buttonWidth - 8)
+    left = Math.max(4, left)
+    const top = Math.max(4, pixelY - buttonHeight - 4)
+
+    return { top, left }
+  }, [])
+
+  const updateSelectionButton = useCallback(() => {
+    if (selectionShowTimerRef.current) {
+      clearTimeout(selectionShowTimerRef.current)
+      selectionShowTimerRef.current = 0
+    }
+
+    const xterm = xtermRef.current
+    if (!xterm || !xterm.hasSelection() || !xterm.getSelection().trim()) {
+      setSelectionButton(null)
+      return
+    }
+
+    // Small delay to avoid flickering during click-drag
+    selectionShowTimerRef.current = window.setTimeout(() => {
+      selectionShowTimerRef.current = 0
+      const pos = computeSelectionButtonPosition()
+      setSelectionButton(pos)
+    }, 150)
+  }, [computeSelectionButtonPosition])
+
+  const handleAddToChat = useCallback(() => {
+    const xterm = xtermRef.current
+    if (!xterm || !onAddToChat) return
+
+    const text = xterm.getSelection()
+    if (!text.trim()) return
+
+    const range = xterm.getSelectionPosition()
+    let lineRange = ''
+    if (range) {
+      const startLine = range.start.y
+      const endLine = range.end.y
+      lineRange = startLine === endLine ? `line ${startLine}` : `lines ${startLine}–${endLine}`
+    }
+
+    onAddToChat({
+      text,
+      terminalName: terminal.name || `Terminal ${terminal.terminalId.slice(-4)}`,
+      lineRange,
+    })
+
+    xterm.clearSelection()
+    setSelectionButton(null)
+  }, [onAddToChat, terminal.name, terminal.terminalId])
 
   const focusTerminalInput = () => {
     terminalInstanceRef.current?.focus()
@@ -97,6 +220,8 @@ export function TerminalViewport({
     let resizeDisposable: { dispose(): void } | null = null
     let webglAddon: { dispose(): void } | null = null
     let resizeFrame = 0
+    let selectionDisposable: { dispose(): void } | null = null
+    let scrollDisposable: { dispose(): void } | null = null
 
     const boot = async () => {
       const host = hostRef.current
@@ -129,6 +254,8 @@ export function TerminalViewport({
         }) as NonNullable<typeof terminalInstance>
         terminalInstance = xterm
         terminalInstanceRef.current = xterm
+        // Store extended ref for selection APIs
+        xtermRef.current = xterm as unknown as NonNullable<typeof xtermRef.current>
 
         xterm.loadAddon(fitAddon)
         xterm.loadAddon(new WebLinksAddon())
@@ -148,6 +275,10 @@ export function TerminalViewport({
         }
 
         terminalInstance.open(host)
+
+        // Measure cell dimensions for selection button positioning
+        cellDimsRef.current = measureCellDimensions(host)
+
         terminalInstance.attachCustomKeyEventHandler((event) => {
           if (
             event.type === 'keydown' &&
@@ -207,6 +338,21 @@ export function TerminalViewport({
           }
         }
 
+        // Selection change detection
+        selectionDisposable = (xterm as unknown as { onSelectionChange: (listener: () => void) => { dispose(): void } }).onSelectionChange(() => {
+          updateSelectionButton()
+        })
+
+        // Hide/recompute button on scroll
+        scrollDisposable = (xterm as unknown as { onScroll: (listener: () => void) => { dispose(): void } }).onScroll(() => {
+          if (xtermRef.current?.hasSelection()) {
+            const pos = computeSelectionButtonPosition()
+            setSelectionButton(pos)
+          } else {
+            setSelectionButton(null)
+          }
+        })
+
         resizeObserver = new ResizeObserver(() => {
           if (resizeFrame) {
             cancelAnimationFrame(resizeFrame)
@@ -221,6 +367,8 @@ export function TerminalViewport({
         requestAnimationFrame(() => {
           runFit()
           focusTerminalInput()
+          // Re-measure after fit
+          cellDimsRef.current = measureCellDimensions(host)
         })
 
         await clientRef.current.connect()
@@ -235,9 +383,15 @@ export function TerminalViewport({
 
     return () => {
       disposed = true
+      if (selectionShowTimerRef.current) {
+        clearTimeout(selectionShowTimerRef.current)
+        selectionShowTimerRef.current = 0
+      }
       if (resizeFrame) {
         cancelAnimationFrame(resizeFrame)
       }
+      selectionDisposable?.dispose()
+      scrollDisposable?.dispose()
       resizeObserver?.disconnect()
       resizeDisposable?.dispose()
       dataDisposable?.dispose()
@@ -245,12 +399,14 @@ export function TerminalViewport({
       clientRef.current?.destroy()
       clientRef.current = null
       terminalInstanceRef.current = null
+      xtermRef.current = null
       terminalInstance?.dispose()
     }
-  }, [initialTicket, issueTicket, onFocusChatInput, sessionAgentId, terminal.terminalId, wsUrl])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialTicket, issueTicket, onFocusChatInput, sessionAgentId, terminal.terminalId, wsUrl, updateSelectionButton, computeSelectionButtonPosition])
 
   return (
-    <div className="forge-terminal-surface relative flex min-h-0 flex-1 flex-col overflow-hidden bg-[#141726] p-1">
+    <div ref={surfaceRef} className="forge-terminal-surface relative flex min-h-0 flex-1 flex-col overflow-hidden bg-[#141726] p-1">
       <div
         ref={hostRef}
         className="forge-terminal-host min-h-0 flex-1 overflow-hidden"
@@ -261,6 +417,14 @@ export function TerminalViewport({
           focusTerminalInput()
         }}
       />
+
+      {selectionButton && onAddToChat ? (
+        <TerminalSelectionAction
+          top={selectionButton.top}
+          left={selectionButton.left}
+          onAddToChat={handleAddToChat}
+        />
+      ) : null}
 
       <TerminalOverlay
         terminal={terminal}
