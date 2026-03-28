@@ -183,32 +183,11 @@ function SidebarModelIcon({ agent }: { agent: AgentDescriptor }) {
   const provider = agent.model.provider.toLowerCase()
   const preset = inferModelPreset(agent)
 
-  if (preset === 'pi-opus' || preset === 'pi-codex' || preset === 'pi-5.4') {
-    return (
-      <span className="inline-flex items-center gap-0.5" aria-hidden="true">
-        <img src="/pi-logo.svg" alt="" className="size-3 shrink-0 object-contain opacity-70 dark:invert" />
-        {(preset === 'pi-opus')
-          ? <img src="/agents/claude-logo.svg" alt="" className="size-3 shrink-0 object-contain opacity-70" />
-          : <img src="/agents/codex-logo.svg" alt="" className="size-3 shrink-0 object-contain opacity-70 dark:invert" />
-        }
-      </span>
-    )
-  }
-
-  if (preset === 'codex-app') {
-    return (
-      <span className="inline-flex items-center gap-0.5" aria-hidden="true">
-        <img src="/agents/codex-app-logo.svg" alt="" className="size-3 shrink-0 object-contain opacity-70 dark:invert" />
-        <img src="/agents/codex-logo.svg" alt="" className="size-3 shrink-0 object-contain opacity-70 dark:invert" />
-      </span>
-    )
-  }
-
-  if (provider.includes('anthropic') || provider.includes('claude')) {
+  if (preset === 'pi-opus' || provider.includes('anthropic') || provider.includes('claude')) {
     return <img src="/agents/claude-logo.svg" alt="" aria-hidden="true" className="size-3 shrink-0 object-contain opacity-70" />
   }
 
-  if (provider.includes('openai')) {
+  if (preset === 'pi-codex' || preset === 'pi-5.4' || preset === 'codex-app' || provider.includes('openai')) {
     return <img src="/agents/codex-logo.svg" alt="" aria-hidden="true" className="size-3 shrink-0 object-contain opacity-70 dark:invert" />
   }
 
