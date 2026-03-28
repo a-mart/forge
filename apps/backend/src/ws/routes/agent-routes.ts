@@ -312,8 +312,12 @@ async function handleSmartCompactAgentHttpRequest(
     return;
   }
 
+  const payload = await readJsonBody(request);
+  const customInstructions = parseCompactCustomInstructionsBody(payload);
+
   try {
     await swarmManager.smartCompactAgentContext(agentId, {
+      customInstructions,
       sourceContext: { channel: "web" },
       trigger: "api"
     });

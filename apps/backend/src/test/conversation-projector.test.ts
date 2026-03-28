@@ -41,6 +41,7 @@ function makeProjector(options: {
   descriptor: AgentDescriptor
   runtimes?: Map<string, SwarmAgentRuntime>
   conversationEntriesByAgentId?: Map<string, ConversationEntryEvent[]>
+  getPinnedMessageIds?: (agentId: string) => ReadonlySet<string> | undefined
 }): ConversationProjector {
   return new ConversationProjector({
     descriptors: new Map([[options.descriptor.agentId, options.descriptor]]),
@@ -49,6 +50,7 @@ function makeProjector(options: {
     now: () => FIXED_NOW,
     emitServerEvent: () => {},
     logDebug: () => {},
+    getPinnedMessageIds: options.getPinnedMessageIds,
   })
 }
 
@@ -479,5 +481,47 @@ describe('ConversationProjector session tree continuity', () => {
     const projector = makeProjector({ descriptor })
 
     expect(projector.getConversationHistory(descriptor.agentId)).toEqual([])
+  })
+
+  it('merges pinned state onto loaded conversation messages', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-projector-pins-'))
+    const sessionFile = join(root, 'manager.jsonl')
+    const descriptor = makeDescriptor(sessionFile, root)
+    const seededSession = SessionManager.open(sessionFile)
+    seededSession.appendMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'seed message' }],
+    } as any)
+    seededSession.appendCustomEntry('swarm_conversation_entry', {
+      type: 'conversation_message',
+      agentId: descriptor.agentId,
+      id: 'pinned-msg',
+      role: 'assistant',
+      text: 'Keep me around',
+      timestamp: FIXED_NOW,
+      source: 'system',
+    })
+    seededSession.appendCustomEntry('swarm_conversation_entry', {
+      type: 'conversation_message',
+      agentId: descriptor.agentId,
+      id: 'regular-msg',
+      role: 'assistant',
+      text: 'Not pinned',
+      timestamp: FIXED_NOW,
+      source: 'system',
+    })
+
+    const projector = makeProjector({
+      descriptor,
+      getPinnedMessageIds: () => new Set(['pinned-msg']),
+    })
+
+    const history = projector.getConversationHistory(descriptor.agentId)
+    const pinnedEntry = history.find((entry) => entry.type === 'conversation_message' && entry.id === 'pinned-msg')
+    const regularEntry = history.find((entry) => entry.type === 'conversation_message' && entry.id === 'regular-msg')
+
+    expect(pinnedEntry).toMatchObject({ type: 'conversation_message', id: 'pinned-msg', pinned: true })
+    expect(regularEntry).toMatchObject({ type: 'conversation_message', id: 'regular-msg' })
+    expect(regularEntry && 'pinned' in regularEntry ? regularEntry.pinned : undefined).toBeUndefined()
   })
 })

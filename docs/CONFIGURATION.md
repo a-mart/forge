@@ -79,6 +79,7 @@ All persistent state lives in a single data directory:
 │       ├── memory.md          # Session-level memory
 │       ├── meta.json          # Session metadata
 │       ├── feedback.jsonl     # User feedback
+│       ├── pinned-messages.json  # Pin state (up to 10 message IDs)
 │       └── workers/           # Worker session logs
 ├── swarm/
 │   └── agents.json            # Agent registry

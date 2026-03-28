@@ -54,6 +54,10 @@ export function isConversationMessageEvent(value: unknown): value is Conversatio
     return false;
   }
 
+  if (maybe.pinned !== undefined && typeof maybe.pinned !== "boolean") {
+    return false;
+  }
+
   return true;
 }
 

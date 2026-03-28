@@ -288,7 +288,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
     this.inFlightPrompts.clear();
   }
 
-  async smartCompact(): Promise<SmartCompactResult> {
+  async smartCompact(customInstructions?: string): Promise<SmartCompactResult> {
     this.ensureNotTerminated();
 
     if (this.isContextRecoveryActive()) {
@@ -331,7 +331,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
       // Compact
       try {
-        await withTimeout(this.compact(), CONTEXT_GUARD_COMPACT_TIMEOUT_MS, "smart_compact_compact", {
+        await withTimeout(this.compact(customInstructions), CONTEXT_GUARD_COMPACT_TIMEOUT_MS, "smart_compact_compact", {
           onTimeout: () => this.abortCompactionSafely("smart_compact_compact_timeout_abort")
         });
         compactionSucceeded = true;

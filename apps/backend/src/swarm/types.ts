@@ -225,6 +225,7 @@ export interface ConversationMessageEvent {
   timestamp: string;
   source: "user_input" | "speak_to_user" | "system";
   sourceContext?: MessageSourceContext;
+  pinned?: boolean;
 }
 
 export type ConversationLogKind =

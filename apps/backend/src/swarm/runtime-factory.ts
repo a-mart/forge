@@ -9,6 +9,7 @@ import { getModel, type Model } from "@mariozechner/pi-ai";
 import {
   AuthStorage,
   DefaultResourceLoader,
+  compact as runPiCompaction,
   createAgentSession,
   ModelRegistry,
   type AgentSession,
@@ -22,11 +23,13 @@ import { CodexAgentRuntime } from "./codex-agent-runtime.js";
 import type { RuntimeErrorEvent, RuntimeSessionEvent, SwarmAgentRuntime } from "./runtime-types.js";
 import { buildSwarmTools, type SwarmToolHost } from "./swarm-tools.js";
 import { normalizeArchetypeId } from "./prompt-registry.js";
+import { combineCompactionCustomInstructions, loadPins } from "./message-pins.js";
 import {
   getProfilePiExtensionsDir,
   getProfilePiPromptsDir,
   getProfilePiSkillsDir,
-  getProfilePiThemesDir
+  getProfilePiThemesDir,
+  getSessionDir
 } from "./data-paths.js";
 import type {
   AgentContextUsage,
@@ -384,6 +387,61 @@ export class RuntimeFactory {
 
   private buildExtensionFactories(descriptor: AgentDescriptor): ExtensionFactory[] {
     const factories: ExtensionFactory[] = [];
+
+    if (descriptor.role === "manager" && descriptor.profileId) {
+      factories.push((pi) => {
+        pi.on("session_before_compact", async (event, ctx) => {
+          const sessionDir = getSessionDir(
+            this.deps.config.paths.dataDir,
+            descriptor.profileId ?? descriptor.agentId,
+            descriptor.agentId
+          );
+          const registry = await loadPins(sessionDir);
+          const existingInstructions = event.customInstructions?.trim() || undefined;
+          const combinedInstructions = combineCompactionCustomInstructions(existingInstructions, registry);
+
+          if (!combinedInstructions || combinedInstructions === existingInstructions) {
+            return undefined;
+          }
+
+          if (!ctx.model) {
+            return undefined;
+          }
+
+          const auth = await ctx.modelRegistry.getApiKeyAndHeaders(ctx.model as Model<any>);
+          if (!auth.ok) {
+            const message =
+              `Pinned-message preservation during auto-compaction is unavailable for ${descriptor.agentId}: ${auth.error}`;
+            console.warn(`[swarm] ${message}`);
+            ctx.ui.notify(message, "warning");
+            return undefined;
+          }
+
+          // Pi's compaction helper currently requires a raw API key plus optional headers.
+          // If a provider can only authenticate via headers, fall back to Pi's default compaction.
+          if (!auth.apiKey) {
+            const message =
+              `Pinned-message preservation during auto-compaction is unavailable for ${descriptor.agentId}: this auth mode does not expose a raw API key to the compaction helper.`;
+            console.warn(`[swarm] ${message}`);
+            ctx.ui.notify(message, "warning");
+            return undefined;
+          }
+
+          const compaction = await runPiCompaction(
+            event.preparation,
+            ctx.model as Model<any>,
+            auth.apiKey,
+            auth.headers,
+            combinedInstructions,
+            event.signal
+          );
+
+          return {
+            compaction
+          };
+        });
+      });
+    }
 
     if (process.env.FORGE_DEBUG === "true") {
       factories.push((pi) => {

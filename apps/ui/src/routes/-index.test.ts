@@ -9,7 +9,7 @@ import { MANAGER_MODEL_PRESETS } from '@forge/protocol'
 import { IndexPage, isCortexDiffViewerSession } from './index'
 
 const CREATE_MANAGER_MODEL_PRESETS = MANAGER_MODEL_PRESETS.filter(
-  (modelPreset) => modelPreset !== 'codex-app',
+  (modelPreset) => modelPreset !== 'codex-app' && modelPreset !== 'pi-grok',
 )
 
 type ListenerMap = Record<string, Array<(event?: any) => void>>

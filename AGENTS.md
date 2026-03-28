@@ -90,6 +90,7 @@ These are briefly described for orientation. Most have both backend and UI compo
 | **Specialists** | `swarm/specialists/` | `components/settings/SettingsSpecialists.tsx` | Named worker spawn templates with model config, fallback, and per-profile overrides |
 | **Mermaid diagrams** | — | `components/chat/message-list/MermaidBlock.tsx` | Inline rendering of mermaid diagrams in chat with interactive toolbar (toggle, copy, SVG/PNG export, fullscreen) |
 | **Electron desktop app** | `apps/electron/src/main.ts`, `auto-updater.ts`, `preload.ts` | `components/settings/SettingsAbout.tsx` | Standalone desktop application for macOS and Windows. Bundles backend, UI, and dependencies. Auto-updates via GitHub Releases with beta channel support. Dark mode by default. Windows uses standard title bar with hidden menu (Alt to show); macOS uses standard title bar. |
+| **Message pins** | `swarm/message-pins.ts` | `components/chat/message-list/` | Pin up to 10 messages per session; pinned content is preserved through all compaction types via custom instructions and extension hooks |
 
 Backend paths above are relative to `apps/backend/src/`. UI paths are relative to `apps/ui/src/`.
 
@@ -154,6 +155,7 @@ All runtime state lives in `~/.forge` (or `%LOCALAPPDATA%\forge` on Windows), ov
         ├── memory.md                      # Session working memory
         ├── meta.json                      # Session metadata
         ├── feedback.jsonl                 # User feedback
+        ├── pinned-messages.json           # Pin state (up to 10 message IDs)
         ├── workers/<workerId>.jsonl       # Worker conversation logs
         └── terminals/<terminalId>/
             ├── meta.json                  # Terminal metadata (shell, cwd, title, cols/rows)

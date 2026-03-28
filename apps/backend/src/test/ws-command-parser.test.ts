@@ -109,6 +109,23 @@ describe('ws command parser session commands', () => {
     })
   })
 
+  it('parses pin_message commands', () => {
+    expect(parseJsonCommand({
+      type: 'pin_message',
+      agentId: '  manager--s2  ',
+      messageId: '  msg-1  ',
+      pinned: true,
+    })).toEqual({
+      ok: true,
+      command: {
+        type: 'pin_message',
+        agentId: 'manager--s2',
+        messageId: 'msg-1',
+        pinned: true,
+      },
+    })
+  })
+
   it('parses choice_response and choice_cancel commands', () => {
     expect(parseJsonCommand({
       type: 'choice_response',

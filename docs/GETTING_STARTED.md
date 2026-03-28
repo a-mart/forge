@@ -97,6 +97,8 @@ Two view modes, toggled at the top:
 
 Agents can include Mermaid diagrams in their responses using standard markdown code fences (` ```mermaid ... ``` `). These render inline with an interactive toolbar for toggling between diagram and source, copying code, exporting as SVG or PNG, and viewing fullscreen.
 
+You can pin important messages to preserve them through compaction. Hover over any user or assistant message and click the pin icon. Pinned messages show an amber indicator and are guaranteed to survive when the context window is summarized. See [Smart Compaction](#8-reliability--continuity) for details.
+
 ### File Browser
 
 The left sidebar has a file browser pointed at your project directory. Currently read-only, but you can browse your entire codebase without leaving Forge. Click any file to view it. There's a button to open it directly in your editor.
@@ -194,7 +196,7 @@ Forking is one of the most useful features for daily workflow. Say you've had a 
 
 **Fork the full conversation:** Use the fork option at the session level to copy the entire conversation into a new session. Same context, fresh workspace.
 
-Either way, the forked session has full context of everything that came before. You can take each fork in a completely different direction without them interfering with each other.
+Either way, the forked session has full context of everything that came before. Pinned messages are preserved through forks, but only those present in the forked history (if you fork from message #5 and had a pin on message #8, that pin won't carry over). You can take each fork in a completely different direction without them interfering with each other.
 
 ### Switching Between Sessions
 
@@ -354,15 +356,27 @@ Forge's smart compaction works differently:
 2. **Handoff file** — Before compaction, the agent writes a markdown handoff file capturing current state, in-progress work, decisions made, and next steps.
 3. **Selective retention** — The most recent ~20,000 tokens of conversation stay intact (your latest messages, tool calls, and reasoning).
 4. **Summary generation** — Everything older gets summarized by a separate model and included as context.
-5. **Resume** — The agent comes back with the detailed recent context, a high-level summary of older work, and the handoff file. It picks up without missing a beat.
+5. **Pinned messages** — Any messages you've pinned (up to 10 per session) are preserved verbatim in the summary under a dedicated "Preserved Messages (Pinned)" section.
+6. **Resume** — The agent comes back with the detailed recent context, a high-level summary of older work, pinned messages, and the handoff file. It picks up without missing a beat.
 
 Sessions can compact 50+ times and still maintain full continuity. You can just keep going indefinitely.
+
+### Pinning Messages
+
+Hover over any user or assistant message and click the pin icon to mark it as important. Pinned messages show an amber indicator. When compaction happens, these messages are preserved verbatim regardless of age. This is useful for:
+
+- Key architectural decisions that need to stay visible
+- Critical requirements or constraints
+- Specific instructions that shouldn't be summarized away
+- Reference examples you want to keep intact
+
+You can have up to 10 pinned messages per session. The pin count badge appears in the chat header near the compaction controls when you have active pins. Click the pin icon again to unpin.
 
 ### Context Window Indicator
 
 The small dial icon in the chat header shows current context utilization. Watch it creep up during long sessions. When smart compaction triggers, you'll see a brief pause while the handoff and summary are generated, then work resumes.
 
-You can also trigger compaction manually from the three-dot menu (**⋯ → Smart Compact**) if you want to proactively clear space.
+You can also trigger compaction manually from the three-dot menu (**⋯ → Smart Compact**) if you want to proactively clear space. Pinned messages are preserved during manual compaction the same way they are during automatic compaction.
 
 ### Idle Worker Detection
 

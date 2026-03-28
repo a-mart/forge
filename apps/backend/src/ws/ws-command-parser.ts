@@ -648,6 +648,32 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
     };
   }
 
+  if (maybe.type === "pin_message") {
+    const agentId = (maybe as { agentId?: unknown }).agentId;
+    const messageId = (maybe as { messageId?: unknown }).messageId;
+    const pinned = (maybe as { pinned?: unknown }).pinned;
+
+    if (typeof agentId !== "string" || agentId.trim().length === 0) {
+      return { ok: false, error: "pin_message.agentId must be a non-empty string" };
+    }
+    if (typeof messageId !== "string" || messageId.trim().length === 0) {
+      return { ok: false, error: "pin_message.messageId must be a non-empty string" };
+    }
+    if (typeof pinned !== "boolean") {
+      return { ok: false, error: "pin_message.pinned must be a boolean" };
+    }
+
+    return {
+      ok: true,
+      command: {
+        type: "pin_message",
+        agentId: agentId.trim(),
+        messageId: messageId.trim(),
+        pinned,
+      }
+    };
+  }
+
   if (maybe.type === "mark_unread") {
     const agentId = (maybe as { agentId?: unknown }).agentId;
     const requestId = (maybe as { requestId?: unknown }).requestId;
@@ -716,6 +742,8 @@ export function extractRequestId(command: ClientCommand): string | undefined {
     case "pick_directory":
     case "mark_unread":
       return command.requestId;
+
+    case "pin_message":
 
     case "subscribe":
     case "user_message":

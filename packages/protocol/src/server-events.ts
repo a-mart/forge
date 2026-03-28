@@ -40,6 +40,15 @@ export interface ConversationMessageEvent {
   timestamp: string
   source: 'user_input' | 'speak_to_user' | 'system'
   sourceContext?: MessageSourceContext
+  pinned?: boolean
+}
+
+export interface MessagePinnedEvent {
+  type: 'message_pinned'
+  agentId: string
+  messageId: string
+  pinned: boolean
+  timestamp: string
 }
 
 export type ConversationLogKind =
@@ -411,4 +420,5 @@ export type ServerEvent =
   | TerminalsSnapshotEvent
   | SpecialistRosterChangedEvent
   | ApiProxyResponseEvent
+  | MessagePinnedEvent
   | { type: 'error'; code: string; message: string; requestId?: string }

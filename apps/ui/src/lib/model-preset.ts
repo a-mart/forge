@@ -26,6 +26,22 @@ const FALLBACK_MODEL_PRESET_INFO: ModelPresetInfo[] = [
     modelId: 'gpt-5.4',
     defaultReasoningLevel: 'xhigh',
     supportedReasoningLevels: ['none', 'low', 'medium', 'high', 'xhigh'],
+    variants: [
+      { modelId: 'gpt-5.4-mini', label: 'GPT-5.4 Mini' },
+      { modelId: 'gpt-5.4-nano', label: 'GPT-5.4 Nano' },
+    ],
+  },
+  {
+    presetId: 'pi-grok',
+    displayName: 'Grok 4',
+    provider: 'xai',
+    modelId: 'grok-4',
+    defaultReasoningLevel: 'high',
+    supportedReasoningLevels: ['none', 'low', 'medium', 'high', 'xhigh'],
+    variants: [
+      { modelId: 'grok-4-fast', label: 'Grok 4 Fast' },
+      { modelId: 'grok-3', label: 'Grok 3' },
+    ],
   },
   {
     presetId: 'pi-opus',

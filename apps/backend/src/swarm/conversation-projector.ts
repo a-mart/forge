@@ -50,6 +50,7 @@ interface ConversationProjectorDependencies {
   now: () => string;
   emitServerEvent: (eventName: ConversationEventName, payload: ServerEvent) => void;
   logDebug: (message: string, details?: unknown) => void;
+  getPinnedMessageIds?: (agentId: string) => ReadonlySet<string> | undefined;
 }
 
 export class ConversationProjector {
@@ -70,6 +71,25 @@ export class ConversationProjector {
 
     const history = this.deps.conversationEntriesByAgentId.get(agentId) ?? [];
     return history;
+  }
+
+  setConversationMessagePinned(agentId: string, messageId: string, pinned: boolean): void {
+    const history = this.deps.conversationEntriesByAgentId.get(agentId);
+    if (!history) {
+      return;
+    }
+
+    for (const entry of history) {
+      if (entry.type !== "conversation_message" || entry.id !== messageId) {
+        continue;
+      }
+
+      if (pinned) {
+        entry.pinned = true;
+      } else {
+        delete entry.pinned;
+      }
+    }
   }
 
   resetConversationHistory(agentId: string, sessionFile?: string): void {
@@ -440,6 +460,7 @@ export class ConversationProjector {
       if (validatedCachedEntries) {
         trimConversationHistory(validatedCachedEntries);
         const mergedEntries = this.mergeDiskAndInMemoryEntries(validatedCachedEntries, existingInMemoryEntries);
+        this.applyPinnedState(descriptor.agentId, mergedEntries);
         this.loadedFromDisk.add(descriptor.agentId);
         this.deps.conversationEntriesByAgentId.set(descriptor.agentId, mergedEntries);
         this.queueConversationHistoryCacheWrite(descriptor.agentId, mergedEntries);
@@ -503,11 +524,36 @@ export class ConversationProjector {
     }
 
     const mergedEntries = this.mergeDiskAndInMemoryEntries(entriesForAgent, existingInMemoryEntries);
+    this.applyPinnedState(descriptor.agentId, mergedEntries);
     this.trackLastSessionEntryId(descriptor.sessionFile, lastSessionEntryId);
     this.loadedFromDisk.add(descriptor.agentId);
     this.deps.conversationEntriesByAgentId.set(descriptor.agentId, mergedEntries);
     this.queueConversationHistoryCacheWrite(descriptor.agentId, mergedEntries);
     return mergedEntries;
+  }
+
+  private applyPinnedState(agentId: string, entries: ConversationEntryEvent[]): void {
+    const pinnedMessageIds = this.deps.getPinnedMessageIds?.(agentId);
+    if (!pinnedMessageIds || pinnedMessageIds.size === 0) {
+      for (const entry of entries) {
+        if (entry.type === "conversation_message") {
+          delete entry.pinned;
+        }
+      }
+      return;
+    }
+
+    for (const entry of entries) {
+      if (entry.type !== "conversation_message") {
+        continue;
+      }
+
+      if (entry.id && pinnedMessageIds.has(entry.id)) {
+        entry.pinned = true;
+      } else {
+        delete entry.pinned;
+      }
+    }
   }
 
   private loadConversationHistoryFromCache(sessionFile: string): ConversationEntryEvent[] | null {

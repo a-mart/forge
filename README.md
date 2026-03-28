@@ -38,7 +38,7 @@ There are plenty of good coding agents. Forge isn't trying to replace them. It o
 
 **It remembers things.** Most AI tools reset every session. Forge's Cortex reviews your conversations, learns your preferences, and builds persistent knowledge over time. After a few weeks, it knows your review process, your naming conventions, your code style.
 
-**Context doesn't die.** When Claude Code compacts, you get amnesia. Forge's smart compaction writes structured handoff files, retains the most recent context, and summarizes the rest. Conversations that have compacted 50+ times still maintain coherence.
+**Context doesn't die.** When Claude Code compacts, you get amnesia. Forge's smart compaction writes structured handoff files, retains the most recent context, and summarizes the rest. Pin critical messages and they'll survive every compaction. Conversations that have compacted 50+ times still maintain coherence.
 
 **Forge builds Forge.** Every feature you see was built using Forge itself. It's been the primary development tool for this project since day one.
 
@@ -128,6 +128,8 @@ Every AI tool hits context limits. Most just truncate and hope for the best.
 
 When a session reaches ~85% context capacity, Forge pauses and writes a structured markdown handoff file capturing the current operational state, then compacts. The compacted context retains the most recent ~20,000 tokens verbatim and summarizes everything older. The handoff file ensures no critical context is lost.
 
+You can pin up to 10 messages per session (user or assistant) by clicking the pin icon. Pinned messages are preserved verbatim through all compaction types — their full content is injected into the summary under a dedicated section.
+
 Sessions can run indefinitely. Conversations that have compacted 50+ times still maintain full coherence. No amnesia, no confusion about what was decided three hours ago.
 
 ### Worker Safeguards
@@ -150,7 +152,7 @@ You don't need to rate every message. Focus on the meaningful moments: when the 
 
 The web UI is designed to be the only window you need open.
 
-- **Chat** — real-time conversation with your manager. Stream worker activity or filter to just the messages directed at you. Mermaid diagrams render inline with interactive controls.
+- **Chat** — real-time conversation with your manager. Stream worker activity or filter to just the messages directed at you. Mermaid diagrams render inline with interactive controls. Pin important messages to preserve them through compaction.
 - **File browser** — full repository file browser with click-to-open in your editor (configurable: VS Code, Cursor, etc.).
 - **Git view** — diff and commit history view, built into the dashboard.
 - **Worker pills** — green indicators show active workers. Click for a quick peek at what each worker is doing.

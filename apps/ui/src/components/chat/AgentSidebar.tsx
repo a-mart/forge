@@ -1155,7 +1155,7 @@ function DeleteSessionDialog({
 // ── Change model dialog ──
 
 const CHANGE_MODEL_PRESETS = MANAGER_MODEL_PRESETS.filter(
-  (preset) => preset !== 'codex-app',
+  (preset) => preset !== 'codex-app' && preset !== 'pi-grok',
 )
 
 const REASONING_LEVEL_LABELS: Record<ManagerReasoningLevel, string> = {

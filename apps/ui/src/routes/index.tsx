@@ -328,6 +328,13 @@ export function IndexPage() {
     channelView,
   })
 
+  const pinnedCount = useMemo(
+    () => state.messages.filter(
+      (m) => m.type === 'conversation_message' && m.pinned,
+    ).length,
+    [state.messages],
+  )
+
   const collectedArtifacts = useMemo(
     () => collectArtifactsFromMessages(allMessages),
     [allMessages],
@@ -592,6 +599,11 @@ export function IndexPage() {
   const handleChoiceCancel = useCallback((agentId: string, choiceId: string) => {
     clientRef.current?.sendChoiceCancel(agentId, choiceId)
   }, [clientRef])
+
+  const handlePinMessage = useCallback((messageId: string, pinned: boolean) => {
+    if (!activeAgentId || !isActiveManager) return
+    clientRef.current?.pinMessage(activeAgentId, messageId, pinned)
+  }, [activeAgentId, clientRef, isActiveManager])
 
   const handleNewChat = () => {
     if (!isActiveManager || !activeAgentId || !activeAgent) {
@@ -1095,6 +1107,7 @@ export function IndexPage() {
                   smartCompactInProgress={isSmartCompactingManager}
                   onSmartCompact={() => void handleSmartCompactManager()}
                   autoCompactionInProgress={autoCompactionInProgress}
+                  pinnedCount={pinnedCount}
                   showStopAll={isActiveManager}
                   stopAllInProgress={isStoppingAllAgents}
                   stopAllDisabled={!state.connected || !canStopAllAgents}
@@ -1172,6 +1185,7 @@ export function IndexPage() {
                         onSuggestionClick={handleSuggestionClick}
                         onArtifactClick={handleOpenArtifact}
                         onForkFromMessage={activeAgentId ? handleForkFromMessage : undefined}
+                        onPinMessage={isActiveManager && activeAgentId ? handlePinMessage : undefined}
                         getVote={feedbackProfileId ? getVote : undefined}
                         hasComment={feedbackProfileId ? hasComment : undefined}
                         onFeedbackVote={feedbackProfileId ? submitVote : undefined}

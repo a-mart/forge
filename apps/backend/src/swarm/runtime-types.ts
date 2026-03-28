@@ -133,7 +133,7 @@ export interface SwarmAgentRuntime {
 
   compact(customInstructions?: string): Promise<unknown>;
 
-  smartCompact(): Promise<SmartCompactResult>;
+  smartCompact(customInstructions?: string): Promise<SmartCompactResult>;
 
   stopInFlight(options?: RuntimeShutdownOptions): Promise<void>;
 

@@ -22,7 +22,7 @@ import {
 } from '@forge/protocol'
 
 const CREATE_MANAGER_MODEL_PRESETS = MANAGER_MODEL_PRESETS.filter(
-  (modelPreset) => modelPreset !== 'codex-app',
+  (modelPreset) => modelPreset !== 'codex-app' && modelPreset !== 'pi-grok',
 )
 
 interface CreateManagerDialogProps {

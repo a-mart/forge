@@ -396,7 +396,7 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
     throw new Error(`Agent ${this.descriptor.agentId} does not support manual compaction`);
   }
 
-  async smartCompact(): Promise<SmartCompactResult> {
+  async smartCompact(_customInstructions?: string): Promise<SmartCompactResult> {
     this.ensureNotTerminated();
     throw new Error(`Agent ${this.descriptor.agentId} does not support smart compaction`);
   }

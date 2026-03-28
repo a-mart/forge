@@ -44,6 +44,13 @@ import {
   getWorkersDir,
   resolveMemoryFilePath
 } from "./data-paths.js";
+import {
+  combineCompactionCustomInstructions,
+  loadPins,
+  savePins,
+  togglePin,
+  type PinRegistry
+} from "./message-pins.js";
 import { ensureCanonicalAuthFilePath } from "./auth-storage-paths.js";
 import { migrateDataDirectory } from "./data-migration.js";
 import {
@@ -1132,6 +1139,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     createdAt: string;
   }>();
   private readonly conversationEntriesByAgentId = new Map<string, ConversationEntryEvent[]>();
+  private readonly pinnedMessageIdsBySessionAgentId = new Map<string, Set<string>>();
   private readonly workerWatchdogState = new Map<string, WorkerWatchdogState>();
   private readonly workerStallState = new Map<string, WorkerStallState>();
   private readonly workerActivityState = new Map<string, WorkerActivityState>();
@@ -1196,7 +1204,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       emitServerEvent: (eventName, payload) => {
         this.emit(eventName, payload);
       },
-      logDebug: (message, details) => this.logDebug(message, details)
+      logDebug: (message, details) => this.logDebug(message, details),
+      getPinnedMessageIds: (agentId) => this.pinnedMessageIdsBySessionAgentId.get(agentId)
     });
     this.skillMetadataService = new SkillMetadataService({
       config: this.config
@@ -1292,6 +1301,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     for (const profile of loaded.profiles ?? []) {
       this.profiles.set(profile.profileId, profile);
     }
+
+    await this.preloadPinnedMessageIndexes();
 
     this.reconcileProfilesOnBoot();
     await this.ensureCortexProfile();
@@ -1698,6 +1709,35 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return this.conversationProjector.getConversationHistory(resolvedAgentId);
   }
 
+  private async preloadPinnedMessageIndexes(): Promise<void> {
+    const sessionDescriptors = Array.from(this.descriptors.values()).filter((descriptor) => this.isSessionAgent(descriptor));
+
+    await Promise.all(
+      sessionDescriptors.map(async (descriptor) => {
+        const registry = await loadPins(this.getSessionDirForDescriptor(descriptor));
+        this.setPinnedRegistryForAgent(descriptor.agentId, registry);
+      })
+    );
+  }
+
+  private setPinnedRegistryForAgent(agentId: string, registry: PinRegistry): void {
+    const pinnedMessageIds = Object.keys(registry.pins);
+    if (pinnedMessageIds.length === 0) {
+      this.pinnedMessageIdsBySessionAgentId.delete(agentId);
+      return;
+    }
+
+    this.pinnedMessageIdsBySessionAgentId.set(agentId, new Set(pinnedMessageIds));
+  }
+
+  private getSessionDirForDescriptor(descriptor: { agentId: string; profileId?: string }): string {
+    return getSessionDir(
+      this.config.paths.dataDir,
+      descriptor.profileId ?? descriptor.agentId,
+      descriptor.agentId
+    );
+  }
+
   async requestUserChoice(
     agentId: string,
     questions: ChoiceQuestion[],
@@ -1934,6 +1974,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     });
 
     this.descriptors.delete(agentId);
+    this.pinnedMessageIdsBySessionAgentId.delete(agentId);
     this.conversationProjector.deleteConversationHistory(agentId, descriptor.sessionFile);
 
     if (descriptor.sessionFile === canonicalSessionFile) {
@@ -1958,6 +1999,56 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return { terminatedWorkerIds };
   }
 
+  async pinMessage(
+    agentId: string,
+    messageId: string,
+    pinned: boolean
+  ): Promise<{ pinned: boolean; timestamp: string }> {
+    const descriptor = this.getRequiredSessionDescriptor(agentId);
+    const sessionDir = this.getSessionDirForDescriptor(descriptor);
+    const history = this.getConversationHistory(agentId);
+    const message = history.find(
+      (entry): entry is ConversationMessageEvent & { role: "user" | "assistant" } => (
+        entry.type === "conversation_message" &&
+        entry.id === messageId &&
+        (entry.role === "user" || entry.role === "assistant")
+      )
+    );
+
+    if (pinned && !message) {
+      throw new Error(`Message not found or not pinnable: ${messageId}`);
+    }
+
+    const registry = await togglePin(
+      sessionDir,
+      messageId,
+      pinned,
+      message
+        ? {
+            role: message.role,
+            text: message.text,
+            timestamp: message.timestamp,
+            attachments: message.attachments
+          }
+        : undefined
+    );
+
+    this.setPinnedRegistryForAgent(agentId, registry);
+    this.conversationProjector.setConversationMessagePinned(agentId, messageId, pinned);
+
+    const timestamp = this.now();
+    this.logDebug("message:pin", {
+      agentId,
+      messageId,
+      pinned
+    });
+
+    return {
+      pinned,
+      timestamp
+    };
+  }
+
   async clearSessionConversation(agentId: string): Promise<void> {
     this.cancelAllPendingChoicesForAgent(agentId);
 
@@ -1971,6 +2062,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         // File may not exist yet — that's fine
       }
     }
+
+    await savePins(this.getSessionDirForDescriptor(descriptor), { version: 1, pins: {} });
+    this.setPinnedRegistryForAgent(agentId, { version: 1, pins: {} });
 
     // Clear in-memory conversation history
     this.conversationProjector.resetConversationHistory(agentId);
@@ -2313,7 +2407,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       label: options?.label,
       name: options?.label
     });
-    const forkedDescriptor = prepared.sessionDescriptor;
+    const forkedDescriptor = prepared.sessionDescriptor as AgentDescriptor & { role: "manager"; profileId: string };
     this.descriptors.set(forkedDescriptor.agentId, forkedDescriptor);
 
     await this.ensureSessionFileParentDirectory(forkedDescriptor.sessionFile);
@@ -2325,6 +2419,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         forkedDescriptor.sessionFile,
         normalizedFromMessageId
       );
+      await this.copyPinnedMessagesForFork(sourceDescriptor, forkedDescriptor);
       await this.writeForkedSessionMemoryHeader(
         sourceDescriptor,
         forkedDescriptor.agentId,
@@ -3588,38 +3683,109 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   private isForkTargetConversationEntryLine(line: string, fromMessageId: string): boolean {
+    const conversationEntry = this.parseConversationMessageEntryLine(line);
+    if (!conversationEntry) {
+      return false;
+    }
+
+    return conversationEntry.id === fromMessageId;
+  }
+
+  private parseConversationMessageEntryLine(line: string): { id?: string } | undefined {
     const trimmedLine = line.trim();
     if (trimmedLine.length === 0) {
-      return false;
+      return undefined;
     }
 
     let parsedEntry: unknown;
     try {
       parsedEntry = JSON.parse(trimmedLine);
     } catch {
-      return false;
+      return undefined;
     }
 
     if (!isRecord(parsedEntry)) {
-      return false;
+      return undefined;
     }
 
     if (
       parsedEntry.type !== "custom" ||
       parsedEntry.customType !== "swarm_conversation_entry"
     ) {
-      return false;
+      return undefined;
     }
 
-    if (parsedEntry.id === fromMessageId) {
-      return true;
+    if (typeof parsedEntry.id === "string" && parsedEntry.id.trim().length > 0) {
+      return { id: parsedEntry.id };
     }
 
     if (!isRecord(parsedEntry.data)) {
-      return false;
+      return undefined;
     }
 
-    return parsedEntry.data.id === fromMessageId;
+    const dataId = parsedEntry.data.id;
+    if (typeof dataId === "string" && dataId.trim().length > 0) {
+      return { id: dataId };
+    }
+
+    return undefined;
+  }
+
+  private async copyPinnedMessagesForFork(
+    sourceDescriptor: AgentDescriptor & { role: "manager"; profileId: string },
+    forkedDescriptor: AgentDescriptor & { role: "manager"; profileId: string }
+  ): Promise<void> {
+    const sourceRegistry = await loadPins(this.getSessionDirForDescriptor(sourceDescriptor));
+    if (Object.keys(sourceRegistry.pins).length === 0) {
+      this.setPinnedRegistryForAgent(forkedDescriptor.agentId, { version: 1, pins: {} });
+      return;
+    }
+
+    const forkedMessageIds = await this.collectConversationMessageIdsFromSessionFile(forkedDescriptor.sessionFile);
+    const filteredRegistry: PinRegistry = {
+      version: 1,
+      pins: Object.fromEntries(
+        Object.entries(sourceRegistry.pins).filter(([messageId]) => forkedMessageIds.has(messageId))
+      )
+    };
+
+    if (Object.keys(filteredRegistry.pins).length === 0) {
+      this.setPinnedRegistryForAgent(forkedDescriptor.agentId, filteredRegistry);
+      return;
+    }
+
+    await savePins(this.getSessionDirForDescriptor(forkedDescriptor), filteredRegistry);
+    this.setPinnedRegistryForAgent(forkedDescriptor.agentId, filteredRegistry);
+  }
+
+  private async collectConversationMessageIdsFromSessionFile(sessionFile: string): Promise<Set<string>> {
+    const messageIds = new Set<string>();
+
+    const handle = await open(sessionFile, "r").catch((error: unknown) => {
+      if (isEnoentError(error)) {
+        return undefined;
+      }
+      throw error;
+    });
+
+    if (!handle) {
+      return messageIds;
+    }
+
+    try {
+      for await (const line of handle.readLines()) {
+        const conversationEntry = this.parseConversationMessageEntryLine(line);
+        if (!conversationEntry?.id) {
+          continue;
+        }
+
+        messageIds.add(conversationEntry.id);
+      }
+    } finally {
+      await handle.close();
+    }
+
+    return messageIds;
   }
 
   private async writeForkedSessionMemoryHeader(
@@ -3683,6 +3849,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     });
 
     this.descriptors.delete(descriptor.agentId);
+    this.pinnedMessageIdsBySessionAgentId.delete(descriptor.agentId);
     this.conversationProjector.deleteConversationHistory(descriptor.agentId, descriptor.sessionFile);
 
     try {
@@ -3992,6 +4159,15 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     };
   }
 
+  private async resolveCompactionCustomInstructions(
+    descriptor: AgentDescriptor & { role: "manager" },
+    customInstructions?: string
+  ): Promise<string | undefined> {
+    const registry = await loadPins(this.getSessionDirForDescriptor(descriptor));
+    this.setPinnedRegistryForAgent(descriptor.agentId, registry);
+    return combineCompactionCustomInstructions(customInstructions, registry);
+  }
+
   async compactAgentContext(
     agentId: string,
     options?: {
@@ -4013,10 +4189,14 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       throw new Error(`Compaction is only supported for manager agents: ${agentId}`);
     }
 
-    const runtime = await this.getOrCreateRuntimeForDescriptor(descriptor);
+    const managerDescriptor = descriptor as AgentDescriptor & { role: "manager" };
+    const runtime = await this.getOrCreateRuntimeForDescriptor(managerDescriptor);
 
     const sourceContext = normalizeMessageSourceContext(options?.sourceContext ?? { channel: "web" });
-    const customInstructions = options?.customInstructions?.trim() || undefined;
+    const customInstructions = await this.resolveCompactionCustomInstructions(
+      managerDescriptor,
+      options?.customInstructions?.trim() || undefined
+    );
 
     this.logDebug("manager:compact:start", {
       agentId,
@@ -4080,6 +4260,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   async smartCompactAgentContext(
     agentId: string,
     options?: {
+      customInstructions?: string;
       sourceContext?: MessageSourceContext;
       trigger?: "api" | "slash_command";
     }
@@ -4097,14 +4278,20 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       throw new Error(`Smart compaction is only supported for manager agents: ${agentId}`);
     }
 
-    const runtime = await this.getOrCreateRuntimeForDescriptor(descriptor);
+    const managerDescriptor = descriptor as AgentDescriptor & { role: "manager" };
+    const runtime = await this.getOrCreateRuntimeForDescriptor(managerDescriptor);
 
     const sourceContext = normalizeMessageSourceContext(options?.sourceContext ?? { channel: "web" });
+    const customInstructions = await this.resolveCompactionCustomInstructions(
+      managerDescriptor,
+      options?.customInstructions?.trim() || undefined
+    );
 
     this.logDebug("manager:smart_compact:start", {
       agentId,
       trigger: options?.trigger ?? "api",
-      sourceContext
+      sourceContext,
+      customInstructionsPreview: previewForLog(customInstructions ?? "")
     });
 
     this.emitConversationMessage({
@@ -4118,7 +4305,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     });
 
     try {
-      const result = await runtime.smartCompact();
+      const result = await runtime.smartCompact(customInstructions);
 
       if (result.compactionSucceeded) {
         const usage = runtime.getContextUsage();

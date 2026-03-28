@@ -37,6 +37,7 @@ export type ClientCommand =
       requestId?: string
     }
   | { type: 'clear_session'; agentId: string; requestId?: string }
+  | { type: 'pin_message'; agentId: string; messageId: string; pinned: boolean }
   | { type: 'merge_session_memory'; agentId: string; requestId?: string }
   | { type: 'get_session_workers'; sessionAgentId: string; requestId?: string }
   | { type: 'list_directories'; path?: string; requestId?: string }

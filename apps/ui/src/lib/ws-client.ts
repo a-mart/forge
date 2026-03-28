@@ -343,6 +343,15 @@ export class ManagerWsClient {
     })
   }
 
+  pinMessage(agentId: string, messageId: string, pinned: boolean): void {
+    this.send({
+      type: 'pin_message',
+      agentId,
+      messageId,
+      pinned,
+    })
+  }
+
   deleteAgent(agentId: string): void {
     const trimmed = agentId.trim()
     if (!trimmed) return
@@ -837,6 +846,21 @@ export class ManagerWsClient {
 
         const messages = [...this.state.messages, event]
         this.updateState({ messages })
+        break
+      }
+
+      case 'message_pinned': {
+        if (event.agentId !== this.state.targetAgentId) {
+          break
+        }
+
+        const pinnedMessages = this.state.messages.map((msg) => {
+          if (msg.type === 'conversation_message' && msg.id === event.messageId) {
+            return { ...msg, pinned: event.pinned }
+          }
+          return msg
+        })
+        this.updateState({ messages: pinnedMessages })
         break
       }
 

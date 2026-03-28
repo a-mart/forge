@@ -38,6 +38,7 @@ interface MessageListProps {
   onSuggestionClick?: (suggestion: string) => void
   onArtifactClick?: (artifact: ArtifactReference) => void
   onForkFromMessage?: (messageId: string) => void
+  onPinMessage?: (messageId: string, pinned: boolean) => void
   getVote?: (targetId: string, fallbackTargetId?: string) => 'up' | 'down' | null
   hasComment?: (targetId: string, fallbackTargetId?: string) => boolean
   onFeedbackVote?: (
@@ -283,6 +284,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
   onSuggestionClick,
   onArtifactClick,
   onForkFromMessage,
+  onPinMessage,
   getVote,
   hasComment,
   onFeedbackVote,
@@ -471,6 +473,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
                     feedbackLegacyTargetId={feedbackLegacyTargetId}
                     onArtifactClick={onArtifactClick}
                     onForkFromMessage={entry.message.role !== 'system' ? onForkFromMessage : undefined}
+                    onPinMessage={entry.message.role !== 'system' ? onPinMessage : undefined}
                     feedbackVote={
                       isAssistant && getVote
                         ? getVote(feedbackTargetId, feedbackLegacyTargetId)

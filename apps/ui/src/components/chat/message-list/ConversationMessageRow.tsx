@@ -1,5 +1,5 @@
 import { memo, useState, useCallback } from 'react'
-import { Copy, Check, GitFork } from 'lucide-react'
+import { Copy, Check, GitFork, Pin } from 'lucide-react'
 import { MarkdownMessage } from '@/components/chat/MarkdownMessage'
 import type { ArtifactReference } from '@/lib/artifacts'
 import { cn } from '@/lib/utils'
@@ -50,6 +50,25 @@ function ForkButton({ onClick }: { onClick: () => void }) {
   )
 }
 
+function PinButton({ pinned, onClick }: { pinned: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        'inline-flex size-5 items-center justify-center rounded-sm transition-colors',
+        pinned
+          ? 'text-amber-500 dark:text-amber-400'
+          : 'text-muted-foreground/50 hover:text-muted-foreground',
+      )}
+      aria-label={pinned ? 'Unpin message' : 'Pin message (preserve through compaction)'}
+      title={pinned ? 'Unpin message' : 'Pin message (preserve through compaction)'}
+    >
+      <Pin className={cn('size-3', pinned && 'fill-current')} />
+    </button>
+  )
+}
+
 interface ConversationMessageRowProps {
   message: ConversationMessageEntry
   wsUrl?: string
@@ -57,6 +76,7 @@ interface ConversationMessageRowProps {
   feedbackLegacyTargetId?: string
   onArtifactClick?: (artifact: ArtifactReference) => void
   onForkFromMessage?: (messageId: string) => void
+  onPinMessage?: (messageId: string, pinned: boolean) => void
   feedbackVote?: 'up' | 'down' | null
   feedbackHasComment?: boolean
   onFeedbackVote?: (
@@ -88,6 +108,7 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
   feedbackLegacyTargetId,
   onArtifactClick,
   onForkFromMessage,
+  onPinMessage,
   feedbackVote,
   feedbackHasComment,
   onFeedbackVote,
@@ -132,9 +153,21 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
 
   if (message.role === 'user') {
     const forkMessageId = message.id?.trim() || message.timestamp
+    const canPin = onPinMessage && message.id?.trim()
     return (
       <div className="flex justify-end">
-        <div className="max-w-[85%] rounded-lg rounded-tr-sm bg-primary px-3 py-2 text-primary-foreground">
+        <div
+          className={cn(
+            'max-w-[85%] rounded-lg rounded-tr-sm bg-primary px-3 py-2 text-primary-foreground',
+            message.pinned && 'ring-2 ring-amber-400/60 dark:ring-amber-500/50',
+          )}
+        >
+          {message.pinned ? (
+            <div className="mb-1 flex items-center gap-1 text-[10px] text-primary-foreground/70">
+              <Pin className="size-2.5 fill-current" />
+              <span>Pinned</span>
+            </div>
+          ) : null}
           <div className="space-y-2">
             <MessageAttachments attachments={attachments} isUser wsUrl={wsUrl} />
             {hasText ? (
@@ -143,13 +176,29 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
               </p>
             ) : null}
           </div>
-          {timestampLabel || sourceContext || onForkFromMessage ? (
+          {timestampLabel || sourceContext || onForkFromMessage || canPin ? (
             <div className="mt-1 flex items-center justify-end gap-1.5">
               <SourceBadge sourceContext={sourceContext} isUser />
               {timestampLabel ? (
                 <p className="text-right text-[10px] leading-none text-primary-foreground/70">
                   {timestampLabel}
                 </p>
+              ) : null}
+              {canPin ? (
+                <button
+                  type="button"
+                  onClick={() => onPinMessage(message.id!, !message.pinned)}
+                  className={cn(
+                    'inline-flex size-5 items-center justify-center rounded-sm transition-colors',
+                    message.pinned
+                      ? 'text-amber-300 dark:text-amber-300'
+                      : 'text-primary-foreground/50 hover:text-primary-foreground',
+                  )}
+                  aria-label={message.pinned ? 'Unpin message' : 'Pin message (preserve through compaction)'}
+                  title={message.pinned ? 'Unpin message' : 'Pin message (preserve through compaction)'}
+                >
+                  <Pin className={cn('size-3', message.pinned && 'fill-current')} />
+                </button>
               ) : null}
               {onForkFromMessage ? (
                 <button
@@ -174,9 +223,21 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
     feedbackTargetId?.trim() || message.id?.trim() || message.timestamp
   const resolvedFeedbackLegacyTargetId = feedbackLegacyTargetId?.trim()
   const assistantForkMessageId = message.id?.trim() || message.timestamp
+  const canPinAssistant = onPinMessage && message.id?.trim()
 
   return (
-    <div className="min-w-0 space-y-2 text-foreground">
+    <div
+      className={cn(
+        'min-w-0 space-y-2 text-foreground',
+        message.pinned && 'rounded-lg border-l-2 border-amber-400/60 pl-3 dark:border-amber-500/50',
+      )}
+    >
+      {message.pinned ? (
+        <div className="flex items-center gap-1 text-[10px] text-amber-600 dark:text-amber-400">
+          <Pin className="size-2.5 fill-current" />
+          <span>Pinned</span>
+        </div>
+      ) : null}
       {hasText ? (
         <MarkdownMessage
           content={normalizedText}
@@ -186,11 +247,17 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
         />
       ) : null}
       <MessageAttachments attachments={attachments} isUser={false} wsUrl={wsUrl} />
-      {timestampLabel || sourceContext || showFeedback || onForkFromMessage ? (
+      {timestampLabel || sourceContext || showFeedback || onForkFromMessage || canPinAssistant ? (
         <div className="flex items-center gap-1.5 text-[11px] leading-none text-muted-foreground/70">
           <SourceBadge sourceContext={sourceContext} />
           {timestampLabel ? <span>{timestampLabel}</span> : null}
           {hasText ? <CopyButton text={normalizedText} /> : null}
+          {canPinAssistant ? (
+            <PinButton
+              pinned={!!message.pinned}
+              onClick={() => onPinMessage(message.id!, !message.pinned)}
+            />
+          ) : null}
           {onForkFromMessage ? (
             <ForkButton onClick={() => onForkFromMessage(assistantForkMessageId)} />
           ) : null}

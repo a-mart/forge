@@ -48,7 +48,17 @@ const MODEL_PRESET_DISPLAY_INFO: Record<SwarmModelPreset, {
     ]
   },
   "pi-5.4": {
-    displayName: "GPT-5.4"
+    displayName: "GPT-5.4",
+    variants: [
+      {
+        modelId: "gpt-5.4-mini",
+        label: "GPT-5.4 Mini"
+      },
+      {
+        modelId: "gpt-5.4-nano",
+        label: "GPT-5.4 Nano"
+      }
+    ]
   },
   "pi-opus": {
     displayName: "Claude Opus 4.6",
@@ -64,7 +74,17 @@ const MODEL_PRESET_DISPLAY_INFO: Record<SwarmModelPreset, {
     ]
   },
   "pi-grok": {
-    displayName: "Grok 4"
+    displayName: "Grok 4",
+    variants: [
+      {
+        modelId: "grok-4-fast",
+        label: "Grok 4 Fast"
+      },
+      {
+        modelId: "grok-3",
+        label: "Grok 3"
+      }
+    ]
   },
   "codex-app": {
     displayName: "Codex App Runtime"

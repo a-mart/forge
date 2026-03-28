@@ -121,7 +121,8 @@ export class WsHandler {
         event.type === "agent_message" ||
         event.type === "agent_tool_call" ||
         event.type === "conversation_reset" ||
-        event.type === "choice_request"
+        event.type === "choice_request" ||
+        event.type === "message_pinned"
       ) {
         if (subscribedAgent !== event.agentId) {
           continue;
@@ -287,6 +288,35 @@ export class WsHandler {
 
     if (command.type === "api_proxy") {
       await this.handleApiProxyCommand(socket, command, subscribedAgentId);
+      return;
+    }
+
+    if (command.type === "pin_message") {
+      if (subscribedAgentId !== command.agentId) {
+        this.send(socket, {
+          type: "error",
+          code: "PIN_MESSAGE_SUBSCRIPTION_MISMATCH",
+          message: `Pin message rejected: not subscribed to agent ${command.agentId}`
+        });
+        return;
+      }
+
+      try {
+        const result = await this.swarmManager.pinMessage(command.agentId, command.messageId, command.pinned);
+        this.broadcastToSubscribed({
+          type: "message_pinned",
+          agentId: command.agentId,
+          messageId: command.messageId,
+          pinned: result.pinned,
+          timestamp: result.timestamp
+        });
+      } catch (error) {
+        this.send(socket, {
+          type: "error",
+          code: "PIN_MESSAGE_FAILED",
+          message: error instanceof Error ? error.message : String(error)
+        });
+      }
       return;
     }
 
@@ -604,6 +634,9 @@ export class WsHandler {
       return this.createApiProxyMethodNotAllowedResponse(command.requestId, "POST");
     }
 
+    const payload = parseApiProxyBody(command.body);
+    const customInstructions = parseCompactCustomInstructionsBody(payload);
+
     let decodedAgentId = "";
     try {
       decodedAgentId = decodeURIComponent(rawAgentId).trim();
@@ -617,6 +650,7 @@ export class WsHandler {
 
     try {
       await this.swarmManager.smartCompactAgentContext(decodedAgentId, {
+        customInstructions,
         sourceContext: { channel: "web" },
         trigger: "api"
       });
@@ -1536,6 +1570,28 @@ function parseApiProxyBody(body: string | undefined): unknown {
   } catch {
     throw new Error("Request body must be valid JSON");
   }
+}
+
+function parseCompactCustomInstructionsBody(value: unknown): string | undefined {
+  if (value === null || value === undefined) {
+    return undefined;
+  }
+
+  if (!isRecord(value)) {
+    throw new Error("Request body must be a JSON object");
+  }
+
+  const customInstructions = value.customInstructions;
+  if (customInstructions === undefined) {
+    return undefined;
+  }
+
+  if (typeof customInstructions !== "string") {
+    throw new Error("customInstructions must be a string");
+  }
+
+  const trimmed = customInstructions.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 function normalizeReasonCodes(value: unknown): string[] {
