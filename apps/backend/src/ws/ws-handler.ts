@@ -5,11 +5,16 @@ import type {
   ApiProxyResponseEvent,
   FeedbackSubmitEvent,
   ServerEvent,
+  TerminalCreateRequest,
   TerminalDescriptor,
+  TerminalIssueTicketRequest,
+  TerminalRenameRequest,
+  TerminalResizeRequest,
 } from "@forge/protocol";
 import type { IntegrationRegistryService } from "../integrations/registry.js";
 import type { MobilePushService } from "../mobile/mobile-push-service.js";
 import type { PlaywrightDiscoveryService } from "../playwright/playwright-discovery-service.js";
+import { TerminalServiceError, type TerminalService } from "../terminal/terminal-service.js";
 import { getGlobalSlashCommandsPath } from "../swarm/data-paths.js";
 import type { UnreadTracker } from "../swarm/unread-tracker.js";
 import { isPathWithinRoots, normalizeAllowlistRoots, resolveDirectoryPath } from "../swarm/cwd-policy.js";
@@ -21,6 +26,7 @@ import { handleAgentCommand } from "./routes/agent-routes.js";
 import { handleConversationCommand } from "./routes/conversation-routes.js";
 import { handleManagerCommand } from "./routes/manager-routes.js";
 import { handleSessionCommand } from "./routes/session-routes.js";
+import { resolveTerminalServiceStatusCode } from "./routes/terminal-routes.js";
 import { resolveReadFileContentType } from "./http-utils.js";
 import { resolveSessionAgentIdForUnread } from "./unread-utils.js";
 
@@ -36,6 +42,10 @@ const API_PROXY_TEST_PUSH_PATH = "/api/mobile/push/test";
 const API_PROXY_AUTH_TOKENS_PATH = "/api/auth/tokens";
 const API_PROXY_FEEDBACK_PATH = "/api/feedback";
 const API_PROXY_SLASH_COMMANDS_PATH = "/api/slash-commands";
+const API_PROXY_TERMINALS_COLLECTION_PATH = "/api/terminals";
+const API_PROXY_TERMINAL_ITEM_PATH_PATTERN = /^\/api\/terminals\/([^/]+)$/;
+const API_PROXY_TERMINAL_TICKET_PATH_PATTERN = /^\/api\/terminals\/([^/]+)\/ticket$/;
+const API_PROXY_TERMINAL_RESIZE_PATH_PATTERN = /^\/api\/terminals\/([^/]+)\/resize$/;
 const API_PROXY_JSON_CONTENT_TYPE = "application/json; charset=utf-8";
 const MAX_READ_FILE_CONTENT_BYTES = 2 * 1024 * 1024;
 const MAX_WS_EVENT_BYTES = 1 * 1024 * 1024;
@@ -52,6 +62,7 @@ export class WsHandler {
   private readonly playwrightDiscovery: PlaywrightDiscoveryService | null;
   private readonly allowNonManagerSubscriptions: boolean;
   private readonly feedbackService: FeedbackService;
+  private readonly terminalService: TerminalService | null;
   private readonly listTerminalsForSession?: (sessionAgentId: string) => TerminalDescriptor[];
   private readonly unreadTracker: UnreadTracker | null;
 
@@ -64,6 +75,7 @@ export class WsHandler {
     mobilePushService: MobilePushService;
     playwrightDiscovery: PlaywrightDiscoveryService | null;
     allowNonManagerSubscriptions: boolean;
+    terminalService?: TerminalService | null;
     listTerminalsForSession?: (sessionAgentId: string) => TerminalDescriptor[];
     unreadTracker?: UnreadTracker;
   }) {
@@ -73,6 +85,7 @@ export class WsHandler {
     this.playwrightDiscovery = options.playwrightDiscovery;
     this.allowNonManagerSubscriptions = options.allowNonManagerSubscriptions;
     this.feedbackService = new FeedbackService(this.swarmManager.getConfig().paths.dataDir);
+    this.terminalService = options.terminalService ?? null;
     this.listTerminalsForSession = options.listTerminalsForSession;
     this.unreadTracker = options.unreadTracker ?? null;
   }
@@ -440,6 +453,25 @@ export class WsHandler {
         return await this.handleApiProxySlashCommands(command);
       }
 
+      if (pathname === API_PROXY_TERMINALS_COLLECTION_PATH) {
+        return await this.handleApiProxyTerminals(command, payload);
+      }
+
+      const terminalTicketMatch = pathname.match(API_PROXY_TERMINAL_TICKET_PATH_PATTERN);
+      if (terminalTicketMatch) {
+        return await this.handleApiProxyTerminalTicket(command, terminalTicketMatch[1] ?? "", payload);
+      }
+
+      const terminalResizeMatch = pathname.match(API_PROXY_TERMINAL_RESIZE_PATH_PATTERN);
+      if (terminalResizeMatch) {
+        return await this.handleApiProxyTerminalResize(command, terminalResizeMatch[1] ?? "", payload);
+      }
+
+      const terminalItemMatch = pathname.match(API_PROXY_TERMINAL_ITEM_PATH_PATTERN);
+      if (terminalItemMatch) {
+        return await this.handleApiProxyTerminalItem(command, terminalItemMatch[1] ?? "", payload);
+      }
+
       const smartCompactMatch = pathname.match(API_PROXY_SMART_COMPACT_ENDPOINT_PATTERN);
       if (smartCompactMatch) {
         return await this.handleApiProxySmartCompact(command, smartCompactMatch[1] ?? "");
@@ -624,6 +656,135 @@ export class WsHandler {
 
     const commands = await this.listApiProxySlashCommands();
     return this.createApiProxyJsonResponse(command.requestId, 200, { commands });
+  }
+
+  private async handleApiProxyTerminals(
+    command: ApiProxyCommand,
+    payload: unknown,
+  ): Promise<ApiProxyResponseEvent> {
+    if (!this.terminalService) {
+      return this.createApiProxyJsonResponse(command.requestId, 503, { error: "Terminals not available" });
+    }
+
+    if (command.method !== "GET" && command.method !== "POST") {
+      return this.createApiProxyMethodNotAllowedResponse(command.requestId, "GET, POST");
+    }
+
+    try {
+      if (command.method === "GET") {
+        const requestUrl = new URL(command.path, "http://api-proxy.local");
+        const sessionAgentId = requireApiProxyQueryString(requestUrl, "sessionAgentId");
+        return this.createApiProxyJsonResponse(command.requestId, 200, {
+          terminals: this.terminalService.listTerminals(sessionAgentId),
+        });
+      }
+
+      const request = parseApiProxyTerminalCreateBody(payload);
+      const created = await this.terminalService.create(request);
+      return this.createApiProxyJsonResponse(command.requestId, 201, { ...created });
+    } catch (error) {
+      return this.createApiProxyTerminalErrorResponse(command.requestId, error);
+    }
+  }
+
+  private async handleApiProxyTerminalItem(
+    command: ApiProxyCommand,
+    rawTerminalId: string,
+    payload: unknown,
+  ): Promise<ApiProxyResponseEvent> {
+    if (!this.terminalService) {
+      return this.createApiProxyJsonResponse(command.requestId, 503, { error: "Terminals not available" });
+    }
+
+    if (command.method !== "PATCH" && command.method !== "DELETE") {
+      return this.createApiProxyMethodNotAllowedResponse(command.requestId, "PATCH, DELETE");
+    }
+
+    const terminalId = decodeApiProxyPathSegment(rawTerminalId);
+    if (!terminalId) {
+      return this.createApiProxyJsonResponse(command.requestId, 400, {
+        error: "Invalid terminal id",
+        code: "INVALID_REQUEST",
+      });
+    }
+
+    try {
+      if (command.method === "PATCH") {
+        const request = parseApiProxyTerminalRenameBody(payload);
+        const terminal = await this.terminalService.renameTerminal({ terminalId, request });
+        return this.createApiProxyJsonResponse(command.requestId, 200, { terminal });
+      }
+
+      const requestUrl = new URL(command.path, "http://api-proxy.local");
+      const sessionAgentId = requireApiProxyQueryString(requestUrl, "sessionAgentId");
+      await this.terminalService.close(terminalId, sessionAgentId, "user_closed");
+      return this.createApiProxyJsonResponse(command.requestId, 200, { ok: true });
+    } catch (error) {
+      return this.createApiProxyTerminalErrorResponse(command.requestId, error);
+    }
+  }
+
+  private async handleApiProxyTerminalTicket(
+    command: ApiProxyCommand,
+    rawTerminalId: string,
+    payload: unknown,
+  ): Promise<ApiProxyResponseEvent> {
+    if (!this.terminalService) {
+      return this.createApiProxyJsonResponse(command.requestId, 503, { error: "Terminals not available" });
+    }
+
+    if (command.method !== "POST") {
+      return this.createApiProxyMethodNotAllowedResponse(command.requestId, "POST");
+    }
+
+    const terminalId = decodeApiProxyPathSegment(rawTerminalId);
+    if (!terminalId) {
+      return this.createApiProxyJsonResponse(command.requestId, 400, {
+        error: "Invalid terminal id",
+        code: "INVALID_REQUEST",
+      });
+    }
+
+    try {
+      const request = parseApiProxyTerminalIssueTicketBody(payload);
+      const ticket = await this.terminalService.issueWsTicket({
+        terminalId,
+        sessionAgentId: request.sessionAgentId,
+      });
+      return this.createApiProxyJsonResponse(command.requestId, 200, { ...ticket });
+    } catch (error) {
+      return this.createApiProxyTerminalErrorResponse(command.requestId, error);
+    }
+  }
+
+  private async handleApiProxyTerminalResize(
+    command: ApiProxyCommand,
+    rawTerminalId: string,
+    payload: unknown,
+  ): Promise<ApiProxyResponseEvent> {
+    if (!this.terminalService) {
+      return this.createApiProxyJsonResponse(command.requestId, 503, { error: "Terminals not available" });
+    }
+
+    if (command.method !== "POST") {
+      return this.createApiProxyMethodNotAllowedResponse(command.requestId, "POST");
+    }
+
+    const terminalId = decodeApiProxyPathSegment(rawTerminalId);
+    if (!terminalId) {
+      return this.createApiProxyJsonResponse(command.requestId, 400, {
+        error: "Invalid terminal id",
+        code: "INVALID_REQUEST",
+      });
+    }
+
+    try {
+      const request = parseApiProxyTerminalResizeBody(payload);
+      const terminal = await this.terminalService.resizeTerminal({ terminalId, request });
+      return this.createApiProxyJsonResponse(command.requestId, 200, { terminal });
+    } catch (error) {
+      return this.createApiProxyTerminalErrorResponse(command.requestId, error);
+    }
   }
 
   private async handleApiProxySmartCompact(
@@ -838,6 +999,33 @@ export class WsHandler {
     const message = error instanceof Error ? error.message : String(error);
     return this.createApiProxyJsonResponse(requestId, resolveApiProxyErrorStatusCode(message), {
       error: message
+    });
+  }
+
+  private createApiProxyTerminalErrorResponse(
+    requestId: string,
+    error: unknown,
+  ): ApiProxyResponseEvent {
+    if (error instanceof TerminalServiceError) {
+      return this.createApiProxyJsonResponse(requestId, resolveTerminalServiceStatusCode(error), {
+        error: error.message,
+        code: error.code,
+      });
+    }
+
+    const message = error instanceof Error ? error.message : String(error);
+    const statusCode =
+      message.includes("must be") ||
+      message.includes("Invalid") ||
+      message.includes("Missing") ||
+      message.includes("required") ||
+      message.includes("too large")
+        ? 400
+        : 500;
+
+    return this.createApiProxyJsonResponse(requestId, statusCode, {
+      error: message,
+      code: statusCode === 400 ? "INVALID_REQUEST" : "INTERNAL_ERROR",
     });
   }
 
@@ -1060,7 +1248,10 @@ export class WsHandler {
     this.send(socket, {
       type: "terminals_snapshot",
       sessionAgentId: effectiveTerminalSessionId,
-      terminals: this.listTerminalsForSession?.(effectiveTerminalSessionId) ?? [],
+      terminals:
+        this.listTerminalsForSession?.(effectiveTerminalSessionId) ??
+        this.terminalService?.listTerminals(effectiveTerminalSessionId) ??
+        [],
     });
 
     if (this.unreadTracker) {
@@ -1592,6 +1783,129 @@ function parseCompactCustomInstructionsBody(value: unknown): string | undefined 
 
   const trimmed = customInstructions.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function parseApiProxyTerminalCreateBody(value: unknown): TerminalCreateRequest {
+  const record = requireApiProxyRecord(value, "Terminal create body must be an object.");
+  const shellArgs = record.shellArgs;
+  if (shellArgs !== undefined && (!Array.isArray(shellArgs) || shellArgs.some((entry) => typeof entry !== "string"))) {
+    throw new Error("shellArgs must be an array of strings.");
+  }
+
+  return {
+    sessionAgentId: requireApiProxyBodyString(record, "sessionAgentId"),
+    name: optionalApiProxyTerminalName(record),
+    shell: optionalApiProxyBodyString(record, "shell"),
+    shellArgs: shellArgs as string[] | undefined,
+    cwd: optionalApiProxyBodyString(record, "cwd"),
+    cols: optionalApiProxyBodyInteger(record, "cols"),
+    rows: optionalApiProxyBodyInteger(record, "rows"),
+  };
+}
+
+function parseApiProxyTerminalRenameBody(value: unknown): TerminalRenameRequest {
+  const record = requireApiProxyRecord(value, "Terminal rename body must be an object.");
+  const name = optionalApiProxyBodyString(record, "title") ?? optionalApiProxyBodyString(record, "name");
+  if (!name) {
+    throw new Error("title must be a non-empty string.");
+  }
+
+  return {
+    sessionAgentId: requireApiProxyBodyString(record, "sessionAgentId"),
+    name,
+  };
+}
+
+function parseApiProxyTerminalResizeBody(value: unknown): TerminalResizeRequest {
+  const record = requireApiProxyRecord(value, "Terminal resize body must be an object.");
+  const cols = record.cols;
+  const rows = record.rows;
+  if (!Number.isInteger(cols) || !Number.isInteger(rows)) {
+    throw new Error("cols and rows must be integers.");
+  }
+
+  return {
+    sessionAgentId: requireApiProxyBodyString(record, "sessionAgentId"),
+    cols: cols as number,
+    rows: rows as number,
+  };
+}
+
+function parseApiProxyTerminalIssueTicketBody(value: unknown): TerminalIssueTicketRequest {
+  const record = requireApiProxyRecord(value, "Terminal ticket body must be an object.");
+  return {
+    sessionAgentId: requireApiProxyBodyString(record, "sessionAgentId"),
+  };
+}
+
+function requireApiProxyRecord(input: unknown, message: string): Record<string, unknown> {
+  if (!isRecord(input)) {
+    throw new Error(message);
+  }
+
+  return input;
+}
+
+function requireApiProxyBodyString(record: Record<string, unknown>, field: string): string {
+  const value = optionalApiProxyBodyString(record, field);
+  if (!value) {
+    throw new Error(`${field} must be a non-empty string.`);
+  }
+
+  return value;
+}
+
+function optionalApiProxyBodyString(record: Record<string, unknown>, field: string): string | undefined {
+  const value = record[field];
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  if (typeof value !== "string") {
+    throw new Error(`${field} must be a string.`);
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function optionalApiProxyBodyInteger(record: Record<string, unknown>, field: string): number | undefined {
+  const value = record[field];
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  if (!Number.isInteger(value)) {
+    throw new Error(`${field} must be an integer.`);
+  }
+
+  return value as number;
+}
+
+function optionalApiProxyTerminalName(record: Record<string, unknown>): string | undefined {
+  return optionalApiProxyBodyString(record, "title") ?? optionalApiProxyBodyString(record, "name");
+}
+
+function requireApiProxyQueryString(requestUrl: URL, field: string): string {
+  const value = requestUrl.searchParams.get(field);
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`${field} must be a non-empty string.`);
+  }
+
+  return value.trim();
+}
+
+function decodeApiProxyPathSegment(raw: string | undefined): string | undefined {
+  if (!raw) {
+    return undefined;
+  }
+
+  try {
+    const decoded = decodeURIComponent(raw).trim();
+    return decoded.length > 0 ? decoded : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function normalizeReasonCodes(value: unknown): string[] {

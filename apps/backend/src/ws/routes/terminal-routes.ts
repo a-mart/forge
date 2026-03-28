@@ -338,7 +338,7 @@ function sendTerminalJsonError(
   sendJson(response, statusCode, code ? { error, code } : { error });
 }
 
-function resolveTerminalServiceStatusCode(error: TerminalServiceError): number {
+export function resolveTerminalServiceStatusCode(error: TerminalServiceError): number {
   switch (error.code) {
     case "SESSION_NOT_FOUND":
     case "TERMINAL_NOT_FOUND":

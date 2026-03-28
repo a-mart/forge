@@ -7,7 +7,7 @@ import type {
 import { WebSocket, WebSocketServer, type RawData } from "ws";
 import type { TerminalRuntimeConfig } from "./terminal-config.js";
 import { validateTerminalWsOrigin } from "./terminal-access-policy.js";
-import { TerminalService, TerminalServiceError } from "./terminal-service.js";
+import { TerminalServiceError, type TerminalService } from "./terminal-service.js";
 
 const TERMINAL_WS_PATH_PATTERN = /^\/terminal\/ws\/([^/]+)$/;
 
@@ -40,12 +40,6 @@ export class TerminalWsProxy {
       return false;
     }
 
-    const originValidation = validateTerminalWsOrigin(request);
-    if (!originValidation.ok) {
-      writeUpgradeError(socket, 403, originValidation.errorMessage);
-      return true;
-    }
-
     const terminalId = decodePathSegment(match[1]);
     if (!terminalId) {
       writeUpgradeError(socket, 400, "Invalid terminal id");
@@ -56,12 +50,22 @@ export class TerminalWsProxy {
     const sessionAgentId = requestUrl.searchParams.get("sessionAgentId")?.trim() ?? "";
     const ticket = requestUrl.searchParams.get("ticket")?.trim() ?? "";
 
-    if (!sessionAgentId || !ticket) {
+    const hasTicketCredentials = Boolean(sessionAgentId && ticket);
+    const ticketValidated =
+      hasTicketCredentials && this.terminalService.validateWsTicket({ terminalId, sessionAgentId, ticket });
+
+    const originValidation = validateTerminalWsOrigin(request);
+    if (!originValidation.ok && !ticketValidated) {
+      writeUpgradeError(socket, 403, originValidation.errorMessage);
+      return true;
+    }
+
+    if (!hasTicketCredentials) {
       writeUpgradeError(socket, 400, "Missing sessionAgentId or ticket");
       return true;
     }
 
-    if (!this.terminalService.validateWsTicket({ terminalId, sessionAgentId, ticket })) {
+    if (!ticketValidated) {
       writeUpgradeError(socket, 403, "Invalid or expired ticket");
       return true;
     }

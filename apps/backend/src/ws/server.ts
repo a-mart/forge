@@ -295,6 +295,7 @@ export class SwarmWebSocketServer {
       mobilePushService: this.mobilePushService,
       playwrightDiscovery: this.playwrightDiscovery,
       allowNonManagerSubscriptions: options.allowNonManagerSubscriptions,
+      terminalService: this.terminalService,
       listTerminalsForSession: this.terminalService
         ? (sessionAgentId) => this.terminalService?.listTerminals(sessionAgentId) ?? []
         : undefined,

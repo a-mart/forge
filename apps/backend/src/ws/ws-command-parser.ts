@@ -72,7 +72,7 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
       return { ok: false, error: "api_proxy.requestId must be a non-empty string" };
     }
     if (!isApiProxyMethod(method)) {
-      return { ok: false, error: "api_proxy.method must be one of GET|POST|PUT|DELETE" };
+      return { ok: false, error: "api_proxy.method must be one of GET|POST|PUT|PATCH|DELETE" };
     }
     if (typeof path !== "string" || path.trim().length === 0 || !path.trim().startsWith("/")) {
       return { ok: false, error: "api_proxy.path must be a non-empty string starting with /" };
@@ -698,8 +698,8 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
   return { ok: false, error: "Unknown command type" };
 }
 
-function isApiProxyMethod(value: unknown): value is "GET" | "POST" | "PUT" | "DELETE" {
-  return value === "GET" || value === "POST" || value === "PUT" || value === "DELETE";
+function isApiProxyMethod(value: unknown): value is "GET" | "POST" | "PUT" | "PATCH" | "DELETE" {
+  return value === "GET" || value === "POST" || value === "PUT" || value === "PATCH" || value === "DELETE";
 }
 
 function isSafeMessageCount(value: unknown): value is number {

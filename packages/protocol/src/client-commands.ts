@@ -4,7 +4,7 @@ import type { ChoiceAnswer, DeliveryMode, ManagerModelPreset, ManagerReasoningLe
 export interface ApiProxyCommand {
   type: 'api_proxy'
   requestId: string
-  method: 'GET' | 'POST' | 'PUT' | 'DELETE'
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
   path: string
   body?: string
 }
