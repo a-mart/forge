@@ -3,7 +3,7 @@ displayName: Scout
 color: "#6b7280"
 enabled: true
 whenToUse: Quick file reads, grep searches, simple edits, fast investigations, lightweight checks, codebase exploration. Not for complex multi-file changes, architecture decisions, or tasks requiring deep reasoning.
-modelId: gpt-5.3-codex
+modelId: gpt-5.4-mini
 reasoningLevel: low
 builtin: true
 ---
