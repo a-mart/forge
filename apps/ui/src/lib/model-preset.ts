@@ -40,7 +40,9 @@ const FALLBACK_MODEL_PRESET_INFO: ModelPresetInfo[] = [
     supportedReasoningLevels: ['none', 'low', 'medium', 'high', 'xhigh'],
     variants: [
       { modelId: 'grok-4-fast', label: 'Grok 4 Fast' },
-      { modelId: 'grok-3', label: 'Grok 3' },
+      { modelId: 'grok-4.20-0309-reasoning', label: 'Grok 4.20 Reasoning' },
+      { modelId: 'grok-4.20-0309-non-reasoning', label: 'Grok 4.20 Non-Reasoning' },
+      { modelId: 'grok-4.20-multi-agent-0309', label: 'Grok 4.20 Multi-Agent' },
     ],
   },
   {
