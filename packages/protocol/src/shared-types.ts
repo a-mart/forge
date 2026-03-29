@@ -381,6 +381,7 @@ export interface GitCommitMetadata {
   profileId?: string
   sessionId?: string
   agentId?: string
+  reviewRunId?: string
   promptCategory?: PromptCategory
   promptId?: string
   paths: string[]
@@ -402,6 +403,21 @@ export interface GitLogResult {
   notInitialized?: boolean
 }
 
+export interface GitFileHistoryStats {
+  totalEdits: number
+  lastModifiedAt: string | null
+  editsToday: number
+  editsThisWeek: number
+}
+
+export interface GitFileLogResult {
+  file: string
+  commits: GitLogEntry[]
+  stats: GitFileHistoryStats
+  hasMore: boolean
+  notInitialized?: boolean
+}
+
 export interface GitCommitDetail {
   sha: string
   message: string
@@ -410,6 +426,29 @@ export interface GitCommitDetail {
   files: GitFileStatus[]
   metadata?: GitCommitMetadata | null
   notInitialized?: boolean
+}
+
+export interface CortexFileReviewHistoryEntry {
+  reviewId?: string
+  recordedAt: string
+  status: 'success' | 'no-op' | 'blocked' | 'failed'
+  changedFiles: string[]
+  notes: string[]
+  blockers: string[]
+  watermarksAdvanced: boolean
+  trigger?: CortexReviewRunTrigger
+  scope?: CortexReviewRunScope
+  scopeLabel?: string
+  sessionAgentId?: string | null
+  scheduleName?: string | null
+  manifestPath?: string
+  manifestExists: boolean
+}
+
+export interface CortexFileReviewHistoryResult {
+  file: string
+  runs: CortexFileReviewHistoryEntry[]
+  latestRun: CortexFileReviewHistoryEntry | null
 }
 
 // ── Prompt Centralization ─────────────────────────────────

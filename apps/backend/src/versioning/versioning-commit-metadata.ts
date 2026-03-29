@@ -95,6 +95,12 @@ export function parseVersioningCommitMetadata(body: string): GitCommitMetadata |
           recognizedFields += 1;
         }
         break;
+      case "Review-Run":
+        if (value) {
+          metadata.reviewRunId = value;
+          recognizedFields += 1;
+        }
+        break;
       case "Prompt": {
         const prompt = parsePromptReference(value);
         if (prompt) {

@@ -55,7 +55,6 @@ const FALLBACK_MODEL_PRESET_INFO: ModelPresetInfo[] = [
       { modelId: 'grok-4-fast', label: 'Grok 4 Fast' },
       { modelId: 'grok-4.20-0309-reasoning', label: 'Grok 4.20 Reasoning' },
       { modelId: 'grok-4.20-0309-non-reasoning', label: 'Grok 4.20 Non-Reasoning' },
-      { modelId: 'grok-4.20-multi-agent-0309', label: 'Grok 4.20 Multi-Agent' },
     ],
   },
   {

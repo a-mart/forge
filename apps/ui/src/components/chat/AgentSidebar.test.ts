@@ -6,6 +6,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AgentSidebar } from './AgentSidebar'
+import { HelpProvider } from '@/components/help/HelpProvider'
 import type { AgentDescriptor, AgentStatus, ManagerProfile } from '@forge/protocol'
 
 function manager(
@@ -135,22 +136,26 @@ function renderSidebar({
 
   flushSync(() => {
     root?.render(
-      createElement(AgentSidebar, {
-        connected: true,
-        wsUrl,
-        agents,
-        profiles: resolvedProfiles,
-        statuses,
-        unreadCounts: {},
-        selectedAgentId,
-        onAddManager: vi.fn(),
-        onSelectAgent,
-        onDeleteAgent,
-        onDeleteManager,
-        onOpenSettings,
-        onOpenCortexReview,
-        isSettingsActive,
-      }),
+      createElement(
+        HelpProvider,
+        null,
+        createElement(AgentSidebar, {
+          connected: true,
+          wsUrl,
+          agents,
+          profiles: resolvedProfiles,
+          statuses,
+          unreadCounts: {},
+          selectedAgentId,
+          onAddManager: vi.fn(),
+          onSelectAgent,
+          onDeleteAgent,
+          onDeleteManager,
+          onOpenSettings,
+          onOpenCortexReview,
+          isSettingsActive,
+        }),
+      ),
     )
   })
 }

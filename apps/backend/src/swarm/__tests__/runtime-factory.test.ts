@@ -4,23 +4,42 @@ import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const piAiMockState = vi.hoisted(() => ({
-  getModel: vi.fn()
+  getModel: vi.fn(),
+  getModels: vi.fn((provider: unknown) =>
+    provider === "xai"
+      ? [
+          {
+            id: "grok-4",
+            name: "Grok 4",
+            api: "openai-completions",
+            provider: "xai",
+            baseUrl: "https://api.x.ai/v1",
+            reasoning: true,
+            input: ["text"],
+            cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 },
+            contextWindow: 123,
+            maxTokens: 456,
+          },
+        ]
+      : [],
+  ),
 }));
 
 const piCodingAgentMockState = vi.hoisted(() => ({
   createAgentSession: vi.fn(),
   compact: vi.fn(),
   modelRegistryFind: vi.fn(),
-  modelRegistryGetAll: vi.fn()
+  modelRegistryGetAll: vi.fn(),
 }));
 
 vi.mock("@mariozechner/pi-ai", () => ({
-  getModel: (...args: unknown[]) => piAiMockState.getModel(...args)
+  getModel: (provider: unknown, modelId: unknown) => piAiMockState.getModel(provider, modelId),
+  getModels: (provider: unknown) => piAiMockState.getModels(provider),
 }));
 
 vi.mock("@mariozechner/pi-coding-agent", () => ({
   AuthStorage: {
-    create: vi.fn(() => ({}))
+    create: vi.fn(() => ({})),
   },
   DefaultResourceLoader: class {
     constructor(_options: unknown) {}
@@ -43,7 +62,7 @@ vi.mock("@mariozechner/pi-coding-agent", () => ({
     getAll(): unknown[] {
       return piCodingAgentMockState.modelRegistryGetAll();
     }
-  }
+  },
 }));
 
 import { savePins } from "../message-pins.js";
@@ -63,7 +82,7 @@ function createConfig(rootDir: string): SwarmConfig {
     defaultModel: {
       provider: "openai-codex",
       modelId: "gpt-5.4",
-      thinkingLevel: "high"
+      thinkingLevel: "high",
     },
     defaultCwd: rootDir,
     cwdAllowlistRoots: [rootDir],
@@ -87,12 +106,15 @@ function createConfig(rootDir: string): SwarmConfig {
       agentDir: join(rootDir, "agent"),
       managerAgentDir: join(rootDir, "manager-agent"),
       repoArchetypesDir: join(rootDir, "archetypes"),
-      repoMemorySkillFile: join(rootDir, "memory-skill.md")
-    }
+      repoMemorySkillFile: join(rootDir, "memory-skill.md"),
+    },
   };
 }
 
-function createDescriptor(rootDir: string): AgentDescriptor {
+function createDescriptor(
+  rootDir: string,
+  overrides: Partial<AgentDescriptor> = {},
+): AgentDescriptor {
   return {
     agentId: "worker-1",
     displayName: "Worker 1",
@@ -106,21 +128,21 @@ function createDescriptor(rootDir: string): AgentDescriptor {
     model: {
       provider: "openai-codex",
       modelId: "gpt-5.4-mini",
-      thinkingLevel: "high"
+      thinkingLevel: "high",
     },
-    sessionFile: join(rootDir, "session.jsonl")
+    sessionFile: join(rootDir, "session.jsonl"),
+    ...overrides,
   };
 }
 
 function createManagerDescriptor(rootDir: string): AgentDescriptor {
-  return {
-    ...createDescriptor(rootDir),
+  return createDescriptor(rootDir, {
     agentId: "manager-1",
     displayName: "Manager 1",
     role: "manager",
     managerId: "manager-1",
-    sessionFile: join(rootDir, "manager-session.jsonl")
-  };
+    sessionFile: join(rootDir, "manager-session.jsonl"),
+  });
 }
 
 function createFactory(rootDir: string): RuntimeFactory {
@@ -135,12 +157,12 @@ function createFactory(rootDir: string): RuntimeFactory {
       sendMessage: async () => ({
         targetAgentId: "worker-1",
         deliveryId: "delivery-1",
-        acceptedMode: "prompt"
+        acceptedMode: "prompt",
       }),
       publishToUser: async () => ({
-        targetContext: { channel: "web" }
+        targetContext: { channel: "web" },
       }),
-      requestUserChoice: async () => []
+      requestUserChoice: async () => [],
     },
     config: createConfig(rootDir),
     now: () => "2026-01-01T00:00:00.000Z",
@@ -148,9 +170,9 @@ function createFactory(rootDir: string): RuntimeFactory {
     getMemoryRuntimeResources: async () => ({
       memoryContextFile: {
         path: join(rootDir, "memory.md"),
-        content: ""
+        content: "",
       },
-      additionalSkillPaths: []
+      additionalSkillPaths: [],
     }),
     getSwarmContextFiles: async () => [],
     mergeRuntimeContextFiles: (base) => base,
@@ -159,14 +181,23 @@ function createFactory(rootDir: string): RuntimeFactory {
       onSessionEvent: async () => {},
       onAgentEnd: async () => {},
       onRuntimeError: async () => {},
-      onRuntimeExtensionSnapshot: async () => {}
-    }
+      onRuntimeExtensionSnapshot: async () => {},
+    },
   });
+}
+
+function buildExtensionFactories(factory: RuntimeFactory, descriptor: AgentDescriptor) {
+  return (
+    factory as unknown as {
+      buildExtensionFactories: (agentDescriptor: AgentDescriptor) => Array<(pi: any) => void>;
+    }
+  ).buildExtensionFactories(descriptor);
 }
 
 describe("RuntimeFactory", () => {
   beforeEach(() => {
     piAiMockState.getModel.mockReset();
+    piAiMockState.getModels.mockClear();
     piCodingAgentMockState.createAgentSession.mockReset();
     piCodingAgentMockState.compact.mockReset();
     piCodingAgentMockState.modelRegistryFind.mockReset();
@@ -181,15 +212,15 @@ describe("RuntimeFactory", () => {
     piCodingAgentMockState.modelRegistryGetAll.mockReturnValue([
       {
         provider: "openai-codex",
-        modelId: "gpt-5.4"
-      }
+        modelId: "gpt-5.4",
+      },
     ]);
     piAiMockState.getModel.mockReturnValue(undefined);
 
     const factory = createFactory(rootDir);
 
     await expect(factory.createRuntimeForDescriptor(createDescriptor(rootDir), "system prompt")).rejects.toThrow(
-      'Model "gpt-5.4-mini" not found for provider "openai-codex". The model may not be available in the current Pi runtime version.'
+      'Model "gpt-5.4-mini" not found for provider "openai-codex". The model may not be available in the current Pi runtime version.',
     );
 
     expect(piCodingAgentMockState.modelRegistryGetAll).not.toHaveBeenCalled();
@@ -209,21 +240,19 @@ describe("RuntimeFactory", () => {
           pinnedAt: "2026-01-01T00:00:00.000Z",
           role: "user",
           text: "Keep this exact wording",
-          timestamp: "2026-01-01T00:00:00.000Z"
-        }
-      }
+          timestamp: "2026-01-01T00:00:00.000Z",
+        },
+      },
     });
 
-    const extensionFactories = (factory as any).buildExtensionFactories(descriptor) as Array<(pi: {
-      on: (event: string, handler: (...args: any[]) => unknown) => void;
-    }) => void>;
+    const extensionFactories = buildExtensionFactories(factory, descriptor);
 
     const handlers = new Map<string, (...args: any[]) => unknown>();
     for (const extensionFactory of extensionFactories) {
       extensionFactory({
-        on: (event, handler) => {
+        on: (event: string, handler: (...args: any[]) => unknown) => {
           handlers.set(event, handler);
-        }
+        },
       });
     }
 
@@ -233,7 +262,7 @@ describe("RuntimeFactory", () => {
     piCodingAgentMockState.compact.mockResolvedValue({
       summary: "summary",
       firstKeptEntryId: "entry-1",
-      tokensBefore: 123
+      tokensBefore: 123,
     });
 
     const signal = new AbortController().signal;
@@ -246,11 +275,11 @@ describe("RuntimeFactory", () => {
           isSplitTurn: false,
           tokensBefore: 123,
           fileOps: { readFiles: [], modifiedFiles: [] },
-          settings: { enabled: true, reserveTokens: 1000, keepRecentTokens: 2000 }
+          settings: { enabled: true, reserveTokens: 1000, keepRecentTokens: 2000 },
         },
         branchEntries: [],
         customInstructions: "Focus on deployment details.",
-        signal
+        signal,
       },
       {
         model: { provider: "openai-codex", id: "gpt-5.4" },
@@ -258,11 +287,11 @@ describe("RuntimeFactory", () => {
           getApiKeyAndHeaders: vi.fn().mockResolvedValue({
             ok: true,
             apiKey: "oauth-access-token",
-            headers: { Authorization: "Bearer oauth-access-token", "x-test": "1" }
-          })
+            headers: { Authorization: "Bearer oauth-access-token", "x-test": "1" },
+          }),
         },
-        ui: { notify: vi.fn() }
-      }
+        ui: { notify: vi.fn() },
+      },
     );
 
     expect(piCodingAgentMockState.compact).toHaveBeenCalledWith(
@@ -273,20 +302,151 @@ describe("RuntimeFactory", () => {
         isSplitTurn: false,
         tokensBefore: 123,
         fileOps: { readFiles: [], modifiedFiles: [] },
-        settings: { enabled: true, reserveTokens: 1000, keepRecentTokens: 2000 }
+        settings: { enabled: true, reserveTokens: 1000, keepRecentTokens: 2000 },
       },
       { provider: "openai-codex", id: "gpt-5.4" },
       "oauth-access-token",
       { Authorization: "Bearer oauth-access-token", "x-test": "1" },
       expect.stringContaining("Focus on deployment details."),
-      signal
+      signal,
     );
     expect(result).toEqual({
       compaction: {
         summary: "summary",
         firstKeptEntryId: "entry-1",
-        tokensBefore: 123
-      }
+        tokensBefore: 123,
+      },
     });
+  });
+
+  it("injects the xAI responses extension factory for xAI workers", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    const factory = createFactory(rootDir);
+    const descriptor = createDescriptor(rootDir, {
+      model: {
+        provider: "xai",
+        modelId: "grok-4",
+        thinkingLevel: "high",
+      },
+    });
+
+    const extensionFactories = buildExtensionFactories(factory, descriptor);
+    const registerProvider = vi.fn();
+
+    for (const extensionFactory of extensionFactories) {
+      extensionFactory({ registerProvider, on: vi.fn() } as any);
+    }
+
+    expect(registerProvider).toHaveBeenCalledWith(
+      "xai",
+      expect.objectContaining({
+        baseUrl: "https://api.x.ai/v1",
+        apiKey: "XAI_API_KEY",
+        api: "openai-responses",
+        models: [
+          expect.objectContaining({
+            id: "grok-4",
+            name: "Grok 4",
+            api: "openai-responses",
+          }),
+        ],
+      }),
+    );
+  });
+
+  it("does not inject the xAI responses extension factory for non-xAI workers", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    const factory = createFactory(rootDir);
+    const descriptor = createDescriptor(rootDir, {
+      model: {
+        provider: "openai-codex",
+        modelId: "gpt-5.4",
+        thinkingLevel: "high",
+      },
+    });
+
+    const extensionFactories = buildExtensionFactories(factory, descriptor);
+    const registerProvider = vi.fn();
+
+    for (const extensionFactory of extensionFactories) {
+      extensionFactory({ registerProvider, on: vi.fn() } as any);
+    }
+
+    expect(registerProvider).not.toHaveBeenCalledWith("xai", expect.anything());
+  });
+
+  it("registers before_provider_request injection when xAI web search is enabled", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    const factory = createFactory(rootDir);
+    const descriptor = createDescriptor(rootDir, {
+      model: {
+        provider: "xai",
+        modelId: "grok-4",
+        thinkingLevel: "high",
+      },
+      webSearch: true,
+    });
+
+    const extensionFactories = buildExtensionFactories(factory, descriptor);
+    const handlers = new Map<string, (...args: any[]) => unknown>();
+    const registerProvider = vi.fn();
+
+    for (const extensionFactory of extensionFactories) {
+      extensionFactory({
+        registerProvider,
+        on: (event: string, handler: (...args: any[]) => unknown) => {
+          handlers.set(event, handler);
+        },
+      } as any);
+    }
+
+    expect(registerProvider).toHaveBeenCalledWith("xai", expect.anything());
+
+    const beforeProviderRequest = handlers.get("before_provider_request");
+    expect(beforeProviderRequest).toBeTypeOf("function");
+
+    const result = beforeProviderRequest?.(
+      {
+        payload: {
+          input: "hello",
+          tools: [{ type: "function", name: "existing_tool" }],
+        },
+      },
+      {
+        model: { provider: "xai", id: "grok-4" },
+      },
+    );
+
+    expect(result).toEqual({
+      input: "hello",
+      tools: [{ type: "function", name: "existing_tool" }, { type: "web_search" }],
+    });
+  });
+
+  it("registers before_provider_request handling when xAI web search is disabled", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    const factory = createFactory(rootDir);
+    const descriptor = createDescriptor(rootDir, {
+      model: {
+        provider: "xai",
+        modelId: "grok-4",
+        thinkingLevel: "high",
+      },
+      webSearch: false,
+    });
+
+    const extensionFactories = buildExtensionFactories(factory, descriptor);
+    const handlers = new Map<string, (...args: any[]) => unknown>();
+
+    for (const extensionFactory of extensionFactories) {
+      extensionFactory({
+        registerProvider: vi.fn(),
+        on: (event: string, handler: (...args: any[]) => unknown) => {
+          handlers.set(event, handler);
+        },
+      } as any);
+    }
+
+    expect(handlers.has("before_provider_request")).toBe(true);
   });
 });

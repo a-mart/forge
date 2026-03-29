@@ -97,6 +97,15 @@ function providerLabel(provider: string): string {
   return PROVIDER_LABELS[provider] ?? provider
 }
 
+function modelSupportsWebSearch(modelId: string, presets: ModelPresetInfo[]): boolean {
+  for (const preset of presets) {
+    if (preset.modelId === modelId || preset.variants?.some((variant) => variant.modelId === modelId)) {
+      return preset.webSearch === true
+    }
+  }
+  return false
+}
+
 interface SettingsSpecialistsProps {
   wsUrl: string
   profiles: ManagerProfile[]
@@ -118,6 +127,7 @@ interface CardEditState {
   fallbackModelId: string
   fallbackReasoningLevel: string
   pinned: boolean
+  webSearch: boolean
   promptBody: string
 }
 
@@ -135,6 +145,7 @@ function specialistToEditState(
     fallbackModelId: specialist.fallbackModelId ?? '',
     fallbackReasoningLevel: specialist.fallbackReasoningLevel ?? '',
     pinned: specialist.pinned,
+    webSearch: specialist.webSearch ?? false,
     promptBody: specialist.promptBody,
   }
 }
@@ -171,6 +182,7 @@ function toSaveSpecialistPayload(state: CardEditState): SaveSpecialistPayload {
     // Strip fallback reasoning level when there's no fallback model.
     fallbackReasoningLevel: normalizedFallbackModelId ? normalizedFallbackReasoningLevel : undefined,
     pinned: state.pinned,
+    webSearch: state.webSearch,
     promptBody: state.promptBody,
   }
 }
@@ -521,6 +533,9 @@ export function SettingsSpecialists({ wsUrl, profiles, specialistChangeKey }: Se
         if (!supported.includes(nextState.reasoningLevel as ManagerReasoningLevel)) {
           nextState.reasoningLevel = supported[supported.length - 1] || 'high'
         }
+        if (!modelSupportsWebSearch(value, modelPresets)) {
+          nextState.webSearch = false
+        }
       }
 
       // Auto-normalize fallback reasoning level when fallback model changes
@@ -732,6 +747,7 @@ export function SettingsSpecialists({ wsUrl, profiles, specialistChangeKey }: Se
         fallbackModelId: source.fallbackModelId ?? undefined,
         fallbackReasoningLevel: (source.fallbackReasoningLevel as ManagerReasoningLevel) ?? undefined,
         pinned: false,
+        webSearch: source.webSearch ?? false,
         promptBody: source.promptBody,
       }
 
@@ -1673,6 +1689,7 @@ function SpecialistCard({
   /* ---- Expanded state (editing) ---- */
   const promptLineCount = currentValues.promptBody.split('\n').length
   const supportedLevels = getSupportedReasoningLevelsForModelId(currentValues.modelId, modelPresets)
+  const supportsWebSearch = modelSupportsWebSearch(currentValues.modelId, modelPresets)
 
   return (
     <div className="space-y-4 rounded-lg border bg-card p-4">
@@ -1806,6 +1823,19 @@ function SpecialistCard({
         modelPresets={modelPresets}
         selectableModels={selectableModels}
       />
+
+      {supportsWebSearch && (
+        <div className="flex items-center gap-2">
+          <Switch
+            checked={currentValues.webSearch}
+            onCheckedChange={(checked) => onUpdateField('webSearch', checked)}
+          />
+          <Label>Web Search</Label>
+          <span className="text-xs text-muted-foreground">
+            Enable xAI native web search for this specialist
+          </span>
+        </div>
+      )}
 
       {/* System prompt */}
       <div className="space-y-1">

@@ -301,12 +301,20 @@ export class EmbeddedGitVersioningService implements VersioningMutationSink {
       subject = `versioning(${uniqueProfiles[0]}): update ${fileCountLabel}`;
     }
 
+    const uniqueReviewRunIds = Array.from(
+      new Set(mutations.map((mutation) => mutation.reviewRunId?.trim()).filter((value): value is string => Boolean(value)))
+    );
+    const sharedReviewRunId = uniqueReviewRunIds.length === 1 && mutations.every((mutation) => mutation.reviewRunId?.trim() === uniqueReviewRunIds[0])
+      ? uniqueReviewRunIds[0]
+      : null;
+
     const bodyLines = [
       `Reason: ${reason}`,
       uniqueSources.length === 1 ? `Source: ${uniqueSources[0]}` : `Sources: ${uniqueSources.join(", ")}`,
       ...(uniqueProfiles.length === 1 ? [`Profile: ${uniqueProfiles[0]}`] : []),
       ...(primary?.sessionId ? [`Session: ${primary.sessionId}`] : []),
       ...(primary?.agentId ? [`Agent: ${primary.agentId}`] : []),
+      ...(sharedReviewRunId ? [`Review-Run: ${sharedReviewRunId}`] : []),
       ...(primary?.promptCategory && primary?.promptId
         ? [`Prompt: ${primary.promptCategory}/${primary.promptId}`]
         : []),

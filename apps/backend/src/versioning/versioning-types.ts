@@ -20,6 +20,7 @@ export interface VersioningMutation {
   promptCategory?: "archetype" | "operational";
   promptId?: string;
   agentId?: string;
+  reviewRunId?: string;
 }
 
 export interface VersioningMutationSink {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  getModelPresetInfoList,
   inferProviderFromModelId,
   inferSwarmModelPresetFromDescriptor,
   normalizeSwarmModelDescriptor
@@ -17,6 +18,20 @@ describe("model-presets", () => {
       inferSwarmModelPresetFromDescriptor({
         provider: "xai",
         modelId: "grok-4-fast"
+      })
+    ).toBe("pi-grok");
+
+    expect(
+      inferSwarmModelPresetFromDescriptor({
+        provider: "xai",
+        modelId: "grok-4.20-0309-reasoning"
+      })
+    ).toBe("pi-grok");
+
+    expect(
+      inferSwarmModelPresetFromDescriptor({
+        provider: "xai",
+        modelId: "grok-4.20-0309-non-reasoning"
       })
     ).toBe("pi-grok");
 
@@ -42,5 +57,36 @@ describe("model-presets", () => {
       modelId: "grok-4",
       thinkingLevel: "high"
     });
+
+    expect(
+      normalizeSwarmModelDescriptor(
+        {
+          provider: "xai",
+          modelId: "grok-4.20-0309-reasoning"
+        },
+        "pi-codex"
+      )
+    ).toEqual({
+      provider: "xai",
+      modelId: "grok-4",
+      thinkingLevel: "high"
+    });
+  });
+
+  it("includes webSearch capability metadata for the pi-grok preset", () => {
+    const grokPreset = getModelPresetInfoList().find((preset) => preset.presetId === "pi-grok");
+    expect(grokPreset?.webSearch).toBe(true);
+    expect(grokPreset?.variants?.map((variant) => variant.modelId)).toEqual([
+      "grok-4-fast",
+      "grok-4.20-0309-reasoning",
+      "grok-4.20-0309-non-reasoning"
+    ]);
+  });
+
+  it("does not expose webSearch capability metadata for other presets", () => {
+    const presets = getModelPresetInfoList();
+    for (const presetId of ["pi-codex", "pi-5.4", "pi-opus", "codex-app"] as const) {
+      expect(presets.find((preset) => preset.presetId === presetId)?.webSearch).toBeUndefined();
+    }
   });
 });

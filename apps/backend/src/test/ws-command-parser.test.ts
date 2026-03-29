@@ -195,8 +195,8 @@ describe('ws command parser session commands', () => {
         message: 'get_session_workers.sessionAgentId must be a non-empty string',
       },
       {
-        payload: { type: 'api_proxy', requestId: 'proxy-1', method: 'PATCH', path: '/api/mobile/push/test' },
-        message: 'api_proxy.method must be one of GET|POST|PUT|DELETE',
+        payload: { type: 'api_proxy', requestId: 'proxy-1', method: 'TRACE', path: '/api/mobile/push/test' },
+        message: 'api_proxy.method must be one of GET|POST|PUT|PATCH|DELETE',
       },
       {
         payload: { type: 'api_proxy', requestId: '', method: 'GET', path: '/api/slash-commands' },

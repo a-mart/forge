@@ -6,6 +6,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SettingsPrompts } from './SettingsPrompts'
+import { HelpProvider } from '@/components/help/HelpProvider'
 import type { ManagerProfile } from '@forge/protocol'
 
 let container: HTMLDivElement
@@ -93,11 +94,15 @@ describe('SettingsPrompts', () => {
     root = createRoot(container)
     flushSync(() => {
       root?.render(
-        createElement(SettingsPrompts, {
-          wsUrl: 'ws://127.0.0.1:47187',
-          profiles,
-          promptChangeKey: 0,
-        }),
+        createElement(
+          HelpProvider,
+          null,
+          createElement(SettingsPrompts, {
+            wsUrl: 'ws://127.0.0.1:47187',
+            profiles,
+            promptChangeKey: 0,
+          }),
+        ),
       )
     })
 
@@ -156,11 +161,15 @@ describe('SettingsPrompts', () => {
     root = createRoot(container)
     flushSync(() => {
       root?.render(
-        createElement(SettingsPrompts, {
-          wsUrl: 'ws://127.0.0.1:47187',
-          profiles,
-          promptChangeKey: 0,
-        }),
+        createElement(
+          HelpProvider,
+          null,
+          createElement(SettingsPrompts, {
+            wsUrl: 'ws://127.0.0.1:47187',
+            profiles,
+            promptChangeKey: 0,
+          }),
+        ),
       )
     })
 

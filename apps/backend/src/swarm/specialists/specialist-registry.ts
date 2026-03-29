@@ -587,7 +587,7 @@ function validateSaveRequest(data: SaveSpecialistRequest): SpecialistFrontmatter
     fallbackReasoningLevel: normalizedFallbackReasoningLevel,
     builtin: false,
     pinned: data.pinned ?? false,
-    webSearch: data.webSearch === true,
+    webSearch: normalizeWebSearchForModelId(modelId, data.webSearch === true),
   };
 }
 
@@ -662,6 +662,10 @@ function parseYamlStringValue(value: string): string {
   return trimmed;
 }
 
+function normalizeWebSearchForModelId(modelId: string, webSearch: boolean): boolean {
+  return webSearch && inferProviderFromModelId(modelId) === "xai";
+}
+
 function toResolvedSpecialistDefinition(options: {
   specialistId: string;
   frontmatter: SpecialistFrontmatter;
@@ -690,6 +694,8 @@ function toResolvedSpecialistDefinition(options: {
     availabilityMessage = `Unknown fallbackModelId: ${options.frontmatter.fallbackModelId}`;
   }
 
+  const webSearch = normalizeWebSearchForModelId(options.frontmatter.modelId, options.frontmatter.webSearch);
+
   return {
     specialistId: options.specialistId,
     displayName: options.frontmatter.displayName,
@@ -704,7 +710,7 @@ function toResolvedSpecialistDefinition(options: {
     fallbackReasoningLevel: options.frontmatter.fallbackReasoningLevel,
     builtin: options.frontmatter.builtin,
     pinned: options.frontmatter.pinned,
-    webSearch: options.frontmatter.webSearch,
+    webSearch,
     promptBody: options.body,
     sourceKind: options.sourceKind,
     sourcePath: options.sourcePath,

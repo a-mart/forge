@@ -1,6 +1,6 @@
 import type { Dirent } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
-import { join, relative, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import type { PromptCategory } from "../swarm/prompt-registry.js";
 import { getProfilesDir, getSharedKnowledgeDir } from "../swarm/data-paths.js";
 
@@ -17,6 +17,10 @@ export interface VersionedPathMetadata {
   surface: "knowledge" | "memory" | "reference" | "prompt";
 }
 
+export interface TrackedVersionedPathReference extends VersionedPathMetadata {
+  gitPath: string;
+}
+
 export function isTrackedVersionedPath(
   dataDir: string,
   filePath: string,
@@ -30,7 +34,7 @@ export function resolveVersionedPathMetadata(
   filePath: string,
   options?: VersionedPathsOptions
 ): VersionedPathMetadata | undefined {
-  const relativePath = toDataDirRelativePath(dataDir, filePath);
+  const relativePath = normalizeTrackedPathInput(dataDir, filePath);
   if (!relativePath || relativePath.startsWith(".git/") || relativePath.includes(".bak")) {
     return undefined;
   }
@@ -98,6 +102,22 @@ export function resolveVersionedPathMetadata(
   }
 
   return undefined;
+}
+
+export function resolveTrackedVersionedPathReference(
+  dataDir: string,
+  filePath: string,
+  options?: VersionedPathsOptions
+): TrackedVersionedPathReference | undefined {
+  const metadata = resolveVersionedPathMetadata(dataDir, filePath, options);
+  if (!metadata) {
+    return undefined;
+  }
+
+  return {
+    ...metadata,
+    gitPath: metadata.relativePath
+  };
 }
 
 export async function enumerateExistingTrackedPaths(
@@ -181,6 +201,30 @@ export function toDataDirRelativePath(dataDir: string, filePath: string): string
   }
 
   return relativePath.replace(/\\/g, "/");
+}
+
+function normalizeTrackedPathInput(dataDir: string, filePath: string): string | undefined {
+  const trimmedPath = filePath.trim();
+  if (!trimmedPath) {
+    return undefined;
+  }
+
+  if (isAbsolute(trimmedPath)) {
+    return toDataDirRelativePath(dataDir, trimmedPath);
+  }
+
+  const normalizedPath = trimmedPath.replace(/\\/g, "/").replace(/^\.\//u, "");
+  if (
+    normalizedPath.length === 0 ||
+    normalizedPath === "." ||
+    normalizedPath === ".." ||
+    normalizedPath.startsWith("../") ||
+    normalizedPath.startsWith("..\\")
+  ) {
+    return undefined;
+  }
+
+  return normalizedPath;
 }
 
 async function addTrackedMarkdownChildren(

@@ -87,10 +87,6 @@ const MODEL_PRESET_DISPLAY_INFO: Record<SwarmModelPreset, {
       {
         modelId: "grok-4.20-0309-non-reasoning",
         label: "Grok 4.20 Non-Reasoning"
-      },
-      {
-        modelId: "grok-4.20-multi-agent-0309",
-        label: "Grok 4.20 Multi-Agent"
       }
     ]
   },
@@ -233,7 +229,7 @@ export function inferSwarmModelPresetFromDescriptor(
     return "pi-opus";
   }
 
-  if (provider === "xai" && (modelId === "grok-4" || modelId === "grok-4-fast" || modelId === "grok-3")) {
+  if (provider === "xai" && modelId?.startsWith("grok-")) {
     return "pi-grok";
   }
 

@@ -7,6 +7,7 @@ import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MANAGER_MODEL_PRESETS } from '@forge/protocol'
 import { IndexPage, isCortexDiffViewerSession } from './index'
+import { HelpProvider } from '@/components/help/HelpProvider'
 
 const CREATE_MANAGER_MODEL_PRESETS = MANAGER_MODEL_PRESETS.filter(
   (modelPreset) => modelPreset !== 'codex-app' && modelPreset !== 'pi-grok',
@@ -172,7 +173,7 @@ async function renderPage(): Promise<FakeWebSocket> {
   root = createRoot(container)
 
   flushSync(() => {
-    root?.render(createElement(IndexPage))
+    root?.render(createElement(HelpProvider, null, createElement(IndexPage)))
   })
 
   await Promise.resolve()

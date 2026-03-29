@@ -107,6 +107,59 @@ describe("specialist-registry", () => {
     expect(parsed?.frontmatter.pinned).toBe(true);
   });
 
+  it("parses webSearch frontmatter when provided", async () => {
+    const root = await mkdtemp(join(tmpdir(), "specialist-registry-test-"));
+    const filePath = join(root, "web-search.md");
+
+    await writeFile(
+      filePath,
+      [
+        "---",
+        "displayName: Research Specialist",
+        "color: '#2563eb'",
+        "enabled: true",
+        "whenToUse: Live web research",
+        "modelId: grok-4",
+        "webSearch: true",
+        "---",
+        "",
+        "Research body.",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const parsed = await parseSpecialistFile(filePath);
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.frontmatter.webSearch).toBe(true);
+  });
+
+  it("defaults webSearch frontmatter to false when omitted", async () => {
+    const root = await mkdtemp(join(tmpdir(), "specialist-registry-test-"));
+    const filePath = join(root, "default-web-search.md");
+
+    await writeFile(
+      filePath,
+      [
+        "---",
+        "displayName: Standard Specialist",
+        "color: '#2563eb'",
+        "enabled: true",
+        "whenToUse: General tasks",
+        "modelId: gpt-5.3-codex",
+        "---",
+        "",
+        "Standard body.",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const parsed = await parseSpecialistFile(filePath);
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.frontmatter.webSearch).toBe(false);
+  });
+
   it("migrates legacy preset-based frontmatter to modelId", async () => {
     const root = await mkdtemp(join(tmpdir(), "specialist-registry-test-"));
     const filePath = join(root, "legacy.md");
@@ -150,6 +203,63 @@ describe("specialist-registry", () => {
 
     const markdown = await readFile(specialistPath, "utf8");
     expect(markdown).toContain("pinned: true");
+  });
+
+  it("serializes webSearch frontmatter when enabled", async () => {
+    const root = await mkdtemp(join(tmpdir(), "specialist-registry-test-"));
+    const dataDir = join(root, "data");
+    const specialistPath = join(dataDir, "shared", "specialists", "research.md");
+
+    await saveSharedSpecialist(dataDir, "research", {
+      displayName: "Research Specialist",
+      color: "#123abc",
+      enabled: true,
+      whenToUse: "Research tasks",
+      modelId: "grok-4",
+      webSearch: true,
+      promptBody: "Research prompt body",
+    });
+
+    const markdown = await readFile(specialistPath, "utf8");
+    expect(markdown).toContain("webSearch: true");
+  });
+
+  it("omits webSearch frontmatter when disabled", async () => {
+    const root = await mkdtemp(join(tmpdir(), "specialist-registry-test-"));
+    const dataDir = join(root, "data");
+    const specialistPath = join(dataDir, "shared", "specialists", "standard.md");
+
+    await saveSharedSpecialist(dataDir, "standard", {
+      displayName: "Standard Specialist",
+      color: "#123abc",
+      enabled: true,
+      whenToUse: "Standard tasks",
+      modelId: "gpt-5.4",
+      webSearch: false,
+      promptBody: "Standard prompt body",
+    });
+
+    const markdown = await readFile(specialistPath, "utf8");
+    expect(markdown).not.toContain("webSearch:");
+  });
+
+  it("coerces webSearch to false when saving a non-Grok specialist", async () => {
+    const root = await mkdtemp(join(tmpdir(), "specialist-registry-test-"));
+    const dataDir = join(root, "data");
+    const specialistPath = join(dataDir, "shared", "specialists", "non-grok.md");
+
+    await saveSharedSpecialist(dataDir, "non-grok", {
+      displayName: "Non Grok Specialist",
+      color: "#123abc",
+      enabled: true,
+      whenToUse: "Standard tasks",
+      modelId: "gpt-5.4",
+      webSearch: true,
+      promptBody: "Standard prompt body",
+    });
+
+    const markdown = await readFile(specialistPath, "utf8");
+    expect(markdown).not.toContain("webSearch:");
   });
 
   it("resolves profile specialists over shared specialists and computes availability", async () => {
@@ -637,6 +747,65 @@ describe("specialist-registry", () => {
     );
   });
 
+  it("includes webSearch in resolved roster entries", async () => {
+    const root = await mkdtemp(join(tmpdir(), "specialist-registry-test-"));
+    const dataDir = join(root, "data");
+
+    await saveSharedSpecialist(dataDir, "research-worker", {
+      displayName: "Research Worker",
+      color: "#123abc",
+      enabled: true,
+      whenToUse: "Shared research tasks",
+      modelId: "grok-4",
+      webSearch: true,
+      promptBody: "Shared research prompt body",
+    });
+
+    const roster = await resolveSharedRoster(dataDir);
+    expect(roster).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          specialistId: "research-worker",
+          webSearch: true,
+        }),
+      ]),
+    );
+  });
+
+  it("coerces webSearch to false in resolved roster entries for non-Grok specialist files", async () => {
+    const root = await mkdtemp(join(tmpdir(), "specialist-registry-test-"));
+    const dataDir = join(root, "data");
+    const sharedDir = join(dataDir, "shared", "specialists");
+
+    await mkdir(sharedDir, { recursive: true });
+    await writeFile(
+      join(sharedDir, "non-grok.md"),
+      [
+        "---",
+        "displayName: Non Grok Specialist",
+        "color: '#123abc'",
+        "enabled: true",
+        "whenToUse: Standard tasks",
+        "modelId: gpt-5.4",
+        "webSearch: true",
+        "---",
+        "",
+        "Standard prompt body",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const roster = await resolveSharedRoster(dataDir);
+    expect(roster).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          specialistId: "non-grok",
+          webSearch: false,
+        }),
+      ]),
+    );
+  });
+
   it("rejects deleting missing profile specialists", async () => {
     const root = await mkdtemp(join(tmpdir(), "specialist-registry-test-"));
     const dataDir = join(root, "data");
@@ -710,6 +879,31 @@ describe("specialist-registry", () => {
     expect(markdown).toContain("`backend`");
     expect(markdown).toContain("[openai-codex/gpt-5.3-codex high");
     expect(markdown).toContain("-> fallback anthropic/claude-opus-4-6 medium]");
+  });
+
+  it("adds a web search tag to roster entries when enabled", () => {
+    const markdown = generateRosterBlock([
+      {
+        specialistId: "research",
+        displayName: "Research Specialist",
+        color: "#2563eb",
+        enabled: true,
+        whenToUse: "Web research",
+        modelId: "grok-4",
+        provider: "xai",
+        reasoningLevel: "medium",
+        builtin: false,
+        pinned: false,
+        webSearch: true,
+        promptBody: "Prompt",
+        sourceKind: "global",
+        available: true,
+        availabilityCode: "ok",
+        shadowsGlobal: false,
+      },
+    ]);
+
+    expect(markdown).toContain("[web search]");
   });
 
   it("returns null for legacy migration with unknown preset name", async () => {
