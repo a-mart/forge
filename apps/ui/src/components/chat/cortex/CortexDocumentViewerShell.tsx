@@ -8,7 +8,9 @@ import { Textarea } from '@/components/ui/textarea'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
 import { cn } from '@/lib/utils'
 import { MarkdownMessage } from '../MarkdownMessage'
+import type { DiffViewerInitialState } from '@/components/diff-viewer/DiffViewerDialog'
 import { CortexDocumentMetaStrip } from './CortexDocumentMetaStrip'
+import { CortexHistoryPanel } from './CortexHistoryPanel'
 import { useCortexFileReviewHistory, useGitFileLog } from './use-cortex-history'
 
 export type CortexDocumentDescriptor = Pick<
@@ -25,10 +27,17 @@ interface CortexDocumentViewerShellProps {
   onArtifactClick?: (artifact: ArtifactReference) => void
   onOpenSession?: (agentId: string) => void
   canOpenSession?: (agentId: string) => boolean
+  onSelectDocument?: (documentId: string) => void
+  onOpenDiffViewer?: (initialState: DiffViewerInitialState) => void
 }
 
 type ViewerState = 'loading' | 'rendered' | 'editing' | 'saving' | 'error'
 type ViewerMode = 'content' | 'history'
+
+export interface PendingHistorySelection {
+  reviewId: string | null
+  sha: string | null
+}
 
 interface ReadFileResult {
   path: string
@@ -92,11 +101,14 @@ async function writeFileContent(wsUrl: string, filePath: string, content: string
 export function CortexDocumentViewerShell({
   wsUrl,
   document,
+  documents = [],
   agentId,
   refreshKey = 0,
   onArtifactClick,
   onOpenSession,
   canOpenSession,
+  onSelectDocument,
+  onOpenDiffViewer,
 }: CortexDocumentViewerShellProps) {
   const [viewerState, setViewerState] = useState<ViewerState>('loading')
   const [viewerMode, setViewerMode] = useState<ViewerMode>('content')
@@ -104,11 +116,13 @@ export function CortexDocumentViewerShell({
   const [editContent, setEditContent] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [isEmpty, setIsEmpty] = useState(false)
+  const [historySelection, setHistorySelection] = useState<PendingHistorySelection | null>(null)
   const [latestRunSessionAvailable, setLatestRunSessionAvailable] = useState<boolean | null>(null)
 
   const fileLogQuery = useGitFileLog(wsUrl, agentId, document?.gitPath ?? null, 1, 0)
   const reviewHistoryQuery = useCortexFileReviewHistory(wsUrl, document?.gitPath ?? null, 1)
 
+  const latestCommit = fileLogQuery.data?.commits[0] ?? null
   const latestRun = reviewHistoryQuery.data?.latestRun ?? null
   const isDirty = viewerState === 'editing' && editContent !== content
   const historyToggleDisabled = viewerState === 'saving' || isDirty
@@ -171,6 +185,7 @@ export function CortexDocumentViewerShell({
 
   useEffect(() => {
     setViewerMode('content')
+    setHistorySelection(null)
     setEditContent('')
   }, [document?.absolutePath, document?.gitPath])
 
@@ -251,13 +266,33 @@ export function CortexDocumentViewerShell({
       })
   }, [document?.absolutePath, editContent, fileLogQuery, reviewHistoryQuery, wsUrl])
 
+  const enterHistoryMode = useCallback(
+    (run?: CortexFileReviewHistoryEntry | null) => {
+      if (viewerState === 'editing') {
+        handleCancelEditing()
+      }
+
+      setHistorySelection({
+        reviewId: run?.reviewId ?? latestRun?.reviewId ?? null,
+        sha: latestCommit?.sha ?? null,
+      })
+      setViewerMode('history')
+    },
+    [handleCancelEditing, latestCommit?.sha, latestRun?.reviewId, viewerState],
+  )
+
   const handleToggleHistoryMode = useCallback(() => {
     if (historyToggleDisabled) {
       return
     }
 
-    setViewerMode((current) => (current === 'history' ? 'content' : 'history'))
-  }, [historyToggleDisabled])
+    if (viewerMode === 'history') {
+      setViewerMode('content')
+      return
+    }
+
+    enterHistoryMode()
+  }, [enterHistoryMode, historyToggleDisabled, viewerMode])
 
   const handleOpenRun = useCallback(() => {
     if (!latestRun?.sessionAgentId || !canOpenLatestRunSession) {
@@ -380,7 +415,7 @@ export function CortexDocumentViewerShell({
               <p className="mt-0.5 text-[10px] text-emerald-100/80">{formatLatestRunSummary(latestRun)}</p>
             </div>
             <div className="flex shrink-0 items-center gap-1">
-              <Button variant="ghost" size="sm" className="h-6 px-2 text-[10px]" onClick={() => setViewerMode('history')}>
+              <Button variant="ghost" size="sm" className="h-6 px-2 text-[10px]" onClick={() => enterHistoryMode(latestRun)}>
                 View changes
               </Button>
               <Button
@@ -414,9 +449,20 @@ export function CortexDocumentViewerShell({
             </Button>
           </div>
         ) : viewerMode === 'history' ? (
-          <div className="flex h-full items-center justify-center px-4 text-center text-xs text-muted-foreground">
-            Inline history mode is available in the next step of this series.
-          </div>
+          <CortexHistoryPanel
+            wsUrl={wsUrl}
+            agentId={agentId}
+            document={document}
+            documents={documents}
+            refreshKey={refreshKey}
+            pendingSelection={historySelection}
+            onExitHistoryMode={() => setViewerMode('content')}
+            onArtifactClick={onArtifactClick}
+            onOpenSession={onOpenSession}
+            canOpenSession={canOpenSession}
+            onSelectDocument={onSelectDocument}
+            onOpenDiffViewer={onOpenDiffViewer}
+          />
         ) : viewerState === 'editing' || viewerState === 'saving' ? (
           <Textarea
             className="h-full min-h-0 resize-none rounded-none border-0 bg-transparent font-mono text-xs leading-relaxed focus-visible:ring-0"

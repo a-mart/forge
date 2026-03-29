@@ -21,6 +21,32 @@ const historyState = vi.hoisted(() => ({
     error: string | null
     refetch: ReturnType<typeof vi.fn>
   } | null,
+  commitDetail: {
+    data: {
+      sha: 'abcdef1234567890',
+      message: 'Knowledge update',
+      author: 'Cortex',
+      date: '2026-03-29T12:00:00.000Z',
+      files: [{ path: 'shared/knowledge/common.md', status: 'modified', additions: 1, deletions: 1 }],
+      metadata: {
+        source: 'profile-memory-merge',
+        reviewRunId: 'review-1',
+        paths: ['shared/knowledge/common.md'],
+      },
+    },
+    isLoading: false,
+    error: null,
+    refetch: vi.fn(),
+  },
+  commitDiff: {
+    data: {
+      oldContent: '# Before\nBody\n',
+      newContent: '# After\nBody\n',
+    },
+    isLoading: false,
+    error: null,
+    refetch: vi.fn(),
+  },
 }))
 
 vi.mock('./use-cortex-history', () => ({
@@ -42,6 +68,16 @@ vi.mock('./use-cortex-history', () => ({
 
 vi.mock('../MarkdownMessage', () => ({
   MarkdownMessage: ({ content }: { content: string }) => createElement('div', { 'data-testid': 'markdown-message' }, content),
+}))
+
+vi.mock('@/components/diff-viewer/use-diff-queries', () => ({
+  useGitCommitDetail: () => historyState.commitDetail,
+  useGitCommitDiff: () => historyState.commitDiff,
+}))
+
+vi.mock('@/components/diff-viewer/DiffPane', () => ({
+  DiffPane: ({ oldContent, newContent }: { oldContent: string | null; newContent: string | null }) =>
+    createElement('div', { 'data-testid': 'mock-diff-pane', 'data-old': oldContent ?? '', 'data-new': newContent ?? '' }),
 }))
 
 let container: HTMLDivElement
@@ -66,6 +102,11 @@ beforeEach(() => {
   container = document.createElement('div')
   document.body.appendChild(container)
   Element.prototype.scrollIntoView ??= vi.fn()
+  globalThis.ResizeObserver ??= class ResizeObserver {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  } as typeof ResizeObserver
   historyState.fileLog = {
     data: buildFileLogResult(),
     isLoading: false,
@@ -205,6 +246,18 @@ function buildReviewHistoryResult(overrides?: Partial<CortexFileReviewHistoryRes
 }
 
 describe('KnowledgeFileViewer', () => {
+  it('toggles from content mode into the history layout', async () => {
+    renderViewer()
+    await flushPromises()
+
+    expect(getByTestId(container, 'markdown-message')).toBeTruthy()
+    fireEvent.click(getByTestId(container, 'cortex-history-toggle'))
+    await flushPromises()
+
+    expect(getByTestId(container, 'cortex-history-panel')).toBeTruthy()
+    expect(queryByTestId(container, 'markdown-message')).toBeNull()
+  })
+
   it('renders the metadata strip from file-log stats', async () => {
     renderViewer()
     await flushPromises()
@@ -215,7 +268,7 @@ describe('KnowledgeFileViewer', () => {
     expect(metaStrip.textContent).toContain('active today')
   })
 
-  it('shows the recent change banner and toggles into history mode', async () => {
+  it('shows the recent change banner only when the latest review touched the current file', async () => {
     renderViewer({ canOpenSession: () => false })
     await flushPromises()
 
@@ -228,7 +281,37 @@ describe('KnowledgeFileViewer', () => {
     fireEvent.click(getByRole(container, 'button', { name: 'View changes' }))
     await flushPromises()
 
+    expect(getByTestId(container, 'cortex-history-panel')).toBeTruthy()
+    expect(getByTestId(container, 'cortex-file-history-stats').textContent).toContain('Total edits')
     expect(container.querySelector('[data-testid="cortex-document-viewer-shell"]')?.getAttribute('data-mode')).toBe('history')
+
+    historyState.reviewHistory = {
+      data: buildReviewHistoryResult({
+        latestRun: {
+          reviewId: 'review-2',
+          recordedAt: '2026-03-29T14:00:00.000Z',
+          status: 'success',
+          changedFiles: ['profiles/alpha/memory.md'],
+          notes: [],
+          blockers: [],
+          watermarksAdvanced: true,
+          manifestExists: false,
+        },
+        runs: [],
+      }),
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    }
+
+    flushSync(() => {
+      root?.unmount()
+    })
+    root = null
+
+    renderViewer({ canOpenSession: () => false })
+    await flushPromises()
+
     expect(queryByTestId(container, 'cortex-recent-change-banner')).toBeNull()
   })
 

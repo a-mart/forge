@@ -4,6 +4,7 @@ import {
   commitMatchesKnowledgeQuickFilter,
   groupFilesByKnowledgeSurface,
   matchesKnowledgeQuickFilter,
+  resolveKnowledgeQuickFilterForPath,
 } from './knowledge-surface'
 
 describe('knowledge-surface', () => {
@@ -41,6 +42,14 @@ describe('knowledge-surface', () => {
       'Reference Docs',
     ])
     expect(groups[0]?.files.map((file) => file.path)).toEqual(['shared/knowledge/common.md'])
+  })
+
+  it('resolves the best matching quick filter for a tracked path', () => {
+    expect(resolveKnowledgeQuickFilterForPath('shared/knowledge/common.md')).toBe('shared-knowledge')
+    expect(resolveKnowledgeQuickFilterForPath('profiles/alpha/memory.md')).toBe('profile-memory')
+    expect(resolveKnowledgeQuickFilterForPath('profiles/alpha/reference/guide.md')).toBe('reference-docs')
+    expect(resolveKnowledgeQuickFilterForPath('profiles/alpha/prompts/archetypes/review.md')).toBe('prompt-overrides')
+    expect(resolveKnowledgeQuickFilterForPath('profiles/alpha/other.md')).toBe('all')
   })
 
   it('filters commits using metadata paths', () => {

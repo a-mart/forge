@@ -166,6 +166,29 @@ describe('MarkdownDiffPane', () => {
     expect(getAllByRole(document.body, 'button', { name: 'Hide preview' }).length).toBeGreaterThan(0)
     expect(getByTestId(document.body, 'raw-diff-viewer')).toBeTruthy()
   })
+
+  it('uses a collapsible inline outline in sidebar mode', () => {
+    render(
+      createElement(MarkdownDiffPane, {
+        fileName: 'knowledge.md',
+        oldContent: '# Intro\nOld body\n## Details\nOld details',
+        newContent: '# Intro\nNew body\n## Details\nNew details',
+        layoutMode: 'sidebar',
+      }),
+    )
+
+    const outlineToggle = getByRole(document.body, 'button', { name: /outline \(2\)/i })
+    expect(outlineToggle.getAttribute('aria-expanded')).toBe('false')
+
+    click(outlineToggle)
+
+    expect(outlineToggle.getAttribute('aria-expanded')).toBe('true')
+    expect(getByRole(document.body, 'button', { name: 'Intro' })).toBeTruthy()
+
+    click(getByRole(document.body, 'button', { name: 'Show preview' }))
+    expect(getByText(document.body, 'Rendered preview')).toBeTruthy()
+    expect(getByTestId(document.body, 'rendered-markdown').textContent).toContain('New body')
+  })
 })
 
 describe('DiffPane markdown routing', () => {
@@ -182,6 +205,21 @@ describe('DiffPane markdown routing', () => {
 
     expect(getByRole(document.body, 'button', { name: 'Expand all sections' })).toBeTruthy()
     expect(getByRole(document.body, 'button', { name: 'Show preview' })).toBeTruthy()
+  })
+
+  it('passes sidebar layout through to markdown diffs when requested', () => {
+    render(
+      createElement(DiffPane, {
+        fileName: 'notes.md',
+        oldContent: '# Intro\nOld',
+        newContent: '# Intro\nNew',
+        isLoading: false,
+        error: null,
+        markdownLayoutMode: 'sidebar',
+      }),
+    )
+
+    expect(getByRole(document.body, 'button', { name: /outline \(1\)/i })).toBeTruthy()
   })
 
   it('keeps non-markdown files on the generic diff pane', () => {

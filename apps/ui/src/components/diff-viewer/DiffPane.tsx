@@ -15,6 +15,7 @@ interface DiffPaneProps {
   error: string | null
   truncated?: boolean
   truncatedReason?: string
+  markdownLayoutMode?: 'full' | 'sidebar'
 }
 
 export function DiffPane({
@@ -25,6 +26,7 @@ export function DiffPane({
   error,
   truncated,
   truncatedReason,
+  markdownLayoutMode = 'full',
 }: DiffPaneProps) {
   const { styles, useDarkTheme } = useDiffTheme()
 
@@ -125,6 +127,7 @@ export function DiffPane({
         fileName={fileName}
         oldContent={oldContent ?? ''}
         newContent={newContent ?? ''}
+        layoutMode={markdownLayoutMode}
       />
     )
   }

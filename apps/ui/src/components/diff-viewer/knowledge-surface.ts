@@ -162,6 +162,21 @@ export function commitMatchesKnowledgeQuickFilter(
   return paths.some((path) => matchesKnowledgeQuickFilter(path, quickFilter))
 }
 
+export function resolveKnowledgeQuickFilterForPath(path: string): KnowledgeQuickFilterId {
+  const specificFilters = KNOWLEDGE_QUICK_FILTERS.filter(
+    (filter): filter is KnowledgeQuickFilterDefinition & { id: Exclude<KnowledgeQuickFilterId, 'all'> } =>
+      filter.id !== 'all',
+  )
+
+  for (const filter of specificFilters) {
+    if (matchesKnowledgeQuickFilter(path, filter.id)) {
+      return filter.id
+    }
+  }
+
+  return 'all'
+}
+
 function normalizePath(path: string): string {
   return path.replace(/\\/g, '/').replace(/^\.\//u, '')
 }

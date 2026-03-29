@@ -1,5 +1,6 @@
 import type { CortexDocumentEntry } from '@forge/protocol'
 import type { ArtifactReference } from '@/lib/artifacts'
+import type { DiffViewerInitialState } from '@/components/diff-viewer/DiffViewerDialog'
 import { CortexDocumentViewerShell, type CortexDocumentDescriptor } from './CortexDocumentViewerShell'
 
 interface KnowledgeFileViewerProps {
@@ -11,6 +12,8 @@ interface KnowledgeFileViewerProps {
   onArtifactClick?: (artifact: ArtifactReference) => void
   onOpenSession?: (agentId: string) => void
   canOpenSession?: (agentId: string) => boolean
+  onSelectDocument?: (documentId: string) => void
+  onOpenDiffViewer?: (initialState: DiffViewerInitialState) => void
 }
 
 export function KnowledgeFileViewer({
@@ -22,6 +25,8 @@ export function KnowledgeFileViewer({
   onArtifactClick,
   onOpenSession,
   canOpenSession,
+  onSelectDocument,
+  onOpenDiffViewer,
 }: KnowledgeFileViewerProps) {
   return (
     <CortexDocumentViewerShell
@@ -33,6 +38,8 @@ export function KnowledgeFileViewer({
       onArtifactClick={onArtifactClick}
       onOpenSession={onOpenSession}
       canOpenSession={canOpenSession}
+      onSelectDocument={onSelectDocument}
+      onOpenDiffViewer={onOpenDiffViewer}
     />
   )
 }

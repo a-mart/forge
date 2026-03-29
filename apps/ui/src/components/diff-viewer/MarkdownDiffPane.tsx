@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactElement, type ReactNode } from 'react'
 import ReactDiffViewer, { DiffMethod } from 'react-diff-viewer-continued'
-import { Eye, EyeOff, FileText, ListTree } from 'lucide-react'
+import { ChevronDown, Eye, EyeOff, FileText, ListTree } from 'lucide-react'
 import { MarkdownMessage } from '@/components/chat/MarkdownMessage'
 import { cn } from '@/lib/utils'
 import { detectLanguage, highlightCode } from '@/lib/syntax-highlight'
@@ -10,18 +10,26 @@ import '@/styles/syntax-highlight.css'
 import './syntax-highlight.css'
 
 type PreviewSource = 'new' | 'old'
+type MarkdownDiffLayoutMode = 'full' | 'sidebar'
 
 interface MarkdownDiffPaneProps {
   oldContent: string
   newContent: string
   fileName: string
+  layoutMode?: MarkdownDiffLayoutMode
 }
 
-export function MarkdownDiffPane({ oldContent, newContent, fileName }: MarkdownDiffPaneProps) {
+export function MarkdownDiffPane({
+  oldContent,
+  newContent,
+  fileName,
+  layoutMode = 'full',
+}: MarkdownDiffPaneProps) {
   const [selectedSectionId, setSelectedSectionId] = useState<string | null>(null)
   const [expandAll, setExpandAll] = useState(false)
   const [showPreview, setShowPreview] = useState(false)
   const [previewSource, setPreviewSource] = useState<PreviewSource>('new')
+  const [showOutline, setShowOutline] = useState(layoutMode === 'full')
 
   const { styles, useDarkTheme } = useDiffTheme()
   const language = useMemo(() => detectLanguage(fileName), [fileName])
@@ -35,7 +43,8 @@ export function MarkdownDiffPane({ oldContent, newContent, fileName }: MarkdownD
     setExpandAll(false)
     setShowPreview(false)
     setPreviewSource('new')
-  }, [fileName, oldContent, newContent])
+    setShowOutline(layoutMode === 'full')
+  }, [fileName, oldContent, newContent, layoutMode])
 
   useEffect(() => {
     if (selectedSectionId == null) {
@@ -77,9 +86,10 @@ export function MarkdownDiffPane({ oldContent, newContent, fileName }: MarkdownD
 
   const previewContent = previewSource === 'new' ? newContent : oldContent
   const hasPreviewSwitch = oldContent.trim().length > 0 && newContent.trim().length > 0
+  const isSidebarLayout = layoutMode === 'sidebar'
 
   return (
-    <div className="syntax-highlight flex h-full flex-col overflow-hidden">
+    <div className="syntax-highlight flex h-full flex-col overflow-hidden" data-layout={layoutMode}>
       <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-border/60 bg-card px-3 py-1.5">
         <span className="font-mono text-xs text-muted-foreground">{fileName}</span>
         <div className="ml-auto flex items-center gap-1">
@@ -113,47 +123,79 @@ export function MarkdownDiffPane({ oldContent, newContent, fileName }: MarkdownD
         </div>
       </div>
 
-      <div className="min-h-0 flex-1">
-        <div className={cn('flex h-full', showPreview && 'min-w-0')}>
-          <aside className="hidden w-60 shrink-0 border-r border-border/60 xl:flex xl:flex-col">
-            <div className="flex items-center gap-2 border-b border-border/60 px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+      {isSidebarLayout ? (
+        <div className="border-b border-border/60 bg-muted/10 px-3 py-2">
+          <button
+            type="button"
+            className="flex w-full items-center justify-between gap-2 rounded-md border border-border/60 bg-background/70 px-2.5 py-1.5 text-left text-[11px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            aria-expanded={showOutline}
+            aria-controls="markdown-diff-inline-outline"
+            onClick={() => setShowOutline((current) => !current)}
+          >
+            <span className="inline-flex items-center gap-1.5">
               <ListTree className="size-3.5" />
-              Outline
-            </div>
-            <div className="min-h-0 flex-1 overflow-y-auto p-2">
+              Outline ({outlineSections.length})
+            </span>
+            <ChevronDown className={cn('size-3.5 transition-transform', showOutline && 'rotate-180')} />
+          </button>
+          {showOutline ? (
+            <div id="markdown-diff-inline-outline" className="mt-2 space-y-1">
               {outlineSections.map((section) => {
                 const matchingDiff = diffSections.find((entry) => entry.id === section.id)
                 const isSelected = selectedSectionId === section.id
                 const hasChanges = matchingDiff?.hasChanges ?? false
                 return (
-                  <button
+                  <OutlineButton
                     key={section.id}
-                    type="button"
-                    aria-pressed={isSelected}
+                    sectionId={section.id}
+                    title={section.title}
+                    level={section.level}
+                    isSelected={isSelected}
+                    hasChanges={hasChanges}
                     onClick={() => setSelectedSectionId((current) => (current === section.id ? null : section.id))}
-                    className={cn(
-                      'mb-1 flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs transition-colors last:mb-0',
-                      isSelected
-                        ? 'bg-accent/80 text-foreground'
-                        : 'text-muted-foreground hover:bg-accent/40 hover:text-foreground',
-                    )}
-                    style={{ paddingLeft: `${Math.max(section.level - 1, 0) * 12 + 8}px` }}
-                  >
-                    <span
-                      className={cn(
-                        'size-1.5 shrink-0 rounded-full',
-                        hasChanges ? 'bg-primary/80' : 'bg-muted-foreground/30',
-                      )}
-                      aria-hidden
-                    />
-                    <span className="truncate">{section.title}</span>
-                  </button>
+                  />
                 )
               })}
             </div>
-          </aside>
+          ) : null}
+        </div>
+      ) : null}
 
-          <div className={cn('min-w-0 flex-1', showPreview ? 'grid grid-cols-2' : 'flex')}>
+      <div className="min-h-0 flex-1">
+        <div className={cn('flex h-full', showPreview && !isSidebarLayout && 'min-w-0')}>
+          {!isSidebarLayout ? (
+            <aside className="hidden w-60 shrink-0 border-r border-border/60 xl:flex xl:flex-col">
+              <div className="flex items-center gap-2 border-b border-border/60 px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                <ListTree className="size-3.5" />
+                Outline
+              </div>
+              <div className="min-h-0 flex-1 overflow-y-auto p-2">
+                {outlineSections.map((section) => {
+                  const matchingDiff = diffSections.find((entry) => entry.id === section.id)
+                  const isSelected = selectedSectionId === section.id
+                  const hasChanges = matchingDiff?.hasChanges ?? false
+                  return (
+                    <OutlineButton
+                      key={section.id}
+                      sectionId={section.id}
+                      title={section.title}
+                      level={section.level}
+                      isSelected={isSelected}
+                      hasChanges={hasChanges}
+                      onClick={() => setSelectedSectionId((current) => (current === section.id ? null : section.id))}
+                    />
+                  )
+                })}
+              </div>
+            </aside>
+          ) : null}
+
+          <div
+            className={cn(
+              'min-w-0 flex-1',
+              showPreview ? (isSidebarLayout ? 'flex flex-col' : 'grid grid-cols-2') : 'flex',
+            )}
+          >
             <div className="min-h-0 overflow-auto">
               {selectedSection != null ? (
                 <div className="border-b border-border/60 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
@@ -171,8 +213,6 @@ export function MarkdownDiffPane({ oldContent, newContent, fileName }: MarkdownD
                     const sectionExpanded = expandAll || selectedSection != null
                     return (
                       <MarkdownSectionCard
-                        // ReactDiffViewer keeps fold state internally, so force a remount when the
-                        // section switches between collapsed and fully expanded modes.
                         key={`${section.id}:${section.changeKind}:${sectionExpanded ? 'expanded' : 'collapsed'}`}
                         section={section}
                         renderContent={renderContent}
@@ -192,7 +232,7 @@ export function MarkdownDiffPane({ oldContent, newContent, fileName }: MarkdownD
             </div>
 
             {showPreview ? (
-              <div className="min-h-0 overflow-hidden border-l border-border/60 bg-muted/10">
+              <div className={cn('min-h-0 overflow-hidden bg-muted/10', isSidebarLayout ? 'border-t border-border/60' : 'border-l border-border/60')}>
                 <div className="flex items-center justify-between border-b border-border/60 px-3 py-2 text-xs text-muted-foreground">
                   <span>Rendered preview</span>
                   {hasPreviewSwitch ? (
@@ -215,12 +255,8 @@ export function MarkdownDiffPane({ oldContent, newContent, fileName }: MarkdownD
                   ) : null}
                 </div>
                 <div className="h-full overflow-auto">
-                  <div className="mx-auto max-w-3xl px-8 py-6">
-                    <MarkdownMessage
-                      content={previewContent}
-                      variant="document"
-                      enableMermaid
-                    />
+                  <div className={cn('mx-auto py-6', isSidebarLayout ? 'max-w-none px-4' : 'max-w-3xl px-8')}>
+                    <MarkdownMessage content={previewContent} variant="document" enableMermaid />
                   </div>
                 </div>
               </div>
@@ -229,6 +265,42 @@ export function MarkdownDiffPane({ oldContent, newContent, fileName }: MarkdownD
         </div>
       </div>
     </div>
+  )
+}
+
+function OutlineButton({
+  title,
+  level,
+  isSelected,
+  hasChanges,
+  onClick,
+}: {
+  sectionId: string
+  title: string
+  level: number
+  isSelected: boolean
+  hasChanges: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={isSelected}
+      onClick={onClick}
+      className={cn(
+        'mb-1 flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs transition-colors last:mb-0',
+        isSelected
+          ? 'bg-accent/80 text-foreground'
+          : 'text-muted-foreground hover:bg-accent/40 hover:text-foreground',
+      )}
+      style={{ paddingLeft: `${Math.max(level - 1, 0) * 12 + 8}px` }}
+    >
+      <span
+        className={cn('size-1.5 shrink-0 rounded-full', hasChanges ? 'bg-primary/80' : 'bg-muted-foreground/30')}
+        aria-hidden
+      />
+      <span className="truncate">{title}</span>
+    </button>
   )
 }
 
