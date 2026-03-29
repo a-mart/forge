@@ -1,8 +1,9 @@
-import type { GitCommitDetail, GitDiffResult, GitLogResult, GitRepoTarget } from "@forge/protocol";
+import type { GitCommitDetail, GitDiffResult, GitFileLogResult, GitLogResult, GitRepoTarget } from "@forge/protocol";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
 import { applyCorsHeaders, sendJson } from "../http-utils.js";
 import { GitDiffService } from "./git-diff-service.js";
 import type { HttpRoute } from "./http-route.js";
+import { resolveTrackedVersionedPathReference } from "../../versioning/versioned-paths.js";
 import { resolveGitRepoContext } from "./route-utils.js";
 
 const SHA_PATTERN = /^[a-f0-9]{4,40}$/i;
@@ -76,6 +77,45 @@ export function createGitDiffRoutes(options: { swarmManager: SwarmManager }): Ht
       }
 
       return service.getLog(repoContext.cwd, limit, offset);
+    }),
+    handleGet("/api/git/file-log", async (requestUrl) => {
+      const agentId = requireNonEmptyQuery(requestUrl.searchParams, "agentId");
+      const file = requireNonEmptyQuery(requestUrl.searchParams, "file");
+      const limit = parseNumberParam(requestUrl.searchParams.get("limit"), 50, 1, MAX_LOG_LIMIT, "limit");
+      const offset = parseNumberParam(requestUrl.searchParams.get("offset"), 0, 0, Number.MAX_SAFE_INTEGER, "offset");
+      const repoTarget = parseRepoTarget(requestUrl.searchParams.get("repoTarget"));
+      if (repoTarget !== "versioning") {
+        throw new Error("file-log is only available for repoTarget=versioning.");
+      }
+
+      const repoContext = resolveGitRepoContext(swarmManager, agentId, repoTarget);
+      const trackedFile = resolveTrackedVersionedPathReference(repoContext.cwd, file);
+      if (!trackedFile) {
+        throw new Error("file must resolve to a tracked versioning path.");
+      }
+      if (repoContext.notInitialized) {
+        return createNotInitializedFileLogResult(trackedFile.gitPath);
+      }
+
+      return service.getFileLog(repoContext.cwd, trackedFile.gitPath, limit, offset);
+    }),
+    handleGet("/api/git/file-section-provenance", async (requestUrl) => {
+      const agentId = requireNonEmptyQuery(requestUrl.searchParams, "agentId");
+      const file = requireNonEmptyQuery(requestUrl.searchParams, "file");
+      const repoTarget = parseRepoTarget(requestUrl.searchParams.get("repoTarget"));
+      if (repoTarget !== "versioning") {
+        throw new Error("file-section-provenance is only available for repoTarget=versioning.");
+      }
+
+      const repoContext = resolveGitRepoContext(swarmManager, agentId, repoTarget);
+      const trackedFile = resolveTrackedVersionedPathReference(repoContext.cwd, file);
+      if (!trackedFile) {
+        throw new Error("file must resolve to a tracked versioning path.");
+      }
+
+      return service.getFileSectionProvenance(repoContext.cwd, trackedFile.gitPath, {
+        notInitialized: repoContext.notInitialized === true
+      });
     }),
     handleGet("/api/git/commit", async (requestUrl) => {
       const agentId = requireNonEmptyQuery(requestUrl.searchParams, "agentId");
@@ -184,6 +224,21 @@ function createNotInitializedCommitDetail(sha: string): GitCommitDetail {
   };
 }
 
+function createNotInitializedFileLogResult(file: string): GitFileLogResult {
+  return {
+    file,
+    commits: [],
+    stats: {
+      totalEdits: 0,
+      lastModifiedAt: null,
+      editsToday: 0,
+      editsThisWeek: 0
+    },
+    hasMore: false,
+    notInitialized: true
+  };
+}
+
 function resolveHttpStatusCode(message: string): number {
   const normalized = message.toLowerCase();
 
@@ -195,6 +250,9 @@ function resolveHttpStatusCode(message: string): number {
     normalized.includes("must be") ||
     normalized.includes("invalid") ||
     normalized.includes("outside repository") ||
+    normalized.includes("tracked versioning path") ||
+    normalized.includes("file-log is only available") ||
+    normalized.includes("file-section-provenance is only available") ||
     normalized.includes("no cwd") ||
     normalized.includes("not a git repository") ||
     normalized.includes("git was not found") ||

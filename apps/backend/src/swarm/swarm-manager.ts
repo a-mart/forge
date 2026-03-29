@@ -2340,7 +2340,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
           action: "write",
           source: "profile-memory-merge",
           profileId,
-          sessionId: descriptor.agentId
+          sessionId: descriptor.agentId,
+          reviewRunId: await this.resolveActiveCortexReviewRunIdForDescriptor(descriptor)
         });
       }
       failureContext.stage = "refresh_session_meta_stats";
@@ -6789,7 +6790,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return;
     }
 
-    this.queueVersioningMutation({
+    void this.queueVersionedToolMutation(descriptor, {
       path,
       action: "write",
       source: tracked?.toolName === "edit" ? "agent-edit-tool" : "agent-write-tool",
@@ -6797,6 +6798,34 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       sessionId: descriptor.role === "manager" ? descriptor.agentId : descriptor.managerId,
       agentId
     });
+  }
+
+  private async queueVersionedToolMutation(
+    descriptor: AgentDescriptor,
+    mutation: VersioningMutation
+  ): Promise<void> {
+    this.queueVersioningMutation({
+      ...mutation,
+      reviewRunId: await this.resolveActiveCortexReviewRunIdForDescriptor(descriptor)
+    });
+  }
+
+  private async resolveActiveCortexReviewRunIdForDescriptor(descriptor: AgentDescriptor): Promise<string | undefined> {
+    const sessionAgentId = descriptor.role === "manager" ? descriptor.agentId : descriptor.managerId;
+    if (!sessionAgentId) {
+      return undefined;
+    }
+
+    try {
+      const storedRuns = await readStoredCortexReviewRuns(this.config.paths.dataDir);
+      return storedRuns.find((run) => run.sessionAgentId === sessionAgentId)?.runId;
+    } catch (error) {
+      this.logDebug("cortex:review_run:resolve_failed", {
+        sessionAgentId,
+        message: error instanceof Error ? error.message : String(error)
+      });
+      return undefined;
+    }
   }
 
   private queueVersioningMutation(mutation: VersioningMutation): void {

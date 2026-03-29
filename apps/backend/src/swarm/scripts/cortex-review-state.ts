@@ -48,6 +48,11 @@ export interface CortexReviewLogEntry extends AppendCortexReviewLogEntryInput {
   recordedAt: string;
 }
 
+export interface StoredCortexReviewLogEntry extends Omit<AppendCortexReviewLogEntryInput, "reviewId"> {
+  reviewId?: string;
+  recordedAt: string;
+}
+
 export interface CortexReviewWatermarkUpdate {
   profileId: string;
   sessionId: string;
@@ -212,6 +217,24 @@ export async function appendCortexReviewLogEntry(options: {
   return entry;
 }
 
+export async function readCortexReviewLogEntries(dataDir: string): Promise<StoredCortexReviewLogEntry[]> {
+  const logPath = getCortexReviewLogPath(resolve(dataDir));
+  try {
+    const raw = await readFile(logPath, "utf8");
+    return raw
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+      .map(parseStoredCortexReviewLogEntry)
+      .filter((entry): entry is StoredCortexReviewLogEntry => entry !== null);
+  } catch (error) {
+    if (isEnoentError(error)) {
+      return [];
+    }
+    throw error;
+  }
+}
+
 export async function writeCortexPromotionManifest(options: {
   dataDir: string;
   reviewId: string;
@@ -285,6 +308,29 @@ function sanitizeReviewId(reviewId: string): string {
   return sanitizePathSegment(reviewId.replace(/\s+/g, "-"));
 }
 
+function parseStoredCortexReviewLogEntry(line: string): StoredCortexReviewLogEntry | null {
+  try {
+    const parsed = JSON.parse(line) as Partial<StoredCortexReviewLogEntry>;
+    if (typeof parsed.recordedAt !== "string" || !isReviewStatus(parsed.status)) {
+      return null;
+    }
+
+    return {
+      reviewId: typeof parsed.reviewId === "string" && parsed.reviewId.trim().length > 0 ? parsed.reviewId.trim() : undefined,
+      ownerId: typeof parsed.ownerId === "string" ? sanitizePathSegment(parsed.ownerId) : "unknown",
+      status: parsed.status,
+      reviewed: Array.isArray(parsed.reviewed) ? parsed.reviewed.filter(isNonEmptyString) : [],
+      changedFiles: Array.isArray(parsed.changedFiles) ? parsed.changedFiles.filter(isNonEmptyString) : [],
+      blockers: Array.isArray(parsed.blockers) ? parsed.blockers.filter(isNonEmptyString) : [],
+      notes: Array.isArray(parsed.notes) ? parsed.notes.filter(isNonEmptyString) : [],
+      watermarksAdvanced: parsed.watermarksAdvanced === true,
+      recordedAt: parsed.recordedAt
+    };
+  } catch {
+    return null;
+  }
+}
+
 function normalizeTtlMs(value: number | undefined): number {
   if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
     return DEFAULT_LOCK_TTL_MS;
@@ -351,6 +397,14 @@ async function prepareWatermarkUpdates(
   }
 
   return plans;
+}
+
+function isReviewStatus(value: unknown): value is StoredCortexReviewLogEntry["status"] {
+  return value === "success" || value === "no-op" || value === "blocked" || value === "failed";
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
 }
 
 function isEnoentError(error: unknown): boolean {

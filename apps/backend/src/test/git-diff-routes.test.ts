@@ -4,7 +4,14 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { promisify } from "node:util";
-import type { AgentDescriptor, GitCommitDetail, GitLogResult, GitStatusResult } from "@forge/protocol";
+import type {
+  AgentDescriptor,
+  GitCommitDetail,
+  GitFileLogResult,
+  GitFileSectionProvenanceResult,
+  GitLogResult,
+  GitStatusResult
+} from "@forge/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import { createGitDiffRoutes } from "../ws/routes/git-diff-routes.js";
@@ -105,6 +112,7 @@ describe("git-diff-routes", () => {
         "Profile: alpha",
         "Session: alpha--s1",
         "Agent: alpha-worker-1",
+        "Review-Run: review-123",
         "Paths:",
         "- profiles/alpha/memory-renamed.md"
       ].join("\n")
@@ -126,6 +134,7 @@ describe("git-diff-routes", () => {
       profileId: "alpha",
       sessionId: "alpha--s1",
       agentId: "alpha-worker-1",
+      reviewRunId: "review-123",
       paths: ["profiles/alpha/memory-renamed.md"]
     });
 
@@ -142,6 +151,7 @@ describe("git-diff-routes", () => {
       profileId: "alpha",
       sessionId: "alpha--s1",
       agentId: "alpha-worker-1",
+      reviewRunId: "review-123",
       paths: ["profiles/alpha/memory-renamed.md"]
     });
     expect(commitPayload.files).toEqual(
@@ -158,6 +168,137 @@ describe("git-diff-routes", () => {
       )
     ).toBe(true);
     expect(commitPayload.files.some((file) => (file.deletions ?? 0) > 0)).toBe(true);
+  });
+
+  it("returns file-scoped versioning history with pagination and stats", async () => {
+    const server = await createGitDiffTestServer({
+      descriptors: [createManagerSession("cortex", "cortex--s1")]
+    });
+
+    await initGitRepo(server.dataDir, "profiles/alpha/reference/guide.md", "# Guide\n\n- first\n", "initial guide");
+    await execGit(server.dataDir, ["mv", "profiles/alpha/reference/guide.md", "profiles/alpha/reference/guide-renamed.md"]);
+    await writeFile(join(server.dataDir, "profiles/alpha/reference/guide-renamed.md"), "# Guide\n\n- second\n", "utf8");
+    await commitGit(server.dataDir, "guide update", ["Paths:", "- profiles/alpha/reference/guide-renamed.md"].join("\n"));
+
+    const trackedPath = join(server.dataDir, "profiles/alpha/reference/guide-renamed.md");
+    const response = await fetch(
+      `${server.baseUrl}/api/git/file-log?agentId=cortex--s1&repoTarget=versioning&file=${encodeURIComponent(trackedPath)}&limit=1&offset=0`
+    );
+    expect(response.status).toBe(200);
+
+    const payload = (await response.json()) as GitFileLogResult;
+    expect(payload.file).toBe("profiles/alpha/reference/guide-renamed.md");
+    expect(payload.commits).toHaveLength(1);
+    expect(payload.hasMore).toBe(true);
+    expect(payload.stats.totalEdits).toBe(2);
+    expect(payload.stats.lastModifiedAt).toBe(payload.commits[0]?.date ?? null);
+
+    const secondPageResponse = await fetch(
+      `${server.baseUrl}/api/git/file-log?agentId=cortex--s1&repoTarget=versioning&file=profiles/alpha/reference/guide-renamed.md&limit=1&offset=1`
+    );
+    expect(secondPageResponse.status).toBe(200);
+    const secondPage = (await secondPageResponse.json()) as GitFileLogResult;
+    expect(secondPage.commits).toHaveLength(1);
+    expect(secondPage.hasMore).toBe(false);
+  });
+
+  it("returns markdown section provenance for current headings", async () => {
+    const server = await createGitDiffTestServer({
+      descriptors: [createManagerSession("cortex", "cortex--s1")]
+    });
+
+    await initGitRepo(
+      server.dataDir,
+      "shared/knowledge/common.md",
+      [
+        "# Common",
+        "",
+        "## Workflow Preferences",
+        "- first",
+        "",
+        "## Technical Standards",
+        "- stable",
+        "",
+        "## Known Gotchas",
+        "- note"
+      ].join("\n") + "\n",
+      "initial knowledge"
+    );
+
+    await writeFile(
+      join(server.dataDir, "shared/knowledge", "common.md"),
+      [
+        "# Common",
+        "",
+        "## Workflow Preferences",
+        "- updated workflow",
+        "",
+        "## Technical Standards",
+        "- stable",
+        "",
+        "## Known Gotchas",
+        "- note"
+      ].join("\n") + "\n",
+      "utf8"
+    );
+    await commitGit(
+      server.dataDir,
+      "update common knowledge",
+      [
+        "Review-Run: review-2026-03-29-0230",
+        "Paths:",
+        "- shared/knowledge/common.md"
+      ].join("\n")
+    );
+
+    const response = await fetch(
+      `${server.baseUrl}/api/git/file-section-provenance?agentId=cortex--s1&repoTarget=versioning&file=shared/knowledge/common.md`
+    );
+    expect(response.status).toBe(200);
+
+    const payload = (await response.json()) as GitFileSectionProvenanceResult;
+    expect(payload.file).toBe("shared/knowledge/common.md");
+    expect(payload.notInitialized).toBeUndefined();
+    expect(payload.sections).toHaveLength(4);
+
+    expect(payload.sections).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          heading: "Common",
+          level: 1,
+          lineStart: 1,
+          lineEnd: 2,
+          lastModifiedSummary: "initial knowledge",
+          reviewRunId: null
+        }),
+        expect.objectContaining({
+          heading: "Workflow Preferences",
+          level: 2,
+          lineStart: 3,
+          lineEnd: 5,
+          lastModifiedSummary: "update common knowledge",
+          reviewRunId: "review-2026-03-29-0230"
+        }),
+        expect.objectContaining({
+          heading: "Technical Standards",
+          level: 2,
+          lineStart: 6,
+          lineEnd: 8,
+          lastModifiedSummary: "initial knowledge",
+          reviewRunId: null
+        }),
+        expect.objectContaining({
+          heading: "Known Gotchas",
+          level: 2,
+          lineStart: 9,
+          lineEnd: 11,
+          lastModifiedSummary: "initial knowledge",
+          reviewRunId: null
+        })
+      ])
+    );
+    expect(payload.sections.every((section) => typeof section.lastModifiedSha === "string")).toBe(true);
+    expect(payload.sections.every((section) => typeof section.lastModifiedAt === "string")).toBe(true);
   });
 
   it("rejects versioning access for non-Cortex sessions", async () => {
@@ -191,6 +332,80 @@ describe("git-diff-routes", () => {
     expect(payload.error).toContain("versioning repo is only available to Cortex sessions");
   });
 
+  it("rejects file-log requests for non-Cortex versioning access", async () => {
+    const server = await createGitDiffTestServer({
+      descriptors: [createManagerSession("alpha", "alpha--s1")]
+    });
+
+    const response = await fetch(
+      `${server.baseUrl}/api/git/file-log?agentId=alpha--s1&repoTarget=versioning&file=shared/knowledge/common.md&limit=10&offset=0`
+    );
+
+    expect(response.status).toBe(403);
+    const payload = (await response.json()) as { error?: string };
+    expect(payload.error).toContain("versioning repo is only available to Cortex sessions");
+  });
+
+  it("rejects file-section-provenance requests for non-Cortex versioning access", async () => {
+    const server = await createGitDiffTestServer({
+      descriptors: [createManagerSession("alpha", "alpha--s1")]
+    });
+
+    const response = await fetch(
+      `${server.baseUrl}/api/git/file-section-provenance?agentId=alpha--s1&repoTarget=versioning&file=shared/knowledge/common.md`
+    );
+
+    expect(response.status).toBe(403);
+    const payload = (await response.json()) as { error?: string };
+    expect(payload.error).toContain("versioning repo is only available to Cortex sessions");
+  });
+
+  it("returns section provenance with null commit metadata when the versioning repo is not initialized", async () => {
+    const server = await createGitDiffTestServer({
+      descriptors: [createManagerSession("cortex", "cortex--s1")]
+    });
+
+    await mkdir(join(server.dataDir, "shared", "knowledge"), { recursive: true });
+    await writeFile(
+      join(server.dataDir, "shared", "knowledge", "common.md"),
+      ["# Common", "", "## Workflow Preferences", "- draft"].join("\n") + "\n",
+      "utf8"
+    );
+
+    const response = await fetch(
+      `${server.baseUrl}/api/git/file-section-provenance?agentId=cortex--s1&repoTarget=versioning&file=shared/knowledge/common.md`
+    );
+    expect(response.status).toBe(200);
+
+    const payload = (await response.json()) as GitFileSectionProvenanceResult;
+    expect(payload).toEqual({
+      file: "shared/knowledge/common.md",
+      sections: [
+        {
+          heading: "Common",
+          level: 1,
+          lineStart: 1,
+          lineEnd: 2,
+          lastModifiedSha: null,
+          lastModifiedAt: null,
+          lastModifiedSummary: null,
+          reviewRunId: null
+        },
+        {
+          heading: "Workflow Preferences",
+          level: 2,
+          lineStart: 3,
+          lineEnd: 5,
+          lastModifiedSha: null,
+          lastModifiedAt: null,
+          lastModifiedSummary: null,
+          reviewRunId: null
+        }
+      ],
+      notInitialized: true
+    });
+  });
+
   it("returns a graceful empty state when the versioning repo is not initialized", async () => {
     const server = await createGitDiffTestServer({
       descriptors: [createManagerSession("cortex", "cortex--s1")]
@@ -216,6 +431,25 @@ describe("git-diff-routes", () => {
 
     const logPayload = (await logResponse.json()) as GitLogResult;
     expect(logPayload).toEqual({ commits: [], hasMore: false, notInitialized: true });
+
+    const fileLogResponse = await fetch(
+      `${server.baseUrl}/api/git/file-log?agentId=cortex--s1&repoTarget=versioning&file=shared/knowledge/common.md&limit=10&offset=0`
+    );
+    expect(fileLogResponse.status).toBe(200);
+
+    const fileLogPayload = (await fileLogResponse.json()) as GitFileLogResult;
+    expect(fileLogPayload).toEqual({
+      file: "shared/knowledge/common.md",
+      commits: [],
+      stats: {
+        totalEdits: 0,
+        lastModifiedAt: null,
+        editsToday: 0,
+        editsThisWeek: 0
+      },
+      hasMore: false,
+      notInitialized: true
+    });
   });
 });
 

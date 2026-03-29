@@ -17,6 +17,7 @@ describe("parseVersioningCommitMetadata", () => {
           profileId: "cortex",
           sessionId: "cortex--s1",
           agentId: "cortex-worker-1",
+          reviewRunId: "review-123",
           promptCategory: "archetype",
           promptId: "review"
         }
@@ -31,6 +32,7 @@ describe("parseVersioningCommitMetadata", () => {
       profileId: "cortex",
       sessionId: "cortex--s1",
       agentId: "cortex-worker-1",
+      reviewRunId: "review-123",
       promptCategory: "archetype",
       promptId: "review",
       paths: ["shared/knowledge/common.md"]
@@ -64,6 +66,24 @@ describe("parseVersioningCommitMetadata", () => {
       profileId: "alpha",
       sessionId: "alpha--s1",
       paths: ["profiles/alpha/memory.md", "profiles/alpha/reference/guide.md"]
+    });
+  });
+
+  it("parses Review-Run metadata", () => {
+    const body = [
+      "Reason: debounce",
+      "Source: agent-edit-tool",
+      "Review-Run: review-789",
+      "Paths:",
+      "- shared/knowledge/common.md"
+    ].join("\n");
+
+    expect(parseVersioningCommitMetadata(body)).toEqual({
+      reason: "debounce",
+      source: "agent-edit-tool",
+      sources: ["agent-edit-tool"],
+      reviewRunId: "review-789",
+      paths: ["shared/knowledge/common.md"]
     });
   });
 
@@ -103,6 +123,7 @@ async function buildCommitBody(
     promptCategory?: "archetype" | "operational";
     promptId?: string;
     agentId?: string;
+    reviewRunId?: string;
   }>,
   reason: string
 ): Promise<string> {

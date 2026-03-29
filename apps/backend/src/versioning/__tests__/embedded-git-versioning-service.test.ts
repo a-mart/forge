@@ -125,6 +125,80 @@ describe("EmbeddedGitVersioningService", () => {
     await service.stop();
   });
 
+  it("includes Review-Run metadata when every mutation shares the same review run id", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "embedded-git-versioning-"));
+    const service = new EmbeddedGitVersioningService({
+      dataDir,
+      debounceMs: 10,
+      reconcileIntervalMs: 0
+    });
+
+    await service.start();
+    try {
+      const built = await (service as any).buildCommitMessage(
+        ["shared/knowledge/common.md", "profiles/alpha/memory.md"],
+        [
+          {
+            path: "shared/knowledge/common.md",
+            action: "write",
+            source: "agent-edit-tool",
+            profileId: "cortex",
+            reviewRunId: "review-123"
+          },
+          {
+            path: "profiles/alpha/memory.md",
+            action: "write",
+            source: "profile-memory-merge",
+            profileId: "alpha",
+            reviewRunId: "review-123"
+          }
+        ],
+        "debounce"
+      );
+
+      expect(built.body).toContain("Review-Run: review-123");
+    } finally {
+      await service.stop();
+    }
+  });
+
+  it("omits Review-Run metadata when the staged batch mixes review run ids", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "embedded-git-versioning-"));
+    const service = new EmbeddedGitVersioningService({
+      dataDir,
+      debounceMs: 10,
+      reconcileIntervalMs: 0
+    });
+
+    await service.start();
+    try {
+      const built = await (service as any).buildCommitMessage(
+        ["shared/knowledge/common.md", "profiles/alpha/memory.md"],
+        [
+          {
+            path: "shared/knowledge/common.md",
+            action: "write",
+            source: "agent-edit-tool",
+            profileId: "cortex",
+            reviewRunId: "review-123"
+          },
+          {
+            path: "profiles/alpha/memory.md",
+            action: "write",
+            source: "profile-memory-merge",
+            profileId: "alpha",
+            reviewRunId: "review-456"
+          }
+        ],
+        "debounce"
+      );
+
+      expect(built.body).not.toContain("Review-Run:");
+    } finally {
+      await service.stop();
+    }
+  });
+
   it("catches background debounce failures and disables versioning fail-open", async () => {
     const warn = vi.fn();
     const dataDir = await mkdtemp(join(tmpdir(), "embedded-git-versioning-"));

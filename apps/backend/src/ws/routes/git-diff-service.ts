@@ -3,13 +3,19 @@ import { basename, resolve, sep } from "node:path";
 import type {
   GitCommitDetail,
   GitDiffResult,
+  GitFileHistoryStats,
+  GitFileLogResult,
+  GitFileSectionProvenanceEntry,
+  GitFileSectionProvenanceResult,
   GitFileStatus,
+  GitLogEntry,
   GitLogResult,
   GitRepoKind,
   GitStatusResult
 } from "@forge/protocol";
 import { GitCli } from "../../versioning/git-cli.js";
 import { parseVersioningCommitMetadata } from "../../versioning/versioning-commit-metadata.js";
+import { resolveTrackedVersionedPathReference } from "../../versioning/versioned-paths.js";
 
 const MAX_DIFF_FILE_BYTES = 1 * 1024 * 1024;
 const MAX_STATUS_FILES = 500;
@@ -17,10 +23,23 @@ const MAX_LOG_LIMIT = 200;
 const BINARY_SNIFF_BYTES = 8 * 1024;
 const FIELD_SEPARATOR = "\x1f";
 const RECORD_SEPARATOR = "\x1e";
+const HEADING_PATTERN = /^\s{0,3}(#{1,6})[ \t]+(.+?)\s*$/u;
+const FENCE_PATTERN = /^\s*(`{3,}|~{3,})/u;
 
 interface GitStatusContext {
   repoKind: GitRepoKind;
   repoLabel: string;
+  notInitialized?: boolean;
+}
+
+interface MarkdownHeadingSection {
+  heading: string;
+  level: number;
+  lineStart: number;
+  lineEnd: number;
+}
+
+interface GitFileSectionProvenanceOptions {
   notInitialized?: boolean;
 }
 
@@ -152,44 +171,72 @@ export class GitDiffService {
   async getLog(cwd: string, limit: number, offset: number): Promise<GitLogResult> {
     const boundedLimit = Math.min(Math.max(limit, 1), MAX_LOG_LIMIT);
     const boundedOffset = Math.max(offset, 0);
-    const git = this.createGit(cwd);
-    const format = `%H${FIELD_SEPARATOR}%h${FIELD_SEPARATOR}%an${FIELD_SEPARATOR}%aI${FIELD_SEPARATOR}%s${FIELD_SEPARATOR}%b${RECORD_SEPARATOR}`;
-
-    const result = await git.run([
-      "log",
-      `--format=${format}`,
-      `--skip=${boundedOffset}`,
-      "-n",
-      String(boundedLimit + 1)
-    ]);
-
-    const records = parseGitFormatRecords(result.stdout);
-    const hasMore = records.length > boundedLimit;
-    const selectedRecords = records.slice(0, boundedLimit);
-
-    const parsedBase = selectedRecords.map((record) => {
-      const [sha, shortSha, author, date, message = "", ...bodyParts] = record.split(FIELD_SEPARATOR);
-      const body = bodyParts.join(FIELD_SEPARATOR);
-      return {
-        sha: sha ?? "",
-        shortSha: shortSha ?? "",
-        author: author ?? "",
-        date: date ?? "",
-        message: message.trim(),
-        metadata: parseVersioningCommitMetadata(body)
-      };
-    });
-
-    const commits = await Promise.all(
-      parsedBase.map(async (entry) => ({
-        ...entry,
-        filesChanged: await this.countFilesChangedInCommit(cwd, entry.sha)
-      }))
-    );
+    const commits = await this.readGitLogEntries(cwd, boundedLimit + 1, boundedOffset);
+    const hasMore = commits.length > boundedLimit;
 
     return {
-      commits,
+      commits: commits.slice(0, boundedLimit),
       hasMore
+    };
+  }
+
+  async getFileLog(cwd: string, file: string, limit: number, offset: number): Promise<GitFileLogResult> {
+    const normalized = resolveTrackedVersionedPathReference(cwd, file);
+    if (!normalized) {
+      throw new Error("file must resolve to a tracked versioning path.");
+    }
+
+    const boundedLimit = Math.min(Math.max(limit, 1), MAX_LOG_LIMIT);
+    const boundedOffset = Math.max(offset, 0);
+    const allCommits = await this.readGitLogEntries(cwd, undefined, undefined, normalized.gitPath, true);
+    const selectedCommits = allCommits.slice(boundedOffset, boundedOffset + boundedLimit);
+
+    return {
+      file: normalized.gitPath,
+      commits: selectedCommits,
+      stats: computeGitFileHistoryStats(allCommits),
+      hasMore: boundedOffset + boundedLimit < allCommits.length
+    };
+  }
+
+  async getFileSectionProvenance(
+    cwd: string,
+    file: string,
+    options?: GitFileSectionProvenanceOptions
+  ): Promise<GitFileSectionProvenanceResult> {
+    const normalized = resolveTrackedVersionedPathReference(cwd, file);
+    if (!normalized) {
+      throw new Error("file must resolve to a tracked versioning path.");
+    }
+
+    const fileResult = await readUtf8FileAllowMissing(resolve(cwd, normalized.gitPath));
+    if (!fileResult.exists) {
+      throw new Error(`File not found: ${normalized.gitPath}`);
+    }
+
+    const sections = parseMarkdownHeadingSections(fileResult.content);
+    const baseSections = sections.map((section) => createEmptySectionProvenance(section));
+
+    if (options?.notInitialized || sections.length === 0) {
+      return {
+        file: normalized.gitPath,
+        sections: baseSections,
+        notInitialized: options?.notInitialized ? true : undefined
+      };
+    }
+
+    const git = this.createGit(cwd);
+    const provenancedSections: GitFileSectionProvenanceEntry[] = [];
+
+    for (const section of sections) {
+      provenancedSections.push(
+        await this.resolveSectionProvenance(git, normalized.gitPath, section)
+      );
+    }
+
+    return {
+      file: normalized.gitPath,
+      sections: provenancedSections
     };
   }
 
@@ -320,6 +367,56 @@ export class GitDiffService {
     return trimmed.replace(/\\/g, "/");
   }
 
+  private async readGitLogEntries(
+    cwd: string,
+    limit?: number,
+    offset?: number,
+    file?: string,
+    follow = false
+  ): Promise<GitLogEntry[]> {
+    const git = this.createGit(cwd);
+    const format = `%H${FIELD_SEPARATOR}%h${FIELD_SEPARATOR}%an${FIELD_SEPARATOR}%aI${FIELD_SEPARATOR}%s${FIELD_SEPARATOR}%b${RECORD_SEPARATOR}`;
+    const args = ["log", `--format=${format}`];
+
+    if (follow && file) {
+      args.push("--follow");
+    }
+
+    if (typeof offset === "number" && offset > 0) {
+      args.push(`--skip=${offset}`);
+    }
+
+    if (typeof limit === "number") {
+      args.push("-n", String(limit));
+    }
+
+    if (file) {
+      args.push("--", file);
+    }
+
+    const result = await git.run(args);
+    const records = parseGitFormatRecords(result.stdout);
+    const parsedBase = records.map((record) => {
+      const [sha, shortSha, author, date, message = "", ...bodyParts] = record.split(FIELD_SEPARATOR);
+      const body = bodyParts.join(FIELD_SEPARATOR);
+      return {
+        sha: sha ?? "",
+        shortSha: shortSha ?? "",
+        author: author ?? "",
+        date: date ?? "",
+        message: message.trim(),
+        metadata: parseVersioningCommitMetadata(body)
+      };
+    });
+
+    return Promise.all(
+      parsedBase.map(async (entry) => ({
+        ...entry,
+        filesChanged: await this.countFilesChangedInCommit(cwd, entry.sha)
+      }))
+    );
+  }
+
   private async countFilesChangedInCommit(cwd: string, sha: string): Promise<number> {
     if (!sha) {
       return 0;
@@ -346,6 +443,48 @@ export class GitDiffService {
 
     const parts = result.stdout.trim().split(/\s+/).filter((part) => part.length > 0);
     return parts.length > 1;
+  }
+
+  private async resolveSectionProvenance(
+    git: GitCli,
+    file: string,
+    section: MarkdownHeadingSection
+  ): Promise<GitFileSectionProvenanceEntry> {
+    const format = `%H${FIELD_SEPARATOR}%aI${FIELD_SEPARATOR}%s${FIELD_SEPARATOR}%b${RECORD_SEPARATOR}`;
+    const result = await git.run(
+      [
+        "log",
+        "-n",
+        "1",
+        "-L",
+        `${section.lineStart},${section.lineEnd}:${file}`,
+        `--format=${format}`
+      ],
+      { allowFailure: true }
+    );
+
+    if (result.exitCode !== 0) {
+      return createEmptySectionProvenance(section);
+    }
+
+    const record = parseGitFormatRecords(result.stdout)[0];
+    if (!record) {
+      return createEmptySectionProvenance(section);
+    }
+
+    const [sha, modifiedAt, summary = "", ...bodyParts] = record.split(FIELD_SEPARATOR);
+    const metadata = parseVersioningCommitMetadata(bodyParts.join(FIELD_SEPARATOR));
+
+    return {
+      heading: section.heading,
+      level: section.level,
+      lineStart: section.lineStart,
+      lineEnd: section.lineEnd,
+      lastModifiedSha: sha?.trim() || null,
+      lastModifiedAt: modifiedAt?.trim() || null,
+      lastModifiedSummary: summary.trim() || null,
+      reviewRunId: metadata?.reviewRunId ?? null
+    };
   }
 }
 
@@ -497,6 +636,142 @@ function mapStatusCode(code: string): GitFileStatus["status"] {
     default:
       return "modified";
   }
+}
+
+function computeGitFileHistoryStats(commits: GitLogEntry[]): GitFileHistoryStats {
+  const now = Date.now();
+  const dayAgo = now - 24 * 60 * 60 * 1000;
+  const weekAgo = now - 7 * 24 * 60 * 60 * 1000;
+
+  let editsToday = 0;
+  let editsThisWeek = 0;
+  for (const commit of commits) {
+    const timestamp = Date.parse(commit.date);
+    if (!Number.isFinite(timestamp)) {
+      continue;
+    }
+
+    if (timestamp >= dayAgo) {
+      editsToday += 1;
+    }
+    if (timestamp >= weekAgo) {
+      editsThisWeek += 1;
+    }
+  }
+
+  return {
+    totalEdits: commits.length,
+    lastModifiedAt: commits[0]?.date ?? null,
+    editsToday,
+    editsThisWeek
+  };
+}
+
+function parseMarkdownHeadingSections(content: string): MarkdownHeadingSection[] {
+  const lines = splitMarkdownLines(content);
+  const headings: Array<{ heading: string; level: number; lineNumber: number }> = [];
+
+  let inFence = false;
+  let fenceChar = "";
+  let fenceLength = 0;
+  let inHtmlComment = false;
+
+  for (const [index, rawLine] of lines.entries()) {
+    const lineNumber = index + 1;
+    const line = rawLine ?? "";
+
+    if (inFence) {
+      if (isFenceClose(line, fenceChar, fenceLength)) {
+        inFence = false;
+        fenceChar = "";
+        fenceLength = 0;
+      }
+      continue;
+    }
+
+    const fenceMatch = line.match(FENCE_PATTERN);
+    if (fenceMatch) {
+      inFence = true;
+      fenceChar = fenceMatch[1]?.[0] ?? "";
+      fenceLength = fenceMatch[1]?.length ?? 0;
+      continue;
+    }
+
+    if (inHtmlComment) {
+      if (line.includes("-->")) {
+        inHtmlComment = false;
+      }
+      continue;
+    }
+
+    const trimmedStart = line.trimStart();
+    if (trimmedStart.startsWith("<!--")) {
+      if (!trimmedStart.includes("-->")) {
+        inHtmlComment = true;
+      }
+      continue;
+    }
+
+    const match = line.match(HEADING_PATTERN);
+    if (!match) {
+      continue;
+    }
+
+    const heading = normalizeHeadingText(match[2] ?? "");
+    if (!heading) {
+      continue;
+    }
+
+    headings.push({
+      heading,
+      level: match[1]?.length ?? 1,
+      lineNumber
+    });
+  }
+
+  return headings.map((heading, index) => ({
+    heading: heading.heading,
+    level: heading.level,
+    lineStart: heading.lineNumber,
+    lineEnd: (headings[index + 1]?.lineNumber ?? lines.length + 1) - 1
+  }));
+}
+
+function createEmptySectionProvenance(section: MarkdownHeadingSection): GitFileSectionProvenanceEntry {
+  return {
+    heading: section.heading,
+    level: section.level,
+    lineStart: section.lineStart,
+    lineEnd: section.lineEnd,
+    lastModifiedSha: null,
+    lastModifiedAt: null,
+    lastModifiedSummary: null,
+    reviewRunId: null
+  };
+}
+
+function splitMarkdownLines(content: string): string[] {
+  return content.replace(/\r\n?/gu, "\n").split("\n");
+}
+
+function normalizeHeadingText(value: string): string {
+  return value
+    .replace(/\s+#+\s*$/u, "")
+    .replace(/<!--.*?-->/gu, "")
+    .trim();
+}
+
+function isFenceClose(line: string, fenceChar: string, fenceLength: number): boolean {
+  if (!fenceChar || fenceLength === 0) {
+    return false;
+  }
+
+  const closePattern = new RegExp(`^\\s*${escapeRegExp(fenceChar)}{${fenceLength},}\\s*$`, "u");
+  return closePattern.test(line);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
 async function readUtf8FileAllowMissing(path: string): Promise<{ exists: boolean; content: string; buffer: Buffer }> {

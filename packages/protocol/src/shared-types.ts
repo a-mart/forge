@@ -418,6 +418,23 @@ export interface GitFileLogResult {
   notInitialized?: boolean
 }
 
+export interface GitFileSectionProvenanceEntry {
+  heading: string
+  level: number
+  lineStart: number
+  lineEnd: number
+  lastModifiedSha: string | null
+  lastModifiedAt: string | null
+  lastModifiedSummary: string | null
+  reviewRunId: string | null
+}
+
+export interface GitFileSectionProvenanceResult {
+  file: string
+  sections: GitFileSectionProvenanceEntry[]
+  notInitialized?: boolean
+}
+
 export interface GitCommitDetail {
   sha: string
   message: string
@@ -426,6 +443,27 @@ export interface GitCommitDetail {
   files: GitFileStatus[]
   metadata?: GitCommitMetadata | null
   notInitialized?: boolean
+}
+
+export type CortexDocumentGroup =
+  | 'commonKnowledge'
+  | 'profileMemory'
+  | 'referenceDocs'
+  | 'promptOverrides'
+  | 'notes'
+
+export interface CortexDocumentEntry {
+  id: string
+  label: string
+  description: string
+  group: CortexDocumentGroup
+  surface: 'knowledge' | 'memory' | 'reference' | 'prompt'
+  absolutePath: string
+  gitPath: string
+  profileId?: string
+  exists: boolean
+  sizeBytes: number
+  editable: boolean
 }
 
 export interface CortexFileReviewHistoryEntry {

@@ -1,6 +1,15 @@
 import { readdir, stat } from "node:fs/promises";
-import { join } from "node:path";
-import type { CortexReviewControlAction, CortexReviewRunAxis, CortexReviewRunScope, OnboardingState, OnboardingTechnicalLevel } from "@forge/protocol";
+import { join, resolve } from "node:path";
+import type {
+  CortexDocumentEntry,
+  CortexFileReviewHistoryEntry,
+  CortexFileReviewHistoryResult,
+  CortexReviewControlAction,
+  CortexReviewRunAxis,
+  CortexReviewRunScope,
+  OnboardingState,
+  OnboardingTechnicalLevel
+} from "@forge/protocol";
 import { ONBOARDING_TECHNICAL_LEVEL_VALUES } from "@forge/protocol";
 import {
   getCommonKnowledgePath,
@@ -16,9 +25,14 @@ import {
   getProfileReferencePath
 } from "../../swarm/data-paths.js";
 import { getOnboardingSnapshot, renderOnboardingCommonKnowledge, saveOnboardingPreferences, skipOnboarding } from "../../swarm/onboarding-state.js";
+import { readStoredCortexReviewRuns } from "../../swarm/cortex-review-runs.js";
 import { scanCortexReviewStatus } from "../../swarm/scripts/cortex-scan.js";
+import {
+  readCortexReviewLogEntries
+} from "../../swarm/scripts/cortex-review-state.js";
 import { readSessionMeta, writeSessionMeta } from "../../swarm/session-manifest.js";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
+import { enumerateExistingTrackedPaths, resolveTrackedVersionedPathReference } from "../../versioning/versioned-paths.js";
 import { applyCorsHeaders, parseJsonBody, sendJson } from "../http-utils.js";
 import type { HttpRoute } from "./http-route.js";
 
@@ -28,6 +42,8 @@ const CORTEX_REVIEW_RUNS_ENDPOINT_PATH = "/api/cortex/review-runs";
 const CORTEX_REVIEW_RUNS_METHODS = "GET, POST, OPTIONS";
 const CORTEX_REVIEW_CONTROLS_ENDPOINT_PATH = "/api/cortex/review-controls";
 const CORTEX_REVIEW_CONTROLS_METHODS = "POST, OPTIONS";
+const CORTEX_FILE_REVIEW_HISTORY_ENDPOINT_PATH = "/api/cortex/file-review-history";
+const CORTEX_FILE_REVIEW_HISTORY_METHODS = "GET, OPTIONS";
 const ONBOARDING_STATE_ENDPOINT_PATH = "/api/onboarding/state";
 const ONBOARDING_STATE_METHODS = "GET, OPTIONS";
 const ONBOARDING_PREFERENCES_ENDPOINT_PATH = "/api/onboarding/preferences";
@@ -268,6 +284,48 @@ export function createCortexRoutes(options: { swarmManager: SwarmManager }): Htt
       }
     },
     {
+      methods: CORTEX_FILE_REVIEW_HISTORY_METHODS,
+      matches: (pathname) => pathname === CORTEX_FILE_REVIEW_HISTORY_ENDPOINT_PATH,
+      handle: async (request, response, requestUrl) => {
+        if (request.method === "OPTIONS") {
+          applyCorsHeaders(request, response, CORTEX_FILE_REVIEW_HISTORY_METHODS);
+          response.statusCode = 204;
+          response.end();
+          return;
+        }
+
+        if (request.method !== "GET") {
+          applyCorsHeaders(request, response, CORTEX_FILE_REVIEW_HISTORY_METHODS);
+          response.setHeader("Allow", CORTEX_FILE_REVIEW_HISTORY_METHODS);
+          sendJson(response, 405, { error: "Method Not Allowed" });
+          return;
+        }
+
+        applyCorsHeaders(request, response, CORTEX_FILE_REVIEW_HISTORY_METHODS);
+
+        try {
+          const dataDir = swarmManager.getConfig().paths.dataDir;
+          const path = requireNonEmptyQuery(requestUrl.searchParams, "path");
+          const limit = parseIntegerQuery(requestUrl.searchParams.get("limit"), 10, 1, 100, "limit");
+          const trackedPath = resolveTrackedVersionedPathReference(dataDir, path);
+          if (!trackedPath) {
+            sendJson(response, 400, { error: "path must resolve to a tracked versioning file." });
+            return;
+          }
+
+          const payload = await buildCortexFileReviewHistoryResult(dataDir, trackedPath.gitPath, limit);
+          sendJson(response, 200, payload as unknown as Record<string, unknown>);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Unable to load Cortex file review history.";
+          if (message.includes("must be") || message.includes("tracked versioning file")) {
+            sendJson(response, 400, { error: message });
+            return;
+          }
+          sendJson(response, 500, { error: message });
+        }
+      }
+    },
+    {
       methods: CORTEX_SCAN_METHODS,
       matches: (pathname) => pathname === CORTEX_SCAN_ENDPOINT_PATH,
       handle: async (request, response) => {
@@ -300,7 +358,7 @@ export function createCortexRoutes(options: { swarmManager: SwarmManager }): Htt
                 .filter((profileId) => profileId !== "cortex")
             ])
           ).sort((a, b) => a.localeCompare(b));
-          const [profileMemory, profileKnowledge, profileReference, profileMergeAudit, cortexReviewLog, cortexReviewLock, cortexReviewRuns, cortexPromotionManifests] = await Promise.all([
+          const [profileMemory, profileKnowledge, profileReference, profileMergeAudit, cortexReviewLog, cortexReviewLock, cortexReviewRuns, cortexPromotionManifests, documents] = await Promise.all([
             buildProfileMemoryInfoMap(dataDir, profileIds),
             buildProfileKnowledgeInfoMap(dataDir, profileIds),
             buildProfileReferenceInfoMap(dataDir, profileIds),
@@ -308,7 +366,8 @@ export function createCortexRoutes(options: { swarmManager: SwarmManager }): Htt
             buildFileInfo(getCortexReviewLogPath(dataDir)),
             buildFileInfo(getCortexReviewLockPath(dataDir)),
             buildFileInfo(getCortexReviewRunsPath(dataDir)),
-            buildDirectoryInfo(getCortexPromotionManifestsDir(dataDir))
+            buildDirectoryInfo(getCortexPromotionManifestsDir(dataDir)),
+            buildCortexDocuments(dataDir, profileIds)
           ]);
 
           sendJson(response, 200, {
@@ -324,7 +383,8 @@ export function createCortexRoutes(options: { swarmManager: SwarmManager }): Htt
               profileKnowledge,
               profileReference,
               profileMergeAudit
-            }
+            },
+            documents
           });
         } catch (error) {
           const message = error instanceof Error ? error.message : "Unable to scan Cortex review status.";
@@ -342,6 +402,101 @@ function buildOnboardingStateResponse(snapshot: OnboardingState) {
     skippedAt: snapshot.skippedAt,
     preferences: snapshot.preferences
   };
+}
+
+async function buildCortexFileReviewHistoryResult(
+  dataDir: string,
+  gitPath: string,
+  limit: number
+): Promise<CortexFileReviewHistoryResult> {
+  const [logEntries, storedRuns] = await Promise.all([
+    readCortexReviewLogEntries(dataDir),
+    readStoredCortexReviewRuns(dataDir)
+  ]);
+  const storedRunById = new Map(storedRuns.map((run) => [run.runId, run]));
+
+  const matchingRuns = await Promise.all(
+    logEntries
+      .filter((entry) => entry.changedFiles.some((candidate) => normalizeTrackedGitPath(candidate) === gitPath))
+      .sort((left, right) => Date.parse(right.recordedAt) - Date.parse(left.recordedAt))
+      .map(async (entry) => buildCortexFileReviewHistoryEntry(dataDir, entry, storedRunById.get(entry.reviewId ?? "")))
+  );
+
+  return {
+    file: gitPath,
+    runs: matchingRuns.slice(0, limit),
+    latestRun: matchingRuns[0] ?? null
+  };
+}
+
+async function buildCortexFileReviewHistoryEntry(
+  dataDir: string,
+  entry: Awaited<ReturnType<typeof readCortexReviewLogEntries>>[number],
+  storedRun: Awaited<ReturnType<typeof readStoredCortexReviewRuns>>[number] | undefined
+): Promise<CortexFileReviewHistoryEntry> {
+  const manifestPath = entry.reviewId ? join(getCortexPromotionManifestsDir(dataDir), `${entry.reviewId}.md`) : undefined;
+  const manifestExists = manifestPath ? await pathExists(manifestPath) : false;
+
+  return {
+    reviewId: entry.reviewId,
+    recordedAt: entry.recordedAt,
+    status: entry.status,
+    changedFiles: entry.changedFiles.map(normalizeTrackedGitPath),
+    notes: entry.notes ?? [],
+    blockers: entry.blockers ?? [],
+    watermarksAdvanced: entry.watermarksAdvanced,
+    trigger: storedRun?.trigger,
+    scope: storedRun?.scope,
+    scopeLabel: storedRun?.scopeLabel,
+    sessionAgentId: storedRun?.sessionAgentId,
+    scheduleName: storedRun?.scheduleName ?? null,
+    manifestPath,
+    manifestExists
+  };
+}
+
+function requireNonEmptyQuery(searchParams: URLSearchParams, key: string): string {
+  const value = searchParams.get(key);
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`${key} must be a non-empty string.`);
+  }
+
+  return value.trim();
+}
+
+function parseIntegerQuery(
+  rawValue: string | null,
+  fallback: number,
+  min: number,
+  max: number,
+  fieldName: string
+): number {
+  if (rawValue === null || rawValue.trim().length === 0) {
+    return fallback;
+  }
+
+  const parsed = Number.parseInt(rawValue, 10);
+  if (!Number.isFinite(parsed) || parsed < min || parsed > max) {
+    throw new Error(`${fieldName} must be an integer between ${min} and ${max}.`);
+  }
+
+  return parsed;
+}
+
+function normalizeTrackedGitPath(value: string): string {
+  return value.replace(/\\/g, "/").trim();
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch (error) {
+    if (isEnoentError(error)) {
+      return false;
+    }
+    throw error;
+  }
 }
 
 function parseOnboardingPreferencesPayload(
@@ -599,6 +754,129 @@ async function buildProfileMergeAuditInfoMap(
   );
 
   return profileMergeAudit;
+}
+
+async function buildCortexDocuments(
+  dataDir: string,
+  profileIds: string[]
+): Promise<CortexDocumentEntry[]> {
+  const documents: CortexDocumentEntry[] = [];
+  const seenIds = new Set<string>();
+
+  const addDocument = async (descriptor: {
+    gitPath: string;
+    label: string;
+    description: string;
+    group: CortexDocumentEntry["group"];
+    editable: boolean;
+  }): Promise<void> => {
+    if (seenIds.has(descriptor.gitPath)) {
+      return;
+    }
+
+    const absolutePath = resolve(dataDir, descriptor.gitPath);
+    const fileInfo = await buildFileInfo(absolutePath);
+    const tracked = resolveTrackedVersionedPathReference(dataDir, descriptor.gitPath);
+    if (!tracked) {
+      return;
+    }
+
+    documents.push({
+      id: descriptor.gitPath,
+      label: descriptor.label,
+      description: descriptor.description,
+      group: descriptor.group,
+      surface: tracked.surface,
+      absolutePath,
+      gitPath: descriptor.gitPath,
+      profileId: tracked.profileId,
+      exists: fileInfo.exists,
+      sizeBytes: fileInfo.sizeBytes,
+      editable: descriptor.editable
+    });
+    seenIds.add(descriptor.gitPath);
+  };
+
+  await addDocument({
+    gitPath: "shared/knowledge/common.md",
+    label: "Common Knowledge",
+    description: "Shared knowledge base across all profiles",
+    group: "commonKnowledge",
+    editable: true
+  });
+  await addDocument({
+    gitPath: "shared/knowledge/.cortex-notes.md",
+    label: "Cortex Notes",
+    description: "Working notes and tentative observations",
+    group: "notes",
+    editable: true
+  });
+
+  for (const profileId of profileIds) {
+    await addDocument({
+      gitPath: `profiles/${profileId}/memory.md`,
+      label: `Profile Memory: ${profileId}`,
+      description: `Injected profile summary memory for ${profileId}`,
+      group: "profileMemory",
+      editable: true
+    });
+  }
+
+  const trackedPaths = await enumerateExistingTrackedPaths(dataDir);
+  for (const gitPath of trackedPaths) {
+    if (
+      gitPath === "shared/knowledge/common.md" ||
+      gitPath === "shared/knowledge/.cortex-notes.md" ||
+      gitPath === "shared/knowledge/.cortex-worker-prompts.md" ||
+      /^shared\/knowledge\/profiles\/[^/]+\.md$/u.test(gitPath) ||
+      /^profiles\/[^/]+\/memory\.md$/u.test(gitPath)
+    ) {
+      continue;
+    }
+
+    const tracked = resolveTrackedVersionedPathReference(dataDir, gitPath);
+    if (!tracked || !tracked.profileId) {
+      continue;
+    }
+
+    if (tracked.surface === "reference") {
+      const fileName = gitPath.split("/").at(-1) ?? gitPath;
+      await addDocument({
+        gitPath,
+        label: `${tracked.profileId} / ${fileName}`,
+        description: `Reference doc for ${tracked.profileId}`,
+        group: "referenceDocs",
+        editable: true
+      });
+      continue;
+    }
+
+    if (tracked.surface === "prompt" && tracked.promptCategory && tracked.promptId) {
+      await addDocument({
+        gitPath,
+        label: `${tracked.profileId} / ${tracked.promptCategory} / ${tracked.promptId}`,
+        description: `Prompt override for ${tracked.profileId}`,
+        group: "promptOverrides",
+        editable: true
+      });
+    }
+  }
+
+  const groupOrder: CortexDocumentEntry["group"][] = [
+    "commonKnowledge",
+    "profileMemory",
+    "referenceDocs",
+    "promptOverrides",
+    "notes"
+  ];
+
+  return documents.sort((left, right) => {
+    const groupDelta = groupOrder.indexOf(left.group) - groupOrder.indexOf(right.group);
+    if (groupDelta !== 0) {
+      return groupDelta;
+    }
+    return left.label.localeCompare(right.label);
+  });
 }
 
 function isEnoentError(error: unknown): boolean {
