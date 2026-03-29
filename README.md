@@ -38,7 +38,7 @@ There are plenty of good coding agents. Forge isn't trying to replace them. It o
 
 **It remembers things.** Most AI tools reset every session. Forge's Cortex reviews your conversations, learns your preferences, and builds persistent knowledge over time. After a few weeks, it knows your review process, your naming conventions, your code style.
 
-**Context doesn't die.** When Claude Code compacts, you get amnesia. Forge's smart compaction writes structured handoff files, retains the most recent context, and summarizes the rest. Pin critical messages and they'll survive every compaction. Conversations that have compacted 50+ times still maintain coherence.
+**Context doesn't die.** When Claude Code compacts, you get amnesia. Forge's smart compaction writes structured handoff files, retains the most recent context, and summarizes the rest. Pin critical messages and they'll survive every compaction. The pin navigator in the chat header lets you jump directly to any pinned message. Conversations that have compacted 50+ times still maintain coherence.
 
 **Forge builds Forge.** Every feature you see was built using Forge itself. It's been the primary development tool for this project since day one.
 
@@ -152,7 +152,7 @@ You don't need to rate every message. Focus on the meaningful moments: when the 
 
 The web UI is designed to be the only window you need open.
 
-- **Chat** — real-time conversation with your manager. Stream worker activity or filter to just the messages directed at you. Mermaid diagrams render inline with interactive controls. Pin important messages to preserve them through compaction.
+- **Chat** — real-time conversation with your manager. Stream worker activity or filter to just the messages directed at you. Mermaid diagrams render inline with interactive controls. Pin important messages to preserve them through compaction, then use the pin navigator to jump between them.
 - **File browser** — full repository file browser with click-to-open in your editor (configurable: VS Code, Cursor, etc.).
 - **Git view** — diff and commit history view, built into the dashboard.
 - **Worker pills** — green indicators show active workers. Click for a quick peek at what each worker is doing.

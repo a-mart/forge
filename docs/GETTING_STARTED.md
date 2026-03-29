@@ -370,7 +370,7 @@ Hover over any user or assistant message and click the pin icon to mark it as im
 - Specific instructions that shouldn't be summarized away
 - Reference examples you want to keep intact
 
-You can have up to 10 pinned messages per session. The pin count badge appears in the chat header near the compaction controls when you have active pins. Click the pin icon again to unpin.
+You can have up to 10 pinned messages per session. The pin count badge appears in the chat header near the compaction controls when you have active pins. Click the badge to open a navigator that lets you jump directly to any pinned message with prev/next buttons (keyboard arrow keys also work). The chat auto-scrolls and highlights each pin as you navigate. Click the pin icon again to unpin.
 
 ### Context Window Indicator
 

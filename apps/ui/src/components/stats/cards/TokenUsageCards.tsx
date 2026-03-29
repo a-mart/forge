@@ -1,5 +1,5 @@
 import { StatCard } from './StatCard'
-import { abbreviateNumber, formatTokenCount } from '../charts/chart-utils'
+import { abbreviateNumber } from '../charts/chart-utils'
 import type { TokenStats } from '@forge/protocol'
 
 interface TokenUsageCardsProps {
@@ -18,8 +18,8 @@ export function TokenUsageCards({ tokens }: TokenUsageCardsProps) {
         unit="tokens"
         subtitle={
           <div>
-            <div>{formatTokenCount(tokens.todayInputTokens)} in</div>
-            <div>{formatTokenCount(tokens.todayOutputTokens)} out</div>
+            <div>{abbreviateNumber(tokens.todayInputTokens)} in</div>
+            <div>{abbreviateNumber(tokens.todayOutputTokens)} out</div>
           </div>
         }
         variant="accent"

@@ -91,7 +91,7 @@ These are briefly described for orientation. Most have both backend and UI compo
 | **Specialists** | `swarm/specialists/` | `components/settings/SettingsSpecialists.tsx` | Named worker spawn templates with model config, fallback, per-profile overrides, and provider-native tool config (e.g., xAI web search) |
 | **Mermaid diagrams** | — | `components/chat/message-list/MermaidBlock.tsx` | Inline rendering of mermaid diagrams in chat with interactive toolbar (toggle, copy, SVG/PNG export, fullscreen) |
 | **Electron desktop app** | `apps/electron/src/main.ts`, `auto-updater.ts`, `preload.ts` | `components/settings/SettingsAbout.tsx` | Standalone desktop application for macOS and Windows. Bundles backend, UI, and dependencies. Auto-updates via GitHub Releases with beta channel support. Dark mode by default. Windows uses standard title bar with hidden menu (Alt to show); macOS uses standard title bar. Provides shell integration for revealing files in Finder/Explorer. |
-| **Message pins** | `swarm/message-pins.ts` | `components/chat/message-list/` | Pin up to 10 messages per session; pinned content is preserved through all compaction types via custom instructions and extension hooks |
+| **Message pins** | `swarm/message-pins.ts` | `components/chat/message-list/` | Pin up to 10 messages per session; pinned content is preserved through all compaction types via custom instructions and extension hooks. Pin count badge in chat header opens a navigator popover with prev/next buttons to jump directly to any pinned message. |
 
 Backend paths above are relative to `apps/backend/src/`. UI paths are relative to `apps/ui/src/`.
 

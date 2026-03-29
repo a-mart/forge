@@ -1,5 +1,5 @@
 import { StatCard } from './StatCard'
-import { abbreviateNumber, formatTokenCount } from '../charts/chart-utils'
+import { abbreviateNumber } from '../charts/chart-utils'
 import type { CacheStats, WorkerStats, ActivityStats } from '@forge/protocol'
 
 interface CacheMetricsCardsProps {
@@ -26,7 +26,7 @@ export function CacheMetricsCards({ cache, workers, activity }: CacheMetricsCard
       <StatCard
         title="Peak Day"
         value={activity.peakDay || '—'}
-        subtitle={activity.peakDayTokens > 0 ? `${formatTokenCount(activity.peakDayTokens)} tokens` : 'No data'}
+        subtitle={activity.peakDayTokens > 0 ? `${abbreviateNumber(activity.peakDayTokens)} tokens` : 'No data'}
       />
     </div>
   )
