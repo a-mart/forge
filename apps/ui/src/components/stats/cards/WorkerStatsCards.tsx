@@ -1,9 +1,11 @@
 import { StatCard } from './StatCard'
 import { abbreviateNumber } from '../charts/chart-utils'
-import type { WorkerStats } from '@forge/protocol'
+import type { WorkerStats, CodeStats } from '@forge/protocol'
+import { Card } from '@/components/ui/card'
 
 interface WorkerStatsCardsProps {
   workers: WorkerStats
+  code: CodeStats
 }
 
 function formatRuntime(valueMs: number): string {
@@ -22,7 +24,12 @@ function formatRuntime(valueMs: number): string {
   return `${minutes}m ${seconds}s`
 }
 
-export function WorkerStatsCards({ workers }: WorkerStatsCardsProps) {
+export function WorkerStatsCards({ workers, code }: WorkerStatsCardsProps) {
+  const netChange = code.linesAdded - code.linesDeleted
+  const netChangeFormatted = netChange >= 0 
+    ? `+${abbreviateNumber(netChange)}` 
+    : `-${abbreviateNumber(Math.abs(netChange))}`
+
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
       <StatCard
@@ -41,11 +48,19 @@ export function WorkerStatsCards({ workers }: WorkerStatsCardsProps) {
         value={formatRuntime(workers.averageRuntimeMs)}
         subtitle="Completed worker duration"
       />
-      <StatCard
-        title="Currently Active"
-        value={String(workers.currentlyActive)}
-        subtitle="Workers running now"
-      />
+      <Card className="border-border/50 bg-card/80 p-3 backdrop-blur-sm">
+        <div className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+          Code Changes
+        </div>
+        <div className="mt-1 flex items-baseline gap-2 font-mono text-lg font-bold leading-none">
+          <span className="text-emerald-500">+{abbreviateNumber(code.linesAdded)}</span>
+          <span className="text-muted-foreground/40">/</span>
+          <span className="text-rose-500">-{abbreviateNumber(code.linesDeleted)}</span>
+        </div>
+        <div className="mt-1 text-xs text-muted-foreground/80">
+          {netChangeFormatted} net · {code.commits.toLocaleString()} commits
+        </div>
+      </Card>
     </div>
   )
 }

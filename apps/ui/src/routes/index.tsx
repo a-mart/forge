@@ -330,12 +330,22 @@ export function IndexPage() {
     channelView,
   })
 
-  const pinnedCount = useMemo(
-    () => state.messages.filter(
-      (m) => m.type === 'conversation_message' && m.pinned,
-    ).length,
-    [state.messages],
-  )
+  const pinnedMessageIds = useMemo(() => {
+    const ids: string[] = []
+    for (const m of visibleMessages) {
+      if (m.type === 'conversation_message' && m.pinned) {
+        const id = m.id?.trim() || m.timestamp
+        ids.push(id)
+      }
+    }
+    return ids
+  }, [visibleMessages])
+
+  const pinnedCount = pinnedMessageIds.length
+
+  const handleScrollToMessage = useCallback((messageId: string) => {
+    messageListRef.current?.scrollToMessage(messageId)
+  }, [])
 
   const collectedArtifacts = useMemo(
     () => collectArtifactsFromMessages(allMessages),
@@ -1115,6 +1125,8 @@ export function IndexPage() {
                   onSmartCompact={() => void handleSmartCompactManager()}
                   autoCompactionInProgress={autoCompactionInProgress}
                   pinnedCount={pinnedCount}
+                  pinnedMessageIds={pinnedMessageIds}
+                  onScrollToMessage={handleScrollToMessage}
                   showStopAll={isActiveManager}
                   stopAllInProgress={isStoppingAllAgents}
                   stopAllDisabled={!state.connected || !canStopAllAgents}

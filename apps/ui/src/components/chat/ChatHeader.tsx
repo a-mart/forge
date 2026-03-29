@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { FolderOpen, GitBranch, Loader2, Menu, Minimize2, MoreHorizontal, PanelRight, Pin, ScrollText, Sparkles, Square, SquareTerminal, Trash2 } from 'lucide-react'
+import { FolderOpen, GitBranch, Loader2, Menu, Minimize2, MoreHorizontal, PanelRight, ScrollText, Sparkles, Square, SquareTerminal, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 
 import { ContextWindowIndicator } from '@/components/chat/ContextWindowIndicator'
+import { PinNavigator } from '@/components/chat/PinNavigator'
 import { SystemPromptDialog } from '@/components/chat/message-list/SystemPromptDialog'
 import { MessageFeedback } from '@/components/chat/message-list/MessageFeedback'
 import { cn } from '@/lib/utils'
@@ -40,6 +41,8 @@ interface ChatHeaderProps {
   onSmartCompact: () => void
   autoCompactionInProgress?: boolean
   pinnedCount?: number
+  pinnedMessageIds?: string[]
+  onScrollToMessage?: (messageId: string) => void
   showStopAll: boolean
   stopAllInProgress: boolean
   stopAllDisabled: boolean
@@ -139,6 +142,8 @@ export function ChatHeader({
   onSmartCompact,
   autoCompactionInProgress = false,
   pinnedCount = 0,
+  pinnedMessageIds,
+  onScrollToMessage,
   showStopAll,
   stopAllInProgress,
   stopAllDisabled,
@@ -332,23 +337,14 @@ export function ChatHeader({
           ) : null}
         </div>
 
-        {/* ── Pinned message count ── */}
-        {pinnedCount > 0 ? (
+        {/* ── Pinned message navigator ── */}
+        {pinnedCount > 0 && pinnedMessageIds && onScrollToMessage ? (
           <>
             <Separator orientation="vertical" className="hidden sm:block mx-0.5 h-4 bg-border/60" />
-            <TooltipProvider delayDuration={200}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div className="hidden sm:inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400">
-                    <Pin className="size-3 fill-current" />
-                    <span>{pinnedCount}</span>
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent side="bottom" sideOffset={6}>
-                  {pinnedCount} pinned message{pinnedCount !== 1 ? 's' : ''} (preserved through compaction)
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
+            <PinNavigator
+              pinnedMessageIds={pinnedMessageIds}
+              onScrollToMessage={onScrollToMessage}
+            />
           </>
         ) : null}
 

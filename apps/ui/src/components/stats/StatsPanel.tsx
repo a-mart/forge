@@ -9,7 +9,6 @@ import { TokenUsageCards } from './cards/TokenUsageCards'
 import { CacheMetricsCards } from './cards/CacheMetricsCards'
 import { StatCard } from './cards/StatCard'
 import { WorkerStatsCards } from './cards/WorkerStatsCards'
-import { CodeStatsCards } from './cards/CodeStatsCards'
 import { DailyUsageChart } from './charts/DailyUsageChart'
 import { ModelDistribution } from './sections/ModelDistribution'
 import type { StatsRange } from '@forge/protocol'
@@ -167,11 +166,8 @@ export function StatsPanel({ wsUrl, onBack }: StatsPanelProps) {
             />
           </div>
 
-          {/* Worker stats */}
-          <WorkerStatsCards workers={stats.workers} />
-
-          {/* Git code stats */}
-          <CodeStatsCards code={stats.code} />
+          {/* Worker stats + code changes */}
+          <WorkerStatsCards workers={stats.workers} code={stats.code} />
 
           {/* Daily usage chart: full width */}
           <DailyUsageChart data={stats.dailyUsage} />

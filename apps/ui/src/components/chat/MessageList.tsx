@@ -69,6 +69,7 @@ interface MessageListProps {
 
 export interface MessageListHandle {
   scrollToBottom: (behavior?: ScrollBehavior) => void
+  scrollToMessage: (messageId: string) => void
 }
 
 const AUTO_SCROLL_THRESHOLD_PX = 100
@@ -355,12 +356,36 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
     }
   }, [])
 
+  const scrollToMessage = useCallback((messageId: string) => {
+    const container = scrollContainerRef.current
+    if (!container) return
+
+    const target = container.querySelector(`[data-message-id="${CSS.escape(messageId)}"]`)
+    if (!target) return
+
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    // Re-scroll after layout settles (content-visibility can cause height shifts)
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      })
+    })
+
+    // Flash highlight
+    target.classList.remove('pin-nav-highlight')
+    // Force reflow so re-adding the class restarts the animation
+    void (target as HTMLElement).offsetWidth
+    target.classList.add('pin-nav-highlight')
+    setTimeout(() => target.classList.remove('pin-nav-highlight'), 1500)
+  }, [])
+
   useImperativeHandle(
     ref,
     () => ({
       scrollToBottom,
+      scrollToMessage,
     }),
-    [scrollToBottom],
+    [scrollToBottom, scrollToMessage],
   )
 
   const updateIsAtBottom = () => {
@@ -464,6 +489,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
               return (
                 <div
                   key={entry.id}
+                  data-message-id={resolveConversationMessageTargetId(entry.message)}
                   className="[content-visibility:auto] [contain-intrinsic-size:auto_96px]"
                 >
                   <ConversationMessageRow
