@@ -19,7 +19,7 @@ The backend runs as a child process of the main Electron app. When the app start
 | `src/main.ts` | Main process entry point. Window management, backend lifecycle, IPC handlers |
 | `src/preload.ts` | Renderer bridge. Exposes minimal API for platform detection and window controls |
 | `src/auto-updater.ts` | Auto-update logic using `electron-updater` and GitHub Releases |
-| `src/window-state.ts` | Persists window position and size across restarts |
+| `src/window-state.ts` | Persists window position, size, maximized state, and fullscreen state across restarts |
 | `src/fix-path.ts` | Ensures PATH is set correctly on macOS when launched from GUI (not terminal) |
 | `src/whats-new.ts` | Displays release notes after successful update |
 | `electron-builder.yml` | Build configuration for packaging and distribution |
