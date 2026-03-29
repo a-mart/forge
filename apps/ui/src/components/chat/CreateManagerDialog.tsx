@@ -64,9 +64,9 @@ export function CreateManagerDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-xl">
         <DialogHeader>
-          <DialogTitle>Create manager</DialogTitle>
+          <DialogTitle>Create project</DialogTitle>
           <DialogDescription>
-            Create a new manager with a name and working directory.
+            Create a new project with a name and working directory.
           </DialogDescription>
         </DialogHeader>
 
@@ -77,7 +77,7 @@ export function CreateManagerDialog({
             </Label>
             <Input
               id="manager-name"
-              placeholder="release-manager"
+              placeholder="my-project"
               value={newManagerName}
               onChange={(event) => onNameChange(event.target.value)}
               autoFocus
@@ -154,7 +154,7 @@ export function CreateManagerDialog({
                 ? isValidatingDirectory
                   ? 'Validating...'
                   : 'Creating...'
-                : 'Create manager'}
+                : 'Create project'}
             </Button>
           </div>
         </form>
