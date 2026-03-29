@@ -32,12 +32,14 @@ function buildSummaryFromMetadata(metadata: GitCommitMetadata): string | null {
       return 'Migrated legacy knowledge'
     case 'profile-memory-merge':
       return 'Updated profile memory'
+    case 'api-write-file-restore':
+      return summarizeFromPaths(metadata, 'restore')
     default:
       return summarizeFromPaths(metadata)
   }
 }
 
-function summarizeFromPaths(metadata: GitCommitMetadata): string | null {
+function summarizeFromPaths(metadata: GitCommitMetadata, mode: 'update' | 'restore' = 'update'): string | null {
   const paths = metadata.paths ?? []
   if (paths.length === 0) {
     return null
@@ -45,27 +47,27 @@ function summarizeFromPaths(metadata: GitCommitMetadata): string | null {
 
   const surfaceIds = Array.from(new Set(paths.map((path) => classifyKnowledgeSurface(path).id)))
   if (surfaceIds.length !== 1) {
-    return 'Updated tracked knowledge'
+    return mode === 'restore' ? 'Restored tracked knowledge' : 'Updated tracked knowledge'
   }
 
   switch (surfaceIds[0]) {
     case 'common-knowledge':
-      return 'Updated common knowledge'
+      return mode === 'restore' ? 'Restored common knowledge' : 'Updated common knowledge'
     case 'cortex-notes':
-      return 'Updated Cortex notes'
+      return mode === 'restore' ? 'Restored Cortex notes' : 'Updated Cortex notes'
     case 'cortex-worker-prompts':
-      return 'Updated Cortex worker prompts'
+      return mode === 'restore' ? 'Restored Cortex worker prompts' : 'Updated Cortex worker prompts'
     case 'profile-knowledge':
-      return 'Updated profile knowledge'
+      return mode === 'restore' ? 'Restored profile knowledge' : 'Updated profile knowledge'
     case 'profile-memory':
-      return 'Updated profile memory'
+      return mode === 'restore' ? 'Restored profile memory' : 'Updated profile memory'
     case 'reference-docs':
-      return 'Synced reference docs'
+      return mode === 'restore' ? 'Restored reference docs' : 'Synced reference docs'
     case 'prompt-overrides':
-      return 'Prompt override edited'
+      return mode === 'restore' ? 'Restored prompt override' : 'Prompt override edited'
     case 'other-tracked':
     default:
-      return 'Updated tracked knowledge'
+      return mode === 'restore' ? 'Restored tracked knowledge' : 'Updated tracked knowledge'
   }
 }
 

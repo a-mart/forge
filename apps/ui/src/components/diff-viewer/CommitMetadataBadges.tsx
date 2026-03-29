@@ -20,6 +20,10 @@ const SOURCE_STYLES: Record<string, { label: string; className: string }> = {
     label: 'API write',
     className: 'border-sky-500/30 bg-sky-500/10 text-sky-500',
   },
+  'api-write-file-restore': {
+    label: 'Restore',
+    className: 'border-amber-500/30 bg-amber-500/10 text-amber-500',
+  },
   'profile-memory-merge': {
     label: 'Memory merge',
     className: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-500',

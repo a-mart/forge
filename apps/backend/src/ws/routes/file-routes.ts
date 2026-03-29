@@ -389,6 +389,9 @@ export function createFileRoutes(options: {
             return;
           }
 
+          const requestedVersioningSource = (payload as { versioningSource?: unknown }).versioningSource;
+          const versioningSource = resolveWriteVersioningSource(requestedVersioningSource);
+
           const resolvedPath = await resolveWriteAllowedPath(pathFromBody);
           const trackedWrite = await maybeWriteTrackedCortexFile(
             swarmManager.getConfig().paths.dataDir,
@@ -405,7 +408,7 @@ export function createFileRoutes(options: {
           void swarmManager.getVersioningService()?.recordMutation({
             path: resolvedPath,
             action: "write",
-            source: "api-write-file"
+            source: versioningSource
           }).catch(() => {
             // Fail open: file writes succeed even when versioning cannot record them.
           });
@@ -437,6 +440,18 @@ export function createFileRoutes(options: {
       }
     }
   ];
+}
+
+function resolveWriteVersioningSource(rawValue: unknown): "api-write-file" | "api-write-file-restore" {
+  if (rawValue === undefined) {
+    return "api-write-file";
+  }
+
+  if (rawValue === "api-write-file" || rawValue === "api-write-file-restore") {
+    return rawValue;
+  }
+
+  throw new Error("versioningSource must be one of: api-write-file, api-write-file-restore.");
 }
 
 async function maybeWriteTrackedCortexFile(

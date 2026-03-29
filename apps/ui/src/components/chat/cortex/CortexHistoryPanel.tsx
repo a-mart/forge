@@ -1,16 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CortexDocumentEntry, GitLogEntry } from '@forge/protocol'
-import { ExternalLink } from 'lucide-react'
+import { ExternalLink, RotateCcw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import type { ArtifactReference } from '@/lib/artifacts'
 import type { DiffViewerInitialState } from '@/components/diff-viewer/DiffViewerDialog'
+import { formatCommitSummary } from '@/components/diff-viewer/formatCommitSummary'
 import { resolveKnowledgeQuickFilterForPath } from '@/components/diff-viewer/knowledge-surface'
 import { CortexFileHistoryStats } from './CortexFileHistoryStats'
 import { CortexFileTimeline } from './CortexFileTimeline'
 import { CortexHistoryActivitySummary } from './CortexHistoryActivitySummary'
 import { CortexInlineHistoryDiff } from './CortexInlineHistoryDiff'
 import { CortexLastReviewRunCard } from './CortexLastReviewRunCard'
+import { CortexRestoreVersionDialog } from './CortexRestoreVersionDialog'
 import { useCortexFileReviewHistory, useGitFileLog } from './use-cortex-history'
 
 const PAGE_SIZE = 12
@@ -28,6 +30,7 @@ interface CortexHistoryPanelProps {
   canOpenSession?: (agentId: string) => boolean
   onSelectDocument?: (documentId: string) => void
   onOpenDiffViewer?: (initialState: DiffViewerInitialState) => void
+  onRestoreSuccess?: () => void
 }
 
 export function CortexHistoryPanel({
@@ -43,11 +46,14 @@ export function CortexHistoryPanel({
   canOpenSession,
   onSelectDocument,
   onOpenDiffViewer,
+  onRestoreSuccess,
 }: CortexHistoryPanelProps) {
   const [offset, setOffset] = useState(0)
   const [commits, setCommits] = useState<GitLogEntry[]>([])
   const [selectedSha, setSelectedSha] = useState<string | null>(pendingSelection?.sha ?? null)
   const [isLoadingMore, setIsLoadingMore] = useState(false)
+  const [timelineSearch, setTimelineSearch] = useState('')
+  const [restoreDialogOpen, setRestoreDialogOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement | null>(null)
 
   const fileLogQuery = useGitFileLog(wsUrl, agentId, document?.gitPath ?? null, PAGE_SIZE, offset)
@@ -58,6 +64,8 @@ export function CortexHistoryPanel({
     setCommits([])
     setSelectedSha(pendingSelection?.sha ?? null)
     setIsLoadingMore(false)
+    setTimelineSearch('')
+    setRestoreDialogOpen(false)
   }, [document?.absolutePath, document?.gitPath, pendingSelection?.reviewId, pendingSelection?.sha, refreshKey])
 
   useEffect(() => {
@@ -78,25 +86,31 @@ export function CortexHistoryPanel({
     })
   }, [fileLogQuery.data, offset])
 
+  const filteredCommits = useMemo(
+    () => commits.filter((commit) => matchesTimelineSearch(commit, timelineSearch)),
+    [commits, timelineSearch],
+  )
+
   useEffect(() => {
-    if (commits.length === 0) {
+    const candidateCommits = timelineSearch.trim() ? filteredCommits : commits
+    if (candidateCommits.length === 0) {
       if (!pendingSelection?.sha) {
         setSelectedSha(null)
       }
       return
     }
 
-    if (selectedSha && commits.some((commit) => commit.sha === selectedSha)) {
+    if (selectedSha && candidateCommits.some((commit) => commit.sha === selectedSha)) {
       return
     }
 
-    if (pendingSelection?.sha && commits.some((commit) => commit.sha === pendingSelection.sha)) {
+    if (pendingSelection?.sha && candidateCommits.some((commit) => commit.sha === pendingSelection.sha)) {
       setSelectedSha(pendingSelection.sha)
       return
     }
 
-    setSelectedSha((current) => current ?? commits[0]?.sha ?? null)
-  }, [commits, pendingSelection?.sha, selectedSha])
+    setSelectedSha(candidateCommits[0]?.sha ?? null)
+  }, [commits, filteredCommits, pendingSelection?.sha, selectedSha, timelineSearch])
 
   useEffect(() => {
     rootRef.current?.focus()
@@ -134,7 +148,8 @@ export function CortexHistoryPanel({
 
   const handleKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {
-      if (!commits.length) {
+      const navigableCommits = timelineSearch.trim() ? filteredCommits : commits
+      if (!navigableCommits.length) {
         if (event.key === 'Escape') {
           event.preventDefault()
           onExitHistoryMode()
@@ -153,16 +168,16 @@ export function CortexHistoryPanel({
       }
 
       event.preventDefault()
-      const currentIndex = selectedSha ? commits.findIndex((commit) => commit.sha === selectedSha) : -1
+      const currentIndex = selectedSha ? navigableCommits.findIndex((commit) => commit.sha === selectedSha) : -1
       const delta = event.key === 'ArrowDown' ? 1 : -1
-      const fallbackIndex = event.key === 'ArrowDown' ? 0 : commits.length - 1
-      const nextIndex = currentIndex === -1 ? fallbackIndex : Math.min(Math.max(currentIndex + delta, 0), commits.length - 1)
-      const nextCommit = commits[nextIndex]
+      const fallbackIndex = event.key === 'ArrowDown' ? 0 : navigableCommits.length - 1
+      const nextIndex = currentIndex === -1 ? fallbackIndex : Math.min(Math.max(currentIndex + delta, 0), navigableCommits.length - 1)
+      const nextCommit = navigableCommits[nextIndex]
       if (nextCommit) {
         setSelectedSha(nextCommit.sha)
       }
     },
-    [commits, onExitHistoryMode, selectedSha],
+    [commits, filteredCommits, onExitHistoryMode, selectedSha, timelineSearch],
   )
 
   const fullViewerDisabled = !document?.gitPath || notInitialized
@@ -220,15 +235,29 @@ export function CortexHistoryPanel({
           />
 
           <CortexFileTimeline
-            commits={commits}
+            commits={filteredCommits}
             selectedSha={selectedSha}
             hasMore={fileLogQuery.data?.hasMore === true}
             isLoading={fileLogQuery.isLoading}
             isLoadingMore={isLoadingMore}
             notInitialized={notInitialized}
+            searchQuery={timelineSearch}
+            onSearchChange={setTimelineSearch}
             onSelectCommit={setSelectedSha}
             onLoadMore={handleLoadMore}
           />
+
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 w-full gap-1.5 text-[11px]"
+            disabled={!selectedCommit || notInitialized || !document?.absolutePath || !document?.gitPath}
+            onClick={() => setRestoreDialogOpen(true)}
+            data-testid="cortex-restore-version-button"
+          >
+            <RotateCcw className="size-3.5" />
+            Restore this version
+          </Button>
 
           <CortexInlineHistoryDiff
             wsUrl={wsUrl}
@@ -245,6 +274,17 @@ export function CortexHistoryPanel({
       </ScrollArea>
 
       <div className="border-t border-border/60 px-3 py-2">
+        <CortexRestoreVersionDialog
+          open={restoreDialogOpen}
+          wsUrl={wsUrl}
+          agentId={agentId}
+          absolutePath={document?.absolutePath ?? null}
+          gitPath={document?.gitPath ?? null}
+          documentLabel={document?.label ?? null}
+          selectedCommit={selectedCommit}
+          onOpenChange={setRestoreDialogOpen}
+          onRestoreSuccess={onRestoreSuccess}
+        />
         <Button
           variant="outline"
           size="sm"
@@ -264,4 +304,36 @@ export function CortexHistoryPanel({
       </div>
     </div>
   )
+}
+
+function matchesTimelineSearch(commit: GitLogEntry, rawQuery: string): boolean {
+  const query = rawQuery.trim().toLowerCase()
+  if (!query) {
+    return true
+  }
+
+  const metadata = commit.metadata
+  const sources = metadata?.sources?.length ? metadata.sources : metadata?.source ? [metadata.source] : []
+  const haystack = [
+    formatCommitSummary(commit),
+    commit.message,
+    sources.map(humanizeSource).join(' '),
+    sources.join(' '),
+    metadata?.profileId,
+    metadata?.sessionId,
+    metadata?.reviewRunId,
+    metadata?.paths?.join(' '),
+  ]
+    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    .join(' ')
+    .toLowerCase()
+
+  return haystack.includes(query)
+}
+
+function humanizeSource(source: string): string {
+  return source
+    .split('-')
+    .filter(Boolean)
+    .join(' ')
 }

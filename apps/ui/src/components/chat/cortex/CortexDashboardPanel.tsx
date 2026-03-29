@@ -7,6 +7,7 @@ import { resolveApiEndpoint } from '@/lib/api-endpoint'
 import type { ArtifactReference } from '@/lib/artifacts'
 import { cn } from '@/lib/utils'
 import { HelpTrigger } from '@/components/help/HelpTrigger'
+import type { DiffViewerInitialState } from '@/components/diff-viewer/DiffViewerDialog'
 import { SchedulesPanel } from '../SchedulesPanel'
 import { CortexDocumentSelector } from './CortexDocumentSelector'
 import { KnowledgeFileViewer } from './KnowledgeFileViewer'
@@ -19,6 +20,7 @@ interface CortexDashboardPanelProps {
   onClose: () => void
   onArtifactClick: (artifact: ArtifactReference) => void
   onOpenSession: (agentId: string) => void
+  onOpenDiffViewer?: (initialState: DiffViewerInitialState) => void
   requestedTab?: { tab: DashboardTab; nonce: number } | null
 }
 
@@ -67,6 +69,7 @@ export function CortexDashboardPanel({
   onClose,
   onArtifactClick,
   onOpenSession,
+  onOpenDiffViewer,
   requestedTab,
 }: CortexDashboardPanelProps) {
   const [activeTab, setActiveTab] = useState<DashboardTab>('knowledge')
@@ -282,9 +285,13 @@ export function CortexDashboardPanel({
                 <KnowledgeFileViewer
                   key={`knowledge-${selectedKnowledgeDocument?.id ?? 'none'}-${refreshKey}`}
                   wsUrl={wsUrl}
+                  documents={documents}
                   agentId={managerId}
                   document={selectedKnowledgeDocument}
                   onArtifactClick={onArtifactClick}
+                  onOpenSession={onOpenSession}
+                  onSelectDocument={handleSelectDocument}
+                  onOpenDiffViewer={onOpenDiffViewer}
                 />
               </div>
             </div>
@@ -296,9 +303,13 @@ export function CortexDashboardPanel({
             <KnowledgeFileViewer
               key={`notes-${notesDocument?.id ?? 'none'}-${refreshKey}`}
               wsUrl={wsUrl}
+              documents={documents}
               agentId={managerId}
               document={notesDocument}
               onArtifactClick={onArtifactClick}
+              onOpenSession={onOpenSession}
+              onSelectDocument={handleSelectDocument}
+              onOpenDiffViewer={onOpenDiffViewer}
             />
           ) : null}
         </TabsContent>

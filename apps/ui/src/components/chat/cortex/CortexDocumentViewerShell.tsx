@@ -8,10 +8,11 @@ import { Textarea } from '@/components/ui/textarea'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
 import { cn } from '@/lib/utils'
 import { MarkdownMessage } from '../MarkdownMessage'
+import { CortexSectionProvenance } from './CortexSectionProvenance'
 import type { DiffViewerInitialState } from '@/components/diff-viewer/DiffViewerDialog'
 import { CortexDocumentMetaStrip } from './CortexDocumentMetaStrip'
 import { CortexHistoryPanel } from './CortexHistoryPanel'
-import { useCortexFileReviewHistory, useGitFileLog } from './use-cortex-history'
+import { useCortexFileReviewHistory, useGitFileLog, useGitFileSectionProvenance } from './use-cortex-history'
 
 export type CortexDocumentDescriptor = Pick<
   CortexDocumentEntry,
@@ -121,6 +122,7 @@ export function CortexDocumentViewerShell({
 
   const fileLogQuery = useGitFileLog(wsUrl, agentId, document?.gitPath ?? null, 1, 0)
   const reviewHistoryQuery = useCortexFileReviewHistory(wsUrl, document?.gitPath ?? null, 1)
+  const sectionProvenanceQuery = useGitFileSectionProvenance(wsUrl, agentId, document?.gitPath ?? null)
 
   const latestCommit = fileLogQuery.data?.commits[0] ?? null
   const latestRun = reviewHistoryQuery.data?.latestRun ?? null
@@ -228,7 +230,8 @@ export function CortexDocumentViewerShell({
     fetchFile(abortController.signal)
     fileLogQuery.refetch()
     reviewHistoryQuery.refetch()
-  }, [fetchFile, fileLogQuery, reviewHistoryQuery])
+    sectionProvenanceQuery.refetch()
+  }, [fetchFile, fileLogQuery, reviewHistoryQuery, sectionProvenanceQuery])
 
   const handleStartEditing = useCallback(() => {
     setViewerMode('content')
@@ -257,6 +260,7 @@ export function CortexDocumentViewerShell({
         setViewerState('rendered')
         fileLogQuery.refetch()
         reviewHistoryQuery.refetch()
+        sectionProvenanceQuery.refetch()
       })
       .catch((saveError: unknown) => {
         if (abortController.signal.aborted) return
@@ -264,7 +268,7 @@ export function CortexDocumentViewerShell({
         setError(message)
         setViewerState('editing')
       })
-  }, [document?.absolutePath, editContent, fileLogQuery, reviewHistoryQuery, wsUrl])
+  }, [document?.absolutePath, editContent, fileLogQuery, reviewHistoryQuery, sectionProvenanceQuery, wsUrl])
 
   const enterHistoryMode = useCallback(
     (run?: CortexFileReviewHistoryEntry | null) => {
@@ -301,6 +305,35 @@ export function CortexDocumentViewerShell({
 
     onOpenSession?.(latestRun.sessionAgentId)
   }, [canOpenLatestRunSession, latestRun?.sessionAgentId, onOpenSession])
+
+  const sectionProvenanceByHeading = useMemo(() => {
+    const grouped = new Map<string, Array<NonNullable<typeof sectionProvenanceQuery.data>['sections'][number]>>()
+    for (const section of sectionProvenanceQuery.data?.sections ?? []) {
+      const key = `${section.level}:${normalizeHeadingKey(section.heading)}`
+      const existing = grouped.get(key) ?? []
+      existing.push(section)
+      grouped.set(key, existing)
+    }
+    return grouped
+  }, [sectionProvenanceQuery.data?.sections])
+
+  const renderSectionProvenance = useCallback(
+    ({ level, text, index }: { level: 1 | 2 | 3 | 4 | 5 | 6; text: string; index: number }) => {
+      const key = `${level}:${normalizeHeadingKey(text)}`
+      const section = sectionProvenanceByHeading.get(key)?.[index]
+      if (!section || !section.lastModifiedAt) {
+        return null
+      }
+
+      return (
+        <CortexSectionProvenance
+          provenance={section}
+          testId={buildSectionProvenanceTestId(text, index)}
+        />
+      )
+    },
+    [sectionProvenanceByHeading],
+  )
 
   const label = document?.label ?? 'Document unavailable'
   const description = document?.description ?? 'This Cortex document is not available.'
@@ -462,6 +495,7 @@ export function CortexDocumentViewerShell({
             canOpenSession={canOpenSession}
             onSelectDocument={onSelectDocument}
             onOpenDiffViewer={onOpenDiffViewer}
+            onRestoreSuccess={handleRefresh}
           />
         ) : viewerState === 'editing' || viewerState === 'saving' ? (
           <Textarea
@@ -493,6 +527,7 @@ export function CortexDocumentViewerShell({
                 variant="document"
                 artifactSourceAgentId={agentId}
                 onArtifactClick={onArtifactClick}
+                renderHeadingAdornment={renderSectionProvenance}
               />
             </div>
           </ScrollArea>
@@ -531,4 +566,18 @@ function formatTimestamp(isoString: string): string {
     dateStyle: 'medium',
     timeStyle: 'short',
   }).format(new Date(parsed))
+}
+
+function normalizeHeadingKey(value: string): string {
+  return value.trim().replace(/\s+/g, ' ').toLowerCase()
+}
+
+function buildSectionProvenanceTestId(heading: string, index: number): string {
+  const slug = heading
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+
+  return index > 0 ? `cortex-section-provenance-${slug || 'section'}-${index + 1}` : `cortex-section-provenance-${slug || 'section'}`
 }

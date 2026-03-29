@@ -1,4 +1,8 @@
-import type { CortexFileReviewHistoryResult, GitFileLogResult } from '@forge/protocol'
+import type {
+  CortexFileReviewHistoryResult,
+  GitFileLogResult,
+  GitFileSectionProvenanceResult,
+} from '@forge/protocol'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
 
@@ -137,4 +141,33 @@ export function useCortexFileReviewHistory(
   )
 
   return useEndpointQuery<CortexFileReviewHistoryResult>(!!normalizedPath, queryKey, fetcher)
+}
+
+export function useGitFileSectionProvenance(
+  wsUrl: string,
+  agentId: string | null | undefined,
+  file: string | null | undefined,
+): QueryResult<GitFileSectionProvenanceResult> {
+  const normalizedAgentId = agentId?.trim() || null
+  const normalizedFile = file?.trim() || null
+  const queryKey = useMemo(
+    () => JSON.stringify(['cortex', 'git-file-section-provenance', wsUrl, normalizedAgentId, normalizedFile]),
+    [wsUrl, normalizedAgentId, normalizedFile],
+  )
+  const fetcher = useCallback(
+    (signal: AbortSignal) =>
+      fetchJson<GitFileSectionProvenanceResult>(
+        wsUrl,
+        '/api/git/file-section-provenance',
+        {
+          agentId: normalizedAgentId!,
+          repoTarget: 'versioning',
+          file: normalizedFile!,
+        },
+        signal,
+      ),
+    [wsUrl, normalizedAgentId, normalizedFile],
+  )
+
+  return useEndpointQuery<GitFileSectionProvenanceResult>(!!normalizedAgentId && !!normalizedFile, queryKey, fetcher)
 }

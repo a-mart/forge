@@ -1,11 +1,16 @@
 /** @vitest-environment jsdom */
 
 import { fireEvent, getByRole, getByTestId, queryByTestId, waitFor } from '@testing-library/dom'
-import { createElement } from 'react'
+import { createElement, Fragment, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { CortexDocumentEntry, CortexFileReviewHistoryResult, GitFileLogResult } from '@forge/protocol'
+import type {
+  CortexDocumentEntry,
+  CortexFileReviewHistoryResult,
+  GitFileLogResult,
+  GitFileSectionProvenanceResult,
+} from '@forge/protocol'
 import { KnowledgeFileViewer } from './KnowledgeFileViewer'
 
 const historyState = vi.hoisted(() => ({
@@ -17,6 +22,12 @@ const historyState = vi.hoisted(() => ({
   } | null,
   reviewHistory: null as {
     data: CortexFileReviewHistoryResult | null
+    isLoading: boolean
+    error: string | null
+    refetch: ReturnType<typeof vi.fn>
+  } | null,
+  sectionProvenance: null as {
+    data: GitFileSectionProvenanceResult | null
     isLoading: boolean
     error: string | null
     refetch: ReturnType<typeof vi.fn>
@@ -64,10 +75,49 @@ vi.mock('./use-cortex-history', () => ({
       error: null,
       refetch: vi.fn(),
     },
+  useGitFileSectionProvenance: () =>
+    historyState.sectionProvenance ?? {
+      data: null,
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    },
 }))
 
 vi.mock('../MarkdownMessage', () => ({
-  MarkdownMessage: ({ content }: { content: string }) => createElement('div', { 'data-testid': 'markdown-message' }, content),
+  MarkdownMessage: ({
+    content,
+    renderHeadingAdornment,
+  }: {
+    content: string
+    renderHeadingAdornment?: (heading: { level: 1 | 2 | 3 | 4; text: string; index: number }) => ReactNode
+  }) => {
+    const counts = new Map<string, number>()
+    const headingNodes = content
+      .split(/\r?\n/)
+      .map((line) => /^(#{1,4})\s+(.+)$/.exec(line))
+      .filter((match): match is RegExpExecArray => match !== null)
+      .map((match) => {
+        const level = match[1].length as 1 | 2 | 3 | 4
+        const text = match[2].trim()
+        const key = `${level}:${text}`
+        const index = counts.get(key) ?? 0
+        counts.set(key, index + 1)
+        return createElement(
+          'div',
+          { key: `${key}:${index}`, 'data-heading-level': String(level) },
+          createElement('span', null, text),
+          renderHeadingAdornment ? renderHeadingAdornment({ level, text, index }) : null,
+        )
+      })
+
+    return createElement(
+      Fragment,
+      null,
+      createElement('div', { 'data-testid': 'markdown-message' }, content),
+      createElement('div', { 'data-testid': 'markdown-headings' }, headingNodes),
+    )
+  },
 }))
 
 vi.mock('@/components/diff-viewer/use-diff-queries', () => ({
@@ -119,6 +169,12 @@ beforeEach(() => {
     error: null,
     refetch: vi.fn(),
   }
+  historyState.sectionProvenance = {
+    data: buildSectionProvenanceResult(),
+    isLoading: false,
+    error: null,
+    refetch: vi.fn(),
+  }
   globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
     const method = init?.method ?? 'GET'
@@ -127,7 +183,10 @@ beforeEach(() => {
       const body = JSON.parse(String(init?.body ?? '{}')) as { path?: string }
       return {
         ok: true,
-        json: async () => ({ path: body.path ?? DOCUMENT.absolutePath, content: '# Common Knowledge\nBody\n' }),
+        json: async () => ({
+          path: body.path ?? DOCUMENT.absolutePath,
+          content: '# Common Knowledge\n\n## Workflow Preferences\nBody\n',
+        }),
       } as Response
     }
 
@@ -245,6 +304,35 @@ function buildReviewHistoryResult(overrides?: Partial<CortexFileReviewHistoryRes
   }
 }
 
+function buildSectionProvenanceResult(overrides?: Partial<GitFileSectionProvenanceResult>): GitFileSectionProvenanceResult {
+  return {
+    file: DOCUMENT.gitPath,
+    sections: [
+      {
+        heading: 'Common Knowledge',
+        level: 1,
+        lineStart: 1,
+        lineEnd: 2,
+        lastModifiedSha: 'abcdef1234567890',
+        lastModifiedAt: '2026-03-29T12:00:00.000Z',
+        lastModifiedSummary: 'Knowledge update',
+        reviewRunId: null,
+      },
+      {
+        heading: 'Workflow Preferences',
+        level: 2,
+        lineStart: 3,
+        lineEnd: 5,
+        lastModifiedSha: 'abcdef1234567890',
+        lastModifiedAt: '2026-03-29T12:00:00.000Z',
+        lastModifiedSummary: 'Knowledge update',
+        reviewRunId: 'review-1',
+      },
+    ],
+    ...overrides,
+  }
+}
+
 describe('KnowledgeFileViewer', () => {
   it('toggles from content mode into the history layout', async () => {
     renderViewer()
@@ -266,6 +354,15 @@ describe('KnowledgeFileViewer', () => {
     expect(metaStrip.textContent).toContain('Modified')
     expect(metaStrip.textContent).toContain('5 edits')
     expect(metaStrip.textContent).toContain('active today')
+  })
+
+  it('renders section provenance badges for markdown headings in content mode', async () => {
+    renderViewer()
+    await flushPromises()
+
+    const badge = getByTestId(container, 'cortex-section-provenance-workflow-preferences')
+    expect(badge.textContent).toContain('Mar')
+    expect(badge.textContent).toContain('review-1')
   })
 
   it('shows the recent change banner only when the latest review touched the current file', async () => {
@@ -352,6 +449,12 @@ describe('KnowledgeFileViewer', () => {
     }
     historyState.reviewHistory = {
       data: buildReviewHistoryResult({ runs: [], latestRun: null }),
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    }
+    historyState.sectionProvenance = {
+      data: buildSectionProvenanceResult({ sections: [] }),
       isLoading: false,
       error: null,
       refetch: vi.fn(),

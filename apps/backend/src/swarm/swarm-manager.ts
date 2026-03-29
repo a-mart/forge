@@ -99,6 +99,9 @@ import {
   extractMessageStopReason,
   extractMessageText,
   extractRole,
+  hasMessageErrorMessageField,
+  isAbortLikeErrorMessage,
+  normalizeProviderErrorMessage
 } from "./message-utils.js";
 import { classifyRuntimeCapacityError } from "./runtime-utils.js";
 import {
@@ -816,6 +819,8 @@ const STALL_DETAILED_REPORT_INTERVAL_MS = 10 * 60_000;
 const STALL_KILL_AFTER_NUDGE_MS = 25 * 60_000;
 const RUNTIME_SHUTDOWN_TIMEOUT_MS = 1_500;
 const RUNTIME_SHUTDOWN_DRAIN_TIMEOUT_MS = 500;
+const PENDING_MANUAL_MANAGER_STOP_NOTICE_TTL_MS = 15_000;
+const MANUAL_MANAGER_STOP_NOTICE = "Session stopped.";
 const MODEL_CAPACITY_BLOCK_DEFAULT_MS = 10 * 60_000;
 const MODEL_CAPACITY_BLOCK_MIN_MS = 5_000;
 const MODEL_CAPACITY_BLOCK_MAX_MS = 7 * 24 * 60 * 60 * 1_000;
@@ -1130,6 +1135,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly runtimeExtensionSnapshotsByAgentId = new Map<string, AgentRuntimeExtensionSnapshot>();
   private nextRuntimeToken = 1;
   private readonly pendingManagerRuntimeRecycleAgentIds = new Set<string>();
+  private readonly pendingManualManagerStopNoticeTimersByAgentId = new Map<string, NodeJS.Timeout>();
   private readonly pendingChoiceRequests = new Map<string, {
     choiceId: string;
     agentId: string;
@@ -2869,6 +2875,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     if (!isNonRunningAgentStatus(target.status)) {
       const managerRuntime = this.runtimes.get(target.agentId);
       if (managerRuntime) {
+        if (target.status === "streaming") {
+          this.markPendingManualManagerStopNotice(target.agentId);
+        }
         const shutdown = await this.runRuntimeShutdown(target, "stopInFlight", { abort: true });
         this.detachRuntime(target.agentId, shutdown.runtimeToken);
       }
@@ -3616,6 +3625,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     const runtime = this.runtimes.get(agentId);
     if (runtime) {
+      if (!options.deleteWorkers && descriptor.status === "streaming") {
+        this.markPendingManualManagerStopNotice(agentId);
+      }
       const shutdown = await this.runRuntimeShutdown(descriptor, "terminate", { abort: true });
       this.detachRuntime(agentId, shutdown.runtimeToken);
     }
@@ -6527,6 +6539,68 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
   }
 
+  private markPendingManualManagerStopNotice(agentId: string): void {
+    this.clearPendingManualManagerStopNotice(agentId);
+
+    const timer = setTimeout(() => {
+      this.pendingManualManagerStopNoticeTimersByAgentId.delete(agentId);
+    }, PENDING_MANUAL_MANAGER_STOP_NOTICE_TTL_MS);
+    timer.unref?.();
+
+    this.pendingManualManagerStopNoticeTimersByAgentId.set(agentId, timer);
+  }
+
+  private clearPendingManualManagerStopNotice(agentId: string): void {
+    const timer = this.pendingManualManagerStopNoticeTimersByAgentId.get(agentId);
+    if (!timer) {
+      return;
+    }
+
+    clearTimeout(timer);
+    this.pendingManualManagerStopNoticeTimersByAgentId.delete(agentId);
+  }
+
+  private consumePendingManualManagerStopNoticeIfApplicable(agentId: string, event: RuntimeSessionEvent): boolean {
+    if (!this.pendingManualManagerStopNoticeTimersByAgentId.has(agentId) || event.type !== "message_end") {
+      return false;
+    }
+
+    this.clearPendingManualManagerStopNotice(agentId);
+
+    if (extractRole(event.message) !== "assistant") {
+      return false;
+    }
+
+    const stopReason = extractMessageStopReason(event.message);
+    const hasStructuredErrorMessage = hasMessageErrorMessageField(event.message);
+    if (stopReason !== "error" && !hasStructuredErrorMessage) {
+      return false;
+    }
+
+    const normalizedErrorMessage = normalizeProviderErrorMessage(
+      extractMessageErrorMessage(event.message) ?? extractMessageText(event.message)
+    );
+
+    return isAbortLikeErrorMessage(normalizedErrorMessage);
+  }
+
+  private stripManagerAbortErrorFromEvent(event: RuntimeSessionEvent): RuntimeSessionEvent {
+    if (event.type !== "message_end") {
+      return event;
+    }
+
+    const messageWithMetadata = event.message as typeof event.message & { errorMessage?: unknown; stopReason?: unknown };
+    const { errorMessage: _errorMessage, ...messageWithoutError } = messageWithMetadata;
+
+    return {
+      ...event,
+      message: {
+        ...messageWithoutError,
+        stopReason: "stop"
+      }
+    };
+  }
+
   private async handleRuntimeSessionEvent(
     runtimeTokenOrAgentId: number | string,
     agentIdOrEvent: string | RuntimeSessionEvent,
@@ -6546,23 +6620,38 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     if (runtimeToken !== undefined && !this.isCurrentRuntimeToken(agentId, runtimeToken)) {
       return;
     }
-    this.captureConversationEventFromRuntime(agentId, event);
-    this.maybeRecordVersionedToolMutation(agentId, event);
 
     const descriptor = this.descriptors.get(agentId);
+    const shouldSurfaceManualStopNotice =
+      descriptor?.role === "manager" && this.consumePendingManualManagerStopNoticeIfApplicable(agentId, event);
+    const effectiveEvent = shouldSurfaceManualStopNotice ? this.stripManagerAbortErrorFromEvent(event) : event;
+
+    this.captureConversationEventFromRuntime(agentId, effectiveEvent);
+    if (shouldSurfaceManualStopNotice) {
+      this.conversationProjector.emitConversationMessage({
+        type: "conversation_message",
+        agentId,
+        role: "system",
+        text: MANUAL_MANAGER_STOP_NOTICE,
+        timestamp: this.now(),
+        source: "system"
+      });
+    }
+    this.maybeRecordVersionedToolMutation(agentId, effectiveEvent);
+
     if (descriptor?.role === "worker") {
-      this.trackWorkerStallProgressEvent(descriptor.agentId, event);
-      this.updateWorkerActivity(descriptor.agentId, event);
+      this.trackWorkerStallProgressEvent(descriptor.agentId, effectiveEvent);
+      this.updateWorkerActivity(descriptor.agentId, effectiveEvent);
     }
 
     if (
       descriptor?.role === "worker" &&
-      event.type === "message_end" &&
-      extractMessageStopReason(event.message) === "error"
+      effectiveEvent.type === "message_end" &&
+      extractMessageStopReason(effectiveEvent.message) === "error"
     ) {
       const errorText =
-        extractMessageErrorMessage(event.message) ??
-        extractMessageText(event.message) ??
+        extractMessageErrorMessage(effectiveEvent.message) ??
+        extractMessageText(effectiveEvent.message) ??
         "Unknown runtime error";
       this.maybeRecordModelCapacityBlock(agentId, descriptor, {
         phase: "prompt_start",
@@ -6576,7 +6665,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return;
     }
 
-    switch (event.type) {
+    switch (effectiveEvent.type) {
       case "agent_start":
       case "agent_end":
       case "turn_start":
@@ -6585,32 +6674,32 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
       case "turn_end":
         this.logDebug("manager:event:turn_end", {
-          toolResults: event.toolResults.length
+          toolResults: effectiveEvent.toolResults.length
         });
         return;
 
       case "tool_execution_start":
         this.logDebug("manager:tool:start", {
-          toolName: event.toolName,
-          toolCallId: event.toolCallId,
-          args: previewForLog(safeJson(event.args), 240)
+          toolName: effectiveEvent.toolName,
+          toolCallId: effectiveEvent.toolCallId,
+          args: previewForLog(safeJson(effectiveEvent.args), 240)
         });
         return;
 
       case "tool_execution_end":
         this.logDebug("manager:tool:end", {
-          toolName: event.toolName,
-          toolCallId: event.toolCallId,
-          isError: event.isError,
-          result: previewForLog(safeJson(event.result), 240)
+          toolName: effectiveEvent.toolName,
+          toolCallId: effectiveEvent.toolCallId,
+          isError: effectiveEvent.isError,
+          result: previewForLog(safeJson(effectiveEvent.result), 240)
         });
         return;
 
       case "message_start":
       case "message_end":
-        this.logDebug(`manager:event:${event.type}`, {
-          role: extractRole(event.message),
-          textPreview: previewForLog(extractMessageText(event.message) ?? "")
+        this.logDebug(`manager:event:${effectiveEvent.type}`, {
+          role: extractRole(effectiveEvent.message),
+          textPreview: previewForLog(extractMessageText(effectiveEvent.message) ?? "")
         });
         return;
 

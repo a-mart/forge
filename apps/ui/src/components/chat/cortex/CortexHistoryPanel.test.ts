@@ -253,6 +253,7 @@ function buildFileLogPage(overrides?: Partial<GitFileLogResult>): GitFileLogResu
           reviewRunId: 'review-1',
           paths: [DOCUMENTS[0].gitPath, DOCUMENTS[1].gitPath],
           profileId: 'alpha',
+          sessionId: 'alpha--s1',
         },
       },
       {
@@ -319,6 +320,7 @@ function buildCommitDetail(overrides?: Partial<GitCommitDetail>): GitCommitDetai
       reviewRunId: 'review-1',
       paths: [DOCUMENTS[0].gitPath, DOCUMENTS[1].gitPath],
       profileId: 'alpha',
+      sessionId: 'alpha--s1',
     },
     ...overrides,
   }
@@ -358,6 +360,33 @@ describe('CortexHistoryPanel', () => {
     await flushPromises()
 
     expect(timeline.textContent).toContain('cccccccc')
+  })
+
+  it('filters timeline entries by summary, session, and source metadata', async () => {
+    renderPanel()
+    await flushPromises()
+
+    const searchInput = getByTestId(container, 'cortex-file-timeline-search') as HTMLInputElement
+    const timeline = getByTestId(container, 'cortex-file-timeline')
+
+    fireEvent.change(searchInput, { target: { value: 'updated profile memory' } })
+    await flushPromises()
+    expect(timeline.textContent).toContain('Updated profile memory for alpha (session alpha--s1)')
+    expect(timeline.textContent).not.toContain('Earlier change')
+
+    fireEvent.change(searchInput, { target: { value: 'alpha--s1' } })
+    await flushPromises()
+    expect(timeline.textContent).toContain('Updated profile memory for alpha (session alpha--s1)')
+    expect(timeline.textContent).not.toContain('Earlier change')
+
+    fireEvent.change(searchInput, { target: { value: 'agent edit tool' } })
+    await flushPromises()
+    expect(timeline.textContent).toContain('bbbbbbbb')
+    expect(timeline.textContent).toContain('Updated common knowledge')
+    expect(timeline.textContent).toContain('Edit tool')
+    expect(timeline.textContent).not.toContain('Updated profile memory for alpha (session alpha--s1)')
+
+    expect(getByRole(container, 'button', { name: /load more for search completeness/i })).toBeTruthy()
   })
 
   it('supports arrow-key navigation and Escape to exit history mode', async () => {

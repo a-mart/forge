@@ -65,6 +65,19 @@ export function isStrictContextOverflowMessage(message: string | undefined): boo
   return /\bprompt is too long\b/i.test(message) || /\bmaximum context length\b/i.test(message);
 }
 
+export function isAbortLikeErrorMessage(message: string | undefined): boolean {
+  if (!message) {
+    return false;
+  }
+
+  return (
+    /\brequest was aborted\b/i.test(message) ||
+    /\boperation was aborted\b/i.test(message) ||
+    /\baborterror\b/i.test(message) ||
+    /^aborted\.?$/i.test(message)
+  );
+}
+
 export function extractRole(message: unknown): string | undefined {
   if (!message || typeof message !== "object") return undefined;
   const maybeRole = (message as { role?: unknown }).role;

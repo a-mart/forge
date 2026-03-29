@@ -1,4 +1,4 @@
-import { isValidElement, memo, useCallback, useMemo, useState, type ReactNode } from 'react'
+import { createElement, isValidElement, memo, useCallback, useMemo, useState, type ReactNode } from 'react'
 import { Check, ChevronRight, Copy, FileCode2, FileText, ZoomIn } from 'lucide-react'
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -27,6 +27,7 @@ interface MarkdownMessageProps {
   onArtifactClick?: (artifact: ArtifactReference) => void
   artifactSourceAgentId?: string | null
   enableMermaid?: boolean
+  renderHeadingAdornment?: (args: { level: 1 | 2 | 3 | 4 | 5 | 6; text: string; index: number }) => ReactNode
 }
 
 type ZoomTarget = {
@@ -41,10 +42,25 @@ export const MarkdownMessage = memo(function MarkdownMessage({
   onArtifactClick,
   artifactSourceAgentId,
   enableMermaid = false,
+  renderHeadingAdornment,
 }: MarkdownMessageProps) {
   const isDocument = variant === 'document'
   const normalizedContent = useMemo(() => normalizeArtifactShortcodes(content), [content])
   const [zoomTarget, setZoomTarget] = useState<ZoomTarget | null>(null)
+  const headingInstanceCounts = new Map<string, number>()
+
+  const renderHeading = useCallback(
+    (level: 1 | 2 | 3 | 4 | 5 | 6, children: ReactNode, className: string) => {
+      const text = flattenText(children).trim()
+      const key = `${level}:${normalizeHeadingText(text)}`
+      const index = headingInstanceCounts.get(key) ?? 0
+      headingInstanceCounts.set(key, index + 1)
+      const adornment = text ? renderHeadingAdornment?.({ level, text, index }) : null
+
+      return createHeadingElement(level, className, children, adornment)
+    },
+    [headingInstanceCounts, renderHeadingAdornment],
+  )
 
   return (
     <>
@@ -68,55 +84,47 @@ export const MarkdownMessage = memo(function MarkdownMessage({
               )
             },
             h1({ children }) {
-              return (
-                <h1
-                  className={cn(
-                    isDocument
-                      ? 'mb-4 mt-8 border-b border-border/50 pb-3 text-2xl font-bold tracking-tight text-foreground first:mt-0'
-                      : 'mb-2 text-base font-semibold',
-                  )}
-                >
-                  {children}
-                </h1>
+              return renderHeading(
+                1,
+                children,
+                cn(
+                  isDocument
+                    ? 'mb-4 mt-8 border-b border-border/50 pb-3 text-2xl font-bold tracking-tight text-foreground first:mt-0'
+                    : 'mb-2 text-base font-semibold',
+                ),
               )
             },
             h2({ children }) {
-              return (
-                <h2
-                  className={cn(
-                    isDocument
-                      ? 'mb-3 mt-7 border-b border-border/40 pb-2 text-xl font-semibold tracking-tight text-foreground first:mt-0'
-                      : 'mb-2 text-[15px] font-semibold',
-                  )}
-                >
-                  {children}
-                </h2>
+              return renderHeading(
+                2,
+                children,
+                cn(
+                  isDocument
+                    ? 'mb-3 mt-7 border-b border-border/40 pb-2 text-xl font-semibold tracking-tight text-foreground first:mt-0'
+                    : 'mb-2 text-[15px] font-semibold',
+                ),
               )
             },
             h3({ children }) {
-              return (
-                <h3
-                  className={cn(
-                    isDocument
-                      ? 'mb-2 mt-6 text-lg font-semibold tracking-tight text-foreground first:mt-0'
-                      : 'mb-2 text-sm font-semibold',
-                  )}
-                >
-                  {children}
-                </h3>
+              return renderHeading(
+                3,
+                children,
+                cn(
+                  isDocument
+                    ? 'mb-2 mt-6 text-lg font-semibold tracking-tight text-foreground first:mt-0'
+                    : 'mb-2 text-sm font-semibold',
+                ),
               )
             },
             h4({ children }) {
-              return (
-                <h4
-                  className={cn(
-                    isDocument
-                      ? 'mb-2 mt-5 text-base font-semibold text-foreground first:mt-0'
-                      : 'mb-2 text-sm font-semibold',
-                  )}
-                >
-                  {children}
-                </h4>
+              return renderHeading(
+                4,
+                children,
+                cn(
+                  isDocument
+                    ? 'mb-2 mt-5 text-base font-semibold text-foreground first:mt-0'
+                    : 'mb-2 text-sm font-semibold',
+                ),
               )
             },
             ul({ children }) {
@@ -366,6 +374,25 @@ export const MarkdownMessage = memo(function MarkdownMessage({
     </>
   )
 })
+
+function createHeadingElement(
+  level: 1 | 2 | 3 | 4 | 5 | 6,
+  className: string,
+  children: ReactNode,
+  adornment: ReactNode,
+) {
+  const tag = `h${level}` as const
+  return createElement(
+    tag,
+    { className },
+    <span>{children}</span>,
+    adornment,
+  )
+}
+
+function normalizeHeadingText(value: string): string {
+  return value.trim().replace(/\s+/g, ' ').toLowerCase()
+}
 
 function CodeBlockCopyButton({ code }: { code: string }) {
   const [copied, setCopied] = useState(false)

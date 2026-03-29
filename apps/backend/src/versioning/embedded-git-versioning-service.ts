@@ -288,6 +288,11 @@ export class EmbeddedGitVersioningService implements VersioningMutationSink {
             ? `knowledge(${uniqueProfiles[0]}): update ${stagedPaths.length === 1 ? "tracked file" : fileCountLabel}`
             : `versioning: update ${fileCountLabel}`;
           break;
+        case "api-write-file-restore":
+          subject = uniqueProfiles.length === 1
+            ? `knowledge(${uniqueProfiles[0]}): restore ${stagedPaths.length === 1 ? "tracked file" : fileCountLabel}`
+            : `versioning: restore ${fileCountLabel}`;
+          break;
         case "reconcile":
           subject = "versioning: reconcile tracked files";
           break;

@@ -1,6 +1,7 @@
 import type { GitLogEntry } from '@forge/protocol'
-import { History, Loader2 } from 'lucide-react'
+import { History, Loader2, Search } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import { CommitMetadataBadges } from '@/components/diff-viewer/CommitMetadataBadges'
 import { formatCommitSummary } from '@/components/diff-viewer/formatCommitSummary'
@@ -12,6 +13,8 @@ interface CortexFileTimelineProps {
   isLoading: boolean
   isLoadingMore: boolean
   notInitialized?: boolean
+  searchQuery: string
+  onSearchChange: (value: string) => void
   onSelectCommit: (sha: string) => void
   onLoadMore: () => void
 }
@@ -23,9 +26,13 @@ export function CortexFileTimeline({
   isLoading,
   isLoadingMore,
   notInitialized = false,
+  searchQuery,
+  onSearchChange,
   onSelectCommit,
   onLoadMore,
 }: CortexFileTimelineProps) {
+  const hasActiveSearch = searchQuery.trim().length > 0
+
   return (
     <section className="rounded-lg border border-border/60 bg-card/70" data-testid="cortex-file-timeline">
       <div className="border-b border-border/60 px-3 py-2">
@@ -34,17 +41,29 @@ export function CortexFileTimeline({
           Timeline
         </div>
         <p className="mt-1 text-[10px] text-muted-foreground">Arrow keys move through commits. Esc returns to content mode.</p>
+        <div className="relative mt-2">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={searchQuery}
+            onChange={(event) => onSearchChange(event.target.value)}
+            placeholder="Search loaded history"
+            className="h-8 border-border/60 bg-background/70 pl-8 text-[11px]"
+            data-testid="cortex-file-timeline-search"
+          />
+        </div>
       </div>
 
       {notInitialized ? (
         <div className="px-3 py-4 text-[11px] text-muted-foreground">Initialize the versioning repo to unlock file-local history.</div>
-      ) : isLoading && commits.length === 0 ? (
+      ) : isLoading && commits.length === 0 && !hasActiveSearch ? (
         <div className="flex items-center gap-2 px-3 py-4 text-[11px] text-muted-foreground">
           <Loader2 className="size-3.5 animate-spin" />
           Loading commit history…
         </div>
       ) : commits.length === 0 ? (
-        <div className="px-3 py-4 text-[11px] text-muted-foreground">No commits found for this file yet.</div>
+        <div className="px-3 py-4 text-[11px] text-muted-foreground">
+          {hasActiveSearch ? 'No loaded commits match this search yet.' : 'No commits found for this file yet.'}
+        </div>
       ) : (
         <>
           <div className="space-y-1 p-2">
@@ -89,7 +108,7 @@ export function CortexFileTimeline({
                     Loading…
                   </>
                 ) : (
-                  'Load more'
+                  hasActiveSearch ? 'Load more for search completeness' : 'Load more'
                 )}
               </Button>
             </div>
