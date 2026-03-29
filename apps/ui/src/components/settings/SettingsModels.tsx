@@ -96,7 +96,7 @@ function OverrideBadge({ active }: { active: boolean }) {
 function ModelCard({
   wsUrl,
   model,
-  familyDisplayName,
+  modelId,
   override,
   expanded,
   onToggle,
@@ -104,7 +104,7 @@ function ModelCard({
 }: {
   wsUrl: string
   model: ForgeModelDefinition
-  familyDisplayName: string
+  modelId: string
   override?: ModelOverrideEntry
   expanded: boolean
   onToggle: () => void
@@ -191,7 +191,7 @@ function ModelCard({
           <div className="flex flex-wrap items-center gap-2">
             <span className="truncate text-sm font-medium text-foreground">{model.displayName}</span>
             <Badge variant="outline" className="text-[10px] uppercase tracking-wide text-muted-foreground">
-              {familyDisplayName}
+              {modelId}
             </Badge>
             {enabled ? null : <Badge variant="destructive">Disabled</Badge>}
             {hasAnyOverride ? <OverrideBadge active /> : null}
@@ -418,9 +418,6 @@ export function SettingsModels({ wsUrl, modelConfigChangeKey }: SettingsModelsPr
 
             <div className="space-y-2">
               {group.models.map((model) => {
-                const familyDisplayName = FORGE_MODEL_CATALOG.families[
-                  model.familyId as keyof typeof FORGE_MODEL_CATALOG.families
-                ]?.displayName ?? model.familyId
                 const override = overrides[model.modelId]
 
                 return (
@@ -428,7 +425,7 @@ export function SettingsModels({ wsUrl, modelConfigChangeKey }: SettingsModelsPr
                     key={model.modelId}
                     wsUrl={wsUrl}
                     model={model}
-                    familyDisplayName={familyDisplayName}
+                    modelId={model.modelId}
                     override={override}
                     expanded={expandedModelIds[model.modelId] === true}
                     onToggle={() =>
