@@ -424,6 +424,25 @@ if (!hasSingleInstanceLock) {
   // the handler registered so the renderer doesn't throw on send.
   ipcMain.on('update-title-bar-overlay', () => {})
 
+  ipcMain.handle('reveal-in-folder', (_event, filePath: string): { success: boolean; error?: string } => {
+    if (typeof filePath !== 'string' || filePath.length === 0) {
+      return { success: false, error: 'Invalid file path' }
+    }
+
+    const normalized = path.normalize(filePath)
+
+    if (!path.isAbsolute(normalized)) {
+      return { success: false, error: 'Path must be absolute' }
+    }
+
+    if (!existsSync(normalized)) {
+      return { success: false, error: 'File not found' }
+    }
+
+    shell.showItemInFolder(normalized)
+    return { success: true }
+  })
+
   ipcMain.handle('check-for-updates', async () => {
     await checkForUpdatesManually(mainWindow)
   })

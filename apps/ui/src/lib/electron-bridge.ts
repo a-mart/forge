@@ -45,6 +45,8 @@ export interface ElectronBridge {
   setBetaChannel?(enabled: boolean): Promise<void>
   /** Subscribe to update status events from the main process. Returns an unsubscribe function. */
   onUpdateStatus?(callback: (status: UpdateStatus) => void): () => void
+  /** Reveal a file in the native file manager (Finder / File Explorer). */
+  revealInFolder?(filePath: string): Promise<void>
 }
 
 declare global {

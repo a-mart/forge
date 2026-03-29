@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import * as DialogPrimitive from '@radix-ui/react-dialog'
-import { ExternalLink, FileCode2, FileImage, FileText, Loader2, X } from 'lucide-react'
+import { ExternalLink, FileCode2, FileImage, FileText, FolderOpen, Loader2, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogOverlay, DialogPortal, DialogTitle } from '@/components/ui/dialog'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -12,6 +12,7 @@ import {
   readStoredEditorPreference,
 } from '@/lib/editor-preference'
 import { cn } from '@/lib/utils'
+import { isElectron } from '@/lib/electron-bridge'
 import { MarkdownMessage } from './MarkdownMessage'
 
 interface ArtifactPanelProps {
@@ -233,6 +234,29 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
                 <span className="hidden sm:inline">Open in {editorLabel}</span>
                 <span className="sm:hidden">{editorLabel}</span>
               </a>
+
+              {isElectron() && window.electronBridge?.revealInFolder && (() => {
+                const pathToReveal = displayPath || artifact?.path || ''
+                const isAbsolute = pathToReveal.startsWith('/') || /^[a-zA-Z]:\\/.test(pathToReveal)
+                if (!pathToReveal || !isAbsolute) return null
+                return (
+                  <button
+                    type="button"
+                    className={cn(
+                      'inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium',
+                      'text-muted-foreground transition-colors',
+                      'hover:bg-muted hover:text-foreground',
+                    )}
+                    onClick={() => {
+                      window.electronBridge?.revealInFolder?.(pathToReveal)
+                    }}
+                    aria-label="Show in folder"
+                  >
+                    <FolderOpen className="size-3" aria-hidden="true" />
+                    <span className="hidden sm:inline">Show in folder</span>
+                  </button>
+                )
+              })()}
 
               <div className="mx-0.5 h-4 w-px bg-border/60" aria-hidden="true" />
 

@@ -36,6 +36,7 @@ contextBridge.exposeInMainWorld('electronBridge', {
   installUpdate: (): Promise<void> => ipcRenderer.invoke('install-update'),
   getBetaChannel: (): Promise<boolean> => ipcRenderer.invoke('get-beta-channel'),
   setBetaChannel: (enabled: boolean): Promise<void> => ipcRenderer.invoke('set-beta-channel', enabled),
+  revealInFolder: (filePath: string): Promise<void> => ipcRenderer.invoke('reveal-in-folder', filePath),
   onUpdateStatus: (callback: (status: { type: string; version?: string; percent?: number; message?: string }) => void): (() => void) => {
     const handler = (_event: Electron.IpcRendererEvent, status: { type: string; version?: string; percent?: number; message?: string }) => {
       callback(status)

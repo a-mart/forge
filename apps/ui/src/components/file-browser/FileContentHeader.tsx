@@ -7,6 +7,7 @@ import {
   ExternalLink,
   Eye,
   Code,
+  FolderOpen,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
@@ -21,6 +22,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { isElectron } from '@/lib/electron-bridge'
 
 interface FileContentHeaderProps {
   filePath: string
@@ -218,6 +220,32 @@ export function FileContentHeader({
               Open in {editorLabel}
             </TooltipContent>
           </Tooltip>
+
+          {/* Reveal in file manager (Electron only) */}
+          {isElectron() && window.electronBridge?.revealInFolder && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  className={cn(
+                    'inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors',
+                    'hover:bg-muted hover:text-foreground',
+                  )}
+                  onClick={() => {
+                    if (absolutePath) {
+                      window.electronBridge?.revealInFolder?.(absolutePath)
+                    }
+                  }}
+                  aria-label="Show in folder"
+                >
+                  <FolderOpen className="size-3.5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" sideOffset={4}>
+                Show in folder
+              </TooltipContent>
+            </Tooltip>
+          )}
         </TooltipProvider>
       </div>
     </div>
