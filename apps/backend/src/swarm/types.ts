@@ -1,4 +1,10 @@
-import { MANAGER_MODEL_PRESETS, type ChoiceRequestEvent, type ManagerProfile } from "@forge/protocol";
+import {
+  MANAGER_MODEL_PRESETS,
+  type ChoiceRequestEvent,
+  type ManagerProfile,
+  type ProjectAgentInfo,
+  type ProjectAgentMessageContext,
+} from "@forge/protocol";
 import type { AgentStatus } from "./agent-state-machine.js";
 
 export type AgentRole = "manager" | "worker";
@@ -7,6 +13,7 @@ export type AgentArchetypeId = string;
 
 export type { AgentStatus };
 export type { ManagerProfile };
+export type { ProjectAgentMessageContext };
 export type {
   ChoiceAnswer,
   ChoiceQuestion,
@@ -60,6 +67,7 @@ export interface AgentDescriptor {
   specialistId?: string;
   specialistDisplayName?: string;
   specialistColor?: string;
+  projectAgent?: ProjectAgentInfo;
   webSearch?: boolean;
 }
 
@@ -226,8 +234,9 @@ export interface ConversationMessageEvent {
   text: string;
   attachments?: ConversationMessageAttachment[];
   timestamp: string;
-  source: "user_input" | "speak_to_user" | "system";
+  source: "user_input" | "speak_to_user" | "system" | "project_agent_input";
   sourceContext?: MessageSourceContext;
+  projectAgentContext?: ProjectAgentMessageContext;
   pinned?: boolean;
 }
 

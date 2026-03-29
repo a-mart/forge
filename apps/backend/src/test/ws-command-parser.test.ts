@@ -50,6 +50,12 @@ describe('ws command parser session commands', () => {
       { type: 'resume_session', agentId: 'session-a', requestId: 'req-resume' },
       { type: 'delete_session', agentId: 'session-a', requestId: 'req-delete' },
       { type: 'rename_session', agentId: 'session-a', label: 'Renamed', requestId: 'req-rename' },
+      {
+        type: 'set_session_project_agent',
+        agentId: 'session-a',
+        projectAgent: { whenToUse: 'Coordinate release work' },
+        requestId: 'req-project-agent',
+      },
       { type: 'fork_session', sourceAgentId: 'session-a', label: 'Forked', requestId: 'req-fork' },
       { type: 'merge_session_memory', agentId: 'session-a', requestId: 'req-merge' },
       { type: 'get_session_workers', sessionAgentId: 'session-a', requestId: 'req-workers' },
@@ -181,6 +187,22 @@ describe('ws command parser session commands', () => {
       {
         payload: { type: 'rename_session', agentId: 'session-a', label: '  ' },
         message: 'rename_session.label must be a non-empty string',
+      },
+      {
+        payload: { type: 'set_session_project_agent', agentId: '', projectAgent: null },
+        message: 'set_session_project_agent.agentId must be a non-empty string',
+      },
+      {
+        payload: { type: 'set_session_project_agent', agentId: 'session-a', projectAgent: 'bad' },
+        message: 'set_session_project_agent.projectAgent must be an object or null',
+      },
+      {
+        payload: { type: 'set_session_project_agent', agentId: 'session-a', projectAgent: {} },
+        message: 'set_session_project_agent.projectAgent.whenToUse must be a string',
+      },
+      {
+        payload: { type: 'set_session_project_agent', agentId: 'session-a', projectAgent: null, requestId: 42 },
+        message: 'set_session_project_agent.requestId must be a string when provided',
       },
       {
         payload: { type: 'fork_session', sourceAgentId: '' },
@@ -365,6 +387,12 @@ describe('ws command parser session commands', () => {
       { type: 'resume_session', agentId: 'manager--s2', requestId: 'req-resume' },
       { type: 'delete_session', agentId: 'manager--s2', requestId: 'req-delete' },
       { type: 'rename_session', agentId: 'manager--s2', label: 'Renamed', requestId: 'req-rename' },
+      {
+        type: 'set_session_project_agent',
+        agentId: 'manager--s2',
+        projectAgent: { whenToUse: 'Coordinate release work' },
+        requestId: 'req-project-agent',
+      },
       { type: 'fork_session', sourceAgentId: 'manager--s2', requestId: 'req-fork' },
       { type: 'merge_session_memory', agentId: 'manager--s2', requestId: 'req-merge' },
       { type: 'get_session_workers', sessionAgentId: 'manager--s2', requestId: 'req-workers' },

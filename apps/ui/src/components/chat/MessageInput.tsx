@@ -27,6 +27,13 @@ import { cn } from '@/lib/utils'
 import type { ConversationAttachment } from '@forge/protocol'
 import type { SlashCommand } from '@/components/settings/slash-commands-api'
 
+export interface ProjectAgentSuggestion {
+  agentId: string
+  handle: string
+  displayName: string
+  whenToUse: string
+}
+
 const TEXTAREA_MAX_HEIGHT = 186
 const ACTIVE_WAVEFORM_BAR_COUNT = 16
 const OPENAI_KEY_REQUIRED_MESSAGE = 'OpenAI API key required \u2014 add it in Settings.'
@@ -226,6 +233,7 @@ interface MessageInputProps {
   wsUrl?: string
   agentId?: string
   slashCommands?: SlashCommand[]
+  projectAgents?: ProjectAgentSuggestion[]
 }
 
 export interface MessageInputHandle {
@@ -304,6 +312,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
     wsUrl,
     agentId,
     slashCommands,
+    projectAgents,
   },
   ref,
 ) {
@@ -319,12 +328,30 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
   const [slashSelectedIndex, setSlashSelectedIndex] = useState(0)
   const slashMenuRef = useRef<HTMLDivElement | null>(null)
 
+  // --- @mention autocomplete ---
+  const [isMentionMenuOpen, setIsMentionMenuOpen] = useState(false)
+  const [mentionFilter, setMentionFilter] = useState('')
+  const [mentionSelectedIndex, setMentionSelectedIndex] = useState(0)
+  const [mentionTokenStart, setMentionTokenStart] = useState(-1)
+  const mentionMenuRef = useRef<HTMLDivElement | null>(null)
+
   const filteredSlashCommands = useMemo(() => {
     if (!slashCommands || slashCommands.length === 0) return []
     if (!slashFilter) return slashCommands
     const lower = slashFilter.toLowerCase()
     return slashCommands.filter((cmd) => cmd.name.toLowerCase().startsWith(lower))
   }, [slashCommands, slashFilter])
+
+  const filteredMentions = useMemo(() => {
+    if (!projectAgents || projectAgents.length === 0) return []
+    if (!mentionFilter) return projectAgents
+    const lower = mentionFilter.toLowerCase()
+    return projectAgents.filter(
+      (agent) =>
+        agent.handle.toLowerCase().startsWith(lower) ||
+        agent.displayName.toLowerCase().startsWith(lower),
+    )
+  }, [projectAgents, mentionFilter])
 
   // Close slash menu on outside click
   useEffect(() => {
@@ -337,6 +364,18 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
     document.addEventListener('mousedown', handleClick)
     return () => document.removeEventListener('mousedown', handleClick)
   }, [isSlashMenuOpen])
+
+  // Close mention menu on outside click
+  useEffect(() => {
+    if (!isMentionMenuOpen) return
+    const handleClick = (e: MouseEvent) => {
+      if (mentionMenuRef.current && !mentionMenuRef.current.contains(e.target as Node)) {
+        setIsMentionMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [isMentionMenuOpen])
 
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
@@ -750,7 +789,50 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
     requestAnimationFrame(() => textareaRef.current?.focus())
   }, [setInputWithDraft])
 
+  const selectMention = useCallback((agent: ProjectAgentSuggestion) => {
+    // Replace the @token (from mentionTokenStart to current cursor) with @handle + space
+    const textarea = textareaRef.current
+    const cursorPos = textarea?.selectionStart ?? input.length
+    const replacement = `@${agent.handle} `
+    const newValue = input.slice(0, mentionTokenStart) + replacement + input.slice(cursorPos)
+    setInputWithDraft(newValue)
+    setIsMentionMenuOpen(false)
+    setMentionFilter('')
+    setMentionSelectedIndex(0)
+    setMentionTokenStart(-1)
+    const newCursor = mentionTokenStart + replacement.length
+    requestAnimationFrame(() => {
+      textarea?.focus()
+      textarea?.setSelectionRange(newCursor, newCursor)
+    })
+  }, [input, mentionTokenStart, setInputWithDraft])
+
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    // @mention autocomplete keyboard handling
+    if (isMentionMenuOpen && filteredMentions.length > 0) {
+      if (event.key === 'ArrowDown') {
+        event.preventDefault()
+        setMentionSelectedIndex((prev) => (prev + 1) % filteredMentions.length)
+        return
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault()
+        setMentionSelectedIndex((prev) => (prev - 1 + filteredMentions.length) % filteredMentions.length)
+        return
+      }
+      if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey)) {
+        event.preventDefault()
+        const selected = filteredMentions[mentionSelectedIndex]
+        if (selected) selectMention(selected)
+        return
+      }
+    }
+    if (isMentionMenuOpen && event.key === 'Escape') {
+      event.preventDefault()
+      setIsMentionMenuOpen(false)
+      return
+    }
+
     // Slash command autocomplete keyboard handling
     if (isSlashMenuOpen && filteredSlashCommands.length > 0) {
       if (event.key === 'ArrowDown') {
@@ -799,7 +881,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
     }
   }
 
-  // Track input changes for slash command detection
+  // Track input changes for slash command and @mention detection
   const handleInputChange = useCallback((value: string) => {
     setInputWithDraft(value)
 
@@ -811,11 +893,38 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
         setSlashFilter(afterSlash)
         setIsSlashMenuOpen(true)
         setSlashSelectedIndex(0)
+        setIsMentionMenuOpen(false)
         return
       }
     }
     setIsSlashMenuOpen(false)
-  }, [setInputWithDraft, slashCommands])
+
+    // Check for @mention trigger (works mid-text)
+    if (projectAgents && projectAgents.length > 0) {
+      const cursorPos = textareaRef.current?.selectionStart ?? value.length
+      // Walk backward from cursor to find an @ that starts a mention token
+      const textBeforeCursor = value.slice(0, cursorPos)
+      const atIdx = textBeforeCursor.lastIndexOf('@')
+      if (atIdx >= 0) {
+        // The @ must be at start of input or preceded by whitespace/newline
+        const charBefore = atIdx > 0 ? textBeforeCursor[atIdx - 1] : ' '
+        const tokenAfterAt = textBeforeCursor.slice(atIdx + 1)
+        // Token must be contiguous (no spaces/newlines) and reasonable length
+        if (
+          (charBefore === ' ' || charBefore === '\n' || charBefore === '\t' || atIdx === 0) &&
+          !/[\s]/.test(tokenAfterAt) &&
+          tokenAfterAt.length <= 50
+        ) {
+          setMentionFilter(tokenAfterAt)
+          setMentionTokenStart(atIdx)
+          setIsMentionMenuOpen(true)
+          setMentionSelectedIndex(0)
+          return
+        }
+      }
+    }
+    setIsMentionMenuOpen(false)
+  }, [setInputWithDraft, slashCommands, projectAgents])
 
   const hasContent = input.trim().length > 0 || attachedFiles.length > 0
   const canSubmit = hasContent && !disabled && !blockedByLoading && !isRecording && !isTranscribingVoice
@@ -869,6 +978,47 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
           className="mb-1 rounded-lg border border-border bg-popover px-3 py-2 shadow-lg"
         >
           <p className="text-xs text-muted-foreground">No matching commands</p>
+        </div>
+      ) : null}
+
+      {/* @mention autocomplete dropdown */}
+      {isMentionMenuOpen && filteredMentions.length > 0 ? (
+        <div
+          ref={mentionMenuRef}
+          className="mb-1 max-h-52 overflow-y-auto rounded-lg border border-border bg-popover shadow-lg"
+        >
+          {filteredMentions.map((agent, idx) => (
+            <button
+              key={agent.agentId}
+              type="button"
+              className={cn(
+                'flex w-full flex-col gap-0.5 px-3 py-2 text-left text-sm transition-colors',
+                idx === mentionSelectedIndex
+                  ? 'bg-accent text-accent-foreground'
+                  : 'text-popover-foreground hover:bg-accent/50',
+              )}
+              onMouseEnter={() => setMentionSelectedIndex(idx)}
+              onMouseDown={(e) => {
+                e.preventDefault() // prevent textarea blur
+                selectMention(agent)
+              }}
+            >
+              <div className="flex items-center gap-2">
+                <code className="shrink-0 text-xs font-semibold text-blue-500">@{agent.handle}</code>
+                <span className="text-xs text-foreground">{agent.displayName}</span>
+              </div>
+              {agent.whenToUse ? (
+                <span className="line-clamp-1 text-xs text-muted-foreground">{agent.whenToUse}</span>
+              ) : null}
+            </button>
+          ))}
+        </div>
+      ) : isMentionMenuOpen && projectAgents && projectAgents.length > 0 && filteredMentions.length === 0 ? (
+        <div
+          ref={mentionMenuRef}
+          className="mb-1 rounded-lg border border-border bg-popover px-3 py-2 shadow-lg"
+        >
+          <p className="text-xs text-muted-foreground">No matching project agents</p>
         </div>
       ) : null}
 

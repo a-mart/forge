@@ -488,6 +488,74 @@ describe('SwarmWebSocketServer', () => {
     await server.stop()
   })
 
+  it('broadcasts unread_notification for inbound project-agent messages and increments unread for inactive target sessions', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const { sessionAgent } = await manager.createSession('manager', { label: 'Release Notes' })
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+    await server.start()
+
+    const client = new WebSocket(`ws://${config.host}:${config.port}`)
+    const events: ServerEvent[] = []
+    client.on('message', (raw) => {
+      events.push(JSON.parse(raw.toString()) as ServerEvent)
+    })
+
+    await once(client, 'open')
+    client.send(JSON.stringify({ type: 'subscribe', agentId: 'manager' }))
+    await waitForEvent(
+      events,
+      (event) => event.type === 'ready' && event.subscribedAgentId === 'manager',
+    )
+
+    manager.emit(
+      'conversation_message',
+      {
+        type: 'conversation_message',
+        agentId: sessionAgent.agentId,
+        role: 'user',
+        text: 'Please draft release notes.',
+        timestamp: new Date().toISOString(),
+        source: 'project_agent_input',
+        projectAgentContext: {
+          fromAgentId: 'qa--s2',
+          fromDisplayName: 'QA',
+        },
+      } satisfies ServerEvent,
+    )
+
+    await waitForEvent(
+      events,
+      (event) => event.type === 'unread_notification' && event.agentId === sessionAgent.agentId,
+    )
+    await waitForEvent(
+      events,
+      (event) => event.type === 'unread_count_update' && event.agentId === sessionAgent.agentId && event.count === 1,
+    )
+
+    expect(
+      events.some(
+        (event) =>
+          event.type === 'conversation_message' &&
+          event.agentId === sessionAgent.agentId &&
+          event.text === 'Please draft release notes.',
+      ),
+    ).toBe(false)
+
+    client.close()
+    await once(client, 'close')
+    await server.stop()
+  })
+
   it('preserves Unicode conversation_message text over WebSocket delivery', async () => {
     const port = await getAvailablePort()
     const config = await makeTempConfig(port, true)

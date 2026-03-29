@@ -11,7 +11,8 @@ import type {
   ConversationMessageAttachment,
   ConversationMessageEvent,
   ConversationTextAttachment,
-  MessageSourceContext
+  MessageSourceContext,
+  ProjectAgentMessageContext
 } from "./types.js";
 
 export function isConversationEntryEvent(value: unknown): value is ConversationEntryEvent {
@@ -36,7 +37,12 @@ export function isConversationMessageEvent(value: unknown): value is Conversatio
   }
   if (typeof maybe.text !== "string") return false;
   if (typeof maybe.timestamp !== "string") return false;
-  if (maybe.source !== "user_input" && maybe.source !== "speak_to_user" && maybe.source !== "system") return false;
+  if (
+    maybe.source !== "user_input" &&
+    maybe.source !== "speak_to_user" &&
+    maybe.source !== "system" &&
+    maybe.source !== "project_agent_input"
+  ) return false;
 
   if (maybe.attachments !== undefined) {
     if (!Array.isArray(maybe.attachments)) {
@@ -51,6 +57,10 @@ export function isConversationMessageEvent(value: unknown): value is Conversatio
   }
 
   if (maybe.sourceContext !== undefined && !isMessageSourceContext(maybe.sourceContext)) {
+    return false;
+  }
+
+  if (maybe.projectAgentContext !== undefined && !isProjectAgentMessageContext(maybe.projectAgentContext)) {
     return false;
   }
 
@@ -107,6 +117,15 @@ export function isMessageSourceContext(value: unknown): value is MessageSourceCo
   }
 
   return true;
+}
+
+function isProjectAgentMessageContext(value: unknown): value is ProjectAgentMessageContext {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const maybe = value as Partial<ProjectAgentMessageContext>;
+  return typeof maybe.fromAgentId === "string" && typeof maybe.fromDisplayName === "string";
 }
 
 export function isConversationAttachment(value: unknown): value is ConversationAttachment {

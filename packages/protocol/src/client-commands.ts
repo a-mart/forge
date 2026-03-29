@@ -30,6 +30,12 @@ export type ClientCommand =
   | { type: 'delete_session'; agentId: string; requestId?: string }
   | { type: 'rename_session'; agentId: string; label: string; requestId?: string }
   | {
+      type: 'set_session_project_agent'
+      agentId: string
+      projectAgent: { whenToUse: string } | null
+      requestId?: string
+    }
+  | {
       type: 'fork_session'
       sourceAgentId: string
       label?: string

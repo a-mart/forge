@@ -30,6 +30,11 @@ export interface AgentContextUsage {
   percent: number
 }
 
+export interface ProjectAgentInfo {
+  handle: string
+  whenToUse: string
+}
+
 export interface AgentModelDescriptor {
   provider: string
   modelId: string
@@ -71,6 +76,7 @@ export interface AgentDescriptor {
   specialistId?: string
   specialistDisplayName?: string
   specialistColor?: string
+  projectAgent?: ProjectAgentInfo
   webSearch?: boolean
 }
 

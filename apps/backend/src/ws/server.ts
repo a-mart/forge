@@ -93,11 +93,14 @@ export class SwarmWebSocketServer {
     if (event.type !== "conversation_message") return;
     this.wsHandler.broadcastToSubscribed(event);
 
-    if (
-      event.role === "assistant" &&
-      event.source === "speak_to_user" &&
-      !this.isUnreadNotificationSuppressed(event.agentId)
-    ) {
+    const shouldBroadcastUnread =
+      !this.isUnreadNotificationSuppressed(event.agentId) &&
+      (
+        (event.role === "assistant" && event.source === "speak_to_user") ||
+        event.source === "project_agent_input"
+      );
+
+    if (shouldBroadcastUnread) {
       this.wsHandler.broadcastToSubscribed({
         type: "unread_notification",
         agentId: event.agentId,

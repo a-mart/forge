@@ -1154,6 +1154,10 @@ function isPreservedWebTranscriptEntry(entry: ConversationEntryEvent): boolean {
     return false;
   }
 
+  if (entry.source === "project_agent_input") {
+    return true;
+  }
+
   if (entry.source !== "user_input" && entry.source !== "speak_to_user") {
     return false;
   }

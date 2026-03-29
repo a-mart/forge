@@ -154,16 +154,26 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
   if (message.role === 'user') {
     const forkMessageId = message.id?.trim() || message.timestamp
     const canPin = onPinMessage && message.id?.trim()
+    const isProjectAgentMessage = message.source === 'project_agent_input'
+    const projectAgentSenderName = isProjectAgentMessage
+      ? message.projectAgentContext?.fromDisplayName
+      : undefined
     return (
       <div className="flex justify-end">
         <div
           className={cn(
-            'max-w-[85%] rounded-lg rounded-tr-sm bg-primary px-3 py-2 text-primary-foreground',
+            'max-w-[85%] rounded-lg rounded-tr-sm px-3 py-2',
+            isProjectAgentMessage
+              ? 'bg-blue-600 text-white dark:bg-blue-600'
+              : 'bg-primary text-primary-foreground',
             message.pinned && 'ring-2 ring-amber-400/60 dark:ring-amber-500/50',
           )}
         >
           {message.pinned ? (
-            <div className="mb-1 flex items-center gap-1 text-[10px] text-primary-foreground/70">
+            <div className={cn(
+              'mb-1 flex items-center gap-1 text-[10px]',
+              isProjectAgentMessage ? 'text-white/70' : 'text-primary-foreground/70',
+            )}>
               <Pin className="size-2.5 fill-current" />
               <span>Pinned</span>
             </div>
@@ -176,11 +186,25 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
               </p>
             ) : null}
           </div>
-          {timestampLabel || sourceContext || onForkFromMessage || canPin ? (
+          {timestampLabel || sourceContext || onForkFromMessage || canPin || projectAgentSenderName ? (
             <div className="mt-1 flex items-center justify-end gap-1.5">
-              <SourceBadge sourceContext={sourceContext} isUser />
+              {projectAgentSenderName ? (
+                <span className={cn(
+                  'inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium leading-none',
+                  isProjectAgentMessage
+                    ? 'border-white/30 bg-white/10 text-white/90'
+                    : 'border-primary-foreground/30 bg-primary-foreground/10 text-primary-foreground/90',
+                )}>
+                  {projectAgentSenderName}
+                </span>
+              ) : (
+                <SourceBadge sourceContext={sourceContext} isUser />
+              )}
               {timestampLabel ? (
-                <p className="text-right text-[10px] leading-none text-primary-foreground/70">
+                <p className={cn(
+                  'text-right text-[10px] leading-none',
+                  isProjectAgentMessage ? 'text-white/70' : 'text-primary-foreground/70',
+                )}>
                   {timestampLabel}
                 </p>
               ) : null}
@@ -192,7 +216,9 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
                     'inline-flex size-5 items-center justify-center rounded-sm transition-colors',
                     message.pinned
                       ? 'text-amber-300 dark:text-amber-300'
-                      : 'text-primary-foreground/50 hover:text-primary-foreground',
+                      : isProjectAgentMessage
+                        ? 'text-white/50 hover:text-white'
+                        : 'text-primary-foreground/50 hover:text-primary-foreground',
                   )}
                   aria-label={message.pinned ? 'Unpin message' : 'Pin message (preserve through compaction)'}
                   title={message.pinned ? 'Unpin message' : 'Pin message (preserve through compaction)'}
@@ -204,7 +230,12 @@ export const ConversationMessageRow = memo(function ConversationMessageRow({
                 <button
                   type="button"
                   onClick={() => onForkFromMessage(forkMessageId)}
-                  className="inline-flex size-5 items-center justify-center rounded-sm text-primary-foreground/50 transition-colors hover:text-primary-foreground"
+                  className={cn(
+                    'inline-flex size-5 items-center justify-center rounded-sm transition-colors',
+                    isProjectAgentMessage
+                      ? 'text-white/50 hover:text-white'
+                      : 'text-primary-foreground/50 hover:text-primary-foreground',
+                  )}
                   aria-label="Fork from this message"
                   title="Fork from this message"
                 >

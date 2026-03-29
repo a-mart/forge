@@ -536,6 +536,9 @@ function coerceAgentDescriptor(value: unknown): AgentDescriptor | undefined {
   const modelId = normalizeOptionalString(model?.modelId);
   const thinkingLevel = normalizeOptionalString(model?.thinkingLevel);
   const status = normalizeOptionalString(value.status);
+  const projectAgentRecord = isRecord(value.projectAgent) ? value.projectAgent : undefined;
+  const projectAgentHandle = normalizeOptionalString(projectAgentRecord?.handle);
+  const projectAgentWhenToUse = normalizeOptionalString(projectAgentRecord?.whenToUse);
 
   if (!agentId || !managerId || !createdAt || !updatedAt || !cwd || !sessionFile || !provider || !modelId || !status) {
     return undefined;
@@ -561,7 +564,14 @@ function coerceAgentDescriptor(value: unknown): AgentDescriptor | undefined {
     profileId: normalizeOptionalString(value.profileId),
     sessionLabel: normalizeOptionalString(value.sessionLabel),
     sessionPurpose: normalizeOptionalString(value.sessionPurpose) === "cortex_review" ? "cortex_review" : undefined,
-    mergedAt: normalizeOptionalString(value.mergedAt)
+    mergedAt: normalizeOptionalString(value.mergedAt),
+    projectAgent:
+      projectAgentHandle && projectAgentWhenToUse
+        ? {
+            handle: projectAgentHandle,
+            whenToUse: projectAgentWhenToUse
+          }
+        : undefined
   };
 }
 

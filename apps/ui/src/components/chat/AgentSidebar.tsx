@@ -1,4 +1,6 @@
 import {
+  ArrowDownToLine,
+  ArrowUpFromLine,
   BarChart3,
   Brain,
   ChevronDown,
@@ -20,9 +22,12 @@ import {
   SquarePen,
   Trash2,
   X,
+  Zap,
 } from 'lucide-react'
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from '@/components/ui/context-menu'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
+import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ForkSessionDialog } from './ForkSessionDialog'
@@ -75,6 +80,7 @@ import {
   type ManagerModelPreset,
   type ManagerReasoningLevel,
   type ManagerProfile,
+  type ProjectAgentInfo,
 } from '@forge/protocol'
 
 interface AgentSidebarProps {
@@ -112,6 +118,7 @@ interface AgentSidebarProps {
   onUpdateManagerModel?: (managerId: string, model: ManagerModelPreset, reasoningLevel?: ManagerReasoningLevel) => void
   onRequestSessionWorkers?: (sessionId: string) => void
   onReorderProfiles?: (profileIds: string[]) => void
+  onSetSessionProjectAgent?: (agentId: string, projectAgent: { whenToUse: string } | null) => Promise<void>
 }
 
 type AgentLiveStatus = {
@@ -425,6 +432,9 @@ function SessionRowItem({
   onStopWorker,
   onResumeWorker,
   highlightQuery,
+  onPromoteToProjectAgent,
+  onOpenProjectAgentSettings,
+  onDemoteProjectAgent,
 }: {
   session: SessionRow
   statuses: Record<string, { status: AgentStatus; pendingCount: number; contextUsage?: AgentContextUsage }>
@@ -446,6 +456,9 @@ function SessionRowItem({
   onStopWorker?: (agentId: string) => void
   onResumeWorker?: (agentId: string) => void
   highlightQuery?: string
+  onPromoteToProjectAgent?: () => void
+  onOpenProjectAgentSettings?: () => void
+  onDemoteProjectAgent?: () => void
 }) {
   const { sessionAgent, workers, isDefault } = session
   const running = isSessionRunning(sessionAgent)
@@ -459,6 +472,7 @@ function SessionRowItem({
     || 0
   const managerStreaming = getAgentLiveStatus(sessionAgent, statuses).status === 'streaming'
   const hasPendingChoice = (sessionAgent.pendingChoiceCount ?? 0) > 0
+  const isProjectAgent = Boolean(sessionAgent.projectAgent)
 
   return (
     <li>
@@ -535,6 +549,9 @@ function SessionRowItem({
                     <span className="min-w-0 flex-1 truncate text-sm leading-5">
                       {highlightQuery ? <HighlightedText text={label} query={highlightQuery} /> : label}
                     </span>
+                    {isProjectAgent ? (
+                      <Zap className="size-3 shrink-0 text-blue-400 dark:text-blue-400" aria-label="Project Agent" />
+                    ) : null}
                     {hasPendingChoice ? (
                       <span className="inline-flex size-4 shrink-0 items-center justify-center rounded-full bg-blue-500 text-[9px] font-bold text-white">
                         ?
@@ -596,6 +613,30 @@ function SessionRowItem({
             <ContextMenuItem onClick={onMarkUnread}>
               <EyeOff className="mr-2 size-3.5" />
               Mark as unread
+            </ContextMenuItem>
+          ) : null}
+          {onPromoteToProjectAgent && !isProjectAgent ? (
+            <>
+              <ContextMenuSeparator />
+              <ContextMenuItem onClick={onPromoteToProjectAgent}>
+                <ArrowUpFromLine className="mr-2 size-3.5" />
+                Promote to Project Agent
+              </ContextMenuItem>
+            </>
+          ) : null}
+          {isProjectAgent && onOpenProjectAgentSettings ? (
+            <>
+              <ContextMenuSeparator />
+              <ContextMenuItem onClick={onOpenProjectAgentSettings}>
+                <Settings className="mr-2 size-3.5" />
+                Project Agent Settings
+              </ContextMenuItem>
+            </>
+          ) : null}
+          {isProjectAgent && onDemoteProjectAgent ? (
+            <ContextMenuItem onClick={onDemoteProjectAgent}>
+              <ArrowDownToLine className="mr-2 size-3.5" />
+              Demote to Session
             </ContextMenuItem>
           ) : null}
           {!isDefault && onDelete ? (
@@ -731,6 +772,9 @@ function ProfileGroup({
   highlightQuery,
   dragHandleRef,
   dragHandleListeners,
+  onPromoteToProjectAgent,
+  onOpenProjectAgentSettings,
+  onDemoteProjectAgent,
 }: {
   treeRow: ProfileTreeRow
   statuses: Record<string, { status: AgentStatus; pendingCount: number; contextUsage?: AgentContextUsage }>
@@ -763,6 +807,9 @@ function ProfileGroup({
   highlightQuery?: string
   dragHandleRef?: (element: HTMLElement | null) => void
   dragHandleListeners?: Record<string, any> | undefined
+  onPromoteToProjectAgent?: (agentId: string) => void
+  onOpenProjectAgentSettings?: (agentId: string) => void
+  onDemoteProjectAgent?: (agentId: string) => void | Promise<void>
 }) {
   const { profile, sessions } = treeRow
   const hasAnySessions = sessions.length > 0
@@ -911,16 +958,20 @@ function ProfileGroup({
       {!isCollapsed && hasAnySessions ? (
         <div className="relative mt-1">
           {(() => {
-            const hasMore = sessions.length > visibleSessionLimit
+            // Split sessions into project agents (always visible) and regular sessions (subject to truncation)
+            const projectAgentSessions = sessions.filter((s) => Boolean(s.sessionAgent.projectAgent))
+            const regularSessions = sessions.filter((s) => !s.sessionAgent.projectAgent)
+
+            const hasMore = regularSessions.length > visibleSessionLimit
             const isExpanded = visibleSessionLimit > MAX_VISIBLE_SESSIONS
-            let visibleSessions: SessionRow[]
+            let visibleRegularSessions: SessionRow[]
             let hiddenCount = 0
 
             if (!hasMore) {
-              visibleSessions = sessions
+              visibleRegularSessions = regularSessions
             } else {
               // Take the top visibleSessionLimit, but guarantee the selected session is visible
-              const topSessions = sessions.slice(0, visibleSessionLimit)
+              const topSessions = regularSessions.slice(0, visibleSessionLimit)
               const selectedSessionInTop = !selectedAgentId || isSettingsActive || topSessions.some(
                 (s) =>
                   s.sessionAgent.agentId === selectedAgentId ||
@@ -928,56 +979,75 @@ function ProfileGroup({
               )
 
               if (selectedSessionInTop) {
-                visibleSessions = topSessions
+                visibleRegularSessions = topSessions
               } else {
-                // Find the selected session from the full list and swap it in
-                const selectedSession = sessions.find(
+                const selectedSession = regularSessions.find(
                   (s) =>
                     s.sessionAgent.agentId === selectedAgentId ||
                     s.workers.some((w) => w.agentId === selectedAgentId),
                 )
                 if (selectedSession) {
-                  visibleSessions = [...topSessions.slice(0, visibleSessionLimit - 1), selectedSession]
+                  visibleRegularSessions = [...topSessions.slice(0, visibleSessionLimit - 1), selectedSession]
                 } else {
-                  visibleSessions = topSessions
+                  visibleRegularSessions = topSessions
                 }
               }
-              hiddenCount = sessions.length - visibleSessions.length
+              hiddenCount = regularSessions.length - visibleRegularSessions.length
+            }
+
+            // Determine if a session is eligible for project agent promotion
+            // Cortex sessions and cortex_review sessions are excluded
+            const isCortex = sessions.some((s) => s.sessionAgent.archetypeId === 'cortex')
+            const canPromote = (s: SessionRow) =>
+              !isCortex && s.sessionAgent.sessionPurpose !== 'cortex_review' && !s.sessionAgent.projectAgent
+
+            const renderSession = (session: SessionRow) => {
+              const sessionCollapsed = !collapsedSessionIds.has(session.sessionAgent.agentId)
+              const eligible = canPromote(session)
+
+              return (
+                <SessionRowItem
+                  key={session.sessionAgent.agentId}
+                  session={session}
+                  statuses={statuses}
+                  unreadCount={unreadCounts[session.sessionAgent.agentId] ?? 0}
+                  selectedAgentId={selectedAgentId}
+                  isSettingsActive={isSettingsActive}
+                  isCollapsed={sessionCollapsed}
+                  isWorkerListExpanded={expandedWorkerListSessionIds.has(session.sessionAgent.agentId)}
+                  onToggleCollapse={() => onToggleSessionCollapsed(session.sessionAgent.agentId)}
+                  onToggleWorkerListExpanded={() => onToggleWorkerListExpanded(session.sessionAgent.agentId)}
+                  onSelect={onSelect}
+                  onDeleteAgent={onDeleteAgent}
+                  onStop={onStopSession ? () => onStopSession(session.sessionAgent.agentId) : undefined}
+                  onResume={onResumeSession ? () => onResumeSession(session.sessionAgent.agentId) : undefined}
+                  onDelete={onDeleteSession ? () => onDeleteSession(session.sessionAgent.agentId) : undefined}
+                  onRename={onRequestRenameSession ? () => onRequestRenameSession(session.sessionAgent.agentId) : undefined}
+                  onFork={onForkSession ? () => onForkSession(session.sessionAgent.agentId) : undefined}
+                  onMarkUnread={onMarkUnread ? () => onMarkUnread(session.sessionAgent.agentId) : undefined}
+                  onStopWorker={onStopSession}
+                  onResumeWorker={onResumeSession}
+                  highlightQuery={highlightQuery}
+                  onPromoteToProjectAgent={eligible && onPromoteToProjectAgent ? () => onPromoteToProjectAgent(session.sessionAgent.agentId) : undefined}
+                  onOpenProjectAgentSettings={session.sessionAgent.projectAgent && onOpenProjectAgentSettings ? () => onOpenProjectAgentSettings(session.sessionAgent.agentId) : undefined}
+                  onDemoteProjectAgent={session.sessionAgent.projectAgent && onDemoteProjectAgent ? async () => {
+                    try {
+                      await onDemoteProjectAgent(session.sessionAgent.agentId)
+                    } catch (err) {
+                      console.error('Failed to demote project agent:', err)
+                    }
+                  } : undefined}
+                />
+              )
             }
 
             return (
               <>
                 <ul className="space-y-0.5">
-                  {visibleSessions.map((session) => {
-                    // Default is collapsed; only expanded if user explicitly opened it
-                    const sessionCollapsed = !collapsedSessionIds.has(session.sessionAgent.agentId)
-
-                    return (
-                      <SessionRowItem
-                        key={session.sessionAgent.agentId}
-                        session={session}
-                        statuses={statuses}
-                        unreadCount={unreadCounts[session.sessionAgent.agentId] ?? 0}
-                        selectedAgentId={selectedAgentId}
-                        isSettingsActive={isSettingsActive}
-                        isCollapsed={sessionCollapsed}
-                        isWorkerListExpanded={expandedWorkerListSessionIds.has(session.sessionAgent.agentId)}
-                        onToggleCollapse={() => onToggleSessionCollapsed(session.sessionAgent.agentId)}
-                        onToggleWorkerListExpanded={() => onToggleWorkerListExpanded(session.sessionAgent.agentId)}
-                        onSelect={onSelect}
-                        onDeleteAgent={onDeleteAgent}
-                        onStop={onStopSession ? () => onStopSession(session.sessionAgent.agentId) : undefined}
-                        onResume={onResumeSession ? () => onResumeSession(session.sessionAgent.agentId) : undefined}
-                        onDelete={onDeleteSession ? () => onDeleteSession(session.sessionAgent.agentId) : undefined}
-                        onRename={onRequestRenameSession ? () => onRequestRenameSession(session.sessionAgent.agentId) : undefined}
-                        onFork={onForkSession ? () => onForkSession(session.sessionAgent.agentId) : undefined}
-                        onMarkUnread={onMarkUnread ? () => onMarkUnread(session.sessionAgent.agentId) : undefined}
-                        onStopWorker={onStopSession}
-                        onResumeWorker={onResumeSession}
-                        highlightQuery={highlightQuery}
-                      />
-                    )
-                  })}
+                  {/* Project agents always pinned at top */}
+                  {projectAgentSessions.map(renderSession)}
+                  {/* Regular sessions below */}
+                  {visibleRegularSessions.map(renderSession)}
                 </ul>
                 {hasMore || isExpanded ? (
                   <div className="relative z-10 mt-0.5 flex items-center gap-2 pl-5 pr-1.5">
@@ -1227,6 +1297,124 @@ function DeleteSessionDialog({
         </div>
       </DialogContent>
     </Dialog>
+  )
+}
+
+// ── Project Agent Settings Sheet ──
+
+const PROJECT_AGENT_WHEN_TO_USE_MAX = 280
+
+function ProjectAgentSettingsSheet({
+  agentId,
+  sessionLabel,
+  currentProjectAgent,
+  onSave,
+  onDemote,
+  onClose,
+}: {
+  agentId: string
+  sessionLabel: string
+  currentProjectAgent: ProjectAgentInfo | null
+  onSave: (agentId: string, projectAgent: { whenToUse: string }) => Promise<void>
+  onDemote: (agentId: string) => Promise<void>
+  onClose: () => void
+}) {
+  const [whenToUse, setWhenToUse] = useState(currentProjectAgent?.whenToUse ?? '')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const derivedHandle = slugifySessionName(sessionLabel)
+  const isPromoting = !currentProjectAgent
+  const trimmedWhenToUse = whenToUse.trim()
+  const canSave = trimmedWhenToUse.length > 0 && trimmedWhenToUse.length <= PROJECT_AGENT_WHEN_TO_USE_MAX
+  const hasChanges = isPromoting || trimmedWhenToUse !== (currentProjectAgent?.whenToUse ?? '')
+
+  const handleSave = async () => {
+    if (!canSave) return
+    setSaving(true)
+    setError(null)
+    try {
+      await onSave(agentId, { whenToUse: trimmedWhenToUse })
+      onClose()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save project agent settings.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleDemote = async () => {
+    setSaving(true)
+    setError(null)
+    try {
+      await onDemote(agentId)
+      onClose()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to demote project agent.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Sheet open onOpenChange={(open) => { if (!open) onClose() }}>
+      <SheetContent side="right" className="w-full max-w-md sm:max-w-md">
+        <SheetHeader>
+          <SheetTitle>{isPromoting ? 'Promote to Project Agent' : 'Project Agent Settings'}</SheetTitle>
+          <SheetDescription>
+            {isPromoting
+              ? 'Make this session discoverable by other sessions in the same profile.'
+              : 'Configure how other sessions discover and interact with this project agent.'}
+          </SheetDescription>
+        </SheetHeader>
+        <div className="space-y-4 px-4">
+          <div className="space-y-1">
+            <label className="text-sm font-medium text-foreground">Session</label>
+            <p className="text-sm text-muted-foreground">{sessionLabel}</p>
+          </div>
+          <div className="space-y-1">
+            <label className="text-sm font-medium text-foreground">Handle</label>
+            <p className="font-mono text-sm text-muted-foreground">
+              {derivedHandle ? `@${derivedHandle}` : <span className="text-amber-500">(invalid name)</span>}
+            </p>
+          </div>
+          <div className="space-y-1.5">
+            <label htmlFor="whenToUse" className="text-sm font-medium text-foreground">When to use</label>
+            <Textarea
+              id="whenToUse"
+              value={whenToUse}
+              onChange={(e) => setWhenToUse(e.target.value)}
+              placeholder="Describe when other sessions should send messages to this agent…"
+              rows={3}
+              maxLength={PROJECT_AGENT_WHEN_TO_USE_MAX}
+              className="resize-none"
+              autoFocus
+            />
+            <p className="text-[11px] text-muted-foreground">
+              {trimmedWhenToUse.length}/{PROJECT_AGENT_WHEN_TO_USE_MAX}
+            </p>
+          </div>
+          {error ? (
+            <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {error}
+            </p>
+          ) : null}
+          <div className="flex items-center gap-2">
+            <Button onClick={handleSave} disabled={!canSave || !hasChanges || saving}>
+              {saving ? 'Saving…' : isPromoting ? 'Promote' : 'Save'}
+            </Button>
+            {!isPromoting ? (
+              <Button variant="outline" onClick={handleDemote} disabled={saving} className="text-destructive hover:text-destructive">
+                Demote
+              </Button>
+            ) : null}
+            <Button variant="ghost" onClick={onClose} disabled={saving}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      </SheetContent>
+    </Sheet>
   )
 }
 
@@ -1802,6 +1990,7 @@ export function AgentSidebar({
   onUpdateManagerModel,
   onRequestSessionWorkers,
   onReorderProfiles,
+  onSetSessionProjectAgent,
 }: AgentSidebarProps) {
   const treeRows = buildProfileTreeRows(agents, profiles)
   const hasCortexProfile = profiles.some((profile) => profile.profileId === 'cortex')
@@ -1909,6 +2098,11 @@ export function AgentSidebar({
     profileLabel: string
     currentPreset: ManagerModelPreset | undefined
     currentReasoningLevel: ManagerReasoningLevel | undefined
+  } | null>(null)
+  const [projectAgentTarget, setProjectAgentTarget] = useState<{
+    agentId: string
+    sessionLabel: string
+    currentProjectAgent: ProjectAgentInfo | null
   } | null>(null)
 
   const toggleProfileCollapsed = useCallback((profileId: string) => {
@@ -2075,6 +2269,34 @@ export function AgentSidebar({
     onUpdateManagerModel?.(profileId, model, reasoningLevel)
     setChangeModelTarget(null)
   }, [onUpdateManagerModel])
+
+  const handlePromoteToProjectAgent = useCallback((agentId: string) => {
+    const agent = agents.find((a) => a.agentId === agentId)
+    if (!agent) return
+    setProjectAgentTarget({
+      agentId,
+      sessionLabel: agent.sessionLabel || agent.displayName || agent.agentId,
+      currentProjectAgent: null,
+    })
+  }, [agents])
+
+  const handleOpenProjectAgentSettings = useCallback((agentId: string) => {
+    const agent = agents.find((a) => a.agentId === agentId)
+    if (!agent) return
+    setProjectAgentTarget({
+      agentId,
+      sessionLabel: agent.sessionLabel || agent.displayName || agent.agentId,
+      currentProjectAgent: agent.projectAgent ?? null,
+    })
+  }, [agents])
+
+  const handleDemoteProjectAgent = useCallback(async (agentId: string) => {
+    await onSetSessionProjectAgent?.(agentId, null)
+  }, [onSetSessionProjectAgent])
+
+  const handleSaveProjectAgent = useCallback(async (agentId: string, projectAgent: { whenToUse: string }) => {
+    await onSetSessionProjectAgent?.(agentId, projectAgent)
+  }, [onSetSessionProjectAgent])
 
   const handleDragEnd = useCallback((event: DragEndEvent) => {
     setActiveDragId(null)
@@ -2269,6 +2491,9 @@ export function AgentSidebar({
               highlightQuery={isSearchActive ? parsedSearch.term : undefined}
               dragHandleRef={dragHandleRef}
               dragHandleListeners={dragHandleListeners}
+              onPromoteToProjectAgent={onSetSessionProjectAgent ? handlePromoteToProjectAgent : undefined}
+              onOpenProjectAgentSettings={onSetSessionProjectAgent ? handleOpenProjectAgentSettings : undefined}
+              onDemoteProjectAgent={onSetSessionProjectAgent ? handleDemoteProjectAgent : undefined}
             />
           )
 
@@ -2482,6 +2707,18 @@ export function AgentSidebar({
           currentReasoningLevel={changeModelTarget.currentReasoningLevel}
           onConfirm={handleConfirmChangeModel}
           onClose={() => setChangeModelTarget(null)}
+        />
+      ) : null}
+
+      {/* Project Agent settings sheet */}
+      {projectAgentTarget && onSetSessionProjectAgent ? (
+        <ProjectAgentSettingsSheet
+          agentId={projectAgentTarget.agentId}
+          sessionLabel={projectAgentTarget.sessionLabel}
+          currentProjectAgent={projectAgentTarget.currentProjectAgent}
+          onSave={handleSaveProjectAgent}
+          onDemote={handleDemoteProjectAgent}
+          onClose={() => setProjectAgentTarget(null)}
         />
       ) : null}
     </>

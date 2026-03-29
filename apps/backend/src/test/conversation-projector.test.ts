@@ -524,4 +524,94 @@ describe('ConversationProjector session tree continuity', () => {
     expect(regularEntry).toMatchObject({ type: 'conversation_message', id: 'regular-msg' })
     expect(regularEntry && 'pinned' in regularEntry ? regularEntry.pinned : undefined).toBeUndefined()
   })
+
+  it('loads persisted project-agent transcript entries during JSONL replay', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-projector-project-agent-replay-'))
+    const sessionFile = join(root, 'manager.jsonl')
+    const descriptor = makeDescriptor(sessionFile, root)
+
+    const seededSession = SessionManager.open(sessionFile)
+    seededSession.appendMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'seed message' }],
+    } as any)
+    seededSession.appendCustomEntry('swarm_conversation_entry', {
+      type: 'conversation_message',
+      agentId: descriptor.agentId,
+      role: 'user',
+      text: 'Draft release notes for v1.2.3.',
+      timestamp: FIXED_NOW,
+      source: 'project_agent_input',
+      projectAgentContext: {
+        fromAgentId: 'release-notes--s2',
+        fromDisplayName: 'Release Notes',
+      },
+    })
+
+    const projector = makeProjector({ descriptor })
+    const history = projector.getConversationHistory(descriptor.agentId)
+    const replayedEntry = history.find(
+      (entry) =>
+        entry.type === 'conversation_message' &&
+        entry.source === 'project_agent_input' &&
+        entry.text === 'Draft release notes for v1.2.3.',
+    )
+
+    expect(replayedEntry).toBeDefined()
+    expect(replayedEntry?.type).toBe('conversation_message')
+    if (replayedEntry?.type === 'conversation_message') {
+      expect(replayedEntry.projectAgentContext).toEqual({
+        fromAgentId: 'release-notes--s2',
+        fromDisplayName: 'Release Notes',
+      })
+    }
+  })
+
+  it('preserves project-agent transcript entries during history trimming even without sourceContext', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-projector-project-agent-trim-'))
+    const sessionFile = join(root, 'manager.jsonl')
+    const descriptor = makeDescriptor(sessionFile, root)
+    const projector = makeProjector({ descriptor })
+
+    projector.emitConversationMessage({
+      type: 'conversation_message',
+      agentId: descriptor.agentId,
+      role: 'user',
+      text: 'Coordinate the release handoff.',
+      timestamp: FIXED_NOW,
+      source: 'project_agent_input',
+      projectAgentContext: {
+        fromAgentId: 'release-notes--s2',
+        fromDisplayName: 'Release Notes',
+      },
+    })
+
+    for (let index = 0; index < 2000; index += 1) {
+      projector.emitConversationMessage({
+        type: 'conversation_message',
+        agentId: descriptor.agentId,
+        role: 'system',
+        text: `system-${index}`,
+        timestamp: FIXED_NOW,
+        source: 'system',
+      })
+    }
+
+    const history = projector.getConversationHistory(descriptor.agentId)
+
+    expect(history).toHaveLength(2000)
+    expect(
+      history.some(
+        (entry) =>
+          entry.type === 'conversation_message' &&
+          entry.source === 'project_agent_input' &&
+          entry.text === 'Coordinate the release handoff.',
+      ),
+    ).toBe(true)
+    expect(
+      history.some(
+        (entry) => entry.type === 'conversation_message' && entry.source === 'system' && entry.text === 'system-0',
+      ),
+    ).toBe(false)
+  })
 })

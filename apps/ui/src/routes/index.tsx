@@ -19,7 +19,7 @@ import { ChatHeader, type ChannelView } from '@/components/chat/ChatHeader'
 import { CreateManagerDialog } from '@/components/chat/CreateManagerDialog'
 import { DeleteManagerDialog } from '@/components/chat/DeleteManagerDialog'
 import { ForkSessionDialog } from '@/components/chat/ForkSessionDialog'
-import { MessageInput, type MessageInputHandle } from '@/components/chat/MessageInput'
+import { MessageInput, type MessageInputHandle, type ProjectAgentSuggestion } from '@/components/chat/MessageInput'
 import { MessageList, type MessageListHandle } from '@/components/chat/MessageList'
 import { WorkerBackBar } from '@/components/chat/WorkerBackBar'
 import { WorkerPillBar } from '@/components/chat/WorkerPillBar'
@@ -199,6 +199,25 @@ export function IndexPage() {
 
     return activeManagerAgent?.profileId ?? activeManagerAgent?.agentId ?? activeAgent.managerId ?? null
   }, [activeAgent, activeManagerAgent])
+
+  // Project agents for @mention autocomplete — only when the active agent is a manager session
+  const projectAgentSuggestions = useMemo((): ProjectAgentSuggestion[] => {
+    if (!activeAgent || activeAgent.role !== 'manager' || !activeAgent.profileId) return []
+    const profileId = activeAgent.profileId
+    return state.agents
+      .filter(
+        (a) =>
+          a.projectAgent &&
+          a.profileId === profileId &&
+          a.agentId !== activeAgent.agentId,
+      )
+      .map((a) => ({
+        agentId: a.agentId,
+        handle: a.projectAgent!.handle,
+        displayName: a.displayName,
+        whenToUse: a.projectAgent!.whenToUse,
+      }))
+  }, [activeAgent, state.agents])
 
   const diffViewerSessionAgent = useMemo(() => {
     if (!activeAgent) {
@@ -833,6 +852,10 @@ export function IndexPage() {
     clientRef.current?.reorderProfiles(profileIds)
   }, [clientRef])
 
+  const handleSetSessionProjectAgent = useCallback(async (agentId: string, projectAgent: { whenToUse: string } | null) => {
+    await clientRef.current?.setSessionProjectAgent(agentId, projectAgent)
+  }, [clientRef])
+
   const handleSelectAgent = (agentId: string) => {
     navigateToRoute({ view: 'chat', agentId })
     clientRef.current?.subscribeToAgent(agentId)
@@ -1044,7 +1067,7 @@ export function IndexPage() {
           onUpdateManagerModel={handleUpdateManagerModel}
           onRequestSessionWorkers={handleRequestSessionWorkers}
           onReorderProfiles={handleReorderProfiles}
-
+          onSetSessionProjectAgent={handleSetSessionProjectAgent}
         />
 
         <div
@@ -1285,6 +1308,7 @@ export function IndexPage() {
                       wsUrl={wsUrl}
                       agentId={activeAgentId ?? undefined}
                       slashCommands={slashCommands}
+                      projectAgents={projectAgentSuggestions}
                     />
                   </>
                 )}

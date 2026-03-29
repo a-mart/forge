@@ -364,6 +364,41 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
     };
   }
 
+  if (maybe.type === "set_session_project_agent") {
+    const agentId = (maybe as { agentId?: unknown }).agentId;
+    const projectAgent = (maybe as { projectAgent?: unknown }).projectAgent;
+    const requestId = (maybe as { requestId?: unknown }).requestId;
+
+    if (typeof agentId !== "string" || agentId.trim().length === 0) {
+      return { ok: false, error: "set_session_project_agent.agentId must be a non-empty string" };
+    }
+    if (projectAgent !== null && (typeof projectAgent !== "object" || projectAgent === null || Array.isArray(projectAgent))) {
+      return { ok: false, error: "set_session_project_agent.projectAgent must be an object or null" };
+    }
+    if (
+      projectAgent !== null &&
+      (typeof (projectAgent as { whenToUse?: unknown }).whenToUse !== "string")
+    ) {
+      return { ok: false, error: "set_session_project_agent.projectAgent.whenToUse must be a string" };
+    }
+    if (requestId !== undefined && typeof requestId !== "string") {
+      return { ok: false, error: "set_session_project_agent.requestId must be a string when provided" };
+    }
+
+    return {
+      ok: true,
+      command: {
+        type: "set_session_project_agent",
+        agentId: agentId.trim(),
+        projectAgent:
+          projectAgent === null
+            ? null
+            : { whenToUse: (projectAgent as { whenToUse: string }).whenToUse },
+        requestId
+      }
+    };
+  }
+
   if (maybe.type === "rename_profile") {
     const profileId = (maybe as { profileId?: unknown }).profileId;
     const displayName = (maybe as { displayName?: unknown }).displayName;
@@ -731,6 +766,7 @@ export function extractRequestId(command: ClientCommand): string | undefined {
     case "delete_session":
     case "clear_session":
     case "rename_session":
+    case "set_session_project_agent":
     case "rename_profile":
     case "fork_session":
     case "merge_session_memory":

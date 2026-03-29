@@ -66,6 +66,17 @@ import {
   type StoredCortexReviewRun
 } from "./cortex-review-runs.js";
 import { executeLLMMerge, MEMORY_MERGE_SYSTEM_PROMPT } from "./memory-merge.js";
+import {
+  deliverProjectAgentMessage,
+  findProjectAgentByHandle,
+  formatProjectAgentRuntimeMessage,
+  generateProjectAgentDirectoryBlock,
+  getProjectAgentHandleCollisionError,
+  getProjectAgentPublicName,
+  listProjectAgents,
+  normalizeProjectAgentHandle,
+  normalizeProjectAgentInlineText
+} from "./project-agents.js";
 import { PersistenceService } from "./persistence-service.js";
 import { migrateLegacyProfileKnowledgeToReferenceDoc } from "./reference-docs.js";
 import { scanCortexReviewStatus } from "./scripts/cortex-scan.js";
@@ -1065,11 +1076,23 @@ function cloneContextUsage(contextUsage: AgentContextUsage | undefined): AgentCo
   };
 }
 
+function cloneProjectAgentInfo(descriptor: AgentDescriptor): AgentDescriptor["projectAgent"] {
+  if (!descriptor.projectAgent) {
+    return undefined;
+  }
+
+  return {
+    handle: descriptor.projectAgent.handle,
+    whenToUse: descriptor.projectAgent.whenToUse
+  };
+}
+
 function cloneDescriptor(descriptor: AgentDescriptor): AgentDescriptor {
   return {
     ...descriptor,
     model: { ...descriptor.model },
-    contextUsage: cloneContextUsage(descriptor.contextUsage)
+    contextUsage: cloneContextUsage(descriptor.contextUsage),
+    projectAgent: cloneProjectAgentInfo(descriptor)
   };
 }
 
@@ -1140,6 +1163,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly runtimeExtensionSnapshotsByAgentId = new Map<string, AgentRuntimeExtensionSnapshot>();
   private nextRuntimeToken = 1;
   private readonly pendingManagerRuntimeRecycleAgentIds = new Set<string>();
+  private readonly projectAgentMessageTimestampsBySender = new Map<string, number[]>();
   private readonly pendingManualManagerStopNoticeTimersByAgentId = new Map<string, NodeJS.Timeout>();
   private readonly pendingChoiceRequests = new Map<string, {
     choiceId: string;
@@ -1971,6 +1995,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   async deleteSession(agentId: string): Promise<{ terminatedWorkerIds: string[] }> {
     const descriptor = this.getRequiredSessionDescriptor(agentId);
     this.assertSessionIsDeletable(descriptor);
+    const wasProjectAgent = Boolean(descriptor.projectAgent);
 
     const { terminatedWorkerIds } = await this.stopSessionInternal(agentId, {
       saveStore: false,
@@ -2013,6 +2038,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     });
     this.emitAgentsSnapshot();
     this.emitProfilesSnapshot();
+
+    if (wasProjectAgent) {
+      await this.notifyProjectAgentsChanged(profileId);
+    }
 
     return { terminatedWorkerIds };
   }
@@ -2093,6 +2122,32 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.logDebug("session:clear", { agentId });
   }
 
+  async setSessionProjectAgent(
+    agentId: string,
+    projectAgent: { whenToUse: string } | null
+  ): Promise<{ profileId: string; projectAgent: NonNullable<AgentDescriptor["projectAgent"]> | null }> {
+    const descriptor = this.getRequiredSessionDescriptor(agentId);
+    this.assertSessionSupportsProjectAgent(descriptor);
+
+    const profileId = descriptor.profileId;
+    const nextProjectAgent = projectAgent
+      ? this.buildProjectAgentInfoForSession(descriptor, projectAgent.whenToUse)
+      : null;
+
+    descriptor.projectAgent = nextProjectAgent ?? undefined;
+    this.descriptors.set(agentId, descriptor);
+
+    await this.saveStore();
+    this.emitAgentsSnapshot();
+    this.emitSessionProjectAgentUpdated(descriptor.agentId, profileId, nextProjectAgent);
+    await this.notifyProjectAgentsChanged(profileId);
+
+    return {
+      profileId,
+      projectAgent: nextProjectAgent
+    };
+  }
+
   async renameSession(agentId: string, label: string): Promise<void> {
     const descriptor = this.getRequiredSessionDescriptor(agentId);
     const normalizedLabel = label.trim();
@@ -2102,8 +2157,33 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     const previousLabel = descriptor.sessionLabel ?? descriptor.displayName ?? descriptor.agentId;
     const renamedAt = this.now();
+    let nextProjectAgentHandle: string | undefined;
+
+    if (descriptor.projectAgent) {
+      nextProjectAgentHandle = normalizeProjectAgentHandle(normalizedLabel);
+      if (!nextProjectAgentHandle) {
+        throw new Error(
+          "Project agent handle could not be derived from the session name. Rename the session to include at least one letter, number, or dash, then try again."
+        );
+      }
+
+      const existingProjectAgent = findProjectAgentByHandle(
+        this.descriptors.values(),
+        descriptor.profileId,
+        nextProjectAgentHandle
+      );
+      if (existingProjectAgent && existingProjectAgent.agentId !== descriptor.agentId) {
+        throw new Error(getProjectAgentHandleCollisionError(nextProjectAgentHandle));
+      }
+    }
 
     descriptor.sessionLabel = normalizedLabel;
+    if (descriptor.projectAgent && nextProjectAgentHandle) {
+      descriptor.projectAgent = {
+        ...descriptor.projectAgent,
+        handle: nextProjectAgentHandle
+      };
+    }
     this.descriptors.set(agentId, descriptor);
 
     await this.writeInitialSessionMeta(descriptor);
@@ -2121,6 +2201,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     });
     this.emitAgentsSnapshot();
     this.emitProfilesSnapshot();
+
+    if (descriptor.projectAgent) {
+      await this.notifyProjectAgentsChanged(descriptor.profileId);
+    }
   }
 
   async renameProfile(profileId: string, displayName: string): Promise<void> {
@@ -3163,6 +3247,23 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     });
   }
 
+  async notifyProjectAgentsChanged(profileId: string): Promise<void> {
+    const sessions = this.getSessionsForProfile(profileId);
+    const results = await Promise.allSettled(
+      sessions.map((session) => this.applyManagerRuntimeRecyclePolicy(session.agentId, "project_agent_directory_change")),
+    );
+
+    results.forEach((result, index) => {
+      if (result.status === "rejected") {
+        this.logDebug("project_agents:directory_change:recycle:error", {
+          profileId,
+          agentId: sessions[index]?.agentId,
+          message: result.reason instanceof Error ? result.reason.message : String(result.reason)
+        });
+      }
+    });
+  }
+
   private async syncWorkerSpecialistMetadata(
     profileId: string,
     roster: ResolvedSpecialistDefinitionLike[]
@@ -3210,7 +3311,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   private async applyManagerRuntimeRecyclePolicy(
     agentId: string,
-    reason: "model_change" | "idle_transition" | "prompt_mode_change" | "specialist_roster_change"
+    reason:
+      | "model_change"
+      | "idle_transition"
+      | "prompt_mode_change"
+      | "project_agent_directory_change"
+      | "specialist_roster_change"
   ): Promise<"recycled" | "deferred" | "none"> {
     const descriptor = this.descriptors.get(agentId);
     if (!descriptor || descriptor.role !== "manager") {
@@ -3253,7 +3359,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private async recycleManagerRuntime(
     descriptor: AgentDescriptor,
     runtime: SwarmAgentRuntime,
-    reason: "model_change" | "idle_transition" | "prompt_mode_change" | "specialist_roster_change"
+    reason:
+      | "model_change"
+      | "idle_transition"
+      | "prompt_mode_change"
+      | "project_agent_directory_change"
+      | "specialist_roster_change"
   ): Promise<void> {
     if (descriptor.role !== "manager") {
       return;
@@ -3436,6 +3547,49 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     return descriptor;
+  }
+
+  private assertSessionSupportsProjectAgent(
+    descriptor: AgentDescriptor & { role: "manager"; profileId: string }
+  ): void {
+    if (descriptor.agentId === CORTEX_PROFILE_ID && descriptor.profileId === CORTEX_PROFILE_ID) {
+      throw new Error("Cortex root cannot be promoted to a project agent");
+    }
+
+    if (descriptor.sessionPurpose === "cortex_review") {
+      throw new Error("Cortex review sessions cannot be promoted to project agents");
+    }
+  }
+
+  private buildProjectAgentInfoForSession(
+    descriptor: AgentDescriptor & { role: "manager"; profileId: string },
+    whenToUse: string
+  ): NonNullable<AgentDescriptor["projectAgent"]> {
+    const normalizedWhenToUse = normalizeProjectAgentInlineText(whenToUse);
+    if (!normalizedWhenToUse) {
+      throw new Error("Project agent \"When to use\" must be non-empty");
+    }
+
+    if (normalizedWhenToUse.length > 280) {
+      throw new Error("Project agent \"When to use\" must be 280 characters or fewer");
+    }
+
+    const handle = normalizeProjectAgentHandle(getProjectAgentPublicName(descriptor));
+    if (!handle) {
+      throw new Error(
+        "Project agent handle could not be derived from the session name. Rename the session to include at least one letter, number, or dash, then try again."
+      );
+    }
+
+    const existingProjectAgent = findProjectAgentByHandle(this.descriptors.values(), descriptor.profileId, handle);
+    if (existingProjectAgent && existingProjectAgent.agentId !== descriptor.agentId) {
+      throw new Error(getProjectAgentHandleCollisionError(handle));
+    }
+
+    return {
+      handle,
+      whenToUse: normalizedWhenToUse
+    };
   }
 
   private getSessionsForProfile(profileId: string): AgentDescriptor[] {
@@ -3957,6 +4111,68 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       );
     }
 
+    const origin = options?.origin ?? "internal";
+    const attachments = normalizeConversationAttachments(options?.attachments);
+    const isProjectAgentDelivery =
+      sender.role === "manager" &&
+      target.role === "manager" &&
+      fromAgentId !== targetAgentId &&
+      target.projectAgent !== undefined;
+
+    if (isProjectAgentDelivery) {
+      const receipt = await deliverProjectAgentMessage(
+        {
+          now: this.now,
+          getOrCreateRuntimeForDescriptor: (descriptor) => this.getOrCreateRuntimeForDescriptor(descriptor),
+          emitConversationMessage: (event) => this.emitConversationMessage(event),
+          markSessionActivity: (agentId, timestamp) => this.markSessionActivity(agentId, timestamp),
+          rateLimitBuckets: this.projectAgentMessageTimestampsBySender
+        },
+        {
+          sender,
+          target,
+          message,
+          delivery
+        }
+      );
+
+      this.logDebug("agent:send_message", {
+        fromAgentId,
+        targetAgentId,
+        origin,
+        requestedDelivery: delivery,
+        acceptedMode: receipt.acceptedMode,
+        textPreview: previewForLog(message),
+        attachmentCount: attachments.length,
+        modelTextPreview: previewForLog(
+          formatProjectAgentRuntimeMessage(
+            {
+              fromAgentId,
+              fromDisplayName: getProjectAgentPublicName(sender)
+            },
+            message
+          )
+        )
+      });
+
+      if (origin !== "user" && fromAgentId !== targetAgentId) {
+        this.emitAgentMessage({
+          type: "agent_message",
+          agentId: sender.agentId,
+          timestamp: this.now(),
+          source: "agent_to_agent",
+          fromAgentId,
+          toAgentId: targetAgentId,
+          text: message,
+          requestedDelivery: delivery,
+          acceptedMode: receipt.acceptedMode,
+          attachmentCount: attachments.length > 0 ? attachments.length : undefined
+        });
+      }
+
+      return receipt;
+    }
+
     const managerContextIds = this.resolveActivityManagerContextIds(sender, target);
     const runtime = await this.getOrCreateRuntimeForDescriptor(target);
 
@@ -3966,8 +4182,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       ? this.getOrCreateWorkerWatchdogState(sender.agentId).turnSeq
       : undefined;
 
-    const origin = options?.origin ?? "internal";
-    const attachments = normalizeConversationAttachments(options?.attachments);
     const modelMessage = await this.prepareModelInboundMessage(
       targetAgentId,
       {
@@ -5872,12 +6086,21 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const delegationBlock = specialistsEnabled
       ? specialistRegistry.generateRosterBlock(roster)
       : specialistRegistry.legacyModelRoutingGuidance;
+    const projectAgentDirectoryBlock = generateProjectAgentDirectoryBlock(
+      listProjectAgents(this.descriptors.values(), profileId, { excludeAgentId: descriptor.agentId }).map((entry) => ({
+        agentId: entry.agentId,
+        displayName: getProjectAgentPublicName(entry),
+        handle: entry.projectAgent.handle,
+        whenToUse: entry.projectAgent.whenToUse
+      }))
+    );
+    const delegationContextBlock = `${delegationBlock}\n\n${projectAgentDirectoryBlock}`;
     let prompt = resolvePromptVariables(promptTemplate, this.buildStandardPromptVariables(descriptor));
 
     if (prompt.includes("${SPECIALIST_ROSTER}")) {
-      prompt = prompt.replaceAll("${SPECIALIST_ROSTER}", delegationBlock);
+      prompt = prompt.replaceAll("${SPECIALIST_ROSTER}", delegationContextBlock);
     } else {
-      prompt = `${prompt.trimEnd()}\n\n${delegationBlock}`;
+      prompt = `${prompt.trimEnd()}\n\n${delegationContextBlock}`;
     }
 
     if (this.integrationContextProvider) {
@@ -7080,6 +7303,27 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       {
         type: "profiles_snapshot",
         profiles: this.listProfiles()
+      } satisfies ServerEvent
+    );
+  }
+
+  private emitSessionProjectAgentUpdated(
+    agentId: string,
+    profileId: string,
+    projectAgent: AgentDescriptor["projectAgent"] | null
+  ): void {
+    this.emit(
+      "session_project_agent_updated",
+      {
+        type: "session_project_agent_updated",
+        agentId,
+        profileId,
+        projectAgent: projectAgent
+          ? {
+              handle: projectAgent.handle,
+              whenToUse: projectAgent.whenToUse
+            }
+          : null
       } satisfies ServerEvent
     );
   }
@@ -8660,6 +8904,20 @@ function validateAgentDescriptor(value: unknown): AgentDescriptor | string {
 
   if (value.sessionPurpose !== undefined && value.sessionPurpose !== "cortex_review") {
     return 'sessionPurpose must be "cortex_review" when provided';
+  }
+
+  if (value.projectAgent !== undefined) {
+    if (!isRecord(value.projectAgent)) {
+      return "projectAgent must be an object when provided";
+    }
+
+    if (!isNonEmptyString(value.projectAgent.handle)) {
+      return "projectAgent.handle must be a non-empty string";
+    }
+
+    if (!isNonEmptyString(value.projectAgent.whenToUse)) {
+      return "projectAgent.whenToUse must be a non-empty string";
+    }
   }
 
   const descriptor = value as unknown as AgentDescriptor;

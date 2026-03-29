@@ -188,6 +188,14 @@ class MergeEnabledTestSwarmManager extends TestSwarmManager {
   }
 }
 
+class ProjectAgentAwareSwarmManager extends TestSwarmManager {
+  readonly notifiedProjectAgentProfileIds: string[] = []
+
+  override async notifyProjectAgentsChanged(profileId: string): Promise<void> {
+    this.notifiedProjectAgentProfileIds.push(profileId)
+  }
+}
+
 class AuthFallbackSwarmManager extends SwarmManager {
   protected override async createRuntimeForDescriptor(
     descriptor: AgentDescriptor,
@@ -821,6 +829,188 @@ describe('SwarmManager', () => {
     })
     expect(typeof history[0]?.renamedAt).toBe('string')
     expect(typeof history[1]?.renamedAt).toBe('string')
+  })
+
+  it('setSessionProjectAgent promotes, persists, emits, and survives clear_session', async () => {
+    const config = await makeTempConfig()
+    const manager = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const created = await manager.createSession('manager', { label: 'Release Notes' })
+    const updates: Array<{ agentId: string; profileId: string; projectAgent: { handle: string; whenToUse: string } | null }> = []
+    manager.on('session_project_agent_updated', (event) => {
+      updates.push(event as { agentId: string; profileId: string; projectAgent: { handle: string; whenToUse: string } | null })
+    })
+
+    const result = await manager.setSessionProjectAgent(created.sessionAgent.agentId, {
+      whenToUse: '  Draft release notes and changelog copy.  ',
+    })
+
+    expect(result).toEqual({
+      profileId: 'manager',
+      projectAgent: {
+        handle: 'release-notes',
+        whenToUse: 'Draft release notes and changelog copy.',
+      },
+    })
+    expect(manager.getAgent(created.sessionAgent.agentId)?.projectAgent).toEqual(result.projectAgent)
+    expect(updates).toHaveLength(1)
+    expect(updates[0]).toMatchObject({
+      type: 'session_project_agent_updated',
+      agentId: created.sessionAgent.agentId,
+      profileId: 'manager',
+      projectAgent: {
+        handle: 'release-notes',
+        whenToUse: 'Draft release notes and changelog copy.',
+      },
+    })
+    expect(manager.notifiedProjectAgentProfileIds).toEqual(['manager'])
+
+    const store = JSON.parse(await readFile(config.paths.agentsStoreFile, 'utf8')) as { agents: AgentDescriptor[] }
+    expect(store.agents.find((agent) => agent.agentId === created.sessionAgent.agentId)?.projectAgent).toEqual({
+      handle: 'release-notes',
+      whenToUse: 'Draft release notes and changelog copy.',
+    })
+
+    await manager.clearSessionConversation(created.sessionAgent.agentId)
+    expect(manager.getAgent(created.sessionAgent.agentId)?.projectAgent).toEqual({
+      handle: 'release-notes',
+      whenToUse: 'Draft release notes and changelog copy.',
+    })
+  })
+
+  it('collapses multiline project-agent when-to-use text before persisting', async () => {
+    const config = await makeTempConfig()
+    const manager = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const created = await manager.createSession('manager', { label: 'Release Notes' })
+
+    const result = await manager.setSessionProjectAgent(created.sessionAgent.agentId, {
+      whenToUse: '  Draft release notes\n\nand   changelog\tcopy.  ',
+    })
+
+    expect(result.projectAgent).toEqual({
+      handle: 'release-notes',
+      whenToUse: 'Draft release notes and changelog copy.',
+    })
+    expect(manager.getAgent(created.sessionAgent.agentId)?.projectAgent).toEqual({
+      handle: 'release-notes',
+      whenToUse: 'Draft release notes and changelog copy.',
+    })
+
+    const store = JSON.parse(await readFile(config.paths.agentsStoreFile, 'utf8')) as { agents: AgentDescriptor[] }
+    expect(store.agents.find((agent) => agent.agentId === created.sessionAgent.agentId)?.projectAgent).toEqual({
+      handle: 'release-notes',
+      whenToUse: 'Draft release notes and changelog copy.',
+    })
+  })
+
+  it('rejects project-agent promotion collisions and cortex-only sessions', async () => {
+    const config = await makeTempConfig()
+    const manager = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const first = await manager.createSession('manager', { label: 'Release Notes' })
+    const second = await manager.createSession('manager', { label: 'Release Notes!!!' })
+
+    await manager.setSessionProjectAgent(first.sessionAgent.agentId, {
+      whenToUse: 'Draft release notes.',
+    })
+
+    await expect(
+      manager.setSessionProjectAgent(second.sessionAgent.agentId, {
+        whenToUse: 'Also draft release notes.',
+      }),
+    ).rejects.toThrow(
+      'Project agent handle "release-notes" is already in use in this profile. Rename the session to get a unique handle, then try again.',
+    )
+
+    await expect(
+      manager.setSessionProjectAgent('cortex', {
+        whenToUse: 'Should fail.',
+      }),
+    ).rejects.toThrow('Cortex root cannot be promoted to a project agent')
+
+    const reviewSession = await manager.createSession('cortex', {
+      label: 'Review',
+      sessionPurpose: 'cortex_review',
+    })
+
+    await expect(
+      manager.setSessionProjectAgent(reviewSession.sessionAgent.agentId, {
+        whenToUse: 'Should also fail.',
+      }),
+    ).rejects.toThrow('Cortex review sessions cannot be promoted to project agents')
+  })
+
+  it('renameSession recomputes project-agent handles, rejects collisions, and deleteSession notifies on removal', async () => {
+    const config = await makeTempConfig()
+    const manager = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const releases = await manager.createSession('manager', { label: 'Release Notes' })
+    const qa = await manager.createSession('manager', { label: 'QA' })
+
+    await manager.setSessionProjectAgent(releases.sessionAgent.agentId, {
+      whenToUse: 'Draft release notes.',
+    })
+    await manager.setSessionProjectAgent(qa.sessionAgent.agentId, {
+      whenToUse: 'Verify fixes.',
+    })
+
+    await manager.renameSession(releases.sessionAgent.agentId, 'Ship Notes')
+    expect(manager.getAgent(releases.sessionAgent.agentId)?.projectAgent?.handle).toBe('ship-notes')
+
+    await expect(manager.renameSession(qa.sessionAgent.agentId, 'Ship Notes!!!')).rejects.toThrow(
+      'Project agent handle "ship-notes" is already in use in this profile. Rename the session to get a unique handle, then try again.',
+    )
+    expect(manager.getAgent(qa.sessionAgent.agentId)?.sessionLabel).toBe('QA')
+    expect(manager.getAgent(qa.sessionAgent.agentId)?.projectAgent?.handle).toBe('qa')
+
+    const notificationsBeforeDelete = manager.notifiedProjectAgentProfileIds.length
+    await manager.deleteSession(releases.sessionAgent.agentId)
+    expect(manager.notifiedProjectAgentProfileIds.slice(notificationsBeforeDelete)).toEqual(['manager'])
+  })
+
+  it('forked sessions are not promoted by default', async () => {
+    const config = await makeTempConfig()
+    const manager = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const source = await manager.createSession('manager', { label: 'Source Session' })
+    await manager.setSessionProjectAgent(source.sessionAgent.agentId, {
+      whenToUse: 'Coordinate release work.',
+    })
+
+    const forked = await manager.forkSession(source.sessionAgent.agentId, { label: 'Forked Session' })
+    expect(forked.sessionAgent.projectAgent).toBeUndefined()
+    expect(manager.getAgent(forked.sessionAgent.agentId)?.projectAgent).toBeUndefined()
+  })
+
+  it('includes promoted peer sessions in manager prompt preview and excludes the current session from its own directory', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await manager.setSessionProjectAgent('manager', {
+      whenToUse: 'Coordinate the main manager session.',
+    })
+
+    const { sessionAgent } = await manager.createSession('manager', { label: 'Release Notes' })
+    await manager.setSessionProjectAgent(sessionAgent.agentId, {
+      whenToUse: 'Draft release notes and changelog copy.',
+    })
+
+    const preview = await manager.previewManagerSystemPrompt('manager')
+    const systemPrompt = preview.sections.find((section) => section.label === 'System Prompt')?.content
+
+    expect(systemPrompt).toBeDefined()
+    expect(systemPrompt).toContain('Project agents in this profile')
+    expect(systemPrompt).toContain('Release Notes (`@release-notes`, agentId: `' + sessionAgent.agentId + '`)')
+    expect(systemPrompt).toContain('Draft release notes and changelog copy.')
+    expect(systemPrompt).not.toContain('Coordinate the main manager session.')
+    expect(systemPrompt).not.toContain('`@manager`')
   })
 
   it('mergeSessionMemory safely promotes session memory into profile memory and records audit/meta state', async () => {
@@ -1533,6 +1723,9 @@ describe('SwarmManager', () => {
     expect(managerPrompt).toContain('You are the manager agent in a multi-agent swarm.')
     expect(managerPrompt).toContain('End users only see two things')
     expect(managerPrompt).toContain('prefixed with "SYSTEM:"')
+    expect(managerPrompt).toContain('Project agents in this profile — none configured.')
+    expect(managerPrompt).toContain('Workers do not receive this directory.')
+    expect(managerPrompt).toContain('[projectAgentContext] { ... }')
     expect(managerPrompt).toContain(managerMemoryPath)
 
     const worker = await manager.spawnAgent('manager', { agentId: 'Prompt Worker' })
@@ -1962,6 +2155,167 @@ describe('SwarmManager', () => {
     expect(workerRuntime?.sendCalls.at(-1)?.message).toBe('SYSTEM: hi worker')
   })
 
+  it('routes manager-to-promoted-manager sends through project-agent transcript delivery', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const { sessionAgent } = await manager.createSession('manager', { label: 'Release Notes' })
+    await manager.setSessionProjectAgent(sessionAgent.agentId, {
+      whenToUse: 'Draft release notes.',
+    })
+
+    const state = manager as unknown as {
+      runtimes: Map<string, SwarmAgentRuntime>
+    }
+
+    state.runtimes.delete(sessionAgent.agentId)
+    manager.runtimeByAgentId.delete(sessionAgent.agentId)
+
+    const createdRuntimeCountBeforeSend = manager.createdRuntimeIds.length
+    const receipt = await manager.sendMessage('manager', sessionAgent.agentId, 'Please draft release notes.', 'auto')
+
+    expect(receipt.targetAgentId).toBe(sessionAgent.agentId)
+    expect(manager.createdRuntimeIds.length).toBe(createdRuntimeCountBeforeSend + 1)
+
+    const recreatedRuntime = manager.runtimeByAgentId.get(sessionAgent.agentId)
+    expect(recreatedRuntime?.sendCalls.at(-1)?.message).toBe(
+      `[projectAgentContext] ${JSON.stringify({
+        fromAgentId: 'manager',
+        fromDisplayName: 'manager',
+      })}\n\nPlease draft release notes.`,
+    )
+
+    const targetHistory = manager.getConversationHistory(sessionAgent.agentId)
+    const projectAgentMessage = targetHistory.find(
+      (entry) =>
+        entry.type === 'conversation_message' &&
+        entry.source === 'project_agent_input' &&
+        entry.role === 'user' &&
+        entry.text === 'Please draft release notes.',
+    )
+
+    expect(projectAgentMessage).toBeDefined()
+    expect(projectAgentMessage?.type).toBe('conversation_message')
+    if (projectAgentMessage?.type === 'conversation_message') {
+      expect(projectAgentMessage.sourceContext).toBeUndefined()
+      expect(projectAgentMessage.projectAgentContext).toEqual({
+        fromAgentId: 'manager',
+        fromDisplayName: 'manager',
+      })
+    }
+
+    expect(targetHistory.some((entry) => entry.type === 'agent_message')).toBe(false)
+
+    const senderHistory = manager.getConversationHistory('manager')
+    expect(
+      senderHistory.some(
+        (entry) =>
+          entry.type === 'agent_message' &&
+          entry.agentId === 'manager' &&
+          entry.fromAgentId === 'manager' &&
+          entry.toAgentId === sessionAgent.agentId &&
+          entry.text === 'Please draft release notes.',
+      ),
+    ).toBe(true)
+  })
+
+  it('keeps promoted-session self-sends on the generic manager path', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const { sessionAgent } = await manager.createSession('manager', { label: 'Release Notes' })
+    await manager.setSessionProjectAgent(sessionAgent.agentId, {
+      whenToUse: 'Draft release notes.',
+    })
+
+    const receipt = await manager.sendMessage(sessionAgent.agentId, sessionAgent.agentId, 'SYSTEM: closeout reminder', 'auto')
+
+    expect(receipt.targetAgentId).toBe(sessionAgent.agentId)
+
+    const sessionRuntime = manager.runtimeByAgentId.get(sessionAgent.agentId)
+    expect(sessionRuntime?.sendCalls.at(-1)?.message).toBe('SYSTEM: closeout reminder')
+
+    const sessionHistory = manager.getConversationHistory(sessionAgent.agentId)
+    expect(
+      sessionHistory.some(
+        (entry) =>
+          entry.type === 'conversation_message' &&
+          entry.source === 'project_agent_input' &&
+          entry.text === 'SYSTEM: closeout reminder',
+      ),
+    ).toBe(false)
+  })
+
+  it('rate limits project-agent sends per sender session', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const { sessionAgent } = await manager.createSession('manager', { label: 'Release Notes' })
+    await manager.setSessionProjectAgent(sessionAgent.agentId, {
+      whenToUse: 'Draft release notes.',
+    })
+
+    for (let index = 0; index < 6; index += 1) {
+      await manager.sendMessage('manager', sessionAgent.agentId, `note-${index + 1}`, 'auto')
+    }
+
+    await expect(
+      manager.sendMessage('manager', sessionAgent.agentId, 'note-7', 'auto'),
+    ).rejects.toThrow(
+      'Project-agent messaging rate limit exceeded for this session. Batch your message or involve the user before continuing.',
+    )
+
+    const deliveredMessages = manager
+      .getConversationHistory(sessionAgent.agentId)
+      .filter(
+        (entry) =>
+          entry.type === 'conversation_message' &&
+          entry.source === 'project_agent_input' &&
+          entry.role === 'user',
+      )
+
+    expect(deliveredMessages).toHaveLength(6)
+  })
+
+  it('keeps worker-to-manager completion reporting on the generic send path', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', { agentId: 'Reporter Worker' })
+    const managerRuntime = manager.runtimeByAgentId.get('manager')
+    expect(managerRuntime).toBeDefined()
+
+    managerRuntime!.sendCalls = []
+
+    await manager.sendMessage(worker.agentId, 'manager', 'status: done', 'auto')
+
+    expect(managerRuntime?.sendCalls.at(-1)?.message).toBe('SYSTEM: status: done')
+
+    const managerHistory = manager.getConversationHistory('manager')
+    expect(
+      managerHistory.some(
+        (entry) =>
+          entry.type === 'agent_message' &&
+          entry.agentId === 'manager' &&
+          entry.fromAgentId === worker.agentId &&
+          entry.toAgentId === 'manager' &&
+          entry.text === 'status: done',
+      ),
+    ).toBe(true)
+    expect(
+      managerHistory.some(
+        (entry) =>
+          entry.type === 'conversation_message' &&
+          entry.source === 'project_agent_input' &&
+          entry.text === 'status: done',
+      ),
+    ).toBe(false)
+  })
+
   it('sends manager user input as steer delivery, without SYSTEM prefixing, and with source metadata annotation', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
@@ -2112,24 +2466,30 @@ describe('SwarmManager', () => {
 
     await waitForCondition(() => recordMutation.mock.calls.length >= 2, 1_000)
 
-    expect(recordMutation).toHaveBeenNthCalledWith(1, {
-      path: commonKnowledgePath,
-      action: 'write',
-      source: 'agent-write-tool',
-      profileId: 'manager',
-      sessionId: 'manager',
-      agentId: 'manager',
-      reviewRunId: undefined,
-    })
-    expect(recordMutation).toHaveBeenNthCalledWith(2, {
-      path: commonKnowledgePath,
-      action: 'write',
-      source: 'agent-edit-tool',
-      profileId: 'manager',
-      sessionId: 'manager',
-      agentId: 'manager',
-      reviewRunId: undefined,
-    })
+    const recordedMutations = (recordMutation.mock.calls as unknown as Array<Array<Record<string, unknown>>>).map(
+      (call) => call[0],
+    )
+    expect(recordedMutations).toHaveLength(2)
+    expect(recordedMutations).toEqual(expect.arrayContaining([
+      {
+        path: commonKnowledgePath,
+        action: 'write',
+        source: 'agent-write-tool',
+        profileId: 'manager',
+        sessionId: 'manager',
+        agentId: 'manager',
+        reviewRunId: undefined,
+      },
+      {
+        path: commonKnowledgePath,
+        action: 'write',
+        source: 'agent-edit-tool',
+        profileId: 'manager',
+        sessionId: 'manager',
+        agentId: 'manager',
+        reviewRunId: undefined,
+      },
+    ]))
   })
 
   it('records versioning mutations when session memory merges update profile memory', async () => {
@@ -4617,6 +4977,59 @@ describe('SwarmManager', () => {
     expect(manager.createdRuntimeIds.length).toBe(createdRuntimeCountBeforePrompt + 1)
     expect(manager.runtimeByAgentId.get(sessionAgent.agentId)).not.toBe(sessionRuntime)
     expect(state.runtimes.has(sessionAgent.agentId)).toBe(true)
+  })
+
+  it('recycles or defers manager runtimes when the project-agent directory changes', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    const rootSession = await bootWithDefaultManager(manager, config)
+    const { sessionAgent } = await manager.createSession('manager', { label: 'Streaming Session' })
+
+    const rootRuntime = manager.runtimeByAgentId.get(rootSession.agentId)
+    const sessionRuntime = manager.runtimeByAgentId.get(sessionAgent.agentId)
+    const descriptor = manager.getAgent(sessionAgent.agentId)
+    const state = manager as unknown as {
+      runtimes: Map<string, SwarmAgentRuntime>
+      runtimeTokensByAgentId: Map<string, number>
+      pendingManagerRuntimeRecycleAgentIds: Set<string>
+      handleRuntimeStatus: (
+        runtimeToken: number,
+        agentId: string,
+        status: AgentDescriptor['status'],
+        pendingCount: number,
+        contextUsage?: AgentContextUsage,
+      ) => Promise<void>
+    }
+
+    expect(rootRuntime).toBeDefined()
+    expect(sessionRuntime).toBeDefined()
+    expect(descriptor?.role).toBe('manager')
+
+    if (!rootRuntime || !sessionRuntime || !descriptor || descriptor.role !== 'manager') {
+      throw new Error('Expected manager session runtimes to exist')
+    }
+
+    descriptor.status = 'streaming'
+    descriptor.updatedAt = new Date().toISOString()
+    sessionRuntime.busy = true
+
+    await manager.notifyProjectAgentsChanged('manager')
+
+    expect(rootRuntime.recycleCalls).toBe(1)
+    expect(sessionRuntime.recycleCalls).toBe(0)
+    expect(state.runtimes.has(rootSession.agentId)).toBe(false)
+    expect(state.runtimes.has(sessionAgent.agentId)).toBe(true)
+    expect(state.pendingManagerRuntimeRecycleAgentIds.has(sessionAgent.agentId)).toBe(true)
+
+    const runtimeToken = state.runtimeTokensByAgentId.get(sessionAgent.agentId)
+    expect(runtimeToken).toBeTypeOf('number')
+
+    sessionRuntime.busy = false
+    await state.handleRuntimeStatus(runtimeToken as number, sessionAgent.agentId, 'idle', 0)
+
+    expect(sessionRuntime.recycleCalls).toBe(1)
+    expect(state.pendingManagerRuntimeRecycleAgentIds.has(sessionAgent.agentId)).toBe(false)
+    expect(state.runtimes.has(sessionAgent.agentId)).toBe(false)
   })
 
   it('maps spawn_agent model presets to canonical runtime models with highest reasoning', async () => {

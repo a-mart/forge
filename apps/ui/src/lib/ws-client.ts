@@ -19,6 +19,7 @@ import {
   type DeliveryMode,
   type ManagerModelPreset,
   type ManagerReasoningLevel,
+  type ProjectAgentInfo,
   type ServerEvent,
   type SessionMemoryMergeResult,
 } from '@forge/protocol'
@@ -50,6 +51,8 @@ type SessionActionResult = { agentId: string }
 type SessionForkedResult = { sourceAgentId: string; newSessionAgent: AgentDescriptor }
 type SessionWorkersResult = { sessionAgentId: string; workers: AgentDescriptor[] }
 
+type SessionProjectAgentResult = { agentId: string; profileId: string; projectAgent: ProjectAgentInfo | null }
+
 type WsRequestResultMap = {
   create_manager: AgentDescriptor
   delete_manager: { managerId: string }
@@ -64,6 +67,7 @@ type WsRequestResultMap = {
   rename_profile: { profileId: string }
   fork_session: SessionForkedResult
   merge_session_memory: SessionMemoryMergeResult
+  set_session_project_agent: SessionProjectAgentResult
   get_session_workers: { sessionAgentId: string; workers: AgentDescriptor[] }
   list_directories: DirectoriesListedResult
   validate_directory: DirectoryValidationResult
@@ -85,6 +89,7 @@ const WS_REQUEST_TYPES: WsRequestType[] = [
   'rename_profile',
   'fork_session',
   'merge_session_memory',
+  'set_session_project_agent',
   'get_session_workers',
   'list_directories',
   'validate_directory',
@@ -105,6 +110,7 @@ const WS_REQUEST_ERROR_HINTS: Array<{ requestType: WsRequestType; codeFragment: 
   { requestType: 'rename_profile', codeFragment: 'rename_profile' },
   { requestType: 'fork_session', codeFragment: 'fork_session' },
   { requestType: 'merge_session_memory', codeFragment: 'merge_session_memory' },
+  { requestType: 'set_session_project_agent', codeFragment: 'set_session_project_agent' },
   { requestType: 'get_session_workers', codeFragment: 'get_session_workers' },
   { requestType: 'list_directories', codeFragment: 'list_directories' },
   { requestType: 'validate_directory', codeFragment: 'validate_directory' },
@@ -673,6 +679,27 @@ export class ManagerWsClient {
     }))
   }
 
+  async setSessionProjectAgent(
+    agentId: string,
+    projectAgent: { whenToUse: string } | null,
+  ): Promise<SessionProjectAgentResult> {
+    const trimmed = agentId.trim()
+    if (!trimmed) {
+      throw new Error('Agent id is required.')
+    }
+
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+      throw new Error('WebSocket is disconnected. Reconnecting...')
+    }
+
+    return this.enqueueRequest('set_session_project_agent', (requestId) => ({
+      type: 'set_session_project_agent',
+      agentId: trimmed,
+      projectAgent,
+      requestId,
+    }))
+  }
+
   async mergeSessionMemory(agentId: string): Promise<SessionMemoryMergeResult> {
     const trimmed = agentId.trim()
     if (!trimmed) {
@@ -1175,6 +1202,17 @@ export class ManagerWsClient {
         this.requestTracker.resolve('rename_session', event.requestId, {
           agentId: event.agentId,
         })
+        break
+      }
+
+      case 'session_project_agent_updated': {
+        if (event.requestId) {
+          this.requestTracker.resolve('set_session_project_agent', event.requestId, {
+            agentId: event.agentId,
+            profileId: event.profileId,
+            projectAgent: event.projectAgent,
+          })
+        }
         break
       }
 

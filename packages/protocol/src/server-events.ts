@@ -17,6 +17,7 @@ import type {
   ManagerReasoningLevel,
   MessageSourceContext,
   ManagerProfile,
+  ProjectAgentInfo,
   PromptCategory,
   PromptSourceLayer,
   SessionMemoryMergeFailureStage,
@@ -30,6 +31,11 @@ import type {
   TerminalUpdatedEvent,
 } from './terminal-types.js'
 
+export interface ProjectAgentMessageContext {
+  fromAgentId: string
+  fromDisplayName: string
+}
+
 export interface ConversationMessageEvent {
   type: 'conversation_message'
   agentId: string
@@ -38,8 +44,9 @@ export interface ConversationMessageEvent {
   text: string
   attachments?: ConversationMessageAttachment[]
   timestamp: string
-  source: 'user_input' | 'speak_to_user' | 'system'
+  source: 'user_input' | 'speak_to_user' | 'system' | 'project_agent_input'
   sourceContext?: MessageSourceContext
+  projectAgentContext?: ProjectAgentMessageContext
   pinned?: boolean
 }
 
@@ -173,6 +180,14 @@ export interface SessionRenamedEvent {
   type: 'session_renamed'
   agentId: string
   label: string
+  requestId?: string
+}
+
+export interface SessionProjectAgentUpdatedEvent {
+  type: 'session_project_agent_updated'
+  agentId: string
+  profileId: string
+  projectAgent: ProjectAgentInfo | null
   requestId?: string
 }
 
@@ -404,6 +419,7 @@ export type ServerEvent =
   | SessionDeletedEvent
   | SessionClearedEvent
   | SessionRenamedEvent
+  | SessionProjectAgentUpdatedEvent
   | ProfileRenamedEvent
   | SessionForkedEvent
   | SessionMemoryMergeStartedEvent
