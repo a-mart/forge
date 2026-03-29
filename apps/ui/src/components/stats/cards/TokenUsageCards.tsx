@@ -11,7 +11,7 @@ export function TokenUsageCards({ tokens }: TokenUsageCardsProps) {
   const avgPerWeekLast30 = Math.round(tokens.last30Days * 7 / 30)
 
   return (
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
       <StatCard
         title="Today"
         value={abbreviateNumber(tokens.today)}
@@ -22,6 +22,13 @@ export function TokenUsageCards({ tokens }: TokenUsageCardsProps) {
             <div>{formatTokenCount(tokens.todayOutputTokens)} out</div>
           </div>
         }
+        variant="accent"
+      />
+      <StatCard
+        title="Yesterday"
+        value={abbreviateNumber(tokens.yesterday)}
+        unit="tokens"
+        subtitle=""
         variant="accent"
       />
       <StatCard

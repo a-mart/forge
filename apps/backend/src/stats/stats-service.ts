@@ -241,6 +241,7 @@ export class StatsService {
     const scanResult = await this.scanProfilesData(dataDir, profileIds, timezone);
 
     const todayKey = toDayKey(nowMs, timezone);
+    const yesterdayKey = shiftDayKey(todayKey, -1);
     const rangeStartMs = getRangeStartMs(range, nowMs, scanResult.earliestUsageDayKey, timezone);
     const rangeStartDayKey = toDayKey(rangeStartMs, timezone);
 
@@ -250,6 +251,7 @@ export class StatsService {
       .sort((left, right) => left.day.localeCompare(right.day));
 
     const totalToday = scanResult.dailyUsage.get(todayKey) ?? emptyDailyTotals();
+    const totalYesterday = scanResult.dailyUsage.get(yesterdayKey) ?? emptyDailyTotals();
 
     const last7 = this.sumDailyWindow(scanResult.dailyUsage, todayKey, 7);
     const last30 = this.sumDailyWindow(scanResult.dailyUsage, todayKey, 30);
@@ -296,6 +298,7 @@ export class StatsService {
       uptimeMs: Math.round(process.uptime() * 1000),
       tokens: {
         today: totalToday.total,
+        yesterday: totalYesterday.total,
         todayDate: formatDayLabel(todayKey),
         todayInputTokens: totalToday.input,
         todayOutputTokens: totalToday.output,

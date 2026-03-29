@@ -23,8 +23,8 @@ function StatsSkeleton() {
   return (
     <div className="space-y-4">
       {/* Token usage row */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        {Array.from({ length: 4 }).map((_, i) => (
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        {Array.from({ length: 5 }).map((_, i) => (
           <Card key={i} className="border-border/50 bg-card/80 p-3">
             <Skeleton className="mb-2 h-3 w-20" />
             <Skeleton className="mb-1 h-7 w-16" />
@@ -127,7 +127,7 @@ export function StatsPanel({ wsUrl, onBack }: StatsPanelProps) {
         <EmptyState />
       ) : stats ? (
         <div className={cn('space-y-4 transition-opacity duration-200', isUpdating && 'opacity-60')}>
-          {/* Token usage: 4-card row */}
+          {/* Token usage: 5-card row */}
           <TokenUsageCards tokens={stats.tokens} />
 
           {/* Secondary metrics: 3-card row */}

@@ -18,6 +18,7 @@ export interface StatsSnapshot {
 
 export interface TokenStats {
   today: number;
+  yesterday: number;
   todayDate: string;
   todayInputTokens: number;
   todayOutputTokens: number;
