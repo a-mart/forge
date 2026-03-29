@@ -49,6 +49,7 @@ export interface SpecialistFrontmatter {
   fallbackReasoningLevel?: string;
   builtin: boolean;
   pinned: boolean;
+  webSearch: boolean;
 }
 
 export interface SaveSpecialistRequest {
@@ -61,6 +62,7 @@ export interface SaveSpecialistRequest {
   fallbackModelId?: string;
   fallbackReasoningLevel?: string;
   pinned?: boolean;
+  webSearch?: boolean;
   promptBody: string;
 }
 
@@ -201,7 +203,8 @@ export function generateRosterBlock(roster: ResolvedSpecialistDefinition[]): str
           s.fallbackReasoningLevel ? ` ${s.fallbackReasoningLevel}` : ""
         }`
       : "";
-    lines.push(`- \`${s.specialistId}\`: ${s.whenToUse} [${primary}${fallback}]`);
+    const webSearchTag = s.webSearch ? " [web search]" : "";
+    lines.push(`- \`${s.specialistId}\`: ${s.whenToUse} [${primary}${fallback}]${webSearchTag}`);
   }
 
   lines.push(
@@ -471,6 +474,7 @@ function parseSpecialistMarkdown(markdown: string): ParsedSpecialistFile | null 
   const enabled = parseOptionalBoolean(frontmatterValues.enabled);
   const builtin = parseOptionalBoolean(frontmatterValues.builtin);
   const pinned = parseOptionalBoolean(frontmatterValues.pinned);
+  const webSearch = parseOptionalBoolean(frontmatterValues.webSearch);
 
   if (frontmatterValues.enabled !== undefined && enabled === undefined) {
     return null;
@@ -481,6 +485,10 @@ function parseSpecialistMarkdown(markdown: string): ParsedSpecialistFile | null 
   }
 
   if (frontmatterValues.pinned !== undefined && pinned === undefined) {
+    return null;
+  }
+
+  if (frontmatterValues.webSearch !== undefined && webSearch === undefined) {
     return null;
   }
 
@@ -512,6 +520,7 @@ function parseSpecialistMarkdown(markdown: string): ParsedSpecialistFile | null 
       fallbackReasoningLevel,
       builtin: builtin ?? false,
       pinned: pinned ?? false,
+      webSearch: webSearch ?? false,
     },
     body,
   };
@@ -578,6 +587,7 @@ function validateSaveRequest(data: SaveSpecialistRequest): SpecialistFrontmatter
     fallbackReasoningLevel: normalizedFallbackReasoningLevel,
     builtin: false,
     pinned: data.pinned ?? false,
+    webSearch: data.webSearch === true,
   };
 }
 
@@ -694,6 +704,7 @@ function toResolvedSpecialistDefinition(options: {
     fallbackReasoningLevel: options.frontmatter.fallbackReasoningLevel,
     builtin: options.frontmatter.builtin,
     pinned: options.frontmatter.pinned,
+    webSearch: options.frontmatter.webSearch,
     promptBody: options.body,
     sourceKind: options.sourceKind,
     sourcePath: options.sourcePath,
@@ -732,6 +743,10 @@ function serializeSpecialistFile(frontmatter: SpecialistFrontmatter, body: strin
 
   if (frontmatter.pinned) {
     lines.push("pinned: true");
+  }
+
+  if (frontmatter.webSearch) {
+    lines.push("webSearch: true");
   }
 
   lines.push("---", "", body.trim(), "");

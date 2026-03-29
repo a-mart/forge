@@ -409,6 +409,7 @@ function parseSaveSpecialistBody(value: unknown): SaveSpecialistRequest {
     fallbackModelId: readOptionalStringField(obj, "fallbackModelId"),
     fallbackReasoningLevel: readOptionalStringField(obj, "fallbackReasoningLevel"),
     pinned: readOptionalBooleanField(obj, "pinned"),
+    webSearch: readOptionalBooleanField(obj, "webSearch"),
     promptBody: readRequiredStringField(obj, "promptBody"),
   };
 }

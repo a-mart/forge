@@ -44,6 +44,21 @@ const FALLBACK_MODEL_PRESET_INFO: ModelPresetInfo[] = [
     ],
   },
   {
+    presetId: 'pi-grok',
+    displayName: 'Grok 4',
+    provider: 'xai',
+    modelId: 'grok-4',
+    defaultReasoningLevel: 'high',
+    supportedReasoningLevels: ['none', 'low', 'medium', 'high', 'xhigh'],
+    webSearch: true,
+    variants: [
+      { modelId: 'grok-4-fast', label: 'Grok 4 Fast' },
+      { modelId: 'grok-4.20-0309-reasoning', label: 'Grok 4.20 Reasoning' },
+      { modelId: 'grok-4.20-0309-non-reasoning', label: 'Grok 4.20 Non-Reasoning' },
+      { modelId: 'grok-4.20-multi-agent-0309', label: 'Grok 4.20 Multi-Agent' },
+    ],
+  },
+  {
     presetId: 'codex-app',
     displayName: 'Codex App Runtime',
     provider: 'openai-codex-app-server',
@@ -211,7 +226,8 @@ function isModelPresetInfo(value: unknown): value is ModelPresetInfo {
     !Array.isArray(model.supportedReasoningLevels) ||
     model.supportedReasoningLevels.some(
       (level) => !MANAGER_REASONING_LEVELS.includes(level as ManagerReasoningLevel),
-    )
+    ) ||
+    (model.webSearch !== undefined && typeof model.webSearch !== 'boolean')
   ) {
     return false
   }

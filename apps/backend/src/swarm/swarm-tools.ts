@@ -379,7 +379,13 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
         ),
         reasoningLevel: Type.Optional(spawnReasoningLevelSchema),
         cwd: Type.Optional(Type.String({ description: "Optional working directory override." })),
-        initialMessage: Type.Optional(Type.String({ description: "Optional first message to send after spawn." }))
+        initialMessage: Type.Optional(Type.String({ description: "Optional first message to send after spawn." })),
+        webSearch: Type.Optional(
+          Type.Boolean({
+            description:
+              "Enable xAI native web search for this worker. Only effective with Grok models in ad-hoc mode. Ignored when specialist is provided (specialist config controls web search)."
+          })
+        )
       }),
       async execute(_toolCallId, params) {
         const parsed = params as {
@@ -392,6 +398,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
           reasoningLevel?: unknown;
           cwd?: string;
           initialMessage?: string;
+          webSearch?: boolean;
         };
 
         const spawnInput: SpawnAgentInput = {
@@ -403,7 +410,8 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
           modelId: parsed.modelId,
           reasoningLevel: parseSwarmReasoningLevel(parsed.reasoningLevel, "spawn_agent.reasoningLevel"),
           cwd: parsed.cwd,
-          initialMessage: parsed.initialMessage
+          initialMessage: parsed.initialMessage,
+          webSearch: parsed.webSearch
         };
 
         const spawned = await host.spawnAgent(descriptor.agentId, spawnInput);

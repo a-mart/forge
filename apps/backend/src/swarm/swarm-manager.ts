@@ -170,6 +170,7 @@ interface ResolvedSpecialistDefinitionLike {
   fallbackModelId?: string;
   fallbackProvider?: string;
   fallbackReasoningLevel?: SwarmReasoningLevel;
+  webSearch?: boolean;
   promptBody: string;
   available: boolean;
   availabilityCode?: string;
@@ -1771,6 +1772,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         reject,
         createdAt: this.now(),
       });
+      this.emitAgentsSnapshot();
     });
   }
 
@@ -1792,6 +1794,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.emitChoiceRequest(answeredEvent);
 
     pending.resolve(answers);
+    this.emitAgentsSnapshot();
   }
 
   cancelChoiceRequest(choiceId: string, reason: Extract<ChoiceRequestStatus, "cancelled" | "expired">): void {
@@ -1811,6 +1814,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.emitChoiceRequest(cancelledEvent);
 
     pending.reject(new ChoiceRequestCancelledError(reason));
+    this.emitAgentsSnapshot();
   }
 
   cancelAllPendingChoicesForAgent(agentId: string): void {
@@ -2490,6 +2494,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     let specialist: ResolvedSpecialistDefinitionLike | undefined;
     let specialistFallbackModel: AgentModelDescriptor | undefined;
     let explicitSystemPrompt: string | undefined;
+    let webSearch = false;
 
     if (requestedSpecialistId) {
       const roster = await this.resolveSpecialistRosterForProfile(managerProfileId);
@@ -2558,6 +2563,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       model = this.resolveSpawnModelWithCapacityFallback(requestedModel);
       archetypeId = await this.resolveSpawnWorkerArchetypeId(input, agentId, managerProfileId);
       explicitSystemPrompt = input.systemPrompt?.trim();
+      webSearch = input.webSearch === true;
     }
 
     const descriptor: AgentDescriptor = {
@@ -2577,13 +2583,17 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         manager.profileId ?? manager.agentId,
         manager.agentId,
         agentId
-      )
+      ),
+      ...(webSearch ? { webSearch: true } : {})
     };
 
     if (specialist) {
       descriptor.specialistId = specialist.specialistId;
       descriptor.specialistDisplayName = specialist.displayName;
       descriptor.specialistColor = specialist.color;
+      if (specialist.webSearch) {
+        descriptor.webSearch = true;
+      }
     }
 
     this.descriptors.set(agentId, descriptor);
@@ -3440,6 +3450,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const workers = this.getWorkersForManager(clone.agentId);
     clone.workerCount = workers.length;
     clone.activeWorkerCount = workers.filter((worker) => worker.status === "streaming").length;
+    clone.pendingChoiceCount = this.getPendingChoiceIdsForSession(clone.agentId).length;
     return clone;
   }
 

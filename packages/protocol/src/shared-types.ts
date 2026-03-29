@@ -18,6 +18,7 @@ export interface ModelPresetInfo {
   modelId: string
   defaultReasoningLevel: ManagerReasoningLevel
   supportedReasoningLevels: ManagerReasoningLevel[]
+  webSearch?: boolean
   variants?: ModelVariantInfo[]
 }
 
@@ -64,9 +65,11 @@ export interface AgentDescriptor {
   workerCount?: number
   activeWorkerCount?: number
   streamingStartedAt?: number
+  pendingChoiceCount?: number
   specialistId?: string
   specialistDisplayName?: string
   specialistColor?: string
+  webSearch?: boolean
 }
 
 export type SpecialistSourceKind = 'builtin' | 'global' | 'profile'
@@ -86,6 +89,7 @@ export interface ResolvedSpecialistDefinition {
   fallbackReasoningLevel?: string
   builtin: boolean
   pinned: boolean
+  webSearch?: boolean
   promptBody: string
   sourceKind: SpecialistSourceKind
   sourcePath?: string

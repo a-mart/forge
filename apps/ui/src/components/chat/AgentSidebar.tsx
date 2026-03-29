@@ -112,7 +112,6 @@ interface AgentSidebarProps {
   onUpdateManagerModel?: (managerId: string, model: ManagerModelPreset, reasoningLevel?: ManagerReasoningLevel) => void
   onRequestSessionWorkers?: (sessionId: string) => void
   onReorderProfiles?: (profileIds: string[]) => void
-  pendingChoiceSessionId?: string | null
 }
 
 type AgentLiveStatus = {
@@ -425,7 +424,6 @@ function SessionRowItem({
   onMarkUnread,
   onStopWorker,
   onResumeWorker,
-  pendingChoiceSessionId,
   highlightQuery,
 }: {
   session: SessionRow
@@ -447,7 +445,6 @@ function SessionRowItem({
   onMarkUnread?: () => void
   onStopWorker?: (agentId: string) => void
   onResumeWorker?: (agentId: string) => void
-  pendingChoiceSessionId?: string | null
   highlightQuery?: string
 }) {
   const { sessionAgent, workers, isDefault } = session
@@ -461,7 +458,7 @@ function SessionRowItem({
     || sessionAgent.activeWorkerCount
     || 0
   const managerStreaming = getAgentLiveStatus(sessionAgent, statuses).status === 'streaming'
-  const hasPendingChoice = pendingChoiceSessionId === sessionAgent.agentId
+  const hasPendingChoice = (sessionAgent.pendingChoiceCount ?? 0) > 0
 
   return (
     <li>
@@ -727,7 +724,6 @@ function ProfileGroup({
   onMarkUnread,
   onChangeModel,
   showModelIcons,
-  pendingChoiceSessionId,
   highlightQuery,
   dragHandleRef,
   dragHandleListeners,
@@ -760,7 +756,6 @@ function ProfileGroup({
   onMarkUnread?: (agentId: string) => void
   onChangeModel?: (profileId: string) => void
   showModelIcons?: boolean
-  pendingChoiceSessionId?: string | null
   highlightQuery?: string
   dragHandleRef?: (element: HTMLElement | null) => void
   dragHandleListeners?: Record<string, any> | undefined
@@ -975,7 +970,6 @@ function ProfileGroup({
                         onMarkUnread={onMarkUnread ? () => onMarkUnread(session.sessionAgent.agentId) : undefined}
                         onStopWorker={onStopSession}
                         onResumeWorker={onResumeSession}
-                        pendingChoiceSessionId={pendingChoiceSessionId}
                         highlightQuery={highlightQuery}
                       />
                     )
@@ -1366,7 +1360,6 @@ function CortexSection({
   onForkSession,
   onMarkUnread,
   onChangeModel,
-  pendingChoiceSessionId,
   highlightQuery,
 }: {
   cortexRow: ProfileTreeRow
@@ -1397,7 +1390,6 @@ function CortexSection({
   onForkSession?: (sourceAgentId: string) => void
   onMarkUnread?: (agentId: string) => void
   onChangeModel?: (profileId: string) => void
-  pendingChoiceSessionId?: string | null
   highlightQuery?: string
 }) {
   const { profile, sessions } = cortexRow
@@ -1645,7 +1637,6 @@ function CortexSection({
                         onMarkUnread={onMarkUnread ? () => onMarkUnread(session.sessionAgent.agentId) : undefined}
                         onStopWorker={onStopSession}
                         onResumeWorker={onResumeSession}
-                        pendingChoiceSessionId={pendingChoiceSessionId}
                         highlightQuery={highlightQuery}
                       />
                     )
@@ -1778,7 +1769,6 @@ export function AgentSidebar({
   onUpdateManagerModel,
   onRequestSessionWorkers,
   onReorderProfiles,
-  pendingChoiceSessionId,
 }: AgentSidebarProps) {
   const treeRows = buildProfileTreeRows(agents, profiles)
   const hasCortexProfile = profiles.some((profile) => profile.profileId === 'cortex')
@@ -2180,7 +2170,6 @@ export function AgentSidebar({
               onForkSession={onForkSession ? (sourceAgentId: string) => setForkTarget({ sourceAgentId }) : undefined}
               onMarkUnread={onMarkUnread}
               onChangeModel={onUpdateManagerModel ? handleRequestChangeModel : undefined}
-              pendingChoiceSessionId={pendingChoiceSessionId}
               highlightQuery={isSearchActive ? parsedSearch.term : undefined}
             />
           )
@@ -2244,7 +2233,6 @@ export function AgentSidebar({
               onMarkUnread={onMarkUnread}
               onChangeModel={onUpdateManagerModel ? handleRequestChangeModel : undefined}
               showModelIcons={showModelIcons}
-              pendingChoiceSessionId={pendingChoiceSessionId}
               highlightQuery={isSearchActive ? parsedSearch.term : undefined}
               dragHandleRef={dragHandleRef}
               dragHandleListeners={dragHandleListeners}

@@ -56,9 +56,11 @@ export interface AgentDescriptor {
   workerCount?: number;
   activeWorkerCount?: number;
   streamingStartedAt?: number;
+  pendingChoiceCount?: number;
   specialistId?: string;
   specialistDisplayName?: string;
   specialistColor?: string;
+  webSearch?: boolean;
 }
 
 export interface AgentsStoreFile {
@@ -104,6 +106,7 @@ export interface SpawnAgentInput {
   reasoningLevel?: SwarmReasoningLevel;
   cwd?: string;
   initialMessage?: string;
+  webSearch?: boolean;
 }
 
 export interface SwarmPaths {

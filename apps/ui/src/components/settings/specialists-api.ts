@@ -14,6 +14,7 @@ export interface SaveSpecialistPayload {
   fallbackModelId?: string
   fallbackReasoningLevel?: ManagerReasoningLevel
   pinned?: boolean
+  webSearch?: boolean
   promptBody: string
 }
 
@@ -90,6 +91,7 @@ function isResolvedSpecialistDefinition(value: unknown): value is ResolvedSpecia
     (specialist.fallbackReasoningLevel === undefined || typeof specialist.fallbackReasoningLevel === 'string') &&
     typeof specialist.builtin === 'boolean' &&
     typeof specialist.pinned === 'boolean' &&
+    (specialist.webSearch === undefined || typeof specialist.webSearch === 'boolean') &&
     typeof specialist.promptBody === 'string' &&
     (specialist.sourceKind === 'builtin' || specialist.sourceKind === 'global' || specialist.sourceKind === 'profile') &&
     typeof specialist.available === 'boolean' &&

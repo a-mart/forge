@@ -196,6 +196,7 @@ export function getModelPresetInfoList(): ModelPresetInfo[] {
       modelId: descriptor.modelId,
       defaultReasoningLevel,
       supportedReasoningLevels,
+      ...(presetId === "pi-grok" ? { webSearch: true } : {}),
       variants: displayInfo.variants?.map((variant) => ({ ...variant }))
     };
   });

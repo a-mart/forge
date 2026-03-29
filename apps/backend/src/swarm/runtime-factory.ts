@@ -24,6 +24,7 @@ import type { RuntimeErrorEvent, RuntimeSessionEvent, SwarmAgentRuntime } from "
 import { buildSwarmTools, type SwarmToolHost } from "./swarm-tools.js";
 import { normalizeArchetypeId } from "./prompt-registry.js";
 import { combineCompactionCustomInstructions, loadPins } from "./message-pins.js";
+import { createXaiResponsesExtensionFactory } from "./extensions/xai-responses-provider.js";
 import {
   getProfilePiExtensionsDir,
   getProfilePiPromptsDir,
@@ -457,6 +458,14 @@ export class RuntimeFactory {
           }
         });
       });
+    }
+
+    if (descriptor.model.provider === "xai") {
+      factories.push(
+        createXaiResponsesExtensionFactory({
+          webSearchEnabled: descriptor.webSearch === true
+        })
+      );
     }
 
     return factories;
