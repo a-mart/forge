@@ -4,6 +4,7 @@ import { SettingsGeneral } from '@/components/settings/SettingsGeneral'
 import { SettingsNotifications } from '@/components/settings/SettingsNotifications'
 import { SettingsAuth } from '@/components/settings/SettingsAuth'
 import { SettingsIntegrations } from '@/components/settings/SettingsIntegrations'
+import { SettingsModels } from '@/components/settings/SettingsModels'
 import { SettingsSkills } from '@/components/settings/SettingsSkills'
 import { SettingsPrompts } from '@/components/settings/SettingsPrompts'
 import { SettingsSpecialists } from '@/components/settings/SettingsSpecialists'
@@ -19,6 +20,7 @@ interface SettingsPanelProps {
   telegramStatus?: TelegramStatusEvent | null
   promptChangeKey: number
   specialistChangeKey: number
+  modelConfigChangeKey: number
   onBack?: () => void
   onPlaywrightSnapshotUpdate?: (snapshot: PlaywrightDiscoverySnapshot) => void
   onPlaywrightSettingsLoaded?: (settings: PlaywrightDiscoverySettings) => void
@@ -31,6 +33,7 @@ export function SettingsPanel({
   telegramStatus,
   promptChangeKey,
   specialistChangeKey,
+  modelConfigChangeKey,
   onBack,
   onPlaywrightSnapshotUpdate,
   onPlaywrightSettingsLoaded,
@@ -42,6 +45,7 @@ export function SettingsPanel({
       {activeTab === 'general' && <SettingsGeneral wsUrl={wsUrl} onPlaywrightSnapshotUpdate={onPlaywrightSnapshotUpdate} onPlaywrightSettingsLoaded={onPlaywrightSettingsLoaded} />}
       {activeTab === 'notifications' && <SettingsNotifications managers={managers} />}
       {activeTab === 'auth' && <SettingsAuth wsUrl={wsUrl} />}
+      {activeTab === 'models' && <SettingsModels wsUrl={wsUrl} modelConfigChangeKey={modelConfigChangeKey} />}
       {activeTab === 'integrations' && (
         <SettingsIntegrations
           wsUrl={wsUrl}
@@ -62,6 +66,7 @@ export function SettingsPanel({
           wsUrl={wsUrl}
           profiles={profiles}
           specialistChangeKey={specialistChangeKey}
+          modelConfigChangeKey={modelConfigChangeKey}
         />
       )}
       {activeTab === 'slash-commands' && (

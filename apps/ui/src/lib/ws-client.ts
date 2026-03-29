@@ -1283,6 +1283,10 @@ export class ManagerWsClient {
         this.updateState({ specialistChangeKey: this.state.specialistChangeKey + 1 })
         break
 
+      case 'model_config_changed':
+        this.updateState({ modelConfigChangeKey: this.state.modelConfigChangeKey + 1 })
+        break
+
       case 'error':
         this.updateState({ lastError: event.message })
         this.pushSystemMessage(`${event.code}: ${event.message}`)

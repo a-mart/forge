@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -28,6 +28,7 @@ const piAiMockState = vi.hoisted(() => ({
 const piCodingAgentMockState = vi.hoisted(() => ({
   createAgentSession: vi.fn(),
   compact: vi.fn(),
+  modelRegistryConstructorArgs: vi.fn(),
   modelRegistryFind: vi.fn(),
   modelRegistryGetAll: vi.fn(),
 }));
@@ -53,7 +54,13 @@ vi.mock("@mariozechner/pi-coding-agent", () => ({
   createAgentSession: (...args: unknown[]) => piCodingAgentMockState.createAgentSession(...args),
   compact: (...args: unknown[]) => piCodingAgentMockState.compact(...args),
   ModelRegistry: class {
-    constructor(_authStorage: unknown) {}
+    constructor(_authStorage: unknown, modelsJsonPath?: unknown) {
+      piCodingAgentMockState.modelRegistryConstructorArgs(_authStorage, modelsJsonPath);
+    }
+
+    getError(): undefined {
+      return undefined;
+    }
 
     find(provider: string, modelId: string): unknown {
       return piCodingAgentMockState.modelRegistryFind(provider, modelId);
@@ -145,6 +152,13 @@ function createManagerDescriptor(rootDir: string): AgentDescriptor {
   });
 }
 
+async function seedProjectionFile(rootDir: string): Promise<string> {
+  const projectionPath = join(rootDir, "data", "shared", "generated", "pi-models.json");
+  await mkdir(join(rootDir, "data", "shared", "generated"), { recursive: true });
+  await writeFile(projectionPath, '{"providers":{}}\n', "utf8");
+  return projectionPath;
+}
+
 function createFactory(rootDir: string): RuntimeFactory {
   return new RuntimeFactory({
     host: {
@@ -167,6 +181,7 @@ function createFactory(rootDir: string): RuntimeFactory {
     config: createConfig(rootDir),
     now: () => "2026-01-01T00:00:00.000Z",
     logDebug: () => {},
+    getPiModelsJsonPath: () => join(rootDir, "data", "shared", "generated", "pi-models.json"),
     getMemoryRuntimeResources: async () => ({
       memoryContextFile: {
         path: join(rootDir, "memory.md"),
@@ -200,6 +215,7 @@ describe("RuntimeFactory", () => {
     piAiMockState.getModels.mockClear();
     piCodingAgentMockState.createAgentSession.mockReset();
     piCodingAgentMockState.compact.mockReset();
+    piCodingAgentMockState.modelRegistryConstructorArgs.mockReset();
     piCodingAgentMockState.modelRegistryFind.mockReset();
     piCodingAgentMockState.modelRegistryGetAll.mockReset();
   });
@@ -207,6 +223,8 @@ describe("RuntimeFactory", () => {
   it("throws when the requested Pi model is unavailable instead of falling back", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
     await mkdir(rootDir, { recursive: true });
+
+    await seedProjectionFile(rootDir);
 
     piCodingAgentMockState.modelRegistryFind.mockReturnValue(undefined);
     piCodingAgentMockState.modelRegistryGetAll.mockReturnValue([
@@ -220,10 +238,28 @@ describe("RuntimeFactory", () => {
     const factory = createFactory(rootDir);
 
     await expect(factory.createRuntimeForDescriptor(createDescriptor(rootDir), "system prompt")).rejects.toThrow(
-      'Model "gpt-5.4-mini" not found for provider "openai-codex". The model may not be available in the current Pi runtime version.',
+      'Model "gpt-5.4-mini" not found for provider "openai-codex".',
     );
 
+    expect(piCodingAgentMockState.modelRegistryConstructorArgs).toHaveBeenCalledWith(
+      expect.anything(),
+      join(rootDir, "data", "shared", "generated", "pi-models.json"),
+    );
     expect(piCodingAgentMockState.modelRegistryGetAll).not.toHaveBeenCalled();
+    expect(piCodingAgentMockState.createAgentSession).not.toHaveBeenCalled();
+  });
+
+  it("fails fast when the generated Pi projection file is missing", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    await mkdir(rootDir, { recursive: true });
+
+    const factory = createFactory(rootDir);
+
+    await expect(factory.createRuntimeForDescriptor(createDescriptor(rootDir), "system prompt")).rejects.toThrow(
+      `Pi model projection file is missing: ${join(rootDir, "data", "shared", "generated", "pi-models.json")}. Regenerate it before creating a ModelRegistry.`,
+    );
+
+    expect(piCodingAgentMockState.modelRegistryConstructorArgs).not.toHaveBeenCalled();
     expect(piCodingAgentMockState.createAgentSession).not.toHaveBeenCalled();
   });
 
@@ -319,7 +355,7 @@ describe("RuntimeFactory", () => {
     });
   });
 
-  it("injects the xAI responses extension factory for xAI workers", async () => {
+  it("injects the catalog request behavior extension for xAI workers without re-registering the provider", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
     const factory = createFactory(rootDir);
     const descriptor = createDescriptor(rootDir, {
@@ -331,30 +367,23 @@ describe("RuntimeFactory", () => {
     });
 
     const extensionFactories = buildExtensionFactories(factory, descriptor);
+    const handlers = new Map<string, (...args: any[]) => unknown>();
     const registerProvider = vi.fn();
 
     for (const extensionFactory of extensionFactories) {
-      extensionFactory({ registerProvider, on: vi.fn() } as any);
+      extensionFactory({
+        registerProvider,
+        on: (event: string, handler: (...args: any[]) => unknown) => {
+          handlers.set(event, handler);
+        },
+      } as any);
     }
 
-    expect(registerProvider).toHaveBeenCalledWith(
-      "xai",
-      expect.objectContaining({
-        baseUrl: "https://api.x.ai/v1",
-        apiKey: "XAI_API_KEY",
-        api: "openai-responses",
-        models: [
-          expect.objectContaining({
-            id: "grok-4",
-            name: "Grok 4",
-            api: "openai-responses",
-          }),
-        ],
-      }),
-    );
+    expect(registerProvider).not.toHaveBeenCalled();
+    expect(handlers.has("before_provider_request")).toBe(true);
   });
 
-  it("does not inject the xAI responses extension factory for non-xAI workers", async () => {
+  it("does not inject request-behavior handling for non-xAI workers", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
     const factory = createFactory(rootDir);
     const descriptor = createDescriptor(rootDir, {
@@ -366,13 +395,18 @@ describe("RuntimeFactory", () => {
     });
 
     const extensionFactories = buildExtensionFactories(factory, descriptor);
-    const registerProvider = vi.fn();
+    const handlers = new Map<string, (...args: any[]) => unknown>();
 
     for (const extensionFactory of extensionFactories) {
-      extensionFactory({ registerProvider, on: vi.fn() } as any);
+      extensionFactory({
+        registerProvider: vi.fn(),
+        on: (event: string, handler: (...args: any[]) => unknown) => {
+          handlers.set(event, handler);
+        },
+      } as any);
     }
 
-    expect(registerProvider).not.toHaveBeenCalledWith("xai", expect.anything());
+    expect(handlers.has("before_provider_request")).toBe(false);
   });
 
   it("registers before_provider_request injection when xAI web search is enabled", async () => {
@@ -389,18 +423,15 @@ describe("RuntimeFactory", () => {
 
     const extensionFactories = buildExtensionFactories(factory, descriptor);
     const handlers = new Map<string, (...args: any[]) => unknown>();
-    const registerProvider = vi.fn();
 
     for (const extensionFactory of extensionFactories) {
       extensionFactory({
-        registerProvider,
+        registerProvider: vi.fn(),
         on: (event: string, handler: (...args: any[]) => unknown) => {
           handlers.set(event, handler);
         },
       } as any);
     }
-
-    expect(registerProvider).toHaveBeenCalledWith("xai", expect.anything());
 
     const beforeProviderRequest = handlers.get("before_provider_request");
     expect(beforeProviderRequest).toBeTypeOf("function");

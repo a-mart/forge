@@ -2,13 +2,18 @@ import { access, copyFile, mkdir, readdir, readFile, rename, unlink, writeFile }
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { Dirent } from "node:fs";
-import type { ResolvedSpecialistDefinition } from "@forge/protocol";
 import {
-  MODEL_PRESET_DESCRIPTORS,
+  FORGE_MODEL_CATALOG,
+  getCatalogFamily,
+  getCatalogModelsByFamily,
+  type ResolvedSpecialistDefinition,
+} from "@forge/protocol";
+import {
   inferProviderFromModelId,
   isKnownModelId,
   isSwarmReasoningLevel,
 } from "../model-presets.js";
+import { modelCatalogService } from "../model-catalog-service.js";
 import { sanitizePathSegment } from "../data-paths.js";
 import {
   getBuiltinSpecialistsDir,
@@ -21,20 +26,69 @@ const HEX_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
 const CACHE_KEY_SEPARATOR = "\u0000";
 const SPECIALISTS_ENABLED_FILENAME = "specialists-enabled.json";
 
+function formatPresetList(entries: string[]): string {
+  if (entries.length === 0) {
+    return "none";
+  }
+
+  if (entries.length === 1) {
+    return entries[0];
+  }
+
+  if (entries.length === 2) {
+    return `${entries[0]} and ${entries[1]}`;
+  }
+
+  return `${entries.slice(0, -1).join(", ")}, and ${entries[entries.length - 1]}`;
+}
+
+function selectVariantModelId(
+  familyId: string,
+  matcher: (model: { modelId: string; displayName: string; isFamilyDefault: boolean }) => boolean,
+): string | undefined {
+  const variants = getCatalogModelsByFamily(familyId).filter((model) => !model.isFamilyDefault);
+  return variants.find(matcher)?.modelId ?? variants[0]?.modelId;
+}
+
+function buildLegacyModelRoutingGuidance(): string {
+  const presetList = formatPresetList(
+    Object.values(FORGE_MODEL_CATALOG.families)
+      .filter((family) => family.visibleInSpawnPreset)
+      .map((family) => {
+        const providerSuffix =
+          family.provider === "openai-codex-app-server"
+            ? ` on ${family.provider}`
+            : "";
+        return `\`${family.familyId}\` (\`${family.defaultModelId}\`${providerSuffix})`;
+      }),
+  );
+
+  const codexQuickModelId =
+    selectVariantModelId("pi-codex", (model) => model.displayName.toLowerCase().includes("spark")) ??
+    "gpt-5.3-codex-spark";
+  const anthropicQuickModelId =
+    selectVariantModelId("pi-opus", (model) => model.displayName.toLowerCase().includes("haiku")) ??
+    "claude-haiku-4-5-20251001";
+  const complexCodingPreset = getCatalogFamily("pi-5.4")?.familyId ?? "pi-5.4";
+  const complexReviewPreset = getCatalogFamily("pi-opus")?.familyId ?? "pi-opus";
+
+  return `Model and reasoning selection for workers:
+- spawn_agent accepts optional \`model\`, \`modelId\`, and \`reasoningLevel\` to tune cost, speed, and capability per worker.
+- Available model presets: ${presetList}.
+- Think in three tiers when assigning work:
+  1. **Quick/cheap** — file reads, searches, command runs, simple edits. Use \`modelId: "${codexQuickModelId}"\` or \`modelId: "${anthropicQuickModelId}"\` with \`reasoningLevel: "low"\`. Fast, minimal cost.
+  2. **Standard** — normal implementation, moderate complexity. Use preset defaults with no overrides. This is the baseline and needs no tuning.
+  3. **Complex** — architecture, thorough code review, debugging subtle issues. Choose the model explicitly (e.g., \`model: "${complexCodingPreset}"\` for heavy coding tasks, \`model: "${complexReviewPreset}"\` for nuanced review).
+- The primary optimization lever is **model selection**, not reasoning level. A haiku worker costs a fraction of opus; a spark worker is ultra-fast. Use cheaper models for sub-tasks and exploration.
+- Reasoning level defaults are already high for all presets. Lower it for quick tasks; raising it further is rarely needed.
+- Cross-provider strengths: Codex models tend to excel at backend/algorithmic work. Claude models shine at UI polish, nuanced code review, and writing. Mix them on the same project like specialists on a team.`;
+}
+
 /**
  * Legacy model routing guidance injected into the manager prompt when specialists are disabled.
  * Extracted from the pre-specialists manager archetype.
  */
-export const LEGACY_MODEL_ROUTING_GUIDANCE = `Model and reasoning selection for workers:
-- spawn_agent accepts optional \`model\`, \`modelId\`, and \`reasoningLevel\` to tune cost, speed, and capability per worker.
-- Available model presets: \`pi-codex\` (\`gpt-5.3-codex\`), \`pi-5.4\` (\`gpt-5.4\`), \`pi-opus\` (\`claude-opus-4-6\`), \`pi-grok\` (\`grok-4\`), and \`codex-app\` (\`default\` on openai-codex-app-server).
-- Think in three tiers when assigning work:
-  1. **Quick/cheap** — file reads, searches, command runs, simple edits. Use \`modelId: "gpt-5.3-codex-spark"\` or \`modelId: "claude-haiku-4-5-20251001"\` with \`reasoningLevel: "low"\`. Fast, minimal cost.
-  2. **Standard** — normal implementation, moderate complexity. Use preset defaults with no overrides. This is the baseline and needs no tuning.
-  3. **Complex** — architecture, thorough code review, debugging subtle issues. Choose the model explicitly (e.g., \`model: "pi-5.4"\` for heavy coding tasks, \`model: "pi-opus"\` for nuanced review).
-- The primary optimization lever is **model selection**, not reasoning level. A haiku worker costs a fraction of opus; a spark worker is ultra-fast. Use cheaper models for sub-tasks and exploration.
-- Reasoning level defaults are already high for all presets. Lower it for quick tasks; raising it further is rarely needed.
-- Cross-provider strengths: Codex models tend to excel at backend/algorithmic work. Claude models shine at UI polish, nuanced code review, and writing. Mix them on the same project like specialists on a team.`;
+export const LEGACY_MODEL_ROUTING_GUIDANCE = buildLegacyModelRoutingGuidance();
 
 const rosterCache = new Map<string, ResolvedSpecialistDefinition[]>();
 
@@ -452,9 +506,9 @@ function parseSpecialistMarkdown(markdown: string): ParsedSpecialistFile | null 
   // Backward compatibility: migrate legacy preset-based frontmatter (`model`) to `modelId`.
   const legacyModelPreset = parseOptionalString(frontmatterValues.model);
   if (legacyModelPreset && !frontmatterValues.modelId) {
-    const preset = MODEL_PRESET_DESCRIPTORS[legacyModelPreset as keyof typeof MODEL_PRESET_DESCRIPTORS];
-    if (preset) {
-      frontmatterValues.modelId = preset.modelId;
+    const effectiveDescriptor = modelCatalogService.resolveModelDescriptorFromFamily(legacyModelPreset);
+    if (effectiveDescriptor) {
+      frontmatterValues.modelId = effectiveDescriptor.modelId;
     }
   }
 

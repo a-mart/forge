@@ -1,49 +1,40 @@
 import type { ExtensionFactory } from "@mariozechner/pi-coding-agent";
-import { getModels } from "@mariozechner/pi-ai";
+import { getCatalogProvider } from "@forge/protocol";
 
-const XAI_PROVIDER = "xai";
-const XAI_BASE_URL = "https://api.x.ai/v1";
 const RESPONSES_REASONING_INCLUDE = "reasoning.encrypted_content";
 
-const xaiResponsesModels = getModels(XAI_PROVIDER).map((model) => ({
-  id: model.id,
-  name: model.name,
-  api: "openai-responses" as const,
-  reasoning: model.reasoning,
-  input: [...model.input],
-  cost: { ...model.cost },
-  contextWindow: model.contextWindow,
-  maxTokens: model.maxTokens,
-  ...(model.headers ? { headers: { ...model.headers } } : {}),
-  compat: {
-    ...(model.compat ?? {}),
-    supportsReasoningEffort: false,
-  },
-}));
-
-export function createXaiResponsesExtensionFactory(options: {
+/**
+ * Create a Pi extension factory that applies catalog-driven request behaviors.
+ *
+ * Currently handles:
+ * - xAI: strip unsupported reasoning fields from Responses payloads
+ * - xAI: inject native web_search / x_search tools when enabled
+ */
+export function createCatalogRequestBehaviorExtensionFactory(options: {
   webSearchEnabled: boolean;
 }): ExtensionFactory {
   return (pi) => {
-    pi.registerProvider(XAI_PROVIDER, {
-      baseUrl: XAI_BASE_URL,
-      apiKey: "XAI_API_KEY",
-      api: "openai-responses",
-      models: xaiResponsesModels,
-    });
-
     pi.on("before_provider_request", (event, ctx) => {
-      if (ctx.model?.provider !== XAI_PROVIDER) {
+      if (!ctx.model) {
         return undefined;
       }
 
-      let payload = stripReasoningFromResponsesPayload(event.payload);
-
-      if (options.webSearchEnabled) {
-        payload = injectNativeSearchTools(payload);
+      const provider = getCatalogProvider(ctx.model.provider);
+      if (!provider) {
+        return undefined;
       }
 
-      return payload === event.payload ? undefined : payload;
+      if (provider.requestBehaviorId === "xai-responses") {
+        let payload = stripReasoningFromResponsesPayload(event.payload);
+
+        if (options.webSearchEnabled) {
+          payload = injectNativeSearchTools(payload);
+        }
+
+        return payload === event.payload ? undefined : payload;
+      }
+
+      return undefined;
     });
   };
 }

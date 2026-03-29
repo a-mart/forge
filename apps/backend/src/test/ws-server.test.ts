@@ -3426,7 +3426,7 @@ describe('SwarmWebSocketServer', () => {
         models: Array<{ presetId: string }>
       }
 
-      expect(initialPayload.models.map((model) => model.presetId)).toEqual(['codex-app'])
+      expect(initialPayload.models.map((model) => model.presetId)).toEqual([])
 
       const authUpdateResponse = await fetch(`http://${config.host}:${config.port}/api/settings/auth`, {
         method: 'PUT',
@@ -3462,7 +3462,7 @@ describe('SwarmWebSocketServer', () => {
       expect(updatedPresetIds).toContain('pi-codex')
       expect(updatedPresetIds).toContain('pi-5.4')
       expect(updatedPresetIds).toContain('pi-grok')
-      expect(updatedPresetIds).toContain('codex-app')
+      expect(updatedPresetIds).not.toContain('codex-app')
       expect(updatedPresetIds).not.toContain('pi-opus')
     } finally {
       if (previousAnthropicApiKey === undefined) {
@@ -4338,7 +4338,7 @@ describe('SwarmWebSocketServer', () => {
       expect(createdEvent.manager.model).toEqual({
         provider: 'anthropic',
         modelId: 'claude-opus-4-6',
-        thinkingLevel: 'xhigh',
+        thinkingLevel: 'high',
       })
     }
 
