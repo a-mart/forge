@@ -170,7 +170,7 @@ export function StatsPanel({ wsUrl, onBack }: StatsPanelProps) {
           <WorkerStatsCards workers={stats.workers} code={stats.code} />
 
           {/* Daily usage chart: full width */}
-          <DailyUsageChart data={stats.dailyUsage} />
+          <DailyUsageChart data={stats.dailyUsage} range={range} />
 
           {/* Model distribution badges */}
           <ModelDistribution models={stats.models} />

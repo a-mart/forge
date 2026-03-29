@@ -4,14 +4,14 @@ import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
-import type { CodeStats, ModelDistributionEntry, StatsRange, StatsSnapshot } from "@forge/protocol";
+import type { CodeStats, ModelDistributionEntry, StatsRange, StatsSnapshot, TokenStats } from "@forge/protocol";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import { getAgentsStoreFilePath, getProfilesDir, getSharedDir } from "../swarm/data-paths.js";
 
 export const STATS_CACHE_TTL_MS = 2 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const STATS_CACHE_FILE_NAME = "stats-cache.json";
-const STATS_CACHE_VERSION = 4;
+const STATS_CACHE_VERSION = 5;
 const SERVER_TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
 const GIT_COMMAND_TIMEOUT_MS = 10_000;
 const GIT_COMMAND_MAX_BUFFER_BYTES = 10 * 1024 * 1024;
@@ -92,18 +92,18 @@ export class StatsService {
     if (!options.forceRefresh) {
       const cached = this.cache.get(cacheKey);
       if (cached && cached.timezone === timezone && cached.expiresAt > nowMs) {
-        return cached.snapshot;
+        return this.withLatestTokenStats(cached.snapshot, timezone);
       }
 
       if (cached && cached.timezone === timezone) {
         void this.refreshRangeInBackground(range, timezone);
-        return cached.snapshot;
+        return this.withLatestTokenStats(cached.snapshot, timezone);
       }
     }
 
     const inFlight = this.inFlightComputations.get(inFlightKey);
     if (inFlight) {
-      return inFlight;
+      return inFlight.then((snapshot) => this.withLatestTokenStats(snapshot, timezone));
     }
 
     const computePromise = this.computeSnapshot(range, nowMs, timezone)
@@ -121,7 +121,7 @@ export class StatsService {
       });
 
     this.inFlightComputations.set(inFlightKey, computePromise);
-    return computePromise;
+    return computePromise.then((snapshot) => this.withLatestTokenStats(snapshot, timezone));
   }
 
   clearCache(): void {
@@ -166,6 +166,45 @@ export class StatsService {
 
   private getInFlightKey(range: StatsRange, timezone: string): string {
     return `stats:${range}:${timezone}`;
+  }
+
+  private withLatestTokenStats(snapshot: StatsSnapshot, timezone: string): StatsSnapshot {
+    const latest = this.getLatestTokenStatsForTimezone(timezone);
+    if (!latest) {
+      return snapshot;
+    }
+
+    if (latest === snapshot.tokens) {
+      return snapshot;
+    }
+
+    return {
+      ...snapshot,
+      tokens: latest
+    };
+  }
+
+  private getLatestTokenStatsForTimezone(timezone: string): TokenStats | null {
+    const ranges: StatsRange[] = ["7d", "30d", "all"];
+    let latestTokens: TokenStats | null = null;
+    let latestComputedAtMs = Number.NEGATIVE_INFINITY;
+
+    for (const range of ranges) {
+      const entry = this.cache.get(this.getCacheKey(range));
+      if (!entry || entry.timezone !== timezone) {
+        continue;
+      }
+
+      const computedAtMs = Date.parse(entry.snapshot.computedAt);
+      if (!Number.isFinite(computedAtMs) || computedAtMs < latestComputedAtMs) {
+        continue;
+      }
+
+      latestComputedAtMs = computedAtMs;
+      latestTokens = entry.snapshot.tokens;
+    }
+
+    return latestTokens;
   }
 
   private async ensurePersistentCacheLoaded(): Promise<void> {
@@ -252,10 +291,7 @@ export class StatsService {
     const rangeStartDayKey = toDayKey(rangeStartMs, timezone);
     const code = await this.computeCodeStats(scanResult.managerRepoPaths, rangeStartMs);
 
-    const dailyEntriesInRange = Array.from(scanResult.dailyUsage.entries())
-      .map(([day, totals]) => ({ day, totals }))
-      .filter((entry) => entry.day >= rangeStartDayKey)
-      .sort((left, right) => left.day.localeCompare(right.day));
+    const dailyEntriesInRange = this.buildDailyEntriesForRange(scanResult.dailyUsage, rangeStartDayKey, todayKey);
 
     const totalToday = scanResult.dailyUsage.get(todayKey) ?? emptyDailyTotals();
     const totalYesterday = scanResult.dailyUsage.get(yesterdayKey) ?? emptyDailyTotals();
@@ -288,12 +324,14 @@ export class StatsService {
     const activeDays = dailyEntriesInRange.filter((entry) => entry.totals.total > 0).map((entry) => entry.day);
     const longestStreak = computeLongestStreak(activeDays);
 
-    const peakDayEntry = dailyEntriesInRange.reduce<{ day: string; tokens: number } | null>((best, entry) => {
-      if (!best || entry.totals.total > best.tokens) {
-        return { day: entry.day, tokens: entry.totals.total };
-      }
-      return best;
-    }, null);
+    const peakDayEntry = dailyEntriesInRange
+      .filter((entry) => entry.totals.total > 0)
+      .reduce<{ day: string; tokens: number } | null>((best, entry) => {
+        if (!best || entry.totals.total > best.tokens) {
+          return { day: entry.day, tokens: entry.totals.total };
+        }
+        return best;
+      }, null);
 
     const totalMessagesInRange = scanResult.userMessages.filter(
       (messageMs) => toDayKey(messageMs, timezone) >= rangeStartDayKey
@@ -774,6 +812,30 @@ export class StatsService {
     return this.sumDailyEntries(values);
   }
 
+  private buildDailyEntriesForRange(
+    daily: Map<string, DailyTotals>,
+    rangeStartDayKey: string,
+    rangeEndDayKey: string
+  ): Array<{ day: string; totals: DailyTotals }> {
+    const startOrdinal = dayKeyToOrdinal(rangeStartDayKey);
+    const endOrdinal = dayKeyToOrdinal(rangeEndDayKey);
+
+    if (startOrdinal === null || endOrdinal === null || endOrdinal < startOrdinal) {
+      return [];
+    }
+
+    const entries: Array<{ day: string; totals: DailyTotals }> = [];
+    for (let ordinal = startOrdinal; ordinal <= endOrdinal; ordinal += 1) {
+      const day = ordinalToDayKey(ordinal);
+      entries.push({
+        day,
+        totals: daily.get(day) ?? emptyDailyTotals()
+      });
+    }
+
+    return entries;
+  }
+
   private sumDailyEntries(values: DailyTotals[]): DailyTotals {
     return values.reduce(
       (sum, value) => ({
@@ -1244,6 +1306,18 @@ function dayKeyToOrdinal(dayKey: string): number | null {
   }
 
   return Math.floor(dayMs / DAY_MS);
+}
+
+function ordinalToDayKey(ordinal: number): string {
+  if (!Number.isFinite(ordinal)) {
+    return "1970-01-01";
+  }
+
+  const date = new Date(ordinal * DAY_MS);
+  const year = date.getUTCFullYear();
+  const month = `${date.getUTCMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getUTCDate()}`.padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function dayKeyToMs(dayKey: string): number {
