@@ -204,11 +204,11 @@ describe('isCortexDiffViewerSession', () => {
   })
 })
 
-describe('IndexPage create manager model selection', () => {
+describe('IndexPage create project model selection', () => {
   it('shows only allowed model presets and defaults to GPT-5.3 Codex', async () => {
     await renderPage()
 
-    click(getAllByRole(container, 'button', { name: 'Add manager' })[0])
+    click(getAllByRole(container, 'button', { name: 'Add project' })[0])
 
     const modelSelect = getByRole(document.body, 'combobox', { name: 'Model' })
     expect(modelSelect.textContent).toContain('GPT-5.3 Codex')
@@ -224,7 +224,7 @@ describe('IndexPage create manager model selection', () => {
   it('sends selected model in create_manager payload', async () => {
     const socket = await renderPage()
 
-    click(getAllByRole(container, 'button', { name: 'Add manager' })[0])
+    click(getAllByRole(container, 'button', { name: 'Add project' })[0])
 
     changeValue(getByLabelText(document.body, 'Name') as HTMLInputElement, 'release-manager')
     changeValue(getByLabelText(document.body, 'Working directory') as HTMLInputElement, '/tmp/release')
@@ -233,7 +233,7 @@ describe('IndexPage create manager model selection', () => {
     click(modelSelect as HTMLElement)
     click(getByRole(document.body, 'option', { name: 'Claude Opus 4.6' }))
 
-    click(getByRole(document.body, 'button', { name: 'Create manager' }))
+    click(getByRole(document.body, 'button', { name: 'Create project' }))
 
     const validatePayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
     expect(validatePayload.type).toBe('validate_directory')

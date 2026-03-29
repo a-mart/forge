@@ -84,8 +84,8 @@ Your manager can have multiple **sessions** — independent conversations with t
 Sessions belong to a **profile**, which holds shared settings like model choice, system prompt, and persistent memory. Changes to the profile apply to all sessions under it.`,
     keywords: [
       'first session',
-      'create manager',
-      'new manager',
+      'create project',
+      'new project',
       'send message',
       'workers',
       'worker pills',

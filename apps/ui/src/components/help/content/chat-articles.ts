@@ -192,7 +192,7 @@ To start fresh without creating a new session, open the **⋮ menu** in the chat
     title: 'Profiles',
     category: 'chat',
     summary: 'What profiles are and what they control.',
-    content: `A profile is the set of settings, memory, and resources that a manager uses. When you create a new manager in Forge, you're creating a profile.
+    content: `A profile is the set of settings, memory, and resources that a manager uses. When you create a new project in Forge, you're creating a profile.
 
 ## What a profile controls
 
