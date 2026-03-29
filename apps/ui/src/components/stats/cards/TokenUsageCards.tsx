@@ -35,7 +35,7 @@ export function TokenUsageCards({ tokens }: TokenUsageCardsProps) {
         title="Last 7 Days"
         value={abbreviateNumber(tokens.last7Days)}
         unit="tokens"
-        subtitle={`Avg ${abbreviateNumber(tokens.last7DaysAvgPerDay)}/day`}
+        subtitle={`Avg ${abbreviateNumber(tokens.last7DaysAvgPerDay)} / day`}
         variant="accent"
       />
       <StatCard
@@ -44,8 +44,8 @@ export function TokenUsageCards({ tokens }: TokenUsageCardsProps) {
         unit="tokens"
         subtitle={
           <div>
-            <div>Avg {abbreviateNumber(avgPerDayLast30)}/day</div>
-            <div>Avg {abbreviateNumber(avgPerWeekLast30)}/week</div>
+            <div>Avg {abbreviateNumber(avgPerDayLast30)} / day</div>
+            <div>Avg {abbreviateNumber(avgPerWeekLast30)} / week</div>
           </div>
         }
         variant="accent"
