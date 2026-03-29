@@ -2110,6 +2110,10 @@ describe('SwarmManager', () => {
       isError: false,
     })
 
+    for (let attempt = 0; attempt < 20 && recordMutation.mock.calls.length < 2; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    }
+
     expect(recordMutation).toHaveBeenNthCalledWith(1, {
       path: commonKnowledgePath,
       action: 'write',
