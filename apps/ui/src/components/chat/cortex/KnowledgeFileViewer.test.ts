@@ -379,7 +379,8 @@ describe('KnowledgeFileViewer', () => {
     await flushPromises()
 
     expect(getByTestId(container, 'cortex-history-panel')).toBeTruthy()
-    expect(getByTestId(container, 'cortex-file-history-stats').textContent).toContain('Total edits')
+    expect(queryByTestId(container, 'cortex-file-history-stats')).toBeNull()
+    expect(getByTestId(container, 'cortex-file-timeline').textContent).toContain('Version history')
     expect(container.querySelector('[data-testid="cortex-document-viewer-shell"]')?.getAttribute('data-mode')).toBe('history')
 
     historyState.reviewHistory = {

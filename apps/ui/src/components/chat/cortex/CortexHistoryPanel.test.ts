@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { fireEvent, getByRole, getByTestId, getByText, waitFor } from '@testing-library/dom'
+import { fireEvent, getByRole, getByTestId, queryByTestId, waitFor } from '@testing-library/dom'
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
@@ -81,6 +81,7 @@ vi.mock('@/components/diff-viewer/DiffPane', () => ({
 let container: HTMLDivElement
 let root: Root | null = null
 const originalFetch = globalThis.fetch
+const fetchSpyState = { writeBodies: [] as Array<{ path: string; content: string; versioningSource?: string }> }
 
 const DOCUMENTS: CortexDocumentEntry[] = [
   {
@@ -112,6 +113,9 @@ const DOCUMENTS: CortexDocumentEntry[] = [
 ]
 
 beforeEach(() => {
+  vi.useFakeTimers()
+  vi.setSystemTime(new Date('2026-03-29T15:00:00.000Z'))
+
   container = document.createElement('div')
   document.body.appendChild(container)
   Element.prototype.scrollIntoView ??= vi.fn()
@@ -121,6 +125,7 @@ beforeEach(() => {
     disconnect() {}
   } as typeof ResizeObserver
 
+  fetchSpyState.writeBodies = []
   historyState.fileLogByOffset.clear()
   historyState.fileLogByOffset.set(0, {
     data: buildFileLogPage({ hasMore: true }),
@@ -175,11 +180,17 @@ beforeEach(() => {
   globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
     const method = init?.method ?? 'GET'
+
     if (url.endsWith('/api/read-file') && method === 'POST') {
       return {
         ok: true,
         json: async () => ({ path: DOCUMENTS[0].absolutePath, content: '# Current\nLatest content' }),
       } as Response
+    }
+
+    if (url.endsWith('/api/write-file') && method === 'POST') {
+      fetchSpyState.writeBodies.push(JSON.parse(String(init?.body ?? '{}')) as { path: string; content: string; versioningSource?: string })
+      return { ok: true, json: async () => ({ success: true }) } as Response
     }
 
     throw new Error(`Unexpected fetch: ${method} ${url}`)
@@ -197,22 +208,23 @@ afterEach(() => {
   container.remove()
   document.body.innerHTML = ''
   globalThis.fetch = originalFetch
+  vi.useRealTimers()
   vi.restoreAllMocks()
 })
 
 async function flushPromises(): Promise<void> {
   await Promise.resolve()
   await Promise.resolve()
-  await new Promise((resolve) => setTimeout(resolve, 0))
+  await vi.runAllTimersAsync()
   flushSync(() => {})
 }
 
 function renderPanel(options?: {
   onExitHistoryMode?: () => void
   onOpenSession?: (agentId: string) => void
-  onSelectDocument?: (documentId: string) => void
   onOpenDiffViewer?: (initialState: unknown) => void
   canOpenSession?: (agentId: string) => boolean
+  onRestoreSuccess?: () => void
 }) {
   if (!root) {
     root = createRoot(container)
@@ -230,8 +242,9 @@ function renderPanel(options?: {
         onArtifactClick: vi.fn(),
         onOpenSession: options?.onOpenSession,
         canOpenSession: options?.canOpenSession,
-        onSelectDocument: options?.onSelectDocument,
+        onSelectDocument: vi.fn(),
         onOpenDiffViewer: options?.onOpenDiffViewer,
+        onRestoreSuccess: options?.onRestoreSuccess,
       }),
     )
   })
@@ -264,7 +277,7 @@ function buildFileLogPage(overrides?: Partial<GitFileLogResult>): GitFileLogResu
         date: '2026-03-28T09:00:00.000Z',
         filesChanged: 1,
         metadata: {
-          source: 'agent-edit-tool',
+          source: 'reconcile',
           paths: [DOCUMENTS[0].gitPath],
         },
       },
@@ -327,121 +340,109 @@ function buildCommitDetail(overrides?: Partial<GitCommitDetail>): GitCommitDetai
 }
 
 describe('CortexHistoryPanel', () => {
-  it('renders the history stack, activity summary, stats, and review actions', async () => {
+  it('renders the simplified history view with a subtle review line and compact timeline', async () => {
     renderPanel({ canOpenSession: () => true })
     await flushPromises()
 
     expect(getByTestId(container, 'cortex-history-panel')).toBeTruthy()
-    expect(getByTestId(container, 'cortex-history-activity-summary').textContent).toContain('3 edits today, 6 edits this week.')
-    expect(getByTestId(container, 'cortex-history-activity-summary').textContent).toContain('nightly review run')
+    expect(queryByTestId(container, 'cortex-history-activity-summary')).toBeNull()
+    expect(queryByTestId(container, 'cortex-file-history-stats')).toBeNull()
+    expect(queryByTestId(container, 'cortex-inline-history-diff')).toBeNull()
 
-    const stats = getByTestId(container, 'cortex-file-history-stats')
-    expect(stats.textContent).toContain('Last modified')
-    expect(stats.textContent).toContain('Total edits')
-    expect(stats.textContent).toContain('6')
+    const reviewLine = getByTestId(container, 'cortex-last-review-run-card')
+    expect(reviewLine.textContent).toContain('Last review run')
+    expect(reviewLine.textContent).toContain('nightly review run')
+    expect(reviewLine.textContent).toContain('2h ago')
+    expect(reviewLine.textContent).toContain('session review-session-1')
 
-    const card = getByTestId(container, 'cortex-last-review-run-card')
-    expect(card.textContent).toContain('View manifest')
-    expect(card.textContent).toContain('Open review session')
-    expect(card.textContent).toContain('View changes')
-    expect(card.textContent).toContain('Common Knowledge')
-    expect(card.textContent).toContain('Reference Docs')
+    const timeline = getByTestId(container, 'cortex-file-timeline')
+    expect(timeline.textContent).toContain('Version history')
+    expect(timeline.textContent).toContain('v6')
+    expect(timeline.textContent).toContain('3h ago')
+    expect(timeline.textContent).toContain('session alpha--s1')
+    expect(timeline.textContent).toContain('v5')
+    expect(timeline.textContent).toContain('1d ago')
+    expect(timeline.textContent).toContain('reconcile')
   })
 
-  it('renders commit timeline rows and loads more commits', async () => {
+  it('renders compact version rows and loads more versions', async () => {
     renderPanel()
     await flushPromises()
 
     const timeline = getByTestId(container, 'cortex-file-timeline')
-    expect(timeline.textContent).toContain('Updated profile memory for alpha')
-    expect(timeline.textContent).toContain('Memory merge')
+    expect(timeline.textContent).toContain('v6')
+    expect(timeline.textContent).toContain('v5')
 
-    fireEvent.click(getByRole(container, 'button', { name: 'Load more' }))
+    fireEvent.click(getByRole(container, 'button', { name: 'Load more versions' }))
     await flushPromises()
 
-    expect(timeline.textContent).toContain('cccccccc')
+    expect(timeline.textContent).toContain('v4')
+    expect(timeline.textContent).toContain('edit tool')
   })
 
-  it('filters timeline entries by summary, session, and source metadata', async () => {
-    renderPanel()
-    await flushPromises()
-
-    const searchInput = getByTestId(container, 'cortex-file-timeline-search') as HTMLInputElement
-    const timeline = getByTestId(container, 'cortex-file-timeline')
-
-    fireEvent.change(searchInput, { target: { value: 'updated profile memory' } })
-    await flushPromises()
-    expect(timeline.textContent).toContain('Updated profile memory for alpha (session alpha--s1)')
-    expect(timeline.textContent).not.toContain('Earlier change')
-
-    fireEvent.change(searchInput, { target: { value: 'alpha--s1' } })
-    await flushPromises()
-    expect(timeline.textContent).toContain('Updated profile memory for alpha (session alpha--s1)')
-    expect(timeline.textContent).not.toContain('Earlier change')
-
-    fireEvent.change(searchInput, { target: { value: 'agent edit tool' } })
-    await flushPromises()
-    expect(timeline.textContent).toContain('bbbbbbbb')
-    expect(timeline.textContent).toContain('Updated common knowledge')
-    expect(timeline.textContent).toContain('Edit tool')
-    expect(timeline.textContent).not.toContain('Updated profile memory for alpha (session alpha--s1)')
-
-    expect(getByRole(container, 'button', { name: /load more for search completeness/i })).toBeTruthy()
-  })
-
-  it('supports arrow-key navigation and Escape to exit history mode', async () => {
+  it('supports arrow-key navigation, Enter to open diff, and Escape to exit history mode', async () => {
     const onExitHistoryMode = vi.fn()
     renderPanel({ onExitHistoryMode })
     await flushPromises()
 
     const panel = getByTestId(container, 'cortex-history-panel')
-    const timelineButtons = Array.from(
-      container.querySelectorAll('[data-testid="cortex-file-timeline"] button[aria-pressed]'),
-    ) as HTMLButtonElement[]
-    expect(timelineButtons[0]?.getAttribute('aria-pressed')).toBe('true')
-    expect(timelineButtons[1]?.getAttribute('aria-pressed')).toBe('false')
+    const options = Array.from(container.querySelectorAll('[data-testid="cortex-file-timeline"] [role="option"]'))
+    expect(options[0]?.getAttribute('aria-selected')).toBe('true')
+    expect(options[1]?.getAttribute('aria-selected')).toBe('false')
 
     fireEvent.keyDown(panel, { key: 'ArrowDown' })
     await flushPromises()
 
-    const updatedButtons = Array.from(
-      container.querySelectorAll('[data-testid="cortex-file-timeline"] button[aria-pressed]'),
-    ) as HTMLButtonElement[]
-    expect(updatedButtons[0]?.getAttribute('aria-pressed')).toBe('false')
-    expect(updatedButtons[1]?.getAttribute('aria-pressed')).toBe('true')
+    const updatedOptions = Array.from(container.querySelectorAll('[data-testid="cortex-file-timeline"] [role="option"]'))
+    expect(updatedOptions[0]?.getAttribute('aria-selected')).toBe('false')
+    expect(updatedOptions[1]?.getAttribute('aria-selected')).toBe('true')
+
+    fireEvent.keyDown(panel, { key: 'Enter' })
+    await flushPromises()
+    expect(getByTestId(document.body, 'cortex-version-diff-dialog')).toBeTruthy()
 
     fireEvent.keyDown(panel, { key: 'Escape' })
     expect(onExitHistoryMode).toHaveBeenCalledTimes(1)
   })
 
-  it('switches the diff into compare-with-current mode', async () => {
+  it('opens the diff modal from a timeline row', async () => {
     renderPanel()
     await flushPromises()
 
-    const diffPane = getByTestId(container, 'mock-diff-pane')
-    expect(diffPane.getAttribute('data-old')).toBe('# Previous\nBefore')
-    expect(diffPane.getAttribute('data-new')).toBe('# Previous\nAfter commit')
-
-    fireEvent.click(getByRole(container, 'switch', { name: 'Compare with current' }))
-
-    await waitFor(() => {
-      expect(getByTestId(container, 'mock-diff-pane').getAttribute('data-old')).toBe('# Previous\nAfter commit')
-      expect(getByTestId(container, 'mock-diff-pane').getAttribute('data-new')).toBe('# Current\nLatest content')
-    })
-  })
-
-  it('lists sibling files and switches documents when clicked', async () => {
-    const onSelectDocument = vi.fn()
-    renderPanel({ onSelectDocument })
+    fireEvent.click(getByRole(container, 'option', { name: /v6, 3h ago, session alpha--s1, by cortex/i }))
     await flushPromises()
 
-    const siblingList = getByTestId(container, 'cortex-history-sibling-files')
-    expect(siblingList.textContent).toContain('Changed together with')
-    expect(siblingList.textContent).toContain('profiles/alpha/reference/guide.md')
-    expect(siblingList.textContent).toContain('Reference Docs')
+    expect(getByTestId(document.body, 'cortex-version-diff-dialog')).toBeTruthy()
+    const diffPane = getByTestId(document.body, 'mock-diff-pane')
+    expect(diffPane.getAttribute('data-old')).toBe('# Previous\nBefore')
+    expect(diffPane.getAttribute('data-new')).toBe('# Previous\nAfter commit')
+  })
 
-    fireEvent.click(getByRole(siblingList, 'button', { name: /profiles\/alpha\/reference\/guide.md/i }))
-    expect(onSelectDocument).toHaveBeenCalledWith('profiles/alpha/reference/guide.md')
+  it('keeps compare-with-current and restore available through the diff modal', async () => {
+    const onRestoreSuccess = vi.fn()
+    renderPanel({ onRestoreSuccess })
+    await flushPromises()
+
+    fireEvent.click(getByRole(container, 'option', { name: /v6, 3h ago, session alpha--s1, by cortex/i }))
+    await flushPromises()
+
+    fireEvent.click(getByRole(document.body, 'switch', { name: 'Compare with current' }))
+    await waitFor(() => {
+      expect(getByTestId(document.body, 'mock-diff-pane').getAttribute('data-old')).toBe('# Previous\nAfter commit')
+      expect(getByTestId(document.body, 'mock-diff-pane').getAttribute('data-new')).toBe('# Current\nLatest content')
+    })
+
+    fireEvent.click(getByTestId(document.body, 'cortex-version-diff-restore'))
+    await waitFor(() => {
+      expect(fetchSpyState.writeBodies).toHaveLength(1)
+      expect(onRestoreSuccess).toHaveBeenCalledTimes(1)
+    })
+
+    expect(fetchSpyState.writeBodies[0]).toEqual({
+      path: '/data/shared/knowledge/common.md',
+      content: '# Previous\nAfter commit',
+      versioningSource: 'api-write-file-restore',
+    })
   })
 
   it('opens the full diff viewer with the current file and commit preselected', async () => {
@@ -481,8 +482,7 @@ describe('CortexHistoryPanel', () => {
     renderPanel()
     await flushPromises()
 
-    expect(getByTestId(container, 'cortex-history-activity-summary').textContent).toContain('Versioning history is not available')
-    expect(getByText(container, 'Initialize the versioning repo to unlock file-local history.')).toBeTruthy()
+    expect(getByTestId(container, 'cortex-file-timeline').textContent).toContain('Initialize the versioning repo to unlock file-local history.')
     expect((getByTestId(container, 'cortex-open-full-viewer') as HTMLButtonElement).disabled).toBe(true)
   })
 })
