@@ -365,6 +365,11 @@ export interface SpecialistRosterChangedEvent {
   updatedAt: string
 }
 
+export interface ModelConfigChangedEvent {
+  type: 'model_config_changed'
+  updatedAt: string
+}
+
 export interface ApiProxyResponseEvent {
   type: 'api_proxy_response'
   requestId: string
@@ -419,6 +424,7 @@ export type ServerEvent =
   | TerminalClosedEvent
   | TerminalsSnapshotEvent
   | SpecialistRosterChangedEvent
+  | ModelConfigChangedEvent
   | ApiProxyResponseEvent
   | MessagePinnedEvent
   | { type: 'error'; code: string; message: string; requestId?: string }

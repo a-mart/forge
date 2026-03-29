@@ -1,4 +1,4 @@
-import type { FormEvent } from 'react'
+import { useEffect, useMemo, type FormEvent } from 'react'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -16,17 +16,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import {
-  MANAGER_MODEL_PRESETS,
-  type ManagerModelPreset,
-} from '@forge/protocol'
+import { useModelPresets } from '@/lib/model-preset'
+import { type ManagerModelPreset } from '@forge/protocol'
+import { getCreateManagerFamilies } from '@forge/protocol'
 
-const CREATE_MANAGER_MODEL_PRESETS = MANAGER_MODEL_PRESETS.filter(
-  (modelPreset) => modelPreset !== 'codex-app' && modelPreset !== 'pi-grok',
+const STATIC_CREATE_MANAGER_FAMILIES = getCreateManagerFamilies()
+const STATIC_CREATE_MANAGER_FAMILY_IDS = new Set(
+  STATIC_CREATE_MANAGER_FAMILIES.map((family) => family.familyId),
 )
 
 interface CreateManagerDialogProps {
   open: boolean
+  wsUrl?: string
   isCreatingManager: boolean
   isValidatingDirectory: boolean
   isPickingDirectory: boolean
@@ -45,6 +46,7 @@ interface CreateManagerDialogProps {
 
 export function CreateManagerDialog({
   open,
+  wsUrl,
   isCreatingManager,
   isValidatingDirectory,
   isPickingDirectory,
@@ -60,6 +62,44 @@ export function CreateManagerDialog({
   onBrowseDirectory,
   onSubmit,
 }: CreateManagerDialogProps) {
+  const modelPresets = useModelPresets(wsUrl, open ? 1 : 0)
+
+  const createManagerFamilies = useMemo(() => {
+    const presetInfoById = new Map(modelPresets.map((preset) => [preset.presetId, preset]))
+    const hasServerFilteredFamilies = modelPresets.length > 0
+
+    return STATIC_CREATE_MANAGER_FAMILIES.flatMap((family) => {
+      const preset = presetInfoById.get(family.familyId)
+      if (!preset && hasServerFilteredFamilies) {
+        return []
+      }
+
+      return [{
+        familyId: family.familyId,
+        displayName: preset?.displayName ?? family.displayName,
+      }]
+    })
+  }, [modelPresets])
+
+  useEffect(() => {
+    if (!open) {
+      return
+    }
+
+    if (!STATIC_CREATE_MANAGER_FAMILY_IDS.has(newManagerModel)) {
+      return
+    }
+
+    if (createManagerFamilies.some((family) => family.familyId === newManagerModel)) {
+      return
+    }
+
+    const fallbackFamilyId = createManagerFamilies[0]?.familyId
+    if (fallbackFamilyId) {
+      onModelChange(fallbackFamilyId as ManagerModelPreset)
+    }
+  }, [createManagerFamilies, newManagerModel, onModelChange, open])
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-xl">
@@ -127,9 +167,9 @@ export function CreateManagerDialog({
                 <SelectValue placeholder="Select model preset" />
               </SelectTrigger>
               <SelectContent>
-                {CREATE_MANAGER_MODEL_PRESETS.map((modelPreset) => (
-                  <SelectItem key={modelPreset} value={modelPreset}>
-                    {modelPreset}
+                {createManagerFamilies.map((family) => (
+                  <SelectItem key={family.familyId} value={family.familyId}>
+                    {family.displayName}
                   </SelectItem>
                 ))}
               </SelectContent>

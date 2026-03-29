@@ -39,6 +39,7 @@ import { createHealthRoutes } from "./routes/health-routes.js";
 import type { HttpRoute } from "./routes/http-route.js";
 import { createIntegrationRoutes } from "./routes/integration-routes.js";
 import { createMobileRoutes } from "./routes/mobile-routes.js";
+import { createModelConfigRoutes } from "./routes/model-config-routes.js";
 import { createPlaywrightLiveRoutes } from "./routes/playwright-live-routes.js";
 import { createPlaywrightRoutes } from "./routes/playwright-routes.js";
 import { createPromptRoutes, type PromptRegistryForRoutes } from "./routes/prompt-routes.js";
@@ -331,6 +332,10 @@ export class SwarmWebSocketServer {
       ...(this.terminalService ? createTerminalRoutes({ terminalService: this.terminalService }) : []),
       ...this.settingsRoutes.routes,
       ...createSpecialistRoutes({
+        swarmManager: this.swarmManager,
+        broadcastEvent: (event) => this.wsHandler.broadcastToSubscribed(event),
+      }),
+      ...createModelConfigRoutes({
         swarmManager: this.swarmManager,
         broadcastEvent: (event) => this.wsHandler.broadcastToSubscribed(event),
       }),

@@ -62,13 +62,13 @@ import {
   type ProfileTreeRow,
   type SessionRow,
 } from '@/lib/agent-hierarchy'
-import { inferModelPreset } from '@/lib/model-preset'
+import { inferModelPreset, useModelPresets } from '@/lib/model-preset'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
 import { readSidebarModelIconsPref } from '@/lib/sidebar-prefs'
 import { cn } from '@/lib/utils'
 import {
-  MANAGER_MODEL_PRESETS,
   MANAGER_REASONING_LEVELS,
+  getChangeManagerFamilies,
   type AgentContextUsage,
   type AgentDescriptor,
   type AgentStatus,
@@ -1232,9 +1232,7 @@ function DeleteSessionDialog({
 
 // ── Change model dialog ──
 
-const CHANGE_MODEL_PRESETS = MANAGER_MODEL_PRESETS.filter(
-  (preset) => preset !== 'codex-app' && preset !== 'pi-grok',
-)
+const STATIC_CHANGE_MODEL_FAMILIES = getChangeManagerFamilies()
 
 const REASONING_LEVEL_LABELS: Record<ManagerReasoningLevel, string> = {
   none: 'None',
@@ -1245,6 +1243,7 @@ const REASONING_LEVEL_LABELS: Record<ManagerReasoningLevel, string> = {
 }
 
 function ChangeModelDialog({
+  wsUrl,
   profileId,
   profileLabel,
   currentPreset,
@@ -1252,6 +1251,7 @@ function ChangeModelDialog({
   onConfirm,
   onClose,
 }: {
+  wsUrl?: string
   profileId: string
   profileLabel: string
   currentPreset: ManagerModelPreset | undefined
@@ -1259,8 +1259,37 @@ function ChangeModelDialog({
   onConfirm: (profileId: string, model: ManagerModelPreset, reasoningLevel?: ManagerReasoningLevel) => void
   onClose: () => void
 }) {
+  const modelPresets = useModelPresets(wsUrl, 1)
+  const changeModelFamilies = useMemo(() => {
+    const presetInfoById = new Map(modelPresets.map((preset) => [preset.presetId, preset]))
+    const hasServerFilteredFamilies = modelPresets.length > 0
+
+    return STATIC_CHANGE_MODEL_FAMILIES.flatMap((family) => {
+      const preset = presetInfoById.get(family.familyId)
+      if (!preset && hasServerFilteredFamilies) {
+        return []
+      }
+
+      return [{
+        familyId: family.familyId,
+        displayName: preset?.displayName ?? family.displayName,
+      }]
+    })
+  }, [modelPresets])
+
   const [model, setModel] = useState<ManagerModelPreset>(currentPreset ?? 'pi-codex')
   const [reasoning, setReasoning] = useState<ManagerReasoningLevel>(currentReasoningLevel ?? 'xhigh')
+
+  useEffect(() => {
+    if (changeModelFamilies.some((family) => family.familyId === model)) {
+      return
+    }
+
+    const fallbackFamilyId = changeModelFamilies[0]?.familyId
+    if (fallbackFamilyId) {
+      setModel(fallbackFamilyId as ManagerModelPreset)
+    }
+  }, [changeModelFamilies, model])
 
   const hasChanges = model !== currentPreset || reasoning !== (currentReasoningLevel ?? 'xhigh')
 
@@ -1289,9 +1318,9 @@ function ChangeModelDialog({
                 <SelectValue placeholder="Select model preset" />
               </SelectTrigger>
               <SelectContent>
-                {CHANGE_MODEL_PRESETS.map((preset) => (
-                  <SelectItem key={preset} value={preset}>
-                    {preset}
+                {changeModelFamilies.map((family) => (
+                  <SelectItem key={family.familyId} value={family.familyId}>
+                    {family.displayName}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -2446,6 +2475,7 @@ export function AgentSidebar({
       {/* Change model dialog */}
       {changeModelTarget && onUpdateManagerModel ? (
         <ChangeModelDialog
+          wsUrl={wsUrl}
           profileId={changeModelTarget.profileId}
           profileLabel={changeModelTarget.profileLabel}
           currentPreset={changeModelTarget.currentPreset}

@@ -110,6 +110,7 @@ interface SettingsSpecialistsProps {
   wsUrl: string
   profiles: ManagerProfile[]
   specialistChangeKey: number
+  modelConfigChangeKey: number
 }
 
 function isManagerReasoningLevel(value: string): value is ManagerReasoningLevel {
@@ -372,13 +373,18 @@ function ModelIdSelect({
 /*  Main component                                                     */
 /* ================================================================== */
 
-export function SettingsSpecialists({ wsUrl, profiles, specialistChangeKey }: SettingsSpecialistsProps) {
+export function SettingsSpecialists({
+  wsUrl,
+  profiles,
+  specialistChangeKey,
+  modelConfigChangeKey,
+}: SettingsSpecialistsProps) {
   useHelpContext('settings.specialists')
 
   const [selectedScope, setSelectedScope] = useState<string>(SCOPE_GLOBAL)
   const isGlobal = selectedScope === SCOPE_GLOBAL
 
-  const modelPresets = useModelPresets(wsUrl)
+  const modelPresets = useModelPresets(wsUrl, modelConfigChangeKey)
   const selectableModels = useMemo(() => getAllSelectableModels(modelPresets), [modelPresets])
 
   const [specialists, setSpecialists] = useState<ResolvedSpecialistDefinition[]>([])

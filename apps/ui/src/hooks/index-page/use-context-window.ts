@@ -1,5 +1,4 @@
 import { useMemo } from 'react'
-import { inferModelPreset } from '@/lib/model-preset'
 import type { ManagerWsState } from '@/lib/ws-state'
 import type {
   AgentContextUsage,
@@ -7,25 +6,17 @@ import type {
   ConversationEntry,
   ConversationMessageAttachment,
   ConversationTextAttachment,
-  ManagerModelPreset,
 } from '@forge/protocol'
+import { getCatalogContextWindow } from '@forge/protocol'
 
 const CHARS_PER_TOKEN_ESTIMATE = 4
-const CONTEXT_WINDOW_BY_PRESET: Record<ManagerModelPreset, number> = {
-  'pi-opus': 200_000,
-  'pi-codex': 1_048_576,
-  'pi-5.4': 1_048_576,
-  'pi-grok': 1_048_576,
-  'codex-app': 1_048_576,
-}
 
 function contextWindowForAgent(agent: AgentDescriptor | null): number | null {
   if (!agent) {
     return null
   }
 
-  const modelPreset = inferModelPreset(agent)
-  return modelPreset ? CONTEXT_WINDOW_BY_PRESET[modelPreset] : null
+  return getCatalogContextWindow(agent.model.modelId) ?? null
 }
 
 function isTextAttachmentWithContent(

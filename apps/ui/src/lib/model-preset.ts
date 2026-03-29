@@ -6,92 +6,41 @@ import type {
   ModelPresetInfo,
   ModelVariantInfo,
 } from '@forge/protocol'
-import { MANAGER_MODEL_PRESETS, MANAGER_REASONING_LEVELS } from '@forge/protocol'
+import {
+  MANAGER_MODEL_PRESETS,
+  MANAGER_REASONING_LEVELS,
+  getCatalogModel,
+  getCatalogModelsByFamily,
+  getSpecialistFamilies,
+  inferCatalogFamily,
+} from '@forge/protocol'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
 
-const FALLBACK_MODEL_PRESET_INFO: ModelPresetInfo[] = [
-  {
-    presetId: 'pi-codex',
-    displayName: 'GPT-5.3 Codex',
-    provider: 'openai-codex',
-    modelId: 'gpt-5.3-codex',
-    defaultReasoningLevel: 'xhigh',
-    supportedReasoningLevels: ['none', 'low', 'medium', 'high', 'xhigh'],
-    variants: [{ modelId: 'gpt-5.3-codex-spark', label: 'GPT-5.3 Codex Spark' }],
-  },
-  {
-    presetId: 'pi-5.4',
-    displayName: 'GPT-5.4',
-    provider: 'openai-codex',
-    modelId: 'gpt-5.4',
-    defaultReasoningLevel: 'xhigh',
-    supportedReasoningLevels: ['none', 'low', 'medium', 'high', 'xhigh'],
-    variants: [
-      { modelId: 'gpt-5.4-mini', label: 'GPT-5.4 Mini' },
-      { modelId: 'gpt-5.4-nano', label: 'GPT-5.4 Nano' },
-    ],
-  },
-  {
-    presetId: 'pi-opus',
-    displayName: 'Claude Opus 4.6',
-    provider: 'anthropic',
-    modelId: 'claude-opus-4-6',
-    defaultReasoningLevel: 'high',
-    supportedReasoningLevels: ['low', 'medium', 'high'],
-    variants: [
-      { modelId: 'claude-sonnet-4-5-20250929', label: 'Claude Sonnet 4.5' },
-      { modelId: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5' },
-    ],
-  },
-  {
-    presetId: 'pi-grok',
-    displayName: 'Grok 4',
-    provider: 'xai',
-    modelId: 'grok-4',
-    defaultReasoningLevel: 'high',
-    supportedReasoningLevels: ['none', 'low', 'medium', 'high', 'xhigh'],
-    webSearch: true,
-    variants: [
-      { modelId: 'grok-4-fast', label: 'Grok 4 Fast' },
-      { modelId: 'grok-4.20-0309-reasoning', label: 'Grok 4.20 Reasoning' },
-      { modelId: 'grok-4.20-0309-non-reasoning', label: 'Grok 4.20 Non-Reasoning' },
-    ],
-  },
-  {
-    presetId: 'codex-app',
-    displayName: 'Codex App Runtime',
-    provider: 'openai-codex-app-server',
-    modelId: 'default',
-    defaultReasoningLevel: 'xhigh',
-    supportedReasoningLevels: ['none', 'low', 'medium', 'high', 'xhigh'],
-  },
-]
+// Generate fallback from the checked-in catalog so the UI works offline
+const FALLBACK_MODEL_PRESET_INFO: ModelPresetInfo[] = getSpecialistFamilies().map((family) => {
+  const familyModels = getCatalogModelsByFamily(family.familyId)
+  const defaultModel = familyModels.find((m) => m.isFamilyDefault)
+  const variants = familyModels
+    .filter((m) => !m.isFamilyDefault)
+    .map((m) => ({ modelId: m.modelId, label: m.displayName }))
+  const supportsWebSearch = familyModels.some((m) => m.webSearchCapability === 'native')
+
+  return {
+    presetId: family.familyId as ManagerModelPreset,
+    displayName: family.displayName,
+    provider: family.provider,
+    modelId: family.defaultModelId,
+    defaultReasoningLevel: (defaultModel?.defaultReasoningLevel ?? family.defaultReasoningLevel) as ManagerReasoningLevel,
+    supportedReasoningLevels: (defaultModel?.supportedReasoningLevels ?? MANAGER_REASONING_LEVELS) as ManagerReasoningLevel[],
+    ...(supportsWebSearch ? { webSearch: true } : {}),
+    ...(variants.length > 0 ? { variants } : {}),
+  }
+})
 
 export function inferModelPreset(agent: AgentDescriptor): ManagerModelPreset | undefined {
   const provider = agent.model.provider.trim().toLowerCase()
   const modelId = agent.model.modelId.trim().toLowerCase()
-
-  if (provider === 'openai-codex' && modelId === 'gpt-5.3-codex') {
-    return 'pi-codex'
-  }
-
-  if (provider === 'openai-codex' && modelId === 'gpt-5.4') {
-    return 'pi-5.4'
-  }
-
-  if (provider === 'xai' && modelId.startsWith('grok-')) {
-    return 'pi-grok'
-  }
-
-  if (provider === 'anthropic' && modelId === 'claude-opus-4-6') {
-    return 'pi-opus'
-  }
-
-  if (provider === 'openai-codex-app-server' && modelId === 'default') {
-    return 'codex-app'
-  }
-
-  return undefined
+  return inferCatalogFamily(provider, modelId) as ManagerModelPreset | undefined
 }
 
 export function getModelPresetInfoMap(models: readonly ModelPresetInfo[]): Map<string, ModelPresetInfo> {
@@ -172,7 +121,7 @@ export async function fetchModelPresets(wsUrl: string | undefined): Promise<Mode
   return payload.models.filter(isModelPresetInfo)
 }
 
-export function useModelPresets(wsUrl: string): ModelPresetInfo[] {
+export function useModelPresets(wsUrl: string | undefined, refreshKey = 0): ModelPresetInfo[] {
   const [modelPresets, setModelPresets] = useState<ModelPresetInfo[]>(FALLBACK_MODEL_PRESET_INFO)
 
   useEffect(() => {
@@ -199,7 +148,7 @@ export function useModelPresets(wsUrl: string): ModelPresetInfo[] {
     return () => {
       cancelled = true
     }
-  }, [wsUrl])
+  }, [refreshKey, wsUrl])
 
   return modelPresets
 }
@@ -282,6 +231,12 @@ export function getSupportedReasoningLevelsForModelId(
   modelId: string,
   presets: ModelPresetInfo[],
 ): ManagerReasoningLevel[] {
+  // Try catalog first for per-model accuracy
+  const catalogModel = getCatalogModel(modelId)
+  if (catalogModel) {
+    return catalogModel.supportedReasoningLevels as ManagerReasoningLevel[]
+  }
+  // Fall back to preset-level data
   for (const preset of presets) {
     if (preset.modelId === modelId) {
       return preset.supportedReasoningLevels

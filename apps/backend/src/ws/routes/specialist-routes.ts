@@ -14,7 +14,7 @@ import {
   invalidateSpecialistCache,
   type SaveSpecialistRequest,
 } from "../../swarm/specialists/specialist-registry.js";
-import { getModelPresetInfoList } from "../../swarm/model-presets.js";
+import { modelCatalogService } from "../../swarm/model-catalog-service.js";
 import { getManagedModelProviderCredentialAvailability } from "../../swarm/secrets-env-service.js";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
 import {
@@ -84,9 +84,8 @@ async function handleSettingsModelsRequest(
     const providerAvailability = await getManagedModelProviderCredentialAvailability(
       swarmManager.getConfig()
     );
-    const models = getModelPresetInfoList().filter((model) => {
-      // Providers without a managed credential check (for example codex-app, which can rely on
-      // external Codex login state) stay visible.
+    const models = modelCatalogService.getSpecialistModelPresetInfoList().filter((model) => {
+      // Providers without a managed credential check stay visible.
       const isAvailable = providerAvailability.get(model.provider);
       return isAvailable ?? true;
     });

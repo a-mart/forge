@@ -1,4 +1,4 @@
-import type { ChoiceRequestEvent, ManagerProfile } from "@forge/protocol";
+import { MANAGER_MODEL_PRESETS, type ChoiceRequestEvent, type ManagerProfile } from "@forge/protocol";
 import type { AgentStatus } from "./agent-state-machine.js";
 
 export type AgentRole = "manager" | "worker";
@@ -14,9 +14,9 @@ export type {
   ChoiceRequestStatus,
 } from "@forge/protocol";
 
-export const SWARM_MODEL_PRESETS = ["pi-codex", "pi-5.4", "pi-opus", "pi-grok", "codex-app"] as const;
+export const SWARM_MODEL_PRESETS = MANAGER_MODEL_PRESETS;
 
-export type SwarmModelPreset = (typeof SWARM_MODEL_PRESETS)[number];
+export type SwarmModelPreset = string;
 
 export const SWARM_REASONING_LEVELS = ["none", "low", "medium", "high", "xhigh"] as const;
 

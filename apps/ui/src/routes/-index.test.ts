@@ -5,13 +5,11 @@ import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { MANAGER_MODEL_PRESETS } from '@forge/protocol'
+import { getCreateManagerFamilies } from '@forge/protocol'
 import { IndexPage, isCortexDiffViewerSession } from './index'
 import { HelpProvider } from '@/components/help/HelpProvider'
 
-const CREATE_MANAGER_MODEL_PRESETS = MANAGER_MODEL_PRESETS.filter(
-  (modelPreset) => modelPreset !== 'codex-app' && modelPreset !== 'pi-grok',
-)
+const CREATE_MANAGER_FAMILIES = getCreateManagerFamilies()
 
 type ListenerMap = Record<string, Array<(event?: any) => void>>
 
@@ -207,20 +205,20 @@ describe('isCortexDiffViewerSession', () => {
 })
 
 describe('IndexPage create manager model selection', () => {
-  it('shows only allowed model presets and defaults to pi-codex', async () => {
+  it('shows only allowed model presets and defaults to GPT-5.3 Codex', async () => {
     await renderPage()
 
     click(getAllByRole(container, 'button', { name: 'Add manager' })[0])
 
     const modelSelect = getByRole(document.body, 'combobox', { name: 'Model' })
-    expect(modelSelect.textContent).toContain('pi-codex')
+    expect(modelSelect.textContent).toContain('GPT-5.3 Codex')
 
     click(modelSelect as HTMLElement)
 
     const optionValues = getAllByRole(document.body, 'option').map((option) => option.textContent?.trim() ?? '')
-    expect(optionValues).toContain('pi-5.4')
-    expect(optionValues).not.toContain('codex-app')
-    expect(optionValues).toEqual([...CREATE_MANAGER_MODEL_PRESETS])
+    expect(optionValues).toContain('GPT-5.4')
+    expect(optionValues).not.toContain('Codex App Runtime')
+    expect(optionValues).toEqual(CREATE_MANAGER_FAMILIES.map((family) => family.displayName))
   })
 
   it('sends selected model in create_manager payload', async () => {
@@ -233,7 +231,7 @@ describe('IndexPage create manager model selection', () => {
 
     const modelSelect = getByRole(document.body, 'combobox', { name: 'Model' })
     click(modelSelect as HTMLElement)
-    click(getByRole(document.body, 'option', { name: 'pi-opus' }))
+    click(getByRole(document.body, 'option', { name: 'Claude Opus 4.6' }))
 
     click(getByRole(document.body, 'button', { name: 'Create manager' }))
 

@@ -69,6 +69,11 @@ import { executeLLMMerge, MEMORY_MERGE_SYSTEM_PROMPT } from "./memory-merge.js";
 import { PersistenceService } from "./persistence-service.js";
 import { migrateLegacyProfileKnowledgeToReferenceDoc } from "./reference-docs.js";
 import { scanCortexReviewStatus } from "./scripts/cortex-scan.js";
+import {
+  assertPiModelsProjectionAvailable,
+  generatePiProjection,
+} from "./model-catalog-projection.js";
+import { modelCatalogService } from "./model-catalog-service.js";
 import { RuntimeFactory } from "./runtime-factory.js";
 import {
   computePromptFingerprint,
@@ -1163,6 +1168,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly conversationProjector: ConversationProjector;
   private readonly persistenceService: PersistenceService;
   private readonly runtimeFactory: RuntimeFactory;
+  private piModelsJsonPath: string | null = null;
   private readonly skillMetadataService: SkillMetadataService;
   private readonly secretsEnvService: SecretsEnvService;
   readonly promptRegistry: PromptRegistry;
@@ -1227,6 +1233,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       config: this.config,
       now: this.now,
       logDebug: (message, details) => this.logDebug(message, details),
+      getPiModelsJsonPath: () => this.getPiModelsJsonPathOrThrow(),
       onSessionFileRotated: async (descriptor, sessionFile) => {
         if (descriptor.role !== "manager") {
           await this.refreshSessionMetaStatsBySessionId(descriptor.managerId);
@@ -1269,6 +1276,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     });
 
     await this.ensureDirectories();
+    await this.reloadModelCatalogOverridesAndProjection();
     await this.loadSecretsStore();
     await this.reloadSkillMetadata();
 
@@ -4689,6 +4697,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return this.versioningService;
   }
 
+  async reloadModelCatalogOverridesAndProjection(): Promise<void> {
+    await modelCatalogService.loadOverrides(this.config.paths.dataDir);
+    await this.refreshPiModelsJsonProjection();
+  }
+
   listRuntimeExtensionSnapshots(): AgentRuntimeExtensionSnapshot[] {
     return Array.from(this.runtimeExtensionSnapshotsByAgentId.values())
       .map((snapshot) => ({
@@ -8087,6 +8100,21 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     await this.persistenceService.ensureDirectories();
   }
 
+  private getPiModelsJsonPathOrThrow(): string {
+    if (!this.piModelsJsonPath) {
+      throw new Error("Pi model projection path is unavailable before SwarmManager boot completes.");
+    }
+
+    return this.piModelsJsonPath;
+  }
+
+  private async refreshPiModelsJsonProjection(): Promise<void> {
+    this.piModelsJsonPath = await generatePiProjection(this.config.paths.dataDir);
+    this.logDebug("model_catalog:projection:generated", {
+      path: this.piModelsJsonPath,
+    });
+  }
+
   private async ensureSessionFileParentDirectory(sessionFile: string): Promise<void> {
     await mkdir(dirname(sessionFile), { recursive: true });
   }
@@ -8178,7 +8206,13 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   ): Promise<{ mergedContent: string; model: string }> {
     const authFilePath = await ensureCanonicalAuthFilePath(this.config);
     const authStorage = AuthStorage.create(authFilePath);
-    const modelRegistry = new ModelRegistry(authStorage);
+    const piModelsJsonPath = this.getPiModelsJsonPathOrThrow();
+    assertPiModelsProjectionAvailable(piModelsJsonPath);
+    const modelRegistry = new ModelRegistry(authStorage, piModelsJsonPath);
+    const modelRegistryError = modelRegistry.getError?.();
+    if (modelRegistryError) {
+      throw new Error(modelRegistryError);
+    }
     const model = resolveModel(modelRegistry, descriptor.model);
 
     if (!model) {

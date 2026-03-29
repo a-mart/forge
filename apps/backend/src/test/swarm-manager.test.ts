@@ -4476,7 +4476,7 @@ describe('SwarmManager', () => {
     expect(opusManager.model).toEqual({
       provider: 'anthropic',
       modelId: 'claude-opus-4-6',
-      thinkingLevel: 'xhigh',
+      thinkingLevel: 'high',
     })
     expect(codexAppManager.model).toEqual({
       provider: 'openai-codex-app-server',
@@ -4608,7 +4608,7 @@ describe('SwarmManager', () => {
     expect(manager.getAgent(sessionAgent.agentId)?.model).toEqual({
       provider: 'anthropic',
       modelId: 'claude-opus-4-6',
-      thinkingLevel: 'xhigh',
+      thinkingLevel: 'high',
     })
 
     const createdRuntimeCountBeforePrompt = manager.createdRuntimeIds.length

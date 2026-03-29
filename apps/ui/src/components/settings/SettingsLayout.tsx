@@ -1,9 +1,9 @@
-import { ArrowLeft, Bell, Settings, KeyRound, Blocks, Wrench, FileText, Terminal, Puzzle, UserCog, Info } from 'lucide-react'
+import { ArrowLeft, Bell, Settings, KeyRound, Blocks, Wrench, FileText, Terminal, Puzzle, UserCog, Info, Cpu } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { HelpTrigger } from '@/components/help/HelpTrigger'
 import { cn } from '@/lib/utils'
 
-export type SettingsTab = 'general' | 'notifications' | 'auth' | 'integrations' | 'skills' | 'prompts' | 'specialists' | 'slash-commands' | 'extensions' | 'about'
+export type SettingsTab = 'general' | 'notifications' | 'auth' | 'models' | 'integrations' | 'skills' | 'prompts' | 'specialists' | 'slash-commands' | 'extensions' | 'about'
 
 interface NavItem {
   id: SettingsTab
@@ -15,6 +15,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'general', label: 'General', icon: <Settings className="size-4" /> },
   { id: 'notifications', label: 'Notifications', icon: <Bell className="size-4" /> },
   { id: 'auth', label: 'Authentication', icon: <KeyRound className="size-4" /> },
+  { id: 'models', label: 'Models', icon: <Cpu className="size-4" /> },
   { id: 'integrations', label: 'Integrations', icon: <Blocks className="size-4" /> },
   { id: 'skills', label: 'Skills', icon: <Wrench className="size-4" /> },
   { id: 'prompts', label: 'Prompts', icon: <FileText className="size-4" /> },

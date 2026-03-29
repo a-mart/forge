@@ -15,6 +15,8 @@ import {
   saveSharedSpecialist,
   seedBuiltins,
 } from "../specialist-registry.js";
+import { modelCatalogService } from "../../model-catalog-service.js";
+import { writeModelOverrides } from "../../model-overrides.js";
 
 describe("specialist-registry", () => {
   let originalForgeDataDir: string | undefined;
@@ -184,6 +186,47 @@ describe("specialist-registry", () => {
     const parsed = await parseSpecialistFile(filePath);
     expect(parsed).not.toBeNull();
     expect(parsed?.frontmatter.modelId).toBe("gpt-5.3-codex");
+  });
+
+  it("maps legacy preset-based frontmatter through the effective family default when overrides disable the builtin default", async () => {
+    const root = await mkdtemp(join(tmpdir(), "specialist-registry-test-"));
+    const dataDir = join(root, "data");
+    const filePath = join(root, "legacy-opus.md");
+
+    await writeModelOverrides(dataDir, {
+      version: 1,
+      overrides: {
+        "claude-opus-4-6": {
+          enabled: false,
+        },
+      },
+    });
+    await modelCatalogService.loadOverrides(dataDir);
+
+    try {
+      await writeFile(
+        filePath,
+        [
+          "---",
+          "displayName: Legacy Specialist",
+          "color: '#2563eb'",
+          "enabled: true",
+          "whenToUse: Legacy tasks",
+          "model: pi-opus",
+          "reasoningLevel: high",
+          "---",
+          "",
+          "Legacy prompt body.",
+        ].join("\n"),
+        "utf8",
+      );
+
+      const parsed = await parseSpecialistFile(filePath);
+      expect(parsed).not.toBeNull();
+      expect(parsed?.frontmatter.modelId).toBe("claude-sonnet-4-5-20250929");
+    } finally {
+      await modelCatalogService.loadOverrides(join(root, "reset-data"));
+    }
   });
 
   it("serializes pinned frontmatter when saving", async () => {

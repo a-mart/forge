@@ -1057,6 +1057,7 @@ export function IndexPage() {
                 telegramStatus={state.telegramStatus}
                 promptChangeKey={state.promptChangeKey}
                 specialistChangeKey={state.specialistChangeKey}
+                modelConfigChangeKey={state.modelConfigChangeKey}
                 onBack={() =>
                   navigateToRoute({
                     view: 'chat',
@@ -1337,6 +1338,7 @@ export function IndexPage() {
 
       <CreateManagerDialog
         open={isCreateManagerDialogOpen}
+        wsUrl={wsUrl}
         isCreatingManager={isCreatingManager}
         isValidatingDirectory={isValidatingDirectory}
         isPickingDirectory={isPickingDirectory}

@@ -1,9 +1,10 @@
 import { readdirSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
-import type {
-  AgentRuntimeExtensionSnapshot,
-  RuntimeExtensionMetadata,
-  RuntimeExtensionSource
+import {
+  getCatalogProvider,
+  type AgentRuntimeExtensionSnapshot,
+  type RuntimeExtensionMetadata,
+  type RuntimeExtensionSource
 } from "@forge/protocol";
 import { getModel, type Model } from "@mariozechner/pi-ai";
 import {
@@ -24,7 +25,7 @@ import type { RuntimeErrorEvent, RuntimeSessionEvent, SwarmAgentRuntime } from "
 import { buildSwarmTools, type SwarmToolHost } from "./swarm-tools.js";
 import { normalizeArchetypeId } from "./prompt-registry.js";
 import { combineCompactionCustomInstructions, loadPins } from "./message-pins.js";
-import { createXaiResponsesExtensionFactory } from "./extensions/xai-responses-provider.js";
+import { createCatalogRequestBehaviorExtensionFactory } from "./model-catalog-request-behaviors.js";
 import {
   getProfilePiExtensionsDir,
   getProfilePiPromptsDir,
@@ -32,6 +33,7 @@ import {
   getProfilePiThemesDir,
   getSessionDir
 } from "./data-paths.js";
+import { assertPiModelsProjectionAvailable } from "./model-catalog-projection.js";
 import type {
   AgentContextUsage,
   AgentDescriptor,
@@ -45,6 +47,7 @@ interface RuntimeFactoryDependencies {
   config: SwarmConfig;
   now: () => string;
   logDebug: (message: string, details?: unknown) => void;
+  getPiModelsJsonPath: () => string;
   onSessionFileRotated?: (descriptor: AgentDescriptor, sessionFile: string) => Promise<void>;
   getMemoryRuntimeResources: (descriptor: AgentDescriptor) => Promise<{
     memoryContextFile: { path: string; content: string };
@@ -119,6 +122,7 @@ export class RuntimeFactory {
       cwd: descriptor.cwd,
       authFile: authFilePath,
       agentDir: runtimeAgentDir,
+      piModelsJsonPath: this.deps.getPiModelsJsonPath(),
       memoryFile: memoryResources.memoryContextFile.path,
       profileId,
       profilePiExtensionsDir,
@@ -130,7 +134,13 @@ export class RuntimeFactory {
     });
 
     const authStorage = AuthStorage.create(authFilePath);
-    const modelRegistry = new ModelRegistry(authStorage);
+    const piModelsJsonPath = this.deps.getPiModelsJsonPath();
+    assertPiModelsProjectionAvailable(piModelsJsonPath);
+    const modelRegistry = new ModelRegistry(authStorage, piModelsJsonPath);
+    const modelRegistryError = modelRegistry.getError?.();
+    if (modelRegistryError) {
+      throw new Error(modelRegistryError);
+    }
     const swarmContextFiles = await this.deps.getSwarmContextFiles(descriptor.cwd);
     const applyRuntimeContext = (base: { agentsFiles: Array<{ path: string; content: string }> }) => ({
       agentsFiles: this.deps.mergeRuntimeContextFiles(base.agentsFiles, {
@@ -460,9 +470,10 @@ export class RuntimeFactory {
       });
     }
 
-    if (descriptor.model.provider === "xai") {
+    const provider = getCatalogProvider(descriptor.model.provider);
+    if (provider?.requestBehaviorId) {
       factories.push(
-        createXaiResponsesExtensionFactory({
+        createCatalogRequestBehaviorExtensionFactory({
           webSearchEnabled: descriptor.webSearch === true
         })
       );
@@ -522,15 +533,18 @@ export class RuntimeFactory {
       return direct;
     }
 
+    this.deps.logDebug("runtime:model:projection_miss", {
+      provider: descriptor.provider,
+      modelId: descriptor.modelId,
+      message: "Model not found in Forge projection — falling back to Pi built-in catalog"
+    });
+
     const fromCatalog = getModel(descriptor.provider as any, descriptor.modelId as any);
     if (fromCatalog) {
       return fromCatalog;
     }
 
-    throw new Error(
-      `Model "${descriptor.modelId}" not found for provider "${descriptor.provider}". ` +
-        "The model may not be available in the current Pi runtime version."
-    );
+    throw new Error(`Model "${descriptor.modelId}" not found for provider "${descriptor.provider}".`);
   }
 }
 

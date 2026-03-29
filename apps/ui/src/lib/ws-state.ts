@@ -44,6 +44,8 @@ export interface ManagerWsState {
   promptChangeKey: number
   /** Monotonically increasing counter bumped on specialist_roster_changed WS events */
   specialistChangeKey: number
+  /** Monotonically increasing counter bumped on model_config_changed WS events */
+  modelConfigChangeKey: number
 }
 
 export function createInitialManagerWsState(targetAgentId: string | null): ManagerWsState {
@@ -69,5 +71,6 @@ export function createInitialManagerWsState(targetAgentId: string | null): Manag
     hasReceivedAgentsSnapshot: false,
     promptChangeKey: 0,
     specialistChangeKey: 0,
+    modelConfigChangeKey: 0,
   }
 }
