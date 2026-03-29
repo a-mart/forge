@@ -1033,6 +1033,7 @@ export function IndexPage() {
           onUpdateManagerModel={handleUpdateManagerModel}
           onRequestSessionWorkers={handleRequestSessionWorkers}
           onReorderProfiles={handleReorderProfiles}
+          pendingChoiceSessionId={hasActivePendingChoice && activeAgentId ? activeAgentId : null}
         />
 
         <div
