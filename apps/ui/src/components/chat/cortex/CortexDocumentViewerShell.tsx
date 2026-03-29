@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from 'react'
-import { Edit3, Loader2, RefreshCw, Save, X } from 'lucide-react'
-import type { CortexDocumentEntry } from '@forge/protocol'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Clock3, Edit3, ExternalLink, Loader2, RefreshCw, Save, X } from 'lucide-react'
+import type { CortexDocumentEntry, CortexFileReviewHistoryEntry } from '@forge/protocol'
 import type { ArtifactReference } from '@/lib/artifacts'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -8,6 +8,8 @@ import { Textarea } from '@/components/ui/textarea'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
 import { cn } from '@/lib/utils'
 import { MarkdownMessage } from '../MarkdownMessage'
+import { CortexDocumentMetaStrip } from './CortexDocumentMetaStrip'
+import { useCortexFileReviewHistory, useGitFileLog } from './use-cortex-history'
 
 export type CortexDocumentDescriptor = Pick<
   CortexDocumentEntry,
@@ -17,12 +19,16 @@ export type CortexDocumentDescriptor = Pick<
 interface CortexDocumentViewerShellProps {
   wsUrl: string
   document: CortexDocumentDescriptor | null
+  documents?: CortexDocumentEntry[]
   agentId?: string | null
   refreshKey?: number
   onArtifactClick?: (artifact: ArtifactReference) => void
+  onOpenSession?: (agentId: string) => void
+  canOpenSession?: (agentId: string) => boolean
 }
 
 type ViewerState = 'loading' | 'rendered' | 'editing' | 'saving' | 'error'
+type ViewerMode = 'content' | 'history'
 
 interface ReadFileResult {
   path: string
@@ -89,12 +95,35 @@ export function CortexDocumentViewerShell({
   agentId,
   refreshKey = 0,
   onArtifactClick,
+  onOpenSession,
+  canOpenSession,
 }: CortexDocumentViewerShellProps) {
   const [viewerState, setViewerState] = useState<ViewerState>('loading')
+  const [viewerMode, setViewerMode] = useState<ViewerMode>('content')
   const [content, setContent] = useState('')
   const [editContent, setEditContent] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [isEmpty, setIsEmpty] = useState(false)
+  const [latestRunSessionAvailable, setLatestRunSessionAvailable] = useState<boolean | null>(null)
+
+  const fileLogQuery = useGitFileLog(wsUrl, agentId, document?.gitPath ?? null, 1, 0)
+  const reviewHistoryQuery = useCortexFileReviewHistory(wsUrl, document?.gitPath ?? null, 1)
+
+  const latestRun = reviewHistoryQuery.data?.latestRun ?? null
+  const isDirty = viewerState === 'editing' && editContent !== content
+  const historyToggleDisabled = viewerState === 'saving' || isDirty
+
+  const canOpenLatestRunSession = useMemo(() => {
+    if (!latestRun?.sessionAgentId) {
+      return false
+    }
+
+    if (canOpenSession) {
+      return canOpenSession(latestRun.sessionAgentId)
+    }
+
+    return latestRunSessionAvailable === true
+  }, [canOpenSession, latestRun?.sessionAgentId, latestRunSessionAvailable])
 
   const fetchFile = useCallback(
     (signal: AbortSignal) => {
@@ -141,15 +170,53 @@ export function CortexDocumentViewerShell({
   }, [fetchFile, refreshKey])
 
   useEffect(() => {
+    setViewerMode('content')
     setEditContent('')
-  }, [document?.absolutePath])
+  }, [document?.absolutePath, document?.gitPath])
+
+  useEffect(() => {
+    if (!latestRun?.sessionAgentId) {
+      setLatestRunSessionAvailable(null)
+      return
+    }
+
+    if (canOpenSession) {
+      setLatestRunSessionAvailable(canOpenSession(latestRun.sessionAgentId))
+      return
+    }
+
+    const abortController = new AbortController()
+    setLatestRunSessionAvailable(null)
+
+    const endpoint = resolveApiEndpoint(
+      wsUrl,
+      `/api/agents/${encodeURIComponent(latestRun.sessionAgentId)}/system-prompt`,
+    )
+
+    void fetch(endpoint, { signal: abortController.signal })
+      .then((response) => {
+        if (abortController.signal.aborted) return
+        setLatestRunSessionAvailable(response.ok)
+      })
+      .catch(() => {
+        if (abortController.signal.aborted) return
+        setLatestRunSessionAvailable(false)
+      })
+
+    return () => {
+      abortController.abort()
+    }
+  }, [canOpenSession, latestRun?.sessionAgentId, wsUrl])
 
   const handleRefresh = useCallback(() => {
     const abortController = new AbortController()
     fetchFile(abortController.signal)
-  }, [fetchFile])
+    fileLogQuery.refetch()
+    reviewHistoryQuery.refetch()
+  }, [fetchFile, fileLogQuery, reviewHistoryQuery])
 
   const handleStartEditing = useCallback(() => {
+    setViewerMode('content')
     setEditContent(content)
     setViewerState('editing')
   }, [content])
@@ -173,6 +240,8 @@ export function CortexDocumentViewerShell({
         setIsEmpty(editContent.trim().length === 0)
         setEditContent('')
         setViewerState('rendered')
+        fileLogQuery.refetch()
+        reviewHistoryQuery.refetch()
       })
       .catch((saveError: unknown) => {
         if (abortController.signal.aborted) return
@@ -180,20 +249,71 @@ export function CortexDocumentViewerShell({
         setError(message)
         setViewerState('editing')
       })
-  }, [document?.absolutePath, editContent, wsUrl])
+  }, [document?.absolutePath, editContent, fileLogQuery, reviewHistoryQuery, wsUrl])
+
+  const handleToggleHistoryMode = useCallback(() => {
+    if (historyToggleDisabled) {
+      return
+    }
+
+    setViewerMode((current) => (current === 'history' ? 'content' : 'history'))
+  }, [historyToggleDisabled])
+
+  const handleOpenRun = useCallback(() => {
+    if (!latestRun?.sessionAgentId || !canOpenLatestRunSession) {
+      return
+    }
+
+    onOpenSession?.(latestRun.sessionAgentId)
+  }, [canOpenLatestRunSession, latestRun?.sessionAgentId, onOpenSession])
 
   const label = document?.label ?? 'Document unavailable'
   const description = document?.description ?? 'This Cortex document is not available.'
   const editable = document?.editable ?? false
+  const showRecentChangeBanner =
+    viewerMode === 'content' &&
+    viewerState !== 'editing' &&
+    viewerState !== 'saving' &&
+    !!document?.gitPath &&
+    !!latestRun &&
+    latestRun.changedFiles.includes(document.gitPath)
 
   return (
-    <div className="flex h-full flex-col" data-testid="cortex-document-viewer-shell" data-surface={document?.surface ?? 'unknown'}>
-      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/60 px-3 py-2">
-        <div className="min-w-0">
+    <div
+      className="flex h-full flex-col"
+      data-testid="cortex-document-viewer-shell"
+      data-surface={document?.surface ?? 'unknown'}
+      data-mode={viewerMode}
+    >
+      <div className="flex shrink-0 items-start justify-between gap-2 border-b border-border/60 px-3 py-2">
+        <div className="min-w-0 flex-1">
           <h3 className="truncate text-xs font-semibold text-foreground">{label}</h3>
-          <p className="truncate text-[10px] text-muted-foreground">{description}</p>
+          {viewerMode === 'content' ? (
+            <div className="mt-0.5">
+              <CortexDocumentMetaStrip
+                stats={fileLogQuery.data?.stats}
+                isLoading={!!document?.gitPath && fileLogQuery.isLoading}
+                notInitialized={fileLogQuery.data?.notInitialized === true}
+              />
+            </div>
+          ) : null}
+          <p className="mt-0.5 truncate text-[10px] text-muted-foreground">{description}</p>
         </div>
         <div className="flex shrink-0 items-center gap-1">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-6 text-muted-foreground hover:text-foreground"
+            onClick={handleToggleHistoryMode}
+            disabled={historyToggleDisabled}
+            aria-label={viewerMode === 'history' ? 'View content' : 'View history'}
+            aria-pressed={viewerMode === 'history'}
+            title={historyToggleDisabled ? 'Save or discard your draft before opening history.' : undefined}
+            data-testid="cortex-history-toggle"
+          >
+            <Clock3 className="size-3" />
+          </Button>
+
           {viewerState === 'editing' || viewerState === 'saving' ? (
             <>
               <Button
@@ -229,7 +349,7 @@ export function CortexDocumentViewerShell({
               >
                 <RefreshCw className={cn('size-3', viewerState === 'loading' && 'animate-spin')} />
               </Button>
-              {editable && document?.absolutePath ? (
+              {editable && document?.absolutePath && viewerMode === 'content' ? (
                 <Button
                   variant="ghost"
                   size="icon"
@@ -252,6 +372,32 @@ export function CortexDocumentViewerShell({
         </div>
       ) : null}
 
+      {showRecentChangeBanner ? (
+        <div className="shrink-0 border-b border-emerald-500/20 bg-emerald-500/10 px-3 py-2" data-testid="cortex-recent-change-banner">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-[11px] font-medium text-emerald-300">Latest Cortex review touched this file.</p>
+              <p className="mt-0.5 text-[10px] text-emerald-100/80">{formatLatestRunSummary(latestRun)}</p>
+            </div>
+            <div className="flex shrink-0 items-center gap-1">
+              <Button variant="ghost" size="sm" className="h-6 px-2 text-[10px]" onClick={() => setViewerMode('history')}>
+                View changes
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 gap-1 px-2 text-[10px]"
+                onClick={handleOpenRun}
+                disabled={!canOpenLatestRunSession}
+              >
+                <ExternalLink className="size-3" />
+                Open run
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <div className="min-h-0 flex-1">
         {viewerState === 'loading' ? (
           <div className="flex items-center justify-center py-12">
@@ -266,6 +412,10 @@ export function CortexDocumentViewerShell({
             <Button variant="ghost" size="sm" className="mt-2 h-7 text-[11px]" onClick={handleRefresh}>
               Retry
             </Button>
+          </div>
+        ) : viewerMode === 'history' ? (
+          <div className="flex h-full items-center justify-center px-4 text-center text-xs text-muted-foreground">
+            Inline history mode is available in the next step of this series.
           </div>
         ) : viewerState === 'editing' || viewerState === 'saving' ? (
           <Textarea
@@ -304,4 +454,35 @@ export function CortexDocumentViewerShell({
       </div>
     </div>
   )
+}
+
+function formatLatestRunSummary(run: CortexFileReviewHistoryEntry | null): string {
+  if (!run) {
+    return 'No recent review context available.'
+  }
+
+  const pieces = [
+    run.scopeLabel || formatTimestamp(run.recordedAt),
+    `recorded ${formatTimestamp(run.recordedAt)}`,
+  ]
+
+  if (run.trigger === 'scheduled') {
+    pieces.push(run.scheduleName ? `scheduled via ${run.scheduleName}` : 'scheduled review')
+  } else if (run.trigger === 'manual') {
+    pieces.push('manual review')
+  }
+
+  return pieces.join(' • ')
+}
+
+function formatTimestamp(isoString: string): string {
+  const parsed = Date.parse(isoString)
+  if (!Number.isFinite(parsed)) {
+    return 'unknown time'
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(new Date(parsed))
 }
