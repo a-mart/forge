@@ -3303,7 +3303,37 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       throw new Error(`Prompt not found: archetype/${archetypeId}`);
     }
 
-    const systemPrompt = await this.buildResolvedManagerPrompt(descriptor);
+    let systemPrompt = await this.buildResolvedManagerPrompt(descriptor);
+
+    const memoryResources = await this.getMemoryRuntimeResources(descriptor);
+
+    // Append the <available_skills> index block to the system prompt, matching
+    // what the Pi agent runtime does at session startup. Skills are NOT loaded
+    // in full — the agent only sees this lightweight index and reads SKILL.md
+    // files on demand.
+    const allSkillMetadata = this.skillMetadataService.getSkillMetadata();
+    if (allSkillMetadata.length > 0) {
+      const skillLines = [
+        "",
+        "",
+        "The following skills provide specialized instructions for specific tasks.",
+        "Use the read tool to load a skill's file when the task matches its description.",
+        "When a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.",
+        "",
+        "<available_skills>"
+      ];
+      for (const skill of allSkillMetadata) {
+        skillLines.push("  <skill>");
+        skillLines.push(`    <name>${escapeXmlForPreview(skill.skillName)}</name>`);
+        if (skill.description) {
+          skillLines.push(`    <description>${escapeXmlForPreview(skill.description)}</description>`);
+        }
+        skillLines.push(`    <location>${escapeXmlForPreview(skill.path)}</location>`);
+        skillLines.push("  </skill>");
+      }
+      skillLines.push("</available_skills>");
+      systemPrompt = systemPrompt.trimEnd() + skillLines.join("\n");
+    }
 
     const sections: PromptPreviewSection[] = [
       {
@@ -3313,7 +3343,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       }
     ];
 
-    const memoryResources = await this.getMemoryRuntimeResources(descriptor);
     sections.push({
       label: "Memory Composite",
       source: memoryResources.memoryContextFile.path,
@@ -3344,32 +3373,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         source: contextFile.path,
         content: contextFile.content
       });
-    }
-
-    const skillMetadataByPath = new Map(
-      this.skillMetadataService.getSkillMetadata().map((metadata) => [metadata.path, metadata])
-    );
-    const seenSkillPaths = new Set<string>();
-    for (const skillPath of memoryResources.additionalSkillPaths) {
-      if (seenSkillPaths.has(skillPath)) {
-        continue;
-      }
-      seenSkillPaths.add(skillPath);
-
-      try {
-        const skillMetadata = skillMetadataByPath.get(skillPath);
-        sections.push({
-          label: skillMetadata ? `Skill: ${skillMetadata.skillName}` : "Skill",
-          source: skillPath,
-          content: await readFile(skillPath, "utf8")
-        });
-      } catch (error) {
-        this.logDebug("prompt:preview:skill_read:error", {
-          profileId: resolvedProfileId,
-          path: skillPath,
-          message: error instanceof Error ? error.message : String(error)
-        });
-      }
     }
 
     return { sections };
@@ -9505,6 +9508,15 @@ function normalizeMemoryTemplateLines(content: string): string[] {
     .map((line) => line.trimEnd())
     .filter((line, index, lines) => line.length > 0 || index < lines.length - 1)
     .filter((line) => line.length > 0)
+}
+
+function escapeXmlForPreview(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
 }
 
 function errorToMessage(error: unknown): string {

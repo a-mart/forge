@@ -219,6 +219,14 @@ export function SettingsPrompts({ wsUrl, profiles, promptChangeKey }: SettingsPr
   const [previewSections, setPreviewSections] = useState<PromptPreviewSection[]>([])
   const [previewLoading, setPreviewLoading] = useState(false)
   const [previewError, setPreviewError] = useState<string | null>(null)
+  const [previewMode, setPreviewMode] = useState<'sections' | 'combined'>('sections')
+
+  const combinedPreviewContent = useMemo(() => {
+    if (previewSections.length === 0) return ''
+    return previewSections
+      .map((section) => `# ${section.label}\n\n${section.content}`)
+      .join('\n\n---\n\n')
+  }, [previewSections])
 
   const handlePreview = useCallback(async () => {
     if (!selectedProfileId) return
@@ -429,12 +437,42 @@ export function SettingsPrompts({ wsUrl, profiles, promptChangeKey }: SettingsPr
             </div>
           ) : (
             <div className="flex flex-col gap-3 min-h-0 flex-1 overflow-hidden">
-              <div className="shrink-0 text-xs text-muted-foreground">
-                {previewSections.length} {previewSections.length === 1 ? 'section' : 'sections'}
+              <div className="shrink-0 flex items-center justify-between">
+                <span className="text-xs text-muted-foreground">
+                  {previewSections.length} {previewSections.length === 1 ? 'section' : 'sections'}
+                </span>
+                <div className="inline-flex items-center rounded-md border bg-muted p-0.5 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setPreviewMode('sections')}
+                    className={`rounded-sm px-2.5 py-1 font-medium transition-colors ${
+                      previewMode === 'sections'
+                        ? 'bg-background text-foreground shadow-sm'
+                        : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    Sections
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPreviewMode('combined')}
+                    className={`rounded-sm px-2.5 py-1 font-medium transition-colors ${
+                      previewMode === 'combined'
+                        ? 'bg-background text-foreground shadow-sm'
+                        : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    Combined
+                  </button>
+                </div>
               </div>
               <div className="flex-1 min-h-0 overflow-auto rounded-md border bg-muted/50 p-3">
                 {previewSections.length === 0 ? (
                   <p className="text-xs text-muted-foreground">No preview sections were returned.</p>
+                ) : previewMode === 'combined' ? (
+                  <pre className="text-xs leading-relaxed whitespace-pre-wrap break-words font-mono">
+                    {combinedPreviewContent}
+                  </pre>
                 ) : (
                   <div className="space-y-2">
                     {previewSections.map((section, index) => (
