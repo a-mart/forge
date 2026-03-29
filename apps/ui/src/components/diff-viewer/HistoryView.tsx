@@ -32,16 +32,28 @@ interface HistoryViewProps {
   repoTarget: GitRepoTarget
   onStatusChange?: (info: HistoryStatusInfo | null) => void
   refreshToken?: number
+  initialSha?: string | null
+  initialFile?: string | null
+  initialQuickFilter?: KnowledgeQuickFilterId
 }
 
-export function HistoryView({ wsUrl, agentId, repoTarget, onStatusChange, refreshToken = 0 }: HistoryViewProps) {
-  const [selectedSha, setSelectedSha] = useState<string | null>(null)
-  const [selectedFile, setSelectedFile] = useState<string | null>(null)
+export function HistoryView({
+  wsUrl,
+  agentId,
+  repoTarget,
+  onStatusChange,
+  refreshToken = 0,
+  initialSha = null,
+  initialFile = null,
+  initialQuickFilter = 'all',
+}: HistoryViewProps) {
+  const [selectedSha, setSelectedSha] = useState<string | null>(initialSha)
+  const [selectedFile, setSelectedFile] = useState<string | null>(initialFile)
   const [allCommits, setAllCommits] = useState<GitLogEntry[]>([])
   const [currentOffset, setCurrentOffset] = useState(0)
   const [hasMore, setHasMore] = useState(false)
   const [isLoadingMore, setIsLoadingMore] = useState(false)
-  const [quickFilter, setQuickFilter] = useState<KnowledgeQuickFilterId>('all')
+  const [quickFilter, setQuickFilter] = useState<KnowledgeQuickFilterId>(initialQuickFilter)
   const prevContextKeyRef = useRef(`${agentId ?? ''}:${repoTarget}`)
   const prevRefreshTokenRef = useRef(refreshToken)
   const isKnowledgeMode = repoTarget === 'versioning'
@@ -55,12 +67,12 @@ export function HistoryView({ wsUrl, agentId, repoTarget, onStatusChange, refres
       setAllCommits([])
       setCurrentOffset(0)
       setHasMore(false)
-      setSelectedSha(null)
-      setSelectedFile(null)
-      setQuickFilter('all')
+      setSelectedSha(initialSha)
+      setSelectedFile(initialFile)
+      setQuickFilter(initialQuickFilter)
       onStatusChange?.(null)
     }
-  }, [agentId, onStatusChange, repoTarget])
+  }, [agentId, initialFile, initialQuickFilter, initialSha, onStatusChange, repoTarget])
 
   useEffect(() => {
     if (!logQuery.data) return

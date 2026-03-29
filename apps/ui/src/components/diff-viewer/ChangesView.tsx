@@ -15,6 +15,8 @@ interface ChangesViewProps {
   isStatusLoading: boolean
   statusError: string | null
   refreshToken?: number
+  initialFile?: string | null
+  initialQuickFilter?: KnowledgeQuickFilterId
 }
 
 export function ChangesView({
@@ -25,16 +27,19 @@ export function ChangesView({
   isStatusLoading,
   statusError,
   refreshToken = 0,
+  initialFile = null,
+  initialQuickFilter = 'all',
 }: ChangesViewProps) {
-  const [selectedFile, setSelectedFile] = useState<string | null>(null)
-  const [quickFilter, setQuickFilter] = useState<KnowledgeQuickFilterId>('all')
+  const [selectedFile, setSelectedFile] = useState<string | null>(initialFile)
+  const [quickFilter, setQuickFilter] = useState<KnowledgeQuickFilterId>(initialQuickFilter)
   const files = status?.files ?? []
   const diffQuery = useGitDiff(wsUrl, agentId, repoTarget, selectedFile)
   const prevRefreshTokenRef = useRef(refreshToken)
 
   useEffect(() => {
-    setQuickFilter('all')
-  }, [agentId, repoTarget])
+    setSelectedFile(initialFile)
+    setQuickFilter(initialQuickFilter)
+  }, [agentId, initialFile, initialQuickFilter, repoTarget])
 
   const visibleFiles = useMemo(() => {
     if (repoTarget !== 'versioning') {

@@ -311,7 +311,18 @@ afterEach(() => {
   })
 })
 
-function renderDialog(props: { isCortex: boolean; agentId?: string | null; open?: boolean }) {
+function renderDialog(
+  props: {
+    isCortex: boolean
+    agentId?: string | null
+    open?: boolean
+    initialRepoTarget?: 'workspace' | 'versioning'
+    initialTab?: 'changes' | 'history'
+    initialSha?: string | null
+    initialFile?: string | null
+    initialQuickFilter?: 'all' | 'shared-knowledge' | 'profile-memory' | 'reference-docs' | 'prompt-overrides'
+  },
+) {
   root = createRoot(container)
 
   flushSync(() => {
@@ -322,6 +333,11 @@ function renderDialog(props: { isCortex: boolean; agentId?: string | null; open?
         wsUrl: 'ws://localhost:47187',
         agentId: props.agentId ?? 'agent-1',
         isCortex: props.isCortex,
+        initialRepoTarget: props.initialRepoTarget,
+        initialTab: props.initialTab,
+        initialSha: props.initialSha,
+        initialFile: props.initialFile,
+        initialQuickFilter: props.initialQuickFilter,
       }),
     )
   })
@@ -400,6 +416,26 @@ describe('DiffViewerDialog', () => {
       expect(queryByRole(document.body, 'button', { name: 'Cortex Knowledge' })?.getAttribute('aria-pressed')).toBe('false')
       expect(getByRole(document.body, 'button', { name: 'Workspace' }).getAttribute('aria-pressed')).toBe('true')
     })
+  })
+
+  it('applies deep-link initial repo target, tab, sha, file, and quick filter', async () => {
+    renderDialog({
+      isCortex: true,
+      initialRepoTarget: 'versioning',
+      initialTab: 'history',
+      initialSha: 'versioning-3',
+      initialFile: 'profiles/cortex/prompts/archetypes/review.md',
+      initialQuickFilter: 'prompt-overrides',
+    })
+    await flushEffects()
+    await flushEffects()
+
+    expect(getByRole(document.body, 'button', { name: 'History' }).getAttribute('aria-pressed')).toBe('true')
+    expect(getByRole(document.body, 'button', { name: 'Cortex Knowledge' }).getAttribute('aria-pressed')).toBe('true')
+    expect(getAllByRole(document.body, 'button', { name: 'Prompt overrides' })[0]?.getAttribute('aria-pressed')).toBe('true')
+    expect(findOptionByText('Prompt override edited for cortex (session cortex--s2)').getAttribute('aria-selected')).toBe('true')
+    expect(findOptionByText('review.md').getAttribute('aria-selected')).toBe('true')
+    expect(queryByText(document.body, 'Updated common knowledge for cortex (session cortex--s1)')).toBeNull()
   })
 
   it('filters commit rows and file rows with knowledge quick filters', async () => {

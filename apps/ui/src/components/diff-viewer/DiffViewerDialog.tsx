@@ -7,9 +7,18 @@ import { DiffDialogHeader, type DiffTab } from './DiffDialogHeader'
 import { DiffStatusBar } from './DiffStatusBar'
 import { ChangesView } from './ChangesView'
 import { HistoryView, type HistoryStatusInfo } from './HistoryView'
+import type { KnowledgeQuickFilterId } from './knowledge-surface'
 import { useGitStatus, invalidateGitCaches } from './use-diff-queries'
 
-interface DiffViewerDialogProps {
+export interface DiffViewerInitialState {
+  initialRepoTarget?: GitRepoTarget
+  initialTab?: DiffTab
+  initialSha?: string | null
+  initialFile?: string | null
+  initialQuickFilter?: KnowledgeQuickFilterId
+}
+
+interface DiffViewerDialogProps extends DiffViewerInitialState {
   open: boolean
   onOpenChange: (open: boolean) => void
   wsUrl: string
@@ -31,16 +40,23 @@ export function DiffViewerDialog({
   wsUrl,
   agentId,
   isCortex,
+  initialRepoTarget,
+  initialTab,
+  initialSha,
+  initialFile,
+  initialQuickFilter,
 }: DiffViewerDialogProps) {
-  const [activeTab, setActiveTab] = useState<DiffTab>(() => getDefaultTab(isCortex))
-  const [repoTarget, setRepoTarget] = useState<GitRepoTarget>(() => getDefaultRepoTarget(isCortex))
+  const defaultTab = useMemo(() => initialTab ?? getDefaultTab(isCortex), [initialTab, isCortex])
+  const defaultRepoTarget = useMemo(
+    () => initialRepoTarget ?? getDefaultRepoTarget(isCortex),
+    [initialRepoTarget, isCortex],
+  )
+  const [activeTab, setActiveTab] = useState<DiffTab>(defaultTab)
+  const [repoTarget, setRepoTarget] = useState<GitRepoTarget>(defaultRepoTarget)
   const [historyStatus, setHistoryStatus] = useState<HistoryStatusInfo | null>(null)
   const [refreshToken, setRefreshToken] = useState(0)
   const prevOpenRef = useRef(open)
   const prevContextKeyRef = useRef(`${agentId ?? ''}:${isCortex ? 'cortex' : 'workspace'}`)
-
-  const defaultTab = useMemo(() => getDefaultTab(isCortex), [isCortex])
-  const defaultRepoTarget = useMemo(() => getDefaultRepoTarget(isCortex), [isCortex])
 
   useEffect(() => {
     const contextKey = `${agentId ?? ''}:${isCortex ? 'cortex' : 'workspace'}`
@@ -135,6 +151,8 @@ export function DiffViewerDialog({
                 isStatusLoading={statusQuery.isLoading}
                 statusError={statusQuery.error}
                 refreshToken={refreshToken}
+                initialFile={initialFile}
+                initialQuickFilter={initialQuickFilter}
               />
             ) : (
               <HistoryView
@@ -144,6 +162,9 @@ export function DiffViewerDialog({
                 repoTarget={repoTarget}
                 onStatusChange={setHistoryStatus}
                 refreshToken={refreshToken}
+                initialSha={initialSha}
+                initialFile={initialFile}
+                initialQuickFilter={initialQuickFilter}
               />
             )}
           </div>

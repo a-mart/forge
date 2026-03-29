@@ -23,7 +23,7 @@ import { MessageInput, type MessageInputHandle } from '@/components/chat/Message
 import { MessageList, type MessageListHandle } from '@/components/chat/MessageList'
 import { WorkerBackBar } from '@/components/chat/WorkerBackBar'
 import { WorkerPillBar } from '@/components/chat/WorkerPillBar'
-import { DiffViewerDialog } from '@/components/diff-viewer/DiffViewerDialog'
+import { DiffViewerDialog, type DiffViewerInitialState } from '@/components/diff-viewer/DiffViewerDialog'
 import { FileBrowserSidebar } from '@/components/file-browser/FileBrowserSidebar'
 import { FileBrowserPanel } from '@/components/file-browser/FileBrowserPanel'
 import { PlaywrightDashboardView } from '@/components/playwright/PlaywrightDashboardView'
@@ -106,6 +106,7 @@ export function IndexPage() {
   const [slashCommands, setSlashCommands] = useState<SlashCommand[]>([])
   const slashCommandsFetchKeyRef = useRef(0)
   const [isDiffViewerOpen, setIsDiffViewerOpen] = useState(false)
+  const [diffViewerInitialState, setDiffViewerInitialState] = useState<DiffViewerInitialState | null>(null)
   const [isFileBrowserOpen, setIsFileBrowserOpen] = useState(false)
   const [selectedFileBrowserFile, setSelectedFileBrowserFile] = useState<string | null>(null)
 
@@ -1125,7 +1126,10 @@ export function IndexPage() {
                   isTerminalPanelOpen={terminalPanel.isPanelVisible}
                   terminalCount={state.terminals.length}
                   onToggleTerminalPanel={terminalSessionAgentId ? terminalPanel.togglePanel : undefined}
-                  onOpenDiffViewer={() => setIsDiffViewerOpen(true)}
+                  onOpenDiffViewer={() => {
+                    setDiffViewerInitialState(null)
+                    setIsDiffViewerOpen(true)
+                  }}
                   isFileBrowserOpen={isFileBrowserOpen}
                   onToggleFileBrowser={handleToggleFileBrowser}
                   onToggleMobileSidebar={() =>
@@ -1285,6 +1289,10 @@ export function IndexPage() {
                   onClose={() => setIsArtifactsPanelOpen(false)}
                   onArtifactClick={handleOpenArtifact}
                   onOpenSession={handleSelectAgent}
+                  onOpenDiffViewer={(initialState) => {
+                    setDiffViewerInitialState(initialState)
+                    setIsDiffViewerOpen(true)
+                  }}
                   requestedTab={cortexDashboardTabRequest}
                 />
               ) : (
@@ -1375,6 +1383,11 @@ export function IndexPage() {
         wsUrl={wsUrl}
         agentId={activeAgentId}
         isCortex={isDiffViewerCortexSession}
+        initialRepoTarget={diffViewerInitialState?.initialRepoTarget}
+        initialTab={diffViewerInitialState?.initialTab}
+        initialSha={diffViewerInitialState?.initialSha}
+        initialFile={diffViewerInitialState?.initialFile}
+        initialQuickFilter={diffViewerInitialState?.initialQuickFilter}
       />
     </main>
   )
