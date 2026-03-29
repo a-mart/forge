@@ -419,7 +419,11 @@ describe("RuntimeFactory", () => {
 
     expect(result).toEqual({
       input: "hello",
-      tools: [{ type: "function", name: "existing_tool" }, { type: "web_search" }],
+      tools: [
+        { type: "function", name: "existing_tool" },
+        { type: "web_search" },
+        { type: "x_search" },
+      ],
     });
   });
 

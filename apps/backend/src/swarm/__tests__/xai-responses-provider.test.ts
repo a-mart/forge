@@ -89,7 +89,7 @@ describe("createXaiResponsesExtensionFactory", () => {
     });
   });
 
-  it("strips reasoning and injects web_search when enabled", () => {
+  it("strips reasoning and injects native search tools when enabled", () => {
     const { beforeProviderRequest } = installExtension(true);
 
     expect(beforeProviderRequest).toBeTypeOf("function");
@@ -110,8 +110,51 @@ describe("createXaiResponsesExtensionFactory", () => {
 
     expect(result).toEqual({
       input: "hello",
-      tools: [{ type: "function", name: "existing_tool" }, { type: "web_search" }],
+      tools: [
+        { type: "function", name: "existing_tool" },
+        { type: "web_search" },
+        { type: "x_search" },
+      ],
     });
+  });
+
+  it("injects only the missing native search tool", () => {
+    const { beforeProviderRequest } = installExtension(true);
+
+    const result = beforeProviderRequest?.(
+      {
+        payload: {
+          input: "hello",
+          tools: [{ type: "web_search" }],
+        },
+      },
+      {
+        model: { provider: "xai", id: "grok-4.20-0309-reasoning" },
+      },
+    );
+
+    expect(result).toEqual({
+      input: "hello",
+      tools: [{ type: "web_search" }, { type: "x_search" }],
+    });
+  });
+
+  it("does not modify payloads when both native search tools are already present", () => {
+    const { beforeProviderRequest } = installExtension(true);
+
+    const result = beforeProviderRequest?.(
+      {
+        payload: {
+          input: "hello",
+          tools: [{ type: "web_search" }, { type: "x_search" }],
+        },
+      },
+      {
+        model: { provider: "xai", id: "grok-4.20-0309-reasoning" },
+      },
+    );
+
+    expect(result).toBeUndefined();
   });
 
   it("leaves non-xAI payloads unchanged", () => {

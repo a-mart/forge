@@ -40,7 +40,7 @@ export function createXaiResponsesExtensionFactory(options: {
       let payload = stripReasoningFromResponsesPayload(event.payload);
 
       if (options.webSearchEnabled) {
-        payload = injectWebSearchTool(payload);
+        payload = injectNativeSearchTools(payload);
       }
 
       return payload === event.payload ? undefined : payload;
@@ -79,25 +79,34 @@ function stripReasoningFromResponsesPayload(payload: unknown): unknown {
   return changed ? nextPayload : payload;
 }
 
-function injectWebSearchTool(payload: unknown): unknown {
+function injectNativeSearchTools(payload: unknown): unknown {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     return payload;
   }
 
   const objectPayload = payload as Record<string, unknown>;
   const tools = Array.isArray(objectPayload.tools) ? [...objectPayload.tools] : [];
-  const hasWebSearchTool = tools.some(
-    (tool) =>
-      typeof tool === "object" &&
-      tool !== null &&
-      "type" in tool &&
-      (tool as { type?: unknown }).type === "web_search",
-  );
 
-  if (hasWebSearchTool) {
-    return payload;
+  const hasToolType = (type: string) =>
+    tools.some(
+      (tool) =>
+        typeof tool === "object" &&
+        tool !== null &&
+        "type" in tool &&
+        (tool as { type?: unknown }).type === type,
+    );
+
+  let changed = false;
+
+  if (!hasToolType("web_search")) {
+    tools.push({ type: "web_search" });
+    changed = true;
   }
 
-  tools.push({ type: "web_search" });
-  return { ...objectPayload, tools };
+  if (!hasToolType("x_search")) {
+    tools.push({ type: "x_search" });
+    changed = true;
+  }
+
+  return changed ? { ...objectPayload, tools } : payload;
 }
