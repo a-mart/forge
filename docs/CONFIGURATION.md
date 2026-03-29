@@ -34,7 +34,8 @@ Skill API keys can also be configured in the dashboard under **Settings → Envi
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CODEX_BIN` | — | Path to a custom Codex binary. |
-| `CODEX_API_KEY` | — | API key for the Codex agent runtime. |
+| `CODEX_API_KEY` | — | API key for the Codex agent runtime (deprecated; prefer managed auth in Settings). |
+| `XAI_API_KEY` | — | API key for xAI/Grok models (when using external API key mode). |
 
 ### Playwright Dashboard
 
@@ -59,7 +60,9 @@ FORGE_PORT=47187
 
 ## API Keys (LLM Providers)
 
-API keys for LLM providers — **OpenAI** and **Anthropic** — are configured through the dashboard UI under **Settings → API Keys**. They are stored locally in the data directory and never leave your machine.
+API keys for LLM providers — **OpenAI**, **Anthropic**, and **xAI** — are configured through the dashboard UI under **Settings → Providers**. They are stored locally in the data directory and never leave your machine.
+
+Model availability and behavior are managed through **Settings → Models**, which provides visibility controls and context window overrides for all supported models. See [docs/MODEL_CATALOG.md](MODEL_CATALOG.md) for details on the model catalog system.
 
 ## Data Directory
 
@@ -70,6 +73,9 @@ All persistent state lives in a single data directory:
 ├── shared/                    # Shared config
 │   ├── auth/auth.json         # API keys and auth tokens
 │   ├── secrets.json           # Additional secrets
+│   ├── model-overrides.json   # User model visibility/context caps (Settings → Models)
+│   ├── generated/
+│   │   └── pi-models.json     # Generated Pi-compatible model projection
 │   ├── integrations/          # Shared integration configs
 │   └── playwright-dashboard.json
 ├── profiles/<profileId>/      # Per-manager-profile data

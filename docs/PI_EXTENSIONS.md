@@ -341,21 +341,15 @@ This is expected. Forge runs in headless mode. Check `ctx.hasUI` and provide non
 
 Set `FORGE_DEBUG=true` in your `.env` to enable extension tool-call logging. This surfaces tool invocations from extensions in the backend logs, which is useful for verifying that your extension is being called.
 
-## Built-in Extensions
+## Model Catalog Integration
 
-Forge ships with a built-in extension that enhances xAI/Grok model integration.
+Forge's model catalog system handles provider-specific behaviors and API protocol mappings. This includes:
 
-### xAI Responses Provider
+- **xAI/Grok models** — automatically use OpenAI's Responses API (not Chat Completions) for Pi compatibility
+- **Native web search** — xAI models support native `web_search` and `x_search` tools when enabled per specialist
+- **Request behavior adapters** — provider-specific quirks (reasoning effort stripping, tool injection) are handled by the model catalog at request time
 
-**Location:** `apps/backend/src/swarm/extensions/xai-responses-provider.ts`
-
-This extension re-registers all xAI models to use OpenAI's Responses API instead of the Chat Completions API. The Responses API provides better compatibility with Pi and enables xAI's native search capabilities across both the web and X.
-
-**What it does:**
-
-1. **API switching** — all Grok workers use `openai-responses` instead of `openai-completions`
-2. **Native search** — injects the xAI `web_search` and `x_search` tools when enabled via specialist config
-3. **Reasoning effort stripping** — removes `reasoningEffort` from requests (Pi compatibility workaround)
+These behaviors are not extensions — they're built into the model catalog layer (see `apps/backend/src/swarm/model-catalog-request-behaviors.ts`).
 
 **Native search activation:**
 
@@ -371,7 +365,7 @@ Your specialist prompt...
 ```
 
 When `webSearch` is enabled:
-- The extension injects `{ type: "web_search" }` and `{ type: "x_search" }` into the tools array for every API call
+- Forge injects `{ type: "web_search" }` and `{ type: "x_search" }` into the tools array for every API call
 - Citations appear as inline markdown links in Grok's responses, including webpage and X post/profile URLs when used
 - The toggle is visible in the specialist settings UI (Grok models only)
 - For non-Grok models, the setting is coerced to `false` and the toggle is hidden
@@ -389,14 +383,7 @@ spawn_agent({
 })
 ```
 
-**Implementation notes:**
-
-- The extension is instantiated per worker session with native search enablement determined by the specialist's `webSearch` flag
-- The `before_provider_request` hook intercepts payloads heading to xAI's API
-- Native search tool injection only happens if the tool isn't already present in the tools array
-- The reasoning effort strip is applied to all xAI requests regardless of native search status
-
-This extension is loaded automatically for all Grok workers. You cannot disable it — xAI models always use the Responses API in Forge.
+For full model catalog documentation, see [docs/MODEL_CATALOG.md](MODEL_CATALOG.md) and [docs/SPECIALISTS.md](SPECIALISTS.md).
 
 ## Ecosystem
 
