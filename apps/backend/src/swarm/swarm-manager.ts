@@ -6597,7 +6597,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       message: {
         ...messageWithoutError,
         stopReason: "stop"
-      }
+      } as typeof event.message
     };
   }
 
