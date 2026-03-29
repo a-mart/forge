@@ -8,6 +8,7 @@ export interface StatsSnapshot {
   tokens: TokenStats;
   cache: CacheStats;
   workers: WorkerStats;
+  code: CodeStats;
   sessions: SessionStats;
   activity: ActivityStats;
   models: ModelDistributionEntry[];
@@ -40,6 +41,13 @@ export interface WorkerStats {
   averageTokensPerRun: number;
   averageRuntimeMs: number;
   currentlyActive: number;
+}
+
+export interface CodeStats {
+  linesAdded: number;
+  linesDeleted: number;
+  commits: number;
+  repos: number;
 }
 
 export interface SessionStats {

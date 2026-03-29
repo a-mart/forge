@@ -1,16 +1,22 @@
+import { execFile as execFileCallback } from "node:child_process";
 import { createReadStream } from "node:fs";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
-import type { ModelDistributionEntry, StatsRange, StatsSnapshot } from "@forge/protocol";
+import { promisify } from "node:util";
+import type { CodeStats, ModelDistributionEntry, StatsRange, StatsSnapshot } from "@forge/protocol";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import { getAgentsStoreFilePath, getProfilesDir, getSharedDir } from "../swarm/data-paths.js";
 
 export const STATS_CACHE_TTL_MS = 2 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const STATS_CACHE_FILE_NAME = "stats-cache.json";
-const STATS_CACHE_VERSION = 3;
+const STATS_CACHE_VERSION = 4;
 const SERVER_TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
+const GIT_COMMAND_TIMEOUT_MS = 10_000;
+const GIT_COMMAND_MAX_BUFFER_BYTES = 10 * 1024 * 1024;
+
+const execFileAsync = promisify(execFileCallback);
 
 interface SessionMetaLite {
   workers?: Array<{
@@ -244,6 +250,7 @@ export class StatsService {
     const yesterdayKey = shiftDayKey(todayKey, -1);
     const rangeStartMs = getRangeStartMs(range, nowMs, scanResult.earliestUsageDayKey, timezone);
     const rangeStartDayKey = toDayKey(rangeStartMs, timezone);
+    const code = await this.computeCodeStats(scanResult.managerRepoPaths, rangeStartMs);
 
     const dailyEntriesInRange = Array.from(scanResult.dailyUsage.entries())
       .map(([day, totals]) => ({ day, totals }))
@@ -323,6 +330,7 @@ export class StatsService {
         averageRuntimeMs: averageRuntimeMs,
         currentlyActive: scanResult.activeWorkerCount
       },
+      code,
       sessions: {
         totalSessions: scanResult.totalSessionCount,
         activeSessions: scanResult.activeSessionCount,
@@ -380,6 +388,7 @@ export class StatsService {
     activeSessionCount: number;
     userMessages: number[];
     earliestUsageDayKey: string | null;
+    managerRepoPaths: string[];
   }> {
     const usageRecords: UsageRecord[] = [];
     const dailyUsage = new Map<string, DailyTotals>();
@@ -468,6 +477,7 @@ export class StatsService {
     const activeSessionCount = agents.filter(
       (agent) => agent.role === "manager" && agent.status !== "terminated" && agent.status !== "stopped"
     ).length;
+    const managerRepoPaths = collectManagerRepoPaths(agents);
 
     return {
       usageRecords,
@@ -477,7 +487,8 @@ export class StatsService {
       totalSessionCount,
       activeSessionCount,
       userMessages,
-      earliestUsageDayKey
+      earliestUsageDayKey,
+      managerRepoPaths
     };
   }
 
@@ -603,13 +614,13 @@ export class StatsService {
     }
   }
 
-  private async readAgentsRegistry(dataDir: string): Promise<Array<{ role?: string; status?: string }>> {
+  private async readAgentsRegistry(dataDir: string): Promise<Array<{ role?: string; status?: string; cwd?: string }>> {
     const path = getAgentsStoreFilePath(dataDir);
     try {
       const raw = await readFile(path, "utf8");
       const parsed = JSON.parse(raw) as { agents?: unknown };
       return Array.isArray(parsed.agents)
-        ? parsed.agents.filter((agent): agent is { role?: string; status?: string } => isRecord(agent))
+        ? parsed.agents.filter((agent): agent is { role?: string; status?: string; cwd?: string } => isRecord(agent))
         : [];
     } catch (error) {
       if (isEnoentError(error)) {
@@ -617,6 +628,117 @@ export class StatsService {
       }
       return [];
     }
+  }
+
+  private async computeCodeStats(repoPaths: string[], rangeStartMs: number): Promise<CodeStats> {
+    if (repoPaths.length === 0) {
+      return {
+        linesAdded: 0,
+        linesDeleted: 0,
+        commits: 0,
+        repos: 0
+      };
+    }
+
+    const sinceIso = new Date(rangeStartMs).toISOString();
+    let linesAdded = 0;
+    let linesDeleted = 0;
+    let commits = 0;
+    let repos = 0;
+
+    for (const repoPath of repoPaths) {
+      try {
+        if (!(await this.isGitRepo(repoPath))) {
+          continue;
+        }
+
+        const author = await this.getRepoAuthor(repoPath);
+        if (!author) {
+          continue;
+        }
+
+        const numstatOutput = await this.runGitCommand(repoPath, [
+          "log",
+          `--author=${author}`,
+          `--since=${sinceIso}`,
+          "--numstat",
+          "--format="
+        ]);
+        const parsedNumstat = parseNumstatTotals(numstatOutput);
+
+        const commitCount = await this.countCommits(repoPath, author, sinceIso);
+
+        linesAdded += parsedNumstat.linesAdded;
+        linesDeleted += parsedNumstat.linesDeleted;
+        commits += commitCount;
+
+        if (commitCount > 0 || parsedNumstat.linesAdded > 0 || parsedNumstat.linesDeleted > 0) {
+          repos += 1;
+        }
+      } catch {
+        // skip repositories where git commands fail
+      }
+    }
+
+    return {
+      linesAdded,
+      linesDeleted,
+      commits,
+      repos
+    };
+  }
+
+  private async getRepoAuthor(repoPath: string): Promise<string | null> {
+    const email = await this.getGitConfigValue(repoPath, "user.email");
+    if (email) {
+      return email;
+    }
+
+    return this.getGitConfigValue(repoPath, "user.name");
+  }
+
+  private async getGitConfigValue(repoPath: string, key: string): Promise<string | null> {
+    try {
+      const output = await this.runGitCommand(repoPath, ["config", "--get", key]);
+      const value = output.trim();
+      return value.length > 0 ? value : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async isGitRepo(repoPath: string): Promise<boolean> {
+    try {
+      const output = await this.runGitCommand(repoPath, ["rev-parse", "--is-inside-work-tree"]);
+      return output.trim() === "true";
+    } catch {
+      return false;
+    }
+  }
+
+  private async countCommits(repoPath: string, author: string, sinceIso: string): Promise<number> {
+    const output = await this.runGitCommand(repoPath, [
+      "log",
+      `--author=${author}`,
+      `--since=${sinceIso}`,
+      "--format=%H"
+    ]);
+
+    return output
+      .split(/\r?\n/u)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0).length;
+  }
+
+  private async runGitCommand(repoPath: string, args: string[]): Promise<string> {
+    const result = await execFileAsync("git", args, {
+      cwd: repoPath,
+      timeout: GIT_COMMAND_TIMEOUT_MS,
+      maxBuffer: GIT_COMMAND_MAX_BUFFER_BYTES,
+      windowsHide: true
+    });
+
+    return typeof result.stdout === "string" ? result.stdout : `${result.stdout ?? ""}`;
   }
 
   private async listDirectoryNames(path: string): Promise<string[]> {
@@ -717,6 +839,62 @@ export class StatsService {
       return "1.0.0";
     }
   }
+}
+
+function collectManagerRepoPaths(
+  agents: Array<{ role?: string; status?: string; cwd?: string }>
+): string[] {
+  const uniquePaths = new Set<string>();
+
+  for (const agent of agents) {
+    if (agent.role !== "manager" || typeof agent.cwd !== "string") {
+      continue;
+    }
+
+    const cwd = agent.cwd.trim();
+    if (cwd.length === 0) {
+      continue;
+    }
+
+    uniquePaths.add(resolve(cwd));
+  }
+
+  return Array.from(uniquePaths.values());
+}
+
+function parseNumstatTotals(output: string): { linesAdded: number; linesDeleted: number } {
+  let linesAdded = 0;
+  let linesDeleted = 0;
+
+  for (const line of output.split(/\r?\n/u)) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      continue;
+    }
+
+    const parts = trimmed.split("\t");
+    if (parts.length < 3) {
+      continue;
+    }
+
+    const additionsRaw = parts[0]?.trim() ?? "";
+    const deletionsRaw = parts[1]?.trim() ?? "";
+    if (additionsRaw === "-" || deletionsRaw === "-") {
+      continue;
+    }
+
+    const additions = Number.parseInt(additionsRaw, 10);
+    const deletions = Number.parseInt(deletionsRaw, 10);
+
+    if (!Number.isFinite(additions) || !Number.isFinite(deletions)) {
+      continue;
+    }
+
+    linesAdded += additions;
+    linesDeleted += deletions;
+  }
+
+  return { linesAdded, linesDeleted };
 }
 
 function extractUsage(value: unknown): { input: number; output: number; cacheRead: number; cacheWrite: number; total: number } | null {

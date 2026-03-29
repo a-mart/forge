@@ -9,6 +9,7 @@ import { TokenUsageCards } from './cards/TokenUsageCards'
 import { CacheMetricsCards } from './cards/CacheMetricsCards'
 import { StatCard } from './cards/StatCard'
 import { WorkerStatsCards } from './cards/WorkerStatsCards'
+import { CodeStatsCards } from './cards/CodeStatsCards'
 import { DailyUsageChart } from './charts/DailyUsageChart'
 import { ModelDistribution } from './sections/ModelDistribution'
 import type { StatsRange } from '@forge/protocol'
@@ -100,8 +101,13 @@ function ErrorState({
   )
 }
 
-function isEmptyStats(tokens: { today: number; last7Days: number; allTime: number }): boolean {
-  return tokens.today === 0 && tokens.last7Days === 0 && tokens.allTime === 0
+function isEmptyStats(stats: {
+  tokens: { today: number; last7Days: number; allTime: number }
+  code: { linesAdded: number; linesDeleted: number; commits: number }
+}): boolean {
+  const hasTokenUsage = stats.tokens.today > 0 || stats.tokens.last7Days > 0 || stats.tokens.allTime > 0
+  const hasCodeUsage = stats.code.linesAdded > 0 || stats.code.linesDeleted > 0 || stats.code.commits > 0
+  return !hasTokenUsage && !hasCodeUsage
 }
 
 export function StatsPanel({ wsUrl, onBack }: StatsPanelProps) {
@@ -123,7 +129,7 @@ export function StatsPanel({ wsUrl, onBack }: StatsPanelProps) {
         <StatsSkeleton />
       ) : error && !stats ? (
         <ErrorState error={error} onRetry={refresh} />
-      ) : stats && isEmptyStats(stats.tokens) ? (
+      ) : stats && isEmptyStats(stats) ? (
         <EmptyState />
       ) : stats ? (
         <div className={cn('space-y-4 transition-opacity duration-200', isUpdating && 'opacity-60')}>
@@ -136,9 +142,6 @@ export function StatsPanel({ wsUrl, onBack }: StatsPanelProps) {
             workers={stats.workers}
             activity={stats.activity}
           />
-
-          {/* Daily usage chart: full width */}
-          <DailyUsageChart data={stats.dailyUsage} />
 
           {/* Activity + session overview: 4-card row */}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -166,6 +169,12 @@ export function StatsPanel({ wsUrl, onBack }: StatsPanelProps) {
 
           {/* Worker stats */}
           <WorkerStatsCards workers={stats.workers} />
+
+          {/* Git code stats */}
+          <CodeStatsCards code={stats.code} />
+
+          {/* Daily usage chart: full width */}
+          <DailyUsageChart data={stats.dailyUsage} />
 
           {/* Model distribution badges */}
           <ModelDistribution models={stats.models} />
