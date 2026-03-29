@@ -495,18 +495,18 @@ The global toggle at the top turns the specialist system on or off. When disable
 
 Each specialist has a primary model and reasoning level. You can also set a fallback model that takes over if the primary is unavailable or rate-limited. Expand the fallback section to configure it.
 
-## Web search (Grok models only)
+## Native search (web + X) (Grok models only)
 
-Specialists using xAI Grok models can enable native web search. When enabled, the model automatically searches the web for current information and includes citations as inline markdown links in its responses.
+Specialists using xAI Grok models can enable native search. When enabled, Forge gives the model access to xAI's built-in web and X search tools for current information, public social discussion, and inline citations.
 
-The web search toggle appears in the specialist editor only when a Grok model is selected. For other models, the setting is hidden and ignored.
+The native search toggle appears in the specialist editor only when a Grok model is selected. For other models, the setting is hidden and ignored.
 
-To enable web search:
+To enable native search:
 1. Select a Grok model (e.g., grok-4, grok-4.20).
-2. Find the Web Search toggle below the fallback settings.
+2. Find the Native Search toggle below the fallback settings.
 3. Toggle it on and save.
 
-Web search can also be enabled for one-off workers using the \`spawn_agent\` tool with the \`webSearch: true\` parameter.
+Native search can also be enabled for one-off workers using the \`spawn_agent\` tool with the \`webSearch: true\` parameter.
 
 ## Pinning
 

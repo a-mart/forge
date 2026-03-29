@@ -349,17 +349,17 @@ Forge ships with a built-in extension that enhances xAI/Grok model integration.
 
 **Location:** `apps/backend/src/swarm/extensions/xai-responses-provider.ts`
 
-This extension re-registers all xAI models to use OpenAI's Responses API instead of the Chat Completions API. The Responses API provides better compatibility with Pi and enables native web search capabilities.
+This extension re-registers all xAI models to use OpenAI's Responses API instead of the Chat Completions API. The Responses API provides better compatibility with Pi and enables xAI's native search capabilities across both the web and X.
 
 **What it does:**
 
 1. **API switching** — all Grok workers use `openai-responses` instead of `openai-completions`
-2. **Native web search** — injects the xAI `web_search` tool when enabled via specialist config
+2. **Native search** — injects the xAI `web_search` and `x_search` tools when enabled via specialist config
 3. **Reasoning effort stripping** — removes `reasoningEffort` from requests (Pi compatibility workaround)
 
-**Web search activation:**
+**Native search activation:**
 
-Web search is controlled per specialist via the `webSearch: true` frontmatter field:
+Native search is controlled per specialist via the `webSearch: true` frontmatter field:
 
 ```markdown
 ---
@@ -371,8 +371,8 @@ Your specialist prompt...
 ```
 
 When `webSearch` is enabled:
-- The extension injects `{ type: "web_search" }` into the tools array for every API call
-- Citations appear as inline markdown links in Grok's responses
+- The extension injects `{ type: "web_search" }` and `{ type: "x_search" }` into the tools array for every API call
+- Citations appear as inline markdown links in Grok's responses, including webpage and X post/profile URLs when used
 - The toggle is visible in the specialist settings UI (Grok models only)
 - For non-Grok models, the setting is coerced to `false` and the toggle is hidden
 
@@ -391,10 +391,10 @@ spawn_agent({
 
 **Implementation notes:**
 
-- The extension is instantiated per worker session with web search enablement determined by the specialist's `webSearch` flag
+- The extension is instantiated per worker session with native search enablement determined by the specialist's `webSearch` flag
 - The `before_provider_request` hook intercepts payloads heading to xAI's API
-- Web search tool injection only happens if the tool isn't already present in the tools array
-- The reasoning effort strip is applied to all xAI requests regardless of web search status
+- Native search tool injection only happens if the tool isn't already present in the tools array
+- The reasoning effort strip is applied to all xAI requests regardless of native search status
 
 This extension is loaded automatically for all Grok workers. You cannot disable it — xAI models always use the Responses API in Forge.
 

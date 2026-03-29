@@ -1830,9 +1830,9 @@ function SpecialistCard({
             checked={currentValues.webSearch}
             onCheckedChange={(checked) => onUpdateField('webSearch', checked)}
           />
-          <Label>Web Search</Label>
+          <Label>Native Search</Label>
           <span className="text-xs text-muted-foreground">
-            Enable xAI native web search for this specialist
+            Enable xAI native search (web + X) for this specialist
           </span>
         </div>
       )}

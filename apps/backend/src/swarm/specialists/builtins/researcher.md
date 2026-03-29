@@ -1,8 +1,8 @@
 ---
 displayName: Researcher
-color: "#7c3aed"
+color: "#e11d48"
 enabled: true
-whenToUse: General web research, fact-checking, documentation lookup, technical research, background investigation. Uses Brave Search API for structured results. Provider-neutral — works with any model. For real-time social media analysis or X/Twitter search, use Web Researcher instead.
+whenToUse: General research from indexed web sources, fact-checking against authoritative publications, documentation lookup, technical research, background investigation. Uses Brave Search API for structured results. Provider-neutral — works with any model. Not intended for real-time social media or breaking-news research; use Web Researcher for X/Twitter search or live developments instead.
 modelId: gpt-5.4-mini
 reasoningLevel: medium
 fallbackModelId: claude-sonnet-4-5-20250929
