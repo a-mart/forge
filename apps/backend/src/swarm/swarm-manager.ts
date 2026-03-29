@@ -2835,6 +2835,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     const stoppedWorkerIds: string[] = [];
+    const managerRuntime = this.runtimes.get(target.agentId);
+    if (managerRuntime && (target.status === "streaming" || managerRuntime.getStatus() === "streaming")) {
+      this.markPendingManualManagerStopNotice(target.agentId);
+    }
 
     this.cancelAllPendingChoicesForAgent(targetManagerId);
 
@@ -2873,11 +2877,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     let managerStopped = false;
     if (!isNonRunningAgentStatus(target.status)) {
-      const managerRuntime = this.runtimes.get(target.agentId);
       if (managerRuntime) {
-        if (target.status === "streaming") {
-          this.markPendingManualManagerStopNotice(target.agentId);
-        }
         const shutdown = await this.runRuntimeShutdown(target, "stopInFlight", { abort: true });
         this.detachRuntime(target.agentId, shutdown.runtimeToken);
       }
@@ -3613,6 +3613,14 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   ): Promise<{ terminatedWorkerIds: string[] }> {
     const descriptor = this.getRequiredSessionDescriptor(agentId);
     const terminatedWorkerIds: string[] = [];
+    const runtime = this.runtimes.get(agentId);
+    if (
+      runtime &&
+      !options.deleteWorkers &&
+      (descriptor.status === "streaming" || runtime.getStatus() === "streaming")
+    ) {
+      this.markPendingManualManagerStopNotice(agentId);
+    }
 
     for (const workerDescriptor of this.getWorkersForManager(agentId)) {
       terminatedWorkerIds.push(workerDescriptor.agentId);
@@ -3623,11 +3631,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       this.conversationProjector.deleteConversationHistory(workerDescriptor.agentId, workerDescriptor.sessionFile);
     }
 
-    const runtime = this.runtimes.get(agentId);
     if (runtime) {
-      if (!options.deleteWorkers && descriptor.status === "streaming") {
-        this.markPendingManualManagerStopNotice(agentId);
-      }
       const shutdown = await this.runRuntimeShutdown(descriptor, "terminate", { abort: true });
       this.detachRuntime(agentId, shutdown.runtimeToken);
     }
@@ -6565,8 +6569,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return false;
     }
 
-    this.clearPendingManualManagerStopNotice(agentId);
-
     if (extractRole(event.message) !== "assistant") {
       return false;
     }
@@ -6581,6 +6583,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       extractMessageErrorMessage(event.message) ?? extractMessageText(event.message)
     );
 
+    this.clearPendingManualManagerStopNotice(agentId);
     return isAbortLikeErrorMessage(normalizedErrorMessage);
   }
 

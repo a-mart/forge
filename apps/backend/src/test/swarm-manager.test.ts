@@ -2240,7 +2240,7 @@ describe('SwarmManager', () => {
         role: 'assistant',
         content: [],
         stopReason: 'error',
-        errorMessage: 'Rate limit exceeded for requests per minute',
+        errorMessage: 'Rate limit exceeded for requests per minute.',
       },
     })
 
@@ -2257,10 +2257,56 @@ describe('SwarmManager', () => {
 
     expect(systemEvent).toBeDefined()
     if (systemEvent?.type === 'conversation_message') {
-      expect(systemEvent.text).toContain('Rate limit exceeded for requests per minute')
+      expect(systemEvent.text).toContain('Rate limit exceeded for requests per minute.')
+      expect(systemEvent.text).not.toContain('Rate limit exceeded for requests per minute..')
       expect(systemEvent.text).not.toContain('prompt exceeded the model context window')
       expect(systemEvent.text).not.toContain('Try compacting the conversation to free up context space.')
     }
+  })
+
+  it('keeps the pending manual stop notice until the abort error arrives', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    seedManagerDescriptorForRuntimeEventTests(manager, config)
+
+    ;(manager as any).markPendingManualManagerStopNotice('manager')
+
+    await (manager as any).handleRuntimeSessionEvent('manager', {
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'partial response before abort' }],
+        stopReason: 'stop',
+      },
+    })
+
+    await (manager as any).handleRuntimeSessionEvent('manager', {
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        content: [],
+        stopReason: 'error',
+        errorMessage: 'Request was aborted.',
+      },
+    })
+
+    const history = manager.getConversationHistory('manager')
+    expect(
+      history.some(
+        (entry) =>
+          entry.type === 'conversation_message' &&
+          entry.role === 'system' &&
+          entry.text === 'Session stopped.',
+      ),
+    ).toBe(true)
+    expect(
+      history.some(
+        (entry) =>
+          entry.type === 'conversation_message' &&
+          entry.role === 'system' &&
+          entry.text.includes('Manager reply failed'),
+      ),
+    ).toBe(false)
   })
 
   it('handles undefined/null/empty/malformed errorMessage payloads without crashing', async () => {
@@ -3558,6 +3604,64 @@ describe('SwarmManager', () => {
     expect(workerAfter?.status).toBe('idle')
     expect(manager.runtimeByAgentId.has('manager')).toBe(true)
     expect(manager.runtimeByAgentId.has(worker.agentId)).toBe(true)
+  })
+
+  it('marks the manager stop notice before worker shutdown during stopAllAgents', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', { agentId: 'Stop-All Worker' })
+    const managerRuntime = manager.runtimeByAgentId.get('manager')
+    const workerRuntime = manager.runtimeByAgentId.get(worker.agentId)
+    expect(managerRuntime).toBeDefined()
+    expect(workerRuntime).toBeDefined()
+
+    const state = manager as unknown as { descriptors: Map<string, AgentDescriptor> }
+    const managerDescriptor = state.descriptors.get('manager')
+    const workerDescriptor = state.descriptors.get(worker.agentId)
+    expect(managerDescriptor).toBeDefined()
+    expect(workerDescriptor).toBeDefined()
+
+    managerDescriptor!.status = 'streaming'
+    workerDescriptor!.status = 'streaming'
+    managerRuntime!.busy = true
+    workerRuntime!.busy = true
+
+    const originalStopInFlight = workerRuntime!.stopInFlight.bind(workerRuntime)
+    workerRuntime!.stopInFlight = async (options) => {
+      await (manager as any).handleRuntimeSessionEvent('manager', {
+        type: 'message_end',
+        message: {
+          role: 'assistant',
+          content: [],
+          stopReason: 'error',
+          errorMessage: 'Request was aborted.',
+        },
+      })
+
+      await originalStopInFlight(options)
+    }
+
+    await manager.stopAllAgents('manager', 'manager')
+
+    const history = manager.getConversationHistory('manager')
+    expect(
+      history.some(
+        (entry) =>
+          entry.type === 'conversation_message' &&
+          entry.role === 'system' &&
+          entry.text === 'Session stopped.',
+      ),
+    ).toBe(true)
+    expect(
+      history.some(
+        (entry) =>
+          entry.type === 'conversation_message' &&
+          entry.role === 'system' &&
+          entry.text.includes('Manager reply failed'),
+      ),
+    ).toBe(false)
   })
 
   it('normalizes persisted streaming workers to idle on restart without recreating runtimes', async () => {

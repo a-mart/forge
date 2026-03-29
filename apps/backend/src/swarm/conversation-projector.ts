@@ -1070,10 +1070,19 @@ function buildManagerErrorConversationText(options: {
   }
 
   if (options.errorMessage) {
-    return `⚠️ Manager reply failed: ${options.errorMessage}. ${MANAGER_ERROR_GENERIC_HINT}`;
+    return `⚠️ Manager reply failed: ${formatManagerErrorMessage(options.errorMessage)} ${MANAGER_ERROR_GENERIC_HINT}`;
   }
 
   return `⚠️ Manager reply failed. ${MANAGER_ERROR_GENERIC_HINT}`;
+}
+
+function formatManagerErrorMessage(errorMessage: string): string {
+  const trimmed = errorMessage.trim();
+  if (trimmed.length === 0) {
+    return "Unknown error.";
+  }
+
+  return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
 }
 
 function shouldPersistConversationEntry(entry: ConversationEntryEvent): boolean {
