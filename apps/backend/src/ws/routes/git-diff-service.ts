@@ -21,6 +21,7 @@ const MAX_DIFF_FILE_BYTES = 1 * 1024 * 1024;
 const MAX_STATUS_FILES = 500;
 const MAX_LOG_LIMIT = 200;
 const BINARY_SNIFF_BYTES = 8 * 1024;
+const MAX_SECTION_PROVENANCE_SECTIONS = 20;
 const FIELD_SEPARATOR = "\x1f";
 const RECORD_SEPARATOR = "\x1e";
 const HEADING_PATTERN = /^\s{0,3}(#{1,6})[ \t]+(.+?)\s*$/u;
@@ -43,7 +44,16 @@ interface GitFileSectionProvenanceOptions {
   notInitialized?: boolean;
 }
 
+interface GitFileLogOptions {
+  includeStats?: boolean;
+}
+
+interface ReadGitLogEntriesOptions {
+  includeFilesChanged?: boolean;
+}
+
 export class GitDiffService {
+  private readonly fileHistoryStatsCache = new Map<string, GitFileHistoryStats>();
   async getStatus(cwd: string, context?: GitStatusContext): Promise<GitStatusResult> {
     const repoKind = context?.repoKind ?? "workspace";
     const repoLabel = context?.repoLabel ?? "Workspace";
@@ -180,7 +190,13 @@ export class GitDiffService {
     };
   }
 
-  async getFileLog(cwd: string, file: string, limit: number, offset: number): Promise<GitFileLogResult> {
+  async getFileLog(
+    cwd: string,
+    file: string,
+    limit: number,
+    offset: number,
+    options?: GitFileLogOptions
+  ): Promise<GitFileLogResult> {
     const normalized = resolveTrackedVersionedPathReference(cwd, file);
     if (!normalized) {
       throw new Error("file must resolve to a tracked versioning path.");
@@ -188,14 +204,24 @@ export class GitDiffService {
 
     const boundedLimit = Math.min(Math.max(limit, 1), MAX_LOG_LIMIT);
     const boundedOffset = Math.max(offset, 0);
-    const allCommits = await this.readGitLogEntries(cwd, undefined, undefined, normalized.gitPath, true);
-    const selectedCommits = allCommits.slice(boundedOffset, boundedOffset + boundedLimit);
+    const shouldIncludeStats = options?.includeStats === true || boundedOffset === 0;
+    const allCommits = await this.readGitLogEntries(cwd, undefined, undefined, normalized.gitPath, true, {
+      includeFilesChanged: false
+    });
+    const selectedBaseCommits = allCommits.slice(boundedOffset, boundedOffset + boundedLimit + 1);
+    const statsCacheKey = this.buildFileHistoryStatsCacheKey(cwd, normalized.gitPath);
+
+    let stats = this.fileHistoryStatsCache.get(statsCacheKey) ?? createEmptyGitFileHistoryStats();
+    if (shouldIncludeStats) {
+      stats = computeGitFileHistoryStats(allCommits);
+      this.fileHistoryStatsCache.set(statsCacheKey, stats);
+    }
 
     return {
       file: normalized.gitPath,
-      commits: selectedCommits,
-      stats: computeGitFileHistoryStats(allCommits),
-      hasMore: boundedOffset + boundedLimit < allCommits.length
+      commits: await this.attachFilesChangedCounts(cwd, selectedBaseCommits.slice(0, boundedLimit)),
+      stats,
+      hasMore: selectedBaseCommits.length > boundedLimit
     };
   }
 
@@ -214,7 +240,7 @@ export class GitDiffService {
       throw new Error(`File not found: ${normalized.gitPath}`);
     }
 
-    const sections = parseMarkdownHeadingSections(fileResult.content);
+    const sections = parseMarkdownHeadingSections(fileResult.content).slice(0, MAX_SECTION_PROVENANCE_SECTIONS);
     const baseSections = sections.map((section) => createEmptySectionProvenance(section));
 
     if (options?.notInitialized || sections.length === 0) {
@@ -228,6 +254,9 @@ export class GitDiffService {
     const git = this.createGit(cwd);
     const provenancedSections: GitFileSectionProvenanceEntry[] = [];
 
+    // v1 intentionally resolves sections one git process at a time because `git log -L`
+    // is relatively expensive and Cortex files are usually small. Cap the section count
+    // to avoid pathological markdown files from spawning an unbounded number of processes.
     for (const section of sections) {
       provenancedSections.push(
         await this.resolveSectionProvenance(git, normalized.gitPath, section)
@@ -372,7 +401,8 @@ export class GitDiffService {
     limit?: number,
     offset?: number,
     file?: string,
-    follow = false
+    follow = false,
+    options?: ReadGitLogEntriesOptions
   ): Promise<GitLogEntry[]> {
     const git = this.createGit(cwd);
     const format = `%H${FIELD_SEPARATOR}%h${FIELD_SEPARATOR}%an${FIELD_SEPARATOR}%aI${FIELD_SEPARATOR}%s${FIELD_SEPARATOR}%b${RECORD_SEPARATOR}`;
@@ -409,12 +439,30 @@ export class GitDiffService {
       };
     });
 
+    if (options?.includeFilesChanged === false) {
+      return parsedBase.map((entry) => ({
+        ...entry,
+        filesChanged: 0
+      }));
+    }
+
+    return this.attachFilesChangedCounts(cwd, parsedBase);
+  }
+
+  private attachFilesChangedCounts(
+    cwd: string,
+    entries: Array<Omit<GitLogEntry, "filesChanged"> & { filesChanged?: number }>
+  ): Promise<GitLogEntry[]> {
     return Promise.all(
-      parsedBase.map(async (entry) => ({
+      entries.map(async (entry) => ({
         ...entry,
         filesChanged: await this.countFilesChangedInCommit(cwd, entry.sha)
       }))
     );
+  }
+
+  private buildFileHistoryStatsCacheKey(cwd: string, file: string): string {
+    return `${resolve(cwd)}::${file}`;
   }
 
   private async countFilesChangedInCommit(cwd: string, sha: string): Promise<number> {
@@ -636,6 +684,15 @@ function mapStatusCode(code: string): GitFileStatus["status"] {
     default:
       return "modified";
   }
+}
+
+function createEmptyGitFileHistoryStats(): GitFileHistoryStats {
+  return {
+    totalEdits: 0,
+    lastModifiedAt: null,
+    editsToday: 0,
+    editsThisWeek: 0
+  };
 }
 
 function computeGitFileHistoryStats(commits: GitLogEntry[]): GitFileHistoryStats {

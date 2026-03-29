@@ -88,6 +88,7 @@ export function createGitDiffRoutes(options: { swarmManager: SwarmManager }): Ht
         throw new Error("file-log is only available for repoTarget=versioning.");
       }
 
+      const includeStatsParam = requestUrl.searchParams.get("includeStats");
       const repoContext = resolveGitRepoContext(swarmManager, agentId, repoTarget);
       const trackedFile = resolveTrackedVersionedPathReference(repoContext.cwd, file);
       if (!trackedFile) {
@@ -97,7 +98,9 @@ export function createGitDiffRoutes(options: { swarmManager: SwarmManager }): Ht
         return createNotInitializedFileLogResult(trackedFile.gitPath);
       }
 
-      return service.getFileLog(repoContext.cwd, trackedFile.gitPath, limit, offset);
+      return service.getFileLog(repoContext.cwd, trackedFile.gitPath, limit, offset, {
+        includeStats: includeStatsParam === "1" || includeStatsParam === "true"
+      });
     }),
     handleGet("/api/git/file-section-provenance", async (requestUrl) => {
       const agentId = requireNonEmptyQuery(requestUrl.searchParams, "agentId");

@@ -2110,9 +2110,7 @@ describe('SwarmManager', () => {
       isError: false,
     })
 
-    for (let attempt = 0; attempt < 20 && recordMutation.mock.calls.length < 2; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 0))
-    }
+    await waitForCondition(() => recordMutation.mock.calls.length >= 2, 1_000)
 
     expect(recordMutation).toHaveBeenNthCalledWith(1, {
       path: commonKnowledgePath,
@@ -2121,6 +2119,7 @@ describe('SwarmManager', () => {
       profileId: 'manager',
       sessionId: 'manager',
       agentId: 'manager',
+      reviewRunId: undefined,
     })
     expect(recordMutation).toHaveBeenNthCalledWith(2, {
       path: commonKnowledgePath,
@@ -2129,6 +2128,7 @@ describe('SwarmManager', () => {
       profileId: 'manager',
       sessionId: 'manager',
       agentId: 'manager',
+      reviewRunId: undefined,
     })
   })
 

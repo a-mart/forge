@@ -1,4 +1,4 @@
-import { createElement, isValidElement, memo, useCallback, useMemo, useState, type ReactNode } from 'react'
+import { createElement, isValidElement, memo, useCallback, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Check, ChevronRight, Copy, FileCode2, FileText, ZoomIn } from 'lucide-react'
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -47,19 +47,20 @@ export const MarkdownMessage = memo(function MarkdownMessage({
   const isDocument = variant === 'document'
   const normalizedContent = useMemo(() => normalizeArtifactShortcodes(content), [content])
   const [zoomTarget, setZoomTarget] = useState<ZoomTarget | null>(null)
-  const headingInstanceCounts = new Map<string, number>()
+  const headingInstanceCountsRef = useRef<Map<string, number>>(new Map())
+  headingInstanceCountsRef.current = new Map()
 
   const renderHeading = useCallback(
     (level: 1 | 2 | 3 | 4 | 5 | 6, children: ReactNode, className: string) => {
       const text = flattenText(children).trim()
       const key = `${level}:${normalizeHeadingText(text)}`
-      const index = headingInstanceCounts.get(key) ?? 0
-      headingInstanceCounts.set(key, index + 1)
+      const index = headingInstanceCountsRef.current.get(key) ?? 0
+      headingInstanceCountsRef.current.set(key, index + 1)
       const adornment = text ? renderHeadingAdornment?.({ level, text, index }) : null
 
       return createHeadingElement(level, className, children, adornment)
     },
-    [headingInstanceCounts, renderHeadingAdornment],
+    [renderHeadingAdornment],
   )
 
   return (

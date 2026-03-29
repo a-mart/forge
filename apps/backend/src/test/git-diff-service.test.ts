@@ -142,6 +142,17 @@ describe("GitDiffService", () => {
       sections: []
     });
   });
+
+  it("getFileSectionProvenance caps section lookups for heading-heavy files", async () => {
+    const repo = await createManySectionsRepo();
+    const service = new GitDiffService();
+
+    const result = await service.getFileSectionProvenance(repo.cwd, "shared/knowledge/common.md");
+
+    expect(result.sections).toHaveLength(20);
+    expect(result.sections[0]?.heading).toBe("Section 1");
+    expect(result.sections[19]?.heading).toBe("Section 20");
+  });
 });
 
 async function createStructuredHistoryRepo(): Promise<{ cwd: string; headSha: string; initialSha: string; headDate: string }> {
@@ -281,6 +292,26 @@ async function createSectionHistoryRepo(): Promise<{ cwd: string; headSha: strin
 
   const headSha = (await execGit(cwd, ["rev-parse", "HEAD"])).stdout.trim();
   return { cwd, headSha, initialSha };
+}
+
+async function createManySectionsRepo(): Promise<{ cwd: string }> {
+  const cwd = await mkdtemp(join(tmpdir(), "git-diff-service-many-sections-"));
+  activeRoots.push(cwd);
+
+  await mkdir(join(cwd, "shared", "knowledge"), { recursive: true });
+  await writeFile(
+    join(cwd, "shared", "knowledge", "common.md"),
+    Array.from({ length: 25 }, (_, index) => `## Section ${index + 1}\n- item ${index + 1}`).join("\n\n") + "\n",
+    "utf8"
+  );
+
+  await execGit(cwd, ["init"]);
+  await execGit(cwd, ["config", "user.name", "Forge Test"]);
+  await execGit(cwd, ["config", "user.email", "forge-test@example.com"]);
+  await execGit(cwd, ["add", "shared/knowledge/common.md"]);
+  await execGit(cwd, ["commit", "-m", "initial many sections"], "2026-03-23T10:00:00.000Z");
+
+  return { cwd };
 }
 
 async function createHeadinglessMarkdownRepo(): Promise<{ cwd: string }> {
