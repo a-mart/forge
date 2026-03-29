@@ -160,7 +160,7 @@ The web UI is designed to be the only window you need open.
 - **Schedules** — view and manage scheduled jobs per session.
 - **Context meter** — visual indicator of context utilization with manual smart-compact trigger.
 - **Session search** — search across session names and message content with highlighted results.
-- **Notifications** — per-session notification customization with custom sound uploads. (Pro tip: turn off notifications for Cortex. It gets noisy during review runs.)
+- **Notifications** — global notification defaults with per-manager overrides and custom sound uploads. Set baseline sounds once and all managers inherit them. Cortex is excluded from defaults so automated reviews stay quiet.
 - **Prompt preview** — view the full effective system prompt being sent, including memory, knowledge, and skills.
 
 ## Skills

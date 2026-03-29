@@ -203,31 +203,44 @@ Either approach works. OAuth is useful if you prefer not to generate long-lived 
     title: 'Notification Sounds',
     category: 'settings',
     summary: 'Set up sound alerts per manager and upload custom sounds.',
-    content: `Forge can play sounds when agents send messages or finish their work. Notifications are configured per manager profile, so different managers can have different sounds.
+    content: `Forge can play sounds when agents send messages or finish their work. You set baseline defaults once, and individual managers inherit them automatically. Any manager can override the defaults with its own settings.
 
 ## Global toggle
 
-The main toggle at the top enables or disables all notification sounds. When it's off, no sounds play regardless of per-manager settings.
+The main toggle at the top enables or disables all notification sounds. When it's off, no sounds play regardless of other settings.
 
-## Per-manager sounds
+## Notification defaults
 
-Each manager profile has two sound triggers:
+The Defaults section sets baseline preferences that apply to all managers except Cortex. It has the same controls as per-manager settings: unread message sound, all-done sound, and volume.
 
-- **Unread message sound** — plays when a manager sends a message you haven't read yet. Useful if you switch away from Forge while agents are working.
-- **All done sound** — plays when a manager finishes with no workers still running. This tells you the task is complete without checking the UI.
+When you change the defaults, every manager that hasn't been explicitly customized picks up the new settings automatically.
 
-Each trigger has its own on/off toggle and sound picker. You can also set volume independently per manager.
+## Per-manager overrides
+
+Below the defaults, each manager profile is listed. Managers using the defaults show a compact row with "Using defaults" and a **Customize** button. Click Customize to create a per-manager override that starts as a copy of the current defaults, then adjust whatever you need.
+
+Managers with overrides show the full controls plus a **Reset to defaults** button. Resetting removes the override and the manager goes back to inheriting defaults.
+
+Each manager has two sound triggers:
+
+- **Unread message sound** — plays when a manager sends a message you haven't read yet.
+- **All done sound** — plays when a manager finishes with no workers still running.
+
+## Cortex
+
+Cortex always has its own standalone settings and never inherits from the defaults. This prevents automated review sessions from triggering sounds meant for interactive managers.
 
 ## Custom sounds
 
 Upload your own notification sounds in MP3, WAV, or OGG format (max 2 MB per file). Custom sounds appear alongside the built-in options in every sound picker. Click the play button to preview a sound before selecting it.
 
-To remove a custom sound, click the trash icon next to it. If a manager was using that sound, it falls back to the default.
+To remove a custom sound, click the trash icon next to it. Any manager or the defaults using that sound falls back to the built-in default.
 
 ## Tips
 
-- Set a distinct "all done" sound so you can hear when a long task finishes without looking at the screen.
-- Use different sounds for different managers if you run several at once and want to tell them apart by ear.`,
+- Set a distinct "all done" sound in the defaults so you hear when any long task finishes.
+- Use per-manager overrides only when you need to tell managers apart by ear.
+- Cortex settings are separate — configure them if you want sounds for automated reviews.`,
     keywords: [
       'notifications',
       'sound',

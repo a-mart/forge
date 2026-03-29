@@ -23,9 +23,10 @@ export interface CustomSound {
 }
 
 export interface NotificationStore {
+  globalEnabled: boolean
+  defaults: AgentNotificationPrefs
   agents: Record<string, AgentNotificationPrefs>
   customSounds: CustomSound[]
-  globalEnabled: boolean
 }
 
 // ── Constants ──
@@ -45,10 +46,17 @@ const DEFAULT_AGENT_PREFS: AgentNotificationPrefs = {
   volume: 0.7,
 }
 
+const DEFAULT_AGENT_PREFS_DISABLED: AgentNotificationPrefs = {
+  unreadSound: { enabled: false, soundId: 'notification' },
+  allDoneSound: { enabled: false, soundId: 'complete' },
+  volume: 0.7,
+}
+
 const DEFAULT_STORE: NotificationStore = {
+  globalEnabled: true,
+  defaults: { ...DEFAULT_AGENT_PREFS },
   agents: {},
   customSounds: [],
-  globalEnabled: true,
 }
 
 // ── Storage ──
@@ -60,11 +68,19 @@ export function readNotificationStore(): NotificationStore {
     const raw = window.localStorage.getItem(STORAGE_KEY)
     if (!raw) return { ...DEFAULT_STORE }
     const parsed = JSON.parse(raw)
-    return {
+    const store: NotificationStore = {
+      globalEnabled: typeof parsed.globalEnabled === 'boolean' ? parsed.globalEnabled : true,
+      defaults: parsed.defaults && typeof parsed.defaults === 'object'
+        ? parsed.defaults
+        : { ...DEFAULT_AGENT_PREFS },
       agents: parsed.agents && typeof parsed.agents === 'object' ? parsed.agents : {},
       customSounds: Array.isArray(parsed.customSounds) ? parsed.customSounds : [],
-      globalEnabled: typeof parsed.globalEnabled === 'boolean' ? parsed.globalEnabled : true,
     }
+    // Migration: persist defaults field if it was missing in stored data
+    if (!parsed.defaults) {
+      writeNotificationStore(store)
+    }
+    return store
   } catch {
     return { ...DEFAULT_STORE }
   }
@@ -81,6 +97,32 @@ export function writeNotificationStore(store: NotificationStore): void {
 
 export function getAgentPrefs(store: NotificationStore, agentId: string): AgentNotificationPrefs {
   return store.agents[agentId] ?? { ...DEFAULT_AGENT_PREFS }
+}
+
+/**
+ * Resolve effective prefs for a profile, respecting the defaults cascade.
+ * Cortex never inherits from defaults — it uses its own explicit prefs or disabled fallback.
+ */
+export function getEffectivePrefs(
+  store: NotificationStore,
+  prefsKey: string,
+  isCortex: boolean,
+): AgentNotificationPrefs {
+  if (isCortex) {
+    return store.agents[prefsKey] ?? { ...DEFAULT_AGENT_PREFS_DISABLED }
+  }
+  return store.agents[prefsKey] ?? store.defaults
+}
+
+/** Check if a profile has an explicit override (not using defaults). */
+export function hasExplicitOverride(store: NotificationStore, prefsKey: string): boolean {
+  return prefsKey in store.agents
+}
+
+/** Remove a profile's explicit override so it falls back to defaults. */
+export function clearOverride(store: NotificationStore, prefsKey: string): NotificationStore {
+  const { [prefsKey]: _, ...rest } = store.agents
+  return { ...store, agents: rest }
 }
 
 export function setAgentPrefs(
@@ -215,7 +257,8 @@ export function shouldPlayUnread(
   if (!store.globalEnabled) return false
   // Don't play for the currently viewed agent if the user is actively looking at it
   if (agentId === state.targetAgentId && document.hasFocus()) return false
-  const prefs = getAgentPrefs(store, prefsKey)
+  const isCortex = prefsKey === 'cortex'
+  const prefs = getEffectivePrefs(store, prefsKey, isCortex)
   return prefs.unreadSound.enabled
 }
 
@@ -228,7 +271,8 @@ export function shouldPlayAllDone(
   if (!store.globalEnabled) return false
   // Don't play for the currently viewed agent if the user is actively looking at it
   if (agentId === state.targetAgentId && document.hasFocus()) return false
-  const prefs = getAgentPrefs(store, prefsKey)
+  const isCortex = prefsKey === 'cortex'
+  const prefs = getEffectivePrefs(store, prefsKey, isCortex)
   if (!prefs.allDoneSound.enabled) return false
   // Hard safety guard: never classify as all-done while the manager itself is streaming.
   // speak_to_user is a tool call that fires mid-turn; workers may not be spawned yet.
@@ -240,7 +284,8 @@ export function shouldPlayAllDone(
 
 export function playUnread(prefsKey: string, store: NotificationStore): void {
   if (!canPlay(`unread:${prefsKey}`)) return
-  const prefs = getAgentPrefs(store, prefsKey)
+  const isCortex = prefsKey === 'cortex'
+  const prefs = getEffectivePrefs(store, prefsKey, isCortex)
   const url = resolveSoundUrl(prefs.unreadSound.soundId, store)
   if (!url) return
   playSound(url, prefs.volume)
@@ -248,7 +293,8 @@ export function playUnread(prefsKey: string, store: NotificationStore): void {
 
 export function playAllDone(prefsKey: string, store: NotificationStore): void {
   if (!canPlay(`allDone:${prefsKey}`)) return
-  const prefs = getAgentPrefs(store, prefsKey)
+  const isCortex = prefsKey === 'cortex'
+  const prefs = getEffectivePrefs(store, prefsKey, isCortex)
   const url = resolveSoundUrl(prefs.allDoneSound.soundId, store)
   if (!url) return
   playSound(url, prefs.volume)
@@ -342,8 +388,17 @@ export function removeCustomSound(
   store: NotificationStore,
   soundId: string,
 ): NotificationStore {
+  // Reset defaults if they reference the removed sound
+  let defaults = store.defaults
+  if (defaults.unreadSound.soundId === soundId) {
+    defaults = { ...defaults, unreadSound: { ...defaults.unreadSound, soundId: 'notification' } }
+  }
+  if (defaults.allDoneSound.soundId === soundId) {
+    defaults = { ...defaults, allDoneSound: { ...defaults.allDoneSound, soundId: 'complete' } }
+  }
   return {
     ...store,
+    defaults,
     customSounds: store.customSounds.filter((s) => s.id !== soundId),
     // Also clear any agent prefs that reference this sound
     agents: Object.fromEntries(

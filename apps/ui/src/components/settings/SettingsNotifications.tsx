@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Bell, BellOff, Play, Trash2, Upload, Volume2 } from 'lucide-react'
+import { Bell, BellOff, Play, RotateCcw, Settings2, Trash2, Upload, Volume2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import {
@@ -17,6 +17,9 @@ import {
   type NotificationStore,
   getAllSoundOptions,
   getAgentPrefs,
+  getEffectivePrefs,
+  hasExplicitOverride,
+  clearOverride,
   readNotificationStore,
   writeNotificationStore,
   setAgentPrefs,
@@ -61,15 +64,45 @@ export function SettingsNotifications({ managers }: SettingsNotificationsProps) 
     setStore((prev) => ({ ...prev, globalEnabled: enabled }))
   }, [])
 
+  // ── Defaults prefs ──
+
+  const updateDefaults = useCallback(
+    (updater: (prev: AgentNotificationPrefs) => AgentNotificationPrefs) => {
+      setStore((prev) => ({
+        ...prev,
+        defaults: updater(prev.defaults),
+      }))
+    },
+    [],
+  )
+
   // ── Per-agent prefs ──
 
   const updateAgentPrefs = useCallback(
-    (agentId: string, updater: (prev: AgentNotificationPrefs) => AgentNotificationPrefs) => {
+    (profileId: string, updater: (prev: AgentNotificationPrefs) => AgentNotificationPrefs) => {
       setStore((prev) => {
-        const current = getAgentPrefs(prev, agentId)
+        const current = getAgentPrefs(prev, profileId)
         const updated = updater(current)
-        return setAgentPrefs(prev, agentId, updated)
+        return setAgentPrefs(prev, profileId, updated)
       })
+    },
+    [],
+  )
+
+  const handleCustomize = useCallback(
+    (profileId: string) => {
+      setStore((prev) => {
+        // Copy current defaults into an explicit override
+        if (hasExplicitOverride(prev, profileId)) return prev
+        return setAgentPrefs(prev, profileId, { ...prev.defaults })
+      })
+    },
+    [],
+  )
+
+  const handleResetToDefaults = useCallback(
+    (profileId: string) => {
+      setStore((prev) => clearOverride(prev, profileId))
     },
     [],
   )
@@ -117,7 +150,12 @@ export function SettingsNotifications({ managers }: SettingsNotificationsProps) 
       profileMap.set(pid, agent)
     }
   }
-  const profileAgents = Array.from(profileMap.values())
+  const profileAgents = Array.from(profileMap.values()).sort((a, b) => {
+    // Pin Cortex to the top of the per-manager list
+    if (a.profileId === 'cortex') return -1
+    if (b.profileId === 'cortex') return 1
+    return 0
+  })
 
   return (
     <div className="flex flex-col gap-8">
@@ -150,19 +188,71 @@ export function SettingsNotifications({ managers }: SettingsNotificationsProps) 
             No manager agents found. Create a manager to configure notification sounds.
           </p>
         )}
-
-        {store.globalEnabled &&
-          profileAgents.map((agent) => (
-            <AgentNotificationSection
-              key={agent.agentId}
-              agent={agent}
-              prefs={getAgentPrefs(store, agent.agentId)}
-              soundOptions={soundOptions}
-              store={store}
-              onUpdate={(updater) => updateAgentPrefs(agent.agentId, updater)}
-            />
-          ))}
       </SettingsSection>
+
+      {/* ── Notification Defaults ── */}
+      {store.globalEnabled && (
+        <SettingsSection
+          label="Notification Defaults"
+          description="Applies to all managers except Cortex. Individual managers can override."
+        >
+          <DefaultsNotificationSection
+            prefs={store.defaults}
+            soundOptions={soundOptions}
+            store={store}
+            onUpdate={updateDefaults}
+          />
+        </SettingsSection>
+      )}
+
+      {/* ── Per-Manager Overrides ── */}
+      {store.globalEnabled && profileAgents.length > 0 && (
+        <SettingsSection
+          label="Per-Manager Settings"
+          description="Override defaults for individual managers"
+        >
+          {profileAgents.map((agent) => {
+            const profileId = agent.profileId!
+            const isCortex = profileId === 'cortex'
+            const isOverride = hasExplicitOverride(store, profileId)
+
+            if (isCortex) {
+              return (
+                <AgentNotificationSection
+                  key={profileId}
+                  agent={agent}
+                  prefs={getEffectivePrefs(store, profileId, true)}
+                  soundOptions={soundOptions}
+                  store={store}
+                  onUpdate={(updater) => updateAgentPrefs(profileId, updater)}
+                />
+              )
+            }
+
+            if (!isOverride) {
+              return (
+                <DefaultsProfileRow
+                  key={profileId}
+                  agent={agent}
+                  onCustomize={() => handleCustomize(profileId)}
+                />
+              )
+            }
+
+            return (
+              <AgentNotificationSection
+                key={profileId}
+                agent={agent}
+                prefs={getAgentPrefs(store, profileId)}
+                soundOptions={soundOptions}
+                store={store}
+                onUpdate={(updater) => updateAgentPrefs(profileId, updater)}
+                onResetToDefaults={() => handleResetToDefaults(profileId)}
+              />
+            )
+          })}
+        </SettingsSection>
+      )}
 
       {/* ── Custom Sounds ── */}
       <SettingsSection
@@ -229,25 +319,176 @@ export function SettingsNotifications({ managers }: SettingsNotificationsProps) 
 
 // ── Per-Agent Section ──
 
+/** Collapsed row for a profile that inherits defaults. */
+function DefaultsProfileRow({
+  agent,
+  onCustomize,
+}: {
+  agent: AgentDescriptor
+  onCustomize: () => void
+}) {
+  const displayName = agent.displayName || agent.agentId
+
+  return (
+    <div className="flex items-center justify-between rounded-lg border border-border/60 px-3 py-2.5">
+      <div className="flex items-center gap-2">
+        <Label className="text-sm font-semibold">{displayName}</Label>
+        <span className="text-xs text-muted-foreground">Using defaults</span>
+      </div>
+      <Button
+        variant="outline"
+        size="sm"
+        className="h-7 text-xs"
+        onClick={onCustomize}
+      >
+        <Settings2 className="size-3 mr-1.5" />
+        Customize
+      </Button>
+    </div>
+  )
+}
+
+/** Notification controls for the defaults section. Same controls, no agent header. */
+function DefaultsNotificationSection({
+  prefs,
+  soundOptions,
+  store,
+  onUpdate,
+}: {
+  prefs: AgentNotificationPrefs
+  soundOptions: ReturnType<typeof getAllSoundOptions>
+  store: NotificationStore
+  onUpdate: (updater: (prev: AgentNotificationPrefs) => AgentNotificationPrefs) => void
+}) {
+  return (
+    <div className="rounded-lg border border-border/60 p-3 space-y-3">
+      {/* Unread sound */}
+      <SettingsWithCTA
+        label="Unread message sound"
+        description="Plays when a manager sends a message you haven't seen"
+      >
+        <div className="flex items-center gap-2">
+          <Switch
+            checked={prefs.unreadSound.enabled}
+            onCheckedChange={(enabled) =>
+              onUpdate((p) => ({
+                ...p,
+                unreadSound: { ...p.unreadSound, enabled },
+              }))
+            }
+          />
+          {prefs.unreadSound.enabled && (
+            <SoundPicker
+              value={prefs.unreadSound.soundId}
+              options={soundOptions}
+              store={store}
+              volume={prefs.volume}
+              onChange={(soundId) =>
+                onUpdate((p) => ({
+                  ...p,
+                  unreadSound: { ...p.unreadSound, soundId },
+                }))
+              }
+            />
+          )}
+        </div>
+      </SettingsWithCTA>
+
+      {/* All-done sound */}
+      <SettingsWithCTA
+        label="All done sound"
+        description="Plays when a manager finishes with no workers running"
+      >
+        <div className="flex items-center gap-2">
+          <Switch
+            checked={prefs.allDoneSound.enabled}
+            onCheckedChange={(enabled) =>
+              onUpdate((p) => ({
+                ...p,
+                allDoneSound: { ...p.allDoneSound, enabled },
+              }))
+            }
+          />
+          {prefs.allDoneSound.enabled && (
+            <SoundPicker
+              value={prefs.allDoneSound.soundId}
+              options={soundOptions}
+              store={store}
+              volume={prefs.volume}
+              onChange={(soundId) =>
+                onUpdate((p) => ({
+                  ...p,
+                  allDoneSound: { ...p.allDoneSound, soundId },
+                }))
+              }
+            />
+          )}
+        </div>
+      </SettingsWithCTA>
+
+      <Separator className="my-1" />
+
+      {/* Volume */}
+      <SettingsWithCTA label="Volume" description="Default notification volume">
+        <div className="flex items-center gap-2 w-full sm:w-48">
+          <Volume2 className="size-3.5 shrink-0 text-muted-foreground" />
+          <input
+            type="range"
+            min={0}
+            max={100}
+            step={1}
+            value={Math.round(prefs.volume * 100)}
+            onChange={(e) => {
+              const vol = Number(e.target.value) / 100
+              onUpdate((p) => ({ ...p, volume: vol }))
+            }}
+            className="w-full h-1.5 bg-muted rounded-full appearance-none cursor-pointer accent-primary
+              [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:w-3.5
+              [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary [&::-webkit-slider-thumb]:shadow-sm
+              [&::-moz-range-thumb]:h-3.5 [&::-moz-range-thumb]:w-3.5 [&::-moz-range-thumb]:rounded-full
+              [&::-moz-range-thumb]:bg-primary [&::-moz-range-thumb]:border-0"
+          />
+          <span className="text-xs text-muted-foreground w-8 text-right tabular-nums">
+            {Math.round(prefs.volume * 100)}%
+          </span>
+        </div>
+      </SettingsWithCTA>
+    </div>
+  )
+}
+
 function AgentNotificationSection({
   agent,
   prefs,
   soundOptions,
   store,
   onUpdate,
+  onResetToDefaults,
 }: {
   agent: AgentDescriptor
   prefs: AgentNotificationPrefs
   soundOptions: ReturnType<typeof getAllSoundOptions>
   store: NotificationStore
   onUpdate: (updater: (prev: AgentNotificationPrefs) => AgentNotificationPrefs) => void
+  onResetToDefaults?: () => void
 }) {
   const displayName = agent.displayName || agent.agentId
 
   return (
     <div className="rounded-lg border border-border/60 p-3 space-y-3">
-      <div className="flex items-center gap-2 pb-1">
+      <div className="flex items-center justify-between pb-1">
         <Label className="text-sm font-semibold">{displayName}</Label>
+        {onResetToDefaults && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 text-xs text-muted-foreground hover:text-foreground"
+            onClick={onResetToDefaults}
+          >
+            <RotateCcw className="size-3 mr-1.5" />
+            Reset to defaults
+          </Button>
+        )}
       </div>
 
       {/* Unread sound */}
