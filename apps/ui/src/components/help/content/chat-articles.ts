@@ -280,11 +280,15 @@ The panel loads the file content from the agent's working directory and displays
 - **Images** (PNG, JPG, GIF, WebP, SVG) display inline.
 - **Code and text files** show syntax-highlighted source.
 
-The header shows the file name, full path, and an "Open in Editor" link.
+The header shows the file name, full path, and an "Open in Editor" link. In the desktop app, a "Show in folder" button also appears.
 
 ## Opening in your editor
 
 Click "Open in [Editor]" in the panel header to open the file directly in your preferred editor. Set your editor (VS Code, VS Code Insiders, or Cursor) in Settings > General.
+
+## Revealing in the file system
+
+In the desktop app, click "Show in folder" to reveal the file in Finder (macOS) or File Explorer (Windows). This is useful when you want to see the file's location or work with it outside the editor.
 
 ## Navigating between files
 

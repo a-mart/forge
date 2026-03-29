@@ -101,7 +101,7 @@ You can pin important messages to preserve them through compaction. Hover over a
 
 ### File Browser
 
-The left sidebar has a file browser pointed at your project directory. Currently read-only, but you can browse your entire codebase without leaving Forge. Click any file to view it. There's a button to open it directly in your editor.
+The left sidebar has a file browser pointed at your project directory. Currently read-only, but you can browse your entire codebase without leaving Forge. Click any file to view it. There's a button to open it directly in your editor. In the desktop app, there's also a "Show in folder" button to reveal the file in Finder or File Explorer.
 
 > **Editor preference:** By default, files open in VS Code. You can change this to Cursor (or other editors) in **Settings**.
 
