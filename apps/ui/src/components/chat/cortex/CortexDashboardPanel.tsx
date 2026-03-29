@@ -1,19 +1,14 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { BookOpen, ClipboardList, Clock3, StickyNote, X } from 'lucide-react'
+import type { CortexDocumentEntry } from '@forge/protocol'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
 import type { ArtifactReference } from '@/lib/artifacts'
 import { cn } from '@/lib/utils'
 import { HelpTrigger } from '@/components/help/HelpTrigger'
 import { SchedulesPanel } from '../SchedulesPanel'
+import { CortexDocumentSelector } from './CortexDocumentSelector'
 import { KnowledgeFileViewer } from './KnowledgeFileViewer'
 import { ReviewStatusPanel } from './ReviewStatusPanel'
 
@@ -25,6 +20,10 @@ interface CortexDashboardPanelProps {
   onArtifactClick: (artifact: ArtifactReference) => void
   onOpenSession: (agentId: string) => void
   requestedTab?: { tab: DashboardTab; nonce: number } | null
+}
+
+interface CortexScanResponse {
+  documents?: CortexDocumentEntry[]
 }
 
 export type DashboardTab = 'knowledge' | 'notes' | 'review' | 'schedules'
@@ -57,18 +56,6 @@ function persistWidth(width: number): void {
   }
 }
 
-interface ProfileScopedFileEntry {
-  path: string
-  exists: boolean
-  sizeBytes: number
-}
-
-interface CortexPaths {
-  commonKnowledge: string | null
-  cortexNotes: string | null
-  profileMemory: Record<string, ProfileScopedFileEntry>
-}
-
 function isDashboardTab(value: string): value is DashboardTab {
   return value === 'knowledge' || value === 'notes' || value === 'review' || value === 'schedules'
 }
@@ -84,16 +71,25 @@ export function CortexDashboardPanel({
 }: CortexDashboardPanelProps) {
   const [activeTab, setActiveTab] = useState<DashboardTab>('knowledge')
   const [panelWidth, setPanelWidth] = useState(loadPersistedWidth)
-  const [paths, setPaths] = useState<CortexPaths>({
-    commonKnowledge: null,
-    cortexNotes: null,
-    profileMemory: {},
-  })
+  const [documents, setDocuments] = useState<CortexDocumentEntry[]>([])
   const [pathsLoaded, setPathsLoaded] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
-  const [selectedKnowledgeScope, setSelectedKnowledgeScope] = useState<string>('common')
+  const [selectedKnowledgeDocumentId, setSelectedKnowledgeDocumentId] = useState<string>('')
   const isDraggingRef = useRef(false)
   const panelRef = useRef<HTMLDivElement>(null)
+
+  const knowledgeDocuments = useMemo(
+    () => documents.filter((document) => document.group !== 'notes'),
+    [documents],
+  )
+  const notesDocument = useMemo(
+    () => documents.find((document) => document.group === 'notes') ?? null,
+    [documents],
+  )
+  const selectedKnowledgeDocument = useMemo(
+    () => knowledgeDocuments.find((document) => document.id === selectedKnowledgeDocumentId) ?? null,
+    [knowledgeDocuments, selectedKnowledgeDocumentId],
+  )
 
   useEffect(() => {
     if (requestedTab) {
@@ -101,7 +97,25 @@ export function CortexDashboardPanel({
     }
   }, [requestedTab])
 
-  // Fetch file paths from scan endpoint on mount
+  useEffect(() => {
+    if (!knowledgeDocuments.length) {
+      if (selectedKnowledgeDocumentId) {
+        setSelectedKnowledgeDocumentId('')
+      }
+      return
+    }
+
+    if (knowledgeDocuments.some((document) => document.id === selectedKnowledgeDocumentId)) {
+      return
+    }
+
+    const fallbackDocument =
+      knowledgeDocuments.find((document) => document.group === 'commonKnowledge') ?? knowledgeDocuments[0]
+    if (fallbackDocument) {
+      setSelectedKnowledgeDocumentId(fallbackDocument.id)
+    }
+  }, [knowledgeDocuments, selectedKnowledgeDocumentId])
+
   useEffect(() => {
     if (!isOpen) return
 
@@ -111,33 +125,16 @@ export function CortexDashboardPanel({
     void fetch(endpoint, { signal: abortController.signal })
       .then((response) => {
         if (!response.ok) throw new Error(`${response.status}`)
-        return response.json()
+        return response.json() as Promise<CortexScanResponse>
       })
-      .then((data: unknown) => {
+      .then((payload) => {
         if (abortController.signal.aborted) return
-        const payload = data as {
-          files?: {
-            commonKnowledge?: string
-            cortexNotes?: string
-            profileMemory?: Record<string, ProfileScopedFileEntry>
-            profileKnowledge?: Record<string, ProfileScopedFileEntry>
-          }
-          paths?: { commonKnowledge?: string; cortexNotes?: string }
-          profileMemory?: Record<string, ProfileScopedFileEntry>
-          profileKnowledge?: Record<string, ProfileScopedFileEntry>
-        }
-        const files = payload.files ?? payload.paths
-        const profileMemory = payload.files?.profileMemory ?? payload.profileMemory ?? payload.files?.profileKnowledge ?? payload.profileKnowledge ?? {}
-        setPaths({
-          commonKnowledge: typeof files?.commonKnowledge === 'string' ? files.commonKnowledge : null,
-          cortexNotes: typeof files?.cortexNotes === 'string' ? files.cortexNotes : null,
-          profileMemory,
-        })
+        setDocuments(Array.isArray(payload.documents) ? payload.documents : [])
         setPathsLoaded(true)
       })
       .catch(() => {
         if (abortController.signal.aborted) return
-        // Endpoint not available yet — fall through with null paths
+        setDocuments([])
         setPathsLoaded(true)
       })
 
@@ -146,14 +143,30 @@ export function CortexDashboardPanel({
     }
   }, [wsUrl, isOpen])
 
-  // Trigger refresh when panel opens or tab changes
   useEffect(() => {
     if (isOpen) {
       setRefreshKey((prev) => prev + 1)
     }
   }, [isOpen, activeTab])
 
-  // Resizable drag handle logic
+  const handleSelectDocument = useCallback(
+    (documentId: string) => {
+      const nextDocument = documents.find((entry) => entry.id === documentId)
+      if (!nextDocument) {
+        return
+      }
+
+      if (nextDocument.group === 'notes') {
+        setActiveTab('notes')
+        return
+      }
+
+      setSelectedKnowledgeDocumentId(nextDocument.id)
+      setActiveTab('knowledge')
+    },
+    [documents],
+  )
+
   const handleMouseDown = useCallback(
     (event: React.MouseEvent) => {
       event.preventDefault()
@@ -164,7 +177,6 @@ export function CortexDashboardPanel({
 
       const handleMouseMove = (moveEvent: MouseEvent) => {
         if (!isDraggingRef.current) return
-        // Panel is on the right side, so dragging left increases width
         const diff = startX - moveEvent.clientX
         const newWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, startWidth + diff))
         setPanelWidth(newWidth)
@@ -176,7 +188,6 @@ export function CortexDashboardPanel({
         document.removeEventListener('mouseup', handleMouseUp)
         document.body.style.cursor = ''
         document.body.style.userSelect = ''
-        // Persist final width
         const panel = panelRef.current
         if (panel) {
           const computedWidth = panel.getBoundingClientRect().width
@@ -207,7 +218,6 @@ export function CortexDashboardPanel({
       aria-label="Cortex Dashboard"
       aria-hidden={!isOpen}
     >
-      {/* Resize handle (left edge) — hidden on mobile */}
       <div
         className="absolute left-0 top-0 z-10 hidden h-full w-1 cursor-col-resize hover:bg-primary/20 active:bg-primary/30 md:block"
         onMouseDown={handleMouseDown}
@@ -227,31 +237,19 @@ export function CortexDashboardPanel({
       >
         <div className="flex h-[62px] shrink-0 items-center gap-2 px-3">
           <TabsList className="h-7 w-full bg-muted/60 p-0.5">
-            <TabsTrigger
-              value="knowledge"
-              className="h-6 gap-1 rounded-sm px-2 text-[11px] font-medium data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm"
-            >
+            <TabsTrigger value="knowledge" className="h-6 gap-1 rounded-sm px-2 text-[11px] font-medium data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">
               <BookOpen className="size-3" />
               Knowledge
             </TabsTrigger>
-            <TabsTrigger
-              value="notes"
-              className="h-6 gap-1 rounded-sm px-2 text-[11px] font-medium data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm"
-            >
+            <TabsTrigger value="notes" className="h-6 gap-1 rounded-sm px-2 text-[11px] font-medium data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">
               <StickyNote className="size-3" />
               Notes
             </TabsTrigger>
-            <TabsTrigger
-              value="review"
-              className="h-6 gap-1 rounded-sm px-2 text-[11px] font-medium data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm"
-            >
+            <TabsTrigger value="review" className="h-6 gap-1 rounded-sm px-2 text-[11px] font-medium data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">
               <ClipboardList className="size-3" />
               Review
             </TabsTrigger>
-            <TabsTrigger
-              value="schedules"
-              className="h-6 gap-1 rounded-sm px-2 text-[11px] font-medium data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm"
-            >
+            <TabsTrigger value="schedules" className="h-6 gap-1 rounded-sm px-2 text-[11px] font-medium data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">
               <Clock3 className="size-3" />
               Cron
             </TabsTrigger>
@@ -273,55 +271,19 @@ export function CortexDashboardPanel({
         <TabsContent value="knowledge" className="mt-0 min-h-0 flex-1">
           {pathsLoaded ? (
             <div className="flex h-full flex-col">
-              {/* Knowledge scope selector */}
               <div className="shrink-0 border-b border-border/60 px-3 py-2">
-                <Select value={selectedKnowledgeScope} onValueChange={setSelectedKnowledgeScope}>
-                  <SelectTrigger className="h-7 text-[11px]">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="common">Common Knowledge</SelectItem>
-                    {Object.entries(paths.profileMemory)
-                      .sort(([a], [b]) => a.localeCompare(b))
-                      .map(([profileId, entry]) => (
-                        <SelectItem key={profileId} value={profileId}>
-                          <div className="flex items-center gap-1.5">
-                            <span>{profileId}</span>
-                            {entry.exists && entry.sizeBytes > 0 ? (
-                              <span className="text-[9px] text-muted-foreground">
-                                ({(entry.sizeBytes / 1024).toFixed(1)}KB)
-                              </span>
-                            ) : (
-                              <span className="text-[9px] text-muted-foreground/60">(empty)</span>
-                            )}
-                          </div>
-                        </SelectItem>
-                      ))}
-                  </SelectContent>
-                </Select>
+                <CortexDocumentSelector
+                  documents={knowledgeDocuments}
+                  value={selectedKnowledgeDocument?.id ?? ''}
+                  onValueChange={setSelectedKnowledgeDocumentId}
+                />
               </div>
-              {/* Viewer */}
               <div className="min-h-0 flex-1">
                 <KnowledgeFileViewer
-                  key={`knowledge-${selectedKnowledgeScope}-${refreshKey}`}
+                  key={`knowledge-${selectedKnowledgeDocument?.id ?? 'none'}-${refreshKey}`}
                   wsUrl={wsUrl}
                   agentId={managerId}
-                  filePath={
-                    selectedKnowledgeScope === 'common'
-                      ? paths.commonKnowledge
-                      : paths.profileMemory[selectedKnowledgeScope]?.path ?? null
-                  }
-                  label={
-                    selectedKnowledgeScope === 'common'
-                      ? 'Common Knowledge'
-                      : `Profile Memory: ${selectedKnowledgeScope}`
-                  }
-                  description={
-                    selectedKnowledgeScope === 'common'
-                      ? 'Shared knowledge base across all profiles'
-                      : `Injected profile summary memory for ${selectedKnowledgeScope}`
-                  }
-                  editable
+                  document={selectedKnowledgeDocument}
                   onArtifactClick={onArtifactClick}
                 />
               </div>
@@ -332,24 +294,17 @@ export function CortexDashboardPanel({
         <TabsContent value="notes" className="mt-0 min-h-0 flex-1">
           {pathsLoaded ? (
             <KnowledgeFileViewer
-              key={`notes-${refreshKey}`}
+              key={`notes-${notesDocument?.id ?? 'none'}-${refreshKey}`}
               wsUrl={wsUrl}
               agentId={managerId}
-              filePath={paths.cortexNotes}
-              label="Cortex Notes"
-              description="Working notes and tentative observations"
-              editable
+              document={notesDocument}
               onArtifactClick={onArtifactClick}
             />
           ) : null}
         </TabsContent>
 
         <TabsContent value="review" className="mt-0 min-h-0 flex-1">
-          <ReviewStatusPanel
-            key={`review-${refreshKey}`}
-            wsUrl={wsUrl}
-            onOpenSession={onOpenSession}
-          />
+          <ReviewStatusPanel key={`review-${refreshKey}`} wsUrl={wsUrl} onOpenSession={onOpenSession} />
         </TabsContent>
 
         <TabsContent value="schedules" className="mt-0 min-h-0 flex-1">
