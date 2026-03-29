@@ -535,7 +535,11 @@ function SessionRowItem({
                     <span className="min-w-0 flex-1 truncate text-sm leading-5">
                       {highlightQuery ? <HighlightedText text={label} query={highlightQuery} /> : label}
                     </span>
-                    {showUnread ? (
+                    {hasPendingChoice ? (
+                      <span className="inline-flex size-4 shrink-0 items-center justify-center rounded-full bg-blue-500 text-[9px] font-bold text-white">
+                        ?
+                      </span>
+                    ) : showUnread ? (
                       <span className="inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-medium tabular-nums leading-none text-white">
                         {unreadCount > 99 ? '99+' : unreadCount}
                       </span>
