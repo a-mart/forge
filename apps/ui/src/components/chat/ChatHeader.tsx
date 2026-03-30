@@ -16,7 +16,7 @@ import { PinNavigator } from '@/components/chat/PinNavigator'
 import { SystemPromptDialog } from '@/components/chat/message-list/SystemPromptDialog'
 import { MessageFeedback } from '@/components/chat/message-list/MessageFeedback'
 import { cn } from '@/lib/utils'
-import type { AgentStatus } from '@forge/protocol'
+import type { AgentStatus, AgentSessionPurpose } from '@forge/protocol'
 
 export type ChannelView = 'web' | 'all'
 
@@ -29,6 +29,7 @@ interface ChatHeaderProps {
   activeAgentSessionLabel?: string
   totalUnreadCount?: number
   activeAgentArchetypeId?: string | null
+  activeAgentSessionPurpose?: AgentSessionPurpose | null
   activeAgentStatus: AgentStatus | null
   channelView: ChannelView
   onChannelViewChange: (view: ChannelView) => void
@@ -130,6 +131,7 @@ export function ChatHeader({
   activeAgentSessionLabel,
   totalUnreadCount = 0,
   activeAgentArchetypeId,
+  activeAgentSessionPurpose,
   activeAgentStatus,
   channelView,
   onChannelViewChange,
@@ -170,7 +172,8 @@ export function ChatHeader({
 }: ChatHeaderProps) {
   const isStreaming = connected && activeAgentStatus === 'streaming'
   const statusLabel = connected ? formatAgentStatus(activeAgentStatus) : 'Reconnecting'
-  const archetypeLabel = activeAgentArchetypeId?.trim()
+  const isAgentCreator = activeAgentSessionPurpose === 'agent_creator'
+  const archetypeLabel = isAgentCreator ? null : activeAgentArchetypeId?.trim()
   const isCortex = activeAgentArchetypeId === 'cortex'
   const panelLabel = isCortex ? 'Dashboard' : 'Artifacts'
   const anyCompactionInProgress = compactInProgress || smartCompactInProgress || autoCompactionInProgress
@@ -185,8 +188,10 @@ export function ChatHeader({
   return (
     <header
       className={cn(
-        'sticky top-0 z-10 flex h-[62px] w-full shrink-0 items-center justify-between gap-2 overflow-hidden border-b border-border/80 bg-card/80 px-2 backdrop-blur md:px-4',
-        // Windows uses native title bar, macOS uses hiddenInset
+        'sticky top-0 z-10 flex h-[62px] w-full shrink-0 items-center justify-between gap-2 overflow-hidden border-b bg-card/80 px-2 backdrop-blur md:px-4',
+        isAgentCreator
+          ? 'border-b-2 border-violet-500/40'
+          : 'border-border/80',
       )}
     >
       <div className="flex min-w-0 flex-1 items-center gap-2 md:gap-3">
@@ -218,14 +223,18 @@ export function ChatHeader({
           <span
             className={cn(
               'absolute inline-flex size-4 rounded-full',
-              isStreaming ? 'animate-ping bg-emerald-500/45' : 'bg-transparent',
+              isStreaming
+                ? isAgentCreator ? 'animate-ping bg-violet-500/45' : 'animate-ping bg-emerald-500/45'
+                : 'bg-transparent',
             )}
             aria-hidden="true"
           />
           <span
             className={cn(
               'relative inline-flex size-2.5 rounded-full',
-              isStreaming ? 'bg-emerald-500' : 'bg-muted-foreground/45',
+              isStreaming
+                ? isAgentCreator ? 'bg-violet-500' : 'bg-emerald-500'
+                : 'bg-muted-foreground/45',
             )}
             aria-hidden="true"
           />
@@ -246,7 +255,15 @@ export function ChatHeader({
               activeAgentLabel
             )}
           </h1>
-          {archetypeLabel ? (
+          {isAgentCreator ? (
+            <Badge
+              variant="outline"
+              className="hidden h-5 shrink-0 gap-1 border-violet-500/30 bg-violet-500/10 px-1.5 text-[10px] font-medium text-violet-400 md:inline-flex"
+            >
+              <Sparkles className="size-3" />
+              <span>Agent Architect</span>
+            </Badge>
+          ) : archetypeLabel ? (
             <Badge
               variant="outline"
               className="hidden h-5 max-w-32 shrink-0 border-border/60 bg-muted/40 px-1.5 text-[10px] font-medium text-muted-foreground md:inline-flex"

@@ -1095,6 +1095,9 @@ function cloneProjectAgentInfo(descriptor: AgentDescriptor): AgentDescriptor["pr
     whenToUse: descriptor.projectAgent.whenToUse,
     ...(descriptor.projectAgent.systemPrompt !== undefined
       ? { systemPrompt: descriptor.projectAgent.systemPrompt }
+      : {}),
+    ...(descriptor.projectAgent.creatorSessionId !== undefined
+      ? { creatorSessionId: descriptor.projectAgent.creatorSessionId }
       : {})
   };
 }
@@ -1104,7 +1107,16 @@ function cloneDescriptor(descriptor: AgentDescriptor): AgentDescriptor {
     ...descriptor,
     model: { ...descriptor.model },
     contextUsage: cloneContextUsage(descriptor.contextUsage),
-    projectAgent: cloneProjectAgentInfo(descriptor)
+    projectAgent: cloneProjectAgentInfo(descriptor),
+    ...(descriptor.agentCreatorResult !== undefined
+      ? {
+          agentCreatorResult: {
+            createdAgentId: descriptor.agentCreatorResult.createdAgentId,
+            createdHandle: descriptor.agentCreatorResult.createdHandle,
+            createdAt: descriptor.agentCreatorResult.createdAt
+          }
+        }
+      : {})
   };
 }
 
@@ -2007,6 +2019,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     };
     this.descriptors.set(sessionDescriptor.agentId, sessionDescriptor);
 
+    const previousCreatorResult = creatorDescriptor.agentCreatorResult
+      ? { ...creatorDescriptor.agentCreatorResult }
+      : undefined;
+
     try {
       await this.ensureSessionFileParentDirectory(sessionDescriptor.sessionFile);
       await this.ensureAgentMemoryFile(this.getAgentMemoryPath(sessionDescriptor.agentId), prepared.profile.profileId);
@@ -2016,8 +2032,22 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       const runtime = await this.getOrCreateRuntimeForDescriptor(sessionDescriptor);
       sessionDescriptor.contextUsage = runtime.getContextUsage();
 
+      prepared.sessionDescriptor.projectAgent!.creatorSessionId = creatorAgentId;
+      creatorDescriptor.agentCreatorResult = {
+        createdAgentId: sessionDescriptor.agentId,
+        createdHandle: handle,
+        createdAt: new Date().toISOString()
+      };
+      this.descriptors.set(creatorDescriptor.agentId, creatorDescriptor);
+
       await this.saveStore();
     } catch (error) {
+      if (previousCreatorResult) {
+        creatorDescriptor.agentCreatorResult = previousCreatorResult;
+      } else {
+        delete creatorDescriptor.agentCreatorResult;
+      }
+      this.descriptors.set(creatorDescriptor.agentId, creatorDescriptor);
       await this.rollbackCreatedSession(sessionDescriptor);
       throw error;
     }
@@ -3722,7 +3752,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return {
       handle,
       whenToUse: normalizedWhenToUse,
-      ...(normalizedSystemPrompt ? { systemPrompt: normalizedSystemPrompt } : {})
+      ...(normalizedSystemPrompt ? { systemPrompt: normalizedSystemPrompt } : {}),
+      ...(descriptor.projectAgent?.creatorSessionId !== undefined
+        ? { creatorSessionId: descriptor.projectAgent.creatorSessionId }
+        : {})
     };
   }
 
@@ -5402,7 +5435,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         sessionAgentId,
         profileId,
         agentCount: sources.existingAgents.length,
-        memoryCount: sources.sessionMemories.length
+        recentSessionCount: sources.recentSessions.length
       });
     } catch (error) {
       this.logDebug("agent_creator:context:error", {
@@ -7513,6 +7546,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
               whenToUse: projectAgent.whenToUse,
               ...(projectAgent.systemPrompt !== undefined
                 ? { systemPrompt: projectAgent.systemPrompt }
+                : {}),
+              ...(projectAgent.creatorSessionId !== undefined
+                ? { creatorSessionId: projectAgent.creatorSessionId }
                 : {})
             }
           : null
@@ -9183,6 +9219,31 @@ function validateAgentDescriptor(value: unknown): AgentDescriptor | string {
       typeof value.projectAgent.systemPrompt !== "string"
     ) {
       return "projectAgent.systemPrompt must be a string when provided";
+    }
+
+    if (
+      value.projectAgent.creatorSessionId !== undefined &&
+      typeof value.projectAgent.creatorSessionId !== "string"
+    ) {
+      return "projectAgent.creatorSessionId must be a string when provided";
+    }
+  }
+
+  if (value.agentCreatorResult !== undefined) {
+    if (!isRecord(value.agentCreatorResult)) {
+      return "agentCreatorResult must be an object when provided";
+    }
+
+    if (!isNonEmptyString(value.agentCreatorResult.createdAgentId)) {
+      return "agentCreatorResult.createdAgentId must be a non-empty string";
+    }
+
+    if (!isNonEmptyString(value.agentCreatorResult.createdHandle)) {
+      return "agentCreatorResult.createdHandle must be a non-empty string";
+    }
+
+    if (!isNonEmptyString(value.agentCreatorResult.createdAt)) {
+      return "agentCreatorResult.createdAt must be a non-empty string";
     }
   }
 

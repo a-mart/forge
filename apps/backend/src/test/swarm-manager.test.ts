@@ -1092,8 +1092,9 @@ describe('SwarmManager', () => {
     const injectedMessage = typeof runtime?.sendCalls[0]?.message === 'string' ? runtime.sendCalls[0].message : ''
 
     expect(runtime?.sendCalls).toHaveLength(1)
+    expect(injectedMessage).toContain('<agent_creator_seed_context>')
     expect(injectedMessage).toContain('<existing_project_agents>')
-    expect(injectedMessage).toContain('</recent_session_context>')
+    expect(injectedMessage).toContain('</recent_sessions>')
   })
 
   it('createAndPromoteProjectAgent creates a promoted session with the custom prompt on first boot', async () => {
@@ -1121,6 +1122,7 @@ describe('SwarmManager', () => {
       handle: 'release-notes',
       whenToUse: 'Draft release notes and changelog copy.',
       systemPrompt: 'You are the release notes project agent.',
+      creatorSessionId: creator.sessionAgent.agentId,
     })
     expect(manager.systemPromptByAgentId.get(result.agentId)).toContain('You are the release notes project agent.')
     expect(manager.notifiedProjectAgentProfileIds).toEqual(['manager'])
@@ -1130,6 +1132,7 @@ describe('SwarmManager', () => {
       handle: 'release-notes',
       whenToUse: 'Draft release notes and changelog copy.',
       systemPrompt: 'You are the release notes project agent.',
+      creatorSessionId: creator.sessionAgent.agentId,
     })
   })
 

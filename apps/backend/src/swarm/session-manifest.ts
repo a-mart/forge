@@ -540,6 +540,13 @@ function coerceAgentDescriptor(value: unknown): AgentDescriptor | undefined {
   const projectAgentHandle = normalizeOptionalString(projectAgentRecord?.handle);
   const projectAgentWhenToUse = normalizeOptionalString(projectAgentRecord?.whenToUse);
   const projectAgentSystemPrompt = normalizeOptionalString(projectAgentRecord?.systemPrompt);
+  const projectAgentCreatorSessionId = normalizeOptionalString(projectAgentRecord?.creatorSessionId);
+
+  // agentCreatorResult (set on wizard sessions after successful agent creation)
+  const creatorResultRecord = isRecord(value.agentCreatorResult) ? value.agentCreatorResult : undefined;
+  const creatorResultAgentId = normalizeOptionalString(creatorResultRecord?.createdAgentId);
+  const creatorResultHandle = normalizeOptionalString(creatorResultRecord?.createdHandle);
+  const creatorResultAt = normalizeOptionalString(creatorResultRecord?.createdAt);
 
   if (!agentId || !managerId || !createdAt || !updatedAt || !cwd || !sessionFile || !provider || !modelId || !status) {
     return undefined;
@@ -578,9 +585,20 @@ function coerceAgentDescriptor(value: unknown): AgentDescriptor | undefined {
             whenToUse: projectAgentWhenToUse,
             ...(projectAgentSystemPrompt !== undefined
               ? { systemPrompt: projectAgentSystemPrompt }
+              : {}),
+            ...(projectAgentCreatorSessionId !== undefined
+              ? { creatorSessionId: projectAgentCreatorSessionId }
               : {})
           }
-        : undefined
+        : undefined,
+    agentCreatorResult:
+      creatorResultAgentId && creatorResultHandle && creatorResultAt
+        ? {
+            createdAgentId: creatorResultAgentId,
+            createdHandle: creatorResultHandle,
+            createdAt: creatorResultAt,
+          }
+        : undefined,
   };
 }
 

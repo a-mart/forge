@@ -1,5 +1,6 @@
 import {
   MANAGER_MODEL_PRESETS,
+  type AgentCreatorResult,
   type ChoiceRequestEvent,
   type ManagerProfile,
   type ProjectAgentInfo,
@@ -68,6 +69,7 @@ export interface AgentDescriptor {
   specialistDisplayName?: string;
   specialistColor?: string;
   projectAgent?: ProjectAgentInfo;
+  agentCreatorResult?: AgentCreatorResult;
   webSearch?: boolean;
 }
 

@@ -34,6 +34,13 @@ export interface ProjectAgentInfo {
   handle: string
   whenToUse: string
   systemPrompt?: string
+  creatorSessionId?: string
+}
+
+export interface AgentCreatorResult {
+  createdAgentId: string
+  createdHandle: string
+  createdAt: string
 }
 
 export interface AgentModelDescriptor {
@@ -78,6 +85,7 @@ export interface AgentDescriptor {
   specialistDisplayName?: string
   specialistColor?: string
   projectAgent?: ProjectAgentInfo
+  agentCreatorResult?: AgentCreatorResult
   webSearch?: boolean
 }
 

@@ -12,6 +12,7 @@ import {
   Edit3,
   EyeOff,
   GitFork,
+  History,
   Loader2,
   MonitorPlay,
   Pause,
@@ -439,6 +440,7 @@ function SessionRowItem({
   onPromoteToProjectAgent,
   onOpenProjectAgentSettings,
   onDemoteProjectAgent,
+  onViewCreationHistory,
 }: {
   session: SessionRow
   statuses: Record<string, { status: AgentStatus; pendingCount: number; contextUsage?: AgentContextUsage }>
@@ -463,6 +465,7 @@ function SessionRowItem({
   onPromoteToProjectAgent?: () => void
   onOpenProjectAgentSettings?: () => void
   onDemoteProjectAgent?: () => void
+  onViewCreationHistory?: () => void
 }) {
   const { sessionAgent, workers, isDefault } = session
   const running = isSessionRunning(sessionAgent)
@@ -639,6 +642,12 @@ function SessionRowItem({
                 Project Agent Settings
               </ContextMenuItem>
             </>
+          ) : null}
+          {isProjectAgent && onViewCreationHistory ? (
+            <ContextMenuItem onClick={onViewCreationHistory}>
+              <History className="mr-2 size-3.5" />
+              View Creation History
+            </ContextMenuItem>
           ) : null}
           {isProjectAgent && onDemoteProjectAgent ? (
             <ContextMenuItem onClick={onDemoteProjectAgent}>
@@ -973,9 +982,25 @@ function ProfileGroup({
       {!isCollapsed && hasAnySessions ? (
         <div className="relative mt-1">
           {(() => {
+            // Build a set of all session agentIds in this profile for existence checks
+            const sessionAgentIds = new Set(sessions.map((s) => s.sessionAgent.agentId))
+
+            // Hide completed wizard sessions (agentCreatorResult is set) unless currently selected
+            const isCompletedWizard = (s: SessionRow) =>
+              Boolean(s.sessionAgent.agentCreatorResult)
+            const isSelectedSession = (s: SessionRow) =>
+              !isSettingsActive && (
+                s.sessionAgent.agentId === selectedAgentId ||
+                s.workers.some((w) => w.agentId === selectedAgentId)
+              )
+
             // Split sessions into project agents (always visible) and regular sessions (subject to truncation)
             const projectAgentSessions = sessions.filter((s) => Boolean(s.sessionAgent.projectAgent))
-            const regularSessions = sessions.filter((s) => !s.sessionAgent.projectAgent)
+            const regularSessions = sessions.filter((s) =>
+              !s.sessionAgent.projectAgent &&
+              // Hide completed wizard sessions unless they are the active selection
+              (!isCompletedWizard(s) || isSelectedSession(s))
+            )
 
             const hasMore = regularSessions.length > visibleSessionLimit
             const isExpanded = visibleSessionLimit > MAX_VISIBLE_SESSIONS
@@ -1055,6 +1080,12 @@ function ProfileGroup({
                       console.error('Failed to demote project agent:', err)
                     }
                   } : undefined}
+                  onViewCreationHistory={
+                    session.sessionAgent.projectAgent?.creatorSessionId &&
+                    sessionAgentIds.has(session.sessionAgent.projectAgent.creatorSessionId)
+                      ? () => onSelect(session.sessionAgent.projectAgent!.creatorSessionId!)
+                      : undefined
+                  }
                 />
               )
             }

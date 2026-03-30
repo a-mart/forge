@@ -1174,6 +1174,7 @@ export function IndexPage() {
                   activeAgentSessionLabel={activeAgentSessionLabel}
                   totalUnreadCount={totalUnreadCount}
                   activeAgentArchetypeId={activeAgent?.archetypeId}
+                  activeAgentSessionPurpose={activeAgent?.sessionPurpose}
                   activeAgentStatus={activeAgentStatus}
                   channelView={channelView}
                   onChannelViewChange={setChannelView}
