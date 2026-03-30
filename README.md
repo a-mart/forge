@@ -87,7 +87,9 @@ Open the UI at [http://127.0.0.1:47189](http://127.0.0.1:47189) and configure yo
 pnpm package:electron
 ```
 
-The packaged app will be available in `apps/electron/release/`.
+The package step clears `apps/electron/release/` first, then writes the current build there and runs a staged packaged-runtime preflight before handing off to `electron-builder`.
+
+**Desktop release safety:** `pnpm package:electron` is the build step. It now treats `apps/electron/release/` as ephemeral output for the current run, so stale assets are cleared before packaging. Official desktop releases still follow a build-first, publish-last, draft-first flow. Desktop rollout is beta-first: beta versions must be published as GitHub prereleases, and stable release happens later as a separate intentional promotion. The old `pnpm release:electron` shortcut is intentionally disabled. Use the workflow documented in [`apps/electron/README.md`](apps/electron/README.md): bump and push the version first, build macOS locally, run Windows via GitHub Actions `workflow_dispatch`, create a draft GitHub Release, keep beta builds marked as prereleases, then upload the full updater asset set (installers, archives, `latest*.yml`, `*.blockmap`, and related release files) before publishing.
 
 ### Your First Session
 
@@ -271,13 +273,20 @@ pnpm dev
 # Build everything
 pnpm build
 
+# Package the Electron app locally (build only, no publish)
+pnpm package:electron
+
 # Run tests
 pnpm test
 
 # Typecheck (run from each package, not root)
+# Backend note: tsconfig.build.json is production-only and excludes tests.
+# Pair it with backend tests for test-file validation.
 cd apps/backend && pnpm exec tsc -p tsconfig.build.json --noEmit
 cd apps/ui && pnpm exec tsc --noEmit
 ```
+
+Desktop releases are draft-first, beta-first, and publish-last. Use `workflow_dispatch` for Windows release builds, `electron/*` branches for Windows validation only, publish beta builds only as GitHub prereleases, and upload the full updater asset set when publishing. For backend validation, treat `tsconfig.build.json` as a production-only typecheck and rely on `pnpm test` (or `pnpm --filter @forge/backend test`) for test coverage. See [`apps/electron/README.md`](apps/electron/README.md) for the current release runbook.
 
 ### Production
 

@@ -197,9 +197,19 @@ Dev ports:
 pnpm prod                   # Build all packages, then start backend + UI
 pnpm prod:daemon            # Start as a background daemon (recommended for production)
 pnpm prod:restart           # Restart a running daemon
-pnpm package:electron       # Build standalone desktop app for distribution
-pnpm release:electron       # Package and publish new Electron release to GitHub
+pnpm package:electron       # Build standalone desktop app for distribution (build only; no publish)
+pnpm release:electron       # Intentionally disabled; use the guarded draft-first desktop release flow in apps/electron/README.md
 ```
+
+Desktop release rules:
+- **Build first, publish last.** Bump and push the Electron version before any release build.
+- **Beta-first channel policy.** New desktop rollouts go out on beta first. Beta versions must be published as GitHub prereleases; stable rollout happens later as a separate intentional release.
+- **Draft-first only.** Create the GitHub Release as a draft, upload the full updater asset set (`.dmg`, `.zip`, `.exe`, `latest*.yml`, `*.blockmap`, and related files), then publish.
+- **Never publish beta assets to stable.** If the version is a beta/prerelease version, keep the GitHub Release marked as a prerelease when publishing.
+- **Windows release builds use `workflow_dispatch`.** Pushes to `electron/*` branches are validation-only and must not be treated as published release builds.
+- **`apps/electron/release/` is disposable build output.** `pnpm package:electron` now clears it before packaging so stale installers/blockmaps do not get mixed into validation or manual upload steps.
+- **Packaged-runtime smoke should come from staged assets, not repo fallbacks.** The Electron package build now resolves and loads staged runtime externals from `.stage/backend/node_modules/`; if you change packaged dependencies, keep that preflight passing.
+- See `apps/electron/README.md` for the current packaged layout and release workflow.
 
 > `pnpm prod` implicitly runs `pnpm build` before starting. The daemon commands in `scripts/` manage PID tracking and process lifecycle.
 
@@ -212,8 +222,8 @@ Production ports:
 
 ```bash
 pnpm build                                                # Build all packages
-pnpm test                                                 # Run all tests (backend + UI)
-cd apps/backend && pnpm exec tsc -p tsconfig.build.json --noEmit   # Backend typecheck
+pnpm test                                                 # Run all tests (backend + UI, including backend test files)
+cd apps/backend && pnpm exec tsc -p tsconfig.build.json --noEmit   # Backend production typecheck only (tests excluded by tsconfig.build.json)
 cd apps/ui && pnpm exec tsc --noEmit                               # UI typecheck
 pnpm model-catalog:audit                                  # Audit model catalog against Pi upstream
 ```
@@ -224,7 +234,7 @@ cd apps/backend && pnpm exec vitest run src/swarm/__tests__/some-test.ts
 cd apps/ui && pnpm exec vitest run src/components/chat/SomeComponent.test.ts
 ```
 
-**Before finishing any task, run both typecheck commands above and fix all reported errors.**
+**Before finishing any task, run `pnpm test` plus both typecheck commands above and fix all reported errors.**
 
 ## Environment Variables
 
@@ -279,9 +289,10 @@ Generated components go to `apps/ui/src/components/ui/`. Check that directory fo
 1. **Preserve existing behavior** unless explicitly asked to change it. The UI replays conversation history from JSONL files — event handling must work identically for both live-streamed and replayed messages.
 2. **Respect backend/frontend boundaries.** Shared types go in `packages/protocol/`. Don't duplicate type definitions across apps.
 3. **Validate changes** with smoke checks: manager creation, chat send/stop, settings updates.
-4. **Run typechecks** before finishing any task:
+4. **Run validation** before finishing any task:
    ```bash
-   cd apps/backend && pnpm exec tsc -p tsconfig.build.json --noEmit
+   pnpm test
+   cd apps/backend && pnpm exec tsc -p tsconfig.build.json --noEmit   # production-only backend typecheck; tests are covered by pnpm test
    cd apps/ui && pnpm exec tsc --noEmit
    ```
 
