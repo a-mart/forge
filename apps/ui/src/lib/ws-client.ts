@@ -11,6 +11,7 @@ import {
   MANAGER_MODEL_PRESETS,
   MANAGER_REASONING_LEVELS,
   type AgentDescriptor,
+  type AgentSessionPurpose,
   type ChoiceAnswer,
   type ClientCommand,
   type ConversationAttachment,
@@ -533,7 +534,7 @@ export class ManagerWsClient {
       }))
   }
 
-  async createSession(profileId: string, name?: string): Promise<SessionCreatedResult> {
+  async createSession(profileId: string, name?: string, opts?: { sessionPurpose?: AgentSessionPurpose; label?: string }): Promise<SessionCreatedResult> {
     const trimmed = profileId.trim()
     if (!trimmed) {
       throw new Error('Profile id is required.')
@@ -547,6 +548,8 @@ export class ManagerWsClient {
       type: 'create_session',
       profileId: trimmed,
       name: name?.trim() || undefined,
+      label: opts?.label,
+      sessionPurpose: opts?.sessionPurpose,
       requestId,
     }))
   }

@@ -51,7 +51,7 @@ export interface ManagerProfile {
   sortOrder?: number
 }
 
-export type AgentSessionPurpose = 'cortex_review'
+export type AgentSessionPurpose = 'cortex_review' | 'agent_creator'
 
 export interface AgentDescriptor {
   agentId: string

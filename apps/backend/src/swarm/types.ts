@@ -41,7 +41,7 @@ export interface AgentContextUsage {
   percent: number;
 }
 
-export type AgentSessionPurpose = "cortex_review";
+export type AgentSessionPurpose = "cortex_review" | "agent_creator";
 
 export interface AgentDescriptor {
   agentId: string;

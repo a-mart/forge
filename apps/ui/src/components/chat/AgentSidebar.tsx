@@ -122,6 +122,7 @@ interface AgentSidebarProps {
   onReorderProfiles?: (profileIds: string[]) => void
   onSetSessionProjectAgent?: (agentId: string, projectAgent: { whenToUse: string; systemPrompt?: string } | null) => Promise<void>
   onRequestProjectAgentRecommendations?: (agentId: string) => Promise<{ whenToUse: string; systemPrompt: string }>
+  onCreateAgentCreator?: (profileId: string) => void
 }
 
 type AgentLiveStatus = {
@@ -476,6 +477,7 @@ function SessionRowItem({
   const managerStreaming = getAgentLiveStatus(sessionAgent, statuses).status === 'streaming'
   const hasPendingChoice = (sessionAgent.pendingChoiceCount ?? 0) > 0
   const isProjectAgent = Boolean(sessionAgent.projectAgent)
+  const isAgentCreator = sessionAgent.sessionPurpose === 'agent_creator'
 
   return (
     <li>
@@ -546,6 +548,8 @@ function SessionRowItem({
                         style={{ animation: 'subtle-glow-pulse 2s ease-in-out infinite' }}
                         aria-label="Manager streaming"
                       />
+                    ) : isAgentCreator ? (
+                      <Sparkles className="size-3 shrink-0 text-violet-400" aria-label="Agent Creator" />
                     ) : (
                       <SessionStatusDot running={running} />
                     )}
@@ -778,6 +782,7 @@ function ProfileGroup({
   onPromoteToProjectAgent,
   onOpenProjectAgentSettings,
   onDemoteProjectAgent,
+  onCreateAgentCreator,
 }: {
   treeRow: ProfileTreeRow
   statuses: Record<string, { status: AgentStatus; pendingCount: number; contextUsage?: AgentContextUsage }>
@@ -813,6 +818,7 @@ function ProfileGroup({
   onPromoteToProjectAgent?: (agentId: string) => void
   onOpenProjectAgentSettings?: (agentId: string) => void
   onDemoteProjectAgent?: (agentId: string) => void | Promise<void>
+  onCreateAgentCreator?: (profileId: string) => void
 }) {
   const { profile, sessions } = treeRow
   const hasAnySessions = sessions.length > 0
@@ -945,6 +951,12 @@ function ProfileGroup({
               Change Model
             </ContextMenuItem>
           ) : null}
+          {onCreateAgentCreator ? (
+            <ContextMenuItem onClick={() => onCreateAgentCreator(profile.profileId)}>
+              <Sparkles className="mr-2 size-3.5" />
+              Create Project Agent
+            </ContextMenuItem>
+          ) : null}
           {!isCortexProfile(treeRow) ? (
             <>
               <ContextMenuSeparator />
@@ -1002,7 +1014,10 @@ function ProfileGroup({
             // Cortex sessions and cortex_review sessions are excluded
             const isCortex = sessions.some((s) => s.sessionAgent.archetypeId === 'cortex')
             const canPromote = (s: SessionRow) =>
-              !isCortex && s.sessionAgent.sessionPurpose !== 'cortex_review' && !s.sessionAgent.projectAgent
+              !isCortex &&
+              s.sessionAgent.sessionPurpose !== 'cortex_review' &&
+              s.sessionAgent.sessionPurpose !== 'agent_creator' &&
+              !s.sessionAgent.projectAgent
 
             const renderSession = (session: SessionRow) => {
               const sessionCollapsed = !collapsedSessionIds.has(session.sessionAgent.agentId)
@@ -1026,7 +1041,7 @@ function ProfileGroup({
                   onResume={onResumeSession ? () => onResumeSession(session.sessionAgent.agentId) : undefined}
                   onDelete={onDeleteSession ? () => onDeleteSession(session.sessionAgent.agentId) : undefined}
                   onRename={onRequestRenameSession ? () => onRequestRenameSession(session.sessionAgent.agentId) : undefined}
-                  onFork={onForkSession ? () => onForkSession(session.sessionAgent.agentId) : undefined}
+                  onFork={onForkSession && session.sessionAgent.sessionPurpose !== 'agent_creator' ? () => onForkSession(session.sessionAgent.agentId) : undefined}
                   onMarkUnread={onMarkUnread ? () => onMarkUnread(session.sessionAgent.agentId) : undefined}
                   onStopWorker={onStopSession}
                   onResumeWorker={onResumeSession}
@@ -2118,6 +2133,7 @@ export function AgentSidebar({
   onReorderProfiles,
   onSetSessionProjectAgent,
   onRequestProjectAgentRecommendations,
+  onCreateAgentCreator,
 }: AgentSidebarProps) {
   const treeRows = buildProfileTreeRows(agents, profiles)
   const hasCortexProfile = profiles.some((profile) => profile.profileId === 'cortex')
@@ -2621,6 +2637,7 @@ export function AgentSidebar({
               onPromoteToProjectAgent={onSetSessionProjectAgent ? handlePromoteToProjectAgent : undefined}
               onOpenProjectAgentSettings={onSetSessionProjectAgent ? handleOpenProjectAgentSettings : undefined}
               onDemoteProjectAgent={onSetSessionProjectAgent ? handleDemoteProjectAgent : undefined}
+              onCreateAgentCreator={onCreateAgentCreator}
             />
           )
 

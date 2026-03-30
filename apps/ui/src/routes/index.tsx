@@ -690,6 +690,27 @@ export function IndexPage() {
     })()
   }, [clientRef, navigateToRoute, setState])
 
+  const handleCreateAgentCreator = useCallback((profileId: string) => {
+    const client = clientRef.current
+    if (!client) return
+
+    void (async () => {
+      try {
+        const result = await client.createSession(profileId, undefined, {
+          sessionPurpose: 'agent_creator',
+          label: 'Agent Creator',
+        })
+        navigateToRoute({ view: 'chat', agentId: result.sessionAgent.agentId })
+        client.subscribeToAgent(result.sessionAgent.agentId)
+      } catch (error) {
+        setState((prev) => ({
+          ...prev,
+          lastError: `Failed to create agent creator: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        }))
+      }
+    })()
+  }, [clientRef, navigateToRoute, setState])
+
   const handleStopSession = useCallback((agentId: string) => {
     const client = clientRef.current
     if (!client) return
@@ -1083,6 +1104,7 @@ export function IndexPage() {
           onReorderProfiles={handleReorderProfiles}
           onSetSessionProjectAgent={handleSetSessionProjectAgent}
           onRequestProjectAgentRecommendations={handleRequestProjectAgentRecommendations}
+          onCreateAgentCreator={handleCreateAgentCreator}
         />
 
         <div

@@ -67,6 +67,10 @@ import {
 } from "./cortex-review-runs.js";
 import { executeLLMMerge, MEMORY_MERGE_SYSTEM_PROMPT } from "./memory-merge.js";
 import {
+  formatAgentCreatorContextMessage,
+  gatherAgentCreatorContext
+} from "./agent-creator-context.js";
+import {
   analyzeSessionForPromotion,
   type AnalyzeSessionForPromotionOptions,
   type ProjectAgentRecommendations
@@ -1942,6 +1946,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.emitAgentsSnapshot();
     this.emitProfilesSnapshot();
 
+    if (sessionDescriptor.sessionPurpose === "agent_creator") {
+      void this.injectAgentCreatorContext(sessionDescriptor.agentId, prepared.profile.profileId);
+    }
+
     return {
       profile: { ...prepared.profile },
       sessionAgent: cloneDescriptor(sessionDescriptor)
@@ -3594,6 +3602,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     if (descriptor.sessionPurpose === "cortex_review") {
       throw new Error("Cortex review sessions cannot be promoted to project agents");
     }
+
+    if (descriptor.sessionPurpose === "agent_creator") {
+      throw new Error("Agent creator sessions cannot be promoted to project agents");
+    }
   }
 
   private buildProjectAgentInfoForSession(
@@ -3760,6 +3772,14 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       model: { ...templateDescriptor.model },
       sessionFile: getSessionFilePath(this.config.paths.dataDir, profile.profileId, sessionAgentId)
     };
+
+    if (sessionDescriptor.sessionPurpose === "agent_creator") {
+      sessionDescriptor.archetypeId = "agent-architect";
+      if (!sessionDescriptor.sessionLabel || sessionDescriptor.sessionLabel === `Session ${sessionNumber}`) {
+        sessionDescriptor.sessionLabel = "Agent Creator";
+        sessionDescriptor.displayName = "Agent Creator";
+      }
+    }
 
     return {
       profile,
@@ -4911,7 +4931,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       descriptor.agentId === CORTEX_PROFILE_ID &&
       descriptor.profileId === CORTEX_PROFILE_ID &&
       normalizeArchetypeId(descriptor.archetypeId ?? "") === CORTEX_ARCHETYPE_ID &&
-      descriptor.sessionPurpose !== "cortex_review"
+      descriptor.sessionPurpose !== "cortex_review" &&
+      descriptor.sessionPurpose !== "agent_creator"
     );
   }
 
@@ -5267,6 +5288,39 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     } catch (error) {
       this.logDebug("manager:bootstrap_message:error", {
         managerId,
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  private async injectAgentCreatorContext(sessionAgentId: string, profileId: string): Promise<void> {
+    try {
+      const sources = await gatherAgentCreatorContext(
+        this.config.paths.dataDir,
+        profileId,
+        this.descriptors.values(),
+        sessionAgentId
+      );
+      const contextText = formatAgentCreatorContextMessage(sources);
+
+      if (!contextText.trim()) {
+        this.logDebug("agent_creator:context:empty", { sessionAgentId, profileId });
+        return;
+      }
+
+      await this.sendMessage(sessionAgentId, sessionAgentId, contextText, "auto", {
+        origin: "internal"
+      });
+      this.logDebug("agent_creator:context:injected", {
+        sessionAgentId,
+        profileId,
+        agentCount: sources.existingAgents.length,
+        memoryCount: sources.sessionMemories.length
+      });
+    } catch (error) {
+      this.logDebug("agent_creator:context:error", {
+        sessionAgentId,
+        profileId,
         message: error instanceof Error ? error.message : String(error)
       });
     }
@@ -9016,8 +9070,12 @@ function validateAgentDescriptor(value: unknown): AgentDescriptor | string {
     return "archetypeId must be a string when provided";
   }
 
-  if (value.sessionPurpose !== undefined && value.sessionPurpose !== "cortex_review") {
-    return 'sessionPurpose must be "cortex_review" when provided';
+  if (
+    value.sessionPurpose !== undefined &&
+    value.sessionPurpose !== "cortex_review" &&
+    value.sessionPurpose !== "agent_creator"
+  ) {
+    return 'sessionPurpose must be "cortex_review" or "agent_creator" when provided';
   }
 
   if (value.projectAgent !== undefined) {

@@ -564,7 +564,12 @@ function coerceAgentDescriptor(value: unknown): AgentDescriptor | undefined {
     contextUsage: undefined,
     profileId: normalizeOptionalString(value.profileId),
     sessionLabel: normalizeOptionalString(value.sessionLabel),
-    sessionPurpose: normalizeOptionalString(value.sessionPurpose) === "cortex_review" ? "cortex_review" : undefined,
+    sessionPurpose:
+      normalizeOptionalString(value.sessionPurpose) === "cortex_review"
+        ? "cortex_review"
+        : normalizeOptionalString(value.sessionPurpose) === "agent_creator"
+          ? "agent_creator"
+          : undefined,
     mergedAt: normalizeOptionalString(value.mergedAt),
     projectAgent:
       projectAgentHandle && projectAgentWhenToUse

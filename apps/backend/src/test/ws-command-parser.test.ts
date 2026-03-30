@@ -12,6 +12,7 @@ describe('ws command parser session commands', () => {
       profileId: ' manager ',
       label: '  Focus work  ',
       name: '  My Cool Session  ',
+      sessionPurpose: 'agent_creator',
       requestId: 'req-1',
     })
 
@@ -22,6 +23,7 @@ describe('ws command parser session commands', () => {
         profileId: 'manager',
         label: 'Focus work',
         name: 'My Cool Session',
+        sessionPurpose: 'agent_creator',
         requestId: 'req-1',
       },
     })
@@ -224,6 +226,10 @@ describe('ws command parser session commands', () => {
       {
         payload: { type: 'create_session', profileId: 'manager', name: 42 },
         message: 'create_session.name must be a string when provided',
+      },
+      {
+        payload: { type: 'create_session', profileId: 'manager', sessionPurpose: 'bad-purpose' },
+        message: 'create_session.sessionPurpose must be "cortex_review" or "agent_creator" when provided',
       },
       {
         payload: { type: 'stop_session', agentId: 42 },
