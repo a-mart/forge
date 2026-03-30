@@ -1956,6 +1956,89 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     };
   }
 
+  async createAndPromoteProjectAgent(
+    creatorAgentId: string,
+    params: { sessionName: string; whenToUse: string; systemPrompt: string }
+  ): Promise<{ agentId: string; handle: string; profileId: string }> {
+    const creatorDescriptor = this.getRequiredSessionDescriptor(creatorAgentId);
+    if (creatorDescriptor.sessionPurpose !== "agent_creator") {
+      throw new Error("Only agent_creator sessions can create project agents");
+    }
+
+    const profileId = creatorDescriptor.profileId;
+    const trimmedName = params.sessionName.trim();
+    const trimmedWhenToUse = normalizeProjectAgentInlineText(params.whenToUse);
+    const trimmedSystemPrompt = params.systemPrompt.trim();
+
+    if (!trimmedName) {
+      throw new Error("sessionName must be non-empty");
+    }
+    if (!trimmedWhenToUse) {
+      throw new Error("whenToUse must be non-empty");
+    }
+    if (trimmedWhenToUse.length > 280) {
+      throw new Error("whenToUse must be 280 characters or fewer");
+    }
+    if (!trimmedSystemPrompt) {
+      throw new Error("systemPrompt must be non-empty");
+    }
+
+    const handle = normalizeProjectAgentHandle(trimmedName);
+    if (!handle) {
+      throw new Error("Session name must produce a valid handle (at least one letter, number, or dash)");
+    }
+
+    const collision = findProjectAgentByHandle(this.descriptors.values(), profileId, handle);
+    if (collision) {
+      throw new Error(getProjectAgentHandleCollisionError(handle));
+    }
+
+    // Keep this specialized path aligned with createSession(), but populate projectAgent
+    // before runtime creation so the custom system prompt is active on first boot.
+    const prepared = this.prepareSessionCreation(profileId, {
+      name: trimmedName,
+      label: trimmedName
+    });
+    const sessionDescriptor = prepared.sessionDescriptor;
+    sessionDescriptor.projectAgent = {
+      handle,
+      whenToUse: trimmedWhenToUse,
+      systemPrompt: trimmedSystemPrompt
+    };
+    this.descriptors.set(sessionDescriptor.agentId, sessionDescriptor);
+
+    await this.ensureSessionFileParentDirectory(sessionDescriptor.sessionFile);
+    await this.ensureAgentMemoryFile(this.getAgentMemoryPath(sessionDescriptor.agentId), prepared.profile.profileId);
+    await this.ensureAgentMemoryFile(getProfileMemoryPath(this.config.paths.dataDir, prepared.profile.profileId), prepared.profile.profileId);
+    await this.writeInitialSessionMeta(sessionDescriptor);
+
+    try {
+      const runtime = await this.getOrCreateRuntimeForDescriptor(sessionDescriptor);
+      sessionDescriptor.contextUsage = runtime.getContextUsage();
+    } catch (error) {
+      await this.rollbackCreatedSession(sessionDescriptor);
+      throw error;
+    }
+
+    await this.saveStore();
+    this.emitSessionLifecycle({
+      action: "created",
+      sessionAgentId: sessionDescriptor.agentId,
+      profileId,
+      label: sessionDescriptor.sessionLabel
+    });
+    this.emitAgentsSnapshot();
+    this.emitProfilesSnapshot();
+    this.emitSessionProjectAgentUpdated(sessionDescriptor.agentId, profileId, sessionDescriptor.projectAgent ?? null);
+    await this.notifyProjectAgentsChanged(profileId);
+
+    return {
+      agentId: sessionDescriptor.agentId,
+      handle,
+      profileId
+    };
+  }
+
   async stopSession(agentId: string): Promise<{ terminatedWorkerIds: string[] }> {
     const { terminatedWorkerIds } = await this.stopSessionInternal(agentId, {
       saveStore: true,

@@ -1061,6 +1061,94 @@ describe('SwarmManager', () => {
     ).rejects.toThrow('Cortex review sessions cannot be promoted to project agents')
   })
 
+  it('createAndPromoteProjectAgent creates a promoted session with the custom prompt on first boot', async () => {
+    const config = await makeTempConfig()
+    const manager = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const creator = await manager.createSession('manager', {
+      label: 'Agent Creator',
+      sessionPurpose: 'agent_creator',
+    })
+
+    const result = await manager.createAndPromoteProjectAgent(creator.sessionAgent.agentId, {
+      sessionName: 'Release Notes',
+      whenToUse: '  Draft release notes\n\nand   changelog copy.  ',
+      systemPrompt: '  You are the release notes project agent.  ',
+    })
+
+    expect(result).toEqual({
+      agentId: expect.any(String),
+      handle: 'release-notes',
+      profileId: 'manager',
+    })
+    expect(manager.getAgent(result.agentId)?.projectAgent).toEqual({
+      handle: 'release-notes',
+      whenToUse: 'Draft release notes and changelog copy.',
+      systemPrompt: 'You are the release notes project agent.',
+    })
+    expect(manager.systemPromptByAgentId.get(result.agentId)).toContain('You are the release notes project agent.')
+    expect(manager.notifiedProjectAgentProfileIds).toEqual(['manager'])
+
+    const store = JSON.parse(await readFile(config.paths.agentsStoreFile, 'utf8')) as { agents: AgentDescriptor[] }
+    expect(store.agents.find((agent) => agent.agentId === result.agentId)?.projectAgent).toEqual({
+      handle: 'release-notes',
+      whenToUse: 'Draft release notes and changelog copy.',
+      systemPrompt: 'You are the release notes project agent.',
+    })
+  })
+
+  it('createAndPromoteProjectAgent rejects invalid creators and collisions before creating a session', async () => {
+    const config = await makeTempConfig()
+    const manager = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await expect(
+      manager.createAndPromoteProjectAgent('manager', {
+        sessionName: 'Release Notes',
+        whenToUse: 'Draft release notes.',
+        systemPrompt: 'You are the release notes project agent.',
+      }),
+    ).rejects.toThrow('Only agent_creator sessions can create project agents')
+
+    const creator = await manager.createSession('manager', {
+      label: 'Agent Creator',
+      sessionPurpose: 'agent_creator',
+    })
+    const existing = await manager.createSession('manager', { label: 'Release Notes' })
+    await manager.setSessionProjectAgent(existing.sessionAgent.agentId, {
+      whenToUse: 'Draft release notes.',
+    })
+
+    const agentCountBeforeCollision = manager.listAgents().length
+    await expect(
+      manager.createAndPromoteProjectAgent(creator.sessionAgent.agentId, {
+        sessionName: 'Release Notes!!!',
+        whenToUse: 'Also draft release notes.',
+        systemPrompt: 'You are another release notes project agent.',
+      }),
+    ).rejects.toThrow(
+      'Project agent handle "release-notes" is already in use in this profile. Rename the session to get a unique handle, then try again.',
+    )
+    expect(manager.listAgents()).toHaveLength(agentCountBeforeCollision)
+
+    await expect(
+      manager.createAndPromoteProjectAgent(creator.sessionAgent.agentId, {
+        sessionName: '   ',
+        whenToUse: 'Draft release notes.',
+        systemPrompt: 'You are the release notes project agent.',
+      }),
+    ).rejects.toThrow('sessionName must be non-empty')
+
+    await expect(
+      manager.createAndPromoteProjectAgent(creator.sessionAgent.agentId, {
+        sessionName: 'Release Notes 2',
+        whenToUse: 'Draft release notes.',
+        systemPrompt: '   ',
+      }),
+    ).rejects.toThrow('systemPrompt must be non-empty')
+  })
+
   it('renameSession recomputes project-agent handles, rejects collisions, and deleteSession notifies on removal', async () => {
     const config = await makeTempConfig()
     const manager = new ProjectAgentAwareSwarmManager(config)

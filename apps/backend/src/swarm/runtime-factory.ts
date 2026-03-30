@@ -18,6 +18,7 @@ import {
   type LoadExtensionsResult
 } from "@mariozechner/pi-coding-agent";
 import { AgentRuntime } from "./agent-runtime.js";
+import { buildCreateProjectAgentTool } from "./agent-creator-tool.js";
 import { ensureCanonicalAuthFilePath } from "./auth-storage-paths.js";
 import { openSessionManagerWithSizeGuard } from "./session-file-guard.js";
 import { CodexAgentRuntime } from "./codex-agent-runtime.js";
@@ -387,6 +388,10 @@ export class RuntimeFactory {
 
     if (descriptor.role !== "manager") {
       return swarmTools;
+    }
+
+    if (descriptor.sessionPurpose === "agent_creator") {
+      swarmTools.push(buildCreateProjectAgentTool(this.deps.host, descriptor));
     }
 
     if (normalizeArchetypeId(descriptor.archetypeId ?? "") !== CORTEX_ARCHETYPE_ID) {

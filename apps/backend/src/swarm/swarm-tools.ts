@@ -33,6 +33,14 @@ export interface SwarmToolHost {
     message: string,
     delivery?: RequestedDeliveryMode
   ): Promise<SendMessageReceipt>;
+  createAndPromoteProjectAgent?(
+    creatorAgentId: string,
+    params: {
+      sessionName: string;
+      whenToUse: string;
+      systemPrompt: string;
+    }
+  ): Promise<{ agentId: string; handle: string }>;
   publishToUser(
     agentId: string,
     text: string,
