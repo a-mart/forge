@@ -321,6 +321,7 @@ export function SettingsModels({ wsUrl, modelConfigChangeKey }: SettingsModelsPr
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [expandedModelIds, setExpandedModelIds] = useState<Record<string, boolean>>({})
+  const [collapsedProviderIds, setCollapsedProviderIds] = useState<Record<string, boolean>>({})
   const [resettingAll, setResettingAll] = useState(false)
 
   const loadOverrides = useCallback(async () => {
@@ -401,46 +402,66 @@ export function SettingsModels({ wsUrl, modelConfigChangeKey }: SettingsModelsPr
       ) : null}
 
       <div className="space-y-4">
-        {providerGroups.map((group) => (
-          <div key={group.providerId} className="space-y-3 rounded-xl border border-border/70 p-4">
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/60 pb-3">
-              <div>
-                <h3 className="text-sm font-semibold text-foreground">{group.displayName}</h3>
-                <p className="text-xs text-muted-foreground">
-                  {group.models.length} {group.models.length === 1 ? 'model' : 'models'}
-                </p>
-              </div>
-              <ProviderStatusBadge
-                availabilityMode={group.availabilityMode}
-                available={providerAvailability[group.providerId]}
-              />
-            </div>
+        {providerGroups.map((group) => {
+          const collapsed = collapsedProviderIds[group.providerId] === true
 
-            <div className="space-y-2">
-              {group.models.map((model) => {
-                const override = overrides[model.modelId]
-
-                return (
-                  <ModelCard
-                    key={model.modelId}
-                    wsUrl={wsUrl}
-                    model={model}
-                    modelId={model.modelId}
-                    override={override}
-                    expanded={expandedModelIds[model.modelId] === true}
-                    onToggle={() =>
-                      setExpandedModelIds((current) => ({
-                        ...current,
-                        [model.modelId]: !current[model.modelId],
-                      }))
-                    }
-                    onRefresh={loadOverrides}
+          return (
+            <div key={group.providerId} className="space-y-3 rounded-xl border border-border/70 p-4">
+              <button
+                type="button"
+                onClick={() =>
+                  setCollapsedProviderIds((current) => ({
+                    ...current,
+                    [group.providerId]: !current[group.providerId],
+                  }))
+                }
+                className="flex w-full items-center justify-between gap-3 text-left"
+                aria-expanded={!collapsed}
+                aria-controls={`provider-group-${group.providerId}`}
+              >
+                <div>
+                  <h3 className="text-sm font-semibold text-foreground">{group.displayName}</h3>
+                  <p className="text-xs text-muted-foreground">
+                    {group.models.length} {group.models.length === 1 ? 'model' : 'models'}
+                  </p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <ProviderStatusBadge
+                    availabilityMode={group.availabilityMode}
+                    available={providerAvailability[group.providerId]}
                   />
-                )
-              })}
+                  {collapsed ? <ChevronDown className="size-4 text-muted-foreground" /> : <ChevronUp className="size-4 text-muted-foreground" />}
+                </div>
+              </button>
+
+              {!collapsed ? (
+                <div id={`provider-group-${group.providerId}`} className="space-y-2 border-t border-border/60 pt-3">
+                  {group.models.map((model) => {
+                    const override = overrides[model.modelId]
+
+                    return (
+                      <ModelCard
+                        key={model.modelId}
+                        wsUrl={wsUrl}
+                        model={model}
+                        modelId={model.modelId}
+                        override={override}
+                        expanded={expandedModelIds[model.modelId] === true}
+                        onToggle={() =>
+                          setExpandedModelIds((current) => ({
+                            ...current,
+                            [model.modelId]: !current[model.modelId],
+                          }))
+                        }
+                        onRefresh={loadOverrides}
+                      />
+                    )
+                  })}
+                </div>
+              ) : null}
             </div>
-          </div>
-        ))}
+          )
+        })}
       </div>
 
       {!loading && providerGroups.length === 0 ? (

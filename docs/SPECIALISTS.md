@@ -18,14 +18,16 @@ Profile specialists shadow global ones with the same filename. Forge ships with 
 ```yaml
 ---
 displayName: Backend Engineer        # Required — human-readable name shown in UI and badges
-color: "#2563eb"                     # Required — hex color for the specialist badge
+color: "#2563eb"                     # Required — hex color (click color swatch in UI to pick)
+handle: backend-engineer             # Optional — specialist handle (defaults to filename without .md)
 enabled: true                        # Required — whether the manager can use this specialist
 whenToUse: >-                        # Required — guidance for the manager on when to pick this specialist
   Backend/core implementation, TypeScript refactors, debugging server routes
 modelId: gpt-5.3-codex              # Required — the model ID to use
 reasoningLevel: high                 # Optional — defaults to model preset default
-fallbackModelId: claude-sonnet-4-5-20250929  # Optional — model if primary is unavailable
+fallbackModelId: claude-sonnet-4-5-20250929  # Optional — model if primary is unavailable (can be cross-provider)
 fallbackReasoningLevel: medium       # Optional — reasoning for fallback (defaults to primary)
+pin: true                            # Optional — pin to top of sidebar list
 builtin: true                        # Internal — marks Forge-shipped specialists (do not set manually)
 ---
 ```
@@ -38,7 +40,6 @@ builtin: true                        # Internal — marks Forge-shipped speciali
 | `gpt-5.3-codex-spark` | GPT-5.3 Codex Spark | OpenAI Codex | none, low, medium, high, xhigh |
 | `gpt-5.4` | GPT-5.4 | OpenAI Codex | none, low, medium, high, xhigh |
 | `gpt-5.4-mini` | GPT-5.4 Mini | OpenAI Codex | none, low, medium, high, xhigh |
-| `gpt-5.4-nano` | GPT-5.4 Nano | OpenAI Codex | none, low, medium, high, xhigh |
 | `claude-opus-4-6` | Claude Opus 4.6 | Anthropic | low, medium, high |
 | `claude-sonnet-4-5-20250929` | Claude Sonnet 4.5 | Anthropic | low, medium, high |
 | `claude-haiku-4-5-20251001` | Claude Haiku 4.5 | Anthropic | low, medium, high |
@@ -46,13 +47,13 @@ builtin: true                        # Internal — marks Forge-shipped speciali
 | `grok-4-fast` | Grok 4 Fast | xAI | none, low, medium, high, xhigh |
 | `grok-4.20-0309-reasoning` | Grok 4.20 Reasoning | xAI | none, low, medium, high, xhigh |
 | `grok-4.20-0309-non-reasoning` | Grok 4.20 Non-Reasoning | xAI | none, low, medium, high, xhigh |
-| `grok-4.20-multi-agent-0309` | Grok 4.20 Multi-Agent | xAI | none, low, medium, high, xhigh |
 | `default` | Codex App Runtime | Codex App | none, low, medium, high, xhigh |
 
 **Notes:**
-- `gpt-5.4-nano` is not yet available in the current Pi runtime and will error if selected.
-- `grok-4.20-multi-agent-0309` is not yet available in the current Pi runtime and will error if selected.
-- xAI models require `XAI_API_KEY` to be configured.
+- The table above shows models currently available in the Forge catalog. Some models listed in upstream Pi releases may not yet be curated into Forge.
+- For the authoritative, up-to-date model list with availability status, see **Settings → Models** in the UI.
+- xAI models require `XAI_API_KEY` to be configured (see Settings → Providers).
+- To audit model catalog drift against Pi upstream, run `pnpm model-catalog:audit`.
 
 ## System Prompt
 
@@ -106,11 +107,17 @@ Go to **Settings → Specialists** to manage your roster:
 
 Click any specialist card to expand and edit it. Changes are saved per-file.
 
+**Actions:**
+- **Clone**: Duplicate a specialist to create a new variant with different settings
+- **Edit handle**: Rename the specialist's handle (kebab-case identifier)
+- **Pin**: Pin frequently-used specialists to the top of the list
+- **Color picker**: Click the color swatch to choose a custom badge color
+
 ### Fallback Models
 
 Each specialist can optionally define a fallback model. If the primary model is unavailable (rate limited, auth error, capacity), the manager automatically retries with the fallback model and reasoning level.
 
-You can use a model from a different provider as your fallback (e.g., primary `grok-4`, fallback `claude-sonnet-4-5-20250929`). This is useful for provider outages.
+**Cross-provider fallback is fully supported**: You can use a model from a different provider as your fallback (e.g., primary `grok-4`, fallback `claude-sonnet-4-5-20250929`). This is useful for provider outages or rate limit mitigation.
 
 ### Resolution Order
 

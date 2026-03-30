@@ -5,6 +5,7 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { checkForUpdatesManually, downloadUpdateManually, installUpdateManually, initAutoUpdater, getBetaChannel, setBetaChannel } from './auto-updater.js'
 import { fixPath } from './fix-path.js'
+import { loadWindowState, trackWindowState } from './window-state.js'
 import { showWhatsNewIfUpdated } from './whats-new.js'
 
 // Load .env from repo root so FORGE_PORT etc. are available in main process
@@ -525,9 +526,17 @@ if (!hasSingleInstanceLock) {
 }
 
 function createMainWindow(): BrowserWindow {
+  const savedState = loadWindowState()
+
   const window = new BrowserWindow({
-    width: 1440,
-    height: 960,
+    width: savedState.width,
+    height: savedState.height,
+    ...(savedState.x !== undefined && savedState.y !== undefined
+      ? {
+          x: savedState.x,
+          y: savedState.y,
+        }
+      : {}),
     minWidth: 1100,
     minHeight: 720,
     show: false,
@@ -542,7 +551,15 @@ function createMainWindow(): BrowserWindow {
     },
   })
 
+  trackWindowState(window)
+
   window.once('ready-to-show', () => {
+    if (savedState.isFullScreen) {
+      window.setFullScreen(true)
+    } else if (savedState.isMaximized) {
+      window.maximize()
+    }
+
     window.show()
   })
 

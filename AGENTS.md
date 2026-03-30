@@ -86,11 +86,12 @@ These are briefly described for orientation. Most have both backend and UI compo
 | **Worker stall detector** | `swarm/swarm-manager.ts` (WorkerStallState, checkForStalledWorkers) | — | Periodic wall-clock detection of workers stuck mid-tool-execution; two-stage nudge then auto-kill |
 | **Choice Picker** | `swarm/swarm-manager.ts` (pending registry), `swarm/swarm-tools.ts` (present_choices tool) | `components/chat/message-list/ChoiceRequestCard.tsx`, `components/chat/message-list/ChoiceAnsweredRow.tsx` | Interactive structured choice picker for agent-user decision points |
 | **Pi extensions** | Agent runtime (`pi-agent-runtime.ts`: `bindExtensions()`, `session_shutdown`, auto-discovery) | — | In-process custom tools, event interception, context modification, and packages via Pi's extension system. Auto-discovered from `~/.forge/agent/extensions/` (workers), `~/.forge/agent/manager/extensions/` (managers), and `<cwd>/.pi/extensions/` (project-local). See [`docs/PI_EXTENSIONS.md`](docs/PI_EXTENSIONS.md) |
-| **xAI Responses provider** | `swarm/extensions/xai-responses-provider.ts` | `components/settings/SettingsSpecialists.tsx` | Configures xAI/Grok models to use OpenAI Responses API (instead of Chat Completions) for all Grok workers, with optional native web search tool injection per specialist config |
 | **Integrated terminals** | `terminal/` | `components/terminal/` | Per-session PTY terminals with persistence and state restoration |
 | **Specialists** | `swarm/specialists/` | `components/settings/SettingsSpecialists.tsx` | Named worker spawn templates with model config, fallback, per-profile overrides, and provider-native tool config (e.g., xAI web search) |
+| **Model catalog** | `swarm/model-catalog-service.ts`, `swarm/model-catalog-projection.ts` | `components/settings/SettingsModels.tsx` | Authoritative single-source model metadata catalog with Pi projection, local overrides, and audit workflow for upstream sync |
+| **Model overrides** | `swarm/model-overrides.ts` | Settings Models UI | User-scoped model visibility and context-window caps persisted to `model-overrides.json` |
 | **Mermaid diagrams** | — | `components/chat/message-list/MermaidBlock.tsx` | Inline rendering of mermaid diagrams in chat with interactive toolbar (toggle, copy, SVG/PNG export, fullscreen) |
-| **Electron desktop app** | `apps/electron/src/main.ts`, `auto-updater.ts`, `preload.ts` | `components/settings/SettingsAbout.tsx` | Standalone desktop application for macOS and Windows. Bundles backend, UI, and dependencies. Auto-updates via GitHub Releases with beta channel support. Dark mode by default. Windows uses standard title bar with hidden menu (Alt to show); macOS uses standard title bar. Provides shell integration for revealing files in Finder/Explorer. |
+| **Electron desktop app** | `apps/electron/src/main.ts`, `auto-updater.ts`, `preload.ts`, `window-state.ts` | `components/settings/SettingsAbout.tsx` | Standalone desktop application for macOS and Windows. Bundles backend, UI, and dependencies. Auto-updates via GitHub Releases with beta channel support. Persists and restores window position, size, maximized state, and fullscreen state across launches. Dark mode by default. Windows uses standard title bar with hidden menu (Alt to show); macOS uses standard title bar. Provides shell integration for revealing files in Finder/Explorer. |
 | **Message pins** | `swarm/message-pins.ts` | `components/chat/message-list/` | Pin up to 10 messages per session; pinned content is preserved through all compaction types via custom instructions and extension hooks. Pin count badge in chat header opens a navigator popover with prev/next buttons to jump directly to any pinned message. |
 
 Backend paths above are relative to `apps/backend/src/`. UI paths are relative to `apps/ui/src/`.
@@ -128,6 +129,9 @@ All runtime state lives in `~/.forge` (or `%LOCALAPPDATA%\forge` on Windows), ov
 ├── shared/
 │   ├── auth/auth.json                     # Authentication credentials
 │   ├── secrets.json                       # Encrypted secrets
+│   ├── model-overrides.json               # User model visibility/context caps
+│   ├── generated/
+│   │   └── pi-models.json                 # Generated Pi-compatible model projection
 │   ├── integrations/                      # Telegram integration configs
 │   ├── knowledge/                         # Knowledge base
 │   │   ├── common.md                      #   Common knowledge (cross-profile, including a managed onboarding preferences block)
@@ -209,6 +213,7 @@ pnpm build                                                # Build all packages
 pnpm test                                                 # Run all tests (backend + UI)
 cd apps/backend && pnpm exec tsc -p tsconfig.build.json --noEmit   # Backend typecheck
 cd apps/ui && pnpm exec tsc --noEmit                               # UI typecheck
+pnpm model-catalog:audit                                  # Audit model catalog against Pi upstream
 ```
 
 Run individual test files with Vitest:
@@ -232,8 +237,8 @@ Copy `.env.example` to `.env` and uncomment/set values as needed. Key variables:
 | `VITE_FORGE_WS_URL` | auto-detected | WebSocket URL override (dev mode only) |
 | `BRAVE_API_KEY` | — | Brave Search skill |
 | `GEMINI_API_KEY` | — | Image generation skill |
-| `CODEX_API_KEY` | — | OpenAI Codex runtime |
-| `XAI_API_KEY` | — | xAI/Grok API key |
+| `CODEX_API_KEY` | — | OpenAI Codex runtime (deprecated; use managed auth) |
+| `XAI_API_KEY` | — | xAI/Grok models (when using external API key mode) |
 | `CODEX_BIN` | `codex` | Path to Codex binary |
 | `FORGE_TERMINAL_ENABLED` | `true` | Enable integrated terminal subsystem |
 | `FORGE_TERMINAL_MAX_PER_SESSION` | `10` | Max terminals per session |
