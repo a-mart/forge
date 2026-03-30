@@ -11,5 +11,9 @@ export function getProfileSpecialistsDir(dataDir: string, profileId: string): st
 }
 
 export function getBuiltinSpecialistsDir(): string {
+  const resourcesDir = process.env.FORGE_RESOURCES_DIR?.trim();
+  if (resourcesDir) {
+    return join(resourcesDir, "apps", "backend", "src", "swarm", "specialists", "builtins");
+  }
   return fileURLToPath(new URL("./builtins", import.meta.url));
 }

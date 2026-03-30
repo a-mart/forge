@@ -404,6 +404,10 @@ async function stageBackendResources() {
     path.join(forgeResourcesDir, 'apps', 'backend', 'src', 'swarm', 'skills', 'builtins'),
   )
   await copyDirectory(
+    path.join(repoRoot, 'apps', 'backend', 'src', 'swarm', 'specialists', 'builtins'),
+    path.join(forgeResourcesDir, 'apps', 'backend', 'src', 'swarm', 'specialists', 'builtins'),
+  )
+  await copyDirectory(
     path.join(repoRoot, 'apps', 'backend', 'static'),
     path.join(forgeResourcesDir, 'apps', 'backend', 'static'),
   )

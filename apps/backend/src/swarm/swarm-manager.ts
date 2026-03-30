@@ -78,6 +78,13 @@ import {
   updateSessionMetaWorker,
   writeSessionMeta
 } from "./session-manifest.js";
+import {
+  resolveRoster as specialistResolveRoster,
+  generateRosterBlock as specialistGenerateRosterBlock,
+  normalizeSpecialistHandle as specialistNormalizeHandle,
+  getSpecialistsEnabled as specialistGetSpecialistsEnabled,
+  LEGACY_MODEL_ROUTING_GUIDANCE
+} from "./specialists/specialist-registry.js";
 import { SecretsEnvService } from "./secrets-env-service.js";
 import { SkillMetadataService } from "./skill-metadata-service.js";
 import {
@@ -190,7 +197,6 @@ interface SpecialistRegistryModule {
 
 // AgentDescriptor now includes specialistId/specialistDisplayName/specialistColor directly.
 
-const SPECIALIST_REGISTRY_MODULE_PATH = "./specialists/specialist-registry.js";
 
 const DEFAULT_WORKER_SYSTEM_PROMPT = `You are a worker agent in a swarm.
 - You can list agents and send messages to other agents.
@@ -5785,47 +5791,18 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   private async loadSpecialistRegistryModule(): Promise<SpecialistRegistryModule> {
     if (!this.specialistRegistryModulePromise) {
-      const modulePath: string = SPECIALIST_REGISTRY_MODULE_PATH;
       const dataDir = this.config.paths.dataDir;
-      this.specialistRegistryModulePromise = import(modulePath).then((moduleExports) => {
-        const mod = moduleExports as {
-          resolveRoster?: (profileId: string, dataDir: string) => Promise<ResolvedSpecialistDefinitionLike[]>;
-          generateRosterBlock?: (roster: ResolvedSpecialistDefinitionLike[]) => string;
-          normalizeSpecialistHandle?: (value: string) => string;
-          getSpecialistsEnabled?: (dataDir: string) => Promise<boolean>;
-          LEGACY_MODEL_ROUTING_GUIDANCE?: string;
-        };
-        const rawResolveRoster = mod.resolveRoster;
-        const generateRosterBlock = mod.generateRosterBlock;
-        const normalizeSpecialistHandle = mod.normalizeSpecialistHandle;
-        const rawGetSpecialistsEnabled = mod.getSpecialistsEnabled;
-        const legacyModelRoutingGuidance = mod.LEGACY_MODEL_ROUTING_GUIDANCE;
-
-        if (
-          typeof rawResolveRoster !== "function" ||
-          typeof generateRosterBlock !== "function" ||
-          typeof normalizeSpecialistHandle !== "function"
-        ) {
-          throw new Error(
-            `Specialist registry module is missing required exports (resolveRoster, generateRosterBlock, normalizeSpecialistHandle): ${SPECIALIST_REGISTRY_MODULE_PATH}`
-          );
-        }
-
-        return {
-          resolveRoster: (profileId: string) => rawResolveRoster(profileId, dataDir),
-          generateRosterBlock,
-          normalizeSpecialistHandle,
-          getSpecialistsEnabled: typeof rawGetSpecialistsEnabled === "function"
-            ? () => rawGetSpecialistsEnabled(dataDir)
-            : () => Promise.resolve(true),
-          legacyModelRoutingGuidance: typeof legacyModelRoutingGuidance === "string"
-            ? legacyModelRoutingGuidance
-            : "",
-        };
+      this.specialistRegistryModulePromise = Promise.resolve({
+        resolveRoster: (profileId: string) =>
+          specialistResolveRoster(profileId, dataDir) as Promise<ResolvedSpecialistDefinitionLike[]>,
+        generateRosterBlock: specialistGenerateRosterBlock as (roster: ResolvedSpecialistDefinitionLike[]) => string,
+        normalizeSpecialistHandle: specialistNormalizeHandle,
+        getSpecialistsEnabled: () => specialistGetSpecialistsEnabled(dataDir),
+        legacyModelRoutingGuidance: LEGACY_MODEL_ROUTING_GUIDANCE,
       });
     }
 
-    return this.specialistRegistryModulePromise;
+    return this.specialistRegistryModulePromise!;
   }
 
   private async resolveSpecialistRosterForProfile(
