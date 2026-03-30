@@ -10,6 +10,7 @@ import {
   type ClipboardEvent,
   type FormEvent,
   type KeyboardEvent,
+  type ReactNode,
 } from 'react'
 import { ALargeSmall, ArrowUp, List, ListOrdered, Loader2, Mic, Paperclip, Square } from 'lucide-react'
 import { AttachedFiles } from '@/components/chat/AttachedFiles'
@@ -68,6 +69,7 @@ function getCurrentLine(text: string, cursorPos: number): { line: string; lineSt
 
 const BULLET_RE = /^- /
 const NUMBERED_RE = /^(\d+)\. /
+const MENTION_TOKEN_RE = /\[@[^\]]+\]/g
 
 /**
  * Toggle a bullet-list prefix (`- `) on the current line.
@@ -159,6 +161,46 @@ function toggleNumberedList(
     text: text.slice(0, lineStart) + newLine + text.slice(lineEnd),
     cursor: cursorPos + prefix.length,
   }
+}
+
+/** Find the mention token range that contains or is bounded by the given cursor position. */
+function findMentionContaining(text: string, pos: number): { start: number; end: number } | null {
+  for (const match of text.matchAll(MENTION_TOKEN_RE)) {
+    const start = match.index!
+    const end = start + match[0].length
+    if (pos >= start && pos <= end) {
+      return { start, end }
+    }
+  }
+  return null
+}
+
+/** Render text with [@handle] tokens as styled mention chips for the overlay. */
+function renderMentionOverlay(text: string): ReactNode[] {
+  const parts: ReactNode[] = []
+  let lastIdx = 0
+  for (const match of text.matchAll(MENTION_TOKEN_RE)) {
+    const start = match.index!
+    const end = start + match[0].length
+    if (start > lastIdx) {
+      parts.push(text.slice(lastIdx, start))
+    }
+    const handle = match[0].slice(2, -1)
+    parts.push(
+      <span key={start} className="rounded-sm bg-blue-500/10 dark:bg-blue-400/10">
+        <span className="text-transparent">[</span>
+        <span className="text-blue-600 dark:text-blue-400">@{handle}</span>
+        <span className="text-transparent">]</span>
+      </span>,
+    )
+    lastIdx = end
+  }
+  if (lastIdx < text.length) {
+    parts.push(text.slice(lastIdx))
+  }
+  // Trailing newline matches textarea's implicit trailing line
+  parts.push('\n')
+  return parts
 }
 
 function loadDrafts(): Record<string, string> {
@@ -321,6 +363,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
   const [isTranscribingVoice, setIsTranscribingVoice] = useState(false)
   const [voiceError, setVoiceError] = useState<string | null>(null)
   const [formatMode, setFormatMode] = useState(loadFormatMode)
+  const hasMentionTokens = useMemo(() => /\[@[^\]]+\]/.test(input), [input])
 
   // --- Slash command autocomplete ---
   const [isSlashMenuOpen, setIsSlashMenuOpen] = useState(false)
@@ -378,6 +421,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
   }, [isMentionMenuOpen])
 
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const overlayRef = useRef<HTMLDivElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   // --- Per-session draft persistence ---
@@ -807,6 +851,28 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
     })
   }, [input, mentionTokenStart, setInputWithDraft])
 
+  // --- Mention overlay helpers ---
+  const syncOverlayScroll = useCallback(() => {
+    if (overlayRef.current && textareaRef.current) {
+      overlayRef.current.scrollTop = textareaRef.current.scrollTop
+    }
+  }, [])
+
+  const snapCursorOutOfMention = useCallback(() => {
+    const textarea = textareaRef.current
+    if (!textarea) return
+    const { selectionStart, selectionEnd } = textarea
+    if (selectionStart !== selectionEnd) return
+    const mention = findMentionContaining(input, selectionStart)
+    if (mention && selectionStart > mention.start && selectionStart < mention.end) {
+      const snapTo =
+        selectionStart - mention.start <= mention.end - selectionStart
+          ? mention.start
+          : mention.end
+      textarea.setSelectionRange(snapTo, snapTo)
+    }
+  }, [input])
+
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     // @mention autocomplete keyboard handling
     if (isMentionMenuOpen && filteredMentions.length > 0) {
@@ -831,6 +897,28 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
       event.preventDefault()
       setIsMentionMenuOpen(false)
       return
+    }
+
+    // Atomic backspace/delete for mention tokens
+    if (hasMentionTokens && (event.key === 'Backspace' || event.key === 'Delete')) {
+      const textarea = textareaRef.current
+      if (textarea && textarea.selectionStart === textarea.selectionEnd) {
+        const pos = textarea.selectionStart
+        const mention = findMentionContaining(input, pos)
+        if (mention) {
+          const shouldDelete =
+            event.key === 'Backspace' ? pos > mention.start : pos < mention.end
+          if (shouldDelete) {
+            event.preventDefault()
+            const newValue = input.slice(0, mention.start) + input.slice(mention.end)
+            setInputWithDraft(newValue)
+            requestAnimationFrame(() => {
+              textarea.setSelectionRange(mention.start, mention.start)
+            })
+            return
+          }
+        }
+      }
     }
 
     // Slash command autocomplete keyboard handling
@@ -1083,26 +1171,46 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
               </button>
             </div>
           ) : (
-            <textarea
-              ref={textareaRef}
-              value={input}
-              onChange={(event) => handleInputChange(event.target.value)}
-              onKeyDown={handleKeyDown}
-              onPaste={handlePaste}
-              placeholder={placeholder}
-              disabled={disabled}
-              rows={1}
-              className={cn(
-                'w-full resize-none border-0 bg-transparent text-sm leading-normal text-foreground shadow-none focus:outline-none',
-                formatMode ? 'min-h-[120px]' : 'min-h-[44px]',
-                'px-4 pt-3 pb-2',
-                '[&::-webkit-scrollbar]:w-1.5',
-                '[&::-webkit-scrollbar-track]:bg-transparent',
-                '[&::-webkit-scrollbar-thumb]:bg-transparent',
-                '[&::-webkit-scrollbar-thumb]:rounded-full',
-                'group-hover:[&::-webkit-scrollbar-thumb]:bg-border',
+            <div className="relative">
+              {hasMentionTokens && (
+                <div
+                  ref={overlayRef}
+                  aria-hidden
+                  className={cn(
+                    'pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words text-sm leading-normal text-foreground',
+                    'px-4 pt-3 pb-2',
+                  )}
+                >
+                  {renderMentionOverlay(input)}
+                </div>
               )}
-            />
+              <textarea
+                ref={textareaRef}
+                value={input}
+                onChange={(event) => handleInputChange(event.target.value)}
+                onKeyDown={handleKeyDown}
+                onPaste={handlePaste}
+                onScroll={syncOverlayScroll}
+                onSelect={hasMentionTokens ? snapCursorOutOfMention : undefined}
+                placeholder={placeholder}
+                disabled={disabled}
+                rows={1}
+                className={cn(
+                  'relative w-full resize-none border-0 bg-transparent text-sm leading-normal shadow-none focus:outline-none',
+                  hasMentionTokens
+                    ? 'text-transparent placeholder:text-muted-foreground'
+                    : 'text-foreground',
+                  formatMode ? 'min-h-[120px]' : 'min-h-[44px]',
+                  'px-4 pt-3 pb-2',
+                  '[&::-webkit-scrollbar]:w-1.5',
+                  '[&::-webkit-scrollbar-track]:bg-transparent',
+                  '[&::-webkit-scrollbar-thumb]:bg-transparent',
+                  '[&::-webkit-scrollbar-thumb]:rounded-full',
+                  'group-hover:[&::-webkit-scrollbar-thumb]:bg-border',
+                )}
+                style={hasMentionTokens ? { caretColor: 'var(--foreground)' } : undefined}
+              />
+            </div>
           )}
 
           <input
