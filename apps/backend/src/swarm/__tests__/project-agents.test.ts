@@ -79,7 +79,7 @@ describe('project-agents helpers', () => {
     expect(findProjectAgentByHandle(descriptors, 'manager', 'missing')).toBeUndefined()
   })
 
-  it('generates a prompt directory block with entries and empty state', () => {
+  it('generates a prompt directory block with entries', () => {
     const populated = generateProjectAgentDirectoryBlock([
       {
         agentId: 'release-notes--s2',
@@ -93,9 +93,10 @@ describe('project-agents helpers', () => {
     expect(populated).toContain('`@release-notes`')
     expect(populated).toContain('Draft release notes and changelog copy.')
     expect(populated).toContain('Workers do not have this directory.')
+  })
 
-    const empty = generateProjectAgentDirectoryBlock([])
-    expect(empty).toBe('Project agents in this profile — none configured.')
+  it('renders a sensible empty directory block when no project agents are configured', () => {
+    expect(generateProjectAgentDirectoryBlock([])).toBe('Project agents in this profile — none configured.')
   })
 
   it('normalizes multiline display names and when-to-use text before rendering', () => {
@@ -126,6 +127,32 @@ describe('project-agents helpers', () => {
     expect(populated).toContain(`- Agent ${PROJECT_AGENT_DIRECTORY_MAX_ENTRIES} (\`@agent-${PROJECT_AGENT_DIRECTORY_MAX_ENTRIES}\`, agentId: \`agent-${PROJECT_AGENT_DIRECTORY_MAX_ENTRIES}\`): Task ${PROJECT_AGENT_DIRECTORY_MAX_ENTRIES}`)
     expect(populated).not.toContain(`- Agent ${PROJECT_AGENT_DIRECTORY_MAX_ENTRIES + 1} (\`@agent-${PROJECT_AGENT_DIRECTORY_MAX_ENTRIES + 1}\`, agentId: \`agent-${PROJECT_AGENT_DIRECTORY_MAX_ENTRIES + 1}\`): Task ${PROJECT_AGENT_DIRECTORY_MAX_ENTRIES + 1}`)
     expect(populated).toContain('(+2 more project agents not shown)')
+  })
+
+  it('collapses multiline session labels before rendering the directory block', () => {
+    const [entry] = listProjectAgents(
+      [
+        makeManagerDescriptor({
+          agentId: 'release-notes--s2',
+          sessionLabel: 'Release\n\nNotes',
+          projectAgent: { handle: 'release-notes', whenToUse: 'Draft release notes' },
+        }),
+      ],
+      'manager',
+    )
+
+    expect(entry).toBeDefined()
+    const populated = generateProjectAgentDirectoryBlock([
+      {
+        agentId: entry!.agentId,
+        displayName: getProjectAgentPublicName(entry!),
+        handle: entry!.projectAgent.handle,
+        whenToUse: entry!.projectAgent.whenToUse,
+      },
+    ])
+
+    expect(populated).toContain('- Release Notes (`@release-notes`, agentId: `release-notes--s2`): Draft release notes')
+    expect(populated).not.toContain('Release\n\nNotes')
   })
 
   it('does not emit a transcript entry or mark activity when runtime creation fails', async () => {

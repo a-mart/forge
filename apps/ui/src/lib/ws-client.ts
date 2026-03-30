@@ -53,6 +53,8 @@ type SessionWorkersResult = { sessionAgentId: string; workers: AgentDescriptor[]
 
 type SessionProjectAgentResult = { agentId: string; profileId: string; projectAgent: ProjectAgentInfo | null }
 
+type ProjectAgentRecommendationsResult = { agentId: string; whenToUse: string; systemPrompt: string }
+
 type WsRequestResultMap = {
   create_manager: AgentDescriptor
   delete_manager: { managerId: string }
@@ -68,6 +70,7 @@ type WsRequestResultMap = {
   fork_session: SessionForkedResult
   merge_session_memory: SessionMemoryMergeResult
   set_session_project_agent: SessionProjectAgentResult
+  request_project_agent_recommendations: ProjectAgentRecommendationsResult
   get_session_workers: { sessionAgentId: string; workers: AgentDescriptor[] }
   list_directories: DirectoriesListedResult
   validate_directory: DirectoryValidationResult
@@ -90,6 +93,7 @@ const WS_REQUEST_TYPES: WsRequestType[] = [
   'fork_session',
   'merge_session_memory',
   'set_session_project_agent',
+  'request_project_agent_recommendations',
   'get_session_workers',
   'list_directories',
   'validate_directory',
@@ -111,6 +115,7 @@ const WS_REQUEST_ERROR_HINTS: Array<{ requestType: WsRequestType; codeFragment: 
   { requestType: 'fork_session', codeFragment: 'fork_session' },
   { requestType: 'merge_session_memory', codeFragment: 'merge_session_memory' },
   { requestType: 'set_session_project_agent', codeFragment: 'set_session_project_agent' },
+  { requestType: 'request_project_agent_recommendations', codeFragment: 'project_agent_recommendations' },
   { requestType: 'get_session_workers', codeFragment: 'get_session_workers' },
   { requestType: 'list_directories', codeFragment: 'list_directories' },
   { requestType: 'validate_directory', codeFragment: 'validate_directory' },
@@ -681,7 +686,7 @@ export class ManagerWsClient {
 
   async setSessionProjectAgent(
     agentId: string,
-    projectAgent: { whenToUse: string } | null,
+    projectAgent: { whenToUse: string; systemPrompt?: string } | null,
   ): Promise<SessionProjectAgentResult> {
     const trimmed = agentId.trim()
     if (!trimmed) {
@@ -696,6 +701,23 @@ export class ManagerWsClient {
       type: 'set_session_project_agent',
       agentId: trimmed,
       projectAgent,
+      requestId,
+    }))
+  }
+
+  async requestProjectAgentRecommendations(agentId: string): Promise<ProjectAgentRecommendationsResult> {
+    const trimmed = agentId.trim()
+    if (!trimmed) {
+      throw new Error('Agent id is required.')
+    }
+
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+      throw new Error('WebSocket is disconnected. Reconnecting...')
+    }
+
+    return this.enqueueRequest('request_project_agent_recommendations', (requestId) => ({
+      type: 'request_project_agent_recommendations',
+      agentId: trimmed,
       requestId,
     }))
   }
@@ -1212,6 +1234,26 @@ export class ManagerWsClient {
             profileId: event.profileId,
             projectAgent: event.projectAgent,
           })
+        }
+        break
+      }
+
+      case 'project_agent_recommendations': {
+        this.requestTracker.resolve('request_project_agent_recommendations', event.requestId, {
+          agentId: event.agentId,
+          whenToUse: event.whenToUse,
+          systemPrompt: event.systemPrompt,
+        })
+        break
+      }
+
+      case 'project_agent_recommendations_error': {
+        if (event.requestId) {
+          this.requestTracker.reject(
+            'request_project_agent_recommendations',
+            event.requestId,
+            new Error(event.message || 'Failed to generate project agent recommendations.'),
+          )
         }
         break
       }

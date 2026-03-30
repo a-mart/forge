@@ -33,6 +33,7 @@ export interface AgentContextUsage {
 export interface ProjectAgentInfo {
   handle: string
   whenToUse: string
+  systemPrompt?: string
 }
 
 export interface AgentModelDescriptor {

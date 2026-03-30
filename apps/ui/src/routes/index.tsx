@@ -860,8 +860,14 @@ export function IndexPage() {
     clientRef.current?.reorderProfiles(profileIds)
   }, [clientRef])
 
-  const handleSetSessionProjectAgent = useCallback(async (agentId: string, projectAgent: { whenToUse: string } | null) => {
+  const handleSetSessionProjectAgent = useCallback(async (agentId: string, projectAgent: { whenToUse: string; systemPrompt?: string } | null) => {
     await clientRef.current?.setSessionProjectAgent(agentId, projectAgent)
+  }, [clientRef])
+
+  const handleRequestProjectAgentRecommendations = useCallback(async (agentId: string) => {
+    const client = clientRef.current
+    if (!client) throw new Error('WebSocket is not connected.')
+    return client.requestProjectAgentRecommendations(agentId)
   }, [clientRef])
 
   const handleSelectAgent = (agentId: string) => {
@@ -1076,6 +1082,7 @@ export function IndexPage() {
           onRequestSessionWorkers={handleRequestSessionWorkers}
           onReorderProfiles={handleReorderProfiles}
           onSetSessionProjectAgent={handleSetSessionProjectAgent}
+          onRequestProjectAgentRecommendations={handleRequestProjectAgentRecommendations}
         />
 
         <div

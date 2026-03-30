@@ -206,6 +206,26 @@ Click any session in the sidebar to switch to it. Your manager tracks state inde
 
 The search bar in the sidebar searches across session names, then digs into message content with highlighted matches. When you have dozens of sessions, this is how you find that conversation from last Tuesday about the caching strategy.
 
+### Project Agents
+
+Sometimes you want a session to serve as a persistent specialist that other sessions can message asynchronously. For example, a dedicated documentation agent that multiple implementation sessions can coordinate with, or a research agent that gathers context for various features.
+
+**Promoting a session:** Right-click any session in the sidebar and select "Promote to Project Agent." You'll provide:
+
+- **Handle** — A unique identifier like `@docs` or `@research`. Used for discovery and @mentions in chat.
+- **When to use** — A brief description that helps other session agents understand when to message this project agent (e.g., "Ask me to write or review documentation").
+- **System prompt** — An authoritative prompt that completely replaces the base manager template. Defines the project agent's role and behavior.
+
+**AI-assisted promotion:** The promotion dialog includes an "AI Assist" option that analyzes the session's history and suggests a handle, description, and system prompt based on what the session has actually been doing.
+
+**Discovery:** Once promoted, project agents appear at the top of the sidebar in their profile with a special badge. Other session agents in the same profile can discover them through the injected directory and send fire-and-forget messages using the existing `send_message_to_agent` tool.
+
+**Messaging:** When a project agent receives a message, it appears as a blue right-justified bubble in its chat (similar to user messages but with sender attribution). The project agent wakes up if idle and can respond by sending a message back to the sender.
+
+**@mentions:** Type `@` in the chat composer to see autocomplete suggestions for all project agents in the current profile. Selecting one inserts a mention chip. This is purely UI convenience — the actual routing happens when your session agent interprets your message and decides to use `send_message_to_agent`.
+
+**Demoting:** Right-click a promoted session and select "Demote from Project Agent" to convert it back to a regular session.
+
 ---
 
 ## 6. Teaching Forge How You Work

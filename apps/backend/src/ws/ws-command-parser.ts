@@ -381,6 +381,13 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
     ) {
       return { ok: false, error: "set_session_project_agent.projectAgent.whenToUse must be a string" };
     }
+    if (
+      projectAgent !== null &&
+      (projectAgent as { systemPrompt?: unknown }).systemPrompt !== undefined &&
+      typeof (projectAgent as { systemPrompt?: unknown }).systemPrompt !== "string"
+    ) {
+      return { ok: false, error: "set_session_project_agent.projectAgent.systemPrompt must be a string when provided" };
+    }
     if (requestId !== undefined && typeof requestId !== "string") {
       return { ok: false, error: "set_session_project_agent.requestId must be a string when provided" };
     }
@@ -393,7 +400,33 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
         projectAgent:
           projectAgent === null
             ? null
-            : { whenToUse: (projectAgent as { whenToUse: string }).whenToUse },
+            : {
+                whenToUse: (projectAgent as { whenToUse: string }).whenToUse,
+                ...((projectAgent as { systemPrompt?: string }).systemPrompt !== undefined
+                  ? { systemPrompt: (projectAgent as { systemPrompt?: string }).systemPrompt }
+                  : {})
+              },
+        requestId
+      }
+    };
+  }
+
+  if (maybe.type === "request_project_agent_recommendations") {
+    const agentId = (maybe as { agentId?: unknown }).agentId;
+    const requestId = (maybe as { requestId?: unknown }).requestId;
+
+    if (typeof agentId !== "string" || agentId.trim().length === 0) {
+      return { ok: false, error: "request_project_agent_recommendations.agentId must be a non-empty string" };
+    }
+    if (requestId !== undefined && typeof requestId !== "string") {
+      return { ok: false, error: "request_project_agent_recommendations.requestId must be a string when provided" };
+    }
+
+    return {
+      ok: true,
+      command: {
+        type: "request_project_agent_recommendations",
+        agentId: agentId.trim(),
         requestId
       }
     };
@@ -767,6 +800,7 @@ export function extractRequestId(command: ClientCommand): string | undefined {
     case "clear_session":
     case "rename_session":
     case "set_session_project_agent":
+    case "request_project_agent_recommendations":
     case "rename_profile":
     case "fork_session":
     case "merge_session_memory":

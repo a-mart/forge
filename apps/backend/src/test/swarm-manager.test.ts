@@ -22,6 +22,12 @@ import {
 const memoryMergeMockState = vi.hoisted(() => ({
   executeLLMMerge: vi.fn(async (..._args: any[]) => '# Swarm Memory\n\n## Decisions\n- merged by mock\n'),
 }))
+const projectAgentAnalysisMockState = vi.hoisted(() => ({
+  analyzeSessionForPromotion: vi.fn(async (..._args: any[]) => ({
+    whenToUse: 'Use for release coordination.',
+    systemPrompt: 'You are the release coordination manager.',
+  })),
+}))
 
 vi.mock('../swarm/memory-merge.js', async () => {
   const actual = await vi.importActual<typeof import('../swarm/memory-merge.js')>('../swarm/memory-merge.js')
@@ -29,6 +35,15 @@ vi.mock('../swarm/memory-merge.js', async () => {
     ...actual,
     executeLLMMerge: (...args: Parameters<typeof actual.executeLLMMerge>) =>
       memoryMergeMockState.executeLLMMerge(...args),
+  }
+})
+
+vi.mock('../swarm/project-agent-analysis.js', async () => {
+  const actual = await vi.importActual<typeof import('../swarm/project-agent-analysis.js')>('../swarm/project-agent-analysis.js')
+  return {
+    ...actual,
+    analyzeSessionForPromotion: (...args: Parameters<typeof actual.analyzeSessionForPromotion>) =>
+      projectAgentAnalysisMockState.analyzeSessionForPromotion(...args),
   }
 })
 
@@ -906,6 +921,108 @@ describe('SwarmManager', () => {
     })
   })
 
+  it('rejects empty project-agent when-to-use text after normalization', async () => {
+    const config = await makeTempConfig()
+    const manager = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const created = await manager.createSession('manager', { label: 'Release Notes' })
+
+    await expect(
+      manager.setSessionProjectAgent(created.sessionAgent.agentId, {
+        whenToUse: '',
+      }),
+    ).rejects.toThrow('Project agent "When to use" must be non-empty')
+
+    await expect(
+      manager.setSessionProjectAgent(created.sessionAgent.agentId, {
+        whenToUse: '   ',
+      }),
+    ).rejects.toThrow('Project agent "When to use" must be non-empty')
+
+    expect(manager.getAgent(created.sessionAgent.agentId)?.projectAgent).toBeUndefined()
+  })
+
+  it('rejects project-agent when-to-use text longer than 280 characters', async () => {
+    const config = await makeTempConfig()
+    const manager = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const created = await manager.createSession('manager', { label: 'Release Notes' })
+
+    await expect(
+      manager.setSessionProjectAgent(created.sessionAgent.agentId, {
+        whenToUse: 'a'.repeat(281),
+      }),
+    ).rejects.toThrow('Project agent "When to use" must be 280 characters or fewer')
+
+    expect(manager.getAgent(created.sessionAgent.agentId)?.projectAgent).toBeUndefined()
+  })
+
+  it('persists project-agent system prompts through store reload', async () => {
+    const config = await makeTempConfig()
+    const firstBoot = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(firstBoot, config)
+
+    const created = await firstBoot.createSession('manager', { label: 'Release Notes' })
+    const expectedProjectAgent = {
+      handle: 'release-notes',
+      whenToUse: 'Draft release notes and changelog copy.',
+      systemPrompt: 'You are the release notes project agent.',
+    }
+
+    await firstBoot.setSessionProjectAgent(created.sessionAgent.agentId, {
+      whenToUse: expectedProjectAgent.whenToUse,
+      systemPrompt: '  You are the release notes project agent.  ',
+    })
+
+    expect(firstBoot.getAgent(created.sessionAgent.agentId)?.projectAgent).toEqual(expectedProjectAgent)
+
+    const store = JSON.parse(await readFile(config.paths.agentsStoreFile, 'utf8')) as { agents: AgentDescriptor[] }
+    expect(store.agents.find((agent) => agent.agentId === created.sessionAgent.agentId)?.projectAgent).toEqual(expectedProjectAgent)
+
+    const secondBoot = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(secondBoot, config)
+
+    expect(secondBoot.getAgent(created.sessionAgent.agentId)?.projectAgent).toEqual(expectedProjectAgent)
+  })
+
+  it('recycles manager runtimes through project-agent directory refresh when a project-agent system prompt is saved', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    const rootSession = await bootWithDefaultManager(manager, config)
+
+    const { sessionAgent } = await manager.createSession('manager', { label: 'Release Notes' })
+    const rootRuntime = manager.runtimeByAgentId.get(rootSession.agentId)
+    const sessionRuntime = manager.runtimeByAgentId.get(sessionAgent.agentId)
+    const state = manager as unknown as {
+      runtimes: Map<string, SwarmAgentRuntime>
+    }
+
+    expect(rootRuntime).toBeDefined()
+    expect(sessionRuntime).toBeDefined()
+    expect(state.runtimes.has(rootSession.agentId)).toBe(true)
+    expect(state.runtimes.has(sessionAgent.agentId)).toBe(true)
+
+    await manager.setSessionProjectAgent(sessionAgent.agentId, {
+      whenToUse: 'Draft release notes and changelog copy.',
+      systemPrompt: '  You are the release notes project agent.  ',
+    })
+
+    expect(rootRuntime?.recycleCalls).toBe(1)
+    expect(sessionRuntime?.recycleCalls).toBe(1)
+    expect(state.runtimes.has(rootSession.agentId)).toBe(false)
+    expect(state.runtimes.has(sessionAgent.agentId)).toBe(false)
+
+    const createdRuntimeCountBeforePrompt = manager.createdRuntimeIds.length
+    await manager.handleUserMessage('Use the refreshed prompt', { targetAgentId: sessionAgent.agentId })
+
+    expect(manager.createdRuntimeIds.length).toBe(createdRuntimeCountBeforePrompt + 1)
+    expect(manager.runtimeByAgentId.get(sessionAgent.agentId)).not.toBe(sessionRuntime)
+    expect(manager.systemPromptByAgentId.get(sessionAgent.agentId)).toContain('You are the release notes project agent.')
+    expect(manager.systemPromptByAgentId.get(sessionAgent.agentId)).toContain('Project agents in this profile')
+  })
+
   it('rejects project-agent promotion collisions and cortex-only sessions', async () => {
     const config = await makeTempConfig()
     const manager = new ProjectAgentAwareSwarmManager(config)
@@ -1011,6 +1128,144 @@ describe('SwarmManager', () => {
     expect(systemPrompt).toContain('Draft release notes and changelog copy.')
     expect(systemPrompt).not.toContain('Coordinate the main manager session.')
     expect(systemPrompt).not.toContain('`@manager`')
+  })
+
+  it('labels prompt preview sections with the project-agent system prompt source when overridden', async () => {
+    const config = await makeTempConfig()
+    const manager = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await manager.setSessionProjectAgent('manager', {
+      whenToUse: 'Coordinate the main manager session.',
+      systemPrompt: '  You are the release planning project agent.  ',
+    })
+
+    const preview = await manager.previewManagerSystemPrompt('manager')
+    const systemPromptSection = preview.sections.find((section) => section.label === 'System Prompt')
+
+    expect(systemPromptSection).toMatchObject({
+      source: 'Project Agent system prompt',
+    })
+    expect(systemPromptSection?.content).toContain('You are the release planning project agent.')
+    expect(systemPromptSection?.content).not.toContain('You are the manager agent in a multi-agent swarm.')
+  })
+
+  it('previews promoted sessions even when their saved archetype no longer exists', async () => {
+    const config = await makeTempConfig()
+    const firstBoot = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(firstBoot, config)
+
+    await firstBoot.setSessionProjectAgent('manager', {
+      whenToUse: 'Coordinate the main manager session.',
+      systemPrompt: '  You are the release planning project agent.  ',
+    })
+
+    const store = JSON.parse(await readFile(config.paths.agentsStoreFile, 'utf8')) as { agents: AgentDescriptor[] }
+    await writeFile(
+      config.paths.agentsStoreFile,
+      `${JSON.stringify(
+        {
+          ...store,
+          agents: store.agents.map((agent) =>
+            agent.agentId === 'manager'
+              ? {
+                  ...agent,
+                  archetypeId: 'missing-preview-archetype',
+                }
+              : agent,
+          ),
+        },
+        null,
+        2,
+      )}\n`,
+      'utf8',
+    )
+
+    const secondBoot = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(secondBoot, config)
+
+    const preview = await secondBoot.previewManagerSystemPrompt('manager')
+    const systemPromptSection = preview.sections.find((section) => section.label === 'System Prompt')
+
+    expect(systemPromptSection).toMatchObject({
+      source: 'Project Agent system prompt',
+    })
+    expect(systemPromptSection?.content).toContain('You are the release planning project agent.')
+  })
+
+  it('refreshes persisted session prompt metadata when a project-agent prompt changes', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    const { agentId } = await bootWithDefaultManager(manager, config)
+
+    await manager.setSessionProjectAgent(agentId, {
+      whenToUse: 'Coordinate the main manager session.',
+      systemPrompt: '  You are the release planning project agent.  ',
+    })
+
+    const meta = await readSessionMeta(config.paths.dataDir, 'manager', agentId)
+
+    expect(meta?.resolvedSystemPrompt).toContain('You are the release planning project agent.')
+    expect(meta?.resolvedSystemPrompt).toContain('Project agents in this profile')
+  })
+
+  it('requestProjectAgentRecommendations analyzes against the base manager prompt without reusing the old override', async () => {
+    projectAgentAnalysisMockState.analyzeSessionForPromotion.mockReset()
+    projectAgentAnalysisMockState.analyzeSessionForPromotion.mockResolvedValue({
+      whenToUse: 'Use for release coordination.',
+      systemPrompt: 'You are the release coordination manager.',
+    })
+
+    const previousAnthropicApiKey = process.env.ANTHROPIC_API_KEY
+    delete process.env.ANTHROPIC_API_KEY
+
+    try {
+      const config = await makeTempConfig()
+      const manager = new TestSwarmManager(config)
+      await bootWithDefaultManager(manager, config)
+
+      const sharedAuthStorage = AuthStorage.create(config.paths.sharedAuthFile)
+      sharedAuthStorage.set('openai-codex', {
+        type: 'api_key',
+        key: 'sk-openai-project-agent-analysis',
+      } as any)
+
+      const { sessionAgent } = await manager.createSession('manager', { label: 'Release Notes' })
+      await manager.setSessionProjectAgent(sessionAgent.agentId, {
+        whenToUse: 'Draft release notes and changelog copy.',
+        systemPrompt: 'You are the old release-notes override prompt.',
+      })
+
+      appendSessionConversationMessage(sessionAgent.sessionFile, sessionAgent.agentId, 'Draft the release notes.')
+
+      const result = await manager.requestProjectAgentRecommendations(sessionAgent.agentId)
+
+      expect(result).toEqual({
+        whenToUse: 'Use for release coordination.',
+        systemPrompt: 'You are the release coordination manager.',
+      })
+      expect(projectAgentAnalysisMockState.analyzeSessionForPromotion).toHaveBeenCalledTimes(1)
+      const [model, options] = projectAgentAnalysisMockState.analyzeSessionForPromotion.mock.calls[0] ?? []
+      expect([
+        { provider: 'anthropic', id: 'claude-opus-4-6' },
+        { provider: 'openai-codex', id: 'gpt-5.4' },
+      ]).toContainEqual(expect.objectContaining({ provider: model?.provider, id: model?.id }))
+      expect(options).toMatchObject({
+        sessionAgentId: sessionAgent.agentId,
+        sessionLabel: 'Release Notes',
+        displayName: 'Release Notes',
+        profileId: 'manager',
+        sessionCwd: expect.stringContaining('swarm-manager-test-'),
+      })
+      expect(options.currentSystemPrompt).toContain('User-facing output MUST go through speak_to_user.')
+      expect(options.currentSystemPrompt).not.toContain('old release-notes override prompt')
+    } finally {
+      if (previousAnthropicApiKey === undefined) {
+        delete process.env.ANTHROPIC_API_KEY
+      } else {
+        process.env.ANTHROPIC_API_KEY = previousAnthropicApiKey
+      }
+    }
   })
 
   it('mergeSessionMemory safely promotes session memory into profile memory and records audit/meta state', async () => {

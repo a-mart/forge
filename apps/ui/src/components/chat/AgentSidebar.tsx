@@ -12,6 +12,7 @@ import {
   Edit3,
   EyeOff,
   GitFork,
+  Loader2,
   MonitorPlay,
   Pause,
   Play,
@@ -19,6 +20,7 @@ import {
   RefreshCw,
   Search,
   Settings,
+  Sparkles,
   SquarePen,
   Trash2,
   X,
@@ -118,7 +120,8 @@ interface AgentSidebarProps {
   onUpdateManagerModel?: (managerId: string, model: ManagerModelPreset, reasoningLevel?: ManagerReasoningLevel) => void
   onRequestSessionWorkers?: (sessionId: string) => void
   onReorderProfiles?: (profileIds: string[]) => void
-  onSetSessionProjectAgent?: (agentId: string, projectAgent: { whenToUse: string } | null) => Promise<void>
+  onSetSessionProjectAgent?: (agentId: string, projectAgent: { whenToUse: string; systemPrompt?: string } | null) => Promise<void>
+  onRequestProjectAgentRecommendations?: (agentId: string) => Promise<{ whenToUse: string; systemPrompt: string }>
 }
 
 type AgentLiveStatus = {
@@ -1311,30 +1314,91 @@ function ProjectAgentSettingsSheet({
   onSave,
   onDemote,
   onClose,
+  onRequestRecommendations,
 }: {
   agentId: string
   sessionLabel: string
   currentProjectAgent: ProjectAgentInfo | null
-  onSave: (agentId: string, projectAgent: { whenToUse: string }) => Promise<void>
+  onSave: (agentId: string, projectAgent: { whenToUse: string; systemPrompt?: string }) => Promise<void>
   onDemote: (agentId: string) => Promise<void>
   onClose: () => void
+  onRequestRecommendations?: (agentId: string) => Promise<{ whenToUse: string; systemPrompt: string }>
 }) {
   const [whenToUse, setWhenToUse] = useState(currentProjectAgent?.whenToUse ?? '')
+  const [systemPrompt, setSystemPrompt] = useState(currentProjectAgent?.systemPrompt ?? '')
   const [saving, setSaving] = useState(false)
+  const [analyzing, setAnalyzing] = useState(false)
+  const [analysisError, setAnalysisError] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  // Track whether the user has manually edited each field (via refs to avoid stale closures)
+  const whenToUseDirtyRef = useRef(false)
+  const systemPromptDirtyRef = useRef(false)
 
   const derivedHandle = slugifySessionName(sessionLabel)
   const isPromoting = !currentProjectAgent
   const trimmedWhenToUse = whenToUse.trim()
+  const trimmedSystemPrompt = systemPrompt.trim()
   const canSave = trimmedWhenToUse.length > 0 && trimmedWhenToUse.length <= PROJECT_AGENT_WHEN_TO_USE_MAX
-  const hasChanges = isPromoting || trimmedWhenToUse !== (currentProjectAgent?.whenToUse ?? '')
+  const hasChanges = isPromoting
+    || trimmedWhenToUse !== (currentProjectAgent?.whenToUse ?? '')
+    || trimmedSystemPrompt !== (currentProjectAgent?.systemPrompt ?? '')
+
+  const requestRecommendations = useCallback(async (replaceExisting: boolean) => {
+    if (!onRequestRecommendations) return
+    setAnalyzing(true)
+    setAnalysisError(null)
+    try {
+      const result = await onRequestRecommendations(agentId)
+      if (replaceExisting) {
+        // Explicit regeneration — always replace
+        setWhenToUse(result.whenToUse)
+        setSystemPrompt(result.systemPrompt)
+        whenToUseDirtyRef.current = false
+        systemPromptDirtyRef.current = false
+      } else {
+        // Auto-trigger on promotion — only populate untouched fields
+        if (!whenToUseDirtyRef.current) {
+          setWhenToUse(result.whenToUse)
+        }
+        if (!systemPromptDirtyRef.current) {
+          setSystemPrompt(result.systemPrompt)
+        }
+      }
+    } catch {
+      setAnalysisError('AI analysis failed — you can fill in the fields manually.')
+    } finally {
+      setAnalyzing(false)
+    }
+  }, [agentId, onRequestRecommendations])
+
+  // Auto-trigger AI analysis on initial promotion
+  useEffect(() => {
+    if (isPromoting && onRequestRecommendations) {
+      void requestRecommendations(false)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const handleWhenToUseChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    whenToUseDirtyRef.current = true
+    setWhenToUse(e.target.value)
+  }, [])
+
+  const handleSystemPromptChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    systemPromptDirtyRef.current = true
+    setSystemPrompt(e.target.value)
+  }, [])
 
   const handleSave = async () => {
     if (!canSave) return
     setSaving(true)
     setError(null)
     try {
-      await onSave(agentId, { whenToUse: trimmedWhenToUse })
+      await onSave(agentId, {
+        whenToUse: trimmedWhenToUse,
+        ...(trimmedSystemPrompt ? { systemPrompt: trimmedSystemPrompt } : {}),
+      })
       onClose()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save project agent settings.')
@@ -1358,7 +1422,7 @@ function ProjectAgentSettingsSheet({
 
   return (
     <Sheet open onOpenChange={(open) => { if (!open) onClose() }}>
-      <SheetContent side="right" className="w-full max-w-md sm:max-w-md">
+      <SheetContent side="right" className="w-full max-w-md overflow-y-auto sm:max-w-md">
         <SheetHeader>
           <SheetTitle>{isPromoting ? 'Promote to Project Agent' : 'Project Agent Settings'}</SheetTitle>
           <SheetDescription>
@@ -1378,22 +1442,74 @@ function ProjectAgentSettingsSheet({
               {derivedHandle ? `@${derivedHandle}` : <span className="text-amber-500">(invalid name)</span>}
             </p>
           </div>
+
+          {/* AI analysis loading indicator */}
+          {analyzing ? (
+            <div className="flex items-center gap-2 rounded-md border border-border/50 bg-muted/30 px-3 py-2.5 text-sm text-muted-foreground">
+              <Loader2 className="size-4 shrink-0 animate-spin" />
+              <span>Analyzing session to generate recommendations…</span>
+            </div>
+          ) : null}
+
+          {/* AI analysis error (non-blocking) */}
+          {analysisError ? (
+            <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-600 dark:text-amber-400">
+              {analysisError}
+            </p>
+          ) : null}
+
           <div className="space-y-1.5">
             <label htmlFor="whenToUse" className="text-sm font-medium text-foreground">When to use</label>
             <Textarea
               id="whenToUse"
               value={whenToUse}
-              onChange={(e) => setWhenToUse(e.target.value)}
-              placeholder="Describe when other sessions should send messages to this agent…"
+              onChange={handleWhenToUseChange}
+              placeholder={analyzing ? 'Generating recommendation…' : 'Describe when other sessions should send messages to this agent…'}
               rows={3}
               maxLength={PROJECT_AGENT_WHEN_TO_USE_MAX}
               className="resize-none"
-              autoFocus
+              autoFocus={!analyzing}
             />
             <p className="text-[11px] text-muted-foreground">
               {trimmedWhenToUse.length}/{PROJECT_AGENT_WHEN_TO_USE_MAX}
             </p>
           </div>
+
+          <div className="space-y-1.5">
+            <label htmlFor="systemPrompt" className="text-sm font-medium text-foreground">
+              System Prompt
+              <span className="ml-1 text-xs font-normal text-muted-foreground">(optional)</span>
+            </label>
+            <Textarea
+              id="systemPrompt"
+              value={systemPrompt}
+              onChange={handleSystemPromptChange}
+              placeholder={analyzing ? 'Generating recommendation…' : 'Custom system prompt for this project agent…'}
+              rows={8}
+              className="resize-y font-mono text-xs"
+            />
+            <p className="text-[11px] text-muted-foreground">
+              When set, this replaces the standard manager prompt for this session.
+            </p>
+          </div>
+
+          {/* Regenerate button for already-promoted agents */}
+          {!isPromoting && onRequestRecommendations ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => void requestRecommendations(true)}
+              disabled={analyzing}
+              className="gap-1.5"
+            >
+              {analyzing
+                ? <Loader2 className="size-3.5 animate-spin" />
+                : <Sparkles className="size-3.5" />
+              }
+              Regenerate recommendations
+            </Button>
+          ) : null}
+
           {error ? (
             <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
               {error}
@@ -1991,6 +2107,7 @@ export function AgentSidebar({
   onRequestSessionWorkers,
   onReorderProfiles,
   onSetSessionProjectAgent,
+  onRequestProjectAgentRecommendations,
 }: AgentSidebarProps) {
   const treeRows = buildProfileTreeRows(agents, profiles)
   const hasCortexProfile = profiles.some((profile) => profile.profileId === 'cortex')
@@ -2294,7 +2411,7 @@ export function AgentSidebar({
     await onSetSessionProjectAgent?.(agentId, null)
   }, [onSetSessionProjectAgent])
 
-  const handleSaveProjectAgent = useCallback(async (agentId: string, projectAgent: { whenToUse: string }) => {
+  const handleSaveProjectAgent = useCallback(async (agentId: string, projectAgent: { whenToUse: string; systemPrompt?: string }) => {
     await onSetSessionProjectAgent?.(agentId, projectAgent)
   }, [onSetSessionProjectAgent])
 
@@ -2719,6 +2836,7 @@ export function AgentSidebar({
           onSave={handleSaveProjectAgent}
           onDemote={handleDemoteProjectAgent}
           onClose={() => setProjectAgentTarget(null)}
+          onRequestRecommendations={onRequestProjectAgentRecommendations}
         />
       ) : null}
     </>

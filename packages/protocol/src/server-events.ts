@@ -191,6 +191,21 @@ export interface SessionProjectAgentUpdatedEvent {
   requestId?: string
 }
 
+export interface ProjectAgentRecommendationsEvent {
+  type: 'project_agent_recommendations'
+  agentId: string
+  whenToUse: string
+  systemPrompt: string
+  requestId?: string
+}
+
+export interface ProjectAgentRecommendationsErrorEvent {
+  type: 'project_agent_recommendations_error'
+  agentId: string
+  message: string
+  requestId?: string
+}
+
 export interface ProfileRenamedEvent {
   type: 'profile_renamed'
   profileId: string
@@ -420,6 +435,8 @@ export type ServerEvent =
   | SessionClearedEvent
   | SessionRenamedEvent
   | SessionProjectAgentUpdatedEvent
+  | ProjectAgentRecommendationsEvent
+  | ProjectAgentRecommendationsErrorEvent
   | ProfileRenamedEvent
   | SessionForkedEvent
   | SessionMemoryMergeStartedEvent

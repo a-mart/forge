@@ -41,6 +41,7 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
     command.type !== "clear_session" &&
     command.type !== "rename_session" &&
     command.type !== "set_session_project_agent" &&
+    command.type !== "request_project_agent_recommendations" &&
     command.type !== "fork_session" &&
     command.type !== "merge_session_memory"
   ) {
@@ -238,7 +239,17 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
 
   if (command.type === "set_session_project_agent") {
     try {
-      const result = await swarmManager.setSessionProjectAgent(command.agentId, command.projectAgent);
+      const result = await swarmManager.setSessionProjectAgent(
+        command.agentId,
+        command.projectAgent
+          ? {
+              whenToUse: command.projectAgent.whenToUse,
+              ...(command.projectAgent.systemPrompt !== undefined
+                ? { systemPrompt: command.projectAgent.systemPrompt }
+                : {})
+            }
+          : null
+      );
 
       send(socket, {
         type: "session_project_agent_updated",
@@ -255,6 +266,30 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
         requestId: command.requestId
       });
     }
+
+    return true;
+  }
+
+  if (command.type === "request_project_agent_recommendations") {
+    void swarmManager
+      .requestProjectAgentRecommendations(command.agentId)
+      .then((recommendations) => {
+        send(socket, {
+          type: "project_agent_recommendations",
+          agentId: command.agentId,
+          whenToUse: recommendations.whenToUse,
+          systemPrompt: recommendations.systemPrompt,
+          requestId: command.requestId
+        });
+      })
+      .catch((error) => {
+        send(socket, {
+          type: "project_agent_recommendations_error",
+          agentId: command.agentId,
+          message: error instanceof Error ? error.message : String(error),
+          requestId: command.requestId
+        });
+      });
 
     return true;
   }

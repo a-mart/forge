@@ -111,6 +111,8 @@ Each manager supports multiple named sessions. These are independent workstreams
 
 Session forking lets you run discovery in one conversation, gather context, narrow down an approach, then fork into parallel workstreams that all inherit that context. You can fork from the current point or from any earlier message, carrying forward only the relevant context. It's branching for conversations.
 
+**Project Agents** — Sessions can be promoted to discoverable Project Agents within a profile. Right-click any session in the sidebar and select "Promote to Project Agent." Promoted sessions get a unique handle (e.g., `@research` or `@docs`) and appear at the top of the sidebar. Other session agents in the same profile can discover and message them asynchronously using `send_message_to_agent`. Use this for dedicated specialists (documentation, testing, research) that multiple sessions need to coordinate with. The promotion UI includes AI-assisted configuration to help you write effective discovery descriptions and system prompts.
+
 ### Cortex
 
 Cortex is a dedicated subsystem that reviews your sessions and improves Forge's behavior over time. It maintains two layers of persistent knowledge:

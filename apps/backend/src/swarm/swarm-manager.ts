@@ -67,6 +67,11 @@ import {
 } from "./cortex-review-runs.js";
 import { executeLLMMerge, MEMORY_MERGE_SYSTEM_PROMPT } from "./memory-merge.js";
 import {
+  analyzeSessionForPromotion,
+  type AnalyzeSessionForPromotionOptions,
+  type ProjectAgentRecommendations
+} from "./project-agent-analysis.js";
+import {
   deliverProjectAgentMessage,
   findProjectAgentByHandle,
   formatProjectAgentRuntimeMessage,
@@ -1083,7 +1088,10 @@ function cloneProjectAgentInfo(descriptor: AgentDescriptor): AgentDescriptor["pr
 
   return {
     handle: descriptor.projectAgent.handle,
-    whenToUse: descriptor.projectAgent.whenToUse
+    whenToUse: descriptor.projectAgent.whenToUse,
+    ...(descriptor.projectAgent.systemPrompt !== undefined
+      ? { systemPrompt: descriptor.projectAgent.systemPrompt }
+      : {})
   };
 }
 
@@ -2124,20 +2132,21 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   async setSessionProjectAgent(
     agentId: string,
-    projectAgent: { whenToUse: string } | null
+    projectAgent: { whenToUse: string; systemPrompt?: string } | null
   ): Promise<{ profileId: string; projectAgent: NonNullable<AgentDescriptor["projectAgent"]> | null }> {
     const descriptor = this.getRequiredSessionDescriptor(agentId);
     this.assertSessionSupportsProjectAgent(descriptor);
 
     const profileId = descriptor.profileId;
     const nextProjectAgent = projectAgent
-      ? this.buildProjectAgentInfoForSession(descriptor, projectAgent.whenToUse)
+      ? this.buildProjectAgentInfoForSession(descriptor, projectAgent.whenToUse, projectAgent.systemPrompt)
       : null;
 
     descriptor.projectAgent = nextProjectAgent ?? undefined;
     this.descriptors.set(agentId, descriptor);
 
     await this.saveStore();
+    await this.captureSessionRuntimePromptMeta(descriptor);
     this.emitAgentsSnapshot();
     this.emitSessionProjectAgentUpdated(descriptor.agentId, profileId, nextProjectAgent);
     await this.notifyProjectAgentsChanged(profileId);
@@ -2146,6 +2155,29 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       profileId,
       projectAgent: nextProjectAgent
     };
+  }
+
+  async requestProjectAgentRecommendations(agentId: string): Promise<ProjectAgentRecommendations> {
+    const descriptor = this.getRequiredSessionDescriptor(agentId);
+    this.assertSessionSupportsProjectAgent(descriptor);
+
+    const [conversationHistory, currentSystemPrompt, analysisModel] = await Promise.all([
+      Promise.resolve(this.getConversationHistory(agentId)),
+      this.buildResolvedManagerPrompt(descriptor, { ignoreProjectAgentSystemPrompt: true }),
+      this.resolveProjectAgentAnalysisModel()
+    ]);
+
+    return this.executeProjectAgentAnalysis(analysisModel.model, {
+      conversationHistory,
+      currentSystemPrompt,
+      sessionAgentId: descriptor.agentId,
+      sessionLabel: descriptor.sessionLabel ?? descriptor.displayName ?? descriptor.agentId,
+      displayName: descriptor.displayName,
+      profileId: descriptor.profileId,
+      sessionCwd: descriptor.cwd,
+      apiKey: analysisModel.apiKey,
+      headers: analysisModel.headers
+    });
   }
 
   async renameSession(agentId: string, label: string): Promise<void> {
@@ -3414,15 +3446,18 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     const resolvedProfileId = normalizeOptionalAgentId(descriptor.profileId) ?? profileId;
+    const projectAgentPrompt = descriptor.projectAgent?.systemPrompt?.trim();
     const archetypeId = descriptor.archetypeId
       ? normalizeArchetypeId(descriptor.archetypeId) || MANAGER_ARCHETYPE_ID
       : MANAGER_ARCHETYPE_ID;
-    const archetypeEntry = await this.promptRegistry.resolveEntry("archetype", archetypeId, resolvedProfileId);
-    if (!archetypeEntry) {
+    const archetypeEntry = projectAgentPrompt
+      ? undefined
+      : await this.promptRegistry.resolveEntry("archetype", archetypeId, resolvedProfileId);
+    if (!projectAgentPrompt && !archetypeEntry) {
       throw new Error(`Prompt not found: archetype/${archetypeId}`);
     }
 
-    let systemPrompt = await this.buildResolvedManagerPrompt(descriptor);
+    let systemPrompt = await this.resolveSystemPromptForDescriptor(descriptor);
 
     const memoryResources = await this.getMemoryRuntimeResources(descriptor);
 
@@ -3457,7 +3492,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const sections: PromptPreviewSection[] = [
       {
         label: "System Prompt",
-        source: archetypeEntry.sourcePath,
+        source: projectAgentPrompt ? "Project Agent system prompt" : archetypeEntry!.sourcePath,
         content: systemPrompt
       }
     ];
@@ -3563,7 +3598,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   private buildProjectAgentInfoForSession(
     descriptor: AgentDescriptor & { role: "manager"; profileId: string },
-    whenToUse: string
+    whenToUse: string,
+    systemPrompt?: string
   ): NonNullable<AgentDescriptor["projectAgent"]> {
     const normalizedWhenToUse = normalizeProjectAgentInlineText(whenToUse);
     if (!normalizedWhenToUse) {
@@ -3586,9 +3622,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       throw new Error(getProjectAgentHandleCollisionError(handle));
     }
 
+    const normalizedSystemPrompt = systemPrompt?.trim();
+
     return {
       handle,
-      whenToUse: normalizedWhenToUse
+      whenToUse: normalizedWhenToUse,
+      ...(normalizedSystemPrompt ? { systemPrompt: normalizedSystemPrompt } : {})
     };
   }
 
@@ -6071,15 +6110,23 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     };
   }
 
-  private async buildResolvedManagerPrompt(descriptor: AgentDescriptor): Promise<string> {
+  private async buildResolvedManagerPrompt(
+    descriptor: AgentDescriptor,
+    options?: { ignoreProjectAgentSystemPrompt?: boolean }
+  ): Promise<string> {
     const profileId = descriptor.profileId ?? descriptor.agentId;
     const managerArchetypeId = descriptor.archetypeId
       ? normalizeArchetypeId(descriptor.archetypeId) || MANAGER_ARCHETYPE_ID
       : MANAGER_ARCHETYPE_ID;
 
     const specialistRegistry = await this.loadSpecialistRegistryModule();
+    const projectAgentPrompt = options?.ignoreProjectAgentSystemPrompt
+      ? undefined
+      : descriptor.projectAgent?.systemPrompt?.trim();
     const [promptTemplate, roster, specialistsEnabled] = await Promise.all([
-      this.promptRegistry.resolve("archetype", managerArchetypeId, profileId),
+      projectAgentPrompt
+        ? Promise.resolve(projectAgentPrompt)
+        : this.promptRegistry.resolve("archetype", managerArchetypeId, profileId),
       specialistRegistry.resolveRoster(profileId),
       specialistRegistry.getSpecialistsEnabled(),
     ]);
@@ -7322,7 +7369,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         projectAgent: projectAgent
           ? {
               handle: projectAgent.handle,
-              whenToUse: projectAgent.whenToUse
+              whenToUse: projectAgent.whenToUse,
+              ...(projectAgent.systemPrompt !== undefined
+                ? { systemPrompt: projectAgent.systemPrompt }
+                : {})
             }
           : null
       } satisfies ServerEvent
@@ -8444,6 +8494,69 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     };
   }
 
+  protected async executeProjectAgentAnalysis(
+    model: Model<Api>,
+    options: AnalyzeSessionForPromotionOptions
+  ): Promise<ProjectAgentRecommendations> {
+    return analyzeSessionForPromotion(model, options);
+  }
+
+  private async resolveProjectAgentAnalysisModel(): Promise<{
+    model: Model<Api>;
+    apiKey?: string;
+    headers?: Record<string, string>;
+    modelLabel: string;
+  }> {
+    const authFilePath = await ensureCanonicalAuthFilePath(this.config);
+    const authStorage = AuthStorage.create(authFilePath);
+    const piModelsJsonPath = this.getPiModelsJsonPathOrThrow();
+    assertPiModelsProjectionAvailable(piModelsJsonPath);
+    const modelRegistry = new ModelRegistry(authStorage, piModelsJsonPath);
+    const modelRegistryError = modelRegistry.getError?.();
+    if (modelRegistryError) {
+      throw new Error(modelRegistryError);
+    }
+
+    const candidates = [
+      { provider: "anthropic", modelId: "claude-opus-4-6" },
+      { provider: "openai-codex", modelId: "gpt-5.4" }
+    ] as const;
+    const failureMessages: string[] = [];
+
+    for (const candidate of candidates) {
+      const model =
+        modelRegistry.find(candidate.provider, candidate.modelId) ??
+        (getModel(candidate.provider as never, candidate.modelId as never) as Model<Api> | undefined);
+      if (!model) {
+        failureMessages.push(`Model ${candidate.provider}/${candidate.modelId} is unavailable.`);
+        continue;
+      }
+
+      const auth = await modelRegistry.getApiKeyAndHeaders(model);
+      if (!auth.ok) {
+        failureMessages.push(`${candidate.provider}/${candidate.modelId}: ${auth.error}`);
+        continue;
+      }
+
+      return {
+        model,
+        apiKey: auth.apiKey,
+        headers: auth.headers,
+        modelLabel: `${candidate.provider}/${candidate.modelId}`
+      };
+    }
+
+    throw new Error(
+      [
+        "No configured model is available for project agent analysis.",
+        "Tried anthropic/claude-opus-4-6 first, then openai-codex/gpt-5.4.",
+        failureMessages.join(" ")
+      ]
+        .filter((part) => part.trim().length > 0)
+        .join(" ")
+    );
+  }
+
   protected async executeSessionMemoryLLMMerge(
     descriptor: AgentDescriptor,
     profileMemoryContent: string,
@@ -8918,6 +9031,13 @@ function validateAgentDescriptor(value: unknown): AgentDescriptor | string {
 
     if (!isNonEmptyString(value.projectAgent.whenToUse)) {
       return "projectAgent.whenToUse must be a non-empty string";
+    }
+
+    if (
+      value.projectAgent.systemPrompt !== undefined &&
+      typeof value.projectAgent.systemPrompt !== "string"
+    ) {
+      return "projectAgent.systemPrompt must be a string when provided";
     }
   }
 

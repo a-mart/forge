@@ -56,6 +56,11 @@ describe('ws command parser session commands', () => {
         projectAgent: { whenToUse: 'Coordinate release work' },
         requestId: 'req-project-agent',
       },
+      {
+        type: 'request_project_agent_recommendations',
+        agentId: 'session-a',
+        requestId: 'req-project-agent-recs',
+      },
       { type: 'fork_session', sourceAgentId: 'session-a', label: 'Forked', requestId: 'req-fork' },
       { type: 'merge_session_memory', agentId: 'session-a', requestId: 'req-merge' },
       { type: 'get_session_workers', sessionAgentId: 'session-a', requestId: 'req-workers' },
@@ -65,6 +70,54 @@ describe('ws command parser session commands', () => {
       const parsed = parseJsonCommand(command)
       expect(parsed).toEqual({ ok: true, command })
     }
+  })
+
+  it('parses set_session_project_agent with an optional systemPrompt override', () => {
+    const parsed = parseJsonCommand({
+      type: 'set_session_project_agent',
+      agentId: ' session-a ',
+      projectAgent: {
+        whenToUse: 'Coordinate release work',
+        systemPrompt: 'You are the release coordination project agent.',
+      },
+      requestId: 'req-project-agent',
+    })
+
+    expect(parsed).toEqual({
+      ok: true,
+      command: {
+        type: 'set_session_project_agent',
+        agentId: 'session-a',
+        projectAgent: {
+          whenToUse: 'Coordinate release work',
+          systemPrompt: 'You are the release coordination project agent.',
+        },
+        requestId: 'req-project-agent',
+      },
+    })
+  })
+
+  it('parses set_session_project_agent without a systemPrompt override', () => {
+    const parsed = parseJsonCommand({
+      type: 'set_session_project_agent',
+      agentId: 'session-a',
+      projectAgent: {
+        whenToUse: 'Coordinate release work',
+      },
+      requestId: 'req-project-agent',
+    })
+
+    expect(parsed).toEqual({
+      ok: true,
+      command: {
+        type: 'set_session_project_agent',
+        agentId: 'session-a',
+        projectAgent: {
+          whenToUse: 'Coordinate release work',
+        },
+        requestId: 'req-project-agent',
+      },
+    })
   })
 
   it('parses api_proxy commands', () => {
@@ -203,6 +256,14 @@ describe('ws command parser session commands', () => {
       {
         payload: { type: 'set_session_project_agent', agentId: 'session-a', projectAgent: null, requestId: 42 },
         message: 'set_session_project_agent.requestId must be a string when provided',
+      },
+      {
+        payload: { type: 'request_project_agent_recommendations', agentId: '' },
+        message: 'request_project_agent_recommendations.agentId must be a non-empty string',
+      },
+      {
+        payload: { type: 'request_project_agent_recommendations', agentId: 'session-a', requestId: 42 },
+        message: 'request_project_agent_recommendations.requestId must be a string when provided',
       },
       {
         payload: { type: 'fork_session', sourceAgentId: '' },
@@ -392,6 +453,11 @@ describe('ws command parser session commands', () => {
         agentId: 'manager--s2',
         projectAgent: { whenToUse: 'Coordinate release work' },
         requestId: 'req-project-agent',
+      },
+      {
+        type: 'request_project_agent_recommendations',
+        agentId: 'manager--s2',
+        requestId: 'req-project-agent-recs',
       },
       { type: 'fork_session', sourceAgentId: 'manager--s2', requestId: 'req-fork' },
       { type: 'merge_session_memory', agentId: 'manager--s2', requestId: 'req-merge' },

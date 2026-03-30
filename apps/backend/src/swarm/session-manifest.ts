@@ -539,6 +539,7 @@ function coerceAgentDescriptor(value: unknown): AgentDescriptor | undefined {
   const projectAgentRecord = isRecord(value.projectAgent) ? value.projectAgent : undefined;
   const projectAgentHandle = normalizeOptionalString(projectAgentRecord?.handle);
   const projectAgentWhenToUse = normalizeOptionalString(projectAgentRecord?.whenToUse);
+  const projectAgentSystemPrompt = normalizeOptionalString(projectAgentRecord?.systemPrompt);
 
   if (!agentId || !managerId || !createdAt || !updatedAt || !cwd || !sessionFile || !provider || !modelId || !status) {
     return undefined;
@@ -569,7 +570,10 @@ function coerceAgentDescriptor(value: unknown): AgentDescriptor | undefined {
       projectAgentHandle && projectAgentWhenToUse
         ? {
             handle: projectAgentHandle,
-            whenToUse: projectAgentWhenToUse
+            whenToUse: projectAgentWhenToUse,
+            ...(projectAgentSystemPrompt !== undefined
+              ? { systemPrompt: projectAgentSystemPrompt }
+              : {})
           }
         : undefined
   };
