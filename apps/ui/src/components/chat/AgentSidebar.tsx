@@ -1425,13 +1425,13 @@ function ProjectAgentSettingsSheet({
       <SheetContent
         side="right"
         className={cn(
-          'overflow-y-auto',
+          'w-[600px] max-w-[90vw] overflow-y-auto',
           '[color-scheme:light] dark:[color-scheme:dark]',
           '[&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent',
           '[&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border',
           '[&::-webkit-scrollbar-thumb:hover]:bg-border/80',
         )}
-        style={{ width: '100%', maxWidth: 'min(90vw, 600px)', scrollbarWidth: 'thin', scrollbarColor: 'hsl(var(--border)) transparent' }}
+        style={{ scrollbarWidth: 'thin', scrollbarColor: 'hsl(var(--border)) transparent' }}
       >
         <SheetHeader>
           <SheetTitle>{isPromoting ? 'Promote to Project Agent' : 'Project Agent Settings'}</SheetTitle>
