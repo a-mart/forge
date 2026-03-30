@@ -793,7 +793,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
     // Replace the @token (from mentionTokenStart to current cursor) with @handle + space
     const textarea = textareaRef.current
     const cursorPos = textarea?.selectionStart ?? input.length
-    const replacement = `@${agent.handle} `
+    const replacement = `[@${agent.handle}] `
     const newValue = input.slice(0, mentionTokenStart) + replacement + input.slice(cursorPos)
     setInputWithDraft(newValue)
     setIsMentionMenuOpen(false)
@@ -1004,8 +1004,8 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
               }}
             >
               <div className="flex items-center gap-2">
-                <code className="shrink-0 text-xs font-semibold text-blue-500">@{agent.handle}</code>
-                <span className="text-xs text-foreground">{agent.displayName}</span>
+                <code className="shrink-0 text-xs font-semibold text-foreground">@{agent.handle}</code>
+                <span className="text-xs text-muted-foreground">{agent.displayName}</span>
               </div>
               {agent.whenToUse ? (
                 <span className="line-clamp-1 text-xs text-muted-foreground">{agent.whenToUse}</span>
