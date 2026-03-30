@@ -1947,7 +1947,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.emitProfilesSnapshot();
 
     if (sessionDescriptor.sessionPurpose === "agent_creator") {
-      void this.injectAgentCreatorContext(sessionDescriptor.agentId, prepared.profile.profileId);
+      await this.injectAgentCreatorContext(sessionDescriptor.agentId, prepared.profile.profileId);
     }
 
     return {
@@ -3809,6 +3809,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const profile = this.profiles.get(profileId);
     if (!profile) {
       throw new Error(`Unknown profile: ${profileId}`);
+    }
+
+    if (options?.sessionPurpose === "agent_creator" && profileId === CORTEX_PROFILE_ID) {
+      throw new Error("Agent creator sessions cannot be created in the Cortex profile");
     }
 
     const templateDescriptor = this.descriptors.get(profile.defaultSessionAgentId);

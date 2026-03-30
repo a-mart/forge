@@ -4,9 +4,11 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   extractStructuredMemoryContent,
+  EXISTING_AGENTS_SECTION_CHAR_BUDGET,
   formatAgentCreatorContextMessage,
   gatherAgentCreatorContext,
   GLOBAL_SESSION_MEMORIES_BUDGET,
+  MAX_AGENT_CREATOR_CONTEXT_MESSAGE_CHARS,
   MAX_SESSION_SCAN_COUNT,
   PER_SESSION_CHAR_BUDGET,
   scanRecentSessionMemories
@@ -141,6 +143,29 @@ describe("agent-creator-context", () => {
     expect(populated).toContain("whenToUse: Use for backend correctness and route debugging.");
     expect(populated).toContain("systemPromptFocus: Backend specialist focused on APIs, persistence, and runtime behavior.");
     expect(populated).toContain('Session "Release Work":');
+  });
+
+  it("caps the formatted context message based on full rendered output, including existing-agent summaries", () => {
+    const message = formatAgentCreatorContextMessage({
+      existingAgents: Array.from({ length: 20 }, (_, index) => ({
+        handle: `agent-${index + 1}`,
+        displayName: `Agent ${index + 1}`,
+        whenToUse: `Use agent ${index + 1} for ${"routing ".repeat(25)}`,
+        systemPromptExcerpt: `Focus ${index + 1}: ${"context ".repeat(18)}`
+      })),
+      sessionMemories: Array.from({ length: MAX_SESSION_SCAN_COUNT }, (_, index) => ({
+        sessionId: `session-${index + 1}`,
+        label: `Session ${index + 1}`,
+        excerpt: `- Memory ${index + 1}: ${"x".repeat(260)}`
+      }))
+    });
+
+    expect(message.length).toBeLessThanOrEqual(MAX_AGENT_CREATOR_CONTEXT_MESSAGE_CHARS);
+    expect(message).toContain("</existing_project_agents>");
+    expect(message).toContain("</recent_session_context>");
+    expect(message).toContain("additional project agents omitted to stay within context budget");
+    expect(message).toContain("Session \"Session 1\":");
+    expect(message.length).toBeGreaterThan(EXISTING_AGENTS_SECTION_CHAR_BUDGET);
   });
 
   it("scans recent session memories with placeholder skipping, exclude filtering, scan cap, and global budget enforcement", async () => {

@@ -1061,6 +1061,41 @@ describe('SwarmManager', () => {
     ).rejects.toThrow('Cortex review sessions cannot be promoted to project agents')
   })
 
+  it('rejects agent_creator sessions in the cortex profile', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await expect(
+      manager.createSession('cortex', {
+        label: 'Agent Creator',
+        sessionPurpose: 'agent_creator',
+      }),
+    ).rejects.toThrow('Agent creator sessions cannot be created in the Cortex profile')
+
+    expect(manager.listAgents().some((agent) => agent.profileId === 'cortex' && agent.sessionPurpose === 'agent_creator')).toBe(
+      false,
+    )
+  })
+
+  it('awaits agent creator context injection before createSession resolves', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const creator = await manager.createSession('manager', {
+      label: 'Agent Creator',
+      sessionPurpose: 'agent_creator',
+    })
+
+    const runtime = manager.runtimeByAgentId.get(creator.sessionAgent.agentId)
+    const injectedMessage = typeof runtime?.sendCalls[0]?.message === 'string' ? runtime.sendCalls[0].message : ''
+
+    expect(runtime?.sendCalls).toHaveLength(1)
+    expect(injectedMessage).toContain('<existing_project_agents>')
+    expect(injectedMessage).toContain('</recent_session_context>')
+  })
+
   it('createAndPromoteProjectAgent creates a promoted session with the custom prompt on first boot', async () => {
     const config = await makeTempConfig()
     const manager = new ProjectAgentAwareSwarmManager(config)
