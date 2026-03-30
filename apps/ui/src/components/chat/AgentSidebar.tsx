@@ -1422,7 +1422,7 @@ function ProjectAgentSettingsSheet({
 
   return (
     <Sheet open onOpenChange={(open) => { if (!open) onClose() }}>
-      <SheetContent side="right" className="w-full max-w-md overflow-y-auto sm:max-w-md">
+      <SheetContent side="right" className="w-full max-w-[90vw] overflow-y-auto sm:max-w-[600px]">
         <SheetHeader>
           <SheetTitle>{isPromoting ? 'Promote to Project Agent' : 'Project Agent Settings'}</SheetTitle>
           <SheetDescription>
