@@ -2007,20 +2007,20 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     };
     this.descriptors.set(sessionDescriptor.agentId, sessionDescriptor);
 
-    await this.ensureSessionFileParentDirectory(sessionDescriptor.sessionFile);
-    await this.ensureAgentMemoryFile(this.getAgentMemoryPath(sessionDescriptor.agentId), prepared.profile.profileId);
-    await this.ensureAgentMemoryFile(getProfileMemoryPath(this.config.paths.dataDir, prepared.profile.profileId), prepared.profile.profileId);
-    await this.writeInitialSessionMeta(sessionDescriptor);
-
     try {
+      await this.ensureSessionFileParentDirectory(sessionDescriptor.sessionFile);
+      await this.ensureAgentMemoryFile(this.getAgentMemoryPath(sessionDescriptor.agentId), prepared.profile.profileId);
+      await this.ensureAgentMemoryFile(getProfileMemoryPath(this.config.paths.dataDir, prepared.profile.profileId), prepared.profile.profileId);
+      await this.writeInitialSessionMeta(sessionDescriptor);
+
       const runtime = await this.getOrCreateRuntimeForDescriptor(sessionDescriptor);
       sessionDescriptor.contextUsage = runtime.getContextUsage();
+
+      await this.saveStore();
     } catch (error) {
       await this.rollbackCreatedSession(sessionDescriptor);
       throw error;
     }
-
-    await this.saveStore();
     this.emitSessionLifecycle({
       action: "created",
       sessionAgentId: sessionDescriptor.agentId,

@@ -1133,6 +1133,78 @@ describe('SwarmManager', () => {
     })
   })
 
+  it('createAndPromoteProjectAgent rolls back descriptors when setup fails before runtime creation', async () => {
+    const config = await makeTempConfig()
+    const manager = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const creator = await manager.createSession('manager', {
+      label: 'Agent Creator',
+      sessionPurpose: 'agent_creator',
+    })
+    const agentIdsBefore = manager.listAgents().map((agent) => agent.agentId).sort()
+    const profileSessionsDir = join(config.paths.dataDir, 'profiles', 'manager', 'sessions')
+    const sessionDirsBefore = (await readdir(profileSessionsDir)).sort()
+
+    vi.spyOn(manager as any, 'writeInitialSessionMeta').mockRejectedValueOnce(new Error('meta boom'))
+
+    await expect(
+      manager.createAndPromoteProjectAgent(creator.sessionAgent.agentId, {
+        sessionName: 'Release Notes',
+        whenToUse: 'Draft release notes.',
+        systemPrompt: 'You are the release notes project agent.',
+      }),
+    ).rejects.toThrow('meta boom')
+
+    expect(manager.listAgents().map((agent) => agent.agentId).sort()).toEqual(agentIdsBefore)
+    expect((await readdir(profileSessionsDir)).sort()).toEqual(sessionDirsBefore)
+    expect(manager.notifiedProjectAgentProfileIds).toEqual([])
+
+    const retried = await manager.createAndPromoteProjectAgent(creator.sessionAgent.agentId, {
+      sessionName: 'Release Notes',
+      whenToUse: 'Draft release notes.',
+      systemPrompt: 'You are the release notes project agent.',
+    })
+
+    expect(retried.handle).toBe('release-notes')
+  })
+
+  it('createAndPromoteProjectAgent rolls back descriptors when persistence fails after runtime creation', async () => {
+    const config = await makeTempConfig()
+    const manager = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const creator = await manager.createSession('manager', {
+      label: 'Agent Creator',
+      sessionPurpose: 'agent_creator',
+    })
+    const agentIdsBefore = manager.listAgents().map((agent) => agent.agentId).sort()
+    const profileSessionsDir = join(config.paths.dataDir, 'profiles', 'manager', 'sessions')
+    const sessionDirsBefore = (await readdir(profileSessionsDir)).sort()
+
+    vi.spyOn(manager as any, 'saveStore').mockRejectedValueOnce(new Error('save boom'))
+
+    await expect(
+      manager.createAndPromoteProjectAgent(creator.sessionAgent.agentId, {
+        sessionName: 'Release Notes',
+        whenToUse: 'Draft release notes.',
+        systemPrompt: 'You are the release notes project agent.',
+      }),
+    ).rejects.toThrow('save boom')
+
+    expect(manager.listAgents().map((agent) => agent.agentId).sort()).toEqual(agentIdsBefore)
+    expect((await readdir(profileSessionsDir)).sort()).toEqual(sessionDirsBefore)
+    expect(manager.notifiedProjectAgentProfileIds).toEqual([])
+
+    const retried = await manager.createAndPromoteProjectAgent(creator.sessionAgent.agentId, {
+      sessionName: 'Release Notes',
+      whenToUse: 'Draft release notes.',
+      systemPrompt: 'You are the release notes project agent.',
+    })
+
+    expect(retried.handle).toBe('release-notes')
+  })
+
   it('createAndPromoteProjectAgent rejects invalid creators and collisions before creating a session', async () => {
     const config = await makeTempConfig()
     const manager = new ProjectAgentAwareSwarmManager(config)

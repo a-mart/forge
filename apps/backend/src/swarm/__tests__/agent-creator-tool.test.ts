@@ -22,6 +22,10 @@ describe('buildCreateProjectAgentTool', () => {
       'whenToUse',
       'systemPrompt',
     ])
+    expect((tool.parameters as any).properties.sessionName.minLength).toBe(1)
+    expect((tool.parameters as any).properties.whenToUse.minLength).toBe(1)
+    expect((tool.parameters as any).properties.whenToUse.maxLength).toBe(280)
+    expect((tool.parameters as any).properties.systemPrompt.minLength).toBe(1)
 
     const result = await tool.execute(
       'tool-1',
@@ -47,7 +51,7 @@ describe('buildCreateProjectAgentTool', () => {
     })
     expect(result.content[0]).toEqual({
       type: 'text',
-      text: 'Project agent "Release Notes" created successfully with handle @release-notes (agentId: manager--s2).',
+      text: 'Project agent @release-notes created successfully (agentId: manager--s2).',
     })
   })
 
