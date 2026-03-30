@@ -22,7 +22,7 @@
     "build:electron": "pnpm --filter @forge/electron run build:all",
     "model-catalog:audit": "node scripts/model-catalog-audit.mjs",
     "package:electron": "pnpm --filter @forge/electron run package",
-    "release:electron": "cd apps/electron && node scripts/release.mjs",
+    "release:electron": "node -e \"console.error('Deprecated: official desktop releases must use the build-first, draft-first flow in apps/electron/README.md. This shortcut is intentionally disabled.'); process.exit(1)\"",
     "prod": "pnpm build && pnpm prod:start",
     "prod:start": "node scripts/check-data-migration.mjs && concurrently --kill-others-on-fail --names backend,ui \"cross-env NODE_ENV=production FORGE_PORT=47287 pnpm --filter @forge/backend start\" \"pnpm --filter @forge/ui preview\"",
     "prod:daemon": "node scripts/prod-daemon.mjs",

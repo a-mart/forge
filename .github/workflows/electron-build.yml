@@ -1,7 +1,8 @@
-# Electron desktop app build workflow.
-# - Manual trigger (workflow_dispatch): builds Windows artifacts and uploads them.
-#   The release script (electron-release skill) triggers this and handles GitHub Release creation.
-# - Branch push (electron/*): Windows validation build only.
+# Electron desktop app Windows build workflow.
+# - Manual trigger (workflow_dispatch): release-path Windows artifact build.
+# - Branch push (electron/*): validation-only Windows build for release branches.
+# - This workflow does not publish GitHub Releases; operators create a draft release separately
+#   and upload the full updater asset set after macOS and Windows artifacts are both validated.
 # - macOS builds (signed + notarized) are performed locally on a developer machine.
 
 name: Electron Build
@@ -52,11 +53,57 @@ jobs:
       - name: Package Electron
         run: pnpm package:electron
 
+      - name: Derive Electron version
+        id: electron_version
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "version=$(node -p 'require("./apps/electron/package.json").version')" >> "$GITHUB_OUTPUT"
+
+      - name: Validate Windows release artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.electron_version.outputs.version }}"
+          RELEASE_DIR="apps/electron/release"
+          EXPECTED_INSTALLER="Forge-Setup-${VERSION}.exe"
+          EXPECTED_BLOCKMAP="${EXPECTED_INSTALLER}.blockmap"
+          EXPECTED_MANIFEST="latest.yml"
+
+          mapfile -t EXE_FILES < <(find "$RELEASE_DIR" -maxdepth 1 -type f -name '*.exe' -exec basename {} \; | sort)
+          mapfile -t BLOCKMAP_FILES < <(find "$RELEASE_DIR" -maxdepth 1 -type f -name '*.exe.blockmap' -exec basename {} \; | sort)
+          mapfile -t MANIFEST_FILES < <(find "$RELEASE_DIR" -maxdepth 1 -type f -name 'latest.yml' -exec basename {} \; | sort)
+
+          if [[ ${#EXE_FILES[@]} -ne 1 || "${EXE_FILES[0]}" != "$EXPECTED_INSTALLER" ]]; then
+            echo "[electron-build] expected exactly $EXPECTED_INSTALLER, found: ${EXE_FILES[*]:-<none>}" >&2
+            exit 1
+          fi
+
+          if [[ ${#BLOCKMAP_FILES[@]} -ne 1 || "${BLOCKMAP_FILES[0]}" != "$EXPECTED_BLOCKMAP" ]]; then
+            echo "[electron-build] expected exactly $EXPECTED_BLOCKMAP, found: ${BLOCKMAP_FILES[*]:-<none>}" >&2
+            exit 1
+          fi
+
+          if [[ ${#MANIFEST_FILES[@]} -ne 1 || "${MANIFEST_FILES[0]}" != "$EXPECTED_MANIFEST" ]]; then
+            echo "[electron-build] expected exactly one $EXPECTED_MANIFEST, found: ${MANIFEST_FILES[*]:-<none>}" >&2
+            exit 1
+          fi
+
+          node apps/electron/scripts/validate-updater-manifest.mjs \
+            --manifest "$RELEASE_DIR/$EXPECTED_MANIFEST" \
+            --platform windows \
+            --version "$VERSION" \
+            --asset-root "$RELEASE_DIR" \
+            --label "[electron-build]"
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: forge-${{ matrix.platform }}
-          path: apps/electron/release/**
+          path: |
+            apps/electron/release/Forge-Setup-${{ steps.electron_version.outputs.version }}.exe
+            apps/electron/release/Forge-Setup-${{ steps.electron_version.outputs.version }}.exe.blockmap
+            apps/electron/release/latest.yml
           if-no-files-found: error
 
 

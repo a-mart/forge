@@ -4,7 +4,7 @@ import { cp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { build as esbuild } from 'esbuild'
 
 gracefulFs.gracefulify(fs)
@@ -16,19 +16,47 @@ const backendWorkspaceDir = path.join(repoRoot, 'apps', 'backend')
 const backendWorkspaceManifestPath = path.join(backendWorkspaceDir, 'package.json')
 const backendBuildEntry = path.join(backendWorkspaceDir, 'dist', 'index.js')
 const stageDir = path.join(electronDir, '.stage')
+const releaseDir = path.join(electronDir, 'release')
 const backendStageDir = path.join(stageDir, 'backend')
 const backendStageBundlePath = path.join(backendStageDir, 'dist', 'index.mjs')
 const backendStageNodeModulesDir = path.join(backendStageDir, 'node_modules')
 const uiStageDir = path.join(stageDir, 'ui')
 const forgeResourcesDir = path.join(stageDir, 'forge-resources')
+const stagedBuiltinSkillsDir = path.join(forgeResourcesDir, 'apps', 'backend', 'src', 'swarm', 'skills', 'builtins')
+const stagedBuiltinArchetypesDir = path.join(forgeResourcesDir, 'apps', 'backend', 'src', 'swarm', 'archetypes', 'builtins')
+const stagedBuiltinSpecialistsDir = path.join(forgeResourcesDir, 'apps', 'backend', 'src', 'swarm', 'specialists', 'builtins')
 const pnpmCommand = 'pnpm'
 const useShell = process.platform === 'win32'
 
 const BACKEND_BUNDLE_EXTERNAL_PACKAGES = [
-  { name: 'sharp', optional: false },
-  { name: 'node-pty', optional: false },
-  { name: 'koffi', optional: true },
-  { name: '@mariozechner/clipboard', optional: true },
+  {
+    name: 'sharp',
+    optional: false,
+    validateLoadedModule: (loadedModule) =>
+      typeof loadedModule === 'function' && typeof loadedModule.versions === 'object'
+        ? null
+        : 'expected a callable export with versions metadata',
+  },
+  {
+    name: 'node-pty',
+    optional: false,
+    validateLoadedModule: (loadedModule) =>
+      typeof loadedModule?.spawn === 'function' ? null : 'expected a spawn() export',
+  },
+  {
+    name: 'koffi',
+    optional: true,
+    validateLoadedModule: (loadedModule) =>
+      typeof loadedModule?.struct === 'function' ? null : 'expected a struct() export',
+  },
+  {
+    name: '@mariozechner/clipboard',
+    optional: true,
+    validateLoadedModule: (loadedModule) =>
+      typeof loadedModule?.getText === 'function' && typeof loadedModule?.setText === 'function'
+        ? null
+        : 'expected getText()/setText() exports',
+  },
 ]
 const PACKAGE_METADATA_DIRS_TO_PRUNE = new Set([
   '.github',
@@ -53,7 +81,17 @@ const declarationMapSuffixes = ['.d.ts.map', '.d.mts.map', '.d.cts.map']
 const docsPrefixes = ['license', 'changelog', 'readme']
 const docsPrunableExtensions = new Set(['', '.md', '.mdx', '.markdown', '.txt', '.rst', '.adoc', '.rtf'])
 
+export async function cleanReleaseDir(targetDir = releaseDir) {
+  await mkdir(targetDir, { recursive: true })
+
+  const entries = await fs.promises.readdir(targetDir)
+  await Promise.all(entries.map((entry) => rm(path.join(targetDir, entry), { recursive: true, force: true })))
+
+  console.log(`[electron/build-all] Cleaned release output directory ${targetDir} (${entries.length} entries removed)`)
+}
+
 async function main() {
+  await cleanReleaseDir()
   await rm(stageDir, { recursive: true, force: true })
   await mkdir(stageDir, { recursive: true })
 
@@ -68,10 +106,11 @@ async function main() {
 
   await assertExists(backendStageBundlePath, 'staged backend bundle entry')
   await assertExists(path.join(uiStageDir, 'index.html'), 'staged renderer entry')
-  await assertExists(
-    path.join(forgeResourcesDir, 'apps', 'backend', 'src', 'swarm', 'skills', 'builtins'),
-    'staged built-in skills',
-  )
+  await assertExists(stagedBuiltinSkillsDir, 'staged built-in skills')
+  await assertExists(stagedBuiltinArchetypesDir, 'staged built-in archetypes')
+  await assertExists(stagedBuiltinSpecialistsDir, 'staged built-in specialists')
+
+  await validatePackagedRuntimePreflight()
 }
 
 async function stageBundledBackend() {
@@ -108,6 +147,108 @@ async function stageBundledBackend() {
 
   const fileCount = await countFiles(backendStageDir)
   console.log(`[electron/build-all] Staged bundled backend with ${runtimePackages.length} runtime packages (${fileCount} files)`)
+}
+
+export async function validatePackagedRuntimePreflight() {
+  const stagedRequire = createRequire(backendStageBundlePath)
+  const verifiedPackages = []
+
+  for (const runtimePackage of BACKEND_BUNDLE_EXTERNAL_PACKAGES) {
+    const stagedPackageDir = path.join(backendStageNodeModulesDir, ...runtimePackage.name.split('/'))
+    if (!existsSync(stagedPackageDir)) {
+      if (runtimePackage.optional) {
+        console.log(`[electron/build-all] Packaged-runtime preflight skipped optional package ${runtimePackage.name} (not staged)`)
+        continue
+      }
+
+      throw new Error(
+        `Packaged-runtime preflight failed: staged runtime package directory is missing for ${runtimePackage.name} (${stagedPackageDir})`,
+      )
+    }
+
+    let resolvedEntry
+    try {
+      resolvedEntry = stagedRequire.resolve(runtimePackage.name)
+    } catch (error) {
+      throw new Error(
+        `Packaged-runtime preflight failed: unable to resolve staged runtime package "${runtimePackage.name}" from ${backendStageBundlePath}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      )
+    }
+
+    assertPathIsWithinDirectory(
+      resolvedEntry,
+      backendStageNodeModulesDir,
+      `Packaged-runtime preflight failed: runtime package "${runtimePackage.name}" resolved outside the staged node_modules directory`,
+    )
+
+    let loadedModule
+    try {
+      loadedModule = await loadRuntimeModule(stagedRequire, runtimePackage.name, resolvedEntry)
+    } catch (error) {
+      throw new Error(
+        `Packaged-runtime preflight failed: unable to load staged runtime package "${runtimePackage.name}" from ${resolvedEntry}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      )
+    }
+
+    const validationFailure = runtimePackage.validateLoadedModule?.(loadedModule)
+    if (validationFailure) {
+      throw new Error(
+        `Packaged-runtime preflight failed: staged runtime package "${runtimePackage.name}" loaded from ${resolvedEntry} but ${validationFailure}`,
+      )
+    }
+
+    verifiedPackages.push(
+      `${runtimePackage.name} -> ${path.relative(backendStageDir, resolvedEntry)} (${describeLoadedModule(loadedModule)})`,
+    )
+  }
+
+  console.log(`[electron/build-all] Packaged-runtime preflight resolved and loaded ${verifiedPackages.length} staged runtime packages`)
+  for (const resolution of verifiedPackages) {
+    console.log(`[electron/build-all]   ${resolution}`)
+  }
+}
+
+async function loadRuntimeModule(stagedRequire, packageName, resolvedEntry) {
+  try {
+    return stagedRequire(packageName)
+  } catch (error) {
+    if (!isRequireEsmError(error)) {
+      throw error
+    }
+
+    const importedModule = await import(pathToFileURL(resolvedEntry).href)
+    return importedModule.default ?? importedModule
+  }
+}
+
+function describeLoadedModule(loadedModule) {
+  if (typeof loadedModule === 'function') {
+    const functionKeys = Object.keys(loadedModule).slice(0, 5)
+    return functionKeys.length > 0 ? `function export; keys=${functionKeys.join(', ')}` : 'function export'
+  }
+
+  if (loadedModule && typeof loadedModule === 'object') {
+    const objectKeys = Object.keys(loadedModule).slice(0, 5)
+    return objectKeys.length > 0 ? `object export; keys=${objectKeys.join(', ')}` : 'object export'
+  }
+
+  return `${typeof loadedModule} export`
+}
+
+function assertPathIsWithinDirectory(targetPath, parentDirectory, failurePrefix) {
+  const resolvedParentDirectory = path.resolve(parentDirectory)
+  const resolvedTargetPath = path.resolve(targetPath)
+  const normalizedParentPrefix = `${resolvedParentDirectory}${path.sep}`
+
+  if (resolvedTargetPath === resolvedParentDirectory || resolvedTargetPath.startsWith(normalizedParentPrefix)) {
+    return
+  }
+
+  throw new Error(`${failurePrefix}: ${resolvedTargetPath}`)
 }
 
 async function stageBundledDependencyRuntimeAssets() {
@@ -269,6 +410,10 @@ function isModuleNotFoundError(error) {
   )
 }
 
+function isRequireEsmError(error) {
+  return Boolean(error && typeof error === 'object' && 'code' in error && error.code === 'ERR_REQUIRE_ESM')
+}
+
 async function stageRuntimePackages(runtimePackages) {
   if (runtimePackages.length === 0) {
     return
@@ -404,6 +549,10 @@ async function stageBackendResources() {
     path.join(forgeResourcesDir, 'apps', 'backend', 'src', 'swarm', 'skills', 'builtins'),
   )
   await copyDirectory(
+    path.join(repoRoot, 'apps', 'backend', 'src', 'swarm', 'specialists', 'builtins'),
+    path.join(forgeResourcesDir, 'apps', 'backend', 'src', 'swarm', 'specialists', 'builtins'),
+  )
+  await copyDirectory(
     path.join(repoRoot, 'apps', 'backend', 'static'),
     path.join(forgeResourcesDir, 'apps', 'backend', 'static'),
   )
@@ -448,8 +597,12 @@ async function run(command, args) {
   })
 }
 
-main().catch((error) => {
-  console.error('[electron/build-all] Failed to assemble packaged app resources')
-  console.error(error)
-  process.exit(1)
-})
+const isEntrypoint = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+
+if (isEntrypoint) {
+  main().catch((error) => {
+    console.error('[electron/build-all] Failed to assemble packaged app resources')
+    console.error(error)
+    process.exit(1)
+  })
+}
