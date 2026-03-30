@@ -6,7 +6,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getCreateManagerFamilies } from '@forge/protocol'
-import { IndexPage, isCortexDiffViewerSession } from './index'
+import { getProjectAgentSuggestions, IndexPage, isCortexDiffViewerSession } from './index'
 import { HelpProvider } from '@/components/help/HelpProvider'
 
 const CREATE_MANAGER_FAMILIES = getCreateManagerFamilies()
@@ -353,6 +353,38 @@ describe('IndexPage create project model selection', () => {
     expect(queryByText(container, /owned-call/)).toBeNull()
     expect(queryByText(container, 'foreign worker chatter')).toBeNull()
     expect(queryByText(container, /foreign-call/)).toBeNull()
+  })
+
+  it('uses sessionLabel for project-agent suggestions when displayName is stale after rename', () => {
+    const activeAgent = {
+      ...buildManager('manager', '/tmp/manager'),
+      profileId: 'manager',
+      sessionLabel: 'Main Session',
+    }
+
+    const suggestions = getProjectAgentSuggestions(activeAgent, [
+      activeAgent,
+      {
+        ...buildManager('manager--s2', '/tmp/manager'),
+        managerId: 'manager--s2',
+        profileId: 'manager',
+        displayName: 'Old Name',
+        sessionLabel: 'Renamed Session',
+        projectAgent: {
+          handle: 'renamed-session',
+          whenToUse: 'Handle release-note drafting',
+        },
+      },
+    ])
+
+    expect(suggestions).toEqual([
+      {
+        agentId: 'manager--s2',
+        handle: 'renamed-session',
+        displayName: 'Renamed Session',
+        whenToUse: 'Handle release-note drafting',
+      },
+    ])
   })
 
   it('keeps the root URL free of query params when the active agent is implicit', async () => {

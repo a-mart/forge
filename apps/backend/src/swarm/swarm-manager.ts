@@ -4117,6 +4117,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       sender.role === "manager" &&
       target.role === "manager" &&
       fromAgentId !== targetAgentId &&
+      (sender.profileId ?? sender.agentId) === (target.profileId ?? target.agentId) &&
       target.projectAgent !== undefined;
 
     if (isProjectAgentDelivery) {

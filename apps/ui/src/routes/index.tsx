@@ -75,6 +75,27 @@ export function isCortexDiffViewerSession(agent: AgentDescriptor | null | undefi
   )
 }
 
+export function getProjectAgentSuggestions(
+  activeAgent: AgentDescriptor | null | undefined,
+  agents: AgentDescriptor[],
+): ProjectAgentSuggestion[] {
+  if (!activeAgent || activeAgent.role !== 'manager' || !activeAgent.profileId) return []
+
+  return agents
+    .filter(
+      (agent) =>
+        agent.projectAgent &&
+        agent.profileId === activeAgent.profileId &&
+        agent.agentId !== activeAgent.agentId,
+    )
+    .map((agent) => ({
+      agentId: agent.agentId,
+      handle: agent.projectAgent!.handle,
+      displayName: agent.sessionLabel ?? agent.displayName ?? agent.agentId,
+      whenToUse: agent.projectAgent!.whenToUse,
+    }))
+}
+
 export function IndexPage() {
   const wsUrl = resolveBackendWsUrl()
   const messageInputRef = useRef<MessageInputHandle | null>(null)
@@ -201,23 +222,10 @@ export function IndexPage() {
   }, [activeAgent, activeManagerAgent])
 
   // Project agents for @mention autocomplete — only when the active agent is a manager session
-  const projectAgentSuggestions = useMemo((): ProjectAgentSuggestion[] => {
-    if (!activeAgent || activeAgent.role !== 'manager' || !activeAgent.profileId) return []
-    const profileId = activeAgent.profileId
-    return state.agents
-      .filter(
-        (a) =>
-          a.projectAgent &&
-          a.profileId === profileId &&
-          a.agentId !== activeAgent.agentId,
-      )
-      .map((a) => ({
-        agentId: a.agentId,
-        handle: a.projectAgent!.handle,
-        displayName: a.displayName,
-        whenToUse: a.projectAgent!.whenToUse,
-      }))
-  }, [activeAgent, state.agents])
+  const projectAgentSuggestions = useMemo(
+    () => getProjectAgentSuggestions(activeAgent, state.agents),
+    [activeAgent, state.agents],
+  )
 
   const diffViewerSessionAgent = useMemo(() => {
     if (!activeAgent) {
