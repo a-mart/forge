@@ -104,6 +104,38 @@ export interface TerminalIssueTicketResponse {
   ticketExpiresAt: string
 }
 
+export type TerminalDefaultShellSource = 'settings' | 'env' | 'default'
+
+export interface AvailableTerminalShell {
+  path: string
+  name: string
+  available: boolean
+}
+
+export interface TerminalSettings {
+  defaultShell: string | null
+  persistedDefaultShell: string | null
+  source: TerminalDefaultShellSource
+}
+
+export interface GetAvailableTerminalShellsResponse {
+  shells: AvailableTerminalShell[]
+  settings: TerminalSettings
+}
+
+export interface GetTerminalSettingsResponse {
+  settings: TerminalSettings
+}
+
+export interface UpdateTerminalSettingsRequest {
+  defaultShell?: string | null
+}
+
+export interface UpdateTerminalSettingsResponse {
+  ok: true
+  settings: TerminalSettings
+}
+
 export interface TerminalCreatedEvent {
   type: 'terminal_created'
   sessionAgentId: string

@@ -1,14 +1,21 @@
 import type {
+  AvailableTerminalShell,
+  GetAvailableTerminalShellsResponse,
+  GetTerminalSettingsResponse,
   TerminalCreateRequest,
   TerminalIssueTicketRequest,
   TerminalRenameRequest,
   TerminalResizeRequest,
+  UpdateTerminalSettingsRequest,
+  UpdateTerminalSettingsResponse,
 } from "@forge/protocol";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   applyTerminalCorsHeaders,
   validateTerminalHttpOrigin,
 } from "../../terminal/terminal-access-policy.js";
+import { discoverAvailableShells } from "../../terminal/terminal-shell-discovery.js";
+import { TerminalSettingsService, TerminalSettingsValidationError } from "../../terminal/terminal-settings-service.js";
 import { TerminalService, TerminalServiceError } from "../../terminal/terminal-service.js";
 import {
   decodePathSegment,
@@ -23,14 +30,86 @@ const TERMINAL_ITEM_PATH_PATTERN = /^\/api\/terminals\/([^/]+)$/;
 const TERMINAL_RESIZE_PATH_PATTERN = /^\/api\/terminals\/([^/]+)\/resize$/;
 const TERMINAL_TICKET_PATH_PATTERN = /^\/api\/terminals\/([^/]+)\/ticket$/;
 const TERMINALS_COLLECTION_METHODS = "GET, POST, OPTIONS";
+const TERMINAL_SETTINGS_PATH = "/api/terminals/settings";
+const TERMINAL_AVAILABLE_SHELLS_PATH = "/api/terminals/available-shells";
 const TERMINAL_ITEM_METHODS = "PATCH, DELETE, OPTIONS";
 const TERMINAL_RESIZE_METHODS = "POST, OPTIONS";
 const TERMINAL_TICKET_METHODS = "POST, OPTIONS";
+const TERMINAL_SETTINGS_METHODS = "GET, PUT, OPTIONS";
+const TERMINAL_AVAILABLE_SHELLS_METHODS = "GET, OPTIONS";
 
-export function createTerminalRoutes(options: { terminalService: TerminalService }): HttpRoute[] {
-  const { terminalService } = options;
+export function createTerminalRoutes(options: {
+  terminalService: TerminalService;
+  settingsService: TerminalSettingsService;
+  discoverShells?: (currentDefaultShell?: string) => Promise<AvailableTerminalShell[]>;
+}): HttpRoute[] {
+  const { terminalService, settingsService } = options;
+  const discoverShells = options.discoverShells ?? discoverAvailableShells;
 
   return [
+    {
+      methods: TERMINAL_SETTINGS_METHODS,
+      matches: (pathname) => pathname === TERMINAL_SETTINGS_PATH,
+      handle: async (request, response, requestUrl) => {
+        const access = beginTerminalRequest(request, response, requestUrl, TERMINAL_SETTINGS_METHODS);
+        if (!access) {
+          return;
+        }
+
+        try {
+          if (request.method === "GET") {
+            const payload: GetTerminalSettingsResponse = {
+              settings: settingsService.getSettings(),
+            };
+            sendJson(response, 200, payload as unknown as Record<string, unknown>);
+            return;
+          }
+
+          if (request.method !== "PUT") {
+            response.setHeader("Allow", TERMINAL_SETTINGS_METHODS);
+            sendTerminalJsonError(response, 405, "Method Not Allowed", "METHOD_NOT_ALLOWED");
+            return;
+          }
+
+          const body = await readJsonBody(request);
+          const settings = await settingsService.update(parseTerminalSettingsUpdateRequest(body));
+          const payload: UpdateTerminalSettingsResponse = {
+            ok: true,
+            settings,
+          };
+          sendJson(response, 200, payload as unknown as Record<string, unknown>);
+        } catch (error) {
+          sendTerminalRouteError(request, response, TERMINAL_SETTINGS_METHODS, access.allowedOrigin, error);
+        }
+      },
+    },
+    {
+      methods: TERMINAL_AVAILABLE_SHELLS_METHODS,
+      matches: (pathname) => pathname === TERMINAL_AVAILABLE_SHELLS_PATH,
+      handle: async (request, response, requestUrl) => {
+        const access = beginTerminalRequest(request, response, requestUrl, TERMINAL_AVAILABLE_SHELLS_METHODS);
+        if (!access) {
+          return;
+        }
+
+        if (request.method !== "GET") {
+          response.setHeader("Allow", TERMINAL_AVAILABLE_SHELLS_METHODS);
+          sendTerminalJsonError(response, 405, "Method Not Allowed", "METHOD_NOT_ALLOWED");
+          return;
+        }
+
+        try {
+          const settings = settingsService.getSettings();
+          const payload: GetAvailableTerminalShellsResponse = {
+            shells: await discoverShells(settings.defaultShell ?? undefined),
+            settings,
+          };
+          sendJson(response, 200, payload as unknown as Record<string, unknown>);
+        } catch (error) {
+          sendTerminalRouteError(request, response, TERMINAL_AVAILABLE_SHELLS_METHODS, access.allowedOrigin, error);
+        }
+      },
+    },
     {
       methods: TERMINALS_COLLECTION_METHODS,
       matches: (pathname) => pathname === TERMINALS_COLLECTION_PATH,
@@ -242,6 +321,21 @@ function parseTerminalIssueTicketRequest(input: unknown): TerminalIssueTicketReq
   };
 }
 
+function parseTerminalSettingsUpdateRequest(input: unknown): UpdateTerminalSettingsRequest {
+  const record = requireRecord(input, "Terminal settings body must be an object.");
+  const patch: UpdateTerminalSettingsRequest = {};
+
+  if (Object.prototype.hasOwnProperty.call(record, "defaultShell")) {
+    const defaultShell = record.defaultShell;
+    if (defaultShell !== null && typeof defaultShell !== "string") {
+      throw new TerminalSettingsValidationError("defaultShell must be a string or null");
+    }
+    patch.defaultShell = defaultShell as string | null;
+  }
+
+  return patch;
+}
+
 function requireRecord(input: unknown, message: string): Record<string, unknown> {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     throw new Error(message);
@@ -318,6 +412,11 @@ function sendTerminalRouteError(
       error: error.message,
       code: error.code,
     });
+    return;
+  }
+
+  if (error instanceof TerminalSettingsValidationError) {
+    sendTerminalJsonError(response, 400, error.message, "INVALID_REQUEST");
     return;
   }
 

@@ -1,3 +1,7 @@
+import type { PersistedTerminalSettings } from "./terminal-settings-service.js";
+import { loadPersistedTerminalSettingsFromPath, readTerminalDefaultShellFromEnv } from "./terminal-settings-service.js";
+import { getTerminalSettingsPath } from "../swarm/data-paths.js";
+
 export interface TerminalRuntimeConfig {
   enabled: boolean;
   maxTerminalsPerManager: number;
@@ -29,7 +33,14 @@ const DEFAULTS: TerminalRuntimeConfig = {
   wsMaxBufferedAmountBytes: 1_048_576,
 };
 
-export function readTerminalRuntimeConfig(env: NodeJS.ProcessEnv = process.env): TerminalRuntimeConfig {
+export async function readTerminalRuntimeConfig(options: {
+  env?: NodeJS.ProcessEnv;
+  dataDir?: string;
+  persistedSettings?: PersistedTerminalSettings;
+} = {}): Promise<TerminalRuntimeConfig> {
+  const env = options.env ?? process.env;
+  const persistedSettings = options.persistedSettings ?? await readPersistedTerminalSettings(options.dataDir);
+
   return {
     enabled: readBooleanEnv(env, "TERMINAL_ENABLED", DEFAULTS.enabled),
     maxTerminalsPerManager: readIntegerEnv(env, "TERMINAL_MAX_PER_SESSION", DEFAULTS.maxTerminalsPerManager, 1),
@@ -58,8 +69,18 @@ export function readTerminalRuntimeConfig(env: NodeJS.ProcessEnv = process.env):
       DEFAULTS.wsMaxBufferedAmountBytes,
       1_024,
     ),
-    defaultShell: readStringEnv(env, "TERMINAL_DEFAULT_SHELL"),
+    defaultShell: persistedSettings.defaultShell ?? readTerminalDefaultShellFromEnv(env),
   };
+}
+
+async function readPersistedTerminalSettings(dataDir: string | undefined): Promise<PersistedTerminalSettings> {
+  if (!dataDir) {
+    return {};
+  }
+
+  return loadPersistedTerminalSettingsFromPath(getTerminalSettingsPath(dataDir), (message) => {
+    console.warn(`[terminal-config] ${message}`);
+  });
 }
 
 function readStringEnv(env: NodeJS.ProcessEnv, suffix: string): string | undefined {

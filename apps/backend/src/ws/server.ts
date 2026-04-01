@@ -50,6 +50,7 @@ import { createSlashCommandRoutes } from "./routes/slash-command-routes.js";
 import { createTranscriptionRoutes } from "./routes/transcription-routes.js";
 import { STATS_CACHE_TTL_MS, StatsService } from "../stats/stats-service.js";
 import type { TerminalRuntimeConfig } from "../terminal/terminal-config.js";
+import { TerminalSettingsService } from "../terminal/terminal-settings-service.js";
 import type { TerminalService } from "../terminal/terminal-service.js";
 import { TerminalWsProxy } from "../terminal/terminal-ws-proxy.js";
 import { createStatsRoutes } from "./routes/stats-routes.js";
@@ -71,6 +72,7 @@ export class SwarmWebSocketServer {
   private readonly playwrightEnvEnabledOverride: boolean | undefined;
   private readonly terminalService: TerminalService | null;
   private readonly terminalRuntimeConfig: TerminalRuntimeConfig | null;
+  private readonly terminalSettingsService: TerminalSettingsService;
   private readonly terminalWsProxy: TerminalWsProxy | null;
   private readonly unreadTracker: UnreadTracker;
 
@@ -242,6 +244,7 @@ export class SwarmWebSocketServer {
     playwrightEnvEnabledOverride?: boolean;
     terminalService?: TerminalService | null;
     terminalRuntimeConfig?: TerminalRuntimeConfig | null;
+    terminalSettingsService?: TerminalSettingsService;
     promptRegistry?: PromptRegistryForRoutes;
     unreadTracker?: UnreadTracker;
   }) {
@@ -265,6 +268,9 @@ export class SwarmWebSocketServer {
     this.playwrightEnvEnabledOverride = options.playwrightEnvEnabledOverride;
     this.terminalService = options.terminalService ?? null;
     this.terminalRuntimeConfig = options.terminalRuntimeConfig ?? null;
+    this.terminalSettingsService =
+      options.terminalSettingsService ??
+      new TerminalSettingsService({ dataDir: this.swarmManager.getConfig().paths.dataDir });
     this.terminalWsProxy =
       this.terminalService && this.terminalRuntimeConfig
         ? new TerminalWsProxy({
@@ -337,7 +343,7 @@ export class SwarmWebSocketServer {
       ...createSlashCommandRoutes({ swarmManager: this.swarmManager }),
       ...createMobileRoutes({ mobilePushService: this.mobilePushService }),
       ...createAgentHttpRoutes({ swarmManager: this.swarmManager }),
-      ...(this.terminalService ? createTerminalRoutes({ terminalService: this.terminalService }) : []),
+      ...(this.terminalService ? createTerminalRoutes({ terminalService: this.terminalService, settingsService: this.terminalSettingsService }) : []),
       ...this.settingsRoutes.routes,
       ...createSpecialistRoutes({
         swarmManager: this.swarmManager,

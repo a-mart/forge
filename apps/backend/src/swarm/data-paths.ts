@@ -239,6 +239,10 @@ export function getSharedMobileNotificationPreferencesPath(dataDir: string): str
   return join(getSharedDir(dataDir), "mobile-notification-prefs.json");
 }
 
+export function getTerminalSettingsPath(dataDir: string): string {
+  return join(getSharedDir(dataDir), "terminal-settings.json");
+}
+
 export function getSharedModelOverridesPath(dataDir: string): string {
   return join(getSharedDir(dataDir), "model-overrides.json");
 }

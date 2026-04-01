@@ -63,11 +63,13 @@ type NodePtyModule = {
 export class NodePtyRuntime implements TerminalPtyRuntime {
   private readonly outputBatchIntervalMs: number;
   private readonly defaultShell?: string;
+  private readonly getDefaultShell?: () => string | undefined;
   private nodePtyModulePromise: Promise<NodePtyModule | null> | null = null;
 
-  constructor(options: { outputBatchIntervalMs: number; defaultShell?: string }) {
+  constructor(options: { outputBatchIntervalMs: number; defaultShell?: string; getDefaultShell?: () => string | undefined }) {
     this.outputBatchIntervalMs = options.outputBatchIntervalMs;
     this.defaultShell = options.defaultShell;
+    this.getDefaultShell = options.getDefaultShell;
   }
 
   async isAvailable(): Promise<boolean> {
@@ -253,7 +255,7 @@ export class NodePtyRuntime implements TerminalPtyRuntime {
     shellArgs: string[];
   } {
     const explicitShell = requestedShell?.trim();
-    const configuredShell = this.defaultShell?.trim();
+    const configuredShell = this.getDefaultShell?.()?.trim() ?? this.defaultShell?.trim();
     const shell = process.platform === "win32"
       ? this.resolveWindowsShell(explicitShell ?? configuredShell)
       : this.resolveUnixShell(explicitShell ?? configuredShell);
@@ -345,7 +347,7 @@ export class NodePtyRuntime implements TerminalPtyRuntime {
   }
 }
 
-function resolveCommand(command: string | undefined): string | undefined {
+export function resolveCommand(command: string | undefined): string | undefined {
   const trimmed = command?.trim();
   if (!trimmed) {
     return undefined;

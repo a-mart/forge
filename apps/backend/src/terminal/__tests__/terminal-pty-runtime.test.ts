@@ -120,6 +120,24 @@ describe('NodePtyRuntime', () => {
     }
   })
 
+  it('uses the dynamic default shell provider when present', async () => {
+    const fake = createFakeNodePtyModule()
+    let configuredShell = process.platform === 'win32' ? 'cmd.exe' : '/bin/sh'
+    const runtime = new NodePtyRuntime({
+      outputBatchIntervalMs: 16,
+      defaultShell: process.platform === 'win32' ? 'powershell.exe' : '/bin/bash',
+      getDefaultShell: () => configuredShell,
+    })
+    ;(runtime as any).nodePtyModulePromise = Promise.resolve(fake.module)
+
+    const handleA = await runtime.spawnPty(createSpawnRequest())
+    expect(handleA.shell).toBe(configuredShell)
+
+    configuredShell = process.platform === 'win32' ? 'powershell.exe' : '/bin/bash'
+    const handleB = await runtime.spawnPty(createSpawnRequest())
+    expect(handleB.shell).toBe(configuredShell)
+  })
+
   it('classifies terminal-dead errors across errno and message shapes', () => {
     const runtime = new NodePtyRuntime({ outputBatchIntervalMs: 16 })
 

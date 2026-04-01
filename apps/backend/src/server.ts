@@ -14,6 +14,7 @@ import type { AgentDescriptor, SessionLifecycleEvent, SwarmConfig } from "./swar
 import { readTerminalRuntimeConfig } from "./terminal/terminal-config.js";
 import { TerminalPersistence } from "./terminal/terminal-persistence.js";
 import { NodePtyRuntime } from "./terminal/terminal-pty-runtime.js";
+import { TerminalSettingsService } from "./terminal/terminal-settings-service.js";
 import type { TerminalSessionResolver } from "./terminal/terminal-session-resolver.js";
 import { TerminalService } from "./terminal/terminal-service.js";
 import { EmbeddedGitVersioningService } from "./versioning/embedded-git-versioning-service.js";
@@ -145,6 +146,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
   let playwrightDiscovery: PlaywrightDiscoveryService | null = null;
   let playwrightLivePreviewService: PlaywrightLivePreviewService | null = null;
   let terminalService: TerminalService | null = null;
+  const terminalSettingsService = new TerminalSettingsService({ dataDir: config.paths.dataDir });
   let handleTerminalSessionLifecycle: (event: SessionLifecycleEvent) => void = () => undefined;
   let handleTerminalAgentsSnapshot: () => void = () => undefined;
   let server: BackendServer | null = null;
@@ -165,7 +167,10 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
     await queueSchedulerSync(collectSchedulerProfileIds(swarmManager.listAgents(), config.managerId));
     swarmManager.on("agents_snapshot", handleAgentsSnapshot);
 
-    const terminalRuntimeConfig = readTerminalRuntimeConfig();
+    await terminalSettingsService.load();
+    const terminalRuntimeConfig = await readTerminalRuntimeConfig({
+      persistedSettings: terminalSettingsService.getPersistedSettings(),
+    });
     const terminalSessionResolver: TerminalSessionResolver = {
       resolveSession: (sessionAgentId) => {
         const descriptor = swarmManager.getAgent(sessionAgentId);
@@ -207,6 +212,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
     const terminalPtyRuntime = new NodePtyRuntime({
       outputBatchIntervalMs: terminalRuntimeConfig.outputBatchIntervalMs,
       defaultShell: terminalRuntimeConfig.defaultShell,
+      getDefaultShell: () => terminalSettingsService.getSettings().defaultShell ?? undefined,
     });
     terminalService = new TerminalService({
       dataDir: config.paths.dataDir,
@@ -288,6 +294,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
       playwrightEnvEnabledOverride,
       terminalService,
       terminalRuntimeConfig,
+      terminalSettingsService,
       promptRegistry: swarmManager.promptRegistry,
       unreadTracker,
     });
