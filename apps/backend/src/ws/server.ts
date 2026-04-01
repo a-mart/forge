@@ -49,11 +49,13 @@ import { createSpecialistRoutes } from "./routes/specialist-routes.js";
 import { createSlashCommandRoutes } from "./routes/slash-command-routes.js";
 import { createTranscriptionRoutes } from "./routes/transcription-routes.js";
 import { STATS_CACHE_TTL_MS, StatsService } from "../stats/stats-service.js";
+import type { TelemetryService } from "../telemetry/telemetry-service.js";
 import type { TerminalRuntimeConfig } from "../terminal/terminal-config.js";
 import { TerminalSettingsService } from "../terminal/terminal-settings-service.js";
 import type { TerminalService } from "../terminal/terminal-service.js";
 import { TerminalWsProxy } from "../terminal/terminal-ws-proxy.js";
 import { createStatsRoutes } from "./routes/stats-routes.js";
+import { createTelemetryRoutes } from "./routes/telemetry-routes.js";
 import { createTerminalRoutes } from "./routes/terminal-routes.js";
 import { resolveSessionAgentIdForUnread } from "./unread-utils.js";
 import { WsHandler } from "./ws-handler.js";
@@ -83,6 +85,7 @@ export class SwarmWebSocketServer {
   private readonly mobilePushService: MobilePushService;
   private readonly settingsRoutes: SettingsRouteBundle;
   private readonly statsService: StatsService;
+  private readonly telemetryService: TelemetryService | null;
   private readonly httpRoutes: HttpRoute[];
   private readonly controlPidFile: string;
   private readonly shouldManageControlPid: boolean;
@@ -247,6 +250,8 @@ export class SwarmWebSocketServer {
     terminalSettingsService?: TerminalSettingsService;
     promptRegistry?: PromptRegistryForRoutes;
     unreadTracker?: UnreadTracker;
+    statsService?: StatsService;
+    telemetryService?: TelemetryService | null;
   }) {
     this.swarmManager = options.swarmManager;
     this.host = options.host;
@@ -319,7 +324,8 @@ export class SwarmWebSocketServer {
     wsHandlerRef = this.wsHandler;
 
     this.settingsRoutes = createSettingsRoutes({ swarmManager: this.swarmManager });
-    this.statsService = new StatsService(this.swarmManager);
+    this.statsService = options.statsService ?? new StatsService(this.swarmManager);
+    this.telemetryService = options.telemetryService ?? null;
     this.httpRoutes = [
       ...createHealthRoutes({
         resolveControlPidFile: () => this.controlPidFile,
@@ -339,6 +345,7 @@ export class SwarmWebSocketServer {
       }),
       ...createTranscriptionRoutes({ swarmManager: this.swarmManager }),
       ...createStatsRoutes({ statsService: this.statsService }),
+      ...(this.telemetryService ? createTelemetryRoutes({ telemetryService: this.telemetryService }) : []),
       ...createSchedulerRoutes({ swarmManager: this.swarmManager }),
       ...createSlashCommandRoutes({ swarmManager: this.swarmManager }),
       ...createMobileRoutes({ mobilePushService: this.mobilePushService }),
@@ -450,6 +457,8 @@ export class SwarmWebSocketServer {
       void this.statsService.refreshAllRangesInBackground();
     }, STATS_CACHE_TTL_MS);
     this.statsRefreshInterval.unref?.();
+
+    await this.telemetryService?.start();
   }
 
   getPort(): number {
@@ -489,6 +498,7 @@ export class SwarmWebSocketServer {
 
     this.wsHandler.reset();
     this.settingsRoutes.cancelActiveSettingsAuthLoginFlows();
+    this.telemetryService?.stop();
 
     await Promise.allSettled([
       this.mobilePushService.stop(),

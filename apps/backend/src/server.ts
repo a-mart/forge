@@ -4,6 +4,14 @@ import { PlaywrightDiscoveryService } from "./playwright/playwright-discovery-se
 import { PlaywrightLivePreviewService } from "./playwright/playwright-live-preview-service.js";
 import { PlaywrightSettingsService } from "./playwright/playwright-settings-service.js";
 import { readPlaywrightDashboardEnvOverride, createConfig } from "./config.js";
+import { StatsService } from "./stats/stats-service.js";
+import { collectFeatureAdoption } from "./telemetry/feature-counters.js";
+import {
+  assembleFullPayload,
+  extractAuthMethodsConfigured,
+  extractProvidersUsed
+} from "./telemetry/telemetry-payload.js";
+import { TelemetryService } from "./telemetry/telemetry-service.js";
 import { CronSchedulerService } from "./scheduler/cron-scheduler-service.js";
 import { getScheduleFilePath } from "./scheduler/schedule-storage.js";
 import { acquireRuntimeLock, type RuntimeLock } from "./runtime-lock.js";
@@ -154,6 +162,25 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
   try {
     await swarmManager.boot();
 
+    const statsService = new StatsService(swarmManager);
+    const telemetryService = new TelemetryService({
+      dataDir: config.paths.dataDir,
+      debug: config.debug,
+      assemblePayload: async (installId) => {
+        const stats = await statsService.getSnapshot("all");
+        const profileIds = swarmManager.listProfiles().map((profile) => profile.profileId);
+        const features = await collectFeatureAdoption(config.paths.dataDir, profileIds, config);
+        const authMethods = await extractAuthMethodsConfigured(config);
+        return assembleFullPayload(
+          installId,
+          stats,
+          features,
+          extractProvidersUsed(stats),
+          authMethods,
+        );
+      },
+    });
+
     const unreadTracker = new UnreadTracker({
       dataDir: config.paths.dataDir,
       getProfileIds: () => swarmManager.listProfiles().map((profile) => profile.profileId),
@@ -297,6 +324,8 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
       terminalSettingsService,
       promptRegistry: swarmManager.promptRegistry,
       unreadTracker,
+      statsService,
+      telemetryService,
     });
 
     server = new BackendServer({

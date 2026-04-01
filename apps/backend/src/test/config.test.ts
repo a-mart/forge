@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { createConfig, readPlaywrightDashboardEnvOverride } from '../config.js'
+import { createConfig, readPlaywrightDashboardEnvOverride, readTelemetryEnvOverride } from '../config.js'
 import { withPlatform } from './test-helpers.js'
 
 const MANAGED_ENV_KEYS = [
@@ -15,12 +15,14 @@ const MANAGED_ENV_KEYS = [
   'FORGE_RESOURCES_DIR',
   'FORGE_DESKTOP',
   'FORGE_PLAYWRIGHT_DASHBOARD_ENABLED',
+  'FORGE_TELEMETRY',
   'MIDDLEMAN_HOST',
   'MIDDLEMAN_PORT',
   'MIDDLEMAN_DATA_DIR',
   'MIDDLEMAN_DEBUG',
   'MIDDLEMAN_RESOURCES_DIR',
   'MIDDLEMAN_PLAYWRIGHT_DASHBOARD_ENABLED',
+  'MIDDLEMAN_TELEMETRY',
   'LOCALAPPDATA',
 ] as const
 
@@ -303,6 +305,38 @@ describe('createConfig', () => {
       })
       expect(warnSpy).toHaveBeenCalledWith(
         '[config] Ignoring invalid FORGE_PLAYWRIGHT_DASHBOARD_ENABLED value: maybe',
+      )
+    } finally {
+      warnSpy.mockRestore()
+    }
+  })
+
+  it('parses telemetry env override values with FORGE_* precedence', async () => {
+    await withEnv({ FORGE_TELEMETRY: 'yes' }, () => {
+      expect(readTelemetryEnvOverride()).toBe(true)
+    })
+
+    await withEnv({ MIDDLEMAN_TELEMETRY: 'off' }, () => {
+      expect(readTelemetryEnvOverride()).toBe(false)
+    })
+
+    await withEnv(
+      {
+        FORGE_TELEMETRY: 'true',
+        MIDDLEMAN_TELEMETRY: 'off',
+      },
+      () => {
+        expect(readTelemetryEnvOverride()).toBe(true)
+      }
+    )
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      await withEnv({ FORGE_TELEMETRY: 'maybe' }, () => {
+        expect(readTelemetryEnvOverride()).toBeUndefined()
+      })
+      expect(warnSpy).toHaveBeenCalledWith(
+        '[config] Ignoring invalid FORGE_TELEMETRY value: maybe',
       )
     } finally {
       warnSpy.mockRestore()

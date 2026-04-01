@@ -42,12 +42,32 @@ import {
   type AvailableShellsResponse,
   type TerminalShellSettings,
 } from '@/components/settings/terminal-shell-api'
-import type { PlaywrightDiscoverySettings, CortexAutoReviewSettings } from '@forge/protocol'
+import {
+  fetchTelemetrySettings,
+  resetTelemetryInstallId,
+  updateTelemetrySettings,
+} from '@/components/settings/telemetry-api'
+import type {
+  CortexAutoReviewSettings,
+  PlaywrightDiscoverySettings,
+  TelemetrySettingsResponse,
+} from '@forge/protocol'
 
 interface SettingsGeneralProps {
   wsUrl: string
   onPlaywrightSnapshotUpdate?: (snapshot: import('@forge/protocol').PlaywrightDiscoverySnapshot) => void
   onPlaywrightSettingsLoaded?: (settings: PlaywrightDiscoverySettings) => void
+}
+
+function formatTelemetryTimestamp(value: string | null): string {
+  if (!value) return 'Never'
+
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) {
+    return value
+  }
+
+  return parsed.toLocaleString()
 }
 
 export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrightSettingsLoaded }: SettingsGeneralProps) {
@@ -70,6 +90,12 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
   const [playwrightSettings, setPlaywrightSettings] = useState<PlaywrightDiscoverySettings | null>(null)
   const [playwrightError, setPlaywrightError] = useState<string | null>(null)
   const [playwrightUpdating, setPlaywrightUpdating] = useState(false)
+
+  const [telemetrySettings, setTelemetrySettings] = useState<TelemetrySettingsResponse | null>(null)
+  const [telemetryError, setTelemetryError] = useState<string | null>(null)
+  const [telemetryUpdating, setTelemetryUpdating] = useState(false)
+  const [telemetryResetting, setTelemetryResetting] = useState(false)
+  const [telemetryLoadFailed, setTelemetryLoadFailed] = useState(false)
 
   const [cortexSettings, setCortexSettings] = useState<CortexAutoReviewSettings | null>(null)
   const [cortexError, setCortexError] = useState<string | null>(null)
@@ -154,6 +180,21 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
       })
   }, [wsUrl, onPlaywrightSettingsLoaded])
 
+  useEffect(() => {
+    setTelemetryError(null)
+    setTelemetryLoadFailed(false)
+    void fetchTelemetrySettings(wsUrl)
+      .then((settings) => {
+        setTelemetrySettings(settings)
+        setTelemetryError(null)
+        setTelemetryLoadFailed(false)
+      })
+      .catch((err) => {
+        setTelemetryLoadFailed(true)
+        setTelemetryError(err instanceof Error ? err.message : 'Could not load telemetry settings')
+      })
+  }, [wsUrl])
+
   // Fetch terminal shell settings on mount
   useEffect(() => {
     setTerminalLoadFailed(false)
@@ -227,6 +268,45 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
     },
     [wsUrl, playwrightUpdating, onPlaywrightSnapshotUpdate],
   )
+
+  const handleTelemetryToggle = useCallback(
+    (enabled: boolean) => {
+      if (!telemetrySettings || telemetryUpdating || telemetrySettings.envOverride !== null) return
+      setTelemetryUpdating(true)
+      setTelemetryError(null)
+
+      void updateTelemetrySettings(wsUrl, { enabled })
+        .then((settings) => {
+          setTelemetrySettings(settings)
+          setTelemetryError(null)
+        })
+        .catch((err) => {
+          setTelemetryError(err instanceof Error ? err.message : 'Failed to update telemetry setting')
+        })
+        .finally(() => {
+          setTelemetryUpdating(false)
+        })
+    },
+    [wsUrl, telemetrySettings, telemetryUpdating],
+  )
+
+  const handleTelemetryResetId = useCallback(() => {
+    if (telemetryResetting) return
+    setTelemetryResetting(true)
+    setTelemetryError(null)
+
+    void resetTelemetryInstallId(wsUrl)
+      .then((settings) => {
+        setTelemetrySettings(settings)
+        setTelemetryError(null)
+      })
+      .catch((err) => {
+        setTelemetryError(err instanceof Error ? err.message : 'Failed to reset install ID')
+      })
+      .finally(() => {
+        setTelemetryResetting(false)
+      })
+  }, [wsUrl, telemetryResetting])
 
   const handleCortexToggle = useCallback(
     (enabled: boolean) => {
@@ -701,6 +781,105 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
             ) : null}
           </div>
         </SettingsWithCTA>
+      </SettingsSection>
+
+      <SettingsSection
+        label="Anonymous Telemetry"
+        description="Help improve Forge by sharing anonymous aggregate usage statistics"
+      >
+        <SettingsWithCTA
+          label="Anonymous telemetry"
+          description={
+            telemetrySettings?.source === 'env' ? (
+              <>
+                <span>Share anonymous usage statistics. No prompts, code, or personal data is sent.</span>
+                <br />
+                <span className="text-amber-600 dark:text-amber-400">
+                  Telemetry is {telemetrySettings.effectiveEnabled ? 'forced on' : 'forced off'} by the{' '}
+                  <code className="text-[10px]">FORGE_TELEMETRY</code> environment variable.
+                </span>
+              </>
+            ) : (
+              'Share anonymous usage statistics. No prompts, code, or personal data is sent.'
+            )
+          }
+        >
+          <div className="flex flex-col items-end gap-1.5">
+            <Switch
+              checked={telemetrySettings?.effectiveEnabled ?? true}
+              onCheckedChange={handleTelemetryToggle}
+              disabled={!telemetrySettings || telemetryUpdating || telemetrySettings.envOverride !== null}
+            />
+            {telemetryError ? (
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] text-destructive">{telemetryError}</span>
+                {telemetryLoadFailed ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTelemetryError(null)
+                      setTelemetryLoadFailed(false)
+                      void fetchTelemetrySettings(wsUrl)
+                        .then((settings) => {
+                          setTelemetrySettings(settings)
+                          setTelemetryError(null)
+                          setTelemetryLoadFailed(false)
+                        })
+                        .catch((err) => {
+                          setTelemetryLoadFailed(true)
+                          setTelemetryError(err instanceof Error ? err.message : 'Could not load telemetry settings')
+                        })
+                    }}
+                    className="text-[10px] text-primary underline hover:no-underline"
+                  >
+                    Retry
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        </SettingsWithCTA>
+
+        <SettingsWithCTA
+          label="Install ID"
+          description="Random identifier used to deduplicate daily anonymous reports. Reset it any time."
+        >
+          <div className="flex flex-col items-end gap-2">
+            <code className="max-w-full break-all rounded border bg-muted/40 px-2 py-1 text-[11px]">
+              {telemetrySettings?.installId ?? 'Loading…'}
+            </code>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleTelemetryResetId}
+              disabled={!telemetrySettings || telemetryResetting}
+            >
+              Reset install ID
+            </Button>
+          </div>
+        </SettingsWithCTA>
+
+        <SettingsWithCTA
+          label="Last sent"
+          description="Timestamp of the most recent successful telemetry report."
+        >
+          <span className="text-xs text-muted-foreground">
+            {formatTelemetryTimestamp(telemetrySettings?.lastSentAt ?? null)}
+          </span>
+        </SettingsWithCTA>
+
+        <div className="rounded-md border border-border bg-muted/20 px-4 py-3 text-xs text-muted-foreground">
+          <p className="font-semibold text-foreground">What we collect</p>
+          <ul className="mt-2 list-disc space-y-1 pl-4">
+            <li>App version, platform, architecture, locale, and whether you are using the desktop app</li>
+            <li>Aggregate usage totals like sessions, messages, workers, and token counts</li>
+            <li>Anonymous feature counts such as terminals, schedules, project agents, extensions, and specialists</li>
+            <li>Provider names and the top model ID, but never API keys or account identifiers</li>
+          </ul>
+          <p className="mt-2">
+            Forge never sends prompts, chat content, code, file paths, repo names, or personal data in telemetry reports.
+          </p>
+        </div>
       </SettingsSection>
 
       <SettingsSection

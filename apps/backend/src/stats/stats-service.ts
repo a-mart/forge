@@ -5,13 +5,14 @@ import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 import type { CodeStats, ModelDistributionEntry, StatsRange, StatsSnapshot, TokenStats } from "@forge/protocol";
+import { inferProviderFromModelId } from "../telemetry/provider-inference.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import { getAgentsStoreFilePath, getProfilesDir, getSharedDir } from "../swarm/data-paths.js";
 
 export const STATS_CACHE_TTL_MS = 2 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const STATS_CACHE_FILE_NAME = "stats-cache.json";
-const STATS_CACHE_VERSION = 5;
+const STATS_CACHE_VERSION = 6;
 const SERVER_TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
 const GIT_COMMAND_TIMEOUT_MS = 10_000;
 const GIT_COMMAND_MAX_BUFFER_BYTES = 10 * 1024 * 1024;
@@ -304,6 +305,7 @@ export class StatsService {
       (record) => toDayKey(record.timestampMs, timezone) >= rangeStartDayKey
     );
     const models = this.computeModelDistribution(rangeUsageRecords);
+    const allProviders = this.computeProvidersUsed(rangeUsageRecords);
     const rangeTotals = this.sumDailyEntries(dailyEntriesInRange.map((entry) => entry.totals));
 
     const workerRunsInRange = scanResult.workerRuns.filter((run) => toDayKey(run.createdAtMs, timezone) >= rangeStartDayKey);
@@ -385,6 +387,7 @@ export class StatsService {
         peakDayTokens: peakDayEntry?.tokens ?? 0
       },
       models,
+      allProviders,
       dailyUsage: dailyEntriesInRange.map((entry) => ({
         date: entry.day,
         dateLabel: formatDayLabel(entry.day),
@@ -410,7 +413,11 @@ export class StatsService {
         uptimeFormatted: formatUptime(Math.round(process.uptime() * 1000)),
         totalProfiles: profileIds.length,
         serverVersion: await this.readServerVersion(),
-        nodeVersion: process.version
+        nodeVersion: process.version,
+        platform: process.platform,
+        arch: process.arch,
+        isDesktop: this.swarmManager.getConfig().isDesktop,
+        electronVersion: process.env.FORGE_ELECTRON_VERSION ?? null
       }
     };
 
@@ -891,7 +898,25 @@ export class StatsService {
       .slice(0, 10);
   }
 
+  private computeProvidersUsed(usageRecords: UsageRecord[]): string[] {
+    const providers = new Set<string>();
+
+    for (const record of usageRecords) {
+      const provider = inferProviderFromModelId(record.modelId);
+      if (provider) {
+        providers.add(provider);
+      }
+    }
+
+    return Array.from(providers).sort((left, right) => left.localeCompare(right));
+  }
+
   private async readServerVersion(): Promise<string> {
+    const envVersion = process.env.FORGE_APP_VERSION;
+    if (typeof envVersion === "string" && envVersion.trim().length > 0) {
+      return envVersion.trim();
+    }
+
     try {
       const packageJsonPath = join(this.swarmManager.getConfig().paths.rootDir, "package.json");
       const raw = await readFile(packageJsonPath, "utf8");
