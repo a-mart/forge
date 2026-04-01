@@ -7,7 +7,7 @@ export interface PersistedTelemetryConfig {
   lastSentAt: string | null
 }
 
-export type TelemetrySettingsSource = 'default' | 'settings' | 'env'
+export type TelemetrySettingsSource = 'settings' | 'env'
 
 export interface TelemetrySettingsResponse {
   /** Persisted enabled flag. */

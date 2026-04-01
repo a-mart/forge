@@ -1,5 +1,5 @@
-import { type StatsSnapshot, type TelemetryPayload } from '@forge/protocol'
-import { readConfiguredSettingsAuthProviders } from '../swarm/secrets-env-service.js'
+import { inferCatalogProvider, type StatsSnapshot, type TelemetryPayload } from '@forge/protocol'
+import { getManagedModelProviderCredentialAvailability } from '../swarm/secrets-env-service.js'
 import type { SwarmConfig } from '../swarm/types.js'
 import { inferProviderFromModelId } from './provider-inference.js'
 
@@ -98,7 +98,9 @@ export function assembleFullPayload(
   providersUsed: string[],
   authProviders: string[],
 ): TelemetryPayload {
-  const topModel = stats.models[0]?.modelId ?? ''
+  const topModelRaw = stats.models[0]?.modelId ?? ''
+  const normalizedTopModel = topModelRaw.trim().toLowerCase()
+  const topModel = inferCatalogProvider(normalizedTopModel) ? normalizedTopModel : ''
 
   return {
     install_id: installId,
@@ -171,7 +173,11 @@ export function extractProvidersUsed(stats: StatsSnapshot): string[] {
 
 export async function extractAuthMethodsConfigured(config: SwarmConfig): Promise<string[]> {
   try {
-    return Array.from(await readConfiguredSettingsAuthProviders(config)).sort()
+    const availability = await getManagedModelProviderCredentialAvailability(config)
+    return Array.from(availability.entries())
+      .filter(([, isConfigured]) => isConfigured)
+      .map(([provider]) => provider)
+      .sort()
   } catch {
     return []
   }

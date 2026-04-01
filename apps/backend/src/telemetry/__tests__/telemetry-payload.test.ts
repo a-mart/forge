@@ -204,10 +204,34 @@ describe('telemetry payload helpers', () => {
     expect(extractProvidersUsed(stats)).toEqual(['anthropic', 'openai-codex', 'xai'])
   })
 
-  it('extracts configured auth providers without exposing secrets', async () => {
+  it('omits top_model when the runtime model id is not catalog-known', () => {
+    const stats = createStatsSnapshot()
+    stats.models = [
+      {
+        modelId: 'my-company/private-model',
+        displayName: 'Private Model',
+        percentage: 100,
+        tokenCount: 1000,
+      },
+    ]
+
+    const payload = assembleFullPayload(
+      'install-123',
+      stats,
+      emptyFeatureAdoption(),
+      ['anthropic'],
+      ['anthropic'],
+    )
+
+    expect(payload.top_model).toBe('')
+  })
+
+  it('extracts configured auth providers from auth storage and env-backed credentials without exposing secrets', async () => {
     const root = await mkdtemp(join(tmpdir(), 'telemetry-auth-providers-test-'))
     const sharedAuthFile = join(root, 'shared', 'auth', 'auth.json')
     const legacyAuthFile = join(root, 'auth', 'auth.json')
+    const sharedSecretsFile = join(root, 'shared', 'secrets.json')
+    const legacySecretsFile = join(root, 'secrets.json')
 
     await mkdir(join(root, 'shared', 'auth'), { recursive: true })
 
@@ -227,13 +251,26 @@ describe('telemetry payload helpers', () => {
       expires: '',
     } as any)
 
-    const config = {
-      paths: {
-        sharedAuthFile,
-        authFile: legacyAuthFile,
-      },
-    } as unknown as SwarmConfig
+    const originalOpenAiApiKey = process.env.OPENAI_API_KEY
+    process.env.OPENAI_API_KEY = 'sk-openai-secret'
 
-    expect(await extractAuthMethodsConfigured(config)).toEqual(['anthropic'])
+    try {
+      const config = {
+        paths: {
+          sharedAuthFile,
+          authFile: legacyAuthFile,
+          sharedSecretsFile,
+          secretsFile: legacySecretsFile,
+        },
+      } as unknown as SwarmConfig
+
+      expect(await extractAuthMethodsConfigured(config)).toEqual(['anthropic', 'openai-codex'])
+    } finally {
+      if (originalOpenAiApiKey === undefined) {
+        delete process.env.OPENAI_API_KEY
+      } else {
+        process.env.OPENAI_API_KEY = originalOpenAiApiKey
+      }
+    }
   })
 })
