@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   MAX_PINS_PER_SESSION,
+  clearAllPins,
   combineCompactionCustomInstructions,
   formatPinnedMessagesForCompaction,
   loadPins,
@@ -69,6 +70,32 @@ describe('message-pins', () => {
       text: 'updated content',
       timestamp: '2026-03-27T15:01:00.000Z',
     })).resolves.toBeTruthy()
+  })
+
+  it('clears all pins and returns the previously pinned message ids', async () => {
+    const sessionDir = await mkdtemp(join(tmpdir(), 'forge-message-pins-'))
+
+    await savePins(sessionDir, {
+      version: 1,
+      pins: {
+        'msg-1': {
+          pinnedAt: '2026-03-27T14:30:00.000Z',
+          role: 'user',
+          text: 'Persist me',
+          timestamp: '2026-03-27T14:30:00.000Z',
+        },
+        'msg-2': {
+          pinnedAt: '2026-03-27T14:31:00.000Z',
+          role: 'assistant',
+          text: 'Persist me too',
+          timestamp: '2026-03-27T14:31:00.000Z',
+        },
+      },
+    })
+
+    await expect(clearAllPins(sessionDir)).resolves.toEqual(['msg-1', 'msg-2'])
+    await expect(loadPins(sessionDir)).resolves.toEqual({ version: 1, pins: {} })
+    await expect(clearAllPins(sessionDir)).resolves.toEqual([])
   })
 
   it('formats pinned messages for compaction and avoids duplicate appends', async () => {

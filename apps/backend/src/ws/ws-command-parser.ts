@@ -747,6 +747,22 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
     };
   }
 
+  if (maybe.type === "clear_all_pins") {
+    const agentId = (maybe as { agentId?: unknown }).agentId;
+
+    if (typeof agentId !== "string" || agentId.trim().length === 0) {
+      return { ok: false, error: "clear_all_pins.agentId must be a non-empty string" };
+    }
+
+    return {
+      ok: true,
+      command: {
+        type: "clear_all_pins",
+        agentId: agentId.trim(),
+      }
+    };
+  }
+
   if (maybe.type === "mark_unread") {
     const agentId = (maybe as { agentId?: unknown }).agentId;
     const requestId = (maybe as { requestId?: unknown }).requestId;
@@ -819,6 +835,7 @@ export function extractRequestId(command: ClientCommand): string | undefined {
       return command.requestId;
 
     case "pin_message":
+    case "clear_all_pins":
 
     case "subscribe":
     case "user_message":

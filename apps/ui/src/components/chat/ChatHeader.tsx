@@ -44,6 +44,7 @@ interface ChatHeaderProps {
   pinnedCount?: number
   pinnedMessageIds?: string[]
   onScrollToMessage?: (messageId: string) => void
+  onClearAllPins?: () => void
   showStopAll: boolean
   stopAllInProgress: boolean
   stopAllDisabled: boolean
@@ -146,6 +147,7 @@ export function ChatHeader({
   pinnedCount = 0,
   pinnedMessageIds,
   onScrollToMessage,
+  onClearAllPins,
   showStopAll,
   stopAllInProgress,
   stopAllDisabled,
@@ -355,12 +357,13 @@ export function ChatHeader({
         </div>
 
         {/* ── Pinned message navigator ── */}
-        {pinnedCount > 0 && pinnedMessageIds && onScrollToMessage ? (
+        {pinnedCount > 0 && pinnedMessageIds && onScrollToMessage && onClearAllPins ? (
           <>
             <Separator orientation="vertical" className="hidden sm:block mx-0.5 h-4 bg-border/60" />
             <PinNavigator
               pinnedMessageIds={pinnedMessageIds}
               onScrollToMessage={onScrollToMessage}
+              onClearAllPins={onClearAllPins}
             />
           </>
         ) : null}

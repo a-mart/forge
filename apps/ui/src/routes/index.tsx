@@ -644,6 +644,11 @@ export function IndexPage() {
     clientRef.current?.pinMessage(activeAgentId, messageId, pinned)
   }, [activeAgentId, clientRef, isActiveManager])
 
+  const handleClearAllPins = useCallback(() => {
+    if (!activeAgentId || !isActiveManager) return
+    clientRef.current?.clearAllPins(activeAgentId)
+  }, [activeAgentId, clientRef, isActiveManager])
+
   const handleNewChat = () => {
     if (!isActiveManager || !activeAgentId || !activeAgent) {
       return
@@ -1189,6 +1194,7 @@ export function IndexPage() {
                   pinnedCount={pinnedCount}
                   pinnedMessageIds={pinnedMessageIds}
                   onScrollToMessage={handleScrollToMessage}
+                  onClearAllPins={handleClearAllPins}
                   showStopAll={isActiveManager}
                   stopAllInProgress={isStoppingAllAgents}
                   stopAllDisabled={!state.connected || !canStopAllAgents}

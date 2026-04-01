@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
-import { ChevronUp, ChevronDown, Pin, X } from 'lucide-react'
+import { ChevronUp, ChevronDown, Pin, Trash2, X } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { Button } from '@/components/ui/button'
@@ -7,9 +7,10 @@ import { Button } from '@/components/ui/button'
 interface PinNavigatorProps {
   pinnedMessageIds: string[]
   onScrollToMessage: (messageId: string) => void
+  onClearAllPins: () => void
 }
 
-export function PinNavigator({ pinnedMessageIds, onScrollToMessage }: PinNavigatorProps) {
+export function PinNavigator({ pinnedMessageIds, onScrollToMessage, onClearAllPins }: PinNavigatorProps) {
   const [open, setOpen] = useState(false)
   const [currentIndex, setCurrentIndex] = useState(0)
   const activeMessageIdRef = useRef<string | null>(null)
@@ -77,6 +78,13 @@ export function PinNavigator({ pinnedMessageIds, onScrollToMessage }: PinNavigat
     [currentIndex, navigateTo],
   )
 
+  const handleClearAllPins = useCallback(() => {
+    activeMessageIdRef.current = null
+    setOpen(false)
+    setCurrentIndex(0)
+    onClearAllPins()
+  }, [onClearAllPins])
+
   if (count === 0) return null
 
   return (
@@ -107,42 +115,56 @@ export function PinNavigator({ pinnedMessageIds, onScrollToMessage }: PinNavigat
         className="w-auto min-w-[200px] p-2"
         onKeyDown={handleKeyDown}
       >
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <Pin className="size-3 text-amber-500 fill-current" />
-            <span className="font-medium tabular-nums">
-              {currentIndex + 1} of {count}
-            </span>
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Pin className="size-3 text-amber-500 fill-current" />
+              <span className="font-medium tabular-nums">
+                {currentIndex + 1} of {count}
+              </span>
+            </div>
+            <div className="flex items-center gap-0.5">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-6"
+                disabled={currentIndex <= 0}
+                onClick={() => navigateTo(currentIndex - 1)}
+                aria-label="Previous pinned message"
+              >
+                <ChevronUp className="size-3.5" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-6"
+                disabled={currentIndex >= count - 1}
+                onClick={() => navigateTo(currentIndex + 1)}
+                aria-label="Next pinned message"
+              >
+                <ChevronDown className="size-3.5" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-6 text-muted-foreground"
+                onClick={() => setOpen(false)}
+                aria-label="Close pin navigator"
+              >
+                <X className="size-3" />
+              </Button>
+            </div>
           </div>
-          <div className="flex items-center gap-0.5">
+
+          <div className="border-t border-border/60 pt-2">
             <Button
               variant="ghost"
-              size="icon"
-              className="size-6"
-              disabled={currentIndex <= 0}
-              onClick={() => navigateTo(currentIndex - 1)}
-              aria-label="Previous pinned message"
+              size="sm"
+              className="h-7 w-full justify-start gap-1.5 px-2 text-xs text-muted-foreground hover:text-destructive"
+              onClick={handleClearAllPins}
             >
-              <ChevronUp className="size-3.5" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="size-6"
-              disabled={currentIndex >= count - 1}
-              onClick={() => navigateTo(currentIndex + 1)}
-              aria-label="Next pinned message"
-            >
-              <ChevronDown className="size-3.5" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="size-6 text-muted-foreground"
-              onClick={() => setOpen(false)}
-              aria-label="Close pin navigator"
-            >
-              <X className="size-3" />
+              <Trash2 className="size-3.5" />
+              Clear all pins
             </Button>
           </div>
         </div>

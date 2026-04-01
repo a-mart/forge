@@ -63,22 +63,43 @@ export async function togglePin(
   }
 ): Promise<PinRegistry> {
   const normalizedSessionDir = resolve(sessionDir);
-  const previous = pinLocks.get(normalizedSessionDir) ?? Promise.resolve();
+  return withPinLock(normalizedSessionDir, () =>
+    togglePinInternal(normalizedSessionDir, messageId, pinned, messageContent)
+  );
+}
+
+export async function clearAllPins(sessionDir: string): Promise<string[]> {
+  const normalizedSessionDir = resolve(sessionDir);
+  return withPinLock(normalizedSessionDir, async () => {
+    const registry = await loadPins(normalizedSessionDir);
+    const pinnedMessageIds = Object.keys(registry.pins);
+
+    if (pinnedMessageIds.length === 0) {
+      return [];
+    }
+
+    await savePins(normalizedSessionDir, EMPTY_PIN_REGISTRY);
+    return pinnedMessageIds;
+  });
+}
+
+async function withPinLock<T>(sessionDir: string, operation: () => Promise<T>): Promise<T> {
+  const previous = pinLocks.get(sessionDir) ?? Promise.resolve();
   let releaseCurrentLock: (() => void) | undefined;
   const current = new Promise<void>((resolveCurrent) => {
     releaseCurrentLock = resolveCurrent;
   });
   const nextLock = previous.catch(() => {}).then(() => current);
-  pinLocks.set(normalizedSessionDir, nextLock);
+  pinLocks.set(sessionDir, nextLock);
 
   await previous.catch(() => {});
 
   try {
-    return await togglePinInternal(normalizedSessionDir, messageId, pinned, messageContent);
+    return await operation();
   } finally {
     releaseCurrentLock?.();
-    if (pinLocks.get(normalizedSessionDir) === nextLock) {
-      pinLocks.delete(normalizedSessionDir);
+    if (pinLocks.get(sessionDir) === nextLock) {
+      pinLocks.delete(sessionDir);
     }
   }
 }

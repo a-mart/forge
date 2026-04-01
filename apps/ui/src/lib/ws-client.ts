@@ -364,6 +364,13 @@ export class ManagerWsClient {
     })
   }
 
+  clearAllPins(agentId: string): void {
+    this.send({
+      type: 'clear_all_pins',
+      agentId,
+    })
+  }
+
   deleteAgent(agentId: string): void {
     const trimmed = agentId.trim()
     if (!trimmed) return

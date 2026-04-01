@@ -333,6 +333,28 @@ export class WsHandler {
       return;
     }
 
+    if (command.type === "clear_all_pins") {
+      if (subscribedAgentId !== command.agentId) {
+        this.send(socket, {
+          type: "error",
+          code: "CLEAR_ALL_PINS_SUBSCRIPTION_MISMATCH",
+          message: `Clear all pins rejected: not subscribed to agent ${command.agentId}`
+        });
+        return;
+      }
+
+      try {
+        await this.swarmManager.clearAllPins(command.agentId);
+      } catch (error) {
+        this.send(socket, {
+          type: "error",
+          code: "CLEAR_ALL_PINS_FAILED",
+          message: error instanceof Error ? error.message : String(error)
+        });
+      }
+      return;
+    }
+
     const managerHandled = await handleManagerCommand({
       command,
       socket,

@@ -45,6 +45,7 @@ import {
   resolveMemoryFilePath
 } from "./data-paths.js";
 import {
+  clearAllPins as clearAllSessionPins,
   combineCompactionCustomInstructions,
   loadPins,
   savePins,
@@ -2229,6 +2230,29 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       pinned,
       timestamp
     };
+  }
+
+  async clearAllPins(agentId: string): Promise<void> {
+    const descriptor = this.getRequiredSessionDescriptor(agentId);
+    const sessionDir = this.getSessionDirForDescriptor(descriptor);
+    const previouslyPinnedMessageIds = await clearAllSessionPins(sessionDir);
+
+    if (previouslyPinnedMessageIds.length === 0) {
+      this.setPinnedRegistryForAgent(agentId, { version: 1, pins: {} });
+      return;
+    }
+
+    this.setPinnedRegistryForAgent(agentId, { version: 1, pins: {} });
+
+    for (const messageId of previouslyPinnedMessageIds) {
+      this.conversationProjector.setConversationMessagePinned(agentId, messageId, false);
+      this.emitMessagePinned(agentId, messageId, false, this.now());
+    }
+
+    this.logDebug("message:clear_all_pins", {
+      agentId,
+      clearedCount: previouslyPinnedMessageIds.length
+    });
   }
 
   async clearSessionConversation(agentId: string): Promise<void> {
@@ -5180,6 +5204,19 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   private emitConversationReset(agentId: string, reason: "user_new_command" | "api_reset"): void {
     this.conversationProjector.emitConversationReset(agentId, reason);
+  }
+
+  private emitMessagePinned(agentId: string, messageId: string, pinned: boolean, timestamp: string): void {
+    this.emit(
+      "message_pinned",
+      {
+        type: "message_pinned",
+        agentId,
+        messageId,
+        pinned,
+        timestamp
+      } satisfies ServerEvent
+    );
   }
 
   private markSessionActivity(agentId: string, timestamp?: string): void {

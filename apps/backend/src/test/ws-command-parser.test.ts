@@ -187,6 +187,19 @@ describe('ws command parser session commands', () => {
     })
   })
 
+  it('parses clear_all_pins commands', () => {
+    expect(parseJsonCommand({
+      type: 'clear_all_pins',
+      agentId: '  manager--s2  ',
+    })).toEqual({
+      ok: true,
+      command: {
+        type: 'clear_all_pins',
+        agentId: 'manager--s2',
+      },
+    })
+  })
+
   it('parses choice_response and choice_cancel commands', () => {
     expect(parseJsonCommand({
       type: 'choice_response',
@@ -294,6 +307,10 @@ describe('ws command parser session commands', () => {
       {
         payload: { type: 'api_proxy', requestId: 'proxy-1', method: 'GET', path: 'api/slash-commands' },
         message: 'api_proxy.path must be a non-empty string starting with /',
+      },
+      {
+        payload: { type: 'clear_all_pins', agentId: '  ' },
+        message: 'clear_all_pins.agentId must be a non-empty string',
       },
       {
         payload: { type: 'mark_unread', requestId: 'req-unread' },
@@ -481,6 +498,11 @@ describe('ws command parser session commands', () => {
       profileIds: ['a', 'b'],
       requestId: 'req-reorder',
     })).toBe('req-reorder')
+
+    expect(extractRequestId({
+      type: 'clear_all_pins',
+      agentId: 'manager--s2',
+    })).toBeUndefined()
 
     expect(extractRequestId({
       type: 'choice_response',
