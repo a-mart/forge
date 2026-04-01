@@ -13,6 +13,7 @@ import {
 } from '@/lib/editor-preference'
 import { cn } from '@/lib/utils'
 import { isElectron } from '@/lib/electron-bridge'
+import { useSelectionContainment } from '@/hooks/useSelectionContainment'
 import { MarkdownMessage } from './MarkdownMessage'
 
 interface ArtifactPanelProps {
@@ -39,6 +40,8 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
   const [content, setContent] = useState('')
   const [resolvedPath, setResolvedPath] = useState<string | null>(null)
   const closingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const contentRef = useRef<HTMLDivElement | null>(null)
+  const { onPointerDown: onSelectionPointerDown } = useSelectionContainment(contentRef)
 
   const editorPreference = readStoredEditorPreference()
   const editorScheme = EDITOR_URL_SCHEMES[editorPreference]
@@ -187,6 +190,8 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
           )}
         />
         <DialogPrimitive.Content
+          ref={contentRef}
+          onPointerDown={onSelectionPointerDown}
           className={cn(
             'fixed right-0 top-0 z-50 flex h-full w-full flex-col',
             'max-md:max-w-full md:max-w-[min(880px,90vw)]',

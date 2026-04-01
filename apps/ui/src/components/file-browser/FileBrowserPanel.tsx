@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useRef } from 'react'
 import { FileCode2, FileImage, FileText, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -7,6 +7,7 @@ import { FileContentViewer, useFileViewerInfo } from './FileContentViewer'
 import { FileStatusBar } from './FileStatusBar'
 import { useDirectoryListing, useFileContent } from './use-file-browser-queries'
 import { isImageFile } from './file-browser-utils'
+import { useSelectionContainment } from '@/hooks/useSelectionContainment'
 
 const IMAGE_FILE_PATTERN = /\.(png|jpg|jpeg|gif|webp|svg)$/i
 const MARKDOWN_FILE_PATTERN = /\.(md|markdown|mdx)$/i
@@ -45,6 +46,9 @@ export function FileBrowserPanel({
 
   const viewerInfo = useFileViewerInfo(filePath, fileContent.data)
 
+  const panelRef = useRef<HTMLDivElement>(null)
+  const { onPointerDown: onSelectionPointerDown } = useSelectionContainment(panelRef)
+
   const { width, isDragging, handleRef } = useResizablePanel({
     storageKey: 'forge-file-viewer-width',
     defaultWidth: 850,
@@ -78,6 +82,8 @@ export function FileBrowserPanel({
 
       {/* Panel */}
       <div
+        ref={panelRef}
+        onPointerDown={onSelectionPointerDown}
         className="flex h-full shrink-0 flex-col border-l border-border/80 bg-background"
         style={{ width }}
       >
