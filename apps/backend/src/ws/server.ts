@@ -103,12 +103,14 @@ export class SwarmWebSocketServer {
       );
 
     if (shouldBroadcastUnread) {
+      const sessionAgentId = resolveSessionAgentIdForUnread(this.swarmManager, event.agentId);
       this.wsHandler.broadcastToSubscribed({
         type: "unread_notification",
         agentId: event.agentId,
+        reason: "message",
+        sessionAgentId,
       });
 
-      const sessionAgentId = resolveSessionAgentIdForUnread(this.swarmManager, event.agentId);
       if (
         sessionAgentId &&
         !this.wsHandler.hasActiveSubscriptionForSession(sessionAgentId)
@@ -142,12 +144,14 @@ export class SwarmWebSocketServer {
     this.wsHandler.broadcastToSubscribed(event);
 
     if (event.status === "pending") {
+      const sessionAgentId = resolveSessionAgentIdForUnread(this.swarmManager, event.agentId);
       this.wsHandler.broadcastToSubscribed({
         type: "unread_notification",
         agentId: event.agentId,
+        reason: "choice_request",
+        sessionAgentId,
       });
 
-      const sessionAgentId = resolveSessionAgentIdForUnread(this.swarmManager, event.agentId);
       if (
         sessionAgentId &&
         !this.wsHandler.hasActiveSubscriptionForSession(sessionAgentId)

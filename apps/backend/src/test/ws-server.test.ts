@@ -277,6 +277,29 @@ async function waitForEvent(
   throw new Error('Timed out waiting for websocket event')
 }
 
+function getUnreadNotifications(
+  events: ServerEvent[],
+): Array<Extract<ServerEvent, { type: 'unread_notification' }>> {
+  return events.filter(
+    (event): event is Extract<ServerEvent, { type: 'unread_notification' }> =>
+      event.type === 'unread_notification',
+  )
+}
+
+async function waitForCondition(predicate: () => boolean, timeoutMs = 2000): Promise<void> {
+  const started = Date.now()
+
+  while (Date.now() - started < timeoutMs) {
+    if (predicate()) {
+      return
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+
+  throw new Error('Timed out waiting for condition')
+}
+
 describe('SwarmWebSocketServer', () => {
   it('connect + subscribe + user_message yields manager feed events', async () => {
     const port = await getAvailablePort()
@@ -443,14 +466,27 @@ describe('SwarmWebSocketServer', () => {
       managerEvents,
       (event) => event.type === 'conversation_message' && event.agentId === 'manager' && event.text === 'assistant update',
     )
-    await waitForEvent(
+    const managerUnreadEvent = await waitForEvent(
       managerEvents,
       (event) => event.type === 'unread_notification' && event.agentId === 'manager',
     )
-    await waitForEvent(
+    expect(managerUnreadEvent).toEqual({
+      type: 'unread_notification',
+      agentId: 'manager',
+      reason: 'message',
+      sessionAgentId: 'manager',
+    })
+
+    const workerUnreadEvent = await waitForEvent(
       workerEvents,
       (event) => event.type === 'unread_notification' && event.agentId === 'manager',
     )
+    expect(workerUnreadEvent).toEqual({
+      type: 'unread_notification',
+      agentId: 'manager',
+      reason: 'message',
+      sessionAgentId: 'manager',
+    })
 
     expect(
       workerEvents.some(
@@ -533,10 +569,16 @@ describe('SwarmWebSocketServer', () => {
       } satisfies ServerEvent,
     )
 
-    await waitForEvent(
+    const unreadEvent = await waitForEvent(
       events,
       (event) => event.type === 'unread_notification' && event.agentId === sessionAgent.agentId,
     )
+    expect(unreadEvent).toEqual({
+      type: 'unread_notification',
+      agentId: sessionAgent.agentId,
+      reason: 'message',
+      sessionAgentId: sessionAgent.agentId,
+    })
     await waitForEvent(
       events,
       (event) => event.type === 'unread_count_update' && event.agentId === sessionAgent.agentId && event.count === 1,
@@ -791,10 +833,13 @@ describe('SwarmWebSocketServer', () => {
       } satisfies ServerEvent,
     )
 
-    await waitForEvent(
-      events,
-      (event) => event.type === 'unread_notification' && event.agentId === worker.agentId,
-    )
+    await waitForCondition(() => getUnreadNotifications(events).length === 1)
+    expect(getUnreadNotifications(events)[0]).toEqual({
+      type: 'unread_notification',
+      agentId: worker.agentId,
+      reason: 'message',
+      sessionAgentId: 'manager',
+    })
     await new Promise((resolve) => setTimeout(resolve, 75))
     expect(events.some((event) => event.type === 'unread_count_update' && event.agentId === 'manager')).toBe(false)
 
@@ -810,12 +855,32 @@ describe('SwarmWebSocketServer', () => {
       } satisfies ServerEvent,
     )
 
-    await waitForEvent(
-      events,
-      (event) => event.type === 'unread_notification' && event.agentId === worker.agentId,
-    )
+    await waitForCondition(() => getUnreadNotifications(events).length === 2)
+    expect(getUnreadNotifications(events)[1]).toEqual({
+      type: 'unread_notification',
+      agentId: worker.agentId,
+      reason: 'choice_request',
+      sessionAgentId: 'manager',
+    })
     await new Promise((resolve) => setTimeout(resolve, 75))
     expect(events.some((event) => event.type === 'unread_count_update' && event.agentId === 'manager')).toBe(false)
+
+    const unreadCountBeforeNonPending = getUnreadNotifications(events).length
+    manager.emit(
+      'choice_request',
+      {
+        type: 'choice_request',
+        agentId: worker.agentId,
+        choiceId: 'choice-1',
+        status: 'answered',
+        questions: [{ id: 'q1', question: 'Pick one' }],
+        answers: [{ questionId: 'q1', selectedOptionIds: [], text: 'Option A' }],
+        timestamp: new Date().toISOString(),
+      } satisfies ServerEvent,
+    )
+
+    await new Promise((resolve) => setTimeout(resolve, 75))
+    expect(getUnreadNotifications(events)).toHaveLength(unreadCountBeforeNonPending)
 
     client.close()
     await once(client, 'close')
