@@ -221,9 +221,10 @@ Below the defaults, each manager profile is listed. Managers using the defaults 
 
 Managers with overrides show the full controls plus a **Reset to defaults** button. Resetting removes the override and the manager goes back to inheriting defaults.
 
-Each manager has two sound triggers:
+Each manager has three sound triggers:
 
 - **Unread message sound** — plays when a manager sends a message you haven't read yet.
+- **Question sound** — plays when an agent presents a structured choice or question (via the choice picker tool). When enabled, this takes priority over the unread message sound for choice request events. When disabled, choice requests fall back to the regular unread sound.
 - **All done sound** — plays when a manager finishes with no workers still running.
 
 ## Cortex
@@ -238,9 +239,11 @@ To remove a custom sound, click the trash icon next to it. Any manager or the de
 
 ## Tips
 
+- The question sound is enabled by default and uses a dedicated audio file. It helps you notice when agents need your input for a decision.
 - Set a distinct "all done" sound in the defaults so you hear when any long task finishes.
 - Use per-manager overrides only when you need to tell managers apart by ear.
-- Cortex settings are separate — configure them if you want sounds for automated reviews.`,
+- Cortex settings are separate — configure them if you want sounds for automated reviews.
+- If you prefer not to hear question alerts, disable the question sound in defaults — choice requests will fall back to the regular unread sound instead.`,
     keywords: [
       'notifications',
       'sound',
