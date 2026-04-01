@@ -1290,6 +1290,7 @@ export function IndexPage() {
                         isLoading={isLoading}
                         wsUrl={wsUrl}
                         activeAgentId={activeAgentId}
+                        projectAgent={activeAgent?.projectAgent}
                         onSuggestionClick={handleSuggestionClick}
                         onArtifactClick={handleOpenArtifact}
                         onForkFromMessage={activeAgentId ? handleForkFromMessage : undefined}

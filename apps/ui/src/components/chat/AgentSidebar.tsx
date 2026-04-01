@@ -1001,21 +1001,16 @@ function ProfileGroup({
             // Build a set of all session agentIds in this profile for existence checks
             const sessionAgentIds = new Set(sessions.map((s) => s.sessionAgent.agentId))
 
-            // Hide completed wizard sessions (agentCreatorResult is set) unless currently selected
+            // Hide completed wizard sessions (agentCreatorResult is set) — always hidden
             const isCompletedWizard = (s: SessionRow) =>
               Boolean(s.sessionAgent.agentCreatorResult)
-            const isSelectedSession = (s: SessionRow) =>
-              !isSettingsActive && (
-                s.sessionAgent.agentId === selectedAgentId ||
-                s.workers.some((w) => w.agentId === selectedAgentId)
-              )
 
             // Split sessions into project agents (always visible) and regular sessions (subject to truncation)
             const projectAgentSessions = sessions.filter((s) => Boolean(s.sessionAgent.projectAgent))
             const pinnedSessions = sessions.filter((s) =>
               !s.sessionAgent.projectAgent &&
               Boolean(s.sessionAgent.pinnedAt) &&
-              (!isCompletedWizard(s) || isSelectedSession(s))
+              !isCompletedWizard(s)
             ).sort((a, b) => {
               const aPinned = a.sessionAgent.pinnedAt ?? ''
               const bPinned = b.sessionAgent.pinnedAt ?? ''
@@ -1024,8 +1019,7 @@ function ProfileGroup({
             const regularSessions = sessions.filter((s) =>
               !s.sessionAgent.projectAgent &&
               !s.sessionAgent.pinnedAt &&
-              // Hide completed wizard sessions unless they are the active selection
-              (!isCompletedWizard(s) || isSelectedSession(s))
+              !isCompletedWizard(s)
             )
 
             const hasMore = regularSessions.length > visibleSessionLimit

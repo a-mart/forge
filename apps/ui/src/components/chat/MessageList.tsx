@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button'
 import type { ArtifactReference } from '@/lib/artifacts'
 import { formatElapsed } from '@/lib/format-utils'
 import { cn } from '@/lib/utils'
-import type { ChoiceAnswer, ConversationEntry } from '@forge/protocol'
+import type { ChoiceAnswer, ConversationEntry, ProjectAgentInfo } from '@forge/protocol'
 import { AgentMessageRow } from './message-list/AgentMessageRow'
 import { ChoiceAnsweredRow } from './message-list/ChoiceAnsweredRow'
 import { ChoiceRequestCard } from './message-list/ChoiceRequestCard'
@@ -35,6 +35,7 @@ interface MessageListProps {
   isLoading: boolean
   wsUrl?: string
   activeAgentId?: string | null
+  projectAgent?: ProjectAgentInfo | null
   onSuggestionClick?: (suggestion: string) => void
   onArtifactClick?: (artifact: ArtifactReference) => void
   onForkFromMessage?: (messageId: string) => void
@@ -282,6 +283,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
   isLoading,
   wsUrl,
   activeAgentId,
+  projectAgent,
   onSuggestionClick,
   onArtifactClick,
   onForkFromMessage,
@@ -457,6 +459,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
     return (
       <EmptyState
         activeAgentId={activeAgentId}
+        projectAgent={projectAgent}
         onSuggestionClick={onSuggestionClick}
       />
     )
