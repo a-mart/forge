@@ -1,10 +1,13 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import type { SessionMeta, SessionWorkerMeta } from "@forge/protocol";
 import {
+  getProfilesDir,
   getSessionFilePath,
   getSessionMetaPath,
+  getSessionsDir,
+  getSharedDir,
   resolveMemoryFilePath
 } from "./data-paths.js";
 import { renameWithRetry } from "./retry-rename.js";
@@ -92,6 +95,83 @@ export async function incrementSessionCompactionCount(
   meta.compactionCount = newCount;
   await writeFile(metaPath, `${JSON.stringify(meta, null, 2)}\n`, "utf8");
   return newCount;
+}
+
+const BACKFILL_SENTINEL = ".compaction-count-backfill-done";
+
+/**
+ * One-time background backfill of compactionCount for existing sessions.
+ * Scans session JSONL files for compaction success markers and persists the count to meta.json.
+ * Writes a sentinel file after completion so it never re-runs.
+ */
+export async function backfillCompactionCounts(dataDir: string): Promise<void> {
+  const sentinelPath = join(getSharedDir(dataDir), BACKFILL_SENTINEL);
+
+  // Check sentinel — if already done, skip entirely
+  try {
+    await stat(sentinelPath);
+    return; // Sentinel exists — backfill already completed
+  } catch {
+    // Sentinel doesn't exist — proceed with backfill
+  }
+
+  const profilesDir = getProfilesDir(dataDir);
+  let profileIds: string[];
+  try {
+    profileIds = await readdir(profilesDir);
+  } catch {
+    // No profiles directory — nothing to backfill
+    await writeFile(sentinelPath, new Date().toISOString() + "\n", "utf8");
+    return;
+  }
+
+  for (const profileId of profileIds) {
+    const sessionsDir = getSessionsDir(dataDir, profileId);
+    let sessionIds: string[];
+    try {
+      sessionIds = await readdir(sessionsDir);
+    } catch {
+      continue; // No sessions dir for this profile
+    }
+
+    for (const sessionId of sessionIds) {
+      try {
+        const metaPath = getSessionMetaPath(dataDir, profileId, sessionId);
+        const metaRaw = await readFile(metaPath, "utf-8").catch(() => "");
+        if (!metaRaw) continue;
+
+        const meta = JSON.parse(metaRaw) as Record<string, unknown>;
+        // Skip if already has a non-zero compaction count
+        if (typeof meta.compactionCount === "number" && meta.compactionCount > 0) {
+          continue;
+        }
+
+        // Scan JSONL for compaction success markers
+        const sessionFilePath = getSessionFilePath(dataDir, profileId, sessionId);
+        const sessionRaw = await readFile(sessionFilePath, "utf-8").catch(() => "");
+        if (!sessionRaw) continue;
+
+        let count = 0;
+        for (const line of sessionRaw.split("\n")) {
+          if (line.includes("Compaction complete.") || line.includes("Context automatically compacted")) {
+            count++;
+          }
+        }
+
+        if (count > 0) {
+          meta.compactionCount = count;
+          await writeFile(metaPath, `${JSON.stringify(meta, null, 2)}\n`, "utf8");
+        }
+      } catch {
+        // Skip individual session errors — best-effort backfill
+        continue;
+      }
+    }
+  }
+
+  // Write sentinel so we never re-run
+  await mkdir(dirname(sentinelPath), { recursive: true }).catch(() => {});
+  await writeFile(sentinelPath, new Date().toISOString() + "\n", "utf8");
 }
 
 export async function rebuildSessionMeta(options: RebuildSessionMetaOptions): Promise<SessionMeta[]> {

@@ -98,6 +98,7 @@ import { modelCatalogService } from "./model-catalog-service.js";
 import { RuntimeFactory } from "./runtime-factory.js";
 import {
   computePromptFingerprint,
+  backfillCompactionCounts,
   incrementSessionCompactionCount,
   readSessionMeta,
   rebuildSessionMeta,
@@ -1391,6 +1392,13 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     await this.saveStore();
     await this.rebuildSessionManifestForBoot();
     await this.hydrateCompactionCountsForBoot();
+
+    // Fire-and-forget: one-time backfill of historical compaction counts from JSONL
+    void backfillCompactionCounts(this.config.paths.dataDir).then(() => {
+      this.logDebug("boot:compaction-count-backfill:done", {});
+    }).catch((err) => {
+      this.logDebug("boot:compaction-count-backfill:error", { error: String(err) });
+    });
 
     this.loadConversationHistoriesFromStore();
     await this.restoreRuntimesForBoot();
