@@ -44,7 +44,7 @@ export function EmptyState({
           {projectAgent.whenToUse}
         </p>
         <p className="mx-auto mb-4 max-w-sm text-sm text-muted-foreground">
-          <span className="font-medium text-red-400">Created by the Agent Architect. To adjust this agent&apos;s configuration, right-click it in the sidebar and select View Creation History.</span>
+          <span className="font-medium text-red-400">To adjust this agent&apos;s configuration, right-click it in the sidebar and select View Creation History.</span>
         </p>
         {onSuggestionClick ? (
           <Button
