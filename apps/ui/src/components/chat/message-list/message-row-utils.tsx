@@ -3,10 +3,29 @@ import type { MessageSourceContext } from '@forge/protocol'
 
 export function formatTimestamp(iso: string): string {
   try {
-    return new Date(iso).toLocaleTimeString([], {
+    const date = new Date(iso)
+    if (Number.isNaN(date.getTime())) return ''
+
+    const now = new Date()
+    const isToday =
+      date.getFullYear() === now.getFullYear() &&
+      date.getMonth() === now.getMonth() &&
+      date.getDate() === now.getDate()
+    const isSameYear = date.getFullYear() === now.getFullYear()
+
+    const time = date.toLocaleTimeString([], {
       hour: 'numeric',
       minute: '2-digit',
     })
+
+    if (isToday) return time
+
+    const month = date.getMonth() + 1
+    const day = date.getDate()
+
+    if (isSameYear) return `${month}/${day} ${time}`
+
+    return `${month}/${day}/${date.getFullYear()} ${time}`
   } catch {
     return ''
   }
