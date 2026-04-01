@@ -34,6 +34,7 @@ interface ChatHeaderProps {
   channelView: ChannelView
   onChannelViewChange: (view: ChannelView) => void
   contextWindowUsage: { usedTokens: number; contextWindow: number } | null
+  compactionCount?: number
   showCompact: boolean
   compactInProgress: boolean
   onCompact: () => void
@@ -136,6 +137,7 @@ export function ChatHeader({
   channelView,
   onChannelViewChange,
   contextWindowUsage,
+  compactionCount,
   showCompact,
   compactInProgress,
   onCompact,
@@ -350,6 +352,7 @@ export function ChatHeader({
             <ContextWindowIndicator
               usedTokens={contextWindowUsage.usedTokens}
               contextWindow={contextWindowUsage.contextWindow}
+              compactionCount={compactionCount}
             />
           ) : null}
         </div>
