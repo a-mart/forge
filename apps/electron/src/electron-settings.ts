@@ -4,10 +4,14 @@ import path from 'node:path'
 
 export interface ElectronSettings {
   betaChannel: boolean
+  sleepBlockerEnabled: boolean
+  sleepBlockerGracePeriodMinutes: number
 }
 
 const DEFAULTS: ElectronSettings = {
   betaChannel: false,
+  sleepBlockerEnabled: false,
+  sleepBlockerGracePeriodMinutes: 30,
 }
 
 function getSettingsPath(): string {

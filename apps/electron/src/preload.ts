@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import type { SleepBlockerSettingsPatch, SleepBlockerStatus } from './sleep-blocker.js'
 
 const BACKEND_READY_CHANNEL = 'forge:get-backend-bootstrap'
 const TERMINAL_SHORTCUT_CHANNEL = 'bridge:terminal-shortcut'
@@ -36,6 +37,9 @@ contextBridge.exposeInMainWorld('electronBridge', {
   installUpdate: (): Promise<void> => ipcRenderer.invoke('install-update'),
   getBetaChannel: (): Promise<boolean> => ipcRenderer.invoke('get-beta-channel'),
   setBetaChannel: (enabled: boolean): Promise<void> => ipcRenderer.invoke('set-beta-channel', enabled),
+  getSleepBlockerSettings: (): Promise<SleepBlockerStatus> => ipcRenderer.invoke('get-sleep-blocker-settings'),
+  setSleepBlockerSettings: (patch: SleepBlockerSettingsPatch): Promise<SleepBlockerStatus | null> =>
+    ipcRenderer.invoke('set-sleep-blocker-settings', patch),
   revealInFolder: (filePath: string): Promise<void> => ipcRenderer.invoke('reveal-in-folder', filePath),
   onUpdateStatus: (callback: (status: { type: string; version?: string; percent?: number; message?: string }) => void): (() => void) => {
     const handler = (_event: Electron.IpcRendererEvent, status: { type: string; version?: string; percent?: number; message?: string }) => {
@@ -44,6 +48,15 @@ contextBridge.exposeInMainWorld('electronBridge', {
     ipcRenderer.on('update-status', handler)
     return () => {
       ipcRenderer.removeListener('update-status', handler)
+    }
+  },
+  onSleepBlockerStatus: (callback: (status: SleepBlockerStatus) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, status: SleepBlockerStatus) => {
+      callback(status)
+    }
+    ipcRenderer.on('sleep-blocker-status', handler)
+    return () => {
+      ipcRenderer.removeListener('sleep-blocker-status', handler)
     }
   },
 })

@@ -6,6 +6,17 @@
  * port-based heuristic that assumes the renderer runs on a known HTTP port.
  */
 
+export interface SleepBlockerStatus {
+  /** Feature enabled in settings */
+  enabled: boolean
+  /** powerSaveBlocker is currently active */
+  blocking: boolean
+  /** Null when not in grace period, otherwise ms remaining */
+  graceRemainingMs: number | null
+  /** Human-readable reason */
+  reason: string
+}
+
 export type UpdateStatus =
   | { type: 'checking' }
   | { type: 'available'; version?: string }
@@ -47,6 +58,12 @@ export interface ElectronBridge {
   onUpdateStatus?(callback: (status: UpdateStatus) => void): () => void
   /** Reveal a file in the native file manager (Finder / File Explorer). */
   revealInFolder?(filePath: string): Promise<void>
+  /** Get current sleep blocker settings and status. */
+  getSleepBlockerSettings?(): Promise<SleepBlockerStatus>
+  /** Update sleep blocker settings. Returns updated status. */
+  setSleepBlockerSettings?(patch: { enabled?: boolean; gracePeriodMinutes?: number }): Promise<SleepBlockerStatus | null>
+  /** Subscribe to sleep blocker status changes. Returns unsubscribe function. */
+  onSleepBlockerStatus?(callback: (status: SleepBlockerStatus) => void): () => void
 }
 
 declare global {

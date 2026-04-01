@@ -15,6 +15,7 @@ import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { readSidebarModelIconsPref, storeSidebarModelIconsPref } from '@/lib/sidebar-prefs'
 import { SettingsSection, SettingsWithCTA } from './settings-row'
+import { isElectron, type SleepBlockerStatus } from '@/lib/electron-bridge'
 import {
   applyThemePreference,
   readStoredThemePreference,
@@ -68,6 +69,55 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
   const [cortexError, setCortexError] = useState<string | null>(null)
   const [cortexUpdating, setCortexUpdating] = useState(false)
   const [cortexLoadFailed, setCortexLoadFailed] = useState(false)
+
+  // Sleep blocker state (Electron-only)
+  const bridge = window.electronBridge
+  const inElectron = isElectron()
+  const [sleepBlockerEnabled, setSleepBlockerEnabled] = useState(false)
+  const [sleepBlockerGracePeriod, setSleepBlockerGracePeriod] = useState(30)
+  const [sleepBlockerStatus, setSleepBlockerStatus] = useState<SleepBlockerStatus | null>(null)
+  const [sleepBlockerUpdating, setSleepBlockerUpdating] = useState(false)
+
+  // Load initial sleep blocker state
+  useEffect(() => {
+    if (!inElectron || !bridge?.getSleepBlockerSettings) return
+    bridge.getSleepBlockerSettings().then((status) => {
+      setSleepBlockerEnabled(status.enabled)
+      setSleepBlockerStatus(status)
+    }).catch(() => {})
+  }, [inElectron, bridge])
+
+  // Subscribe to sleep blocker status updates
+  useEffect(() => {
+    if (!inElectron || !bridge?.onSleepBlockerStatus) return
+    const unsub = bridge.onSleepBlockerStatus((status) => {
+      setSleepBlockerStatus(status)
+      setSleepBlockerEnabled(status.enabled)
+    })
+    return unsub
+  }, [inElectron, bridge])
+
+  const handleSleepBlockerToggle = useCallback((checked: boolean) => {
+    setSleepBlockerEnabled(checked)
+    setSleepBlockerUpdating(true)
+    bridge?.setSleepBlockerSettings?.({ enabled: checked })
+      ?.then((result) => {
+        if (result) setSleepBlockerStatus(result)
+      })
+      ?.catch(() => {})
+      ?.finally(() => setSleepBlockerUpdating(false))
+  }, [bridge])
+
+  const handleSleepBlockerGracePeriodChange = useCallback((minutes: number) => {
+    setSleepBlockerGracePeriod(minutes)
+    setSleepBlockerUpdating(true)
+    bridge?.setSleepBlockerSettings?.({ gracePeriodMinutes: minutes })
+      ?.then((result) => {
+        if (result) setSleepBlockerStatus(result)
+      })
+      ?.catch(() => {})
+      ?.finally(() => setSleepBlockerUpdating(false))
+  }, [bridge])
 
   useEffect(() => {
     setThemePreference(readStoredThemePreference())
@@ -318,6 +368,61 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
           </div>
         </SettingsWithCTA>
       </SettingsSection>
+
+      {inElectron && (
+        <SettingsSection
+          label="Sleep Prevention"
+          description="Keep the system awake while agents are active"
+        >
+          <SettingsWithCTA
+            label="Prevent Sleep During Activity"
+            description="Automatically prevent system sleep while agents are processing. Display sleep is not affected."
+          >
+            <Switch
+              checked={sleepBlockerEnabled}
+              onCheckedChange={handleSleepBlockerToggle}
+              disabled={sleepBlockerUpdating}
+            />
+          </SettingsWithCTA>
+
+          {sleepBlockerEnabled && (
+            <SettingsWithCTA
+              label="Grace Period"
+              description="How long to keep preventing sleep after all agents finish"
+            >
+              <Select
+                value={String(sleepBlockerGracePeriod)}
+                onValueChange={(value) => {
+                  const minutes = parseInt(value, 10)
+                  if (!isNaN(minutes)) handleSleepBlockerGracePeriodChange(minutes)
+                }}
+                disabled={sleepBlockerUpdating}
+              >
+                <SelectTrigger className="w-full sm:w-48">
+                  <SelectValue placeholder="Select duration" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="0">No grace period</SelectItem>
+                  <SelectItem value="5">5 minutes</SelectItem>
+                  <SelectItem value="15">15 minutes</SelectItem>
+                  <SelectItem value="30">30 minutes</SelectItem>
+                  <SelectItem value="60">1 hour</SelectItem>
+                  <SelectItem value="120">2 hours</SelectItem>
+                </SelectContent>
+              </Select>
+            </SettingsWithCTA>
+          )}
+
+          {sleepBlockerStatus?.blocking && (
+            <div className="flex items-center gap-2 rounded-md border border-border px-4 py-2.5">
+              <div className="size-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span className="text-xs text-muted-foreground">
+                {sleepBlockerStatus.reason}
+              </span>
+            </div>
+          )}
+        </SettingsSection>
+      )}
 
       <SettingsSection
         label="Cortex"

@@ -5,6 +5,7 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { checkForUpdatesManually, downloadUpdateManually, installUpdateManually, initAutoUpdater, getBetaChannel, setBetaChannel } from './auto-updater.js'
 import { fixPath } from './fix-path.js'
+import { SleepBlockerService, type SleepBlockerSettingsPatch, type SleepBlockerStatus } from './sleep-blocker.js'
 import { loadWindowState, trackWindowState } from './window-state.js'
 import { showWhatsNewIfUpdated } from './whats-new.js'
 
@@ -385,10 +386,23 @@ const backendSupervisor = new BackendSupervisor((port, isRestart) => {
   }
 })
 
+let sleepBlockerService: SleepBlockerService | null = null
+
 async function prepareQuitForUpdate(): Promise<void> {
   if (!appIsQuitting) {
     appIsQuitting = true
+    sleepBlockerService?.dispose()
     await backendSupervisor.stop()
+  }
+}
+
+function getUnavailableSleepBlockerStatus(): SleepBlockerStatus {
+  return {
+    enabled: false,
+    gracePeriodMinutes: 30,
+    blocking: false,
+    graceRemainingMs: null,
+    reason: 'Sleep prevention is not available.',
   }
 }
 
@@ -464,6 +478,13 @@ if (!hasSingleInstanceLock) {
     setBetaChannel(enabled)
   })
 
+  ipcMain.handle('get-sleep-blocker-settings', () => {
+    return sleepBlockerService?.getStatus() ?? getUnavailableSleepBlockerStatus()
+  })
+
+  ipcMain.handle('set-sleep-blocker-settings', (_event, patch: SleepBlockerSettingsPatch) => {
+    return sleepBlockerService?.updateSettings(patch) ?? null
+  })
 
   app.whenReady().then(async () => {
     nativeTheme.themeSource = 'dark'
@@ -496,6 +517,15 @@ if (!hasSingleInstanceLock) {
       getBackendBaseUrl: () => backendBootstrap?.backendUrl ?? null,
       prepareQuitForUpdate,
     })
+    sleepBlockerService = new SleepBlockerService({
+      getBackendBaseUrl: () => backendBootstrap?.backendUrl ?? null,
+      onStatusChange: (status) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('sleep-blocker-status', status)
+        }
+      },
+    })
+    sleepBlockerService.initialize()
     await loadRenderer(mainWindow)
 
     // Show "What's New" dialog if the app was just updated (non-blocking)
@@ -518,6 +548,7 @@ if (!hasSingleInstanceLock) {
 
     event.preventDefault()
     appIsQuitting = true
+    sleepBlockerService?.dispose()
 
     void backendSupervisor.stop().finally(() => {
       app.exit(0)

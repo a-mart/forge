@@ -60,16 +60,18 @@ export function loadWindowState(): WindowState {
       isFullScreen: saved.isFullScreen === true,
     }
 
-    if (Number.isFinite(saved.x) && Number.isFinite(saved.y)) {
+    if (typeof saved.x === 'number' && Number.isFinite(saved.x) && typeof saved.y === 'number' && Number.isFinite(saved.y)) {
+      const savedX = saved.x
+      const savedY = saved.y
       const displays = screen.getAllDisplays()
       const visible = displays.some((display) => {
         const { x, y, width, height } = display.workArea
-        return saved.x >= x - 100 && saved.x < x + width && saved.y >= y - 100 && saved.y < y + height
+        return savedX >= x - 100 && savedX < x + width && savedY >= y - 100 && savedY < y + height
       })
 
       if (visible) {
-        state.x = saved.x
-        state.y = saved.y
+        state.x = savedX
+        state.y = savedY
       }
     }
 
