@@ -348,7 +348,7 @@ async function migrateSchedules(
 
     const sourcePath = join(legacySchedulesDir, entry.name);
     const targetPath = getProfileScheduleFilePath(dataDir, profileId);
-    await mergeScheduleFileIntoProfileSchedule(sourcePath, targetPath, logger);
+    await mergeScheduleFileIntoProfileSchedule(sourcePath, targetPath, managerId, logger);
   }
 }
 
@@ -364,25 +364,34 @@ function resolveScheduleProfileId(managerId: string, managerProfileBySessionId: 
 async function mergeScheduleFileIntoProfileSchedule(
   sourcePath: string,
   targetPath: string,
+  sourceSessionId: string,
   logger: DataMigrationLogger
 ): Promise<void> {
   if (!(await pathExists(sourcePath))) {
     return;
   }
 
+  const sourcePayload = await readSchedulePayload(sourcePath, logger);
+  if (!sourcePayload) {
+    return;
+  }
+
+  const normalizedSourceSchedules = stampLegacyImportedSchedules(sourcePayload.schedules, sourceSessionId);
+
   if (!(await pathExists(targetPath))) {
-    await copyFileIfMissing(sourcePath, targetPath);
+    await writeJsonAtomic(targetPath, {
+      ...sourcePayload.payload,
+      schedules: normalizedSourceSchedules
+    });
     return;
   }
 
   const targetPayload = await readSchedulePayload(targetPath, logger);
-  const sourcePayload = await readSchedulePayload(sourcePath, logger);
-
-  if (!targetPayload || !sourcePayload) {
+  if (!targetPayload) {
     return;
   }
 
-  const mergedSchedules = mergeSchedules(targetPayload.schedules, sourcePayload.schedules);
+  const mergedSchedules = mergeSchedules(targetPayload.schedules, normalizedSourceSchedules);
   if (mergedSchedules.length === targetPayload.schedules.length) {
     return;
   }
@@ -450,6 +459,29 @@ function mergeSchedules(base: unknown[], incoming: unknown[]): unknown[] {
   }
 
   return merged;
+}
+
+function stampLegacyImportedSchedules(schedules: unknown[], sourceSessionId: string): unknown[] {
+  const shouldStampSessionId = Boolean(deriveProfileIdFromSessionAgentId(sourceSessionId));
+  if (!shouldStampSessionId) {
+    return schedules;
+  }
+
+  return schedules.map((schedule) => {
+    if (!isRecord(schedule)) {
+      return schedule;
+    }
+
+    const existingSessionId = normalizeOptionalString(schedule.sessionId);
+    if (existingSessionId) {
+      return schedule;
+    }
+
+    return {
+      ...schedule,
+      sessionId: sourceSessionId
+    };
+  });
 }
 
 function scheduleIdentity(value: unknown): string {

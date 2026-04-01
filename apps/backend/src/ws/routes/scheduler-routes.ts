@@ -13,6 +13,7 @@ const MANAGER_SCHEDULES_ENDPOINT_PATTERN = /^\/api\/managers\/([^/]+)\/schedules
 
 interface ScheduleHttpRecord {
   id: string;
+  sessionId: string;
   name: string;
   cron: string;
   message: string;
@@ -76,7 +77,7 @@ export function createSchedulerRoutes(options: { swarmManager: SwarmManager }): 
           }
 
           const schedules = parsed.schedules
-            .map((entry) => normalizeScheduleRecord(entry))
+            .map((entry) => normalizeScheduleRecord(entry, profileId))
             .filter((entry): entry is ScheduleHttpRecord => entry !== undefined);
 
           sendJson(response, 200, { schedules });
@@ -117,13 +118,18 @@ function isManagerAgent(swarmManager: SwarmManager, managerId: string): boolean 
   return Boolean(descriptor && descriptor.role === "manager");
 }
 
-function normalizeScheduleRecord(entry: unknown): ScheduleHttpRecord | undefined {
+function normalizeScheduleRecord(
+  entry: unknown,
+  fallbackSessionId: string
+): ScheduleHttpRecord | undefined {
   if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
     return undefined;
   }
 
   const maybe = entry as Partial<ScheduleHttpRecord>;
   const id = normalizeScheduleRequiredString(maybe.id);
+  const sessionId =
+    normalizeScheduleRequiredString(maybe.sessionId) ?? normalizeScheduleRequiredString(fallbackSessionId);
   const name = normalizeScheduleRequiredString(maybe.name);
   const cron = normalizeScheduleRequiredString(maybe.cron);
   const message = normalizeScheduleRequiredString(maybe.message);
@@ -132,12 +138,13 @@ function normalizeScheduleRecord(entry: unknown): ScheduleHttpRecord | undefined
   const nextFireAt = normalizeScheduleRequiredString(maybe.nextFireAt);
   const lastFiredAt = normalizeScheduleRequiredString(maybe.lastFiredAt);
 
-  if (!id || !name || !cron || !message || !timezone || !createdAt || !nextFireAt) {
+  if (!id || !sessionId || !name || !cron || !message || !timezone || !createdAt || !nextFireAt) {
     return undefined;
   }
 
   return {
     id,
+    sessionId,
     name,
     cron,
     message,

@@ -40,6 +40,7 @@ describe('CortexAutoReviewSettingsService', () => {
     expect(storedSchedules.schedules).toEqual([
       {
         id: CORTEX_AUTO_REVIEW_SCHEDULE_ID,
+        sessionId: 'cortex',
         name: 'Cortex Auto-Review',
         cron: '0 */2 * * *',
         message: 'Review all sessions that need attention',
@@ -116,6 +117,7 @@ describe('CortexAutoReviewSettingsService', () => {
     expect(scheduleAfterIntervalUpdate.schedules).toHaveLength(1)
     expect(scheduleAfterIntervalUpdate.schedules[0]).toMatchObject({
       id: CORTEX_AUTO_REVIEW_SCHEDULE_ID,
+      sessionId: 'cortex',
       cron: '0 */4 * * *',
       createdAt: '2026-03-27T12:00:00.000Z',
       nextFireAt: '2026-03-27T16:00:00.000Z',
@@ -242,6 +244,7 @@ describe('syncCortexAutoReviewSchedule', () => {
         },
         {
           id: CORTEX_AUTO_REVIEW_SCHEDULE_ID,
+          sessionId: 'cortex',
           name: 'Cortex Auto-Review',
           cron: '0 */2 * * *',
           message: 'Review all sessions that need attention',
@@ -321,6 +324,7 @@ describe('syncCortexAutoReviewSchedule', () => {
     expect(stored.schedules[0]).toEqual(original.schedules[0])
     expect(stored.schedules[1]).toEqual({
       id: CORTEX_AUTO_REVIEW_SCHEDULE_ID,
+      sessionId: 'cortex',
       name: 'Cortex Auto-Review',
       cron: '0 */8 * * *',
       message: 'Review all sessions that need attention',

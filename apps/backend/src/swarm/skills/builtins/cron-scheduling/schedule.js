@@ -31,7 +31,16 @@ function normalizeOptionalManagerId(rawValue) {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-async function loadAgentsStoreManagers(dataDir) {
+function normalizeOptionalSessionId(rawValue) {
+  if (typeof rawValue !== "string") {
+    return null;
+  }
+
+  const trimmed = rawValue.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+async function loadAgentsStoreAgents(dataDir) {
   const agentsStoreFile = resolve(dataDir, AGENTS_STORE_RELATIVE_PATH);
 
   let raw;
@@ -52,13 +61,14 @@ async function loadAgentsStoreManagers(dataDir) {
     parsed = {};
   }
 
-  const managers = [];
-  const agents = Array.isArray(parsed?.agents) ? parsed.agents : [];
-  for (const agent of agents) {
-    if (!isObject(agent)) {
-      continue;
-    }
+  return Array.isArray(parsed?.agents) ? parsed.agents.filter(isObject) : [];
+}
 
+async function loadAgentsStoreManagers(dataDir) {
+  const agents = await loadAgentsStoreAgents(dataDir);
+  const managers = [];
+
+  for (const agent of agents) {
     if (agent.role !== "manager") {
       continue;
     }
@@ -164,6 +174,7 @@ function isScheduleRecord(value) {
     isObject(value) &&
     typeof value.id === "string" &&
     value.id.trim().length > 0 &&
+    (typeof value.sessionId === "undefined" || normalizeOptionalSessionId(value.sessionId) !== null) &&
     typeof value.name === "string" &&
     value.name.trim().length > 0 &&
     typeof value.cron === "string" &&
@@ -285,14 +296,35 @@ function printUsage() {
     ok: false,
     error: "Usage: schedule.js <add|remove|list> [options]",
     commands: {
-      add: 'schedule.js add --name "..." --cron "..." --message "..." [--timezone "America/Los_Angeles"] [--one-shot] [--manager "<id>"]',
+      add: 'schedule.js add --session "<session-id>" --name "..." --cron "..." --message "..." [--timezone "America/Los_Angeles"] [--one-shot] [--manager "<id>"]',
       remove: 'schedule.js remove --id "..." [--manager "<id>"]',
       list: 'schedule.js list [--manager "<id>"]'
     }
   });
 }
 
-async function handleAdd(flags, filePath, legacyFilePath, managerId) {
+async function validateSessionForManager(dataDir, sessionId, expectedProfileId) {
+  const agents = await loadAgentsStoreAgents(dataDir);
+  const matchingAgent = agents.find((agent) => normalizeOptionalManagerId(agent.agentId) === sessionId);
+
+  if (!matchingAgent) {
+    throw new Error(`Unknown session: ${sessionId}`);
+  }
+
+  if (matchingAgent.role !== "manager") {
+    throw new Error(`Invalid session ${sessionId}: target must be a manager session`);
+  }
+
+  const sessionProfileId = normalizeOptionalManagerId(matchingAgent.profileId) ?? sessionId;
+  if (sessionProfileId !== expectedProfileId) {
+    throw new Error(
+      `Invalid session ${sessionId}: belongs to profile ${sessionProfileId}, expected profile ${expectedProfileId}`
+    );
+  }
+}
+
+async function handleAdd(flags, filePath, legacyFilePath, managerId, dataDir, profileId) {
+  const sessionId = getRequiredFlag(flags, "session");
   const name = getRequiredFlag(flags, "name");
   const cron = getRequiredFlag(flags, "cron");
   const message = getRequiredFlag(flags, "message");
@@ -303,12 +335,15 @@ async function handleAdd(flags, filePath, legacyFilePath, managerId) {
     throw new Error(`Invalid timezone: ${timezone}`);
   }
 
+  await validateSessionForManager(dataDir, sessionId, profileId);
+
   const now = new Date();
   const nextFireAt = computeNextFireAt(cron, timezone, now);
   const createdAt = now.toISOString();
 
   const schedule = {
     id: randomUUID(),
+    sessionId,
     name,
     cron,
     message,
@@ -399,7 +434,7 @@ async function main() {
 
   switch (command) {
     case "add":
-      await handleAdd(flags, schedulesFilePath, legacySchedulesFilePath, managerId);
+      await handleAdd(flags, schedulesFilePath, legacySchedulesFilePath, managerId, dataDir, profileId);
       return;
     case "remove":
       await handleRemove(flags, schedulesFilePath, legacySchedulesFilePath, managerId);

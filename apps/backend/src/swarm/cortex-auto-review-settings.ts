@@ -170,7 +170,7 @@ export async function syncCortexAutoReviewSchedule(options: {
     if (!foundManagedEntry) {
       foundManagedEntry = true
 
-      if (getScheduleCron(entry) === cron) {
+      if (getScheduleCron(entry) === cron && getScheduleSessionId(entry) === CORTEX_PROFILE_ID) {
         nextSchedules.push(entry)
         changed = false
         continue
@@ -379,6 +379,14 @@ function getScheduleCron(entry: unknown): string | undefined {
   return normalizeNonEmptyString((entry as { cron?: unknown }).cron)
 }
 
+function getScheduleSessionId(entry: unknown): string | undefined {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+    return undefined
+  }
+
+  return normalizeNonEmptyString((entry as { sessionId?: unknown }).sessionId)
+}
+
 function getManagedScheduleEntry(entry: unknown): ManagedScheduleEntry | undefined {
   if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
     return undefined
@@ -404,6 +412,7 @@ function buildManagedScheduleEntry(options: {
     name: CORTEX_AUTO_REVIEW_SCHEDULE_NAME,
     cron: options.cron,
     message: CORTEX_AUTO_REVIEW_SCHEDULE_MESSAGE,
+    sessionId: CORTEX_PROFILE_ID,
     oneShot: false,
     timezone: CORTEX_AUTO_REVIEW_SCHEDULE_TIMEZONE,
     createdAt: options.existing?.createdAt ?? nowIso,

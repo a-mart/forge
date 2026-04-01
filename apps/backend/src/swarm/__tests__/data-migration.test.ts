@@ -98,10 +98,14 @@ describe("data-migration", () => {
 
     const migratedSchedules = JSON.parse(
       await readFile(getProfileScheduleFilePath(dataDir, profileId), "utf8")
-    ) as { schedules: Array<{ id: string }> };
+    ) as { schedules: Array<{ id: string; sessionId?: string }> };
     expect(migratedSchedules.schedules.map((schedule) => schedule.id)).toEqual([
       "profile-schedule",
       "session-schedule"
+    ]);
+    expect(migratedSchedules.schedules).toEqual([
+      { id: "profile-schedule", name: "profile" },
+      { id: "session-schedule", name: "session", sessionId: nonRootSessionId }
     ]);
 
     await expect(readFile(getSharedAuthFilePath(dataDir), "utf8")).resolves.toContain("openai-codex");

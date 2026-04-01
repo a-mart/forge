@@ -2,6 +2,7 @@ import { watch, type FSWatcher } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, dirname } from "node:path";
 import { CronExpressionParser } from "cron-parser";
+import { isNonRunningAgentStatus } from "../swarm/agent-state-machine.js";
 import { renameWithRetry } from "../swarm/retry-rename.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 
@@ -10,6 +11,7 @@ const MIN_POLL_INTERVAL_MS = 5_000;
 
 export interface ScheduledTask {
   id: string;
+  sessionId: string;
   name: string;
   cron: string;
   message: string;
@@ -244,8 +246,32 @@ export class CronSchedulerService {
   }
 
   private async dispatchSchedule(schedule: ScheduledTask, scheduledForIso: string): Promise<boolean> {
+    const targetSession = this.swarmManager.getAgent(schedule.sessionId);
+    if (!targetSession || targetSession.role !== "manager") {
+      console.warn(
+        `[scheduler] Skipping schedule ${schedule.id} (${schedule.name}): target session ${schedule.sessionId} does not exist`
+      );
+      return true;
+    }
+
+    const targetProfileId = targetSession.profileId ?? targetSession.agentId;
+    if (targetProfileId !== this.managerId) {
+      console.warn(
+        `[scheduler] Skipping schedule ${schedule.id} (${schedule.name}): target session ${schedule.sessionId} belongs to profile ${targetProfileId}, expected ${this.managerId}`
+      );
+      return true;
+    }
+
+    if (isNonRunningAgentStatus(targetSession.status)) {
+      console.warn(
+        `[scheduler] Skipping schedule ${schedule.id} (${schedule.name}): target session ${schedule.sessionId} is not running (status: ${targetSession.status})`
+      );
+      return true;
+    }
+
     const scheduleContext = {
       scheduleId: schedule.id,
+      sessionId: schedule.sessionId,
       name: schedule.name,
       cron: schedule.cron,
       timezone: schedule.timezone,
@@ -262,7 +288,7 @@ export class CronSchedulerService {
 
     try {
       await this.swarmManager.handleUserMessage(message, {
-        targetAgentId: this.managerId,
+        targetAgentId: schedule.sessionId,
         sourceContext: { channel: "web" }
       });
 
@@ -381,7 +407,7 @@ export class CronSchedulerService {
       }
 
       const schedules = parsed.schedules
-        .map((entry) => normalizeScheduledTask(entry))
+        .map((entry) => normalizeScheduledTask(entry, this.managerId))
         .filter((entry): entry is ScheduledTask => entry !== undefined);
 
       return { schedules };
@@ -414,13 +440,16 @@ function normalizePollIntervalMs(value: number | undefined): number {
   return Math.max(MIN_POLL_INTERVAL_MS, Math.floor(value));
 }
 
-function normalizeScheduledTask(entry: unknown): ScheduledTask | undefined {
+function normalizeScheduledTask(entry: unknown, fallbackSessionId: string): ScheduledTask | undefined {
   if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
     return undefined;
   }
 
   const maybe = entry as Partial<ScheduledTask>;
   const id = normalizeRequiredString(maybe.id);
+  // Backward compatibility: legacy persisted rows predate session-scoped scheduling,
+  // so fall back to the profile root session when sessionId is missing.
+  const sessionId = normalizeRequiredString(maybe.sessionId) ?? normalizeRequiredString(fallbackSessionId);
   const name = normalizeRequiredString(maybe.name);
   const cron = normalizeRequiredString(maybe.cron);
   const message = normalizeRequiredString(maybe.message);
@@ -433,7 +462,7 @@ function normalizeScheduledTask(entry: unknown): ScheduledTask | undefined {
       ? maybe.lastFiredAt
       : undefined;
 
-  if (!id || !name || !cron || !message || !timezone || !createdAt || !nextFireAt) {
+  if (!id || !sessionId || !name || !cron || !message || !timezone || !createdAt || !nextFireAt) {
     return undefined;
   }
 
@@ -450,6 +479,7 @@ function normalizeScheduledTask(entry: unknown): ScheduledTask | undefined {
 
   return {
     id,
+    sessionId,
     name,
     cron,
     message,
@@ -516,6 +546,7 @@ function computeNextFireAt(cron: string, timezone: string, afterDate: Date): str
 function areSchedulesEqual(left: ScheduledTask, right: ScheduledTask): boolean {
   return (
     left.id === right.id &&
+    left.sessionId === right.sessionId &&
     left.name === right.name &&
     left.cron === right.cron &&
     left.message === right.message &&

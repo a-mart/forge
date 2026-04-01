@@ -3080,6 +3080,7 @@ describe('SwarmWebSocketServer', () => {
           schedules: [
             {
               id: 'daily-standup',
+              sessionId: 'manager',
               name: 'Daily standup',
               cron: '0 9 * * *',
               message: 'Post standup summary to the team.',
@@ -3107,6 +3108,7 @@ describe('SwarmWebSocketServer', () => {
       const payload = (await response.json()) as {
         schedules: Array<{
           id: string
+          sessionId: string
           name: string
           cron: string
           message: string
@@ -3120,6 +3122,7 @@ describe('SwarmWebSocketServer', () => {
       expect(payload.schedules).toEqual([
         {
           id: 'daily-standup',
+          sessionId: 'manager',
           name: 'Daily standup',
           cron: '0 9 * * *',
           message: 'Post standup summary to the team.',
@@ -3163,6 +3166,7 @@ describe('SwarmWebSocketServer', () => {
           schedules: [
             {
               id: 'weekly-check',
+              sessionId: secondaryManager.agentId,
               name: 'Weekly release check',
               cron: '0 10 * * 1',
               message: 'Review release readiness.',
@@ -3188,6 +3192,7 @@ describe('SwarmWebSocketServer', () => {
       const payload = (await response.json()) as {
         schedules: Array<{
           id: string
+          sessionId: string
           name: string
           cron: string
           message: string
@@ -3201,6 +3206,7 @@ describe('SwarmWebSocketServer', () => {
       expect(payload.schedules).toEqual([
         {
           id: 'weekly-check',
+          sessionId: secondaryManager.agentId,
           name: 'Weekly release check',
           cron: '0 10 * * 1',
           message: 'Review release readiness.',
