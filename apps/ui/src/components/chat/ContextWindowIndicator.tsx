@@ -4,6 +4,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 interface ContextWindowIndicatorProps {
   usedTokens: number
   contextWindow: number
+  compactionCount?: number
 }
 
 const RING_RADIUS = 7
@@ -21,6 +22,7 @@ function formatTokens(value: number): string {
 export function ContextWindowIndicator({
   usedTokens,
   contextWindow,
+  compactionCount,
 }: ContextWindowIndicatorProps) {
   if (contextWindow <= 0) return null
 
@@ -79,6 +81,11 @@ export function ContextWindowIndicator({
         <p className="font-medium">
           {formatTokens(usedTokens)} / {formatTokens(contextWindow)} tokens used
         </p>
+        {compactionCount != null && compactionCount > 0 && (
+          <p className="opacity-50 mt-0.5">
+            Compacted {compactionCount} {compactionCount === 1 ? 'time' : 'times'}
+          </p>
+        )}
       </TooltipContent>
     </Tooltip>
     </TooltipProvider>

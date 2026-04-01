@@ -98,6 +98,7 @@ import { modelCatalogService } from "./model-catalog-service.js";
 import { RuntimeFactory } from "./runtime-factory.js";
 import {
   computePromptFingerprint,
+  incrementSessionCompactionCount,
   readSessionMeta,
   rebuildSessionMeta,
   updateSessionMetaStats,
@@ -1389,6 +1390,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     await this.ensureMemoryFilesForBoot();
     await this.saveStore();
     await this.rebuildSessionManifestForBoot();
+    await this.hydrateCompactionCountsForBoot();
 
     this.loadConversationHistoriesFromStore();
     await this.restoreRuntimesForBoot();
@@ -4681,6 +4683,19 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     try {
       const result = await runtime.compact(customInstructions);
 
+      // Track successful compaction count
+      const newCount = await incrementSessionCompactionCount(
+        this.config.paths.dataDir,
+        descriptor.profileId!,
+        agentId
+      ).catch((err) => {
+        this.logDebug("manager:compact:count-increment-failed", { agentId, error: String(err) });
+        return undefined;
+      });
+      if (newCount !== undefined) {
+        descriptor.compactionCount = newCount;
+      }
+
       this.emitConversationMessage({
         type: "conversation_message",
         agentId,
@@ -4771,6 +4786,19 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       const result = await runtime.smartCompact(customInstructions);
 
       if (result.compactionSucceeded) {
+        // Track successful smart compaction
+        const smartCount = await incrementSessionCompactionCount(
+          this.config.paths.dataDir,
+          descriptor.profileId!,
+          agentId
+        ).catch((err) => {
+          this.logDebug("manager:smart_compact:count-increment-failed", { agentId, error: String(err) });
+          return undefined;
+        });
+        if (smartCount !== undefined) {
+          descriptor.compactionCount = smartCount;
+        }
+
         const usage = runtime.getContextUsage();
         const usageSuffix = usage ? ` Context now at ${Math.round(usage.percent)}%.` : "";
         this.emitConversationMessage({
@@ -7456,6 +7484,21 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const extensionEvent = readStringDetail(error.details, "event");
     const extensionBaseName = extensionPath ? basename(extensionPath) : undefined;
 
+    // Track successful auto-compaction
+    if (error.phase === "compaction" && recoveryStage === "auto_compaction_succeeded" && descriptor.profileId) {
+      const autoCount = await incrementSessionCompactionCount(
+        this.config.paths.dataDir,
+        descriptor.profileId,
+        agentId
+      ).catch((err) => {
+        this.logDebug("runtime:compact:count-increment-failed", { agentId, error: String(err) });
+        return undefined;
+      });
+      if (autoCount !== undefined) {
+        descriptor.compactionCount = autoCount;
+      }
+    }
+
     const text =
       error.phase === "compaction"
         ? recoveryStage === "auto_compaction_succeeded"
@@ -7586,6 +7629,21 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       this.logDebug("session:meta:rebuild_error", {
         message: error instanceof Error ? error.message : String(error)
       });
+    }
+  }
+
+  private async hydrateCompactionCountsForBoot(): Promise<void> {
+    for (const descriptor of this.descriptors.values()) {
+      if (descriptor.role !== "manager") continue;
+      const profileId = descriptor.profileId ?? descriptor.agentId;
+      try {
+        const meta = await readSessionMeta(this.config.paths.dataDir, profileId, descriptor.agentId);
+        if (meta?.compactionCount) {
+          descriptor.compactionCount = meta.compactionCount;
+        }
+      } catch {
+        // Ignore — compactionCount remains undefined
+      }
     }
   }
 

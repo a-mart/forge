@@ -80,6 +80,20 @@ export async function readSessionMeta(
   }
 }
 
+export async function incrementSessionCompactionCount(
+  dataDir: string,
+  profileId: string,
+  sessionId: string
+): Promise<number> {
+  const metaPath = getSessionMetaPath(dataDir, profileId, sessionId);
+  const raw = await readFile(metaPath, "utf-8").catch(() => "{}");
+  const meta = JSON.parse(raw) as Record<string, unknown>;
+  const newCount = ((meta.compactionCount as number | undefined) ?? 0) + 1;
+  meta.compactionCount = newCount;
+  await writeFile(metaPath, `${JSON.stringify(meta, null, 2)}\n`, "utf8");
+  return newCount;
+}
+
 export async function rebuildSessionMeta(options: RebuildSessionMetaOptions): Promise<SessionMeta[]> {
   const now = options.now ?? nowIso;
   const descriptors = options.descriptors ?? (await readDescriptorsFromAgentsStore(options.agentsStoreFile));
@@ -138,6 +152,7 @@ export async function rebuildSessionMeta(options: RebuildSessionMetaOptions): Pr
             createdAt: sessionDescriptor.createdAt,
             updatedAt: sessionDescriptor.updatedAt ?? now(),
             cwd: normalizeOptionalString(sessionDescriptor.cwd) ?? null,
+            compactionCount: existingMeta?.compactionCount ?? 0,
             resolvedSystemPrompt: existingMeta?.resolvedSystemPrompt ?? null,
             promptFingerprint: existingMeta?.promptFingerprint ?? null,
             promptComponents: existingMeta?.promptComponents ?? null,
@@ -327,6 +342,7 @@ function createEmptySessionMeta(profileId: string, sessionId: string, timestamp:
     createdAt: timestamp,
     updatedAt: timestamp,
     cwd: null,
+    compactionCount: 0,
     resolvedSystemPrompt: null,
     promptFingerprint: null,
     promptComponents: null,
@@ -641,6 +657,7 @@ function coerceSessionMeta(value: unknown): SessionMeta | undefined {
     createdAt,
     updatedAt,
     cwd: normalizeOptionalString(value.cwd) ?? null,
+    compactionCount: coerceOptionalNonNegativeInteger(value.compactionCount),
     resolvedSystemPrompt: normalizeOptionalNullableString(value.resolvedSystemPrompt),
     promptFingerprint: normalizeOptionalString(value.promptFingerprint) ?? null,
     promptComponents: promptComponentsRecord

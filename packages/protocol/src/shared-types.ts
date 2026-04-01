@@ -77,6 +77,7 @@ export interface AgentDescriptor {
   sessionLabel?: string
   sessionPurpose?: AgentSessionPurpose
   mergedAt?: string
+  compactionCount?: number
   workerCount?: number
   activeWorkerCount?: number
   streamingStartedAt?: number
@@ -249,6 +250,7 @@ export interface SessionMeta {
   sessionId: string
   profileId: string
   label: string | null
+  compactionCount?: number
   model: {
     provider: string | null
     modelId: string | null

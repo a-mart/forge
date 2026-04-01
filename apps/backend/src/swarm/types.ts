@@ -61,6 +61,7 @@ export interface AgentDescriptor {
   sessionLabel?: string;
   sessionPurpose?: AgentSessionPurpose;
   mergedAt?: string;
+  compactionCount?: number;
   workerCount?: number;
   activeWorkerCount?: number;
   streamingStartedAt?: number;

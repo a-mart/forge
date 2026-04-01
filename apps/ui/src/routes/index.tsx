@@ -1184,6 +1184,7 @@ export function IndexPage() {
                   channelView={channelView}
                   onChannelViewChange={setChannelView}
                   contextWindowUsage={contextWindowUsage}
+                  compactionCount={activeAgent?.compactionCount}
                   showCompact={isActiveManager}
                   compactInProgress={isCompactingManager}
                   onCompact={() => void handleCompactManager()}
