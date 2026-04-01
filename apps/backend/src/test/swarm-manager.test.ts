@@ -1078,6 +1078,45 @@ describe('SwarmManager', () => {
     )
   })
 
+  it('does not reuse orphaned agent creator session directories when creating a new session', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const orphanedSessionId = 'manager--s2'
+    const orphanedSessionDir = getSessionDir(config.paths.dataDir, 'manager', orphanedSessionId)
+    await mkdir(orphanedSessionDir, { recursive: true })
+    appendSessionConversationMessage(join(orphanedSessionDir, 'session.jsonl'), orphanedSessionId, 'old wizard transcript')
+    await writeFile(
+      join(orphanedSessionDir, 'meta.json'),
+      `${JSON.stringify({
+        profileId: 'manager',
+        sessionId: orphanedSessionId,
+        label: 'Agent Creator',
+        stats: {
+          sessionFileSize: 0,
+          memoryFileSize: 0,
+        },
+      }, null, 2)}\n`,
+      'utf8',
+    )
+
+    const created = await manager.createSession('manager', {
+      label: 'Agent Creator',
+      sessionPurpose: 'agent_creator',
+    })
+
+    expect(created.sessionAgent.agentId).toBe('manager--s3')
+    expect(manager.getConversationHistory(created.sessionAgent.agentId)).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'conversation_message',
+          text: 'old wizard transcript',
+        }),
+      ]),
+    )
+  })
+
   it('awaits agent creator context injection before createSession resolves', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)

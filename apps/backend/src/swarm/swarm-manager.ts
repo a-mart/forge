@@ -3864,6 +3864,14 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return clone;
   }
 
+  private isSessionAgentIdReserved(profileId: string, agentId: string): boolean {
+    if (this.descriptors.has(agentId)) {
+      return true;
+    }
+
+    return existsSync(getSessionDir(this.config.paths.dataDir, profileId, agentId));
+  }
+
   private generateSessionAgentIdentity(profileId: string): { agentId: string; sessionNumber: number } {
     const existingSessions = this.getSessionsForProfile(profileId);
     let highestSessionNumber = existingSessions.some((descriptor) => descriptor.agentId === profileId)
@@ -3880,7 +3888,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     let nextSessionNumber = Math.max(ROOT_SESSION_NUMBER + 1, highestSessionNumber + 1);
     let sessionAgentId = `${profileId}${SESSION_ID_SUFFIX_SEPARATOR}${nextSessionNumber}`;
 
-    while (this.descriptors.has(sessionAgentId)) {
+    while (this.isSessionAgentIdReserved(profileId, sessionAgentId)) {
       nextSessionNumber += 1;
       sessionAgentId = `${profileId}${SESSION_ID_SUFFIX_SEPARATOR}${nextSessionNumber}`;
     }
@@ -3891,11 +3899,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     };
   }
 
-  private generateUniqueSessionAgentId(baseAgentId: string): string {
+  private generateUniqueSessionAgentId(profileId: string, baseAgentId: string): string {
     let candidate = baseAgentId;
     let suffix = 2;
 
-    while (this.descriptors.has(candidate)) {
+    while (this.isSessionAgentIdReserved(profileId, candidate)) {
       candidate = `${baseAgentId}-${suffix}`;
       suffix += 1;
     }
@@ -3937,7 +3945,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         throw new Error("Session name must include at least one letter, number, or dash");
       }
 
-      sessionAgentId = this.generateUniqueSessionAgentId(slug);
+      sessionAgentId = this.generateUniqueSessionAgentId(profileId, slug);
       sessionLabel = normalizedName;
       displayName = normalizedName;
     }
