@@ -40,6 +40,7 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
     command.type !== "delete_session" &&
     command.type !== "clear_session" &&
     command.type !== "rename_session" &&
+    command.type !== "pin_session" &&
     command.type !== "set_session_project_agent" &&
     command.type !== "request_project_agent_recommendations" &&
     command.type !== "fork_session" &&
@@ -230,6 +231,29 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
       send(socket, {
         type: "error",
         code: "RENAME_SESSION_FAILED",
+        message: error instanceof Error ? error.message : String(error),
+        requestId: command.requestId
+      });
+    }
+
+    return true;
+  }
+
+  if (command.type === "pin_session") {
+    try {
+      const result = await swarmManager.pinSession(command.agentId, command.pinned);
+
+      send(socket, {
+        type: "session_pinned",
+        agentId: command.agentId,
+        pinned: command.pinned,
+        pinnedAt: result.pinnedAt,
+        requestId: command.requestId
+      });
+    } catch (error) {
+      send(socket, {
+        type: "error",
+        code: "PIN_SESSION_FAILED",
         message: error instanceof Error ? error.message : String(error),
         requestId: command.requestId
       });

@@ -2301,6 +2301,24 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.logDebug("session:clear", { agentId });
   }
 
+  async pinSession(agentId: string, pinned: boolean): Promise<{ pinnedAt: string | null }> {
+    const descriptor = this.getRequiredSessionDescriptor(agentId);
+
+    if (pinned) {
+      descriptor.pinnedAt = descriptor.pinnedAt ?? this.now();
+    } else {
+      delete descriptor.pinnedAt;
+    }
+
+    this.descriptors.set(agentId, descriptor);
+    await this.saveStore();
+    this.emitAgentsSnapshot();
+
+    return {
+      pinnedAt: descriptor.pinnedAt ?? null
+    };
+  }
+
   async setSessionProjectAgent(
     agentId: string,
     projectAgent: { whenToUse: string; systemPrompt?: string } | null
@@ -9289,6 +9307,10 @@ function validateAgentDescriptor(value: unknown): AgentDescriptor | string {
     value.sessionPurpose !== "agent_creator"
   ) {
     return 'sessionPurpose must be "cortex_review" or "agent_creator" when provided';
+  }
+
+  if (value.pinnedAt !== undefined && typeof value.pinnedAt !== "string") {
+    return "pinnedAt must be a string when provided";
   }
 
   if (value.projectAgent !== undefined) {

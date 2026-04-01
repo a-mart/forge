@@ -25,6 +25,7 @@ import {
   SquarePen,
   Trash2,
   X,
+  Pin,
   Zap,
 } from 'lucide-react'
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from '@/components/ui/context-menu'
@@ -115,6 +116,7 @@ interface AgentSidebarProps {
   onResumeSession?: (agentId: string) => void
   onDeleteSession?: (agentId: string) => void
   onRenameSession?: (agentId: string, label: string) => void
+  onPinSession?: (agentId: string, pinned: boolean) => void
   onRenameProfile?: (profileId: string, displayName: string) => void
   onForkSession?: (sourceAgentId: string, name?: string) => void
   onMarkUnread?: (agentId: string) => void
@@ -437,6 +439,7 @@ function SessionRowItem({
   onStopWorker,
   onResumeWorker,
   highlightQuery,
+  onPinSession,
   onPromoteToProjectAgent,
   onOpenProjectAgentSettings,
   onDemoteProjectAgent,
@@ -462,6 +465,7 @@ function SessionRowItem({
   onStopWorker?: (agentId: string) => void
   onResumeWorker?: (agentId: string) => void
   highlightQuery?: string
+  onPinSession?: (agentId: string, pinned: boolean) => void
   onPromoteToProjectAgent?: () => void
   onOpenProjectAgentSettings?: () => void
   onDemoteProjectAgent?: () => void
@@ -481,6 +485,7 @@ function SessionRowItem({
   const hasPendingChoice = (sessionAgent.pendingChoiceCount ?? 0) > 0
   const isProjectAgent = Boolean(sessionAgent.projectAgent)
   const isAgentCreator = sessionAgent.sessionPurpose === 'agent_creator'
+  const isPinned = Boolean(sessionAgent.pinnedAt)
 
   return (
     <li>
@@ -559,6 +564,9 @@ function SessionRowItem({
                     <span className="min-w-0 flex-1 truncate text-sm leading-5">
                       {highlightQuery ? <HighlightedText text={label} query={highlightQuery} /> : label}
                     </span>
+                    {isPinned && !isProjectAgent && sessionAgent.profileId ? (
+                      <Pin className="size-3 shrink-0 text-muted-foreground/60" aria-label="Pinned" />
+                    ) : null}
                     {isProjectAgent ? (
                       <Zap className="size-3 shrink-0 text-blue-400 dark:text-blue-400" aria-label="Project Agent" />
                     ) : null}
@@ -595,6 +603,12 @@ function SessionRowItem({
             <Copy className="mr-2 size-3.5" />
             Copy path
           </ContextMenuItem>
+          {onPinSession && sessionAgent.profileId ? (
+            <ContextMenuItem onClick={() => onPinSession(sessionAgent.agentId, !isPinned)}>
+              <Pin className="mr-2 size-3.5" />
+              {isPinned ? 'Unpin' : 'Pin'}
+            </ContextMenuItem>
+          ) : null}
           {onRename ? (
             <ContextMenuItem onClick={onRename}>
               <Edit3 className="mr-2 size-3.5" />
@@ -788,6 +802,7 @@ function ProfileGroup({
   highlightQuery,
   dragHandleRef,
   dragHandleListeners,
+  onPinSession,
   onPromoteToProjectAgent,
   onOpenProjectAgentSettings,
   onDemoteProjectAgent,
@@ -824,6 +839,7 @@ function ProfileGroup({
   highlightQuery?: string
   dragHandleRef?: (element: HTMLElement | null) => void
   dragHandleListeners?: Record<string, any> | undefined
+  onPinSession?: (agentId: string, pinned: boolean) => void
   onPromoteToProjectAgent?: (agentId: string) => void
   onOpenProjectAgentSettings?: (agentId: string) => void
   onDemoteProjectAgent?: (agentId: string) => void | Promise<void>
@@ -996,8 +1012,18 @@ function ProfileGroup({
 
             // Split sessions into project agents (always visible) and regular sessions (subject to truncation)
             const projectAgentSessions = sessions.filter((s) => Boolean(s.sessionAgent.projectAgent))
+            const pinnedSessions = sessions.filter((s) =>
+              !s.sessionAgent.projectAgent &&
+              Boolean(s.sessionAgent.pinnedAt) &&
+              (!isCompletedWizard(s) || isSelectedSession(s))
+            ).sort((a, b) => {
+              const aPinned = a.sessionAgent.pinnedAt ?? ''
+              const bPinned = b.sessionAgent.pinnedAt ?? ''
+              return aPinned.localeCompare(bPinned)
+            })
             const regularSessions = sessions.filter((s) =>
               !s.sessionAgent.projectAgent &&
+              !s.sessionAgent.pinnedAt &&
               // Hide completed wizard sessions unless they are the active selection
               (!isCompletedWizard(s) || isSelectedSession(s))
             )
@@ -1071,6 +1097,7 @@ function ProfileGroup({
                   onStopWorker={onStopSession}
                   onResumeWorker={onResumeSession}
                   highlightQuery={highlightQuery}
+                  onPinSession={onPinSession}
                   onPromoteToProjectAgent={eligible && onPromoteToProjectAgent ? () => onPromoteToProjectAgent(session.sessionAgent.agentId) : undefined}
                   onOpenProjectAgentSettings={session.sessionAgent.projectAgent && onOpenProjectAgentSettings ? () => onOpenProjectAgentSettings(session.sessionAgent.agentId) : undefined}
                   onDemoteProjectAgent={session.sessionAgent.projectAgent && onDemoteProjectAgent ? async () => {
@@ -1095,6 +1122,8 @@ function ProfileGroup({
                 <ul className="space-y-0.5">
                   {/* Project agents always pinned at top */}
                   {projectAgentSessions.map(renderSession)}
+                  {/* Pinned sessions always visible, sorted by pin time */}
+                  {pinnedSessions.map(renderSession)}
                   {/* Regular sessions below */}
                   {visibleRegularSessions.map(renderSession)}
                 </ul>
@@ -2156,6 +2185,7 @@ export function AgentSidebar({
   onResumeSession,
   onDeleteSession,
   onRenameSession,
+  onPinSession,
   onRenameProfile,
   onForkSession,
   onMarkUnread,
@@ -2667,6 +2697,7 @@ export function AgentSidebar({
               dragHandleListeners={dragHandleListeners}
               onPromoteToProjectAgent={onSetSessionProjectAgent ? handlePromoteToProjectAgent : undefined}
               onOpenProjectAgentSettings={onSetSessionProjectAgent ? handleOpenProjectAgentSettings : undefined}
+              onPinSession={onPinSession}
               onDemoteProjectAgent={onSetSessionProjectAgent ? handleDemoteProjectAgent : undefined}
               onCreateAgentCreator={onCreateAgentCreator}
             />

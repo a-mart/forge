@@ -29,6 +29,7 @@ export type ClientCommand =
   | { type: 'resume_session'; agentId: string; requestId?: string }
   | { type: 'delete_session'; agentId: string; requestId?: string }
   | { type: 'rename_session'; agentId: string; label: string; requestId?: string }
+  | { type: 'pin_session'; agentId: string; pinned: boolean; requestId?: string }
   | {
       type: 'set_session_project_agent'
       agentId: string

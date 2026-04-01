@@ -60,6 +60,7 @@ export interface AgentDescriptor {
   profileId?: string;
   sessionLabel?: string;
   sessionPurpose?: AgentSessionPurpose;
+  pinnedAt?: string;
   mergedAt?: string;
   compactionCount?: number;
   workerCount?: number;

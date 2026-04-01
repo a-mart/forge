@@ -780,6 +780,22 @@ export function IndexPage() {
     })()
   }, [clientRef, setState])
 
+  const handlePinSession = useCallback((agentId: string, pinned: boolean) => {
+    const client = clientRef.current
+    if (!client) return
+
+    void (async () => {
+      try {
+        await client.pinSession(agentId, pinned)
+      } catch (error) {
+        setState((prev) => ({
+          ...prev,
+          lastError: `Failed to ${pinned ? 'pin' : 'unpin'} session: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        }))
+      }
+    })()
+  }, [clientRef, setState])
+
   const handleRenameProfile = useCallback((profileId: string, displayName: string) => {
     const client = clientRef.current
     if (!client) return
@@ -1101,6 +1117,7 @@ export function IndexPage() {
           onResumeSession={handleResumeSession}
           onDeleteSession={handleDeleteSession}
           onRenameSession={handleRenameSession}
+          onPinSession={handlePinSession}
           onRenameProfile={handleRenameProfile}
           onForkSession={handleForkSession}
           onMarkUnread={handleMarkUnread}

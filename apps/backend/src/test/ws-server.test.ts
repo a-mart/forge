@@ -5051,6 +5051,32 @@ describe('SwarmWebSocketServer', () => {
 
     client.send(
       JSON.stringify({
+        type: 'pin_session',
+        agentId: sessionAgentId,
+        pinned: true,
+        requestId: 'pin-1',
+      }),
+    )
+
+    const pinned = await waitForEvent(
+      events,
+      (event) => event.type === 'session_pinned' && event.agentId === sessionAgentId && event.requestId === 'pin-1',
+    )
+    expect(pinned.type).toBe('session_pinned')
+    if (pinned.type === 'session_pinned') {
+      expect(pinned.pinned).toBe(true)
+      expect(typeof pinned.pinnedAt).toBe('string')
+    }
+
+    await waitForEvent(
+      events,
+      (event) =>
+        event.type === 'agents_snapshot' &&
+        event.agents.some((agent) => agent.agentId === sessionAgentId && typeof agent.pinnedAt === 'string'),
+    )
+
+    client.send(
+      JSON.stringify({
         type: 'fork_session',
         sourceAgentId: sessionAgentId,
         label: 'Forked session',
@@ -5066,6 +5092,7 @@ describe('SwarmWebSocketServer', () => {
       forkedAgentId = forked.newSessionAgent.agentId
       expect(forked.sourceAgentId).toBe(sessionAgentId)
       expect(forked.profile.profileId).toBe('manager')
+      expect(forked.newSessionAgent.pinnedAt).toBeUndefined()
     }
     expect(forkedAgentId).not.toBe('')
 

@@ -67,6 +67,7 @@ type WsRequestResultMap = {
   delete_session: SessionActionResult
   clear_session: SessionActionResult
   rename_session: SessionActionResult
+  pin_session: { pinnedAt: string | null }
   rename_profile: { profileId: string }
   fork_session: SessionForkedResult
   merge_session_memory: SessionMemoryMergeResult
@@ -90,6 +91,7 @@ const WS_REQUEST_TYPES: WsRequestType[] = [
   'delete_session',
   'clear_session',
   'rename_session',
+  'pin_session',
   'rename_profile',
   'fork_session',
   'merge_session_memory',
@@ -112,6 +114,7 @@ const WS_REQUEST_ERROR_HINTS: Array<{ requestType: WsRequestType; codeFragment: 
   { requestType: 'delete_session', codeFragment: 'delete_session' },
   { requestType: 'clear_session', codeFragment: 'clear_session' },
   { requestType: 'rename_session', codeFragment: 'rename_session' },
+  { requestType: 'pin_session', codeFragment: 'pin_session' },
   { requestType: 'rename_profile', codeFragment: 'rename_profile' },
   { requestType: 'fork_session', codeFragment: 'fork_session' },
   { requestType: 'merge_session_memory', codeFragment: 'merge_session_memory' },
@@ -648,6 +651,24 @@ export class ManagerWsClient {
       type: 'rename_session',
       agentId: trimmed,
       label: trimmedLabel,
+      requestId,
+    }))
+  }
+
+  async pinSession(agentId: string, pinned: boolean): Promise<{ pinnedAt: string | null }> {
+    const trimmed = agentId.trim()
+    if (!trimmed) {
+      throw new Error('Agent id is required.')
+    }
+
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+      throw new Error('WebSocket is disconnected. Reconnecting...')
+    }
+
+    return this.enqueueRequest('pin_session', (requestId) => ({
+      type: 'pin_session',
+      agentId: trimmed,
+      pinned,
       requestId,
     }))
   }
@@ -1233,6 +1254,13 @@ export class ManagerWsClient {
       case 'session_renamed': {
         this.requestTracker.resolve('rename_session', event.requestId, {
           agentId: event.agentId,
+        })
+        break
+      }
+
+      case 'session_pinned': {
+        this.requestTracker.resolve('pin_session', event.requestId, {
+          pinnedAt: event.pinnedAt,
         })
         break
       }

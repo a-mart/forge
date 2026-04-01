@@ -52,6 +52,7 @@ describe('ws command parser session commands', () => {
       { type: 'resume_session', agentId: 'session-a', requestId: 'req-resume' },
       { type: 'delete_session', agentId: 'session-a', requestId: 'req-delete' },
       { type: 'rename_session', agentId: 'session-a', label: 'Renamed', requestId: 'req-rename' },
+      { type: 'pin_session', agentId: 'session-a', pinned: true, requestId: 'req-pin' },
       {
         type: 'set_session_project_agent',
         agentId: 'session-a',
@@ -259,6 +260,10 @@ describe('ws command parser session commands', () => {
       {
         payload: { type: 'rename_session', agentId: 'session-a', label: '  ' },
         message: 'rename_session.label must be a non-empty string',
+      },
+      {
+        payload: { type: 'pin_session', agentId: 'session-a', pinned: 'yes' },
+        message: 'pin_session.pinned must be a boolean',
       },
       {
         payload: { type: 'set_session_project_agent', agentId: '', projectAgent: null },
@@ -471,6 +476,7 @@ describe('ws command parser session commands', () => {
       { type: 'resume_session', agentId: 'manager--s2', requestId: 'req-resume' },
       { type: 'delete_session', agentId: 'manager--s2', requestId: 'req-delete' },
       { type: 'rename_session', agentId: 'manager--s2', label: 'Renamed', requestId: 'req-rename' },
+      { type: 'pin_session', agentId: 'manager--s2', pinned: true, requestId: 'req-pin' },
       {
         type: 'set_session_project_agent',
         agentId: 'manager--s2',

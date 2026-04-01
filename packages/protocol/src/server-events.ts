@@ -183,6 +183,14 @@ export interface SessionRenamedEvent {
   requestId?: string
 }
 
+export interface SessionPinnedEvent {
+  type: 'session_pinned'
+  agentId: string
+  pinned: boolean
+  pinnedAt: string | null
+  requestId?: string
+}
+
 export interface SessionProjectAgentUpdatedEvent {
   type: 'session_project_agent_updated'
   agentId: string
@@ -434,6 +442,7 @@ export type ServerEvent =
   | SessionDeletedEvent
   | SessionClearedEvent
   | SessionRenamedEvent
+  | SessionPinnedEvent
   | SessionProjectAgentUpdatedEvent
   | ProjectAgentRecommendationsEvent
   | ProjectAgentRecommendationsErrorEvent
