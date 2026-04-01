@@ -394,6 +394,38 @@ function DefaultsNotificationSection({
         </div>
       </SettingsWithCTA>
 
+      {/* Question sound */}
+      <SettingsWithCTA
+        label="Question sound"
+        description="Plays when an agent asks you a question or presents choices"
+      >
+        <div className="flex items-center gap-2">
+          <Switch
+            checked={prefs.questionSound.enabled}
+            onCheckedChange={(enabled) =>
+              onUpdate((p) => ({
+                ...p,
+                questionSound: { ...p.questionSound, enabled },
+              }))
+            }
+          />
+          {prefs.questionSound.enabled && (
+            <SoundPicker
+              value={prefs.questionSound.soundId}
+              options={soundOptions}
+              store={store}
+              volume={prefs.volume}
+              onChange={(soundId) =>
+                onUpdate((p) => ({
+                  ...p,
+                  questionSound: { ...p.questionSound, soundId },
+                }))
+              }
+            />
+          )}
+        </div>
+      </SettingsWithCTA>
+
       {/* All-done sound */}
       <SettingsWithCTA
         label="All done sound"
@@ -516,6 +548,38 @@ function AgentNotificationSection({
                 onUpdate((p) => ({
                   ...p,
                   unreadSound: { ...p.unreadSound, soundId },
+                }))
+              }
+            />
+          )}
+        </div>
+      </SettingsWithCTA>
+
+      {/* Question sound */}
+      <SettingsWithCTA
+        label="Question sound"
+        description="Plays when this agent asks you a question or presents choices"
+      >
+        <div className="flex items-center gap-2">
+          <Switch
+            checked={prefs.questionSound.enabled}
+            onCheckedChange={(enabled) =>
+              onUpdate((p) => ({
+                ...p,
+                questionSound: { ...p.questionSound, enabled },
+              }))
+            }
+          />
+          {prefs.questionSound.enabled && (
+            <SoundPicker
+              value={prefs.questionSound.soundId}
+              options={soundOptions}
+              store={store}
+              volume={prefs.volume}
+              onChange={(soundId) =>
+                onUpdate((p) => ({
+                  ...p,
+                  questionSound: { ...p.questionSound, soundId },
                 }))
               }
             />

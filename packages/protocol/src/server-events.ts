@@ -349,6 +349,10 @@ export interface ProfilesSnapshotEvent {
 export interface UnreadNotificationEvent {
   type: 'unread_notification'
   agentId: string
+  /** What triggered this notification. Absent for legacy compat (treat as 'message'). */
+  reason?: 'message' | 'choice_request'
+  /** The session/manager agent this notification belongs to. Needed for per-manager prefs on worker-originated events. */
+  sessionAgentId?: string
 }
 
 /** Sent during bootstrap — full authoritative state for all profiles. */

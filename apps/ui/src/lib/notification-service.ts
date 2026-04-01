@@ -13,6 +13,7 @@ export interface SoundOption {
 export interface AgentNotificationPrefs {
   unreadSound: { enabled: boolean; soundId: string }
   allDoneSound: { enabled: boolean; soundId: string }
+  questionSound: { enabled: boolean; soundId: string }
   volume: number // 0–1
 }
 
@@ -38,17 +39,20 @@ const DEBOUNCE_MS = 2_000
 export const BUILT_IN_SOUNDS: SoundOption[] = [
   { id: 'notification', name: 'Default Notification', url: '/sounds/notification.mp3', builtIn: true },
   { id: 'complete', name: 'Default Complete', url: '/sounds/complete.mp3', builtIn: true },
+  { id: 'question', name: 'Agent Has a Question', url: '/sounds/question.mp3', builtIn: true },
 ]
 
 const DEFAULT_AGENT_PREFS: AgentNotificationPrefs = {
   unreadSound: { enabled: false, soundId: 'notification' },
   allDoneSound: { enabled: false, soundId: 'complete' },
+  questionSound: { enabled: true, soundId: 'question' },
   volume: 0.7,
 }
 
 const DEFAULT_AGENT_PREFS_DISABLED: AgentNotificationPrefs = {
   unreadSound: { enabled: false, soundId: 'notification' },
   allDoneSound: { enabled: false, soundId: 'complete' },
+  questionSound: { enabled: false, soundId: 'question' },
   volume: 0.7,
 }
 
@@ -77,7 +81,26 @@ export function readNotificationStore(): NotificationStore {
       customSounds: Array.isArray(parsed.customSounds) ? parsed.customSounds : [],
     }
     // Migration: persist defaults field if it was missing in stored data
-    if (!parsed.defaults) {
+    let needsPersist = !parsed.defaults
+    // Migration: add questionSound to defaults if missing
+    if (!store.defaults.questionSound) {
+      store.defaults = {
+        ...store.defaults,
+        questionSound: { enabled: true, soundId: 'question' },
+      }
+      needsPersist = true
+    }
+    // Migration: add questionSound to existing agent prefs that lack it
+    for (const [agentId, prefs] of Object.entries(store.agents)) {
+      if (!(prefs as AgentNotificationPrefs).questionSound) {
+        store.agents[agentId] = {
+          ...prefs,
+          questionSound: { enabled: true, soundId: 'question' },
+        }
+        needsPersist = true
+      }
+    }
+    if (needsPersist) {
       writeNotificationStore(store)
     }
     return store
@@ -248,6 +271,19 @@ function isManagerStreaming(agentId: string, state: ManagerWsState): boolean {
   return agent?.status === 'streaming'
 }
 
+export function shouldPlayQuestion(
+  prefsKey: string,
+  agentId: string,
+  state: ManagerWsState,
+  store: NotificationStore,
+): boolean {
+  if (!store.globalEnabled) return false
+  if (agentId === state.targetAgentId && document.hasFocus()) return false
+  const isCortex = prefsKey === 'cortex'
+  const prefs = getEffectivePrefs(store, prefsKey, isCortex)
+  return prefs.questionSound.enabled
+}
+
 export function shouldPlayUnread(
   prefsKey: string,
   agentId: string,
@@ -300,6 +336,15 @@ export function playAllDone(prefsKey: string, store: NotificationStore): void {
   playSound(url, prefs.volume)
 }
 
+export function playQuestion(prefsKey: string, store: NotificationStore): void {
+  if (!canPlay(`question:${prefsKey}`)) return
+  const isCortex = prefsKey === 'cortex'
+  const prefs = getEffectivePrefs(store, prefsKey, isCortex)
+  const url = resolveSoundUrl(prefs.questionSound.soundId, store)
+  if (!url) return
+  playSound(url, prefs.volume)
+}
+
 /**
  * Main entry point — called from ws-client on `unread_notification`.
  *
@@ -311,13 +356,30 @@ export function playAllDone(prefsKey: string, store: NotificationStore): void {
 export function handleUnreadNotification(
   agentId: string,
   state: ManagerWsState,
+  reason?: 'message' | 'choice_request',
+  sessionAgentId?: string,
 ): void {
   const store = readNotificationStore()
   if (!store.globalEnabled) return
 
   // Resolve profileId-based prefs key (settings UI saves prefs keyed by profileId)
-  const agent = state.agents.find((a) => a.agentId === agentId)
-  const prefsKey = agent?.profileId ?? agentId
+  // For worker-originated events, sessionAgentId lets us find the owning manager's profile
+  const resolvedAgentId = sessionAgentId ?? agentId
+  const agent = state.agents.find((a) => a.agentId === resolvedAgentId)
+  const prefsKey = agent?.profileId ?? resolvedAgentId
+
+  // Choice-request events get their own branch — never enter the all-done path.
+  if (reason === 'choice_request') {
+    if (shouldPlayQuestion(prefsKey, agentId, state, store)) {
+      playQuestion(prefsKey, store)
+      return
+    }
+    // Question sound disabled — fall back to unread, but never all-done
+    if (shouldPlayUnread(prefsKey, agentId, state, store)) {
+      playUnread(prefsKey, store)
+    }
+    return
+  }
 
   if (isManagerStreaming(agentId, state)) {
     // Manager is mid-turn — defer the all-done decision until idle transition.
@@ -396,6 +458,9 @@ export function removeCustomSound(
   if (defaults.allDoneSound.soundId === soundId) {
     defaults = { ...defaults, allDoneSound: { ...defaults.allDoneSound, soundId: 'complete' } }
   }
+  if (defaults.questionSound.soundId === soundId) {
+    defaults = { ...defaults, questionSound: { ...defaults.questionSound, soundId: 'question' } }
+  }
   return {
     ...store,
     defaults,
@@ -409,6 +474,9 @@ export function removeCustomSound(
         }
         if (prefs.allDoneSound.soundId === soundId) {
           updated = { ...updated, allDoneSound: { ...updated.allDoneSound, soundId: 'complete' } }
+        }
+        if (prefs.questionSound.soundId === soundId) {
+          updated = { ...updated, questionSound: { ...updated.questionSound, soundId: 'question' } }
         }
         return [agentId, updated]
       }),

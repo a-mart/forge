@@ -975,7 +975,7 @@ export class ManagerWsClient {
       case 'unread_notification': {
         // Sound/notification side-effects only.
         // Count is managed by unread_count_update from server.
-        handleUnreadNotification(event.agentId, this.state)
+        handleUnreadNotification(event.agentId, this.state, event.reason, event.sessionAgentId)
         break
       }
 
