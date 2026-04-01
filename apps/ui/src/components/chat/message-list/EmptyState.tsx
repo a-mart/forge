@@ -40,12 +40,12 @@ export function EmptyState({
         <h2 className="mb-1 text-base font-medium text-foreground">
           @{projectAgent.handle}
         </h2>
-        <p className="mx-auto mb-4 max-w-sm text-sm text-muted-foreground">
+        <p className="mx-auto mb-4 max-w-sm text-base text-muted-foreground">
           {projectAgent.whenToUse}
         </p>
-        <p className="mx-auto mb-4 max-w-sm text-xs text-muted-foreground/70">
+        <p className="mx-auto mb-4 max-w-sm text-sm text-muted-foreground">
           Created by the Agent Architect. To adjust this agent&apos;s configuration,
-          right-click it in the sidebar and select <span className="font-medium text-muted-foreground">Settings</span>.
+          <span className="font-medium text-red-400">right-click</span> it in the sidebar and select <span className="font-medium text-red-400">Settings</span>.
         </p>
         {onSuggestionClick ? (
           <Button
