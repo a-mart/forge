@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useHelpContext } from '@/components/help/help-hooks'
 import { HelpTooltip } from '@/components/help/HelpTooltip'
-import { Code, Monitor, Moon, RotateCcw, Sun } from 'lucide-react'
+import { Check, Code, Monitor, Moon, RotateCcw, Sun, Terminal } from 'lucide-react'
 import { OnboardingCallout } from '@/components/chat/cortex/OnboardingCallout'
 import { useOnboardingState } from '@/hooks/use-onboarding-state'
 import {
@@ -36,6 +36,12 @@ import {
   fetchCortexAutoReviewSettings,
   updateCortexAutoReviewSettings,
 } from '@/components/settings/cortex-auto-review-api'
+import {
+  fetchAvailableShells,
+  updateTerminalShellSettings,
+  type AvailableShellsResponse,
+  type TerminalShellSettings,
+} from '@/components/settings/terminal-shell-api'
 import type { PlaywrightDiscoverySettings, CortexAutoReviewSettings } from '@forge/protocol'
 
 interface SettingsGeneralProps {
@@ -69,6 +75,14 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
   const [cortexError, setCortexError] = useState<string | null>(null)
   const [cortexUpdating, setCortexUpdating] = useState(false)
   const [cortexLoadFailed, setCortexLoadFailed] = useState(false)
+
+  // Terminal shell settings
+  const [terminalShells, setTerminalShells] = useState<AvailableShellsResponse | null>(null)
+  const [terminalSettings, setTerminalSettings] = useState<TerminalShellSettings | null>(null)
+  const [terminalError, setTerminalError] = useState<string | null>(null)
+  const [terminalLoadFailed, setTerminalLoadFailed] = useState(false)
+  const [terminalUpdating, setTerminalUpdating] = useState(false)
+  const [terminalSuccess, setTerminalSuccess] = useState(false)
 
   // Sleep blocker state (Electron-only)
   const bridge = window.electronBridge
@@ -139,6 +153,45 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
         setPlaywrightError(err instanceof Error ? err.message : 'Could not load Playwright settings')
       })
   }, [wsUrl, onPlaywrightSettingsLoaded])
+
+  // Fetch terminal shell settings on mount
+  useEffect(() => {
+    setTerminalLoadFailed(false)
+    void fetchAvailableShells(wsUrl)
+      .then((data) => {
+        setTerminalShells(data)
+        setTerminalSettings(data.settings)
+        setTerminalLoadFailed(false)
+      })
+      .catch((err) => {
+        setTerminalLoadFailed(true)
+        setTerminalError(err instanceof Error ? err.message : 'Could not load terminal settings')
+      })
+  }, [wsUrl])
+
+  const handleTerminalShellChange = useCallback(
+    (value: string) => {
+      if (terminalUpdating) return
+      const shellPath = value === '__system_default__' ? null : value
+      setTerminalUpdating(true)
+      setTerminalError(null)
+      setTerminalSuccess(false)
+
+      void updateTerminalShellSettings(wsUrl, shellPath)
+        .then((settings) => {
+          setTerminalSettings(settings)
+          setTerminalSuccess(true)
+          setTimeout(() => setTerminalSuccess(false), 2000)
+        })
+        .catch((err) => {
+          setTerminalError(err instanceof Error ? err.message : 'Failed to update terminal shell')
+        })
+        .finally(() => {
+          setTerminalUpdating(false)
+        })
+    },
+    [wsUrl, terminalUpdating],
+  )
 
   // Fetch Cortex auto-review settings on mount
   useEffect(() => {
@@ -529,6 +582,124 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
               storeSidebarModelIconsPref(checked)
             }}
           />
+        </SettingsWithCTA>
+      </SettingsSection>
+
+      <SettingsSection
+        label="Terminal"
+        description="Configure the integrated terminal"
+      >
+        <SettingsWithCTA
+          label="Default Shell"
+          description={
+            terminalSettings?.source === 'env' ? (
+              <>
+                <span>Shell used when opening new terminals.</span>
+                <br />
+                <span className="text-amber-600 dark:text-amber-400">
+                  Currently set via <code className="text-[10px]">FORGE_TERMINAL_DEFAULT_SHELL</code> environment variable.
+                </span>
+              </>
+            ) : (
+              'Shell used when opening new terminals'
+            )
+          }
+        >
+          <div className="flex flex-col items-end gap-1.5">
+            <div className="flex items-center gap-2">
+              {terminalSuccess && (
+                <span className="text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                  <Check className="size-3" />
+                  Saved
+                </span>
+              )}
+              <Select
+                value={terminalSettings?.persistedDefaultShell ?? '__system_default__'}
+                onValueChange={handleTerminalShellChange}
+                disabled={
+                  !terminalShells ||
+                  terminalSettings?.source === 'env' ||
+                  terminalUpdating
+                }
+              >
+                <SelectTrigger className="w-full sm:w-64">
+                  <SelectValue placeholder="Loading shells…">
+                    {terminalSettings?.persistedDefaultShell
+                      ? (() => {
+                          const shell = terminalShells?.shells.find(
+                            (s) => s.path === terminalSettings.persistedDefaultShell,
+                          )
+                          return shell ? (
+                            <span className="inline-flex items-center gap-2">
+                              <Terminal className="size-3.5" />
+                              {shell.name}
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-2">
+                              <Terminal className="size-3.5" />
+                              {terminalSettings.persistedDefaultShell}
+                            </span>
+                          )
+                        })()
+                      : (
+                        <span className="inline-flex items-center gap-2">
+                          <Terminal className="size-3.5" />
+                          System Default
+                        </span>
+                      )}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__system_default__">
+                    <span className="inline-flex items-center gap-2">
+                      <Terminal className="size-3.5" />
+                      System Default
+                    </span>
+                  </SelectItem>
+                  {terminalShells?.shells
+                    .filter((s) => s.available)
+                    .map((shell) => (
+                      <SelectItem key={shell.path} value={shell.path}>
+                        <span className="inline-flex items-center gap-2">
+                          <Terminal className="size-3.5" />
+                          {shell.name}
+                          <span className="text-muted-foreground text-[10px]">— {shell.path}</span>
+                        </span>
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </div>
+            {terminalError ? (
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] text-destructive">{terminalError}</span>
+                {terminalLoadFailed ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTerminalError(null)
+                      setTerminalLoadFailed(false)
+                      void fetchAvailableShells(wsUrl)
+                        .then((data) => {
+                          setTerminalShells(data)
+                          setTerminalSettings(data.settings)
+                          setTerminalLoadFailed(false)
+                        })
+                        .catch((err) => {
+                          setTerminalLoadFailed(true)
+                          setTerminalError(
+                            err instanceof Error ? err.message : 'Could not load terminal settings',
+                          )
+                        })
+                    }}
+                    className="text-[10px] text-primary underline hover:no-underline"
+                  >
+                    Retry
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
         </SettingsWithCTA>
       </SettingsSection>
 
