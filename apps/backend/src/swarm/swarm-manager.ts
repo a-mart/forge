@@ -1394,8 +1394,18 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     await this.hydrateCompactionCountsForBoot();
 
     // Fire-and-forget: one-time backfill of historical compaction counts from JSONL
-    void backfillCompactionCounts(this.config.paths.dataDir).then(() => {
-      this.logDebug("boot:compaction-count-backfill:done", {});
+    void backfillCompactionCounts(this.config.paths.dataDir).then((result) => {
+      // Update in-memory descriptors with backfilled counts
+      for (const [sessionId, count] of result.counts) {
+        const descriptor = this.descriptors.get(sessionId);
+        if (descriptor && descriptor.role === "manager") {
+          descriptor.compactionCount = count;
+        }
+      }
+      if (result.counts.size > 0) {
+        this.emitAgentsSnapshot();
+      }
+      this.logDebug("boot:compaction-count-backfill:done", { sessionsUpdated: result.counts.size });
     }).catch((err) => {
       this.logDebug("boot:compaction-count-backfill:error", { error: String(err) });
     });

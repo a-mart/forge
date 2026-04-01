@@ -97,20 +97,29 @@ export async function incrementSessionCompactionCount(
   return newCount;
 }
 
-const BACKFILL_SENTINEL = ".compaction-count-backfill-done";
+const BACKFILL_SENTINEL = ".compaction-count-backfill-v2-done";
+
+export interface BackfillResult {
+  /** Map of sessionAgentId → corrected compactionCount */
+  counts: Map<string, number>;
+}
 
 /**
  * One-time background backfill of compactionCount for existing sessions.
- * Scans session JSONL files for compaction success markers and persists the count to meta.json.
+ * Counts `"type":"compaction"` JSONL events (the authoritative compaction records)
+ * and persists the count to meta.json. Returns a map so the caller can update
+ * in-memory descriptors.
+ *
  * Writes a sentinel file after completion so it never re-runs.
  */
-export async function backfillCompactionCounts(dataDir: string): Promise<void> {
+export async function backfillCompactionCounts(dataDir: string): Promise<BackfillResult> {
+  const result: BackfillResult = { counts: new Map() };
   const sentinelPath = join(getSharedDir(dataDir), BACKFILL_SENTINEL);
 
   // Check sentinel — if already done, skip entirely
   try {
     await stat(sentinelPath);
-    return; // Sentinel exists — backfill already completed
+    return result; // Sentinel exists — backfill already completed
   } catch {
     // Sentinel doesn't exist — proceed with backfill
   }
@@ -122,7 +131,7 @@ export async function backfillCompactionCounts(dataDir: string): Promise<void> {
   } catch {
     // No profiles directory — nothing to backfill
     await writeFile(sentinelPath, new Date().toISOString() + "\n", "utf8");
-    return;
+    return result;
   }
 
   for (const profileId of profileIds) {
@@ -136,31 +145,42 @@ export async function backfillCompactionCounts(dataDir: string): Promise<void> {
 
     for (const sessionId of sessionIds) {
       try {
-        const metaPath = getSessionMetaPath(dataDir, profileId, sessionId);
-        const metaRaw = await readFile(metaPath, "utf-8").catch(() => "");
-        if (!metaRaw) continue;
-
-        const meta = JSON.parse(metaRaw) as Record<string, unknown>;
-        // Skip if already has a non-zero compaction count
-        if (typeof meta.compactionCount === "number" && meta.compactionCount > 0) {
-          continue;
-        }
-
-        // Scan JSONL for compaction success markers
+        // Count type:"compaction" events in JSONL — the authoritative records
         const sessionFilePath = getSessionFilePath(dataDir, profileId, sessionId);
         const sessionRaw = await readFile(sessionFilePath, "utf-8").catch(() => "");
         if (!sessionRaw) continue;
 
         let count = 0;
         for (const line of sessionRaw.split("\n")) {
-          if (line.includes("Compaction complete.") || line.includes("Context automatically compacted")) {
-            count++;
+          if (!line.trim()) continue;
+          // Fast pre-filter before JSON parse
+          if (!line.includes('"compaction"')) continue;
+          try {
+            const event = JSON.parse(line) as Record<string, unknown>;
+            if (event.type === "compaction") {
+              count++;
+            }
+          } catch {
+            // Malformed JSONL line — skip
           }
         }
 
-        if (count > 0) {
+        // Update meta.json with the correct count
+        const metaPath = getSessionMetaPath(dataDir, profileId, sessionId);
+        const metaRaw = await readFile(metaPath, "utf-8").catch(() => "");
+        if (!metaRaw) continue;
+
+        const meta = JSON.parse(metaRaw) as Record<string, unknown>;
+        const existingCount = typeof meta.compactionCount === "number" ? meta.compactionCount : 0;
+
+        // Only write if the count differs from what's stored
+        if (count !== existingCount) {
           meta.compactionCount = count;
           await writeFile(metaPath, `${JSON.stringify(meta, null, 2)}\n`, "utf8");
+        }
+
+        if (count > 0) {
+          result.counts.set(sessionId, count);
         }
       } catch {
         // Skip individual session errors — best-effort backfill
@@ -172,6 +192,8 @@ export async function backfillCompactionCounts(dataDir: string): Promise<void> {
   // Write sentinel so we never re-run
   await mkdir(dirname(sentinelPath), { recursive: true }).catch(() => {});
   await writeFile(sentinelPath, new Date().toISOString() + "\n", "utf8");
+
+  return result;
 }
 
 export async function rebuildSessionMeta(options: RebuildSessionMetaOptions): Promise<SessionMeta[]> {
