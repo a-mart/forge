@@ -220,6 +220,18 @@ Sometimes you want a session to serve as a persistent specialist that other sess
 
 **AI-assisted promotion:** The promotion dialog includes an "AI Assist" option that analyzes the session's history and suggests a handle, description, and system prompt based on what the session has actually been doing.
 
+**Creating with the Agent Architect:** Instead of promoting an existing session, you can use the Agent Creator wizard for a guided creation flow. Right-click any profile header in the sidebar and select "Create Project Agent." This opens a fresh Agent Architect session (marked with a violet Sparkles icon) that:
+
+1. Spawns a scout worker to explore your repository structure, `AGENTS.md`, git history, and existing project agent prompts
+2. Runs a focused 2–3 turn interview about the new agent's role, autonomy level, and validation expectations
+3. Drafts a complete proposal including session name, handle, `whenToUse` description (max 280 chars), and full system prompt
+4. Waits for your explicit approval before proceeding
+5. Atomically creates and promotes the new session via `create_project_agent`
+
+Each creation attempt starts a fresh dedicated Agent Architect session. After successful creation, the wizard session automatically hides from the sidebar. You can revisit the creation conversation anytime by right-clicking the created agent and selecting "View Creation History."
+
+Agent Creator sessions cannot be promoted, forked, or created within the Cortex profile.
+
 **Discovery:** Once promoted, project agents appear at the top of the sidebar in their profile with a special badge. Other session agents in the same profile can discover them through the injected directory and send fire-and-forget messages using the existing `send_message_to_agent` tool.
 
 **Messaging:** When a project agent receives a message, it appears as a blue right-justified bubble in its chat (similar to user messages but with sender attribution). The project agent wakes up if idle and can respond by sending a message back to the sender.
