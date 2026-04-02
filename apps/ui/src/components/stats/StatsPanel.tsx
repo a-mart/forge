@@ -128,52 +128,56 @@ export function StatsPanel({ wsUrl, onBack }: StatsPanelProps) {
         <StatsSkeleton />
       ) : error && !stats ? (
         <ErrorState error={error} onRetry={refresh} />
-      ) : stats && isEmptyStats(stats) ? (
-        <EmptyState />
       ) : stats ? (
         <div className={cn('space-y-4 transition-opacity duration-200', isUpdating && 'opacity-60')}>
-          {/* Token usage: 5-card row */}
-          <TokenUsageCards tokens={stats.tokens} />
+          {isEmptyStats(stats) ? (
+            <EmptyState />
+          ) : (
+            <>
+              {/* Token usage: 5-card row */}
+              <TokenUsageCards tokens={stats.tokens} />
 
-          {/* Secondary metrics: 3-card row */}
-          <CacheMetricsCards
-            cache={stats.cache}
-            workers={stats.workers}
-            activity={stats.activity}
-          />
+              {/* Secondary metrics: 3-card row */}
+              <CacheMetricsCards
+                cache={stats.cache}
+                workers={stats.workers}
+                activity={stats.activity}
+              />
 
-          {/* Activity + session overview: 4-card row */}
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <StatCard
-              title="Longest Streak"
-              value={`${stats.activity.longestStreak} days`}
-              subtitle={stats.activity.streakLabel}
-            />
-            <StatCard
-              title="Active Days"
-              value={`${stats.activity.activeDays} / ${stats.activity.totalDaysInRange}`}
-              subtitle={`${stats.activity.activeDaysInRange} / ${stats.activity.totalDaysInRange} in current range`}
-            />
-            <StatCard
-              title="Sessions"
-              value={String(stats.sessions.totalSessions)}
-              subtitle={`${stats.sessions.activeSessions} active`}
-            />
-            <StatCard
-              title="Messages Sent"
-              value={stats.sessions.totalMessagesSent.toLocaleString()}
-              subtitle={stats.sessions.totalMessagesPeriod}
-            />
-          </div>
+              {/* Activity + session overview: 4-card row */}
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <StatCard
+                  title="Longest Streak"
+                  value={`${stats.activity.longestStreak} days`}
+                  subtitle={stats.activity.streakLabel}
+                />
+                <StatCard
+                  title="Active Days"
+                  value={`${stats.activity.activeDays} / ${stats.activity.totalDaysInRange}`}
+                  subtitle={`${stats.activity.activeDaysInRange} / ${stats.activity.totalDaysInRange} in current range`}
+                />
+                <StatCard
+                  title="Sessions"
+                  value={String(stats.sessions.totalSessions)}
+                  subtitle={`${stats.sessions.activeSessions} active`}
+                />
+                <StatCard
+                  title="Messages Sent"
+                  value={stats.sessions.totalMessagesSent.toLocaleString()}
+                  subtitle={stats.sessions.totalMessagesPeriod}
+                />
+              </div>
 
-          {/* Worker stats + code changes */}
-          <WorkerStatsCards workers={stats.workers} code={stats.code} />
+              {/* Worker stats + code changes */}
+              <WorkerStatsCards workers={stats.workers} code={stats.code} />
 
-          {/* Daily usage chart: full width */}
-          <DailyUsageChart data={stats.dailyUsage} range={range} />
+              {/* Daily usage chart: full width */}
+              <DailyUsageChart data={stats.dailyUsage} range={range} />
 
-          {/* Model distribution badges */}
-          <ModelDistribution models={stats.models} />
+              {/* Model distribution badges */}
+              <ModelDistribution models={stats.models} />
+            </>
+          )}
         </div>
       ) : null}
     </StatsLayout>

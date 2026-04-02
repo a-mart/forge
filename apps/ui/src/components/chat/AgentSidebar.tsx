@@ -35,6 +35,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ForkSessionDialog } from './ForkSessionDialog'
+import { SidebarUsageRings, SidebarUsagePanel } from './SidebarUsageWidget'
 import { SpecialistBadge } from './SpecialistBadge'
 import { useHelp } from '@/components/help/help-hooks'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -73,7 +74,8 @@ import {
 } from '@/lib/agent-hierarchy'
 import { inferModelPreset, useModelPresets } from '@/lib/model-preset'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
-import { readSidebarModelIconsPref } from '@/lib/sidebar-prefs'
+import { useProviderUsage } from '@/hooks/use-provider-usage'
+import { readSidebarModelIconsPref, readSidebarProviderUsagePref } from '@/lib/sidebar-prefs'
 import { cn } from '@/lib/utils'
 import {
   MANAGER_REASONING_LEVELS,
@@ -2201,10 +2203,16 @@ export function AgentSidebar({
   const [activeDragId, setActiveDragId] = useState<string | null>(null)
   const [cortexOutstandingReviewCount, setCortexOutstandingReviewCount] = useState<number | null>(null)
   const [showModelIcons, setShowModelIcons] = useState(() => readSidebarModelIconsPref())
+  const [showProviderUsage, setShowProviderUsage] = useState(() => readSidebarProviderUsagePref())
+  const [usagePanelOpen, setUsagePanelOpen] = useState(false)
+  const providerUsage = useProviderUsage(showProviderUsage)
 
   // Re-read pref on custom event (same-tab) and storage event (cross-tab)
   useEffect(() => {
-    const update = () => setShowModelIcons(readSidebarModelIconsPref())
+    const update = () => {
+      setShowModelIcons(readSidebarModelIconsPref())
+      setShowProviderUsage(readSidebarProviderUsagePref())
+    }
     window.addEventListener('forge-sidebar-pref-change', update)
     window.addEventListener('storage', update)
     return () => {
@@ -2744,9 +2752,21 @@ export function AgentSidebar({
         })()}
       </div>
 
-      <div className="shrink-0 border-t border-sidebar-border px-2 py-1.5">
+      {showProviderUsage ? (
+        <SidebarUsagePanel providers={providerUsage} open={usagePanelOpen} onClose={() => setUsagePanelOpen(false)} />
+      ) : null}
+
+      <div className="relative shrink-0 border-t border-sidebar-border">
+        {showProviderUsage ? (
+          <>
+            <div className="absolute inset-y-0 left-0 z-10 flex items-center justify-center" style={{ width: '38%' }}>
+              <SidebarUsageRings providers={providerUsage} onToggle={() => setUsagePanelOpen(prev => !prev)} />
+            </div>
+            <div className="absolute top-0 bottom-0 w-px bg-sidebar-border" style={{ left: '38%' }} />
+          </>
+        ) : null}
         <TooltipProvider delayDuration={200}>
-          <div className="flex items-center justify-center gap-1">
+          <div className="flex items-center px-2 py-1.5" style={showProviderUsage ? { paddingLeft: 'calc(38% + 8px)', justifyContent: 'space-evenly' } : { justifyContent: 'center', gap: '4px' }}>
             {showPlaywrightNav ? (
               <Tooltip>
                 <TooltipTrigger asChild>

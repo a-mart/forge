@@ -4,7 +4,8 @@ import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
-import type { CodeStats, ModelDistributionEntry, StatsRange, StatsSnapshot, TokenStats } from "@forge/protocol";
+import type { CodeStats, ModelDistributionEntry, ProviderUsageStats, StatsRange, StatsSnapshot, TokenStats } from "@forge/protocol";
+import { ProviderUsageService } from "./provider-usage-service.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import { getAgentsStoreFilePath, getProfilesDir, getSharedDir } from "../swarm/data-paths.js";
 
@@ -68,14 +69,16 @@ export class StatsService {
   private readonly cache = new Map<string, CacheEntry>();
   private readonly inFlightComputations = new Map<string, Promise<StatsSnapshot>>();
   private readonly cacheFilePath: string;
+  private readonly providerUsageService: ProviderUsageService;
 
   private persistentCacheLoaded = false;
   private persistQueue: Promise<void> = Promise.resolve();
   private refreshAllPromise: Promise<void> | null = null;
 
   constructor(private readonly swarmManager: SwarmManager) {
-    const dataDir = this.swarmManager.getConfig().paths.dataDir;
-    this.cacheFilePath = join(getSharedDir(dataDir), STATS_CACHE_FILE_NAME);
+    const config = this.swarmManager.getConfig();
+    this.cacheFilePath = join(getSharedDir(config.paths.dataDir), STATS_CACHE_FILE_NAME);
+    this.providerUsageService = new ProviderUsageService(config.paths.sharedAuthFile);
   }
 
   async getSnapshot(
@@ -128,6 +131,10 @@ export class StatsService {
     this.cache.clear();
   }
 
+  async getProviderUsage(): Promise<ProviderUsageStats> {
+    return this.providerUsageService.getSnapshot();
+  }
+
   async refreshAllRangesInBackground(): Promise<void> {
     if (this.refreshAllPromise) {
       return this.refreshAllPromise;
@@ -168,19 +175,23 @@ export class StatsService {
     return `stats:${range}:${timezone}`;
   }
 
-  private withLatestTokenStats(snapshot: StatsSnapshot, timezone: string): StatsSnapshot {
-    const latest = this.getLatestTokenStatsForTimezone(timezone);
-    if (!latest) {
-      return snapshot;
-    }
+  private async withLatestTokenStats(snapshot: StatsSnapshot, timezone: string): Promise<StatsSnapshot> {
+    const latestTokens = this.getLatestTokenStatsForTimezone(timezone);
+    const latestProviders = await this.providerUsageService.getSnapshot();
 
-    if (latest === snapshot.tokens) {
+    const tokensChanged = Boolean(latestTokens && latestTokens !== snapshot.tokens);
+    const providersChanged =
+      snapshot.providers.openai !== latestProviders.openai ||
+      snapshot.providers.anthropic !== latestProviders.anthropic;
+
+    if (!tokensChanged && !providersChanged) {
       return snapshot;
     }
 
     return {
       ...snapshot,
-      tokens: latest
+      ...(tokensChanged ? { tokens: latestTokens ?? snapshot.tokens } : {}),
+      ...(providersChanged ? { providers: latestProviders } : {})
     };
   }
 
@@ -393,19 +404,7 @@ export class StatsService {
         outputTokens: entry.totals.output,
         cachedTokens: entry.totals.cacheRead
       })),
-      // TODO(stats): Replace placeholder provider usage with real account/subscription data.
-      providers: {
-        anthropic: {
-          provider: "anthropic",
-          available: false,
-          error: "No subscription data available"
-        },
-        openai: {
-          provider: "openai",
-          available: false,
-          error: "No subscription data available"
-        }
-      },
+      providers: await this.providerUsageService.getSnapshot(),
       system: {
         uptimeFormatted: formatUptime(Math.round(process.uptime() * 1000)),
         totalProfiles: profileIds.length,

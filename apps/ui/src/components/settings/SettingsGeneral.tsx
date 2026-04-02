@@ -13,7 +13,12 @@ import {
 } from '@/components/ui/select'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
-import { readSidebarModelIconsPref, storeSidebarModelIconsPref } from '@/lib/sidebar-prefs'
+import {
+  readSidebarModelIconsPref,
+  readSidebarProviderUsagePref,
+  storeSidebarModelIconsPref,
+  storeSidebarProviderUsagePref,
+} from '@/lib/sidebar-prefs'
 import { SettingsSection, SettingsWithCTA } from './settings-row'
 import { isElectron, type SleepBlockerStatus } from '@/lib/electron-bridge'
 import {
@@ -61,6 +66,7 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
   } = useOnboardingState(wsUrl)
   const [onboardingSuccess, setOnboardingSuccess] = useState<string | null>(null)
   const [sidebarModelIcons, setSidebarModelIcons] = useState(() => readSidebarModelIconsPref())
+  const [sidebarProviderUsage, setSidebarProviderUsage] = useState(() => readSidebarProviderUsagePref())
   const [themePreference, setThemePreference] = useState<ThemePreference>(() =>
     readStoredThemePreference(),
   )
@@ -580,6 +586,19 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
             onCheckedChange={(checked) => {
               setSidebarModelIcons(checked)
               storeSidebarModelIconsPref(checked)
+            }}
+          />
+        </SettingsWithCTA>
+
+        <SettingsWithCTA
+          label="Show provider usage"
+          description="Display provider usage limits above the sidebar footer"
+        >
+          <Switch
+            checked={sidebarProviderUsage}
+            onCheckedChange={(checked) => {
+              setSidebarProviderUsage(checked)
+              storeSidebarProviderUsagePref(checked)
             }}
           />
         </SettingsWithCTA>

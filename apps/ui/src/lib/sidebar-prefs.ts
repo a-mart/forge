@@ -1,4 +1,10 @@
 const MODEL_ICONS_KEY = 'forge-sidebar-model-icons'
+const PROVIDER_USAGE_KEY = 'forge-sidebar-provider-usage'
+const PREF_CHANGE_EVENT = 'forge-sidebar-pref-change'
+
+function dispatchSidebarPrefChange(key: string, value: boolean): void {
+  window.dispatchEvent(new CustomEvent(PREF_CHANGE_EVENT, { detail: { key, value } }))
+}
 
 export function readSidebarModelIconsPref(): boolean {
   try {
@@ -11,8 +17,25 @@ export function readSidebarModelIconsPref(): boolean {
 export function storeSidebarModelIconsPref(enabled: boolean): void {
   try {
     localStorage.setItem(MODEL_ICONS_KEY, String(enabled))
-    // Dispatch custom event for same-tab listeners
-    window.dispatchEvent(new CustomEvent('forge-sidebar-pref-change', { detail: { key: MODEL_ICONS_KEY, value: enabled } }))
+    dispatchSidebarPrefChange(MODEL_ICONS_KEY, enabled)
+  } catch {
+    // Ignore localStorage write failures
+  }
+}
+
+export function readSidebarProviderUsagePref(): boolean {
+  try {
+    const stored = localStorage.getItem(PROVIDER_USAGE_KEY)
+    return stored === null ? true : stored === 'true'
+  } catch {
+    return true
+  }
+}
+
+export function storeSidebarProviderUsagePref(enabled: boolean): void {
+  try {
+    localStorage.setItem(PROVIDER_USAGE_KEY, String(enabled))
+    dispatchSidebarPrefChange(PROVIDER_USAGE_KEY, enabled)
   } catch {
     // Ignore localStorage write failures
   }
