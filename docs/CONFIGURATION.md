@@ -71,13 +71,30 @@ All persistent state lives in a single data directory:
 ```
 <data-dir>/
 ├── shared/                    # Shared config
-│   ├── auth/auth.json         # API keys and auth tokens
-│   ├── secrets.json           # Additional secrets
-│   ├── model-overrides.json   # User model visibility/context caps (Settings → Models)
-│   ├── generated/
-│   │   └── pi-models.json     # Generated Pi-compatible model projection
-│   ├── integrations/          # Shared integration configs
-│   └── playwright-dashboard.json
+│   ├── config/                # User settings & credentials
+│   │   ├── auth/
+│   │   │   └── auth.json      # API keys and auth tokens
+│   │   ├── secrets.json       # Additional secrets
+│   │   ├── model-overrides.json   # User model visibility/context caps (Settings → Models)
+│   │   ├── cortex-auto-review.json        # Cortex auto-review schedule settings
+│   │   ├── mobile-notification-prefs.json # Mobile push preferences
+│   │   ├── playwright-dashboard.json      # Playwright dashboard settings
+│   │   ├── slash-commands.json            # Global slash commands
+│   │   ├── terminal-settings.json         # Terminal runtime settings
+│   │   └── integrations/      # Shared integration configs
+│   ├── cache/                 # Regenerable/ephemeral
+│   │   ├── generated/
+│   │   │   └── pi-models.json # Generated Pi-compatible model projection
+│   │   └── stats-cache.json   # Cached dashboard statistics
+│   ├── state/                 # Runtime state & markers
+│   │   ├── mobile-devices.json            # Registered mobile devices
+│   │   ├── .compaction-count-backfill-v2-done  # Compaction-count backfill sentinel
+│   │   └── .shared-config-migration-done       # Shared-config layout migration sentinel
+│   ├── knowledge/             # Knowledge base
+│   │   ├── common.md          # Common knowledge (cross-profile)
+│   │   ├── onboarding-state.json  # First-launch user preferences
+│   │   └── profiles/<profileId>.md  # Per-profile knowledge
+│   └── specialists/           # Global specialist definitions (.md files)
 ├── profiles/<profileId>/      # Per-manager-profile data
 │   ├── memory.md              # Profile-level memory
 │   └── sessions/<sessionId>/  # Per-session data

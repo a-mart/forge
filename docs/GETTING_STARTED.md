@@ -572,7 +572,8 @@ No database. Everything is files (JSON, JSONL, and Markdown):
 ~/.forge/
 ├── swarm/agents.json              # Global agent registry
 ├── shared/
-│   ├── auth/                      # Your authentication credentials
+│   ├── config/
+│   │   └── auth/                  # Your authentication credentials
 │   └── knowledge/                 # Cortex knowledge files (common + per-project)
 └── profiles/<profileId>/
     ├── memory.md                  # Profile-level memory
