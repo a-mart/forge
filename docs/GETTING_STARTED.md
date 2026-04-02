@@ -427,6 +427,8 @@ Workers are supposed to report back to the manager when they finish. But LLMs ar
 
 Forge detects this. When a worker goes idle without reporting back, the system notifies the session agent: "This worker went idle without sending a message." The session agent can then inspect the worker's output, nudge it, or spin up a replacement.
 
+If a worker turn fails instead of finishing cleanly, that failure can now surface in the transcript as a system message with the error context preserved, so it does not just look like a missing callback.
+
 ### Stalled Worker Auto-Kill
 
 Sometimes workers get stuck on a command that hangs. An infinite loop, a misconfigured server, a command waiting for input that will never come.

@@ -24,7 +24,7 @@ The manager controls the flow. It decides which model each worker uses, what ins
 
 The manager picks a model for each worker based on the task. Quick jobs like file reads get a cheaper, faster model. Complex work like architecture review gets a more capable one. If you have specialists configured, the manager routes work to the right specialist automatically based on what the task needs.
 
-Workers can use tools — reading files, running shell commands, making edits — but they always report results back to the manager, which decides the next step.`,
+Workers can use tools — reading files, running shell commands, making edits — but they always report results back to the manager, which decides the next step. If a worker turn fails, that failure can surface as a system message with the error context preserved instead of looking like a normal completion.`,
   keywords: [
     'manager',
     'worker',

@@ -144,6 +144,8 @@ Agents hang. Models stall. Workers finish their work and forget to report back. 
 - **Stall detection** — workers stuck in a streaming state with no progress for five minutes get flagged. The manager is notified and can intervene.
 - **Auto-kill** — if a stalled worker doesn't recover after a second five-minute window, it's terminated and reported to the manager.
 
+Worker turn failures are projected into the manager conversation as system messages with preserved error context, and duplicate callback or summary reports for the same turn are suppressed.
+
 You can also manually stop any agent from the UI, but you'll rarely need to.
 
 ### Feedback

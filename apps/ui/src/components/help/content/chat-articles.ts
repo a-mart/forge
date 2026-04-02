@@ -234,7 +234,7 @@ Right-click the profile header and choose **Delete Manager**. This removes the p
     title: 'Worker Agents',
     category: 'chat',
     summary: 'How worker pills, quick look, and worker monitoring work.',
-    content: `Workers are agents that the manager spawns to handle tasks. They appear in two places: the pill bar above the message area, and nested under sessions in the sidebar.
+    content: `Workers are agents that the manager spawns to handle tasks. They appear in two places: the pill bar above the message area, and nested under sessions in the sidebar. Failed worker turns appear in the transcript as system error messages with the last error context preserved, and the same turn will not produce duplicate end reports.
 
 ## Worker pill bar
 
