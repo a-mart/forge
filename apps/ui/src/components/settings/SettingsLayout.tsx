@@ -106,7 +106,15 @@ export function SettingsLayout({ activeTab, onTabChange, onBack, children }: Set
         </nav>
 
         {/* Content area */}
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div
+          className={cn(
+            'min-h-0 flex-1 overflow-y-auto',
+            '[&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent',
+            '[&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-transparent',
+            '[scrollbar-width:thin] [scrollbar-color:transparent_transparent]',
+            'hover:[&::-webkit-scrollbar-thumb]:bg-border hover:[scrollbar-color:var(--color-border)_transparent]',
+          )}
+        >
           <div className="mx-auto max-w-3xl px-4 py-4 md:px-6 md:py-5">
             {children}
           </div>
