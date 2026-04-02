@@ -188,6 +188,8 @@ class BackendSupervisor {
           FORGE_HOST: process.env.FORGE_HOST || '0.0.0.0',
           FORGE_PORT: process.env.FORGE_PORT || String(resolveDefaultBackendPort()),
           FORGE_RESOURCES_DIR: resourcesDir,
+          FORGE_APP_VERSION: app.getVersion(),
+          FORGE_ELECTRON_VERSION: process.versions.electron ?? '',
         },
         stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
         execArgv,

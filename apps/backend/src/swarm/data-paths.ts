@@ -251,6 +251,10 @@ export function getGlobalSlashCommandsPath(dataDir: string): string {
   return join(getSharedDir(dataDir), "slash-commands.json");
 }
 
+export function getTelemetryConfigPath(dataDir: string): string {
+  return join(getSharedDir(dataDir), "telemetry.json");
+}
+
 // ── Unchanged global paths ─────────────────────────────────────────────────────
 
 export function getUploadsDir(dataDir: string): string {

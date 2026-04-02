@@ -1,0 +1,74 @@
+export interface PersistedTelemetryConfig {
+  /** Whether telemetry reporting is enabled. Default: true. */
+  enabled: boolean
+  /** Random UUIDv4 install identifier. Generated on first run. */
+  installId: string
+  /** ISO 8601 timestamp of last successful telemetry send, or null if never sent. */
+  lastSentAt: string | null
+}
+
+export type TelemetrySettingsSource = 'settings' | 'env'
+
+export interface TelemetrySettingsResponse {
+  /** Persisted enabled flag. */
+  enabled: boolean
+  /** Effective enabled state after env var override. */
+  effectiveEnabled: boolean
+  /** Where the effective state was determined from. */
+  source: TelemetrySettingsSource
+  /** Env var override value, or null if unset. */
+  envOverride: boolean | null
+  /** Install ID. */
+  installId: string
+  /** Last successful send timestamp, or null. */
+  lastSentAt: string | null
+}
+
+export interface TelemetryPayload {
+  install_id: string
+  schema_version: number
+
+  // System info
+  app_version: string
+  platform: string
+  arch: string
+  node_version: string
+  electron_version: string | null
+  is_desktop: boolean
+  locale: string
+  total_profiles: number
+
+  // Usage stats
+  total_sessions: number
+  total_messages_sent: number
+  total_workers_run: number
+  tokens_all_time: number
+  tokens_last_30_days: number
+  cache_hit_rate: number
+  active_days: number
+  longest_streak: number
+  commits: number
+  lines_added: number
+  average_tokens_per_run: number
+
+  // Feature adoption
+  specialists_configured: number
+  terminals_active: number
+  pinned_messages_used: number
+  scheduled_tasks_count: number
+  telegram_configured: boolean
+  playwright_enabled: boolean
+  forked_sessions_count: number
+  project_agents_count: number
+  extensions_loaded: number
+  skills_configured: number
+  reference_docs_count: number
+  slash_commands_count: number
+  cortex_auto_review_enabled: boolean
+  mobile_devices_registered: number
+
+  // Provider / model info
+  providers_used: string
+  auth_providers: string
+  top_model: string
+}

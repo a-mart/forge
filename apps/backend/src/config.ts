@@ -23,7 +23,15 @@ import type { SwarmConfig } from "./swarm/types.js";
 export function readPlaywrightDashboardEnvOverride(): boolean | undefined {
   return parseOptionalBooleanEnv(
     process.env.FORGE_PLAYWRIGHT_DASHBOARD_ENABLED ??
-      process.env.MIDDLEMAN_PLAYWRIGHT_DASHBOARD_ENABLED
+      process.env.MIDDLEMAN_PLAYWRIGHT_DASHBOARD_ENABLED,
+    "FORGE_PLAYWRIGHT_DASHBOARD_ENABLED"
+  );
+}
+
+export function readTelemetryEnvOverride(): boolean | undefined {
+  return parseOptionalBooleanEnv(
+    process.env.FORGE_TELEMETRY ?? process.env.MIDDLEMAN_TELEMETRY,
+    "FORGE_TELEMETRY"
   );
 }
 
@@ -196,7 +204,10 @@ function parseBooleanEnv(value: string | undefined): boolean {
   return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
 }
 
-function parseOptionalBooleanEnv(value: string | undefined): boolean | undefined {
+function parseOptionalBooleanEnv(
+  value: string | undefined,
+  envVarName?: string,
+): boolean | undefined {
   const normalized = value?.trim().toLowerCase();
   if (!normalized) {
     return undefined;
@@ -210,9 +221,9 @@ function parseOptionalBooleanEnv(value: string | undefined): boolean | undefined
     return false;
   }
 
-  console.warn(
-    `[config] Ignoring invalid FORGE_PLAYWRIGHT_DASHBOARD_ENABLED value: ${value}`,
-  );
+  if (envVarName) {
+    console.warn(`[config] Ignoring invalid ${envVarName} value: ${value}`);
+  }
   return undefined;
 }
 
