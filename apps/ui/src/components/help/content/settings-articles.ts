@@ -504,7 +504,7 @@ The global toggle at the top turns the specialist system on or off. When disable
 
 ## Model and fallback
 
-Each specialist has a primary model and reasoning level. You can also set a fallback model that takes over if the primary is unavailable or rate-limited. Expand the fallback section to configure it.
+Each specialist has a primary model and reasoning level. You can also set a fallback model that takes over if the primary is unavailable or rate-limited. Built-in specialists generally use cross-vendor fallbacks when practical, with a few exceptions like \`app-runtime\` and \`web-researcher\`. Expand the fallback section to configure it.
 
 ## Native search (web + X) (Grok models only)
 
