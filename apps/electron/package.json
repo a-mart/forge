@@ -1,6 +1,6 @@
 {
   "name": "@forge/electron",
-  "version": "0.9.1-beta.1",
+  "version": "0.10.0",
   "private": true,
   "license": "Apache-2.0",
   "description": "Forge Desktop",
