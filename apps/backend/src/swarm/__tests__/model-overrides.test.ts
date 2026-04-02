@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { getSharedModelOverridesPath } from "../data-paths.js";
 import { ModelCatalogService } from "../model-catalog-service.js";
@@ -30,7 +30,7 @@ describe("model-overrides", () => {
   it("ignores malformed override files", async () => {
     const dataDir = await makeTempDataDir();
     const filePath = getSharedModelOverridesPath(dataDir);
-    await mkdir(join(dataDir, "shared"), { recursive: true });
+    await mkdir(dirname(filePath), { recursive: true });
     await writeFile(filePath, "{not-json", "utf8");
 
     await expect(readModelOverrides(dataDir)).resolves.toEqual({

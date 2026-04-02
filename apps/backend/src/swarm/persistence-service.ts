@@ -10,6 +10,7 @@ import {
   getProfilePiPromptsDir,
   getProfilePiSkillsDir,
   getProfilePiThemesDir,
+  getSharedCacheGeneratedDir,
   getSharedKnowledgeDir,
   resolveMemoryFilePath
 } from "./data-paths.js";
@@ -52,8 +53,12 @@ export class PersistenceService {
       this.deps.config.paths.swarmDir,
       this.deps.config.paths.profilesDir,
       this.deps.config.paths.sharedDir,
+      this.deps.config.paths.sharedConfigDir,
       this.deps.config.paths.sharedAuthDir,
       this.deps.config.paths.sharedIntegrationsDir,
+      this.deps.config.paths.sharedCacheDir,
+      getSharedCacheGeneratedDir(this.deps.config.paths.dataDir),
+      this.deps.config.paths.sharedStateDir,
       getSharedKnowledgeDir(this.deps.config.paths.dataDir),
       getProfileKnowledgeDir(this.deps.config.paths.dataDir),
 

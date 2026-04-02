@@ -584,7 +584,7 @@ export function SettingsAuth({ wsUrl }: SettingsAuthProps) {
     <div className="flex flex-col gap-8">
       <SettingsSection
         label="API Keys"
-        description="Stored in ~/.forge/shared/auth/auth.json"
+        description="Stored in ~/.forge/shared/config/auth/auth.json"
       >
         {authError ? (
           <div className="flex items-center gap-2 rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2">

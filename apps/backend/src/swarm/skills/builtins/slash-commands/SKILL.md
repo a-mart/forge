@@ -8,7 +8,7 @@ description: Create, update, list, and delete global slash commands.
 Use this skill when the user asks to manage reusable `/` commands.
 
 Slash commands are global (shared across profiles/sessions) and stored under:
-- `${SWARM_DATA_DIR}/shared/slash-commands.json`
+- `${SWARM_DATA_DIR}/shared/config/slash-commands.json`
 
 Run the CLI from this skill directory.
 

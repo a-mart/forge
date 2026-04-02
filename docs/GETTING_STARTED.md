@@ -131,6 +131,15 @@ When agents create plans, design documents, or other working files that aren't p
 
 If you've set up scheduled tasks (like automated Cortex reviews on a cron schedule), they appear in the sidebar's Schedules pane.
 
+### Provider Usage
+
+If you've authenticated with OpenAI or Anthropic via OAuth, Forge can display subscription rate-limit monitoring in two places:
+
+- **Sidebar widget** — Compact stacked gauges showing 5-hour rolling and weekly usage windows with reset timers. Click to expand for detailed metrics (deficit, pace, runout estimates).
+- **Dashboard stats panel** — Full usage breakdown with the same metrics in a dedicated section.
+
+Usage data is cached per-provider with a 3-minute TTL to avoid excessive API calls. Toggle the sidebar widget visibility in **Settings → General → Sidebar**.
+
 ---
 
 ## 4. Working with Your Manager
@@ -219,6 +228,18 @@ Sometimes you want a session to serve as a persistent specialist that other sess
 - **System prompt** — An authoritative prompt that completely replaces the base manager template. Defines the project agent's role and behavior.
 
 **AI-assisted promotion:** The promotion dialog includes an "AI Assist" option that analyzes the session's history and suggests a handle, description, and system prompt based on what the session has actually been doing.
+
+**Creating with the Agent Architect:** Instead of promoting an existing session, you can use the Agent Creator wizard for a guided creation flow. Right-click any profile header in the sidebar and select "Create Project Agent." This opens a fresh Agent Architect session (marked with a violet Sparkles icon) that:
+
+1. Spawns a scout worker to explore your repository structure, `AGENTS.md`, git history, and existing project agent prompts
+2. Runs a focused 2–3 turn interview about the new agent's role, autonomy level, and validation expectations
+3. Drafts a complete proposal including session name, handle, `whenToUse` description (max 280 chars), and full system prompt
+4. Waits for your explicit approval before proceeding
+5. Atomically creates and promotes the new session via `create_project_agent`
+
+Each creation attempt starts a fresh dedicated Agent Architect session. After successful creation, the wizard session automatically hides from the sidebar. You can revisit the creation conversation anytime by right-clicking the created agent and selecting "View Creation History."
+
+Agent Creator sessions cannot be promoted, forked, or created within the Cortex profile.
 
 **Discovery:** Once promoted, project agents appear at the top of the sidebar in their profile with a special badge. Other session agents in the same profile can discover them through the injected directory and send fire-and-forget messages using the existing `send_message_to_agent` tool.
 

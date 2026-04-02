@@ -41,8 +41,8 @@ describe("EmbeddedGitVersioningService", () => {
     const trackedHeadContents = await execGit(dataDir, ["show", "HEAD:shared/knowledge/common.md"]);
     expect(trackedHeadContents.stdout).toContain("durable fact");
 
-    await mkdir(join(dataDir, "shared"), { recursive: true });
-    const secretsPath = join(dataDir, "shared", "secrets.json");
+    await mkdir(join(dataDir, "shared", "config"), { recursive: true });
+    const secretsPath = join(dataDir, "shared", "config", "secrets.json");
     await writeFile(secretsPath, '{"token":"secret"}\n', "utf8");
 
     await service.recordMutation({

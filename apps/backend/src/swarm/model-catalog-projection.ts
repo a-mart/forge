@@ -7,10 +7,9 @@ import {
   getCatalogModel,
   type ForgeProviderDefinition,
 } from "@forge/protocol";
-import { getSharedDir } from "./data-paths.js";
+import { getSharedCacheGeneratedDir } from "./data-paths.js";
 import { modelCatalogService } from "./model-catalog-service.js";
 
-const GENERATED_DIR_NAME = "generated";
 const PI_MODELS_FILENAME = "pi-models.json";
 
 export interface PiModelsConfig {
@@ -47,7 +46,7 @@ interface PiModelOverride {
 }
 
 export function getPiModelsProjectionPath(dataDir: string): string {
-  return join(getSharedDir(dataDir), GENERATED_DIR_NAME, PI_MODELS_FILENAME);
+  return join(getSharedCacheGeneratedDir(dataDir), PI_MODELS_FILENAME);
 }
 
 export function assertPiModelsProjectionAvailable(projectionPath: string): void {
@@ -85,14 +84,14 @@ export function buildPiModelsProjection(): PiModelsConfig {
 /**
  * Generate a Pi-compatible models.json projection from the Forge catalog.
  *
- * This file is written to <dataDir>/shared/generated/pi-models.json and the stable path is
+ * This file is written to <dataDir>/shared/cache/generated/pi-models.json and the stable path is
  * passed as modelsJsonPath to every Pi ModelRegistry instance.
  */
 export async function generatePiProjection(dataDir: string): Promise<string> {
   await modelCatalogService.loadOverrides(dataDir);
 
   const outputPath = getPiModelsProjectionPath(dataDir);
-  const generatedDir = join(getSharedDir(dataDir), GENERATED_DIR_NAME);
+  const generatedDir = getSharedCacheGeneratedDir(dataDir);
   const tempPath = join(generatedDir, `${PI_MODELS_FILENAME}.tmp`);
   const projection = buildPiModelsProjection();
 

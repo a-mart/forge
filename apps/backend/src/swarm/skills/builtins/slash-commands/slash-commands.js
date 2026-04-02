@@ -12,7 +12,7 @@ function resolveDataDir() {
 }
 
 function resolveSlashCommandsFilePath(dataDir) {
-  return resolve(dataDir, "shared", "slash-commands.json");
+  return resolve(dataDir, "shared", "config", "slash-commands.json");
 }
 
 function printJson(payload) {

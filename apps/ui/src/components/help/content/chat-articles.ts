@@ -123,6 +123,8 @@ Forge categorizes files automatically. Common image formats are recognized and s
 
 Each **profile** is a collapsible group. Inside each profile are its **sessions**. Inside each session, you can expand to see active **workers**. Click any item to switch to it.
 
+Project agents appear pinned at the top of each profile section with a badge, above regular sessions.
+
 ## Search
 
 The search bar at the top filters sessions and workers by name. Prefix shortcuts:
@@ -132,7 +134,7 @@ The search bar at the top filters sessions and workers by name. Prefix shortcuts
 
 ## Profile actions
 
-Right-click a profile header to access: New Session, Rename, Change Model, or Delete Manager.
+Right-click a profile header to access: New Session, Create Project Agent, Rename, Change Model, or Delete Manager.
 
 You can also drag profiles to reorder them. The **+** button on a profile header creates a new session.
 
@@ -148,7 +150,7 @@ Sessions with active workers show a numbered badge. Expand the session to see in
 
 On smaller screens, the sidebar is hidden by default. Tap the hamburger menu in the header to open it. An unread badge shows on the menu button when there are unread messages.`,
     keywords: ['sidebar', 'navigation', 'search', 'profile', 'session', 'worker', 'tree', 'mobile', 'hamburger'],
-    relatedIds: ['chat-sessions', 'chat-profiles', 'chat-workers'],
+    relatedIds: ['chat-sessions', 'chat-profiles', 'chat-workers', 'chat-project-agents'],
     contextKeys: ['chat.sidebar'],
   },
   {
@@ -439,5 +441,84 @@ Feedback is saved to the session's feedback file on disk. It's local to your For
     keywords: ['feedback', 'rating', 'thumbs', 'upvote', 'downvote', 'comment', 'reason', 'vote'],
     relatedIds: ['chat-overview'],
     contextKeys: ['chat.main'],
+  },
+  {
+    id: 'chat-project-agents',
+    title: 'Creating and Using Project Agents',
+    category: 'chat',
+    summary: 'How to create project agents, message them, and manage their settings.',
+    content: `Project agents are specialized sessions with persistent identities that other sessions can discover and message. Use them for cross-session coordination on recurring tasks like documentation, releases, or domain-specific work.
+
+## Two ways to create
+
+### Agent Creator wizard
+
+Right-click a profile header in the sidebar and choose **Create Project Agent**. This opens a new session with the Agent Architect archetype.
+
+The wizard flow:
+
+1. **Repo exploration** — The Agent Architect scans your repository to understand its structure and existing agents.
+2. **Interview** — You're asked 2-3 focused questions about the new agent's role and scope.
+3. **Proposal** — The architect drafts a configuration including handle, "when to use" blurb, and system prompt.
+4. **Creation** — After you approve, the agent is atomically created and promoted to a project agent.
+
+The wizard session shows a violet Sparkles icon in the sidebar. Once the agent is created, the wizard session auto-hides but remains accessible via "View Creation History" on the created agent's context menu.
+
+### Manual promotion
+
+Right-click any existing session and choose **Promote to Project Agent**. A dialog opens where you fill in:
+
+- **Handle** — A unique identifier like \`@releases\` or \`@docs\`. Must be unique within the profile.
+- **When to use** — A description that tells other sessions when to message this agent.
+- **System prompt** (optional) — Custom instructions tailored to the agent's role.
+
+Click **Generate recommendations** to have AI suggest both the "when to use" text and system prompt based on the session's conversation history. You can edit the suggestions before saving.
+
+## Using project agents
+
+Project agents appear pinned at the top of their profile section in the sidebar with a badge. Click one to open its conversation.
+
+To message a project agent from another session, mention its handle in your message (the composer offers autocomplete when you type \`@\`). The manager interprets your intent and uses the \`send_message_to_agent\` tool to deliver the message asynchronously.
+
+Messages to project agents are fire-and-forget — there's no reply threading. If the receiving session is idle, Forge wakes it up to handle the incoming work.
+
+## Managing project agents
+
+Right-click a project agent to access:
+
+- **Settings** — Edit the handle, "when to use" text, and system prompt. You can regenerate recommendations here too.
+- **View Creation History** — Opens the Agent Architect session that created this agent (if it was created via the wizard).
+- **Demote to Regular Session** — Converts the project agent back to a normal session. The handle and discovery metadata are removed, but the conversation history is preserved.
+- Other standard session actions like Rename, Fork, Stop, Delete.
+
+## Wizard sessions
+
+Agent Creator sessions have special behavior:
+
+- They cannot be promoted to project agents themselves.
+- They cannot be forked.
+- They auto-hide from the sidebar after successful creation (but are not deleted).
+- Each creation attempt must use a fresh wizard session — reusing an old Agent Architect conversation is not supported.
+
+## Handles and discovery
+
+Handles must be unique within a profile. If you try to promote a session with a handle that already exists, you'll see an error. Rename the existing project agent or choose a different handle.
+
+The "when to use" blurb is injected into the prompt context of all sibling manager sessions (but not workers). This is how managers learn about available project agents and when to message them.`,
+    keywords: [
+      'project agent',
+      'create',
+      'promotion',
+      'agent creator',
+      'wizard',
+      'agent architect',
+      'handle',
+      '@mention',
+      'messaging',
+      'settings',
+      'demote',
+    ],
+    relatedIds: ['concepts-project-agents', 'chat-sidebar', 'chat-sessions'],
+    contextKeys: ['chat.sidebar', 'chat.main'],
   },
 ]

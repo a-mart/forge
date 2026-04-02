@@ -33,7 +33,7 @@ describe("TerminalSettingsService", () => {
     });
   });
 
-  it("persists the selected shell in shared/terminal-settings.json", async () => {
+  it("persists the selected shell in shared/config/terminal-settings.json", async () => {
     const dataDir = await createTempDataDir();
     const service = new TerminalSettingsService({ dataDir, env: {} });
 

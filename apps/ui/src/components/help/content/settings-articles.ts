@@ -125,7 +125,7 @@ If clicking a file link does nothing, check that the editor is installed and tha
 3. Paste your API key into the input field.
 4. Click **Save**.
 
-Each provider row shows a "Configured" or "Not configured" badge. Once saved, the key is masked but stored on disk at \`~/.forge/shared/auth/auth.json\`. Use the eye icon to toggle visibility of the input. Click **Remove** to delete a saved key.
+Each provider row shows a "Configured" or "Not configured" badge. Once saved, the key is masked but stored on disk at \`~/.forge/shared/config/auth/auth.json\`. Use the eye icon to toggle visibility of the input. Click **Remove** to delete a saved key.
 
 Each provider also has a "Get key" link that opens the provider's key management page in your browser.
 

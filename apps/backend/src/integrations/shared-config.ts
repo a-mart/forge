@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { getSharedIntegrationsDir } from "../swarm/data-paths.js";
+import { getSharedDir, getSharedIntegrationsDir } from "../swarm/data-paths.js";
 
 export const SHARED_INTEGRATION_MANAGER_ID = "__shared__";
 
@@ -12,6 +12,10 @@ export function isSharedIntegrationManagerId(managerId: string): boolean {
 
 export function getSharedIntegrationConfigPath(dataDir: string, fileName: string): string {
   return resolve(getSharedIntegrationsDir(dataDir), fileName);
+}
+
+export function getOldSharedIntegrationConfigPath(dataDir: string, fileName: string): string {
+  return resolve(getSharedDir(dataDir), "integrations", fileName);
 }
 
 export function getLegacySharedIntegrationConfigPath(dataDir: string, fileName: string): string {

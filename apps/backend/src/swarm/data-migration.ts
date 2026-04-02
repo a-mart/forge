@@ -13,9 +13,7 @@ import {
   getSessionFilePath,
   getSessionMemoryPath,
   getSessionsDir,
-  getSharedAuthFilePath,
-  getSharedIntegrationsDir,
-  getSharedSecretsFilePath,
+  getSharedDir,
   getWorkerSessionFilePath
 } from "./data-paths.js";
 import { rebuildSessionMeta } from "./session-manifest.js";
@@ -497,8 +495,11 @@ function scheduleIdentity(value: unknown): string {
 }
 
 async function migrateAuthAndSecrets(dataDir: string, _logger: DataMigrationLogger): Promise<void> {
-  await copyFileIfMissing(getLegacyAuthFilePath(dataDir), getSharedAuthFilePath(dataDir));
-  await copyFileIfMissing(getLegacySecretsFilePath(dataDir), getSharedSecretsFilePath(dataDir));
+  const legacySharedAuthFilePath = join(getSharedDir(dataDir), "auth", "auth.json");
+  const legacySharedSecretsFilePath = join(getSharedDir(dataDir), "secrets.json");
+
+  await copyFileIfMissing(getLegacyAuthFilePath(dataDir), legacySharedAuthFilePath);
+  await copyFileIfMissing(getLegacySecretsFilePath(dataDir), legacySharedSecretsFilePath);
 }
 
 async function migrateIntegrationConfigs(
@@ -510,7 +511,9 @@ async function migrateIntegrationConfigs(
   const legacySharedIntegrationsDir = join(legacyIntegrationsDir, LEGACY_SHARED_INTEGRATIONS_DIR_NAME);
   const legacyManagerIntegrationsDir = join(legacyIntegrationsDir, LEGACY_MANAGER_INTEGRATIONS_DIR_NAME);
 
-  await copyDirectoryIfExists(legacySharedIntegrationsDir, getSharedIntegrationsDir(dataDir));
+  const legacySharedIntegrationsDirPath = join(getSharedDir(dataDir), "integrations");
+
+  await copyDirectoryIfExists(legacySharedIntegrationsDir, legacySharedIntegrationsDirPath);
 
   for (const profileId of profileIds) {
     const sourceDir = join(legacyManagerIntegrationsDir, profileId);

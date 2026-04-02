@@ -42,10 +42,15 @@ import {
   getCortexReviewRunsPath,
   getSharedAuthDir,
   getSharedAuthFilePath,
+  getSharedCacheDir,
+  getSharedCacheGeneratedDir,
+  getSharedConfigDir,
   getSharedDir,
   getSharedIntegrationsDir,
   getSharedKnowledgeDir,
   getSharedSecretsFilePath,
+  getSharedStateDir,
+  getSharedStatsCachePath,
   getSwarmDir,
   getUploadsDir,
   getWorkerSessionFilePath,
@@ -65,6 +70,9 @@ describe("data-paths", () => {
     expect(getProfilesDir(DATA_DIR)).toBe(join(DATA_DIR, "profiles"));
     expect(getProfileDir(DATA_DIR, PROFILE_ID)).toBe(join(DATA_DIR, "profiles", PROFILE_ID));
     expect(getSharedDir(DATA_DIR)).toBe(join(DATA_DIR, "shared"));
+    expect(getSharedConfigDir(DATA_DIR)).toBe(join(DATA_DIR, "shared", "config"));
+    expect(getSharedCacheDir(DATA_DIR)).toBe(join(DATA_DIR, "shared", "cache"));
+    expect(getSharedStateDir(DATA_DIR)).toBe(join(DATA_DIR, "shared", "state"));
 
     expect(getProfileMemoryPath(DATA_DIR, PROFILE_ID)).toBe(join(DATA_DIR, "profiles", PROFILE_ID, "memory.md"));
     expect(getProfileMergeAuditLogPath(DATA_DIR, PROFILE_ID)).toBe(
@@ -117,7 +125,7 @@ describe("data-paths", () => {
       join(DATA_DIR, "profiles", PROFILE_ID, "schedules", "schedules.json")
     );
 
-    expect(getSharedIntegrationsDir(DATA_DIR)).toBe(join(DATA_DIR, "shared", "integrations"));
+    expect(getSharedIntegrationsDir(DATA_DIR)).toBe(join(DATA_DIR, "shared", "config", "integrations"));
     expect(getSharedKnowledgeDir(DATA_DIR)).toBe(join(DATA_DIR, "shared", "knowledge"));
     expect(getProfileKnowledgeDir(DATA_DIR)).toBe(join(DATA_DIR, "shared", "knowledge", "profiles"));
     expect(getProfileKnowledgePath(DATA_DIR, PROFILE_ID)).toBe(
@@ -129,10 +137,12 @@ describe("data-paths", () => {
     expect(getCortexReviewRunsPath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "knowledge", ".cortex-review-runs.json"));
     expect(getCortexPromotionManifestsDir(DATA_DIR)).toBe(join(DATA_DIR, "shared", "knowledge", ".cortex-promotion-manifests"));
     expect(getCortexReviewLockPath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "knowledge", ".cortex-lock.json"));
-    expect(getSharedAuthDir(DATA_DIR)).toBe(join(DATA_DIR, "shared", "auth"));
-    expect(getSharedAuthFilePath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "auth", "auth.json"));
-    expect(getSharedSecretsFilePath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "secrets.json"));
-    expect(getCortexAutoReviewSettingsPath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "cortex-auto-review.json"));
+    expect(getSharedAuthDir(DATA_DIR)).toBe(join(DATA_DIR, "shared", "config", "auth"));
+    expect(getSharedAuthFilePath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "config", "auth", "auth.json"));
+    expect(getSharedSecretsFilePath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "config", "secrets.json"));
+    expect(getCortexAutoReviewSettingsPath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "config", "cortex-auto-review.json"));
+    expect(getSharedCacheGeneratedDir(DATA_DIR)).toBe(join(DATA_DIR, "shared", "cache", "generated"));
+    expect(getSharedStatsCachePath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "cache", "stats-cache.json"));
 
     expect(getUploadsDir(DATA_DIR)).toBe(join(DATA_DIR, "uploads"));
     expect(getSwarmDir(DATA_DIR)).toBe(join(DATA_DIR, "swarm"));

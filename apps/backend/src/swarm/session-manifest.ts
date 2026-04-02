@@ -7,7 +7,7 @@ import {
   getSessionFilePath,
   getSessionMetaPath,
   getSessionsDir,
-  getSharedDir,
+  getSharedStateDir,
   resolveMemoryFilePath
 } from "./data-paths.js";
 import { renameWithRetry } from "./retry-rename.js";
@@ -114,7 +114,7 @@ export interface BackfillResult {
  */
 export async function backfillCompactionCounts(dataDir: string): Promise<BackfillResult> {
   const result: BackfillResult = { counts: new Map() };
-  const sentinelPath = join(getSharedDir(dataDir), BACKFILL_SENTINEL);
+  const sentinelPath = join(getSharedStateDir(dataDir), BACKFILL_SENTINEL);
 
   // Check sentinel — if already done, skip entirely
   try {
@@ -130,6 +130,7 @@ export async function backfillCompactionCounts(dataDir: string): Promise<Backfil
     profileIds = await readdir(profilesDir);
   } catch {
     // No profiles directory — nothing to backfill
+    await mkdir(dirname(sentinelPath), { recursive: true });
     await writeFile(sentinelPath, new Date().toISOString() + "\n", "utf8");
     return result;
   }

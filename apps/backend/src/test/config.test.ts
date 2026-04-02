@@ -100,6 +100,9 @@ describe('createConfig', () => {
       expect(config.port).toBe(47187)
       expect(config.debug).toBe(false)
       expect(config.paths.dataDir).toBe(dataDir)
+      expect(config.paths.sharedConfigDir).toBe(resolve(dataDir, 'shared', 'config'))
+      expect(config.paths.sharedCacheDir).toBe(resolve(dataDir, 'shared', 'cache'))
+      expect(config.paths.sharedStateDir).toBe(resolve(dataDir, 'shared', 'state'))
     })
   })
 

@@ -12,9 +12,12 @@ import {
   getProfilesDir,
   getSharedAuthDir,
   getSharedAuthFilePath,
+  getSharedCacheDir,
+  getSharedConfigDir,
   getSharedDir,
   getSharedIntegrationsDir,
   getSharedSecretsFilePath,
+  getSharedStateDir,
   getSwarmDir,
   getUploadsDir
 } from "./swarm/data-paths.js";
@@ -37,6 +40,9 @@ export function createConfig(): SwarmConfig {
   const uploadsDir = getUploadsDir(dataDir);
   const profilesDir = getProfilesDir(dataDir);
   const sharedDir = getSharedDir(dataDir);
+  const sharedConfigDir = getSharedConfigDir(dataDir);
+  const sharedCacheDir = getSharedCacheDir(dataDir);
+  const sharedStateDir = getSharedStateDir(dataDir);
   const sharedAuthDir = getSharedAuthDir(dataDir);
   const sharedAuthFile = getSharedAuthFilePath(dataDir);
   const sharedSecretsFile = getSharedSecretsFilePath(dataDir);
@@ -89,6 +95,9 @@ export function createConfig(): SwarmConfig {
       agentsStoreFile: getAgentsStoreFilePath(dataDir),
       profilesDir,
       sharedDir,
+      sharedConfigDir,
+      sharedCacheDir,
+      sharedStateDir,
       sharedAuthDir,
       sharedAuthFile,
       sharedSecretsFile,

@@ -5,6 +5,7 @@ import type { HttpRoute } from "./http-route.js";
 
 const STATS_ENDPOINT_PATH = "/api/stats";
 const STATS_REFRESH_ENDPOINT_PATH = "/api/stats/refresh";
+const PROVIDER_USAGE_ENDPOINT_PATH = "/api/provider-usage";
 
 export function createStatsRoutes(options: { statsService: StatsService }): HttpRoute[] {
   const { statsService } = options;
@@ -70,6 +71,37 @@ export function createStatsRoutes(options: { statsService: StatsService }): Http
         try {
           const stats = await statsService.getSnapshot(range, { forceRefresh: true, timezone });
           sendJson(response, 200, stats as unknown as Record<string, unknown>);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Internal server error";
+          sendJson(response, 500, { error: message });
+        }
+      }
+    },
+    {
+      methods: "GET, OPTIONS",
+      matches: (pathname) => pathname === PROVIDER_USAGE_ENDPOINT_PATH,
+      handle: async (request, response) => {
+        const methods = "GET, OPTIONS";
+
+        if (request.method === "OPTIONS") {
+          applyCorsHeaders(request, response, methods);
+          response.statusCode = 204;
+          response.end();
+          return;
+        }
+
+        if (request.method !== "GET") {
+          applyCorsHeaders(request, response, methods);
+          response.setHeader("Allow", methods);
+          sendJson(response, 405, { error: "Method Not Allowed" });
+          return;
+        }
+
+        applyCorsHeaders(request, response, methods);
+
+        try {
+          const providerUsage = await statsService.getProviderUsage();
+          sendJson(response, 200, providerUsage as unknown as Record<string, unknown>);
         } catch (error) {
           const message = error instanceof Error ? error.message : "Internal server error";
           sendJson(response, 500, { error: message });

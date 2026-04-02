@@ -26,9 +26,9 @@ Do **not** add model metadata in frontend fallback constants, ad-hoc backend map
 Forge owns model metadata end-to-end:
 
 1. The checked-in catalog defines the baseline model metadata.
-2. Optional local user overrides are stored in `~/.forge/shared/model-overrides.json`.
+2. Optional local user overrides are stored in `~/.forge/shared/config/model-overrides.json`.
 3. Backend merges catalog + overrides.
-4. Backend generates a Pi-compatible projection at `~/.forge/shared/generated/pi-models.json`.
+4. Backend generates a Pi-compatible projection at `~/.forge/shared/cache/generated/pi-models.json`.
 5. Every Pi `ModelRegistry` is constructed with that generated projection path.
 6. Request-time provider quirks (currently xAI Responses shaping + native search injection) are handled by `apps/backend/src/swarm/model-catalog-request-behaviors.ts`.
 

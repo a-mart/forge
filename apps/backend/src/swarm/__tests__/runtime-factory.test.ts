@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { getPiModelsProjectionPath } from "../model-catalog-projection.js";
 
 const piAiMockState = vi.hoisted(() => ({
   getModel: vi.fn(),
@@ -101,10 +102,13 @@ function createConfig(rootDir: string): SwarmConfig {
       agentsStoreFile: join(dataDir, "swarm", "agents.json"),
       profilesDir: join(dataDir, "profiles"),
       sharedDir: join(dataDir, "shared"),
-      sharedAuthDir: join(dataDir, "shared", "auth"),
-      sharedAuthFile: join(dataDir, "shared", "auth", "auth.json"),
-      sharedSecretsFile: join(dataDir, "shared", "secrets.json"),
-      sharedIntegrationsDir: join(dataDir, "shared", "integrations"),
+      sharedConfigDir: join(dataDir, "shared", "config"),
+      sharedCacheDir: join(dataDir, "shared", "cache"),
+      sharedStateDir: join(dataDir, "shared", "state"),
+      sharedAuthDir: join(dataDir, "shared", "config", "auth"),
+      sharedAuthFile: join(dataDir, "shared", "config", "auth", "auth.json"),
+      sharedSecretsFile: join(dataDir, "shared", "config", "secrets.json"),
+      sharedIntegrationsDir: join(dataDir, "shared", "config", "integrations"),
       sessionsDir: join(dataDir, "sessions"),
       memoryDir: join(dataDir, "memory"),
       authDir: join(dataDir, "auth"),
@@ -153,8 +157,8 @@ function createManagerDescriptor(rootDir: string): AgentDescriptor {
 }
 
 async function seedProjectionFile(rootDir: string): Promise<string> {
-  const projectionPath = join(rootDir, "data", "shared", "generated", "pi-models.json");
-  await mkdir(join(rootDir, "data", "shared", "generated"), { recursive: true });
+  const projectionPath = getPiModelsProjectionPath(join(rootDir, "data"));
+  await mkdir(join(rootDir, "data", "shared", "cache", "generated"), { recursive: true });
   await writeFile(projectionPath, '{"providers":{}}\n', "utf8");
   return projectionPath;
 }
@@ -181,7 +185,7 @@ function createFactory(rootDir: string): RuntimeFactory {
     config: createConfig(rootDir),
     now: () => "2026-01-01T00:00:00.000Z",
     logDebug: () => {},
-    getPiModelsJsonPath: () => join(rootDir, "data", "shared", "generated", "pi-models.json"),
+    getPiModelsJsonPath: () => getPiModelsProjectionPath(join(rootDir, "data")),
     getMemoryRuntimeResources: async () => ({
       memoryContextFile: {
         path: join(rootDir, "memory.md"),
@@ -243,7 +247,7 @@ describe("RuntimeFactory", () => {
 
     expect(piCodingAgentMockState.modelRegistryConstructorArgs).toHaveBeenCalledWith(
       expect.anything(),
-      join(rootDir, "data", "shared", "generated", "pi-models.json"),
+      getPiModelsProjectionPath(join(rootDir, "data")),
     );
     expect(piCodingAgentMockState.modelRegistryGetAll).not.toHaveBeenCalled();
     expect(piCodingAgentMockState.createAgentSession).not.toHaveBeenCalled();
@@ -256,7 +260,7 @@ describe("RuntimeFactory", () => {
     const factory = createFactory(rootDir);
 
     await expect(factory.createRuntimeForDescriptor(createDescriptor(rootDir), "system prompt")).rejects.toThrow(
-      `Pi model projection file is missing: ${join(rootDir, "data", "shared", "generated", "pi-models.json")}. Regenerate it before creating a ModelRegistry.`,
+      `Pi model projection file is missing: ${getPiModelsProjectionPath(join(rootDir, "data"))}. Regenerate it before creating a ModelRegistry.`,
     );
 
     expect(piCodingAgentMockState.modelRegistryConstructorArgs).not.toHaveBeenCalled();

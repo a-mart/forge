@@ -20,8 +20,8 @@ describe("versioned-paths", () => {
   });
 
   it("rejects secrets, high-churn files, and backup files", () => {
-    expect(isTrackedVersionedPath(dataDir, `${dataDir}/shared/secrets.json`)).toBe(false);
-    expect(isTrackedVersionedPath(dataDir, `${dataDir}/shared/auth/auth.json`)).toBe(false);
+    expect(isTrackedVersionedPath(dataDir, `${dataDir}/shared/config/secrets.json`)).toBe(false);
+    expect(isTrackedVersionedPath(dataDir, `${dataDir}/shared/config/auth/auth.json`)).toBe(false);
     expect(isTrackedVersionedPath(dataDir, `${dataDir}/profiles/alpha/sessions/alpha/session.jsonl`)).toBe(false);
     expect(isTrackedVersionedPath(dataDir, `${dataDir}/profiles/alpha/sessions/alpha/meta.json`)).toBe(false);
     expect(isTrackedVersionedPath(dataDir, `${dataDir}/shared/knowledge/.cortex-review-log.jsonl`)).toBe(false);
@@ -61,7 +61,7 @@ describe("versioned-paths", () => {
   });
 
   it("rejects non-tracked and outside-repo path references", () => {
-    expect(resolveTrackedVersionedPathReference(dataDir, `${dataDir}/shared/secrets.json`)).toBeUndefined();
+    expect(resolveTrackedVersionedPathReference(dataDir, `${dataDir}/shared/config/secrets.json`)).toBeUndefined();
     expect(resolveTrackedVersionedPathReference(dataDir, `/etc/passwd`)).toBeUndefined();
     expect(resolveTrackedVersionedPathReference(dataDir, "../outside.md")).toBeUndefined();
   });

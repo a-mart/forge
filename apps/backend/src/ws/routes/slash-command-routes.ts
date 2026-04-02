@@ -36,7 +36,7 @@ type SlashCommandsRoute =
 /**
  * Migrates profile-scoped slash commands to the global location.
  * This is a one-time migration that merges all profile-scoped slash-commands.json
- * files into the shared/slash-commands.json file.
+ * files into the shared/config/slash-commands.json file.
  */
 async function migrateProfileSlashCommandsToGlobal(dataDir: string): Promise<void> {
   const globalPath = getGlobalSlashCommandsPath(dataDir);

@@ -1,6 +1,7 @@
-import { access, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { AuthStorage, type AuthCredential } from "@mariozechner/pi-coding-agent";
+import { copyFileIfMissing } from "./copy-file-if-missing.js";
 import { normalizeEnvVarName, type ParsedSkillEnvDeclaration } from "./skill-frontmatter.js";
 import { renameWithRetry } from "./retry-rename.js";
 import type {
@@ -245,9 +246,17 @@ export class SecretsEnvService {
       return preferredPath;
     }
 
+    const oldSharedPath = join(this.deps.config.paths.sharedDir, "auth", "auth.json");
     const legacyPath = this.deps.config.paths.authFile;
-    if (legacyPath !== preferredPath && (await this.pathExists(legacyPath))) {
-      await copyFile(legacyPath, preferredPath);
+
+    for (const fallbackPath of [oldSharedPath, legacyPath]) {
+      if (fallbackPath === preferredPath) {
+        continue;
+      }
+
+      if (await copyFileIfMissing(fallbackPath, preferredPath)) {
+        break;
+      }
     }
 
     return preferredPath;
@@ -334,8 +343,9 @@ async function readConfiguredSettingsAuthProviders(
 
 async function readSecretsStoreFromConfig(config: SwarmConfig): Promise<Record<string, string>> {
   const preferredPath = config.paths.sharedSecretsFile;
+  const oldSharedPath = join(config.paths.sharedDir, "secrets.json");
   const legacyPath = config.paths.secretsFile;
-  const candidatePaths = legacyPath === preferredPath ? [preferredPath] : [preferredPath, legacyPath];
+  const candidatePaths = uniquePaths([preferredPath, oldSharedPath, legacyPath]);
 
   for (const candidatePath of candidatePaths) {
     let raw: string;
@@ -358,16 +368,20 @@ async function readSecretsStoreFromConfig(config: SwarmConfig): Promise<Record<s
 
 async function resolveAuthFileForReadFromConfig(config: SwarmConfig): Promise<string> {
   const preferredPath = config.paths.sharedAuthFile;
-  if (await pathExists(preferredPath)) {
-    return preferredPath;
-  }
-
+  const oldSharedPath = join(config.paths.sharedDir, "auth", "auth.json");
   const legacyPath = config.paths.authFile;
-  if (legacyPath !== preferredPath && (await pathExists(legacyPath))) {
-    return legacyPath;
+
+  for (const candidatePath of uniquePaths([preferredPath, oldSharedPath, legacyPath])) {
+    if (await pathExists(candidatePath)) {
+      return candidatePath;
+    }
   }
 
   return preferredPath;
+}
+
+function uniquePaths(paths: string[]): string[] {
+  return [...new Set(paths)];
 }
 
 function resolveStoredOrProcessEnvValue(

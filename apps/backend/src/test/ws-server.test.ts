@@ -170,10 +170,13 @@ async function makeTempConfig(port: number, allowNonManagerSubscriptions = false
   const uploadsDir = join(dataDir, 'uploads')
   const profilesDir = join(dataDir, 'profiles')
   const sharedDir = join(dataDir, 'shared')
-  const sharedAuthDir = join(sharedDir, 'auth')
+  const sharedConfigDir = join(sharedDir, 'config')
+  const sharedCacheDir = join(sharedDir, 'cache')
+  const sharedStateDir = join(sharedDir, 'state')
+  const sharedAuthDir = join(sharedConfigDir, 'auth')
   const sharedAuthFile = join(sharedAuthDir, 'auth.json')
-  const sharedSecretsFile = join(sharedDir, 'secrets.json')
-  const sharedIntegrationsDir = join(sharedDir, 'integrations')
+  const sharedSecretsFile = join(sharedConfigDir, 'secrets.json')
+  const sharedIntegrationsDir = join(sharedConfigDir, 'integrations')
   const authDir = join(dataDir, 'auth')
   const agentDir = join(dataDir, 'agent')
   const managerAgentDir = join(agentDir, 'manager')
@@ -188,6 +191,8 @@ async function makeTempConfig(port: number, allowNonManagerSubscriptions = false
   await mkdir(profilesDir, { recursive: true })
   await mkdir(sharedAuthDir, { recursive: true })
   await mkdir(sharedIntegrationsDir, { recursive: true })
+  await mkdir(sharedCacheDir, { recursive: true })
+  await mkdir(sharedStateDir, { recursive: true })
   await mkdir(authDir, { recursive: true })
   await mkdir(memoryDir, { recursive: true })
   await mkdir(agentDir, { recursive: true })
@@ -217,6 +222,9 @@ async function makeTempConfig(port: number, allowNonManagerSubscriptions = false
       agentsStoreFile: join(swarmDir, 'agents.json'),
       profilesDir,
       sharedDir,
+      sharedConfigDir,
+      sharedCacheDir,
+      sharedStateDir,
       sharedAuthDir,
       sharedAuthFile,
       sharedSecretsFile,

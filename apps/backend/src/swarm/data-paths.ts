@@ -25,6 +25,18 @@ export function getSharedDir(dataDir: string): string {
   return join(dataDir, "shared");
 }
 
+export function getSharedConfigDir(dataDir: string): string {
+  return join(getSharedDir(dataDir), "config");
+}
+
+export function getSharedCacheDir(dataDir: string): string {
+  return join(getSharedDir(dataDir), "cache");
+}
+
+export function getSharedStateDir(dataDir: string): string {
+  return join(getSharedDir(dataDir), "state");
+}
+
 // ── Profile-level paths ────────────────────────────────────────────────────────
 
 export function getProfilePiDir(dataDir: string, profileId: string): string {
@@ -168,7 +180,7 @@ export function getProfileSlashCommandsPath(dataDir: string, profileId: string):
 // ── Shared paths ────────────────────────────────────────────────────────────────
 
 export function getSharedIntegrationsDir(dataDir: string): string {
-  return join(getSharedDir(dataDir), "integrations");
+  return join(getSharedConfigDir(dataDir), "integrations");
 }
 
 export function getSharedKnowledgeDir(dataDir: string): string {
@@ -212,7 +224,7 @@ export function getCortexReviewRunsPath(dataDir: string): string {
 }
 
 export function getSharedAuthDir(dataDir: string): string {
-  return join(getSharedDir(dataDir), "auth");
+  return join(getSharedConfigDir(dataDir), "auth");
 }
 
 export function getSharedAuthFilePath(dataDir: string): string {
@@ -220,35 +232,43 @@ export function getSharedAuthFilePath(dataDir: string): string {
 }
 
 export function getSharedSecretsFilePath(dataDir: string): string {
-  return join(getSharedDir(dataDir), "secrets.json");
+  return join(getSharedConfigDir(dataDir), "secrets.json");
 }
 
 export function getSharedPlaywrightDashboardSettingsPath(dataDir: string): string {
-  return join(getSharedDir(dataDir), "playwright-dashboard.json");
+  return join(getSharedConfigDir(dataDir), "playwright-dashboard.json");
 }
 
 export function getCortexAutoReviewSettingsPath(dataDir: string): string {
-  return join(getSharedDir(dataDir), "cortex-auto-review.json");
+  return join(getSharedConfigDir(dataDir), "cortex-auto-review.json");
 }
 
 export function getSharedMobileDevicesPath(dataDir: string): string {
-  return join(getSharedDir(dataDir), "mobile-devices.json");
+  return join(getSharedStateDir(dataDir), "mobile-devices.json");
 }
 
 export function getSharedMobileNotificationPreferencesPath(dataDir: string): string {
-  return join(getSharedDir(dataDir), "mobile-notification-prefs.json");
+  return join(getSharedConfigDir(dataDir), "mobile-notification-prefs.json");
 }
 
 export function getTerminalSettingsPath(dataDir: string): string {
-  return join(getSharedDir(dataDir), "terminal-settings.json");
+  return join(getSharedConfigDir(dataDir), "terminal-settings.json");
 }
 
 export function getSharedModelOverridesPath(dataDir: string): string {
-  return join(getSharedDir(dataDir), "model-overrides.json");
+  return join(getSharedConfigDir(dataDir), "model-overrides.json");
 }
 
 export function getGlobalSlashCommandsPath(dataDir: string): string {
-  return join(getSharedDir(dataDir), "slash-commands.json");
+  return join(getSharedConfigDir(dataDir), "slash-commands.json");
+}
+
+export function getSharedCacheGeneratedDir(dataDir: string): string {
+  return join(getSharedCacheDir(dataDir), "generated");
+}
+
+export function getSharedStatsCachePath(dataDir: string): string {
+  return join(getSharedCacheDir(dataDir), "stats-cache.json");
 }
 
 // ── Unchanged global paths ─────────────────────────────────────────────────────

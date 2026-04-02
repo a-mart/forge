@@ -54,6 +54,7 @@ import {
 } from "./message-pins.js";
 import { ensureCanonicalAuthFilePath } from "./auth-storage-paths.js";
 import { migrateDataDirectory } from "./data-migration.js";
+import { migrateSharedConfigLayout } from "./shared-config-migration.js";
 import {
   appendCortexReviewRun,
   buildCortexReviewRunRequestText,
@@ -1333,6 +1334,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     });
 
     await this.ensureDirectories();
+    await migrateSharedConfigLayout(this.config.paths.dataDir);
     await this.reloadModelCatalogOverridesAndProjection();
     await this.loadSecretsStore();
     await this.reloadSkillMetadata();

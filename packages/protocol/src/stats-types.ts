@@ -95,18 +95,19 @@ export interface ProviderUsageStats {
   openai?: ProviderAccountUsage;
 }
 
+export interface ProviderUsageWindow {
+  percent: number;
+  resetInfo: string;
+  resetAtMs?: number;
+  windowSeconds?: number;
+}
+
 export interface ProviderAccountUsage {
   provider: string;
   accountEmail?: string;
   plan?: string;
-  sessionUsage?: {
-    percent: number;
-    resetInfo: string;
-  };
-  weeklyUsage?: {
-    percent: number;
-    resetInfo: string;
-  };
+  sessionUsage?: ProviderUsageWindow;
+  weeklyUsage?: ProviderUsageWindow;
   available: boolean;
   error?: string;
 }

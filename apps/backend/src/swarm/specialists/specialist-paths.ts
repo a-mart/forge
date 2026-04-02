@@ -1,9 +1,9 @@
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { sanitizePathSegment } from "../data-paths.js";
+import { getSharedDir, sanitizePathSegment } from "../data-paths.js";
 
 export function getSharedSpecialistsDir(dataDir: string): string {
-  return join(dataDir, "shared", "specialists");
+  return join(getSharedDir(dataDir), "specialists");
 }
 
 export function getProfileSpecialistsDir(dataDir: string, profileId: string): string {

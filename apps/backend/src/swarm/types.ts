@@ -132,6 +132,9 @@ export interface SwarmPaths {
   // New hierarchical layout fields
   profilesDir: string;
   sharedDir: string;
+  sharedConfigDir: string;
+  sharedCacheDir: string;
+  sharedStateDir: string;
   sharedAuthDir: string;
   sharedAuthFile: string;
   sharedSecretsFile: string;

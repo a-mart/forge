@@ -6,6 +6,7 @@ import {
 } from "../base-config-persistence.js";
 import {
   getLegacySharedIntegrationConfigPath,
+  getOldSharedIntegrationConfigPath,
   getSharedIntegrationConfigPath,
   isSharedIntegrationManagerId
 } from "../shared-config.js";
@@ -52,6 +53,10 @@ export function getSharedTelegramConfigPath(dataDir: string): string {
   return getSharedIntegrationConfigPath(dataDir, TELEGRAM_CONFIG_FILE_NAME);
 }
 
+function getOldSharedTelegramConfigPath(dataDir: string): string {
+  return getOldSharedIntegrationConfigPath(dataDir, TELEGRAM_CONFIG_FILE_NAME);
+}
+
 function getLegacySharedTelegramConfigPath(dataDir: string): string {
   return getLegacySharedIntegrationConfigPath(dataDir, TELEGRAM_CONFIG_FILE_NAME);
 }
@@ -95,14 +100,17 @@ export async function loadTelegramConfig(options: {
   if (isSharedIntegrationManagerId(managerId)) {
     const sharedConfig = await loadTelegramConfigWithLegacyFallback({
       primaryPath: getSharedTelegramConfigPath(options.dataDir),
-      legacyPath: getLegacySharedTelegramConfigPath(options.dataDir)
+      fallbackPaths: [
+        getOldSharedTelegramConfigPath(options.dataDir),
+        getLegacySharedTelegramConfigPath(options.dataDir)
+      ]
     });
     return sharedConfig ?? createDefaultTelegramConfig(managerId);
   }
 
   const managerConfig = await loadTelegramConfigWithLegacyFallback({
     primaryPath: getTelegramConfigPath(options.dataDir, managerId),
-    legacyPath: getLegacyTelegramConfigPath(options.dataDir, managerId)
+    fallbackPaths: [getLegacyTelegramConfigPath(options.dataDir, managerId)]
   });
   if (managerConfig) {
     return managerConfig;
@@ -110,7 +118,10 @@ export async function loadTelegramConfig(options: {
 
   const sharedConfig = await loadTelegramConfigWithLegacyFallback({
     primaryPath: getSharedTelegramConfigPath(options.dataDir),
-    legacyPath: getLegacySharedTelegramConfigPath(options.dataDir)
+    fallbackPaths: [
+      getOldSharedTelegramConfigPath(options.dataDir),
+      getLegacySharedTelegramConfigPath(options.dataDir)
+    ]
   });
   if (sharedConfig) {
     return {
@@ -242,12 +253,9 @@ export function maskTelegramConfig(config: TelegramIntegrationConfig): TelegramI
 
 async function loadTelegramConfigWithLegacyFallback(options: {
   primaryPath: string;
-  legacyPath: string;
+  fallbackPaths?: string[];
 }): Promise<TelegramIntegrationConfig | undefined> {
-  const candidatePaths =
-    options.primaryPath === options.legacyPath
-      ? [options.primaryPath]
-      : [options.primaryPath, options.legacyPath];
+  const candidatePaths = uniquePaths([options.primaryPath, ...(options.fallbackPaths ?? [])]);
 
   for (const candidatePath of candidatePaths) {
     const loaded = await loadTelegramConfigFromPath(candidatePath);
@@ -319,6 +327,10 @@ function isConfigTextMeaningful(raw: string | undefined): boolean {
   } catch {
     return true;
   }
+}
+
+function uniquePaths(paths: string[]): string[] {
+  return [...new Set(paths)];
 }
 
 function parseConfigText(raw: string, configPath: string): unknown {

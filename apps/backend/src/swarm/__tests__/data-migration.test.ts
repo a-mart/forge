@@ -15,9 +15,7 @@ import {
   getSessionFilePath,
   getSessionMemoryPath,
   getSessionMetaPath,
-  getSharedAuthFilePath,
-  getSharedIntegrationsDir,
-  getSharedSecretsFilePath,
+  getSharedDir,
   getWorkerSessionFilePath
 } from "../data-paths.js";
 import { migrateDataDirectory } from "../data-migration.js";
@@ -108,9 +106,13 @@ describe("data-migration", () => {
       { id: "session-schedule", name: "session", sessionId: nonRootSessionId }
     ]);
 
-    await expect(readFile(getSharedAuthFilePath(dataDir), "utf8")).resolves.toContain("openai-codex");
-    await expect(readFile(getSharedSecretsFilePath(dataDir), "utf8")).resolves.toContain("OPENAI_API_KEY");
-    await expect(readFile(join(getSharedIntegrationsDir(dataDir), "shared.json"), "utf8")).resolves.toContain(
+    await expect(readFile(join(getSharedDir(dataDir), "auth", "auth.json"), "utf8")).resolves.toContain(
+      "openai-codex"
+    );
+    await expect(readFile(join(getSharedDir(dataDir), "secrets.json"), "utf8")).resolves.toContain(
+      "OPENAI_API_KEY"
+    );
+    await expect(readFile(join(getSharedDir(dataDir), "integrations", "shared.json"), "utf8")).resolves.toContain(
       "enabled"
     );
     await expect(

@@ -25,6 +25,7 @@ describe("model-catalog-projection", () => {
 
     const projectionPath = await generatePiProjection(dataDir);
     expect(projectionPath).toBe(getPiModelsProjectionPath(dataDir));
+    expect(projectionPath).toBe(join(dataDir, "shared", "cache", "generated", "pi-models.json"));
 
     const projection = JSON.parse(await readFile(projectionPath, "utf8")) as {
       providers: Record<string, { api?: string; models?: Array<{ id: string; api?: string; cost?: unknown }> }>;

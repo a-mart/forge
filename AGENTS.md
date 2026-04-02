@@ -133,21 +133,29 @@ All runtime state lives in `~/.forge` (or `%LOCALAPPDATA%\forge` on Windows), ov
 │   └── manager/settings.json             #   Global manager package config (optional)
 ├── uploads/                               # User-uploaded files
 ├── shared/
-│   ├── auth/auth.json                     # Authentication credentials
-│   ├── secrets.json                       # Encrypted secrets
-│   ├── model-overrides.json               # User model visibility/context caps
-│   ├── generated/
-│   │   └── pi-models.json                 # Generated Pi-compatible model projection
-│   ├── integrations/                      # Telegram integration configs
+│   ├── config/
+│   │   ├── auth/
+│   │   │   └── auth.json                  # Authentication credentials
+│   │   ├── secrets.json                   # Encrypted secrets
+│   │   ├── model-overrides.json           # User model visibility/context caps
+│   │   ├── cortex-auto-review.json        # Cortex auto-review schedule settings
+│   │   ├── mobile-notification-prefs.json # Mobile push preferences
+│   │   ├── playwright-dashboard.json      # Playwright dashboard settings
+│   │   ├── slash-commands.json            # Global slash commands
+│   │   ├── terminal-settings.json         # Terminal runtime settings
+│   │   └── integrations/                  # Telegram integration configs
+│   ├── cache/
+│   │   ├── generated/
+│   │   │   └── pi-models.json             # Generated Pi-compatible model projection
+│   │   └── stats-cache.json               # Cached dashboard statistics
+│   ├── state/
+│   │   ├── mobile-devices.json            # Registered mobile devices
+│   │   ├── .compaction-count-backfill-v2-done  # Compaction-count backfill sentinel
+│   │   └── .shared-config-migration-done  # Shared-config layout migration sentinel
 │   ├── knowledge/                         # Knowledge base
 │   │   ├── common.md                      #   Common knowledge (cross-profile, including a managed onboarding preferences block)
 │   │   ├── onboarding-state.json          #   First-launch user preferences
 │   │   └── profiles/<profileId>.md        #   Per-profile knowledge
-│   ├── slash-commands.json                # Global slash commands
-│   ├── playwright-dashboard.json          # Playwright dashboard settings
-│   ├── cortex-auto-review.json            # Cortex auto-review schedule settings
-│   ├── mobile-devices.json                # Registered mobile devices
-│   ├── mobile-notification-prefs.json     # Mobile push preferences
 │   └── specialists/                       # Global specialist definitions (.md files)
 └── profiles/<profileId>/
     ├── memory.md                          # Profile-level memory

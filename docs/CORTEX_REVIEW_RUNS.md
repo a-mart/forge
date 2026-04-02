@@ -12,7 +12,7 @@ Cortex runs automatic periodic reviews by default. Every 2 hours (configurable),
 - **Zero cost when nothing changed** — a deterministic pre-check (`scanCortexReviewStatus()`) runs before creating any LLM session. If all sessions are up to date, no tokens are spent.
 - **Deduplication** — if a review is already queued or running, duplicate scheduled runs are coalesced instead of piling up.
 - **Configurable in Settings** — toggle on/off and adjust the interval (15m, 30m, 1h, 2h, 4h, 8h, 12h, 24h) under **Settings → General**.
-- **Persisted config** — settings live at `shared/cortex-auto-review.json` in your data directory. The schedule entry is managed in the Cortex profile's `schedules.json` with ID `cortex-auto-review`.
+- **Persisted config** — settings live at `shared/config/cortex-auto-review.json` in your data directory. The schedule entry is managed in the Cortex profile's `schedules.json` with ID `cortex-auto-review`.
 
 Automatic reviews use the same queueing and session-creation behavior as manual reviews. They appear in **Recent Runs** with a `scheduled` trigger label.
 

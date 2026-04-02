@@ -81,7 +81,9 @@ Workers run independently. You can keep talking to the manager, start a new task
 
 Your manager can have multiple **sessions** — independent conversations with their own history and memory. Right-click the manager in the sidebar to create a new session or fork an existing one.
 
-Sessions belong to a **profile**, which holds shared settings like model choice, system prompt, and persistent memory. Changes to the profile apply to all sessions under it.`,
+Sessions belong to a **profile**, which holds shared settings like model choice, system prompt, and persistent memory. Changes to the profile apply to all sessions under it.
+
+Once you're comfortable with sessions, you can promote them to **project agents** — persistent specialist sessions that other sessions can discover and message for cross-session coordination. See the Project Agents help article for details.`,
     keywords: [
       'first session',
       'create project',
@@ -98,6 +100,7 @@ Sessions belong to a **profile**, which holds shared settings like model choice,
       'getting-started-configuration',
       'chat-overview',
       'concepts-multi-agent',
+      'concepts-project-agents',
     ],
     contextKeys: ['chat.main', 'chat.sidebar'],
   },
