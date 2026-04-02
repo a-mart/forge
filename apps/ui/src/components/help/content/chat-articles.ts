@@ -34,7 +34,7 @@ The ring icon next to the channel toggle shows how full the context window is. G
 
 ## Header controls
 
-The chat header also gives you access to the terminal panel, file browser, diff viewer, and artifact panel through icon buttons on the right side. A pin count shows when you have pinned messages in the session.`,
+The chat header also gives you access to the terminal panel, file browser, diff viewer, and artifact panel through icon buttons on the right side. A pin count badge opens the pinned-message navigator/popover, where you can move to the previous or next pin and the selected pin is auto-scrolled into view and highlighted.`,
     keywords: ['chat', 'streaming', 'stop', 'status', 'channel', 'context window', 'overview'],
     relatedIds: ['chat-sending', 'chat-sidebar', 'chat-compaction'],
     contextKeys: ['chat.main'],
@@ -123,7 +123,7 @@ Forge categorizes files automatically. Common image formats are recognized and s
 
 Each **profile** is a collapsible group. Inside each profile are its **sessions**. Inside each session, you can expand to see active **workers**. Click any item to switch to it.
 
-Project agents appear pinned at the top of each profile section with a badge, above regular sessions.
+Project agents appear pinned at the top of each profile section with a badge, above regular sessions. Session pinning in the sidebar is separate from message pinning inside a conversation.
 
 ## Search
 
@@ -400,7 +400,7 @@ When the context window fills up during an active conversation, Forge triggers c
 
 ## Pinned messages
 
-If you've pinned messages (shown by the pin count in the header), their content is preserved through compaction. Pinned content is injected into the agent's custom instructions so it survives both compaction modes.
+If you've pinned messages (shown by the pin count in the header), their content is preserved through all compaction types, including smart compaction and automatic compaction. You can pin up to 10 messages per session. Pinned content is injected into the agent's custom instructions so it survives every compaction mode.
 
 ## After compaction
 

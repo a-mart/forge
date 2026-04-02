@@ -205,7 +205,7 @@ A session is a single conversation thread. Each session has:
 - Its own **workers** that run during the conversation
 - Its own **pinned messages** (up to 10)
 
-Sessions within a profile are independent. You can have one session debugging a backend issue and another working on a UI feature — both using the same profile config but tracking separate context.
+Sessions within a profile are independent. You can have one session debugging a backend issue and another working on a UI feature — both using the same profile config but tracking separate context. Pinned sessions in the sidebar are just navigation favorites; they are separate from pinned messages inside a conversation.
 
 ## Lifecycle
 
