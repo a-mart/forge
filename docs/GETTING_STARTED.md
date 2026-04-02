@@ -131,6 +131,15 @@ When agents create plans, design documents, or other working files that aren't p
 
 If you've set up scheduled tasks (like automated Cortex reviews on a cron schedule), they appear in the sidebar's Schedules pane.
 
+### Provider Usage
+
+If you've authenticated with OpenAI or Anthropic via OAuth, Forge can display subscription rate-limit monitoring in two places:
+
+- **Sidebar widget** — Compact stacked gauges showing 5-hour rolling and weekly usage windows with reset timers. Click to expand for detailed metrics (deficit, pace, runout estimates).
+- **Dashboard stats panel** — Full usage breakdown with the same metrics in a dedicated section.
+
+Usage data is cached per-provider with a 3-minute TTL to avoid excessive API calls. Toggle the sidebar widget visibility in **Settings → General → Sidebar**.
+
 ---
 
 ## 4. Working with Your Manager

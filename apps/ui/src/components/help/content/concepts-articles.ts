@@ -232,10 +232,77 @@ New sessions and forks inherit all config from the parent profile.`,
   contextKeys: ['chat.sidebar', 'chat.main'],
 }
 
+const conceptsProjectAgents: HelpArticle = {
+  id: 'concepts-project-agents',
+  title: 'Project Agents',
+  category: 'concepts',
+  summary:
+    'Promoted sessions that become discoverable, persistent agents for cross-session collaboration.',
+  content: `Project agents are sessions promoted to persistent specialist roles within a profile. Unlike regular sessions, they have dedicated handles and are discoverable by sibling sessions for async collaboration.
+
+## What makes a project agent
+
+A project agent is a regular session with special properties:
+
+- A **unique handle** (like \`@releases\` or \`@docs\`) that identifies it across the profile
+- A **"when to use"** blurb that tells other sessions what this agent is for
+- An optional **custom system prompt** tailored to its specialized role
+- Appears **pinned at the top** of the profile section in the sidebar with a badge
+
+Project agents persist across restarts and appear in the agent directory that manager sessions can query.
+
+## How discovery works
+
+When a manager session starts, it receives an injected directory of available project agents in its prompt context. Each entry includes the agent's handle and "when to use" description. The manager can then message relevant project agents when it needs help with tasks that match their specialty.
+
+Worker agents never see the project agent directory — this is a manager-to-manager coordination mechanism only.
+
+## Fire-and-forget messaging
+
+Project agents communicate through the existing \`send_message_to_agent\` tool. Messages are asynchronous and one-way — there's no reply threading or delivery confirmation. This keeps the model simple: a manager sends work to a project agent, the project agent processes it in its own session, and results appear in that agent's conversation.
+
+If the receiving session is idle when a message arrives, Forge wakes it up automatically to handle the incoming work.
+
+## @mention autocomplete
+
+The chat composer offers autocomplete for project agent handles when you type \`@\`. This is a convenience feature only — it inserts the handle as text in your message. The \`@mention\` syntax does not trigger any special routing. The manager interprets the intent from the message content and uses the normal tool to send a message if appropriate.
+
+## Two ways to create
+
+You can create project agents in two ways:
+
+1. **Manual promotion** — Right-click an existing session and choose "Promote to Project Agent." Fill in the handle and "when to use" description. Optionally request AI-generated recommendations for both fields based on the session's conversation history.
+
+2. **Agent Creator wizard** — Right-click a profile header and choose "Create Project Agent." This opens a dedicated Agent Architect session that explores your repository, interviews you about the new agent's role, drafts a configuration proposal, and atomically creates and promotes the agent after you approve.
+
+## Sidebar placement
+
+Project agents are always pinned at the top of their profile section, above regular sessions. They remain visible even when the session list is paginated. This makes them easy to find and message.
+
+## Demoting
+
+Right-click a project agent and choose "Demote to Regular Session" to convert it back to a normal session. The handle and discovery metadata are removed, but the conversation history and session memory are preserved.`,
+  keywords: [
+    'project agent',
+    'promotion',
+    'handle',
+    '@mention',
+    'discovery',
+    'cross-session',
+    'messaging',
+    'agent creator',
+    'specialist',
+    'async',
+  ],
+  relatedIds: ['concepts-sessions', 'concepts-multi-agent', 'chat-project-agents'],
+  contextKeys: ['chat.sidebar', 'chat.main'],
+}
+
 export const conceptsArticles: HelpArticle[] = [
   conceptsMultiAgent,
   conceptsMemory,
   conceptsPromptResolution,
   conceptsSpecialists,
   conceptsSessions,
+  conceptsProjectAgents,
 ]

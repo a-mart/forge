@@ -14,6 +14,10 @@ export const settingsArticles: HelpArticle[] = [
 
 Pick a theme (Light, Dark, or System) and choose which code editor opens when you click artifact file links. Supported editors are VS Code Insiders, VS Code, and Cursor. The theme preference is stored in your browser and applies immediately.
 
+## Sidebar
+
+Toggle "Show provider usage" to control whether the provider subscription usage widget appears in the sidebar toolbar. When enabled, you'll see compact usage gauges for OpenAI Codex and Anthropic Claude with 5-hour and weekly windows. Click the widget to expand it for detailed metrics including deficit, pace, and estimated runout times. The setting is stored in your browser and applies immediately.
+
 ## Cortex Auto-Review
 
 Cortex is Forge's self-improvement system. When automatic reviews are enabled, Cortex periodically checks your sessions and updates knowledge, memory, and reference docs. You can set the review interval from every 15 minutes up to every 24 hours. Disable it entirely if you want to run reviews manually.
@@ -45,6 +49,10 @@ The Reboot button restarts the Forge daemon and all active agents. Use it after 
       'appearance',
       'onboarding',
       'preferences',
+      'sidebar',
+      'provider usage',
+      'subscription',
+      'usage monitoring',
     ],
     relatedIds: ['settings-theme', 'settings-editor', 'settings-about'],
     contextKeys: ['settings.general'],
