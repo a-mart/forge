@@ -52,7 +52,7 @@ builtin: true                        # Internal — marks Forge-shipped speciali
 **Notes:**
 - The table above shows models currently available in the Forge catalog. Some models listed in upstream Pi releases may not yet be curated into Forge.
 - For the authoritative, up-to-date model list with availability status, see **Settings → Models** in the UI.
-- xAI models require `XAI_API_KEY` to be configured (see Settings → Providers).
+- xAI models require `XAI_API_KEY` to be configured (see Settings → Authentication).
 - To audit model catalog drift against Pi upstream, run `pnpm model-catalog:audit`.
 
 ## System Prompt

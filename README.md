@@ -258,7 +258,7 @@ The `.env.example` file documents all available options with comments. Key categ
 - **Agent Runtimes** — Codex API key and binary path
 - **Playwright** — dashboard toggle (macOS/Linux only)
 
-API keys for LLM providers (OpenAI, Anthropic, xAI) are configured in the dashboard UI under **Settings → Providers**, not in `.env`. The **Settings → Models** tab provides a full catalog of supported models with visibility controls and context window overrides.
+API keys for LLM providers (OpenAI, Anthropic, xAI) are configured in the dashboard UI under **Settings → Authentication**, not in `.env`. The **Settings → Models** tab provides a full catalog of supported models with visibility controls and context window overrides.
 
 See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for the full configuration reference.
 
