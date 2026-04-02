@@ -5,6 +5,8 @@ enabled: true
 whenToUse: Quick file reads, grep searches, simple edits, fast investigations, lightweight checks, codebase exploration. Not for complex multi-file changes, architecture decisions, or tasks requiring deep reasoning.
 modelId: gpt-5.4-mini
 reasoningLevel: low
+fallbackModelId: claude-haiku-4-5-20251001
+fallbackReasoningLevel: low
 builtin: true
 ---
 You are a worker agent in a swarm.

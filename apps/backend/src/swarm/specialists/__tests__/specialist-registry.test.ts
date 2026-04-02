@@ -508,6 +508,82 @@ describe("specialist-registry", () => {
     expect(architect).not.toBeNull();
   });
 
+  it("seeds builtin fallback models with cross-vendor matches for OpenAI and Anthropic specialists", async () => {
+    const root = await mkdtemp(join(tmpdir(), "specialist-registry-test-"));
+    const dataDir = join(root, "data");
+
+    await seedBuiltins(dataDir);
+
+    const roster = await resolveSharedRoster(dataDir);
+    const byId = new Map(roster.map((entry) => [entry.specialistId, entry]));
+
+    expect(byId.get("architect")).toMatchObject({
+      provider: "openai-codex",
+      fallbackProvider: "anthropic",
+      fallbackModelId: "claude-opus-4-6",
+      fallbackReasoningLevel: "high",
+    });
+    expect(byId.get("backend")).toMatchObject({
+      provider: "openai-codex",
+      fallbackProvider: "anthropic",
+      fallbackModelId: "claude-opus-4-6",
+      fallbackReasoningLevel: "high",
+    });
+    expect(byId.get("code-reviewer")).toMatchObject({
+      provider: "openai-codex",
+      fallbackProvider: "anthropic",
+      fallbackModelId: "claude-opus-4-6",
+      fallbackReasoningLevel: "high",
+    });
+    expect(byId.get("researcher")).toMatchObject({
+      provider: "openai-codex",
+      fallbackProvider: "anthropic",
+      fallbackModelId: "claude-sonnet-4-5-20250929",
+    });
+    expect(byId.get("scout")).toMatchObject({
+      provider: "openai-codex",
+      fallbackProvider: "anthropic",
+      fallbackModelId: "claude-haiku-4-5-20251001",
+      fallbackReasoningLevel: "low",
+    });
+
+    expect(byId.get("code-reviewer-2")).toMatchObject({
+      provider: "anthropic",
+      fallbackProvider: "openai-codex",
+      fallbackModelId: "gpt-5.4",
+      fallbackReasoningLevel: "high",
+    });
+    expect(byId.get("doc-writer")).toMatchObject({
+      provider: "anthropic",
+      fallbackProvider: "openai-codex",
+      fallbackModelId: "gpt-5.4-mini",
+      fallbackReasoningLevel: "medium",
+    });
+    expect(byId.get("frontend")).toMatchObject({
+      provider: "anthropic",
+      fallbackProvider: "openai-codex",
+      fallbackModelId: "gpt-5.4",
+      fallbackReasoningLevel: "high",
+    });
+    expect(byId.get("planner")).toMatchObject({
+      provider: "anthropic",
+      fallbackProvider: "openai-codex",
+      fallbackModelId: "gpt-5.4",
+      fallbackReasoningLevel: "high",
+    });
+
+    expect(byId.get("app-runtime")).toMatchObject({
+      provider: "openai-codex-app-server",
+      modelId: "default",
+      fallbackModelId: undefined,
+    });
+    expect(byId.get("web-researcher")).toMatchObject({
+      provider: "xai",
+      fallbackProvider: "xai",
+      fallbackModelId: "grok-4",
+    });
+  });
+
   it("skips overwriting pinned builtin files during seeding", async () => {
     const root = await mkdtemp(join(tmpdir(), "specialist-registry-test-"));
     const dataDir = join(root, "data");

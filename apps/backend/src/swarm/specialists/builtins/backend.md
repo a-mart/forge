@@ -5,6 +5,8 @@ enabled: true
 whenToUse: Backend/core implementation, TypeScript refactors, debugging server routes, data model work, test fixes. Not for UI/frontend work, documentation, or pure planning tasks.
 modelId: gpt-5.4
 reasoningLevel: high
+fallbackModelId: claude-opus-4-6
+fallbackReasoningLevel: high
 builtin: true
 ---
 You are a worker agent in a swarm.

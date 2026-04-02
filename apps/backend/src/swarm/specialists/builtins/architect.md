@@ -5,6 +5,8 @@ enabled: true
 whenToUse: Complex architecture, system design, high-risk multi-file refactors, cross-cutting changes, deep debugging. Not for routine single-file edits, quick lookups, or documentation.
 modelId: gpt-5.4
 reasoningLevel: xhigh
+fallbackModelId: claude-opus-4-6
+fallbackReasoningLevel: high
 builtin: true
 ---
 You are a worker agent in a swarm.
