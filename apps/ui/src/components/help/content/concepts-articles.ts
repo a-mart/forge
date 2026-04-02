@@ -18,7 +18,7 @@ Workers appear as pills below the chat header while they are active. Click a pil
 
 Splitting work across workers means the manager can handle multiple things at once. A single message might trigger a backend fix, a UI update, and a test run — all happening in parallel instead of one after another.
 
-The manager controls the flow. It decides which model each worker uses, what instructions to give, and whether to retry if something fails. You do not need to manage workers directly, but you can watch their progress and see their output in the chat.
+The manager controls the flow. It decides which model each worker uses, what instructions to give, and whether to retry if something fails. You do not need to manage workers directly, but you can watch their progress and see their output in the chat. User-facing manager updates are intentionally concise and focused on decisions, results, and blockers.
 
 ## How routing works
 

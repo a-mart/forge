@@ -95,6 +95,8 @@ The package step clears `apps/electron/release/` first, then writes the current 
 
 Before you start throwing tasks at Forge, take five minutes to have a conceptual conversation with your manager. Tell it how you like to work: your review process, your branching strategy, how you think about testing. This isn't small talk. It's calibration. The more your manager understands your style, the better it orchestrates workers on your behalf.
 
+The builtin manager is designed to keep user-facing updates concise and outcome-focused. It will favor meaningful results, blockers, and completion updates over routine progress narration.
+
 Then start rating messages. Thumbs up when the manager nails it, thumbs down when it misses, comments when you notice patterns. This feedback feeds directly into Cortex's learning cycle.
 
 ## Core Concepts

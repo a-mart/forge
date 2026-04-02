@@ -148,6 +148,8 @@ Usage data is cached per-provider with a 3-minute TTL to avoid excessive API cal
 
 Talk to your manager like you'd talk to a capable colleague. You don't need to be precise or exhaustive. That's the manager's job. Just describe what you want:
 
+The manager may stay quiet while workers are running routine tasks. It will surface useful results, blockers, and completion updates instead of narrating every small step.
+
 > "The login page has a bug where the error message doesn't show up after a failed attempt. Fix it."
 
 > "Add a dark mode toggle to the settings page. Follow the existing theme patterns."

@@ -13,6 +13,8 @@ Forge is a local-first multi-agent orchestration platform. It provides:
 3. An **Electron desktop app** that bundles backend, UI, and all dependencies for macOS and Windows.
 4. **Real-time updates** over WebSocket.
 
+The builtin manager archetype is intentionally concise and outcome-first in user-facing communication, so docs and UI copy should avoid promising constant progress narration.
+
 **Stack:** TypeScript, React 19, TanStack Start, Radix UI/shadcn, Tailwind v4, Vitest, Electron, pnpm monorepo
 
 ## Prerequisites
