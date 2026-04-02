@@ -5280,10 +5280,11 @@ describe('SwarmWebSocketServer', () => {
 
   it('handles api_proxy websocket commands for mobile + slash-command endpoints', async () => {
     const port = await getAvailablePort()
-    const config = await makeTempConfig(port)
+    const config = await makeTempConfig(port, true)
 
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
+    const { sessionAgent } = await manager.createSession('manager', { label: 'Unread Inbox' })
 
     const server = new SwarmWebSocketServer({
       swarmManager: manager,
@@ -5302,9 +5303,29 @@ describe('SwarmWebSocketServer', () => {
     })
 
     await once(client, 'open')
-    client.send(JSON.stringify({ type: 'subscribe' }))
+    client.send(JSON.stringify({ type: 'subscribe', agentId: 'manager' }))
 
-    await waitForEvent(events, (event) => event.type === 'ready')
+    await waitForEvent(
+      events,
+      (event) => event.type === 'ready' && event.subscribedAgentId === 'manager',
+    )
+
+    manager.emit(
+      'conversation_message',
+      {
+        type: 'conversation_message',
+        agentId: sessionAgent.agentId,
+        role: 'assistant',
+        text: 'Unread update for mobile fallback.',
+        timestamp: new Date().toISOString(),
+        source: 'speak_to_user',
+      } satisfies ServerEvent,
+    )
+
+    await waitForEvent(
+      events,
+      (event) => event.type === 'unread_count_update' && event.agentId === sessionAgent.agentId && event.count === 1,
+    )
 
     client.send(
       JSON.stringify({
@@ -5376,6 +5397,26 @@ describe('SwarmWebSocketServer', () => {
       const body = JSON.parse(slashResponse.body) as { commands?: unknown[] }
       expect(Array.isArray(body.commands)).toBe(true)
       expect(body.commands).toHaveLength(0)
+    }
+
+    client.send(
+      JSON.stringify({
+        type: 'api_proxy',
+        requestId: 'proxy-unread-1',
+        method: 'GET',
+        path: '/api/unread',
+      }),
+    )
+
+    const unreadResponse = await waitForEvent(
+      events,
+      (event) => event.type === 'api_proxy_response' && event.requestId === 'proxy-unread-1',
+    )
+    expect(unreadResponse.type).toBe('api_proxy_response')
+    if (unreadResponse.type === 'api_proxy_response') {
+      expect(unreadResponse.status).toBe(200)
+      const body = JSON.parse(unreadResponse.body) as { counts?: Record<string, number> }
+      expect(body.counts?.[sessionAgent.agentId]).toBe(1)
     }
 
     client.close()

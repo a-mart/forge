@@ -40,6 +40,7 @@ const API_PROXY_REGISTER_DEVICE_PATH = "/api/mobile/devices/register";
 const API_PROXY_LEGACY_REGISTER_DEVICE_PATH = "/api/mobile/push/register";
 const API_PROXY_TEST_PUSH_PATH = "/api/mobile/push/test";
 const API_PROXY_AUTH_TOKENS_PATH = "/api/auth/tokens";
+const API_PROXY_UNREAD_PATH = "/api/unread";
 const API_PROXY_FEEDBACK_PATH = "/api/feedback";
 const API_PROXY_SLASH_COMMANDS_PATH = "/api/slash-commands";
 const API_PROXY_TERMINALS_COLLECTION_PATH = "/api/terminals";
@@ -463,6 +464,10 @@ export class WsHandler {
         return await this.handleApiProxyAuthTokens(command);
       }
 
+      if (pathname === API_PROXY_UNREAD_PATH) {
+        return await this.handleApiProxyUnread(command);
+      }
+
       if (pathname === API_PROXY_READ_FILE_PATH) {
         return await this.handleApiProxyReadFile(command, payload);
       }
@@ -565,6 +570,16 @@ export class WsHandler {
 
     const tokens = await this.swarmManager.listSettingsAuth();
     return this.createApiProxyJsonResponse(command.requestId, 200, { tokens });
+  }
+
+  private async handleApiProxyUnread(command: ApiProxyCommand): Promise<ApiProxyResponseEvent> {
+    if (command.method !== "GET") {
+      return this.createApiProxyMethodNotAllowedResponse(command.requestId, "GET");
+    }
+
+    return this.createApiProxyJsonResponse(command.requestId, 200, {
+      counts: this.unreadTracker?.getSnapshot() ?? {},
+    });
   }
 
   private async handleApiProxyReadFile(
