@@ -34,6 +34,8 @@ const CONVERSATION_ENTRY_TYPE = "swarm_conversation_entry";
 const SESSION_HEADER_VERSION = 3;
 const MANAGER_ERROR_CONTEXT_HINT = "Try compacting the conversation to free up context space.";
 const MANAGER_ERROR_GENERIC_HINT = "Please retry. If this persists, check provider auth and rate limits.";
+const WORKER_ERROR_CONTEXT_HINT = "The manager may need to compact the task context before retrying.";
+const WORKER_ERROR_GENERIC_HINT = "The manager may need to retry after checking provider auth, quotas, or rate limits.";
 
 type ConversationEventName =
   | "conversation_message"
@@ -224,6 +226,29 @@ export class ConversationProjector {
             timestamp,
             source: "system"
           });
+        }
+
+        if (role === "assistant") {
+          const stopReason = extractMessageStopReason(event.message);
+          const hasStructuredErrorMessage = hasMessageErrorMessageField(event.message);
+          if (stopReason === "error" || hasStructuredErrorMessage) {
+            const normalizedErrorMessage = normalizeProviderErrorMessage(
+              extractMessageErrorMessage(event.message) ?? extractedText
+            );
+            const isContextOverflow = isStrictContextOverflowMessage(normalizedErrorMessage);
+
+            this.emitConversationMessage({
+              type: "conversation_message",
+              agentId,
+              role: "system",
+              text: buildWorkerErrorConversationText({
+                errorMessage: normalizedErrorMessage,
+                isContextOverflow
+              }),
+              timestamp,
+              source: "system"
+            });
+          }
         }
 
         this.emitConversationLog({
@@ -1074,6 +1099,25 @@ function buildManagerErrorConversationText(options: {
   }
 
   return `⚠️ Manager reply failed. ${MANAGER_ERROR_GENERIC_HINT}`;
+}
+
+function buildWorkerErrorConversationText(options: {
+  errorMessage?: string;
+  isContextOverflow: boolean;
+}): string {
+  if (options.isContextOverflow) {
+    if (options.errorMessage) {
+      return `⚠️ Worker reply failed because the prompt exceeded the model context window (${options.errorMessage}). ${WORKER_ERROR_CONTEXT_HINT}`;
+    }
+
+    return `⚠️ Worker reply failed because the prompt exceeded the model context window. ${WORKER_ERROR_CONTEXT_HINT}`;
+  }
+
+  if (options.errorMessage) {
+    return `⚠️ Worker reply failed: ${formatManagerErrorMessage(options.errorMessage)} ${WORKER_ERROR_GENERIC_HINT}`;
+  }
+
+  return `⚠️ Worker reply failed. ${WORKER_ERROR_GENERIC_HINT}`;
 }
 
 function formatManagerErrorMessage(errorMessage: string): string {

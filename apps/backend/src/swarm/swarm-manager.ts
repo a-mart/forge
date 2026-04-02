@@ -1220,6 +1220,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly watchdogBatchTimersByManager = new Map<string, NodeJS.Timeout>();
   private readonly modelCapacityBlocks = new Map<string, ModelCapacityBlock>();
   private readonly lastWorkerCompletionReportTimestampByAgentId = new Map<string, number>();
+  private readonly lastWorkerCompletionReportSummaryKeyByAgentId = new Map<string, string>();
   private readonly lastCortexCloseoutReminderUserTimestampByAgentId = new Map<string, number>();
   private readonly cortexCloseoutReminderTimersByAgentId = new Map<string, NodeJS.Timeout>();
   private readonly conversationProjector: ConversationProjector;
@@ -2996,6 +2997,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       this.workerStallState.delete(agentId);
       this.workerActivityState.delete(agentId);
       this.lastWorkerCompletionReportTimestampByAgentId.delete(agentId);
+      this.lastWorkerCompletionReportSummaryKeyByAgentId.delete(agentId);
 
       this.descriptors.delete(agentId);
       this.emitAgentsSnapshot();
@@ -3066,6 +3068,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       this.workerStallState.delete(agentId);
       this.workerActivityState.delete(agentId);
       this.lastWorkerCompletionReportTimestampByAgentId.delete(agentId);
+      this.lastWorkerCompletionReportSummaryKeyByAgentId.delete(agentId);
     }
 
     descriptor.status = transitionAgentStatus(descriptor.status, "idle");
@@ -6641,6 +6644,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       this.workerStallState.delete(descriptor.agentId);
       this.workerActivityState.delete(descriptor.agentId);
       this.lastWorkerCompletionReportTimestampByAgentId.delete(descriptor.agentId);
+      this.lastWorkerCompletionReportSummaryKeyByAgentId.delete(descriptor.agentId);
     }
 
     const runtime = this.runtimes.get(descriptor.agentId);
@@ -8301,15 +8305,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return;
     }
 
-    const autoReported = await this.tryAutoReportWorkerCompletion(descriptor);
-    if (autoReported) {
+    const autoReportOutcome = await this.tryAutoReportWorkerCompletion(descriptor);
+    if (autoReportOutcome === "sent" || autoReportOutcome === "duplicate") {
       const postSendState = this.getOrCreateWorkerWatchdogState(agentId);
       if (postSendState.turnSeq === turnSeq) {
         postSendState.reportedThisTurn = true;
-        this.workerWatchdogState.set(agentId, postSendState);
-
-        // Re-arm for the next runtime end callback.
-        postSendState.reportedThisTurn = false;
         this.workerWatchdogState.set(agentId, postSendState);
       }
 
@@ -8338,16 +8338,19 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     this.lastWorkerCompletionReportTimestampByAgentId.set(agentId, parseTimestampToMillis(this.now()) ?? Date.now());
+    this.lastWorkerCompletionReportSummaryKeyByAgentId.delete(agentId);
   }
 
-  private async tryAutoReportWorkerCompletion(descriptor: AgentDescriptor): Promise<boolean> {
+  private async tryAutoReportWorkerCompletion(
+    descriptor: AgentDescriptor
+  ): Promise<"sent" | "duplicate" | "skipped" | "failed"> {
     if (descriptor.role !== "worker") {
-      return false;
+      return "skipped";
     }
 
     const managerId = normalizeOptionalAgentId(descriptor.managerId);
     if (!managerId) {
-      return false;
+      return "skipped";
     }
 
     const managerDescriptor = this.descriptors.get(managerId);
@@ -8364,7 +8367,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         managerStatus: managerDescriptor?.status,
         hasManagerRuntime: Boolean(managerRuntime)
       });
-      return false;
+      return "skipped";
     }
 
     const workerRuntime = this.runtimes.get(descriptor.agentId);
@@ -8373,7 +8376,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         workerAgentId: descriptor.agentId,
         managerId
       });
-      return false;
+      return "skipped";
     }
 
     if (workerRuntime.getStatus() !== "idle" || workerRuntime.getPendingCount() > 0) {
@@ -8383,15 +8386,26 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         workerStatus: workerRuntime.getStatus(),
         pendingCount: workerRuntime.getPendingCount()
       });
-      return false;
+      return "skipped";
     }
 
     const report = buildWorkerCompletionReport(descriptor.agentId, this.getConversationHistory(descriptor.agentId));
     const lastReportedTimestamp = this.lastWorkerCompletionReportTimestampByAgentId.get(descriptor.agentId);
-
+    const lastReportedSummaryKey = this.lastWorkerCompletionReportSummaryKeyByAgentId.get(descriptor.agentId);
     const hasFreshSummary =
       typeof report.summaryTimestamp === "number" &&
       (typeof lastReportedTimestamp !== "number" || report.summaryTimestamp > lastReportedTimestamp);
+    const isDuplicateSummary = typeof report.summaryKey === "string" && report.summaryKey === lastReportedSummaryKey;
+
+    if (isDuplicateSummary) {
+      this.logDebug("worker:completion_report:suppress_duplicate_summary", {
+        workerAgentId: descriptor.agentId,
+        managerId,
+        summaryTimestamp: report.summaryTimestamp,
+        summaryKey: report.summaryKey
+      });
+      return "duplicate";
+    }
 
     const message = hasFreshSummary
       ? report.message
@@ -8404,6 +8418,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
       if (hasFreshSummary && typeof report.summaryTimestamp === "number") {
         this.lastWorkerCompletionReportTimestampByAgentId.set(descriptor.agentId, report.summaryTimestamp);
+        if (report.summaryKey) {
+          this.lastWorkerCompletionReportSummaryKeyByAgentId.set(descriptor.agentId, report.summaryKey);
+        }
       }
 
       this.logDebug("worker:completion_report:sent", {
@@ -8414,14 +8431,14 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         textPreview: previewForLog(message)
       });
 
-      return true;
+      return "sent";
     } catch (error) {
       this.logDebug("worker:completion_report:error", {
         workerAgentId: descriptor.agentId,
         managerId,
         message: error instanceof Error ? error.message : String(error)
       });
-      return false;
+      return "failed";
     }
   }
 
@@ -9632,7 +9649,7 @@ function resolveModel(
 function buildWorkerCompletionReport(
   agentId: string,
   history: ConversationEntryEvent[]
-): { message: string; summaryTimestamp?: number } {
+): { message: string; summaryTimestamp?: number; summaryKey?: string } {
   const latestSummary = findLatestWorkerCompletionSummary(history);
   if (!latestSummary) {
     return {
@@ -9640,6 +9657,8 @@ function buildWorkerCompletionReport(
     };
   }
 
+  const summaryTimestamp = parseTimestampToMillis(latestSummary.timestamp);
+  const summaryKey = buildWorkerCompletionSummaryKey(latestSummary);
   const summaryText = truncateWorkerCompletionText(
     latestSummary.text,
     MAX_WORKER_COMPLETION_REPORT_CHARS
@@ -9649,28 +9668,37 @@ function buildWorkerCompletionReport(
     attachmentCount > 0
       ? `\n\nAttachments: ${attachmentCount} generated attachment${attachmentCount === 1 ? "" : "s"}.`
       : "";
+  const turnOutcomeLine = isWorkerErrorSummary(latestSummary)
+    ? `SYSTEM: Worker ${agentId} ended its turn with an error.`
+    : `SYSTEM: Worker ${agentId} completed its turn.`;
 
   if (summaryText.length > 0) {
     return {
       message: [
-        `SYSTEM: Worker ${agentId} completed its turn.`,
+        turnOutcomeLine,
         "",
         `${latestSummary.role === "system" ? "Last system message" : "Last assistant message"}:`,
         summaryText
       ].join("\n") + attachmentLine,
-      summaryTimestamp: parseTimestampToMillis(latestSummary.timestamp)
+      summaryTimestamp,
+      summaryKey
     };
   }
 
   if (attachmentCount > 0) {
     return {
-      message: `SYSTEM: Worker ${agentId} completed its turn and generated ${attachmentCount} attachment${attachmentCount === 1 ? "" : "s"}.`,
-      summaryTimestamp: parseTimestampToMillis(latestSummary.timestamp)
+      message: isWorkerErrorSummary(latestSummary)
+        ? `SYSTEM: Worker ${agentId} ended its turn with an error and generated ${attachmentCount} attachment${attachmentCount === 1 ? "" : "s"}.`
+        : `SYSTEM: Worker ${agentId} completed its turn and generated ${attachmentCount} attachment${attachmentCount === 1 ? "" : "s"}.`,
+      summaryTimestamp,
+      summaryKey
     };
   }
 
   return {
-    message: `SYSTEM: Worker ${agentId} completed its turn.`
+    message: turnOutcomeLine,
+    summaryTimestamp,
+    summaryKey
   };
 }
 
@@ -9697,6 +9725,33 @@ function findLatestWorkerCompletionSummary(
   }
 
   return undefined;
+}
+
+const WORKER_ERROR_SUMMARY_PATTERNS = [
+  /^⚠️\s*Worker reply failed\b/i,
+  /^⚠️\s*Agent error\b/i,
+  /^⚠️\s*Extension error\b/i,
+  /^⚠️\s*Context guard error\b/i,
+  /^⚠️\s*Compaction error\b/i,
+  /^🚨\s*Context recovery failed\b/i,
+];
+
+function buildWorkerCompletionSummaryKey(entry: ConversationMessageEvent): string {
+  return createHash("sha256").update(JSON.stringify({
+    role: entry.role,
+    text: entry.text,
+    attachmentCount: entry.attachments?.length ?? 0,
+    timestamp: entry.timestamp
+  })).digest("hex");
+}
+
+function isWorkerErrorSummary(entry: ConversationMessageEvent): boolean {
+  if (entry.role !== "system") {
+    return false;
+  }
+
+  const trimmed = entry.text.trim();
+  return WORKER_ERROR_SUMMARY_PATTERNS.some((pattern) => pattern.test(trimmed));
 }
 
 function truncateWorkerCompletionText(text: string, maxChars: number): string {

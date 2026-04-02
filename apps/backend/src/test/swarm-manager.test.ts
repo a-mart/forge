@@ -4253,7 +4253,52 @@ describe('SwarmManager', () => {
     })
   })
 
-  it('falls back to a generic completion signal when the latest summary was already reported', async () => {
+  it('auto-reports worker turn errors with the error context instead of a generic completion signal', async () => {
+    const config = await makeTempConfig()
+    let tick = 0
+    const now = () => new Date(Date.parse('2026-01-01T00:00:00.000Z') + tick++).toISOString()
+    const manager = new TestSwarmManager(config, { now })
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', { agentId: 'Errored Worker' })
+    const managerRuntime = manager.runtimeByAgentId.get('manager')
+    expect(managerRuntime).toBeDefined()
+
+    await (manager as any).handleRuntimeSessionEvent(worker.agentId, {
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        content: [],
+        stopReason: 'error',
+        errorMessage:
+          '429 {"type":"error","error":{"type":"rate_limit_error","message":"This request would exceed your account\'s rate limit. Please try again later."}}',
+      },
+    })
+
+    await waitForCondition(() =>
+      manager
+        .getConversationHistory(worker.agentId)
+        .some(
+          (entry) =>
+            entry.type === 'conversation_message' &&
+            entry.role === 'system' &&
+            entry.text.includes('⚠️ Worker reply failed:'),
+        ),
+    )
+
+    managerRuntime!.sendCalls = []
+
+    await (manager as any).handleRuntimeAgentEnd(worker.agentId)
+
+    expect(managerRuntime?.sendCalls).toHaveLength(1)
+    expect(managerRuntime?.sendCalls[0]).toMatchObject({
+      delivery: 'auto',
+      message:
+        'SYSTEM: Worker errored-worker ended its turn with an error.\n\nLast system message:\n⚠️ Worker reply failed: This request would exceed your account\'s rate limit. Please try again later. The manager may need to retry after checking provider auth, quotas, or rate limits.',
+    })
+  })
+
+  it('suppresses duplicate auto-reports when the latest summary was already reported', async () => {
     const config = await makeTempConfig()
     let tick = 0
     const now = () => new Date(Date.parse('2026-01-01T00:00:00.000Z') + tick++).toISOString()
@@ -4278,10 +4323,156 @@ describe('SwarmManager', () => {
 
     await (manager as any).handleRuntimeAgentEnd(worker.agentId)
 
+    expect(managerRuntime?.sendCalls).toHaveLength(0)
+  })
+
+  it('suppresses duplicate end callbacks after an errored worker turn instead of falling back to a generic completion signal', async () => {
+    const config = await makeTempConfig()
+    let tick = 0
+    const now = () => new Date(Date.parse('2026-01-01T00:00:00.000Z') + tick++).toISOString()
+    const manager = new TestSwarmManager(config, { now })
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', { agentId: 'Duplicate Error Worker' })
+    const managerRuntime = manager.runtimeByAgentId.get('manager')
+    expect(managerRuntime).toBeDefined()
+
+    await (manager as any).handleRuntimeSessionEvent(worker.agentId, {
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        content: [],
+        stopReason: 'error',
+        errorMessage:
+          '429 {"type":"error","error":{"type":"rate_limit_error","message":"This request would exceed your account\'s rate limit. Please try again later."}}',
+      },
+    })
+
+    await waitForCondition(() =>
+      manager
+        .getConversationHistory(worker.agentId)
+        .some(
+          (entry) =>
+            entry.type === 'conversation_message' &&
+            entry.role === 'system' &&
+            entry.text.includes('⚠️ Worker reply failed:'),
+        ),
+    )
+
+    managerRuntime!.sendCalls = []
+
+    await (manager as any).handleRuntimeAgentEnd(worker.agentId)
+    await (manager as any).handleRuntimeAgentEnd(worker.agentId)
+
     expect(managerRuntime?.sendCalls).toHaveLength(1)
     expect(managerRuntime?.sendCalls[0]).toMatchObject({
       delivery: 'auto',
-      message: 'SYSTEM: Worker repeat-summary-worker completed its turn.',
+      message:
+        'SYSTEM: Worker duplicate-error-worker ended its turn with an error.\n\nLast system message:\n⚠️ Worker reply failed: This request would exceed your account\'s rate limit. Please try again later. The manager may need to retry after checking provider auth, quotas, or rate limits.',
+    })
+  })
+
+  it.each([
+    {
+      label: 'worker reply failures projected from message_end errors',
+      trigger: async (manager: TestSwarmManager, workerId: string) => {
+        await (manager as any).handleRuntimeSessionEvent(workerId, {
+          type: 'message_end',
+          message: {
+            role: 'assistant',
+            content: [],
+            stopReason: 'error',
+            errorMessage: 'Prompt is too long for this model context window.',
+          },
+        })
+      },
+      expectedSummaryLine:
+        '⚠️ Worker reply failed because the prompt exceeded the model context window (Prompt is too long for this model context window.). The manager may need to compact the task context before retrying.',
+    },
+    {
+      label: 'agent runtime errors',
+      trigger: async (manager: TestSwarmManager, workerId: string) => {
+        await (manager as any).handleRuntimeError(workerId, {
+          phase: 'prompt_dispatch',
+          message: 'backend socket closed unexpectedly',
+        })
+      },
+      expectedSummaryLine:
+        '⚠️ Agent error: backend socket closed unexpectedly. Message may need to be resent.',
+    },
+    {
+      label: 'extension runtime errors',
+      trigger: async (manager: TestSwarmManager, workerId: string) => {
+        await (manager as any).handleRuntimeError(workerId, {
+          phase: 'extension',
+          message: 'blocked write outside allowed roots',
+          details: {
+            extensionPath: '/tmp/protected-paths.ts',
+            event: 'tool_call',
+          },
+        })
+      },
+      expectedSummaryLine:
+        '⚠️ Extension error (protected-paths.ts · tool_call): blocked write outside allowed roots',
+    },
+    {
+      label: 'context guard errors',
+      trigger: async (manager: TestSwarmManager, workerId: string) => {
+        await (manager as any).handleRuntimeError(workerId, {
+          phase: 'context_guard',
+          message: 'context guard rejected the pending prompt',
+        })
+      },
+      expectedSummaryLine:
+        '⚠️ Context guard error: context guard rejected the pending prompt.',
+    },
+    {
+      label: 'context recovery failures',
+      trigger: async (manager: TestSwarmManager, workerId: string) => {
+        await (manager as any).handleRuntimeError(workerId, {
+          phase: 'compaction',
+          message: 'failed to rebuild compacted context',
+          details: {
+            recoveryStage: 'recovery_failed',
+          },
+        })
+      },
+      expectedSummaryLine:
+        '🚨 Context recovery failed: failed to rebuild compacted context. Start a new session or manually trim history/compact before continuing.',
+    },
+  ])('classifies $label as worker turn errors in auto-reports', async ({ trigger, expectedSummaryLine }) => {
+    const config = await makeTempConfig()
+    let tick = 0
+    const now = () => new Date(Date.parse('2026-01-01T00:00:00.000Z') + tick++).toISOString()
+    const manager = new TestSwarmManager(config, { now })
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', { agentId: 'Worker Error Variant' })
+    const managerRuntime = manager.runtimeByAgentId.get('manager')
+    expect(managerRuntime).toBeDefined()
+
+    await trigger(manager, worker.agentId)
+
+    await waitForCondition(() =>
+      manager
+        .getConversationHistory(worker.agentId)
+        .some(
+          (entry) =>
+            entry.type === 'conversation_message' &&
+            entry.role === 'system' &&
+            entry.text === expectedSummaryLine,
+        ),
+    )
+
+    managerRuntime!.sendCalls = []
+
+    await (manager as any).handleRuntimeAgentEnd(worker.agentId)
+
+    expect(managerRuntime?.sendCalls).toHaveLength(1)
+    expect(managerRuntime?.sendCalls[0]).toMatchObject({
+      delivery: 'auto',
+      message:
+        `SYSTEM: Worker worker-error-variant ended its turn with an error.\n\nLast system message:\n${expectedSummaryLine}`,
     })
   })
 
