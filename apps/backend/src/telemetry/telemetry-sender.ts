@@ -1,9 +1,7 @@
 import type { TelemetryPayload } from '@forge/protocol'
 
-// TODO: Update with the actual Cloudflare Worker URL after deployment.
-// The deployed workers.dev hostname depends on the Cloudflare account subdomain,
-// but the path pattern should match the worker name from wrangler.toml.
-const TELEMETRY_ENDPOINT = 'https://forge-telemetry.workers.dev/v1/report'
+// Deployed Cloudflare Worker endpoint for anonymous telemetry ingestion.
+const TELEMETRY_ENDPOINT = 'https://forge-telemetry.adam-b44.workers.dev/v1/report'
 const TELEMETRY_TIMEOUT_MS = 10_000
 const TELEMETRY_MAX_RETRIES = 2
 
