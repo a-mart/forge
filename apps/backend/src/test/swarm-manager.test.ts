@@ -1191,6 +1191,7 @@ describe('SwarmManager', () => {
     expect(firstBoot.getAgent(created.sessionAgent.agentId)?.projectAgent).toEqual({
       handle: expectedProjectAgent.handle,
       whenToUse: expectedProjectAgent.whenToUse,
+      systemPrompt: expectedProjectAgent.systemPrompt,
     })
 
     const firstBootState = firstBoot as unknown as { descriptors: Map<string, AgentDescriptor> }
@@ -1205,6 +1206,7 @@ describe('SwarmManager', () => {
     expect(secondBoot.getAgent(created.sessionAgent.agentId)?.projectAgent).toEqual({
       handle: expectedProjectAgent.handle,
       whenToUse: expectedProjectAgent.whenToUse,
+      systemPrompt: expectedProjectAgent.systemPrompt,
     })
     const secondBootState = secondBoot as unknown as { descriptors: Map<string, AgentDescriptor> }
     expect(secondBootState.descriptors.get(created.sessionAgent.agentId)?.projectAgent).toEqual(expectedProjectAgent)
@@ -1383,6 +1385,7 @@ describe('SwarmManager', () => {
     expect(manager.getAgent(result.agentId)?.projectAgent).toEqual({
       handle: 'release-notes',
       whenToUse: 'Draft release notes and changelog copy.',
+      systemPrompt: 'You are the release notes project agent.',
       creatorSessionId: creator.sessionAgent.agentId,
     })
     const managerState = manager as unknown as { descriptors: Map<string, AgentDescriptor> }
@@ -1432,6 +1435,7 @@ describe('SwarmManager', () => {
     expect(manager.getAgent(result.agentId)?.projectAgent).toEqual({
       handle: 'docs',
       whenToUse: 'Owns docs updates.',
+      systemPrompt: 'You are the documentation project agent.',
       creatorSessionId: creator.sessionAgent.agentId,
     })
     const managerState = manager as unknown as { descriptors: Map<string, AgentDescriptor> }

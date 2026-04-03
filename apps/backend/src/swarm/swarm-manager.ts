@@ -82,6 +82,7 @@ import {
 import {
   deleteProjectAgentRecord,
   readProjectAgentRecord,
+  renameProjectAgentRecord,
   writeProjectAgentRecord
 } from "./project-agent-storage.js";
 import {
@@ -1124,6 +1125,9 @@ function cloneProjectAgentInfoValue(
   return {
     handle: projectAgent.handle,
     whenToUse: projectAgent.whenToUse,
+    ...(projectAgent.systemPrompt !== undefined
+      ? { systemPrompt: projectAgent.systemPrompt }
+      : {}),
     ...(projectAgent.creatorSessionId !== undefined
       ? { creatorSessionId: projectAgent.creatorSessionId }
       : {})
@@ -2429,12 +2433,24 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         promotedAt: descriptor.createdAt,
         updatedAt: this.now()
       };
-      await writeProjectAgentRecord(
-        this.config.paths.dataDir,
-        profileId,
-        persistedProjectAgentConfig,
-        nextProjectAgent.systemPrompt ?? null
-      );
+      const configForDisk = persistedProjectAgentConfig;
+      if (previousProjectAgent && previousProjectAgent.handle !== nextProjectAgent.handle) {
+        await renameProjectAgentRecord(
+          this.config.paths.dataDir,
+          profileId,
+          previousProjectAgent.handle,
+          nextProjectAgent.handle,
+          configForDisk,
+          nextProjectAgent.systemPrompt ?? null
+        );
+      } else {
+        await writeProjectAgentRecord(
+          this.config.paths.dataDir,
+          profileId,
+          configForDisk,
+          nextProjectAgent.systemPrompt ?? null
+        );
+      }
     } else if (previousProjectAgent?.handle) {
       await deleteProjectAgentRecord(this.config.paths.dataDir, profileId, previousProjectAgent.handle);
     }
@@ -6476,7 +6492,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       profileId,
       descriptor.projectAgent.handle
     );
-    const prompt = onDiskRecord?.systemPrompt?.trim() || descriptor.projectAgent.systemPrompt?.trim() || undefined;
+    let prompt: string | undefined;
+    if (onDiskRecord?.systemPrompt !== null && onDiskRecord?.systemPrompt !== undefined) {
+      prompt = onDiskRecord.systemPrompt.trim() || undefined;
+    } else {
+      prompt = descriptor.projectAgent.systemPrompt?.trim() || undefined;
+    }
 
     return {
       prompt,
