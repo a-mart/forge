@@ -158,7 +158,7 @@ On smaller screens, the sidebar is hidden by default. Tap the hamburger menu in 
     title: 'Session Management',
     category: 'chat',
     summary: 'Creating, switching, renaming, and deleting sessions.',
-    content: `Sessions are individual conversations within a profile. Each session has its own chat history and session memory, but shares the profile's settings and core memory.
+    content: `Sessions are individual conversations within a profile. Each session has its own chat history and session memory, but shares the profile's settings and core memory. If a session previously showed truncated history, Forge now rebuilds the cached replay from canonical disk history on first load, especially for async project-agent deliveries.
 
 ## Create a session
 

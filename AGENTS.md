@@ -178,7 +178,7 @@ All runtime state lives in `~/.forge` (or `%LOCALAPPDATA%\forge` on Windows), ov
 ```
 
 Session forks now support a **partial fork** from a specific message: the forked `session.jsonl` is copied up to that message only.
-The forked session memory header also records that truncation point so the parent history boundary is explicit.
+The forked session memory header also records that truncation point so the parent history boundary is explicit. Cached conversation sidecars rebuild from canonical `session.jsonl` on first load if they are stale or truncated, including after async project-agent deliveries.
 
 See `apps/backend/src/swarm/data-paths.ts` for the canonical path resolution logic.
 

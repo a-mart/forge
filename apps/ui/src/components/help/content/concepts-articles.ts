@@ -238,7 +238,7 @@ const conceptsProjectAgents: HelpArticle = {
   category: 'concepts',
   summary:
     'Promoted sessions that become discoverable, persistent agents for cross-session collaboration.',
-  content: `Project agents are sessions promoted to persistent specialist roles within a profile. Unlike regular sessions, they have dedicated handles and are discoverable by sibling sessions for async collaboration.
+  content: `Project agents are sessions promoted to persistent specialist roles within a profile. Unlike regular sessions, they have dedicated handles and are discoverable by sibling sessions for async collaboration. If a cached sidecar was truncated, the project agent conversation rebuilds from canonical session history on first load.
 
 ## What makes a project agent
 

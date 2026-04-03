@@ -587,6 +587,8 @@ No database. Everything is files (JSON, JSONL, and Markdown):
         └── workers/               # Individual worker logs
 ```
 
+Cached conversation sidecars rebuild from canonical `session.jsonl` on first load if they are stale or truncated, so sessions affected by async deliveries should show full history again after refresh.
+
 Cortex is architecturally just another manager agent. It lives in the same profile structure with its own sessions and workers.
 
 **Backing up:** Copy the `~/.forge` directory. That's it. No database dumps, no export tools. Just files.

@@ -11,7 +11,7 @@ export const gettingStartedArticles: HelpArticle[] = [
 
 ## How it works
 
-You talk to a **manager** agent. The manager reads your instructions, decides what can run concurrently, and dispatches **workers** to do the actual work. Each worker operates in its own git worktree so nothing collides. You watch progress in real time from this dashboard, or walk away and check in later.
+You talk to a **manager** agent. The manager reads your instructions, decides what can run concurrently, and dispatches **workers** to do the actual work. Each worker operates in its own git worktree so nothing collides. Session history is durable on disk, and cached replay views rebuild from canonical transcript history when needed. You watch progress in real time from this dashboard, or walk away and check in later.
 
 One conversation can have dozens of workers running at once. You don't manage them individually — the manager handles coordination, merging, and status tracking.
 
