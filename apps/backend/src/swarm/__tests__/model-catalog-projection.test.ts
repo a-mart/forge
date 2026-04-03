@@ -9,6 +9,7 @@ import {
   getPiModelsProjectionPath,
 } from "../model-catalog-projection.js";
 import { writeModelOverrides } from "../model-overrides.js";
+import { addOpenRouterModel } from "../openrouter-models.js";
 
 const authStorageStub = {
   getOAuthProviders: () => [],
@@ -42,6 +43,7 @@ describe("model-catalog-projection", () => {
 
     const upstreamGrok4Fast = getModels("xai").find((model) => model.id === "grok-4-fast");
     expect(projectedXaiModels.find((model) => model.id === "grok-4-fast")?.cost).toEqual(upstreamGrok4Fast?.cost);
+    expect(projection.providers.openrouter).toBeUndefined();
 
     const registry = new ModelRegistry(authStorageStub as any, projectionPath);
 
@@ -51,6 +53,44 @@ describe("model-catalog-projection", () => {
     expect(registry.find("openai-codex", "gpt-5.3-codex")?.contextWindow).toBe(272_000);
     expect(registry.find("openai-codex", "gpt-5.3-codex")?.maxTokens).toBe(128_000);
     expect(registry.find("anthropic", "claude-opus-4-6")?.contextWindow).toBe(1_000_000);
+  });
+
+  it("adds user-selected OpenRouter models as a custom provider merge block", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-model-catalog-projection-"));
+    const dataDir = join(rootDir, "data");
+    await mkdir(dataDir, { recursive: true });
+    await addOpenRouterModel(dataDir, {
+      modelId: "anthropic/claude-3.5-sonnet",
+      displayName: "Claude 3.5 Sonnet",
+      contextWindow: 200_000,
+      maxOutputTokens: 8_192,
+      supportsReasoning: true,
+      supportedReasoningLevels: ["none", "low", "medium", "high"],
+      inputModes: ["text", "image"],
+      addedAt: "2026-04-03T00:00:00.000Z",
+    });
+
+    const projectionPath = await generatePiProjection(dataDir);
+    const projection = JSON.parse(await readFile(projectionPath, "utf8")) as {
+      providers: Record<string, { baseUrl?: string; apiKey?: string; api?: string; models?: Array<{ id: string; name?: string }> }>;
+    };
+
+    expect(projection.providers.openrouter).toMatchObject({
+      baseUrl: "https://openrouter.ai/api/v1",
+      apiKey: "OPENROUTER_API_KEY",
+      api: "openai-completions",
+    });
+    expect(projection.providers.openrouter?.models).toEqual([
+      expect.objectContaining({
+        id: "anthropic/claude-3.5-sonnet",
+        name: "Claude 3.5 Sonnet",
+      }),
+    ]);
+
+    const registry = new ModelRegistry(authStorageStub as any, projectionPath);
+    expect(registry.getError()).toBeUndefined();
+    expect(registry.find("openrouter", "anthropic/claude-3.5-sonnet")?.contextWindow).toBe(200_000);
+    expect(registry.find("openrouter", "anthropic/claude-3.5-sonnet")?.api).toBe("openai-completions");
   });
 
   it("keeps disabled curated models in the projection so existing configs retain Forge-owned runtime behavior", async () => {

@@ -5217,6 +5217,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     await this.refreshPiModelsJsonProjection();
   }
 
+  async reloadOpenRouterModelsAndProjection(): Promise<void> {
+    await modelCatalogService.reloadOpenRouterModels();
+    await this.refreshPiModelsJsonProjection();
+  }
+
   listRuntimeExtensionSnapshots(): AgentRuntimeExtensionSnapshot[] {
     return Array.from(this.runtimeExtensionSnapshotsByAgentId.values())
       .map((snapshot) => ({

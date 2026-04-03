@@ -12,6 +12,8 @@ export type ForgePiProjectionMode = 'built-in-overrides' | 'custom-provider-merg
 export type ForgeProjectionScope = 'catalog-only' | 'full-upstream-provider'
 export type ForgeRequestBehaviorId = 'xai-responses' | null
 export type ForgeWebSearchCapability = 'none' | 'native'
+export type ForgeInputMode = 'text' | 'image'
+export type ForgeReasoningLevel = 'none' | 'low' | 'medium' | 'high' | 'xhigh'
 export type ForgeModelApiProtocol =
   | 'openai-codex-responses'
   | 'openai-responses'
@@ -27,9 +29,9 @@ export interface ForgeProviderDefinition {
   /** Whether Pi projection emits only Forge-curated models or the provider's full upstream Pi inventory. */
   projectionScope: ForgeProjectionScope
   requestBehaviorId: ForgeRequestBehaviorId
-  /** Base URL override for Pi projection (xAI only currently) */
+  /** Base URL override for Pi projection custom providers */
   piBaseUrl?: string
-  /** API key env var name for Pi projection (xAI only currently) */
+  /** API key env var name for Pi projection custom providers */
   piApiKeyEnvVar?: string
   /** API protocol override for Pi projection */
   piApiProtocol?: Exclude<ForgeModelApiProtocol, null>
@@ -40,7 +42,7 @@ export interface ForgeFamilyDefinition {
   displayName: string
   provider: string
   defaultModelId: string
-  defaultReasoningLevel: string
+  defaultReasoningLevel: ForgeReasoningLevel
   visibleInCreateManager: boolean
   visibleInChangeManager: boolean
   visibleInSpawnPreset: boolean
@@ -54,11 +56,11 @@ export interface ForgeModelDefinition {
   displayName: string
   isFamilyDefault: boolean
   supportsReasoning: boolean
-  supportedReasoningLevels: readonly string[]
-  defaultReasoningLevel: string
+  supportedReasoningLevels: readonly ForgeReasoningLevel[]
+  defaultReasoningLevel: ForgeReasoningLevel
   contextWindow: number
   maxOutputTokens: number
-  inputModes: readonly ('text' | 'image')[]
+  inputModes: readonly ForgeInputMode[]
   webSearchCapability: ForgeWebSearchCapability
   enabledByDefault: boolean
   /** Pi upstream source metadata for audit; null for synthetic entries */
@@ -81,6 +83,37 @@ export interface ModelOverrideEntry {
 export interface ModelOverridesFile {
   version: 1
   overrides: Record<string, ModelOverrideEntry>
+}
+
+export interface OpenRouterModelEntry {
+  modelId: string
+  displayName: string
+  contextWindow: number
+  maxOutputTokens: number
+  supportsReasoning: boolean
+  supportedReasoningLevels: readonly ForgeReasoningLevel[]
+  inputModes: readonly ForgeInputMode[]
+  addedAt: string
+}
+
+export interface OpenRouterModelsFile {
+  version: 1
+  models: Record<string, OpenRouterModelEntry>
+}
+
+export interface AvailableOpenRouterModel {
+  modelId: string
+  displayName: string
+  upstreamProvider: string
+  contextWindow: number
+  maxOutputTokens: number
+  supportsReasoning: boolean
+  supportsTools: boolean
+  inputModes: string[]
+  pricing: {
+    inputPerMillion: number
+    outputPerMillion: number
+  } | null
 }
 
 export const FORGE_MODEL_CATALOG = {
@@ -111,6 +144,17 @@ export const FORGE_MODEL_CATALOG = {
       piBaseUrl: 'https://api.x.ai/v1',
       piApiKeyEnvVar: 'XAI_API_KEY',
       piApiProtocol: 'openai-responses',
+    },
+    openrouter: {
+      providerId: 'openrouter',
+      displayName: 'OpenRouter',
+      availabilityMode: 'external',
+      piProjectionMode: 'custom-provider-merge',
+      projectionScope: 'catalog-only',
+      requestBehaviorId: null,
+      piBaseUrl: 'https://openrouter.ai/api/v1',
+      piApiKeyEnvVar: 'OPENROUTER_API_KEY',
+      piApiProtocol: 'openai-completions',
     },
     'openai-codex-app-server': {
       providerId: 'openai-codex-app-server',

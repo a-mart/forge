@@ -11,6 +11,7 @@ import {
   type ForgeModelCatalog,
   type ForgeModelDefinition,
   type ForgeProviderDefinition,
+  type OpenRouterModelEntry,
 } from "@forge/protocol";
 import type {
   ManagerReasoningLevel,
@@ -19,6 +20,7 @@ import type {
   ModelVariantInfo,
 } from "@forge/protocol";
 import { readModelOverrides } from "./model-overrides.js";
+import { readOpenRouterModels } from "./openrouter-models.js";
 import type { AgentModelDescriptor } from "./types.js";
 
 const REASONING_LEVELS: ManagerReasoningLevel[] = ["none", "low", "medium", "high", "xhigh"];
@@ -26,26 +28,59 @@ const REASONING_LEVELS: ManagerReasoningLevel[] = ["none", "low", "medium", "hig
 export class ModelCatalogService {
   private readonly catalog: ForgeModelCatalog;
   private overrides: Record<string, ModelOverrideEntry> = {};
+  private openRouterModels: Record<string, OpenRouterModelEntry> = {};
+  private loadedDataDir: string | null = null;
 
   constructor(catalog: ForgeModelCatalog = FORGE_MODEL_CATALOG) {
     this.catalog = catalog;
   }
 
   async loadOverrides(dataDir: string): Promise<void> {
-    const file = await readModelOverrides(dataDir);
-    this.overrides = { ...file.overrides };
+    const [overrideFile, openRouterFile] = await Promise.all([
+      readModelOverrides(dataDir),
+      readOpenRouterModels(dataDir),
+    ]);
+
+    this.loadedDataDir = dataDir;
+    this.overrides = { ...overrideFile.overrides };
+    this.openRouterModels = { ...openRouterFile.models };
+  }
+
+  async reloadOpenRouterModels(): Promise<void> {
+    if (!this.loadedDataDir) {
+      this.openRouterModels = {};
+      return;
+    }
+
+    const file = await readOpenRouterModels(this.loadedDataDir);
+    this.openRouterModels = { ...file.models };
   }
 
   getOverrides(): Record<string, ModelOverrideEntry> {
     return { ...this.overrides };
   }
 
+  getOpenRouterModels(): OpenRouterModelEntry[] {
+    return Object.values(this.openRouterModels).sort((left, right) => left.modelId.localeCompare(right.modelId));
+  }
+
   isKnownModelId(modelId: string): boolean {
-    return isCatalogModelId(modelId);
+    const normalizedModelId = modelId.trim();
+    return isCatalogModelId(normalizedModelId) || normalizedModelId in this.openRouterModels;
   }
 
   inferProvider(modelId: string): string | null {
-    return inferCatalogProvider(modelId);
+    const normalizedModelId = modelId.trim();
+    if (!normalizedModelId) {
+      return null;
+    }
+
+    const catalogProvider = inferCatalogProvider(normalizedModelId);
+    if (catalogProvider) {
+      return catalogProvider;
+    }
+
+    return normalizedModelId in this.openRouterModels ? "openrouter" : null;
   }
 
   inferFamily(descriptor: Pick<AgentModelDescriptor, "provider" | "modelId">): string | undefined {
@@ -123,17 +158,19 @@ export class ModelCatalogService {
   }
 
   getEffectiveContextWindow(modelId: string): number | undefined {
-    const model = getCatalogModel(modelId);
-    if (!model) {
-      return undefined;
+    const normalizedModelId = modelId.trim();
+    const model = getCatalogModel(normalizedModelId);
+    if (model) {
+      const cap = this.overrides[model.modelId]?.contextWindowCap;
+      return cap !== undefined ? Math.min(model.contextWindow, cap) : model.contextWindow;
     }
 
-    const cap = this.overrides[model.modelId]?.contextWindowCap;
-    return cap !== undefined ? Math.min(model.contextWindow, cap) : model.contextWindow;
+    return this.openRouterModels[normalizedModelId]?.contextWindow;
   }
 
   getModelDisplayName(modelId: string): string {
-    return getCatalogModel(modelId)?.displayName ?? modelId;
+    const normalizedModelId = modelId.trim();
+    return getCatalogModel(normalizedModelId)?.displayName ?? this.openRouterModels[normalizedModelId]?.displayName ?? modelId;
   }
 
   supportsNativeWebSearch(modelId: string): boolean {
@@ -141,12 +178,13 @@ export class ModelCatalogService {
   }
 
   isModelEnabled(modelId: string): boolean {
-    const model = getCatalogModel(modelId);
-    if (!model) {
-      return false;
+    const normalizedModelId = modelId.trim();
+    const model = getCatalogModel(normalizedModelId);
+    if (model) {
+      return this.overrides[model.modelId]?.enabled ?? model.enabledByDefault;
     }
 
-    return this.overrides[model.modelId]?.enabled ?? model.enabledByDefault;
+    return normalizedModelId in this.openRouterModels;
   }
 
   getOverride(modelId: string): ModelOverrideEntry | undefined {
@@ -160,7 +198,7 @@ export class ModelCatalogService {
   }
 
   getAllModelIds(): string[] {
-    return Object.keys(this.catalog.models);
+    return [...new Set([...Object.keys(this.catalog.models), ...Object.keys(this.openRouterModels)])];
   }
 
   getAllProviders(): ForgeProviderDefinition[] {

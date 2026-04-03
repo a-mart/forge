@@ -29,13 +29,18 @@ const SETTINGS_AUTH_PROVIDER_DEFINITIONS: Array<{
   {
     provider: "xai",
     storageProvider: "xai"
+  },
+  {
+    provider: "openrouter",
+    storageProvider: "openrouter"
   }
 ];
 
 const MANAGED_MODEL_PROVIDER_ENV_VARS: Record<SettingsAuthProviderName, string[]> = {
   anthropic: ["ANTHROPIC_API_KEY"],
   "openai-codex": ["OPENAI_API_KEY"],
-  xai: ["XAI_API_KEY"]
+  xai: ["XAI_API_KEY"],
+  openrouter: ["OPENROUTER_API_KEY"]
 };
 
 interface SkillMetadataForSettings {

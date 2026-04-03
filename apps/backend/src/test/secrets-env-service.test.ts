@@ -185,21 +185,31 @@ describe('SecretsEnvService path migration', () => {
     } as any)
 
     const previousAnthropic = process.env.ANTHROPIC_API_KEY
+    const previousOpenRouter = process.env.OPENROUTER_API_KEY
     delete process.env.ANTHROPIC_API_KEY
+    delete process.env.OPENROUTER_API_KEY
 
     try {
       process.env.ANTHROPIC_API_KEY = 'sk-ant-secret'
+      process.env.OPENROUTER_API_KEY = 'sk-or-v1-secret'
 
       const availability = await getManagedModelProviderCredentialAvailability(createConfig(paths))
 
       expect(availability.get('openai-codex')).toBe(true)
       expect(availability.get('xai')).toBe(true)
       expect(availability.get('anthropic')).toBe(true)
+      expect(availability.get('openrouter')).toBe(true)
     } finally {
       if (previousAnthropic === undefined) {
         delete process.env.ANTHROPIC_API_KEY
       } else {
         process.env.ANTHROPIC_API_KEY = previousAnthropic
+      }
+
+      if (previousOpenRouter === undefined) {
+        delete process.env.OPENROUTER_API_KEY
+      } else {
+        process.env.OPENROUTER_API_KEY = previousOpenRouter
       }
     }
   })

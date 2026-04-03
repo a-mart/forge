@@ -45,9 +45,15 @@ export const SETTINGS_AUTH_PROVIDER_META: Record<
     placeholder: 'xai-...',
     helpUrl: 'https://console.x.ai/',
   },
+  openrouter: {
+    label: 'OpenRouter API key',
+    description: 'Used by user-added OpenRouter models for specialists and workers.',
+    placeholder: 'sk-or-v1-...',
+    helpUrl: 'https://openrouter.ai/keys',
+  },
 }
 
-export const SETTINGS_AUTH_PROVIDER_ORDER: SettingsAuthProviderId[] = ['anthropic', 'openai-codex', 'xai']
+export const SETTINGS_AUTH_PROVIDER_ORDER: SettingsAuthProviderId[] = ['anthropic', 'openai-codex', 'xai', 'openrouter']
 
 export const SHARED_INTEGRATION_MANAGER_ID = '__shared__'
 
@@ -70,6 +76,7 @@ function normalizeSettingsAuthProviderId(value: unknown): SettingsAuthProviderId
   if (value === 'anthropic') return 'anthropic'
   if (value === 'openai-codex') return 'openai-codex'
   if (value === 'xai') return 'xai'
+  if (value === 'openrouter') return 'openrouter'
   return undefined
 }
 

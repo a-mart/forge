@@ -41,6 +41,7 @@ import { createIntegrationRoutes } from "./routes/integration-routes.js";
 import { createMobileRoutes } from "./routes/mobile-routes.js";
 import { createMermaidPreviewRoutes } from "./routes/mermaid-preview-routes.js";
 import { createModelConfigRoutes } from "./routes/model-config-routes.js";
+import { createOpenRouterRoutes } from "./routes/openrouter-routes.js";
 import { createPlaywrightLiveRoutes } from "./routes/playwright-live-routes.js";
 import { createPlaywrightRoutes } from "./routes/playwright-routes.js";
 import { createPromptRoutes, type PromptRegistryForRoutes } from "./routes/prompt-routes.js";
@@ -368,6 +369,10 @@ export class SwarmWebSocketServer {
         broadcastEvent: (event) => this.wsHandler.broadcastToSubscribed(event),
       }),
       ...createModelConfigRoutes({
+        swarmManager: this.swarmManager,
+        broadcastEvent: (event) => this.wsHandler.broadcastToSubscribed(event),
+      }),
+      ...createOpenRouterRoutes({
         swarmManager: this.swarmManager,
         broadcastEvent: (event) => this.wsHandler.broadcastToSubscribed(event),
       }),

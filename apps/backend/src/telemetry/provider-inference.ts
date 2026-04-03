@@ -11,20 +11,8 @@ export function inferProviderFromModelId(modelId: string): string | null {
     return exactCatalogProvider
   }
 
-  if (normalized.includes('/')) {
-    const [providerPrefix, ...modelParts] = normalized.split('/')
-    const suffix = modelParts.join('/').trim()
-    if (suffix.length > 0) {
-      const suffixCatalogProvider = inferCatalogProvider(suffix)
-      if (suffixCatalogProvider) {
-        return suffixCatalogProvider
-      }
-    }
-
-    const normalizedPrefix = normalizeProviderPrefix(providerPrefix)
-    if (normalizedPrefix) {
-      return normalizedPrefix
-    }
+  if (isSlashScopedOpenRouterModelId(normalized)) {
+    return 'openrouter'
   }
 
   if (normalized.startsWith('claude') || normalized.includes('anthropic')) {
@@ -48,24 +36,7 @@ export function inferProviderFromModelId(modelId: string): string | null {
   return null
 }
 
-function normalizeProviderPrefix(value: string): string | null {
-  const normalized = value.trim().toLowerCase()
-  if (normalized.length === 0) {
-    return null
-  }
-
-  if (normalized === 'openai') {
-    return 'openai-codex'
-  }
-
-  if (
-    normalized === 'anthropic' ||
-    normalized === 'openai-codex' ||
-    normalized === 'openai-codex-app-server' ||
-    normalized === 'xai'
-  ) {
-    return normalized
-  }
-
-  return null
+function isSlashScopedOpenRouterModelId(modelId: string): boolean {
+  const slashIndex = modelId.indexOf('/')
+  return slashIndex > 0 && slashIndex < modelId.length - 1
 }

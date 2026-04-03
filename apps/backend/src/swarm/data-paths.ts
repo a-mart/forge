@@ -259,6 +259,10 @@ export function getSharedModelOverridesPath(dataDir: string): string {
   return join(getSharedConfigDir(dataDir), "model-overrides.json");
 }
 
+export function getOpenRouterModelsPath(dataDir: string): string {
+  return join(getSharedConfigDir(dataDir), "openrouter-models.json");
+}
+
 export function getGlobalSlashCommandsPath(dataDir: string): string {
   return join(getSharedConfigDir(dataDir), "slash-commands.json");
 }
