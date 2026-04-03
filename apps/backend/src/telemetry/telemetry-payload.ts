@@ -7,6 +7,9 @@ const SCHEMA_VERSION = 1
 
 export interface FeatureAdoptionData {
   specialistsConfigured: number
+  specialistsPersistedCount: number
+  specialistsCustomCount: number
+  specialistsEnabledCount: number
   terminalsActive: number
   pinnedMessagesUsed: number
   scheduledTasksCount: number
@@ -14,17 +17,24 @@ export interface FeatureAdoptionData {
   playwrightEnabled: boolean
   forkedSessionsCount: number
   projectAgentsCount: number
+  projectAgentsPersistedCount: number
   extensionsLoaded: number
+  extensionsDiscoveredCount: number
   skillsConfigured: number
+  skillsDiscoveredCount: number
   referenceDocsCount: number
   slashCommandsCount: number
   cortexAutoReviewEnabled: boolean
   mobileDevicesRegistered: number
+  mobileDevicesEnabledCount: number
 }
 
 export function emptyFeatureAdoption(): FeatureAdoptionData {
   return {
     specialistsConfigured: 0,
+    specialistsPersistedCount: 0,
+    specialistsCustomCount: 0,
+    specialistsEnabledCount: 0,
     terminalsActive: 0,
     pinnedMessagesUsed: 0,
     scheduledTasksCount: 0,
@@ -32,12 +42,16 @@ export function emptyFeatureAdoption(): FeatureAdoptionData {
     playwrightEnabled: false,
     forkedSessionsCount: 0,
     projectAgentsCount: 0,
+    projectAgentsPersistedCount: 0,
     extensionsLoaded: 0,
+    extensionsDiscoveredCount: 0,
     skillsConfigured: 0,
+    skillsDiscoveredCount: 0,
     referenceDocsCount: 0,
     slashCommandsCount: 0,
     cortexAutoReviewEnabled: false,
     mobileDevicesRegistered: 0,
+    mobileDevicesEnabledCount: 0,
   }
 }
 
@@ -71,6 +85,9 @@ export async function assembleSkeletonPayload(
     average_tokens_per_run: 0,
 
     specialists_configured: 0,
+    specialists_persisted_count: 0,
+    specialists_custom_count: 0,
+    specialists_enabled_count: 0,
     terminals_active: 0,
     pinned_messages_used: 0,
     scheduled_tasks_count: 0,
@@ -78,12 +95,16 @@ export async function assembleSkeletonPayload(
     playwright_enabled: false,
     forked_sessions_count: 0,
     project_agents_count: 0,
+    project_agents_persisted_count: 0,
     extensions_loaded: 0,
+    extensions_discovered_count: 0,
     skills_configured: 0,
+    skills_discovered_count: 0,
     reference_docs_count: 0,
     slash_commands_count: 0,
     cortex_auto_review_enabled: false,
     mobile_devices_registered: 0,
+    mobile_devices_enabled_count: 0,
 
     providers_used: '',
     auth_providers: '',
@@ -128,6 +149,9 @@ export function assembleFullPayload(
     average_tokens_per_run: stats.workers.averageTokensPerRun,
 
     specialists_configured: features.specialistsConfigured,
+    specialists_persisted_count: features.specialistsPersistedCount,
+    specialists_custom_count: features.specialistsCustomCount,
+    specialists_enabled_count: features.specialistsEnabledCount,
     terminals_active: features.terminalsActive,
     pinned_messages_used: features.pinnedMessagesUsed,
     scheduled_tasks_count: features.scheduledTasksCount,
@@ -135,12 +159,16 @@ export function assembleFullPayload(
     playwright_enabled: features.playwrightEnabled,
     forked_sessions_count: features.forkedSessionsCount,
     project_agents_count: features.projectAgentsCount,
+    project_agents_persisted_count: features.projectAgentsPersistedCount,
     extensions_loaded: features.extensionsLoaded,
+    extensions_discovered_count: features.extensionsDiscoveredCount,
     skills_configured: features.skillsConfigured,
+    skills_discovered_count: features.skillsDiscoveredCount,
     reference_docs_count: features.referenceDocsCount,
     slash_commands_count: features.slashCommandsCount,
     cortex_auto_review_enabled: features.cortexAutoReviewEnabled,
     mobile_devices_registered: features.mobileDevicesRegistered,
+    mobile_devices_enabled_count: features.mobileDevicesEnabledCount,
 
     providers_used: providersUsed.join(','),
     auth_providers: authProviders.join(','),

@@ -19,49 +19,69 @@ import {
   getSharedPlaywrightDashboardSettingsPath,
 } from '../swarm/data-paths.js'
 import { PINNED_MESSAGES_FILE_NAME } from '../swarm/message-pins.js'
+import { parseSpecialistFile } from '../swarm/specialists/specialist-registry.js'
 import { getProfileSpecialistsDir, getSharedSpecialistsDir } from '../swarm/specialists/specialist-paths.js'
 import type { SwarmConfig } from '../swarm/types.js'
 import type { FeatureAdoptionData } from './telemetry-payload.js'
 
+interface SpecialistCounts {
+  persistedCount: number
+  customCount: number
+  enabledCount: number
+}
+
+interface MobileDeviceCounts {
+  registeredCount: number
+  enabledCount: number
+}
+
 export async function collectFeatureAdoption(
   dataDir: string,
   profileIds: string[],
-  _config: SwarmConfig,
+  config: SwarmConfig,
 ): Promise<FeatureAdoptionData> {
+  const rootDir = config.paths?.rootDir
   const [
-    specialistsConfigured,
+    specialistCounts,
     terminalsActive,
     pinnedMessagesUsed,
     scheduledTasksCount,
     telegramConfigured,
     playwrightEnabled,
     forkedSessionsCount,
+    projectAgentsCount,
     extensionsLoaded,
+    extensionsDiscoveredCount,
     skillsConfigured,
+    skillsDiscoveredCount,
     referenceDocsCount,
     slashCommandsCount,
     cortexAutoReviewEnabled,
-    mobileDevicesRegistered,
-    projectAgentsCount,
+    mobileDeviceCounts,
   ] = await Promise.all([
-    countSpecialists(dataDir, profileIds),
+    collectSpecialistCounts(dataDir, profileIds),
     countTerminals(dataDir, profileIds),
     countPinnedSessions(dataDir, profileIds),
     countScheduledTasks(dataDir, profileIds),
     isTelegramConfigured(dataDir, profileIds),
     isPlaywrightEnabled(dataDir),
     countForkedSessions(dataDir, profileIds),
+    countProjectAgents(dataDir),
     countExtensions(dataDir, profileIds),
+    countExtensions(dataDir, profileIds, rootDir),
     countSkills(dataDir, profileIds),
+    countSkills(dataDir, profileIds, rootDir),
     countReferenceDocs(dataDir, profileIds),
     countSlashCommands(dataDir, profileIds),
     isCortexAutoReviewEnabled(dataDir),
     countMobileDevices(dataDir),
-    countProjectAgents(dataDir),
   ])
 
   return {
-    specialistsConfigured,
+    specialistsConfigured: specialistCounts.persistedCount,
+    specialistsPersistedCount: specialistCounts.persistedCount,
+    specialistsCustomCount: specialistCounts.customCount,
+    specialistsEnabledCount: specialistCounts.enabledCount,
     terminalsActive,
     pinnedMessagesUsed,
     scheduledTasksCount,
@@ -69,26 +89,60 @@ export async function collectFeatureAdoption(
     playwrightEnabled,
     forkedSessionsCount,
     projectAgentsCount,
+    projectAgentsPersistedCount: projectAgentsCount,
     extensionsLoaded,
+    extensionsDiscoveredCount,
     skillsConfigured,
+    skillsDiscoveredCount,
     referenceDocsCount,
     slashCommandsCount,
     cortexAutoReviewEnabled,
-    mobileDevicesRegistered,
+    mobileDevicesRegistered: mobileDeviceCounts.registeredCount,
+    mobileDevicesEnabledCount: mobileDeviceCounts.enabledCount,
   }
 }
 
-async function countSpecialists(dataDir: string, profileIds: string[]): Promise<number> {
+async function collectSpecialistCounts(dataDir: string, profileIds: string[]): Promise<SpecialistCounts> {
   try {
-    let count = await countMarkdownFiles(getSharedSpecialistsDir(dataDir))
+    let persistedCount = 0
+    let customCount = 0
+    let enabledCount = 0
 
-    for (const profileId of profileIds) {
-      count += await countMarkdownFiles(getProfileSpecialistsDir(dataDir, profileId))
+    const directories = [getSharedSpecialistsDir(dataDir), ...profileIds.map((profileId) => getProfileSpecialistsDir(dataDir, profileId))]
+
+    for (const directoryPath of directories) {
+      const entries = await readDirEntries(directoryPath)
+      for (const entry of entries) {
+        if (!entry.isFile() || !entry.name.toLowerCase().endsWith('.md')) {
+          continue
+        }
+
+        const parsed = await parseSpecialistFile(join(directoryPath, entry.name))
+        if (!parsed) {
+          continue
+        }
+
+        persistedCount += 1
+        if (!parsed.frontmatter.builtin) {
+          customCount += 1
+        }
+        if (parsed.frontmatter.enabled) {
+          enabledCount += 1
+        }
+      }
     }
 
-    return count
+    return {
+      persistedCount,
+      customCount,
+      enabledCount,
+    }
   } catch {
-    return 0
+    return {
+      persistedCount: 0,
+      customCount: 0,
+      enabledCount: 0,
+    }
   }
 }
 
@@ -162,7 +216,7 @@ async function isTelegramConfigured(dataDir: string, profileIds: string[]): Prom
   }
 }
 
-async function countExtensions(dataDir: string, profileIds: string[]): Promise<number> {
+async function countExtensions(dataDir: string, profileIds: string[], rootDir?: string): Promise<number> {
   try {
     let count = 0
 
@@ -173,13 +227,17 @@ async function countExtensions(dataDir: string, profileIds: string[]): Promise<n
       count += await countSupportedExtensions(getProfilePiExtensionsDir(dataDir, profileId))
     }
 
+    if (typeof rootDir === 'string' && rootDir.trim().length > 0) {
+      count += await countSupportedExtensions(join(rootDir, '.pi', 'extensions'))
+    }
+
     return count
   } catch {
     return 0
   }
 }
 
-async function countSkills(dataDir: string, profileIds: string[]): Promise<number> {
+async function countSkills(dataDir: string, profileIds: string[], rootDir?: string): Promise<number> {
   try {
     let count = 0
 
@@ -189,6 +247,10 @@ async function countSkills(dataDir: string, profileIds: string[]): Promise<numbe
 
     for (const profileId of profileIds) {
       count += await countSkillDirectories(getProfilePiSkillsDir(dataDir, profileId))
+    }
+
+    if (typeof rootDir === 'string' && rootDir.trim().length > 0) {
+      count += await countSkillDirectories(join(rootDir, '.swarm', 'skills'))
     }
 
     return count
@@ -291,17 +353,21 @@ async function isCortexAutoReviewEnabled(dataDir: string): Promise<boolean> {
   }
 }
 
-async function countMobileDevices(dataDir: string): Promise<number> {
+async function countMobileDevices(dataDir: string): Promise<MobileDeviceCounts> {
   try {
-    return await countArrayEntriesInFile(getSharedMobileDevicesPath(dataDir), 'devices')
-  } catch {
-    return 0
-  }
-}
+    const parsed = await readJsonFile(getSharedMobileDevicesPath(dataDir))
+    if (!isRecord(parsed) || !Array.isArray(parsed.devices)) {
+      return { registeredCount: 0, enabledCount: 0 }
+    }
 
-async function countMarkdownFiles(dirPath: string): Promise<number> {
-  const entries = await readDirEntries(dirPath)
-  return entries.filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith('.md')).length
+    const devices = parsed.devices.filter(isRecord)
+    return {
+      registeredCount: devices.length,
+      enabledCount: devices.filter((device) => device.enabled === true).length,
+    }
+  } catch {
+    return { registeredCount: 0, enabledCount: 0 }
+  }
 }
 
 async function countFiles(dirPath: string): Promise<number> {

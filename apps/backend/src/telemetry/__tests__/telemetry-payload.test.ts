@@ -101,14 +101,25 @@ function createStatsSnapshot(): StatsSnapshot {
 }
 
 describe('telemetry payload helpers', () => {
-  it('assembles a flat payload from stats and feature data', () => {
+  it('assembles a flat payload from stats and feature data, including additive clearer fields', () => {
     const stats = createStatsSnapshot()
     const features = {
       ...emptyFeatureAdoption(),
       specialistsConfigured: 2,
+      specialistsPersistedCount: 5,
+      specialistsCustomCount: 2,
+      specialistsEnabledCount: 4,
       scheduledTasksCount: 4,
       telegramConfigured: true,
+      projectAgentsCount: 1,
+      projectAgentsPersistedCount: 1,
+      extensionsLoaded: 3,
+      extensionsDiscoveredCount: 4,
+      skillsConfigured: 6,
+      skillsDiscoveredCount: 7,
       slashCommandsCount: 6,
+      mobileDevicesRegistered: 2,
+      mobileDevicesEnabledCount: 1,
     }
 
     const payload = assembleFullPayload(
@@ -141,9 +152,20 @@ describe('telemetry payload helpers', () => {
       lines_added: 456,
       average_tokens_per_run: 75,
       specialists_configured: 2,
+      specialists_persisted_count: 5,
+      specialists_custom_count: 2,
+      specialists_enabled_count: 4,
       scheduled_tasks_count: 4,
       telegram_configured: true,
+      project_agents_count: 1,
+      project_agents_persisted_count: 1,
+      extensions_loaded: 3,
+      extensions_discovered_count: 4,
+      skills_configured: 6,
+      skills_discovered_count: 7,
       slash_commands_count: 6,
+      mobile_devices_registered: 2,
+      mobile_devices_enabled_count: 1,
       providers_used: 'anthropic,openai-codex',
       auth_providers: 'anthropic,xai',
       top_model: 'gpt-5.4',

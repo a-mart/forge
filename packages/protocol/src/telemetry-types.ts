@@ -53,6 +53,9 @@ export interface TelemetryPayload {
 
   // Feature adoption
   specialists_configured: number
+  specialists_persisted_count?: number
+  specialists_custom_count?: number
+  specialists_enabled_count?: number
   terminals_active: number
   pinned_messages_used: number
   scheduled_tasks_count: number
@@ -60,12 +63,16 @@ export interface TelemetryPayload {
   playwright_enabled: boolean
   forked_sessions_count: number
   project_agents_count: number
+  project_agents_persisted_count?: number
   extensions_loaded: number
+  extensions_discovered_count?: number
   skills_configured: number
+  skills_discovered_count?: number
   reference_docs_count: number
   slash_commands_count: number
   cortex_auto_review_enabled: boolean
   mobile_devices_registered: number
+  mobile_devices_enabled_count?: number
 
   // Provider / model info
   providers_used: string
