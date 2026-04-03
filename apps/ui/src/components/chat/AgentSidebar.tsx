@@ -2205,7 +2205,7 @@ export function AgentSidebar({
   const [showModelIcons, setShowModelIcons] = useState(() => readSidebarModelIconsPref())
   const [showProviderUsage, setShowProviderUsage] = useState(() => readSidebarProviderUsagePref())
   const [usagePanelOpen, setUsagePanelOpen] = useState(false)
-  const providerUsage = useProviderUsage(showProviderUsage)
+  const { data: providerUsage, loading: providerUsageLoading, refetch: refetchProviderUsage } = useProviderUsage(showProviderUsage)
 
   // Re-read pref on custom event (same-tab) and storage event (cross-tab)
   useEffect(() => {
@@ -2753,7 +2753,7 @@ export function AgentSidebar({
       </div>
 
       {showProviderUsage ? (
-        <SidebarUsagePanel providers={providerUsage} open={usagePanelOpen} onClose={() => setUsagePanelOpen(false)} />
+        <SidebarUsagePanel providers={providerUsage} open={usagePanelOpen} onClose={() => setUsagePanelOpen(false)} loading={providerUsageLoading} onRefresh={refetchProviderUsage} />
       ) : null}
 
       <div className="relative shrink-0 border-t border-sidebar-border">

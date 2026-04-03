@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -9,6 +10,35 @@ function makeHistoryFilePath(): string {
 
 function makeCacheFilePath(): string {
   return join(tmpdir(), `provider-usage-cache-${randomUUID()}.json`);
+}
+
+function buildCompleteWeeklyHistoryLines(
+  resetTimesMs: number[],
+  accountKey: string,
+  windowSeconds: number
+): string[] {
+  const sampleOffsetsMs = [
+    1 * 60 * 60 * 1000,
+    12 * 60 * 60 * 1000,
+    2 * 24 * 60 * 60 * 1000,
+    3 * 24 * 60 * 60 * 1000,
+    4 * 24 * 60 * 60 * 1000,
+    (6 * 24 * 60 * 60 * 1000) + (20 * 60 * 60 * 1000)
+  ];
+
+  return resetTimesMs.flatMap((resetAtMs, weekIndex) => {
+    const windowStartMs = resetAtMs - (windowSeconds * 1000);
+    return sampleOffsetsMs.map((offsetMs, sampleIndex) => JSON.stringify({
+      v: 1,
+      provider: "openai",
+      windowKind: "weekly",
+      accountKey,
+      sampledAtMs: windowStartMs + offsetMs,
+      percent: Math.min(100, 8 + weekIndex + (sampleIndex * 14)),
+      resetAtMs,
+      windowSeconds
+    }));
+  });
 }
 
 afterEach(() => {
@@ -270,5 +300,94 @@ describe("ProviderUsageService", () => {
       }
     });
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps 07:45 and 07:46 weekly resets as separate historical weeks", async () => {
+    const historyFilePath = makeHistoryFilePath();
+    const windowSeconds = 7 * 24 * 60 * 60;
+    const accountKey = "test-account";
+    const resetTimesMs = [
+      Date.parse("2026-03-11T07:45:00.000Z"),
+      Date.parse("2026-03-11T07:46:00.000Z"),
+      Date.parse("2026-03-18T07:45:00.000Z"),
+      Date.parse("2026-03-18T07:46:00.000Z"),
+      Date.parse("2026-03-25T07:45:00.000Z"),
+      Date.parse("2026-03-25T07:46:00.000Z"),
+      Date.parse("2026-04-01T07:45:00.000Z"),
+      Date.parse("2026-04-01T07:46:00.000Z")
+    ];
+
+    await writeFile(
+      historyFilePath,
+      `${buildCompleteWeeklyHistoryLines(resetTimesMs, accountKey, windowSeconds).join("\n")}\n`,
+      "utf8"
+    );
+
+    const {
+      ProviderUsageHistoryStore,
+      evaluateHistoricalProviderUsagePace
+    } = await import("../stats/provider-usage-history.js");
+
+    const store = new ProviderUsageHistoryStore(historyFilePath);
+    const dataset = await store.loadDataset("openai", accountKey);
+
+    expect(dataset?.weeks).toHaveLength(8);
+
+    const currentResetAtMs = Date.parse("2026-04-08T07:46:00.000Z");
+    const nowMs = currentResetAtMs - (2 * 24 * 60 * 60 * 1000);
+    const pace = evaluateHistoricalProviderUsagePace({
+      percent: 58,
+      resetInfo: "2.0d",
+      resetAtMs: currentResetAtMs,
+      windowSeconds
+    }, nowMs, dataset);
+
+    expect(pace).toBeDefined();
+    expect(pace?.mode).toBe("historical");
+  });
+
+  it("uses the seven-day fallback window and suppresses pace during the first 3 percent of a week", async () => {
+    const historyFilePath = makeHistoryFilePath();
+    const windowSeconds = 7 * 24 * 60 * 60;
+    const accountKey = "test-account";
+    const resetTimesMs = [
+      Date.parse("2026-03-11T07:46:00.000Z"),
+      Date.parse("2026-03-18T07:46:00.000Z"),
+      Date.parse("2026-03-25T07:46:00.000Z")
+    ];
+
+    await writeFile(
+      historyFilePath,
+      `${buildCompleteWeeklyHistoryLines(resetTimesMs, accountKey, windowSeconds).join("\n")}\n`,
+      "utf8"
+    );
+
+    const {
+      ProviderUsageHistoryStore,
+      evaluateHistoricalProviderUsagePace
+    } = await import("../stats/provider-usage-history.js");
+
+    const store = new ProviderUsageHistoryStore(historyFilePath);
+    const dataset = await store.loadDataset("openai", accountKey);
+    const currentResetAtMs = Date.parse("2026-04-01T07:46:00.000Z");
+
+    const midweekNowMs = currentResetAtMs - (2 * 24 * 60 * 60 * 1000);
+    const midweekPace = evaluateHistoricalProviderUsagePace({
+      percent: 58,
+      resetInfo: "2.0d",
+      resetAtMs: currentResetAtMs
+    }, midweekNowMs, dataset);
+
+    expect(midweekPace).toBeDefined();
+    expect(midweekPace?.mode).toBe("historical");
+
+    const earlyNowMs = currentResetAtMs - windowSeconds * 1000 + (2 * 60 * 60 * 1000);
+    const earlyPace = evaluateHistoricalProviderUsagePace({
+      percent: 1,
+      resetInfo: "6.9d",
+      resetAtMs: currentResetAtMs
+    }, earlyNowMs, dataset);
+
+    expect(earlyPace).toBeUndefined();
   });
 });
