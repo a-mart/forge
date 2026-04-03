@@ -86,11 +86,14 @@ All persistent state lives in a single data directory:
 │   ├── cache/                 # Regenerable/ephemeral
 │   │   ├── generated/
 │   │   │   └── pi-models.json # Generated Pi-compatible model projection
-│   │   └── stats-cache.json   # Cached dashboard statistics
+│   │   ├── stats-cache.json   # Cached dashboard statistics
+│   │   ├── provider-usage-cache.json      # Cached provider subscription usage snapshots
+│   │   └── provider-usage-history.jsonl   # Historical provider usage samples
 │   ├── state/                 # Runtime state & markers
 │   │   ├── mobile-devices.json            # Registered mobile devices
 │   │   ├── .compaction-count-backfill-v2-done  # Compaction-count backfill sentinel
-│   │   └── .shared-config-migration-done       # Shared-config layout migration sentinel
+│   │   ├── .shared-config-migration-done  # Shared-config layout migration sentinel
+│   │   └── .shared-config-cleanup-done    # Shared-config old-path cleanup sentinel
 │   ├── knowledge/             # Knowledge base
 │   │   ├── common.md          # Common knowledge (cross-profile)
 │   │   ├── onboarding-state.json  # First-launch user preferences
