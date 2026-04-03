@@ -18,6 +18,14 @@ Pick a theme (Light, Dark, or System) and choose which code editor opens when yo
 
 Toggle "Show provider usage" to control whether the provider subscription usage widget appears in the sidebar toolbar. When enabled, you'll see compact usage gauges for OpenAI Codex and Anthropic Claude with 5-hour and weekly windows. Click the widget to expand it for detailed metrics including deficit, pace, and estimated runout times. The setting is stored in your browser and applies immediately.
 
+## Telemetry
+
+Turn anonymous usage statistics on or off in Settings. Forge only sends aggregate counts such as sessions, models used, and feature adoption. It does not send prompts, code, file paths, repo names, or personal data.
+
+The **Last sent** field shows the most recent successful report. Reports are sent periodically, at most once every 2 hours, and duplicates are automatically deduplicated.
+
+There is no install ID display or reset action in the UI.
+
 ## Cortex Auto-Review
 
 Cortex is Forge's self-improvement system. When automatic reviews are enabled, Cortex periodically checks your sessions and updates knowledge, memory, and reference docs. You can set the review interval from every 15 minutes up to every 24 hours. Disable it entirely if you want to run reviews manually.
