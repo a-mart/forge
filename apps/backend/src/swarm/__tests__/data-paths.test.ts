@@ -15,6 +15,11 @@ import {
   getProfileMemoryPath,
   getProfileMergeAuditLogPath,
   getProfilePiDir,
+  getProjectAgentConfigPath,
+  getProjectAgentDir,
+  getProjectAgentPromptPath,
+  getProjectAgentReferenceDir,
+  getProjectAgentsDir,
   getProfilePiExtensionsDir,
   getProfilePiSkillsDir,
   getProfilePiPromptsDir,
@@ -113,6 +118,19 @@ describe("data-paths", () => {
 
     expect(getWorkersDir(DATA_DIR, PROFILE_ID, NON_ROOT_SESSION_ID)).toBe(
       join(DATA_DIR, "profiles", PROFILE_ID, "sessions", NON_ROOT_SESSION_ID, "workers")
+    );
+    expect(getProjectAgentsDir(DATA_DIR, PROFILE_ID)).toBe(join(DATA_DIR, "profiles", PROFILE_ID, "project-agents"));
+    expect(getProjectAgentDir(DATA_DIR, PROFILE_ID, "release-notes")).toBe(
+      join(DATA_DIR, "profiles", PROFILE_ID, "project-agents", "release-notes")
+    );
+    expect(getProjectAgentConfigPath(DATA_DIR, PROFILE_ID, "release-notes")).toBe(
+      join(DATA_DIR, "profiles", PROFILE_ID, "project-agents", "release-notes", "config.json")
+    );
+    expect(getProjectAgentPromptPath(DATA_DIR, PROFILE_ID, "release-notes")).toBe(
+      join(DATA_DIR, "profiles", PROFILE_ID, "project-agents", "release-notes", "prompt.md")
+    );
+    expect(getProjectAgentReferenceDir(DATA_DIR, PROFILE_ID, "release-notes")).toBe(
+      join(DATA_DIR, "profiles", PROFILE_ID, "project-agents", "release-notes", "reference")
     );
     expect(getWorkerSessionFilePath(DATA_DIR, PROFILE_ID, NON_ROOT_SESSION_ID, WORKER_ID)).toBe(
       join(DATA_DIR, "profiles", PROFILE_ID, "sessions", NON_ROOT_SESSION_ID, "workers", `${WORKER_ID}.jsonl`)
