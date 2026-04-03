@@ -220,6 +220,36 @@ export interface ProjectAgentConfigEvent {
   agentId: string
   config: PersistedProjectAgentConfig
   systemPrompt: string | null
+  references: string[]
+  requestId?: string
+}
+
+export interface ProjectAgentReferencesEvent {
+  type: 'project_agent_references'
+  agentId: string
+  references: string[]
+  requestId?: string
+}
+
+export interface ProjectAgentReferenceEvent {
+  type: 'project_agent_reference'
+  agentId: string
+  fileName: string
+  content: string
+  requestId?: string
+}
+
+export interface ProjectAgentReferenceSavedEvent {
+  type: 'project_agent_reference_saved'
+  agentId: string
+  fileName: string
+  requestId?: string
+}
+
+export interface ProjectAgentReferenceDeletedEvent {
+  type: 'project_agent_reference_deleted'
+  agentId: string
+  fileName: string
   requestId?: string
 }
 
@@ -460,6 +490,10 @@ export type ServerEvent =
   | ProjectAgentRecommendationsEvent
   | ProjectAgentRecommendationsErrorEvent
   | ProjectAgentConfigEvent
+  | ProjectAgentReferencesEvent
+  | ProjectAgentReferenceEvent
+  | ProjectAgentReferenceSavedEvent
+  | ProjectAgentReferenceDeletedEvent
   | ProfileRenamedEvent
   | SessionForkedEvent
   | SessionMemoryMergeStartedEvent

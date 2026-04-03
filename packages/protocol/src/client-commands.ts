@@ -42,6 +42,30 @@ export type ClientCommand =
       requestId?: string
     }
   | {
+      type: 'list_project_agent_references'
+      agentId: string
+      requestId?: string
+    }
+  | {
+      type: 'get_project_agent_reference'
+      agentId: string
+      fileName: string
+      requestId?: string
+    }
+  | {
+      type: 'set_project_agent_reference'
+      agentId: string
+      fileName: string
+      content: string
+      requestId?: string
+    }
+  | {
+      type: 'delete_project_agent_reference'
+      agentId: string
+      fileName: string
+      requestId?: string
+    }
+  | {
       type: 'request_project_agent_recommendations'
       agentId: string
       requestId?: string

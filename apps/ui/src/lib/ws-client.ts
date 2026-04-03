@@ -59,7 +59,13 @@ export type ProjectAgentConfigResult = {
   agentId: string
   config: PersistedProjectAgentConfig
   systemPrompt: string | null
+  references: string[]
 }
+
+export type ProjectAgentReferencesResult = { agentId: string; references: string[] }
+export type ProjectAgentReferenceResult = { agentId: string; fileName: string; content: string }
+export type ProjectAgentReferenceSavedResult = { agentId: string; fileName: string }
+export type ProjectAgentReferenceDeletedResult = { agentId: string; fileName: string }
 
 type ProjectAgentRecommendationsResult = { agentId: string; whenToUse: string; systemPrompt: string }
 
@@ -80,6 +86,10 @@ type WsRequestResultMap = {
   merge_session_memory: SessionMemoryMergeResult
   set_session_project_agent: SessionProjectAgentResult
   get_project_agent_config: ProjectAgentConfigResult
+  list_project_agent_references: ProjectAgentReferencesResult
+  get_project_agent_reference: ProjectAgentReferenceResult
+  set_project_agent_reference: ProjectAgentReferenceSavedResult
+  delete_project_agent_reference: ProjectAgentReferenceDeletedResult
   request_project_agent_recommendations: ProjectAgentRecommendationsResult
   get_session_workers: { sessionAgentId: string; workers: AgentDescriptor[] }
   list_directories: DirectoriesListedResult
@@ -105,6 +115,10 @@ const WS_REQUEST_TYPES: WsRequestType[] = [
   'merge_session_memory',
   'set_session_project_agent',
   'get_project_agent_config',
+  'list_project_agent_references',
+  'get_project_agent_reference',
+  'set_project_agent_reference',
+  'delete_project_agent_reference',
   'request_project_agent_recommendations',
   'get_session_workers',
   'list_directories',
@@ -129,6 +143,10 @@ const WS_REQUEST_ERROR_HINTS: Array<{ requestType: WsRequestType; codeFragment: 
   { requestType: 'merge_session_memory', codeFragment: 'merge_session_memory' },
   { requestType: 'set_session_project_agent', codeFragment: 'set_session_project_agent' },
   { requestType: 'get_project_agent_config', codeFragment: 'project_agent_config' },
+  { requestType: 'list_project_agent_references', codeFragment: 'project_agent_references' },
+  { requestType: 'get_project_agent_reference', codeFragment: 'project_agent_reference' },
+  { requestType: 'set_project_agent_reference', codeFragment: 'project_agent_reference_saved' },
+  { requestType: 'delete_project_agent_reference', codeFragment: 'project_agent_reference_deleted' },
   { requestType: 'request_project_agent_recommendations', codeFragment: 'project_agent_recommendations' },
   { requestType: 'get_session_workers', codeFragment: 'get_session_workers' },
   { requestType: 'list_directories', codeFragment: 'list_directories' },
@@ -763,6 +781,90 @@ export class ManagerWsClient {
     }))
   }
 
+  async listProjectAgentReferences(agentId: string): Promise<ProjectAgentReferencesResult> {
+    const trimmed = agentId.trim()
+    if (!trimmed) {
+      throw new Error('Agent id is required.')
+    }
+
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+      throw new Error('WebSocket is disconnected. Reconnecting...')
+    }
+
+    return this.enqueueRequest('list_project_agent_references', (requestId) => ({
+      type: 'list_project_agent_references',
+      agentId: trimmed,
+      requestId,
+    }))
+  }
+
+  async getProjectAgentReference(agentId: string, fileName: string): Promise<ProjectAgentReferenceResult> {
+    const trimmedAgentId = agentId.trim()
+    const trimmedFileName = fileName.trim()
+    if (!trimmedAgentId) {
+      throw new Error('Agent id is required.')
+    }
+    if (!trimmedFileName) {
+      throw new Error('File name is required.')
+    }
+
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+      throw new Error('WebSocket is disconnected. Reconnecting...')
+    }
+
+    return this.enqueueRequest('get_project_agent_reference', (requestId) => ({
+      type: 'get_project_agent_reference',
+      agentId: trimmedAgentId,
+      fileName: trimmedFileName,
+      requestId,
+    }))
+  }
+
+  async setProjectAgentReference(agentId: string, fileName: string, content: string): Promise<ProjectAgentReferenceSavedResult> {
+    const trimmedAgentId = agentId.trim()
+    const trimmedFileName = fileName.trim()
+    if (!trimmedAgentId) {
+      throw new Error('Agent id is required.')
+    }
+    if (!trimmedFileName) {
+      throw new Error('File name is required.')
+    }
+
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+      throw new Error('WebSocket is disconnected. Reconnecting...')
+    }
+
+    return this.enqueueRequest('set_project_agent_reference', (requestId) => ({
+      type: 'set_project_agent_reference',
+      agentId: trimmedAgentId,
+      fileName: trimmedFileName,
+      content,
+      requestId,
+    }))
+  }
+
+  async deleteProjectAgentReference(agentId: string, fileName: string): Promise<ProjectAgentReferenceDeletedResult> {
+    const trimmedAgentId = agentId.trim()
+    const trimmedFileName = fileName.trim()
+    if (!trimmedAgentId) {
+      throw new Error('Agent id is required.')
+    }
+    if (!trimmedFileName) {
+      throw new Error('File name is required.')
+    }
+
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+      throw new Error('WebSocket is disconnected. Reconnecting...')
+    }
+
+    return this.enqueueRequest('delete_project_agent_reference', (requestId) => ({
+      type: 'delete_project_agent_reference',
+      agentId: trimmedAgentId,
+      fileName: trimmedFileName,
+      requestId,
+    }))
+  }
+
   async requestProjectAgentRecommendations(agentId: string): Promise<ProjectAgentRecommendationsResult> {
     const trimmed = agentId.trim()
     if (!trimmed) {
@@ -1309,6 +1411,48 @@ export class ManagerWsClient {
             agentId: event.agentId,
             config: event.config,
             systemPrompt: event.systemPrompt,
+            references: event.references,
+          })
+        }
+        break
+      }
+
+      case 'project_agent_references': {
+        if (event.requestId) {
+          this.requestTracker.resolve('list_project_agent_references', event.requestId, {
+            agentId: event.agentId,
+            references: event.references,
+          })
+        }
+        break
+      }
+
+      case 'project_agent_reference': {
+        if (event.requestId) {
+          this.requestTracker.resolve('get_project_agent_reference', event.requestId, {
+            agentId: event.agentId,
+            fileName: event.fileName,
+            content: event.content,
+          })
+        }
+        break
+      }
+
+      case 'project_agent_reference_saved': {
+        if (event.requestId) {
+          this.requestTracker.resolve('set_project_agent_reference', event.requestId, {
+            agentId: event.agentId,
+            fileName: event.fileName,
+          })
+        }
+        break
+      }
+
+      case 'project_agent_reference_deleted': {
+        if (event.requestId) {
+          this.requestTracker.resolve('delete_project_agent_reference', event.requestId, {
+            agentId: event.agentId,
+            fileName: event.fileName,
           })
         }
         break

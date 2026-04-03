@@ -98,7 +98,13 @@ import {
   normalizeProjectAgentInlineText
 } from "./project-agents.js";
 import { PersistenceService } from "./persistence-service.js";
-import { migrateLegacyProfileKnowledgeToReferenceDoc } from "./reference-docs.js";
+import {
+  deleteProjectAgentReferenceDoc,
+  listProjectAgentReferenceDocs,
+  migrateLegacyProfileKnowledgeToReferenceDoc,
+  readProjectAgentReferenceDoc,
+  writeProjectAgentReferenceDoc
+} from "./reference-docs.js";
 import { scanCortexReviewStatus } from "./scripts/cortex-scan.js";
 import {
   assertPiModelsProjectionAvailable,
@@ -3859,26 +3865,24 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   async getProjectAgentConfig(agentId: string): Promise<{
     config: import("@forge/protocol").PersistedProjectAgentConfig;
     systemPrompt: string | null;
+    references: string[];
   }> {
-    const descriptor = this.descriptors.get(agentId);
-    if (!descriptor?.projectAgent?.handle) {
-      throw new Error(`Agent ${agentId} is not a project agent`);
-    }
-    const profileId = descriptor.profileId ?? descriptor.agentId;
+    const { descriptor, profileId, handle } = this.assertProjectAgentReferenceScope(agentId);
+    const references = await listProjectAgentReferenceDocs(this.config.paths.dataDir, profileId, handle);
     const record = await readProjectAgentRecord(
       this.config.paths.dataDir,
       profileId,
-      descriptor.projectAgent.handle
+      handle
     );
     if (record) {
-      return { config: record.config, systemPrompt: record.systemPrompt };
+      return { config: record.config, systemPrompt: record.systemPrompt, references };
     }
     // Fallback: construct from descriptor data (pre-migration or missing directory)
     return {
       config: {
         version: 1,
         agentId,
-        handle: descriptor.projectAgent.handle,
+        handle,
         whenToUse: descriptor.projectAgent.whenToUse,
         ...(descriptor.projectAgent.creatorSessionId !== undefined
           ? { creatorSessionId: descriptor.projectAgent.creatorSessionId }
@@ -3887,7 +3891,32 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         updatedAt: new Date().toISOString(),
       },
       systemPrompt: descriptor.projectAgent.systemPrompt ?? null,
+      references,
     };
+  }
+
+  async listProjectAgentReferences(agentId: string): Promise<string[]> {
+    const { profileId, handle } = this.assertProjectAgentReferenceScope(agentId);
+    return listProjectAgentReferenceDocs(this.config.paths.dataDir, profileId, handle);
+  }
+
+  async getProjectAgentReference(agentId: string, fileName: string): Promise<string> {
+    const { profileId, handle } = this.assertProjectAgentReferenceScope(agentId);
+    const content = await readProjectAgentReferenceDoc(this.config.paths.dataDir, profileId, handle, fileName);
+    if (content === null) {
+      throw new Error(`Reference document ${fileName} does not exist`);
+    }
+    return content;
+  }
+
+  async setProjectAgentReference(agentId: string, fileName: string, content: string): Promise<void> {
+    const { profileId, handle } = this.assertProjectAgentReferenceScope(agentId);
+    await writeProjectAgentReferenceDoc(this.config.paths.dataDir, profileId, handle, fileName, content);
+  }
+
+  async deleteProjectAgentReference(agentId: string, fileName: string): Promise<void> {
+    const { profileId, handle } = this.assertProjectAgentReferenceScope(agentId);
+    await deleteProjectAgentReferenceDoc(this.config.paths.dataDir, profileId, handle, fileName);
   }
 
   async listDirectories(path?: string): Promise<DirectoryListingResult> {
@@ -6563,6 +6592,24 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     };
   }
 
+  private assertProjectAgentReferenceScope(agentId: string): {
+    descriptor: AgentDescriptor & { projectAgent: NonNullable<AgentDescriptor["projectAgent"]> };
+    profileId: string;
+    handle: string;
+  } {
+    const descriptor = this.descriptors.get(agentId);
+    const handle = descriptor?.projectAgent?.handle?.trim();
+    if (!descriptor?.projectAgent || !handle) {
+      throw new Error(`Agent ${agentId} is not a project agent`);
+    }
+
+    return {
+      descriptor: descriptor as AgentDescriptor & { projectAgent: NonNullable<AgentDescriptor["projectAgent"]> },
+      profileId: descriptor.profileId ?? descriptor.agentId,
+      handle
+    };
+  }
+
   private async buildResolvedManagerPrompt(
     descriptor: AgentDescriptor,
     options?: { ignoreProjectAgentSystemPrompt?: boolean }
@@ -6595,6 +6642,31 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     );
     const delegationContextBlock = `${delegationBlock}\n\n${projectAgentDirectoryBlock}`;
     let prompt = resolvePromptVariables(promptTemplate, this.buildStandardPromptVariables(descriptor));
+
+    if (descriptor.projectAgent?.handle) {
+      const refDocFiles = await listProjectAgentReferenceDocs(
+        this.config.paths.dataDir,
+        profileId,
+        descriptor.projectAgent.handle
+      );
+      if (refDocFiles.length > 0) {
+        const refContents: string[] = [];
+        for (const fileName of refDocFiles) {
+          const content = await readProjectAgentReferenceDoc(
+            this.config.paths.dataDir,
+            profileId,
+            descriptor.projectAgent.handle,
+            fileName
+          );
+          if (content) {
+            refContents.push(`## ${fileName}\n${content}`);
+          }
+        }
+        if (refContents.length > 0) {
+          prompt = `${prompt.trimEnd()}\n\n<agent_reference_docs>\n${refContents.join("\n\n")}\n</agent_reference_docs>`;
+        }
+      }
+    }
 
     if (prompt.includes("${SPECIALIST_ROSTER}")) {
       prompt = prompt.replaceAll("${SPECIALIST_ROSTER}", delegationContextBlock);

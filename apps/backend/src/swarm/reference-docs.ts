@@ -1,7 +1,12 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import type { VersioningMutationSink } from "../versioning/versioning-types.js";
-import { getProfileKnowledgePath, getProfileReferencePath } from "./data-paths.js";
+import {
+  getProfileKnowledgePath,
+  getProfileReferencePath,
+  getProjectAgentReferenceDir,
+  sanitizePathSegment
+} from "./data-paths.js";
 
 export const PROFILE_REFERENCE_INDEX_FILE = "index.md";
 export const LEGACY_PROFILE_KNOWLEDGE_REFERENCE_FILE = "legacy-profile-knowledge.md";
@@ -201,6 +206,148 @@ export async function migrateLegacyProfileKnowledgeToReferenceDoc(
   };
 }
 
+export async function ensureProjectAgentReferenceDoc(
+  dataDir: string,
+  profileId: string,
+  handle: string,
+  fileName: string,
+  initialContent = "",
+  options?: ReferenceDocWriteOptions
+): Promise<{ path: string; created: boolean }> {
+  const targetPath = getProjectAgentReferencePath(dataDir, profileId, handle, fileName);
+
+  try {
+    await readFile(targetPath, "utf8");
+    return { path: targetPath, created: false };
+  } catch (error) {
+    if (!isEnoentError(error)) {
+      throw error;
+    }
+  }
+
+  await mkdir(dirname(targetPath), { recursive: true });
+
+  try {
+    await writeFile(targetPath, ensureTrailingNewline(initialContent.trimEnd()), {
+      encoding: "utf8",
+      flag: "wx"
+    });
+    queueReferenceVersioningMutation(options?.versioning, {
+      path: targetPath,
+      action: "write",
+      source: "reference-doc",
+      profileId
+    });
+    return { path: targetPath, created: true };
+  } catch (error) {
+    if (isEexistError(error)) {
+      return { path: targetPath, created: false };
+    }
+
+    throw error;
+  }
+}
+
+export async function listProjectAgentReferenceDocs(
+  dataDir: string,
+  profileId: string,
+  handle: string
+): Promise<string[]> {
+  const referenceDir = getProjectAgentReferenceDir(dataDir, profileId, handle);
+
+  try {
+    const entries = await readdir(referenceDir, { withFileTypes: true });
+    return entries
+      .filter((entry) => entry.isFile())
+      .map((entry) => entry.name)
+      .sort((left, right) => left.localeCompare(right));
+  } catch (error) {
+    if (isEnoentError(error)) {
+      return [];
+    }
+
+    throw error;
+  }
+}
+
+export async function readProjectAgentReferenceDoc(
+  dataDir: string,
+  profileId: string,
+  handle: string,
+  fileName: string
+): Promise<string | null> {
+  const targetPath = getProjectAgentReferencePath(dataDir, profileId, handle, fileName);
+
+  try {
+    return await readFile(targetPath, "utf8");
+  } catch (error) {
+    if (isEnoentError(error)) {
+      return null;
+    }
+
+    throw error;
+  }
+}
+
+export async function writeProjectAgentReferenceDoc(
+  dataDir: string,
+  profileId: string,
+  handle: string,
+  fileName: string,
+  content: string,
+  options?: ReferenceDocWriteOptions
+): Promise<{ path: string; created: boolean; updated: boolean }> {
+  const ensured = await ensureProjectAgentReferenceDoc(dataDir, profileId, handle, fileName, content, options);
+  const normalizedContent = ensureTrailingNewline(content.trimEnd());
+  let updated = false;
+
+  if (!ensured.created) {
+    const existingContent = await readFile(ensured.path, "utf8");
+    if (existingContent !== normalizedContent) {
+      await writeFile(ensured.path, normalizedContent, "utf8");
+      updated = true;
+      queueReferenceVersioningMutation(options?.versioning, {
+        path: ensured.path,
+        action: "write",
+        source: "reference-doc",
+        profileId
+      });
+    }
+  }
+
+  return {
+    path: ensured.path,
+    created: ensured.created,
+    updated
+  };
+}
+
+export async function deleteProjectAgentReferenceDoc(
+  dataDir: string,
+  profileId: string,
+  handle: string,
+  fileName: string,
+  options?: ReferenceDocWriteOptions
+): Promise<void> {
+  const targetPath = getProjectAgentReferencePath(dataDir, profileId, handle, fileName);
+
+  try {
+    await rm(targetPath, { force: false });
+    queueReferenceVersioningMutation(options?.versioning, {
+      path: targetPath,
+      action: "delete",
+      source: "reference-doc",
+      profileId
+    });
+  } catch (error) {
+    if (isEnoentError(error)) {
+      return;
+    }
+
+    throw error;
+  }
+}
+
 export function buildProfileReferenceIndexTemplate(profileId: string): string {
   return [
     `# ${profileId} Reference Index`,
@@ -235,6 +382,15 @@ export function buildLegacyProfileKnowledgeReferenceDoc(profileId: string, legac
     normalizedLegacyContent,
     ""
   ].join("\n");
+}
+
+function getProjectAgentReferencePath(
+  dataDir: string,
+  profileId: string,
+  handle: string,
+  fileName: string
+): string {
+  return join(getProjectAgentReferenceDir(dataDir, profileId, handle), sanitizePathSegment(fileName));
 }
 
 function queueReferenceVersioningMutation(

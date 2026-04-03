@@ -912,6 +912,30 @@ export function IndexPage() {
     return client.getProjectAgentConfig(agentId)
   }, [clientRef])
 
+  const handleListProjectAgentReferences = useCallback(async (agentId: string) => {
+    const client = clientRef.current
+    if (!client) throw new Error('WebSocket is not connected.')
+    return client.listProjectAgentReferences(agentId)
+  }, [clientRef])
+
+  const handleGetProjectAgentReference = useCallback(async (agentId: string, fileName: string) => {
+    const client = clientRef.current
+    if (!client) throw new Error('WebSocket is not connected.')
+    return client.getProjectAgentReference(agentId, fileName)
+  }, [clientRef])
+
+  const handleSetProjectAgentReference = useCallback(async (agentId: string, fileName: string, content: string) => {
+    const client = clientRef.current
+    if (!client) throw new Error('WebSocket is not connected.')
+    return client.setProjectAgentReference(agentId, fileName, content)
+  }, [clientRef])
+
+  const handleDeleteProjectAgentReference = useCallback(async (agentId: string, fileName: string) => {
+    const client = clientRef.current
+    if (!client) throw new Error('WebSocket is not connected.')
+    return client.deleteProjectAgentReference(agentId, fileName)
+  }, [clientRef])
+
   const handleRequestProjectAgentRecommendations = useCallback(async (agentId: string) => {
     const client = clientRef.current
     if (!client) throw new Error('WebSocket is not connected.')
@@ -1132,6 +1156,10 @@ export function IndexPage() {
           onReorderProfiles={handleReorderProfiles}
           onSetSessionProjectAgent={handleSetSessionProjectAgent}
           onGetProjectAgentConfig={handleGetProjectAgentConfig}
+          onListProjectAgentReferences={handleListProjectAgentReferences}
+          onGetProjectAgentReference={handleGetProjectAgentReference}
+          onSetProjectAgentReference={handleSetProjectAgentReference}
+          onDeleteProjectAgentReference={handleDeleteProjectAgentReference}
           onRequestProjectAgentRecommendations={handleRequestProjectAgentRecommendations}
           onCreateAgentCreator={handleCreateAgentCreator}
         />

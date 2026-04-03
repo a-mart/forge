@@ -43,6 +43,10 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
     command.type !== "pin_session" &&
     command.type !== "set_session_project_agent" &&
     command.type !== "get_project_agent_config" &&
+    command.type !== "list_project_agent_references" &&
+    command.type !== "get_project_agent_reference" &&
+    command.type !== "set_project_agent_reference" &&
+    command.type !== "delete_project_agent_reference" &&
     command.type !== "request_project_agent_recommendations" &&
     command.type !== "fork_session" &&
     command.type !== "merge_session_memory"
@@ -307,12 +311,98 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
         agentId: command.agentId,
         config: result.config,
         systemPrompt: result.systemPrompt,
+        references: result.references,
         requestId: command.requestId
       });
     } catch (error) {
       send(socket, {
         type: "error",
         code: "NOT_A_PROJECT_AGENT",
+        message: error instanceof Error ? error.message : String(error),
+        requestId: command.requestId
+      });
+    }
+
+    return true;
+  }
+
+  if (command.type === "list_project_agent_references") {
+    try {
+      const references = await swarmManager.listProjectAgentReferences(command.agentId);
+      send(socket, {
+        type: "project_agent_references",
+        agentId: command.agentId,
+        references,
+        requestId: command.requestId
+      });
+    } catch (error) {
+      send(socket, {
+        type: "error",
+        code: "LIST_PROJECT_AGENT_REFERENCES_FAILED",
+        message: error instanceof Error ? error.message : String(error),
+        requestId: command.requestId
+      });
+    }
+
+    return true;
+  }
+
+  if (command.type === "get_project_agent_reference") {
+    try {
+      const content = await swarmManager.getProjectAgentReference(command.agentId, command.fileName);
+      send(socket, {
+        type: "project_agent_reference",
+        agentId: command.agentId,
+        fileName: command.fileName,
+        content,
+        requestId: command.requestId
+      });
+    } catch (error) {
+      send(socket, {
+        type: "error",
+        code: "GET_PROJECT_AGENT_REFERENCE_FAILED",
+        message: error instanceof Error ? error.message : String(error),
+        requestId: command.requestId
+      });
+    }
+
+    return true;
+  }
+
+  if (command.type === "set_project_agent_reference") {
+    try {
+      await swarmManager.setProjectAgentReference(command.agentId, command.fileName, command.content);
+      send(socket, {
+        type: "project_agent_reference_saved",
+        agentId: command.agentId,
+        fileName: command.fileName,
+        requestId: command.requestId
+      });
+    } catch (error) {
+      send(socket, {
+        type: "error",
+        code: "SET_PROJECT_AGENT_REFERENCE_FAILED",
+        message: error instanceof Error ? error.message : String(error),
+        requestId: command.requestId
+      });
+    }
+
+    return true;
+  }
+
+  if (command.type === "delete_project_agent_reference") {
+    try {
+      await swarmManager.deleteProjectAgentReference(command.agentId, command.fileName);
+      send(socket, {
+        type: "project_agent_reference_deleted",
+        agentId: command.agentId,
+        fileName: command.fileName,
+        requestId: command.requestId
+      });
+    } catch (error) {
+      send(socket, {
+        type: "error",
+        code: "DELETE_PROJECT_AGENT_REFERENCE_FAILED",
         message: error instanceof Error ? error.message : String(error),
         requestId: command.requestId
       });
