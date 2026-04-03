@@ -68,4 +68,19 @@ describe('MarkdownMessage', () => {
     expect(html).toContain('Terminal Support Plan')
     expect(html).toContain('docs/plans/terminal-support.md')
   })
+
+  it('routes mermaid fences through the isolated iframe shell when enabled', () => {
+    const content = ['```mermaid', 'graph LR', '  A-->B', '```'].join('\n')
+
+    const html = renderToStaticMarkup(
+      createElement(MarkdownMessage, {
+        content,
+        enableMermaid: true,
+      }),
+    )
+
+    expect(html).toContain('data-mermaid-preview-frame="true"')
+    expect(html).toContain('/mermaid-preview/embed')
+    expect(html).not.toContain('foreignObject')
+  })
 })

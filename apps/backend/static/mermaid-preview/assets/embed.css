@@ -1,0 +1,84 @@
+:root {
+  color-scheme: light dark;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  background: transparent;
+}
+
+body {
+  padding: 0;
+}
+
+.mermaid-preview-shell {
+  box-sizing: border-box;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  background: #0f172a;
+  color: #e2e8f0;
+}
+
+.mermaid-preview-shell[data-theme-mode='light'] {
+  background: #ffffff;
+  color: #0f172a;
+}
+
+.mermaid-preview-status {
+  font-size: 12px;
+  line-height: 1.5;
+  opacity: 0.8;
+}
+
+.mermaid-preview-canvas {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 120px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  background: rgba(15, 23, 42, 0.72);
+  overflow: auto;
+}
+
+.mermaid-preview-shell[data-theme-mode='light'] .mermaid-preview-canvas {
+  border-color: rgba(148, 163, 184, 0.4);
+  background: #f8fafc;
+}
+
+.mermaid-preview-canvas svg {
+  display: block;
+  max-width: none;
+}
+
+.mermaid-preview-message {
+  width: 100%;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px dashed rgba(148, 163, 184, 0.45);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  opacity: 0.9;
+}
+
+.mermaid-preview-error {
+  border-style: solid;
+  border-color: rgba(248, 113, 113, 0.4);
+  background: rgba(127, 29, 29, 0.18);
+}
+
+.mermaid-preview-shell[data-theme-mode='light'] .mermaid-preview-error {
+  border-color: rgba(220, 38, 38, 0.25);
+  background: rgba(254, 242, 242, 0.92);
+}
