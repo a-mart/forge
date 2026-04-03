@@ -20,11 +20,9 @@ Toggle "Show provider usage" to control whether the provider subscription usage 
 
 ## Telemetry
 
-Turn anonymous usage statistics on or off in Settings. Forge only sends aggregate counts such as sessions, models used, and feature adoption. It does not send prompts, code, file paths, repo names, or personal data.
+Anonymous telemetry is enabled by default and sends only aggregate counts such as sessions, models, and feature adoption. It does not send prompts, code, file paths, repo names, or personal data.
 
-The **Last sent** field shows the most recent successful report. Reports are sent periodically, at most once every 2 hours, and duplicates are automatically deduplicated.
-
-There is no install ID display or reset action in the UI.
+To opt out, set \`FORGE_TELEMETRY=false\` in your environment. There is no telemetry setting in the UI.
 
 ## Cortex Auto-Review
 
