@@ -13,6 +13,8 @@ Forge is a local-first multi-agent orchestration platform. It provides:
 3. An **Electron desktop app** that bundles backend, UI, and all dependencies for macOS and Windows.
 4. **Real-time updates** over WebSocket.
 
+The builtin manager archetype is intentionally concise and outcome-first in user-facing communication, so docs and UI copy should avoid promising constant progress narration.
+
 **Stack:** TypeScript, React 19, TanStack Start, Radix UI/shadcn, Tailwind v4, Vitest, Electron, pnpm monorepo
 
 ## Prerequisites
@@ -86,19 +88,20 @@ These are briefly described for orientation. Most have both backend and UI compo
 | **Feedback** | `swarm/feedback-service.ts` | `lib/feedback-client.ts` | User feedback collection |
 | **Daemon management** | `reboot/`, `scripts/prod-daemon*.mjs` | — | Production process lifecycle (start, restart, PID tracking) |
 | **Reference docs** | `swarm/reference-docs.ts` | Settings UI | Profile-scoped reference documents |
-| **Worker stall detector** | `swarm/swarm-manager.ts` (WorkerStallState, checkForStalledWorkers) | — | Periodic wall-clock detection of workers stuck mid-tool-execution; two-stage nudge then auto-kill |
+| **Worker stall detector** | `swarm/swarm-manager.ts` (WorkerStallState, checkForStalledWorkers) | — | Periodic wall-clock detection of workers stuck mid-tool-execution; projects worker turn failures into system messages with preserved error context, suppresses duplicate callback/summary reports, then nudges or auto-kills |
 | **Choice Picker** | `swarm/swarm-manager.ts` (pending registry), `swarm/swarm-tools.ts` (present_choices tool) | `components/chat/message-list/ChoiceRequestCard.tsx`, `components/chat/message-list/ChoiceAnsweredRow.tsx` | Interactive structured choice picker for agent-user decision points. Choice requests trigger a dedicated notification sound (configurable per-manager, default ON) that takes priority over regular notification sounds. |
 | **Pi extensions** | Agent runtime (`pi-agent-runtime.ts`: `bindExtensions()`, `session_shutdown`, auto-discovery) | — | In-process custom tools, event interception, context modification, and packages via Pi's extension system. Auto-discovered from `~/.forge/agent/extensions/` (workers), `~/.forge/agent/manager/extensions/` (managers), and `<cwd>/.pi/extensions/` (project-local). See [`docs/PI_EXTENSIONS.md`](docs/PI_EXTENSIONS.md) |
 | **Integrated terminals** | `terminal/` | `components/terminal/` | Per-session PTY terminals with persistence and state restoration |
-| **Specialists** | `swarm/specialists/` | `components/settings/SettingsSpecialists.tsx` | Named worker spawn templates with model config, fallback, per-profile overrides, and provider-native tool config (e.g., xAI web search) |
+| **Specialists** | `swarm/specialists/` | `components/settings/SettingsSpecialists.tsx` | Named worker spawn templates with model config, silent worker/runtime fallback recovery, per-profile overrides, and provider-native tool config (e.g., xAI web search) |
 | **Model catalog** | `swarm/model-catalog-service.ts`, `swarm/model-catalog-projection.ts` | `components/settings/SettingsModels.tsx` | Authoritative single-source model metadata catalog with Pi projection, local overrides, and audit workflow for upstream sync |
 | **Model overrides** | `swarm/model-overrides.ts` | Settings Models UI | User-scoped model visibility and context-window caps persisted to `model-overrides.json` |
-| **Mermaid diagrams** | — | `components/chat/message-list/MermaidBlock.tsx` | Inline rendering of mermaid diagrams in chat with interactive toolbar (toggle, copy, SVG/PNG export, fullscreen) |
+| **Mermaid diagrams** | `ws/routes/mermaid-preview-route.ts` | `components/chat/message-list/MermaidBlock.tsx`, artifact/file/diff markdown previews | Sandboxed iframe rendering for Mermaid code fences with inline toolbar controls for code/diagram toggle, copy source, SVG/PNG export, fullscreen, and theme-reactive/error fallback |
 | **Electron desktop app** | `apps/electron/src/main.ts`, `auto-updater.ts`, `preload.ts`, `window-state.ts` | `components/settings/SettingsAbout.tsx` | Standalone desktop application for macOS and Windows. Bundles backend, UI, and dependencies. Auto-updates via GitHub Releases with beta channel support. Persists and restores window position, size, maximized state, and fullscreen state across launches. Dark mode by default. Windows uses standard title bar with hidden menu (Alt to show); macOS uses standard title bar. Provides shell integration for revealing files in Finder/Explorer. |
 | **Message pins** | `swarm/message-pins.ts` | `components/chat/message-list/` | Pin up to 10 messages per session; pinned content is preserved through all compaction types via custom instructions and extension hooks. Pin count badge in chat header opens a navigator popover with prev/next buttons to jump directly to any pinned message. |
 | **Session pins** | `swarm/swarm-manager.ts` (pinSession method) | `components/chat/AgentSidebar.tsx` | Pin sessions to top of sidebar; right-click pin/unpin with three-tier sort (project agents → pinned → regular). Pinned sessions never hidden by pagination. State stored as `pinnedAt` timestamp on `AgentDescriptor`. |
 | **Project Agents** | `swarm/project-agents.ts`, `swarm/project-agent-analysis.ts` | `components/chat/AgentSidebar.tsx`, `components/chat/MessageInput.tsx`, `components/chat/message-list/ConversationMessageRow.tsx` | Cross-session agent messaging via lightweight session promotion with discovery, AI-assisted configuration, and fire-and-forget async messaging. Promoted sessions appear with dedicated handles in sidebar and are discoverable by sibling session agents. |
-| **Project Agent Creator** | `swarm/agent-creator-context.ts`, `swarm/agent-creator-tool.ts`, `swarm/archetypes/builtins/agent-architect.md` | `components/chat/AgentSidebar.tsx` (context menu + violet Sparkles icon) | Conversational project agent creation flow. Right-click profile header to create a session with the Agent Architect archetype. Gathers context (existing agents + recent memory excerpts, 10K budget), interviews user about the new agent's role, then atomically creates and promotes the session via `create_project_agent` tool. Cannot be promoted, forked, or created in Cortex profile. |
+| **Project Agent Creator** | `swarm/agent-creator-context.ts`, `swarm/agent-creator-tool.ts`, `swarm/archetypes/builtins/agent-architect.md` | `components/chat/AgentSidebar.tsx` (context menu + violet Sparkles icon) | Conversational project agent creation flow. Right-click profile header to create a session with the Agent Architect archetype. Gathers context (existing agents + recent memory excerpts, 3,200-char seed context budget), interviews user about the new agent's role, then atomically creates and promotes the session via `create_project_agent` tool. Cannot be promoted, forked, or created in Cortex profile. |
+| **Provider usage monitoring** | `stats/provider-usage-service.ts` | `components/chat/SidebarUsageWidget.tsx`, `components/stats/sections/ProviderUsage.tsx` | OAuth-based subscription rate-limit monitoring for OpenAI Codex and Anthropic Claude. Shows 5-hour rolling and weekly usage windows with reset timers in sidebar widget and dashboard stats panel. Cached per-provider with 3-minute TTL. |
 
 Backend paths above are relative to `apps/backend/src/`. UI paths are relative to `apps/ui/src/`.
 
@@ -183,7 +186,7 @@ All runtime state lives in `~/.forge` (or `%LOCALAPPDATA%\forge` on Windows), ov
 ```
 
 Session forks now support a **partial fork** from a specific message: the forked `session.jsonl` is copied up to that message only.
-The forked session memory header also records that truncation point so the parent history boundary is explicit.
+The forked session memory header also records that truncation point so the parent history boundary is explicit. Cached conversation sidecars rebuild from canonical `session.jsonl` on first load if they are stale or truncated, including after async project-agent deliveries.
 
 See `apps/backend/src/swarm/data-paths.ts` for the canonical path resolution logic.
 
@@ -258,6 +261,7 @@ Copy `.env.example` to `.env` and uncomment/set values as needed. Key variables:
 | `FORGE_PORT` | `47187` | Backend port (production uses `47287`) |
 | `FORGE_DATA_DIR` | `~/.forge` | Data storage root |
 | `FORGE_DEBUG` | `false` | Enable debug logging (also enables extension tool-call logging) |
+| `FORGE_TELEMETRY` | `true` | Enable or disable anonymous telemetry. Only aggregate counts are sent. |
 | `VITE_FORGE_WS_URL` | auto-detected | WebSocket URL override (dev mode only) |
 | `BRAVE_API_KEY` | — | Brave Search skill |
 | `GEMINI_API_KEY` | — | Image generation skill |

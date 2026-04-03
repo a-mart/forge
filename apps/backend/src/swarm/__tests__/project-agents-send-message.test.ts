@@ -1,9 +1,11 @@
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { SessionManager } from "@mariozechner/pi-coding-agent";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { getScheduleFilePath } from "../../scheduler/schedule-storage.js";
 import { getProfileMemoryPath } from "../data-paths.js";
+import { getConversationHistoryCacheFilePath } from "../conversation-history-cache.js";
 import { SwarmManager } from "../swarm-manager.js";
 import type { AgentContextUsage, AgentDescriptor, RequestedDeliveryMode, SendMessageReceipt, SwarmConfig } from "../types.js";
 import type { RuntimeUserMessage, SwarmAgentRuntime } from "../runtime-types.js";
@@ -12,9 +14,11 @@ class FakeRuntime {
   readonly descriptor: AgentDescriptor;
   sendCalls: Array<{ message: string | RuntimeUserMessage; delivery: RequestedDeliveryMode }> = [];
   private nextDeliveryId = 0;
+  private readonly sessionManager: SessionManager;
 
   constructor(descriptor: AgentDescriptor) {
     this.descriptor = descriptor;
+    this.sessionManager = SessionManager.open(descriptor.sessionFile);
   }
 
   getStatus(): AgentDescriptor["status"] {
@@ -58,12 +62,15 @@ class FakeRuntime {
     return false;
   }
 
-  getCustomEntries(_customType: string): unknown[] {
-    return [];
+  getCustomEntries(customType: string): unknown[] {
+    return this.sessionManager.getEntries()
+      .filter((entry) => entry.type === "custom" && entry.customType === customType)
+      .map((entry) => (entry.type === "custom" ? entry.data : undefined))
+      .filter((entry) => entry !== undefined);
   }
 
-  appendCustomEntry(_customType: string, _data?: unknown): string {
-    return "custom-entry-id";
+  appendCustomEntry(customType: string, data?: unknown): string {
+    return this.sessionManager.appendCustomEntry(customType, data);
   }
 }
 
@@ -191,6 +198,29 @@ async function bootWithDefaultManager(manager: TestSwarmManager, config: SwarmCo
   });
 }
 
+async function waitForFileText(
+  path: string,
+  options?: { timeoutMs?: number; matches?: (text: string) => boolean }
+): Promise<string> {
+  const timeoutMs = options?.timeoutMs ?? 500;
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    try {
+      const text = await readFile(path, "utf8");
+      if (!options?.matches || options.matches(text)) {
+        return text;
+      }
+    } catch {
+      // keep polling until the cache write lands
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
+  throw new Error(`Timed out waiting for file ${path}`);
+}
+
 describe("SwarmManager project-agent sendMessage routing", () => {
   it("uses the generic path for cross-profile manager sends to promoted targets", async () => {
     const config = await makeTempConfig();
@@ -225,5 +255,63 @@ describe("SwarmManager project-agent sendMessage routing", () => {
         (entry) => entry.type === "conversation_message" && entry.source === "project_agent_input"
       )
     ).toEqual([]);
+  });
+
+  it("preserves dormant same-profile project-agent history when an async message lands before lazy load", async () => {
+    const config = await makeTempConfig(8898);
+    const firstBoot = new TestSwarmManager(config);
+
+    const sender = await bootWithDefaultManager(firstBoot, config);
+    const { sessionAgent: target } = await firstBoot.createSession(sender.profileId ?? sender.agentId, {
+      label: "Release Notes"
+    });
+
+    await firstBoot.setSessionProjectAgent(target.agentId, {
+      whenToUse: "Draft release notes"
+    });
+
+    const seededSession = SessionManager.open(target.sessionFile);
+    seededSession.appendMessage({
+      role: "assistant",
+      content: [{ type: "text", text: "seed message" }]
+    } as never);
+    seededSession.appendCustomEntry("swarm_conversation_entry", {
+      type: "conversation_message",
+      agentId: target.agentId,
+      role: "assistant",
+      text: "persisted history before async delivery",
+      timestamp: "2025-12-31T23:58:00.000Z",
+      source: "system"
+    });
+
+    const secondBoot = new TestSwarmManager(config);
+    await secondBoot.boot();
+
+    await secondBoot.sendMessage(sender.agentId, target.agentId, "Need a release summary", "auto");
+
+    const cacheFile = getConversationHistoryCacheFilePath(target.sessionFile);
+    await waitForFileText(cacheFile, {
+      matches: (text) =>
+        text.includes("persisted history before async delivery") && text.includes("Need a release summary")
+    });
+
+    const thirdBoot = new TestSwarmManager(config);
+    await thirdBoot.boot();
+
+    const history = thirdBoot.getConversationHistory(target.agentId);
+    expect(
+      history.some(
+        (entry) =>
+          entry.type === "conversation_message" && entry.text === "persisted history before async delivery"
+      )
+    ).toBe(true);
+    expect(
+      history.some(
+        (entry) =>
+          entry.type === "conversation_message" &&
+          entry.source === "project_agent_input" &&
+          entry.text === "Need a release summary"
+      )
+    ).toBe(true);
   });
 });

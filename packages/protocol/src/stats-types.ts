@@ -12,6 +12,8 @@ export interface StatsSnapshot {
   sessions: SessionStats;
   activity: ActivityStats;
   models: ModelDistributionEntry[];
+  /** Untruncated provider set derived from all model usage, not just the top models list. */
+  allProviders?: string[];
   dailyUsage: DailyUsageBucket[];
   providers: ProviderUsageStats;
   system: SystemStats;
@@ -95,11 +97,21 @@ export interface ProviderUsageStats {
   openai?: ProviderAccountUsage;
 }
 
+export interface ProviderUsagePace {
+  mode: 'historical';
+  expectedPercent: number;
+  deltaPercent: number;
+  etaSeconds?: number;
+  willLastToReset: boolean;
+  runOutProbability?: number;
+}
+
 export interface ProviderUsageWindow {
   percent: number;
   resetInfo: string;
   resetAtMs?: number;
   windowSeconds?: number;
+  pace?: ProviderUsagePace;
 }
 
 export interface ProviderAccountUsage {
@@ -117,6 +129,10 @@ export interface SystemStats {
   totalProfiles: number;
   serverVersion: string;
   nodeVersion: string;
+  platform: string;
+  arch: string;
+  isDesktop: boolean;
+  electronVersion: string | null;
 }
 
 export type StatsRange = "7d" | "30d" | "all";

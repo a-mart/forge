@@ -49,6 +49,7 @@ vi.mock('../swarm/project-agent-analysis.js', async () => {
 
 import { readSessionMeta } from '../swarm/session-manifest.js'
 import { loadOnboardingState, saveOnboardingPreferences } from '../swarm/onboarding-state.js'
+import { AgentRuntime } from '../swarm/agent-runtime.js'
 import { buildSessionMemoryRuntimeView, SwarmManager } from '../swarm/swarm-manager.js'
 import type {
   AgentContextUsage,
@@ -58,7 +59,13 @@ import type {
   SendMessageReceipt,
   SwarmConfig,
 } from '../swarm/types.js'
-import type { RuntimeUserMessage, SwarmAgentRuntime } from '../swarm/runtime-types.js'
+import type {
+  RuntimeErrorEvent,
+  RuntimeSessionEvent,
+  RuntimeUserMessage,
+  SpecialistFallbackReplaySnapshot,
+  SwarmAgentRuntime,
+} from '../swarm/runtime-types.js'
 
 class FakeRuntime {
   readonly descriptor: AgentDescriptor
@@ -68,8 +75,16 @@ class FakeRuntime {
   recycleCalls = 0
   sendCalls: Array<{ message: string | RuntimeUserMessage; delivery: RequestedDeliveryMode }> = []
   compactCalls: Array<string | undefined> = []
+  onSendMessage:
+    | ((message: string | RuntimeUserMessage, delivery: RequestedDeliveryMode) => Promise<void> | void)
+    | undefined
   nextDeliveryId = 0
   busy = false
+  terminateMutatesDescriptorStatus = false
+  sendMessageError: Error | undefined
+  specialistFallbackReplayMessage: RuntimeUserMessage | undefined
+  specialistFallbackReplaySnapshot: SpecialistFallbackReplaySnapshot | undefined
+  specialistFallbackReplayError: Error | undefined
 
   constructor(descriptor: AgentDescriptor) {
     this.descriptor = descriptor
@@ -88,8 +103,43 @@ class FakeRuntime {
     return undefined
   }
 
+  async prepareForSpecialistFallbackReplay(): Promise<SpecialistFallbackReplaySnapshot | undefined> {
+    if (this.specialistFallbackReplayError) {
+      throw this.specialistFallbackReplayError
+    }
+
+    if (this.specialistFallbackReplaySnapshot) {
+      return {
+        messages: this.specialistFallbackReplaySnapshot.messages.map((message) => ({
+          text: message.text,
+          images: message.images?.map((image) => ({ ...image })) ?? [],
+        })),
+      }
+    }
+
+    if (!this.specialistFallbackReplayMessage) {
+      return undefined
+    }
+
+    return {
+      messages: [
+        {
+          text: this.specialistFallbackReplayMessage.text,
+          images: this.specialistFallbackReplayMessage.images?.map((image) => ({ ...image })) ?? [],
+        },
+      ],
+    }
+  }
+
   async sendMessage(message: string | RuntimeUserMessage, delivery: RequestedDeliveryMode = 'auto'): Promise<SendMessageReceipt> {
     this.sendCalls.push({ message, delivery })
+
+    await this.onSendMessage?.(message, delivery)
+
+    if (this.sendMessageError) {
+      throw this.sendMessageError
+    }
+
     this.nextDeliveryId += 1
     this.sessionManager.appendMessage({
       role: 'assistant',
@@ -105,6 +155,9 @@ class FakeRuntime {
 
   async terminate(options?: { abort?: boolean; shutdownTimeoutMs?: number; drainTimeoutMs?: number }): Promise<void> {
     this.terminateCalls.push(options)
+    if (this.terminateMutatesDescriptorStatus) {
+      this.descriptor.status = 'terminated'
+    }
   }
 
   async recycle(): Promise<void> {
@@ -138,10 +191,79 @@ class FakeRuntime {
   }
 }
 
+class FallbackReplaySession {
+  isStreaming = false
+  promptCalls: string[] = []
+  steerCalls: string[] = []
+  listener: ((event: any) => void) | undefined
+  promptImpl: ((message: string) => Promise<void>) | undefined
+  steerImpl: ((message: string) => Promise<void>) | undefined
+  private sessionMessages: unknown[] = []
+
+  readonly sessionManager = {
+    getEntries: () => [],
+    buildSessionContext: () => ({ messages: structuredClone(this.sessionMessages) as unknown[] }),
+    resetLeaf: () => {
+      this.sessionMessages = []
+    },
+    appendModelChange: () => {},
+    appendThinkingLevelChange: () => {},
+    appendMessage: (message: unknown) => {
+      this.sessionMessages.push(structuredClone(message))
+    },
+    appendCustomEntry: () => 'custom-id',
+  }
+
+  readonly model = { provider: 'openai-codex', id: 'gpt-5.3-codex' }
+  readonly thinkingLevel = 'medium'
+  readonly state = { messages: [] as Array<{ role?: string; stopReason?: string }> }
+  readonly agent = {
+    replaceMessages: (messages: unknown[]) => {
+      this.sessionMessages = structuredClone(messages)
+      this.state.messages = structuredClone(messages) as Array<{ role?: string; stopReason?: string }>
+    },
+  }
+
+  async prompt(message: string): Promise<void> {
+    this.promptCalls.push(message)
+    if (this.promptImpl) {
+      await this.promptImpl(message)
+    }
+  }
+
+  async steer(message: string): Promise<void> {
+    this.steerCalls.push(message)
+    if (this.steerImpl) {
+      await this.steerImpl(message)
+    }
+  }
+
+  async sendUserMessage(): Promise<void> {}
+  async abort(): Promise<void> {}
+  async compact(): Promise<unknown> { return { ok: true } }
+  getContextUsage(): AgentContextUsage | undefined { return undefined }
+  dispose(): void {}
+
+  subscribe(listener: (event: any) => void): () => void {
+    this.listener = listener
+    return () => {
+      this.listener = undefined
+    }
+  }
+
+  emit(event: any): void {
+    this.listener?.(event)
+  }
+}
+
 class TestSwarmManager extends SwarmManager {
   readonly runtimeByAgentId = new Map<string, FakeRuntime>()
   readonly createdRuntimeIds: string[] = []
+  readonly runtimeCreationCountByAgentId = new Map<string, number>()
   readonly systemPromptByAgentId = new Map<string, string>()
+  onCreateRuntime:
+    | ((options: { descriptor: AgentDescriptor; runtime: FakeRuntime; creationCount: number; runtimeToken?: number }) => Promise<void> | void)
+    | undefined
 
   async getMemoryRuntimeResourcesForTest(agentId = 'manager'): Promise<{
     memoryContextFile: { path: string; content: string }
@@ -170,9 +292,12 @@ class TestSwarmManager extends SwarmManager {
   protected override async createRuntimeForDescriptor(
     descriptor: AgentDescriptor,
     systemPrompt: string,
-    _runtimeToken?: number,
+    runtimeToken?: number,
   ): Promise<SwarmAgentRuntime> {
-    const runtime = new FakeRuntime(descriptor)
+    const runtime = new FakeRuntime(structuredClone(descriptor))
+    const creationCount = (this.runtimeCreationCountByAgentId.get(descriptor.agentId) ?? 0) + 1
+    this.runtimeCreationCountByAgentId.set(descriptor.agentId, creationCount)
+    await this.onCreateRuntime?.({ descriptor, runtime, creationCount, runtimeToken })
     this.createdRuntimeIds.push(descriptor.agentId)
     this.runtimeByAgentId.set(descriptor.agentId, runtime)
     this.systemPromptByAgentId.set(descriptor.agentId, systemPrompt)
@@ -187,6 +312,44 @@ class TestSwarmManager extends SwarmManager {
     throw new Error('LLM merge disabled in tests')
   }
 
+}
+
+class RuntimeFallbackReplayTestManager extends TestSwarmManager {
+  fallbackReplaySessionByAgentId = new Map<string, FallbackReplaySession>()
+  fallbackReplayRuntimeByAgentId = new Map<string, AgentRuntime>()
+  fallbackReplayWorkerId: string | undefined
+
+  protected override async createRuntimeForDescriptor(
+    descriptor: AgentDescriptor,
+    systemPrompt: string,
+    runtimeToken?: number,
+  ): Promise<SwarmAgentRuntime> {
+    const workerId = this.fallbackReplayWorkerId
+    const creationCount = (this.runtimeCreationCountByAgentId.get(descriptor.agentId) ?? 0) + 1
+
+    if (workerId && descriptor.agentId === workerId && creationCount === 1) {
+      const session = new FallbackReplaySession()
+      const runtime = new AgentRuntime({
+        descriptor: structuredClone(descriptor),
+        session: session as any,
+        systemPrompt,
+        callbacks: {
+          onStatusChange: async () => {},
+          onSessionEvent: async () => {},
+          onAgentEnd: async () => {},
+          onRuntimeError: async () => {},
+        },
+      })
+      this.runtimeCreationCountByAgentId.set(descriptor.agentId, creationCount)
+      this.createdRuntimeIds.push(descriptor.agentId)
+      this.fallbackReplaySessionByAgentId.set(descriptor.agentId, session)
+      this.fallbackReplayRuntimeByAgentId.set(descriptor.agentId, runtime)
+      this.systemPromptByAgentId.set(descriptor.agentId, systemPrompt)
+      return runtime as unknown as SwarmAgentRuntime
+    }
+
+    return super.createRuntimeForDescriptor(descriptor, systemPrompt, runtimeToken)
+  }
 }
 
 class MergeEnabledTestSwarmManager extends TestSwarmManager {
@@ -217,7 +380,7 @@ class AuthFallbackSwarmManager extends SwarmManager {
     _systemPrompt: string,
     _runtimeToken?: number,
   ): Promise<SwarmAgentRuntime> {
-    return new FakeRuntime(descriptor) as unknown as SwarmAgentRuntime
+    return new FakeRuntime(structuredClone(descriptor)) as unknown as SwarmAgentRuntime
   }
 }
 
@@ -268,6 +431,15 @@ async function waitForCondition(
   }
 
   throw new Error('Timed out waiting for async condition')
+}
+
+function createDeferred<T = void>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve = (_value: T) => {}
+  const promise = new Promise<T>((nextResolve) => {
+    resolve = nextResolve
+  })
+
+  return { promise, resolve }
 }
 
 function expectStartedReviewRun<T>(run: T | null): T {
@@ -1502,7 +1674,7 @@ describe('SwarmManager', () => {
         profileId: 'manager',
         sessionCwd: expect.stringContaining('swarm-manager-test-'),
       })
-      expect(options.currentSystemPrompt).toContain('User-facing output MUST go through speak_to_user.')
+      expect(options.currentSystemPrompt).toContain('Every user-facing message MUST go through `speak_to_user`.')
       expect(options.currentSystemPrompt).not.toContain('old release-notes override prompt')
     } finally {
       if (previousAnthropicApiKey === undefined) {
@@ -2221,8 +2393,9 @@ describe('SwarmManager', () => {
     const managerPrompt = manager.systemPromptByAgentId.get('manager')
     const managerMemoryPath = getRootSessionMemoryPath(config.paths.dataDir, 'manager')
     expect(managerPrompt).toContain('You are the manager agent in a multi-agent swarm.')
-    expect(managerPrompt).toContain('End users only see two things')
-    expect(managerPrompt).toContain('prefixed with "SYSTEM:"')
+    expect(managerPrompt).toContain('Every user-facing message MUST go through `speak_to_user`.')
+    expect(managerPrompt).toContain('End users only see:')
+    expect(managerPrompt).toContain('Non-user/internal inbound messages may be prefixed with `SYSTEM:`.')
     expect(managerPrompt).toContain('Project agents in this profile — none configured.')
     expect(managerPrompt).toContain('Workers do not receive this directory.')
     expect(managerPrompt).toContain('[projectAgentContext] { ... }')
@@ -4261,7 +4434,1523 @@ describe('SwarmManager', () => {
     })
   })
 
-  it('falls back to a generic completion signal when the latest summary was already reported', async () => {
+  it('auto-reports worker turn errors with the error context instead of a generic completion signal', async () => {
+    const config = await makeTempConfig()
+    let tick = 0
+    const now = () => new Date(Date.parse('2026-01-01T00:00:00.000Z') + tick++).toISOString()
+    const manager = new TestSwarmManager(config, { now })
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', { agentId: 'Errored Worker' })
+    const managerRuntime = manager.runtimeByAgentId.get('manager')
+    expect(managerRuntime).toBeDefined()
+
+    await (manager as any).handleRuntimeSessionEvent(worker.agentId, {
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        content: [],
+        stopReason: 'error',
+        errorMessage:
+          '429 {"type":"error","error":{"type":"rate_limit_error","message":"This request would exceed your account\'s rate limit. Please try again later."}}',
+      },
+    })
+
+    await waitForCondition(() =>
+      manager
+        .getConversationHistory(worker.agentId)
+        .some(
+          (entry) =>
+            entry.type === 'conversation_message' &&
+            entry.role === 'system' &&
+            entry.text.includes('⚠️ Worker reply failed:'),
+        ),
+    )
+
+    managerRuntime!.sendCalls = []
+
+    await (manager as any).handleRuntimeAgentEnd(worker.agentId)
+
+    expect(managerRuntime?.sendCalls).toHaveLength(1)
+    expect(managerRuntime?.sendCalls[0]).toMatchObject({
+      delivery: 'auto',
+      message:
+        'SYSTEM: Worker errored-worker ended its turn with an error.\n\nLast system message:\n⚠️ Worker reply failed: This request would exceed your account\'s rate limit. Please try again later. The manager may need to retry after checking provider auth, quotas, or rate limits.',
+    })
+  })
+
+  it('reroutes recoverable specialist prompt_dispatch failures to the fallback model without surfacing an error', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+
+    await mkdir(join(config.paths.sharedDir, 'specialists'), { recursive: true })
+    await writeFile(
+      join(config.paths.sharedDir, 'specialists', 'planner.md'),
+      [
+        '---',
+        'displayName: Planner',
+        'color: "#7c3aed"',
+        'enabled: true',
+        'whenToUse: Planning work.',
+        'modelId: claude-opus-4-6',
+        'reasoningLevel: high',
+        'fallbackModelId: gpt-5.4',
+        'fallbackReasoningLevel: high',
+        '---',
+        'You are the planner specialist.'
+      ].join('\n'),
+      'utf8',
+    )
+
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', {
+      agentId: 'Planner Worker',
+      specialist: 'planner',
+    })
+    const managerRuntime = manager.runtimeByAgentId.get('manager')
+    const originalRuntime = manager.runtimeByAgentId.get(worker.agentId)
+
+    expect(worker.model).toEqual({
+      provider: 'anthropic',
+      modelId: 'claude-opus-4-6',
+      thinkingLevel: 'high',
+    })
+    expect(managerRuntime).toBeDefined()
+    expect(originalRuntime).toBeDefined()
+
+    originalRuntime!.specialistFallbackReplayMessage = {
+      text: 'Draft the implementation plan.',
+      images: [],
+    }
+    managerRuntime!.sendCalls = []
+
+    await (manager as any).handleRuntimeError(worker.agentId, {
+      phase: 'prompt_dispatch',
+      message: '429 {"type":"error","error":{"type":"rate_limit_error","message":"This request would exceed your account\'s rate limit. Please try again later."}}',
+    })
+
+    const replacementRuntime = manager.runtimeByAgentId.get(worker.agentId)
+    expect(replacementRuntime).toBeDefined()
+    expect(replacementRuntime).not.toBe(originalRuntime)
+    expect(originalRuntime?.terminateCalls).toHaveLength(1)
+    expect(managerRuntime?.sendCalls).toHaveLength(0)
+    expect(manager.getAgent(worker.agentId)?.model).toEqual({
+      provider: 'openai-codex',
+      modelId: 'gpt-5.4',
+      thinkingLevel: 'high',
+    })
+    expect(replacementRuntime?.sendCalls).toEqual([
+      {
+        message: {
+          text: 'Draft the implementation plan.',
+          images: [],
+        },
+        delivery: 'auto',
+      },
+    ])
+    expect(
+      manager
+        .getConversationHistory(worker.agentId)
+        .some(
+          (entry) =>
+            entry.type === 'conversation_message' &&
+            entry.role === 'system' &&
+            entry.text.includes('Worker reply failed:'),
+        ),
+    ).toBe(false)
+  })
+
+  it('keeps the live worker descriptor healthy after old-runtime terminate mutates its own descriptor during fallback', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+
+    await mkdir(join(config.paths.sharedDir, 'specialists'), { recursive: true })
+    await writeFile(
+      join(config.paths.sharedDir, 'specialists', 'planner.md'),
+      [
+        '---',
+        'displayName: Planner',
+        'color: "#7c3aed"',
+        'enabled: true',
+        'whenToUse: Planning work.',
+        'modelId: claude-opus-4-6',
+        'reasoningLevel: high',
+        'fallbackModelId: gpt-5.4',
+        'fallbackReasoningLevel: high',
+        '---',
+        'You are the planner specialist.'
+      ].join('\n'),
+      'utf8',
+    )
+
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', {
+      agentId: 'Planner Descriptor Isolation Worker',
+      specialist: 'planner',
+    })
+    const originalRuntime = manager.runtimeByAgentId.get(worker.agentId)
+    expect(originalRuntime).toBeDefined()
+
+    originalRuntime!.specialistFallbackReplayMessage = {
+      text: 'Retry after rate limit.',
+      images: [],
+    }
+    originalRuntime!.terminateMutatesDescriptorStatus = true
+
+    await (manager as any).handleRuntimeError(worker.agentId, {
+      phase: 'prompt_dispatch',
+      message: '429 {"type":"error","error":{"type":"rate_limit_error","message":"This request would exceed your account\'s rate limit. Please try again later."}}',
+    })
+
+    expect(originalRuntime?.descriptor.status).toBe('terminated')
+    expect(manager.getAgent(worker.agentId)?.status).toBe('idle')
+    expect(manager.getAgent(worker.agentId)?.model).toEqual({
+      provider: 'openai-codex',
+      modelId: 'gpt-5.4',
+      thinkingLevel: 'high',
+    })
+  })
+
+  it('reroutes recoverable specialist message_end provider failures before they reach the manager', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+
+    await mkdir(join(config.paths.sharedDir, 'specialists'), { recursive: true })
+    await writeFile(
+      join(config.paths.sharedDir, 'specialists', 'planner.md'),
+      [
+        '---',
+        'displayName: Planner',
+        'color: "#7c3aed"',
+        'enabled: true',
+        'whenToUse: Planning work.',
+        'modelId: claude-opus-4-6',
+        'reasoningLevel: high',
+        'fallbackModelId: gpt-5.4',
+        'fallbackReasoningLevel: high',
+        '---',
+        'You are the planner specialist.'
+      ].join('\n'),
+      'utf8',
+    )
+
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', {
+      agentId: 'Planner Error Worker',
+      specialist: 'planner',
+    })
+    const managerRuntime = manager.runtimeByAgentId.get('manager')
+    const originalRuntime = manager.runtimeByAgentId.get(worker.agentId)
+    expect(managerRuntime).toBeDefined()
+    expect(originalRuntime).toBeDefined()
+
+    originalRuntime!.specialistFallbackReplayMessage = {
+      text: 'Revise the rollout plan.',
+      images: [],
+    }
+    managerRuntime!.sendCalls = []
+
+    await (manager as any).handleRuntimeSessionEvent(worker.agentId, {
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        content: [],
+        stopReason: 'error',
+        errorMessage:
+          '429 {"type":"error","error":{"type":"rate_limit_error","message":"This request would exceed your account\'s rate limit. Please try again later."}}',
+      },
+    })
+
+    const replacementRuntime = manager.runtimeByAgentId.get(worker.agentId)
+    expect(replacementRuntime).toBeDefined()
+    expect(replacementRuntime).not.toBe(originalRuntime)
+    expect(originalRuntime?.terminateCalls).toHaveLength(1)
+    expect(managerRuntime?.sendCalls).toHaveLength(0)
+    expect(manager.getAgent(worker.agentId)?.model).toEqual({
+      provider: 'openai-codex',
+      modelId: 'gpt-5.4',
+      thinkingLevel: 'high',
+    })
+    expect(replacementRuntime?.sendCalls).toEqual([
+      {
+        message: {
+          text: 'Revise the rollout plan.',
+          images: [],
+        },
+        delivery: 'auto',
+      },
+    ])
+    expect(
+      manager
+        .getConversationHistory(worker.agentId)
+        .some(
+          (entry) =>
+            entry.type === 'conversation_message' &&
+            entry.role === 'system' &&
+            entry.text.includes('Worker reply failed:'),
+        ),
+    ).toBe(false)
+  })
+
+  it('replays the full accepted turn set when a queued follow-up was already consumed', async () => {
+    const config = await makeTempConfig()
+    const manager = new RuntimeFallbackReplayTestManager(config)
+
+    await mkdir(join(config.paths.sharedDir, 'specialists'), { recursive: true })
+    await writeFile(
+      join(config.paths.sharedDir, 'specialists', 'planner.md'),
+      [
+        '---',
+        'displayName: Planner',
+        'color: "#7c3aed"',
+        'enabled: true',
+        'whenToUse: Planning work.',
+        'modelId: claude-opus-4-6',
+        'reasoningLevel: high',
+        'fallbackModelId: gpt-5.4',
+        'fallbackReasoningLevel: high',
+        '---',
+        'You are the planner specialist.'
+      ].join('\n'),
+      'utf8',
+    )
+
+    manager.fallbackReplayWorkerId = 'planner-active-follow-up-worker'
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', {
+      agentId: 'Planner Active Follow Up Worker',
+      specialist: 'planner',
+    })
+    const activeRuntime = manager.fallbackReplayRuntimeByAgentId.get(worker.agentId)
+    const activeSession = manager.fallbackReplaySessionByAgentId.get(worker.agentId)
+    expect(activeRuntime).toBeDefined()
+    expect(activeSession).toBeDefined()
+
+    const firstPromptStarted = createDeferred<void>()
+    const releaseFirstPrompt = createDeferred<void>()
+    activeSession!.promptImpl = async (message: string) => {
+      if (message === 'first prompt') {
+        firstPromptStarted.resolve(undefined)
+        await releaseFirstPrompt.promise
+      }
+    }
+
+    await activeRuntime!.sendMessage('first prompt', 'auto')
+    await firstPromptStarted.promise
+    await activeRuntime!.sendMessage('second prompt', 'auto')
+    releaseFirstPrompt.resolve(undefined)
+
+    activeSession!.emit({
+      type: 'message_start',
+      message: {
+        role: 'user',
+        content: 'second prompt',
+      },
+    })
+    await Promise.resolve()
+
+    await (manager as any).handleRuntimeSessionEvent(worker.agentId, {
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        content: [],
+        stopReason: 'error',
+        errorMessage:
+          '429 {"type":"error","error":{"type":"rate_limit_error","message":"This request would exceed your account\'s rate limit. Please try again later."}}',
+      },
+    })
+
+    const replacementRuntime = manager.runtimeByAgentId.get(worker.agentId)
+    expect(replacementRuntime).toBeDefined()
+    expect(replacementRuntime?.sendCalls).toEqual([
+      {
+        message: {
+          text: 'first prompt',
+          images: [],
+        },
+        delivery: 'auto',
+      },
+      {
+        message: {
+          text: 'second prompt',
+          images: [],
+        },
+        delivery: 'steer',
+      },
+    ])
+  })
+
+  it('replays queued specialist follow-up turns after the fallback prompt', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+
+    await mkdir(join(config.paths.sharedDir, 'specialists'), { recursive: true })
+    await writeFile(
+      join(config.paths.sharedDir, 'specialists', 'planner.md'),
+      [
+        '---',
+        'displayName: Planner',
+        'color: "#7c3aed"',
+        'enabled: true',
+        'whenToUse: Planning work.',
+        'modelId: claude-opus-4-6',
+        'reasoningLevel: high',
+        'fallbackModelId: gpt-5.4',
+        'fallbackReasoningLevel: high',
+        '---',
+        'You are the planner specialist.'
+      ].join('\n'),
+      'utf8',
+    )
+
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', {
+      agentId: 'Planner Queue Worker',
+      specialist: 'planner',
+    })
+    const originalRuntime = manager.runtimeByAgentId.get(worker.agentId)
+    expect(originalRuntime).toBeDefined()
+
+    originalRuntime!.specialistFallbackReplaySnapshot = {
+      messages: [
+        {
+          text: 'Draft the implementation plan.',
+          images: [],
+        },
+        {
+          text: 'Also capture rollout risks.',
+          images: [],
+        },
+        {
+          text: 'Summarize open blockers.',
+          images: [],
+        },
+      ],
+    }
+
+    await (manager as any).handleRuntimeError(worker.agentId, {
+      phase: 'prompt_dispatch',
+      message: '429 {"type":"error","error":{"type":"rate_limit_error","message":"This request would exceed your account\'s rate limit. Please try again later."}}',
+    })
+
+    const replacementRuntime = manager.runtimeByAgentId.get(worker.agentId)
+    expect(replacementRuntime).toBeDefined()
+    expect(replacementRuntime).not.toBe(originalRuntime)
+    expect(replacementRuntime?.sendCalls).toEqual([
+      {
+        message: {
+          text: 'Draft the implementation plan.',
+          images: [],
+        },
+        delivery: 'auto',
+      },
+      {
+        message: {
+          text: 'Also capture rollout risks.',
+          images: [],
+        },
+        delivery: 'steer',
+      },
+      {
+        message: {
+          text: 'Summarize open blockers.',
+          images: [],
+        },
+        delivery: 'steer',
+      },
+    ])
+  })
+
+  it('surfaces the original worker error when specialist fallback replay fails internally', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+
+    await mkdir(join(config.paths.sharedDir, 'specialists'), { recursive: true })
+    await writeFile(
+      join(config.paths.sharedDir, 'specialists', 'planner.md'),
+      [
+        '---',
+        'displayName: Planner',
+        'color: "#7c3aed"',
+        'enabled: true',
+        'whenToUse: Planning work.',
+        'modelId: claude-opus-4-6',
+        'reasoningLevel: high',
+        'fallbackModelId: gpt-5.4',
+        'fallbackReasoningLevel: high',
+        '---',
+        'You are the planner specialist.'
+      ].join('\n'),
+      'utf8',
+    )
+
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', {
+      agentId: 'Planner Replay Failure Worker',
+      specialist: 'planner',
+    })
+    const originalRuntime = manager.runtimeByAgentId.get(worker.agentId)
+    expect(originalRuntime).toBeDefined()
+
+    manager.onCreateRuntime = ({ descriptor, runtime, creationCount }) => {
+      if (descriptor.agentId === worker.agentId && creationCount === 2) {
+        runtime.sendMessageError = new Error('fallback replay boom')
+      }
+    }
+
+    originalRuntime!.specialistFallbackReplayMessage = {
+      text: 'Retry the implementation plan.',
+      images: [],
+    }
+
+    await (manager as any).handleRuntimeError(worker.agentId, {
+      phase: 'prompt_dispatch',
+      message: '429 {"type":"error","error":{"type":"rate_limit_error","message":"This request would exceed your account\'s rate limit. Please try again later."}}',
+    })
+
+    const managerState = manager as unknown as {
+      runtimes: Map<string, SwarmAgentRuntime>
+    }
+    expect(managerState.runtimes.get(worker.agentId)).toBe(originalRuntime as unknown as SwarmAgentRuntime)
+    expect(manager.getAgent(worker.agentId)?.model).toEqual({
+      provider: 'anthropic',
+      modelId: 'claude-opus-4-6',
+      thinkingLevel: 'high',
+    })
+    const rolledBackSessionMeta = await readSessionMeta(config.paths.dataDir, 'manager', 'manager')
+    expect(rolledBackSessionMeta?.workers.find((entry) => entry.id === worker.agentId)?.model).toBe(
+      'anthropic/claude-opus-4-6',
+    )
+    expect(
+      manager
+        .getConversationHistory(worker.agentId)
+        .some(
+          (entry) =>
+            entry.type === 'conversation_message' &&
+            entry.role === 'system' &&
+            entry.text ===
+              '⚠️ Agent error: 429 {"type":"error","error":{"type":"rate_limit_error","message":"This request would exceed your account\'s rate limit. Please try again later."}}. Message may need to be resent.',
+        ),
+    ).toBe(true)
+  })
+
+  it('reconciles buffered old-runtime idle/end callbacks when fallback is unavailable after early handoff suppression', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+
+    await mkdir(join(config.paths.sharedDir, 'specialists'), { recursive: true })
+    await writeFile(
+      join(config.paths.sharedDir, 'specialists', 'planner.md'),
+      [
+        '---',
+        'displayName: Planner',
+        'color: "#7c3aed"',
+        'enabled: true',
+        'whenToUse: Planning work.',
+        'modelId: claude-opus-4-6',
+        'reasoningLevel: high',
+        'fallbackModelId: gpt-5.4',
+        'fallbackReasoningLevel: high',
+        '---',
+        'You are the planner specialist.'
+      ].join('\n'),
+      'utf8',
+    )
+
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', {
+      agentId: 'Planner No Fallback Worker',
+      specialist: 'planner',
+    })
+    const originalRuntime = manager.runtimeByAgentId.get(worker.agentId)
+    expect(originalRuntime).toBeDefined()
+
+    const managerState = manager as unknown as {
+      runtimeTokensByAgentId: Map<string, number>
+      handleRuntimeStatus: (runtimeToken: number, agentId: string, status: AgentStatus, pendingCount: number) => Promise<void>
+      handleRuntimeAgentEnd: (runtimeToken: number, agentId: string) => Promise<void>
+      handleRuntimeError: (runtimeToken: number, agentId: string, error: RuntimeErrorEvent) => Promise<void>
+      runtimes: Map<string, SwarmAgentRuntime>
+    }
+    const originalRuntimeToken = managerState.runtimeTokensByAgentId.get(worker.agentId) ?? 101
+    managerState.runtimeTokensByAgentId.set(worker.agentId, originalRuntimeToken)
+
+    originalRuntime!.descriptor.status = 'streaming'
+    await managerState.handleRuntimeStatus(originalRuntimeToken, worker.agentId, 'streaming', 0)
+
+    const releaseFallbackModel = createDeferred<void>()
+    const originalResolveFallbackModel = (manager as any).resolveSpecialistFallbackModelForDescriptor.bind(manager)
+    ;(manager as any).resolveSpecialistFallbackModelForDescriptor = async () => {
+      await releaseFallbackModel.promise
+      return undefined
+    }
+
+    const fallbackPromise = managerState.handleRuntimeError(originalRuntimeToken, worker.agentId, {
+      phase: 'prompt_dispatch',
+      message: '429 {"type":"error","error":{"type":"rate_limit_error","message":"This request would exceed your account\'s rate limit. Please try again later."}}',
+    })
+
+    await Promise.resolve()
+    originalRuntime!.descriptor.status = 'idle'
+    await managerState.handleRuntimeStatus(originalRuntimeToken, worker.agentId, 'idle', 0)
+    await managerState.handleRuntimeAgentEnd(originalRuntimeToken, worker.agentId)
+
+    releaseFallbackModel.resolve(undefined)
+    await fallbackPromise
+    ;(manager as any).resolveSpecialistFallbackModelForDescriptor = originalResolveFallbackModel
+
+    expect(managerState.runtimes.get(worker.agentId)).toBe(originalRuntime as unknown as SwarmAgentRuntime)
+    expect(manager.getAgent(worker.agentId)?.status).toBe('idle')
+    const sessionMeta = await readSessionMeta(config.paths.dataDir, 'manager', 'manager')
+    expect(sessionMeta?.workers.find((entry) => entry.id === worker.agentId)?.status).toBe('idle')
+  })
+
+  it('suppresses old-runtime status and end callbacks even before fallback model resolution completes', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+
+    await mkdir(join(config.paths.sharedDir, 'specialists'), { recursive: true })
+    await writeFile(
+      join(config.paths.sharedDir, 'specialists', 'planner.md'),
+      [
+        '---',
+        'displayName: Planner',
+        'color: "#7c3aed"',
+        'enabled: true',
+        'whenToUse: Planning work.',
+        'modelId: claude-opus-4-6',
+        'reasoningLevel: high',
+        'fallbackModelId: gpt-5.4',
+        'fallbackReasoningLevel: high',
+        '---',
+        'You are the planner specialist.'
+      ].join('\n'),
+      'utf8',
+    )
+
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', {
+      agentId: 'Planner Early Suppression Worker',
+      specialist: 'planner',
+    })
+    const originalRuntime = manager.runtimeByAgentId.get(worker.agentId)
+    const managerRuntime = manager.runtimeByAgentId.get('manager')
+    expect(originalRuntime).toBeDefined()
+    expect(managerRuntime).toBeDefined()
+
+    const managerState = manager as unknown as {
+      runtimeTokensByAgentId: Map<string, number>
+      handleRuntimeStatus: (runtimeToken: number, agentId: string, status: AgentStatus, pendingCount: number) => Promise<void>
+      handleRuntimeAgentEnd: (runtimeToken: number, agentId: string) => Promise<void>
+      handleRuntimeError: (runtimeToken: number, agentId: string, error: RuntimeErrorEvent) => Promise<void>
+    }
+    const originalRuntimeToken = managerState.runtimeTokensByAgentId.get(worker.agentId) ?? 101
+    managerState.runtimeTokensByAgentId.set(worker.agentId, originalRuntimeToken)
+
+    originalRuntime!.descriptor.status = 'streaming'
+    originalRuntime!.specialistFallbackReplayMessage = {
+      text: 'Retry original request.',
+      images: [],
+    }
+    await managerState.handleRuntimeStatus(originalRuntimeToken, worker.agentId, 'streaming', 0)
+    managerRuntime!.sendCalls = []
+
+    const originalResolveFallbackModel = (manager as any).resolveSpecialistFallbackModelForDescriptor.bind(manager)
+    const releaseFallbackModel = createDeferred<void>()
+    ;(manager as any).resolveSpecialistFallbackModelForDescriptor = async (...args: unknown[]) => {
+      await releaseFallbackModel.promise
+      return await originalResolveFallbackModel(...args)
+    }
+
+    const fallbackPromise = managerState.handleRuntimeError(originalRuntimeToken, worker.agentId, {
+      phase: 'prompt_dispatch',
+      message: '429 {"type":"error","error":{"type":"rate_limit_error","message":"This request would exceed your account\'s rate limit. Please try again later."}}',
+    })
+
+    await Promise.resolve()
+    await managerState.handleRuntimeStatus(originalRuntimeToken, worker.agentId, 'idle', 0)
+    await managerState.handleRuntimeAgentEnd(originalRuntimeToken, worker.agentId)
+
+    expect(manager.getAgent(worker.agentId)?.status).toBe('streaming')
+    expect(managerRuntime?.sendCalls).toHaveLength(0)
+
+    releaseFallbackModel.resolve(undefined)
+    await fallbackPromise
+    ;(manager as any).resolveSpecialistFallbackModelForDescriptor = originalResolveFallbackModel
+
+    expect(managerRuntime?.sendCalls).toHaveLength(0)
+  })
+
+  it('restores idle worker status and session meta when old-runtime idle/end callbacks were suppressed during a failed handoff', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+
+    await mkdir(join(config.paths.sharedDir, 'specialists'), { recursive: true })
+    await writeFile(
+      join(config.paths.sharedDir, 'specialists', 'planner.md'),
+      [
+        '---',
+        'displayName: Planner',
+        'color: "#7c3aed"',
+        'enabled: true',
+        'whenToUse: Planning work.',
+        'modelId: claude-opus-4-6',
+        'reasoningLevel: high',
+        'fallbackModelId: gpt-5.4',
+        'fallbackReasoningLevel: high',
+        '---',
+        'You are the planner specialist.'
+      ].join('\n'),
+      'utf8',
+    )
+
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', {
+      agentId: 'Planner Rollback Idle Worker',
+      specialist: 'planner',
+    })
+    const originalRuntime = manager.runtimeByAgentId.get(worker.agentId)
+    expect(originalRuntime).toBeDefined()
+
+    const managerState = manager as unknown as {
+      runtimeTokensByAgentId: Map<string, number>
+      handleRuntimeStatus: (runtimeToken: number, agentId: string, status: AgentStatus, pendingCount: number) => Promise<void>
+      handleRuntimeAgentEnd: (runtimeToken: number, agentId: string) => Promise<void>
+      handleRuntimeError: (runtimeToken: number, agentId: string, error: RuntimeErrorEvent) => Promise<void>
+      runtimes: Map<string, SwarmAgentRuntime>
+    }
+    const originalRuntimeToken = managerState.runtimeTokensByAgentId.get(worker.agentId) ?? 101
+    managerState.runtimeTokensByAgentId.set(worker.agentId, originalRuntimeToken)
+
+    originalRuntime!.descriptor.status = 'streaming'
+    originalRuntime!.specialistFallbackReplayMessage = {
+      text: 'Retry original request.',
+      images: [],
+    }
+    await managerState.handleRuntimeStatus(originalRuntimeToken, worker.agentId, 'streaming', 0)
+
+    manager.onCreateRuntime = async ({ descriptor, runtime, creationCount }) => {
+      if (descriptor.agentId !== worker.agentId || creationCount !== 2) {
+        return
+      }
+
+      await managerState.handleRuntimeStatus(originalRuntimeToken, worker.agentId, 'idle', 0)
+      await managerState.handleRuntimeAgentEnd(originalRuntimeToken, worker.agentId)
+      runtime.sendMessageError = new Error('fallback replay boom')
+    }
+
+    await managerState.handleRuntimeError(originalRuntimeToken, worker.agentId, {
+      phase: 'prompt_dispatch',
+      message: '429 {"type":"error","error":{"type":"rate_limit_error","message":"This request would exceed your account\'s rate limit. Please try again later."}}',
+    })
+
+    expect(managerState.runtimes.get(worker.agentId)).toBe(originalRuntime as unknown as SwarmAgentRuntime)
+    expect(manager.getAgent(worker.agentId)?.status).toBe('idle')
+    const rolledBackSessionMeta = await readSessionMeta(config.paths.dataDir, 'manager', 'manager')
+    expect(rolledBackSessionMeta?.workers.find((entry) => entry.id === worker.agentId)?.status).toBe('idle')
+  })
+
+  it('does not resurrect a worker with a replacement runtime after stopWorker during delayed fallback handoff', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+
+    await mkdir(join(config.paths.sharedDir, 'specialists'), { recursive: true })
+    await writeFile(
+      join(config.paths.sharedDir, 'specialists', 'planner.md'),
+      [
+        '---',
+        'displayName: Planner',
+        'color: "#7c3aed"',
+        'enabled: true',
+        'whenToUse: Planning work.',
+        'modelId: claude-opus-4-6',
+        'reasoningLevel: high',
+        'fallbackModelId: gpt-5.4',
+        'fallbackReasoningLevel: high',
+        '---',
+        'You are the planner specialist.'
+      ].join('\n'),
+      'utf8',
+    )
+
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', {
+      agentId: 'Planner Stop During Handoff Worker',
+      specialist: 'planner',
+    })
+    const originalRuntime = manager.runtimeByAgentId.get(worker.agentId)
+    expect(originalRuntime).toBeDefined()
+    originalRuntime!.specialistFallbackReplayMessage = {
+      text: 'Retry original request.',
+      images: [],
+    }
+
+    const replacementCreationStarted = createDeferred<void>()
+    const releaseReplacementCreation = createDeferred<void>()
+    manager.onCreateRuntime = async ({ descriptor, creationCount }) => {
+      if (descriptor.agentId !== worker.agentId || creationCount !== 2) {
+        return
+      }
+
+      replacementCreationStarted.resolve(undefined)
+      await releaseReplacementCreation.promise
+    }
+
+    const fallbackPromise = (manager as any).handleRuntimeError(worker.agentId, {
+      phase: 'prompt_dispatch',
+      message: '429 {"type":"error","error":{"type":"rate_limit_error","message":"This request would exceed your account\'s rate limit. Please try again later."}}',
+    })
+
+    await replacementCreationStarted.promise
+    await manager.stopWorker(worker.agentId)
+    releaseReplacementCreation.resolve(undefined)
+    await fallbackPromise
+
+    const managerState = manager as unknown as {
+      runtimes: Map<string, SwarmAgentRuntime>
+    }
+    expect(managerState.runtimes.has(worker.agentId)).toBe(false)
+    expect(manager.getAgent(worker.agentId)?.status).toBe('idle')
+    expect(manager.getAgent(worker.agentId)?.model).toEqual({
+      provider: 'anthropic',
+      modelId: 'claude-opus-4-6',
+      thinkingLevel: 'high',
+    })
+  })
+
+  it('does not resurrect a worker with a replacement runtime after killAgent during delayed fallback handoff', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+
+    await mkdir(join(config.paths.sharedDir, 'specialists'), { recursive: true })
+    await writeFile(
+      join(config.paths.sharedDir, 'specialists', 'planner.md'),
+      [
+        '---',
+        'displayName: Planner',
+        'color: "#7c3aed"',
+        'enabled: true',
+        'whenToUse: Planning work.',
+        'modelId: claude-opus-4-6',
+        'reasoningLevel: high',
+        'fallbackModelId: gpt-5.4',
+        'fallbackReasoningLevel: high',
+        '---',
+        'You are the planner specialist.'
+      ].join('\n'),
+      'utf8',
+    )
+
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', {
+      agentId: 'Planner Kill During Handoff Worker',
+      specialist: 'planner',
+    })
+    const originalRuntime = manager.runtimeByAgentId.get(worker.agentId)
+    expect(originalRuntime).toBeDefined()
+    originalRuntime!.specialistFallbackReplayMessage = {
+      text: 'Retry original request.',
+      images: [],
+    }
+
+    const replacementCreationStarted = createDeferred<void>()
+    const releaseReplacementCreation = createDeferred<void>()
+    manager.onCreateRuntime = async ({ descriptor, creationCount }) => {
+      if (descriptor.agentId !== worker.agentId || creationCount !== 2) {
+        return
+      }
+
+      replacementCreationStarted.resolve(undefined)
+      await releaseReplacementCreation.promise
+    }
+
+    const fallbackPromise = (manager as any).handleRuntimeError(worker.agentId, {
+      phase: 'prompt_dispatch',
+      message: '429 {"type":"error","error":{"type":"rate_limit_error","message":"This request would exceed your account\'s rate limit. Please try again later."}}',
+    })
+
+    await replacementCreationStarted.promise
+    await manager.killAgent('manager', worker.agentId)
+    releaseReplacementCreation.resolve(undefined)
+    await fallbackPromise
+
+    const managerState = manager as unknown as {
+      runtimes: Map<string, SwarmAgentRuntime>
+    }
+    expect(managerState.runtimes.has(worker.agentId)).toBe(false)
+    expect(manager.getAgent(worker.agentId)?.status).toBe('terminated')
+  })
+
+  it('does not restore a dead original runtime after fallback replay failure during handoff', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+
+    await mkdir(join(config.paths.sharedDir, 'specialists'), { recursive: true })
+    await writeFile(
+      join(config.paths.sharedDir, 'specialists', 'planner.md'),
+      [
+        '---',
+        'displayName: Planner',
+        'color: "#7c3aed"',
+        'enabled: true',
+        'whenToUse: Planning work.',
+        'modelId: claude-opus-4-6',
+        'reasoningLevel: high',
+        'fallbackModelId: gpt-5.4',
+        'fallbackReasoningLevel: high',
+        '---',
+        'You are the planner specialist.'
+      ].join('\n'),
+      'utf8',
+    )
+
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', {
+      agentId: 'Planner Dead Original Runtime Worker',
+      specialist: 'planner',
+    })
+    const originalRuntime = manager.runtimeByAgentId.get(worker.agentId)
+    expect(originalRuntime).toBeDefined()
+    originalRuntime!.specialistFallbackReplayMessage = {
+      text: 'Retry original request.',
+      images: [],
+    }
+
+    const managerState = manager as unknown as {
+      runtimeTokensByAgentId: Map<string, number>
+      handleRuntimeStatus: (runtimeToken: number, agentId: string, status: AgentStatus, pendingCount: number) => Promise<void>
+      handleRuntimeError: (runtimeToken: number, agentId: string, error: RuntimeErrorEvent) => Promise<void>
+      runtimes: Map<string, SwarmAgentRuntime>
+    }
+    const originalRuntimeToken = managerState.runtimeTokensByAgentId.get(worker.agentId) ?? 101
+    managerState.runtimeTokensByAgentId.set(worker.agentId, originalRuntimeToken)
+
+    originalRuntime!.descriptor.status = 'streaming'
+    await managerState.handleRuntimeStatus(originalRuntimeToken, worker.agentId, 'streaming', 0)
+
+    manager.onCreateRuntime = async ({ descriptor, runtime, creationCount }) => {
+      if (descriptor.agentId !== worker.agentId || creationCount !== 2) {
+        return
+      }
+
+      originalRuntime!.descriptor.status = 'terminated'
+      await managerState.handleRuntimeStatus(originalRuntimeToken, worker.agentId, 'terminated', 0)
+      runtime.sendMessageError = new Error('fallback replay boom')
+    }
+
+    await managerState.handleRuntimeError(originalRuntimeToken, worker.agentId, {
+      phase: 'prompt_dispatch',
+      message: '429 {"type":"error","error":{"type":"rate_limit_error","message":"This request would exceed your account\'s rate limit. Please try again later."}}',
+    })
+
+    expect(managerState.runtimes.has(worker.agentId)).toBe(false)
+    expect(originalRuntime?.terminateCalls).toHaveLength(1)
+    expect(
+      manager
+        .getConversationHistory(worker.agentId)
+        .some(
+          (entry) =>
+            entry.type === 'conversation_message' &&
+            entry.role === 'system' &&
+            entry.text.includes('Message may need to be resent.'),
+        ),
+    ).toBe(true)
+  })
+
+  it('does not restore the old runtime after stopWorker interrupts replacement replay', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+
+    await mkdir(join(config.paths.sharedDir, 'specialists'), { recursive: true })
+    await writeFile(
+      join(config.paths.sharedDir, 'specialists', 'planner.md'),
+      [
+        '---',
+        'displayName: Planner',
+        'color: "#7c3aed"',
+        'enabled: true',
+        'whenToUse: Planning work.',
+        'modelId: claude-opus-4-6',
+        'reasoningLevel: high',
+        'fallbackModelId: gpt-5.4',
+        'fallbackReasoningLevel: high',
+        '---',
+        'You are the planner specialist.'
+      ].join('\n'),
+      'utf8',
+    )
+
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', {
+      agentId: 'Planner Stop During Replay Worker',
+      specialist: 'planner',
+    })
+    const originalRuntime = manager.runtimeByAgentId.get(worker.agentId)
+    expect(originalRuntime).toBeDefined()
+    originalRuntime!.specialistFallbackReplaySnapshot = {
+      messages: [
+        { text: 'Replay one', images: [] },
+        { text: 'Replay two', images: [] },
+      ],
+    }
+
+    const secondReplayStarted = createDeferred<void>()
+    const releaseSecondReplay = createDeferred<void>()
+    let replacementRuntime: FakeRuntime | undefined
+    manager.onCreateRuntime = ({ descriptor, runtime, creationCount }) => {
+      if (descriptor.agentId !== worker.agentId || creationCount !== 2) {
+        return
+      }
+
+      replacementRuntime = runtime
+      runtime.onSendMessage = async () => {
+        if (runtime.sendCalls.length !== 2) {
+          return
+        }
+
+        secondReplayStarted.resolve(undefined)
+        await releaseSecondReplay.promise
+      }
+    }
+
+    const fallbackPromise = (manager as any).handleRuntimeError(worker.agentId, {
+      phase: 'prompt_dispatch',
+      message: '429 {"type":"error","error":{"type":"rate_limit_error","message":"This request would exceed your account\'s rate limit. Please try again later."}}',
+    })
+
+    await secondReplayStarted.promise
+    replacementRuntime!.sendMessageError = new Error('replacement replay interrupted')
+    await manager.stopWorker(worker.agentId)
+    releaseSecondReplay.resolve(undefined)
+    await fallbackPromise
+
+    const managerState = manager as unknown as {
+      runtimes: Map<string, SwarmAgentRuntime>
+    }
+    expect(managerState.runtimes.has(worker.agentId)).toBe(false)
+    expect(originalRuntime?.terminateCalls).toHaveLength(1)
+    expect(manager.getAgent(worker.agentId)?.status).toBe('idle')
+    expect(manager.getAgent(worker.agentId)?.model).toEqual({
+      provider: 'openai-codex',
+      modelId: 'gpt-5.4',
+      thinkingLevel: 'high',
+    })
+  })
+
+  it('does not restore the old runtime after killAgent interrupts replacement replay', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+
+    await mkdir(join(config.paths.sharedDir, 'specialists'), { recursive: true })
+    await writeFile(
+      join(config.paths.sharedDir, 'specialists', 'planner.md'),
+      [
+        '---',
+        'displayName: Planner',
+        'color: "#7c3aed"',
+        'enabled: true',
+        'whenToUse: Planning work.',
+        'modelId: claude-opus-4-6',
+        'reasoningLevel: high',
+        'fallbackModelId: gpt-5.4',
+        'fallbackReasoningLevel: high',
+        '---',
+        'You are the planner specialist.'
+      ].join('\n'),
+      'utf8',
+    )
+
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', {
+      agentId: 'Planner Kill During Replay Worker',
+      specialist: 'planner',
+    })
+    const originalRuntime = manager.runtimeByAgentId.get(worker.agentId)
+    expect(originalRuntime).toBeDefined()
+    originalRuntime!.specialistFallbackReplaySnapshot = {
+      messages: [
+        { text: 'Replay one', images: [] },
+        { text: 'Replay two', images: [] },
+      ],
+    }
+
+    const secondReplayStarted = createDeferred<void>()
+    const releaseSecondReplay = createDeferred<void>()
+    let replacementRuntime: FakeRuntime | undefined
+    manager.onCreateRuntime = ({ descriptor, runtime, creationCount }) => {
+      if (descriptor.agentId !== worker.agentId || creationCount !== 2) {
+        return
+      }
+
+      replacementRuntime = runtime
+      runtime.onSendMessage = async () => {
+        if (runtime.sendCalls.length !== 2) {
+          return
+        }
+
+        secondReplayStarted.resolve(undefined)
+        await releaseSecondReplay.promise
+      }
+    }
+
+    const fallbackPromise = (manager as any).handleRuntimeError(worker.agentId, {
+      phase: 'prompt_dispatch',
+      message: '429 {"type":"error","error":{"type":"rate_limit_error","message":"This request would exceed your account\'s rate limit. Please try again later."}}',
+    })
+
+    await secondReplayStarted.promise
+    replacementRuntime!.sendMessageError = new Error('replacement replay interrupted')
+    await manager.killAgent('manager', worker.agentId)
+    releaseSecondReplay.resolve(undefined)
+    await fallbackPromise
+
+    const managerState = manager as unknown as {
+      runtimes: Map<string, SwarmAgentRuntime>
+    }
+    expect(managerState.runtimes.has(worker.agentId)).toBe(false)
+    expect(originalRuntime?.terminateCalls).toHaveLength(1)
+    expect(manager.getAgent(worker.agentId)?.status).toBe('terminated')
+    expect(manager.getAgent(worker.agentId)?.model).toEqual({
+      provider: 'openai-codex',
+      modelId: 'gpt-5.4',
+      thinkingLevel: 'high',
+    })
+  })
+
+  it('does not restore the old runtime after delete interrupts replacement replay', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+
+    await mkdir(join(config.paths.sharedDir, 'specialists'), { recursive: true })
+    await writeFile(
+      join(config.paths.sharedDir, 'specialists', 'planner.md'),
+      [
+        '---',
+        'displayName: Planner',
+        'color: "#7c3aed"',
+        'enabled: true',
+        'whenToUse: Planning work.',
+        'modelId: claude-opus-4-6',
+        'reasoningLevel: high',
+        'fallbackModelId: gpt-5.4',
+        'fallbackReasoningLevel: high',
+        '---',
+        'You are the planner specialist.'
+      ].join('\n'),
+      'utf8',
+    )
+
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', {
+      agentId: 'Planner Delete During Replay Worker',
+      specialist: 'planner',
+    })
+    const originalRuntime = manager.runtimeByAgentId.get(worker.agentId)
+    expect(originalRuntime).toBeDefined()
+    originalRuntime!.specialistFallbackReplaySnapshot = {
+      messages: [
+        { text: 'Replay one', images: [] },
+        { text: 'Replay two', images: [] },
+      ],
+    }
+
+    const secondReplayStarted = createDeferred<void>()
+    const releaseSecondReplay = createDeferred<void>()
+    let replacementRuntime: FakeRuntime | undefined
+    manager.onCreateRuntime = ({ descriptor, runtime, creationCount }) => {
+      if (descriptor.agentId !== worker.agentId || creationCount !== 2) {
+        return
+      }
+
+      replacementRuntime = runtime
+      runtime.onSendMessage = async () => {
+        if (runtime.sendCalls.length !== 2) {
+          return
+        }
+
+        secondReplayStarted.resolve(undefined)
+        await releaseSecondReplay.promise
+      }
+    }
+
+    const fallbackPromise = (manager as any).handleRuntimeError(worker.agentId, {
+      phase: 'prompt_dispatch',
+      message: '429 {"type":"error","error":{"type":"rate_limit_error","message":"This request would exceed your account\'s rate limit. Please try again later."}}',
+    })
+
+    await secondReplayStarted.promise
+    replacementRuntime!.sendMessageError = new Error('replacement replay interrupted')
+    const managerState = manager as unknown as {
+      descriptors: Map<string, AgentDescriptor>
+      runtimes: Map<string, SwarmAgentRuntime>
+    }
+    managerState.runtimes.delete(worker.agentId)
+    managerState.descriptors.delete(worker.agentId)
+    releaseSecondReplay.resolve(undefined)
+    await fallbackPromise
+
+    expect(managerState.runtimes.has(worker.agentId)).toBe(false)
+    expect(originalRuntime?.terminateCalls).toHaveLength(1)
+    expect(manager.getAgent(worker.agentId)).toBeUndefined()
+  })
+
+  it('does not resurrect a deleted worker session with a replacement runtime after delayed fallback handoff', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+
+    await bootWithDefaultManager(manager, config)
+
+    await mkdir(join(config.paths.sharedDir, 'specialists'), { recursive: true })
+    await writeFile(
+      join(config.paths.sharedDir, 'specialists', 'planner.md'),
+      [
+        '---',
+        'displayName: Planner',
+        'color: "#7c3aed"',
+        'enabled: true',
+        'whenToUse: Planning work.',
+        'modelId: claude-opus-4-6',
+        'reasoningLevel: high',
+        'fallbackModelId: gpt-5.4',
+        'fallbackReasoningLevel: high',
+        '---',
+        'You are the planner specialist.'
+      ].join('\n'),
+      'utf8',
+    )
+
+    const worker = await manager.spawnAgent('manager', {
+      agentId: 'Planner Delete During Handoff Worker',
+    })
+    const workerDescriptor = manager.getAgent(worker.agentId)
+    expect(workerDescriptor).toBeDefined()
+    if (!workerDescriptor || workerDescriptor.role !== 'worker') {
+      throw new Error('Expected worker descriptor')
+    }
+    workerDescriptor.specialistId = 'planner'
+    workerDescriptor.model = {
+      provider: 'anthropic',
+      modelId: 'claude-opus-4-6',
+      thinkingLevel: 'high',
+    }
+
+    const originalRuntime = manager.runtimeByAgentId.get(worker.agentId)
+    expect(originalRuntime).toBeDefined()
+    originalRuntime!.specialistFallbackReplayMessage = {
+      text: 'Retry original request.',
+      images: [],
+    }
+
+    const releaseFallbackModel = createDeferred<void>()
+    const originalResolveFallbackModel = (manager as any).resolveSpecialistFallbackModelForDescriptor.bind(manager)
+    ;(manager as any).resolveSpecialistFallbackModelForDescriptor = async (...args: unknown[]) => {
+      await releaseFallbackModel.promise
+      return await originalResolveFallbackModel(...args)
+    }
+
+    const fallbackPromise = (manager as any).handleRuntimeError(worker.agentId, {
+      phase: 'prompt_dispatch',
+      message: '429 {"type":"error","error":{"type":"rate_limit_error","message":"This request would exceed your account\'s rate limit. Please try again later."}}',
+    })
+
+    await Promise.resolve()
+    const managerState = manager as unknown as {
+      descriptors: Map<string, AgentDescriptor>
+      runtimes: Map<string, SwarmAgentRuntime>
+    }
+    managerState.runtimes.delete(worker.agentId)
+    managerState.descriptors.delete(worker.agentId)
+    releaseFallbackModel.resolve(undefined)
+    await fallbackPromise
+    ;(manager as any).resolveSpecialistFallbackModelForDescriptor = originalResolveFallbackModel
+
+    expect(managerState.runtimes.has(worker.agentId)).toBe(false)
+    expect(manager.getAgent(worker.agentId)).toBeUndefined()
+  })
+
+  it('waits for the replacement runtime during fallback handoff so concurrent sends are not lost on the old runtime', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+
+    await mkdir(join(config.paths.sharedDir, 'specialists'), { recursive: true })
+    await writeFile(
+      join(config.paths.sharedDir, 'specialists', 'planner.md'),
+      [
+        '---',
+        'displayName: Planner',
+        'color: "#7c3aed"',
+        'enabled: true',
+        'whenToUse: Planning work.',
+        'modelId: claude-opus-4-6',
+        'reasoningLevel: high',
+        'fallbackModelId: gpt-5.4',
+        'fallbackReasoningLevel: high',
+        '---',
+        'You are the planner specialist.'
+      ].join('\n'),
+      'utf8',
+    )
+
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', {
+      agentId: 'Planner Handoff Wait Worker',
+      specialist: 'planner',
+    })
+    const originalRuntime = manager.runtimeByAgentId.get(worker.agentId)
+    expect(originalRuntime).toBeDefined()
+
+    originalRuntime!.specialistFallbackReplayMessage = {
+      text: 'Retry original request.',
+      images: [],
+    }
+
+    const replacementCreationStarted = createDeferred<void>()
+    const releaseReplacementCreation = createDeferred<void>()
+    manager.onCreateRuntime = async ({ descriptor, creationCount }) => {
+      if (descriptor.agentId !== worker.agentId || creationCount !== 2) {
+        return
+      }
+
+      replacementCreationStarted.resolve(undefined)
+      await releaseReplacementCreation.promise
+    }
+
+    const fallbackPromise = (manager as any).handleRuntimeError(worker.agentId, {
+      phase: 'prompt_dispatch',
+      message: '429 {"type":"error","error":{"type":"rate_limit_error","message":"This request would exceed your account\'s rate limit. Please try again later."}}',
+    })
+
+    await replacementCreationStarted.promise
+
+    const concurrentSendPromise = manager.sendMessage('manager', worker.agentId, 'mid-handoff follow-up', 'auto', {
+      origin: 'internal',
+    })
+
+    await Promise.resolve()
+    expect(originalRuntime?.sendCalls).toEqual([])
+
+    releaseReplacementCreation.resolve(undefined)
+    await fallbackPromise
+    await concurrentSendPromise
+
+    const replacementRuntime = manager.runtimeByAgentId.get(worker.agentId)
+    expect(replacementRuntime).toBeDefined()
+    expect(replacementRuntime).not.toBe(originalRuntime)
+    expect(replacementRuntime?.sendCalls).toEqual([
+      {
+        message: {
+          text: 'Retry original request.',
+          images: [],
+        },
+        delivery: 'auto',
+      },
+      {
+        message: 'SYSTEM: mid-handoff follow-up',
+        delivery: 'auto',
+      },
+    ])
+  })
+
+  it('restores the original runtime session state after fallback rollback if replay later fails', async () => {
+    const config = await makeTempConfig()
+    const manager = new RuntimeFallbackReplayTestManager(config)
+
+    await mkdir(join(config.paths.sharedDir, 'specialists'), { recursive: true })
+    await writeFile(
+      join(config.paths.sharedDir, 'specialists', 'planner.md'),
+      [
+        '---',
+        'displayName: Planner',
+        'color: "#7c3aed"',
+        'enabled: true',
+        'whenToUse: Planning work.',
+        'modelId: claude-opus-4-6',
+        'reasoningLevel: high',
+        'fallbackModelId: gpt-5.4',
+        'fallbackReasoningLevel: high',
+        '---',
+        'You are the planner specialist.'
+      ].join('\n'),
+      'utf8',
+    )
+
+    manager.fallbackReplayWorkerId = 'planner-rollback-state-worker'
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', {
+      agentId: 'Planner Rollback State Worker',
+      specialist: 'planner',
+    })
+    const activeRuntime = manager.fallbackReplayRuntimeByAgentId.get(worker.agentId)
+    const activeSession = manager.fallbackReplaySessionByAgentId.get(worker.agentId)
+    expect(activeRuntime).toBeDefined()
+    expect(activeSession).toBeDefined()
+
+    const firstPromptStarted = createDeferred<void>()
+    const releaseFirstPrompt = createDeferred<void>()
+    activeSession!.promptImpl = async (message: string) => {
+      if (message === 'first prompt') {
+        firstPromptStarted.resolve(undefined)
+        await releaseFirstPrompt.promise
+      }
+    }
+
+    await activeRuntime!.sendMessage('first prompt', 'auto')
+    await firstPromptStarted.promise
+    await activeRuntime!.sendMessage('second prompt', 'auto')
+    releaseFirstPrompt.resolve(undefined)
+
+    activeSession!.emit({
+      type: 'message_start',
+      message: {
+        role: 'user',
+        content: 'second prompt',
+      },
+    })
+    await Promise.resolve()
+
+    activeSession!.state.messages = [
+      { role: 'user', content: 'first prompt' },
+      { role: 'user', content: 'second prompt' },
+      { role: 'assistant', stopReason: 'error', content: [] },
+    ] as any
+    ;(activeSession as any).sessionMessages = structuredClone(activeSession!.state.messages)
+    const originalMessages = structuredClone(activeSession!.state.messages)
+
+    manager.onCreateRuntime = ({ descriptor, runtime, creationCount }) => {
+      if (descriptor.agentId === worker.agentId && creationCount === 2) {
+        runtime.sendMessageError = new Error('fallback replay boom')
+      }
+    }
+
+    await (manager as any).handleRuntimeSessionEvent(worker.agentId, {
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        content: [],
+        stopReason: 'error',
+        errorMessage:
+          '429 {"type":"error","error":{"type":"rate_limit_error","message":"This request would exceed your account\'s rate limit. Please try again later."}}',
+      },
+    })
+
+    expect(activeSession!.state.messages).toEqual(originalMessages)
+  })
+
+  it('suppresses stale old-runtime callbacks while specialist fallback handoff is in progress', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+
+    await mkdir(join(config.paths.sharedDir, 'specialists'), { recursive: true })
+    await writeFile(
+      join(config.paths.sharedDir, 'specialists', 'planner.md'),
+      [
+        '---',
+        'displayName: Planner',
+        'color: "#7c3aed"',
+        'enabled: true',
+        'whenToUse: Planning work.',
+        'modelId: claude-opus-4-6',
+        'reasoningLevel: high',
+        'fallbackModelId: gpt-5.4',
+        'fallbackReasoningLevel: high',
+        '---',
+        'You are the planner specialist.'
+      ].join('\n'),
+      'utf8',
+    )
+
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', {
+      agentId: 'Planner Race Worker',
+      specialist: 'planner',
+    })
+    const managerRuntime = manager.runtimeByAgentId.get('manager')
+    const originalRuntime = manager.runtimeByAgentId.get(worker.agentId)
+    expect(managerRuntime).toBeDefined()
+    expect(originalRuntime).toBeDefined()
+
+    originalRuntime!.specialistFallbackReplayMessage = {
+      text: 'Retry the implementation plan.',
+      images: [],
+    }
+
+    let releaseReplacementCreation: (() => void) | undefined
+    const replacementCreationStarted = new Promise<void>((resolve) => {
+      manager.onCreateRuntime = async ({ descriptor, creationCount }) => {
+        if (descriptor.agentId !== worker.agentId || creationCount !== 2) {
+          return
+        }
+
+        resolve()
+        await new Promise<void>((continueResolve) => {
+          releaseReplacementCreation = continueResolve
+        })
+      }
+    })
+
+    const managerState = manager as unknown as {
+      runtimeTokensByAgentId: Map<string, number>
+      handleRuntimeError: (runtimeToken: number, agentId: string, error: RuntimeErrorEvent) => Promise<void>
+      handleRuntimeSessionEvent: (runtimeToken: number, agentId: string, event: RuntimeSessionEvent) => Promise<void>
+      handleRuntimeAgentEnd: (runtimeToken: number, agentId: string) => Promise<void>
+    }
+    const originalRuntimeToken = managerState.runtimeTokensByAgentId.get(worker.agentId) ?? 101
+    managerState.runtimeTokensByAgentId.set(worker.agentId, originalRuntimeToken)
+    expect(originalRuntimeToken).toBeTypeOf('number')
+
+    const fallbackPromise = managerState.handleRuntimeError(originalRuntimeToken as number, worker.agentId, {
+      phase: 'prompt_dispatch',
+      message: '429 {"type":"error","error":{"type":"rate_limit_error","message":"This request would exceed your account\'s rate limit. Please try again later."}}',
+    })
+
+    await replacementCreationStarted
+
+    await managerState.handleRuntimeSessionEvent(originalRuntimeToken as number, worker.agentId, {
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        content: [],
+        stopReason: 'error',
+        errorMessage: 'late stale runtime error',
+      },
+    })
+    await managerState.handleRuntimeAgentEnd(originalRuntimeToken as number, worker.agentId)
+
+    releaseReplacementCreation?.()
+    await fallbackPromise
+
+    expect(managerRuntime?.sendCalls).toHaveLength(0)
+    expect(
+      manager
+        .getConversationHistory(worker.agentId)
+        .some(
+          (entry) =>
+            entry.type === 'conversation_message' &&
+            entry.role === 'system' &&
+            entry.text.includes('late stale runtime error'),
+        ),
+    ).toBe(false)
+  })
+
+  it('suppresses duplicate auto-reports when the latest summary was already reported', async () => {
     const config = await makeTempConfig()
     let tick = 0
     const now = () => new Date(Date.parse('2026-01-01T00:00:00.000Z') + tick++).toISOString()
@@ -4286,10 +5975,156 @@ describe('SwarmManager', () => {
 
     await (manager as any).handleRuntimeAgentEnd(worker.agentId)
 
+    expect(managerRuntime?.sendCalls).toHaveLength(0)
+  })
+
+  it('suppresses duplicate end callbacks after an errored worker turn instead of falling back to a generic completion signal', async () => {
+    const config = await makeTempConfig()
+    let tick = 0
+    const now = () => new Date(Date.parse('2026-01-01T00:00:00.000Z') + tick++).toISOString()
+    const manager = new TestSwarmManager(config, { now })
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', { agentId: 'Duplicate Error Worker' })
+    const managerRuntime = manager.runtimeByAgentId.get('manager')
+    expect(managerRuntime).toBeDefined()
+
+    await (manager as any).handleRuntimeSessionEvent(worker.agentId, {
+      type: 'message_end',
+      message: {
+        role: 'assistant',
+        content: [],
+        stopReason: 'error',
+        errorMessage:
+          '429 {"type":"error","error":{"type":"rate_limit_error","message":"This request would exceed your account\'s rate limit. Please try again later."}}',
+      },
+    })
+
+    await waitForCondition(() =>
+      manager
+        .getConversationHistory(worker.agentId)
+        .some(
+          (entry) =>
+            entry.type === 'conversation_message' &&
+            entry.role === 'system' &&
+            entry.text.includes('⚠️ Worker reply failed:'),
+        ),
+    )
+
+    managerRuntime!.sendCalls = []
+
+    await (manager as any).handleRuntimeAgentEnd(worker.agentId)
+    await (manager as any).handleRuntimeAgentEnd(worker.agentId)
+
     expect(managerRuntime?.sendCalls).toHaveLength(1)
     expect(managerRuntime?.sendCalls[0]).toMatchObject({
       delivery: 'auto',
-      message: 'SYSTEM: Worker repeat-summary-worker completed its turn.',
+      message:
+        'SYSTEM: Worker duplicate-error-worker ended its turn with an error.\n\nLast system message:\n⚠️ Worker reply failed: This request would exceed your account\'s rate limit. Please try again later. The manager may need to retry after checking provider auth, quotas, or rate limits.',
+    })
+  })
+
+  it.each([
+    {
+      label: 'worker reply failures projected from message_end errors',
+      trigger: async (manager: TestSwarmManager, workerId: string) => {
+        await (manager as any).handleRuntimeSessionEvent(workerId, {
+          type: 'message_end',
+          message: {
+            role: 'assistant',
+            content: [],
+            stopReason: 'error',
+            errorMessage: 'Prompt is too long for this model context window.',
+          },
+        })
+      },
+      expectedSummaryLine:
+        '⚠️ Worker reply failed because the prompt exceeded the model context window (Prompt is too long for this model context window.). The manager may need to compact the task context before retrying.',
+    },
+    {
+      label: 'agent runtime errors',
+      trigger: async (manager: TestSwarmManager, workerId: string) => {
+        await (manager as any).handleRuntimeError(workerId, {
+          phase: 'prompt_dispatch',
+          message: 'backend socket closed unexpectedly',
+        })
+      },
+      expectedSummaryLine:
+        '⚠️ Agent error: backend socket closed unexpectedly. Message may need to be resent.',
+    },
+    {
+      label: 'extension runtime errors',
+      trigger: async (manager: TestSwarmManager, workerId: string) => {
+        await (manager as any).handleRuntimeError(workerId, {
+          phase: 'extension',
+          message: 'blocked write outside allowed roots',
+          details: {
+            extensionPath: '/tmp/protected-paths.ts',
+            event: 'tool_call',
+          },
+        })
+      },
+      expectedSummaryLine:
+        '⚠️ Extension error (protected-paths.ts · tool_call): blocked write outside allowed roots',
+    },
+    {
+      label: 'context guard errors',
+      trigger: async (manager: TestSwarmManager, workerId: string) => {
+        await (manager as any).handleRuntimeError(workerId, {
+          phase: 'context_guard',
+          message: 'context guard rejected the pending prompt',
+        })
+      },
+      expectedSummaryLine:
+        '⚠️ Context guard error: context guard rejected the pending prompt.',
+    },
+    {
+      label: 'context recovery failures',
+      trigger: async (manager: TestSwarmManager, workerId: string) => {
+        await (manager as any).handleRuntimeError(workerId, {
+          phase: 'compaction',
+          message: 'failed to rebuild compacted context',
+          details: {
+            recoveryStage: 'recovery_failed',
+          },
+        })
+      },
+      expectedSummaryLine:
+        '🚨 Context recovery failed: failed to rebuild compacted context. Start a new session or manually trim history/compact before continuing.',
+    },
+  ])('classifies $label as worker turn errors in auto-reports', async ({ trigger, expectedSummaryLine }) => {
+    const config = await makeTempConfig()
+    let tick = 0
+    const now = () => new Date(Date.parse('2026-01-01T00:00:00.000Z') + tick++).toISOString()
+    const manager = new TestSwarmManager(config, { now })
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', { agentId: 'Worker Error Variant' })
+    const managerRuntime = manager.runtimeByAgentId.get('manager')
+    expect(managerRuntime).toBeDefined()
+
+    await trigger(manager, worker.agentId)
+
+    await waitForCondition(() =>
+      manager
+        .getConversationHistory(worker.agentId)
+        .some(
+          (entry) =>
+            entry.type === 'conversation_message' &&
+            entry.role === 'system' &&
+            entry.text === expectedSummaryLine,
+        ),
+    )
+
+    managerRuntime!.sendCalls = []
+
+    await (manager as any).handleRuntimeAgentEnd(worker.agentId)
+
+    expect(managerRuntime?.sendCalls).toHaveLength(1)
+    expect(managerRuntime?.sendCalls[0]).toMatchObject({
+      delivery: 'auto',
+      message:
+        `SYSTEM: Worker worker-error-variant ended its turn with an error.\n\nLast system message:\n${expectedSummaryLine}`,
     })
   })
 

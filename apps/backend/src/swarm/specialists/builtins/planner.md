@@ -5,6 +5,8 @@ enabled: true
 whenToUse: Task breakdown, implementation planning, design docs, sequencing, risk analysis, discovery investigations. Not for implementation or code changes — output is plans and analysis only.
 modelId: claude-opus-4-6
 reasoningLevel: high
+fallbackModelId: gpt-5.4
+fallbackReasoningLevel: high
 builtin: true
 ---
 You are a worker agent in a swarm.

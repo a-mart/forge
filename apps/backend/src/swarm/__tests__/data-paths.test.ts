@@ -52,6 +52,7 @@ import {
   getSharedStateDir,
   getSharedStatsCachePath,
   getSwarmDir,
+  getTelemetryConfigPath,
   getUploadsDir,
   getWorkerSessionFilePath,
   getWorkersDir,
@@ -143,6 +144,7 @@ describe("data-paths", () => {
     expect(getCortexAutoReviewSettingsPath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "config", "cortex-auto-review.json"));
     expect(getSharedCacheGeneratedDir(DATA_DIR)).toBe(join(DATA_DIR, "shared", "cache", "generated"));
     expect(getSharedStatsCachePath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "cache", "stats-cache.json"));
+    expect(getTelemetryConfigPath(DATA_DIR)).toBe(join(DATA_DIR, "shared", "config", "telemetry.json"));
 
     expect(getUploadsDir(DATA_DIR)).toBe(join(DATA_DIR, "uploads"));
     expect(getSwarmDir(DATA_DIR)).toBe(join(DATA_DIR, "swarm"));

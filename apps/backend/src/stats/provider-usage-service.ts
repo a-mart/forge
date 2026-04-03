@@ -1,7 +1,13 @@
-import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { ProviderAccountUsage, ProviderUsageStats } from "@forge/protocol";
+import {
+  evaluateHistoricalProviderUsagePace,
+  ProviderUsageHistoryStore,
+  type ProviderUsageHistoryProvider
+} from "./provider-usage-history.js";
 
 const CACHE_TTL_MS = 3 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 10_000;
@@ -61,20 +67,38 @@ interface CachedProviderUsage {
   anthropic?: CachedProviderUsageEntry;
 }
 
+interface PersistedProviderUsageCache {
+  version: number;
+  entries: CachedProviderUsage;
+}
+
 const TEST_PROVIDER_USAGE_SNAPSHOT: ProviderUsageStats = {
   openai: unavailableProviderUsage("openai"),
   anthropic: unavailableProviderUsage("anthropic")
 };
 
+const PERSISTED_CACHE_VERSION = 1;
+
 export class ProviderUsageService {
   private readonly cache: CachedProviderUsage = {};
+  private readonly historyStore: ProviderUsageHistoryStore;
+  private persistentCacheLoaded = false;
+  private persistQueue: Promise<void> = Promise.resolve();
 
-  constructor(private readonly sharedAuthFilePath: string) {}
+  constructor(
+    private readonly sharedAuthFilePath: string,
+    historyFilePath: string,
+    private readonly cacheFilePath?: string
+  ) {
+    this.historyStore = new ProviderUsageHistoryStore(historyFilePath);
+  }
 
   async getSnapshot(): Promise<ProviderUsageStats> {
     if (IS_TEST_ENV) {
       return TEST_PROVIDER_USAGE_SNAPSHOT;
     }
+
+    await this.ensurePersistentCacheLoaded();
 
     const nowMs = Date.now();
 
@@ -97,7 +121,11 @@ export class ProviderUsageService {
     const auth = await this.readOpenAIAuth();
     const accessToken = auth?.tokens?.access_token?.trim();
     if (!accessToken) {
-      this.recordFailedAttempt("openai", nowMs);
+      if (auth) {
+        this.invalidateProvider("openai", nowMs);
+      } else {
+        this.recordFailedAttempt("openai", nowMs);
+      }
       return;
     }
 
@@ -119,12 +147,17 @@ export class ProviderUsageService {
 
       if (!response.ok) {
         console.warn(`[provider-usage] OpenAI usage API returned ${response.status}`);
-        this.recordFailedAttempt("openai", nowMs);
+        if (response.status === 401 || response.status === 403) {
+          this.invalidateProvider("openai", nowMs);
+        } else {
+          this.recordFailedAttempt("openai", nowMs);
+        }
         return;
       }
 
       const body = (await response.json()) as OpenAIUsageResponse;
-      this.setCached("openai", mapOpenAIResponse(body), nowMs);
+      const usage = await this.withHistoricalPace("openai", mapOpenAIResponse(body), nowMs);
+      this.setCached("openai", usage, nowMs);
     } catch (error) {
       console.warn(`[provider-usage] OpenAI usage fetch failed: ${toErrorMessage(error)}`);
       this.recordFailedAttempt("openai", nowMs);
@@ -139,14 +172,18 @@ export class ProviderUsageService {
     const auth = await this.readAnthropicAuth();
     const accessToken = auth?.anthropic?.access?.trim();
     if (!accessToken) {
-      this.recordFailedAttempt("anthropic", nowMs);
+      if (auth) {
+        this.invalidateProvider("anthropic", nowMs);
+      } else {
+        this.recordFailedAttempt("anthropic", nowMs);
+      }
       return;
     }
 
     const expiresMs = auth?.anthropic?.expires;
     if (typeof expiresMs === "number" && Number.isFinite(expiresMs) && Date.now() > expiresMs) {
       console.debug("[provider-usage] Anthropic OAuth token expired");
-      this.recordFailedAttempt("anthropic", nowMs);
+      this.invalidateProvider("anthropic", nowMs);
       return;
     }
 
@@ -163,12 +200,17 @@ export class ProviderUsageService {
 
       if (!response.ok) {
         console.warn(`[provider-usage] Anthropic usage API returned ${response.status}`);
-        this.recordFailedAttempt("anthropic", nowMs);
+        if (response.status === 401 || response.status === 403) {
+          this.invalidateProvider("anthropic", nowMs);
+        } else {
+          this.recordFailedAttempt("anthropic", nowMs);
+        }
         return;
       }
 
       const body = (await response.json()) as AnthropicUsageResponse;
-      this.setCached("anthropic", mapAnthropicResponse(body), nowMs);
+      const usage = await this.withHistoricalPace("anthropic", mapAnthropicResponse(body), nowMs);
+      this.setCached("anthropic", usage, nowMs);
     } catch (error) {
       console.warn(`[provider-usage] Anthropic usage fetch failed: ${toErrorMessage(error)}`);
       this.recordFailedAttempt("anthropic", nowMs);
@@ -211,6 +253,38 @@ export class ProviderUsageService {
       fetchedAtMs,
       lastAttemptMs: fetchedAtMs
     };
+    this.queuePersistCacheWrite();
+  }
+
+  private async withHistoricalPace(
+    provider: ProviderUsageHistoryProvider,
+    data: ProviderAccountUsage,
+    sampledAtMs: number
+  ): Promise<ProviderAccountUsage> {
+    const weeklyUsage = data.weeklyUsage;
+    if (!data.available || !weeklyUsage?.resetAtMs || !weeklyUsage.windowSeconds || weeklyUsage.windowSeconds <= 0) {
+      return data;
+    }
+
+    const accountKey = toHistoryAccountKey(data.accountEmail);
+    const dataset = await this.historyStore.recordWeeklyWindow({
+      provider,
+      window: weeklyUsage,
+      sampledAtMs,
+      accountKey
+    });
+    const pace = evaluateHistoricalProviderUsagePace(weeklyUsage, sampledAtMs, dataset);
+    if (!pace) {
+      return data;
+    }
+
+    return {
+      ...data,
+      weeklyUsage: {
+        ...weeklyUsage,
+        pace
+      }
+    };
   }
 
   private recordFailedAttempt(provider: keyof CachedProviderUsage, nowMs: number): void {
@@ -221,6 +295,7 @@ export class ProviderUsageService {
         ...existing,
         lastAttemptMs: nowMs
       };
+      this.queuePersistCacheWrite();
       return;
     }
 
@@ -229,6 +304,67 @@ export class ProviderUsageService {
       fetchedAtMs: nowMs,
       lastAttemptMs: nowMs
     };
+    this.queuePersistCacheWrite();
+  }
+
+  private invalidateProvider(provider: keyof CachedProviderUsage, nowMs: number): void {
+    this.cache[provider] = {
+      data: unavailableProviderUsage(provider),
+      fetchedAtMs: nowMs,
+      lastAttemptMs: nowMs
+    };
+    this.queuePersistCacheWrite();
+  }
+
+  private async ensurePersistentCacheLoaded(): Promise<void> {
+    if (this.persistentCacheLoaded || !this.cacheFilePath) {
+      return;
+    }
+
+    this.persistentCacheLoaded = true;
+
+    try {
+      const raw = await readFile(this.cacheFilePath, "utf8");
+      const parsed = JSON.parse(raw) as PersistedProviderUsageCache;
+      if (!isRecord(parsed) || parsed.version !== PERSISTED_CACHE_VERSION || !isRecord(parsed.entries)) {
+        return;
+      }
+
+      const openai = parseCachedProviderUsageEntry(parsed.entries.openai);
+      if (openai) {
+        this.cache.openai = openai;
+      }
+
+      const anthropic = parseCachedProviderUsageEntry(parsed.entries.anthropic);
+      if (anthropic) {
+        this.cache.anthropic = anthropic;
+      }
+    } catch (error) {
+      if (!isEnoentError(error)) {
+        console.warn(`[provider-usage] Failed to read persisted provider usage cache: ${toErrorMessage(error)}`);
+      }
+    }
+  }
+
+  private queuePersistCacheWrite(): void {
+    const cacheFilePath = this.cacheFilePath;
+    if (!cacheFilePath) {
+      return;
+    }
+
+    this.persistQueue = this.persistQueue
+      .then(async () => {
+        const payload: PersistedProviderUsageCache = {
+          version: PERSISTED_CACHE_VERSION,
+          entries: this.cache
+        };
+
+        await mkdir(dirname(cacheFilePath), { recursive: true });
+        await writeFile(cacheFilePath, JSON.stringify(payload), "utf8");
+      })
+      .catch((error) => {
+        console.warn(`[provider-usage] Failed to persist provider usage cache: ${toErrorMessage(error)}`);
+      });
   }
 }
 
@@ -298,7 +434,12 @@ function formatResetInfo(resetMs: number): string {
   }
 
   const totalHours = totalMinutes / 60;
-  return `${totalHours.toFixed(1)}h`;
+  if (totalHours < 24) {
+    return `${totalHours.toFixed(1)}h`;
+  }
+
+  const totalDays = totalHours / 24;
+  return `${totalDays.toFixed(1)}d`;
 }
 
 function resolveWindowSeconds(window: UsageWindow, defaultWindowSeconds?: number): number | undefined {
@@ -356,6 +497,48 @@ function normalizeString(value: unknown): string | undefined {
 
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function toHistoryAccountKey(accountEmail: string | undefined): string | undefined {
+  const normalized = normalizeString(accountEmail)?.toLowerCase();
+  if (!normalized) {
+    return undefined;
+  }
+
+  return createHash("sha256").update(normalized).digest("hex");
+}
+
+function parseCachedProviderUsageEntry(value: unknown): CachedProviderUsageEntry | null {
+  if (!isRecord(value) || !isRecord(value.data)) {
+    return null;
+  }
+
+  const provider = normalizeString(value.data.provider);
+  const available = value.data.available;
+  const fetchedAtMs = toSafeNumber(value.fetchedAtMs);
+  const lastAttemptMs = toSafeNumber(value.lastAttemptMs, fetchedAtMs);
+
+  if (!provider || typeof available !== "boolean" || fetchedAtMs <= 0 || lastAttemptMs <= 0) {
+    return null;
+  }
+
+  return {
+    data: value.data as unknown as ProviderAccountUsage,
+    fetchedAtMs,
+    lastAttemptMs
+  };
+}
+
+function toSafeNumber(value: unknown, fallback = 0): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return fallback;
+  }
+
+  return Math.round(value);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isEnoentError(error: unknown): boolean {

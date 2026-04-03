@@ -271,6 +271,10 @@ export function getSharedStatsCachePath(dataDir: string): string {
   return join(getSharedCacheDir(dataDir), "stats-cache.json");
 }
 
+export function getTelemetryConfigPath(dataDir: string): string {
+  return join(getSharedConfigDir(dataDir), "telemetry.json");
+}
+
 // ── Unchanged global paths ─────────────────────────────────────────────────────
 
 export function getUploadsDir(dataDir: string): string {

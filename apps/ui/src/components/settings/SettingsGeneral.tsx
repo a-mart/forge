@@ -47,7 +47,10 @@ import {
   type AvailableShellsResponse,
   type TerminalShellSettings,
 } from '@/components/settings/terminal-shell-api'
-import type { PlaywrightDiscoverySettings, CortexAutoReviewSettings } from '@forge/protocol'
+import type {
+  CortexAutoReviewSettings,
+  PlaywrightDiscoverySettings,
+} from '@forge/protocol'
 
 interface SettingsGeneralProps {
   wsUrl: string

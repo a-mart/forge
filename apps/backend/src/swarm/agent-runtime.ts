@@ -23,6 +23,7 @@ import type {
   RuntimeUserMessage,
   RuntimeUserMessageInput,
   SmartCompactResult,
+  SpecialistFallbackReplaySnapshot,
   SwarmAgentRuntime,
   SwarmRuntimeCallbacks
 } from "./runtime-types.js";
@@ -38,6 +39,7 @@ import { resizeImageIfNeeded } from "./image-utils.js";
 interface PendingDelivery {
   deliveryId: string;
   messageKey: string;
+  message: RuntimeUserMessage;
   mode: "steer" | "recovery_buffer";
 }
 
@@ -75,6 +77,8 @@ export class AgentRuntime implements SwarmAgentRuntime {
   private ignoreNextAgentStart = false;
   private lastStreamingStatusEmitAtMs = 0;
   private lastContextUsage: AgentContextUsage | undefined;
+  private currentTurnReplayMessages: RuntimeUserMessage[] = [];
+  private preparedSpecialistFallbackSessionMessages: EmergencyContextTrimMessage[] | undefined;
   private contextRecoveryInProgress = false;
   private contextRecoveryGraceUntilMs = 0;
   private autoCompactionRecoveryInProgress = false;
@@ -126,6 +130,39 @@ export class AgentRuntime implements SwarmAgentRuntime {
     return this.contextRecoveryInProgress;
   }
 
+  async prepareForSpecialistFallbackReplay(): Promise<SpecialistFallbackReplaySnapshot | undefined> {
+    const replayMessages = [
+      ...this.currentTurnReplayMessages
+        .map((message) => cloneRuntimeUserMessage(message))
+        .filter((message): message is RuntimeUserMessage => message !== undefined),
+      ...this.pendingDeliveries
+        .map((delivery) => cloneRuntimeUserMessage(delivery.message))
+        .filter((message): message is RuntimeUserMessage => message !== undefined)
+    ];
+
+    if (replayMessages.length === 0) {
+      return undefined;
+    }
+
+    const state = this.session.state as { messages?: unknown[] } | undefined;
+    const stateMessages = Array.isArray(state?.messages) ? (structuredClone(state.messages) as EmergencyContextTrimMessage[]) : [];
+    this.preparedSpecialistFallbackSessionMessages = stateMessages;
+
+    this.pruneFailedTurnForReplay(replayMessages);
+    return {
+      messages: replayMessages
+    };
+  }
+
+  async restorePreparedSpecialistFallbackReplay(): Promise<void> {
+    if (!this.preparedSpecialistFallbackSessionMessages) {
+      return;
+    }
+
+    this.rebuildSessionContextFromTrimmedMessages(this.preparedSpecialistFallbackSessionMessages);
+    this.preparedSpecialistFallbackSessionMessages = undefined;
+  }
+
   async sendMessage(
     input: RuntimeUserMessageInput,
     _requestedMode: RequestedDeliveryMode = "auto"
@@ -134,7 +171,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
     this.suppressSessionEventsUntilIdle = false;
 
     const deliveryId = randomUUID();
-    const message = normalizeRuntimeUserMessage(input);
+    const message = await prepareRuntimeUserMessageForDispatch(input);
 
     if (this.isContextRecoveryActive()) {
       if (this.isContextRecoveryInProgress()) {
@@ -161,6 +198,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
       };
     }
 
+    this.currentTurnReplayMessages = [cloneRuntimeUserMessage(message) ?? message];
     this.dispatchPrompt(message);
 
     return {
@@ -252,6 +290,8 @@ export class AgentRuntime implements SwarmAgentRuntime {
     this.pendingDeliveries = [];
     this.recoveryBufferedMessages.length = 0;
     this.promptDispatchPending = false;
+    this.currentTurnReplayMessages = [];
+    this.preparedSpecialistFallbackSessionMessages = undefined;
     this.ignoreNextAgentStart = false;
     this.latestAutoCompactionReason = undefined;
     this.autoCompactionRecoveryInProgress = false;
@@ -281,6 +321,8 @@ export class AgentRuntime implements SwarmAgentRuntime {
     this.pendingDeliveries = [];
     this.recoveryBufferedMessages.length = 0;
     this.promptDispatchPending = false;
+    this.currentTurnReplayMessages = [];
+    this.preparedSpecialistFallbackSessionMessages = undefined;
     this.ignoreNextAgentStart = false;
     this.latestAutoCompactionReason = undefined;
     this.autoCompactionRecoveryInProgress = false;
@@ -466,7 +508,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
   }
 
   private async dispatchPromptWithRetry(message: RuntimeUserMessage): Promise<void> {
-    const images = await toImageContent(message.images);
+    const images = toImageContent(message.images);
 
     for (let attempt = 1; attempt <= MAX_PROMPT_DISPATCH_ATTEMPTS; attempt += 1) {
       try {
@@ -514,12 +556,13 @@ export class AgentRuntime implements SwarmAgentRuntime {
   }
 
   private async enqueueMessage(deliveryId: string, message: RuntimeUserMessage): Promise<void> {
-    const images = await toImageContent(message.images);
+    const images = toImageContent(message.images);
     await this.session.steer(message.text, images.length > 0 ? images : undefined);
 
     this.pendingDeliveries.push({
       deliveryId,
       messageKey: buildRuntimeMessageKey(message),
+      message: cloneRuntimeUserMessage(message) ?? message,
       mode: "steer"
     });
   }
@@ -541,6 +584,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
     this.pendingDeliveries.push({
       deliveryId,
       messageKey: buildRuntimeMessageKey(message),
+      message: cloneRuntimeUserMessage(message) ?? message,
       mode: "recovery_buffer"
     });
   }
@@ -554,7 +598,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
     for (const entry of buffered) {
       try {
-        const images = await toImageContent(entry.message.images);
+        const images = toImageContent(entry.message.images);
         await this.session.steer(entry.message.text, images.length > 0 ? images : undefined);
       } catch (error) {
         this.removePendingDeliveryById(entry.deliveryId);
@@ -597,6 +641,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
     }
 
     if (event.type === "agent_end") {
+      this.currentTurnReplayMessages = [];
       if (this.status !== "terminated") {
         await this.updateStatus("idle");
       }
@@ -638,7 +683,10 @@ export class AgentRuntime implements SwarmAgentRuntime {
     if (event.type === "message_start" && event.message.role === "user") {
       const key = extractMessageKeyFromRuntimeContent(event.message.content);
       if (key !== undefined) {
-        this.consumePendingMessage(key);
+        const pendingMessage = this.consumePendingMessage(key);
+        if (pendingMessage) {
+          this.currentTurnReplayMessages.push(cloneRuntimeUserMessage(pendingMessage.message) ?? pendingMessage.message);
+        }
         await this.emitStatus();
       }
     }
@@ -1120,8 +1168,8 @@ export class AgentRuntime implements SwarmAgentRuntime {
     }
   }
 
-  private consumePendingMessage(messageKey: string): void {
-    consumePendingDeliveryByMessageKey(this.pendingDeliveries, messageKey);
+  private consumePendingMessage(messageKey: string): PendingDelivery | undefined {
+    return consumePendingDeliveryByMessageKey(this.pendingDeliveries, messageKey);
   }
 
   private removePendingDeliveryById(deliveryId: string): void {
@@ -1180,6 +1228,54 @@ export class AgentRuntime implements SwarmAgentRuntime {
   private refreshContextUsage(): AgentContextUsage | undefined {
     this.lastContextUsage = normalizeAgentContextUsage(this.session.getContextUsage?.());
     return this.lastContextUsage;
+  }
+
+  private pruneFailedTurnForReplay(replayMessages: RuntimeUserMessage[]): void {
+    const state = this.session.state as { messages?: unknown[] } | undefined;
+    const stateMessages = Array.isArray(state?.messages) ? [...state.messages] : [];
+    if (stateMessages.length === 0 || replayMessages.length === 0) {
+      return;
+    }
+
+    let trimmedMessages = [...stateMessages];
+    let changed = false;
+
+    const lastMessage = trimmedMessages.at(-1);
+    if (isAssistantErrorLike(lastMessage)) {
+      trimmedMessages = trimmedMessages.slice(0, -1);
+      changed = true;
+    }
+
+    let replayIndex = replayMessages.length - 1;
+    let matchedAcceptedSuffix = false;
+    while (replayIndex >= 0 && trimmedMessages.length > 0) {
+      const trailingUserKey = extractRuntimeMessageKeyFromSessionMessage(trimmedMessages.at(-1));
+      if (trailingUserKey === undefined) {
+        break;
+      }
+
+      const replayMessageKey = buildRuntimeMessageKey(replayMessages[replayIndex]);
+      if (trailingUserKey === replayMessageKey) {
+        trimmedMessages = trimmedMessages.slice(0, -1);
+        replayIndex -= 1;
+        changed = true;
+        matchedAcceptedSuffix = true;
+        continue;
+      }
+
+      if (!matchedAcceptedSuffix) {
+        replayIndex -= 1;
+        continue;
+      }
+
+      break;
+    }
+
+    if (!changed) {
+      return;
+    }
+
+    this.rebuildSessionContextFromTrimmedMessages(trimmedMessages as EmergencyContextTrimMessage[]);
   }
 
   private async reportRuntimeError(error: RuntimeErrorEvent): Promise<void> {
@@ -1383,23 +1479,77 @@ export function isAlreadyCompactedError(message: string): boolean {
   return /already\s+compact(?:ed)?/i.test(message) || /nothing\s+to\s+compact/i.test(message);
 }
 
-async function toImageContent(images: RuntimeImageAttachment[] | undefined): Promise<ImageContent[]> {
-  if (!images || images.length === 0) {
-    return [];
+function cloneRuntimeUserMessage(message: RuntimeUserMessage | undefined): RuntimeUserMessage | undefined {
+  if (!message) {
+    return undefined;
   }
 
-  const results = await Promise.all(
-    images.map(async (image) => {
+  return {
+    text: message.text,
+    images: message.images?.map((image) => ({ ...image })) ?? []
+  };
+}
+
+function isAssistantErrorLike(message: unknown): boolean {
+  if (!message || typeof message !== "object") {
+    return false;
+  }
+
+  const candidate = message as { role?: unknown; stopReason?: unknown; errorMessage?: unknown };
+  if (candidate.role !== "assistant") {
+    return false;
+  }
+
+  return candidate.stopReason === "error" || typeof candidate.errorMessage === "string";
+}
+
+function extractRuntimeMessageKeyFromSessionMessage(message: unknown): string | undefined {
+  if (!message || typeof message !== "object") {
+    return undefined;
+  }
+
+  const candidate = message as { role?: unknown; content?: unknown };
+  if (candidate.role !== "user") {
+    return undefined;
+  }
+
+  return extractMessageKeyFromRuntimeContent(candidate.content);
+}
+
+async function prepareRuntimeUserMessageForDispatch(
+  input: RuntimeUserMessageInput
+): Promise<RuntimeUserMessage> {
+  const normalized = normalizeRuntimeUserMessage(input);
+  if (!normalized.images || normalized.images.length === 0) {
+    return normalized;
+  }
+
+  const images = await Promise.all(
+    normalized.images.map(async (image) => {
       const resized = await resizeImageIfNeeded(image.data, image.mimeType);
       return {
-        type: "image" as const,
         mimeType: resized.mimeType,
         data: resized.data
       };
     })
   );
 
-  return results;
+  return {
+    text: normalized.text,
+    images
+  };
+}
+
+function toImageContent(images: RuntimeImageAttachment[] | undefined): ImageContent[] {
+  if (!images || images.length === 0) {
+    return [];
+  }
+
+  return images.map((image) => ({
+    type: "image" as const,
+    mimeType: image.mimeType,
+    data: image.data
+  }));
 }
 
 function buildUserMessageContent(text: string, images: ImageContent[]): string | (TextContent | ImageContent)[] {

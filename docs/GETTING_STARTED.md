@@ -88,7 +88,7 @@ The key insight: **your manager writes better prompts than you do.** Especially 
 
 ### Chat Interface
 
-The main panel is a chat window. You type messages to your manager, it responds. When it spawns workers, you'll see activity indicators. When workers complete, results flow back through the manager.
+The main panel is a chat window. You type messages to your manager, it responds. When it spawns workers, you'll see activity indicators. When workers complete, results flow back through the manager. Agents can also output Mermaid diagrams in standard code fences, and Forge renders them inline with an interactive toolbar.
 
 Two view modes, toggled at the top:
 
@@ -147,6 +147,8 @@ Usage data is cached per-provider with a 3-minute TTL to avoid excessive API cal
 ### Describing Tasks
 
 Talk to your manager like you'd talk to a capable colleague. You don't need to be precise or exhaustive. That's the manager's job. Just describe what you want:
+
+The manager may stay quiet while workers are running routine tasks. It will surface useful results, blockers, and completion updates instead of narrating every small step.
 
 > "The login page has a bug where the error message doesn't show up after a failed attempt. Fix it."
 
@@ -427,6 +429,8 @@ Workers are supposed to report back to the manager when they finish. But LLMs ar
 
 Forge detects this. When a worker goes idle without reporting back, the system notifies the session agent: "This worker went idle without sending a message." The session agent can then inspect the worker's output, nudge it, or spin up a replacement.
 
+If a worker turn fails instead of finishing cleanly, that failure can now surface in the transcript as a system message with the error context preserved, so it does not just look like a missing callback.
+
 ### Stalled Worker Auto-Kill
 
 Sometimes workers get stuck on a command that hangs. An infinite loop, a misconfigured server, a command waiting for input that will never come.
@@ -583,6 +587,8 @@ No database. Everything is files (JSON, JSONL, and Markdown):
         ├── memory.md              # Session working memory
         └── workers/               # Individual worker logs
 ```
+
+Cached conversation sidecars rebuild from canonical `session.jsonl` on first load if they are stale or truncated, so sessions affected by async deliveries should show full history again after refresh.
 
 Cortex is architecturally just another manager agent. It lives in the same profile structure with its own sessions and workers.
 

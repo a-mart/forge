@@ -125,6 +125,10 @@ function buildStatsSnapshot(overrides: Partial<StatsSnapshot> = {}): StatsSnapsh
       totalProfiles: 1,
       serverVersion: 'test',
       nodeVersion: process.version,
+      platform: 'darwin',
+      arch: 'arm64',
+      isDesktop: false,
+      electronVersion: null,
     },
     ...overrides,
   }

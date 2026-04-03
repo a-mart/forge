@@ -12,6 +12,7 @@ Forge is configured through environment variables, a `.env` file, and the dashbo
 | `FORGE_PORT` | `47187` (dev) / `47287` (prod) | Backend HTTP + WebSocket port. |
 | `FORGE_DATA_DIR` | `~/.forge` (macOS/Linux) or `%LOCALAPPDATA%\forge` (Windows) | Data directory for all persistent state. |
 | `FORGE_DEBUG` | `false` | Enable debug logging. Also enables extension tool-call logging, which surfaces tool invocations from Pi extensions in the backend logs. |
+| `FORGE_TELEMETRY` | `true` | Enable or disable anonymous telemetry. Only aggregate counts are sent. |
 
 ### UI
 
@@ -60,7 +61,7 @@ FORGE_PORT=47187
 
 ## API Keys (LLM Providers)
 
-API keys for LLM providers — **OpenAI**, **Anthropic**, and **xAI** — are configured through the dashboard UI under **Settings → Providers**. They are stored locally in the data directory and never leave your machine.
+API keys for LLM providers — **OpenAI**, **Anthropic**, and **xAI** — are configured through the dashboard UI under **Settings → Authentication**. They are stored locally in the data directory and never leave your machine.
 
 Model availability and behavior are managed through **Settings → Models**, which provides visibility controls and context window overrides for all supported models. See [docs/MODEL_CATALOG.md](MODEL_CATALOG.md) for details on the model catalog system.
 
@@ -133,8 +134,9 @@ Forge automatically scans `${FORGE_DATA_DIR}/skills` for optional machine-local 
 
 Discovery precedence is:
 1. `${FORGE_DATA_DIR}/skills`
-2. repo-local `.swarm/skills`
-3. built-in skill definitions shipped with Forge
+2. built-in skill definitions shipped with Forge
+
+Skills are loaded from the machine-local directory first, and then from Forge's built-in definitions. There is no repo-local `.swarm/skills` layer in the current setup.
 
 Discovered skills are injected into all agent/runtime sessions the same way other loaded skills are.
 

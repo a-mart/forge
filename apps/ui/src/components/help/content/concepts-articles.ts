@@ -12,19 +12,19 @@ When you send a message, the manager reads it, decides what needs to happen, and
 
 ## What you see
 
-Workers appear as pills below the chat header while they are active. Click a pill to see what that worker is doing. When a worker finishes, it reports back to the manager and disappears.
+Workers appear as pills below the chat header while they are active. Click a pill to see what that worker is doing. When a worker finishes, it reports back to the manager and disappears. Agents can also produce Mermaid diagrams that render inline in chat instead of staying as raw code fences.
 
 ## Why this matters
 
 Splitting work across workers means the manager can handle multiple things at once. A single message might trigger a backend fix, a UI update, and a test run — all happening in parallel instead of one after another.
 
-The manager controls the flow. It decides which model each worker uses, what instructions to give, and whether to retry if something fails. You do not need to manage workers directly, but you can watch their progress and see their output in the chat.
+The manager controls the flow. It decides which model each worker uses, what instructions to give, and whether to retry if something fails. You do not need to manage workers directly, but you can watch their progress and see their output in the chat. User-facing manager updates are intentionally concise and focused on decisions, results, and blockers.
 
 ## How routing works
 
 The manager picks a model for each worker based on the task. Quick jobs like file reads get a cheaper, faster model. Complex work like architecture review gets a more capable one. If you have specialists configured, the manager routes work to the right specialist automatically based on what the task needs.
 
-Workers can use tools — reading files, running shell commands, making edits — but they always report results back to the manager, which decides the next step.`,
+Workers can use tools — reading files, running shell commands, making edits — but they always report results back to the manager, which decides the next step. If a worker turn fails, that failure can surface as a system message with the error context preserved instead of looking like a normal completion.`,
   keywords: [
     'manager',
     'worker',
@@ -205,7 +205,7 @@ A session is a single conversation thread. Each session has:
 - Its own **workers** that run during the conversation
 - Its own **pinned messages** (up to 10)
 
-Sessions within a profile are independent. You can have one session debugging a backend issue and another working on a UI feature — both using the same profile config but tracking separate context.
+Sessions within a profile are independent. You can have one session debugging a backend issue and another working on a UI feature — both using the same profile config but tracking separate context. Pinned sessions in the sidebar are just navigation favorites; they are separate from pinned messages inside a conversation.
 
 ## Lifecycle
 
@@ -238,7 +238,7 @@ const conceptsProjectAgents: HelpArticle = {
   category: 'concepts',
   summary:
     'Promoted sessions that become discoverable, persistent agents for cross-session collaboration.',
-  content: `Project agents are sessions promoted to persistent specialist roles within a profile. Unlike regular sessions, they have dedicated handles and are discoverable by sibling sessions for async collaboration.
+  content: `Project agents are sessions promoted to persistent specialist roles within a profile. Unlike regular sessions, they have dedicated handles and are discoverable by sibling sessions for async collaboration. If a cached sidecar was truncated, the project agent conversation rebuilds from canonical session history on first load.
 
 ## What makes a project agent
 

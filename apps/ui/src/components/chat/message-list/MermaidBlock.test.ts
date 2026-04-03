@@ -1,33 +1,11 @@
 /** @vitest-environment jsdom */
 
-import { createElement, act } from 'react'
+import { createElement } from 'react'
+import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-
-// ---------------------------------------------------------------------------
-// Mock mermaid
-// ---------------------------------------------------------------------------
-
-const mockInitialize = vi.fn()
-const mockRender = vi.fn()
-
-vi.mock('mermaid', () => ({
-  default: {
-    initialize: (...args: unknown[]) => mockInitialize(...args),
-    render: (...args: unknown[]) => mockRender(...args),
-  },
-}))
-
-// ---------------------------------------------------------------------------
-// Import component under test (after mocks are set up)
-// ---------------------------------------------------------------------------
-
 import { MermaidBlock } from './MermaidBlock'
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 let root: Root
 let container: HTMLDivElement
@@ -36,230 +14,415 @@ beforeEach(() => {
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
-  mockInitialize.mockReset()
-  mockRender.mockReset()
+
+  Object.defineProperty(navigator, 'clipboard', {
+    configurable: true,
+    value: {
+      writeText: vi.fn().mockResolvedValue(undefined),
+    },
+  })
 })
 
 afterEach(() => {
   flushSync(() => root.unmount())
   container.remove()
+  document.documentElement.classList.remove('dark')
+  vi.restoreAllMocks()
+  vi.useRealTimers()
 })
 
-/** Flush pending microtasks so the async effect inside MermaidBlock completes. */
+function renderMermaid(code: string) {
+  flushSync(() => {
+    root.render(createElement(MermaidBlock, { code }))
+  })
+}
+
 async function flush() {
   await act(async () => {
-    await new Promise((r) => setTimeout(r, 0))
+    await Promise.resolve()
   })
 }
 
-function render(code: string, isDocument = false) {
-  flushSync(() => {
-    root.render(createElement(MermaidBlock, { code, isDocument }))
+function getInlineIframe(): HTMLIFrameElement {
+  const iframe = container.querySelector('iframe[title="Mermaid diagram preview"]')
+  expect(iframe).toBeTruthy()
+  return iframe as HTMLIFrameElement
+}
+
+function attachContentWindow(iframe: HTMLIFrameElement) {
+  const contentWindow = {
+    postMessage: vi.fn(),
+  } as unknown as Window
+
+  Object.defineProperty(iframe, 'contentWindow', {
+    configurable: true,
+    value: contentWindow,
+  })
+
+  return contentWindow
+}
+
+function getInstanceId(iframe: HTMLIFrameElement): string {
+  const src = iframe.getAttribute('src')
+  expect(src).toBeTruthy()
+  const url = new URL(src!, 'http://localhost')
+  const instanceId = url.searchParams.get('instanceId')
+  expect(instanceId).toBeTruthy()
+  return instanceId!
+}
+
+function dispatchFrameMessage(contentWindow: Window, data: Record<string, unknown>) {
+  const event = new MessageEvent('message', { data })
+  Object.defineProperty(event, 'source', {
+    configurable: true,
+    value: contentWindow,
+  })
+
+  act(() => {
+    window.dispatchEvent(event)
   })
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
+function getLatestPostedMessage(contentWindow: Window) {
+  const calls = vi.mocked(contentWindow.postMessage).mock.calls
+  expect(calls.length).toBeGreaterThan(0)
+  return calls.at(-1)?.[0] as Record<string, unknown>
+}
 
 describe('MermaidBlock', () => {
-  // -----------------------------------------------------------------------
-  // Important #1 — strict security config enforcement
-  // -----------------------------------------------------------------------
+  it('shows source immediately and resolves iframe src from the backend URL', () => {
+    renderMermaid('graph LR; A-->B')
 
-  it('always calls mermaid.initialize with securityLevel strict before render', async () => {
-    mockRender.mockResolvedValue({ svg: '<svg><text>Hello</text></svg>' })
-
-    render('graph LR; A-->B')
-    await flush()
-
-    expect(mockInitialize).toHaveBeenCalledTimes(1)
-    expect(mockInitialize).toHaveBeenCalledWith(
-      expect.objectContaining({
-        startOnLoad: false,
-        securityLevel: 'strict',
-      }),
-    )
-
-    // Verify initialize is called before render
-    const initOrder = mockInitialize.mock.invocationCallOrder[0]
-    const renderOrder = mockRender.mock.invocationCallOrder[0]
-    expect(initOrder).toBeLessThan(renderOrder!)
-  })
-
-  it('re-asserts strict config on every render cycle, not just theme changes', async () => {
-    mockRender.mockResolvedValue({ svg: '<svg><text>v1</text></svg>' })
-
-    render('graph LR; A-->B')
-    await flush()
-
-    expect(mockInitialize).toHaveBeenCalledTimes(1)
-
-    // Re-render with different code but same theme
-    mockRender.mockResolvedValue({ svg: '<svg><text>v2</text></svg>' })
-    render('graph LR; A-->C')
-    await flush()
-
-    // Should have called initialize again (not skipped due to same theme)
-    expect(mockInitialize).toHaveBeenCalledTimes(2)
-    for (const call of mockInitialize.mock.calls) {
-      expect(call[0]).toMatchObject({ securityLevel: 'strict' })
-    }
-  })
-
-  // -----------------------------------------------------------------------
-  // Important #2 — SVG sanitization
-  // -----------------------------------------------------------------------
-
-  it('strips script tags from rendered SVG before DOM injection', async () => {
-    const maliciousSvg =
-      '<svg xmlns="http://www.w3.org/2000/svg"><script>alert("xss")</script><text>Safe</text></svg>'
-    mockRender.mockResolvedValue({ svg: maliciousSvg })
-
-    render('graph LR; A-->B')
-    await flush()
-
-    // The rendered content should not contain any script tags
-    expect(container.innerHTML).not.toContain('<script>')
-    expect(container.innerHTML).not.toContain('alert("xss")')
-    // But should still have the safe text content
-    expect(container.innerHTML).toContain('Safe')
-  })
-
-  it('strips onload event handlers from SVG before DOM injection', async () => {
-    const maliciousSvg =
-      '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"><text>OK</text></svg>'
-    mockRender.mockResolvedValue({ svg: maliciousSvg })
-
-    render('graph LR; A-->B')
-    await flush()
-
-    expect(container.innerHTML).not.toContain('onload')
-    expect(container.innerHTML).not.toContain('alert(1)')
-    expect(container.innerHTML).toContain('OK')
-  })
-
-  it('strips foreignObject from SVG before DOM injection', async () => {
-    const maliciousSvg =
-      '<svg xmlns="http://www.w3.org/2000/svg"><foreignObject><body><script>alert(1)</script></body></foreignObject><text>OK</text></svg>'
-    mockRender.mockResolvedValue({ svg: maliciousSvg })
-
-    render('graph LR; A-->B')
-    await flush()
-
-    expect(container.innerHTML).not.toContain('foreignObject')
-    expect(container.innerHTML).not.toContain('<script>')
-  })
-
-  // -----------------------------------------------------------------------
-  // Important #2 — Error / fallback UI
-  // -----------------------------------------------------------------------
-
-  it('shows error fallback UI when mermaid render throws', async () => {
-    mockRender.mockRejectedValue(new Error('Parse error: invalid syntax'))
-
-    render('graph invalid!!!')
-    await flush()
-
-    // Should show error banner
-    expect(container.textContent).toContain('Diagram error')
-    // Should show raw source code as fallback
-    expect(container.textContent).toContain('graph invalid!!!')
-  })
-
-  it('shows error fallback UI when mermaid import fails', async () => {
-    // Temporarily override the mock to simulate import failure
-    const originalRender = mockRender.getMockImplementation()
-    mockInitialize.mockImplementation(() => {
-      throw new Error('Module not found')
-    })
-
-    render('graph LR; A-->B')
-    await flush()
-
-    expect(container.textContent).toContain('Diagram error')
-
-    // Restore
-    mockInitialize.mockReset()
-    if (originalRender) mockRender.mockImplementation(originalRender)
-  })
-
-  it('shows generic error message for non-Error exceptions', async () => {
-    mockRender.mockRejectedValue('string error')
-
-    render('graph LR; A-->B')
-    await flush()
-
-    expect(container.textContent).toContain('Diagram error')
-  })
-
-  // -----------------------------------------------------------------------
-  // Source toggle behavior
-  // -----------------------------------------------------------------------
-
-  it('defaults to source view and shows code immediately', () => {
-    mockRender.mockReturnValue(new Promise(() => {})) // never resolves
-
-    render('graph LR; A-->B')
-
-    // Should show source by default (not loading spinner)
     expect(container.textContent).toContain('graph LR; A-->B')
-    // The source toggle button should be present and not disabled
-    const buttons = container.querySelectorAll('button')
-    const toggleBtn = Array.from(buttons).find(
-      (b) => b.querySelector('svg') !== null,
-    )
-    expect(toggleBtn).toBeTruthy()
-    expect(toggleBtn?.disabled).toBe(false)
+
+    const iframe = getInlineIframe()
+    const iframeUrl = new URL(iframe.src)
+    expect(iframeUrl.pathname).toBe('/mermaid-preview/embed')
+    expect(iframeUrl.searchParams.get('instanceId')).toBeTruthy()
+    expect(iframeUrl.searchParams.get('theme')).toBe('light')
+    expect(container.querySelector('[aria-label="Download SVG"]')).toBeNull()
   })
 
-  it('auto-switches to diagram view after first successful render', async () => {
-    mockRender.mockResolvedValue({
-      svg: '<svg xmlns="http://www.w3.org/2000/svg"><text>Diagram</text></svg>',
+  it('auto-switches to the diagram view after a successful iframe render', async () => {
+    renderMermaid('graph LR; A-->B')
+
+    const iframe = getInlineIframe()
+    const contentWindow = attachContentWindow(iframe)
+    const instanceId = getInstanceId(iframe)
+
+    dispatchFrameMessage(contentWindow, {
+      type: 'forge:mermaid-ready',
+      instanceId,
+    })
+    await flush()
+
+    const renderMessage = getLatestPostedMessage(contentWindow)
+    dispatchFrameMessage(contentWindow, {
+      type: 'forge:mermaid-rendered',
+      instanceId,
+      requestId: renderMessage.requestId as string,
+      height: 360,
+    })
+    await flush()
+
+    expect(container.querySelector('[aria-label="Show source"]')).toBeTruthy()
+    expect(container.querySelector('[aria-label="Download SVG"]')).toBeTruthy()
+    expect(container.querySelector('[aria-label="Download PNG"]')).toBeTruthy()
+    expect(container.querySelector('[aria-label="Expand diagram"]')).toBeTruthy()
+  })
+
+  it('ignores bridge messages from the wrong source or instance', async () => {
+    renderMermaid('graph LR; A-->B')
+
+    const iframe = getInlineIframe()
+    const contentWindow = attachContentWindow(iframe)
+    const instanceId = getInstanceId(iframe)
+
+    dispatchFrameMessage(
+      { postMessage: vi.fn() } as unknown as Window,
+      {
+        type: 'forge:mermaid-ready',
+        instanceId,
+      },
+    )
+    await flush()
+    expect(vi.mocked(contentWindow.postMessage).mock.calls.length).toBe(0)
+
+    dispatchFrameMessage(contentWindow, {
+      type: 'forge:mermaid-ready',
+      instanceId,
+    })
+    await flush()
+
+    const renderMessage = getLatestPostedMessage(contentWindow)
+    dispatchFrameMessage(contentWindow, {
+      type: 'forge:mermaid-rendered',
+      instanceId: `${instanceId}-other`,
+      requestId: renderMessage.requestId as string,
+      height: 300,
+    })
+    await flush()
+
+    expect(container.querySelector('[aria-label="Download SVG"]')).toBeNull()
+  })
+
+  it('re-sends a render request when the theme changes without changing the iframe URL', async () => {
+    renderMermaid('graph LR; A-->B')
+
+    const iframe = getInlineIframe()
+    const initialIframeSrc = iframe.src
+    const contentWindow = attachContentWindow(iframe)
+    const instanceId = getInstanceId(iframe)
+
+    dispatchFrameMessage(contentWindow, {
+      type: 'forge:mermaid-ready',
+      instanceId,
+    })
+    await flush()
+
+    const initialRender = getLatestPostedMessage(contentWindow)
+    expect(initialRender.themeMode).toBe('light')
+
+    act(() => {
+      document.documentElement.classList.add('dark')
+    })
+    await flush()
+
+    const rerenderMessage = getLatestPostedMessage(contentWindow)
+    expect(rerenderMessage.type).toBe('forge:mermaid-render')
+    expect(rerenderMessage.themeMode).toBe('dark')
+    expect(getInlineIframe().src).toBe(initialIframeSrc)
+  })
+
+  it('falls back to source-only UI when the iframe never reports ready', async () => {
+    vi.useFakeTimers()
+    renderMermaid('graph LR; A-->B')
+
+    const iframe = getInlineIframe()
+    attachContentWindow(iframe)
+
+    act(() => {
+      iframe.dispatchEvent(new Event('load'))
     })
 
-    render('graph LR; A-->B')
-    await flush()
+    await act(async () => {
+      vi.advanceTimersByTime(15_001)
+      await Promise.resolve()
+    })
 
-    // Should now show the rendered SVG, not the source
-    const svgContainer = container.querySelector('[class*="justify-center"]')
-    expect(svgContainer?.innerHTML).toContain('<svg')
+    expect(container.textContent).toContain('Diagram error')
+    expect(container.textContent).toContain('graph LR; A-->B')
   })
 
-  // -----------------------------------------------------------------------
-  // Fullscreen uses same sanitized SVG
-  // -----------------------------------------------------------------------
+  it('keeps the source fallback available when the iframe reports a render error', async () => {
+    renderMermaid('graph invalid!!!')
 
-  it('fullscreen dialog receives the same sanitized SVG', async () => {
-    const unsafeSvg =
-      '<svg xmlns="http://www.w3.org/2000/svg"><script>xss</script><text>Diagram</text></svg>'
-    mockRender.mockResolvedValue({ svg: unsafeSvg })
+    const iframe = getInlineIframe()
+    const contentWindow = attachContentWindow(iframe)
+    const instanceId = getInstanceId(iframe)
 
-    render('graph LR; A-->B')
+    dispatchFrameMessage(contentWindow, {
+      type: 'forge:mermaid-ready',
+      instanceId,
+    })
     await flush()
 
-    // Both the inline and zoom dialog SVG should be sanitized
-    // The zoom dialog content div also uses dangerouslySetInnerHTML with the same svg state
-    const allDivsWithSvg = container.querySelectorAll('div')
-    for (const div of allDivsWithSvg) {
-      expect(div.innerHTML).not.toContain('<script>')
-    }
+    const renderMessage = getLatestPostedMessage(contentWindow)
+    dispatchFrameMessage(contentWindow, {
+      type: 'forge:mermaid-error',
+      instanceId,
+      requestId: renderMessage.requestId as string,
+      error: 'Parse failure',
+    })
+    await flush()
+
+    expect(container.textContent).toContain('Diagram error')
+    expect(container.textContent).toContain('graph invalid!!!')
+    expect(container.querySelector('[aria-label="Download SVG"]')).toBeNull()
   })
 
-  // -----------------------------------------------------------------------
-  // Highlighted source is sanitized
-  // -----------------------------------------------------------------------
+  it('exports SVG via the iframe bridge', async () => {
+    const createObjectURL = vi.fn(() => 'blob:diagram-svg')
+    Object.defineProperty(URL, 'createObjectURL', {
+      configurable: true,
+      writable: true,
+      value: createObjectURL,
+    })
+    const anchorClick = vi
+      .spyOn(HTMLAnchorElement.prototype, 'click')
+      .mockImplementation(() => {})
 
-  it('sanitizes highlighted source output used in dangerouslySetInnerHTML', () => {
-    mockRender.mockReturnValue(new Promise(() => {})) // never resolves
+    renderMermaid('graph LR; A-->B')
 
-    // The code content itself will be escaped, but let's verify the output path is safe
-    render('<script>alert(1)</script>')
+    const iframe = getInlineIframe()
+    const contentWindow = attachContentWindow(iframe)
+    const instanceId = getInstanceId(iframe)
 
-    // The raw source view should escape the script tag
-    const codeEl = container.querySelector('code')
-    expect(codeEl).toBeTruthy()
-    expect(codeEl!.innerHTML).not.toContain('<script>')
-    expect(codeEl!.textContent).toContain('<script>')
+    dispatchFrameMessage(contentWindow, {
+      type: 'forge:mermaid-ready',
+      instanceId,
+    })
+    await flush()
+
+    const renderMessage = getLatestPostedMessage(contentWindow)
+    dispatchFrameMessage(contentWindow, {
+      type: 'forge:mermaid-rendered',
+      instanceId,
+      requestId: renderMessage.requestId as string,
+      height: 360,
+    })
+    await flush()
+
+    await act(async () => {
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        if (container.querySelector('[aria-label="Download SVG"]')) {
+          return
+        }
+        await Promise.resolve()
+      }
+    })
+
+    vi.mocked(contentWindow.postMessage).mockClear()
+
+    const downloadButton = container.querySelector('[aria-label="Download SVG"]') as HTMLButtonElement | null
+    expect(downloadButton).toBeTruthy()
+    act(() => {
+      downloadButton?.click()
+    })
+    await flush()
+
+    const exportMessage = getLatestPostedMessage(contentWindow)
+    expect(exportMessage.type).toBe('forge:mermaid-export-svg')
+
+    dispatchFrameMessage(contentWindow, {
+      type: 'forge:mermaid-export-svg-result',
+      instanceId,
+      requestId: exportMessage.requestId as string,
+      svg: '<svg xmlns="http://www.w3.org/2000/svg"></svg>',
+    })
+    await flush()
+
+    expect(createObjectURL).toHaveBeenCalled()
+    expect(anchorClick).toHaveBeenCalled()
+  })
+
+  it('opens fullscreen with a second isolated iframe renderer', async () => {
+    renderMermaid('graph LR; A-->B')
+
+    const iframe = getInlineIframe()
+    const contentWindow = attachContentWindow(iframe)
+    const instanceId = getInstanceId(iframe)
+
+    dispatchFrameMessage(contentWindow, {
+      type: 'forge:mermaid-ready',
+      instanceId,
+    })
+    await flush()
+
+    const renderMessage = getLatestPostedMessage(contentWindow)
+    dispatchFrameMessage(contentWindow, {
+      type: 'forge:mermaid-rendered',
+      instanceId,
+      requestId: renderMessage.requestId as string,
+      height: 360,
+    })
+    await flush()
+
+    await act(async () => {
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        if (container.querySelector('[aria-label="Expand diagram"]')) {
+          return
+        }
+        await Promise.resolve()
+      }
+    })
+
+    const expandButton = container.querySelector('[aria-label="Expand diagram"]') as HTMLButtonElement | null
+    expect(expandButton).toBeTruthy()
+    act(() => {
+      expandButton?.click()
+    })
+    await flush()
+
+    const zoomIframe = document.querySelector('iframe[title="Expanded Mermaid diagram preview"]')
+    expect(zoomIframe).toBeTruthy()
+  })
+
+  it('sends a forge:mermaid-ping on iframe load to recover from a missed READY', async () => {
+    renderMermaid('graph LR; A-->B')
+
+    const iframe = getInlineIframe()
+    const contentWindow = attachContentWindow(iframe)
+    const instanceId = getInstanceId(iframe)
+
+    // Simulate iframe load WITHOUT dispatching forge:mermaid-ready first.
+    // This is the race scenario where READY fires before the React listener
+    // is attached and is therefore lost.
+    act(() => {
+      iframe.dispatchEvent(new Event('load'))
+    })
+    await flush()
+
+    // Parent should have posted a forge:mermaid-ping to the child to
+    // request a re-post of the READY message.
+    const allCalls = vi.mocked(contentWindow.postMessage).mock.calls
+    const pingCalls = allCalls.filter(
+      (call) => (call[0] as Record<string, unknown>)?.type === 'forge:mermaid-ping',
+    )
+    expect(pingCalls.length).toBeGreaterThanOrEqual(1)
+
+    const pingMessage = pingCalls[0]![0] as Record<string, unknown>
+    expect(pingMessage.instanceId).toBe(instanceId)
+
+    // Now simulate the child responding with READY (as it would after a ping)
+    dispatchFrameMessage(contentWindow, {
+      type: 'forge:mermaid-ready',
+      instanceId,
+    })
+    await flush()
+
+    // Parent should have sent a render request after receiving READY
+    const renderMessage = getLatestPostedMessage(contentWindow)
+    expect(renderMessage.type).toBe('forge:mermaid-render')
+    expect(renderMessage.code).toBe('graph LR; A-->B')
+    expect(renderMessage.instanceId).toBe(instanceId)
+  })
+
+  it('completes full render lifecycle even when initial READY is missed', async () => {
+    renderMermaid('graph LR; A-->B')
+
+    const iframe = getInlineIframe()
+    const contentWindow = attachContentWindow(iframe)
+    const instanceId = getInstanceId(iframe)
+
+    // Simulate onLoad (no READY dispatched — it was "lost")
+    act(() => {
+      iframe.dispatchEvent(new Event('load'))
+    })
+    await flush()
+
+    // Respond to ping with READY
+    dispatchFrameMessage(contentWindow, {
+      type: 'forge:mermaid-ready',
+      instanceId,
+    })
+    await flush()
+
+    // Get the render request and simulate successful render
+    const renderMessage = getLatestPostedMessage(contentWindow)
+    expect(renderMessage.type).toBe('forge:mermaid-render')
+
+    dispatchFrameMessage(contentWindow, {
+      type: 'forge:mermaid-rendered',
+      instanceId,
+      requestId: renderMessage.requestId as string,
+      height: 400,
+    })
+    await flush()
+
+    // Should switch to diagram view and show toolbar actions
+    expect(container.querySelector('[aria-label="Show source"]')).toBeTruthy()
+    expect(container.querySelector('[aria-label="Download SVG"]')).toBeTruthy()
+    expect(container.querySelector('[aria-label="Expand diagram"]')).toBeTruthy()
   })
 })

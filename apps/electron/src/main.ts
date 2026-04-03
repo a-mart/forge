@@ -188,6 +188,8 @@ class BackendSupervisor {
           FORGE_HOST: process.env.FORGE_HOST || '0.0.0.0',
           FORGE_PORT: process.env.FORGE_PORT || String(resolveDefaultBackendPort()),
           FORGE_RESOURCES_DIR: resourcesDir,
+          FORGE_APP_VERSION: app.getVersion(),
+          FORGE_ELECTRON_VERSION: process.versions.electron ?? '',
         },
         stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
         execArgv,
@@ -631,11 +633,6 @@ function sendTerminalShortcut(action: 'toggle' | 'new' | 'next' | 'prev'): void 
 function createApplicationMenu(): void {
   const isMac = process.platform === 'darwin'
 
-  if (!isMac) {
-    Menu.setApplicationMenu(null)
-    return
-  }
-
   const template: Array<Electron.MenuItemConstructorOptions> = []
 
   if (isMac) {
@@ -668,9 +665,23 @@ function createApplicationMenu(): void {
         { type: 'separator' },
         { role: 'services' },
         { type: 'separator' },
-        { role: 'hide' },
-        { role: 'hideOthers' },
+        { role: 'hide', accelerator: 'Command+H' },
+        { role: 'hideOthers', accelerator: 'Alt+Command+H' },
         { role: 'unhide' },
+        { type: 'separator' },
+        { role: 'quit', accelerator: 'Command+Q' },
+      ],
+    })
+  } else {
+    template.push({
+      label: 'File',
+      submenu: [
+        {
+          label: 'Check for Updates...',
+          click: (): void => {
+            void checkForUpdatesManually()
+          },
+        },
         { type: 'separator' },
         { role: 'quit' },
       ],
@@ -680,20 +691,20 @@ function createApplicationMenu(): void {
   template.push({
     label: 'Edit',
     submenu: [
-      { role: 'undo' },
-      { role: 'redo' },
+      { role: 'undo', accelerator: 'CmdOrCtrl+Z' },
+      { role: 'redo', accelerator: isMac ? 'Shift+CmdOrCtrl+Z' : 'Ctrl+Y' },
       { type: 'separator' },
-      { role: 'cut' },
-      { role: 'copy' },
-      { role: 'paste' },
+      { role: 'cut', accelerator: 'CmdOrCtrl+X' },
+      { role: 'copy', accelerator: 'CmdOrCtrl+C' },
+      { role: 'paste', accelerator: 'CmdOrCtrl+V' },
       ...(isMac ? [
-        { role: 'pasteAndMatchStyle' as const },
+        { role: 'pasteAndMatchStyle' as const, accelerator: 'Shift+Alt+CmdOrCtrl+V' },
         { role: 'delete' as const },
-        { role: 'selectAll' as const },
+        { role: 'selectAll' as const, accelerator: 'CmdOrCtrl+A' },
       ] : [
         { role: 'delete' as const },
         { type: 'separator' as const },
-        { role: 'selectAll' as const },
+        { role: 'selectAll' as const, accelerator: 'CmdOrCtrl+A' },
       ]),
     ],
   })
@@ -701,26 +712,15 @@ function createApplicationMenu(): void {
   template.push({
     label: 'View',
     submenu: [
-      { role: 'reload' },
-      { role: 'forceReload' },
-      { role: 'toggleDevTools' },
+      { role: 'reload', accelerator: 'CmdOrCtrl+R' },
+      { role: 'forceReload', accelerator: 'Shift+CmdOrCtrl+R' },
+      { role: 'toggleDevTools', accelerator: isMac ? 'Alt+Command+I' : 'Ctrl+Shift+I' },
       { type: 'separator' as const },
-      { role: 'resetZoom' },
-      { role: 'zoomIn' },
-      { role: 'zoomOut' },
-      ...(isMac
-        ? []
-        : [
-            { type: 'separator' as const },
-            {
-              label: 'Check for Updates...',
-              click: (): void => {
-                void checkForUpdatesManually()
-              },
-            },
-          ]),
+      { role: 'resetZoom', accelerator: 'CmdOrCtrl+0' },
+      { role: 'zoomIn', accelerator: 'CmdOrCtrl+Plus' },
+      { role: 'zoomOut', accelerator: 'CmdOrCtrl+-' },
       { type: 'separator' as const },
-      { role: 'togglefullscreen' },
+      { role: 'togglefullscreen', accelerator: isMac ? 'Ctrl+Command+F' : 'F11' },
     ],
   })
 
@@ -754,13 +754,13 @@ function createApplicationMenu(): void {
   template.push({
     label: 'Window',
     submenu: [
-      { role: 'minimize' },
+      { role: 'minimize', ...(isMac ? { accelerator: 'CmdOrCtrl+M' } : {}) },
       { role: 'zoom' },
       ...(isMac ? [
         { type: 'separator' as const },
         { role: 'front' as const },
       ] : [
-        { role: 'close' as const },
+        { role: 'close' as const, accelerator: 'Alt+F4' },
       ]),
     ],
   })

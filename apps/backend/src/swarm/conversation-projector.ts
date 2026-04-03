@@ -31,9 +31,13 @@ const MAX_CONVERSATION_HISTORY = 2000;
 const MAX_SAFE_JSON_BYTES = 32 * 1024;
 const SAFE_JSON_TRUNCATED_SUFFIX = " [truncated]";
 const CONVERSATION_ENTRY_TYPE = "swarm_conversation_entry";
+const CONVERSATION_CACHE_META_TYPE = "swarm_conversation_cache_meta";
+const CONVERSATION_CACHE_VERSION = 1;
 const SESSION_HEADER_VERSION = 3;
 const MANAGER_ERROR_CONTEXT_HINT = "Try compacting the conversation to free up context space.";
 const MANAGER_ERROR_GENERIC_HINT = "Please retry. If this persists, check provider auth and rate limits.";
+const WORKER_ERROR_CONTEXT_HINT = "The manager may need to compact the task context before retrying.";
+const WORKER_ERROR_GENERIC_HINT = "The manager may need to retry after checking provider auth, quotas, or rate limits.";
 
 type ConversationEventName =
   | "conversation_message"
@@ -42,6 +46,32 @@ type ConversationEventName =
   | "agent_tool_call"
   | "conversation_reset"
   | "choice_request";
+
+interface ConversationHistoryCacheMetadata {
+  type: typeof CONVERSATION_CACHE_META_TYPE;
+  version: typeof CONVERSATION_CACHE_VERSION;
+  persistedEntryCount: number;
+  cachedPersistedEntryCount: number;
+  firstPersistedEntryKey: string | null;
+  lastPersistedEntryKey: string | null;
+}
+
+interface LoadedConversationHistoryCache {
+  entries: ConversationEntryEvent[];
+  metadata: ConversationHistoryCacheMetadata | null;
+}
+
+interface QueuedConversationHistoryCacheSnapshot {
+  sessionFile: string;
+  history: ConversationEntryEvent[] | null;
+  metadata: ConversationHistoryCacheMetadata | null;
+}
+
+interface PersistedConversationEntrySummary {
+  count: number;
+  first: PersistedConversationEntryIdentity | null;
+  last: PersistedConversationEntryIdentity | null;
+}
 
 interface ConversationProjectorDependencies {
   descriptors: Map<string, AgentDescriptor>;
@@ -55,9 +85,10 @@ interface ConversationProjectorDependencies {
 
 export class ConversationProjector {
   private readonly lastSessionEntryIdBySessionFile = new Map<string, string>();
+  private readonly persistedEntryCountBySessionFile = new Map<string, number>();
   private readonly loadedFromDisk = new Set<string>();
   private readonly pendingCacheWrites = new Map<string, Promise<void>>();
-  private readonly queuedCacheSnapshots = new Map<string, ConversationEntryEvent[] | null>();
+  private readonly queuedCacheSnapshots = new Map<string, QueuedConversationHistoryCacheSnapshot>();
 
   constructor(private readonly deps: ConversationProjectorDependencies) {}
 
@@ -102,6 +133,7 @@ export class ConversationProjector {
     }
 
     this.lastSessionEntryIdBySessionFile.delete(resolvedSessionFile);
+    this.persistedEntryCountBySessionFile.delete(resolvedSessionFile);
     this.queueCacheSnapshotWrite(resolvedSessionFile, null);
   }
 
@@ -115,6 +147,7 @@ export class ConversationProjector {
     }
 
     this.lastSessionEntryIdBySessionFile.delete(resolvedSessionFile);
+    this.persistedEntryCountBySessionFile.delete(resolvedSessionFile);
     this.queueCacheSnapshotWrite(resolvedSessionFile, null);
   }
 
@@ -159,6 +192,7 @@ export class ConversationProjector {
     // Histories are lazy-loaded on first access per agent.
     this.deps.conversationEntriesByAgentId.clear();
     this.lastSessionEntryIdBySessionFile.clear();
+    this.persistedEntryCountBySessionFile.clear();
     this.loadedFromDisk.clear();
 
     // Seed leaf ids so fallback appends preserve parentId chains even before
@@ -224,6 +258,29 @@ export class ConversationProjector {
             timestamp,
             source: "system"
           });
+        }
+
+        if (role === "assistant") {
+          const stopReason = extractMessageStopReason(event.message);
+          const hasStructuredErrorMessage = hasMessageErrorMessageField(event.message);
+          if (stopReason === "error" || hasStructuredErrorMessage) {
+            const normalizedErrorMessage = normalizeProviderErrorMessage(
+              extractMessageErrorMessage(event.message) ?? extractedText
+            );
+            const isContextOverflow = isStrictContextOverflowMessage(normalizedErrorMessage);
+
+            this.emitConversationMessage({
+              type: "conversation_message",
+              agentId,
+              role: "system",
+              text: buildWorkerErrorConversationText({
+                errorMessage: normalizedErrorMessage,
+                isContextOverflow
+              }),
+              timestamp,
+              source: "system"
+            });
+          }
         }
 
         this.emitConversationLog({
@@ -292,11 +349,15 @@ export class ConversationProjector {
   }
 
   private emitConversationEntry(event: ConversationEntryEvent): void {
-    const history = this.deps.conversationEntriesByAgentId.get(event.agentId) ?? [];
+    const descriptor = this.deps.descriptors.get(event.agentId);
+    const history =
+      descriptor && !this.loadedFromDisk.has(event.agentId)
+        ? this.loadConversationHistoryForDescriptor(descriptor)
+        : (this.deps.conversationEntriesByAgentId.get(event.agentId) ?? []);
+
     history.push(event);
     trimConversationHistory(history);
     this.deps.conversationEntriesByAgentId.set(event.agentId, history);
-    this.queueConversationHistoryCacheWrite(event.agentId, history);
 
     // Runtime logs are valuable for the live in-memory transcript and cache, but
     // they are high-volume JSONL noise during replay/fork/recovery. Forks may omit
@@ -304,10 +365,10 @@ export class ConversationProjector {
     // focused on durable transcript/tool entries instead of transient runtime chatter.
     if (!shouldPersistConversationEntry(event)) {
       this.assignConversationMessageIdIfMissing(event);
+      this.queueConversationHistoryCacheWrite(event.agentId, history);
       return;
     }
 
-    const descriptor = this.deps.descriptors.get(event.agentId);
     const runtime = this.deps.runtimes.get(event.agentId);
 
     try {
@@ -316,22 +377,28 @@ export class ConversationProjector {
         this.assignConversationMessageIdIfMissing(event, entryId);
         if (descriptor) {
           this.trackLastSessionEntryId(descriptor.sessionFile, entryId);
+          this.incrementPersistedEntryCount(descriptor.sessionFile);
         }
+        this.queueConversationHistoryCacheWrite(event.agentId, history);
         return;
       }
 
       if (!descriptor) {
         this.assignConversationMessageIdIfMissing(event);
+        this.queueConversationHistoryCacheWrite(event.agentId, history);
         return;
       }
 
       const entryId = this.appendConversationEntryToSessionFile(descriptor, event);
       this.assignConversationMessageIdIfMissing(event, entryId);
+      this.incrementPersistedEntryCount(descriptor.sessionFile);
+      this.queueConversationHistoryCacheWrite(event.agentId, history);
     } catch (error) {
       this.deps.logDebug("history:save:error", {
         message: error instanceof Error ? error.message : String(error)
       });
       this.assignConversationMessageIdIfMissing(event);
+      this.queueConversationHistoryCacheWrite(event.agentId, history);
     }
   }
 
@@ -454,13 +521,14 @@ export class ConversationProjector {
   private loadConversationHistoryForDescriptor(descriptor: AgentDescriptor): ConversationEntryEvent[] {
     const existingInMemoryEntries = this.deps.conversationEntriesByAgentId.get(descriptor.agentId) ?? [];
 
-    const cachedEntries = this.loadConversationHistoryFromCache(descriptor.sessionFile);
-    if (cachedEntries) {
-      const validatedCachedEntries = this.validateCachedConversationHistory(descriptor.sessionFile, cachedEntries);
+    const cachedHistory = this.loadConversationHistoryFromCache(descriptor.sessionFile);
+    if (cachedHistory) {
+      const validatedCachedEntries = this.validateCachedConversationHistory(descriptor.sessionFile, cachedHistory);
       if (validatedCachedEntries) {
         trimConversationHistory(validatedCachedEntries);
         const mergedEntries = this.mergeDiskAndInMemoryEntries(validatedCachedEntries, existingInMemoryEntries);
         this.applyPinnedState(descriptor.agentId, mergedEntries);
+        this.trackPersistedEntryCount(descriptor.sessionFile, cachedHistory.metadata?.persistedEntryCount ?? 0);
         this.loadedFromDisk.add(descriptor.agentId);
         this.deps.conversationEntriesByAgentId.set(descriptor.agentId, mergedEntries);
         this.queueConversationHistoryCacheWrite(descriptor.agentId, mergedEntries);
@@ -478,6 +546,7 @@ export class ConversationProjector {
     }
 
     const entriesForAgent: ConversationEntryEvent[] = [];
+    let persistedEntryCount = 0;
     let lastSessionEntryId: string | undefined = this.lastSessionEntryIdBySessionFile.get(descriptor.sessionFile);
 
     try {
@@ -506,7 +575,11 @@ export class ConversationProjector {
             continue;
           }
 
-          entriesForAgent.push(this.backfillConversationMessageEntryId(entry.data, extractSessionEntryId(entry)));
+          const hydratedEntry = this.backfillConversationMessageEntryId(entry.data, extractSessionEntryId(entry));
+          entriesForAgent.push(hydratedEntry);
+          if (shouldPersistConversationEntry(hydratedEntry)) {
+            persistedEntryCount += 1;
+          }
         }
 
         trimConversationHistory(entriesForAgent);
@@ -526,6 +599,7 @@ export class ConversationProjector {
     const mergedEntries = this.mergeDiskAndInMemoryEntries(entriesForAgent, existingInMemoryEntries);
     this.applyPinnedState(descriptor.agentId, mergedEntries);
     this.trackLastSessionEntryId(descriptor.sessionFile, lastSessionEntryId);
+    this.trackPersistedEntryCount(descriptor.sessionFile, persistedEntryCount);
     this.loadedFromDisk.add(descriptor.agentId);
     this.deps.conversationEntriesByAgentId.set(descriptor.agentId, mergedEntries);
     this.queueConversationHistoryCacheWrite(descriptor.agentId, mergedEntries);
@@ -556,7 +630,7 @@ export class ConversationProjector {
     }
   }
 
-  private loadConversationHistoryFromCache(sessionFile: string): ConversationEntryEvent[] | null {
+  private loadConversationHistoryFromCache(sessionFile: string): LoadedConversationHistoryCache | null {
     const cacheFile = getConversationHistoryCacheFilePath(sessionFile);
     if (!existsSync(cacheFile)) {
       return null;
@@ -565,10 +639,14 @@ export class ConversationProjector {
     try {
       const raw = readFileSync(cacheFile, "utf8");
       if (raw.trim().length === 0) {
-        return [];
+        return {
+          entries: [],
+          metadata: null
+        };
       }
 
       const entries: ConversationEntryEvent[] = [];
+      let metadata: ConversationHistoryCacheMetadata | null = null;
       for (const line of raw.split("\n")) {
         if (!line.trim()) {
           continue;
@@ -581,16 +659,25 @@ export class ConversationProjector {
           continue;
         }
 
+        const parsedMetadata = parseConversationHistoryCacheMetadata(parsed);
+        if (parsedMetadata) {
+          metadata = parsedMetadata;
+          continue;
+        }
+
         if (isConversationEntryEvent(parsed)) {
           entries.push(parsed);
         }
       }
 
-      if (entries.length === 0 && raw.trim().length > 0) {
+      if (!metadata && entries.length === 0 && raw.trim().length > 0) {
         return null;
       }
 
-      return entries;
+      return {
+        entries,
+        metadata
+      };
     } catch (error) {
       this.deps.logDebug("history:load:cache:error", {
         cacheFile,
@@ -602,91 +689,136 @@ export class ConversationProjector {
 
   private validateCachedConversationHistory(
     sessionFile: string,
-    cachedEntries: ConversationEntryEvent[]
+    cachedHistory: LoadedConversationHistoryCache
   ): ConversationEntryEvent[] | null {
-    const cachedIdentity = extractPersistedConversationEntryIdentity(cachedEntries.at(-1));
-    const lastPersistedCachedEntry =
-      cachedIdentity ?? this.findLastPersistedConversationEntryIdentityInCache(cachedEntries);
-    const lastPersistedSessionEntry = this.readLastPersistedConversationEntryIdentity(sessionFile);
+    const cacheSummary = summarizePersistedConversationEntries(cachedHistory.entries);
+    const sessionSummary = this.readPersistedConversationEntrySummary(sessionFile);
 
-    if (!lastPersistedCachedEntry && !lastPersistedSessionEntry) {
-      return cachedEntries;
-    }
+    if (!cachedHistory.metadata) {
+      if (cacheSummary.count === 0 && sessionSummary.count === 0) {
+        return cachedHistory.entries;
+      }
 
-    if (!lastPersistedSessionEntry) {
-      return lastPersistedCachedEntry && hasValidSessionHeader(sessionFile) ? cachedEntries : null;
-    }
-
-    if (!lastPersistedCachedEntry) {
+      this.deps.logDebug("history:load:cache:validate:legacy_rebuild", {
+        sessionFile,
+        cachePersistedEntryCount: cacheSummary.count,
+        sessionPersistedEntryCount: sessionSummary.count
+      });
       return null;
     }
 
-    return lastPersistedCachedEntry.key === lastPersistedSessionEntry.key ? cachedEntries : null;
-  }
-
-  private findLastPersistedConversationEntryIdentityInCache(
-    cachedEntries: ConversationEntryEvent[]
-  ): PersistedConversationEntryIdentity | null {
-    for (let index = cachedEntries.length - 1; index >= 0; index -= 1) {
-      const identity = extractPersistedConversationEntryIdentity(cachedEntries[index]);
-      if (identity) {
-        return identity;
-      }
+    if (!doesConversationHistoryCacheMetadataMatchEntries(cachedHistory.metadata, cacheSummary)) {
+      this.deps.logDebug("history:load:cache:validate:reject", {
+        sessionFile,
+        reason: "metadata_entries_mismatch"
+      });
+      return null;
     }
 
-    return null;
+    if (sessionSummary.count === 0 && hasValidSessionHeader(sessionFile)) {
+      return cachedHistory.entries;
+    }
+
+    if (
+      cachedHistory.entries.length < MAX_CONVERSATION_HISTORY &&
+      cachedHistory.metadata.cachedPersistedEntryCount < cachedHistory.metadata.persistedEntryCount
+    ) {
+      this.deps.logDebug("history:load:cache:validate:reject", {
+        sessionFile,
+        reason: "cache_missing_persisted_prefix"
+      });
+      return null;
+    }
+
+    if (cachedHistory.metadata.persistedEntryCount !== sessionSummary.count) {
+      this.deps.logDebug("history:load:cache:validate:reject", {
+        sessionFile,
+        reason: "persisted_entry_count_mismatch",
+        expected: cachedHistory.metadata.persistedEntryCount,
+        actual: sessionSummary.count
+      });
+      return null;
+    }
+
+    const sessionLastPersistedEntryKey = sessionSummary.last?.key ?? null;
+    if (cachedHistory.metadata.lastPersistedEntryKey !== sessionLastPersistedEntryKey) {
+      this.deps.logDebug("history:load:cache:validate:reject", {
+        sessionFile,
+        reason: "last_persisted_entry_mismatch"
+      });
+      return null;
+    }
+
+    return cachedHistory.entries;
   }
 
-  private readLastPersistedConversationEntryIdentity(sessionFile: string): PersistedConversationEntryIdentity | null {
+  private readPersistedConversationEntrySummary(sessionFile: string): PersistedConversationEntrySummary {
     let fileDescriptor: number | undefined;
 
     try {
       const fileSize = statSync(sessionFile).size;
       if (fileSize <= 0) {
-        return null;
+        return { count: 0, first: null, last: null };
       }
 
       const chunkSize = 8192;
-      let position = fileSize;
+      let position = 0;
       let remainder = "";
+      let count = 0;
+      let first: PersistedConversationEntryIdentity | null = null;
+      let last: PersistedConversationEntryIdentity | null = null;
 
       fileDescriptor = openSync(sessionFile, "r");
 
-      while (position > 0) {
-        const readOffset = Math.max(0, position - chunkSize);
-        const readLength = position - readOffset;
+      while (position < fileSize) {
+        const readLength = Math.min(chunkSize, fileSize - position);
         const buffer = Buffer.alloc(readLength);
-        const bytesRead = readSync(fileDescriptor, buffer, 0, readLength, readOffset);
+        const bytesRead = readSync(fileDescriptor, buffer, 0, readLength, position);
         if (bytesRead <= 0) {
           break;
         }
 
         const chunk = buffer.toString("utf8", 0, bytesRead);
-        const combined = `${chunk}${remainder}`;
+        const combined = `${remainder}${chunk}`;
         const lines = combined.split("\n");
-        remainder = readOffset > 0 ? (lines.shift() ?? "") : "";
+        remainder = lines.pop() ?? "";
 
-        for (let index = lines.length - 1; index >= 0; index -= 1) {
-          const identity = parsePersistedConversationEntryIdentity(lines[index]);
-          if (identity) {
-            return identity;
+        for (const line of lines) {
+          const identity = parsePersistedConversationEntryIdentity(line);
+          if (!identity) {
+            continue;
           }
+
+          if (!first) {
+            first = identity;
+          }
+          last = identity;
+          count += 1;
         }
 
-        position = readOffset;
+        position += bytesRead;
       }
 
-      return parsePersistedConversationEntryIdentity(remainder);
+      const finalIdentity = parsePersistedConversationEntryIdentity(remainder);
+      if (finalIdentity) {
+        if (!first) {
+          first = finalIdentity;
+        }
+        last = finalIdentity;
+        count += 1;
+      }
+
+      return { count, first, last };
     } catch (error) {
       if (isEnoentError(error)) {
-        return null;
+        return { count: 0, first: null, last: null };
       }
 
       this.deps.logDebug("history:load:cache:validate:error", {
         sessionFile,
         message: error instanceof Error ? error.message : String(error)
       });
-      return null;
+      return { count: 0, first: null, last: null };
     } finally {
       if (fileDescriptor !== undefined) {
         closeSync(fileDescriptor);
@@ -700,12 +832,22 @@ export class ConversationProjector {
       return;
     }
 
-    this.queueCacheSnapshotWrite(descriptor.sessionFile, history.slice());
+    const persistedEntryCount = this.persistedEntryCountBySessionFile.get(descriptor.sessionFile) ?? 0;
+    const metadata = buildConversationHistoryCacheMetadata(history, persistedEntryCount);
+    this.queueCacheSnapshotWrite(descriptor.sessionFile, history.slice(), metadata);
   }
 
-  private queueCacheSnapshotWrite(sessionFile: string, history: ConversationEntryEvent[] | null): void {
+  private queueCacheSnapshotWrite(
+    sessionFile: string,
+    history: ConversationEntryEvent[] | null,
+    metadata: ConversationHistoryCacheMetadata | null = null
+  ): void {
     const cacheFile = getConversationHistoryCacheFilePath(sessionFile);
-    this.queuedCacheSnapshots.set(cacheFile, history);
+    this.queuedCacheSnapshots.set(cacheFile, {
+      sessionFile,
+      history,
+      metadata
+    });
 
     if (this.pendingCacheWrites.has(cacheFile)) {
       return;
@@ -720,8 +862,9 @@ export class ConversationProjector {
       })
       .finally(() => {
         this.pendingCacheWrites.delete(cacheFile);
-        if (this.queuedCacheSnapshots.has(cacheFile)) {
-          this.queueCacheSnapshotWrite(sessionFile, this.queuedCacheSnapshots.get(cacheFile) ?? null);
+        const queuedSnapshot = this.queuedCacheSnapshots.get(cacheFile);
+        if (queuedSnapshot) {
+          this.queueCacheSnapshotWrite(queuedSnapshot.sessionFile, queuedSnapshot.history, queuedSnapshot.metadata);
         }
       });
 
@@ -730,17 +873,24 @@ export class ConversationProjector {
 
   private async flushQueuedCacheSnapshot(cacheFile: string): Promise<void> {
     while (this.queuedCacheSnapshots.has(cacheFile)) {
-      const history = this.queuedCacheSnapshots.get(cacheFile) ?? null;
+      const queuedSnapshot = this.queuedCacheSnapshots.get(cacheFile);
       this.queuedCacheSnapshots.delete(cacheFile);
 
+      if (!queuedSnapshot) {
+        continue;
+      }
+
+      const { history, metadata } = queuedSnapshot;
       if (history === null) {
         await rm(cacheFile, { force: true });
         continue;
       }
 
       await mkdir(dirname(cacheFile), { recursive: true });
-      const serializedHistory =
-        history.length === 0 ? "" : `${history.map((entry) => JSON.stringify(entry)).join("\n")}\n`;
+      const serializedHistory = `${[
+        JSON.stringify(metadata ?? buildConversationHistoryCacheMetadata(history, 0)),
+        ...history.map((entry) => JSON.stringify(entry))
+      ].join("\n")}\n`;
       await writeFile(cacheFile, serializedHistory, "utf8");
     }
   }
@@ -835,6 +985,14 @@ export class ConversationProjector {
     }
 
     this.lastSessionEntryIdBySessionFile.set(sessionFile, entryId);
+  }
+
+  private trackPersistedEntryCount(sessionFile: string, count: number): void {
+    this.persistedEntryCountBySessionFile.set(sessionFile, Math.max(0, Math.trunc(count)));
+  }
+
+  private incrementPersistedEntryCount(sessionFile: string): void {
+    this.trackPersistedEntryCount(sessionFile, (this.persistedEntryCountBySessionFile.get(sessionFile) ?? 0) + 1);
   }
 
   private captureManagerRuntimeErrorConversationEvent(agentId: string, event: RuntimeSessionEvent): void {
@@ -1000,6 +1158,102 @@ function extractPersistedConversationEntryIdentity(
   return { key: `entry:${safeJson(entry)}` };
 }
 
+function summarizePersistedConversationEntries(
+  history: ConversationEntryEvent[]
+): PersistedConversationEntrySummary {
+  let count = 0;
+  let first: PersistedConversationEntryIdentity | null = null;
+  let last: PersistedConversationEntryIdentity | null = null;
+
+  for (const entry of history) {
+    const identity = extractPersistedConversationEntryIdentity(entry);
+    if (!identity) {
+      continue;
+    }
+
+    if (!first) {
+      first = identity;
+    }
+
+    last = identity;
+    count += 1;
+  }
+
+  return { count, first, last };
+}
+
+function buildConversationHistoryCacheMetadata(
+  history: ConversationEntryEvent[],
+  persistedEntryCount: number
+): ConversationHistoryCacheMetadata {
+  const summary = summarizePersistedConversationEntries(history);
+
+  return {
+    type: CONVERSATION_CACHE_META_TYPE,
+    version: CONVERSATION_CACHE_VERSION,
+    persistedEntryCount: Math.max(0, Math.trunc(persistedEntryCount)),
+    cachedPersistedEntryCount: summary.count,
+    firstPersistedEntryKey: summary.first?.key ?? null,
+    lastPersistedEntryKey: summary.last?.key ?? null
+  };
+}
+
+function doesConversationHistoryCacheMetadataMatchEntries(
+  metadata: ConversationHistoryCacheMetadata,
+  summary: PersistedConversationEntrySummary
+): boolean {
+  return (
+    metadata.cachedPersistedEntryCount === summary.count &&
+    metadata.firstPersistedEntryKey === (summary.first?.key ?? null) &&
+    metadata.lastPersistedEntryKey === (summary.last?.key ?? null)
+  );
+}
+
+function parseConversationHistoryCacheMetadata(value: unknown): ConversationHistoryCacheMetadata | null {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    (value as { type?: unknown }).type !== CONVERSATION_CACHE_META_TYPE ||
+    (value as { version?: unknown }).version !== CONVERSATION_CACHE_VERSION
+  ) {
+    return null;
+  }
+
+  const persistedEntryCount = (value as { persistedEntryCount?: unknown }).persistedEntryCount;
+  const cachedPersistedEntryCount = (value as { cachedPersistedEntryCount?: unknown }).cachedPersistedEntryCount;
+  const firstPersistedEntryKey = (value as { firstPersistedEntryKey?: unknown }).firstPersistedEntryKey;
+  const lastPersistedEntryKey = (value as { lastPersistedEntryKey?: unknown }).lastPersistedEntryKey;
+
+  if (typeof persistedEntryCount !== "number" || !Number.isFinite(persistedEntryCount) || persistedEntryCount < 0) {
+    return null;
+  }
+
+  if (
+    typeof cachedPersistedEntryCount !== "number" ||
+    !Number.isFinite(cachedPersistedEntryCount) ||
+    cachedPersistedEntryCount < 0
+  ) {
+    return null;
+  }
+
+  if (firstPersistedEntryKey !== null && typeof firstPersistedEntryKey !== "string") {
+    return null;
+  }
+
+  if (lastPersistedEntryKey !== null && typeof lastPersistedEntryKey !== "string") {
+    return null;
+  }
+
+  return {
+    type: CONVERSATION_CACHE_META_TYPE,
+    version: CONVERSATION_CACHE_VERSION,
+    persistedEntryCount: Math.max(0, Math.trunc(persistedEntryCount)),
+    cachedPersistedEntryCount: Math.max(0, Math.trunc(cachedPersistedEntryCount)),
+    firstPersistedEntryKey,
+    lastPersistedEntryKey
+  };
+}
+
 function parsePersistedConversationEntryIdentity(line: string | undefined): PersistedConversationEntryIdentity | null {
   const trimmedLine = line?.trim();
   if (!trimmedLine) {
@@ -1074,6 +1328,25 @@ function buildManagerErrorConversationText(options: {
   }
 
   return `⚠️ Manager reply failed. ${MANAGER_ERROR_GENERIC_HINT}`;
+}
+
+function buildWorkerErrorConversationText(options: {
+  errorMessage?: string;
+  isContextOverflow: boolean;
+}): string {
+  if (options.isContextOverflow) {
+    if (options.errorMessage) {
+      return `⚠️ Worker reply failed because the prompt exceeded the model context window (${options.errorMessage}). ${WORKER_ERROR_CONTEXT_HINT}`;
+    }
+
+    return `⚠️ Worker reply failed because the prompt exceeded the model context window. ${WORKER_ERROR_CONTEXT_HINT}`;
+  }
+
+  if (options.errorMessage) {
+    return `⚠️ Worker reply failed: ${formatManagerErrorMessage(options.errorMessage)} ${WORKER_ERROR_GENERIC_HINT}`;
+  }
+
+  return `⚠️ Worker reply failed. ${WORKER_ERROR_GENERIC_HINT}`;
 }
 
 function formatManagerErrorMessage(errorMessage: string): string {

@@ -57,7 +57,7 @@ function getPaceLabel(deltaPercent: number): string {
   if (absDelta <= 2) return 'On pace'
   if (absDelta <= 6) return deltaPercent > 0 ? 'Slightly ahead' : 'Slightly behind'
   if (absDelta <= 12) return deltaPercent > 0 ? 'Ahead' : 'Behind'
-  return deltaPercent > 0 ? 'Far ahead' : 'Far behind'
+  return deltaPercent > 0 ? 'Far ahead' : 'Behind'
 }
 
 function getUsageMetrics(window: ProviderUsageWindow | null | undefined, nowMs: number): UsageMetrics | null {
@@ -180,7 +180,7 @@ export function SidebarUsageRings({ providers, onToggle }: { providers: Provider
 
 /* ─── Detail row for popover ─── */
 
-function DetailRow({ label, usageWindow }: { label: string; usageWindow?: ProviderUsageWindow }) {
+function DetailRow({ label, usageWindow, showPace = true }: { label: string; usageWindow?: ProviderUsageWindow; showPace?: boolean }) {
   const p = typeof usageWindow?.percent === 'number' ? usageWindow.percent : null
   const clampedWidth = p !== null ? Math.max(0, Math.min(p, 100)) : 0
   const resetTime = usageWindow?.resetInfo ? stripResetPrefix(usageWindow.resetInfo) : null
@@ -202,14 +202,16 @@ function DetailRow({ label, usageWindow }: { label: string; usageWindow?: Provid
         />
       </div>
 
-      <div className="flex items-center justify-between gap-2 text-[10px]">
-        <span className={cn('font-medium', metrics ? getDeltaTone(metrics.deltaPercent) : 'text-muted-foreground')}>
-          {metrics?.paceLabel ?? 'Pace unavailable'}
-        </span>
-        <span className={cn('tabular-nums', metrics ? getDeltaTone(metrics.deltaPercent) : 'text-muted-foreground/70')}>
-          {metrics?.paceSummary ?? '—'}
-        </span>
-      </div>
+      {showPace ? (
+        <div className="flex items-center justify-between gap-2 text-[10px]">
+          <span className={cn('font-medium', metrics ? getDeltaTone(metrics.deltaPercent) : 'text-muted-foreground')}>
+            {metrics?.paceLabel ?? 'Pace unavailable'}
+          </span>
+          <span className={cn('tabular-nums', metrics ? getDeltaTone(metrics.deltaPercent) : 'text-muted-foreground/70')}>
+            {metrics?.paceSummary ?? '—'}
+          </span>
+        </div>
+      ) : null}
 
       <div className="flex items-center justify-between gap-2 text-[10px] text-muted-foreground/70">
         <span>{metrics?.runoutLabel ?? 'Runout unavailable'}</span>
@@ -221,17 +223,15 @@ function DetailRow({ label, usageWindow }: { label: string; usageWindow?: Provid
 
 /* ─── Provider detail section ─── */
 
-function ProviderDetail({ usage, label }: { usage: ProviderAccountUsage; label: string }) {
+function ProviderDetail({ usage, label, iconSrc, iconClassName }: { usage: ProviderAccountUsage; label: string; iconSrc: string; iconClassName?: string }) {
   return (
     <div className="space-y-2">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center gap-1.5">
+        <img src={iconSrc} alt="" aria-hidden="true" className={cn('size-3 opacity-80 shrink-0', iconClassName)} />
         <span className="text-[11px] font-medium text-foreground">{label}</span>
-        {usage.plan && (
-          <span className="text-[10px] text-muted-foreground/60 capitalize">{usage.plan}</span>
-        )}
       </div>
       <div className="space-y-1.5">
-        <DetailRow label="Session" usageWindow={usage.sessionUsage} />
+        <DetailRow label="Session" usageWindow={usage.sessionUsage} showPace={false} />
         <DetailRow label="Weekly" usageWindow={usage.weeklyUsage} />
       </div>
     </div>
@@ -266,7 +266,7 @@ export function SidebarUsagePanel({ providers, open, onClose }: { providers: Pro
       <div className="space-y-3">
         {availableRows.map((row) =>
           row.usage ? (
-            <ProviderDetail key={row.key} usage={row.usage} label={row.label} />
+            <ProviderDetail key={row.key} usage={row.usage} label={row.label} iconSrc={row.iconSrc} iconClassName={row.iconClassName} />
           ) : null,
         )}
       </div>

@@ -28,13 +28,15 @@ To stop a running response, open the **⋮ menu** in the header and choose **Sto
 
 The header has a **Web / All** toggle. "Web" shows only your conversation messages. "All" includes internal activity like tool calls and worker messages, which is useful for debugging.
 
+Mermaid code blocks also render inline as interactive diagrams, with controls to toggle source, copy the Mermaid text, export SVG or PNG, and expand fullscreen.
+
 ## Context window
 
 The ring icon next to the channel toggle shows how full the context window is. Green means plenty of room. Amber means it's getting full. Red means you're near the limit and should consider compacting.
 
 ## Header controls
 
-The chat header also gives you access to the terminal panel, file browser, diff viewer, and artifact panel through icon buttons on the right side. A pin count shows when you have pinned messages in the session.`,
+The chat header also gives you access to the terminal panel, file browser, diff viewer, and artifact panel through icon buttons on the right side. A pin count badge opens the pinned-message navigator/popover, where you can move to the previous or next pin and the selected pin is auto-scrolled into view and highlighted.`,
     keywords: ['chat', 'streaming', 'stop', 'status', 'channel', 'context window', 'overview'],
     relatedIds: ['chat-sending', 'chat-sidebar', 'chat-compaction'],
     contextKeys: ['chat.main'],
@@ -123,7 +125,7 @@ Forge categorizes files automatically. Common image formats are recognized and s
 
 Each **profile** is a collapsible group. Inside each profile are its **sessions**. Inside each session, you can expand to see active **workers**. Click any item to switch to it.
 
-Project agents appear pinned at the top of each profile section with a badge, above regular sessions.
+Project agents appear pinned at the top of each profile section with a badge, above regular sessions. Session pinning in the sidebar is separate from message pinning inside a conversation.
 
 ## Search
 
@@ -158,7 +160,7 @@ On smaller screens, the sidebar is hidden by default. Tap the hamburger menu in 
     title: 'Session Management',
     category: 'chat',
     summary: 'Creating, switching, renaming, and deleting sessions.',
-    content: `Sessions are individual conversations within a profile. Each session has its own chat history and session memory, but shares the profile's settings and core memory.
+    content: `Sessions are individual conversations within a profile. Each session has its own chat history and session memory, but shares the profile's settings and core memory. If a session previously showed truncated history, Forge now rebuilds the cached replay from canonical disk history on first load, especially for async project-agent deliveries.
 
 ## Create a session
 
@@ -234,7 +236,7 @@ Right-click the profile header and choose **Delete Manager**. This removes the p
     title: 'Worker Agents',
     category: 'chat',
     summary: 'How worker pills, quick look, and worker monitoring work.',
-    content: `Workers are agents that the manager spawns to handle tasks. They appear in two places: the pill bar above the message area, and nested under sessions in the sidebar.
+    content: `Workers are agents that the manager spawns to handle tasks. They appear in two places: the pill bar above the message area, and nested under sessions in the sidebar. Failed worker turns appear in the transcript as system error messages with the last error context preserved, and the same turn will not produce duplicate end reports.
 
 ## Worker pill bar
 
@@ -400,7 +402,7 @@ When the context window fills up during an active conversation, Forge triggers c
 
 ## Pinned messages
 
-If you've pinned messages (shown by the pin count in the header), their content is preserved through compaction. Pinned content is injected into the agent's custom instructions so it survives both compaction modes.
+If you've pinned messages (shown by the pin count in the header), their content is preserved through all compaction types, including smart compaction and automatic compaction. You can pin up to 10 messages per session. Pinned content is injected into the agent's custom instructions so it survives every compaction mode.
 
 ## After compaction
 

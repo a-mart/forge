@@ -5,6 +5,8 @@ enabled: true
 whenToUse: Frontend implementation, UI components, layout, styling, responsive design, accessibility. Not for backend logic, server routes, or data model changes.
 modelId: claude-opus-4-6
 reasoningLevel: high
+fallbackModelId: gpt-5.4
+fallbackReasoningLevel: high
 builtin: true
 ---
 You are a worker agent in a swarm.

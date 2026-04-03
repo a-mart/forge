@@ -15,6 +15,10 @@ const FILE_MIGRATIONS: Array<[oldRelative: string, newRelative: string]> = [
   ["mobile-notification-prefs.json", "config/mobile-notification-prefs.json"],
   ["terminal-settings.json", "config/terminal-settings.json"],
   ["slash-commands.json", "config/slash-commands.json"],
+  ["telemetry.json", "config/telemetry.json"],
+  ["stats-cache.json", "cache/stats-cache.json"],
+  ["provider-usage-cache.json", "cache/provider-usage-cache.json"],
+  ["provider-usage-history.jsonl", "cache/provider-usage-history.jsonl"],
   ["mobile-devices.json", "state/mobile-devices.json"],
   [".compaction-count-backfill-v2-done", "state/.compaction-count-backfill-v2-done"],
 ];

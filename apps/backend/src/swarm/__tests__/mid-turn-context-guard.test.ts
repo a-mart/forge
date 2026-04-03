@@ -10,9 +10,20 @@ import {
 } from "../agent-runtime.js";
 import type { AgentDescriptor } from "../types.js";
 
+const resizeImageIfNeededMock = vi.hoisted(() =>
+  vi.fn(async (data: string, mimeType: string) => ({
+    data,
+    mimeType
+  }))
+);
+
 vi.mock("node:fs/promises", () => ({
   readFile: vi.fn(),
   rm: vi.fn(() => Promise.resolve())
+}));
+
+vi.mock("../image-utils.js", () => ({
+  resizeImageIfNeeded: (...args: any[]) => resizeImageIfNeededMock(...args)
 }));
 
 class FakeSession {
@@ -162,6 +173,10 @@ const rmMock = vi.mocked(rm);
 describe("mid-turn context guard", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resizeImageIfNeededMock.mockImplementation(async (data: string, mimeType: string) => ({
+      data,
+      mimeType
+    }));
     readFileMock.mockResolvedValue("## Current Task\nKeep going\n");
     rmMock.mockResolvedValue(undefined as any);
     vi.spyOn(console, "log").mockImplementation(() => {});
@@ -269,6 +284,136 @@ describe("mid-turn context guard", () => {
 
     await Promise.resolve();
     expect(checkSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("prepareForSpecialistFallbackReplay includes queued follow-up turns", async () => {
+    const { runtime, session } = createRuntime();
+    session.isStreaming = false;
+
+    const dispatchDeferred = createDeferred<void>();
+    session.promptImpl = async () => {
+      await dispatchDeferred.promise;
+    };
+
+    const promptReceipt = await runtime.sendMessage("primary prompt");
+    const followUpReceipt = await runtime.sendMessage("queued follow-up");
+    const replaySnapshot = await runtime.prepareForSpecialistFallbackReplay();
+
+    dispatchDeferred.resolve(undefined);
+    await Promise.resolve();
+
+    expect(promptReceipt.acceptedMode).toBe("prompt");
+    expect(followUpReceipt.acceptedMode).toBe("steer");
+    expect(replaySnapshot).toEqual({
+      messages: [
+        {
+          text: "primary prompt",
+          images: []
+        },
+        {
+          text: "queued follow-up",
+          images: []
+        }
+      ]
+    });
+  });
+
+  it("normalized image steers are consumed before fallback replay snapshots are built", async () => {
+    const { runtime, session } = createRuntime();
+    session.isStreaming = false;
+    resizeImageIfNeededMock.mockImplementation(async (data: string) => ({
+      data: `resized:${data}`,
+      mimeType: "image/png"
+    }));
+
+    const dispatchDeferred = createDeferred<void>();
+    session.promptImpl = async () => {
+      await dispatchDeferred.promise;
+    };
+
+    await runtime.sendMessage("primary prompt");
+    await runtime.sendMessage({
+      text: "queued image follow-up",
+      images: [{ mimeType: "image/png", data: "raw-image-data" }]
+    });
+
+    session.emit({
+      type: "message_start",
+      message: {
+        role: "user",
+        content: [
+          { type: "text", text: "queued image follow-up" },
+          { type: "image", mimeType: "image/png", data: "resized:raw-image-data" }
+        ]
+      }
+    });
+
+    await Promise.resolve();
+
+    const replaySnapshot = await runtime.prepareForSpecialistFallbackReplay();
+    dispatchDeferred.resolve(undefined);
+    await Promise.resolve();
+
+    expect(runtime.getPendingCount()).toBe(0);
+    expect(replaySnapshot).toEqual({
+      messages: [
+        {
+          text: "primary prompt",
+          images: []
+        },
+        {
+          text: "queued image follow-up",
+          images: [{ mimeType: "image/png", data: "resized:raw-image-data" }]
+        }
+      ]
+    });
+  });
+
+  it("prepareForSpecialistFallbackReplay replays consumed steers exactly once and prunes the failed turn suffix", async () => {
+    const { runtime, session } = createRuntime();
+    session.isStreaming = false;
+    const replaceMessagesSpy = vi.spyOn(session.agent, "replaceMessages");
+
+    const dispatchDeferred = createDeferred<void>();
+    session.promptImpl = async () => {
+      await dispatchDeferred.promise;
+    };
+
+    await runtime.sendMessage("primary prompt");
+    await runtime.sendMessage("consumed follow-up");
+
+    session.emit({
+      type: "message_start",
+      message: {
+        role: "user",
+        content: "consumed follow-up"
+      }
+    });
+    await Promise.resolve();
+
+    session.state.messages = [
+      { role: "user", content: "primary prompt" },
+      { role: "user", content: "consumed follow-up" },
+      { role: "assistant", stopReason: "error", content: [] }
+    ] as any
+
+    const replaySnapshot = await runtime.prepareForSpecialistFallbackReplay();
+    dispatchDeferred.resolve(undefined);
+    await Promise.resolve();
+
+    expect(replaySnapshot).toEqual({
+      messages: [
+        {
+          text: "primary prompt",
+          images: []
+        },
+        {
+          text: "consumed follow-up",
+          images: []
+        }
+      ]
+    });
+    expect(replaceMessagesSpy).toHaveBeenCalledWith([]);
   });
 
   it("sendMessage buffers deliveries while context recovery is actively in progress", async () => {

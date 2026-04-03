@@ -14,6 +14,16 @@ export const settingsArticles: HelpArticle[] = [
 
 Pick a theme (Light, Dark, or System) and choose which code editor opens when you click artifact file links. Supported editors are VS Code Insiders, VS Code, and Cursor. The theme preference is stored in your browser and applies immediately.
 
+## Sidebar
+
+Toggle "Show provider usage" to control whether the provider subscription usage widget appears in the sidebar toolbar. When enabled, you'll see compact usage gauges for OpenAI Codex and Anthropic Claude with 5-hour and weekly windows. Click the widget to expand it for detailed metrics including deficit, pace, and estimated runout times. The setting is stored in your browser and applies immediately.
+
+## Telemetry
+
+Anonymous telemetry is enabled by default and sends only aggregate counts such as sessions, models, and feature adoption. It does not send prompts, code, file paths, repo names, or personal data.
+
+To opt out, set \`FORGE_TELEMETRY=false\` in your environment. There is no telemetry setting in the UI.
+
 ## Cortex Auto-Review
 
 Cortex is Forge's self-improvement system. When automatic reviews are enabled, Cortex periodically checks your sessions and updates knowledge, memory, and reference docs. You can set the review interval from every 15 minutes up to every 24 hours. Disable it entirely if you want to run reviews manually.
@@ -45,6 +55,10 @@ The Reboot button restarts the Forge daemon and all active agents. Use it after 
       'appearance',
       'onboarding',
       'preferences',
+      'sidebar',
+      'provider usage',
+      'subscription',
+      'usage monitoring',
     ],
     relatedIds: ['settings-theme', 'settings-editor', 'settings-about'],
     contextKeys: ['settings.general'],
@@ -496,7 +510,7 @@ The global toggle at the top turns the specialist system on or off. When disable
 
 ## Model and fallback
 
-Each specialist has a primary model and reasoning level. You can also set a fallback model that takes over if the primary is unavailable or rate-limited. Expand the fallback section to configure it.
+Each specialist has a primary model and reasoning level. You can also set a fallback model that takes over if the primary is unavailable or rate-limited. Recoverable failures are retried silently inside worker/runtime fallback replay or handoff before the manager sees an error, and successful fallback is invisible to the manager and user. Only exhausted fallback failures bubble up. Built-in specialists generally use cross-vendor fallbacks when practical, with exceptions like \`researcher\` already complying, plus \`app-runtime\` and \`web-researcher\`. Expand the fallback section to configure it.
 
 ## Native search (web + X) (Grok models only)
 

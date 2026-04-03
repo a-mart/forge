@@ -45,8 +45,6 @@ export function useProviderUsage(enabled: boolean): ProviderUsageStats | null {
         if ((error instanceof DOMException && error.name === 'AbortError') || cancelled) {
           return
         }
-
-        setProviders(null)
       }
     }
 

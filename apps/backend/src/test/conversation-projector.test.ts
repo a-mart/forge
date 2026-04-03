@@ -42,6 +42,7 @@ function makeProjector(options: {
   runtimes?: Map<string, SwarmAgentRuntime>
   conversationEntriesByAgentId?: Map<string, ConversationEntryEvent[]>
   getPinnedMessageIds?: (agentId: string) => ReadonlySet<string> | undefined
+  logDebug?: (message: string, details?: unknown) => void
 }): ConversationProjector {
   return new ConversationProjector({
     descriptors: new Map([[options.descriptor.agentId, options.descriptor]]),
@@ -49,7 +50,7 @@ function makeProjector(options: {
     conversationEntriesByAgentId: options.conversationEntriesByAgentId ?? new Map(),
     now: () => FIXED_NOW,
     emitServerEvent: () => {},
-    logDebug: () => {},
+    logDebug: options.logDebug ?? (() => {}),
     getPinnedMessageIds: options.getPinnedMessageIds,
   })
 }
@@ -291,6 +292,92 @@ describe('ConversationProjector session tree continuity', () => {
         (entry: any) => entry?.type === 'agent_tool_call' && entry.kind === 'tool_execution_end',
       ),
     ).toBe(true)
+
+    const reloadedProjector = makeProjector({ descriptor })
+    const reloadedHistory = reloadedProjector.getConversationHistory(descriptor.agentId)
+
+    expect(
+      reloadedHistory.some((entry) => entry.type === 'conversation_log' && entry.kind === 'tool_execution_start'),
+    ).toBe(true)
+    expect(
+      reloadedHistory.some(
+        (entry) => entry.type === 'conversation_message' && entry.text === 'durable transcript entry',
+      ),
+    ).toBe(true)
+  })
+
+  it('loads the full persisted history before appending a cold post-boot conversation entry', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-projector-cold-cache-'))
+    const sessionFile = join(root, 'manager.jsonl')
+    const descriptor = makeDescriptor(sessionFile, root)
+
+    const seededSession = SessionManager.open(sessionFile)
+    seededSession.appendMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'seed entry to create header' }],
+    } as any)
+
+    seededSession.appendCustomEntry('swarm_conversation_entry', {
+      type: 'conversation_message',
+      agentId: descriptor.agentId,
+      role: 'assistant',
+      text: 'persisted history before restart',
+      timestamp: '2025-12-31T23:58:00.000Z',
+      source: 'system',
+    })
+    seededSession.appendCustomEntry('swarm_conversation_entry', {
+      type: 'conversation_message',
+      agentId: descriptor.agentId,
+      role: 'assistant',
+      text: 'persisted history tail before restart',
+      timestamp: '2025-12-31T23:59:00.000Z',
+      source: 'system',
+    })
+
+    const warmProjector = makeProjector({ descriptor })
+    warmProjector.getConversationHistory(descriptor.agentId)
+
+    const cacheFile = getConversationHistoryCacheFilePath(sessionFile)
+    await waitForFileText(cacheFile, {
+      matches: (text) =>
+        text.includes('persisted history before restart') && text.includes('persisted history tail before restart'),
+    })
+
+    const coldProjector = makeProjector({ descriptor })
+    coldProjector.loadConversationHistoriesFromStore()
+
+    coldProjector.emitConversationMessage({
+      type: 'conversation_message',
+      agentId: descriptor.agentId,
+      role: 'assistant',
+      text: 'persisted after cold boot before lazy load',
+      timestamp: FIXED_NOW,
+      source: 'system',
+    })
+
+    await waitForFileText(cacheFile, {
+      matches: (text) =>
+        text.includes('persisted history before restart') && text.includes('persisted after cold boot before lazy load'),
+    })
+
+    const reloadedProjector = makeProjector({ descriptor })
+    const history = reloadedProjector.getConversationHistory(descriptor.agentId)
+
+    expect(
+      history.filter(
+        (entry) => entry.type === 'conversation_message' && entry.text === 'persisted history before restart',
+      ),
+    ).toHaveLength(1)
+    expect(
+      history.filter(
+        (entry) => entry.type === 'conversation_message' && entry.text === 'persisted history tail before restart',
+      ),
+    ).toHaveLength(1)
+    expect(
+      history.filter(
+        (entry) => entry.type === 'conversation_message' && entry.text === 'persisted after cold boot before lazy load',
+      ),
+    ).toHaveLength(1)
   })
 
   it('merges runtime-captured in-memory entries with lazy disk history on first access', async () => {
@@ -400,6 +487,146 @@ describe('ConversationProjector session tree continuity', () => {
       expect(legacyMessage.id).toBe(wrappedEntryId)
       expect(legacyMessage.timestamp).toBe(legacyTimestamp)
     }
+  })
+
+  it('rejects and rewrites a tail-only cache snapshot even when the cached tail matches canonical history', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-projector-tail-cache-'))
+    const sessionFile = join(root, 'manager.jsonl')
+    const descriptor = makeDescriptor(sessionFile, root)
+
+    const seededSession = SessionManager.open(sessionFile)
+    seededSession.appendMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'seed message' }],
+    } as any)
+
+    const firstEntryId = seededSession.appendCustomEntry('swarm_conversation_entry', {
+      type: 'conversation_message',
+      agentId: descriptor.agentId,
+      role: 'assistant',
+      text: 'persisted prefix message',
+      timestamp: '2025-12-31T23:57:00.000Z',
+      source: 'system',
+    })
+    const middleEntryId = seededSession.appendCustomEntry('swarm_conversation_entry', {
+      type: 'conversation_message',
+      agentId: descriptor.agentId,
+      role: 'assistant',
+      text: 'persisted middle message',
+      timestamp: '2025-12-31T23:58:00.000Z',
+      source: 'system',
+    })
+    const lastEntryId = seededSession.appendCustomEntry('swarm_conversation_entry', {
+      type: 'conversation_message',
+      agentId: descriptor.agentId,
+      role: 'assistant',
+      text: 'persisted tail message',
+      timestamp: FIXED_NOW,
+      source: 'system',
+    })
+
+    const cacheFile = getConversationHistoryCacheFilePath(sessionFile)
+    await writeFile(
+      cacheFile,
+      `${JSON.stringify({
+        type: 'swarm_conversation_cache_meta',
+        version: 1,
+        persistedEntryCount: 3,
+        cachedPersistedEntryCount: 2,
+        firstPersistedEntryKey: `conversation_message:${middleEntryId}`,
+        lastPersistedEntryKey: `conversation_message:${lastEntryId}`,
+      })}\n${JSON.stringify({
+        type: 'conversation_message',
+        agentId: descriptor.agentId,
+        role: 'assistant',
+        text: 'persisted middle message',
+        timestamp: '2025-12-31T23:58:00.000Z',
+        source: 'system',
+        id: middleEntryId,
+      })}\n${JSON.stringify({
+        type: 'conversation_message',
+        agentId: descriptor.agentId,
+        role: 'assistant',
+        text: 'persisted tail message',
+        timestamp: FIXED_NOW,
+        source: 'system',
+        id: lastEntryId,
+      })}\n`,
+      'utf8',
+    )
+
+    const projector = makeProjector({ descriptor })
+    const history = projector.getConversationHistory(descriptor.agentId)
+
+    expect(
+      history.some((entry) => entry.type === 'conversation_message' && entry.text === 'persisted prefix message'),
+    ).toBe(true)
+
+    const rewrittenCacheText = await waitForFileText(cacheFile, {
+      matches: (text) => text.includes('persisted prefix message'),
+    })
+    expect(rewrittenCacheText).toContain('"persistedEntryCount":3')
+    expect(rewrittenCacheText).toContain('"cachedPersistedEntryCount":3')
+    expect(rewrittenCacheText).toContain(`"firstPersistedEntryKey":"conversation_message:${firstEntryId}"`)
+    expect(rewrittenCacheText).toContain(`"lastPersistedEntryKey":"conversation_message:${lastEntryId}"`)
+  })
+
+  it('accepts a complete trimmed cache window for long persisted transcripts', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-projector-long-cache-'))
+    const sessionFile = join(root, 'manager.jsonl')
+    const descriptor = makeDescriptor(sessionFile, root)
+
+    const seededSession = SessionManager.open(sessionFile)
+    seededSession.appendMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'seed message' }],
+    } as any)
+
+    for (let index = 0; index < 2005; index += 1) {
+      seededSession.appendCustomEntry('swarm_conversation_entry', {
+        type: 'conversation_message',
+        agentId: descriptor.agentId,
+        role: 'assistant',
+        text: `persisted-${index}`,
+        timestamp: FIXED_NOW,
+        source: 'system',
+      })
+    }
+
+    const warmProjector = makeProjector({ descriptor })
+    const warmHistory = warmProjector.getConversationHistory(descriptor.agentId)
+
+    expect(warmHistory).toHaveLength(2000)
+    expect(warmHistory.some((entry) => entry.type === 'conversation_message' && entry.text === 'persisted-0')).toBe(
+      false,
+    )
+    expect(warmHistory.some((entry) => entry.type === 'conversation_message' && entry.text === 'persisted-2004')).toBe(
+      true,
+    )
+
+    const cacheFile = getConversationHistoryCacheFilePath(sessionFile)
+    await waitForFileText(cacheFile, {
+      matches: (text) => text.includes('"persistedEntryCount":2005') && text.includes('"cachedPersistedEntryCount":2000'),
+    })
+
+    const debugMessages: string[] = []
+    const reloadedProjector = makeProjector({
+      descriptor,
+      logDebug: (message) => {
+        debugMessages.push(message)
+      },
+    })
+    const reloadedHistory = reloadedProjector.getConversationHistory(descriptor.agentId)
+
+    expect(reloadedHistory).toHaveLength(2000)
+    expect(
+      reloadedHistory.some((entry) => entry.type === 'conversation_message' && entry.text === 'persisted-4'),
+    ).toBe(false)
+    expect(
+      reloadedHistory.some((entry) => entry.type === 'conversation_message' && entry.text === 'persisted-5'),
+    ).toBe(true)
+    expect(debugMessages).toContain('history:load:cache')
+    expect(debugMessages).not.toContain('history:load:ready')
   })
 
   it('falls back to JSONL replay when the cache is missing the latest persisted message', async () => {

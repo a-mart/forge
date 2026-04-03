@@ -95,6 +95,8 @@ The package step clears `apps/electron/release/` first, then writes the current 
 
 Before you start throwing tasks at Forge, take five minutes to have a conceptual conversation with your manager. Tell it how you like to work: your review process, your branching strategy, how you think about testing. This isn't small talk. It's calibration. The more your manager understands your style, the better it orchestrates workers on your behalf.
 
+The builtin manager is designed to keep user-facing updates concise and outcome-focused. It will favor meaningful results, blockers, and completion updates over routine progress narration.
+
 Then start rating messages. Thumbs up when the manager nails it, thumbs down when it misses, comments when you notice patterns. This feedback feeds directly into Cortex's learning cycle.
 
 ## Core Concepts
@@ -113,7 +115,7 @@ Each manager supports multiple named sessions. These are independent workstreams
 
 Session forking lets you run discovery in one conversation, gather context, narrow down an approach, then fork into parallel workstreams that all inherit that context. You can fork from the current point or from any earlier message, carrying forward only the relevant context. It's branching for conversations.
 
-**Project Agents** — Sessions can be promoted to discoverable Project Agents within a profile. Right-click any session in the sidebar and select "Promote to Project Agent." Promoted sessions get a unique handle (e.g., `@research` or `@docs`) and appear at the top of the sidebar. Other session agents in the same profile can discover and message them asynchronously using `send_message_to_agent`. Use this for dedicated specialists (documentation, testing, research) that multiple sessions need to coordinate with. The promotion UI includes AI-assisted configuration to help you write effective discovery descriptions and system prompts. Alternatively, use the Agent Creator wizard (right-click a profile header → "Create Project Agent") for a guided creation flow: it explores your codebase, interviews you about the agent's role, and configures everything automatically.
+**Project Agents** — Sessions can be promoted to discoverable Project Agents within a profile. Right-click any session in the sidebar and select "Promote to Project Agent." Promoted sessions get a unique handle (e.g., `@research` or `@docs`) and appear at the top of the sidebar. Other session agents in the same profile can discover and message them asynchronously using `send_message_to_agent`. Use this for dedicated specialists (documentation, testing, research) that multiple sessions need to coordinate with. Derived history caches rebuild from canonical `session.jsonl` if they were truncated, so affected project-agent conversations should show full history again after reload. The promotion UI includes AI-assisted configuration to help you write effective discovery descriptions and system prompts. Alternatively, use the Agent Creator wizard (right-click a profile header → "Create Project Agent") for a guided creation flow: it explores your codebase, interviews you about the agent's role, and configures everything automatically.
 
 ### Cortex
 
@@ -143,6 +145,8 @@ Agents hang. Models stall. Workers finish their work and forget to report back. 
 - **Idle detection** — if a worker completes a task but doesn't report to the manager, Forge detects the idle state and notifies the manager, which can nudge or re-engage the worker.
 - **Stall detection** — workers stuck in a streaming state with no progress for five minutes get flagged. The manager is notified and can intervene.
 - **Auto-kill** — if a stalled worker doesn't recover after a second five-minute window, it's terminated and reported to the manager.
+
+Worker turn failures are projected into the manager conversation as system messages with preserved error context, and duplicate callback or summary reports for the same turn are suppressed.
 
 You can also manually stop any agent from the UI, but you'll rarely need to.
 
@@ -258,7 +262,7 @@ The `.env.example` file documents all available options with comments. Key categ
 - **Agent Runtimes** — Codex API key and binary path
 - **Playwright** — dashboard toggle (macOS/Linux only)
 
-API keys for LLM providers (OpenAI, Anthropic, xAI) are configured in the dashboard UI under **Settings → Providers**, not in `.env`. The **Settings → Models** tab provides a full catalog of supported models with visibility controls and context window overrides.
+API keys for LLM providers (OpenAI, Anthropic, xAI) are configured in the dashboard UI under **Settings → Authentication**, not in `.env`. The **Settings → Models** tab provides a full catalog of supported models with visibility controls and context window overrides.
 
 See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for the full configuration reference.
 

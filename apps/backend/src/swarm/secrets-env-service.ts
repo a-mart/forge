@@ -323,7 +323,7 @@ export async function getManagedModelProviderCredentialAvailability(
   return availability;
 }
 
-async function readConfiguredSettingsAuthProviders(
+export async function readConfiguredSettingsAuthProviders(
   config: SwarmConfig
 ): Promise<Set<SettingsAuthProviderName>> {
   const authFile = await resolveAuthFileForReadFromConfig(config);
