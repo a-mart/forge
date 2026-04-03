@@ -19,10 +19,12 @@ describe('buildCreateProjectAgentTool', () => {
     expect(tool.label).toBe('Create Project Agent')
     expect(Object.keys((tool.parameters as any).properties ?? {})).toEqual([
       'sessionName',
+      'handle',
       'whenToUse',
       'systemPrompt',
     ])
     expect((tool.parameters as any).properties.sessionName.minLength).toBe(1)
+    expect((tool.parameters as any).properties.handle.minLength).toBe(1)
     expect((tool.parameters as any).properties.whenToUse.minLength).toBe(1)
     expect((tool.parameters as any).properties.whenToUse.maxLength).toBe(280)
     expect((tool.parameters as any).properties.systemPrompt.minLength).toBe(1)
@@ -31,6 +33,7 @@ describe('buildCreateProjectAgentTool', () => {
       'tool-1',
       {
         sessionName: 'Release Notes',
+        handle: 'releases',
         whenToUse: 'Draft release notes.',
         systemPrompt: 'You are the release notes project agent.',
       },
@@ -41,6 +44,7 @@ describe('buildCreateProjectAgentTool', () => {
 
     expect(host.createAndPromoteProjectAgent).toHaveBeenCalledWith('creator-session', {
       sessionName: 'Release Notes',
+      handle: 'releases',
       whenToUse: 'Draft release notes.',
       systemPrompt: 'You are the release notes project agent.',
     })

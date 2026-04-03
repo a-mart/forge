@@ -7,6 +7,7 @@ import {
   isSwarmModelPreset,
   isSwarmReasoningLevel
 } from "../swarm/model-presets.js";
+import { normalizeProjectAgentHandle } from "../swarm/project-agents.js";
 
 export type ParsedClientCommand =
   | { ok: true; command: ClientCommand }
@@ -419,6 +420,25 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
     ) {
       return { ok: false, error: "set_session_project_agent.projectAgent.systemPrompt must be a string when provided" };
     }
+    if (
+      projectAgent !== null &&
+      (projectAgent as { handle?: unknown }).handle !== undefined &&
+      typeof (projectAgent as { handle?: unknown }).handle !== "string"
+    ) {
+      return { ok: false, error: "set_session_project_agent.projectAgent.handle must be a string when provided" };
+    }
+    if (
+      projectAgent !== null &&
+      typeof (projectAgent as { handle?: unknown }).handle === "string"
+    ) {
+      const handle = (projectAgent as { handle: string }).handle;
+      if (handle.length === 0 || normalizeProjectAgentHandle(handle) !== handle) {
+        return {
+          ok: false,
+          error: "set_session_project_agent.projectAgent.handle must be a normalized non-empty string containing only lowercase letters, numbers, and dashes"
+        };
+      }
+    }
     if (requestId !== undefined && typeof requestId !== "string") {
       return { ok: false, error: "set_session_project_agent.requestId must be a string when provided" };
     }
@@ -435,6 +455,9 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
                 whenToUse: (projectAgent as { whenToUse: string }).whenToUse,
                 ...((projectAgent as { systemPrompt?: string }).systemPrompt !== undefined
                   ? { systemPrompt: (projectAgent as { systemPrompt?: string }).systemPrompt }
+                  : {}),
+                ...((projectAgent as { handle?: string }).handle !== undefined
+                  ? { handle: (projectAgent as { handle?: string }).handle }
                   : {})
               },
         requestId

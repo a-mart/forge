@@ -33,7 +33,12 @@ export type ClientCommand =
   | {
       type: 'set_session_project_agent'
       agentId: string
-      projectAgent: { whenToUse: string; systemPrompt?: string } | null
+      projectAgent: { whenToUse: string; systemPrompt?: string; handle?: string } | null
+      requestId?: string
+    }
+  | {
+      type: 'get_project_agent_config'
+      agentId: string
       requestId?: string
     }
   | {

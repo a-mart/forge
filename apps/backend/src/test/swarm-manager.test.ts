@@ -1074,6 +1074,37 @@ describe('SwarmManager', () => {
     })
   })
 
+  it('uses explicit handles on promotion and preserves them across later edits', async () => {
+    const config = await makeTempConfig()
+    const manager = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const created = await manager.createSession('manager', { label: 'Release Notes' })
+
+    const promoted = await manager.setSessionProjectAgent(created.sessionAgent.agentId, {
+      handle: 'releases',
+      whenToUse: 'Draft release notes and changelog copy.',
+    })
+
+    expect(promoted.projectAgent).toEqual({
+      handle: 'releases',
+      whenToUse: 'Draft release notes and changelog copy.',
+    })
+
+    const updated = await manager.setSessionProjectAgent(created.sessionAgent.agentId, {
+      whenToUse: 'Owns release notes and changelog QA.',
+    })
+
+    expect(updated.projectAgent).toEqual({
+      handle: 'releases',
+      whenToUse: 'Owns release notes and changelog QA.',
+    })
+    expect(manager.getAgent(created.sessionAgent.agentId)?.projectAgent).toEqual({
+      handle: 'releases',
+      whenToUse: 'Owns release notes and changelog QA.',
+    })
+  })
+
   it('collapses multiline project-agent when-to-use text before persisting', async () => {
     const config = await makeTempConfig()
     const manager = new ProjectAgentAwareSwarmManager(config)
@@ -1220,7 +1251,7 @@ describe('SwarmManager', () => {
         whenToUse: 'Also draft release notes.',
       }),
     ).rejects.toThrow(
-      'Project agent handle "release-notes" is already in use in this profile. Rename the session to get a unique handle, then try again.',
+      'Project agent handle "release-notes" is already in use in this profile. Choose a different handle and try again.',
     )
 
     await expect(
@@ -1355,6 +1386,36 @@ describe('SwarmManager', () => {
     })
   })
 
+  it('createAndPromoteProjectAgent honors an explicit handle override', async () => {
+    const config = await makeTempConfig()
+    const manager = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const creator = await manager.createSession('manager', {
+      label: 'Agent Creator',
+      sessionPurpose: 'agent_creator',
+    })
+
+    const result = await manager.createAndPromoteProjectAgent(creator.sessionAgent.agentId, {
+      sessionName: 'Documentation Writer',
+      handle: 'docs',
+      whenToUse: 'Owns docs updates.',
+      systemPrompt: 'You are the documentation project agent.',
+    })
+
+    expect(result).toEqual({
+      agentId: expect.any(String),
+      handle: 'docs',
+      profileId: 'manager',
+    })
+    expect(manager.getAgent(result.agentId)?.projectAgent).toEqual({
+      handle: 'docs',
+      whenToUse: 'Owns docs updates.',
+      systemPrompt: 'You are the documentation project agent.',
+      creatorSessionId: creator.sessionAgent.agentId,
+    })
+  })
+
   it('createAndPromoteProjectAgent rolls back descriptors when setup fails before runtime creation', async () => {
     const config = await makeTempConfig()
     const manager = new ProjectAgentAwareSwarmManager(config)
@@ -1457,7 +1518,7 @@ describe('SwarmManager', () => {
         systemPrompt: 'You are another release notes project agent.',
       }),
     ).rejects.toThrow(
-      'Project agent handle "release-notes" is already in use in this profile. Rename the session to get a unique handle, then try again.',
+      'Project agent handle "release-notes" is already in use in this profile. Choose a different handle and try again.',
     )
     expect(manager.listAgents()).toHaveLength(agentCountBeforeCollision)
 
@@ -1478,7 +1539,7 @@ describe('SwarmManager', () => {
     ).rejects.toThrow('systemPrompt must be non-empty')
   })
 
-  it('renameSession recomputes project-agent handles, rejects collisions, and deleteSession notifies on removal', async () => {
+  it('renameSession keeps project-agent handles stable and deleteSession notifies on removal', async () => {
     const config = await makeTempConfig()
     const manager = new ProjectAgentAwareSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -1494,12 +1555,11 @@ describe('SwarmManager', () => {
     })
 
     await manager.renameSession(releases.sessionAgent.agentId, 'Ship Notes')
-    expect(manager.getAgent(releases.sessionAgent.agentId)?.projectAgent?.handle).toBe('ship-notes')
+    expect(manager.getAgent(releases.sessionAgent.agentId)?.sessionLabel).toBe('Ship Notes')
+    expect(manager.getAgent(releases.sessionAgent.agentId)?.projectAgent?.handle).toBe('release-notes')
 
-    await expect(manager.renameSession(qa.sessionAgent.agentId, 'Ship Notes!!!')).rejects.toThrow(
-      'Project agent handle "ship-notes" is already in use in this profile. Rename the session to get a unique handle, then try again.',
-    )
-    expect(manager.getAgent(qa.sessionAgent.agentId)?.sessionLabel).toBe('QA')
+    await manager.renameSession(qa.sessionAgent.agentId, 'Ship Notes!!!')
+    expect(manager.getAgent(qa.sessionAgent.agentId)?.sessionLabel).toBe('Ship Notes!!!')
     expect(manager.getAgent(qa.sessionAgent.agentId)?.projectAgent?.handle).toBe('qa')
 
     const notificationsBeforeDelete = manager.notifiedProjectAgentProfileIds.length

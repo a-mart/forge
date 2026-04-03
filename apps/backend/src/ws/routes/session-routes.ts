@@ -271,6 +271,9 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
               whenToUse: command.projectAgent.whenToUse,
               ...(command.projectAgent.systemPrompt !== undefined
                 ? { systemPrompt: command.projectAgent.systemPrompt }
+                : {}),
+              ...(command.projectAgent.handle !== undefined
+                ? { handle: command.projectAgent.handle }
                 : {})
             }
           : null

@@ -2013,7 +2013,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   async createAndPromoteProjectAgent(
     creatorAgentId: string,
-    params: { sessionName: string; whenToUse: string; systemPrompt: string }
+    params: { sessionName: string; handle?: string; whenToUse: string; systemPrompt: string }
   ): Promise<{ agentId: string; handle: string; profileId: string }> {
     const creatorDescriptor = this.getRequiredSessionDescriptor(creatorAgentId);
     if (creatorDescriptor.sessionPurpose !== "agent_creator") {
@@ -2038,9 +2038,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       throw new Error("systemPrompt must be non-empty");
     }
 
-    const handle = normalizeProjectAgentHandle(trimmedName);
+    const handleSource = params.handle ?? trimmedName;
+    const handle = normalizeProjectAgentHandle(handleSource);
     if (!handle) {
-      throw new Error("Session name must produce a valid handle (at least one letter, number, or dash)");
+      throw new Error("Project agent handle must contain at least one letter, number, or dash");
     }
 
     const collision = findProjectAgentByHandle(this.descriptors.values(), profileId, handle);
@@ -2337,14 +2338,19 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   async setSessionProjectAgent(
     agentId: string,
-    projectAgent: { whenToUse: string; systemPrompt?: string } | null
+    projectAgent: { whenToUse: string; systemPrompt?: string; handle?: string } | null
   ): Promise<{ profileId: string; projectAgent: NonNullable<AgentDescriptor["projectAgent"]> | null }> {
     const descriptor = this.getRequiredSessionDescriptor(agentId);
     this.assertSessionSupportsProjectAgent(descriptor);
 
     const profileId = descriptor.profileId;
     const nextProjectAgent = projectAgent
-      ? this.buildProjectAgentInfoForSession(descriptor, projectAgent.whenToUse, projectAgent.systemPrompt)
+      ? this.buildProjectAgentInfoForSession(
+          descriptor,
+          projectAgent.whenToUse,
+          projectAgent.systemPrompt,
+          projectAgent.handle ?? descriptor.projectAgent?.handle
+        )
       : null;
 
     descriptor.projectAgent = nextProjectAgent ?? undefined;
@@ -2394,33 +2400,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     const previousLabel = descriptor.sessionLabel ?? descriptor.displayName ?? descriptor.agentId;
     const renamedAt = this.now();
-    let nextProjectAgentHandle: string | undefined;
-
-    if (descriptor.projectAgent) {
-      nextProjectAgentHandle = normalizeProjectAgentHandle(normalizedLabel);
-      if (!nextProjectAgentHandle) {
-        throw new Error(
-          "Project agent handle could not be derived from the session name. Rename the session to include at least one letter, number, or dash, then try again."
-        );
-      }
-
-      const existingProjectAgent = findProjectAgentByHandle(
-        this.descriptors.values(),
-        descriptor.profileId,
-        nextProjectAgentHandle
-      );
-      if (existingProjectAgent && existingProjectAgent.agentId !== descriptor.agentId) {
-        throw new Error(getProjectAgentHandleCollisionError(nextProjectAgentHandle));
-      }
-    }
 
     descriptor.sessionLabel = normalizedLabel;
-    if (descriptor.projectAgent && nextProjectAgentHandle) {
-      descriptor.projectAgent = {
-        ...descriptor.projectAgent,
-        handle: nextProjectAgentHandle
-      };
-    }
     this.descriptors.set(agentId, descriptor);
 
     await this.writeInitialSessionMeta(descriptor);
@@ -3810,7 +3791,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private buildProjectAgentInfoForSession(
     descriptor: AgentDescriptor & { role: "manager"; profileId: string },
     whenToUse: string,
-    systemPrompt?: string
+    systemPrompt?: string,
+    handle?: string
   ): NonNullable<AgentDescriptor["projectAgent"]> {
     const normalizedWhenToUse = normalizeProjectAgentInlineText(whenToUse);
     if (!normalizedWhenToUse) {
@@ -3821,22 +3803,22 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       throw new Error("Project agent \"When to use\" must be 280 characters or fewer");
     }
 
-    const handle = normalizeProjectAgentHandle(getProjectAgentPublicName(descriptor));
-    if (!handle) {
+    const normalizedHandle = normalizeProjectAgentHandle(handle ?? getProjectAgentPublicName(descriptor));
+    if (!normalizedHandle) {
       throw new Error(
-        "Project agent handle could not be derived from the session name. Rename the session to include at least one letter, number, or dash, then try again."
+        "Project agent handle must contain at least one letter, number, or dash. Provide an explicit handle or use a session name with at least one letter, number, or dash."
       );
     }
 
-    const existingProjectAgent = findProjectAgentByHandle(this.descriptors.values(), descriptor.profileId, handle);
+    const existingProjectAgent = findProjectAgentByHandle(this.descriptors.values(), descriptor.profileId, normalizedHandle);
     if (existingProjectAgent && existingProjectAgent.agentId !== descriptor.agentId) {
-      throw new Error(getProjectAgentHandleCollisionError(handle));
+      throw new Error(getProjectAgentHandleCollisionError(normalizedHandle));
     }
 
     const normalizedSystemPrompt = systemPrompt?.trim();
 
     return {
-      handle,
+      handle: normalizedHandle,
       whenToUse: normalizedWhenToUse,
       ...(normalizedSystemPrompt ? { systemPrompt: normalizedSystemPrompt } : {}),
       ...(descriptor.projectAgent?.creatorSessionId !== undefined
