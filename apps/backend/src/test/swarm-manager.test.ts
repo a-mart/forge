@@ -1188,26 +1188,29 @@ describe('SwarmManager', () => {
       systemPrompt: '  You are the release notes project agent.  ',
     })
 
+    // getAgent() returns cloned descriptor — systemPrompt intentionally stripped from snapshots
     expect(firstBoot.getAgent(created.sessionAgent.agentId)?.projectAgent).toEqual({
       handle: expectedProjectAgent.handle,
       whenToUse: expectedProjectAgent.whenToUse,
-      systemPrompt: expectedProjectAgent.systemPrompt,
     })
 
+    // Internal descriptor still has systemPrompt (for agents.json persistence / downgrade safety)
     const firstBootState = firstBoot as unknown as { descriptors: Map<string, AgentDescriptor> }
     expect(firstBootState.descriptors.get(created.sessionAgent.agentId)?.projectAgent).toEqual(expectedProjectAgent)
 
+    // agents.json still has systemPrompt for Electron downgrade safety
     const store = JSON.parse(await readFile(config.paths.agentsStoreFile, 'utf8')) as { agents: AgentDescriptor[] }
     expect(store.agents.find((agent) => agent.agentId === created.sessionAgent.agentId)?.projectAgent).toEqual(expectedProjectAgent)
 
     const secondBoot = new ProjectAgentAwareSwarmManager(config)
     await bootWithDefaultManager(secondBoot, config)
 
+    // After second boot, cloned output still omits systemPrompt
     expect(secondBoot.getAgent(created.sessionAgent.agentId)?.projectAgent).toEqual({
       handle: expectedProjectAgent.handle,
       whenToUse: expectedProjectAgent.whenToUse,
-      systemPrompt: expectedProjectAgent.systemPrompt,
     })
+    // Internal descriptor should have systemPrompt (hydrated from on-disk or descriptor mirror)
     const secondBootState = secondBoot as unknown as { descriptors: Map<string, AgentDescriptor> }
     expect(secondBootState.descriptors.get(created.sessionAgent.agentId)?.projectAgent).toEqual(expectedProjectAgent)
   })
@@ -1382,12 +1385,13 @@ describe('SwarmManager', () => {
       handle: 'release-notes',
       profileId: 'manager',
     })
+    // Cloned output (getAgent) omits systemPrompt — it's fetched via get_project_agent_config
     expect(manager.getAgent(result.agentId)?.projectAgent).toEqual({
       handle: 'release-notes',
       whenToUse: 'Draft release notes and changelog copy.',
-      systemPrompt: 'You are the release notes project agent.',
       creatorSessionId: creator.sessionAgent.agentId,
     })
+    // Internal descriptor retains systemPrompt for agents.json persistence / downgrade safety
     const managerState = manager as unknown as { descriptors: Map<string, AgentDescriptor> }
     expect(managerState.descriptors.get(result.agentId)?.projectAgent).toEqual({
       handle: 'release-notes',
@@ -1398,6 +1402,7 @@ describe('SwarmManager', () => {
     expect(manager.systemPromptByAgentId.get(result.agentId)).toContain('You are the release notes project agent.')
     expect(manager.notifiedProjectAgentProfileIds).toEqual(['manager'])
 
+    // agents.json still has systemPrompt for Electron downgrade safety
     const store = JSON.parse(await readFile(config.paths.agentsStoreFile, 'utf8')) as { agents: AgentDescriptor[] }
     expect(store.agents.find((agent) => agent.agentId === result.agentId)?.projectAgent).toEqual({
       handle: 'release-notes',
@@ -1432,12 +1437,13 @@ describe('SwarmManager', () => {
       handle: 'docs',
       profileId: 'manager',
     })
+    // Cloned output omits systemPrompt
     expect(manager.getAgent(result.agentId)?.projectAgent).toEqual({
       handle: 'docs',
       whenToUse: 'Owns docs updates.',
-      systemPrompt: 'You are the documentation project agent.',
       creatorSessionId: creator.sessionAgent.agentId,
     })
+    // Internal descriptor retains systemPrompt
     const managerState = manager as unknown as { descriptors: Map<string, AgentDescriptor> }
     expect(managerState.descriptors.get(result.agentId)?.projectAgent).toEqual({
       handle: 'docs',

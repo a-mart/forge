@@ -465,6 +465,27 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
     };
   }
 
+  if (maybe.type === "get_project_agent_config") {
+    const agentId = (maybe as { agentId?: unknown }).agentId;
+    const requestId = (maybe as { requestId?: unknown }).requestId;
+
+    if (typeof agentId !== "string" || agentId.trim().length === 0) {
+      return { ok: false, error: "get_project_agent_config.agentId must be a non-empty string" };
+    }
+    if (requestId !== undefined && typeof requestId !== "string") {
+      return { ok: false, error: "get_project_agent_config.requestId must be a string when provided" };
+    }
+
+    return {
+      ok: true,
+      command: {
+        type: "get_project_agent_config",
+        agentId: agentId.trim(),
+        requestId
+      }
+    };
+  }
+
   if (maybe.type === "request_project_agent_recommendations") {
     const agentId = (maybe as { agentId?: unknown }).agentId;
     const requestId = (maybe as { requestId?: unknown }).requestId;
@@ -871,6 +892,7 @@ export function extractRequestId(command: ClientCommand): string | undefined {
     case "rename_session":
     case "pin_session":
     case "set_session_project_agent":
+    case "get_project_agent_config":
     case "request_project_agent_recommendations":
     case "rename_profile":
     case "fork_session":

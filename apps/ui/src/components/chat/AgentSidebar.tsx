@@ -125,7 +125,8 @@ interface AgentSidebarProps {
   onUpdateManagerModel?: (managerId: string, model: ManagerModelPreset, reasoningLevel?: ManagerReasoningLevel) => void
   onRequestSessionWorkers?: (sessionId: string) => void
   onReorderProfiles?: (profileIds: string[]) => void
-  onSetSessionProjectAgent?: (agentId: string, projectAgent: { whenToUse: string; systemPrompt?: string } | null) => Promise<void>
+  onSetSessionProjectAgent?: (agentId: string, projectAgent: { whenToUse: string; systemPrompt?: string; handle?: string } | null) => Promise<void>
+  onGetProjectAgentConfig?: (agentId: string) => Promise<{ agentId: string; config: import('@forge/protocol').PersistedProjectAgentConfig; systemPrompt: string | null }>
   onRequestProjectAgentRecommendations?: (agentId: string) => Promise<{ whenToUse: string; systemPrompt: string }>
   onCreateAgentCreator?: (profileId: string) => void
 }
@@ -1385,18 +1386,31 @@ function ProjectAgentSettingsSheet({
   onSave,
   onDemote,
   onClose,
+  onGetProjectAgentConfig,
   onRequestRecommendations,
 }: {
   agentId: string
   sessionLabel: string
   currentProjectAgent: ProjectAgentInfo | null
-  onSave: (agentId: string, projectAgent: { whenToUse: string; systemPrompt?: string }) => Promise<void>
+  onSave: (agentId: string, projectAgent: { whenToUse: string; systemPrompt?: string; handle?: string }) => Promise<void>
   onDemote: (agentId: string) => Promise<void>
   onClose: () => void
+  onGetProjectAgentConfig?: (agentId: string) => Promise<{ agentId: string; config: import('@forge/protocol').PersistedProjectAgentConfig; systemPrompt: string | null }>
   onRequestRecommendations?: (agentId: string) => Promise<{ whenToUse: string; systemPrompt: string }>
 }) {
+  const isPromoting = !currentProjectAgent
+
+  // Handle input for promotion flow
+  const [handleInput, setHandleInput] = useState(slugifySessionName(sessionLabel))
+  const normalizedHandle = slugifySessionName(handleInput)
+
+  // Config loading state for existing agents
+  const [configLoading, setConfigLoading] = useState(!isPromoting)
+  const [configError, setConfigError] = useState<string | null>(null)
+  const fetchedSystemPromptRef = useRef<string>('')
+
   const [whenToUse, setWhenToUse] = useState(currentProjectAgent?.whenToUse ?? '')
-  const [systemPrompt, setSystemPrompt] = useState(currentProjectAgent?.systemPrompt ?? '')
+  const [systemPrompt, setSystemPrompt] = useState('')
   const [saving, setSaving] = useState(false)
   const [analyzing, setAnalyzing] = useState(false)
   const [analysisError, setAnalysisError] = useState<string | null>(null)
@@ -1406,14 +1420,37 @@ function ProjectAgentSettingsSheet({
   const whenToUseDirtyRef = useRef(false)
   const systemPromptDirtyRef = useRef(false)
 
-  const derivedHandle = slugifySessionName(sessionLabel)
-  const isPromoting = !currentProjectAgent
+  // Fetch full config from backend when editing an existing agent
+  useEffect(() => {
+    if (isPromoting || !onGetProjectAgentConfig) return
+    let cancelled = false
+    setConfigLoading(true)
+    setConfigError(null)
+    void onGetProjectAgentConfig(agentId).then((result) => {
+      if (cancelled) return
+      const prompt = result.systemPrompt ?? ''
+      fetchedSystemPromptRef.current = prompt
+      if (!systemPromptDirtyRef.current) {
+        setSystemPrompt(prompt)
+      }
+      setConfigLoading(false)
+    }).catch((err) => {
+      if (cancelled) return
+      setConfigError(err instanceof Error ? err.message : 'Failed to load config.')
+      setConfigLoading(false)
+    })
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentId, isPromoting])
+
   const trimmedWhenToUse = whenToUse.trim()
   const trimmedSystemPrompt = systemPrompt.trim()
-  const canSave = trimmedWhenToUse.length > 0 && trimmedWhenToUse.length <= PROJECT_AGENT_WHEN_TO_USE_MAX
+  const canSave = isPromoting
+    ? trimmedWhenToUse.length > 0 && trimmedWhenToUse.length <= PROJECT_AGENT_WHEN_TO_USE_MAX && normalizedHandle.length > 0
+    : trimmedWhenToUse.length > 0 && trimmedWhenToUse.length <= PROJECT_AGENT_WHEN_TO_USE_MAX
   const hasChanges = isPromoting
     || trimmedWhenToUse !== (currentProjectAgent?.whenToUse ?? '')
-    || trimmedSystemPrompt !== (currentProjectAgent?.systemPrompt ?? '')
+    || trimmedSystemPrompt !== fetchedSystemPromptRef.current.trim()
 
   const requestRecommendations = useCallback(async (replaceExisting: boolean) => {
     if (!onRequestRecommendations) return
@@ -1469,6 +1506,7 @@ function ProjectAgentSettingsSheet({
       await onSave(agentId, {
         whenToUse: trimmedWhenToUse,
         ...(trimmedSystemPrompt ? { systemPrompt: trimmedSystemPrompt } : {}),
+        ...(isPromoting && normalizedHandle ? { handle: normalizedHandle } : {}),
       })
       onClose()
     } catch (err) {
@@ -1517,12 +1555,54 @@ function ProjectAgentSettingsSheet({
             <label className="text-sm font-medium text-foreground">Session</label>
             <p className="text-sm text-muted-foreground">{sessionLabel}</p>
           </div>
-          <div className="space-y-1">
-            <label className="text-sm font-medium text-foreground">Handle</label>
-            <p className="font-mono text-sm text-muted-foreground">
-              {derivedHandle ? `@${derivedHandle}` : <span className="text-amber-500">(invalid name)</span>}
+
+          {isPromoting ? (
+            <div className="space-y-1.5">
+              <label htmlFor="agentHandle" className="text-sm font-medium text-foreground">Handle</label>
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-sm text-muted-foreground">@</span>
+                <Input
+                  id="agentHandle"
+                  value={handleInput}
+                  onChange={(e) => setHandleInput(e.target.value)}
+                  placeholder="agent-handle"
+                  className="font-mono text-sm"
+                />
+              </div>
+              {handleInput && normalizedHandle !== handleInput ? (
+                <p className="font-mono text-[11px] text-muted-foreground">
+                  Normalized: @{normalizedHandle || <span className="text-amber-500">(empty)</span>}
+                </p>
+              ) : null}
+              {handleInput && !normalizedHandle ? (
+                <p className="text-[11px] text-amber-500">
+                  Handle must contain at least one letter, number, or dash.
+                </p>
+              ) : null}
+            </div>
+          ) : (
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-foreground">Handle</label>
+              <p className="font-mono text-sm text-muted-foreground">
+                @{currentProjectAgent?.handle}
+              </p>
+            </div>
+          )}
+
+          {/* Config loading indicator for existing agents */}
+          {configLoading ? (
+            <div className="flex items-center gap-2 rounded-md border border-border/50 bg-muted/30 px-3 py-2.5 text-sm text-muted-foreground">
+              <Loader2 className="size-4 shrink-0 animate-spin" />
+              <span>Loading configuration…</span>
+            </div>
+          ) : null}
+
+          {/* Config loading error */}
+          {configError ? (
+            <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-600 dark:text-amber-400">
+              {configError}
             </p>
-          </div>
+          ) : null}
 
           {/* AI analysis loading indicator */}
           {analyzing ? (
@@ -1565,9 +1645,10 @@ function ProjectAgentSettingsSheet({
               id="systemPrompt"
               value={systemPrompt}
               onChange={handleSystemPromptChange}
-              placeholder={analyzing ? 'Generating recommendation…' : 'Custom system prompt for this project agent…'}
+              placeholder={configLoading ? 'Loading…' : analyzing ? 'Generating recommendation…' : 'Custom system prompt for this project agent…'}
               rows={8}
               className="resize-y font-mono text-xs"
+              disabled={configLoading}
             />
             <p className="text-[11px] text-muted-foreground">
               When set, this replaces the standard manager prompt for this session.
@@ -1580,7 +1661,7 @@ function ProjectAgentSettingsSheet({
               variant="ghost"
               size="sm"
               onClick={() => void requestRecommendations(true)}
-              disabled={analyzing}
+              disabled={analyzing || configLoading}
               className="gap-1.5"
             >
               {analyzing
@@ -1597,7 +1678,7 @@ function ProjectAgentSettingsSheet({
             </p>
           ) : null}
           <div className="flex items-center gap-2">
-            <Button onClick={handleSave} disabled={!canSave || !hasChanges || saving}>
+            <Button onClick={handleSave} disabled={!canSave || !hasChanges || saving || configLoading}>
               {saving ? 'Saving…' : isPromoting ? 'Promote' : 'Save'}
             </Button>
             {!isPromoting ? (
@@ -2189,6 +2270,7 @@ export function AgentSidebar({
   onRequestSessionWorkers,
   onReorderProfiles,
   onSetSessionProjectAgent,
+  onGetProjectAgentConfig,
   onRequestProjectAgentRecommendations,
   onCreateAgentCreator,
 }: AgentSidebarProps) {
@@ -2500,7 +2582,7 @@ export function AgentSidebar({
     await onSetSessionProjectAgent?.(agentId, null)
   }, [onSetSessionProjectAgent])
 
-  const handleSaveProjectAgent = useCallback(async (agentId: string, projectAgent: { whenToUse: string; systemPrompt?: string }) => {
+  const handleSaveProjectAgent = useCallback(async (agentId: string, projectAgent: { whenToUse: string; systemPrompt?: string; handle?: string }) => {
     await onSetSessionProjectAgent?.(agentId, projectAgent)
   }, [onSetSessionProjectAgent])
 
@@ -2939,6 +3021,7 @@ export function AgentSidebar({
           onSave={handleSaveProjectAgent}
           onDemote={handleDemoteProjectAgent}
           onClose={() => setProjectAgentTarget(null)}
+          onGetProjectAgentConfig={onGetProjectAgentConfig}
           onRequestRecommendations={onRequestProjectAgentRecommendations}
         />
       ) : null}

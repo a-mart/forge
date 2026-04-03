@@ -20,6 +20,7 @@ import {
   type DeliveryMode,
   type ManagerModelPreset,
   type ManagerReasoningLevel,
+  type PersistedProjectAgentConfig,
   type ProjectAgentInfo,
   type ServerEvent,
   type SessionMemoryMergeResult,
@@ -54,6 +55,12 @@ type SessionWorkersResult = { sessionAgentId: string; workers: AgentDescriptor[]
 
 type SessionProjectAgentResult = { agentId: string; profileId: string; projectAgent: ProjectAgentInfo | null }
 
+export type ProjectAgentConfigResult = {
+  agentId: string
+  config: PersistedProjectAgentConfig
+  systemPrompt: string | null
+}
+
 type ProjectAgentRecommendationsResult = { agentId: string; whenToUse: string; systemPrompt: string }
 
 type WsRequestResultMap = {
@@ -72,6 +79,7 @@ type WsRequestResultMap = {
   fork_session: SessionForkedResult
   merge_session_memory: SessionMemoryMergeResult
   set_session_project_agent: SessionProjectAgentResult
+  get_project_agent_config: ProjectAgentConfigResult
   request_project_agent_recommendations: ProjectAgentRecommendationsResult
   get_session_workers: { sessionAgentId: string; workers: AgentDescriptor[] }
   list_directories: DirectoriesListedResult
@@ -96,6 +104,7 @@ const WS_REQUEST_TYPES: WsRequestType[] = [
   'fork_session',
   'merge_session_memory',
   'set_session_project_agent',
+  'get_project_agent_config',
   'request_project_agent_recommendations',
   'get_session_workers',
   'list_directories',
@@ -119,6 +128,7 @@ const WS_REQUEST_ERROR_HINTS: Array<{ requestType: WsRequestType; codeFragment: 
   { requestType: 'fork_session', codeFragment: 'fork_session' },
   { requestType: 'merge_session_memory', codeFragment: 'merge_session_memory' },
   { requestType: 'set_session_project_agent', codeFragment: 'set_session_project_agent' },
+  { requestType: 'get_project_agent_config', codeFragment: 'project_agent_config' },
   { requestType: 'request_project_agent_recommendations', codeFragment: 'project_agent_recommendations' },
   { requestType: 'get_session_workers', codeFragment: 'get_session_workers' },
   { requestType: 'list_directories', codeFragment: 'list_directories' },
@@ -717,7 +727,7 @@ export class ManagerWsClient {
 
   async setSessionProjectAgent(
     agentId: string,
-    projectAgent: { whenToUse: string; systemPrompt?: string } | null,
+    projectAgent: { whenToUse: string; systemPrompt?: string; handle?: string } | null,
   ): Promise<SessionProjectAgentResult> {
     const trimmed = agentId.trim()
     if (!trimmed) {
@@ -732,6 +742,23 @@ export class ManagerWsClient {
       type: 'set_session_project_agent',
       agentId: trimmed,
       projectAgent,
+      requestId,
+    }))
+  }
+
+  async getProjectAgentConfig(agentId: string): Promise<ProjectAgentConfigResult> {
+    const trimmed = agentId.trim()
+    if (!trimmed) {
+      throw new Error('Agent id is required.')
+    }
+
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+      throw new Error('WebSocket is disconnected. Reconnecting...')
+    }
+
+    return this.enqueueRequest('get_project_agent_config', (requestId) => ({
+      type: 'get_project_agent_config',
+      agentId: trimmed,
       requestId,
     }))
   }
@@ -1271,6 +1298,17 @@ export class ManagerWsClient {
             agentId: event.agentId,
             profileId: event.profileId,
             projectAgent: event.projectAgent,
+          })
+        }
+        break
+      }
+
+      case 'project_agent_config': {
+        if (event.requestId) {
+          this.requestTracker.resolve('get_project_agent_config', event.requestId, {
+            agentId: event.agentId,
+            config: event.config,
+            systemPrompt: event.systemPrompt,
           })
         }
         break

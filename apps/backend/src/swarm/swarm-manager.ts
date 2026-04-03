@@ -1126,9 +1126,7 @@ function cloneProjectAgentInfoValue(
   return {
     handle: projectAgent.handle,
     whenToUse: projectAgent.whenToUse,
-    ...(projectAgent.systemPrompt !== undefined
-      ? { systemPrompt: projectAgent.systemPrompt }
-      : {}),
+    // systemPrompt intentionally omitted — fetched via get_project_agent_config
     ...(projectAgent.creatorSessionId !== undefined
       ? { creatorSessionId: projectAgent.creatorSessionId }
       : {})
@@ -3856,6 +3854,40 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     return cloneDescriptor(descriptor);
+  }
+
+  async getProjectAgentConfig(agentId: string): Promise<{
+    config: import("@forge/protocol").PersistedProjectAgentConfig;
+    systemPrompt: string | null;
+  }> {
+    const descriptor = this.descriptors.get(agentId);
+    if (!descriptor?.projectAgent?.handle) {
+      throw new Error(`Agent ${agentId} is not a project agent`);
+    }
+    const profileId = descriptor.profileId ?? descriptor.agentId;
+    const record = await readProjectAgentRecord(
+      this.config.paths.dataDir,
+      profileId,
+      descriptor.projectAgent.handle
+    );
+    if (record) {
+      return { config: record.config, systemPrompt: record.systemPrompt };
+    }
+    // Fallback: construct from descriptor data (pre-migration or missing directory)
+    return {
+      config: {
+        version: 1,
+        agentId,
+        handle: descriptor.projectAgent.handle,
+        whenToUse: descriptor.projectAgent.whenToUse,
+        ...(descriptor.projectAgent.creatorSessionId !== undefined
+          ? { creatorSessionId: descriptor.projectAgent.creatorSessionId }
+          : {}),
+        promotedAt: descriptor.createdAt ?? new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+      systemPrompt: descriptor.projectAgent.systemPrompt ?? null,
+    };
   }
 
   async listDirectories(path?: string): Promise<DirectoryListingResult> {

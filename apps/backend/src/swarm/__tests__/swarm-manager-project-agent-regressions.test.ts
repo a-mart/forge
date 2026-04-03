@@ -179,7 +179,7 @@ async function bootWithDefaultManager(manager: TestSwarmManager, config: SwarmCo
 }
 
 describe("SwarmManager project-agent regressions", () => {
-  it("keeps systemPrompt in cloned descriptors, list snapshots, and update events", async () => {
+  it("strips systemPrompt from cloned descriptors, list snapshots, and update events", async () => {
     const config = await makeTempConfig();
     const manager = new TestSwarmManager(config);
     const sessionProjectAgentUpdatedEvents: any[] = [];
@@ -199,23 +199,25 @@ describe("SwarmManager project-agent regressions", () => {
       systemPrompt: "You own release-note drafting."
     });
 
+    // systemPrompt intentionally omitted from cloned output — fetched via get_project_agent_config
     expect(manager.getAgent(target.agentId)?.projectAgent).toEqual({
       handle: "release-notes",
       whenToUse: "Draft release notes",
-      systemPrompt: "You own release-note drafting."
     });
 
     expect(manager.listAgents().find((agent) => agent.agentId === target.agentId)?.projectAgent).toEqual({
       handle: "release-notes",
       whenToUse: "Draft release notes",
-      systemPrompt: "You own release-note drafting."
     });
 
     expect(sessionProjectAgentUpdatedEvents.at(-1)?.projectAgent).toEqual({
       handle: "release-notes",
       whenToUse: "Draft release notes",
-      systemPrompt: "You own release-note drafting."
     });
+
+    // Internal descriptor still has systemPrompt (for agents.json persistence)
+    const state = manager as unknown as { descriptors: Map<string, import("../../swarm/types.js").AgentDescriptor> };
+    expect(state.descriptors.get(target.agentId)?.projectAgent?.systemPrompt).toBe("You own release-note drafting.");
   });
 
   it("renames the on-disk project-agent record when the handle changes", async () => {

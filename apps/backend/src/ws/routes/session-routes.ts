@@ -42,6 +42,7 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
     command.type !== "rename_session" &&
     command.type !== "pin_session" &&
     command.type !== "set_session_project_agent" &&
+    command.type !== "get_project_agent_config" &&
     command.type !== "request_project_agent_recommendations" &&
     command.type !== "fork_session" &&
     command.type !== "merge_session_memory"
@@ -290,6 +291,28 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
       send(socket, {
         type: "error",
         code: "SET_SESSION_PROJECT_AGENT_FAILED",
+        message: error instanceof Error ? error.message : String(error),
+        requestId: command.requestId
+      });
+    }
+
+    return true;
+  }
+
+  if (command.type === "get_project_agent_config") {
+    try {
+      const result = await swarmManager.getProjectAgentConfig(command.agentId);
+      send(socket, {
+        type: "project_agent_config",
+        agentId: command.agentId,
+        config: result.config,
+        systemPrompt: result.systemPrompt,
+        requestId: command.requestId
+      });
+    } catch (error) {
+      send(socket, {
+        type: "error",
+        code: "NOT_A_PROJECT_AGENT",
         message: error instanceof Error ? error.message : String(error),
         requestId: command.requestId
       });
