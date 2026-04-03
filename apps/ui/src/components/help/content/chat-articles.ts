@@ -28,6 +28,8 @@ To stop a running response, open the **⋮ menu** in the header and choose **Sto
 
 The header has a **Web / All** toggle. "Web" shows only your conversation messages. "All" includes internal activity like tool calls and worker messages, which is useful for debugging.
 
+Mermaid code blocks also render inline as interactive diagrams, with controls to toggle source, copy the Mermaid text, export SVG or PNG, and expand fullscreen.
+
 ## Context window
 
 The ring icon next to the channel toggle shows how full the context window is. Green means plenty of room. Amber means it's getting full. Red means you're near the limit and should consider compacting.

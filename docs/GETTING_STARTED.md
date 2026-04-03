@@ -88,7 +88,7 @@ The key insight: **your manager writes better prompts than you do.** Especially 
 
 ### Chat Interface
 
-The main panel is a chat window. You type messages to your manager, it responds. When it spawns workers, you'll see activity indicators. When workers complete, results flow back through the manager.
+The main panel is a chat window. You type messages to your manager, it responds. When it spawns workers, you'll see activity indicators. When workers complete, results flow back through the manager. Agents can also output Mermaid diagrams in standard code fences, and Forge renders them inline with an interactive toolbar.
 
 Two view modes, toggled at the top:
 

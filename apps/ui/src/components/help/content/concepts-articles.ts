@@ -12,7 +12,7 @@ When you send a message, the manager reads it, decides what needs to happen, and
 
 ## What you see
 
-Workers appear as pills below the chat header while they are active. Click a pill to see what that worker is doing. When a worker finishes, it reports back to the manager and disappears.
+Workers appear as pills below the chat header while they are active. Click a pill to see what that worker is doing. When a worker finishes, it reports back to the manager and disappears. Agents can also produce Mermaid diagrams that render inline in chat instead of staying as raw code fences.
 
 ## Why this matters
 
