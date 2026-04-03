@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -15,6 +15,9 @@ import {
   getProfileMemoryPath,
   getProfileMergeAuditLogPath,
   getProfileReferencePath,
+  getProjectAgentConfigPath,
+  getProjectAgentDir,
+  getProjectAgentPromptPath,
   getRootSessionMemoryPath,
   getSessionDir,
   getSessionMemoryPath,
@@ -1049,6 +1052,10 @@ describe('SwarmManager', () => {
       },
     })
     expect(manager.getAgent(created.sessionAgent.agentId)?.projectAgent).toEqual(result.projectAgent)
+    expect(manager.getAgent(created.sessionAgent.agentId)?.projectAgent?.systemPrompt).toBeUndefined()
+    expect(
+      manager.listAgents().find((agent) => agent.agentId === created.sessionAgent.agentId)?.projectAgent?.systemPrompt,
+    ).toBeUndefined()
     expect(updates).toHaveLength(1)
     expect(updates[0]).toMatchObject({
       type: 'session_project_agent_updated',
@@ -1059,6 +1066,7 @@ describe('SwarmManager', () => {
         whenToUse: 'Draft release notes and changelog copy.',
       },
     })
+    expect((updates[0]?.projectAgent as { systemPrompt?: string } | null)?.systemPrompt).toBeUndefined()
     expect(manager.notifiedProjectAgentProfileIds).toEqual(['manager'])
 
     const store = JSON.parse(await readFile(config.paths.agentsStoreFile, 'utf8')) as { agents: AgentDescriptor[] }
@@ -1072,6 +1080,85 @@ describe('SwarmManager', () => {
       handle: 'release-notes',
       whenToUse: 'Draft release notes and changelog copy.',
     })
+  })
+
+  it('uses explicit handles on promotion and preserves them across later edits', async () => {
+    const config = await makeTempConfig()
+    const manager = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const created = await manager.createSession('manager', { label: 'Release Notes' })
+
+    const promoted = await manager.setSessionProjectAgent(created.sessionAgent.agentId, {
+      handle: 'releases',
+      whenToUse: 'Draft release notes and changelog copy.',
+    })
+
+    expect(promoted.projectAgent).toEqual({
+      handle: 'releases',
+      whenToUse: 'Draft release notes and changelog copy.',
+    })
+
+    const updated = await manager.setSessionProjectAgent(created.sessionAgent.agentId, {
+      whenToUse: 'Owns release notes and changelog QA.',
+    })
+
+    expect(updated.projectAgent).toEqual({
+      handle: 'releases',
+      whenToUse: 'Owns release notes and changelog QA.',
+    })
+    expect(manager.getAgent(created.sessionAgent.agentId)?.projectAgent).toEqual({
+      handle: 'releases',
+      whenToUse: 'Owns release notes and changelog QA.',
+    })
+  })
+
+  it('promotes, demotes, and re-promotes the same handle with on-disk directory cleanup', async () => {
+    const config = await makeTempConfig()
+    const manager = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const created = await manager.createSession('manager', { label: 'Documentation Writer' })
+    const projectAgentDir = getProjectAgentDir(config.paths.dataDir, 'manager', 'docs')
+    const configPath = getProjectAgentConfigPath(config.paths.dataDir, 'manager', 'docs')
+    const promptPath = getProjectAgentPromptPath(config.paths.dataDir, 'manager', 'docs')
+
+    await manager.setSessionProjectAgent(created.sessionAgent.agentId, {
+      handle: 'docs',
+      whenToUse: 'Owns docs updates.',
+      systemPrompt: 'Document the system.',
+    })
+
+    expect(JSON.parse(await readFile(configPath, 'utf8'))).toMatchObject({
+      agentId: created.sessionAgent.agentId,
+      handle: 'docs',
+      whenToUse: 'Owns docs updates.',
+      version: 1,
+    })
+    expect(await readFile(promptPath, 'utf8')).toBe('Document the system.')
+
+    const demoted = await manager.setSessionProjectAgent(created.sessionAgent.agentId, null)
+    expect(demoted.projectAgent).toBeNull()
+    expect(manager.getAgent(created.sessionAgent.agentId)?.projectAgent).toBeUndefined()
+    await expect(stat(projectAgentDir)).rejects.toMatchObject({ code: 'ENOENT' })
+
+    const rePromoted = await manager.setSessionProjectAgent(created.sessionAgent.agentId, {
+      handle: 'docs',
+      whenToUse: 'Owns docs and changelog updates.',
+      systemPrompt: 'Document the system better.',
+    })
+
+    expect(rePromoted.projectAgent).toEqual({
+      handle: 'docs',
+      whenToUse: 'Owns docs and changelog updates.',
+    })
+    expect(JSON.parse(await readFile(configPath, 'utf8'))).toMatchObject({
+      agentId: created.sessionAgent.agentId,
+      handle: 'docs',
+      whenToUse: 'Owns docs and changelog updates.',
+      version: 1,
+    })
+    expect(await readFile(promptPath, 'utf8')).toBe('Document the system better.')
   })
 
   it('collapses multiline project-agent when-to-use text before persisting', async () => {
@@ -1156,15 +1243,160 @@ describe('SwarmManager', () => {
       systemPrompt: '  You are the release notes project agent.  ',
     })
 
-    expect(firstBoot.getAgent(created.sessionAgent.agentId)?.projectAgent).toEqual(expectedProjectAgent)
+    // getAgent() returns cloned descriptor — systemPrompt intentionally stripped from snapshots
+    expect(firstBoot.getAgent(created.sessionAgent.agentId)?.projectAgent).toEqual({
+      handle: expectedProjectAgent.handle,
+      whenToUse: expectedProjectAgent.whenToUse,
+    })
 
+    // Internal descriptor still has systemPrompt (for agents.json persistence / downgrade safety)
+    const firstBootState = firstBoot as unknown as { descriptors: Map<string, AgentDescriptor> }
+    expect(firstBootState.descriptors.get(created.sessionAgent.agentId)?.projectAgent).toEqual(expectedProjectAgent)
+
+    // agents.json still has systemPrompt for Electron downgrade safety
     const store = JSON.parse(await readFile(config.paths.agentsStoreFile, 'utf8')) as { agents: AgentDescriptor[] }
     expect(store.agents.find((agent) => agent.agentId === created.sessionAgent.agentId)?.projectAgent).toEqual(expectedProjectAgent)
 
     const secondBoot = new ProjectAgentAwareSwarmManager(config)
     await bootWithDefaultManager(secondBoot, config)
 
-    expect(secondBoot.getAgent(created.sessionAgent.agentId)?.projectAgent).toEqual(expectedProjectAgent)
+    // After second boot, cloned output still omits systemPrompt
+    expect(secondBoot.getAgent(created.sessionAgent.agentId)?.projectAgent).toEqual({
+      handle: expectedProjectAgent.handle,
+      whenToUse: expectedProjectAgent.whenToUse,
+    })
+    // Internal descriptor should have systemPrompt (hydrated from on-disk or descriptor mirror)
+    const secondBootState = secondBoot as unknown as { descriptors: Map<string, AgentDescriptor> }
+    expect(secondBootState.descriptors.get(created.sessionAgent.agentId)?.projectAgent).toEqual(expectedProjectAgent)
+  })
+
+  it('materializes descriptor-backed project-agent storage on boot and stays idempotent across reboots', async () => {
+    const config = await makeTempConfig()
+    const firstBoot = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(firstBoot, config)
+
+    const created = await firstBoot.createSession('manager', { label: 'Release Notes' })
+    await firstBoot.setSessionProjectAgent(created.sessionAgent.agentId, {
+      whenToUse: 'Draft release notes and changelog copy.',
+      systemPrompt: 'You are the release notes project agent.',
+    })
+
+    const agentId = created.sessionAgent.agentId
+    const configPath = getProjectAgentConfigPath(config.paths.dataDir, 'manager', 'release-notes')
+    const promptPath = getProjectAgentPromptPath(config.paths.dataDir, 'manager', 'release-notes')
+
+    await rm(getProjectAgentDir(config.paths.dataDir, 'manager', 'release-notes'), { recursive: true, force: true })
+    await expect(stat(configPath)).rejects.toMatchObject({ code: 'ENOENT' })
+
+    const secondBoot = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(secondBoot, config)
+
+    expect(JSON.parse(await readFile(configPath, 'utf8'))).toMatchObject({
+      agentId,
+      handle: 'release-notes',
+      whenToUse: 'Draft release notes and changelog copy.',
+      version: 1,
+    })
+    expect(await readFile(promptPath, 'utf8')).toBe('You are the release notes project agent.')
+    expect(secondBoot.getAgent(agentId)?.projectAgent?.systemPrompt).toBeUndefined()
+
+    const storeAfterSecondBoot = JSON.parse(await readFile(config.paths.agentsStoreFile, 'utf8')) as {
+      agents: AgentDescriptor[]
+    }
+    expect(storeAfterSecondBoot.agents.find((agent) => agent.agentId === agentId)?.projectAgent).toEqual({
+      handle: 'release-notes',
+      whenToUse: 'Draft release notes and changelog copy.',
+      systemPrompt: 'You are the release notes project agent.',
+    })
+
+    const thirdBoot = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(thirdBoot, config)
+
+    expect(JSON.parse(await readFile(configPath, 'utf8'))).toMatchObject({
+      agentId,
+      handle: 'release-notes',
+      whenToUse: 'Draft release notes and changelog copy.',
+      version: 1,
+    })
+    expect(await readFile(promptPath, 'utf8')).toBe('You are the release notes project agent.')
+    expect(thirdBoot.getAgent(agentId)?.projectAgent?.systemPrompt).toBeUndefined()
+  })
+
+  it('hydrates stale descriptor mirrors from on-disk project-agent files on boot for downgrade safety', async () => {
+    const config = await makeTempConfig()
+    const firstBoot = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(firstBoot, config)
+
+    const created = await firstBoot.createSession('manager', { label: 'Release Notes' })
+    await firstBoot.setSessionProjectAgent(created.sessionAgent.agentId, {
+      whenToUse: 'Legacy descriptor when-to-use.',
+      systemPrompt: 'Legacy descriptor prompt.',
+    })
+
+    const agentId = created.sessionAgent.agentId
+    const promotedAt = created.sessionAgent.createdAt
+    const configPath = getProjectAgentConfigPath(config.paths.dataDir, 'manager', 'release-notes')
+    const promptPath = getProjectAgentPromptPath(config.paths.dataDir, 'manager', 'release-notes')
+
+    await writeFile(
+      configPath,
+      `${JSON.stringify(
+        {
+          version: 1,
+          agentId,
+          handle: 'release-notes',
+          whenToUse: 'Disk-backed release coordination.',
+          promotedAt,
+          updatedAt: '2026-04-03T12:34:56.000Z',
+        },
+        null,
+        2,
+      )}\n`,
+      'utf8',
+    )
+    await writeFile(promptPath, 'Disk-backed project-agent prompt.', 'utf8')
+
+    const storeBeforeReboot = JSON.parse(await readFile(config.paths.agentsStoreFile, 'utf8')) as { agents: AgentDescriptor[] }
+    await writeFile(
+      config.paths.agentsStoreFile,
+      `${JSON.stringify(
+        {
+          ...storeBeforeReboot,
+          agents: storeBeforeReboot.agents.map((agent) =>
+            agent.agentId === agentId
+              ? {
+                  ...agent,
+                  projectAgent: {
+                    handle: 'release-notes',
+                    whenToUse: 'Descriptor is stale and missing prompt mirror.',
+                  },
+                }
+              : agent,
+          ),
+        },
+        null,
+        2,
+      )}\n`,
+      'utf8',
+    )
+
+    const secondBoot = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(secondBoot, config)
+
+    const secondBootState = secondBoot as unknown as { descriptors: Map<string, AgentDescriptor> }
+    expect(secondBootState.descriptors.get(agentId)?.projectAgent).toEqual({
+      handle: 'release-notes',
+      whenToUse: 'Disk-backed release coordination.',
+      systemPrompt: 'Disk-backed project-agent prompt.',
+    })
+    expect(secondBoot.getAgent(agentId)?.projectAgent?.systemPrompt).toBeUndefined()
+
+    const storeAfterReboot = JSON.parse(await readFile(config.paths.agentsStoreFile, 'utf8')) as { agents: AgentDescriptor[] }
+    expect(storeAfterReboot.agents.find((agent) => agent.agentId === agentId)?.projectAgent).toEqual({
+      handle: 'release-notes',
+      whenToUse: 'Disk-backed release coordination.',
+      systemPrompt: 'Disk-backed project-agent prompt.',
+    })
   })
 
   it('recycles manager runtimes through project-agent directory refresh when a project-agent system prompt is saved', async () => {
@@ -1220,7 +1452,7 @@ describe('SwarmManager', () => {
         whenToUse: 'Also draft release notes.',
       }),
     ).rejects.toThrow(
-      'Project agent handle "release-notes" is already in use in this profile. Rename the session to get a unique handle, then try again.',
+      'Project agent handle "release-notes" is already in use in this profile. Choose a different handle and try again.',
     )
 
     await expect(
@@ -1337,7 +1569,17 @@ describe('SwarmManager', () => {
       handle: 'release-notes',
       profileId: 'manager',
     })
+    // Cloned output (getAgent) omits systemPrompt — it's fetched via get_project_agent_config
     expect(manager.getAgent(result.agentId)?.projectAgent).toEqual({
+      handle: 'release-notes',
+      whenToUse: 'Draft release notes and changelog copy.',
+      creatorSessionId: creator.sessionAgent.agentId,
+    })
+    expect(manager.getAgent(result.agentId)?.projectAgent?.systemPrompt).toBeUndefined()
+    expect(manager.listAgents().find((agent) => agent.agentId === result.agentId)?.projectAgent?.systemPrompt).toBeUndefined()
+    // Internal descriptor retains systemPrompt for agents.json persistence / downgrade safety
+    const managerState = manager as unknown as { descriptors: Map<string, AgentDescriptor> }
+    expect(managerState.descriptors.get(result.agentId)?.projectAgent).toEqual({
       handle: 'release-notes',
       whenToUse: 'Draft release notes and changelog copy.',
       systemPrompt: 'You are the release notes project agent.',
@@ -1346,6 +1588,7 @@ describe('SwarmManager', () => {
     expect(manager.systemPromptByAgentId.get(result.agentId)).toContain('You are the release notes project agent.')
     expect(manager.notifiedProjectAgentProfileIds).toEqual(['manager'])
 
+    // agents.json still has systemPrompt for Electron downgrade safety
     const store = JSON.parse(await readFile(config.paths.agentsStoreFile, 'utf8')) as { agents: AgentDescriptor[] }
     expect(store.agents.find((agent) => agent.agentId === result.agentId)?.projectAgent).toEqual({
       handle: 'release-notes',
@@ -1353,6 +1596,70 @@ describe('SwarmManager', () => {
       systemPrompt: 'You are the release notes project agent.',
       creatorSessionId: creator.sessionAgent.agentId,
     })
+    expect(
+      JSON.parse(await readFile(getProjectAgentConfigPath(config.paths.dataDir, 'manager', 'release-notes'), 'utf8')),
+    ).toMatchObject({
+      agentId: result.agentId,
+      handle: 'release-notes',
+      whenToUse: 'Draft release notes and changelog copy.',
+      creatorSessionId: creator.sessionAgent.agentId,
+      version: 1,
+    })
+    expect(await readFile(getProjectAgentPromptPath(config.paths.dataDir, 'manager', 'release-notes'), 'utf8')).toBe(
+      'You are the release notes project agent.',
+    )
+  })
+
+  it('createAndPromoteProjectAgent honors an explicit handle override', async () => {
+    const config = await makeTempConfig()
+    const manager = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const creator = await manager.createSession('manager', {
+      label: 'Agent Creator',
+      sessionPurpose: 'agent_creator',
+    })
+
+    const result = await manager.createAndPromoteProjectAgent(creator.sessionAgent.agentId, {
+      sessionName: 'Documentation Writer',
+      handle: 'docs',
+      whenToUse: 'Owns docs updates.',
+      systemPrompt: 'You are the documentation project agent.',
+    })
+
+    expect(result).toEqual({
+      agentId: expect.any(String),
+      handle: 'docs',
+      profileId: 'manager',
+    })
+    // Cloned output omits systemPrompt
+    expect(manager.getAgent(result.agentId)?.projectAgent).toEqual({
+      handle: 'docs',
+      whenToUse: 'Owns docs updates.',
+      creatorSessionId: creator.sessionAgent.agentId,
+    })
+    expect(manager.getAgent(result.agentId)?.projectAgent?.systemPrompt).toBeUndefined()
+    expect(manager.listAgents().find((agent) => agent.agentId === result.agentId)?.projectAgent?.systemPrompt).toBeUndefined()
+    // Internal descriptor retains systemPrompt
+    const managerState = manager as unknown as { descriptors: Map<string, AgentDescriptor> }
+    expect(managerState.descriptors.get(result.agentId)?.projectAgent).toEqual({
+      handle: 'docs',
+      whenToUse: 'Owns docs updates.',
+      systemPrompt: 'You are the documentation project agent.',
+      creatorSessionId: creator.sessionAgent.agentId,
+    })
+    expect(
+      JSON.parse(await readFile(getProjectAgentConfigPath(config.paths.dataDir, 'manager', 'docs'), 'utf8')),
+    ).toMatchObject({
+      agentId: result.agentId,
+      handle: 'docs',
+      whenToUse: 'Owns docs updates.',
+      creatorSessionId: creator.sessionAgent.agentId,
+      version: 1,
+    })
+    expect(await readFile(getProjectAgentPromptPath(config.paths.dataDir, 'manager', 'docs'), 'utf8')).toBe(
+      'You are the documentation project agent.',
+    )
   })
 
   it('createAndPromoteProjectAgent rolls back descriptors when setup fails before runtime creation', async () => {
@@ -1380,6 +1687,9 @@ describe('SwarmManager', () => {
 
     expect(manager.listAgents().map((agent) => agent.agentId).sort()).toEqual(agentIdsBefore)
     expect((await readdir(profileSessionsDir)).sort()).toEqual(sessionDirsBefore)
+    await expect(stat(getProjectAgentDir(config.paths.dataDir, 'manager', 'release-notes'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
     expect(manager.notifiedProjectAgentProfileIds).toEqual([])
 
     const retried = await manager.createAndPromoteProjectAgent(creator.sessionAgent.agentId, {
@@ -1416,6 +1726,9 @@ describe('SwarmManager', () => {
 
     expect(manager.listAgents().map((agent) => agent.agentId).sort()).toEqual(agentIdsBefore)
     expect((await readdir(profileSessionsDir)).sort()).toEqual(sessionDirsBefore)
+    await expect(stat(getProjectAgentDir(config.paths.dataDir, 'manager', 'release-notes'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
     expect(manager.notifiedProjectAgentProfileIds).toEqual([])
 
     const retried = await manager.createAndPromoteProjectAgent(creator.sessionAgent.agentId, {
@@ -1457,7 +1770,7 @@ describe('SwarmManager', () => {
         systemPrompt: 'You are another release notes project agent.',
       }),
     ).rejects.toThrow(
-      'Project agent handle "release-notes" is already in use in this profile. Rename the session to get a unique handle, then try again.',
+      'Project agent handle "release-notes" is already in use in this profile. Choose a different handle and try again.',
     )
     expect(manager.listAgents()).toHaveLength(agentCountBeforeCollision)
 
@@ -1478,7 +1791,7 @@ describe('SwarmManager', () => {
     ).rejects.toThrow('systemPrompt must be non-empty')
   })
 
-  it('renameSession recomputes project-agent handles, rejects collisions, and deleteSession notifies on removal', async () => {
+  it('renameSession keeps project-agent handles stable and deleteSession notifies on removal', async () => {
     const config = await makeTempConfig()
     const manager = new ProjectAgentAwareSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -1494,13 +1807,25 @@ describe('SwarmManager', () => {
     })
 
     await manager.renameSession(releases.sessionAgent.agentId, 'Ship Notes')
-    expect(manager.getAgent(releases.sessionAgent.agentId)?.projectAgent?.handle).toBe('ship-notes')
+    expect(manager.getAgent(releases.sessionAgent.agentId)?.sessionLabel).toBe('Ship Notes')
+    expect(manager.getAgent(releases.sessionAgent.agentId)?.projectAgent?.handle).toBe('release-notes')
+    expect(
+      JSON.parse(await readFile(getProjectAgentConfigPath(config.paths.dataDir, 'manager', 'release-notes'), 'utf8')),
+    ).toMatchObject({
+      agentId: releases.sessionAgent.agentId,
+      handle: 'release-notes',
+    })
+    await expect(stat(getProjectAgentDir(config.paths.dataDir, 'manager', 'ship-notes'))).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
 
-    await expect(manager.renameSession(qa.sessionAgent.agentId, 'Ship Notes!!!')).rejects.toThrow(
-      'Project agent handle "ship-notes" is already in use in this profile. Rename the session to get a unique handle, then try again.',
-    )
-    expect(manager.getAgent(qa.sessionAgent.agentId)?.sessionLabel).toBe('QA')
+    await manager.renameSession(qa.sessionAgent.agentId, 'Ship Notes!!!')
+    expect(manager.getAgent(qa.sessionAgent.agentId)?.sessionLabel).toBe('Ship Notes!!!')
     expect(manager.getAgent(qa.sessionAgent.agentId)?.projectAgent?.handle).toBe('qa')
+    expect(JSON.parse(await readFile(getProjectAgentConfigPath(config.paths.dataDir, 'manager', 'qa'), 'utf8'))).toMatchObject({
+      agentId: qa.sessionAgent.agentId,
+      handle: 'qa',
+    })
 
     const notificationsBeforeDelete = manager.notifiedProjectAgentProfileIds.length
     await manager.deleteSession(releases.sessionAgent.agentId)
@@ -1561,7 +1886,7 @@ describe('SwarmManager', () => {
     const systemPromptSection = preview.sections.find((section) => section.label === 'System Prompt')
 
     expect(systemPromptSection).toMatchObject({
-      source: 'Project Agent system prompt',
+      source: getProjectAgentPromptPath(config.paths.dataDir, 'manager', 'manager'),
     })
     expect(systemPromptSection?.content).toContain('You are the release planning project agent.')
     expect(systemPromptSection?.content).not.toContain('You are the manager agent in a multi-agent swarm.')
@@ -1605,7 +1930,7 @@ describe('SwarmManager', () => {
     const systemPromptSection = preview.sections.find((section) => section.label === 'System Prompt')
 
     expect(systemPromptSection).toMatchObject({
-      source: 'Project Agent system prompt',
+      source: getProjectAgentPromptPath(config.paths.dataDir, 'manager', 'manager'),
     })
     expect(systemPromptSection?.content).toContain('You are the release planning project agent.')
   })

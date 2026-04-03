@@ -123,6 +123,31 @@ describe('ws command parser session commands', () => {
     })
   })
 
+  it('parses set_session_project_agent with an explicit normalized handle', () => {
+    const parsed = parseJsonCommand({
+      type: 'set_session_project_agent',
+      agentId: 'session-a',
+      projectAgent: {
+        handle: 'release-notes',
+        whenToUse: 'Coordinate release work',
+      },
+      requestId: 'req-project-agent',
+    })
+
+    expect(parsed).toEqual({
+      ok: true,
+      command: {
+        type: 'set_session_project_agent',
+        agentId: 'session-a',
+        projectAgent: {
+          handle: 'release-notes',
+          whenToUse: 'Coordinate release work',
+        },
+        requestId: 'req-project-agent',
+      },
+    })
+  })
+
   it('parses api_proxy commands', () => {
     const parsed = parseJsonCommand({
       type: 'api_proxy',
@@ -276,6 +301,14 @@ describe('ws command parser session commands', () => {
       {
         payload: { type: 'set_session_project_agent', agentId: 'session-a', projectAgent: {} },
         message: 'set_session_project_agent.projectAgent.whenToUse must be a string',
+      },
+      {
+        payload: { type: 'set_session_project_agent', agentId: 'session-a', projectAgent: { whenToUse: 'x', handle: 42 } },
+        message: 'set_session_project_agent.projectAgent.handle must be a string when provided',
+      },
+      {
+        payload: { type: 'set_session_project_agent', agentId: 'session-a', projectAgent: { whenToUse: 'x', handle: 'Release Notes' } },
+        message: 'set_session_project_agent.projectAgent.handle must be a normalized non-empty string containing only lowercase letters, numbers, and dashes',
       },
       {
         payload: { type: 'set_session_project_agent', agentId: 'session-a', projectAgent: null, requestId: 42 },

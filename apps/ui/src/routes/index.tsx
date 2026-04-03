@@ -902,8 +902,38 @@ export function IndexPage() {
     clientRef.current?.reorderProfiles(profileIds)
   }, [clientRef])
 
-  const handleSetSessionProjectAgent = useCallback(async (agentId: string, projectAgent: { whenToUse: string; systemPrompt?: string } | null) => {
+  const handleSetSessionProjectAgent = useCallback(async (agentId: string, projectAgent: { whenToUse: string; systemPrompt?: string; handle?: string } | null) => {
     await clientRef.current?.setSessionProjectAgent(agentId, projectAgent)
+  }, [clientRef])
+
+  const handleGetProjectAgentConfig = useCallback(async (agentId: string) => {
+    const client = clientRef.current
+    if (!client) throw new Error('WebSocket is not connected.')
+    return client.getProjectAgentConfig(agentId)
+  }, [clientRef])
+
+  const handleListProjectAgentReferences = useCallback(async (agentId: string) => {
+    const client = clientRef.current
+    if (!client) throw new Error('WebSocket is not connected.')
+    return client.listProjectAgentReferences(agentId)
+  }, [clientRef])
+
+  const handleGetProjectAgentReference = useCallback(async (agentId: string, fileName: string) => {
+    const client = clientRef.current
+    if (!client) throw new Error('WebSocket is not connected.')
+    return client.getProjectAgentReference(agentId, fileName)
+  }, [clientRef])
+
+  const handleSetProjectAgentReference = useCallback(async (agentId: string, fileName: string, content: string) => {
+    const client = clientRef.current
+    if (!client) throw new Error('WebSocket is not connected.')
+    return client.setProjectAgentReference(agentId, fileName, content)
+  }, [clientRef])
+
+  const handleDeleteProjectAgentReference = useCallback(async (agentId: string, fileName: string) => {
+    const client = clientRef.current
+    if (!client) throw new Error('WebSocket is not connected.')
+    return client.deleteProjectAgentReference(agentId, fileName)
   }, [clientRef])
 
   const handleRequestProjectAgentRecommendations = useCallback(async (agentId: string) => {
@@ -1125,6 +1155,11 @@ export function IndexPage() {
           onRequestSessionWorkers={handleRequestSessionWorkers}
           onReorderProfiles={handleReorderProfiles}
           onSetSessionProjectAgent={handleSetSessionProjectAgent}
+          onGetProjectAgentConfig={handleGetProjectAgentConfig}
+          onListProjectAgentReferences={handleListProjectAgentReferences}
+          onGetProjectAgentReference={handleGetProjectAgentReference}
+          onSetProjectAgentReference={handleSetProjectAgentReference}
+          onDeleteProjectAgentReference={handleDeleteProjectAgentReference}
           onRequestProjectAgentRecommendations={handleRequestProjectAgentRecommendations}
           onCreateAgentCreator={handleCreateAgentCreator}
         />

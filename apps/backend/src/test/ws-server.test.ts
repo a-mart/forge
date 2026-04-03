@@ -4212,6 +4212,164 @@ describe('SwarmWebSocketServer', () => {
     await server.stop()
   })
 
+  it('returns project-agent config over websocket for promoted sessions', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const { sessionAgent } = await manager.createSession('manager', { label: 'Release Notes' })
+    await manager.setSessionProjectAgent(sessionAgent.agentId, {
+      whenToUse: 'Draft release notes and changelog copy.',
+      systemPrompt: 'You are the release notes project agent.',
+    })
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    const client = new WebSocket(`ws://${config.host}:${config.port}`)
+    const events: ServerEvent[] = []
+
+    client.on('message', (raw) => {
+      events.push(JSON.parse(raw.toString()) as ServerEvent)
+    })
+
+    await once(client, 'open')
+    client.send(JSON.stringify({ type: 'subscribe', agentId: 'manager' }))
+    await waitForEvent(events, (event) => event.type === 'ready' && event.subscribedAgentId === 'manager')
+
+    client.send(
+      JSON.stringify({ type: 'get_project_agent_config', agentId: sessionAgent.agentId, requestId: 'project-config-1' }),
+    )
+
+    const configEvent = await waitForEvent(
+      events,
+      (event) => event.type === 'project_agent_config' && event.requestId === 'project-config-1',
+    )
+
+    expect(configEvent.type).toBe('project_agent_config')
+    if (configEvent.type === 'project_agent_config') {
+      expect(configEvent.agentId).toBe(sessionAgent.agentId)
+      expect(configEvent.systemPrompt).toBe('You are the release notes project agent.')
+      expect(configEvent.config).toMatchObject({
+        version: 1,
+        agentId: sessionAgent.agentId,
+        handle: 'release-notes',
+        whenToUse: 'Draft release notes and changelog copy.',
+      })
+    }
+
+    client.close()
+    await once(client, 'close')
+    await server.stop()
+  })
+
+  it('returns NOT_A_PROJECT_AGENT errors for get_project_agent_config on non-project agents', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const { sessionAgent } = await manager.createSession('manager', { label: 'Regular Session' })
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    const client = new WebSocket(`ws://${config.host}:${config.port}`)
+    const events: ServerEvent[] = []
+
+    client.on('message', (raw) => {
+      events.push(JSON.parse(raw.toString()) as ServerEvent)
+    })
+
+    await once(client, 'open')
+    client.send(JSON.stringify({ type: 'subscribe', agentId: 'manager' }))
+    await waitForEvent(events, (event) => event.type === 'ready' && event.subscribedAgentId === 'manager')
+
+    client.send(
+      JSON.stringify({ type: 'get_project_agent_config', agentId: sessionAgent.agentId, requestId: 'project-config-miss' }),
+    )
+
+    const errorEvent = await waitForEvent(
+      events,
+      (event) => event.type === 'error' && event.code === 'NOT_A_PROJECT_AGENT' && event.requestId === 'project-config-miss',
+    )
+    expect(errorEvent.type).toBe('error')
+
+    client.close()
+    await once(client, 'close')
+    await server.stop()
+  })
+
+  it('returns null systemPrompt from get_project_agent_config when prompt.md is absent', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const { sessionAgent } = await manager.createSession('manager', { label: 'QA' })
+    await manager.setSessionProjectAgent(sessionAgent.agentId, {
+      whenToUse: 'Verify fixes and regressions.',
+    })
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    const client = new WebSocket(`ws://${config.host}:${config.port}`)
+    const events: ServerEvent[] = []
+
+    client.on('message', (raw) => {
+      events.push(JSON.parse(raw.toString()) as ServerEvent)
+    })
+
+    await once(client, 'open')
+    client.send(JSON.stringify({ type: 'subscribe', agentId: 'manager' }))
+    await waitForEvent(events, (event) => event.type === 'ready' && event.subscribedAgentId === 'manager')
+
+    client.send(
+      JSON.stringify({ type: 'get_project_agent_config', agentId: sessionAgent.agentId, requestId: 'project-config-null' }),
+    )
+
+    const configEvent = await waitForEvent(
+      events,
+      (event) => event.type === 'project_agent_config' && event.requestId === 'project-config-null',
+    )
+
+    expect(configEvent.type).toBe('project_agent_config')
+    if (configEvent.type === 'project_agent_config') {
+      expect(configEvent.agentId).toBe(sessionAgent.agentId)
+      expect(configEvent.systemPrompt).toBeNull()
+      expect(configEvent.config).toMatchObject({
+        version: 1,
+        agentId: sessionAgent.agentId,
+        handle: 'qa',
+        whenToUse: 'Verify fixes and regressions.',
+      })
+    }
+
+    client.close()
+    await once(client, 'close')
+    await server.stop()
+  })
+
   it('kills a worker via kill_agent command and emits updated status + snapshot events', async () => {
     const port = await getAvailablePort()
     const config = await makeTempConfig(port, true)

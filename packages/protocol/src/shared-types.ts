@@ -33,8 +33,19 @@ export interface AgentContextUsage {
 export interface ProjectAgentInfo {
   handle: string
   whenToUse: string
+  /** @deprecated Use PersistedProjectAgentConfig + prompt.md-backed storage instead. */
   systemPrompt?: string
   creatorSessionId?: string
+}
+
+export interface PersistedProjectAgentConfig {
+  version: number
+  agentId: string
+  handle: string
+  whenToUse: string
+  creatorSessionId?: string
+  promotedAt: string
+  updatedAt: string
 }
 
 export interface AgentCreatorResult {

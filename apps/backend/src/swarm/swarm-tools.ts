@@ -37,6 +37,7 @@ export interface SwarmToolHost {
     creatorAgentId: string,
     params: {
       sessionName: string;
+      handle?: string;
       whenToUse: string;
       systemPrompt: string;
     }

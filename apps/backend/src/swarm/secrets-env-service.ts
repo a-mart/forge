@@ -1,5 +1,5 @@
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { AuthStorage, type AuthCredential } from "@mariozechner/pi-coding-agent";
 import { copyFileIfMissing } from "./copy-file-if-missing.js";
 import { normalizeEnvVarName, type ParsedSkillEnvDeclaration } from "./skill-frontmatter.js";
@@ -251,10 +251,9 @@ export class SecretsEnvService {
       return preferredPath;
     }
 
-    const oldSharedPath = join(this.deps.config.paths.sharedDir, "auth", "auth.json");
     const legacyPath = this.deps.config.paths.authFile;
 
-    for (const fallbackPath of [oldSharedPath, legacyPath]) {
+    for (const fallbackPath of [legacyPath]) {
       if (fallbackPath === preferredPath) {
         continue;
       }
@@ -348,9 +347,8 @@ export async function readConfiguredSettingsAuthProviders(
 
 async function readSecretsStoreFromConfig(config: SwarmConfig): Promise<Record<string, string>> {
   const preferredPath = config.paths.sharedSecretsFile;
-  const oldSharedPath = join(config.paths.sharedDir, "secrets.json");
   const legacyPath = config.paths.secretsFile;
-  const candidatePaths = uniquePaths([preferredPath, oldSharedPath, legacyPath]);
+  const candidatePaths = uniquePaths([preferredPath, legacyPath]);
 
   for (const candidatePath of candidatePaths) {
     let raw: string;
@@ -373,10 +371,9 @@ async function readSecretsStoreFromConfig(config: SwarmConfig): Promise<Record<s
 
 async function resolveAuthFileForReadFromConfig(config: SwarmConfig): Promise<string> {
   const preferredPath = config.paths.sharedAuthFile;
-  const oldSharedPath = join(config.paths.sharedDir, "auth", "auth.json");
   const legacyPath = config.paths.authFile;
 
-  for (const candidatePath of uniquePaths([preferredPath, oldSharedPath, legacyPath])) {
+  for (const candidatePath of uniquePaths([preferredPath, legacyPath])) {
     if (await pathExists(candidatePath)) {
       return candidatePath;
     }

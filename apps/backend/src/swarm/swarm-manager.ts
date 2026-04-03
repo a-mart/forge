@@ -12,6 +12,7 @@ import type {
   CortexReviewRunScope,
   CortexReviewRunTrigger,
   OnboardingState,
+  PersistedProjectAgentConfig,
   ServerEvent,
   SessionMemoryMergeAttemptStatus,
   SessionMemoryMergeFailureStage,
@@ -37,12 +38,14 @@ import {
   getCortexWorkerPromptsPath,
   getProfileMemoryPath,
   getProfileMergeAuditLogPath,
+  getProjectAgentPromptPath,
   getSessionDir,
   getSessionFilePath,
   getSessionMetaPath,
   getWorkerSessionFilePath,
   getWorkersDir,
-  resolveMemoryFilePath
+  resolveMemoryFilePath,
+  sanitizePathSegment as sanitizePersistedPathSegment
 } from "./data-paths.js";
 import {
   clearAllPins as clearAllSessionPins,
@@ -54,7 +57,7 @@ import {
 } from "./message-pins.js";
 import { ensureCanonicalAuthFilePath } from "./auth-storage-paths.js";
 import { migrateDataDirectory } from "./data-migration.js";
-import { migrateSharedConfigLayout } from "./shared-config-migration.js";
+import { cleanupOldSharedConfigPaths, migrateSharedConfigLayout } from "./shared-config-migration.js";
 import {
   appendCortexReviewRun,
   buildCortexReviewRunRequestText,
@@ -78,6 +81,13 @@ import {
   type ProjectAgentRecommendations
 } from "./project-agent-analysis.js";
 import {
+  deleteProjectAgentRecord,
+  readProjectAgentRecord,
+  reconcileProjectAgentStorage,
+  renameProjectAgentRecord,
+  writeProjectAgentRecord
+} from "./project-agent-storage.js";
+import {
   deliverProjectAgentMessage,
   findProjectAgentByHandle,
   formatProjectAgentRuntimeMessage,
@@ -89,7 +99,13 @@ import {
   normalizeProjectAgentInlineText
 } from "./project-agents.js";
 import { PersistenceService } from "./persistence-service.js";
-import { migrateLegacyProfileKnowledgeToReferenceDoc } from "./reference-docs.js";
+import {
+  deleteProjectAgentReferenceDoc,
+  listProjectAgentReferenceDocs,
+  migrateLegacyProfileKnowledgeToReferenceDoc,
+  readProjectAgentReferenceDoc,
+  writeProjectAgentReferenceDoc
+} from "./reference-docs.js";
 import { scanCortexReviewStatus } from "./scripts/cortex-scan.js";
 import {
   assertPiModelsProjectionAvailable,
@@ -1107,21 +1123,25 @@ function cloneContextUsage(contextUsage: AgentContextUsage | undefined): AgentCo
   };
 }
 
-function cloneProjectAgentInfo(descriptor: AgentDescriptor): AgentDescriptor["projectAgent"] {
-  if (!descriptor.projectAgent) {
-    return undefined;
+function cloneProjectAgentInfoValue(
+  projectAgent: AgentDescriptor["projectAgent"] | null | undefined
+): AgentDescriptor["projectAgent"] | null | undefined {
+  if (!projectAgent) {
+    return projectAgent;
   }
 
   return {
-    handle: descriptor.projectAgent.handle,
-    whenToUse: descriptor.projectAgent.whenToUse,
-    ...(descriptor.projectAgent.systemPrompt !== undefined
-      ? { systemPrompt: descriptor.projectAgent.systemPrompt }
-      : {}),
-    ...(descriptor.projectAgent.creatorSessionId !== undefined
-      ? { creatorSessionId: descriptor.projectAgent.creatorSessionId }
+    handle: projectAgent.handle,
+    whenToUse: projectAgent.whenToUse,
+    // systemPrompt intentionally omitted — fetched via get_project_agent_config
+    ...(projectAgent.creatorSessionId !== undefined
+      ? { creatorSessionId: projectAgent.creatorSessionId }
       : {})
   };
+}
+
+function cloneProjectAgentInfo(descriptor: AgentDescriptor): AgentDescriptor["projectAgent"] {
+  return cloneProjectAgentInfoValue(descriptor.projectAgent) ?? undefined;
 }
 
 function cloneDescriptor(descriptor: AgentDescriptor): AgentDescriptor {
@@ -1349,6 +1369,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     await this.ensureDirectories();
     await migrateSharedConfigLayout(this.config.paths.dataDir);
+    await cleanupOldSharedConfigPaths(this.config.paths.dataDir);
+    await ensureCanonicalAuthFilePath(this.config);
     await this.reloadModelCatalogOverridesAndProjection();
     await this.loadSecretsStore();
     await this.reloadSkillMetadata();
@@ -1403,6 +1425,31 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     await this.reconcileInterruptedCortexReviewRunsForBoot();
     this.normalizeStreamingStatusesForBoot();
     await this.recoverMissingWorkerDescriptorsForBoot();
+
+    // Reconcile project agent storage: hydrate descriptors from on-disk config,
+    // materialize missing directories from descriptor data (first-boot migration).
+    for (const profile of this.profiles.values()) {
+      const result = await reconcileProjectAgentStorage(
+        this.config.paths.dataDir,
+        profile.profileId,
+        this.descriptors
+      );
+      if (result.materialized.length > 0) {
+        console.info(
+          `[swarm][boot] Materialized ${result.materialized.length} project agent(s) for profile ${profile.profileId}: ${result.materialized.join(", ")}`
+        );
+      }
+      if (result.hydrated.length > 0) {
+        console.info(
+          `[swarm][boot] Hydrated ${result.hydrated.length} project agent descriptor(s) for profile ${profile.profileId}: ${result.hydrated.join(", ")}`
+        );
+      }
+      if (result.orphansRemoved.length > 0) {
+        console.info(
+          `[swarm][boot] Removed ${result.orphansRemoved.length} orphan project agent director(ies) for profile ${profile.profileId}: ${result.orphansRemoved.join(", ")}`
+        );
+      }
+    }
 
     await this.ensureMemoryFilesForBoot();
     await this.saveStore();
@@ -2013,7 +2060,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   async createAndPromoteProjectAgent(
     creatorAgentId: string,
-    params: { sessionName: string; whenToUse: string; systemPrompt: string }
+    params: { sessionName: string; handle?: string; whenToUse: string; systemPrompt: string }
   ): Promise<{ agentId: string; handle: string; profileId: string }> {
     const creatorDescriptor = this.getRequiredSessionDescriptor(creatorAgentId);
     if (creatorDescriptor.sessionPurpose !== "agent_creator") {
@@ -2038,13 +2085,19 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       throw new Error("systemPrompt must be non-empty");
     }
 
-    const handle = normalizeProjectAgentHandle(trimmedName);
+    const handleSource = params.handle ?? trimmedName;
+    const handle = normalizeProjectAgentHandle(handleSource);
     if (!handle) {
-      throw new Error("Session name must produce a valid handle (at least one letter, number, or dash)");
+      throw new Error("Project agent handle must contain at least one letter, number, or dash");
     }
 
     const collision = findProjectAgentByHandle(this.descriptors.values(), profileId, handle);
     if (collision) {
+      throw new Error(getProjectAgentHandleCollisionError(handle));
+    }
+
+    const onDiskCollision = await readProjectAgentRecord(this.config.paths.dataDir, profileId, handle);
+    if (onDiskCollision) {
       throw new Error(getProjectAgentHandleCollisionError(handle));
     }
 
@@ -2058,7 +2111,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     sessionDescriptor.projectAgent = {
       handle,
       whenToUse: trimmedWhenToUse,
-      systemPrompt: trimmedSystemPrompt
+      // DUAL-WRITE: systemPrompt kept in agents.json mirror for Electron rollback safety
+      systemPrompt: trimmedSystemPrompt,
+      creatorSessionId: creatorAgentId
     };
     this.descriptors.set(sessionDescriptor.agentId, sessionDescriptor);
 
@@ -2072,10 +2127,25 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       await this.ensureAgentMemoryFile(getProfileMemoryPath(this.config.paths.dataDir, prepared.profile.profileId), prepared.profile.profileId);
       await this.writeInitialSessionMeta(sessionDescriptor);
 
+      const persistedProjectAgentConfig: PersistedProjectAgentConfig = {
+        version: 1,
+        agentId: sessionDescriptor.agentId,
+        handle,
+        whenToUse: trimmedWhenToUse,
+        creatorSessionId: creatorAgentId,
+        promotedAt: sessionDescriptor.createdAt,
+        updatedAt: this.now()
+      };
+      await writeProjectAgentRecord(
+        this.config.paths.dataDir,
+        profileId,
+        persistedProjectAgentConfig,
+        trimmedSystemPrompt
+      );
+
       const runtime = await this.getOrCreateRuntimeForDescriptor(sessionDescriptor);
       sessionDescriptor.contextUsage = runtime.getContextUsage();
 
-      prepared.sessionDescriptor.projectAgent!.creatorSessionId = creatorAgentId;
       creatorDescriptor.agentCreatorResult = {
         createdAgentId: sessionDescriptor.agentId,
         createdHandle: handle,
@@ -2091,7 +2161,22 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         delete creatorDescriptor.agentCreatorResult;
       }
       this.descriptors.set(creatorDescriptor.agentId, creatorDescriptor);
-      await this.rollbackCreatedSession(sessionDescriptor);
+
+      const cleanupResults = await Promise.allSettled([
+        deleteProjectAgentRecord(this.config.paths.dataDir, profileId, handle),
+        this.rollbackCreatedSession(sessionDescriptor)
+      ]);
+      for (const cleanupResult of cleanupResults) {
+        if (cleanupResult.status === "rejected") {
+          this.logDebug("project_agent:create:rollback_cleanup_error", {
+            creatorAgentId,
+            agentId: sessionDescriptor.agentId,
+            handle,
+            message: cleanupResult.reason instanceof Error ? cleanupResult.reason.message : String(cleanupResult.reason)
+          });
+        }
+      }
+
       throw error;
     }
     this.emitSessionLifecycle({
@@ -2168,6 +2253,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const descriptor = this.getRequiredSessionDescriptor(agentId);
     this.assertSessionIsDeletable(descriptor);
     const wasProjectAgent = Boolean(descriptor.projectAgent);
+    const projectAgentHandle = descriptor.projectAgent?.handle;
 
     const { terminatedWorkerIds } = await this.stopSessionInternal(agentId, {
       saveStore: false,
@@ -2200,6 +2286,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       await rm(sessionMemoryPath, { force: true });
       await rm(workersDir, { recursive: true, force: true });
       await rm(sessionDir, { recursive: true, force: true });
+    }
+
+    if (wasProjectAgent && projectAgentHandle) {
+      await deleteProjectAgentRecord(this.config.paths.dataDir, profileId, projectAgentHandle);
     }
 
     await this.saveStore();
@@ -2337,28 +2427,89 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   async setSessionProjectAgent(
     agentId: string,
-    projectAgent: { whenToUse: string; systemPrompt?: string } | null
+    projectAgent: { whenToUse: string; systemPrompt?: string; handle?: string } | null
   ): Promise<{ profileId: string; projectAgent: NonNullable<AgentDescriptor["projectAgent"]> | null }> {
     const descriptor = this.getRequiredSessionDescriptor(agentId);
     this.assertSessionSupportsProjectAgent(descriptor);
 
     const profileId = descriptor.profileId;
+    const previousProjectAgent = descriptor.projectAgent;
+    const nextHandle = projectAgent?.handle !== undefined ? normalizeProjectAgentHandle(projectAgent.handle) : undefined;
+    if (previousProjectAgent && nextHandle && nextHandle !== previousProjectAgent.handle) {
+      throw new Error("Cannot change project agent handle after promotion. Demote and re-promote to change the handle.");
+    }
+
     const nextProjectAgent = projectAgent
-      ? this.buildProjectAgentInfoForSession(descriptor, projectAgent.whenToUse, projectAgent.systemPrompt)
+      ? this.buildProjectAgentInfoForSession(
+          descriptor,
+          projectAgent.whenToUse,
+          projectAgent.systemPrompt,
+          projectAgent.handle ?? descriptor.projectAgent?.handle
+        )
       : null;
+
+    if (nextProjectAgent) {
+      const onDiskCollision = await readProjectAgentRecord(
+        this.config.paths.dataDir,
+        profileId,
+        nextProjectAgent.handle
+      );
+      if (onDiskCollision && onDiskCollision.config.agentId !== descriptor.agentId) {
+        throw new Error(getProjectAgentHandleCollisionError(nextProjectAgent.handle));
+      }
+
+      const persistedProjectAgentConfig: PersistedProjectAgentConfig = {
+        version: 1,
+        agentId: descriptor.agentId,
+        handle: nextProjectAgent.handle,
+        whenToUse: nextProjectAgent.whenToUse,
+        ...(nextProjectAgent.creatorSessionId !== undefined
+          ? { creatorSessionId: nextProjectAgent.creatorSessionId }
+          : {}),
+        promotedAt: descriptor.createdAt,
+        updatedAt: this.now()
+      };
+      const configForDisk = persistedProjectAgentConfig;
+      if (previousProjectAgent && previousProjectAgent.handle !== nextProjectAgent.handle) {
+        await renameProjectAgentRecord(
+          this.config.paths.dataDir,
+          profileId,
+          previousProjectAgent.handle,
+          nextProjectAgent.handle,
+          configForDisk,
+          nextProjectAgent.systemPrompt ?? null
+        );
+      } else {
+        await writeProjectAgentRecord(
+          this.config.paths.dataDir,
+          profileId,
+          configForDisk,
+          nextProjectAgent.systemPrompt ?? null
+        );
+      }
+    } else if (previousProjectAgent?.handle) {
+      await deleteProjectAgentRecord(this.config.paths.dataDir, profileId, previousProjectAgent.handle);
+    }
 
     descriptor.projectAgent = nextProjectAgent ?? undefined;
     this.descriptors.set(agentId, descriptor);
 
-    await this.saveStore();
-    await this.captureSessionRuntimePromptMeta(descriptor);
+    try {
+      await this.saveStore();
+      await this.captureSessionRuntimePromptMeta(descriptor);
+    } catch (error) {
+      console.warn(
+        `[swarm] project-agent-storage:post_commit_sync_failed agentId=${agentId} profile=${profileId} error=${errorToMessage(error)}`
+      );
+    }
+
     this.emitAgentsSnapshot();
     this.emitSessionProjectAgentUpdated(descriptor.agentId, profileId, nextProjectAgent);
     await this.notifyProjectAgentsChanged(profileId);
 
     return {
       profileId,
-      projectAgent: nextProjectAgent
+      projectAgent: cloneProjectAgentInfoValue(nextProjectAgent) ?? null
     };
   }
 
@@ -2394,33 +2545,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     const previousLabel = descriptor.sessionLabel ?? descriptor.displayName ?? descriptor.agentId;
     const renamedAt = this.now();
-    let nextProjectAgentHandle: string | undefined;
-
-    if (descriptor.projectAgent) {
-      nextProjectAgentHandle = normalizeProjectAgentHandle(normalizedLabel);
-      if (!nextProjectAgentHandle) {
-        throw new Error(
-          "Project agent handle could not be derived from the session name. Rename the session to include at least one letter, number, or dash, then try again."
-        );
-      }
-
-      const existingProjectAgent = findProjectAgentByHandle(
-        this.descriptors.values(),
-        descriptor.profileId,
-        nextProjectAgentHandle
-      );
-      if (existingProjectAgent && existingProjectAgent.agentId !== descriptor.agentId) {
-        throw new Error(getProjectAgentHandleCollisionError(nextProjectAgentHandle));
-      }
-    }
 
     descriptor.sessionLabel = normalizedLabel;
-    if (descriptor.projectAgent && nextProjectAgentHandle) {
-      descriptor.projectAgent = {
-        ...descriptor.projectAgent,
-        handle: nextProjectAgentHandle
-      };
-    }
     this.descriptors.set(agentId, descriptor);
 
     await this.writeInitialSessionMeta(descriptor);
@@ -3653,7 +3779,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     const resolvedProfileId = normalizeOptionalAgentId(descriptor.profileId) ?? profileId;
-    const projectAgentPrompt = descriptor.projectAgent?.systemPrompt?.trim();
+    const { prompt: projectAgentPrompt, sourcePath: projectAgentPromptSourcePath } =
+      await this.resolveProjectAgentSystemPromptOverride(descriptor);
     const archetypeId = descriptor.archetypeId
       ? normalizeArchetypeId(descriptor.archetypeId) || MANAGER_ARCHETYPE_ID
       : MANAGER_ARCHETYPE_ID;
@@ -3699,7 +3826,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const sections: PromptPreviewSection[] = [
       {
         label: "System Prompt",
-        source: projectAgentPrompt ? "Project Agent system prompt" : archetypeEntry!.sourcePath,
+        source: projectAgentPrompt ? projectAgentPromptSourcePath! : archetypeEntry!.sourcePath,
         content: systemPrompt
       }
     ];
@@ -3746,6 +3873,63 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     return cloneDescriptor(descriptor);
+  }
+
+  async getProjectAgentConfig(agentId: string): Promise<{
+    config: import("@forge/protocol").PersistedProjectAgentConfig;
+    systemPrompt: string | null;
+    references: string[];
+  }> {
+    const { descriptor, profileId, handle } = this.assertProjectAgentReferenceScope(agentId);
+    const references = await listProjectAgentReferenceDocs(this.config.paths.dataDir, profileId, handle);
+    const record = await readProjectAgentRecord(
+      this.config.paths.dataDir,
+      profileId,
+      handle
+    );
+    if (record) {
+      return { config: record.config, systemPrompt: record.systemPrompt, references };
+    }
+    // Fallback: construct from descriptor data (pre-migration or missing directory)
+    return {
+      config: {
+        version: 1,
+        agentId,
+        handle,
+        whenToUse: descriptor.projectAgent.whenToUse,
+        ...(descriptor.projectAgent.creatorSessionId !== undefined
+          ? { creatorSessionId: descriptor.projectAgent.creatorSessionId }
+          : {}),
+        promotedAt: descriptor.createdAt ?? new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+      systemPrompt: descriptor.projectAgent.systemPrompt ?? null,
+      references,
+    };
+  }
+
+  async listProjectAgentReferences(agentId: string): Promise<string[]> {
+    const { profileId, handle } = this.assertProjectAgentReferenceScope(agentId);
+    return listProjectAgentReferenceDocs(this.config.paths.dataDir, profileId, handle);
+  }
+
+  async getProjectAgentReference(agentId: string, fileName: string): Promise<string> {
+    const { profileId, handle } = this.assertProjectAgentReferenceScope(agentId);
+    const content = await readProjectAgentReferenceDoc(this.config.paths.dataDir, profileId, handle, fileName);
+    if (content === null) {
+      throw new Error(`Reference document ${fileName} does not exist`);
+    }
+    return content;
+  }
+
+  async setProjectAgentReference(agentId: string, fileName: string, content: string): Promise<void> {
+    const { profileId, handle } = this.assertProjectAgentReferenceScope(agentId);
+    await writeProjectAgentReferenceDoc(this.config.paths.dataDir, profileId, handle, fileName, content);
+  }
+
+  async deleteProjectAgentReference(agentId: string, fileName: string): Promise<void> {
+    const { profileId, handle } = this.assertProjectAgentReferenceScope(agentId);
+    await deleteProjectAgentReferenceDoc(this.config.paths.dataDir, profileId, handle, fileName);
   }
 
   async listDirectories(path?: string): Promise<DirectoryListingResult> {
@@ -3810,7 +3994,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private buildProjectAgentInfoForSession(
     descriptor: AgentDescriptor & { role: "manager"; profileId: string },
     whenToUse: string,
-    systemPrompt?: string
+    systemPrompt?: string,
+    handle?: string
   ): NonNullable<AgentDescriptor["projectAgent"]> {
     const normalizedWhenToUse = normalizeProjectAgentInlineText(whenToUse);
     if (!normalizedWhenToUse) {
@@ -3821,23 +4006,24 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       throw new Error("Project agent \"When to use\" must be 280 characters or fewer");
     }
 
-    const handle = normalizeProjectAgentHandle(getProjectAgentPublicName(descriptor));
-    if (!handle) {
+    const normalizedHandle = normalizeProjectAgentHandle(handle ?? getProjectAgentPublicName(descriptor));
+    if (!normalizedHandle) {
       throw new Error(
-        "Project agent handle could not be derived from the session name. Rename the session to include at least one letter, number, or dash, then try again."
+        "Project agent handle must contain at least one letter, number, or dash. Provide an explicit handle or use a session name with at least one letter, number, or dash."
       );
     }
 
-    const existingProjectAgent = findProjectAgentByHandle(this.descriptors.values(), descriptor.profileId, handle);
+    const existingProjectAgent = findProjectAgentByHandle(this.descriptors.values(), descriptor.profileId, normalizedHandle);
     if (existingProjectAgent && existingProjectAgent.agentId !== descriptor.agentId) {
-      throw new Error(getProjectAgentHandleCollisionError(handle));
+      throw new Error(getProjectAgentHandleCollisionError(normalizedHandle));
     }
 
     const normalizedSystemPrompt = systemPrompt?.trim();
 
     return {
-      handle,
+      handle: normalizedHandle,
       whenToUse: normalizedWhenToUse,
+      // DUAL-WRITE: systemPrompt kept in agents.json mirror for Electron rollback safety
       ...(normalizedSystemPrompt ? { systemPrompt: normalizedSystemPrompt } : {}),
       ...(descriptor.projectAgent?.creatorSessionId !== undefined
         ? { creatorSessionId: descriptor.projectAgent.creatorSessionId }
@@ -6393,6 +6579,55 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     };
   }
 
+  private async resolveProjectAgentSystemPromptOverride(
+    descriptor: AgentDescriptor,
+    options?: { ignoreProjectAgentSystemPrompt?: boolean }
+  ): Promise<{ prompt: string | undefined; sourcePath: string | undefined }> {
+    if (options?.ignoreProjectAgentSystemPrompt || !descriptor.projectAgent?.handle) {
+      return {
+        prompt: undefined,
+        sourcePath: undefined
+      };
+    }
+
+    const profileId = descriptor.profileId ?? descriptor.agentId;
+    const sourcePath = getProjectAgentPromptPath(this.config.paths.dataDir, profileId, descriptor.projectAgent.handle);
+    const onDiskRecord = await readProjectAgentRecord(
+      this.config.paths.dataDir,
+      profileId,
+      descriptor.projectAgent.handle
+    );
+    let prompt: string | undefined;
+    if (onDiskRecord?.systemPrompt !== null && onDiskRecord?.systemPrompt !== undefined) {
+      prompt = onDiskRecord.systemPrompt.trim() || undefined;
+    } else {
+      prompt = descriptor.projectAgent.systemPrompt?.trim() || undefined;
+    }
+
+    return {
+      prompt,
+      sourcePath: prompt ? sourcePath : undefined
+    };
+  }
+
+  private assertProjectAgentReferenceScope(agentId: string): {
+    descriptor: AgentDescriptor & { projectAgent: NonNullable<AgentDescriptor["projectAgent"]> };
+    profileId: string;
+    handle: string;
+  } {
+    const descriptor = this.descriptors.get(agentId);
+    const handle = descriptor?.projectAgent?.handle?.trim();
+    if (!descriptor?.projectAgent || !handle) {
+      throw new Error(`Agent ${agentId} is not a project agent`);
+    }
+
+    return {
+      descriptor: descriptor as AgentDescriptor & { projectAgent: NonNullable<AgentDescriptor["projectAgent"]> },
+      profileId: descriptor.profileId ?? descriptor.agentId,
+      handle
+    };
+  }
+
   private async buildResolvedManagerPrompt(
     descriptor: AgentDescriptor,
     options?: { ignoreProjectAgentSystemPrompt?: boolean }
@@ -6403,9 +6638,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       : MANAGER_ARCHETYPE_ID;
 
     const specialistRegistry = await this.loadSpecialistRegistryModule();
-    const projectAgentPrompt = options?.ignoreProjectAgentSystemPrompt
-      ? undefined
-      : descriptor.projectAgent?.systemPrompt?.trim();
+    const { prompt: projectAgentPrompt } = await this.resolveProjectAgentSystemPromptOverride(descriptor, options);
     const [promptTemplate, roster, specialistsEnabled] = await Promise.all([
       projectAgentPrompt
         ? Promise.resolve(projectAgentPrompt)
@@ -6427,6 +6660,31 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     );
     const delegationContextBlock = `${delegationBlock}\n\n${projectAgentDirectoryBlock}`;
     let prompt = resolvePromptVariables(promptTemplate, this.buildStandardPromptVariables(descriptor));
+
+    if (descriptor.projectAgent?.handle) {
+      const refDocFiles = await listProjectAgentReferenceDocs(
+        this.config.paths.dataDir,
+        profileId,
+        descriptor.projectAgent.handle
+      );
+      if (refDocFiles.length > 0) {
+        const refContents: string[] = [];
+        for (const fileName of refDocFiles) {
+          const content = await readProjectAgentReferenceDoc(
+            this.config.paths.dataDir,
+            profileId,
+            descriptor.projectAgent.handle,
+            fileName
+          );
+          if (content) {
+            refContents.push(`## ${fileName}\n${content}`);
+          }
+        }
+        if (refContents.length > 0) {
+          prompt = `${prompt.trimEnd()}\n\n<agent_reference_docs>\n${refContents.join("\n\n")}\n</agent_reference_docs>`;
+        }
+      }
+    }
 
     if (prompt.includes("${SPECIALIST_ROSTER}")) {
       prompt = prompt.replaceAll("${SPECIALIST_ROSTER}", delegationContextBlock);
@@ -8278,18 +8536,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         type: "session_project_agent_updated",
         agentId,
         profileId,
-        projectAgent: projectAgent
-          ? {
-              handle: projectAgent.handle,
-              whenToUse: projectAgent.whenToUse,
-              ...(projectAgent.systemPrompt !== undefined
-                ? { systemPrompt: projectAgent.systemPrompt }
-                : {}),
-              ...(projectAgent.creatorSessionId !== undefined
-                ? { creatorSessionId: projectAgent.creatorSessionId }
-                : {})
-            }
-          : null
+        projectAgent: cloneProjectAgentInfoValue(projectAgent) ?? null
       } satisfies ServerEvent
     );
   }
@@ -9978,6 +10225,7 @@ function validateAgentDescriptor(value: unknown): AgentDescriptor | string {
     return "pinnedAt must be a string when provided";
   }
 
+  let normalizedProjectAgentHandle: string | undefined;
   if (value.projectAgent !== undefined) {
     if (!isRecord(value.projectAgent)) {
       return "projectAgent must be an object when provided";
@@ -9985,6 +10233,12 @@ function validateAgentDescriptor(value: unknown): AgentDescriptor | string {
 
     if (!isNonEmptyString(value.projectAgent.handle)) {
       return "projectAgent.handle must be a non-empty string";
+    }
+
+    try {
+      normalizedProjectAgentHandle = sanitizePersistedPathSegment(value.projectAgent.handle);
+    } catch {
+      return "projectAgent.handle must be a safe single path segment";
     }
 
     if (!isNonEmptyString(value.projectAgent.whenToUse)) {
@@ -10025,13 +10279,22 @@ function validateAgentDescriptor(value: unknown): AgentDescriptor | string {
   }
 
   const descriptor = value as unknown as AgentDescriptor;
-  if (descriptor.status === normalizedStatus) {
+  const normalizedProjectAgent =
+    descriptor.projectAgent && normalizedProjectAgentHandle && descriptor.projectAgent.handle !== normalizedProjectAgentHandle
+      ? {
+          ...descriptor.projectAgent,
+          handle: normalizedProjectAgentHandle
+        }
+      : descriptor.projectAgent;
+
+  if (descriptor.status === normalizedStatus && normalizedProjectAgent === descriptor.projectAgent) {
     return descriptor;
   }
 
   return {
     ...descriptor,
-    status: normalizedStatus
+    status: normalizedStatus,
+    ...(normalizedProjectAgent !== descriptor.projectAgent ? { projectAgent: normalizedProjectAgent } : {})
   };
 }
 

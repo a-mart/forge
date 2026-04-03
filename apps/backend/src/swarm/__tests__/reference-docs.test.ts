@@ -2,15 +2,19 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { getProfileReferencePath } from "../data-paths.js";
+import { getProfileReferencePath, getProjectAgentReferenceDir } from "../data-paths.js";
 import {
   LEGACY_PROFILE_KNOWLEDGE_REFERENCE_FILE,
   PROFILE_REFERENCE_INDEX_FILE,
   buildProfileReferenceIndexTemplate,
+  deleteProjectAgentReferenceDoc,
   ensureProfileReferenceDoc,
   ensureProfileReferenceIndex,
+  listProjectAgentReferenceDocs,
   migrateLegacyProfileKnowledgeToReferenceDoc,
-  writeProfileReferenceDoc
+  readProjectAgentReferenceDoc,
+  writeProfileReferenceDoc,
+  writeProjectAgentReferenceDoc
 } from "../reference-docs.js";
 
 describe("reference-docs", () => {
@@ -236,4 +240,39 @@ describe("reference-docs", () => {
       profileId: "feature-manager"
     });
   });
+
+  it("lists, reads, writes, and deletes project-agent reference docs", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "reference-docs-"));
+
+    const first = await writeProjectAgentReferenceDoc(dataDir, "feature-manager", "docs", "runbook.md", "# Runbook\n")
+    const second = await writeProjectAgentReferenceDoc(dataDir, "feature-manager", "docs", "notes.md", "hello")
+
+    expect(first).toEqual({
+      path: join(getProjectAgentReferenceDir(dataDir, "feature-manager", "docs"), "runbook.md"),
+      created: true,
+      updated: false,
+    })
+    expect(second).toEqual({
+      path: join(getProjectAgentReferenceDir(dataDir, "feature-manager", "docs"), "notes.md"),
+      created: true,
+      updated: false,
+    })
+    await expect(listProjectAgentReferenceDocs(dataDir, "feature-manager", "docs")).resolves.toEqual([
+      "notes.md",
+      "runbook.md",
+    ])
+    await expect(readProjectAgentReferenceDoc(dataDir, "feature-manager", "docs", "notes.md")).resolves.toBe("hello\n")
+
+    await deleteProjectAgentReferenceDoc(dataDir, "feature-manager", "docs", "notes.md")
+    await expect(listProjectAgentReferenceDocs(dataDir, "feature-manager", "docs")).resolves.toEqual(["runbook.md"])
+    await expect(readProjectAgentReferenceDoc(dataDir, "feature-manager", "docs", "notes.md")).resolves.toBeNull()
+  })
+
+  it("rejects path traversal attempts in project-agent reference doc file names", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "reference-docs-"));
+
+    await expect(
+      writeProjectAgentReferenceDoc(dataDir, "feature-manager", "docs", "../../etc/passwd", "nope")
+    ).rejects.toThrow(/Invalid path segment/)
+  })
 });
