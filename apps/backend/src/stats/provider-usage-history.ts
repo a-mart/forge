@@ -39,7 +39,8 @@ const WRITE_DELTA_THRESHOLD = 1;
 const RETENTION_MS = 56 * 24 * 60 * 60 * 1000;
 const MINIMUM_WEEK_SAMPLES = 6;
 const BOUNDARY_COVERAGE_MS = 24 * 60 * 60 * 1000;
-const RESET_BUCKET_MS = 60 * 1000;
+const DEFAULT_WEEKLY_WINDOW_SECONDS = 7 * 24 * 60 * 60;
+export const WEEKLY_RESET_BUCKET_MS = 60 * 1000;
 const MINIMUM_COMPLETE_WEEKS_FOR_HISTORICAL = 3;
 const MINIMUM_WEEKS_FOR_RISK = 5;
 const RECENCY_TAU_WEEKS = 3;
@@ -73,7 +74,7 @@ export class ProviderUsageHistoryStore {
 
       const accountKey = normalizeAccountKey(input.accountKey);
       const resetAtMs = normalizeResetAtMs(input.window.resetAtMs);
-      const windowSeconds = normalizeWindowSeconds(input.window.windowSeconds);
+      const windowSeconds = resolveWeeklyWindowSeconds(input.window.windowSeconds);
       if (resetAtMs === null || windowSeconds === null) {
         return this.buildDataset(input.provider, accountKey);
       }
@@ -133,7 +134,7 @@ export class ProviderUsageHistoryStore {
           const parsed = JSON.parse(trimmed) as Partial<ProviderUsageHistoryRecord>;
           const provider = parsed.provider === "openai" || parsed.provider === "anthropic" ? parsed.provider : null;
           const resetAtMs = normalizeResetAtMs(parsed.resetAtMs);
-          const windowSeconds = normalizeWindowSeconds(parsed.windowSeconds);
+          const windowSeconds = resolveWeeklyWindowSeconds(parsed.windowSeconds);
           const sampledAtMs = normalizeTimestampMs(parsed.sampledAtMs);
 
           if (!provider || parsed.windowKind !== "weekly" || resetAtMs === null || windowSeconds === null) {
@@ -287,7 +288,7 @@ export function evaluateHistoricalProviderUsagePace(
   }
 
   const resetAtMs = normalizeResetAtMs(window.resetAtMs);
-  const windowSeconds = normalizeWindowSeconds(window.windowSeconds);
+  const windowSeconds = resolveWeeklyWindowSeconds(window.windowSeconds);
   if (resetAtMs === null || windowSeconds === null) {
     return undefined;
   }
@@ -305,6 +306,10 @@ export function evaluateHistoricalProviderUsagePace(
   }
 
   const uNow = clamp(elapsedMs / durationMs, 0, 1);
+  const linearExpectedPercent = 100 * uNow;
+  if (linearExpectedPercent < 3) {
+    return undefined;
+  }
   const scopedWeeks = dataset.weeks.filter((week) => week.windowSeconds === windowSeconds && week.resetAtMs < resetAtMs);
   if (scopedWeeks.length < MINIMUM_COMPLETE_WEEKS_FOR_HISTORICAL) {
     return undefined;
@@ -388,9 +393,9 @@ export function evaluateHistoricalProviderUsagePace(
 
   return {
     mode: "historical",
-    expectedPercent: roundToSingleDecimal(expectedPercent),
-    deltaPercent: roundToSingleDecimal(actual - expectedPercent),
-    etaSeconds: etaSeconds === undefined ? undefined : roundToSingleDecimal(etaSeconds),
+    expectedPercent,
+    deltaPercent: actual - expectedPercent,
+    etaSeconds,
     willLastToReset,
     runOutProbability: runOutProbability === undefined ? undefined : roundToTwoDecimals(runOutProbability)
   };
@@ -597,12 +602,20 @@ function weightedMedian(values: number[], weights: number[]): number {
   return pairs[pairs.length - 1]?.value ?? Number.NaN;
 }
 
-function normalizeResetAtMs(value: unknown): number | null {
+export function normalizeWeeklyResetAtMs(value: unknown): number | null {
   if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
     return null;
   }
 
-  return Math.round(value / RESET_BUCKET_MS) * RESET_BUCKET_MS;
+  return Math.round(value / WEEKLY_RESET_BUCKET_MS) * WEEKLY_RESET_BUCKET_MS;
+}
+
+function normalizeResetAtMs(value: unknown): number | null {
+  return normalizeWeeklyResetAtMs(value);
+}
+
+function resolveWeeklyWindowSeconds(value: unknown): number | null {
+  return normalizeWindowSeconds(value ?? DEFAULT_WEEKLY_WINDOW_SECONDS);
 }
 
 function normalizeWindowSeconds(value: unknown): number | null {
@@ -628,10 +641,6 @@ function normalizeAccountKey(value: unknown): string | undefined {
 
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
-}
-
-function roundToSingleDecimal(value: number): number {
-  return Math.round(value * 10) / 10;
 }
 
 function roundToTwoDecimals(value: number): number {

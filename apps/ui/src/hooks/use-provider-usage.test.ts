@@ -12,7 +12,7 @@ let root: Root | null = null
 const originalFetch = globalThis.fetch
 
 function TestHarness({ enabled }: { enabled: boolean }) {
-  const providers = useProviderUsage(enabled)
+  const { data: providers } = useProviderUsage(enabled)
   return createElement('pre', { 'data-testid': 'providers' }, JSON.stringify(providers))
 }
 

@@ -1,17 +1,30 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ProviderUsageStats } from '@forge/protocol'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
 import { resolveBackendWsUrl } from '@/lib/backend-url'
 
 const PROVIDER_USAGE_POLL_MS = 180_000
 
-export function useProviderUsage(enabled: boolean): ProviderUsageStats | null {
+export interface ProviderUsageResult {
+  data: ProviderUsageStats | null
+  loading: boolean
+  refetch: () => void
+}
+
+export function useProviderUsage(enabled: boolean): ProviderUsageResult {
   const [providers, setProviders] = useState<ProviderUsageStats | null>(null)
+  const [loading, setLoading] = useState(false)
   const wsUrl = useMemo(() => resolveBackendWsUrl(), [])
+
+  // Mutable refs so the stable refetch callback can trigger a fetch
+  // without re-running the effect.
+  const runRef = useRef<(() => Promise<void>) | null>(null)
 
   useEffect(() => {
     if (!enabled) {
       setProviders(null)
+      setLoading(false)
+      runRef.current = null
       return
     }
 
@@ -30,6 +43,8 @@ export function useProviderUsage(enabled: boolean): ProviderUsageStats | null {
       controller?.abort()
       controller = new AbortController()
 
+      if (!cancelled) setLoading(true)
+
       try {
         const endpoint = resolveApiEndpoint(wsUrl, '/api/provider-usage')
         const response = await fetch(endpoint, { signal: controller.signal })
@@ -45,6 +60,8 @@ export function useProviderUsage(enabled: boolean): ProviderUsageStats | null {
         if ((error instanceof DOMException && error.name === 'AbortError') || cancelled) {
           return
         }
+      } finally {
+        if (!cancelled) setLoading(false)
       }
     }
 
@@ -63,6 +80,8 @@ export function useProviderUsage(enabled: boolean): ProviderUsageStats | null {
       await fetchProviderUsage()
       scheduleNextPoll()
     }
+
+    runRef.current = run
 
     const handleVisibilityChange = () => {
       if (typeof document === 'undefined') {
@@ -87,6 +106,7 @@ export function useProviderUsage(enabled: boolean): ProviderUsageStats | null {
 
     return () => {
       cancelled = true
+      runRef.current = null
       clearPollTimer()
       controller?.abort()
       controller = null
@@ -96,5 +116,9 @@ export function useProviderUsage(enabled: boolean): ProviderUsageStats | null {
     }
   }, [enabled, wsUrl])
 
-  return providers
+  const refetch = useCallback(() => {
+    runRef.current?.()
+  }, [])
+
+  return { data: providers, loading, refetch }
 }

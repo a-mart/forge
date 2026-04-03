@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
-import type { ProviderAccountUsage, ProviderUsageStats, ProviderUsageWindow } from '@forge/protocol'
+import type { ProviderAccountUsage, ProviderUsagePace, ProviderUsageStats, ProviderUsageWindow } from '@forge/protocol'
+import { RefreshCw } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 
@@ -10,6 +11,15 @@ interface ProviderRowConfig {
   iconClassName?: string
   usage?: ProviderAccountUsage
 }
+
+type PaceStage =
+  | 'onTrack'
+  | 'slightlyAhead'
+  | 'ahead'
+  | 'farAhead'
+  | 'slightlyBehind'
+  | 'behind'
+  | 'farBehind'
 
 interface UsageMetrics {
   paceLabel: string
@@ -39,56 +49,146 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
 }
 
-function formatCompactDuration(seconds: number): string {
+function formatCountdownDuration(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds <= 0) return 'now'
-  if (seconds < 60 * 60) return `${Math.max(1, Math.round(seconds / 60))}m`
-  if (seconds < 48 * 60 * 60) return `${(seconds / 3600).toFixed(1)}h`
-  return `${(seconds / (24 * 3600)).toFixed(1)}d`
+
+  const totalMinutes = Math.max(1, Math.ceil(seconds / 60))
+  const days = Math.floor(totalMinutes / (24 * 60))
+  const hours = Math.floor(totalMinutes / 60) % 24
+  const minutes = totalMinutes % 60
+
+  if (days > 0) {
+    return hours > 0 ? `${days}d ${hours}h` : `${days}d`
+  }
+  if (hours > 0) {
+    return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`
+  }
+  return `${totalMinutes}m`
 }
 
 function formatDeltaPercent(value: number): string {
-  const absValue = Math.abs(value)
-  const rounded = absValue < 10 ? Math.round(absValue * 10) / 10 : Math.round(absValue)
-  return Number.isInteger(rounded) ? `${rounded}` : rounded.toFixed(1)
+  return `${Math.round(Math.abs(value))}`
 }
 
-function getPaceLabel(deltaPercent: number): string {
+function roundRiskPercent(probability: number): number {
+  return Math.round(clamp(probability, 0, 1) * 20) * 5
+}
+
+function getPaceStage(deltaPercent: number): PaceStage {
   const absDelta = Math.abs(deltaPercent)
-  if (absDelta <= 2) return 'On pace'
-  if (absDelta <= 6) return deltaPercent > 0 ? 'Slightly ahead' : 'Slightly behind'
-  if (absDelta <= 12) return deltaPercent > 0 ? 'Ahead' : 'Behind'
-  return deltaPercent > 0 ? 'Far ahead' : 'Behind'
+  if (absDelta <= 2) return 'onTrack'
+  if (absDelta <= 6) return deltaPercent >= 0 ? 'slightlyAhead' : 'slightlyBehind'
+  if (absDelta <= 12) return deltaPercent >= 0 ? 'ahead' : 'behind'
+  return deltaPercent >= 0 ? 'farAhead' : 'farBehind'
 }
 
-function getUsageMetrics(window: ProviderUsageWindow | null | undefined, nowMs: number): UsageMetrics | null {
-  if (!window || typeof window.resetAtMs !== 'number' || typeof window.windowSeconds !== 'number' || window.windowSeconds <= 0) {
+function getPaceLabel(stage: PaceStage): string {
+  switch (stage) {
+    case 'onTrack':
+      return 'On pace'
+    case 'slightlyAhead':
+      return 'Slight deficit'
+    case 'ahead':
+      return 'Deficit'
+    case 'farAhead':
+      return 'Far in deficit'
+    case 'slightlyBehind':
+      return 'Slight reserve'
+    case 'behind':
+      return 'Reserve'
+    case 'farBehind':
+      return 'Far in reserve'
+  }
+}
+
+function formatPaceSummary(stage: PaceStage, deltaPercent: number): string {
+  if (stage === 'onTrack') {
+    return 'On pace'
+  }
+  return `${formatDeltaPercent(deltaPercent)}% in ${deltaPercent >= 0 ? 'deficit' : 'reserve'}`
+}
+
+function formatRunoutLabelFromPace(pace: Pick<ProviderUsagePace, 'etaSeconds' | 'willLastToReset' | 'runOutProbability'>): string {
+  let label = 'Runout unavailable'
+
+  if (pace.willLastToReset) {
+    label = 'Lasts until reset'
+  } else if (typeof pace.etaSeconds === 'number') {
+    const etaText = formatCountdownDuration(pace.etaSeconds)
+    label = etaText === 'now' ? 'Runs out now' : `Runs out in ${etaText}`
+  }
+
+  if (typeof pace.runOutProbability === 'number') {
+    const riskLabel = `≈ ${roundRiskPercent(pace.runOutProbability)}% run-out risk`
+    return label === 'Runout unavailable' ? riskLabel : `${label} · ${riskLabel}`
+  }
+
+  return label
+}
+
+function getDeterministicUsageMetrics(window: ProviderUsageWindow, nowMs: number): UsageMetrics | null {
+  if (typeof window.resetAtMs !== 'number' || typeof window.windowSeconds !== 'number' || window.windowSeconds <= 0) {
     return null
   }
 
-  const resetRemainingSeconds = Math.max(0, (window.resetAtMs - nowMs) / 1000)
-  const elapsedSeconds = Math.max(0, window.windowSeconds - resetRemainingSeconds)
-  const expectedPercent = clamp((elapsedSeconds / window.windowSeconds) * 100, 0, 100)
-  const deltaPercent = window.percent - expectedPercent
-  const paceLabel = getPaceLabel(deltaPercent)
-
-  let paceSummary = 'On pace'
-  if (Math.abs(deltaPercent) > 2) {
-    paceSummary = `${formatDeltaPercent(deltaPercent)}% in ${deltaPercent > 0 ? 'deficit' : 'reserve'}`
+  const durationSeconds = window.windowSeconds
+  const timeUntilResetSeconds = (window.resetAtMs - nowMs) / 1000
+  if (timeUntilResetSeconds <= 0 || timeUntilResetSeconds > durationSeconds) {
+    return null
   }
 
-  let runoutLabel = 'Runout unavailable'
-  if (window.percent >= 100) {
-    runoutLabel = 'Runs out now'
-  } else if (window.percent <= 0) {
-    runoutLabel = 'Lasts until reset'
-  } else if (elapsedSeconds > 0) {
-    const rate = window.percent / elapsedSeconds
-    const remainingPercent = 100 - window.percent
-    const etaSeconds = remainingPercent / rate
-    runoutLabel = etaSeconds >= resetRemainingSeconds ? 'Lasts until reset' : `Runs out in ${formatCompactDuration(etaSeconds)}`
+  const elapsedSeconds = clamp(durationSeconds - timeUntilResetSeconds, 0, durationSeconds)
+  const actualPercent = clamp(window.percent, 0, 100)
+  if (elapsedSeconds === 0 && actualPercent > 0) {
+    return null
   }
 
-  return { paceLabel, paceSummary, runoutLabel, deltaPercent }
+  const expectedPercent = clamp((elapsedSeconds / durationSeconds) * 100, 0, 100)
+  const deltaPercent = actualPercent - expectedPercent
+  const stage = getPaceStage(deltaPercent)
+
+  let willLastToReset = false
+  let etaSeconds: number | undefined
+
+  if (elapsedSeconds > 0 && actualPercent > 0) {
+    const rate = actualPercent / elapsedSeconds
+    if (rate > 0) {
+      const remainingPercent = Math.max(0, 100 - actualPercent)
+      const candidateEtaSeconds = remainingPercent / rate
+      if (candidateEtaSeconds >= timeUntilResetSeconds) {
+        willLastToReset = true
+      } else {
+        etaSeconds = candidateEtaSeconds
+      }
+    }
+  } else if (elapsedSeconds > 0 && actualPercent === 0) {
+    willLastToReset = true
+  }
+
+  return {
+    paceLabel: getPaceLabel(stage),
+    paceSummary: formatPaceSummary(stage, deltaPercent),
+    runoutLabel: formatRunoutLabelFromPace({ etaSeconds, willLastToReset }),
+    deltaPercent,
+  }
+}
+
+export function getUsageMetrics(window: ProviderUsageWindow | null | undefined, nowMs: number): UsageMetrics | null {
+  if (!window) {
+    return null
+  }
+
+  if (window.pace) {
+    const stage = getPaceStage(window.pace.deltaPercent)
+    return {
+      paceLabel: getPaceLabel(stage),
+      paceSummary: formatPaceSummary(stage, window.pace.deltaPercent),
+      runoutLabel: formatRunoutLabelFromPace(window.pace),
+      deltaPercent: window.pace.deltaPercent,
+    }
+  }
+
+  return getDeterministicUsageMetrics(window, nowMs)
 }
 
 /* ─── Mini bar gauge (two stacked horizontal bars) ─── */
@@ -240,7 +340,7 @@ function ProviderDetail({ usage, label, iconSrc, iconClassName }: { usage: Provi
 
 /* ─── Detail panel (rendered directly inside sidebar, above toolbar) ─── */
 
-export function SidebarUsagePanel({ providers, open, onClose }: { providers: ProviderUsageStats | null; open: boolean; onClose: () => void }) {
+export function SidebarUsagePanel({ providers, open, onClose, loading, onRefresh }: { providers: ProviderUsageStats | null; open: boolean; onClose: () => void; loading?: boolean; onRefresh?: () => void }) {
   const panelRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -264,6 +364,19 @@ export function SidebarUsagePanel({ providers, open, onClose }: { providers: Pro
   return (
     <div ref={panelRef} className="shrink-0 border-t border-sidebar-border bg-sidebar p-3">
       <div className="space-y-3">
+        {onRefresh && (
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={onRefresh}
+              disabled={loading}
+              className="inline-flex items-center justify-center rounded-sm p-0.5 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+              aria-label="Refresh usage"
+            >
+              <RefreshCw className={cn('size-3.5', loading && 'animate-spin')} />
+            </button>
+          </div>
+        )}
         {availableRows.map((row) =>
           row.usage ? (
             <ProviderDetail key={row.key} usage={row.usage} label={row.label} iconSrc={row.iconSrc} iconClassName={row.iconClassName} />
