@@ -16,7 +16,7 @@ Pick a theme (Light, Dark, or System) and choose which code editor opens when yo
 
 ## Sidebar
 
-Toggle "Show provider usage" to control whether the provider subscription usage widget appears in the sidebar toolbar. When enabled, you'll see compact usage gauges for OpenAI Codex and Anthropic Claude with 5-hour and weekly windows. Click the widget to expand it for detailed metrics including deficit, pace, and estimated runout times. The setting is stored in your browser and applies immediately.
+Toggle "Show provider usage" to control whether the provider subscription usage widget appears in the sidebar toolbar. When enabled, you'll see compact usage gauges for OpenAI Codex and Anthropic Claude with 5-hour and weekly windows. Click the widget to expand it for detailed metrics including deficit/reserve pace and estimated runout times, and use the refresh button in the detail panel to re-poll immediately. Usage state is restored after backend restarts, and weekly estimates follow historical usage curves rather than simple linear interpolation. The setting is stored in your browser and applies immediately.
 
 ## Telemetry
 
