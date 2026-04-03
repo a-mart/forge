@@ -82,6 +82,7 @@ import {
 import {
   deleteProjectAgentRecord,
   readProjectAgentRecord,
+  reconcileProjectAgentStorage,
   renameProjectAgentRecord,
   writeProjectAgentRecord
 } from "./project-agent-storage.js";
@@ -1419,6 +1420,31 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     await this.reconcileInterruptedCortexReviewRunsForBoot();
     this.normalizeStreamingStatusesForBoot();
     await this.recoverMissingWorkerDescriptorsForBoot();
+
+    // Reconcile project agent storage: hydrate descriptors from on-disk config,
+    // materialize missing directories from descriptor data (first-boot migration).
+    for (const profile of this.profiles.values()) {
+      const result = await reconcileProjectAgentStorage(
+        this.config.paths.dataDir,
+        profile.profileId,
+        this.descriptors
+      );
+      if (result.materialized.length > 0) {
+        console.info(
+          `[swarm][boot] Materialized ${result.materialized.length} project agent(s) for profile ${profile.profileId}: ${result.materialized.join(", ")}`
+        );
+      }
+      if (result.hydrated.length > 0) {
+        console.info(
+          `[swarm][boot] Hydrated ${result.hydrated.length} project agent descriptor(s) for profile ${profile.profileId}: ${result.hydrated.join(", ")}`
+        );
+      }
+      if (result.orphansRemoved.length > 0) {
+        console.info(
+          `[swarm][boot] Removed ${result.orphansRemoved.length} orphan project agent director(ies) for profile ${profile.profileId}: ${result.orphansRemoved.join(", ")}`
+        );
+      }
+    }
 
     await this.ensureMemoryFilesForBoot();
     await this.saveStore();
