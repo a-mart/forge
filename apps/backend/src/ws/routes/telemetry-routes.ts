@@ -5,7 +5,6 @@ import { applyCorsHeaders, readJsonBody, sendJson } from '../http-utils.js'
 import type { HttpRoute } from './http-route.js'
 
 const TELEMETRY_SETTINGS_ENDPOINT = '/api/settings/telemetry'
-const TELEMETRY_RESET_ID_ENDPOINT = '/api/telemetry/reset-id'
 const TELEMETRY_SEND_NOW_ENDPOINT = '/api/telemetry/send-now'
 
 class TelemetrySettingsValidationError extends Error {}
@@ -21,13 +20,6 @@ export function createTelemetryRoutes(options: {
       matches: (pathname) => pathname === TELEMETRY_SETTINGS_ENDPOINT,
       handle: async (request, response) => {
         await handleSettingsRequest(request, response, telemetryService)
-      },
-    },
-    {
-      methods: 'POST, OPTIONS',
-      matches: (pathname) => pathname === TELEMETRY_RESET_ID_ENDPOINT,
-      handle: async (request, response) => {
-        await handleResetIdRequest(request, response, telemetryService)
       },
     },
     {
@@ -85,35 +77,6 @@ async function handleSettingsRequest(
 
     throw error
   }
-}
-
-async function handleResetIdRequest(
-  request: IncomingMessage,
-  response: ServerResponse,
-  telemetryService: TelemetryService,
-): Promise<void> {
-  const methods = 'POST, OPTIONS'
-
-  if (request.method === 'OPTIONS') {
-    applyCorsHeaders(request, response, methods)
-    response.statusCode = 204
-    response.end()
-    return
-  }
-
-  applyCorsHeaders(request, response, methods)
-
-  if (request.method !== 'POST') {
-    response.setHeader('Allow', methods)
-    sendJson(response, 405, { error: 'Method Not Allowed' })
-    return
-  }
-
-  const settings = await telemetryService.resetInstallId()
-  sendJson(response, 200, {
-    ok: true,
-    settings: settings as unknown as Record<string, unknown>,
-  })
 }
 
 async function handleSendNowRequest(

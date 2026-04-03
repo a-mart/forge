@@ -49,7 +49,6 @@ import {
 } from '@/components/settings/terminal-shell-api'
 import {
   fetchTelemetrySettings,
-  resetTelemetryInstallId,
   updateTelemetrySettings,
 } from '@/components/settings/telemetry-api'
 import type {
@@ -100,7 +99,6 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
   const [telemetrySettings, setTelemetrySettings] = useState<TelemetrySettingsResponse | null>(null)
   const [telemetryError, setTelemetryError] = useState<string | null>(null)
   const [telemetryUpdating, setTelemetryUpdating] = useState(false)
-  const [telemetryResetting, setTelemetryResetting] = useState(false)
   const [telemetryLoadFailed, setTelemetryLoadFailed] = useState(false)
 
   const [cortexSettings, setCortexSettings] = useState<CortexAutoReviewSettings | null>(null)
@@ -295,24 +293,6 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
     },
     [wsUrl, telemetrySettings, telemetryUpdating],
   )
-
-  const handleTelemetryResetId = useCallback(() => {
-    if (telemetryResetting) return
-    setTelemetryResetting(true)
-    setTelemetryError(null)
-
-    void resetTelemetryInstallId(wsUrl)
-      .then((settings) => {
-        setTelemetrySettings(settings)
-        setTelemetryError(null)
-      })
-      .catch((err) => {
-        setTelemetryError(err instanceof Error ? err.message : 'Failed to reset install ID')
-      })
-      .finally(() => {
-        setTelemetryResetting(false)
-      })
-  }, [wsUrl, telemetryResetting])
 
   const handleCortexToggle = useCallback(
     (enabled: boolean) => {
@@ -856,25 +836,6 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
                 ) : null}
               </div>
             ) : null}
-          </div>
-        </SettingsWithCTA>
-
-        <SettingsWithCTA
-          label="Install ID"
-          description="Random identifier used to deduplicate daily anonymous reports. Reset it any time."
-        >
-          <div className="flex flex-col items-end gap-2">
-            <code className="max-w-full break-all rounded border bg-muted/40 px-2 py-1 text-[11px]">
-              {telemetrySettings?.installId ?? 'Loading…'}
-            </code>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleTelemetryResetId}
-              disabled={!telemetrySettings || telemetryResetting}
-            >
-              Reset install ID
-            </Button>
           </div>
         </SettingsWithCTA>
 

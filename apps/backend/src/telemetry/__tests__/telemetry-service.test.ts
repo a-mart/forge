@@ -85,25 +85,6 @@ describe('TelemetryService', () => {
     expect(config.lastSentAt).toMatch(ISO_TIMESTAMP_RE)
   })
 
-  it('resetInstallId regenerates the ID and clears lastSentAt', async () => {
-    const dataDir = await createDataDir('telemetry-reset-')
-    await writeTelemetryConfig(dataDir, {
-      enabled: true,
-      installId: 'install-old',
-      lastSentAt: '2026-04-01T00:00:00.000Z',
-    })
-
-    const service = createService({ dataDir })
-    const settings = await service.resetInstallId()
-    const config = await readConfig(dataDir)
-
-    expect(settings.installId).not.toBe('install-old')
-    expect(settings.installId).toMatch(UUID_RE)
-    expect(settings.lastSentAt).toBeNull()
-    expect(config.installId).toBe(settings.installId)
-    expect(config.lastSentAt).toBeNull()
-  })
-
   it('forceSend shares the serialized send lock with sendIfDue', async () => {
     const dataDir = await createDataDir('telemetry-force-send-')
     const firstStarted = createDeferred<void>()
@@ -270,7 +251,7 @@ describe('TelemetryService', () => {
 })
 
 describe('telemetry routes', () => {
-  it('serves GET, PUT, reset-id, and send-now responses', async () => {
+  it('serves GET, PUT, and send-now responses', async () => {
     const dataDir = await createDataDir('telemetry-routes-')
     const service = createService({ dataDir, sendPayload: async () => true })
     const server = await createRouteServer(service)
@@ -279,8 +260,7 @@ describe('telemetry routes', () => {
     expect(initialResponse.status).toBe(200)
     const initialPayload = (await initialResponse.json()) as { settings?: { installId?: string; enabled?: boolean } }
     expect(initialPayload.settings?.enabled).toBe(true)
-    const initialInstallId = initialPayload.settings?.installId
-    expect(initialInstallId).toMatch(UUID_RE)
+    expect(initialPayload.settings?.installId).toMatch(UUID_RE)
 
     const updateResponse = await fetch(`${server.baseUrl}/api/settings/telemetry`, {
       method: 'PUT',
@@ -291,19 +271,6 @@ describe('telemetry routes', () => {
     const updatePayload = (await updateResponse.json()) as { ok?: boolean; settings?: { enabled?: boolean } }
     expect(updatePayload.ok).toBe(true)
     expect(updatePayload.settings?.enabled).toBe(false)
-
-    const resetResponse = await fetch(`${server.baseUrl}/api/telemetry/reset-id`, {
-      method: 'POST',
-    })
-    expect(resetResponse.status).toBe(200)
-    const resetPayload = (await resetResponse.json()) as {
-      ok?: boolean
-      settings?: { installId?: string; lastSentAt?: string | null }
-    }
-    expect(resetPayload.ok).toBe(true)
-    expect(resetPayload.settings?.installId).toMatch(UUID_RE)
-    expect(resetPayload.settings?.installId).not.toBe(initialInstallId)
-    expect(resetPayload.settings?.lastSentAt).toBeNull()
 
     process.env.FORGE_TELEMETRY = 'true'
     const sendNowResponse = await fetch(`${server.baseUrl}/api/telemetry/send-now`, {

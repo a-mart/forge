@@ -41,13 +41,3 @@ export async function updateTelemetrySettings(
   return payload.settings
 }
 
-export async function resetTelemetryInstallId(
-  wsUrl: string,
-): Promise<TelemetrySettingsResponse> {
-  const endpoint = resolveApiEndpoint(wsUrl, '/api/telemetry/reset-id')
-  const response = await fetch(endpoint, { method: 'POST' })
-  if (!response.ok) throw new Error(await readApiError(response))
-  const payload = (await response.json()) as { ok?: boolean; settings?: TelemetrySettingsResponse }
-  if (!payload?.settings) throw new Error('Invalid telemetry reset response')
-  return payload.settings
-}

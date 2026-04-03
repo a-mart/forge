@@ -88,16 +88,6 @@ export class TelemetryService {
     })
   }
 
-  async resetInstallId(): Promise<TelemetrySettingsResponse> {
-    return this.enqueue(async () => {
-      const persisted = await this.readConfigFromFile()
-      persisted.installId = randomUUID()
-      persisted.lastSentAt = null
-      await this.writeConfigFile(persisted)
-      return this.buildSettingsResponse(persisted)
-    })
-  }
-
   async forceSend(): Promise<boolean> {
     if (readTelemetryEnvOverride() === false) {
       this.log('forceSend: skipped (disabled by env override)')
