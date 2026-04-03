@@ -49,6 +49,25 @@ function createManagerDescriptor(
   }
 }
 
+function createWorkerDescriptor(managerId = 'manager', agentId = 'worker-1'): AgentDescriptor {
+  return {
+    agentId,
+    displayName: 'Backend Specialist',
+    role: 'worker',
+    managerId,
+    status: 'idle',
+    createdAt: '2026-03-12T00:00:00.000Z',
+    updatedAt: '2026-03-12T00:00:00.000Z',
+    cwd: '/tmp/project',
+    model: {
+      provider: 'openai-codex',
+      modelId: 'gpt-5.3-codex',
+      thinkingLevel: 'medium',
+    },
+    sessionFile: `/tmp/${agentId}.jsonl`,
+  }
+}
+
 async function flushAsync(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0))
 }
@@ -139,7 +158,70 @@ describe('MobilePushService', () => {
     expect(payload.data).toMatchObject({
       v: 1,
       type: 'unread',
+      reason: 'message',
       agentId: 'manager',
+      sessionAgentId: 'manager',
+      profileId: 'profile-a',
+      route: '/profiles/profile-a/sessions/manager',
+    })
+  })
+
+  it('dispatches pending choice requests as question notifications routed to the owning session', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'mobile-push-service-'))
+    const manager = new FakeSwarmManager([
+      createManagerDescriptor('profile-a', 'manager'),
+      createWorkerDescriptor('manager', 'worker-1'),
+    ])
+
+    const sendMock = vi.fn(async () => ({ ok: true, retryable: false, ticketId: 'ticket-choice-1' }))
+
+    const service = new MobilePushService({
+      swarmManager: manager as unknown as SwarmManager,
+      dataDir,
+      expoPushClient: {
+        send: sendMock,
+        getReceipts: vi.fn(async () => ({})),
+      } as unknown as ExpoPushClient,
+      isSessionActive: () => false,
+      receiptPollIntervalMs: 60_000,
+    })
+
+    await service.registerDevice({
+      token: 'ExpoPushToken[test-device]',
+      platform: 'ios',
+      deviceName: 'iPhone',
+    })
+
+    await service.start()
+    manager.emit('choice_request', {
+      type: 'choice_request',
+      agentId: 'worker-1',
+      choiceId: 'choice-123',
+      status: 'pending',
+      timestamp: new Date().toISOString(),
+      questions: [
+        {
+          id: 'q-1',
+          question: 'Should I keep the current retry window?',
+        },
+      ],
+    })
+
+    await waitForCondition(() => sendMock.mock.calls.length === 1)
+    await service.stop()
+
+    const calls = sendMock.mock.calls as unknown as Array<Array<unknown>>
+    const payload = (calls[0]?.[0] as Record<string, unknown> | undefined) ?? {}
+
+    expect(payload.to).toBe('ExpoPushToken[test-device]')
+    expect(payload.title).toBe('Backend Specialist needs your answer')
+    expect(payload.body).toBe('Should I keep the current retry window?')
+    expect(payload.data).toMatchObject({
+      v: 1,
+      type: 'choice_request',
+      reason: 'choice_request',
+      agentId: 'worker-1',
+      sessionAgentId: 'manager',
       profileId: 'profile-a',
       route: '/profiles/profile-a/sessions/manager',
     })

@@ -15,7 +15,8 @@ const RECEIPTS_CHUNK_SIZE = 100;
 const DEFAULT_PUSH_TITLE = "Forge";
 const DEFAULT_TEST_BODY = "Forge push notifications are configured.";
 
-type PushNotificationType = "unread" | "agent_status" | "error" | "test";
+type PushNotificationType = "unread" | "choice_request" | "agent_status" | "error" | "test";
+type UnreadNotificationReason = "message" | "choice_request";
 
 interface AgentRoutingContext {
   sessionAgentId: string;
@@ -63,6 +64,16 @@ export class MobilePushService {
     });
   };
 
+  private readonly onChoiceRequest = (event: ServerEvent): void => {
+    if (event.type !== "choice_request") {
+      return;
+    }
+
+    void this.handleChoiceRequest(event).catch((error) => {
+      this.logError("choice_request", error);
+    });
+  };
+
   constructor(options: {
     swarmManager: SwarmManager;
     dataDir: string;
@@ -91,6 +102,7 @@ export class MobilePushService {
     this.started = true;
     this.swarmManager.on("conversation_message", this.onConversationMessage);
     this.swarmManager.on("agent_status", this.onAgentStatus);
+    this.swarmManager.on("choice_request", this.onChoiceRequest);
 
     this.receiptTimer = setInterval(() => {
       void this.pollReceipts().catch((error) => {
@@ -108,6 +120,7 @@ export class MobilePushService {
     this.started = false;
     this.swarmManager.off("conversation_message", this.onConversationMessage);
     this.swarmManager.off("agent_status", this.onAgentStatus);
+    this.swarmManager.off("choice_request", this.onChoiceRequest);
 
     if (this.receiptTimer) {
       clearInterval(this.receiptTimer);
@@ -219,6 +232,7 @@ export class MobilePushService {
     if (event.role === "assistant" && event.source === "speak_to_user") {
       await this.dispatchNotification({
         type: "unread",
+        reason: "message",
         agentId: event.agentId,
         title: "New message",
         body: truncateText(event.text, 180)
@@ -259,8 +273,29 @@ export class MobilePushService {
     });
   }
 
+  private async handleChoiceRequest(event: Extract<ServerEvent, { type: "choice_request" }>): Promise<void> {
+    if (event.status !== "pending") {
+      return;
+    }
+
+    const context = this.resolveAgentRoutingContext(event.agentId);
+    const { title, body } = buildChoiceRequestNotificationContent({
+      agentDisplayName: context.agentDisplayName,
+      questions: event.questions
+    });
+
+    await this.dispatchNotification({
+      type: "choice_request",
+      reason: "choice_request",
+      agentId: event.agentId,
+      title,
+      body
+    });
+  }
+
   private async dispatchNotification(notification: {
     type: PushNotificationType;
+    reason?: UnreadNotificationReason;
     agentId: string;
     title: string;
     body: string;
@@ -295,7 +330,9 @@ export class MobilePushService {
       data: {
         v: 1,
         type: notification.type,
-        agentId: context.sessionAgentId,
+        reason: notification.reason ?? (notification.type === "choice_request" ? "choice_request" : "message"),
+        agentId: notification.agentId,
+        sessionAgentId: context.sessionAgentId,
         profileId: context.profileId,
         route: context.route
       }
@@ -474,6 +511,8 @@ function isNotificationTypeEnabled(
   switch (type) {
     case "unread":
       return preferences.unreadMessages;
+    case "choice_request":
+      return preferences.unreadMessages;
     case "agent_status":
       return preferences.agentStatusChanges;
     case "error":
@@ -483,6 +522,31 @@ function isNotificationTypeEnabled(
     default:
       return false;
   }
+}
+
+function buildChoiceRequestNotificationContent(options: {
+  agentDisplayName: string;
+  questions: Array<{ header?: string; question: string }>;
+}): { title: string; body: string } {
+  const { agentDisplayName, questions } = options;
+  const primaryQuestion = questions[0]
+    ? normalizeOptionalString(questions[0].header) ?? normalizeOptionalString(questions[0].question)
+    : undefined;
+
+  const title = `${agentDisplayName} needs your answer`;
+
+  if (!primaryQuestion) {
+    return {
+      title,
+      body: "Open Forge Mobile to review the pending question."
+    };
+  }
+
+  const suffix = questions.length > 1 ? ` (+${questions.length - 1} more)` : "";
+  return {
+    title,
+    body: truncateText(`${primaryQuestion}${suffix}`, 180)
+  };
 }
 
 function isSystemErrorMessage(text: string): boolean {
