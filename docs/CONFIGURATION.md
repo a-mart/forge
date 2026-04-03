@@ -101,6 +101,10 @@ All persistent state lives in a single data directory:
 │   └── specialists/           # Global specialist definitions (.md files)
 ├── profiles/<profileId>/      # Per-manager-profile data
 │   ├── memory.md              # Profile-level memory
+│   ├── project-agents/<handle>/  # Per-project-agent data
+│   │   ├── config.json        # Agent config
+│   │   ├── prompt.md          # Editable system prompt
+│   │   └── reference/         # Per-agent reference docs
 │   └── sessions/<sessionId>/  # Per-session data
 │       ├── session.jsonl      # Conversation history
 │       ├── memory.md          # Session-level memory

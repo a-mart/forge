@@ -229,6 +229,8 @@ Sometimes you want a session to serve as a persistent specialist that other sess
 - **When to use** — A brief description that helps other session agents understand when to message this project agent (e.g., "Ask me to write or review documentation").
 - **System prompt** — An authoritative prompt that completely replaces the base manager template. Defines the project agent's role and behavior.
 
+Promoted agents are stored in dedicated per-handle directories under `profiles/<profileId>/project-agents/<handle>/`, with a `config.json`, editable `prompt.md` file, and per-agent `reference/` documents. Handles are immutable after promotion, so renaming the underlying session does not change the agent handle.
+
 **AI-assisted promotion:** The promotion dialog includes an "AI Assist" option that analyzes the session's history and suggests a handle, description, and system prompt based on what the session has actually been doing.
 
 **Creating with the Agent Architect:** Instead of promoting an existing session, you can use the Agent Creator wizard for a guided creation flow. Right-click any profile header in the sidebar and select "Create Project Agent." This opens a fresh Agent Architect session (marked with a violet Sparkles icon) that:
@@ -581,6 +583,10 @@ No database. Everything is files (JSON, JSONL, and Markdown):
 │   └── knowledge/                 # Cortex knowledge files (common + per-project)
 └── profiles/<profileId>/
     ├── memory.md                  # Profile-level memory
+    ├── project-agents/<handle>/
+    │   ├── config.json            # Agent config (handle, whenToUse, agentId, timestamps)
+    │   ├── prompt.md              # System prompt (editable, takes effect on restart)
+    │   └── reference/             # Per-agent reference documents
     └── sessions/<sessionId>/
         ├── session.jsonl          # Conversation history (the source of truth)
         ├── meta.json              # Session metadata

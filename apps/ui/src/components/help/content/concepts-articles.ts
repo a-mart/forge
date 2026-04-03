@@ -238,7 +238,7 @@ const conceptsProjectAgents: HelpArticle = {
   category: 'concepts',
   summary:
     'Promoted sessions that become discoverable, persistent agents for cross-session collaboration.',
-  content: `Project agents are sessions promoted to persistent specialist roles within a profile. Unlike regular sessions, they have dedicated handles and are discoverable by sibling sessions for async collaboration. If a cached sidecar was truncated, the project agent conversation rebuilds from canonical session history on first load.
+  content: `Project agents are sessions promoted to persistent specialist roles within a profile. Unlike regular sessions, they have dedicated handles, dedicated storage directories, and are discoverable by sibling sessions for async collaboration. If a cached sidecar was truncated, the project agent conversation rebuilds from canonical session history on first load.
 
 ## What makes a project agent
 
@@ -246,10 +246,11 @@ A project agent is a regular session with special properties:
 
 - A **unique handle** (like \`@releases\` or \`@docs\`) that identifies it across the profile
 - A **"when to use"** blurb that tells other sessions what this agent is for
-- An optional **custom system prompt** tailored to its specialized role
+- A dedicated \`prompt.md\` file containing the system prompt, editable directly in your preferred editor
+- Optional **per-agent reference documents** that are injected into the agent's prompt context
 - Appears **pinned at the top** of the profile section in the sidebar with a badge
 
-Project agents persist across restarts and appear in the agent directory that manager sessions can query.
+Project agents persist across restarts and appear in the agent directory that manager sessions can query. Handles are immutable after promotion, so renaming the underlying session does not change the project agent handle.
 
 ## How discovery works
 
