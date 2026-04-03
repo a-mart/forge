@@ -97,11 +97,21 @@ export interface ProviderUsageStats {
   openai?: ProviderAccountUsage;
 }
 
+export interface ProviderUsagePace {
+  mode: 'historical';
+  expectedPercent: number;
+  deltaPercent: number;
+  etaSeconds?: number;
+  willLastToReset: boolean;
+  runOutProbability?: number;
+}
+
 export interface ProviderUsageWindow {
   percent: number;
   resetInfo: string;
   resetAtMs?: number;
   windowSeconds?: number;
+  pace?: ProviderUsagePace;
 }
 
 export interface ProviderAccountUsage {
