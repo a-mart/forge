@@ -5,6 +5,12 @@ import { inferProviderFromModelId } from './provider-inference.js'
 
 const SCHEMA_VERSION = 1
 
+const FRIENDLY_PLATFORM_NAMES: Record<string, string> = {
+  darwin: 'macOS',
+  win32: 'Windows',
+  linux: 'Linux',
+}
+
 export interface FeatureAdoptionData {
   specialistsConfigured: number
   specialistsPersistedCount: number
@@ -61,6 +67,8 @@ export async function assembleSkeletonPayload(
   snapshotComputedAt: string,
   config: SwarmConfig,
 ): Promise<TelemetryPayload> {
+  const rawPlatform = process.platform
+
   return {
     install_id: installId,
     report_id: reportId,
@@ -68,7 +76,8 @@ export async function assembleSkeletonPayload(
     snapshot_computed_at: snapshotComputedAt,
 
     app_version: '0.0.0',
-    platform: process.platform,
+    platform: toFriendlyPlatformName(rawPlatform),
+    platform_raw: rawPlatform,
     arch: process.arch,
     node_version: process.version,
     electron_version: process.env.FORGE_ELECTRON_VERSION ?? null,
@@ -128,6 +137,8 @@ export function assembleFullPayload(
   const normalizedTopModel = topModelRaw.trim().toLowerCase()
   const topModel = inferCatalogProvider(normalizedTopModel) ? normalizedTopModel : ''
 
+  const rawPlatform = stats.system.platform
+
   return {
     install_id: installId,
     report_id: reportId,
@@ -135,7 +146,8 @@ export function assembleFullPayload(
     snapshot_computed_at: stats.computedAt,
 
     app_version: stats.system.serverVersion,
-    platform: stats.system.platform,
+    platform: toFriendlyPlatformName(rawPlatform),
+    platform_raw: rawPlatform,
     arch: stats.system.arch,
     node_version: stats.system.nodeVersion,
     electron_version: stats.system.electronVersion,
@@ -216,6 +228,10 @@ export async function extractAuthMethodsConfigured(config: SwarmConfig): Promise
   } catch {
     return []
   }
+}
+
+function toFriendlyPlatformName(platform: string): string {
+  return FRIENDLY_PLATFORM_NAMES[platform] ?? platform
 }
 
 function resolveLocale(): string {

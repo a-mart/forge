@@ -6,6 +6,7 @@ import { AuthStorage } from '@mariozechner/pi-coding-agent'
 import type { StatsSnapshot } from '@forge/protocol'
 import {
   assembleFullPayload,
+  assembleSkeletonPayload,
   emptyFeatureAdoption,
   extractAuthMethodsConfigured,
   extractProvidersUsed,
@@ -137,7 +138,8 @@ describe('telemetry payload helpers', () => {
       schema_version: 1,
       snapshot_computed_at: '2026-04-01T00:00:00.000Z',
       app_version: '0.9.0',
-      platform: 'darwin',
+      platform: 'macOS',
+      platform_raw: 'darwin',
       arch: 'arm64',
       node_version: 'v22.0.0',
       electron_version: '35.1.4',
@@ -174,6 +176,53 @@ describe('telemetry payload helpers', () => {
       top_model: 'gpt-5.4',
     })
     expect(payload.locale.length).toBeGreaterThan(0)
+  })
+
+  it('maps runtime platforms to friendly telemetry labels while preserving the raw value', () => {
+    const expectations = [
+      { raw: 'darwin', friendly: 'macOS' },
+      { raw: 'win32', friendly: 'Windows' },
+      { raw: 'linux', friendly: 'Linux' },
+      { raw: 'freebsd', friendly: 'freebsd' },
+    ]
+
+    for (const expectation of expectations) {
+      const stats = createStatsSnapshot()
+      stats.system.platform = expectation.raw
+
+      const payload = assembleFullPayload(
+        'install-123',
+        `report-${expectation.raw}`,
+        stats,
+        emptyFeatureAdoption(),
+        ['anthropic'],
+        ['anthropic'],
+      )
+
+      expect(payload.platform).toBe(expectation.friendly)
+      expect(payload.platform_raw).toBe(expectation.raw)
+    }
+  })
+
+  it('assembles skeleton payload with a friendly platform label and raw fallback', async () => {
+    const payload = await assembleSkeletonPayload(
+      'install-123',
+      'report-skeleton',
+      '2026-04-01T00:00:00.000Z',
+      { isDesktop: false } as SwarmConfig,
+    )
+
+    const expectedPlatform =
+      process.platform === 'darwin'
+        ? 'macOS'
+        : process.platform === 'win32'
+          ? 'Windows'
+          : process.platform === 'linux'
+            ? 'Linux'
+            : process.platform
+
+    expect(payload.platform).toBe(expectedPlatform)
+    expect(payload.platform_raw).toBe(process.platform)
   })
 
   it('extracts providers used from catalog lookups and heuristics', () => {

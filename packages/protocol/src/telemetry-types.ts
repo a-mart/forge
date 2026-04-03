@@ -1,29 +1,10 @@
 export interface PersistedTelemetryConfig {
-  /** Whether telemetry reporting is enabled. Default: true. */
-  enabled: boolean
   /** Random UUIDv4 install identifier. Generated on first run. */
   installId: string
   /** ISO 8601 timestamp of the last successful telemetry send, or null if never sent. */
   lastSuccessfulSendAt: string | null
   /** ISO 8601 timestamp of the last failed telemetry send attempt, or null if none. */
   lastFailedAttemptAt: string | null
-}
-
-export type TelemetrySettingsSource = 'settings' | 'env'
-
-export interface TelemetrySettingsResponse {
-  /** Persisted enabled flag. */
-  enabled: boolean
-  /** Effective enabled state after env var override. */
-  effectiveEnabled: boolean
-  /** Where the effective state was determined from. */
-  source: TelemetrySettingsSource
-  /** Env var override value, or null if unset. */
-  envOverride: boolean | null
-  /** Install ID. */
-  installId: string
-  /** Last successful send timestamp, or null. */
-  lastSentAt: string | null
 }
 
 export interface TelemetryPayload {
@@ -35,6 +16,7 @@ export interface TelemetryPayload {
   // System info
   app_version: string
   platform: string
+  platform_raw?: string
   arch: string
   node_version: string
   electron_version: string | null

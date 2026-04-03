@@ -5,8 +5,6 @@ import type {
   PersistedTelemetryConfig,
   StatsSnapshot,
   TelemetryPayload,
-  TelemetrySettingsResponse,
-  TelemetrySettingsSource,
 } from '@forge/protocol'
 import { readTelemetryEnvOverride } from '../config.js'
 import { getTelemetryConfigPath } from '../swarm/data-paths.js'
@@ -50,26 +48,8 @@ export class TelemetryService {
     // no-op: telemetry cadence is driven by backend stats refresh completion
   }
 
-  async readSettings(): Promise<TelemetrySettingsResponse> {
-    return this.enqueue(async () => {
-      const persisted = await this.readConfigFromFile()
-      return this.buildSettingsResponse(persisted)
-    })
-  }
-
-  async updateConfig(patch: { enabled?: boolean }): Promise<TelemetrySettingsResponse> {
-    return this.enqueue(async () => {
-      const persisted = await this.readConfigFromFile()
-      if (patch.enabled !== undefined) {
-        persisted.enabled = patch.enabled
-      }
-      await this.writeConfigFile(persisted)
-      return this.buildSettingsResponse(persisted)
-    })
-  }
-
   async forceSend(): Promise<boolean> {
-    return this.attemptSend('forceSend')
+    return this.attemptSend('forceSend', { bypassThrottle: true })
   }
 
   async sendOnStatsRefresh(stats: StatsSnapshot | null): Promise<boolean> {
@@ -91,7 +71,7 @@ export class TelemetryService {
 
   private async attemptSend(
     source: 'forceSend' | 'sendOnStatsRefresh' | 'sendIfDue',
-    options: { stats?: StatsSnapshot | null } = {},
+    options: { stats?: StatsSnapshot | null; bypassThrottle?: boolean } = {},
   ): Promise<boolean> {
     if (readTelemetryEnvOverride() === false) {
       this.log(`${source}: skipped (disabled by env override)`)
@@ -101,15 +81,13 @@ export class TelemetryService {
     try {
       return await this.enqueue(async () => {
         const persisted = await this.readConfigFromFile()
-        if (!this.isEffectivelyEnabled(persisted)) {
-          this.log(`${source}: skipped (disabled)`)
-          return false
-        }
 
-        const throttle = getThrottleState(persisted)
-        if (throttle.kind !== 'allowed') {
-          this.log(`${source}: skipped (${formatThrottleLogMessage(throttle)})`)
-          return false
+        if (!options.bypassThrottle) {
+          const throttle = getThrottleState(persisted)
+          if (throttle.kind !== 'allowed') {
+            this.log(`${source}: skipped (${formatThrottleLogMessage(throttle)})`)
+            return false
+          }
         }
 
         return this.doSend(persisted, {
@@ -159,45 +137,17 @@ export class TelemetryService {
     return result
   }
 
-  private isEffectivelyEnabled(persisted: PersistedTelemetryConfig): boolean {
-    const envOverride = readTelemetryEnvOverride()
-    if (envOverride === false) {
-      return false
-    }
-    if (envOverride === true) {
-      return true
-    }
-    return persisted.enabled
-  }
-
-  private buildSettingsResponse(
-    persisted: PersistedTelemetryConfig,
-  ): TelemetrySettingsResponse {
-    const envOverride = readTelemetryEnvOverride() ?? null
-    const source: TelemetrySettingsSource = envOverride !== null ? 'env' : 'settings'
-    const effectiveEnabled = envOverride ?? persisted.enabled
-
-    return {
-      enabled: persisted.enabled,
-      effectiveEnabled,
-      source,
-      envOverride,
-      installId: persisted.installId,
-      lastSentAt: persisted.lastSuccessfulSendAt,
-    }
-  }
-
   private async readConfigFromFile(): Promise<PersistedTelemetryConfig> {
     try {
       const raw = await readFile(this.configPath, 'utf8')
       const parsed = JSON.parse(raw) as Partial<PersistedTelemetryConfig> & {
+        enabled?: unknown
         lastSentAt?: unknown
         lastAttemptedAt?: unknown
       }
       const lastSuccessfulSendAt = normalizeTimestamp(parsed.lastSuccessfulSendAt ?? parsed.lastSentAt)
       const legacyAttemptAt = normalizeTimestamp(parsed.lastAttemptedAt)
       const normalized: PersistedTelemetryConfig = {
-        enabled: typeof parsed.enabled === 'boolean' ? parsed.enabled : true,
         installId:
           typeof parsed.installId === 'string' && parsed.installId.trim().length > 0
             ? parsed.installId
@@ -209,10 +159,10 @@ export class TelemetryService {
       }
 
       if (
-        parsed.enabled !== normalized.enabled ||
         parsed.installId !== normalized.installId ||
         parsed.lastSuccessfulSendAt !== normalized.lastSuccessfulSendAt ||
         parsed.lastFailedAttemptAt !== normalized.lastFailedAttemptAt ||
+        parsed.enabled !== undefined ||
         parsed.lastSentAt !== undefined ||
         parsed.lastAttemptedAt !== undefined
       ) {
@@ -222,7 +172,6 @@ export class TelemetryService {
       return normalized
     } catch {
       const config: PersistedTelemetryConfig = {
-        enabled: true,
         installId: randomUUID(),
         lastSuccessfulSendAt: null,
         lastFailedAttemptAt: null,
