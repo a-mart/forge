@@ -301,7 +301,7 @@ export class RuntimeFactory {
     });
 
     return new AgentRuntime({
-      descriptor,
+      descriptor: cloneRuntimeDescriptor(descriptor),
       session: session as AgentSession,
       systemPrompt,
       callbacks: {
@@ -346,7 +346,7 @@ export class RuntimeFactory {
     });
 
     const runtime = await CodexAgentRuntime.create({
-      descriptor,
+      descriptor: cloneRuntimeDescriptor(descriptor),
       callbacks: {
         onStatusChange: async (agentId, status, pendingCount, contextUsage) => {
           await this.deps.callbacks.onStatusChange(runtimeToken, agentId, status, pendingCount, contextUsage);
@@ -748,6 +748,10 @@ function previewForLog(text: string, maxLength = 160): string {
   const normalized = text.replace(/\s+/g, " ").trim();
   if (normalized.length <= maxLength) return normalized;
   return `${normalized.slice(0, maxLength)}...`;
+}
+
+function cloneRuntimeDescriptor(descriptor: AgentDescriptor): AgentDescriptor {
+  return structuredClone(descriptor);
 }
 
 function previewJsonForLog(value: unknown, maxLength = 160): string {

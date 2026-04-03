@@ -116,21 +116,24 @@ export function extractMessageKeyFromRuntimeContent(content: unknown): string | 
 export function consumePendingDeliveryByMessageKey<T extends { messageKey: string }>(
   pendingDeliveries: T[],
   messageKey: string
-): void {
+): T | undefined {
   if (pendingDeliveries.length === 0) {
-    return;
+    return undefined;
   }
 
   const first = pendingDeliveries[0];
   if (first.messageKey === messageKey) {
     pendingDeliveries.shift();
-    return;
+    return first;
   }
 
   const index = pendingDeliveries.findIndex((item) => item.messageKey === messageKey);
   if (index >= 0) {
-    pendingDeliveries.splice(index, 1);
+    const [removed] = pendingDeliveries.splice(index, 1);
+    return removed;
   }
+
+  return undefined;
 }
 
 export function normalizeRuntimeError(error: unknown): { message: string; stack?: string } {

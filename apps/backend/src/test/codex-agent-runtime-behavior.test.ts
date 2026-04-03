@@ -372,6 +372,70 @@ describe('CodexAgentRuntime behavior', () => {
     await runtime.terminate({ abort: false })
   })
 
+  it('builds specialist fallback replay snapshots for active codex turns, including accepted queued steers', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'swarm-codex-runtime-'))
+    const descriptor = makeDescriptor(tempDir)
+    await mkdir(dirname(descriptor.sessionFile), { recursive: true })
+
+    rpcMockState.requestImpl.mockImplementation(async (_client: any, method: string) => {
+      if (method === 'initialize') {
+        return {}
+      }
+
+      if (method === 'account/read') {
+        return { requiresOpenaiAuth: false, account: { id: 'acct-1' } }
+      }
+
+      if (method === 'thread/start') {
+        return { thread: { id: 'thread-1' } }
+      }
+
+      if (method === 'turn/start') {
+        return { turn: { id: 'turn-1' } }
+      }
+
+      if (method === 'turn/steer') {
+        return { accepted: true }
+      }
+
+      throw new Error(`Unexpected method: ${method}`)
+    })
+
+    const runtime = await CodexAgentRuntime.create({
+      descriptor,
+      callbacks: {
+        onStatusChange: async () => {},
+      },
+      systemPrompt: 'You are a test codex runtime.',
+      tools: [],
+    })
+
+    await runtime.sendMessage('first prompt')
+    await runtime.sendMessage('queued steer')
+
+    await expect(runtime.prepareForSpecialistFallbackReplay?.()).resolves.toEqual({
+      messages: [
+        {
+          text: 'first prompt',
+          images: [],
+        },
+        {
+          text: 'queued steer',
+          images: [],
+        },
+      ],
+    })
+
+    const instance = rpcMockState.instances[0]
+    await instance.emitNotification({
+      method: 'turn/completed',
+    })
+
+    await expect(runtime.prepareForSpecialistFallbackReplay?.()).resolves.toBeUndefined()
+
+    await runtime.terminate({ abort: false })
+  })
+
   it('recovers from steer delivery failure by starting the queued message as a new turn', async () => {
     const tempDir = await mkdtemp(join(tmpdir(), 'swarm-codex-runtime-'))
     const descriptor = makeDescriptor(tempDir)

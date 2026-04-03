@@ -24,6 +24,7 @@ import type {
   RuntimeUserMessage,
   RuntimeUserMessageInput,
   SmartCompactResult,
+  SpecialistFallbackReplaySnapshot,
   SwarmAgentRuntime,
   SwarmRuntimeCallbacks
 } from "./runtime-types.js";
@@ -91,6 +92,7 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
 
   private pendingDeliveries: PendingDelivery[] = [];
   private queuedSteers: QueuedSteer[] = [];
+  private currentTurnReplayMessages: RuntimeUserMessage[] = [];
   private readonly toolNameByItemId = new Map<string, string>();
   private readonly pendingCustomEntryWrites = new Set<Promise<void>>();
   private suppressNotificationsUntilIdle = false;
@@ -207,6 +209,25 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
 
   getSystemPrompt(): string {
     return this.systemPrompt;
+  }
+
+  async prepareForSpecialistFallbackReplay(): Promise<SpecialistFallbackReplaySnapshot | undefined> {
+    const replayMessages = [
+      ...this.currentTurnReplayMessages.map((message) => cloneRuntimeUserMessage(message)),
+      ...this.queuedSteers.map((queued) => cloneRuntimeUserMessage(queued.message))
+    ];
+
+    if (replayMessages.length === 0) {
+      return undefined;
+    }
+
+    return {
+      messages: replayMessages
+    };
+  }
+
+  async restorePreparedSpecialistFallbackReplay(): Promise<void> {
+    // Codex replay snapshot generation is non-destructive.
   }
 
   async sendMessage(
@@ -343,6 +364,7 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
 
     this.pendingDeliveries = [];
     this.queuedSteers = [];
+    this.currentTurnReplayMessages = [];
     this.toolNameByItemId.clear();
     this.threadId = undefined;
     this.activeTurnId = undefined;
@@ -385,6 +407,7 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
 
     this.pendingDeliveries = [];
     this.queuedSteers = [];
+    this.currentTurnReplayMessages = [];
     this.startRequestPending = false;
     this.activeTurnId = undefined;
 
@@ -584,6 +607,7 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
       throw new Error("Codex runtime thread is not initialized");
     }
 
+    this.currentTurnReplayMessages = [cloneRuntimeUserMessage(message)];
     this.startRequestPending = true;
 
     try {
@@ -633,6 +657,7 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
           input: await toCodexInputItems(queued.message)
         });
 
+        this.currentTurnReplayMessages.push(cloneRuntimeUserMessage(queued.message));
         this.queuedSteers.shift();
       } catch (error) {
         await this.recoverFromTurnFailure("steer_delivery", error, {
@@ -698,6 +723,7 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
       case "turn/completed": {
         this.startRequestPending = false;
         this.activeTurnId = undefined;
+        this.currentTurnReplayMessages = [];
 
         await this.emitSessionEvent({
           type: "turn_end",
@@ -938,6 +964,7 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
 
     this.pendingDeliveries = [];
     this.queuedSteers = [];
+    this.currentTurnReplayMessages = [];
     this.toolNameByItemId.clear();
     this.startRequestPending = false;
     this.activeTurnId = undefined;
@@ -1272,6 +1299,13 @@ function threadItemRepresentsError(item: { type: string; [key: string]: unknown 
     default:
       return false;
   }
+}
+
+function cloneRuntimeUserMessage(message: RuntimeUserMessage): RuntimeUserMessage {
+  return {
+    text: message.text,
+    images: message.images?.map((image) => ({ ...image })) ?? []
+  };
 }
 
 async function toCodexInputItems(message: RuntimeUserMessage): Promise<unknown[]> {

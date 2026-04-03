@@ -23,6 +23,10 @@ export interface RuntimeSessionMessage {
   content: unknown;
 }
 
+export interface SpecialistFallbackReplaySnapshot {
+  messages: RuntimeUserMessage[];
+}
+
 export type RuntimeSessionEvent =
   | { type: "agent_start" }
   | { type: "agent_end" }
@@ -125,6 +129,8 @@ export interface SwarmAgentRuntime {
   getContextUsage(): AgentContextUsage | undefined;
   getSystemPrompt?(): string;
   isContextRecoveryInProgress?(): boolean;
+  prepareForSpecialistFallbackReplay?(): Promise<SpecialistFallbackReplaySnapshot | undefined>;
+  restorePreparedSpecialistFallbackReplay?(): Promise<void>;
 
   sendMessage(
     input: RuntimeUserMessageInput,
