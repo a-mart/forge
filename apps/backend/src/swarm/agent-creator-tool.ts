@@ -11,12 +11,16 @@ export function buildCreateProjectAgentTool(
     name: "create_project_agent",
     label: "Create Project Agent",
     description:
-      "Create a new project agent with the given configuration. Only call this after the user has explicitly approved the session name, whenToUse directive, and system prompt.",
+      "Create a new project agent with the given configuration. Only call this after the user has explicitly approved the session name, handle (if customized), whenToUse directive, and system prompt.",
     parameters: Type.Object({
       sessionName: Type.String({
         minLength: 1,
-        description: "Name for the new session. This is also slugified into the project-agent handle."
+        description: "Name for the new session."
       }),
+      handle: Type.Optional(Type.String({
+        minLength: 1,
+        description: "Explicit handle for the project agent (for example, 'releases'). If omitted, it is derived from sessionName."
+      })),
       whenToUse: Type.String({
         minLength: 1,
         maxLength: 280,
@@ -34,6 +38,7 @@ export function buildCreateProjectAgentTool(
 
       const parsed = params as {
         sessionName: string;
+        handle?: string;
         whenToUse: string;
         systemPrompt: string;
       };

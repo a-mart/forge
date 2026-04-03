@@ -1,5 +1,5 @@
 import { access, mkdir } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { copyFileIfMissing } from "./copy-file-if-missing.js";
 import type { SwarmConfig } from "./types.js";
 
@@ -11,11 +11,9 @@ export async function ensureCanonicalAuthFilePath(config: Pick<SwarmConfig, "pat
     return preferredPath;
   }
 
-  const oldSharedPath = join(config.paths.sharedDir, "auth", "auth.json");
   const legacyPath = config.paths.authFile;
-  const fallbackPaths = [oldSharedPath, legacyPath];
 
-  for (const fallbackPath of fallbackPaths) {
+  for (const fallbackPath of [legacyPath]) {
     if (fallbackPath === preferredPath) {
       continue;
     }

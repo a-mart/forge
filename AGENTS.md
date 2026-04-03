@@ -101,7 +101,7 @@ These are briefly described for orientation. Most have both backend and UI compo
 | **Session pins** | `swarm/swarm-manager.ts` (pinSession method) | `components/chat/AgentSidebar.tsx` | Pin sessions to top of sidebar; right-click pin/unpin with three-tier sort (project agents → pinned → regular). Pinned sessions never hidden by pagination. State stored as `pinnedAt` timestamp on `AgentDescriptor`. |
 | **Project Agents** | `swarm/project-agents.ts`, `swarm/project-agent-analysis.ts` | `components/chat/AgentSidebar.tsx`, `components/chat/MessageInput.tsx`, `components/chat/message-list/ConversationMessageRow.tsx` | Cross-session agent messaging via lightweight session promotion with discovery, AI-assisted configuration, and fire-and-forget async messaging. Promoted sessions appear with dedicated handles in sidebar and are discoverable by sibling session agents. |
 | **Project Agent Creator** | `swarm/agent-creator-context.ts`, `swarm/agent-creator-tool.ts`, `swarm/archetypes/builtins/agent-architect.md` | `components/chat/AgentSidebar.tsx` (context menu + violet Sparkles icon) | Conversational project agent creation flow. Right-click profile header to create a session with the Agent Architect archetype. Gathers context (existing agents + recent memory excerpts, 3,200-char seed context budget), interviews user about the new agent's role, then atomically creates and promotes the session via `create_project_agent` tool. Cannot be promoted, forked, or created in Cortex profile. |
-| **Provider usage monitoring** | `stats/provider-usage-service.ts` | `components/chat/SidebarUsageWidget.tsx`, `components/stats/sections/ProviderUsage.tsx` | OAuth-based subscription rate-limit monitoring for OpenAI Codex and Anthropic Claude. Uses a restart-persistent cache (`shared/provider-usage-cache.json`), shows 5-hour rolling and weekly windows with deficit/reserve pace labels, supports manual refresh in the sidebar detail panel, and estimates weekly pace from historical usage curves. |
+| **Provider usage monitoring** | `stats/provider-usage-service.ts` | `components/chat/SidebarUsageWidget.tsx`, `components/stats/sections/ProviderUsage.tsx` | OAuth-based subscription rate-limit monitoring for OpenAI Codex and Anthropic Claude. Uses a restart-persistent cache (`shared/cache/provider-usage-cache.json`), shows 5-hour rolling and weekly windows with deficit/reserve pace labels, supports manual refresh in the sidebar detail panel, and estimates weekly pace from historical usage curves. |
 
 Backend paths above are relative to `apps/backend/src/`. UI paths are relative to `apps/ui/src/`.
 
@@ -150,11 +150,14 @@ All runtime state lives in `~/.forge` (or `%LOCALAPPDATA%\forge` on Windows), ov
 │   ├── cache/
 │   │   ├── generated/
 │   │   │   └── pi-models.json             # Generated Pi-compatible model projection
-│   │   └── stats-cache.json               # Cached dashboard statistics
+│   │   ├── stats-cache.json               # Cached dashboard statistics
+│   │   ├── provider-usage-cache.json      # Cached provider subscription usage snapshots
+│   │   └── provider-usage-history.jsonl   # Historical provider usage samples
 │   ├── state/
 │   │   ├── mobile-devices.json            # Registered mobile devices
 │   │   ├── .compaction-count-backfill-v2-done  # Compaction-count backfill sentinel
-│   │   └── .shared-config-migration-done  # Shared-config layout migration sentinel
+│   │   ├── .shared-config-migration-done  # Shared-config layout migration sentinel
+│   │   └── .shared-config-cleanup-done    # Shared-config old-path cleanup sentinel
 │   ├── knowledge/                         # Knowledge base
 │   │   ├── common.md                      #   Common knowledge (cross-profile, including a managed onboarding preferences block)
 │   │   ├── onboarding-state.json          #   First-launch user preferences

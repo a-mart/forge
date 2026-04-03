@@ -144,6 +144,28 @@ export function getTerminalLogPath(
   return join(getTerminalDir(dataDir, profileId, sessionAgentId, terminalId), "delta.ndjson");
 }
 
+// ── Project agent paths ────────────────────────────────────────────────────────
+
+export function getProjectAgentsDir(dataDir: string, profileId: string): string {
+  return join(getProfileDir(dataDir, profileId), "project-agents");
+}
+
+export function getProjectAgentDir(dataDir: string, profileId: string, handle: string): string {
+  return join(getProjectAgentsDir(dataDir, profileId), sanitizePathSegment(handle));
+}
+
+export function getProjectAgentConfigPath(dataDir: string, profileId: string, handle: string): string {
+  return join(getProjectAgentDir(dataDir, profileId, handle), "config.json");
+}
+
+export function getProjectAgentPromptPath(dataDir: string, profileId: string, handle: string): string {
+  return join(getProjectAgentDir(dataDir, profileId, handle), "prompt.md");
+}
+
+export function getProjectAgentReferenceDir(dataDir: string, profileId: string, handle: string): string {
+  return join(getProjectAgentDir(dataDir, profileId, handle), "reference");
+}
+
 // ── Worker-level paths ─────────────────────────────────────────────────────────
 
 export function getWorkersDir(dataDir: string, profileId: string, sessionAgentId: string): string {

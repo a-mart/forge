@@ -126,7 +126,7 @@ export function generateProjectAgentDirectoryBlock(entries: ProjectAgentDirector
 }
 
 export function getProjectAgentHandleCollisionError(handle: string): string {
-  return `Project agent handle "${handle}" is already in use in this profile. Rename the session to get a unique handle, then try again.`;
+  return `Project agent handle "${handle}" is already in use in this profile. Choose a different handle and try again.`;
 }
 
 export const PROJECT_AGENT_MESSAGES_PER_MINUTE = 6;

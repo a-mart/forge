@@ -125,7 +125,12 @@ interface AgentSidebarProps {
   onUpdateManagerModel?: (managerId: string, model: ManagerModelPreset, reasoningLevel?: ManagerReasoningLevel) => void
   onRequestSessionWorkers?: (sessionId: string) => void
   onReorderProfiles?: (profileIds: string[]) => void
-  onSetSessionProjectAgent?: (agentId: string, projectAgent: { whenToUse: string; systemPrompt?: string } | null) => Promise<void>
+  onSetSessionProjectAgent?: (agentId: string, projectAgent: { whenToUse: string; systemPrompt?: string; handle?: string } | null) => Promise<void>
+  onGetProjectAgentConfig?: (agentId: string) => Promise<{ agentId: string; config: import('@forge/protocol').PersistedProjectAgentConfig; systemPrompt: string | null; references: string[] }>
+  onListProjectAgentReferences?: (agentId: string) => Promise<{ agentId: string; references: string[] }>
+  onGetProjectAgentReference?: (agentId: string, fileName: string) => Promise<{ agentId: string; fileName: string; content: string }>
+  onSetProjectAgentReference?: (agentId: string, fileName: string, content: string) => Promise<{ agentId: string; fileName: string }>
+  onDeleteProjectAgentReference?: (agentId: string, fileName: string) => Promise<{ agentId: string; fileName: string }>
   onRequestProjectAgentRecommendations?: (agentId: string) => Promise<{ whenToUse: string; systemPrompt: string }>
   onCreateAgentCreator?: (profileId: string) => void
 }
@@ -1385,35 +1390,93 @@ function ProjectAgentSettingsSheet({
   onSave,
   onDemote,
   onClose,
+  onGetProjectAgentConfig,
+  onListReferences,
+  onGetReference,
+  onSetReference,
+  onDeleteReference,
   onRequestRecommendations,
 }: {
   agentId: string
   sessionLabel: string
   currentProjectAgent: ProjectAgentInfo | null
-  onSave: (agentId: string, projectAgent: { whenToUse: string; systemPrompt?: string }) => Promise<void>
+  onSave: (agentId: string, projectAgent: { whenToUse: string; systemPrompt?: string; handle?: string }) => Promise<void>
   onDemote: (agentId: string) => Promise<void>
   onClose: () => void
+  onGetProjectAgentConfig?: (agentId: string) => Promise<{ agentId: string; config: import('@forge/protocol').PersistedProjectAgentConfig; systemPrompt: string | null; references: string[] }>
+  onListReferences?: (agentId: string) => Promise<{ agentId: string; references: string[] }>
+  onGetReference?: (agentId: string, fileName: string) => Promise<{ agentId: string; fileName: string; content: string }>
+  onSetReference?: (agentId: string, fileName: string, content: string) => Promise<{ agentId: string; fileName: string }>
+  onDeleteReference?: (agentId: string, fileName: string) => Promise<{ agentId: string; fileName: string }>
   onRequestRecommendations?: (agentId: string) => Promise<{ whenToUse: string; systemPrompt: string }>
 }) {
+  const isPromoting = !currentProjectAgent
+
+  const [handleInput, setHandleInput] = useState(slugifySessionName(sessionLabel))
+  const normalizedHandle = slugifySessionName(handleInput)
+
+  const [configLoading, setConfigLoading] = useState(!isPromoting)
+  const [configError, setConfigError] = useState<string | null>(null)
+  const fetchedSystemPromptRef = useRef<string>('')
+
   const [whenToUse, setWhenToUse] = useState(currentProjectAgent?.whenToUse ?? '')
-  const [systemPrompt, setSystemPrompt] = useState(currentProjectAgent?.systemPrompt ?? '')
+  const [systemPrompt, setSystemPrompt] = useState('')
+  const [referenceDocs, setReferenceDocs] = useState<string[]>([])
+  const [expandedReferenceFile, setExpandedReferenceFile] = useState<string | null>(null)
+  const [referenceContents, setReferenceContents] = useState<Record<string, string>>({})
+  const [loadedReferenceFiles, setLoadedReferenceFiles] = useState<Set<string>>(() => new Set())
+  const [loadingReferenceFiles, setLoadingReferenceFiles] = useState<Set<string>>(() => new Set())
+  const [savingReferenceFiles, setSavingReferenceFiles] = useState<Set<string>>(() => new Set())
+  const [dirtyReferenceFiles, setDirtyReferenceFiles] = useState<Set<string>>(() => new Set())
   const [saving, setSaving] = useState(false)
   const [analyzing, setAnalyzing] = useState(false)
   const [analysisError, setAnalysisError] = useState<string | null>(null)
+  const [referenceError, setReferenceError] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  // Track whether the user has manually edited each field (via refs to avoid stale closures)
   const whenToUseDirtyRef = useRef(false)
   const systemPromptDirtyRef = useRef(false)
 
-  const derivedHandle = slugifySessionName(sessionLabel)
-  const isPromoting = !currentProjectAgent
+  const refreshReferenceDocs = useCallback(async () => {
+    if (!onListReferences) return
+    const result = await onListReferences(agentId)
+    setReferenceDocs(result.references)
+    setExpandedReferenceFile((previous) => (
+      previous && !result.references.includes(previous) ? null : previous
+    ))
+  }, [agentId, onListReferences])
+
+  useEffect(() => {
+    if (isPromoting || !onGetProjectAgentConfig) return
+    let cancelled = false
+    setConfigLoading(true)
+    setConfigError(null)
+    void onGetProjectAgentConfig(agentId).then((result) => {
+      if (cancelled) return
+      const prompt = result.systemPrompt ?? ''
+      fetchedSystemPromptRef.current = prompt
+      if (!systemPromptDirtyRef.current) {
+        setSystemPrompt(prompt)
+      }
+      setReferenceDocs(result.references)
+      setConfigLoading(false)
+    }).catch((err) => {
+      if (cancelled) return
+      setConfigError(err instanceof Error ? err.message : 'Failed to load config.')
+      setConfigLoading(false)
+    })
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentId, isPromoting])
+
   const trimmedWhenToUse = whenToUse.trim()
   const trimmedSystemPrompt = systemPrompt.trim()
-  const canSave = trimmedWhenToUse.length > 0 && trimmedWhenToUse.length <= PROJECT_AGENT_WHEN_TO_USE_MAX
+  const canSave = isPromoting
+    ? trimmedWhenToUse.length > 0 && trimmedWhenToUse.length <= PROJECT_AGENT_WHEN_TO_USE_MAX && normalizedHandle.length > 0
+    : trimmedWhenToUse.length > 0 && trimmedWhenToUse.length <= PROJECT_AGENT_WHEN_TO_USE_MAX
   const hasChanges = isPromoting
     || trimmedWhenToUse !== (currentProjectAgent?.whenToUse ?? '')
-    || trimmedSystemPrompt !== (currentProjectAgent?.systemPrompt ?? '')
+    || trimmedSystemPrompt !== fetchedSystemPromptRef.current.trim()
 
   const requestRecommendations = useCallback(async (replaceExisting: boolean) => {
     if (!onRequestRecommendations) return
@@ -1422,13 +1485,11 @@ function ProjectAgentSettingsSheet({
     try {
       const result = await onRequestRecommendations(agentId)
       if (replaceExisting) {
-        // Explicit regeneration — always replace
         setWhenToUse(result.whenToUse)
         setSystemPrompt(result.systemPrompt)
         whenToUseDirtyRef.current = false
         systemPromptDirtyRef.current = false
       } else {
-        // Auto-trigger on promotion — only populate untouched fields
         if (!whenToUseDirtyRef.current) {
           setWhenToUse(result.whenToUse)
         }
@@ -1443,13 +1504,34 @@ function ProjectAgentSettingsSheet({
     }
   }, [agentId, onRequestRecommendations])
 
-  // Auto-trigger AI analysis on initial promotion
   useEffect(() => {
     if (isPromoting && onRequestRecommendations) {
       void requestRecommendations(false)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  const loadReference = useCallback(async (fileName: string) => {
+    if (!onGetReference) return
+    setReferenceError(null)
+    setLoadingReferenceFiles((prev) => new Set(prev).add(fileName))
+    try {
+      const result = await onGetReference(agentId, fileName)
+      setReferenceContents((prev) => ({
+        ...prev,
+        [fileName]: prev[fileName] ?? result.content,
+      }))
+      setLoadedReferenceFiles((prev) => new Set(prev).add(fileName))
+    } catch (err) {
+      setReferenceError(err instanceof Error ? err.message : `Failed to load ${fileName}.`)
+    } finally {
+      setLoadingReferenceFiles((prev) => {
+        const next = new Set(prev)
+        next.delete(fileName)
+        return next
+      })
+    }
+  }, [agentId, onGetReference])
 
   const handleWhenToUseChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     whenToUseDirtyRef.current = true
@@ -1461,6 +1543,102 @@ function ProjectAgentSettingsSheet({
     setSystemPrompt(e.target.value)
   }, [])
 
+  const handleToggleReference = useCallback((fileName: string) => {
+    setExpandedReferenceFile((previous) => previous === fileName ? null : fileName)
+    if (!loadedReferenceFiles.has(fileName) && !loadingReferenceFiles.has(fileName)) {
+      void loadReference(fileName)
+    }
+  }, [loadReference, loadedReferenceFiles, loadingReferenceFiles])
+
+  const handleReferenceContentChange = useCallback((fileName: string, nextContent: string) => {
+    setReferenceContents((prev) => ({ ...prev, [fileName]: nextContent }))
+    setDirtyReferenceFiles((prev) => new Set(prev).add(fileName))
+  }, [])
+
+  const handleSaveReference = useCallback(async (fileName: string) => {
+    if (!onSetReference) return
+    setReferenceError(null)
+    setSavingReferenceFiles((prev) => new Set(prev).add(fileName))
+    try {
+      await onSetReference(agentId, fileName, referenceContents[fileName] ?? '')
+      setDirtyReferenceFiles((prev) => {
+        const next = new Set(prev)
+        next.delete(fileName)
+        return next
+      })
+      await refreshReferenceDocs()
+    } catch (err) {
+      setReferenceError(err instanceof Error ? err.message : `Failed to save ${fileName}.`)
+    } finally {
+      setSavingReferenceFiles((prev) => {
+        const next = new Set(prev)
+        next.delete(fileName)
+        return next
+      })
+    }
+  }, [agentId, onSetReference, referenceContents, refreshReferenceDocs])
+
+  const handleDeleteReference = useCallback(async (fileName: string) => {
+    if (!onDeleteReference) return
+    if (typeof window !== 'undefined' && !window.confirm(`Delete reference document \"${fileName}\"?`)) {
+      return
+    }
+
+    setReferenceError(null)
+    setSavingReferenceFiles((prev) => new Set(prev).add(fileName))
+    try {
+      await onDeleteReference(agentId, fileName)
+      setReferenceDocs((prev) => prev.filter((entry) => entry !== fileName))
+      setExpandedReferenceFile((prev) => prev === fileName ? null : prev)
+      setReferenceContents((prev) => {
+        const next = { ...prev }
+        delete next[fileName]
+        return next
+      })
+      setLoadedReferenceFiles((prev) => {
+        const next = new Set(prev)
+        next.delete(fileName)
+        return next
+      })
+      setDirtyReferenceFiles((prev) => {
+        const next = new Set(prev)
+        next.delete(fileName)
+        return next
+      })
+      await refreshReferenceDocs()
+    } catch (err) {
+      setReferenceError(err instanceof Error ? err.message : `Failed to delete ${fileName}.`)
+    } finally {
+      setSavingReferenceFiles((prev) => {
+        const next = new Set(prev)
+        next.delete(fileName)
+        return next
+      })
+    }
+  }, [agentId, onDeleteReference, refreshReferenceDocs])
+
+  const handleAddReference = useCallback(async () => {
+    if (!onSetReference) return
+    const requestedFileName = typeof window !== 'undefined'
+      ? window.prompt('Reference document filename', 'notes.md')
+      : null
+    const fileName = requestedFileName?.trim()
+    if (!fileName) {
+      return
+    }
+
+    setReferenceError(null)
+    try {
+      await onSetReference(agentId, fileName, '')
+      await refreshReferenceDocs()
+      setReferenceContents((prev) => ({ ...prev, [fileName]: prev[fileName] ?? '' }))
+      setLoadedReferenceFiles((prev) => new Set(prev).add(fileName))
+      setExpandedReferenceFile(fileName)
+    } catch (err) {
+      setReferenceError(err instanceof Error ? err.message : `Failed to create ${fileName}.`)
+    }
+  }, [agentId, onSetReference, refreshReferenceDocs])
+
   const handleSave = async () => {
     if (!canSave) return
     setSaving(true)
@@ -1469,6 +1647,7 @@ function ProjectAgentSettingsSheet({
       await onSave(agentId, {
         whenToUse: trimmedWhenToUse,
         ...(trimmedSystemPrompt ? { systemPrompt: trimmedSystemPrompt } : {}),
+        ...(isPromoting && normalizedHandle ? { handle: normalizedHandle } : {}),
       })
       onClose()
     } catch (err) {
@@ -1490,6 +1669,8 @@ function ProjectAgentSettingsSheet({
       setSaving(false)
     }
   }
+
+  const referenceEditingAvailable = !isPromoting && !!onGetReference && !!onSetReference && !!onDeleteReference
 
   return (
     <Sheet open onOpenChange={(open) => { if (!open) onClose() }}>
@@ -1517,14 +1698,53 @@ function ProjectAgentSettingsSheet({
             <label className="text-sm font-medium text-foreground">Session</label>
             <p className="text-sm text-muted-foreground">{sessionLabel}</p>
           </div>
-          <div className="space-y-1">
-            <label className="text-sm font-medium text-foreground">Handle</label>
-            <p className="font-mono text-sm text-muted-foreground">
-              {derivedHandle ? `@${derivedHandle}` : <span className="text-amber-500">(invalid name)</span>}
-            </p>
-          </div>
 
-          {/* AI analysis loading indicator */}
+          {isPromoting ? (
+            <div className="space-y-1.5">
+              <label htmlFor="agentHandle" className="text-sm font-medium text-foreground">Handle</label>
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-sm text-muted-foreground">@</span>
+                <Input
+                  id="agentHandle"
+                  value={handleInput}
+                  onChange={(e) => setHandleInput(e.target.value)}
+                  placeholder="agent-handle"
+                  className="font-mono text-sm"
+                />
+              </div>
+              {handleInput && normalizedHandle !== handleInput ? (
+                <p className="font-mono text-[11px] text-muted-foreground">
+                  Normalized: @{normalizedHandle || <span className="text-amber-500">(empty)</span>}
+                </p>
+              ) : null}
+              {handleInput && !normalizedHandle ? (
+                <p className="text-[11px] text-amber-500">
+                  Handle must contain at least one letter, number, or dash.
+                </p>
+              ) : null}
+            </div>
+          ) : (
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-foreground">Handle</label>
+              <p className="font-mono text-sm text-muted-foreground">
+                @{currentProjectAgent?.handle}
+              </p>
+            </div>
+          )}
+
+          {configLoading ? (
+            <div className="flex items-center gap-2 rounded-md border border-border/50 bg-muted/30 px-3 py-2.5 text-sm text-muted-foreground">
+              <Loader2 className="size-4 shrink-0 animate-spin" />
+              <span>Loading configuration…</span>
+            </div>
+          ) : null}
+
+          {configError ? (
+            <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-600 dark:text-amber-400">
+              {configError}
+            </p>
+          ) : null}
+
           {analyzing ? (
             <div className="flex items-center gap-2 rounded-md border border-border/50 bg-muted/30 px-3 py-2.5 text-sm text-muted-foreground">
               <Loader2 className="size-4 shrink-0 animate-spin" />
@@ -1532,7 +1752,6 @@ function ProjectAgentSettingsSheet({
             </div>
           ) : null}
 
-          {/* AI analysis error (non-blocking) */}
           {analysisError ? (
             <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-600 dark:text-amber-400">
               {analysisError}
@@ -1565,22 +1784,146 @@ function ProjectAgentSettingsSheet({
               id="systemPrompt"
               value={systemPrompt}
               onChange={handleSystemPromptChange}
-              placeholder={analyzing ? 'Generating recommendation…' : 'Custom system prompt for this project agent…'}
+              placeholder={configLoading ? 'Loading…' : analyzing ? 'Generating recommendation…' : 'Custom system prompt for this project agent…'}
               rows={8}
               className="resize-y font-mono text-xs"
+              disabled={configLoading}
             />
             <p className="text-[11px] text-muted-foreground">
               When set, this replaces the standard manager prompt for this session.
             </p>
           </div>
 
-          {/* Regenerate button for already-promoted agents */}
+          <div className="space-y-2">
+            <div className="flex items-start justify-between gap-3">
+              <div className="space-y-1">
+                <label className="text-sm font-medium text-foreground">Reference Documents</label>
+                <p className="text-[11px] text-muted-foreground">
+                  Injected into this project agent's prompt inside <code>&lt;agent_reference_docs&gt;</code>.
+                </p>
+              </div>
+              {!isPromoting ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void handleAddReference()}
+                  disabled={!referenceEditingAvailable || configLoading || saving}
+                  className="gap-1.5"
+                >
+                  <Plus className="size-3.5" />
+                  Add Reference Document
+                </Button>
+              ) : null}
+            </div>
+
+            {isPromoting ? (
+              <p className="rounded-md border border-border/50 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+                Promote this session first, then add reference documents.
+              </p>
+            ) : null}
+
+            {!isPromoting && !referenceEditingAvailable ? (
+              <p className="rounded-md border border-border/50 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+                Reference document editing is unavailable right now.
+              </p>
+            ) : null}
+
+            {!isPromoting && referenceDocs.length === 0 ? (
+              <p className="rounded-md border border-dashed border-border/60 px-3 py-3 text-sm text-muted-foreground">
+                No reference documents yet.
+              </p>
+            ) : null}
+
+            {!isPromoting && referenceDocs.length > 0 ? (
+              <div className="space-y-2">
+                {referenceDocs.map((fileName) => {
+                  const isExpanded = expandedReferenceFile === fileName
+                  const isLoading = loadingReferenceFiles.has(fileName)
+                  const isSavingReference = savingReferenceFiles.has(fileName)
+                  const isDirty = dirtyReferenceFiles.has(fileName)
+                  const content = referenceContents[fileName] ?? ''
+
+                  return (
+                    <div key={fileName} className="overflow-hidden rounded-md border border-border/60">
+                      <div className="flex items-center gap-2 px-3 py-2">
+                        <button
+                          type="button"
+                          onClick={() => handleToggleReference(fileName)}
+                          className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                        >
+                          {isExpanded ? <ChevronDown className="size-4 shrink-0 text-muted-foreground" /> : <ChevronRight className="size-4 shrink-0 text-muted-foreground" />}
+                          <span className="min-w-0 truncate font-mono text-sm">{fileName}</span>
+                          {isDirty ? (
+                            <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
+                              Unsaved
+                            </span>
+                          ) : null}
+                        </button>
+                        {isSavingReference ? <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" /> : null}
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="size-8 shrink-0 text-muted-foreground hover:text-destructive"
+                          onClick={() => void handleDeleteReference(fileName)}
+                          disabled={isSavingReference || saving}
+                        >
+                          <Trash2 className="size-4" />
+                          <span className="sr-only">Delete {fileName}</span>
+                        </Button>
+                      </div>
+                      {isExpanded ? (
+                        <div className="space-y-2 border-t border-border/60 px-3 py-3">
+                          {isLoading ? (
+                            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                              <Loader2 className="size-4 animate-spin" />
+                              <span>Loading document…</span>
+                            </div>
+                          ) : (
+                            <>
+                              <Textarea
+                                value={content}
+                                onChange={(event) => handleReferenceContentChange(fileName, event.target.value)}
+                                rows={10}
+                                className="resize-y font-mono text-xs"
+                              />
+                              <div className="flex items-center justify-between gap-3">
+                                <p className="text-[11px] text-muted-foreground">
+                                  Markdown content injected into this project agent's runtime prompt.
+                                </p>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  onClick={() => void handleSaveReference(fileName)}
+                                  disabled={!isDirty || isSavingReference || saving}
+                                >
+                                  Save
+                                </Button>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      ) : null}
+                    </div>
+                  )
+                })}
+              </div>
+            ) : null}
+
+            {referenceError ? (
+              <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-600 dark:text-amber-400">
+                {referenceError}
+              </p>
+            ) : null}
+          </div>
+
           {!isPromoting && onRequestRecommendations ? (
             <Button
               variant="ghost"
               size="sm"
               onClick={() => void requestRecommendations(true)}
-              disabled={analyzing}
+              disabled={analyzing || configLoading}
               className="gap-1.5"
             >
               {analyzing
@@ -1597,7 +1940,7 @@ function ProjectAgentSettingsSheet({
             </p>
           ) : null}
           <div className="flex items-center gap-2">
-            <Button onClick={handleSave} disabled={!canSave || !hasChanges || saving}>
+            <Button onClick={handleSave} disabled={!canSave || !hasChanges || saving || configLoading}>
               {saving ? 'Saving…' : isPromoting ? 'Promote' : 'Save'}
             </Button>
             {!isPromoting ? (
@@ -2189,6 +2532,11 @@ export function AgentSidebar({
   onRequestSessionWorkers,
   onReorderProfiles,
   onSetSessionProjectAgent,
+  onGetProjectAgentConfig,
+  onListProjectAgentReferences,
+  onGetProjectAgentReference,
+  onSetProjectAgentReference,
+  onDeleteProjectAgentReference,
   onRequestProjectAgentRecommendations,
   onCreateAgentCreator,
 }: AgentSidebarProps) {
@@ -2500,7 +2848,7 @@ export function AgentSidebar({
     await onSetSessionProjectAgent?.(agentId, null)
   }, [onSetSessionProjectAgent])
 
-  const handleSaveProjectAgent = useCallback(async (agentId: string, projectAgent: { whenToUse: string; systemPrompt?: string }) => {
+  const handleSaveProjectAgent = useCallback(async (agentId: string, projectAgent: { whenToUse: string; systemPrompt?: string; handle?: string }) => {
     await onSetSessionProjectAgent?.(agentId, projectAgent)
   }, [onSetSessionProjectAgent])
 
@@ -2939,6 +3287,11 @@ export function AgentSidebar({
           onSave={handleSaveProjectAgent}
           onDemote={handleDemoteProjectAgent}
           onClose={() => setProjectAgentTarget(null)}
+          onGetProjectAgentConfig={onGetProjectAgentConfig}
+          onListReferences={onListProjectAgentReferences}
+          onGetReference={onGetProjectAgentReference}
+          onSetReference={onSetProjectAgentReference}
+          onDeleteReference={onDeleteProjectAgentReference}
           onRequestRecommendations={onRequestProjectAgentRecommendations}
         />
       ) : null}

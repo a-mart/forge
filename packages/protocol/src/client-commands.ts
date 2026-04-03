@@ -33,7 +33,36 @@ export type ClientCommand =
   | {
       type: 'set_session_project_agent'
       agentId: string
-      projectAgent: { whenToUse: string; systemPrompt?: string } | null
+      projectAgent: { whenToUse: string; systemPrompt?: string; handle?: string } | null
+      requestId?: string
+    }
+  | {
+      type: 'get_project_agent_config'
+      agentId: string
+      requestId?: string
+    }
+  | {
+      type: 'list_project_agent_references'
+      agentId: string
+      requestId?: string
+    }
+  | {
+      type: 'get_project_agent_reference'
+      agentId: string
+      fileName: string
+      requestId?: string
+    }
+  | {
+      type: 'set_project_agent_reference'
+      agentId: string
+      fileName: string
+      content: string
+      requestId?: string
+    }
+  | {
+      type: 'delete_project_agent_reference'
+      agentId: string
+      fileName: string
       requestId?: string
     }
   | {

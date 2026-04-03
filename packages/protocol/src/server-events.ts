@@ -17,6 +17,7 @@ import type {
   ManagerReasoningLevel,
   MessageSourceContext,
   ManagerProfile,
+  PersistedProjectAgentConfig,
   ProjectAgentInfo,
   PromptCategory,
   PromptSourceLayer,
@@ -211,6 +212,44 @@ export interface ProjectAgentRecommendationsErrorEvent {
   type: 'project_agent_recommendations_error'
   agentId: string
   message: string
+  requestId?: string
+}
+
+export interface ProjectAgentConfigEvent {
+  type: 'project_agent_config'
+  agentId: string
+  config: PersistedProjectAgentConfig
+  systemPrompt: string | null
+  references: string[]
+  requestId?: string
+}
+
+export interface ProjectAgentReferencesEvent {
+  type: 'project_agent_references'
+  agentId: string
+  references: string[]
+  requestId?: string
+}
+
+export interface ProjectAgentReferenceEvent {
+  type: 'project_agent_reference'
+  agentId: string
+  fileName: string
+  content: string
+  requestId?: string
+}
+
+export interface ProjectAgentReferenceSavedEvent {
+  type: 'project_agent_reference_saved'
+  agentId: string
+  fileName: string
+  requestId?: string
+}
+
+export interface ProjectAgentReferenceDeletedEvent {
+  type: 'project_agent_reference_deleted'
+  agentId: string
+  fileName: string
   requestId?: string
 }
 
@@ -450,6 +489,11 @@ export type ServerEvent =
   | SessionProjectAgentUpdatedEvent
   | ProjectAgentRecommendationsEvent
   | ProjectAgentRecommendationsErrorEvent
+  | ProjectAgentConfigEvent
+  | ProjectAgentReferencesEvent
+  | ProjectAgentReferenceEvent
+  | ProjectAgentReferenceSavedEvent
+  | ProjectAgentReferenceDeletedEvent
   | ProfileRenamedEvent
   | SessionForkedEvent
   | SessionMemoryMergeStartedEvent
