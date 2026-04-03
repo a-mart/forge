@@ -115,11 +115,13 @@ Click any specialist card to expand and edit it. Changes are saved per-file.
 
 ### Fallback Models
 
-Each specialist can optionally define a fallback model. If the primary model is unavailable (rate limited, auth error, capacity), the manager automatically retries with the fallback model and reasoning level.
+Each specialist can optionally define a fallback model. If the primary model is unavailable (rate limited, auth error, capacity), fallback happens transparently inside worker/runtime recovery rather than as a manager-level retry.
 
-**Built-in specialists intentionally pair across vendors when practical** for resilience: OpenAI-primary builtins generally fall back to Anthropic, and Anthropic-primary builtins generally fall back to OpenAI. Exceptions: `researcher` already complied, `app-runtime` still uses the app-server-specific `default` pseudo-model on `openai-codex-app-server`, and `web-researcher` keeps xAI-native web/X search as its defining capability.
+Only exhausted fallback failures surface upward.
 
-**Cross-provider fallback is fully supported**: You can use a model from a different provider as your fallback (e.g., primary `grok-4`, fallback `claude-sonnet-4-5-20250929`). This is useful for provider outages or rate limit mitigation.
+**Built-in specialists intentionally pair across vendors when practical** for resilience: OpenAI-primary builtins generally fall back to Anthropic, and Anthropic-primary builtins generally fall back to OpenAI. Exceptions: `researcher` already complies, `app-runtime` still uses the app-server-specific `default` pseudo-model on `openai-codex-app-server`, and `web-researcher` keeps xAI-native web/X search as its defining capability.
+
+**Cross-provider fallback is fully supported**: You can use a model from a different provider as your fallback (e.g., primary `grok-4`, fallback `claude-sonnet-4-5-20250929`). This is exercised silently inside runtime recovery and is useful for provider outages or rate limit mitigation.
 
 ### Resolution Order
 
