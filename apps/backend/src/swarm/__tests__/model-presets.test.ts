@@ -14,6 +14,18 @@ describe("model-presets", () => {
     expect(inferProviderFromModelId("grok-3")).toBe("xai");
   });
 
+  it("infers the OpenRouter provider for slash-scoped model IDs", () => {
+    expect(inferProviderFromModelId("anthropic/claude-3.5-sonnet")).toBe("openrouter");
+    expect(inferProviderFromModelId("qwen/qwen3-coder:free")).toBe("openrouter");
+  });
+
+  it("does not treat malformed slash model IDs as OpenRouter models", () => {
+    expect(inferProviderFromModelId("")).toBeNull();
+    expect(inferProviderFromModelId("/")).toBeNull();
+    expect(inferProviderFromModelId("anthropic/")).toBeNull();
+    expect(inferProviderFromModelId("/claude-3.5-sonnet")).toBeNull();
+  });
+
   it("maps Grok variants back to the pi-grok preset", () => {
     expect(
       inferSwarmModelPresetFromDescriptor({

@@ -178,6 +178,20 @@ describe('telemetry payload helpers', () => {
     expect(payload.locale.length).toBeGreaterThan(0)
   })
 
+  it('classifies slash-scoped OpenRouter model IDs as openrouter usage', () => {
+    const stats = createStatsSnapshot()
+    stats.models = [
+      {
+        modelId: 'anthropic/claude-3.5-sonnet',
+        displayName: 'Claude 3.5 Sonnet via OpenRouter',
+        percentage: 100,
+        tokenCount: 100,
+      },
+    ]
+
+    expect(extractProvidersUsed(stats)).toEqual(['openrouter'])
+  })
+
   it('maps runtime platforms to friendly telemetry labels while preserving the raw value', () => {
     const expectations = [
       { raw: 'darwin', friendly: 'macOS' },
@@ -225,7 +239,7 @@ describe('telemetry payload helpers', () => {
     expect(payload.platform_raw).toBe(process.platform)
   })
 
-  it('extracts providers used from catalog lookups and heuristics', () => {
+  it('extracts providers used from catalog lookups and slash heuristics', () => {
     const stats = createStatsSnapshot()
     stats.models = [
       {
@@ -260,7 +274,7 @@ describe('telemetry payload helpers', () => {
       },
     ]
 
-    expect(extractProvidersUsed(stats)).toEqual(['anthropic', 'openai-codex', 'xai'])
+    expect(extractProvidersUsed(stats)).toEqual(['anthropic', 'openai-codex', 'openrouter', 'xai'])
   })
 
   it('prefers untruncated provider sets when present on the stats snapshot', () => {

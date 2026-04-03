@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
+import { formatTokenCount } from '@/lib/format-utils'
 import { SettingsSection } from './settings-row'
 import {
   deleteModelOverride,
@@ -17,6 +18,7 @@ import {
   updateModelOverride,
 } from './models-api'
 import { cn } from '@/lib/utils'
+import { SettingsOpenRouter } from './SettingsOpenRouter'
 
 const numberFormatter = new Intl.NumberFormat()
 
@@ -30,20 +32,6 @@ interface ProviderGroup {
   displayName: string
   availabilityMode: 'managed-auth' | 'external'
   models: ForgeModelDefinition[]
-}
-
-function formatTokenCount(value: number): string {
-  if (value >= 1_000_000) {
-    const millions = value / 1_000_000
-    return `${Number.isInteger(millions) ? millions : millions.toFixed(1)}M`
-  }
-
-  if (value >= 1_000) {
-    const thousands = value / 1_000
-    return `${Number.isInteger(thousands) ? thousands : thousands.toFixed(1)}k`
-  }
-
-  return numberFormatter.format(value)
 }
 
 function getEffectiveContextWindow(model: ForgeModelDefinition, override?: ModelOverrideEntry): number {
@@ -467,6 +455,8 @@ export function SettingsModels({ wsUrl, modelConfigChangeKey }: SettingsModelsPr
       {!loading && providerGroups.length === 0 ? (
         <div className={cn('text-sm text-muted-foreground')}>No models available.</div>
       ) : null}
+
+      <SettingsOpenRouter wsUrl={wsUrl} modelConfigChangeKey={modelConfigChangeKey} />
     </SettingsSection>
   )
 }

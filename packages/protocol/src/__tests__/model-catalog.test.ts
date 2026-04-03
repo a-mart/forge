@@ -166,6 +166,7 @@ describe('model-catalog', () => {
       'openai-codex',
       'anthropic',
       'xai',
+      'openrouter',
       'openai-codex-app-server',
     ])
     expect(Object.keys(FORGE_MODEL_CATALOG.families)).toEqual(Object.keys(EXPECTED_FAMILIES))
@@ -187,6 +188,11 @@ describe('model-catalog', () => {
 
     expect(getCatalogModel('gpt-5.3-codex-spark')?.inputModes).toEqual(['text'])
     expect(getCatalogProvider('xai')?.projectionScope).toBe('full-upstream-provider')
+    expect(getCatalogProvider('openrouter')).toMatchObject({
+      availabilityMode: 'external',
+      piProjectionMode: 'custom-provider-merge',
+      piApiProtocol: 'openai-completions',
+    })
   })
 
   it('documents the intentional xAI divergences from Pi upstream', () => {

@@ -74,7 +74,10 @@ export function buildPiModelsProjection(): PiModelsConfig {
     }
 
     if (provider.piProjectionMode === "custom-provider-merge") {
-      projection.providers[provider.providerId] = buildCustomProviderProjection(provider);
+      const providerConfig = buildCustomProviderProjection(provider);
+      if (providerConfig) {
+        projection.providers[provider.providerId] = providerConfig;
+      }
     }
   }
 
@@ -125,11 +128,15 @@ function buildBuiltInOverrides(provider: ForgeProviderDefinition): PiProviderCon
   return Object.keys(modelOverrides).length > 0 ? { modelOverrides } : undefined;
 }
 
-function buildCustomProviderProjection(provider: ForgeProviderDefinition): PiProviderConfig {
+function buildCustomProviderProjection(provider: ForgeProviderDefinition): PiProviderConfig | undefined {
   const models =
     provider.projectionScope === "full-upstream-provider"
       ? generateFullProviderProjection(provider)
-      : generateCuratedProviderProjection(provider);
+      : generateCatalogOnlyProviderProjection(provider);
+
+  if (models.length === 0) {
+    return undefined;
+  }
 
   return {
     baseUrl: provider.piBaseUrl,
@@ -179,7 +186,18 @@ function generateFullProviderProjection(provider: ForgeProviderDefinition): PiMo
   });
 }
 
-function generateCuratedProviderProjection(provider: ForgeProviderDefinition): PiModelDefinition[] {
+function generateCatalogOnlyProviderProjection(provider: ForgeProviderDefinition): PiModelDefinition[] {
+  if (provider.providerId === "openrouter") {
+    return modelCatalogService.getOpenRouterModels().map((model) => ({
+      id: model.modelId,
+      name: model.displayName,
+      reasoning: model.supportsReasoning,
+      input: [...model.inputModes],
+      contextWindow: model.contextWindow,
+      maxTokens: model.maxOutputTokens,
+    }));
+  }
+
   return Object.values(FORGE_MODEL_CATALOG.models)
     .filter(
       (model) =>

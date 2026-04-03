@@ -78,6 +78,10 @@ export function inferProviderFromModelId(modelId: string): string | null {
     return "openai-codex-app-server";
   }
 
+  if (isSlashScopedOpenRouterModelId(normalizedModelId)) {
+    return "openrouter";
+  }
+
   if (normalizedModelId.startsWith("gpt-")) {
     return "openai-codex";
   }
@@ -91,6 +95,11 @@ export function inferProviderFromModelId(modelId: string): string | null {
   }
 
   return null;
+}
+
+function isSlashScopedOpenRouterModelId(modelId: string): boolean {
+  const slashIndex = modelId.indexOf("/");
+  return slashIndex > 0 && slashIndex < modelId.length - 1;
 }
 
 export function isKnownModelId(modelId: string): boolean {

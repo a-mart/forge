@@ -105,7 +105,10 @@ export function formatModelPresetDisplay(
   return `${info.displayName} (${info.modelId})`
 }
 
-export async function fetchModelPresets(wsUrl: string | undefined): Promise<ModelPresetInfo[]> {
+export async function fetchModelPresets(
+  wsUrl: string | undefined,
+  options?: { allowDynamicPresetIds?: boolean },
+): Promise<ModelPresetInfo[]> {
   const endpoint = resolveApiEndpoint(wsUrl, '/api/settings/models')
   const response = await fetch(endpoint, { cache: 'no-store' })
 
@@ -118,18 +121,25 @@ export async function fetchModelPresets(wsUrl: string | undefined): Promise<Mode
     return []
   }
 
-  return payload.models.filter(isModelPresetInfo)
+  return payload.models.filter((value): value is ModelPresetInfo =>
+    isModelPresetInfo(value, options?.allowDynamicPresetIds === true),
+  )
 }
 
-export function useModelPresets(wsUrl: string | undefined, refreshKey = 0): ModelPresetInfo[] {
+export function useModelPresets(
+  wsUrl: string | undefined,
+  refreshKey = 0,
+  options?: { allowDynamicPresetIds?: boolean },
+): ModelPresetInfo[] {
   const [modelPresets, setModelPresets] = useState<ModelPresetInfo[]>(FALLBACK_MODEL_PRESET_INFO)
+  const allowDynamicPresetIds = options?.allowDynamicPresetIds === true
 
   useEffect(() => {
     let cancelled = false
 
     const loadModelPresets = async () => {
       try {
-        const models = await fetchModelPresets(wsUrl)
+        const models = await fetchModelPresets(wsUrl, { allowDynamicPresetIds })
         if (!cancelled) {
           setModelPresets(models)
         }
@@ -148,18 +158,22 @@ export function useModelPresets(wsUrl: string | undefined, refreshKey = 0): Mode
     return () => {
       cancelled = true
     }
-  }, [refreshKey, wsUrl])
+  }, [allowDynamicPresetIds, refreshKey, wsUrl])
 
   return modelPresets
 }
 
-function isModelPresetInfo(value: unknown): value is ModelPresetInfo {
+function isModelPresetInfo(value: unknown, allowDynamicPresetIds = false): value is ModelPresetInfo {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return false
   }
 
   const model = value as Record<string, unknown>
-  if (!MANAGER_MODEL_PRESETS.includes(model.presetId as ManagerModelPreset)) {
+  if (typeof model.presetId !== 'string' || model.presetId.trim().length === 0) {
+    return false
+  }
+
+  if (!allowDynamicPresetIds && !MANAGER_MODEL_PRESETS.includes(model.presetId as ManagerModelPreset)) {
     return false
   }
 

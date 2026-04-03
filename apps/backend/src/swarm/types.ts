@@ -170,7 +170,7 @@ export interface SkillEnvRequirement {
   maskedValue?: string;
 }
 
-export type SettingsAuthProviderName = "anthropic" | "openai-codex" | "xai";
+export type SettingsAuthProviderName = "anthropic" | "openai-codex" | "xai" | "openrouter";
 
 export interface SettingsAuthProvider {
   provider: SettingsAuthProviderName;

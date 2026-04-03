@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { ServerEvent } from "@forge/protocol";
+import { MANAGER_REASONING_LEVELS, type ManagerReasoningLevel, type ModelPresetInfo, type ServerEvent } from "@forge/protocol";
 import {
   deleteProfileSpecialist,
   deleteSharedSpecialist,
@@ -84,7 +84,10 @@ async function handleSettingsModelsRequest(
     const providerAvailability = await getManagedModelProviderCredentialAvailability(
       swarmManager.getConfig()
     );
-    const models = modelCatalogService.getSpecialistModelPresetInfoList().filter((model) => {
+    const models = [
+      ...modelCatalogService.getSpecialistModelPresetInfoList(),
+      ...buildOpenRouterSelectableModels(),
+    ].filter((model) => {
       // Providers without a managed credential check stay visible.
       const isAvailable = providerAvailability.get(model.provider);
       return isAvailable ?? true;
@@ -96,6 +99,32 @@ async function handleSettingsModelsRequest(
 
   response.setHeader("Allow", SETTINGS_MODELS_METHODS);
   sendJson(response, 405, { error: "Method Not Allowed" });
+}
+
+function buildOpenRouterSelectableModels(): ModelPresetInfo[] {
+  return modelCatalogService.getOpenRouterModels().map((model) => ({
+    presetId: `openrouter:${model.modelId}`,
+    displayName: model.displayName,
+    provider: "openrouter",
+    modelId: model.modelId,
+    defaultReasoningLevel: model.supportsReasoning ? "medium" : "none",
+    supportedReasoningLevels: normalizeReasoningLevels(model.supportedReasoningLevels, model.supportsReasoning),
+  }));
+}
+
+function normalizeReasoningLevels(
+  levels: readonly string[],
+  supportsReasoning: boolean,
+): ManagerReasoningLevel[] {
+  const normalized = levels.filter((level): level is ManagerReasoningLevel =>
+    MANAGER_REASONING_LEVELS.includes(level as ManagerReasoningLevel),
+  );
+
+  if (normalized.length > 0) {
+    return normalized;
+  }
+
+  return supportsReasoning ? ["none", "low", "medium", "high"] : ["none"];
 }
 
 async function handleSpecialistsEnabledRequest(
