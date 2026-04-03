@@ -66,6 +66,10 @@ interface PersistedStatsCache {
   entries: Partial<Record<StatsRange, CacheEntry>>;
 }
 
+interface StatsServiceOptions {
+  onRefreshAllCompleted?: (snapshot: StatsSnapshot | null) => void | Promise<void>;
+}
+
 export class StatsService {
   private readonly cache = new Map<string, CacheEntry>();
   private readonly inFlightComputations = new Map<string, Promise<StatsSnapshot>>();
@@ -74,12 +78,19 @@ export class StatsService {
 
   private persistentCacheLoaded = false;
   private persistQueue: Promise<void> = Promise.resolve();
-  private refreshAllPromise: Promise<void> | null = null;
+  private refreshAllPromise: Promise<StatsSnapshot | null> | null = null;
+  private readonly onRefreshAllCompleted: ((snapshot: StatsSnapshot | null) => void | Promise<void>) | null;
 
-  constructor(private readonly swarmManager: SwarmManager) {
+  constructor(private readonly swarmManager: SwarmManager, options: StatsServiceOptions = {}) {
+    this.onRefreshAllCompleted = options.onRefreshAllCompleted ?? null;
+
     const config = this.swarmManager.getConfig();
     this.cacheFilePath = join(getSharedDir(config.paths.dataDir), STATS_CACHE_FILE_NAME);
-    this.providerUsageService = new ProviderUsageService(config.paths.sharedAuthFile);
+    this.providerUsageService = new ProviderUsageService(
+      config.paths.sharedAuthFile,
+      join(getSharedDir(config.paths.dataDir), "provider-usage-history.jsonl"),
+      join(getSharedDir(config.paths.dataDir), "provider-usage-cache.json")
+    );
   }
 
   async getSnapshot(
@@ -136,30 +147,53 @@ export class StatsService {
     return this.providerUsageService.getSnapshot();
   }
 
-  async refreshAllRangesInBackground(): Promise<void> {
+  async refreshAllRangesInBackground(): Promise<StatsSnapshot | null> {
     if (this.refreshAllPromise) {
       return this.refreshAllPromise;
     }
 
-    this.refreshAllPromise = (async () => {
+    const refreshPromise = (async () => {
       const ranges: StatsRange[] = ["7d", "30d", "all"];
       const timezone = SERVER_TIMEZONE;
+      let allSnapshot: StatsSnapshot | null = null;
       for (const range of ranges) {
         try {
-          await this.getSnapshot(range, { forceRefresh: true, timezone });
+          const snapshot = await this.getSnapshot(range, { forceRefresh: true, timezone });
+          if (range === "all") {
+            allSnapshot = snapshot;
+          }
         } catch {
           // keep refreshing other ranges even if one fails
         }
       }
-    })()
-      .catch(() => {
-        // best-effort background refresh
+      return allSnapshot;
+    })().catch(() => {
+      // best-effort background refresh
+      return null;
+    });
+
+    this.refreshAllPromise = refreshPromise
+      .then((snapshot) => {
+        // Canonical refresh completion path for downstream best-effort hooks (e.g. telemetry send).
+        // Hook execution is intentionally fire-and-forget so refresh callers are never blocked.
+        this.notifyRefreshAllCompleted(snapshot);
+        return snapshot;
       })
       .finally(() => {
         this.refreshAllPromise = null;
       });
 
     return this.refreshAllPromise;
+  }
+
+  private notifyRefreshAllCompleted(snapshot: StatsSnapshot | null): void {
+    if (!this.onRefreshAllCompleted) {
+      return;
+    }
+
+    void Promise.resolve(this.onRefreshAllCompleted(snapshot)).catch(() => {
+      // best-effort refresh completion hook
+    });
   }
 
   private refreshRangeInBackground(range: StatsRange, timezone: string): void {

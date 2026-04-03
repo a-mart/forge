@@ -57,11 +57,15 @@ export function emptyFeatureAdoption(): FeatureAdoptionData {
 
 export async function assembleSkeletonPayload(
   installId: string,
+  reportId: string,
+  snapshotComputedAt: string,
   config: SwarmConfig,
 ): Promise<TelemetryPayload> {
   return {
     install_id: installId,
+    report_id: reportId,
     schema_version: SCHEMA_VERSION,
+    snapshot_computed_at: snapshotComputedAt,
 
     app_version: '0.0.0',
     platform: process.platform,
@@ -114,6 +118,7 @@ export async function assembleSkeletonPayload(
 
 export function assembleFullPayload(
   installId: string,
+  reportId: string,
   stats: StatsSnapshot,
   features: FeatureAdoptionData,
   providersUsed: string[],
@@ -125,7 +130,9 @@ export function assembleFullPayload(
 
   return {
     install_id: installId,
+    report_id: reportId,
     schema_version: SCHEMA_VERSION,
+    snapshot_computed_at: stats.computedAt,
 
     app_version: stats.system.serverVersion,
     platform: stats.system.platform,

@@ -162,17 +162,23 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
   try {
     await swarmManager.boot();
 
-    const statsService = new StatsService(swarmManager);
-    const telemetryService = new TelemetryService({
+    let telemetryService: TelemetryService | null = null;
+    const statsService = new StatsService(swarmManager, {
+      onRefreshAllCompleted: (allStats) => {
+        void telemetryService?.sendOnStatsRefresh(allStats);
+      },
+    });
+    telemetryService = new TelemetryService({
       dataDir: config.paths.dataDir,
       debug: config.debug,
-      assemblePayload: async (installId) => {
-        const stats = await statsService.getSnapshot("all");
+      assemblePayload: async (installId, context) => {
+        const stats = context.stats ?? (await statsService.getSnapshot("all"));
         const profileIds = swarmManager.listProfiles().map((profile) => profile.profileId);
         const features = await collectFeatureAdoption(config.paths.dataDir, profileIds, config);
         const authMethods = await extractAuthMethodsConfigured(config);
         return assembleFullPayload(
           installId,
+          context.reportId,
           stats,
           features,
           extractProvidersUsed(stats),

@@ -39,6 +39,7 @@ import { createHealthRoutes } from "./routes/health-routes.js";
 import type { HttpRoute } from "./routes/http-route.js";
 import { createIntegrationRoutes } from "./routes/integration-routes.js";
 import { createMobileRoutes } from "./routes/mobile-routes.js";
+import { createMermaidPreviewRoutes } from "./routes/mermaid-preview-routes.js";
 import { createModelConfigRoutes } from "./routes/model-config-routes.js";
 import { createPlaywrightLiveRoutes } from "./routes/playwright-live-routes.js";
 import { createPlaywrightRoutes } from "./routes/playwright-routes.js";
@@ -328,8 +329,12 @@ export class SwarmWebSocketServer {
     wsHandlerRef = this.wsHandler;
 
     this.settingsRoutes = createSettingsRoutes({ swarmManager: this.swarmManager });
-    this.statsService = options.statsService ?? new StatsService(this.swarmManager);
     this.telemetryService = options.telemetryService ?? null;
+    this.statsService = options.statsService ?? new StatsService(this.swarmManager, {
+      onRefreshAllCompleted: (allStats) => {
+        void this.telemetryService?.sendOnStatsRefresh(allStats);
+      },
+    });
     this.httpRoutes = [
       ...createHealthRoutes({
         resolveControlPidFile: () => this.controlPidFile,
@@ -348,7 +353,9 @@ export class SwarmWebSocketServer {
         settingsService: this.cortexAutoReviewSettingsService,
       }),
       ...createTranscriptionRoutes({ swarmManager: this.swarmManager }),
-      ...createStatsRoutes({ statsService: this.statsService }),
+      ...createStatsRoutes({
+        statsService: this.statsService,
+      }),
       ...(this.telemetryService ? createTelemetryRoutes({ telemetryService: this.telemetryService }) : []),
       ...createSchedulerRoutes({ swarmManager: this.swarmManager }),
       ...createSlashCommandRoutes({ swarmManager: this.swarmManager }),
@@ -374,6 +381,7 @@ export class SwarmWebSocketServer {
       ...createPlaywrightLiveRoutes({
         livePreviewService: this.playwrightLivePreviewService,
       }),
+      ...createMermaidPreviewRoutes(),
       ...createIntegrationRoutes({
         swarmManager: this.swarmManager,
         integrationRegistry: this.integrationRegistry
@@ -456,9 +464,15 @@ export class SwarmWebSocketServer {
     this.terminalService?.on("terminal_closed", this.onTerminalClosed);
     await this.mobilePushService.start();
 
-    void this.statsService.refreshAllRangesInBackground();
+    const refreshStatsInBackground = () => {
+      void this.statsService.refreshAllRangesInBackground().catch(() => false);
+    };
+
+    // Backstop behavior: keep an automatic refresh cadence (every cache TTL) so telemetry still
+    // gets refresh-completion triggers even when nobody calls /api/stats/refresh manually.
+    refreshStatsInBackground();
     this.statsRefreshInterval = setInterval(() => {
-      void this.statsService.refreshAllRangesInBackground();
+      refreshStatsInBackground();
     }, STATS_CACHE_TTL_MS);
     this.statsRefreshInterval.unref?.();
 

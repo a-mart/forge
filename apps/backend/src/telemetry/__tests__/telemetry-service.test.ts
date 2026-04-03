@@ -2,8 +2,8 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import type { TelemetryPayload } from '@forge/protocol'
-import { afterEach, describe, expect, it } from 'vitest'
+import type { StatsSnapshot, TelemetryPayload } from '@forge/protocol'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { getTelemetryConfigPath } from '../../swarm/data-paths.js'
 import { TelemetryService } from '../telemetry-service.js'
 import { createTelemetryRoutes } from '../../ws/routes/telemetry-routes.js'
@@ -11,12 +11,18 @@ import { createTelemetryRoutes } from '../../ws/routes/telemetry-routes.js'
 interface Deferred<T> {
   promise: Promise<T>
   resolve: (value?: T | PromiseLike<T>) => void
-  reject: (reason?: unknown) => void
 }
 
 interface TestServer {
   baseUrl: string
   close: () => Promise<void>
+}
+
+interface TelemetryConfigFile {
+  enabled: boolean
+  installId: string
+  lastSuccessfulSendAt: string | null
+  lastFailedAttemptAt: string | null
 }
 
 const activeDataRoots: string[] = []
@@ -25,12 +31,13 @@ const activeServers: TestServer[] = []
 afterEach(async () => {
   await Promise.all(activeServers.splice(0).map((server) => server.close()))
   await Promise.all(activeDataRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
+  vi.useRealTimers()
   delete process.env.FORGE_TELEMETRY
   delete process.env.MIDDLEMAN_TELEMETRY
 })
 
 describe('TelemetryService', () => {
-  it('initializes enabled telemetry on first run and persists telemetry.json', async () => {
+  it('initializes enabled telemetry on first run with split success/failure timestamps', async () => {
     const dataDir = await createDataDir('telemetry-first-run-')
     const service = createService({ dataDir })
 
@@ -43,12 +50,14 @@ describe('TelemetryService', () => {
     expect(settings.envOverride).toBeNull()
     expect(settings.lastSentAt).toBeNull()
     expect(settings.installId).toMatch(UUID_RE)
+
     expect(config.enabled).toBe(true)
     expect(config.installId).toBe(settings.installId)
-    expect(config.lastSentAt).toBeNull()
+    expect(config.lastSuccessfulSendAt).toBeNull()
+    expect(config.lastFailedAttemptAt).toBeNull()
   })
 
-  it('serializes send and config updates so enabled=false is not overwritten by lastSentAt writes', async () => {
+  it('serializes stats-refresh send and config updates so enabled=false is not lost', async () => {
     const dataDir = await createDataDir('telemetry-serialize-')
     const sendStarted = createDeferred<void>()
     const releaseSend = createDeferred<void>()
@@ -63,7 +72,7 @@ describe('TelemetryService', () => {
     })
 
     await service.readSettings()
-    const sendPromise = service.sendIfDue()
+    const sendPromise = service.sendOnStatsRefresh(createStatsSnapshot())
     await sendStarted.promise
 
     let updateResolved = false
@@ -76,67 +85,105 @@ describe('TelemetryService', () => {
     expect(updateResolved).toBe(false)
 
     releaseSend.resolve()
-    await sendPromise
+    expect(await sendPromise).toBe(true)
     const updated = await updatePromise
     const config = await readConfig(dataDir)
 
     expect(updated.enabled).toBe(false)
     expect(config.enabled).toBe(false)
-    expect(config.lastSentAt).toMatch(ISO_TIMESTAMP_RE)
+    expect(config.lastSuccessfulSendAt).toMatch(ISO_TIMESTAMP_RE)
+    expect(config.lastFailedAttemptAt).toBeNull()
   })
 
-  it('forceSend shares the serialized send lock with sendIfDue', async () => {
-    const dataDir = await createDataDir('telemetry-force-send-')
-    const firstStarted = createDeferred<void>()
-    const secondStarted = createDeferred<void>()
-    const releaseFirst = createDeferred<void>()
-    const releaseSecond = createDeferred<void>()
-    let sendCount = 0
-    let activeSends = 0
-    let maxActiveSends = 0
-
+  it('coalesces concurrent stats refresh sends with queueing + persisted 2-hour success cap', async () => {
+    const dataDir = await createDataDir('telemetry-concurrent-refresh-')
+    let senderCalls = 0
     const service = createService({
       dataDir,
       sendPayload: async () => {
-        sendCount += 1
-        activeSends += 1
-        maxActiveSends = Math.max(maxActiveSends, activeSends)
-
-        if (sendCount === 1) {
-          firstStarted.resolve()
-          await releaseFirst.promise
-        } else {
-          secondStarted.resolve()
-          await releaseSecond.promise
-        }
-
-        activeSends -= 1
+        senderCalls += 1
         return true
       },
     })
 
-    await service.readSettings()
-    const scheduledSend = service.sendIfDue()
-    await firstStarted.promise
-
-    const forcedSend = service.forceSend()
-    await Promise.resolve()
-    expect(sendCount).toBe(1)
-
-    releaseFirst.resolve()
-    await secondStarted.promise
-    expect(maxActiveSends).toBe(1)
-
-    releaseSecond.resolve()
-    await Promise.all([scheduledSend, forcedSend])
+    const stats = createStatsSnapshot()
+    const [first, second] = await Promise.all([
+      service.sendOnStatsRefresh(stats),
+      service.sendOnStatsRefresh(stats),
+    ])
 
     const config = await readConfig(dataDir)
-    expect(sendCount).toBe(2)
-    expect(config.lastSentAt).toMatch(ISO_TIMESTAMP_RE)
+    expect(first).toBe(true)
+    expect(second).toBe(false)
+    expect(senderCalls).toBe(1)
+    expect(config.lastSuccessfulSendAt).toMatch(ISO_TIMESTAMP_RE)
+    expect(config.lastFailedAttemptAt).toBeNull()
   })
 
-  it('sendIfDue works without calling start()', async () => {
-    const dataDir = await createDataDir('telemetry-direct-send-')
+  it('enforces the 2-hour success cap across service restarts', async () => {
+    const dataDir = await createDataDir('telemetry-restart-success-cap-')
+    let senderCalls = 0
+    const firstService = createService({
+      dataDir,
+      sendPayload: async () => {
+        senderCalls += 1
+        return true
+      },
+    })
+
+    expect(await firstService.sendOnStatsRefresh(createStatsSnapshot())).toBe(true)
+
+    const restartedService = createService({
+      dataDir,
+      sendPayload: async () => {
+        senderCalls += 1
+        return true
+      },
+    })
+
+    expect(await restartedService.sendOnStatsRefresh(createStatsSnapshot())).toBe(false)
+
+    const config = await readConfig(dataDir)
+    expect(senderCalls).toBe(1)
+    expect(config.lastSuccessfulSendAt).toMatch(ISO_TIMESTAMP_RE)
+    expect(config.lastFailedAttemptAt).toBeNull()
+  })
+
+  it('uses failure backoff separately from success cap and clears failure state after a later success', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-04-03T00:00:00.000Z'))
+
+    const dataDir = await createDataDir('telemetry-failure-backoff-')
+    let senderCalls = 0
+    const service = createService({
+      dataDir,
+      sendPayload: async () => {
+        senderCalls += 1
+        return senderCalls > 1
+      },
+    })
+
+    expect(await service.sendOnStatsRefresh(createStatsSnapshot())).toBe(false)
+    expect(senderCalls).toBe(1)
+
+    expect(await service.sendOnStatsRefresh(createStatsSnapshot())).toBe(false)
+    expect(senderCalls).toBe(1)
+
+    vi.setSystemTime(new Date('2026-04-03T00:09:59.000Z'))
+    expect(await service.sendOnStatsRefresh(createStatsSnapshot())).toBe(false)
+    expect(senderCalls).toBe(1)
+
+    vi.setSystemTime(new Date('2026-04-03T00:10:01.000Z'))
+    expect(await service.sendOnStatsRefresh(createStatsSnapshot())).toBe(true)
+    expect(senderCalls).toBe(2)
+
+    const config = await readConfig(dataDir)
+    expect(config.lastSuccessfulSendAt).toBe('2026-04-03T00:10:01.000Z')
+    expect(config.lastFailedAttemptAt).toBeNull()
+  })
+
+  it('skips stats-refresh telemetry when no all-range stats snapshot is available', async () => {
+    const dataDir = await createDataDir('telemetry-missing-stats-')
     let assemblerCalls = 0
     let senderCalls = 0
     const service = createService({
@@ -151,12 +198,9 @@ describe('TelemetryService', () => {
       },
     })
 
-    await service.sendIfDue()
-    const config = await readConfig(dataDir)
-
-    expect(assemblerCalls).toBe(1)
-    expect(senderCalls).toBe(1)
-    expect(config.lastSentAt).toMatch(ISO_TIMESTAMP_RE)
+    expect(await service.sendOnStatsRefresh(null)).toBe(false)
+    expect(assemblerCalls).toBe(0)
+    expect(senderCalls).toBe(0)
   })
 
   it('skips all telemetry work when disabled by persisted config', async () => {
@@ -176,13 +220,14 @@ describe('TelemetryService', () => {
     })
 
     await service.updateConfig({ enabled: false })
-    await service.sendIfDue()
+    await service.sendOnStatsRefresh(createStatsSnapshot())
 
     const config = await readConfig(dataDir)
     expect(assemblerCalls).toBe(0)
     expect(senderCalls).toBe(0)
     expect(config.enabled).toBe(false)
-    expect(config.lastSentAt).toBeNull()
+    expect(config.lastSuccessfulSendAt).toBeNull()
+    expect(config.lastFailedAttemptAt).toBeNull()
   })
 
   it('skips file reads and sends when disabled by env override', async () => {
@@ -203,7 +248,7 @@ describe('TelemetryService', () => {
       },
     })
 
-    await service.sendIfDue()
+    await service.sendOnStatsRefresh(createStatsSnapshot())
 
     expect(assemblerCalls).toBe(0)
     expect(senderCalls).toBe(0)
@@ -224,12 +269,41 @@ describe('TelemetryService', () => {
     await service.updateConfig({ enabled: false })
     process.env.FORGE_TELEMETRY = 'true'
 
-    await service.sendIfDue()
+    await service.sendOnStatsRefresh(createStatsSnapshot())
 
     const config = await readConfig(dataDir)
     expect(senderCalls).toBe(1)
     expect(config.enabled).toBe(false)
-    expect(config.lastSentAt).toMatch(ISO_TIMESTAMP_RE)
+    expect(config.lastSuccessfulSendAt).toMatch(ISO_TIMESTAMP_RE)
+    expect(config.lastFailedAttemptAt).toBeNull()
+  })
+
+  it('migrates legacy telemetry timestamps into split success/failure fields', async () => {
+    const dataDir = await createDataDir('telemetry-legacy-migration-')
+    const configPath = getTelemetryConfigPath(dataDir)
+    await mkdir(dirname(configPath), { recursive: true })
+    await writeFile(
+      configPath,
+      JSON.stringify(
+        {
+          enabled: true,
+          installId: 'install-legacy',
+          lastSentAt: '2026-04-03T00:00:00.000Z',
+          lastAttemptedAt: '2026-04-03T00:15:00.000Z',
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    )
+
+    const service = createService({ dataDir })
+    const settings = await service.readSettings()
+    const config = await readConfig(dataDir)
+
+    expect(settings.installId).toBe('install-legacy')
+    expect(config.lastSuccessfulSendAt).toBe('2026-04-03T00:00:00.000Z')
+    expect(config.lastFailedAttemptAt).toBe('2026-04-03T00:15:00.000Z')
   })
 
   it('recovers from corrupt telemetry.json by rewriting defaults', async () => {
@@ -247,6 +321,8 @@ describe('TelemetryService', () => {
     expect(settings.lastSentAt).toBeNull()
     expect(config.enabled).toBe(true)
     expect(config.installId).toBe(settings.installId)
+    expect(config.lastSuccessfulSendAt).toBeNull()
+    expect(config.lastFailedAttemptAt).toBeNull()
   })
 })
 
@@ -291,21 +367,26 @@ async function createDataDir(prefix: string): Promise<string> {
 
 function createService(options: {
   dataDir: string
-  assemblePayload?: (installId: string) => Promise<TelemetryPayload>
+  assemblePayload?: (
+    installId: string,
+    context: { reportId: string; stats?: StatsSnapshot | null },
+  ) => Promise<TelemetryPayload>
   sendPayload?: (payload: TelemetryPayload) => Promise<boolean>
 }): TelemetryService {
   return new TelemetryService({
     dataDir: options.dataDir,
     debug: false,
-    assemblePayload: options.assemblePayload ?? (async (installId) => createPayload(installId)),
+    assemblePayload: options.assemblePayload ?? (async (installId, context) => createPayload(installId, context.reportId)),
     sendPayload: options.sendPayload,
   })
 }
 
-function createPayload(installId: string): TelemetryPayload {
+function createPayload(installId: string, reportId = 'report-1'): TelemetryPayload {
   return {
     install_id: installId,
+    report_id: reportId,
     schema_version: 1,
+    snapshot_computed_at: '2026-04-03T00:00:00.000Z',
     app_version: '0.0.0',
     platform: 'darwin',
     arch: 'arm64',
@@ -352,32 +433,82 @@ function createPayload(installId: string): TelemetryPayload {
   }
 }
 
+function createStatsSnapshot(): StatsSnapshot {
+  return {
+    computedAt: '2026-04-03T00:00:00.000Z',
+    uptimeMs: 1,
+    tokens: {
+      today: 0,
+      yesterday: 0,
+      todayDate: '2026-04-03',
+      todayInputTokens: 0,
+      todayOutputTokens: 0,
+      last7Days: 0,
+      last7DaysAvgPerDay: 0,
+      last30Days: 0,
+      allTime: 0,
+    },
+    cache: {
+      hitRate: 0,
+      hitRatePeriod: 'all time',
+      cachedTokensSaved: 0,
+    },
+    workers: {
+      totalWorkersRun: 0,
+      totalWorkersRunPeriod: 'all time',
+      averageTokensPerRun: 0,
+      averageRuntimeMs: 0,
+      currentlyActive: 0,
+    },
+    code: {
+      linesAdded: 0,
+      linesDeleted: 0,
+      commits: 0,
+      repos: 0,
+    },
+    sessions: {
+      totalSessions: 0,
+      activeSessions: 0,
+      totalMessagesSent: 0,
+      totalMessagesPeriod: 'all time',
+    },
+    activity: {
+      longestStreak: 0,
+      streakLabel: '0 days',
+      activeDays: 0,
+      activeDaysInRange: 0,
+      totalDaysInRange: 0,
+      peakDay: '',
+      peakDayTokens: 0,
+    },
+    models: [],
+    allProviders: [],
+    dailyUsage: [],
+    providers: {},
+    system: {
+      uptimeFormatted: '0s',
+      totalProfiles: 0,
+      serverVersion: '0.0.0',
+      nodeVersion: process.version,
+      platform: process.platform,
+      arch: process.arch,
+      isDesktop: false,
+      electronVersion: null,
+    },
+  }
+}
+
 function createDeferred<T>(): Deferred<T> {
   let resolve!: Deferred<T>['resolve']
-  let reject!: Deferred<T>['reject']
-  const promise = new Promise<T>((res, rej) => {
+  const promise = new Promise<T>((res) => {
     resolve = res
-    reject = rej
   })
-  return { promise, resolve, reject }
+  return { promise, resolve }
 }
 
-async function writeTelemetryConfig(
-  dataDir: string,
-  value: { enabled: boolean; installId: string; lastSentAt: string | null },
-): Promise<void> {
-  const configPath = getTelemetryConfigPath(dataDir)
-  await mkdir(dirname(configPath), { recursive: true })
-  await writeFile(configPath, JSON.stringify(value, null, 2), 'utf8')
-}
-
-async function readConfig(dataDir: string): Promise<{
-  enabled: boolean
-  installId: string
-  lastSentAt: string | null
-}> {
+async function readConfig(dataDir: string): Promise<TelemetryConfigFile> {
   const raw = await readFile(getTelemetryConfigPath(dataDir), 'utf8')
-  return JSON.parse(raw) as { enabled: boolean; installId: string; lastSentAt: string | null }
+  return JSON.parse(raw) as TelemetryConfigFile
 }
 
 async function createRouteServer(service: TelemetryService): Promise<TestServer> {

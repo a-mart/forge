@@ -124,6 +124,7 @@ describe('telemetry payload helpers', () => {
 
     const payload = assembleFullPayload(
       'install-123',
+      'report-123',
       stats,
       features,
       ['anthropic', 'openai-codex'],
@@ -132,7 +133,9 @@ describe('telemetry payload helpers', () => {
 
     expect(payload).toMatchObject({
       install_id: 'install-123',
+      report_id: 'report-123',
       schema_version: 1,
+      snapshot_computed_at: '2026-04-01T00:00:00.000Z',
       app_version: '0.9.0',
       platform: 'darwin',
       arch: 'arm64',
@@ -239,6 +242,7 @@ describe('telemetry payload helpers', () => {
 
     const payload = assembleFullPayload(
       'install-123',
+      'report-456',
       stats,
       emptyFeatureAdoption(),
       ['anthropic'],

@@ -71,6 +71,7 @@ export function createStatsRoutes(options: { statsService: StatsService }): Http
         try {
           const stats = await statsService.getSnapshot(range, { forceRefresh: true, timezone });
           sendJson(response, 200, stats as unknown as Record<string, unknown>);
+          void statsService.refreshAllRangesInBackground().catch(() => false);
         } catch (error) {
           const message = error instanceof Error ? error.message : "Internal server error";
           sendJson(response, 500, { error: message });

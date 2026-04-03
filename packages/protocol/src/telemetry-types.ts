@@ -3,8 +3,10 @@ export interface PersistedTelemetryConfig {
   enabled: boolean
   /** Random UUIDv4 install identifier. Generated on first run. */
   installId: string
-  /** ISO 8601 timestamp of last successful telemetry send, or null if never sent. */
-  lastSentAt: string | null
+  /** ISO 8601 timestamp of the last successful telemetry send, or null if never sent. */
+  lastSuccessfulSendAt: string | null
+  /** ISO 8601 timestamp of the last failed telemetry send attempt, or null if none. */
+  lastFailedAttemptAt: string | null
 }
 
 export type TelemetrySettingsSource = 'settings' | 'env'
@@ -26,7 +28,9 @@ export interface TelemetrySettingsResponse {
 
 export interface TelemetryPayload {
   install_id: string
+  report_id: string
   schema_version: number
+  snapshot_computed_at: string
 
   // System info
   app_version: string
