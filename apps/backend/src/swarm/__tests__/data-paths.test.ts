@@ -236,6 +236,10 @@ describe("data-paths", () => {
     expect(() => sanitizePathSegment("bad*name")).toThrow(/Invalid path segment/);
   });
 
+  it("getProjectAgentDir rejects traversal handles", () => {
+    expect(() => getProjectAgentDir(DATA_DIR, PROFILE_ID, "../escape")).toThrow(/Invalid path segment/);
+  });
+
   it("legacy compat helpers resolve flat paths", () => {
     expect(getLegacyMemoryDirPath(DATA_DIR)).toBe(join(DATA_DIR, "memory"));
     expect(getLegacyAgentMemoryPath(DATA_DIR, NON_ROOT_SESSION_ID)).toBe(

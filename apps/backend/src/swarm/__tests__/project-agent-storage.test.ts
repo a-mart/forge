@@ -130,6 +130,23 @@ describe("project-agent-storage", () => {
     await expect(readProjectAgentRecord(dataDir, "profile-a", "broken")).resolves.toBeNull();
   });
 
+  it("rejects persisted handles that attempt path traversal", async () => {
+    const dataDir = await createTempDataDir();
+    const configPath = getProjectAgentConfigPath(dataDir, "profile-a", "safe-dir");
+    await mkdir(getProjectAgentDir(dataDir, "profile-a", "safe-dir"), { recursive: true });
+    await writeFile(
+      configPath,
+      `${JSON.stringify(
+        makeConfig({ agentId: "agent-1", handle: "../escape", whenToUse: "Escape the sandbox" }),
+        null,
+        2
+      )}\n`,
+      "utf8"
+    );
+
+    await expect(readProjectAgentRecord(dataDir, "profile-a", "safe-dir")).resolves.toBeNull();
+  });
+
   it("scans multiple project agent records", async () => {
     const dataDir = await createTempDataDir();
 
@@ -254,6 +271,35 @@ describe("project-agent-storage", () => {
 
     expect(result.orphansRemoved).toEqual(["orphan"]);
     await expect(access(getProjectAgentDir(dataDir, "profile-a", "orphan"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("rebuilds handle maps after orphan cleanup so same-boot materialization succeeds", async () => {
+    const dataDir = await createTempDataDir();
+    await writeProjectAgentRecord(
+      dataDir,
+      "profile-a",
+      makeConfig({ agentId: "orphan-agent", handle: "docs", whenToUse: "Stale orphan" }),
+      "Old prompt"
+    );
+
+    const descriptor = makeDescriptor({
+      agentId: "agent-1",
+      projectAgent: {
+        handle: "docs",
+        whenToUse: "Maintain the docs",
+        systemPrompt: "Fresh prompt"
+      }
+    });
+
+    const result = await reconcileProjectAgentStorage(dataDir, "profile-a", new Map([[descriptor.agentId, descriptor]]));
+
+    expect(result.orphansRemoved).toEqual(["docs"]);
+    expect(result.materialized).toEqual(["agent-1"]);
+
+    const record = await readProjectAgentRecord(dataDir, "profile-a", "docs");
+    expect(record?.config.agentId).toBe("agent-1");
+    expect(record?.config.whenToUse).toBe("Maintain the docs");
+    expect(record?.systemPrompt).toBe("Fresh prompt");
   });
 
   it("reconciles rule 4 by keeping the newest duplicate directory and deleting older ones", async () => {

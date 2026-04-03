@@ -44,7 +44,8 @@ import {
   getSessionMetaPath,
   getWorkerSessionFilePath,
   getWorkersDir,
-  resolveMemoryFilePath
+  resolveMemoryFilePath,
+  sanitizePathSegment as sanitizePersistedPathSegment
 } from "./data-paths.js";
 import {
   clearAllPins as clearAllSessionPins,
@@ -2433,6 +2434,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     const profileId = descriptor.profileId;
     const previousProjectAgent = descriptor.projectAgent;
+    const nextHandle = projectAgent?.handle !== undefined ? normalizeProjectAgentHandle(projectAgent.handle) : undefined;
+    if (previousProjectAgent && nextHandle && nextHandle !== previousProjectAgent.handle) {
+      throw new Error("Cannot change project agent handle after promotion. Demote and re-promote to change the handle.");
+    }
+
     const nextProjectAgent = projectAgent
       ? this.buildProjectAgentInfoForSession(
           descriptor,
@@ -2488,8 +2494,15 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     descriptor.projectAgent = nextProjectAgent ?? undefined;
     this.descriptors.set(agentId, descriptor);
 
-    await this.saveStore();
-    await this.captureSessionRuntimePromptMeta(descriptor);
+    try {
+      await this.saveStore();
+      await this.captureSessionRuntimePromptMeta(descriptor);
+    } catch (error) {
+      console.warn(
+        `[swarm] project-agent-storage:post_commit_sync_failed agentId=${agentId} profile=${profileId} error=${errorToMessage(error)}`
+      );
+    }
+
     this.emitAgentsSnapshot();
     this.emitSessionProjectAgentUpdated(descriptor.agentId, profileId, nextProjectAgent);
     await this.notifyProjectAgentsChanged(profileId);
@@ -10207,6 +10220,7 @@ function validateAgentDescriptor(value: unknown): AgentDescriptor | string {
     return "pinnedAt must be a string when provided";
   }
 
+  let normalizedProjectAgentHandle: string | undefined;
   if (value.projectAgent !== undefined) {
     if (!isRecord(value.projectAgent)) {
       return "projectAgent must be an object when provided";
@@ -10214,6 +10228,12 @@ function validateAgentDescriptor(value: unknown): AgentDescriptor | string {
 
     if (!isNonEmptyString(value.projectAgent.handle)) {
       return "projectAgent.handle must be a non-empty string";
+    }
+
+    try {
+      normalizedProjectAgentHandle = sanitizePersistedPathSegment(value.projectAgent.handle);
+    } catch {
+      return "projectAgent.handle must be a safe single path segment";
     }
 
     if (!isNonEmptyString(value.projectAgent.whenToUse)) {
@@ -10254,13 +10274,22 @@ function validateAgentDescriptor(value: unknown): AgentDescriptor | string {
   }
 
   const descriptor = value as unknown as AgentDescriptor;
-  if (descriptor.status === normalizedStatus) {
+  const normalizedProjectAgent =
+    descriptor.projectAgent && normalizedProjectAgentHandle && descriptor.projectAgent.handle !== normalizedProjectAgentHandle
+      ? {
+          ...descriptor.projectAgent,
+          handle: normalizedProjectAgentHandle
+        }
+      : descriptor.projectAgent;
+
+  if (descriptor.status === normalizedStatus && normalizedProjectAgent === descriptor.projectAgent) {
     return descriptor;
   }
 
   return {
     ...descriptor,
-    status: normalizedStatus
+    status: normalizedStatus,
+    ...(normalizedProjectAgent !== descriptor.projectAgent ? { projectAgent: normalizedProjectAgent } : {})
   };
 }
 

@@ -1,9 +1,14 @@
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { getScheduleFilePath } from "../../scheduler/schedule-storage.js";
-import { getProfileMemoryPath, getProjectAgentDir, getProjectAgentPromptPath } from "../data-paths.js";
+import {
+  getProfileMemoryPath,
+  getProjectAgentDir,
+  getProjectAgentPromptPath,
+  getProjectAgentReferenceDir
+} from "../data-paths.js";
 import { readProjectAgentRecord } from "../project-agent-storage.js";
 import { SwarmManager } from "../swarm-manager.js";
 import type { RuntimeUserMessage, SwarmAgentRuntime } from "../runtime-types.js";
@@ -75,6 +80,7 @@ class TestSwarmManager extends SwarmManager {
 const tempRoots: string[] = [];
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -220,8 +226,44 @@ describe("SwarmManager project-agent regressions", () => {
     expect(state.descriptors.get(target.agentId)?.projectAgent?.systemPrompt).toBe("You own release-note drafting.");
   });
 
-  it("renames the on-disk project-agent record when the handle changes", async () => {
+  it("keeps the project-agent mutation applied when saveStore fails after the on-disk write", async () => {
     const config = await makeTempConfig(8899);
+    const manager = new TestSwarmManager(config);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const rootManager = await bootWithDefaultManager(manager, config);
+    const target = await manager.createManager(rootManager.agentId, {
+      name: "docs",
+      cwd: config.defaultCwd
+    });
+
+    vi.spyOn(manager as unknown as { saveStore: () => Promise<void> }, "saveStore").mockRejectedValueOnce(new Error("save boom"));
+
+    const result = await manager.setSessionProjectAgent(target.agentId, {
+      handle: "docs",
+      whenToUse: "Maintain docs",
+      systemPrompt: "Document the system."
+    });
+
+    expect(result.projectAgent).toEqual({
+      handle: "docs",
+      whenToUse: "Maintain docs"
+    });
+    expect(manager.getAgent(target.agentId)?.projectAgent).toEqual({
+      handle: "docs",
+      whenToUse: "Maintain docs"
+    });
+
+    const record = await readProjectAgentRecord(config.paths.dataDir, target.profileId!, "docs");
+    expect(record?.config.agentId).toBe(target.agentId);
+    expect(record?.systemPrompt).toBe("Document the system.");
+
+    const store = JSON.parse(await readFile(config.paths.agentsStoreFile, "utf8")) as { agents: AgentDescriptor[] };
+    expect(store.agents.find((agent) => agent.agentId === target.agentId)?.projectAgent).toBeUndefined();
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("project-agent-storage:post_commit_sync_failed"));
+  });
+
+  it("rejects changing a project-agent handle after promotion", async () => {
+    const config = await makeTempConfig(8900);
     const manager = new TestSwarmManager(config);
     const rootManager = await bootWithDefaultManager(manager, config);
     const target = await manager.createManager(rootManager.agentId, {
@@ -234,27 +276,30 @@ describe("SwarmManager project-agent regressions", () => {
       whenToUse: "Maintain docs",
       systemPrompt: "Document the system."
     });
-    await manager.setSessionProjectAgent(target.agentId, {
-      handle: "documentation",
-      whenToUse: "Maintain docs",
-      systemPrompt: "Document the system better."
-    });
 
-    await expect(access(getProjectAgentDir(config.paths.dataDir, target.profileId!, "docs"))).rejects.toMatchObject({
+    const referenceDir = getProjectAgentReferenceDir(config.paths.dataDir, target.profileId!, "docs");
+    const referencePath = join(referenceDir, "notes.md");
+    await mkdir(referenceDir, { recursive: true });
+    await writeFile(referencePath, "reference notes", "utf8");
+
+    await expect(
+      manager.setSessionProjectAgent(target.agentId, {
+        handle: "documentation",
+        whenToUse: "Maintain docs",
+        systemPrompt: "Document the system better."
+      })
+    ).rejects.toThrow("Cannot change project agent handle after promotion. Demote and re-promote to change the handle.");
+
+    await expect(access(getProjectAgentDir(config.paths.dataDir, target.profileId!, "docs"))).resolves.toBeUndefined();
+    await expect(access(getProjectAgentDir(config.paths.dataDir, target.profileId!, "documentation"))).rejects.toMatchObject({
       code: "ENOENT"
     });
-    await expect(
-      readFile(getProjectAgentPromptPath(config.paths.dataDir, target.profileId!, "documentation"), "utf8")
-    ).resolves.toBe("Document the system better.");
-
-    const record = await readProjectAgentRecord(config.paths.dataDir, target.profileId!, "documentation");
-    expect(record?.config.handle).toBe("documentation");
-    expect(record?.systemPrompt).toBe("Document the system better.");
-    expect(manager.getAgent(target.agentId)?.projectAgent?.handle).toBe("documentation");
+    await expect(readFile(referencePath, "utf8")).resolves.toBe("reference notes");
+    expect(manager.getAgent(target.agentId)?.projectAgent?.handle).toBe("docs");
   });
 
   it("treats an empty prompt.md as an intentionally blank override instead of falling back to descriptor cache", async () => {
-    const config = await makeTempConfig(8900);
+    const config = await makeTempConfig(8901);
     const manager = new TestSwarmManager(config);
     const rootManager = await bootWithDefaultManager(manager, config);
     const target = await manager.createManager(rootManager.agentId, {

@@ -151,7 +151,7 @@ export function getProjectAgentsDir(dataDir: string, profileId: string): string 
 }
 
 export function getProjectAgentDir(dataDir: string, profileId: string, handle: string): string {
-  return join(getProjectAgentsDir(dataDir, profileId), handle);
+  return join(getProjectAgentsDir(dataDir, profileId), sanitizePathSegment(handle));
 }
 
 export function getProjectAgentConfigPath(dataDir: string, profileId: string, handle: string): string {

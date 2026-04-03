@@ -5,7 +5,8 @@ import {
   getProjectAgentConfigPath,
   getProjectAgentDir,
   getProjectAgentPromptPath,
-  getProjectAgentsDir
+  getProjectAgentsDir,
+  sanitizePathSegment
 } from "./data-paths.js";
 import type { AgentDescriptor } from "./types.js";
 
@@ -181,9 +182,8 @@ export async function reconcileProjectAgentStorage(
   const descriptorsByAgentId = new Map(profileDescriptors.map((descriptor) => [descriptor.agentId, descriptor]));
 
   const scannedRecords = await scanProjectAgentRecords(dataDir, profileId);
-  const dedupedRecords = await resolveDuplicateRecords(dataDir, profileId, scannedRecords);
-  const recordsByAgentId = new Map(dedupedRecords.map((record) => [record.config.agentId, record]));
-  const recordsByHandle = new Map(dedupedRecords.map((record) => [record.config.handle, record]));
+  const dedupedRecords = await resolveDuplicateRecords(profileId, scannedRecords);
+  const survivingRecords: ProjectAgentOnDiskRecord[] = [];
 
   for (const record of dedupedRecords) {
     const descriptor = descriptorsByAgentId.get(record.config.agentId);
@@ -191,15 +191,20 @@ export async function reconcileProjectAgentStorage(
       console.info(
         `[swarm] project-agent-storage:remove_orphan profile=${profileId} agentId=${record.config.agentId} handle=${record.config.handle}`
       );
-      await deleteProjectAgentRecord(dataDir, profileId, record.config.handle);
+      await rm(record.dirPath, { recursive: true, force: true });
       result.orphansRemoved.push(record.config.handle);
       continue;
     }
+
+    survivingRecords.push(record);
 
     if (hydrateDescriptorFromRecord(descriptor, record)) {
       result.hydrated.push(descriptor.agentId);
     }
   }
+
+  const recordsByAgentId = new Map(survivingRecords.map((record) => [record.config.agentId, record]));
+  const recordsByHandle = new Map(survivingRecords.map((record) => [record.config.handle, record]));
 
   for (const descriptor of profileDescriptors) {
     if (!descriptor.projectAgent) {
@@ -263,6 +268,13 @@ function coercePersistedProjectAgentConfig(value: unknown): PersistedProjectAgen
     return null;
   }
 
+  let normalizedHandle: string;
+  try {
+    normalizedHandle = sanitizePathSegment(value.handle);
+  } catch {
+    return null;
+  }
+
   if (!isNonEmptyString(value.promotedAt) || !isNonEmptyString(value.updatedAt)) {
     return null;
   }
@@ -274,7 +286,7 @@ function coercePersistedProjectAgentConfig(value: unknown): PersistedProjectAgen
   return {
     version: 1,
     agentId: value.agentId,
-    handle: value.handle,
+    handle: normalizedHandle,
     whenToUse: value.whenToUse,
     ...(typeof value.creatorSessionId === "string" ? { creatorSessionId: value.creatorSessionId } : {}),
     promotedAt: value.promotedAt,
@@ -283,7 +295,6 @@ function coercePersistedProjectAgentConfig(value: unknown): PersistedProjectAgen
 }
 
 async function resolveDuplicateRecords(
-  dataDir: string,
   profileId: string,
   records: ProjectAgentOnDiskRecord[]
 ): Promise<ProjectAgentOnDiskRecord[]> {
@@ -312,7 +323,7 @@ async function resolveDuplicateRecords(
       console.info(
         `[swarm] project-agent-storage:remove_duplicate profile=${profileId} agentId=${duplicate.config.agentId} handle=${duplicate.config.handle} keptHandle=${winner.config.handle}`
       );
-      await deleteProjectAgentRecord(dataDir, profileId, duplicate.config.handle);
+      await rm(duplicate.dirPath, { recursive: true, force: true });
     }
   }
 
