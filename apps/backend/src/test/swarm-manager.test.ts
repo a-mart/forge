@@ -15,6 +15,7 @@ import {
   getProfileMemoryPath,
   getProfileMergeAuditLogPath,
   getProfileReferencePath,
+  getProjectAgentPromptPath,
   getRootSessionMemoryPath,
   getSessionDir,
   getSessionMemoryPath,
@@ -1187,7 +1188,13 @@ describe('SwarmManager', () => {
       systemPrompt: '  You are the release notes project agent.  ',
     })
 
-    expect(firstBoot.getAgent(created.sessionAgent.agentId)?.projectAgent).toEqual(expectedProjectAgent)
+    expect(firstBoot.getAgent(created.sessionAgent.agentId)?.projectAgent).toEqual({
+      handle: expectedProjectAgent.handle,
+      whenToUse: expectedProjectAgent.whenToUse,
+    })
+
+    const firstBootState = firstBoot as unknown as { descriptors: Map<string, AgentDescriptor> }
+    expect(firstBootState.descriptors.get(created.sessionAgent.agentId)?.projectAgent).toEqual(expectedProjectAgent)
 
     const store = JSON.parse(await readFile(config.paths.agentsStoreFile, 'utf8')) as { agents: AgentDescriptor[] }
     expect(store.agents.find((agent) => agent.agentId === created.sessionAgent.agentId)?.projectAgent).toEqual(expectedProjectAgent)
@@ -1195,7 +1202,12 @@ describe('SwarmManager', () => {
     const secondBoot = new ProjectAgentAwareSwarmManager(config)
     await bootWithDefaultManager(secondBoot, config)
 
-    expect(secondBoot.getAgent(created.sessionAgent.agentId)?.projectAgent).toEqual(expectedProjectAgent)
+    expect(secondBoot.getAgent(created.sessionAgent.agentId)?.projectAgent).toEqual({
+      handle: expectedProjectAgent.handle,
+      whenToUse: expectedProjectAgent.whenToUse,
+    })
+    const secondBootState = secondBoot as unknown as { descriptors: Map<string, AgentDescriptor> }
+    expect(secondBootState.descriptors.get(created.sessionAgent.agentId)?.projectAgent).toEqual(expectedProjectAgent)
   })
 
   it('recycles manager runtimes through project-agent directory refresh when a project-agent system prompt is saved', async () => {
@@ -1371,6 +1383,12 @@ describe('SwarmManager', () => {
     expect(manager.getAgent(result.agentId)?.projectAgent).toEqual({
       handle: 'release-notes',
       whenToUse: 'Draft release notes and changelog copy.',
+      creatorSessionId: creator.sessionAgent.agentId,
+    })
+    const managerState = manager as unknown as { descriptors: Map<string, AgentDescriptor> }
+    expect(managerState.descriptors.get(result.agentId)?.projectAgent).toEqual({
+      handle: 'release-notes',
+      whenToUse: 'Draft release notes and changelog copy.',
       systemPrompt: 'You are the release notes project agent.',
       creatorSessionId: creator.sessionAgent.agentId,
     })
@@ -1384,6 +1402,9 @@ describe('SwarmManager', () => {
       systemPrompt: 'You are the release notes project agent.',
       creatorSessionId: creator.sessionAgent.agentId,
     })
+    expect(await readFile(getProjectAgentPromptPath(config.paths.dataDir, 'manager', 'release-notes'), 'utf8')).toBe(
+      'You are the release notes project agent.',
+    )
   })
 
   it('createAndPromoteProjectAgent honors an explicit handle override', async () => {
@@ -1411,9 +1432,18 @@ describe('SwarmManager', () => {
     expect(manager.getAgent(result.agentId)?.projectAgent).toEqual({
       handle: 'docs',
       whenToUse: 'Owns docs updates.',
+      creatorSessionId: creator.sessionAgent.agentId,
+    })
+    const managerState = manager as unknown as { descriptors: Map<string, AgentDescriptor> }
+    expect(managerState.descriptors.get(result.agentId)?.projectAgent).toEqual({
+      handle: 'docs',
+      whenToUse: 'Owns docs updates.',
       systemPrompt: 'You are the documentation project agent.',
       creatorSessionId: creator.sessionAgent.agentId,
     })
+    expect(await readFile(getProjectAgentPromptPath(config.paths.dataDir, 'manager', 'docs'), 'utf8')).toBe(
+      'You are the documentation project agent.',
+    )
   })
 
   it('createAndPromoteProjectAgent rolls back descriptors when setup fails before runtime creation', async () => {
@@ -1621,7 +1651,7 @@ describe('SwarmManager', () => {
     const systemPromptSection = preview.sections.find((section) => section.label === 'System Prompt')
 
     expect(systemPromptSection).toMatchObject({
-      source: 'Project Agent system prompt',
+      source: getProjectAgentPromptPath(config.paths.dataDir, 'manager', 'manager'),
     })
     expect(systemPromptSection?.content).toContain('You are the release planning project agent.')
     expect(systemPromptSection?.content).not.toContain('You are the manager agent in a multi-agent swarm.')
@@ -1665,7 +1695,7 @@ describe('SwarmManager', () => {
     const systemPromptSection = preview.sections.find((section) => section.label === 'System Prompt')
 
     expect(systemPromptSection).toMatchObject({
-      source: 'Project Agent system prompt',
+      source: getProjectAgentPromptPath(config.paths.dataDir, 'manager', 'manager'),
     })
     expect(systemPromptSection?.content).toContain('You are the release planning project agent.')
   })
