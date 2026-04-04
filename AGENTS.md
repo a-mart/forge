@@ -21,7 +21,7 @@ The builtin manager archetype is intentionally concise and outcome-first in user
 
 - **Node.js 22+**
 - **pnpm 10.30+** — install with `npm install -g pnpm` (exact version pinned in `package.json` → `packageManager`)
-- An **OpenAI** or **Anthropic** account (OAuth or API key, configured through the UI after first launch)
+- An **OpenAI**, **Anthropic**, or **Claude SDK** account (OAuth or API key for OpenAI/Anthropic; Claude SDK uses Claude Code CLI OAuth and does not require an API key, configured through the UI after first launch)
 
 ## Getting Started
 
@@ -83,6 +83,7 @@ These are briefly described for orientation. Most have both backend and UI compo
 | **Cortex auto-review** | `swarm/cortex-auto-review-settings.ts`, `ws/routes/cortex-auto-review-routes.ts` | `components/settings/SettingsGeneral.tsx`, `components/settings/cortex-auto-review-api.ts` | Periodic automated reviews that run only when sessions have changed (deterministic pre-check prevents unnecessary LLM sessions) |
 | **Playwright dashboard** | `playwright/*` | `components/playwright/*` | Live browser preview and automation dashboard |
 | **Codex runtime** | `swarm/codex-agent-runtime.ts`, `swarm/codex-*.ts` | — | OpenAI Codex agent runtime integration |
+| **Claude SDK runtime** | `swarm/claude-*.ts` | Settings UI (model selectors) | Native Claude Agent SDK runtime with MCP tool bridge, OAuth auth via Claude Code CLI. Graceful fallback to Pi when SDK is unavailable. |
 | **Mobile push** | `mobile/*` | — | Expo push notification service for mobile companion app |
 | **Voice/transcription** | `ws/routes/transcription-routes.ts` | `lib/voice-transcription-client.ts` | Voice input and transcription |
 | **Feedback** | `swarm/feedback-service.ts` | `lib/feedback-client.ts` | User feedback collection |

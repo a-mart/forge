@@ -63,6 +63,8 @@ FORGE_PORT=47187
 
 API keys for LLM providers — **OpenAI**, **Anthropic**, and **xAI** — are configured through the dashboard UI under **Settings → Authentication**. They are stored locally in the data directory and never leave your machine.
 
+Claude SDK authentication is separate from API-key-based providers: it uses Claude Code CLI OAuth, with credentials stored in macOS Keychain on macOS and `~/.claude/.credentials.json` on Linux and Windows.
+
 Model availability and behavior are managed through **Settings → Models**, which provides visibility controls and context window overrides for all supported models. See [docs/MODEL_CATALOG.md](MODEL_CATALOG.md) for details on the model catalog system.
 
 ## Data Directory

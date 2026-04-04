@@ -32,9 +32,10 @@ You'll see a short welcome form from Cortex, Forge's learning system. It asks fo
 
 Before you can do anything, you need to connect at least one AI provider. Go to **Settings → Authentication**.
 
-Forge supports two providers:
+Forge supports three providers:
 
 - **Anthropic** — Claude models (Opus, Sonnet). Good for manager agents, frontend work, and general tasks.
+- **Claude SDK** — Native Claude Agent SDK access through Claude Code CLI OAuth. Use this when you want the SDK runtime instead of the Pi-proxied Anthropic path.
 - **OpenAI** — GPT and Codex models. Good for backend implementation, code review, and planning.
 
 For each provider, you can either:
@@ -45,7 +46,7 @@ For each provider, you can either:
 
 After adding credentials, you may need to restart the backend (`Ctrl+C` and re-run `pnpm prod:daemon`) for the changes to take effect. On macOS this usually isn't necessary, but on Windows the backend sometimes doesn't pick up auth changes without a restart.
 
-> **Tip:** You don't need both providers to get started. One is enough. But having both gives you access to multi-model routing (more on this in [Advanced Usage](#10-advanced-usage)).
+> **Tip:** You don't need all providers to get started. One is enough. But having multiple options gives you access to multi-model routing (more on this in [Advanced Usage](#10-advanced-usage)).
 
 ### First Impressions
 
@@ -666,7 +667,7 @@ Once you're comfortable with the basics:
 3. **Try forking** — Next time you finish a discovery conversation, fork it into parallel workstreams and dispatch different tasks.
 4. **Experiment with parallel execution** — Give your manager multiple tasks and watch it coordinate workers.
 5. **Adjust review frequency** — Check **Settings → General** to configure how often automatic Cortex reviews run or turn them off if you prefer manual control.
-6. **Explore multi-model routing** — If you have both OpenAI and Anthropic configured, teach your manager which models to use for which kinds of work.
+6. **Explore multi-model routing** — If you have OpenAI, Anthropic, or Claude SDK configured, teach your manager which providers and models to use for which kinds of work. `claude-sdk` is a separate provider option from `anthropic`, so specialists can be configured with either independently.
 7. **Try Pi extensions** — Drop a TypeScript file into `~/.forge/agent/extensions/` to add custom tools or safety guardrails. See the [Pi Extensions guide](PI_EXTENSIONS.md).
 
 > "Forge builds Forge. When I'm working on other projects, as soon as I run into something that's either a bug or a little feature I want, I just pop down, click the conversation with Forge, tell it, and then it chews on it, plans it, whatever."

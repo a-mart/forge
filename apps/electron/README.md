@@ -17,6 +17,7 @@ The Electron app is a thin wrapper around Forge's existing backend and UI:
 - **Backend runtime** — `.stage/backend/dist/index.mjs` bundled from `apps/backend/dist/index.js`, plus staged runtime dependencies under `.stage/backend/node_modules/`
 - **Renderer** — `.stage/ui/`, copied from `apps/ui/.output/public/`; `_shell.html` is promoted to `index.html` for packaged startup
 - **Forge resources** — `.stage/forge-resources/`, containing built-in skills, archetypes, operational prompts, specialists, static assets, and related runtime resources
+- **Claude SDK runtime assets** — staged when available for native Claude Agent SDK support; if they are not present in the packaged build, the desktop app falls back to the Pi-proxied Anthropic path
 
 At runtime the packaged app spawns the staged backend bundle from `backend/dist/index.mjs`, waits for backend readiness, then opens the renderer from the staged `ui/` directory.
 
