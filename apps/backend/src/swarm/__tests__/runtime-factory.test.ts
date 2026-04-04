@@ -73,6 +73,7 @@ vi.mock("@mariozechner/pi-coding-agent", () => ({
   },
 }));
 
+import { resetClaudeSdkLoaderForTests, setClaudeSdkImporterForTests } from "../claude-sdk-loader.js";
 import { savePins } from "../message-pins.js";
 import { RuntimeFactory } from "../runtime-factory.js";
 import type { AgentDescriptor, SwarmConfig } from "../types.js";
@@ -164,7 +165,12 @@ async function seedProjectionFile(rootDir: string): Promise<string> {
   return projectionPath;
 }
 
-function createFactory(rootDir: string): RuntimeFactory {
+function createFactory(
+  rootDir: string,
+  overrides: {
+    logDebug?: (message: string, details?: unknown) => void;
+  } = {},
+): RuntimeFactory {
   return new RuntimeFactory({
     host: {
       listAgents: () => [],
@@ -185,7 +191,7 @@ function createFactory(rootDir: string): RuntimeFactory {
     },
     config: createConfig(rootDir),
     now: () => "2026-01-01T00:00:00.000Z",
-    logDebug: () => {},
+    logDebug: overrides.logDebug ?? (() => {}),
     getPiModelsJsonPath: () => getPiModelsProjectionPath(join(rootDir, "data")),
     getMemoryRuntimeResources: async () => ({
       memoryContextFile: {
@@ -216,6 +222,7 @@ function buildExtensionFactories(factory: RuntimeFactory, descriptor: AgentDescr
 
 describe("RuntimeFactory", () => {
   beforeEach(() => {
+    resetClaudeSdkLoaderForTests();
     piAiMockState.getModel.mockReset();
     piAiMockState.getModels.mockClear();
     piCodingAgentMockState.createAgentSession.mockReset();
@@ -223,6 +230,32 @@ describe("RuntimeFactory", () => {
     piCodingAgentMockState.modelRegistryConstructorArgs.mockReset();
     piCodingAgentMockState.modelRegistryFind.mockReset();
     piCodingAgentMockState.modelRegistryGetAll.mockReset();
+  });
+
+  it("surfaces Claude SDK installation guidance when the native runtime is unavailable", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    await mkdir(rootDir, { recursive: true });
+
+    setClaudeSdkImporterForTests(
+      vi.fn().mockRejectedValue(Object.assign(new Error("missing"), { code: "ERR_MODULE_NOT_FOUND" }))
+    );
+
+    const factory = createFactory(rootDir);
+
+    await expect(
+      factory.createRuntimeForDescriptor(
+        createDescriptor(rootDir, {
+          model: {
+            provider: "claude-sdk",
+            modelId: "claude-opus-4-6",
+            thinkingLevel: "high",
+          },
+        }),
+        "system prompt"
+      )
+    ).rejects.toThrow(
+      'Install the Claude Agent SDK or switch this agent to the Pi-proxied anthropic/claude-opus-4-6 variant.'
+    );
   });
 
   it("throws when the requested Pi model is unavailable instead of falling back", async () => {

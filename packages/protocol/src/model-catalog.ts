@@ -50,6 +50,8 @@ export interface ForgeFamilyDefinition {
 }
 
 export interface ForgeModelDefinition {
+  /** Stable catalog key used for overrides/settings. Defaults to modelId when omitted. */
+  catalogId?: string
   modelId: string
   provider: string
   familyId: string
@@ -134,6 +136,14 @@ export const FORGE_MODEL_CATALOG = {
       projectionScope: 'catalog-only',
       requestBehaviorId: null,
     },
+    'claude-sdk': {
+      providerId: 'claude-sdk',
+      displayName: 'Claude SDK',
+      availabilityMode: 'managed-auth',
+      piProjectionMode: 'none',
+      projectionScope: 'catalog-only',
+      requestBehaviorId: null,
+    },
     xai: {
       providerId: 'xai',
       displayName: 'xAI',
@@ -195,6 +205,28 @@ export const FORGE_MODEL_CATALOG = {
       provider: 'anthropic',
       defaultModelId: 'claude-opus-4-6',
       defaultReasoningLevel: 'high',
+      visibleInCreateManager: true,
+      visibleInChangeManager: true,
+      visibleInSpawnPreset: true,
+      visibleInSpecialists: true,
+    },
+    'sdk-opus': {
+      familyId: 'sdk-opus',
+      displayName: 'Claude Opus 4.6 (SDK)',
+      provider: 'claude-sdk',
+      defaultModelId: 'claude-opus-4-6',
+      defaultReasoningLevel: 'high',
+      visibleInCreateManager: true,
+      visibleInChangeManager: true,
+      visibleInSpawnPreset: true,
+      visibleInSpecialists: true,
+    },
+    'sdk-sonnet': {
+      familyId: 'sdk-sonnet',
+      displayName: 'Claude Sonnet 4.5 (SDK)',
+      provider: 'claude-sdk',
+      defaultModelId: 'claude-sonnet-4-5-20250929',
+      defaultReasoningLevel: 'medium',
       visibleInCreateManager: true,
       visibleInChangeManager: true,
       visibleInSpawnPreset: true,
@@ -348,6 +380,62 @@ export const FORGE_MODEL_CATALOG = {
       intentionalDivergenceNotes: null,
     },
 
+    // ── Claude SDK models ────────────────────────────────
+    'claude-sdk/claude-opus-4-6': {
+      catalogId: 'claude-sdk/claude-opus-4-6',
+      modelId: 'claude-opus-4-6',
+      provider: 'claude-sdk',
+      familyId: 'sdk-opus',
+      displayName: 'Claude Opus 4.6 (SDK)',
+      isFamilyDefault: true,
+      supportsReasoning: true,
+      supportedReasoningLevels: ['low', 'medium', 'high'],
+      defaultReasoningLevel: 'high',
+      contextWindow: 1_000_000,
+      maxOutputTokens: 128_000,
+      inputModes: ['text', 'image'],
+      webSearchCapability: 'none',
+      enabledByDefault: true,
+      piUpstreamId: null,
+      intentionalDivergenceNotes: 'Synthetic native Claude Agent SDK runtime variant.',
+    },
+    'claude-sdk/claude-sonnet-4-5-20250929': {
+      catalogId: 'claude-sdk/claude-sonnet-4-5-20250929',
+      modelId: 'claude-sonnet-4-5-20250929',
+      provider: 'claude-sdk',
+      familyId: 'sdk-sonnet',
+      displayName: 'Claude Sonnet 4.5 (SDK)',
+      isFamilyDefault: false,
+      supportsReasoning: true,
+      supportedReasoningLevels: ['low', 'medium', 'high'],
+      defaultReasoningLevel: 'medium',
+      contextWindow: 200_000,
+      maxOutputTokens: 64_000,
+      inputModes: ['text', 'image'],
+      webSearchCapability: 'none',
+      enabledByDefault: true,
+      piUpstreamId: null,
+      intentionalDivergenceNotes: 'Synthetic native Claude Agent SDK runtime variant.',
+    },
+    'claude-sdk/claude-haiku-4-5-20251001': {
+      catalogId: 'claude-sdk/claude-haiku-4-5-20251001',
+      modelId: 'claude-haiku-4-5-20251001',
+      provider: 'claude-sdk',
+      familyId: 'sdk-opus',
+      displayName: 'Claude Haiku 4.5 (SDK)',
+      isFamilyDefault: false,
+      supportsReasoning: true,
+      supportedReasoningLevels: ['low', 'medium', 'high'],
+      defaultReasoningLevel: 'low',
+      contextWindow: 200_000,
+      maxOutputTokens: 64_000,
+      inputModes: ['text', 'image'],
+      webSearchCapability: 'none',
+      enabledByDefault: true,
+      piUpstreamId: null,
+      intentionalDivergenceNotes: 'Synthetic native Claude Agent SDK runtime variant.',
+    },
+
     // ── xAI models ────────────────────────────────
     'grok-4': {
       modelId: 'grok-4',
@@ -451,14 +539,34 @@ const CATALOG_MODELS = FORGE_MODEL_CATALOG.models as Record<string, ForgeModelDe
 /** All family IDs, derived from the catalog. Replaces the manual MANAGER_MODEL_PRESETS tuple. */
 export const CATALOG_FAMILY_IDS = Object.keys(CATALOG_FAMILIES) as readonly string[]
 
-/** Lookup a model by modelId. Returns undefined if not in catalog. */
-export function getCatalogModel(modelId: string): ForgeModelDefinition | undefined {
+/** Return the stable catalog key for a model definition. */
+export function getCatalogModelKey(model: ForgeModelDefinition): string {
+  return model.catalogId ?? model.modelId
+}
+
+/** Lookup a model by catalog key or by provider + modelId. Returns undefined if not in catalog. */
+export function getCatalogModel(modelId: string, provider?: string): ForgeModelDefinition | undefined {
   const trimmedModelId = modelId.trim()
   if (!trimmedModelId) {
     return undefined
   }
 
-  return CATALOG_MODELS[trimmedModelId] ?? CATALOG_MODELS[trimmedModelId.toLowerCase()]
+  const normalizedProvider = provider?.trim().toLowerCase()
+  const exactMatch = CATALOG_MODELS[trimmedModelId] ?? CATALOG_MODELS[trimmedModelId.toLowerCase()]
+  if (exactMatch && (!normalizedProvider || exactMatch.provider === normalizedProvider)) {
+    return exactMatch
+  }
+
+  const normalizedModelId = trimmedModelId.toLowerCase()
+  const matches = Object.values(CATALOG_MODELS).filter(
+    (model) => model.modelId.toLowerCase() === normalizedModelId,
+  )
+
+  if (normalizedProvider) {
+    return matches.find((model) => model.provider === normalizedProvider)
+  }
+
+  return exactMatch ?? matches[0]
 }
 
 /** Lookup a family by familyId. */
@@ -473,12 +581,23 @@ export function getCatalogProvider(providerId: string): ForgeProviderDefinition 
 
 /** Get all models belonging to a family. */
 export function getCatalogModelsByFamily(familyId: string): ForgeModelDefinition[] {
-  return Object.values(FORGE_MODEL_CATALOG.models).filter((model) => model.familyId === familyId)
+  const familyModels = Object.values(FORGE_MODEL_CATALOG.models).filter((model) => model.familyId === familyId)
+  if (familyModels.length > 0) {
+    return familyModels
+  }
+
+  const family = getCatalogFamily(familyId)
+  if (!family) {
+    return []
+  }
+
+  const fallbackDefaultModel = getCatalogModel(family.defaultModelId, family.provider)
+  return fallbackDefaultModel ? [fallbackDefaultModel] : []
 }
 
 /** Get the family a model belongs to. */
-export function getCatalogFamilyForModel(modelId: string): ForgeFamilyDefinition | undefined {
-  const model = getCatalogModel(modelId)
+export function getCatalogFamilyForModel(modelId: string, provider?: string): ForgeFamilyDefinition | undefined {
+  const model = getCatalogModel(modelId, provider)
   return model ? getCatalogFamily(model.familyId) : undefined
 }
 
@@ -496,10 +615,18 @@ export function inferCatalogProvider(modelId: string): string | null {
 export function inferCatalogFamily(provider: string, modelId: string): string | undefined {
   const normalizedProvider = provider.trim().toLowerCase()
   const normalizedModelId = modelId.trim().toLowerCase()
-  const model = getCatalogModel(normalizedModelId)
 
+  if (normalizedProvider === 'claude-sdk' && normalizedModelId === 'claude-sonnet-4-5-20250929') {
+    return 'sdk-sonnet'
+  }
+
+  const model = getCatalogModel(normalizedModelId, normalizedProvider)
   if (model && model.provider === normalizedProvider) {
     return model.familyId
+  }
+
+  if (normalizedProvider === 'claude-sdk' && normalizedModelId.startsWith('claude-')) {
+    return 'sdk-opus'
   }
 
   if (normalizedProvider === 'xai' && normalizedModelId.startsWith('grok-')) {

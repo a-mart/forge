@@ -1,5 +1,6 @@
 const CLAUDE_SDK_SPECIFIER = "@anthropic-ai/claude-agent-sdk";
 const MISSING_SDK_MESSAGE = 'Claude backend requires "@anthropic-ai/claude-agent-sdk" to be installed.';
+const UNAVAILABLE_SDK_PREFIX = "Claude Agent SDK is unavailable in this environment.";
 
 export interface ClaudeSdkMessage extends Record<string, unknown> {
   type: string;
@@ -57,6 +58,23 @@ export interface ClaudeSdkMcpHelpers {
   tool(name: string, description: string, shape: unknown, handler: (args: unknown) => Promise<unknown>): unknown;
 }
 
+export class ClaudeSdkUnavailableError extends Error {
+  readonly code?: string;
+
+  constructor(message: string, options?: { cause?: unknown; code?: string }) {
+    super(message);
+    this.name = "ClaudeSdkUnavailableError";
+    this.code = options?.code;
+    if (options && "cause" in options) {
+      (this as Error & { cause?: unknown }).cause = options.cause;
+    }
+  }
+}
+
+export function isClaudeSdkUnavailableError(error: unknown): error is ClaudeSdkUnavailableError {
+  return error instanceof ClaudeSdkUnavailableError;
+}
+
 type ClaudeSdkImporter = (specifier: string) => Promise<unknown>;
 
 const defaultImporter = new Function("specifier", "return import(specifier);") as ClaudeSdkImporter;
@@ -107,14 +125,38 @@ async function loadClaudeSdkExports(): Promise<Record<string, unknown>> {
       })
       .catch((error) => {
         cachedLoad = undefined;
-        if (isMissingClaudeSdk(error)) {
-          throw new Error(MISSING_SDK_MESSAGE);
+        const unavailableError = toClaudeSdkUnavailableError(error);
+        if (unavailableError) {
+          throw unavailableError;
         }
         throw error;
       });
   }
 
   return cachedLoad;
+}
+
+function toClaudeSdkUnavailableError(error: unknown): ClaudeSdkUnavailableError | undefined {
+  if (!(error instanceof Error)) {
+    return undefined;
+  }
+
+  const code = (error as NodeJS.ErrnoException).code;
+  if (isMissingClaudeSdk(error)) {
+    return new ClaudeSdkUnavailableError(MISSING_SDK_MESSAGE, {
+      cause: error,
+      code
+    });
+  }
+
+  if (isNativeLoadFailure(error)) {
+    return new ClaudeSdkUnavailableError(`${UNAVAILABLE_SDK_PREFIX} ${error.message}`, {
+      cause: error,
+      code
+    });
+  }
+
+  return undefined;
 }
 
 function isMissingClaudeSdk(error: unknown): boolean {
@@ -124,6 +166,21 @@ function isMissingClaudeSdk(error: unknown): boolean {
 
   const code = (error as NodeJS.ErrnoException).code;
   return code === "ERR_MODULE_NOT_FOUND" || code === "MODULE_NOT_FOUND";
+}
+
+function isNativeLoadFailure(error: Error): boolean {
+  const code = (error as NodeJS.ErrnoException).code;
+  if (code === "ERR_DLOPEN_FAILED") {
+    return true;
+  }
+
+  const message = error.message.toLowerCase();
+  return (
+    message.includes("dlopen") ||
+    message.includes("not a valid win32 application") ||
+    message.includes("compiled against a different node.js version") ||
+    message.includes("the specified module could not be found")
+  );
 }
 
 export function setClaudeSdkImporterForTests(importer: ClaudeSdkImporter): void {

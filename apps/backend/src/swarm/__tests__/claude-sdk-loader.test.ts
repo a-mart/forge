@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  ClaudeSdkUnavailableError,
+  isClaudeSdkUnavailableError,
   loadClaudeSdkMcpHelpers,
   loadClaudeSdkModule,
   resetClaudeSdkLoaderForTests,
@@ -27,9 +29,35 @@ describe("claude-sdk-loader", () => {
     const missing = Object.assign(new Error("not found"), { code: "ERR_MODULE_NOT_FOUND" });
     setClaudeSdkImporterForTests(vi.fn().mockRejectedValue(missing));
 
-    await expect(loadClaudeSdkModule()).rejects.toThrow(
-      'Claude backend requires "@anthropic-ai/claude-agent-sdk" to be installed.'
-    );
+    let thrown: unknown;
+    try {
+      await loadClaudeSdkModule();
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(ClaudeSdkUnavailableError);
+    expect(isClaudeSdkUnavailableError(thrown)).toBe(true);
+    expect((thrown as Error).message).toBe('Claude backend requires "@anthropic-ai/claude-agent-sdk" to be installed.');
+  });
+
+  it("classifies native-load failures as SDK unavailability", async () => {
+    const nativeFailure = Object.assign(new Error("dlopen(/tmp/audio-capture.node) failed"), {
+      code: "ERR_DLOPEN_FAILED"
+    });
+    setClaudeSdkImporterForTests(vi.fn().mockRejectedValue(nativeFailure));
+
+    let thrown: unknown;
+    try {
+      await loadClaudeSdkModule();
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(ClaudeSdkUnavailableError);
+    expect(isClaudeSdkUnavailableError(thrown)).toBe(true);
+    expect((thrown as Error).message).toContain("Claude Agent SDK is unavailable in this environment.");
+    expect((thrown as Error).message).toContain("dlopen(/tmp/audio-capture.node) failed");
   });
 
   it("rejects modules that do not expose query", async () => {

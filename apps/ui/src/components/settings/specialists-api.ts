@@ -10,8 +10,10 @@ export interface SaveSpecialistPayload {
   enabled: boolean
   whenToUse: string
   modelId: string
+  provider?: string
   reasoningLevel?: ManagerReasoningLevel
   fallbackModelId?: string
+  fallbackProvider?: string
   fallbackReasoningLevel?: ManagerReasoningLevel
   pinned?: boolean
   webSearch?: boolean

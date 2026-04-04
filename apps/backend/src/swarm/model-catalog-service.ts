@@ -7,7 +7,6 @@ import {
   getSpecialistFamilies,
   inferCatalogFamily,
   inferCatalogProvider,
-  isCatalogModelId,
   type ForgeModelCatalog,
   type ForgeModelDefinition,
   type ForgeProviderDefinition,
@@ -64,9 +63,9 @@ export class ModelCatalogService {
     return Object.values(this.openRouterModels).sort((left, right) => left.modelId.localeCompare(right.modelId));
   }
 
-  isKnownModelId(modelId: string): boolean {
+  isKnownModelId(modelId: string, provider?: string): boolean {
     const normalizedModelId = modelId.trim();
-    return isCatalogModelId(normalizedModelId) || normalizedModelId in this.openRouterModels;
+    return getCatalogModel(normalizedModelId, provider) !== undefined || normalizedModelId in this.openRouterModels;
   }
 
   inferProvider(modelId: string): string | null {
@@ -153,47 +152,47 @@ export class ModelCatalogService {
     );
   }
 
-  getContextWindow(modelId: string): number | undefined {
-    return this.getEffectiveContextWindow(modelId);
+  getContextWindow(modelId: string, provider?: string): number | undefined {
+    return this.getEffectiveContextWindow(modelId, provider);
   }
 
-  getEffectiveContextWindow(modelId: string): number | undefined {
+  getEffectiveContextWindow(modelId: string, provider?: string): number | undefined {
     const normalizedModelId = modelId.trim();
-    const model = getCatalogModel(normalizedModelId);
+    const model = getCatalogModel(normalizedModelId, provider);
     if (model) {
-      const cap = this.overrides[model.modelId]?.contextWindowCap;
+      const cap = this.overrides[getOverrideKey(model)]?.contextWindowCap;
       return cap !== undefined ? Math.min(model.contextWindow, cap) : model.contextWindow;
     }
 
     return this.openRouterModels[normalizedModelId]?.contextWindow;
   }
 
-  getModelDisplayName(modelId: string): string {
+  getModelDisplayName(modelId: string, provider?: string): string {
     const normalizedModelId = modelId.trim();
-    return getCatalogModel(normalizedModelId)?.displayName ?? this.openRouterModels[normalizedModelId]?.displayName ?? modelId;
+    return getCatalogModel(normalizedModelId, provider)?.displayName ?? this.openRouterModels[normalizedModelId]?.displayName ?? modelId;
   }
 
-  supportsNativeWebSearch(modelId: string): boolean {
-    return this.isModelEnabled(modelId) && getCatalogModel(modelId)?.webSearchCapability === "native";
+  supportsNativeWebSearch(modelId: string, provider?: string): boolean {
+    return this.isModelEnabled(modelId, provider) && getCatalogModel(modelId, provider)?.webSearchCapability === "native";
   }
 
-  isModelEnabled(modelId: string): boolean {
+  isModelEnabled(modelId: string, provider?: string): boolean {
     const normalizedModelId = modelId.trim();
-    const model = getCatalogModel(normalizedModelId);
+    const model = getCatalogModel(normalizedModelId, provider);
     if (model) {
-      return this.overrides[model.modelId]?.enabled ?? model.enabledByDefault;
+      return this.overrides[getOverrideKey(model)]?.enabled ?? model.enabledByDefault;
     }
 
     return normalizedModelId in this.openRouterModels;
   }
 
-  getOverride(modelId: string): ModelOverrideEntry | undefined {
-    const model = getCatalogModel(modelId);
+  getOverride(modelId: string, provider?: string): ModelOverrideEntry | undefined {
+    const model = getCatalogModel(modelId, provider);
     if (!model) {
       return undefined;
     }
 
-    const override = this.overrides[model.modelId];
+    const override = this.overrides[getOverrideKey(model)];
     return override ? { ...override } : undefined;
   }
 
@@ -209,8 +208,8 @@ export class ModelCatalogService {
     return Object.values(this.catalog.families);
   }
 
-  getModel(modelId: string): ForgeModelDefinition | undefined {
-    return getCatalogModel(modelId);
+  getModel(modelId: string, provider?: string): ForgeModelDefinition | undefined {
+    return getCatalogModel(modelId, provider);
   }
 
   getProvider(providerId: string): ForgeProviderDefinition | undefined {
@@ -218,21 +217,40 @@ export class ModelCatalogService {
   }
 
   private getEnabledModelsByFamily(familyId: string): ForgeModelDefinition[] {
-    return getCatalogModelsByFamily(familyId).filter((model) => this.isModelEnabled(model.modelId));
+    return getCatalogModelsByFamily(familyId).filter((model) => this.isModelEnabled(model.modelId, model.provider));
   }
 
   private getEffectiveDefaultModelForFamily(familyId: string): ForgeModelDefinition | undefined {
+    const family = getCatalogFamily(familyId);
+    if (!family) {
+      return undefined;
+    }
+
     const familyModels = getCatalogModelsByFamily(familyId);
     const enabledDefaultModel = familyModels.find(
-      (model) => model.isFamilyDefault && this.isModelEnabled(model.modelId),
+      (model) => model.isFamilyDefault && this.isModelEnabled(model.modelId, model.provider),
     );
 
     if (enabledDefaultModel) {
       return enabledDefaultModel;
     }
 
-    return familyModels.find((model) => this.isModelEnabled(model.modelId));
+    const enabledFamilyModel = familyModels.find((model) => this.isModelEnabled(model.modelId, model.provider));
+    if (enabledFamilyModel) {
+      return enabledFamilyModel;
+    }
+
+    const fallbackDefaultModel = getCatalogModel(family.defaultModelId, family.provider);
+    if (fallbackDefaultModel && this.isModelEnabled(fallbackDefaultModel.modelId, fallbackDefaultModel.provider)) {
+      return fallbackDefaultModel;
+    }
+
+    return fallbackDefaultModel;
   }
 }
 
 export const modelCatalogService = new ModelCatalogService();
+
+function getOverrideKey(model: ForgeModelDefinition): string {
+  return model.catalogId ?? model.modelId;
+}

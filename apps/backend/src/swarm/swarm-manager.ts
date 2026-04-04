@@ -3031,7 +3031,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         throw new Error(`Specialist "${requestedSpecialistId}" is currently unavailable: ${reason}`);
       }
 
-      const inferredProvider = inferProviderFromModelId(specialist.modelId);
+      const inferredProvider = specialist.provider || inferProviderFromModelId(specialist.modelId);
       if (!inferredProvider) {
         throw new Error(
           `Specialist "${requestedSpecialistId}" has an unknown modelId provider mapping: ${specialist.modelId}`
@@ -3052,7 +3052,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       model = this.resolveSpawnModelWithCapacityFallback(model);
 
       if (specialist.fallbackModelId) {
-        const inferredFallbackProvider = inferProviderFromModelId(specialist.fallbackModelId);
+        const inferredFallbackProvider = specialist.fallbackProvider || inferProviderFromModelId(specialist.fallbackModelId);
         if (inferredFallbackProvider) {
           specialistFallbackModel = {
             provider: inferredFallbackProvider,

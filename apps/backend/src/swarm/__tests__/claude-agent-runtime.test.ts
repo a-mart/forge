@@ -34,7 +34,7 @@ function makeDescriptor(baseDir: string): AgentDescriptor {
     updatedAt: "2026-01-01T00:00:00.000Z",
     cwd: baseDir,
     model: {
-      provider: "anthropic-sdk",
+      provider: "claude-sdk",
       modelId: "claude-sonnet-4.5",
       thinkingLevel: "medium"
     },

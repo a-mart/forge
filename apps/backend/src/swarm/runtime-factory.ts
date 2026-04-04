@@ -26,6 +26,7 @@ import { ClaudeAgentRuntime } from "./claude-agent-runtime.js";
 import { ClaudeAuthResolver } from "./claude-auth-resolver.js";
 import { createClaudeMcpToolBridge } from "./claude-mcp-tool-bridge.js";
 import { assembleClaudePrompt, discoverAgentsMd } from "./claude-prompt-assembler.js";
+import { isClaudeSdkUnavailableError } from "./claude-sdk-loader.js";
 import { CodexAgentRuntime } from "./codex-agent-runtime.js";
 import type { RuntimeErrorEvent, RuntimeSessionEvent, SwarmAgentRuntime } from "./runtime-types.js";
 import { buildSwarmTools, type SwarmToolHost } from "./swarm-tools.js";
@@ -92,8 +93,6 @@ interface RuntimeFactoryDependencies {
   };
 }
 
-const CLAUDE_RUNTIME_ENABLED = process.env.FORGE_CLAUDE_RUNTIME !== "false";
-
 export class RuntimeFactory {
   constructor(private readonly deps: RuntimeFactoryDependencies) {}
 
@@ -102,15 +101,25 @@ export class RuntimeFactory {
     systemPrompt: string,
     runtimeToken = 0
   ): Promise<SwarmAgentRuntime> {
-    if (isAnthropicModelDescriptor(descriptor.model)) {
-      if (CLAUDE_RUNTIME_ENABLED) {
-        return this.createClaudeRuntimeForDescriptor(descriptor, systemPrompt, runtimeToken);
-      }
+    if (isClaudeSdkModelDescriptor(descriptor.model)) {
+      try {
+        return await this.createClaudeRuntimeForDescriptor(descriptor, systemPrompt, runtimeToken);
+      } catch (error) {
+        if (!isClaudeSdkUnavailableError(error)) {
+          throw error;
+        }
 
-      this.deps.logDebug("runtime:create:claude:fallback_disabled", {
-        agentId: descriptor.agentId,
-        model: descriptor.model
-      });
+        this.deps.logDebug("runtime:create:claude_sdk:unavailable", {
+          agentId: descriptor.agentId,
+          model: descriptor.model,
+          message: error.message,
+          code: error.code
+        });
+
+        throw new Error(
+          `${error.message} Install the Claude Agent SDK or switch this agent to the Pi-proxied anthropic/${descriptor.model.modelId} variant.`
+        );
+      }
     }
 
     if (isCodexAppServerModelDescriptor(descriptor.model)) {
@@ -402,7 +411,10 @@ export class RuntimeFactory {
       },
       allowedTools: mcpBridge.allowedTools,
       runtimeEnv: this.buildRuntimePromptVariables(this.resolveRuntimeMemoryFilePath(descriptor)),
-      modelContextWindow: modelCatalogService.getEffectiveContextWindow(descriptor.model.modelId)
+      modelContextWindow: modelCatalogService.getEffectiveContextWindow(
+        descriptor.model.modelId,
+        descriptor.model.provider
+      )
     });
 
     this.deps.logDebug("runtime:create:ready", {
@@ -903,12 +915,10 @@ const CORTEX_DISABLED_TOOL_NAMES = new Set(["list_agents", "kill_agent"]);
 const ONBOARDING_SNAPSHOT_MEMORY_HEADER =
   "# Onboarding Snapshot (authoritative backend state — read-only reference)";
 
-function isAnthropicModelDescriptor(
-  descriptor: Pick<AgentModelDescriptor, "provider" | "modelId">
+function isClaudeSdkModelDescriptor(
+  descriptor: Pick<AgentModelDescriptor, "provider">
 ): boolean {
-  const provider = descriptor.provider.trim().toLowerCase();
-  const modelId = descriptor.modelId.trim().toLowerCase();
-  return provider === "anthropic" || modelId.startsWith("claude-");
+  return descriptor.provider.trim().toLowerCase() === "claude-sdk";
 }
 
 function isCodexAppServerModelDescriptor(descriptor: Pick<AgentModelDescriptor, "provider">): boolean {

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ChevronDown, ChevronUp, Loader2, RotateCcw } from 'lucide-react'
 import {
   FORGE_MODEL_CATALOG,
+  getCatalogModelKey,
   type ForgeModelDefinition,
   type ModelOverrideEntry,
 } from '@forge/protocol'
@@ -84,7 +85,7 @@ function OverrideBadge({ active }: { active: boolean }) {
 function ModelCard({
   wsUrl,
   model,
-  modelId,
+  modelKey,
   override,
   expanded,
   onToggle,
@@ -92,7 +93,7 @@ function ModelCard({
 }: {
   wsUrl: string
   model: ForgeModelDefinition
-  modelId: string
+  modelKey: string
   override?: ModelOverrideEntry
   expanded: boolean
   onToggle: () => void
@@ -110,14 +111,14 @@ function ModelCard({
 
   useEffect(() => {
     setContextCapDraft(override?.contextWindowCap?.toString() ?? '')
-  }, [model.modelId, override?.contextWindowCap])
+  }, [modelKey, override?.contextWindowCap])
 
   const saveEnabled = useCallback(
     async (checked: boolean) => {
       setError(null)
       setIsSavingEnabled(true)
       try {
-        await updateModelOverride(wsUrl, model.modelId, {
+        await updateModelOverride(wsUrl, modelKey, {
           enabled: checked === model.enabledByDefault ? null : checked,
         })
         await onRefresh()
@@ -127,7 +128,7 @@ function ModelCard({
         setIsSavingEnabled(false)
       }
     },
-    [model.enabledByDefault, model.modelId, onRefresh, wsUrl],
+    [model.enabledByDefault, modelKey, onRefresh, wsUrl],
   )
 
   const applyContextCap = useCallback(async () => {
@@ -146,27 +147,27 @@ function ModelCard({
 
     setIsSavingCap(true)
     try {
-      await updateModelOverride(wsUrl, model.modelId, { contextWindowCap: nextCap })
+      await updateModelOverride(wsUrl, modelKey, { contextWindowCap: nextCap })
       await onRefresh()
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : String(saveError))
     } finally {
       setIsSavingCap(false)
     }
-  }, [contextCapDraft, model.contextWindow, model.modelId, onRefresh, wsUrl])
+  }, [contextCapDraft, model.contextWindow, modelKey, onRefresh, wsUrl])
 
   const resetModel = useCallback(async () => {
     setError(null)
     setIsResettingAll(true)
     try {
-      await deleteModelOverride(wsUrl, model.modelId)
+      await deleteModelOverride(wsUrl, modelKey)
       await onRefresh()
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : String(saveError))
     } finally {
       setIsResettingAll(false)
     }
-  }, [model.modelId, onRefresh, wsUrl])
+  }, [modelKey, onRefresh, wsUrl])
 
   return (
     <div className="rounded-lg border border-border/70 bg-card/40">
@@ -179,7 +180,7 @@ function ModelCard({
           <div className="flex flex-wrap items-center gap-2">
             <span className="truncate text-sm font-medium text-foreground">{model.displayName}</span>
             <Badge variant="outline" className="text-[10px] uppercase tracking-wide text-muted-foreground">
-              {modelId}
+              {model.modelId}
             </Badge>
             {enabled ? null : <Badge variant="destructive">Disabled</Badge>}
             {hasAnyOverride ? <OverrideBadge active /> : null}
@@ -220,7 +221,7 @@ function ModelCard({
                   variant="ghost"
                   size="sm"
                   className="h-8 px-2"
-                  onClick={() => void updateModelOverride(wsUrl, model.modelId, { enabled: null }).then(onRefresh).catch((saveError) => setError(saveError instanceof Error ? saveError.message : String(saveError)))}
+                  onClick={() => void updateModelOverride(wsUrl, modelKey, { enabled: null }).then(onRefresh).catch((saveError) => setError(saveError instanceof Error ? saveError.message : String(saveError)))}
                   disabled={!hasOverrideField(override, 'enabled') || isSavingEnabled || isResettingAll}
                 >
                   Reset
@@ -261,7 +262,7 @@ function ModelCard({
                   size="sm"
                   onClick={() => {
                     setContextCapDraft('')
-                    void updateModelOverride(wsUrl, model.modelId, { contextWindowCap: null })
+                    void updateModelOverride(wsUrl, modelKey, { contextWindowCap: null })
                       .then(onRefresh)
                       .catch((saveError) => setError(saveError instanceof Error ? saveError.message : String(saveError)))
                   }}
@@ -425,20 +426,21 @@ export function SettingsModels({ wsUrl, modelConfigChangeKey }: SettingsModelsPr
               {!collapsed ? (
                 <div id={`provider-group-${group.providerId}`} className="space-y-2 border-t border-border/60 pt-3">
                   {group.models.map((model) => {
-                    const override = overrides[model.modelId]
+                    const modelKey = getCatalogModelKey(model)
+                    const override = overrides[modelKey]
 
                     return (
                       <ModelCard
-                        key={model.modelId}
+                        key={modelKey}
                         wsUrl={wsUrl}
                         model={model}
-                        modelId={model.modelId}
+                        modelKey={modelKey}
                         override={override}
-                        expanded={expandedModelIds[model.modelId] === true}
+                        expanded={expandedModelIds[modelKey] === true}
                         onToggle={() =>
                           setExpandedModelIds((current) => ({
                             ...current,
-                            [model.modelId]: !current[model.modelId],
+                            [modelKey]: !current[modelKey],
                           }))
                         }
                         onRefresh={loadOverrides}

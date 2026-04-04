@@ -48,6 +48,10 @@ describe("model-overrides", () => {
           enabled: false,
           contextWindowCap: 300_000,
         },
+        "claude-sdk/claude-opus-4-6": {
+          enabled: true,
+          contextWindowCap: 250_000,
+        },
       },
     });
 
@@ -56,6 +60,8 @@ describe("model-overrides", () => {
 
     expect(service.getEffectiveContextWindow("claude-opus-4-6")).toBe(300_000);
     expect(service.isModelEnabled("claude-opus-4-6")).toBe(false);
+    expect(service.getEffectiveContextWindow("claude-opus-4-6", "claude-sdk")).toBe(250_000);
+    expect(service.isModelEnabled("claude-opus-4-6", "claude-sdk")).toBe(true);
 
     const opusPreset = service.getModelPresetInfoList().find((preset) => preset.presetId === "pi-opus");
     expect(opusPreset?.modelId).toBe("claude-sonnet-4-5-20250929");

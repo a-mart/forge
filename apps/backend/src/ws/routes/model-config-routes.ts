@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { ModelOverrideEntry, ServerEvent } from "@forge/protocol";
+import { getCatalogModelKey, type ModelOverrideEntry, type ServerEvent } from "@forge/protocol";
 import { modelCatalogService } from "../../swarm/model-catalog-service.js";
 import {
   readModelOverrides,
@@ -98,11 +98,12 @@ async function handleModelOverridesRequest(
         return;
       }
 
-      const nextOverride = await mergeModelOverridePatch(dataDir, catalogModel.modelId, body as Record<string, unknown>);
+      const catalogModelKey = getCatalogModelKey(catalogModel);
+      const nextOverride = await mergeModelOverridePatch(dataDir, catalogModelKey, body as Record<string, unknown>);
       if (nextOverride) {
-        await setModelOverride(dataDir, catalogModel.modelId, nextOverride);
+        await setModelOverride(dataDir, catalogModelKey, nextOverride);
       } else {
-        await resetModelOverride(dataDir, catalogModel.modelId);
+        await resetModelOverride(dataDir, catalogModelKey);
       }
 
       await swarmManager.reloadModelCatalogOverridesAndProjection();
@@ -110,8 +111,8 @@ async function handleModelOverridesRequest(
 
       sendJson(response, 200, {
         ok: true,
-        modelId: catalogModel.modelId,
-        override: modelCatalogService.getOverride(catalogModel.modelId) ?? null,
+        modelId: getCatalogModelKey(catalogModel),
+        override: modelCatalogService.getOverride(getCatalogModelKey(catalogModel)) ?? null,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -136,7 +137,7 @@ async function handleModelOverridesRequest(
           return;
         }
 
-        await resetModelOverride(dataDir, catalogModel.modelId);
+        await resetModelOverride(dataDir, getCatalogModelKey(catalogModel));
       }
 
       await swarmManager.reloadModelCatalogOverridesAndProjection();

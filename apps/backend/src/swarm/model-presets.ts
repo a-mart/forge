@@ -78,6 +78,10 @@ export function inferProviderFromModelId(modelId: string): string | null {
     return "openai-codex-app-server";
   }
 
+  if (normalizedModelId.startsWith("claude-sdk/")) {
+    return "claude-sdk";
+  }
+
   if (isSlashScopedOpenRouterModelId(normalizedModelId)) {
     return "openrouter";
   }

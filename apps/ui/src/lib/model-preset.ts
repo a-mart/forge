@@ -220,8 +220,12 @@ function isModelVariantInfo(value: unknown): value is ModelVariantInfo {
  * Checks default modelIds and variant modelIds across all presets.
  * Falls back to the raw modelId if no match is found.
  */
-export function getModelDisplayLabel(modelId: string, presets: ModelPresetInfo[]): string {
+export function getModelDisplayLabel(modelId: string, presets: ModelPresetInfo[], provider?: string): string {
   for (const preset of presets) {
+    if (provider && preset.provider !== provider) {
+      continue
+    }
+
     if (preset.modelId === modelId) {
       return preset.displayName
     }
@@ -244,9 +248,10 @@ export function getModelDisplayLabel(modelId: string, presets: ModelPresetInfo[]
 export function getSupportedReasoningLevelsForModelId(
   modelId: string,
   presets: ModelPresetInfo[],
+  provider?: string,
 ): ManagerReasoningLevel[] {
   // Try catalog first for per-model accuracy
-  const catalogModel = getCatalogModel(modelId)
+  const catalogModel = getCatalogModel(modelId, provider)
   if (catalogModel) {
     return catalogModel.supportedReasoningLevels as ManagerReasoningLevel[]
   }
@@ -267,6 +272,7 @@ export function getSupportedReasoningLevelsForModelId(
 }
 
 export interface SelectableModel {
+  key: string
   modelId: string
   label: string
   provider: string
@@ -279,8 +285,20 @@ export interface SelectableModel {
  */
 export function getAllSelectableModels(presets: ModelPresetInfo[]): SelectableModel[] {
   const models: SelectableModel[] = []
+  const seen = new Set<string>()
+
+  const pushIfNeeded = (model: SelectableModel) => {
+    if (seen.has(model.key)) {
+      return
+    }
+
+    seen.add(model.key)
+    models.push(model)
+  }
+
   for (const preset of presets) {
-    models.push({
+    pushIfNeeded({
+      key: `${preset.provider}::${preset.modelId}`,
       modelId: preset.modelId,
       label: preset.displayName,
       provider: preset.provider,
@@ -288,7 +306,8 @@ export function getAllSelectableModels(presets: ModelPresetInfo[]): SelectableMo
     })
     if (preset.variants) {
       for (const variant of preset.variants) {
-        models.push({
+        pushIfNeeded({
+          key: `${preset.provider}::${variant.modelId}`,
           modelId: variant.modelId,
           label: variant.label,
           provider: preset.provider,

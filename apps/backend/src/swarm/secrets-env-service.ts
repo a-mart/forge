@@ -324,6 +324,8 @@ export async function getManagedModelProviderCredentialAvailability(
     availability.set(provider, hasStoredEnv || hasStoredAuth);
   }
 
+  availability.set("claude-sdk", availability.get("anthropic") ?? false);
+
   return availability;
 }
 

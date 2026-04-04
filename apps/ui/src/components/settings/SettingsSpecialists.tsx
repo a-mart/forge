@@ -89,6 +89,7 @@ const DEFAULT_REASONING_LEVEL: ManagerReasoningLevel = 'xhigh'
 const PROVIDER_LABELS: Record<string, string> = {
   'openai-codex': 'OpenAI Codex',
   'anthropic': 'Anthropic',
+  'claude-sdk': 'Claude SDK',
   xai: 'xAI',
   'openai-codex-app-server': 'Codex App',
 }
@@ -97,8 +98,12 @@ function providerLabel(provider: string): string {
   return PROVIDER_LABELS[provider] ?? provider
 }
 
-function modelSupportsWebSearch(modelId: string, presets: ModelPresetInfo[]): boolean {
+function modelSupportsWebSearch(modelId: string, presets: ModelPresetInfo[], provider?: string): boolean {
   for (const preset of presets) {
+    if (provider && preset.provider !== provider) {
+      continue
+    }
+
     if (preset.modelId === modelId || preset.variants?.some((variant) => variant.modelId === modelId)) {
       return preset.webSearch === true
     }
@@ -124,8 +129,10 @@ interface CardEditState {
   enabled: boolean
   whenToUse: string
   modelId: string
+  provider: string
   reasoningLevel: string
   fallbackModelId: string
+  fallbackProvider: string
   fallbackReasoningLevel: string
   pinned: boolean
   webSearch: boolean
@@ -142,8 +149,10 @@ function specialistToEditState(
     enabled: specialist.enabled,
     whenToUse: specialist.whenToUse,
     modelId: specialist.modelId,
+    provider: specialist.provider,
     reasoningLevel: specialist.reasoningLevel ?? 'high',
     fallbackModelId: specialist.fallbackModelId ?? '',
+    fallbackProvider: specialist.fallbackProvider ?? '',
     fallbackReasoningLevel: specialist.fallbackReasoningLevel ?? '',
     pinned: specialist.pinned,
     webSearch: specialist.webSearch ?? false,
@@ -171,6 +180,7 @@ function toSaveSpecialistPayload(state: CardEditState): SaveSpecialistPayload {
     : undefined
 
   const normalizedFallbackModelId = state.fallbackModelId || undefined
+  const normalizedFallbackProvider = normalizedFallbackModelId ? (state.fallbackProvider || undefined) : undefined
 
   return {
     displayName: state.displayName,
@@ -178,8 +188,10 @@ function toSaveSpecialistPayload(state: CardEditState): SaveSpecialistPayload {
     enabled: state.enabled,
     whenToUse: state.whenToUse,
     modelId: state.modelId,
+    provider: state.provider || undefined,
     reasoningLevel: normalizedReasoningLevel,
     fallbackModelId: normalizedFallbackModelId,
+    fallbackProvider: normalizedFallbackProvider,
     // Strip fallback reasoning level when there's no fallback model.
     fallbackReasoningLevel: normalizedFallbackModelId ? normalizedFallbackReasoningLevel : undefined,
     pinned: state.pinned,
@@ -279,6 +291,22 @@ function handleToDisplayName(handle: string): string {
  * Group selectable models by provider for use in Select dropdowns.
  * Returns entries ordered by first occurrence in the flat list.
  */
+function encodeSelectableModelKey(provider: string, modelId: string): string {
+  return `${provider}::${modelId}`
+}
+
+function decodeSelectableModelKey(value: string): { provider: string; modelId: string } | null {
+  const separatorIndex = value.indexOf('::')
+  if (separatorIndex <= 0 || separatorIndex >= value.length - 2) {
+    return null
+  }
+
+  return {
+    provider: value.slice(0, separatorIndex),
+    modelId: value.slice(separatorIndex + 2),
+  }
+}
+
 function groupModelsByProvider(
   models: SelectableModel[],
 ): Array<{ provider: string; label: string; models: SelectableModel[] }> {
@@ -303,15 +331,17 @@ function groupModelsByProvider(
 /* ================================================================== */
 
 function ModelIdSelect({
-  value,
+  modelId,
+  provider,
   onValueChange,
   models,
   presets,
   placeholder,
   allowNone,
 }: {
-  value: string
-  onValueChange: (value: string) => void
+  modelId: string
+  provider: string
+  onValueChange: (next: { provider: string; modelId: string }) => void
   models: SelectableModel[]
   presets: ModelPresetInfo[]
   placeholder?: string
@@ -319,33 +349,43 @@ function ModelIdSelect({
 }) {
   const groups = useMemo(() => groupModelsByProvider(models), [models])
 
-  // Build a mapping from value -> display label for the trigger.
-  // Radix Select matches the selected value against SelectItem children to compute
-  // the trigger display text.  When our items render plain strings this works, but
-  // sentinel values like "__none__" need the mapping too.
   const itemTextByValue = useMemo(() => {
     const map = new Map<string, string>()
     if (allowNone) map.set('__none__', placeholder ?? 'None')
     for (const g of groups) {
       for (const m of g.models) {
-        map.set(m.modelId, m.label)
+        map.set(m.key, m.label)
       }
     }
     return map
   }, [groups, allowNone, placeholder])
 
-  // Controlled value: for allowNone mode use a sentinel so Radix always has a value.
-  const controlledValue = allowNone ? (value || '__none__') : value
+  const selectedKey = modelId && provider ? encodeSelectableModelKey(provider, modelId) : ''
+  const controlledValue = allowNone ? (selectedKey || '__none__') : selectedKey
 
   return (
     <Select
       key={allowNone ? 'fallback' : 'primary'}
       value={controlledValue || undefined}
-      onValueChange={onValueChange}
+      onValueChange={(nextValue) => {
+        if (allowNone && nextValue === '__none__') {
+          onValueChange({ provider: '', modelId: '' })
+          return
+        }
+
+        const decoded = decodeSelectableModelKey(nextValue)
+        if (!decoded) {
+          return
+        }
+
+        onValueChange(decoded)
+      }}
     >
       <SelectTrigger className="w-full text-xs">
         <span className="truncate">
-          {controlledValue ? (itemTextByValue.get(controlledValue) ?? getModelDisplayLabel(controlledValue, presets)) : (placeholder ?? 'Select model')}
+          {controlledValue
+            ? (itemTextByValue.get(controlledValue) ?? getModelDisplayLabel(modelId, presets, provider))
+            : (placeholder ?? 'Select model')}
         </span>
       </SelectTrigger>
       <SelectContent position="popper">
@@ -358,7 +398,7 @@ function ModelIdSelect({
           <SelectGroup key={group.provider}>
             <SelectLabel className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground/60">{group.label}</SelectLabel>
             {group.models.map((m) => (
-              <SelectItem key={m.modelId} value={m.modelId} className="text-xs">
+              <SelectItem key={m.key} value={m.key} className="text-xs">
                 {m.label}
               </SelectItem>
             ))}
@@ -533,20 +573,32 @@ export function SettingsSpecialists({
 
       const nextState: CardEditState = { ...currentState, [field]: value }
 
-      // Auto-normalize reasoning level when model changes
-      if (field === 'modelId' && typeof value === 'string') {
-        const supported = getSupportedReasoningLevelsForModelId(value, modelPresets)
+      // Auto-normalize reasoning level when model selection changes
+      if (
+        (field === 'modelId' || field === 'provider') &&
+        typeof nextState.modelId === 'string' &&
+        nextState.modelId
+      ) {
+        const supported = getSupportedReasoningLevelsForModelId(nextState.modelId, modelPresets, nextState.provider)
         if (!supported.includes(nextState.reasoningLevel as ManagerReasoningLevel)) {
           nextState.reasoningLevel = supported[supported.length - 1] || 'high'
         }
-        if (!modelSupportsWebSearch(value, modelPresets)) {
+        if (!modelSupportsWebSearch(nextState.modelId, modelPresets, nextState.provider)) {
           nextState.webSearch = false
         }
       }
 
-      // Auto-normalize fallback reasoning level when fallback model changes
-      if (field === 'fallbackModelId' && typeof value === 'string' && value) {
-        const supported = getSupportedReasoningLevelsForModelId(value, modelPresets)
+      // Auto-normalize fallback reasoning level when fallback selection changes
+      if (
+        (field === 'fallbackModelId' || field === 'fallbackProvider') &&
+        typeof nextState.fallbackModelId === 'string' &&
+        nextState.fallbackModelId
+      ) {
+        const supported = getSupportedReasoningLevelsForModelId(
+          nextState.fallbackModelId,
+          modelPresets,
+          nextState.fallbackProvider,
+        )
         if (nextState.fallbackReasoningLevel && !supported.includes(nextState.fallbackReasoningLevel as ManagerReasoningLevel)) {
           nextState.fallbackReasoningLevel = supported[supported.length - 1] || 'high'
         }
@@ -749,8 +801,10 @@ export function SettingsSpecialists({
         enabled: true,
         whenToUse: source.whenToUse,
         modelId: source.modelId,
+        provider: source.provider,
         reasoningLevel: (source.reasoningLevel as ManagerReasoningLevel) ?? undefined,
         fallbackModelId: source.fallbackModelId ?? undefined,
+        fallbackProvider: source.fallbackProvider ?? undefined,
         fallbackReasoningLevel: (source.fallbackReasoningLevel as ManagerReasoningLevel) ?? undefined,
         pinned: false,
         webSearch: source.webSearch ?? false,
@@ -889,6 +943,7 @@ export function SettingsSpecialists({
         enabled: true,
         whenToUse: DEFAULT_WHEN_TO_USE,
         modelId: DEFAULT_MODEL_ID,
+        provider: 'openai-codex',
         reasoningLevel: DEFAULT_REASONING_LEVEL,
         promptBody: template,
       }
@@ -1358,6 +1413,7 @@ function FallbackModelSection({
   isExpanded,
   onToggle,
   fallbackModelId,
+  fallbackProvider,
   fallbackReasoningLevel,
   onUpdateField,
   modelPresets,
@@ -1367,6 +1423,7 @@ function FallbackModelSection({
   isExpanded: boolean
   onToggle: () => void
   fallbackModelId: string
+  fallbackProvider: string
   fallbackReasoningLevel: string
   onUpdateField: (field: keyof CardEditState, value: string | boolean) => void
   modelPresets: ModelPresetInfo[]
@@ -1377,7 +1434,7 @@ function FallbackModelSection({
   if (!isEditing) {
     // Read-only: show compact summary if configured
     if (!hasFallback) return null
-    const label = getModelDisplayLabel(fallbackModelId, modelPresets)
+    const label = getModelDisplayLabel(fallbackModelId, modelPresets, fallbackProvider)
     const reasoningLabel = fallbackReasoningLevel
       ? REASONING_LEVEL_LABELS[fallbackReasoningLevel] ?? fallbackReasoningLevel
       : null
@@ -1392,7 +1449,7 @@ function FallbackModelSection({
 
   // Editing mode
   const fallbackSupportedLevels = fallbackModelId
-    ? getSupportedReasoningLevelsForModelId(fallbackModelId, modelPresets)
+    ? getSupportedReasoningLevelsForModelId(fallbackModelId, modelPresets, fallbackProvider)
     : [...MANAGER_REASONING_LEVELS]
 
   return (
@@ -1405,7 +1462,7 @@ function FallbackModelSection({
       >
         {isExpanded ? <ChevronUp className="size-3" /> : <ChevronDown className="size-3" />}
         {hasFallback
-          ? `Fallback: ${getModelDisplayLabel(fallbackModelId, modelPresets)}${fallbackReasoningLevel ? ` · ${REASONING_LEVEL_LABELS[fallbackReasoningLevel] ?? fallbackReasoningLevel}` : ''}`
+          ? `Fallback: ${getModelDisplayLabel(fallbackModelId, modelPresets, fallbackProvider)}${fallbackReasoningLevel ? ` · ${REASONING_LEVEL_LABELS[fallbackReasoningLevel] ?? fallbackReasoningLevel}` : ''}`
           : 'Configure fallback'}
       </button>
 
@@ -1414,8 +1471,12 @@ function FallbackModelSection({
           <div className="flex flex-col gap-1.5 sm:w-52">
             <Label className="text-xs font-medium text-muted-foreground">Fallback model</Label>
             <ModelIdSelect
-              value={fallbackModelId}
-              onValueChange={(v) => onUpdateField('fallbackModelId', v === '__none__' ? '' : v)}
+              modelId={fallbackModelId}
+              provider={fallbackProvider}
+              onValueChange={(next) => {
+                onUpdateField('fallbackProvider', next.provider)
+                onUpdateField('fallbackModelId', next.modelId)
+              }}
               models={selectableModels}
               presets={modelPresets}
               placeholder="None"
@@ -1571,10 +1632,12 @@ function SpecialistCard({
   const currentValues = isEditing && editState ? editState : specialistToEditState(specialist)
 
   // Compact summary values (used in collapsed state)
-  const modelDisplay = getModelDisplayLabel(specialist.modelId, modelPresets)
+  const modelDisplay = getModelDisplayLabel(specialist.modelId, modelPresets, specialist.provider)
   const reasoningLabel = REASONING_LEVEL_LABELS[specialist.reasoningLevel ?? 'high'] ?? specialist.reasoningLevel ?? 'High'
   const hasFallback = !!specialist.fallbackModelId
-  const fallbackLabel = hasFallback ? getModelDisplayLabel(specialist.fallbackModelId!, modelPresets) : null
+  const fallbackLabel = hasFallback
+    ? getModelDisplayLabel(specialist.fallbackModelId!, modelPresets, specialist.fallbackProvider)
+    : null
   const fallbackReasoningLabel = specialist.fallbackReasoningLevel
     ? REASONING_LEVEL_LABELS[specialist.fallbackReasoningLevel] ?? specialist.fallbackReasoningLevel
     : null
@@ -1694,8 +1757,12 @@ function SpecialistCard({
 
   /* ---- Expanded state (editing) ---- */
   const promptLineCount = currentValues.promptBody.split('\n').length
-  const supportedLevels = getSupportedReasoningLevelsForModelId(currentValues.modelId, modelPresets)
-  const supportsWebSearch = modelSupportsWebSearch(currentValues.modelId, modelPresets)
+  const supportedLevels = getSupportedReasoningLevelsForModelId(
+    currentValues.modelId,
+    modelPresets,
+    currentValues.provider,
+  )
+  const supportsWebSearch = modelSupportsWebSearch(currentValues.modelId, modelPresets, currentValues.provider)
 
   return (
     <div className="space-y-4 rounded-lg border bg-card p-4">
@@ -1791,8 +1858,12 @@ function SpecialistCard({
         <div className="flex flex-col gap-1.5 sm:w-52">
           <Label className="text-xs font-medium text-muted-foreground">Model</Label>
           <ModelIdSelect
-            value={currentValues.modelId}
-            onValueChange={(v) => onUpdateField('modelId', v)}
+            modelId={currentValues.modelId}
+            provider={currentValues.provider}
+            onValueChange={(next) => {
+              onUpdateField('provider', next.provider)
+              onUpdateField('modelId', next.modelId)
+            }}
             models={selectableModels}
             presets={modelPresets}
             placeholder="Select model"
@@ -1824,6 +1895,7 @@ function SpecialistCard({
         isExpanded={isFallbackExpanded}
         onToggle={onToggleFallback}
         fallbackModelId={currentValues.fallbackModelId}
+        fallbackProvider={currentValues.fallbackProvider}
         fallbackReasoningLevel={currentValues.fallbackReasoningLevel}
         onUpdateField={onUpdateField}
         modelPresets={modelPresets}

@@ -10,7 +10,6 @@ import {
 } from "@forge/protocol";
 import {
   inferProviderFromModelId,
-  isKnownModelId,
   isSwarmReasoningLevel,
 } from "../model-presets.js";
 import { modelCatalogService } from "../model-catalog-service.js";
@@ -98,8 +97,10 @@ export interface SpecialistFrontmatter {
   enabled: boolean;
   whenToUse: string;
   modelId: string;
+  provider?: string;
   reasoningLevel?: string;
   fallbackModelId?: string;
+  fallbackProvider?: string;
   fallbackReasoningLevel?: string;
   builtin: boolean;
   pinned: boolean;
@@ -112,8 +113,10 @@ export interface SaveSpecialistRequest {
   enabled: boolean;
   whenToUse: string;
   modelId: string;
+  provider?: string;
   reasoningLevel?: string;
   fallbackModelId?: string;
+  fallbackProvider?: string;
   fallbackReasoningLevel?: string;
   pinned?: boolean;
   webSearch?: boolean;
@@ -509,6 +512,9 @@ function parseSpecialistMarkdown(markdown: string): ParsedSpecialistFile | null 
     const effectiveDescriptor = modelCatalogService.resolveModelDescriptorFromFamily(legacyModelPreset);
     if (effectiveDescriptor) {
       frontmatterValues.modelId = effectiveDescriptor.modelId;
+      if (!frontmatterValues.provider) {
+        frontmatterValues.provider = effectiveDescriptor.provider;
+      }
     }
   }
 
@@ -546,12 +552,14 @@ function parseSpecialistMarkdown(markdown: string): ParsedSpecialistFile | null 
     return null;
   }
 
+  const provider = parseOptionalString(frontmatterValues.provider);
   const reasoningLevel = parseOptionalString(frontmatterValues.reasoningLevel);
   if (reasoningLevel && !isSwarmReasoningLevel(reasoningLevel)) {
     return null;
   }
 
   const fallbackModelId = parseOptionalString(frontmatterValues.fallbackModelId);
+  const fallbackProvider = parseOptionalString(frontmatterValues.fallbackProvider);
   const fallbackReasoningLevel = parseOptionalString(frontmatterValues.fallbackReasoningLevel);
   if (fallbackReasoningLevel && !isSwarmReasoningLevel(fallbackReasoningLevel)) {
     return null;
@@ -569,8 +577,10 @@ function parseSpecialistMarkdown(markdown: string): ParsedSpecialistFile | null 
       enabled: enabled ?? true,
       whenToUse,
       modelId,
+      provider,
       reasoningLevel,
       fallbackModelId,
+      fallbackProvider,
       fallbackReasoningLevel,
       builtin: builtin ?? false,
       pinned: pinned ?? false,
@@ -608,12 +618,14 @@ function validateSaveRequest(data: SaveSpecialistRequest): SpecialistFrontmatter
     throw new Error("promptBody is required");
   }
 
+  const provider = data.provider?.trim();
   const reasoningLevel = data.reasoningLevel?.trim();
   if (reasoningLevel !== undefined && reasoningLevel.length > 0 && !isSwarmReasoningLevel(reasoningLevel)) {
     throw new Error("reasoningLevel must be one of none|low|medium|high|xhigh");
   }
 
   const normalizedFallbackModelId = fallbackModelId && fallbackModelId.length > 0 ? fallbackModelId : undefined;
+  const fallbackProvider = data.fallbackProvider?.trim();
 
   const fallbackReasoningLevel = data.fallbackReasoningLevel?.trim();
   if (
@@ -636,12 +648,15 @@ function validateSaveRequest(data: SaveSpecialistRequest): SpecialistFrontmatter
     enabled: data.enabled,
     whenToUse,
     modelId,
+    provider: provider && provider.length > 0 ? provider : undefined,
     reasoningLevel: reasoningLevel && reasoningLevel.length > 0 ? reasoningLevel : undefined,
     fallbackModelId: normalizedFallbackModelId,
+    fallbackProvider:
+      normalizedFallbackModelId && fallbackProvider && fallbackProvider.length > 0 ? fallbackProvider : undefined,
     fallbackReasoningLevel: normalizedFallbackReasoningLevel,
     builtin: false,
     pinned: data.pinned ?? false,
-    webSearch: normalizeWebSearchForModelId(modelId, data.webSearch === true),
+    webSearch: normalizeWebSearchForModelId(provider, modelId, data.webSearch === true),
   };
 }
 
@@ -716,8 +731,9 @@ function parseYamlStringValue(value: string): string {
   return trimmed;
 }
 
-function normalizeWebSearchForModelId(modelId: string, webSearch: boolean): boolean {
-  return webSearch && inferProviderFromModelId(modelId) === "xai";
+function normalizeWebSearchForModelId(provider: string | undefined, modelId: string, webSearch: boolean): boolean {
+  const resolvedProvider = provider?.trim() || inferProviderFromModelId(modelId) || "";
+  return webSearch && resolvedProvider === "xai";
 }
 
 function toResolvedSpecialistDefinition(options: {
@@ -728,14 +744,16 @@ function toResolvedSpecialistDefinition(options: {
   sourcePath: string;
   shadowsGlobal: boolean;
 }): ResolvedSpecialistDefinition {
-  const knownPrimaryModel = isKnownModelId(options.frontmatter.modelId);
-  const knownFallbackModel =
-    !options.frontmatter.fallbackModelId || isKnownModelId(options.frontmatter.fallbackModelId);
+  const provider = options.frontmatter.provider ?? inferProviderFromModelId(options.frontmatter.modelId) ?? "unknown";
+  const fallbackProvider = options.frontmatter.fallbackProvider
+    ?? (options.frontmatter.fallbackModelId
+      ? (inferProviderFromModelId(options.frontmatter.fallbackModelId) ?? undefined)
+      : undefined);
 
-  const provider = inferProviderFromModelId(options.frontmatter.modelId) ?? "unknown";
-  const fallbackProvider = options.frontmatter.fallbackModelId
-    ? (inferProviderFromModelId(options.frontmatter.fallbackModelId) ?? undefined)
-    : undefined;
+  const knownPrimaryModel = modelCatalogService.isKnownModelId(options.frontmatter.modelId, provider);
+  const knownFallbackModel =
+    !options.frontmatter.fallbackModelId ||
+    modelCatalogService.isKnownModelId(options.frontmatter.fallbackModelId, fallbackProvider);
 
   let availabilityCode: "ok" | "invalid_model" = "ok";
   let availabilityMessage: string | undefined;
@@ -748,7 +766,7 @@ function toResolvedSpecialistDefinition(options: {
     availabilityMessage = `Unknown fallbackModelId: ${options.frontmatter.fallbackModelId}`;
   }
 
-  const webSearch = normalizeWebSearchForModelId(options.frontmatter.modelId, options.frontmatter.webSearch);
+  const webSearch = normalizeWebSearchForModelId(provider, options.frontmatter.modelId, options.frontmatter.webSearch);
 
   return {
     specialistId: options.specialistId,
@@ -785,12 +803,20 @@ function serializeSpecialistFile(frontmatter: SpecialistFrontmatter, body: strin
     `modelId: ${quoteYamlString(frontmatter.modelId)}`,
   ];
 
+  if (frontmatter.provider) {
+    lines.push(`provider: ${quoteYamlString(frontmatter.provider)}`);
+  }
+
   if (frontmatter.reasoningLevel) {
     lines.push(`reasoningLevel: ${quoteYamlString(frontmatter.reasoningLevel)}`);
   }
 
   if (frontmatter.fallbackModelId) {
     lines.push(`fallbackModelId: ${quoteYamlString(frontmatter.fallbackModelId)}`);
+
+    if (frontmatter.fallbackProvider) {
+      lines.push(`fallbackProvider: ${quoteYamlString(frontmatter.fallbackProvider)}`);
+    }
 
     if (frontmatter.fallbackReasoningLevel) {
       lines.push(`fallbackReasoningLevel: ${quoteYamlString(frontmatter.fallbackReasoningLevel)}`);
