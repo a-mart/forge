@@ -21,6 +21,7 @@ class FakeClaudeRuntime {
 
   recycleCalls = 0;
   private systemPrompt: string;
+  private pinnedContent: string | undefined;
   private smartCompactResult: SmartCompactResult = { compacted: true };
 
   constructor(
@@ -48,6 +49,21 @@ class FakeClaudeRuntime {
 
   setSystemPrompt(systemPrompt: string): void {
     this.systemPrompt = systemPrompt;
+  }
+
+  seedPinnedContent(content: string | undefined): void {
+    this.pinnedContent = content;
+  }
+
+  async setPinnedContent(content: string | undefined, options?: { suppressRecycle?: boolean }): Promise<void> {
+    if (content === this.pinnedContent) {
+      return;
+    }
+
+    this.pinnedContent = content;
+    if (!options?.suppressRecycle) {
+      await this.recycle();
+    }
   }
 
   async sendMessage(
@@ -255,6 +271,24 @@ describe("Claude session lifecycle", () => {
     expect(meta?.resolvedSystemPrompt).not.toContain("Old summary should be cleared.");
   });
 
+  it("suppresses pin-triggered recycle when clearing a Claude conversation with pinned content", async () => {
+    const config = await makeTempConfig(8906);
+    const manager = new TestSwarmManager(config);
+    const rootManager = await bootWithDefaultManager(manager, config);
+    const session = await manager.createManager(rootManager.agentId, {
+      name: "Claude Session",
+      cwd: config.defaultCwd
+    });
+
+    const runtime = manager.getFakeRuntime(session.agentId);
+    expect(runtime).toBeDefined();
+    runtime?.seedPinnedContent("Pinned summary to preserve");
+
+    await manager.clearSessionConversation(session.agentId);
+
+    expect(runtime?.recycleCalls).toBe(1);
+  });
+
   it("drops persisted Claude runtime state when forking a full session", async () => {
     const config = await makeTempConfig(8902);
     const manager = new TestSwarmManager(config);
@@ -314,7 +348,7 @@ describe("Claude session lifecycle", () => {
     });
   });
 
-  it("tracks Claude SDK auto-compaction in compaction counts and does not double-increment on smart-compact no-ops", async () => {
+  it("tracks boundary-only Claude SDK auto-compaction success in compaction counts and does not double-increment on smart-compact no-ops", async () => {
     const config = await makeTempConfig(8904);
     const manager = new TestSwarmManager(config);
     const rootManager = await bootWithDefaultManager(manager, config);

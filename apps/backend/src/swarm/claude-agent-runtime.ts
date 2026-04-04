@@ -17,6 +17,7 @@ import type {
   RuntimeShutdownOptions,
   RuntimeUserMessage,
   RuntimeUserMessageInput,
+  SetPinnedContentOptions,
   SmartCompactResult,
   SpecialistFallbackReplaySnapshot,
   SwarmAgentRuntime,
@@ -194,7 +195,7 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
     return this.activeSystemPrompt;
   }
 
-  setPinnedContent(content: string | undefined): void {
+  setPinnedContent(content: string | undefined, options?: SetPinnedContentOptions): void {
     const normalizedContent = normalizeOptionalString(content);
     if (normalizedContent === this.pinnedMessageContent) {
       return;
@@ -204,6 +205,11 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
     this.activeSystemPrompt = this.buildActiveSystemPrompt(this.persistedCompactionSummary?.summary);
 
     if (!this.activeSession) {
+      return;
+    }
+
+    if (options?.suppressRecycle) {
+      this.pendingRecycleForPins = false;
       return;
     }
 
@@ -797,12 +803,8 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
     }
 
     if (event.type === "auto_compaction_end") {
-      if (!this.sdkAutoCompactionInProgress) {
-        return;
-      }
-
-      await this.refreshActiveSessionContextUsageFromSdk();
       this.clearSdkAutoCompactionState();
+      await this.refreshActiveSessionContextUsageFromSdk();
       await this.emitStatus();
 
       if (event.aborted || event.errorMessage) {

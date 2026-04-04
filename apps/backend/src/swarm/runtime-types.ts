@@ -126,6 +126,10 @@ export interface RuntimeShutdownOptions {
   drainTimeoutMs?: number;
 }
 
+export interface SetPinnedContentOptions {
+  suppressRecycle?: boolean;
+}
+
 export interface SwarmAgentRuntime {
   readonly descriptor: AgentDescriptor;
   readonly runtimeType?: "pi" | "claude" | "codex";
@@ -134,7 +138,7 @@ export interface SwarmAgentRuntime {
   getPendingCount(): number;
   getContextUsage(): AgentContextUsage | undefined;
   getSystemPrompt?(): string;
-  setPinnedContent?(content: string | undefined): void | Promise<void>;
+  setPinnedContent?(content: string | undefined, options?: SetPinnedContentOptions): void | Promise<void>;
   isContextRecoveryInProgress?(): boolean;
   prepareForSpecialistFallbackReplay?(): Promise<SpecialistFallbackReplaySnapshot | undefined>;
   restorePreparedSpecialistFallbackReplay?(): Promise<void>;

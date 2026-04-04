@@ -180,6 +180,7 @@ import type {
   RuntimeSessionEvent,
   RuntimeShutdownOptions,
   RuntimeUserMessage,
+  SetPinnedContentOptions,
   SpecialistFallbackReplaySnapshot,
   SwarmAgentRuntime
 } from "./runtime-types.js";
@@ -1926,6 +1927,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     options?: {
       registry?: PinRegistry;
       runtime?: SwarmAgentRuntime;
+      setPinnedContentOptions?: SetPinnedContentOptions;
     }
   ): Promise<PinRegistry> {
     const registry = options?.registry ?? await loadPins(this.getSessionDirForDescriptor(descriptor));
@@ -1933,7 +1935,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     const runtime = options?.runtime ?? this.runtimes.get(descriptor.agentId);
     if (runtime?.setPinnedContent) {
-      await runtime.setPinnedContent(formatPinnedMessagesForCompaction(registry));
+      await runtime.setPinnedContent(
+        formatPinnedMessagesForCompaction(registry),
+        options?.setPinnedContentOptions
+      );
     }
 
     return registry;
@@ -2463,7 +2468,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     const emptyRegistry: PinRegistry = { version: 1, pins: {} };
     await savePins(this.getSessionDirForDescriptor(descriptor), emptyRegistry);
-    await this.syncPinnedContentForManagerRuntime(descriptor, { registry: emptyRegistry });
+    await this.syncPinnedContentForManagerRuntime(descriptor, {
+      registry: emptyRegistry,
+      setPinnedContentOptions: { suppressRecycle: true }
+    });
 
     // Clear in-memory conversation history
     this.conversationProjector.resetConversationHistory(agentId);
