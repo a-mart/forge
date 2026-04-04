@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getScheduleFilePath } from "../../scheduler/schedule-storage.js";
+import { CLAUDE_SDK_AUTH_USER_MESSAGE } from "../claude-startup-errors.js";
 import { getProfileMemoryPath } from "../data-paths.js";
 import { SwarmManager } from "../swarm-manager.js";
 import type { RuntimeUserMessage, SwarmAgentRuntime } from "../runtime-types.js";
@@ -259,8 +260,38 @@ describe("Claude session lifecycle", () => {
     expect(forkedContent).not.toContain("swarm_claude_session_state");
   });
 
-  it("drops persisted Claude runtime state when partially forking a session", async () => {
+  it("emits direct Claude SDK auth guidance system messages", async () => {
     const config = await makeTempConfig(8903);
+    const manager = new TestSwarmManager(config);
+    const rootManager = await bootWithDefaultManager(manager, config);
+    const session = await manager.createManager(rootManager.agentId, {
+      name: "Claude Session",
+      cwd: config.defaultCwd
+    });
+    const conversationMessages: Array<{ type: string; text?: string }> = [];
+    manager.on("conversation_message", (event) => {
+      conversationMessages.push(event as { type: string; text?: string });
+    });
+
+    await (manager as unknown as {
+      handleRuntimeError: (agentId: string, error: { phase: string; message: string; details?: Record<string, unknown> }) => Promise<void>;
+    }).handleRuntimeError(session.agentId, {
+      phase: "startup",
+      message: CLAUDE_SDK_AUTH_USER_MESSAGE,
+      details: {
+        userFacingMessage: CLAUDE_SDK_AUTH_USER_MESSAGE,
+        claudeSdkAuthRequired: true
+      }
+    });
+
+    expect(conversationMessages.at(-1)).toMatchObject({
+      type: "conversation_message",
+      text: CLAUDE_SDK_AUTH_USER_MESSAGE
+    });
+  });
+
+  it("drops persisted Claude runtime state when partially forking a session", async () => {
+    const config = await makeTempConfig(8904);
     const manager = new TestSwarmManager(config);
     const rootManager = await bootWithDefaultManager(manager, config);
     const source = await manager.createManager(rootManager.agentId, {

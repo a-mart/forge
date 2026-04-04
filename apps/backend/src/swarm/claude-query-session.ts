@@ -13,6 +13,7 @@ import type {
   ClaudeSdkUserMessage
 } from "./claude-sdk-loader.js";
 import { ClaudeEventMapper } from "./claude-event-mapper.js";
+import { presentClaudeSdkStartupFailure } from "./claude-startup-errors.js";
 import { normalizeRuntimeError, normalizeRuntimeUserMessage } from "./runtime-utils.js";
 import type {
   RuntimeErrorEvent,
@@ -60,6 +61,7 @@ export interface ClaudeQuerySessionOptions {
   mcpServers?: Record<string, unknown>;
   allowedTools?: string[];
   resumeSessionId?: string;
+  startupTimeoutMs?: number;
 }
 
 type InternalSessionStatus =
@@ -118,6 +120,7 @@ type EmittedStatusSnapshot = {
 
 const MAX_CLAUDE_STDERR_LINES = 20;
 const MAX_CLAUDE_STDERR_SUMMARY_LINES = 3;
+const DEFAULT_CLAUDE_STARTUP_TIMEOUT_MS = 30_000;
 const CLAUDE_SDK_STRIPPED_INHERITED_ENV_KEYS = new Set(["ANTHROPIC_API_KEY"]);
 const CLAUDE_SDK_IGNORED_OVERRIDE_ENV_KEYS = new Set(["ANTHROPIC_API_KEY", "CLAUDE_CONFIG_DIR"]);
 
@@ -284,6 +287,8 @@ export class ClaudeQuerySession {
 
     await this.emitStatus(true);
 
+    const startupTimeoutMs = this.options.startupTimeoutMs ?? DEFAULT_CLAUDE_STARTUP_TIMEOUT_MS;
+
     try {
       const queryOptions = this.buildQueryOptions();
       const queryHandle = this.options.sdk.query({
@@ -293,25 +298,47 @@ export class ClaudeQuerySession {
 
       this.queryHandle = queryHandle;
       this.consumePromise = this.consumeEvents(queryHandle);
-      await queryHandle.initializationResult?.();
 
-      if (!this.startupReady.settled) {
-        if (this.internalStatus === "starting" && !this.activeTurn) {
-          await this.setInternalStatus("idle");
-        }
+      const initializationReady = queryHandle.initializationResult?.();
+      const startupSignals: Array<Promise<void>> = [this.startupReady.promise];
 
-        this.startupReady.resolve();
+      if (initializationReady) {
+        startupSignals.push(
+          Promise.resolve(initializationReady).then(async () => {
+            if (!this.startupReady.settled) {
+              if (this.internalStatus === "starting" && !this.activeTurn) {
+                await this.setInternalStatus("idle");
+              }
+
+              this.startupReady.resolve();
+            }
+          })
+        );
       }
 
+      await withTimeout(Promise.race(startupSignals), startupTimeoutMs, "claude_startup");
       await this.maybeDispatchQueuedInput();
       await this.startupReady.promise;
     } catch (error) {
       const enrichedError = this.enrichError(error);
-      await this.handleFatalError("startup", enrichedError, {
-        model: this.options.config.model,
-        cwd: path.resolve(this.options.config.cwd)
+      const presentation = presentClaudeSdkStartupFailure({
+        error: enrichedError,
+        stderrLines: this.getRecentStderr(),
+        timeoutMs: startupTimeoutMs
       });
-      throw enrichedError;
+      const reportedError = presentation.userFacingMessage
+        ? new Error(presentation.userFacingMessage)
+        : enrichedError;
+
+      await this.handleFatalError("startup", reportedError, {
+        model: this.options.config.model,
+        cwd: path.resolve(this.options.config.cwd),
+        technicalMessage: presentation.technicalMessage,
+        ...(presentation.userFacingMessage ? { userFacingMessage: presentation.userFacingMessage } : {}),
+        ...(presentation.isAuthFailure ? { claudeSdkAuthRequired: true } : {}),
+        ...(presentation.isStartupTimeout ? { claudeSdkStartupTimeoutMs: startupTimeoutMs } : {})
+      });
+      throw reportedError;
     }
   }
 
@@ -1164,4 +1191,23 @@ function cloneStatusSnapshot(snapshot: EmittedStatusSnapshot): EmittedStatusSnap
         }
       : undefined
   };
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timeoutHandle: NodeJS.Timeout | undefined;
+
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timeoutHandle = setTimeout(() => {
+          reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+    }
+  }
 }

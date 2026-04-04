@@ -8689,6 +8689,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const extensionPath = readStringDetail(error.details, "extensionPath");
     const extensionEvent = readStringDetail(error.details, "event");
     const extensionBaseName = extensionPath ? basename(extensionPath) : undefined;
+    const userFacingMessage = readStringDetail(error.details, "userFacingMessage");
 
     // Track successful auto-compaction
     if (error.phase === "compaction" && recoveryStage === "auto_compaction_succeeded" && descriptor.profileId) {
@@ -8706,25 +8707,28 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     const text =
-      error.phase === "compaction"
-        ? recoveryStage === "auto_compaction_succeeded"
-          ? `📋 ${message}.`
-          : recoveryStage === "recovery_failed"
-            ? `🚨 Context recovery failed: ${message}. Start a new session or manually trim history/compact before continuing.`
-            : `⚠️ Compaction error${retryLabel}: ${message}. Attempting fallback recovery.`
-        : error.phase === "context_guard"
-          ? recoveryStage === "guard_started"
+      userFacingMessage
+      ?? (
+        error.phase === "compaction"
+          ? recoveryStage === "auto_compaction_succeeded"
             ? `📋 ${message}.`
-            : `⚠️ Context guard error${retryLabel}: ${message}.`
-          : error.phase === "extension"
-            ? extensionBaseName && extensionEvent
-              ? `⚠️ Extension error (${extensionBaseName} · ${extensionEvent}): ${message}`
-              : extensionBaseName
-                ? `⚠️ Extension error (${extensionBaseName}): ${message}`
-                : `⚠️ Extension error: ${message}`
-            : droppedPendingCount && droppedPendingCount > 0
-              ? `⚠️ Agent error${retryLabel}: ${message}. ${droppedPendingCount} queued message${droppedPendingCount === 1 ? "" : "s"} could not be delivered and were dropped. Please resend.`
-              : `⚠️ Agent error${retryLabel}: ${message}. Message may need to be resent.`;
+            : recoveryStage === "recovery_failed"
+              ? `🚨 Context recovery failed: ${message}. Start a new session or manually trim history/compact before continuing.`
+              : `⚠️ Compaction error${retryLabel}: ${message}. Attempting fallback recovery.`
+          : error.phase === "context_guard"
+            ? recoveryStage === "guard_started"
+              ? `📋 ${message}.`
+              : `⚠️ Context guard error${retryLabel}: ${message}.`
+            : error.phase === "extension"
+              ? extensionBaseName && extensionEvent
+                ? `⚠️ Extension error (${extensionBaseName} · ${extensionEvent}): ${message}`
+                : extensionBaseName
+                  ? `⚠️ Extension error (${extensionBaseName}): ${message}`
+                  : `⚠️ Extension error: ${message}`
+              : droppedPendingCount && droppedPendingCount > 0
+                ? `⚠️ Agent error${retryLabel}: ${message}. ${droppedPendingCount} queued message${droppedPendingCount === 1 ? "" : "s"} could not be delivered and were dropped. Please resend.`
+                : `⚠️ Agent error${retryLabel}: ${message}. Message may need to be resent.`
+      );
 
     this.emitConversationMessage({
       type: "conversation_message",

@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { ClaudeQuerySession, type ClaudeQuerySessionCallbacks } from "../claude-query-session.js";
+import {
+  CLAUDE_SDK_AUTH_USER_MESSAGE,
+  buildClaudeSdkStartupTimeoutUserMessage
+} from "../claude-startup-errors.js";
 import type {
   ClaudeSdkMessage,
   ClaudeSdkModule,
@@ -137,5 +141,99 @@ describe("ClaudeQuerySession", () => {
         process.env.FORGE_TEST_INHERITED_ENV = previousInheritedMarker;
       }
     }
+  });
+
+  it("surfaces Claude login guidance when startup fails with an auth error", async () => {
+    const callbacks = createCallbacks();
+    const startupError = new Error("Authentication required. Please login with Claude Code.");
+    const sdk: ClaudeSdkModule = {
+      query: vi.fn(() => ({
+        async interrupt(): Promise<void> {},
+        async initializationResult(): Promise<void> {
+          throw startupError;
+        },
+        close(): void {},
+        async return(): Promise<IteratorResult<ClaudeSdkMessage>> {
+          return { value: undefined, done: true };
+        },
+        [Symbol.asyncIterator](): AsyncIterator<ClaudeSdkMessage> {
+          return {
+            next: async () => await new Promise<IteratorResult<ClaudeSdkMessage>>(() => {})
+          };
+        }
+      })) as unknown as ClaudeSdkModule["query"]
+    };
+
+    const session = new ClaudeQuerySession({
+      sdk,
+      config: {
+        model: "claude-test",
+        systemPrompt: "system",
+        cwd: process.cwd()
+      },
+      callbacks,
+      startupTimeoutMs: 50
+    });
+
+    await expect(session.start()).rejects.toThrow(CLAUDE_SDK_AUTH_USER_MESSAGE);
+    expect(callbacks.onRuntimeError).toHaveBeenCalledWith(
+      "agent-1",
+      expect.objectContaining({
+        phase: "startup",
+        message: CLAUDE_SDK_AUTH_USER_MESSAGE,
+        details: expect.objectContaining({
+          userFacingMessage: CLAUDE_SDK_AUTH_USER_MESSAGE,
+          claudeSdkAuthRequired: true,
+          technicalMessage: startupError.message
+        })
+      })
+    );
+  });
+
+  it("fails Claude startup after the timeout and surfaces actionable guidance", async () => {
+    const callbacks = createCallbacks();
+    const sdk: ClaudeSdkModule = {
+      query: vi.fn(() => ({
+        async interrupt(): Promise<void> {},
+        async initializationResult(): Promise<void> {
+          await new Promise(() => {});
+        },
+        close(): void {},
+        async return(): Promise<IteratorResult<ClaudeSdkMessage>> {
+          return { value: undefined, done: true };
+        },
+        [Symbol.asyncIterator](): AsyncIterator<ClaudeSdkMessage> {
+          return {
+            next: async () => await new Promise<IteratorResult<ClaudeSdkMessage>>(() => {})
+          };
+        }
+      })) as unknown as ClaudeSdkModule["query"]
+    };
+
+    const session = new ClaudeQuerySession({
+      sdk,
+      config: {
+        model: "claude-test",
+        systemPrompt: "system",
+        cwd: process.cwd()
+      },
+      callbacks,
+      startupTimeoutMs: 25
+    });
+
+    const expectedMessage = buildClaudeSdkStartupTimeoutUserMessage(25);
+    await expect(session.start()).rejects.toThrow(expectedMessage);
+    expect(callbacks.onRuntimeError).toHaveBeenCalledWith(
+      "agent-1",
+      expect.objectContaining({
+        phase: "startup",
+        message: expectedMessage,
+        details: expect.objectContaining({
+          userFacingMessage: expectedMessage,
+          claudeSdkStartupTimeoutMs: 25,
+          technicalMessage: "claude_startup timed out after 25ms"
+        })
+      })
+    );
   });
 });
