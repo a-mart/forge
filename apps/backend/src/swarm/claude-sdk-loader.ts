@@ -34,7 +34,7 @@ export interface ClaudeSdkQueryOptions {
   includePartialMessages?: boolean;
   mcpServers?: Record<string, unknown>;
   allowedTools?: string[];
-  env?: Record<string, string>;
+  env?: Record<string, string | undefined>;
   abortController?: AbortController;
   permissionMode?: string;
   allowDangerouslySkipPermissions?: boolean;
@@ -43,6 +43,8 @@ export interface ClaudeSdkQueryOptions {
   debugFile?: string;
   stderr?: (data: string) => void;
   pathToClaudeCodeExecutable?: string;
+  executable?: string;
+  executableArgs?: string[];
   [key: string]: unknown;
 }
 
@@ -59,6 +61,7 @@ export interface ClaudeSdkModule {
     options: ClaudeSdkQueryOptions;
   }): ClaudeSdkQueryHandle;
   pathToClaudeCodeExecutable?: string;
+  jsRuntimeExecutable?: string;
 }
 
 export interface ClaudeSdkMcpHelpers {
@@ -100,7 +103,8 @@ export async function loadClaudeSdkModule(): Promise<ClaudeSdkModule> {
 
   return {
     query: module.query as ClaudeSdkModule["query"],
-    pathToClaudeCodeExecutable: resolveClaudeSdkCliPath()
+    pathToClaudeCodeExecutable: resolveClaudeSdkCliPath(),
+    jsRuntimeExecutable: resolveClaudeSdkRuntimeExecutable()
   };
 }
 
@@ -222,4 +226,13 @@ function resolveClaudeSdkCliPath(): string {
   }
 
   return cliPath;
+}
+
+function resolveClaudeSdkRuntimeExecutable(): string | undefined {
+  // The SDK treats cli.js as a JavaScript entrypoint and otherwise falls back to
+  // spawning the literal "node" command. Pin the runtime to the current process
+  // executable so packaged/daemon environments do not depend on PATH containing node.
+  return typeof process.execPath === "string" && process.execPath.length > 0
+    ? process.execPath
+    : undefined;
 }

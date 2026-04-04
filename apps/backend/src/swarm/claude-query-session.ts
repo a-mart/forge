@@ -343,7 +343,12 @@ export class ClaudeQuerySession {
     }
 
     if (this.options.config.env && Object.keys(this.options.config.env).length > 0) {
-      queryOptions.env = { ...this.options.config.env };
+      // Treat runtime env as overrides, not a full replacement, so Claude keeps the
+      // inherited PATH/HOME/TMPDIR/ELECTRON_RUN_AS_NODE needed to launch cli.js.
+      queryOptions.env = {
+        ...process.env,
+        ...this.options.config.env
+      };
     }
 
     if (this.options.allowedTools && this.options.allowedTools.length > 0) {
@@ -352,6 +357,10 @@ export class ClaudeQuerySession {
 
     if (this.options.sdk.pathToClaudeCodeExecutable) {
       queryOptions.pathToClaudeCodeExecutable = this.options.sdk.pathToClaudeCodeExecutable;
+    }
+
+    if (this.options.sdk.jsRuntimeExecutable) {
+      queryOptions.executable = this.options.sdk.jsRuntimeExecutable;
     }
 
     queryOptions.abortController = this.abortController;

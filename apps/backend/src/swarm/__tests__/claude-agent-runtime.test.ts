@@ -344,19 +344,21 @@ describe("ClaudeAgentRuntime", () => {
 
       await runtime.sendMessage("hello");
       expect(buildEnv).toHaveBeenCalledTimes(1);
-      expect(queryCalls[0]?.options.env).toEqual({
+      expect(queryCalls[0]?.options.env).toMatchObject({
         ANTHROPIC_API_KEY: "session-api-key-1",
         CLAUDE_CONFIG_DIR: "/session/config/1"
       });
+      expect(queryCalls[0]?.options.executable).toBe(process.execPath);
       expect(process.env.ANTHROPIC_API_KEY).toBe("global-api-key");
       expect(process.env.CLAUDE_CONFIG_DIR).toBe("/global/config");
 
       await runtime.recycle();
       expect(buildEnv).toHaveBeenCalledTimes(2);
-      expect(queryCalls[1]?.options.env).toEqual({
+      expect(queryCalls[1]?.options.env).toMatchObject({
         ANTHROPIC_API_KEY: "session-api-key-2",
         CLAUDE_CONFIG_DIR: "/session/config/2"
       });
+      expect(queryCalls[1]?.options.executable).toBe(process.execPath);
       expect(process.env.ANTHROPIC_API_KEY).toBe("global-api-key");
       expect(process.env.CLAUDE_CONFIG_DIR).toBe("/global/config");
 

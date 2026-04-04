@@ -66,12 +66,14 @@ function createCallbacks(): ClaudeQuerySessionCallbacks {
 }
 
 describe("ClaudeQuerySession", () => {
-  it("passes env overrides to sdk.query without mutating process.env", async () => {
+  it("merges env overrides into the inherited process env without mutating process.env", async () => {
     const previousAnthropicApiKey = process.env.ANTHROPIC_API_KEY;
     const previousClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
+    const previousInheritedMarker = process.env.FORGE_TEST_INHERITED_ENV;
 
     process.env.ANTHROPIC_API_KEY = "global-api-key";
     process.env.CLAUDE_CONFIG_DIR = "/global/config";
+    process.env.FORGE_TEST_INHERITED_ENV = "keep-me";
 
     const capturedOptions: ClaudeSdkQueryOptions[] = [];
     const query = vi.fn(
@@ -82,7 +84,8 @@ describe("ClaudeQuerySession", () => {
     );
     const sdk: ClaudeSdkModule = {
       query: query as unknown as ClaudeSdkModule["query"],
-      pathToClaudeCodeExecutable: "/tmp/claude-sdk/cli.js"
+      pathToClaudeCodeExecutable: "/tmp/claude-sdk/cli.js",
+      jsRuntimeExecutable: "/tmp/runtime/node"
     };
 
     const session = new ClaudeQuerySession({
@@ -103,13 +106,16 @@ describe("ClaudeQuerySession", () => {
       await session.start();
 
       expect(capturedOptions).toHaveLength(1);
-      expect(capturedOptions[0]?.env).toEqual({
+      expect(capturedOptions[0]?.env).toMatchObject({
+        FORGE_TEST_INHERITED_ENV: "keep-me",
         ANTHROPIC_API_KEY: "session-api-key",
         CLAUDE_CONFIG_DIR: "/session/config"
       });
       expect(capturedOptions[0]?.pathToClaudeCodeExecutable).toBe("/tmp/claude-sdk/cli.js");
+      expect(capturedOptions[0]?.executable).toBe("/tmp/runtime/node");
       expect(process.env.ANTHROPIC_API_KEY).toBe("global-api-key");
       expect(process.env.CLAUDE_CONFIG_DIR).toBe("/global/config");
+      expect(process.env.FORGE_TEST_INHERITED_ENV).toBe("keep-me");
 
       await session.stop();
     } finally {
@@ -123,6 +129,12 @@ describe("ClaudeQuerySession", () => {
         delete process.env.CLAUDE_CONFIG_DIR;
       } else {
         process.env.CLAUDE_CONFIG_DIR = previousClaudeConfigDir;
+      }
+
+      if (previousInheritedMarker === undefined) {
+        delete process.env.FORGE_TEST_INHERITED_ENV;
+      } else {
+        process.env.FORGE_TEST_INHERITED_ENV = previousInheritedMarker;
       }
     }
   });

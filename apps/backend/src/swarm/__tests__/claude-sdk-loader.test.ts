@@ -24,6 +24,7 @@ describe("claude-sdk-loader", () => {
     expect(importer).toHaveBeenCalledWith("@anthropic-ai/claude-agent-sdk");
     expect(sdk.query).toBe(query);
     expect(sdk.pathToClaudeCodeExecutable).toMatch(/[/\\]cli\.js$/);
+    expect(sdk.jsRuntimeExecutable).toBe(process.execPath);
   });
 
   it("throws a clear error when the SDK package is missing", async () => {
@@ -83,6 +84,7 @@ describe("claude-sdk-loader", () => {
     expect(importer).toHaveBeenCalledTimes(1);
     expect(sdkAgain.query).toBe(sdk.query);
     expect(sdkAgain.pathToClaudeCodeExecutable).toBe(sdk.pathToClaudeCodeExecutable);
+    expect(sdkAgain.jsRuntimeExecutable).toBe(sdk.jsRuntimeExecutable);
     expect(helpers.createSdkMcpServer).toBe(createSdkMcpServer);
     expect(helpers.tool).toBe(tool);
   });
