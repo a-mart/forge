@@ -12,7 +12,10 @@ import type {
   ClaudeSdkUserMessage
 } from "../claude-sdk-loader.js";
 
-function createMockQueryHandle(initEvent: ClaudeSdkMessage = { type: "system:init" }): ClaudeSdkQueryHandle {
+function createMockQueryHandle(
+  initEvent: ClaudeSdkMessage = { type: "system:init" },
+  overrides?: Partial<ClaudeSdkQueryHandle>
+): ClaudeSdkQueryHandle {
   let sentInit = false;
   let closed = false;
   let pendingResolve: ((value: IteratorResult<ClaudeSdkMessage>) => void) | undefined;
@@ -53,7 +56,8 @@ function createMockQueryHandle(initEvent: ClaudeSdkMessage = { type: "system:ini
     },
     [Symbol.asyncIterator](): AsyncIterator<ClaudeSdkMessage> {
       return iterator;
-    }
+    },
+    ...overrides
   };
 
   return iterator;
@@ -141,6 +145,58 @@ describe("ClaudeQuerySession", () => {
         process.env.FORGE_TEST_INHERITED_ENV = previousInheritedMarker;
       }
     }
+  });
+
+  it("passes auto-compaction settings into query options and proxies SDK control methods", async () => {
+    const callbacks = createCallbacks();
+    const getContextUsage = vi.fn().mockResolvedValue({
+      totalTokens: 1_234,
+      maxTokens: 200_000,
+      percentage: 0.617
+    });
+    const applyFlagSettings = vi.fn().mockResolvedValue(undefined);
+    const capturedOptions: ClaudeSdkQueryOptions[] = [];
+    const sdk: ClaudeSdkModule = {
+      query: vi.fn((args: { prompt: AsyncIterable<ClaudeSdkUserMessage>; options: ClaudeSdkQueryOptions }) => {
+        capturedOptions.push(args.options);
+        return createMockQueryHandle(
+          { type: "system:init" },
+          {
+            getContextUsage,
+            applyFlagSettings
+          }
+        );
+      }) as unknown as ClaudeSdkModule["query"]
+    };
+
+    const session = new ClaudeQuerySession({
+      sdk,
+      config: {
+        model: "claude-test",
+        systemPrompt: "system",
+        cwd: process.cwd(),
+        autoCompactWindow: 160_000
+      },
+      callbacks
+    });
+
+    await session.start();
+
+    expect(capturedOptions).toHaveLength(1);
+    expect(capturedOptions[0]?.settings).toEqual({
+      autoCompactWindow: 160_000
+    });
+    await expect(session.getSdkContextUsage()).resolves.toEqual({
+      totalTokens: 1_234,
+      maxTokens: 200_000,
+      percentage: 0.617
+    });
+
+    await session.applyFlagSettings({ autoCompactWindow: 120_000 });
+    expect(getContextUsage).toHaveBeenCalledTimes(1);
+    expect(applyFlagSettings).toHaveBeenCalledWith({ autoCompactWindow: 120_000 });
+
+    await session.stop();
   });
 
   it("surfaces Claude login guidance when startup fails with an auth error", async () => {

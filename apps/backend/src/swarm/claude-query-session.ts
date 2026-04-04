@@ -53,6 +53,7 @@ export interface ClaudeQuerySessionOptions {
     systemPrompt: string;
     cwd: string;
     contextWindow?: number;
+    autoCompactWindow?: number;
     thinking?: ClaudeThinkingConfig;
     effort?: ClaudeEffort;
     env?: Record<string, string>;
@@ -172,6 +173,16 @@ export class ClaudeQuerySession {
 
   getContextUsage(): AgentContextUsage | undefined {
     return this.lastContextUsage;
+  }
+
+  async getSdkContextUsage(): Promise<unknown> {
+    await this.start();
+    return await this.queryHandle?.getContextUsage?.();
+  }
+
+  async applyFlagSettings(settings: Record<string, unknown>): Promise<void> {
+    await this.start();
+    await this.queryHandle?.applyFlagSettings?.(settings);
   }
 
   getSdkSessionId(): string | undefined {
@@ -365,6 +376,16 @@ export class ClaudeQuerySession {
 
     if (this.options.config.effort) {
       queryOptions.effort = this.options.config.effort;
+    }
+
+    if (
+      typeof this.options.config.autoCompactWindow === "number"
+      && Number.isFinite(this.options.config.autoCompactWindow)
+      && this.options.config.autoCompactWindow > 0
+    ) {
+      queryOptions.settings = {
+        autoCompactWindow: Math.floor(this.options.config.autoCompactWindow)
+      };
     }
 
     if (this.options.mcpServers && Object.keys(this.options.mcpServers).length > 0) {

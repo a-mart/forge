@@ -81,6 +81,29 @@ function createUsageReportingMockClaudeSdk(
   };
 }
 
+function createControlAwareMockClaudeSdk(
+  queryCalls: QueryCallRecord[],
+  controls: {
+    getContextUsage: ReturnType<typeof vi.fn>;
+    applyFlagSettings: ReturnType<typeof vi.fn>;
+  }
+): ClaudeSdkModule {
+  return {
+    query(args: { prompt: AsyncIterable<ClaudeSdkUserMessage>; options: ClaudeSdkQueryOptions }) {
+      queryCalls.push({ options: { ...args.options } });
+      return createMockQueryHandle(
+        args.prompt,
+        args.options,
+        undefined,
+        {
+          getContextUsage: controls.getContextUsage,
+          applyFlagSettings: controls.applyFlagSettings
+        }
+      );
+    }
+  };
+}
+
 function createCompactionMockClaudeSdk(
   queryCalls: QueryCallRecord[],
   hiddenPrompts: string[]
@@ -123,6 +146,10 @@ function createMockQueryHandle(
   options: ClaudeSdkQueryOptions,
   hooks?: {
     onPrompt?: (message: ClaudeSdkUserMessage, pushEvent: (event: ClaudeSdkMessage) => void) => Promise<void> | void;
+  },
+  overrides?: {
+    getContextUsage?: () => Promise<unknown>;
+    applyFlagSettings?: (settings: Record<string, unknown>) => Promise<void>;
   }
 ) {
   const initialSessionId = options.resume ?? options.sessionId ?? "mock-session";
@@ -162,6 +189,12 @@ function createMockQueryHandle(
   return {
     async interrupt(): Promise<void> {},
     async initializationResult(): Promise<void> {},
+    async getContextUsage(): Promise<unknown> {
+      return await overrides?.getContextUsage?.();
+    },
+    async applyFlagSettings(settings: Record<string, unknown>): Promise<void> {
+      await overrides?.applyFlagSettings?.(settings);
+    },
     close,
     async return(): Promise<IteratorResult<ClaudeSdkMessage>> {
       close();
@@ -246,6 +279,162 @@ describe("ClaudeAgentRuntime", () => {
       type: "enabled",
       budgetTokens: 16_384
     });
+  });
+
+  it("configures SDK auto-compaction from the model context window and exposes SDK control methods", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "forge-claude-runtime-"));
+    const descriptor = makeDescriptor(tempDir);
+    await mkdir(dirname(descriptor.sessionFile), { recursive: true });
+
+    const queryCalls: QueryCallRecord[] = [];
+    const getContextUsage = vi.fn().mockResolvedValue({
+      totalTokens: 4_321,
+      maxTokens: 200_000,
+      percentage: 2.1605,
+      autoCompactThreshold: 160_000,
+      isAutoCompactEnabled: true
+    });
+    const applyFlagSettings = vi.fn().mockResolvedValue(undefined);
+    setClaudeSdkImporterForTests(
+      vi.fn().mockResolvedValue(
+        createControlAwareMockClaudeSdk(queryCalls, {
+          getContextUsage,
+          applyFlagSettings
+        })
+      )
+    );
+
+    const runtime = new ClaudeAgentRuntime({
+      descriptor,
+      systemPrompt: "You are a Claude test runtime.",
+      callbacks: {
+        onStatusChange: async () => {}
+      },
+      dataDir: tempDir,
+      profileId: "profile-1",
+      sessionId: descriptor.agentId,
+      authResolver: {
+        buildEnv: async () => ({})
+      } as any,
+      modelContextWindow: 200_000
+    });
+
+    await expect(runtime.getSdkContextUsage()).resolves.toEqual({
+      totalTokens: 4_321,
+      maxTokens: 200_000,
+      percentage: 2.1605,
+      autoCompactThreshold: 160_000,
+      isAutoCompactEnabled: true
+    });
+    await expect(runtime.applyFlagSettings({ autoCompactWindow: 120_000 })).resolves.toBeUndefined();
+
+    expect(queryCalls[0]?.options.settings).toEqual({
+      autoCompactWindow: 160_000
+    });
+    expect(getContextUsage).toHaveBeenCalledTimes(1);
+    expect(applyFlagSettings).toHaveBeenCalledWith({ autoCompactWindow: 120_000 });
+
+    await runtime.terminate({ abort: false });
+  });
+
+  it("returns undefined when the SDK query handle does not expose getContextUsage", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "forge-claude-runtime-"));
+    const descriptor = makeDescriptor(tempDir);
+    await mkdir(dirname(descriptor.sessionFile), { recursive: true });
+
+    const queryCalls: QueryCallRecord[] = [];
+    const sdk: ClaudeSdkModule = {
+      query(args: { prompt: AsyncIterable<ClaudeSdkUserMessage>; options: ClaudeSdkQueryOptions }) {
+        queryCalls.push({ options: { ...args.options } });
+        const handle = createMockQueryHandle(args.prompt, args.options);
+        delete (handle as { getContextUsage?: unknown }).getContextUsage;
+        return handle;
+      }
+    };
+    setClaudeSdkImporterForTests(vi.fn().mockResolvedValue(sdk));
+
+    const runtime = new ClaudeAgentRuntime({
+      descriptor,
+      systemPrompt: "You are a Claude test runtime.",
+      callbacks: {
+        onStatusChange: async () => {}
+      },
+      dataDir: tempDir,
+      profileId: "profile-1",
+      sessionId: descriptor.agentId,
+      authResolver: {
+        buildEnv: async () => ({})
+      } as any,
+      modelContextWindow: 200_000
+    });
+
+    await expect(runtime.getSdkContextUsage()).resolves.toBeUndefined();
+    expect(queryCalls[0]?.options.settings).toEqual({
+      autoCompactWindow: 160_000
+    });
+
+    await runtime.terminate({ abort: false });
+  });
+
+  it("omits auto-compaction settings when the resolved model context window is undefined", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "forge-claude-runtime-"));
+    const descriptor = makeDescriptor(tempDir);
+    descriptor.model = {
+      ...descriptor.model,
+      modelId: "claude-sdk-test-model-without-context-window"
+    };
+    await mkdir(dirname(descriptor.sessionFile), { recursive: true });
+
+    const queryCalls: QueryCallRecord[] = [];
+    setClaudeSdkImporterForTests(vi.fn().mockResolvedValue(createMockClaudeSdk(queryCalls)));
+
+    const runtime = new ClaudeAgentRuntime({
+      descriptor,
+      systemPrompt: "You are a Claude test runtime.",
+      callbacks: {
+        onStatusChange: async () => {}
+      },
+      dataDir: tempDir,
+      profileId: "profile-1",
+      sessionId: descriptor.agentId,
+      authResolver: {
+        buildEnv: async () => ({})
+      } as any
+    });
+
+    await expect(runtime.getSdkContextUsage()).resolves.toBeUndefined();
+    expect(queryCalls[0]?.options.settings).toBeUndefined();
+
+    await runtime.terminate({ abort: false });
+  });
+
+  it("omits auto-compaction settings when the model context window is zero", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "forge-claude-runtime-"));
+    const descriptor = makeDescriptor(tempDir);
+    await mkdir(dirname(descriptor.sessionFile), { recursive: true });
+
+    const queryCalls: QueryCallRecord[] = [];
+    setClaudeSdkImporterForTests(vi.fn().mockResolvedValue(createMockClaudeSdk(queryCalls)));
+
+    const runtime = new ClaudeAgentRuntime({
+      descriptor,
+      systemPrompt: "You are a Claude test runtime.",
+      callbacks: {
+        onStatusChange: async () => {}
+      },
+      dataDir: tempDir,
+      profileId: "profile-1",
+      sessionId: descriptor.agentId,
+      authResolver: {
+        buildEnv: async () => ({})
+      } as any,
+      modelContextWindow: 0
+    });
+
+    await expect(runtime.getSdkContextUsage()).resolves.toBeUndefined();
+    expect(queryCalls[0]?.options.settings).toBeUndefined();
+
+    await runtime.terminate({ abort: false });
   });
 
   it("forwards mapped reasoning config and catalog context windows to the Claude SDK session", async () => {

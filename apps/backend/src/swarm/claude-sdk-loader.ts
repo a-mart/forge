@@ -39,6 +39,7 @@ export interface ClaudeSdkQueryOptions {
   abortController?: AbortController;
   permissionMode?: string;
   allowDangerouslySkipPermissions?: boolean;
+  settings?: string | Record<string, unknown>;
   settingSources?: string[];
   debug?: boolean;
   debugFile?: string;
@@ -52,6 +53,8 @@ export interface ClaudeSdkQueryOptions {
 export interface ClaudeSdkQueryHandle extends AsyncIterable<ClaudeSdkMessage> {
   interrupt(): Promise<void>;
   initializationResult?(): Promise<unknown>;
+  getContextUsage?(): Promise<unknown>;
+  applyFlagSettings?(settings: Record<string, unknown>): Promise<void>;
   close?(): void;
   return?(value?: unknown): Promise<IteratorResult<ClaudeSdkMessage>>;
 }

@@ -88,6 +88,7 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
   private readonly allowedTools: string[];
   private readonly runtimeEnvOverrides: Record<string, string>;
   private readonly modelContextWindow: number | undefined;
+  private readonly autoCompactWindow: number | undefined;
   private readonly customEntries = new Map<string, RuntimeCustomEntry[]>();
 
   private persistedRuntimeState: ClaudeRuntimeStateEntry | undefined;
@@ -150,6 +151,10 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
     this.runtimeEnvOverrides = { ...(options.runtimeEnv ?? {}) };
     this.modelContextWindow =
       options.modelContextWindow ?? modelCatalogService.getEffectiveContextWindow(options.descriptor.model.modelId);
+    this.autoCompactWindow =
+      typeof this.modelContextWindow === "number" && Number.isFinite(this.modelContextWindow) && this.modelContextWindow > 0
+        ? Math.floor(this.modelContextWindow * 0.8)
+        : undefined;
     this.persistedRuntimeState = this.readPersistedRuntimeState();
     this.persistedCompactionSummary = this.readPersistedCompactionSummary();
     this.generation = this.persistedRuntimeState?.generationId ?? 0;
@@ -166,6 +171,18 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
 
   getContextUsage(): AgentContextUsage | undefined {
     return this.activeSession?.getContextUsage() ?? this.contextUsage;
+  }
+
+  async getSdkContextUsage(): Promise<unknown> {
+    this.ensureNotTerminated();
+    const session = await this.ensureSessionStarted();
+    return await session.getSdkContextUsage();
+  }
+
+  async applyFlagSettings(settings: Record<string, unknown>): Promise<void> {
+    this.ensureNotTerminated();
+    const session = await this.ensureSessionStarted();
+    await session.applyFlagSettings(settings);
   }
 
   getSystemPrompt(): string {
@@ -448,6 +465,7 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
         systemPrompt: this.activeSystemPrompt,
         cwd: this.descriptor.cwd,
         contextWindow: this.modelContextWindow,
+        autoCompactWindow: this.autoCompactWindow,
         thinking: options.thinkingConfig.thinking,
         effort: options.thinkingConfig.effort,
         env: options.runtimeEnv
