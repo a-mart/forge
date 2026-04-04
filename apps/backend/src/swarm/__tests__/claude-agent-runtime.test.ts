@@ -1014,6 +1014,52 @@ describe("ClaudeAgentRuntime", () => {
     await runtime.terminate({ abort: false });
   });
 
+  it("reports SDK auto-compaction success through the runtime error callback", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "forge-claude-runtime-"));
+    const descriptor = makeDescriptor(tempDir);
+    await mkdir(dirname(descriptor.sessionFile), { recursive: true });
+
+    const queryCalls: QueryCallRecord[] = [];
+    const runtimeErrors: Array<{ phase?: string; message?: string; details?: Record<string, unknown> }> = [];
+    setClaudeSdkImporterForTests(vi.fn().mockResolvedValue(createAutoCompactingMockClaudeSdk(queryCalls)));
+
+    const runtime = new ClaudeAgentRuntime({
+      descriptor,
+      systemPrompt: "You are a Claude test runtime.",
+      callbacks: {
+        onStatusChange: async () => {},
+        onRuntimeError: async (_agentId, error) => {
+          runtimeErrors.push(error);
+        }
+      },
+      dataDir: tempDir,
+      profileId: "profile-1",
+      sessionId: descriptor.agentId,
+      authResolver: {
+        buildEnv: async () => ({})
+      } as any
+    });
+
+    await runtime.sendMessage("hello");
+
+    await waitFor(() => {
+      expect(runtimeErrors).toContainEqual(
+        expect.objectContaining({
+          phase: "compaction",
+          message: "Context automatically compacted",
+          details: expect.objectContaining({
+            recoveryStage: "auto_compaction_succeeded",
+            source: "claude_sdk_auto_compaction",
+            trigger: "auto"
+          })
+        })
+      );
+    });
+    expect(queryCalls).toHaveLength(1);
+
+    await runtime.terminate({ abort: false });
+  });
+
   it("clears SDK auto-compaction state after a compaction-start session error and replacement", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "forge-claude-runtime-"));
     const descriptor = makeDescriptor(tempDir);

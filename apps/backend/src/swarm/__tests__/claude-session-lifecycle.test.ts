@@ -314,7 +314,7 @@ describe("Claude session lifecycle", () => {
     });
   });
 
-  it("does not increment the compaction count when Claude smart compact is skipped below threshold", async () => {
+  it("tracks Claude SDK auto-compaction in compaction counts and does not double-increment on smart-compact no-ops", async () => {
     const config = await makeTempConfig(8904);
     const manager = new TestSwarmManager(config);
     const rootManager = await bootWithDefaultManager(manager, config);
@@ -337,11 +337,30 @@ describe("Claude session lifecycle", () => {
     const beforeMeta = await readSessionMeta(config.paths.dataDir, session.profileId ?? session.agentId, session.agentId);
     expect(beforeMeta?.compactionCount ?? 0).toBe(0);
 
+    await (manager as any).handleRuntimeError(session.agentId, {
+      phase: "compaction",
+      message: "Context automatically compacted",
+      details: {
+        recoveryStage: "auto_compaction_succeeded",
+        source: "claude_sdk_auto_compaction",
+        trigger: "auto"
+      }
+    });
+
+    const afterAutoMeta = await readSessionMeta(config.paths.dataDir, session.profileId ?? session.agentId, session.agentId);
+    expect(afterAutoMeta?.compactionCount ?? 0).toBe(1);
+    expect(manager.getAgent(session.agentId)?.compactionCount ?? 0).toBe(1);
+    expect(conversationMessages.at(-1)).toMatchObject({
+      type: "conversation_message",
+      agentId: session.agentId,
+      text: "📋 Context automatically compacted."
+    });
+
     await manager.smartCompactAgentContext(session.agentId);
 
-    const afterMeta = await readSessionMeta(config.paths.dataDir, session.profileId ?? session.agentId, session.agentId);
-    expect(afterMeta?.compactionCount ?? 0).toBe(0);
-    expect(manager.getAgent(session.agentId)?.compactionCount ?? 0).toBe(0);
+    const afterSmartCompactMeta = await readSessionMeta(config.paths.dataDir, session.profileId ?? session.agentId, session.agentId);
+    expect(afterSmartCompactMeta?.compactionCount ?? 0).toBe(1);
+    expect(manager.getAgent(session.agentId)?.compactionCount ?? 0).toBe(1);
     expect(conversationMessages.at(-1)).toMatchObject({
       type: "conversation_message",
       agentId: session.agentId,

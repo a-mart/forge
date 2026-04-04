@@ -527,7 +527,11 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
             return;
           }
 
-          await this.handleSdkCompactionSessionEvent(event);
+          // Suppress SDK auto-compaction reporting during hidden turns (manual compaction)
+          // to avoid double-counting and stray system messages
+          if (!this.hiddenTurnCapture) {
+            await this.handleSdkCompactionSessionEvent(event);
+          }
 
           if (this.hiddenTurnCapture) {
             this.captureHiddenTurnEvent(event);
@@ -800,6 +804,21 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
       await this.refreshActiveSessionContextUsageFromSdk();
       this.clearSdkAutoCompactionState();
       await this.emitStatus();
+
+      if (event.aborted || event.errorMessage) {
+        return;
+      }
+
+      const trigger = extractAutoCompactionTrigger(event.result);
+      await this.callbacks.onRuntimeError?.(this.descriptor.agentId, {
+        phase: "compaction",
+        message: "Context automatically compacted",
+        details: {
+          recoveryStage: "auto_compaction_succeeded",
+          source: "claude_sdk_auto_compaction",
+          ...(trigger ? { trigger } : {})
+        }
+      });
     }
   }
 
@@ -1247,6 +1266,17 @@ function cloneRuntimeUserMessage(message: RuntimeUserMessage): RuntimeUserMessag
     text: message.text,
     images: message.images?.map((image) => ({ ...image })) ?? []
   };
+}
+
+function extractAutoCompactionTrigger(result: unknown): string | undefined {
+  if (!result || typeof result !== "object" || Array.isArray(result)) {
+    return undefined;
+  }
+
+  const candidate = result as { trigger?: unknown };
+  return typeof candidate.trigger === "string" && candidate.trigger.trim().length > 0
+    ? candidate.trigger
+    : undefined;
 }
 
 function hasValidSessionHeader(sessionFilePath: string): boolean {
