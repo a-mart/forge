@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { getScheduleFilePath } from "../../scheduler/schedule-storage.js";
 import { CLAUDE_SDK_AUTH_USER_MESSAGE } from "../claude-startup-errors.js";
 import { getProfileMemoryPath } from "../data-paths.js";
+import { readSessionMeta } from "../session-manifest.js";
 import { SwarmManager } from "../swarm-manager.js";
 import type { RuntimeUserMessage, SwarmAgentRuntime } from "../runtime-types.js";
 import type {
@@ -19,11 +20,14 @@ class FakeClaudeRuntime {
   readonly runtimeType = "claude" as const;
 
   recycleCalls = 0;
+  private systemPrompt: string;
 
   constructor(
     readonly descriptor: AgentDescriptor,
-    private readonly systemPrompt: string
-  ) {}
+    systemPrompt: string
+  ) {
+    this.systemPrompt = systemPrompt;
+  }
 
   getStatus(): AgentDescriptor["status"] {
     return "idle";
@@ -39,6 +43,10 @@ class FakeClaudeRuntime {
 
   getSystemPrompt(): string {
     return this.systemPrompt;
+  }
+
+  setSystemPrompt(systemPrompt: string): void {
+    this.systemPrompt = systemPrompt;
   }
 
   async sendMessage(
@@ -66,6 +74,11 @@ class FakeClaudeRuntime {
 
   async recycle(): Promise<void> {
     this.recycleCalls += 1;
+    const compactionMarker = "\n\n# Compacted Conversation Summary\n";
+    const markerIndex = this.systemPrompt.indexOf(compactionMarker);
+    if (markerIndex >= 0) {
+      this.systemPrompt = this.systemPrompt.slice(0, markerIndex);
+    }
   }
 
   getCustomEntries(): unknown[] {
@@ -212,7 +225,7 @@ async function bootWithDefaultManager(manager: TestSwarmManager, config: SwarmCo
 }
 
 describe("Claude session lifecycle", () => {
-  it("recycles active Claude runtimes when clearing a conversation", async () => {
+  it("recycles active Claude runtimes when clearing a conversation and captures cleaned prompt metadata", async () => {
     const config = await makeTempConfig();
     const manager = new TestSwarmManager(config);
     const rootManager = await bootWithDefaultManager(manager, config);
@@ -223,12 +236,18 @@ describe("Claude session lifecycle", () => {
 
     const runtime = manager.getFakeRuntime(session.agentId);
     expect(runtime).toBeDefined();
+    runtime?.setSystemPrompt(`${runtime.getSystemPrompt()}\n\n# Compacted Conversation Summary\nOld summary should be cleared.`);
 
     await writeFile(session.sessionFile, "stale transcript", "utf8");
     await manager.clearSessionConversation(session.agentId);
 
     expect(runtime?.recycleCalls).toBe(1);
     await expect(readFile(session.sessionFile, "utf8")).resolves.toBe("");
+
+    const meta = await readSessionMeta(config.paths.dataDir, session.profileId ?? session.agentId, session.agentId);
+    expect(meta?.resolvedSystemPrompt).toBe(runtime?.getSystemPrompt());
+    expect(meta?.resolvedSystemPrompt).not.toContain("# Compacted Conversation Summary");
+    expect(meta?.resolvedSystemPrompt).not.toContain("Old summary should be cleared.");
   });
 
   it("drops persisted Claude runtime state when forking a full session", async () => {

@@ -64,6 +64,23 @@ function createTurnCompletingMockClaudeSdk(queryCalls: QueryCallRecord[]): Claud
   };
 }
 
+function createDeferredTurnMockClaudeSdk(
+  queryCalls: QueryCallRecord[],
+  releaseTurn: Promise<void>
+): ClaudeSdkModule {
+  return {
+    query(args: { prompt: AsyncIterable<ClaudeSdkUserMessage>; options: ClaudeSdkQueryOptions }) {
+      queryCalls.push({ options: { ...args.options } });
+      return createMockQueryHandle(args.prompt, args.options, {
+        onPrompt: async (_message, pushEvent) => {
+          await releaseTurn;
+          pushEvent({ type: "result", subtype: "result" });
+        }
+      });
+    }
+  };
+}
+
 function createUsageReportingMockClaudeSdk(
   queryCalls: QueryCallRecord[],
   usage: Record<string, unknown>
@@ -746,6 +763,134 @@ describe("ClaudeAgentRuntime", () => {
         }
       ]
     });
+
+    await runtime.terminate({ abort: false });
+  });
+
+  it("recycles an idle Claude session when pinned content changes", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "forge-claude-runtime-"));
+    const descriptor = makeDescriptor(tempDir);
+    await mkdir(dirname(descriptor.sessionFile), { recursive: true });
+
+    const queryCalls: QueryCallRecord[] = [];
+    setClaudeSdkImporterForTests(vi.fn().mockResolvedValue(createTurnCompletingMockClaudeSdk(queryCalls)));
+
+    const runtime = new ClaudeAgentRuntime({
+      descriptor,
+      systemPrompt: "You are a Claude test runtime.",
+      callbacks: {
+        onStatusChange: async () => {}
+      },
+      dataDir: tempDir,
+      profileId: "profile-1",
+      sessionId: descriptor.agentId,
+      authResolver: {
+        buildEnv: async () => ({})
+      } as any
+    });
+
+    await runtime.sendMessage("hello");
+    expect(queryCalls[0]?.options.systemPrompt).toBe("You are a Claude test runtime.");
+
+    runtime.setPinnedContent("Keep this exact wording.");
+
+    expect(runtime.getSystemPrompt()).toContain("# Pinned Messages (preserve across compaction)");
+    expect(runtime.getSystemPrompt()).toContain("Keep this exact wording.");
+
+    await waitFor(() => {
+      expect(queryCalls).toHaveLength(2);
+    });
+    expect(queryCalls[1]?.options.systemPrompt).toContain("# Pinned Messages (preserve across compaction)");
+    expect(queryCalls[1]?.options.systemPrompt).toContain("Keep this exact wording.");
+
+    runtime.setPinnedContent(undefined);
+    await waitFor(() => {
+      expect(queryCalls).toHaveLength(3);
+    });
+    expect(runtime.getSystemPrompt()).not.toContain("# Pinned Messages (preserve across compaction)");
+    expect(queryCalls[2]?.options.systemPrompt).not.toContain("# Pinned Messages (preserve across compaction)");
+
+    await runtime.terminate({ abort: false });
+  });
+
+  it("queues a Claude recycle for pinned content changes until the active turn completes", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "forge-claude-runtime-"));
+    const descriptor = makeDescriptor(tempDir);
+    await mkdir(dirname(descriptor.sessionFile), { recursive: true });
+
+    const queryCalls: QueryCallRecord[] = [];
+    let resolveTurn!: () => void;
+    const releaseTurn = new Promise<void>((resolve) => {
+      resolveTurn = resolve;
+    });
+    setClaudeSdkImporterForTests(vi.fn().mockResolvedValue(createDeferredTurnMockClaudeSdk(queryCalls, releaseTurn)));
+
+    const runtime = new ClaudeAgentRuntime({
+      descriptor,
+      systemPrompt: "You are a Claude test runtime.",
+      callbacks: {
+        onStatusChange: async () => {}
+      },
+      dataDir: tempDir,
+      profileId: "profile-1",
+      sessionId: descriptor.agentId,
+      authResolver: {
+        buildEnv: async () => ({})
+      } as any
+    });
+
+    await runtime.sendMessage("hello");
+    expect(queryCalls).toHaveLength(1);
+
+    runtime.setPinnedContent("Protect this mid-turn pin.");
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(queryCalls).toHaveLength(1);
+
+    resolveTurn();
+
+    await waitFor(() => {
+      expect(queryCalls).toHaveLength(2);
+    });
+    expect(queryCalls[1]?.options.systemPrompt).toContain("Protect this mid-turn pin.");
+
+    await runtime.terminate({ abort: false });
+  });
+
+  it("retains pinned content when rebuilding the Claude system prompt after compaction rollover", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "forge-claude-runtime-"));
+    const descriptor = makeDescriptor(tempDir);
+    await mkdir(dirname(descriptor.sessionFile), { recursive: true });
+
+    const queryCalls: QueryCallRecord[] = [];
+    const hiddenPrompts: string[] = [];
+    setClaudeSdkImporterForTests(vi.fn().mockResolvedValue(createCompactionMockClaudeSdk(queryCalls, hiddenPrompts)));
+
+    const runtime = new ClaudeAgentRuntime({
+      descriptor,
+      systemPrompt: "You are a Claude test runtime.",
+      callbacks: {
+        onStatusChange: async () => {}
+      },
+      dataDir: tempDir,
+      profileId: "profile-1",
+      sessionId: descriptor.agentId,
+      authResolver: {
+        buildEnv: async () => ({})
+      } as any
+    });
+
+    runtime.setPinnedContent("Keep this exact wording.");
+    await runtime.sendMessage("hello");
+    await runtime.compact();
+
+    expect(hiddenPrompts).toHaveLength(1);
+    expect(runtime.getSystemPrompt()).toContain("# Compacted Conversation Summary");
+    expect(runtime.getSystemPrompt()).toContain("# Pinned Messages (preserve across compaction)");
+    expect(runtime.getSystemPrompt()).toContain("Keep this exact wording.");
+    expect(queryCalls[1]?.options.systemPrompt).toContain("# Compacted Conversation Summary");
+    expect(queryCalls[1]?.options.systemPrompt).toContain("# Pinned Messages (preserve across compaction)");
+    expect(queryCalls[1]?.options.systemPrompt).toContain("Keep this exact wording.");
 
     await runtime.terminate({ abort: false });
   });

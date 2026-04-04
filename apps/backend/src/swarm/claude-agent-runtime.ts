@@ -97,6 +97,7 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
   private lastSessionEntryId: string | null = null;
 
   private activeSystemPrompt: string;
+  private pinnedMessageContent: string | undefined;
   private activeSession: ClaudeQuerySession | undefined;
   private activeSessionToken = 0;
   private startupPromise: Promise<ClaudeQuerySession> | undefined;
@@ -106,6 +107,8 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
   private contextUsage: AgentContextUsage | undefined;
   private contextRecoveryInProgress = false;
   private sdkAutoCompactionInProgress = false;
+  private pendingRecycleForPins = false;
+  private recycleScheduledForPins = false;
   private generation = 0;
   private readonly liveReplayMessages: RuntimeUserMessage[] = [];
   private hiddenTurnCapture: HiddenTurnCapture | undefined;
@@ -189,6 +192,23 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
 
   getSystemPrompt(): string {
     return this.activeSystemPrompt;
+  }
+
+  setPinnedContent(content: string | undefined): void {
+    const normalizedContent = normalizeOptionalString(content);
+    if (normalizedContent === this.pinnedMessageContent) {
+      return;
+    }
+
+    this.pinnedMessageContent = normalizedContent;
+    this.activeSystemPrompt = this.buildActiveSystemPrompt(this.persistedCompactionSummary?.summary);
+
+    if (!this.activeSession) {
+      return;
+    }
+
+    this.pendingRecycleForPins = true;
+    this.maybeProcessPinnedContentRecycle();
   }
 
   isContextRecoveryInProgress(): boolean {
@@ -344,6 +364,7 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
   async recycle(): Promise<void> {
     await this.runExclusive(async () => {
       this.ensureNotTerminated();
+      this.pendingRecycleForPins = false;
 
       this.resetPersistedStateIfSessionFileWasExternallyCleared();
 
@@ -493,6 +514,12 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
           }
 
           await this.callbacks.onStatusChange(agentId, status, pendingCount, contextUsage);
+
+          if (sessionToken !== this.activeSessionToken) {
+            return;
+          }
+
+          this.maybeProcessPinnedContentRecycle();
         },
         onSessionEvent: async (event) => {
           if (sessionToken !== this.activeSessionToken) {
@@ -796,6 +823,39 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
     this.sdkAutoCompactionInProgress = false;
   }
 
+  private maybeProcessPinnedContentRecycle(): void {
+    if (!this.pendingRecycleForPins) {
+      return;
+    }
+
+    const session = this.activeSession;
+    if (!session || this.recycleScheduledForPins) {
+      return;
+    }
+
+    if (isUnusableClaudeSessionStatus(session.getStatus())) {
+      return;
+    }
+
+    if (!this.isClaudeSessionIdle(session)) {
+      return;
+    }
+
+    this.pendingRecycleForPins = false;
+    this.recycleScheduledForPins = true;
+    void this.recycle()
+      .catch(() => {
+        // Best-effort refresh only. A future recycle or restart will rebuild the session prompt.
+      })
+      .finally(() => {
+        this.recycleScheduledForPins = false;
+      });
+  }
+
+  private isClaudeSessionIdle(session: ClaudeQuerySession): boolean {
+    return session.getStatus() === "idle" && session.getPendingCount() === 0;
+  }
+
   private captureHiddenTurnEvent(event: {
     type: string;
     message?: unknown;
@@ -844,17 +904,22 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
   }
 
   private buildActiveSystemPrompt(summary?: string): string {
+    const parts = [this.baseSystemPrompt];
     const normalizedSummary = normalizeOptionalString(summary);
-    if (!normalizedSummary) {
-      return this.baseSystemPrompt;
+
+    if (normalizedSummary) {
+      parts.push(
+        "# Compacted Conversation Summary",
+        "The prior Claude conversation was rolled over into a fresh generation. Treat the following summary as authoritative prior context for this session:",
+        normalizedSummary
+      );
     }
 
-    return [
-      this.baseSystemPrompt,
-      "# Compacted Conversation Summary",
-      "The prior Claude conversation was rolled over into a fresh generation. Treat the following summary as authoritative prior context for this session:",
-      normalizedSummary
-    ].join("\n\n");
+    if (this.pinnedMessageContent) {
+      parts.push("# Pinned Messages (preserve across compaction)", this.pinnedMessageContent);
+    }
+
+    return parts.join("\n\n");
   }
 
   private loadPersistedReplayMessages(): RuntimeUserMessage[] {
@@ -880,7 +945,7 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
     this.lastSessionEntryId = null;
     this.persistedRuntimeState = undefined;
     this.persistedCompactionSummary = undefined;
-    this.activeSystemPrompt = this.baseSystemPrompt;
+    this.activeSystemPrompt = this.buildActiveSystemPrompt();
   }
 
   private async normalizeAndResizeMessage(input: RuntimeUserMessageInput): Promise<RuntimeUserMessage> {

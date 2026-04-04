@@ -129,6 +129,7 @@ export interface SwarmAgentRuntime {
   getPendingCount(): number;
   getContextUsage(): AgentContextUsage | undefined;
   getSystemPrompt?(): string;
+  setPinnedContent?(content: string | undefined): void | Promise<void>;
   isContextRecoveryInProgress?(): boolean;
   prepareForSpecialistFallbackReplay?(): Promise<SpecialistFallbackReplaySnapshot | undefined>;
   restorePreparedSpecialistFallbackReplay?(): Promise<void>;

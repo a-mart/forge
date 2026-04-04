@@ -50,6 +50,7 @@ import {
 import {
   clearAllPins as clearAllSessionPins,
   combineCompactionCustomInstructions,
+  formatPinnedMessagesForCompaction,
   loadPins,
   savePins,
   togglePin,
@@ -1920,6 +1921,24 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.pinnedMessageIdsBySessionAgentId.set(agentId, new Set(pinnedMessageIds));
   }
 
+  private async syncPinnedContentForManagerRuntime(
+    descriptor: AgentDescriptor & { role: "manager" },
+    options?: {
+      registry?: PinRegistry;
+      runtime?: SwarmAgentRuntime;
+    }
+  ): Promise<PinRegistry> {
+    const registry = options?.registry ?? await loadPins(this.getSessionDirForDescriptor(descriptor));
+    this.setPinnedRegistryForAgent(descriptor.agentId, registry);
+
+    const runtime = options?.runtime ?? this.runtimes.get(descriptor.agentId);
+    if (runtime?.setPinnedContent) {
+      await runtime.setPinnedContent(formatPinnedMessagesForCompaction(registry));
+    }
+
+    return registry;
+  }
+
   private getSessionDirForDescriptor(descriptor: { agentId: string; profileId?: string }): string {
     return getSessionDir(
       this.config.paths.dataDir,
@@ -2379,8 +2398,13 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         : undefined
     );
 
-    this.setPinnedRegistryForAgent(agentId, registry);
+    await this.syncPinnedContentForManagerRuntime(descriptor, { registry });
     this.conversationProjector.setConversationMessagePinned(agentId, messageId, pinned);
+
+    const runtime = this.runtimes.get(agentId);
+    if (runtime) {
+      await this.captureSessionRuntimePromptMeta(descriptor, runtime.getSystemPrompt?.());
+    }
 
     const timestamp = this.now();
     this.logDebug("message:pin", {
@@ -2400,12 +2424,17 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const sessionDir = this.getSessionDirForDescriptor(descriptor);
     const previouslyPinnedMessageIds = await clearAllSessionPins(sessionDir);
 
-    if (previouslyPinnedMessageIds.length === 0) {
-      this.setPinnedRegistryForAgent(agentId, { version: 1, pins: {} });
-      return;
+    const emptyRegistry: PinRegistry = { version: 1, pins: {} };
+    await this.syncPinnedContentForManagerRuntime(descriptor, { registry: emptyRegistry });
+
+    const runtime = this.runtimes.get(agentId);
+    if (runtime) {
+      await this.captureSessionRuntimePromptMeta(descriptor, runtime.getSystemPrompt?.());
     }
 
-    this.setPinnedRegistryForAgent(agentId, { version: 1, pins: {} });
+    if (previouslyPinnedMessageIds.length === 0) {
+      return;
+    }
 
     for (const messageId of previouslyPinnedMessageIds) {
       this.conversationProjector.setConversationMessagePinned(agentId, messageId, false);
@@ -2432,8 +2461,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       }
     }
 
-    await savePins(this.getSessionDirForDescriptor(descriptor), { version: 1, pins: {} });
-    this.setPinnedRegistryForAgent(agentId, { version: 1, pins: {} });
+    const emptyRegistry: PinRegistry = { version: 1, pins: {} };
+    await savePins(this.getSessionDirForDescriptor(descriptor), emptyRegistry);
+    await this.syncPinnedContentForManagerRuntime(descriptor, { registry: emptyRegistry });
 
     // Clear in-memory conversation history
     this.conversationProjector.resetConversationHistory(agentId);
@@ -2448,6 +2478,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
           message: error instanceof Error ? error.message : String(error)
         });
       }
+    }
+    if (runtime) {
+      await this.captureSessionRuntimePromptMeta(descriptor, runtime.getSystemPrompt?.());
     }
 
     // Notify connected clients to clear their message lists
@@ -5067,8 +5100,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     descriptor: AgentDescriptor & { role: "manager" },
     customInstructions?: string
   ): Promise<string | undefined> {
-    const registry = await loadPins(this.getSessionDirForDescriptor(descriptor));
-    this.setPinnedRegistryForAgent(descriptor.agentId, registry);
+    const registry = await this.syncPinnedContentForManagerRuntime(descriptor);
     return combineCompactionCustomInstructions(customInstructions, registry);
   }
 
@@ -6530,6 +6562,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     const runtimeToken = this.allocateRuntimeToken(descriptor.agentId);
     const runtime = await this.createRuntimeForDescriptor(descriptor, systemPrompt, runtimeToken);
+    if (descriptor.role === "manager") {
+      await this.syncPinnedContentForManagerRuntime(descriptor as AgentDescriptor & { role: "manager" }, { runtime });
+    }
     const persistedSystemPrompt = runtime.getSystemPrompt?.() ?? systemPrompt;
 
     const latestDescriptor = this.descriptors.get(descriptor.agentId);
