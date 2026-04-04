@@ -146,6 +146,7 @@ export class ClaudeQuerySession {
   private activeTurn: ActiveTurn | undefined;
   private currentTurnToolResults: unknown[] = [];
   private sdkSessionId: string | undefined;
+  private sdkCompactionInProgress = false;
   private lastContextUsage: AgentContextUsage | undefined;
   private lastEmittedStatus: EmittedStatusSnapshot | undefined;
   private recentStderrLines: string[] = [];
@@ -164,7 +165,11 @@ export class ClaudeQuerySession {
   }
 
   getStatus(): AgentStatus {
-    return mapInternalStatusToAgentStatus(this.internalStatus, Boolean(this.activeTurn));
+    return mapInternalStatusToAgentStatus(
+      this.internalStatus,
+      Boolean(this.activeTurn),
+      this.sdkCompactionInProgress
+    );
   }
 
   getPendingCount(): number {
@@ -424,6 +429,7 @@ export class ClaudeQuerySession {
       for await (const event of queryHandle) {
         await this.captureSessionId(event);
         await this.captureContextUsage(event);
+        await this.captureRawCompactionStatus(event);
 
         if (isClaudeInitEvent(event)) {
           if (this.internalStatus === "starting" && !this.activeTurn) {
@@ -467,6 +473,8 @@ export class ClaudeQuerySession {
   }
 
   private async forwardMappedEvent(event: RuntimeSessionEvent): Promise<void> {
+    await this.updateCompactionStateForEvent(event);
+
     switch (event.type) {
       case "agent_start":
       case "agent_end":
@@ -745,6 +753,7 @@ export class ClaudeQuerySession {
       }
 
       this.currentTurnToolResults = [];
+      this.sdkCompactionInProgress = false;
 
       if (emitFinalStatus) {
         await this.setInternalStatus(target);
@@ -771,12 +780,18 @@ export class ClaudeQuerySession {
   }
 
   private isTurnActive(): boolean {
-    return Boolean(this.activeTurn) || this.internalStatus === "busy" || this.internalStatus === "interrupting";
+    return (
+      Boolean(this.activeTurn)
+      || this.internalStatus === "busy"
+      || this.internalStatus === "interrupting"
+      || this.sdkCompactionInProgress
+    );
   }
 
   private isIdleNow(): boolean {
     return (
       !this.activeTurn &&
+      !this.sdkCompactionInProgress &&
       this.getPendingCount() === 0 &&
       (this.internalStatus === "idle" ||
         this.internalStatus === "stopped" ||
@@ -828,6 +843,27 @@ export class ClaudeQuerySession {
     await this.options.callbacks.onSessionEvent(event);
   }
 
+  private async updateCompactionStateForEvent(event: RuntimeSessionEvent): Promise<void> {
+    if (event.type === "auto_compaction_start") {
+      if (this.sdkCompactionInProgress) {
+        return;
+      }
+
+      this.sdkCompactionInProgress = true;
+      await this.emitStatus();
+      return;
+    }
+
+    if (event.type === "auto_compaction_end") {
+      if (!this.sdkCompactionInProgress) {
+        return;
+      }
+
+      this.sdkCompactionInProgress = false;
+      await this.emitStatus();
+    }
+  }
+
   private async notifyAgentEnd(): Promise<void> {
     if (!this.options.callbacks.onAgentEnd) {
       return;
@@ -875,6 +911,7 @@ export class ClaudeQuerySession {
     this.queuedInputs = [];
     this.queuedSteers = [];
     this.currentTurnToolResults = [];
+    this.sdkCompactionInProgress = false;
     this.finishInput();
     this.abortController.abort();
     this.queryHandle?.close?.();
@@ -932,6 +969,21 @@ export class ClaudeQuerySession {
     }
 
     this.lastContextUsage = nextUsage;
+    await this.emitStatus();
+  }
+
+  private async captureRawCompactionStatus(event: ClaudeSdkMessage): Promise<void> {
+    if (
+      normalizeOptionalString((event as { type?: unknown }).type) !== "system"
+      || normalizeOptionalString((event as { subtype?: unknown }).subtype) !== "status"
+      || !Object.prototype.hasOwnProperty.call(event, "status")
+      || (event as { status?: unknown }).status !== null
+      || !this.sdkCompactionInProgress
+    ) {
+      return;
+    }
+
+    this.sdkCompactionInProgress = false;
     await this.emitStatus();
   }
 
@@ -1024,8 +1076,13 @@ function normalizeRequestedDelivery(delivery: DeliveryMode): DeliveryMode {
 
 function mapInternalStatusToAgentStatus(
   status: InternalSessionStatus,
-  hasActiveTurn: boolean
+  hasActiveTurn: boolean,
+  sdkCompactionInProgress: boolean
 ): AgentStatus {
+  if (sdkCompactionInProgress) {
+    return "streaming";
+  }
+
   switch (status) {
     case "busy":
     case "interrupting":

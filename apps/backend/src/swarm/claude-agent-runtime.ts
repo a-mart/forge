@@ -13,6 +13,7 @@ import { extractMessageText, extractRole } from "./message-utils.js";
 import { buildRuntimeMessageKey, normalizeRuntimeUserMessage } from "./runtime-utils.js";
 import { openSessionManagerWithSizeGuard } from "./session-file-guard.js";
 import type {
+  RuntimeSessionEvent,
   RuntimeShutdownOptions,
   RuntimeUserMessage,
   RuntimeUserMessageInput,
@@ -104,6 +105,7 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
   private pendingCount = 0;
   private contextUsage: AgentContextUsage | undefined;
   private contextRecoveryInProgress = false;
+  private sdkAutoCompactionInProgress = false;
   private generation = 0;
   private readonly liveReplayMessages: RuntimeUserMessage[] = [];
   private hiddenTurnCapture: HiddenTurnCapture | undefined;
@@ -190,7 +192,7 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
   }
 
   isContextRecoveryInProgress(): boolean {
-    return this.contextRecoveryInProgress;
+    return this.contextRecoveryInProgress || this.sdkAutoCompactionInProgress;
   }
 
   async sendMessage(
@@ -330,6 +332,7 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
       this.pendingCount = 0;
       this.contextUsage = undefined;
       this.contextRecoveryInProgress = false;
+      this.sdkAutoCompactionInProgress = false;
       this.status = "terminated";
       this.descriptor.status = "terminated";
       this.descriptor.contextUsage = undefined;
@@ -458,6 +461,7 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
     resumeSessionId?: string;
   }): Promise<ClaudeQuerySession> {
     const sessionToken = this.activeSessionToken + 1;
+    this.clearSdkAutoCompactionState();
     const querySession = new ClaudeQuerySession({
       sdk: options.sdk,
       config: {
@@ -495,6 +499,8 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
             return;
           }
 
+          await this.handleSdkCompactionSessionEvent(event);
+
           if (this.hiddenTurnCapture) {
             this.captureHiddenTurnEvent(event);
             return;
@@ -524,6 +530,8 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
           if (sessionToken !== this.activeSessionToken) {
             return;
           }
+
+          this.clearSdkAutoCompactionState();
 
           if (this.hiddenTurnCapture) {
             this.hiddenTurnCapture.runtimeError = new Error(error.message);
@@ -563,6 +571,7 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
     this.activeSession = undefined;
     this.activeSessionToken += 1;
     this.startupPromise = undefined;
+    this.clearSdkAutoCompactionState();
     return session;
   }
 
@@ -574,6 +583,7 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
     this.activeSession = undefined;
     this.activeSessionToken += 1;
     this.startupPromise = undefined;
+    this.clearSdkAutoCompactionState();
   }
 
   private async stopDetachedSession(
@@ -693,6 +703,7 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
     this.pendingCount = 0;
     this.contextUsage = undefined;
     this.contextRecoveryInProgress = false;
+    this.clearSdkAutoCompactionState();
     this.status = "idle";
     this.descriptor.status = "idle";
     this.descriptor.contextUsage = undefined;
@@ -740,6 +751,31 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
     } finally {
       this.hiddenTurnCapture = undefined;
     }
+  }
+
+  private async handleSdkCompactionSessionEvent(event: RuntimeSessionEvent): Promise<void> {
+    if (event.type === "auto_compaction_start") {
+      if (this.sdkAutoCompactionInProgress) {
+        return;
+      }
+
+      this.sdkAutoCompactionInProgress = true;
+      await this.emitStatus();
+      return;
+    }
+
+    if (event.type === "auto_compaction_end") {
+      if (!this.sdkAutoCompactionInProgress) {
+        return;
+      }
+
+      this.clearSdkAutoCompactionState();
+      await this.emitStatus();
+    }
+  }
+
+  private clearSdkAutoCompactionState(): void {
+    this.sdkAutoCompactionInProgress = false;
   }
 
   private captureHiddenTurnEvent(event: {

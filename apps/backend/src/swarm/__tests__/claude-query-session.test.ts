@@ -16,21 +16,65 @@ function createMockQueryHandle(
   initEvent: ClaudeSdkMessage = { type: "system:init" },
   overrides?: Partial<ClaudeSdkQueryHandle>
 ): ClaudeSdkQueryHandle {
-  let sentInit = false;
-  let closed = false;
-  let pendingResolve: ((value: IteratorResult<ClaudeSdkMessage>) => void) | undefined;
+  return createPromptAwareMockQueryHandle(undefined, initEvent, overrides);
+}
 
-  const resolveDone = (): void => {
-    closed = true;
-    pendingResolve?.({ value: undefined, done: true });
-    pendingResolve = undefined;
+function createPromptAwareMockQueryHandle(
+  prompt: AsyncIterable<ClaudeSdkUserMessage> | undefined,
+  initEvent: ClaudeSdkMessage = { type: "system:init" },
+  overrides?: Partial<ClaudeSdkQueryHandle>,
+  hooks?: {
+    onPrompt?: (
+      message: ClaudeSdkUserMessage,
+      pushEvent: (event: ClaudeSdkMessage) => void,
+      close: () => void
+    ) => Promise<void> | void;
+  }
+): ClaudeSdkQueryHandle {
+  let closed = false;
+  const queuedEvents: ClaudeSdkMessage[] = [initEvent];
+  const waiters: Array<(value: IteratorResult<ClaudeSdkMessage>) => void> = [];
+
+  const flush = (): void => {
+    while (waiters.length > 0 && queuedEvents.length > 0) {
+      const resolve = waiters.shift();
+      resolve?.({ value: queuedEvents.shift()!, done: false });
+    }
   };
+
+  const close = (): void => {
+    if (closed) {
+      return;
+    }
+
+    closed = true;
+    while (waiters.length > 0) {
+      const resolve = waiters.shift();
+      resolve?.({ value: undefined, done: true });
+    }
+  };
+
+  const pushEvent = (event: ClaudeSdkMessage): void => {
+    if (closed) {
+      return;
+    }
+
+    queuedEvents.push(event);
+    flush();
+  };
+
+  if (prompt && hooks?.onPrompt) {
+    void (async () => {
+      for await (const message of prompt) {
+        await hooks.onPrompt?.(message, pushEvent, close);
+      }
+    })();
+  }
 
   const iterator: ClaudeSdkQueryHandle & AsyncIterator<ClaudeSdkMessage> = {
     async next(): Promise<IteratorResult<ClaudeSdkMessage>> {
-      if (!sentInit) {
-        sentInit = true;
-        return { value: initEvent, done: false };
+      if (queuedEvents.length > 0) {
+        return { value: queuedEvents.shift()!, done: false };
       }
 
       if (closed) {
@@ -38,11 +82,11 @@ function createMockQueryHandle(
       }
 
       return await new Promise<IteratorResult<ClaudeSdkMessage>>((resolve) => {
-        pendingResolve = resolve;
+        waiters.push(resolve);
       });
     },
     async return(): Promise<IteratorResult<ClaudeSdkMessage>> {
-      resolveDone();
+      close();
       return { value: undefined, done: true };
     },
     async interrupt(): Promise<void> {
@@ -51,9 +95,7 @@ function createMockQueryHandle(
     async initializationResult(): Promise<void> {
       // No-op for tests.
     },
-    close(): void {
-      resolveDone();
-    },
+    close,
     [Symbol.asyncIterator](): AsyncIterator<ClaudeSdkMessage> {
       return iterator;
     },
@@ -195,6 +237,64 @@ describe("ClaudeQuerySession", () => {
     await session.applyFlagSettings({ autoCompactWindow: 120_000 });
     expect(getContextUsage).toHaveBeenCalledTimes(1);
     expect(applyFlagSettings).toHaveBeenCalledWith({ autoCompactWindow: 120_000 });
+
+    await session.stop();
+  });
+
+  it("clears compaction state when Claude emits status:null without a compact boundary", async () => {
+    const callbacks = createCallbacks();
+    const sdk: ClaudeSdkModule = {
+      query: vi.fn((args: { prompt: AsyncIterable<ClaudeSdkUserMessage>; options: ClaudeSdkQueryOptions }) => {
+        return createPromptAwareMockQueryHandle(args.prompt, { type: "system:init" }, undefined, {
+          onPrompt: async (_message, pushEvent) => {
+            pushEvent({
+              type: "system",
+              subtype: "status",
+              status: "compacting"
+            });
+            pushEvent({
+              type: "system",
+              subtype: "status",
+              status: null
+            });
+            pushEvent({ type: "result", subtype: "result" });
+          }
+        });
+      }) as unknown as ClaudeSdkModule["query"]
+    };
+
+    const session = new ClaudeQuerySession({
+      sdk,
+      config: {
+        model: "claude-test",
+        systemPrompt: "system",
+        cwd: process.cwd()
+      },
+      callbacks
+    });
+
+    await session.start();
+    await session.sendInput("hello");
+
+    const idleResult = await Promise.race([
+      session.waitForIdle().then(() => "idle"),
+      new Promise<string>((resolve) => {
+        setTimeout(() => resolve("timeout"), 100);
+      })
+    ]);
+
+    expect(idleResult).toBe("idle");
+    expect(session.getStatus()).toBe("idle");
+    expect(callbacks.onSessionEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "auto_compaction_start"
+      })
+    );
+    expect(callbacks.onSessionEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "auto_compaction_end"
+      })
+    );
 
     await session.stop();
   });

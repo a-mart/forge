@@ -141,11 +141,91 @@ function createCompactionMockClaudeSdk(
   };
 }
 
+function createAutoCompactingMockClaudeSdk(queryCalls: QueryCallRecord[]): ClaudeSdkModule {
+  return {
+    query(args: { prompt: AsyncIterable<ClaudeSdkUserMessage>; options: ClaudeSdkQueryOptions }) {
+      queryCalls.push({ options: { ...args.options } });
+      return createMockQueryHandle(args.prompt, args.options, {
+        onPrompt: async (_message, pushEvent) => {
+          pushEvent({
+            type: "system",
+            subtype: "status",
+            status: "compacting",
+            session_id: args.options.sessionId ?? "mock-session",
+            uuid: "status-1"
+          });
+          pushEvent({
+            type: "system",
+            subtype: "compact_boundary",
+            compact_metadata: {
+              trigger: "auto",
+              pre_tokens: 4321
+            },
+            session_id: args.options.sessionId ?? "mock-session",
+            uuid: "boundary-1"
+          });
+          pushEvent({
+            type: "assistant",
+            message: {
+              id: `reply-${queryCalls.length}`,
+              content: [{ type: "text", text: "Normal reply" }]
+            }
+          });
+          pushEvent({ type: "result", subtype: "result" });
+        }
+      });
+    }
+  };
+}
+
+function createAutoCompactionFailureThenRecoveryMockClaudeSdk(queryCalls: QueryCallRecord[]): ClaudeSdkModule {
+  let queryCount = 0;
+
+  return {
+    query(args: { prompt: AsyncIterable<ClaudeSdkUserMessage>; options: ClaudeSdkQueryOptions }) {
+      queryCalls.push({ options: { ...args.options } });
+      queryCount += 1;
+
+      if (queryCount === 1) {
+        return createMockQueryHandle(args.prompt, args.options, {
+          onPrompt: async (_message, pushEvent, close) => {
+            pushEvent({
+              type: "system",
+              subtype: "status",
+              status: "compacting",
+              session_id: args.options.sessionId ?? "mock-session",
+              uuid: "status-1"
+            });
+            close();
+          }
+        });
+      }
+
+      return createMockQueryHandle(args.prompt, args.options, {
+        onPrompt: async (_message, pushEvent) => {
+          pushEvent({
+            type: "assistant",
+            message: {
+              id: `reply-${queryCalls.length}`,
+              content: [{ type: "text", text: "Recovered reply" }]
+            }
+          });
+          pushEvent({ type: "result", subtype: "result" });
+        }
+      });
+    }
+  };
+}
+
 function createMockQueryHandle(
   prompt: AsyncIterable<ClaudeSdkUserMessage>,
   options: ClaudeSdkQueryOptions,
   hooks?: {
-    onPrompt?: (message: ClaudeSdkUserMessage, pushEvent: (event: ClaudeSdkMessage) => void) => Promise<void> | void;
+    onPrompt?: (
+      message: ClaudeSdkUserMessage,
+      pushEvent: (event: ClaudeSdkMessage) => void,
+      close: () => void
+    ) => Promise<void> | void;
   },
   overrides?: {
     getContextUsage?: () => Promise<unknown>;
@@ -182,7 +262,7 @@ function createMockQueryHandle(
 
   void (async () => {
     for await (const message of prompt) {
-      await hooks?.onPrompt?.(message, pushEvent);
+      await hooks?.onPrompt?.(message, pushEvent, close);
     }
   })();
 
@@ -619,6 +699,111 @@ describe("ClaudeAgentRuntime", () => {
         }
       ]
     });
+
+    await runtime.terminate({ abort: false });
+  });
+
+  it("toggles context recovery while SDK auto-compaction events are in flight", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "forge-claude-runtime-"));
+    const descriptor = makeDescriptor(tempDir);
+    await mkdir(dirname(descriptor.sessionFile), { recursive: true });
+
+    const queryCalls: QueryCallRecord[] = [];
+    const observedRecoveryStates: Array<{ eventType: string; recovery: boolean }> = [];
+    setClaudeSdkImporterForTests(vi.fn().mockResolvedValue(createAutoCompactingMockClaudeSdk(queryCalls)));
+
+    let runtime!: ClaudeAgentRuntime;
+    runtime = new ClaudeAgentRuntime({
+      descriptor,
+      systemPrompt: "You are a Claude test runtime.",
+      callbacks: {
+        onStatusChange: async () => {},
+        onSessionEvent: async (agentId, event) => {
+          if (
+            agentId === descriptor.agentId
+            && (event.type === "auto_compaction_start" || event.type === "auto_compaction_end")
+          ) {
+            observedRecoveryStates.push({
+              eventType: event.type,
+              recovery: runtime.isContextRecoveryInProgress()
+            });
+          }
+        }
+      },
+      dataDir: tempDir,
+      profileId: "profile-1",
+      sessionId: descriptor.agentId,
+      authResolver: {
+        buildEnv: async () => ({})
+      } as any
+    });
+
+    await runtime.sendMessage("hello");
+
+    await waitFor(() => {
+      expect(observedRecoveryStates).toEqual([
+        {
+          eventType: "auto_compaction_start",
+          recovery: true
+        },
+        {
+          eventType: "auto_compaction_end",
+          recovery: false
+        }
+      ]);
+    });
+    expect(runtime.isContextRecoveryInProgress()).toBe(false);
+    expect(queryCalls).toHaveLength(1);
+
+    await runtime.terminate({ abort: false });
+  });
+
+  it("clears SDK auto-compaction state after a compaction-start session error and replacement", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "forge-claude-runtime-"));
+    const descriptor = makeDescriptor(tempDir);
+    await mkdir(dirname(descriptor.sessionFile), { recursive: true });
+
+    const queryCalls: QueryCallRecord[] = [];
+    const runtimeErrors: Array<{ phase?: string; message?: string }> = [];
+    setClaudeSdkImporterForTests(
+      vi.fn().mockResolvedValue(createAutoCompactionFailureThenRecoveryMockClaudeSdk(queryCalls))
+    );
+
+    const runtime = new ClaudeAgentRuntime({
+      descriptor,
+      systemPrompt: "You are a Claude test runtime.",
+      callbacks: {
+        onStatusChange: async () => {},
+        onRuntimeError: async (_agentId, error) => {
+          runtimeErrors.push(error);
+        }
+      },
+      dataDir: tempDir,
+      profileId: "profile-1",
+      sessionId: descriptor.agentId,
+      authResolver: {
+        buildEnv: async () => ({})
+      } as any
+    });
+
+    await runtime.sendMessage("hello");
+
+    await waitFor(() => {
+      expect(runtimeErrors).toContainEqual(
+        expect.objectContaining({
+          phase: "runtime_exit",
+          message: "Claude query stream ended unexpectedly."
+        })
+      );
+      expect(runtime.isContextRecoveryInProgress()).toBe(false);
+    });
+
+    await runtime.sendMessage("retry after replacement");
+
+    await waitFor(() => {
+      expect(queryCalls).toHaveLength(2);
+    });
+    expect(runtime.isContextRecoveryInProgress()).toBe(false);
 
     await runtime.terminate({ abort: false });
   });

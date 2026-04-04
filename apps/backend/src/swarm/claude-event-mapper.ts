@@ -1,6 +1,7 @@
 import {
   extractClaudeContextUsage,
   readBoolean,
+  readFiniteNumber,
   readObject,
   readString
 } from "./claude-utils.js";
@@ -29,6 +30,7 @@ export class ClaudeEventMapper implements ClaudeEventMapperLike {
   private activeAssistantMessageId: string | undefined;
   private activeAssistantText = "";
   private contextUsage: AgentContextUsage | undefined;
+  private compactionState: "idle" | "active" | "fallback_ended" = "idle";
 
   mapEvent(event: ClaudeSdkMessage, _context?: ClaudeEventMapperContext): RuntimeSessionEvent[] {
     this.captureContextUsage(event);
@@ -51,6 +53,9 @@ export class ClaudeEventMapper implements ClaudeEventMapperLike {
       case "system:task_started":
         return this.mapTaskStarted(event as Record<string, unknown>);
 
+      case "system":
+        return this.mapSystemEvent(event as Record<string, unknown>);
+
       default:
         return [];
     }
@@ -68,6 +73,7 @@ export class ClaudeEventMapper implements ClaudeEventMapperLike {
     this.activeAssistantMessageId = undefined;
     this.activeAssistantText = "";
     this.contextUsage = undefined;
+    this.compactionState = "idle";
   }
 
   private mapStreamEvent(rawEvent: unknown): RuntimeSessionEvent[] {
@@ -252,6 +258,70 @@ export class ClaudeEventMapper implements ClaudeEventMapperLike {
         args: event.arguments ?? {}
       }
     ];
+  }
+
+  private mapSystemEvent(event: Record<string, unknown>): RuntimeSessionEvent[] {
+    const subtype = readString(event.subtype);
+
+    if (subtype === "status") {
+      const status = readString(event.status);
+      if (status === "compacting") {
+        if (this.compactionState === "active") {
+          return [];
+        }
+
+        this.compactionState = "active";
+        return [
+          {
+            type: "auto_compaction_start",
+            reason: "threshold"
+          }
+        ];
+      }
+
+      if (this.compactionState !== "active") {
+        return [];
+      }
+
+      this.compactionState = "fallback_ended";
+      return [
+        {
+          type: "auto_compaction_end",
+          result: {},
+          aborted: false,
+          willRetry: false
+        }
+      ];
+    }
+
+    if (subtype === "compact_boundary") {
+      const compactMetadata = readObject(event.compact_metadata);
+      const trigger = readString(compactMetadata?.trigger);
+      const preTokens = readFiniteNumber(compactMetadata?.pre_tokens);
+      const preservedSegment = readObject(compactMetadata?.preserved_segment);
+      const result: Record<string, unknown> = {
+        ...(trigger ? { trigger } : {}),
+        ...(preTokens !== undefined ? { preTokens } : {}),
+        ...(preservedSegment ? { preservedSegment } : {})
+      };
+
+      if (this.compactionState === "fallback_ended") {
+        this.compactionState = "idle";
+        return [];
+      }
+
+      this.compactionState = "idle";
+      return [
+        {
+          type: "auto_compaction_end",
+          result,
+          aborted: false,
+          willRetry: false
+        }
+      ];
+    }
+
+    return [];
   }
 
   private captureContextUsage(event: ClaudeSdkMessage): void {

@@ -270,6 +270,89 @@ describe("ClaudeEventMapper", () => {
     ).toEqual([]);
   });
 
+  it("maps Claude SDK auto-compaction status transitions and boundary events", () => {
+    const mapper = new ClaudeEventMapper();
+
+    expect(
+      mapper.mapEvent({
+        type: "system",
+        subtype: "status",
+        status: "compacting"
+      })
+    ).toEqual([
+      {
+        type: "auto_compaction_start",
+        reason: "threshold"
+      }
+    ]);
+
+    expect(
+      mapper.mapEvent({
+        type: "system",
+        subtype: "status",
+        status: null
+      })
+    ).toEqual([
+      {
+        type: "auto_compaction_end",
+        result: {},
+        aborted: false,
+        willRetry: false
+      }
+    ]);
+
+    expect(
+      mapper.mapEvent({
+        type: "system",
+        subtype: "compact_boundary",
+        compact_metadata: {
+          trigger: "auto",
+          pre_tokens: 12345,
+          preserved_segment: {
+            head_uuid: "head-1",
+            anchor_uuid: "anchor-1",
+            tail_uuid: "tail-1"
+          }
+        }
+      })
+    ).toEqual([]);
+  });
+
+  it("maps out-of-order compact boundaries without a prior compacting status", () => {
+    const mapper = new ClaudeEventMapper();
+
+    expect(
+      mapper.mapEvent({
+        type: "system",
+        subtype: "compact_boundary",
+        compact_metadata: {
+          trigger: "auto",
+          pre_tokens: 12345,
+          preserved_segment: {
+            head_uuid: "head-1",
+            anchor_uuid: "anchor-1",
+            tail_uuid: "tail-1"
+          }
+        }
+      })
+    ).toEqual([
+      {
+        type: "auto_compaction_end",
+        result: {
+          trigger: "auto",
+          preTokens: 12345,
+          preservedSegment: {
+            head_uuid: "head-1",
+            anchor_uuid: "anchor-1",
+            tail_uuid: "tail-1"
+          }
+        },
+        aborted: false,
+        willRetry: false
+      }
+    ]);
+  });
+
   it("extracts context usage from usage metadata", () => {
     const mapper = new ClaudeEventMapper();
 
