@@ -400,6 +400,8 @@ Open the **⋮ menu** in the chat header. You'll see two options:
 
 When the context window fills up during an active conversation, Forge triggers compaction automatically. You'll see a spinning indicator on the ⋮ menu button while it runs. This prevents the agent from failing mid-response due to context limits.
 
+Claude SDK sessions use the SDK's native auto-compaction at 80% of the context window, and the SDK handles it internally without restarting the session.
+
 ## Pinned messages
 
 If you've pinned messages (shown by the pin count in the header), their content is preserved through all compaction types, including smart compaction and automatic compaction. You can pin up to 10 messages per session. Pinned content is injected into the agent's custom instructions so it survives every compaction mode.

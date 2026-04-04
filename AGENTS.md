@@ -83,7 +83,7 @@ These are briefly described for orientation. Most have both backend and UI compo
 | **Cortex auto-review** | `swarm/cortex-auto-review-settings.ts`, `ws/routes/cortex-auto-review-routes.ts` | `components/settings/SettingsGeneral.tsx`, `components/settings/cortex-auto-review-api.ts` | Periodic automated reviews that run only when sessions have changed (deterministic pre-check prevents unnecessary LLM sessions) |
 | **Playwright dashboard** | `playwright/*` | `components/playwright/*` | Live browser preview and automation dashboard |
 | **Codex runtime** | `swarm/codex-agent-runtime.ts`, `swarm/codex-*.ts` | — | OpenAI Codex agent runtime integration |
-| **Claude SDK runtime** | `swarm/claude-*.ts` | Settings UI (model selectors) | Native Claude Agent SDK runtime with MCP tool bridge, OAuth auth via Claude Code CLI. Graceful fallback to Pi when SDK is unavailable. |
+| **Claude SDK runtime** | `swarm/claude-*.ts` | Settings UI (model selectors) | Native Claude Agent SDK runtime with MCP tool bridge, OAuth auth via Claude Code CLI, and SDK-native auto-compaction via `autoCompactWindow`. Graceful fallback to Pi when SDK is unavailable. |
 | **Mobile push** | `mobile/*` | — | Expo push notification service for mobile companion app |
 | **Voice/transcription** | `ws/routes/transcription-routes.ts` | `lib/voice-transcription-client.ts` | Voice input and transcription |
 | **Feedback** | `swarm/feedback-service.ts` | `lib/feedback-client.ts` | User feedback collection |
