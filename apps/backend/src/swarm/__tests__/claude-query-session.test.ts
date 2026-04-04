@@ -66,7 +66,7 @@ function createCallbacks(): ClaudeQuerySessionCallbacks {
 }
 
 describe("ClaudeQuerySession", () => {
-  it("merges env overrides into the inherited process env without mutating process.env", async () => {
+  it("strips inherited Anthropic API keys while preserving the user's Claude config dir", async () => {
     const previousAnthropicApiKey = process.env.ANTHROPIC_API_KEY;
     const previousClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
     const previousInheritedMarker = process.env.FORGE_TEST_INHERITED_ENV;
@@ -108,9 +108,9 @@ describe("ClaudeQuerySession", () => {
       expect(capturedOptions).toHaveLength(1);
       expect(capturedOptions[0]?.env).toMatchObject({
         FORGE_TEST_INHERITED_ENV: "keep-me",
-        ANTHROPIC_API_KEY: "session-api-key",
-        CLAUDE_CONFIG_DIR: "/session/config"
+        CLAUDE_CONFIG_DIR: "/global/config"
       });
+      expect(capturedOptions[0]?.env).not.toHaveProperty("ANTHROPIC_API_KEY");
       expect(capturedOptions[0]?.pathToClaudeCodeExecutable).toBe("/tmp/claude-sdk/cli.js");
       expect(capturedOptions[0]?.executable).toBe("/tmp/runtime/node");
       expect(process.env.ANTHROPIC_API_KEY).toBe("global-api-key");

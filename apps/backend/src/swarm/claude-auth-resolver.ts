@@ -66,13 +66,13 @@ export class ClaudeAuthResolver {
     }
   }
 
-  async buildEnv(sessionDataDir: string): Promise<Record<string, string>> {
-    const credentials = await this.resolve();
-
-    return {
-      CLAUDE_CONFIG_DIR: sessionDataDir,
-      ANTHROPIC_API_KEY: credentials.token
-    };
+  async buildEnv(_sessionDataDir: string): Promise<Record<string, string>> {
+    // Claude Code resolves its own OAuth credentials from the inherited process
+    // environment plus the user's existing Claude Code auth storage
+    // (default ~/.claude or a user-provided CLAUDE_CONFIG_DIR). Do not inject
+    // ANTHROPIC_API_KEY or override CLAUDE_CONFIG_DIR here, or we can
+    // accidentally force the SDK onto the wrong auth path.
+    return {};
   }
 
   private buildAuthConfig(): Pick<SwarmConfig, "paths"> {

@@ -118,6 +118,8 @@ type EmittedStatusSnapshot = {
 
 const MAX_CLAUDE_STDERR_LINES = 20;
 const MAX_CLAUDE_STDERR_SUMMARY_LINES = 3;
+const CLAUDE_SDK_STRIPPED_INHERITED_ENV_KEYS = new Set(["ANTHROPIC_API_KEY"]);
+const CLAUDE_SDK_IGNORED_OVERRIDE_ENV_KEYS = new Set(["ANTHROPIC_API_KEY", "CLAUDE_CONFIG_DIR"]);
 
 export class ClaudeQuerySession {
   private readonly mapper = new ClaudeEventMapper();
@@ -342,14 +344,12 @@ export class ClaudeQuerySession {
       queryOptions.mcpServers = this.options.mcpServers;
     }
 
-    if (this.options.config.env && Object.keys(this.options.config.env).length > 0) {
-      // Treat runtime env as overrides, not a full replacement, so Claude keeps the
-      // inherited PATH/HOME/TMPDIR/ELECTRON_RUN_AS_NODE needed to launch cli.js.
-      queryOptions.env = {
-        ...process.env,
-        ...this.options.config.env
-      };
-    }
+    // Treat runtime env as overrides, not a full replacement, so Claude keeps the
+    // inherited PATH/HOME/TMPDIR/ELECTRON_RUN_AS_NODE needed to launch cli.js.
+    // Strip inherited ANTHROPIC_API_KEY so the SDK can follow Claude Code's native
+    // OAuth resolution path, and ignore runtime attempts to override
+    // CLAUDE_CONFIG_DIR so existing Claude Code auth storage remains discoverable.
+    queryOptions.env = buildClaudeSdkEnv(this.options.config.env);
 
     if (this.options.allowedTools && this.options.allowedTools.length > 0) {
       queryOptions.allowedTools = this.options.allowedTools;
@@ -1088,6 +1088,32 @@ function summarizeClaudeStderr(stderrLines: readonly string[]): string | undefin
   }
 
   return stderrLines.slice(-MAX_CLAUDE_STDERR_SUMMARY_LINES).join(" | ");
+}
+
+function buildClaudeSdkEnv(overrides: Record<string, string> | undefined): Record<string, string> {
+  const env: Record<string, string> = {};
+
+  for (const [name, value] of Object.entries(process.env)) {
+    if (CLAUDE_SDK_STRIPPED_INHERITED_ENV_KEYS.has(name) || typeof value !== "string") {
+      continue;
+    }
+
+    env[name] = value;
+  }
+
+  if (!overrides) {
+    return env;
+  }
+
+  for (const [name, value] of Object.entries(overrides)) {
+    if (CLAUDE_SDK_IGNORED_OVERRIDE_ENV_KEYS.has(name)) {
+      continue;
+    }
+
+    env[name] = value;
+  }
+
+  return env;
 }
 
 function areContextUsagesEqual(

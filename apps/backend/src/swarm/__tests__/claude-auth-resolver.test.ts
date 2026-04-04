@@ -1,11 +1,11 @@
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { AuthStorage } from "@mariozechner/pi-coding-agent";
 import { ClaudeAuthResolver } from "../claude-auth-resolver.js";
 import { claudeConfigDir, claudeSessionDir, claudeWorkerDir } from "../claude-data-paths.js";
-import { getSharedAuthFilePath, getSharedSecretsFilePath } from "../data-paths.js";
+import { getSharedAuthFilePath } from "../data-paths.js";
 
 const PROFILE_ID = "profile-alpha";
 const SESSION_ID = "session-bravo";
@@ -71,17 +71,12 @@ describe("ClaudeAuthResolver", () => {
     await expect(resolver.isAvailable()).resolves.toBe(false);
   });
 
-  it("builds Claude SDK env with isolated session storage", async () => {
+  it("does not inject Claude SDK auth env overrides", async () => {
     const dataDir = await createTempDataDir("claude-auth-build-env-");
-    await writeSharedSecrets(dataDir, { ANTHROPIC_API_KEY: "sk-ant-managed-env" });
-
     const resolver = new ClaudeAuthResolver(dataDir);
     const sessionDataDir = claudeSessionDir(dataDir, PROFILE_ID, SESSION_ID);
 
-    await expect(resolver.buildEnv(sessionDataDir)).resolves.toEqual({
-      CLAUDE_CONFIG_DIR: sessionDataDir,
-      ANTHROPIC_API_KEY: "sk-ant-managed-env"
-    });
+    await expect(resolver.buildEnv(sessionDataDir)).resolves.toEqual({});
   });
 });
 
@@ -110,8 +105,3 @@ async function writeAnthropicCredential(dataDir: string, credential: Record<stri
   authStorage.set("anthropic", credential as never);
 }
 
-async function writeSharedSecrets(dataDir: string, values: Record<string, string>): Promise<void> {
-  const secretsPath = getSharedSecretsFilePath(dataDir);
-  await mkdir(dirname(secretsPath), { recursive: true });
-  await writeFile(secretsPath, `${JSON.stringify(values, null, 2)}\n`, "utf8");
-}

@@ -301,7 +301,7 @@ describe("ClaudeAgentRuntime", () => {
     await runtime.terminate({ abort: false });
   });
 
-  it("re-resolves auth env on recycle and forwards env overrides to the SDK without mutating process.env", async () => {
+  it("re-resolves runtime env on recycle without overriding Claude auth discovery", async () => {
     const previousAnthropicApiKey = process.env.ANTHROPIC_API_KEY;
     const previousClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
     process.env.ANTHROPIC_API_KEY = "global-api-key";
@@ -345,9 +345,9 @@ describe("ClaudeAgentRuntime", () => {
       await runtime.sendMessage("hello");
       expect(buildEnv).toHaveBeenCalledTimes(1);
       expect(queryCalls[0]?.options.env).toMatchObject({
-        ANTHROPIC_API_KEY: "session-api-key-1",
-        CLAUDE_CONFIG_DIR: "/session/config/1"
+        CLAUDE_CONFIG_DIR: "/global/config"
       });
+      expect(queryCalls[0]?.options.env).not.toHaveProperty("ANTHROPIC_API_KEY");
       expect(queryCalls[0]?.options.executable).toBe(process.execPath);
       expect(process.env.ANTHROPIC_API_KEY).toBe("global-api-key");
       expect(process.env.CLAUDE_CONFIG_DIR).toBe("/global/config");
@@ -355,9 +355,9 @@ describe("ClaudeAgentRuntime", () => {
       await runtime.recycle();
       expect(buildEnv).toHaveBeenCalledTimes(2);
       expect(queryCalls[1]?.options.env).toMatchObject({
-        ANTHROPIC_API_KEY: "session-api-key-2",
-        CLAUDE_CONFIG_DIR: "/session/config/2"
+        CLAUDE_CONFIG_DIR: "/global/config"
       });
+      expect(queryCalls[1]?.options.env).not.toHaveProperty("ANTHROPIC_API_KEY");
       expect(queryCalls[1]?.options.executable).toBe(process.execPath);
       expect(process.env.ANTHROPIC_API_KEY).toBe("global-api-key");
       expect(process.env.CLAUDE_CONFIG_DIR).toBe("/global/config");

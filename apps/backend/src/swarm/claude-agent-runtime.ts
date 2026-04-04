@@ -2,7 +2,7 @@ import { appendFileSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { ClaudeAuthResolver } from "./claude-auth-resolver.js";
-import { claudeConfigDir, claudeSessionDir, claudeWorkerDir } from "./claude-data-paths.js";
+import { claudeSessionDir, claudeWorkerDir } from "./claude-data-paths.js";
 import { isEnoentError, normalizeOptionalString } from "./claude-utils.js";
 import { getSessionFilePath, getWorkerSessionFilePath } from "./data-paths.js";
 import { ClaudeQuerySession, type ClaudeEffort, type ClaudeThinkingConfig } from "./claude-query-session.js";
@@ -683,11 +683,7 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
   }
 
   private async initializeRuntimeEnv(): Promise<Record<string, string>> {
-    const sharedConfigDir = claudeConfigDir(this.dataDir);
-    await Promise.all([
-      mkdir(sharedConfigDir, { recursive: true }),
-      mkdir(this.sessionDataDir, { recursive: true })
-    ]);
+    await mkdir(this.sessionDataDir, { recursive: true });
 
     return {
       ...this.runtimeEnvOverrides,
