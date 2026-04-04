@@ -553,6 +553,7 @@ async function makeTempConfig(port = 8790): Promise<SwarmConfig> {
     port,
     debug: false,
     isDesktop: false,
+  cortexEnabled: true,
     allowNonManagerSubscriptions: false,
     managerId: 'manager',
     managerDisplayName: 'Manager',
@@ -646,6 +647,110 @@ describe('SwarmManager', () => {
     })
     expect(manager.createdRuntimeIds).toEqual([])
     expect(manager.runtimeByAgentId.size).toBe(0)
+  })
+
+  it('prunes persisted Cortex state on boot when Cortex is disabled', async () => {
+    const config = await makeTempConfig()
+    config.cortexEnabled = false
+
+    await writeFile(
+      config.paths.agentsStoreFile,
+      `${JSON.stringify({
+        agents: [
+          {
+            agentId: 'cortex',
+            displayName: 'Cortex',
+            role: 'manager',
+            managerId: 'cortex',
+            profileId: 'cortex',
+            archetypeId: 'cortex',
+            status: 'idle',
+            createdAt: '2026-03-27T00:00:00.000Z',
+            updatedAt: '2026-03-27T00:00:00.000Z',
+            cwd: config.defaultCwd,
+            model: config.defaultModel,
+            sessionFile: join(config.paths.sessionsDir, 'cortex.jsonl'),
+          },
+          {
+            agentId: 'cortex--review',
+            displayName: 'Review Run',
+            role: 'manager',
+            managerId: 'cortex--review',
+            profileId: 'cortex',
+            archetypeId: 'cortex',
+            sessionPurpose: 'cortex_review',
+            status: 'streaming',
+            createdAt: '2026-03-27T00:01:00.000Z',
+            updatedAt: '2026-03-27T00:01:00.000Z',
+            cwd: config.defaultCwd,
+            model: config.defaultModel,
+            sessionFile: join(config.paths.sessionsDir, 'cortex--review.jsonl'),
+          },
+          {
+            agentId: 'cortex--worker',
+            displayName: 'Cortex Worker',
+            role: 'worker',
+            managerId: 'cortex--review',
+            profileId: 'cortex',
+            status: 'streaming',
+            createdAt: '2026-03-27T00:02:00.000Z',
+            updatedAt: '2026-03-27T00:02:00.000Z',
+            cwd: config.defaultCwd,
+            model: config.defaultModel,
+            sessionFile: join(config.paths.sessionsDir, 'cortex--worker.jsonl'),
+          },
+          {
+            agentId: 'manager',
+            displayName: 'Manager',
+            role: 'manager',
+            managerId: 'manager',
+            profileId: 'manager',
+            archetypeId: 'manager',
+            status: 'idle',
+            createdAt: '2026-03-27T00:03:00.000Z',
+            updatedAt: '2026-03-27T00:03:00.000Z',
+            cwd: config.defaultCwd,
+            model: config.defaultModel,
+            sessionFile: join(config.paths.sessionsDir, 'manager.jsonl'),
+          },
+        ],
+        profiles: [
+          {
+            profileId: 'cortex',
+            displayName: 'Cortex',
+            defaultSessionAgentId: 'cortex',
+            createdAt: '2026-03-27T00:00:00.000Z',
+            updatedAt: '2026-03-27T00:00:00.000Z',
+          },
+          {
+            profileId: 'manager',
+            displayName: 'Manager',
+            defaultSessionAgentId: 'manager',
+            createdAt: '2026-03-27T00:03:00.000Z',
+            updatedAt: '2026-03-27T00:03:00.000Z',
+          },
+        ],
+      }, null, 2)}\n`,
+      'utf8',
+    )
+
+    const manager = new TestSwarmManager(config)
+    await manager.boot()
+
+    expect(manager.listAgents().map((descriptor) => descriptor.agentId)).toEqual(['manager'])
+    expect(manager.listProfiles().map((profile) => profile.profileId)).toEqual(['manager'])
+    await expect(readFile(getCommonKnowledgePath(config.paths.dataDir), 'utf8')).resolves.toContain('# Common Knowledge')
+
+    const persistedStore = JSON.parse(await readFile(config.paths.agentsStoreFile, 'utf8')) as {
+      agents: Array<{ agentId: string; profileId?: string; sessionPurpose?: string }>
+      profiles: Array<{ profileId: string }>
+    }
+    expect(persistedStore.agents).toEqual([
+      expect.objectContaining({ agentId: 'manager', profileId: 'manager' }),
+    ])
+    expect(persistedStore.profiles).toEqual([
+      expect.objectContaining({ profileId: 'manager' }),
+    ])
   })
 
   it('does not materialize manager SYSTEM.md into the data dir on boot', async () => {
@@ -7419,7 +7524,7 @@ describe('SwarmManager', () => {
         name: 'Cortex',
         cwd: config.defaultCwd,
       }),
-    ).rejects.toThrow('Cortex manager already exists')
+    ).rejects.toThrow('The manager name "cortex" is reserved')
   })
 
   it('prevents deleting the cortex manager', async () => {

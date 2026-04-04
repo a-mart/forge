@@ -85,6 +85,7 @@ function createConfig(rootDir: string): SwarmConfig {
     port: 47187,
     debug: false,
     isDesktop: false,
+    cortexEnabled: true,
     allowNonManagerSubscriptions: false,
     managerDisplayName: "Manager",
     defaultModel: {

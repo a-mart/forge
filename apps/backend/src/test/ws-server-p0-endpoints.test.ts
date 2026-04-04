@@ -154,6 +154,7 @@ async function makeTempConfig(options?: { port?: number; managerId?: string }): 
     port,
     debug: false,
     isDesktop: false,
+    cortexEnabled: true,
     allowNonManagerSubscriptions: false,
     managerId: options?.managerId,
     managerDisplayName: 'Manager',

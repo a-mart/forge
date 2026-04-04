@@ -273,8 +273,10 @@ export class SwarmWebSocketServer {
     this.playwrightSettingsService =
       options.playwrightSettingsService ??
       new PlaywrightSettingsService({ dataDir: this.swarmManager.getConfig().paths.dataDir });
+    const cortexEnabled = this.swarmManager.getConfig().cortexEnabled;
     this.cortexAutoReviewSettingsService = new CortexAutoReviewSettingsService({
       dataDir: this.swarmManager.getConfig().paths.dataDir,
+      cortexEnabled,
     });
     this.playwrightEnvEnabledOverride = options.playwrightEnvEnabledOverride;
     this.terminalService = options.terminalService ?? null;
@@ -349,9 +351,10 @@ export class SwarmWebSocketServer {
       ...createFileBrowserRoutes({ swarmManager: this.swarmManager }),
       ...createGitDiffRoutes({ swarmManager: this.swarmManager }),
       ...createFeedbackRoutes({ swarmManager: this.swarmManager }),
-      ...createCortexRoutes({ swarmManager: this.swarmManager }),
+      ...createCortexRoutes({ swarmManager: this.swarmManager, cortexEnabled }),
       ...createCortexAutoReviewRoutes({
         settingsService: this.cortexAutoReviewSettingsService,
+        cortexEnabled,
       }),
       ...createTranscriptionRoutes({ swarmManager: this.swarmManager }),
       ...createStatsRoutes({
@@ -398,6 +401,7 @@ export class SwarmWebSocketServer {
             broadcastEvent: (event) => this.wsHandler.broadcastToSubscribed(event),
             promptPreviewProvider: this.swarmManager,
             versioning: this.swarmManager.getVersioningService(),
+            cortexEnabled,
           })
         : []),
     ];

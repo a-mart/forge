@@ -184,6 +184,7 @@ export interface SwarmConfig {
   port: number;
   debug: boolean;
   isDesktop: boolean;
+  cortexEnabled: boolean;
   allowNonManagerSubscriptions: boolean;
   managerId?: string;
   managerDisplayName: string;

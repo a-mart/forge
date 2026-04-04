@@ -159,6 +159,7 @@ async function makeTempConfig(port = 8796): Promise<SwarmConfig> {
     port,
     debug: false,
     isDesktop: false,
+  cortexEnabled: true,
     allowNonManagerSubscriptions: false,
     managerId: 'manager',
     managerDisplayName: 'Manager',

@@ -1413,6 +1413,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       ...loaded,
       agents: migrationResult.updatedAgents
     };
+    const cortexPruneResult = this.prunePersistedCortexStateForBoot(loaded);
+    loaded = cortexPruneResult.store;
 
     for (const descriptor of loaded.agents) {
       this.descriptors.set(descriptor.agentId, descriptor);
@@ -1424,6 +1426,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     await this.preloadPinnedMessageIndexes();
 
     this.reconcileProfilesOnBoot();
+    if (cortexPruneResult.pruned) {
+      await this.saveStore();
+    }
     await this.ensureCortexProfile();
     await loadOnboardingState(this.config.paths.dataDir);
     await this.ensureLegacyProfileKnowledgeReferenceDocs();
@@ -1573,6 +1578,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   private async reconcileInterruptedCortexReviewRunsForBoot(): Promise<void> {
+    if (!this.config.cortexEnabled) {
+      return;
+    }
+
     const storedRuns = await readStoredCortexReviewRuns(this.config.paths.dataDir);
     const interruptedRuns = storedRuns
       .slice()
@@ -1633,6 +1642,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   async listCortexReviewRuns(): Promise<CortexReviewRunRecord[]> {
+    if (!this.config.cortexEnabled) {
+      return [];
+    }
+
     const storedRuns = await readStoredCortexReviewRuns(this.config.paths.dataDir);
     const queuedRunIdsByPosition = new Map<string, number>();
 
@@ -1667,6 +1680,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     requestText?: string;
     scheduleName?: string | null;
   }): Promise<CortexReviewRunRecord | null> {
+    if (!this.config.cortexEnabled) {
+      return null;
+    }
+
     const runId = createCortexReviewRunId();
     let startedRunId: string | null = null;
 
@@ -1816,6 +1833,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   private scheduleCortexReviewRunQueueCheck(delayMs = CORTEX_REVIEW_RUN_QUEUE_RETRY_MS): void {
+    if (!this.config.cortexEnabled) {
+      this.clearCortexReviewRunQueueCheck();
+      return;
+    }
+
     this.clearCortexReviewRunQueueCheck();
 
     const timer = setTimeout(() => {
@@ -1842,6 +1864,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   private async processCortexReviewRunQueue(): Promise<void> {
+    if (!this.config.cortexEnabled) {
+      this.clearCortexReviewRunQueueCheck();
+      return;
+    }
+
     await this.withCortexReviewRunStartLock(async () => {
       const activeReviewSession = this.getActiveCortexReviewSession();
       const queuedRun = await this.findNextQueuedCortexReviewRun();
@@ -3397,8 +3424,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     const normalizedRequestedName = normalizeAgentId(requestedName);
-    if (normalizedRequestedName === CORTEX_PROFILE_ID && this.hasCortexDescriptor()) {
-      throw new Error("Cortex manager already exists");
+    if (normalizedRequestedName === CORTEX_PROFILE_ID) {
+      throw new Error('The manager name "cortex" is reserved');
     }
 
     const requestedModelPreset = parseSwarmModelPreset(input.model, "create_manager.model");
@@ -5447,6 +5474,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     target: AgentDescriptor,
     sourceContext: MessageSourceContext
   ): Promise<boolean> {
+    if (!this.config.cortexEnabled) {
+      return false;
+    }
+
     if (!this.isCortexRootInteractiveSession(target)) {
       return false;
     }
@@ -5977,7 +6008,59 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
   }
 
+  private prunePersistedCortexStateForBoot(store: AgentsStoreFile): {
+    store: AgentsStoreFile;
+    pruned: boolean;
+  } {
+    if (this.config.cortexEnabled) {
+      return { store, pruned: false };
+    }
+
+    const agents = Array.isArray(store.agents) ? store.agents : [];
+    const profiles = Array.isArray(store.profiles) ? store.profiles : [];
+    const removedManagerIds = new Set(
+      agents
+        .filter((descriptor) => (
+          descriptor.role === "manager" && (
+            descriptor.agentId === CORTEX_PROFILE_ID ||
+            descriptor.profileId === CORTEX_PROFILE_ID ||
+            descriptor.sessionPurpose === "cortex_review"
+          )
+        ))
+        .map((descriptor) => descriptor.agentId)
+    );
+    const filteredAgents = agents.filter((descriptor) => !(
+      descriptor.agentId === CORTEX_PROFILE_ID ||
+      descriptor.profileId === CORTEX_PROFILE_ID ||
+      descriptor.sessionPurpose === "cortex_review" ||
+      removedManagerIds.has(descriptor.managerId)
+    ));
+    const filteredProfiles = profiles.filter((profile) => profile.profileId !== CORTEX_PROFILE_ID);
+    const pruned = filteredAgents.length !== agents.length || filteredProfiles.length !== profiles.length;
+
+    if (pruned) {
+      this.logDebug("boot:cortex:pruned_disabled_state", {
+        removedAgents: agents.length - filteredAgents.length,
+        removedProfiles: profiles.length - filteredProfiles.length
+      });
+    }
+
+    return {
+      store: {
+        ...store,
+        agents: filteredAgents,
+        profiles: filteredProfiles
+      },
+      pruned
+    };
+  }
+
   private async ensureCortexProfile(): Promise<void> {
+    if (!this.config.cortexEnabled) {
+      await this.ensureCommonKnowledgeFile();
+      return;
+    }
+
     if (this.hasCortexDescriptor()) {
       await this.ensureCommonKnowledgeFile();
       await this.ensureCortexWorkerPromptsFile();

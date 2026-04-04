@@ -15,6 +15,7 @@ const CORTEX_AUTO_REVIEW_SETTINGS_ENDPOINT = '/api/settings/cortex-auto-review'
 
 export function createCortexAutoReviewRoutes(options: {
   settingsService: CortexAutoReviewSettingsService
+  cortexEnabled?: boolean
 }): HttpRoute[] {
   const { settingsService } = options
 
@@ -23,7 +24,7 @@ export function createCortexAutoReviewRoutes(options: {
       methods: 'GET, PUT, OPTIONS',
       matches: (pathname) => pathname === CORTEX_AUTO_REVIEW_SETTINGS_ENDPOINT,
       handle: async (request, response) => {
-        await handleSettingsRequest(request, response, settingsService)
+        await handleSettingsRequest(request, response, settingsService, options.cortexEnabled !== false)
       },
     },
   ]
@@ -33,6 +34,7 @@ async function handleSettingsRequest(
   request: IncomingMessage,
   response: ServerResponse,
   settingsService: CortexAutoReviewSettingsService,
+  cortexEnabled: boolean,
 ): Promise<void> {
   const methods = 'GET, PUT, OPTIONS'
 
@@ -46,8 +48,9 @@ async function handleSettingsRequest(
   applyCorsHeaders(request, response, methods)
 
   if (request.method === 'GET') {
-    const payload: GetCortexAutoReviewSettingsResponse = {
+    const payload: GetCortexAutoReviewSettingsResponse & { cortexDisabled?: boolean } = {
       settings: settingsService.getSettings(),
+      ...(cortexEnabled ? {} : { cortexDisabled: true }),
     }
     sendJson(response, 200, payload as unknown as Record<string, unknown>)
     return
@@ -56,6 +59,11 @@ async function handleSettingsRequest(
   if (request.method !== 'PUT') {
     response.setHeader('Allow', methods)
     sendJson(response, 405, { error: 'Method Not Allowed' })
+    return
+  }
+
+  if (!cortexEnabled) {
+    sendJson(response, 503, { error: 'Cortex is disabled' })
     return
   }
 

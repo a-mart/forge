@@ -385,6 +385,10 @@ export class IntegrationRegistryService extends EventEmitter {
       managerIds.add(this.resolveProfileId(managerId));
     }
 
+    if (!this.swarmManager.getConfig().cortexEnabled) {
+      managerIds.delete("cortex");
+    }
+
     return managerIds;
   }
 

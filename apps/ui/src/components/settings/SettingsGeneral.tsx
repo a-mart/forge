@@ -84,6 +84,7 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
   const [cortexError, setCortexError] = useState<string | null>(null)
   const [cortexUpdating, setCortexUpdating] = useState(false)
   const [cortexLoadFailed, setCortexLoadFailed] = useState(false)
+  const [cortexDisabled, setCortexDisabled] = useState(false)
 
   // Terminal shell settings
   const [terminalShells, setTerminalShells] = useState<AvailableShellsResponse | null>(null)
@@ -205,9 +206,11 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
   // Fetch Cortex auto-review settings on mount
   useEffect(() => {
     setCortexLoadFailed(false)
+    setCortexDisabled(false)
     void fetchCortexAutoReviewSettings(wsUrl)
-      .then((settings) => {
-        setCortexSettings(settings)
+      .then((response) => {
+        setCortexSettings(response.settings)
+        setCortexDisabled(response.cortexDisabled === true)
         setCortexLoadFailed(false)
       })
       .catch((err) => {
@@ -486,81 +489,84 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
         </SettingsSection>
       )}
 
-      <SettingsSection
-        label="Cortex"
-        description="Cortex is the self-improvement system that reviews sessions and maintains knowledge"
-      >
-        <SettingsWithCTA
-          label="Automatic Reviews"
-          description="Cortex periodically reviews active sessions and updates knowledge, memory, and reference docs."
+      {!cortexDisabled && (
+        <SettingsSection
+          label="Cortex"
+          description="Cortex is the self-improvement system that reviews sessions and maintains knowledge"
         >
-          <div className="flex flex-col items-end gap-1.5">
-            <HelpTooltip id="settings.cortex-auto-review" side="left">
-            <Switch
-              checked={cortexSettings?.enabled ?? false}
-              onCheckedChange={handleCortexToggle}
-              disabled={!cortexSettings || cortexUpdating}
-            />
-            </HelpTooltip>
-            {cortexError ? (
-              <div className="flex items-center gap-1.5">
-                <span className="text-[10px] text-destructive">{cortexError}</span>
-                {cortexLoadFailed ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCortexError(null)
-                      setCortexLoadFailed(false)
-                      void fetchCortexAutoReviewSettings(wsUrl)
-                        .then((s) => {
-                          setCortexSettings(s)
-                          setCortexLoadFailed(false)
-                        })
-                        .catch((err) => {
-                          setCortexLoadFailed(true)
-                          setCortexError(err instanceof Error ? err.message : 'Could not load Cortex settings')
-                        })
-                    }}
-                    className="text-[10px] text-primary underline hover:no-underline"
-                  >
-                    Retry
-                  </button>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
-        </SettingsWithCTA>
-
-        <SettingsWithCTA
-          label="Review Interval"
-          description="How often Cortex checks for sessions that need review."
-        >
-          <Select
-            value={String(cortexSettings?.intervalMinutes ?? 120)}
-            onValueChange={(value) => {
-              const minutes = parseInt(value, 10)
-              if (!isNaN(minutes)) handleCortexIntervalChange(minutes)
-            }}
-            disabled={!cortexSettings?.enabled || cortexUpdating}
+          <SettingsWithCTA
+            label="Automatic Reviews"
+            description="Cortex periodically reviews active sessions and updates knowledge, memory, and reference docs."
           >
-            <SelectTrigger
-              className={`w-full sm:w-48 ${!cortexSettings?.enabled ? 'opacity-50' : ''}`}
+            <div className="flex flex-col items-end gap-1.5">
+              <HelpTooltip id="settings.cortex-auto-review" side="left">
+                <Switch
+                  checked={cortexSettings?.enabled ?? false}
+                  onCheckedChange={handleCortexToggle}
+                  disabled={!cortexSettings || cortexUpdating}
+                />
+              </HelpTooltip>
+              {cortexError ? (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] text-destructive">{cortexError}</span>
+                  {cortexLoadFailed ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCortexError(null)
+                        setCortexLoadFailed(false)
+                        void fetchCortexAutoReviewSettings(wsUrl)
+                          .then((response) => {
+                            setCortexSettings(response.settings)
+                            setCortexDisabled(response.cortexDisabled === true)
+                            setCortexLoadFailed(false)
+                          })
+                          .catch((err) => {
+                            setCortexLoadFailed(true)
+                            setCortexError(err instanceof Error ? err.message : 'Could not load Cortex settings')
+                          })
+                      }}
+                      className="text-[10px] text-primary underline hover:no-underline"
+                    >
+                      Retry
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          </SettingsWithCTA>
+
+          <SettingsWithCTA
+            label="Review Interval"
+            description="How often Cortex checks for sessions that need review."
+          >
+            <Select
+              value={String(cortexSettings?.intervalMinutes ?? 120)}
+              onValueChange={(value) => {
+                const minutes = parseInt(value, 10)
+                if (!isNaN(minutes)) handleCortexIntervalChange(minutes)
+              }}
+              disabled={!cortexSettings?.enabled || cortexUpdating}
             >
-              <SelectValue placeholder="Select interval" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="15">Every 15 minutes</SelectItem>
-              <SelectItem value="30">Every 30 minutes</SelectItem>
-              <SelectItem value="60">Every hour</SelectItem>
-              <SelectItem value="120">Every 2 hours</SelectItem>
-              <SelectItem value="240">Every 4 hours</SelectItem>
-              <SelectItem value="480">Every 8 hours</SelectItem>
-              <SelectItem value="720">Every 12 hours</SelectItem>
-              <SelectItem value="1440">Every 24 hours</SelectItem>
-            </SelectContent>
-          </Select>
-        </SettingsWithCTA>
-      </SettingsSection>
+              <SelectTrigger
+                className={`w-full sm:w-48 ${!cortexSettings?.enabled ? 'opacity-50' : ''}`}
+              >
+                <SelectValue placeholder="Select interval" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="15">Every 15 minutes</SelectItem>
+                <SelectItem value="30">Every 30 minutes</SelectItem>
+                <SelectItem value="60">Every hour</SelectItem>
+                <SelectItem value="120">Every 2 hours</SelectItem>
+                <SelectItem value="240">Every 4 hours</SelectItem>
+                <SelectItem value="480">Every 8 hours</SelectItem>
+                <SelectItem value="720">Every 12 hours</SelectItem>
+                <SelectItem value="1440">Every 24 hours</SelectItem>
+              </SelectContent>
+            </Select>
+          </SettingsWithCTA>
+        </SettingsSection>
+      )}
 
       <SettingsSection
         label="Welcome Preferences"

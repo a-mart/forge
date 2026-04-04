@@ -51,8 +51,9 @@ const ONBOARDING_PREFERENCES_METHODS = "POST, OPTIONS";
 const ONBOARDING_PREFERRED_NAME_MAX_LENGTH = 200;
 const ONBOARDING_ADDITIONAL_PREFERENCES_MAX_LENGTH = 2000;
 
-export function createCortexRoutes(options: { swarmManager: SwarmManager }): HttpRoute[] {
+export function createCortexRoutes(options: { swarmManager: SwarmManager; cortexEnabled?: boolean }): HttpRoute[] {
   const { swarmManager } = options;
+  const cortexEnabled = options.cortexEnabled !== false;
 
   return [
     {
@@ -153,6 +154,11 @@ export function createCortexRoutes(options: { swarmManager: SwarmManager }): Htt
 
         applyCorsHeaders(request, response, CORTEX_REVIEW_RUNS_METHODS);
 
+        if (!cortexEnabled) {
+          sendJson(response, 503, { error: "Cortex is disabled" });
+          return;
+        }
+
         if (request.method === "GET") {
           try {
             const runs = await swarmManager.listCortexReviewRuns();
@@ -220,6 +226,11 @@ export function createCortexRoutes(options: { swarmManager: SwarmManager }): Htt
         }
 
         applyCorsHeaders(request, response, CORTEX_REVIEW_CONTROLS_METHODS);
+
+        if (!cortexEnabled) {
+          sendJson(response, 503, { error: "Cortex is disabled" });
+          return;
+        }
 
         try {
           const payload = await parseJsonBody(request, 8 * 1024);
@@ -303,6 +314,11 @@ export function createCortexRoutes(options: { swarmManager: SwarmManager }): Htt
 
         applyCorsHeaders(request, response, CORTEX_FILE_REVIEW_HISTORY_METHODS);
 
+        if (!cortexEnabled) {
+          sendJson(response, 503, { error: "Cortex is disabled" });
+          return;
+        }
+
         try {
           const dataDir = swarmManager.getConfig().paths.dataDir;
           const path = requireNonEmptyQuery(requestUrl.searchParams, "path");
@@ -344,6 +360,11 @@ export function createCortexRoutes(options: { swarmManager: SwarmManager }): Htt
         }
 
         applyCorsHeaders(request, response, CORTEX_SCAN_METHODS);
+
+        if (!cortexEnabled) {
+          sendJson(response, 503, { error: "Cortex is disabled" });
+          return;
+        }
 
         try {
           const config = swarmManager.getConfig();

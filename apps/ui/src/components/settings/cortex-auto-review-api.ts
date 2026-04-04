@@ -4,6 +4,11 @@ import type {
 } from '@forge/protocol'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
 
+export interface CortexAutoReviewSettingsResponse {
+  settings: CortexAutoReviewSettings
+  cortexDisabled?: boolean
+}
+
 async function readApiError(response: Response): Promise<string> {
   try {
     const payload = (await response.json()) as { error?: unknown; message?: unknown }
@@ -19,13 +24,13 @@ async function readApiError(response: Response): Promise<string> {
 
 export async function fetchCortexAutoReviewSettings(
   wsUrl: string,
-): Promise<CortexAutoReviewSettings> {
+): Promise<CortexAutoReviewSettingsResponse> {
   const endpoint = resolveApiEndpoint(wsUrl, '/api/settings/cortex-auto-review')
   const response = await fetch(endpoint)
   if (!response.ok) throw new Error(await readApiError(response))
-  const payload = (await response.json()) as { settings?: CortexAutoReviewSettings }
+  const payload = (await response.json()) as Partial<CortexAutoReviewSettingsResponse>
   if (!payload?.settings) throw new Error('Invalid Cortex auto-review settings response from backend.')
-  return payload.settings
+  return payload as CortexAutoReviewSettingsResponse
 }
 
 export async function updateCortexAutoReviewSettings(

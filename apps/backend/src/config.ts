@@ -84,6 +84,11 @@ export function createConfig(): SwarmConfig {
     port: Number.parseInt(process.env.FORGE_PORT ?? process.env.MIDDLEMAN_PORT ?? "47187", 10),
     debug: (process.env.FORGE_DEBUG ?? process.env.MIDDLEMAN_DEBUG ?? "false") === "true",
     isDesktop,
+    cortexEnabled:
+      parseOptionalBooleanEnv(
+        process.env.FORGE_CORTEX_ENABLED ?? process.env.MIDDLEMAN_CORTEX_ENABLED,
+        "FORGE_CORTEX_ENABLED"
+      ) !== false,
     allowNonManagerSubscriptions: true,
     managerId,
     managerDisplayName: "Manager",

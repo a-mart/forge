@@ -51,16 +51,26 @@ export class CortexAutoReviewSettingsService {
   private readonly dataDir: string
   private readonly settingsPath: string
   private readonly now: () => Date
+  private readonly cortexEnabled: boolean
   private settings: CortexAutoReviewSettings = createDefaultCortexAutoReviewSettings()
   private updateMutex: Promise<void> = Promise.resolve()
 
-  constructor(options: { dataDir: string; now?: () => Date }) {
+  constructor(options: { dataDir: string; now?: () => Date; cortexEnabled?: boolean }) {
     this.dataDir = options.dataDir
     this.settingsPath = getCortexAutoReviewSettingsPath(options.dataDir)
     this.now = options.now ?? (() => new Date())
+    this.cortexEnabled = options.cortexEnabled !== false
+    if (!this.cortexEnabled) {
+      this.settings = createDisabledCortexAutoReviewSettings()
+    }
   }
 
   async load(): Promise<void> {
+    if (!this.cortexEnabled) {
+      this.settings = createDisabledCortexAutoReviewSettings()
+      return
+    }
+
     try {
       const raw = await readFile(this.settingsPath, 'utf8')
       const parsed = JSON.parse(raw) as unknown
@@ -96,6 +106,10 @@ export class CortexAutoReviewSettingsService {
   }
 
   async update(patch: UpdateCortexAutoReviewSettingsRequest): Promise<CortexAutoReviewSettings> {
+    if (!this.cortexEnabled) {
+      throw new Error('Cortex is disabled')
+    }
+
     return this.withUpdateLock(async () => {
       const next: CortexAutoReviewSettings = {
         enabled:
@@ -209,6 +223,13 @@ export function createDefaultCortexAutoReviewSettings(): CortexAutoReviewSetting
     enabled: DEFAULT_CORTEX_AUTO_REVIEW_ENABLED,
     intervalMinutes: DEFAULT_CORTEX_AUTO_REVIEW_INTERVAL_MINUTES,
     updatedAt: null,
+  }
+}
+
+export function createDisabledCortexAutoReviewSettings(): CortexAutoReviewSettings {
+  return {
+    ...createDefaultCortexAutoReviewSettings(),
+    enabled: false,
   }
 }
 

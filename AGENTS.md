@@ -270,6 +270,7 @@ Copy `.env.example` to `.env` and uncomment/set values as needed. Key variables:
 | `FORGE_DATA_DIR` | `~/.forge` | Data storage root |
 | `FORGE_DEBUG` | `false` | Enable debug logging (also enables extension tool-call logging) |
 | `FORGE_TELEMETRY` | `true` | Enable or disable anonymous telemetry. Only aggregate counts are sent. |
+| `FORGE_CORTEX_ENABLED` | `true` | Enable or disable the Cortex subsystem |
 | `VITE_FORGE_WS_URL` | auto-detected | WebSocket URL override (dev mode only) |
 | `BRAVE_API_KEY` | — | Brave Search skill |
 | `GEMINI_API_KEY` | — | Image generation skill |

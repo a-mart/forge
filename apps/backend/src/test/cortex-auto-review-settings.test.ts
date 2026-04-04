@@ -84,6 +84,33 @@ describe('CortexAutoReviewSettingsService', () => {
     }
   })
 
+  it('stays disabled and refuses updates when Cortex is disabled', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'cortex-auto-review-settings-disabled-'))
+    const settingsPath = getCortexAutoReviewSettingsPath(dataDir)
+    const schedulePath = getProfileScheduleFilePath(dataDir, 'cortex')
+
+    await mkdir(dirname(settingsPath), { recursive: true })
+    await writeFile(
+      settingsPath,
+      `${JSON.stringify({ version: 1, enabled: true, intervalMinutes: 240, updatedAt: '2026-03-27T12:00:00.000Z' }, null, 2)}\n`,
+      'utf8',
+    )
+    await mkdir(dirname(schedulePath), { recursive: true })
+    await writeFile(schedulePath, JSON.stringify({ schedules: [{ id: 'keep-existing' }] }), 'utf8')
+
+    const service = new CortexAutoReviewSettingsService({ dataDir, cortexEnabled: false })
+    await service.load()
+
+    expect(service.getSettings()).toEqual({
+      enabled: false,
+      intervalMinutes: 120,
+      updatedAt: null,
+    })
+    await expect(service.update({ enabled: true })).rejects.toThrow('Cortex is disabled')
+    expect(await readFile(settingsPath, 'utf8')).toContain('"enabled": true')
+    expect(await readFile(schedulePath, 'utf8')).toContain('keep-existing')
+  })
+
   it('persists updates, merges partial patches, and removes the managed schedule when disabled', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'cortex-auto-review-settings-update-'))
     const now = new Date('2026-03-27T12:00:00.000Z')

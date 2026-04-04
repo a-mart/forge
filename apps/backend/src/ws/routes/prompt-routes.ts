@@ -120,8 +120,10 @@ export function createPromptRoutes(options: {
   broadcastEvent: (event: ServerEvent) => void;
   promptPreviewProvider?: PromptPreviewProvider;
   versioning?: VersioningMutationSink;
+  cortexEnabled?: boolean;
 }): HttpRoute[] {
   const { promptRegistry, dataDir, broadcastEvent, promptPreviewProvider, versioning } = options;
+  const cortexEnabled = options.cortexEnabled !== false;
 
   return [
     // ── Preview full manager runtime context ──────────────────
@@ -263,6 +265,11 @@ export function createPromptRoutes(options: {
           return;
         }
 
+        if (!cortexEnabled) {
+          sendJson(response, 200, { enabled: false, surfaces: [] });
+          return;
+        }
+
         try {
           const result = await listCortexPromptSurfaces({
             dataDir,
@@ -311,6 +318,11 @@ export function createPromptRoutes(options: {
           return;
         }
 
+        if (!cortexEnabled) {
+          sendJson(response, 404, { error: "Cortex prompt surfaces are unavailable because Cortex is disabled." });
+          return;
+        }
+
         try {
           await resetCortexPromptSurface({
             dataDir,
@@ -349,6 +361,11 @@ export function createPromptRoutes(options: {
         }
 
         const surfaceId = decodeURIComponent(match[1]);
+
+        if (!cortexEnabled) {
+          sendJson(response, 404, { error: "Cortex prompt surfaces are unavailable because Cortex is disabled." });
+          return;
+        }
 
         if (request.method === "GET") {
           const profileId = requestUrl.searchParams.get("profileId");
