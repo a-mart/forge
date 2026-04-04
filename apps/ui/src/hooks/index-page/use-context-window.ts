@@ -10,6 +10,7 @@ import type {
 import { getCatalogContextWindow } from '@forge/protocol'
 
 const CHARS_PER_TOKEN_ESTIMATE = 4
+const MAX_REASONABLE_CONTEXT_USAGE_MULTIPLIER = 5
 
 function contextWindowForAgent(agent: AgentDescriptor | null): number | null {
   if (!agent) {
@@ -61,7 +62,7 @@ function estimateUsedTokens(messages: ConversationEntry[]): number {
   return Math.ceil(totalChars / CHARS_PER_TOKEN_ESTIMATE)
 }
 
-function toContextWindowUsage(
+export function toContextWindowUsage(
   contextUsage: AgentContextUsage | undefined,
 ): { usedTokens: number; contextWindow: number } | null {
   if (!contextUsage) {
@@ -72,7 +73,8 @@ function toContextWindowUsage(
     !Number.isFinite(contextUsage.tokens) ||
     contextUsage.tokens < 0 ||
     !Number.isFinite(contextUsage.contextWindow) ||
-    contextUsage.contextWindow <= 0
+    contextUsage.contextWindow <= 0 ||
+    contextUsage.tokens > contextUsage.contextWindow * MAX_REASONABLE_CONTEXT_USAGE_MULTIPLIER
   ) {
     return null
   }

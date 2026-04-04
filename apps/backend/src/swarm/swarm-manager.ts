@@ -5291,7 +5291,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         });
       } else {
         const text =
-          result.reason === "claude_runtime_below_compaction_threshold"
+          runtime.runtimeType === "claude" && result.reason === "claude_runtime_below_compaction_threshold"
             ? "Smart compaction skipped because context is already below the Claude compaction threshold."
             : `Smart compaction finished but context was not reduced (${result.reason}). The handoff note was written and a resume prompt was sent, but compaction did not succeed.`;
         this.emitConversationMessage({

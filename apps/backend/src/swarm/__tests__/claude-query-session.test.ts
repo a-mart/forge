@@ -378,6 +378,68 @@ describe("ClaudeQuerySession", () => {
     await session.stop();
   });
 
+  it("recovers sane context usage from the SDK when streamed usage data is implausible", async () => {
+    const callbacks = createCallbacks();
+    const getContextUsage = vi.fn().mockResolvedValue({
+      totalTokens: 10_649_236,
+      maxTokens: 200_000,
+      percentage: 8.724
+    });
+    const sdk: ClaudeSdkModule = {
+      query: vi.fn((args: { prompt: AsyncIterable<ClaudeSdkUserMessage>; options: ClaudeSdkQueryOptions }) => {
+        return createPromptAwareMockQueryHandle(
+          args.prompt,
+          { type: "system:init" },
+          {
+            getContextUsage
+          },
+          {
+            onPrompt: async (_message, pushEvent) => {
+              pushEvent({
+                type: "assistant",
+                message: {
+                  id: "assistant-1",
+                  content: [{ type: "text", text: "done" }]
+                },
+                modelUsage: {
+                  inputTokens: 17_448,
+                  cacheReadInputTokens: 10_631_688,
+                  outputTokens: 100,
+                  contextWindow: 200_000
+                }
+              });
+              pushEvent({ type: "result", subtype: "result" });
+            }
+          }
+        );
+      }) as unknown as ClaudeSdkModule["query"]
+    };
+
+    const session = new ClaudeQuerySession({
+      sdk,
+      config: {
+        model: "claude-test",
+        systemPrompt: "system",
+        cwd: process.cwd()
+      },
+      callbacks
+    });
+
+    await session.start();
+    await session.sendInput("hello");
+    await session.waitForIdle();
+
+    expect(getContextUsage).toHaveBeenCalledTimes(1);
+    expect(session.getContextUsage()).toEqual({
+      tokens: 17_448,
+      contextWindow: 200_000,
+      percent: 8.724
+    });
+    expect(session.getStatus()).toBe("idle");
+
+    await session.stop();
+  });
+
   it("clears compaction state when Claude emits status:null without a compact boundary", async () => {
     const callbacks = createCallbacks();
     const sdk: ClaudeSdkModule = {

@@ -2,7 +2,9 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import {
   extractClaudeContextUsage,
+  isPlausibleContextUsage,
   normalizeOptionalString,
+  readBoolean,
   readFiniteNumber,
   readObject
 } from "./claude-utils.js";
@@ -149,6 +151,7 @@ export class ClaudeQuerySession {
   private sdkSessionId: string | undefined;
   private sdkCompactionInProgress = false;
   private lastContextUsage: AgentContextUsage | undefined;
+  private sawPlausibleContextUsageThisTurn = false;
   private lastEmittedStatus: EmittedStatusSnapshot | undefined;
   private recentStderrLines: string[] = [];
   private pendingStderr = "";
@@ -195,18 +198,10 @@ export class ClaudeQuerySession {
 
     try {
       const response = readObject(await this.queryHandle.getContextUsage());
-      const totalTokens = readFiniteNumber(response?.totalTokens);
-      const maxTokens = readFiniteNumber(response?.maxTokens);
-      if (totalTokens === undefined || maxTokens === undefined || maxTokens <= 0) {
+      const nextUsage = deriveSdkContextUsage(response);
+      if (!nextUsage) {
         return this.lastContextUsage;
       }
-
-      const percent = readFiniteNumber(response?.percentage);
-      const nextUsage: AgentContextUsage = {
-        tokens: Math.max(0, totalTokens),
-        contextWindow: maxTokens,
-        percent: Math.max(0, Math.min(100, percent ?? (Math.max(0, totalTokens) / maxTokens) * 100))
-      };
 
       if (areContextUsagesEqual(this.lastContextUsage, nextUsage)) {
         return this.lastContextUsage;
@@ -486,11 +481,21 @@ export class ClaudeQuerySession {
           await this.forwardMappedEvent(mappedEvent);
         }
 
+        if (this.activeTurn && isPlausibleContextUsage(this.mapper.getContextUsage())) {
+          this.sawPlausibleContextUsageThisTurn = true;
+        }
+
         if (isClaudeCompactBoundaryEvent(event)) {
-          await this.refreshContextUsageFromSdk();
+          const refreshedUsage = await this.refreshContextUsageFromSdk();
+          if (isPlausibleContextUsage(refreshedUsage)) {
+            this.sawPlausibleContextUsageThisTurn = true;
+          }
         }
 
         if (isClaudeResultEvent(event)) {
+          if (!this.sawPlausibleContextUsageThisTurn || !isPlausibleContextUsage(this.getContextUsage())) {
+            await this.refreshContextUsageFromSdk();
+          }
           await this.handleTurnCompleted();
         }
       }
@@ -543,6 +548,7 @@ export class ClaudeQuerySession {
     }
 
     this.activeTurn = undefined;
+    this.sawPlausibleContextUsageThisTurn = false;
     completedTurn.completion.resolve();
 
     const toolResults = [...this.currentTurnToolResults];
@@ -583,6 +589,7 @@ export class ClaudeQuerySession {
 
     try {
       this.currentTurnToolResults = [];
+      this.sawPlausibleContextUsageThisTurn = false;
       this.activeTurn = {
         deliveryId: input.deliveryId,
         completion: createDeferred<void>()
@@ -1279,6 +1286,75 @@ function areContextUsagesEqual(
   }
 
   return left.tokens === right.tokens && left.contextWindow === right.contextWindow && left.percent === right.percent;
+}
+
+function deriveSdkContextUsage(response: Record<string, unknown> | undefined): AgentContextUsage | undefined {
+  if (!response) {
+    return undefined;
+  }
+
+  const maxTokens = readFiniteNumber(response.maxTokens);
+  if (maxTokens === undefined || maxTokens <= 0) {
+    return undefined;
+  }
+
+  const totalTokens = readFiniteNumber(response.totalTokens);
+  const percent = readFiniteNumber(response.percentage);
+  const normalizedPercent = Math.max(0, Math.min(100, percent ?? 0));
+  const candidates: AgentContextUsage[] = [];
+
+  if (totalTokens !== undefined) {
+    candidates.push({
+      tokens: Math.max(0, totalTokens),
+      contextWindow: maxTokens,
+      percent: Math.max(0, Math.min(100, percent ?? (Math.max(0, totalTokens) / maxTokens) * 100))
+    });
+  }
+
+  const nonDeferredCategoryTokens = sumNonDeferredCategoryTokens(response.categories);
+  if (nonDeferredCategoryTokens !== undefined) {
+    candidates.push({
+      tokens: nonDeferredCategoryTokens,
+      contextWindow: maxTokens,
+      percent: percent !== undefined ? normalizedPercent : (nonDeferredCategoryTokens / maxTokens) * 100
+    });
+  }
+
+  if (percent !== undefined) {
+    candidates.push({
+      tokens: (normalizedPercent / 100) * maxTokens,
+      contextWindow: maxTokens,
+      percent: normalizedPercent
+    });
+  }
+
+  return candidates.find((candidate) => isPlausibleContextUsage(candidate));
+}
+
+function sumNonDeferredCategoryTokens(categories: unknown): number | undefined {
+  if (!Array.isArray(categories)) {
+    return undefined;
+  }
+
+  let total = 0;
+  let sawCategory = false;
+
+  for (const value of categories) {
+    const category = readObject(value);
+    if (!category || readBoolean(category.isDeferred) === true) {
+      continue;
+    }
+
+    const tokens = readFiniteNumber(category.tokens);
+    if (tokens === undefined || tokens < 0) {
+      continue;
+    }
+
+    total += tokens;
+    sawCategory = true;
+  }
+
+  return sawCategory ? total : undefined;
 }
 
 function areStatusSnapshotsEqual(

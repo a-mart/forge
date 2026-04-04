@@ -1,6 +1,8 @@
 import type { ClaudeSdkMessage } from "./claude-sdk-loader.js";
 import type { AgentContextUsage } from "./types.js";
 
+const MAX_REASONABLE_CONTEXT_USAGE_MULTIPLIER = 5;
+
 export function normalizeOptionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
@@ -62,17 +64,35 @@ export function extractClaudeContextUsage(
     return undefined;
   }
 
-  const tokens =
-    Math.max(0, inputTokens)
-    + Math.max(0, cacheReadInputTokens)
-    + Math.max(0, cacheCreationInputTokens)
-    + Math.max(0, outputTokens);
-
-  return {
-    tokens,
+  const usage: AgentContextUsage = {
+    tokens:
+      Math.max(0, inputTokens)
+      + Math.max(0, cacheReadInputTokens)
+      + Math.max(0, cacheCreationInputTokens)
+      + Math.max(0, outputTokens),
     contextWindow,
-    percent: Math.max(0, Math.min(100, (tokens / contextWindow) * 100))
+    percent: 0,
   };
+  usage.percent = Math.max(0, Math.min(100, (usage.tokens / usage.contextWindow) * 100));
+
+  return isPlausibleContextUsage(usage) ? usage : undefined;
+}
+
+export function isPlausibleContextUsage(usage: AgentContextUsage | undefined): usage is AgentContextUsage {
+  if (!usage) {
+    return false;
+  }
+
+  return (
+    Number.isFinite(usage.tokens)
+    && usage.tokens >= 0
+    && Number.isFinite(usage.contextWindow)
+    && usage.contextWindow > 0
+    && usage.tokens <= usage.contextWindow * MAX_REASONABLE_CONTEXT_USAGE_MULTIPLIER
+    && Number.isFinite(usage.percent)
+    && usage.percent >= 0
+    && usage.percent <= 100
+  );
 }
 
 function selectClaudeUsageEntry(
