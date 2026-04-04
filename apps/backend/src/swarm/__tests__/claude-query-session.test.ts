@@ -241,6 +241,143 @@ describe("ClaudeQuerySession", () => {
     await session.stop();
   });
 
+  it("refreshes context usage from the SDK after a compact boundary and emits updated status", async () => {
+    const callbacks = createCallbacks();
+    const getContextUsage = vi.fn().mockResolvedValue({
+      totalTokens: 4_321,
+      maxTokens: 200_000,
+      percentage: 2.1605
+    });
+    const sdk: ClaudeSdkModule = {
+      query: vi.fn((args: { prompt: AsyncIterable<ClaudeSdkUserMessage>; options: ClaudeSdkQueryOptions }) => {
+        return createPromptAwareMockQueryHandle(
+          args.prompt,
+          { type: "system:init" },
+          {
+            getContextUsage
+          },
+          {
+            onPrompt: async (_message, pushEvent) => {
+              pushEvent({
+                type: "system",
+                subtype: "status",
+                status: "compacting"
+              });
+              pushEvent({
+                type: "system",
+                subtype: "compact_boundary",
+                compact_metadata: {
+                  trigger: "auto",
+                  pre_tokens: 12_345
+                }
+              });
+              pushEvent({ type: "result", subtype: "result" });
+            }
+          }
+        );
+      }) as unknown as ClaudeSdkModule["query"]
+    };
+
+    const session = new ClaudeQuerySession({
+      sdk,
+      config: {
+        model: "claude-test",
+        systemPrompt: "system",
+        cwd: process.cwd()
+      },
+      callbacks
+    });
+
+    await session.start();
+    await session.sendInput("hello");
+    await session.waitForIdle();
+
+    expect(getContextUsage).toHaveBeenCalledTimes(1);
+    expect(session.getContextUsage()).toEqual({
+      tokens: 4_321,
+      contextWindow: 200_000,
+      percent: 2.1605
+    });
+    expect(
+      callbacks.onStatusChange.mock.calls.some(
+        ([agentId, _status, _pendingCount, contextUsage]) =>
+          agentId === "agent-1"
+          && contextUsage?.tokens === 4_321
+          && contextUsage?.contextWindow === 200_000
+          && contextUsage?.percent === 2.1605
+      )
+    ).toBe(true);
+
+    await session.stop();
+  });
+
+  it("falls back gracefully when SDK context usage refresh fails after compaction", async () => {
+    const callbacks = createCallbacks();
+    const getContextUsage = vi.fn().mockRejectedValue(new Error("control request failed"));
+    const sdk: ClaudeSdkModule = {
+      query: vi.fn((args: { prompt: AsyncIterable<ClaudeSdkUserMessage>; options: ClaudeSdkQueryOptions }) => {
+        return createPromptAwareMockQueryHandle(
+          args.prompt,
+          { type: "system:init" },
+          {
+            getContextUsage
+          },
+          {
+            onPrompt: async (_message, pushEvent) => {
+              pushEvent({
+                type: "message_delta",
+                usage: {
+                  input_tokens: 100,
+                  output_tokens: 50,
+                  context_window: 200_000
+                }
+              });
+              pushEvent({
+                type: "system",
+                subtype: "status",
+                status: "compacting"
+              });
+              pushEvent({
+                type: "system",
+                subtype: "compact_boundary",
+                compact_metadata: {
+                  trigger: "auto",
+                  pre_tokens: 12_345
+                }
+              });
+              pushEvent({ type: "result", subtype: "result" });
+            }
+          }
+        );
+      }) as unknown as ClaudeSdkModule["query"]
+    };
+
+    const session = new ClaudeQuerySession({
+      sdk,
+      config: {
+        model: "claude-test",
+        systemPrompt: "system",
+        cwd: process.cwd()
+      },
+      callbacks
+    });
+
+    await session.start();
+    await session.sendInput("hello");
+    await session.waitForIdle();
+
+    expect(getContextUsage).toHaveBeenCalledTimes(1);
+    expect(session.getContextUsage()).toEqual({
+      tokens: 150,
+      contextWindow: 200_000,
+      percent: 0.075
+    });
+    expect(callbacks.onRuntimeError).not.toHaveBeenCalled();
+    expect(session.getStatus()).toBe("idle");
+
+    await session.stop();
+  });
+
   it("clears compaction state when Claude emits status:null without a compact boundary", async () => {
     const callbacks = createCallbacks();
     const sdk: ClaudeSdkModule = {

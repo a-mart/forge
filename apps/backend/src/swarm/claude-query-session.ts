@@ -3,6 +3,7 @@ import path from "node:path";
 import {
   extractClaudeContextUsage,
   normalizeOptionalString,
+  readFiniteNumber,
   readObject
 } from "./claude-utils.js";
 import type {
@@ -183,6 +184,40 @@ export class ClaudeQuerySession {
   async getSdkContextUsage(): Promise<unknown> {
     await this.start();
     return await this.queryHandle?.getContextUsage?.();
+  }
+
+  async refreshContextUsageFromSdk(): Promise<AgentContextUsage | undefined> {
+    await this.start();
+
+    if (!this.queryHandle?.getContextUsage) {
+      return this.lastContextUsage;
+    }
+
+    try {
+      const response = readObject(await this.queryHandle.getContextUsage());
+      const totalTokens = readFiniteNumber(response?.totalTokens);
+      const maxTokens = readFiniteNumber(response?.maxTokens);
+      if (totalTokens === undefined || maxTokens === undefined || maxTokens <= 0) {
+        return this.lastContextUsage;
+      }
+
+      const percent = readFiniteNumber(response?.percentage);
+      const nextUsage: AgentContextUsage = {
+        tokens: Math.max(0, totalTokens),
+        contextWindow: maxTokens,
+        percent: Math.max(0, Math.min(100, percent ?? (Math.max(0, totalTokens) / maxTokens) * 100))
+      };
+
+      if (areContextUsagesEqual(this.lastContextUsage, nextUsage)) {
+        return this.lastContextUsage;
+      }
+
+      this.lastContextUsage = nextUsage;
+      await this.emitStatus();
+      return this.lastContextUsage;
+    } catch {
+      return this.lastContextUsage;
+    }
   }
 
   async applyFlagSettings(settings: Record<string, unknown>): Promise<void> {
@@ -449,6 +484,10 @@ export class ClaudeQuerySession {
 
         for (const mappedEvent of mappedEvents) {
           await this.forwardMappedEvent(mappedEvent);
+        }
+
+        if (isClaudeCompactBoundaryEvent(event)) {
+          await this.refreshContextUsageFromSdk();
         }
 
         if (isClaudeResultEvent(event)) {
@@ -1170,6 +1209,12 @@ function isClaudeResultEvent(event: ClaudeSdkMessage): boolean {
   const type = normalizeOptionalString((event as { type?: unknown }).type);
   const subtype = normalizeOptionalString((event as { subtype?: unknown }).subtype);
   return type === "result" || (type === "system" && subtype === "result");
+}
+
+function isClaudeCompactBoundaryEvent(event: ClaudeSdkMessage): boolean {
+  const type = normalizeOptionalString((event as { type?: unknown }).type);
+  const subtype = normalizeOptionalString((event as { subtype?: unknown }).subtype);
+  return type === "system" && subtype === "compact_boundary";
 }
 
 function enrichClaudeError(error: unknown, stderrLines: readonly string[]): Error {

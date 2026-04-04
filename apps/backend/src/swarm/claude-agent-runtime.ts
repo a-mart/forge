@@ -769,9 +769,27 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
         return;
       }
 
+      await this.refreshActiveSessionContextUsageFromSdk();
       this.clearSdkAutoCompactionState();
       await this.emitStatus();
     }
+  }
+
+  private async refreshActiveSessionContextUsageFromSdk(): Promise<void> {
+    const session = this.activeSession;
+    if (!session) {
+      return;
+    }
+
+    await session.refreshContextUsageFromSdk();
+
+    if (this.activeSession !== session) {
+      return;
+    }
+
+    this.contextUsage = session.getContextUsage();
+    this.descriptor.contextUsage = this.contextUsage;
+    this.descriptor.updatedAt = nowIso();
   }
 
   private clearSdkAutoCompactionState(): void {

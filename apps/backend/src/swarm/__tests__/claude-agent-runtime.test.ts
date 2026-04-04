@@ -178,6 +178,53 @@ function createAutoCompactingMockClaudeSdk(queryCalls: QueryCallRecord[]): Claud
   };
 }
 
+function createAutoCompactingContextRefreshMockClaudeSdk(
+  queryCalls: QueryCallRecord[],
+  getContextUsage: () => Promise<unknown>
+): ClaudeSdkModule {
+  return {
+    query(args: { prompt: AsyncIterable<ClaudeSdkUserMessage>; options: ClaudeSdkQueryOptions }) {
+      queryCalls.push({ options: { ...args.options } });
+      return createMockQueryHandle(
+        args.prompt,
+        args.options,
+        {
+          onPrompt: async (_message, pushEvent) => {
+            pushEvent({
+              type: "system",
+              subtype: "status",
+              status: "compacting",
+              session_id: args.options.sessionId ?? "mock-session",
+              uuid: "status-1"
+            });
+            pushEvent({
+              type: "system",
+              subtype: "compact_boundary",
+              compact_metadata: {
+                trigger: "auto",
+                pre_tokens: 4321
+              },
+              session_id: args.options.sessionId ?? "mock-session",
+              uuid: "boundary-1"
+            });
+            pushEvent({
+              type: "assistant",
+              message: {
+                id: `reply-${queryCalls.length}`,
+                content: [{ type: "text", text: "Normal reply" }]
+              }
+            });
+            pushEvent({ type: "result", subtype: "result" });
+          }
+        },
+        {
+          getContextUsage
+        }
+      );
+    }
+  };
+}
+
 function createAutoCompactionFailureThenRecoveryMockClaudeSdk(queryCalls: QueryCallRecord[]): ClaudeSdkModule {
   let queryCount = 0;
 
@@ -753,6 +800,70 @@ describe("ClaudeAgentRuntime", () => {
       ]);
     });
     expect(runtime.isContextRecoveryInProgress()).toBe(false);
+    expect(queryCalls).toHaveLength(1);
+
+    await runtime.terminate({ abort: false });
+  });
+
+  it("refreshes authoritative context usage after SDK auto-compaction completes", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "forge-claude-runtime-"));
+    const descriptor = makeDescriptor(tempDir);
+    await mkdir(dirname(descriptor.sessionFile), { recursive: true });
+
+    const queryCalls: QueryCallRecord[] = [];
+    const statusUpdates: Array<{ status: string; contextUsage?: { tokens: number; contextWindow: number; percent: number } }> = [];
+    const getContextUsage = vi.fn().mockResolvedValue({
+      totalTokens: 4_321,
+      maxTokens: 200_000,
+      percentage: 2.1605
+    });
+    setClaudeSdkImporterForTests(
+      vi.fn().mockResolvedValue(createAutoCompactingContextRefreshMockClaudeSdk(queryCalls, getContextUsage))
+    );
+
+    const runtime = new ClaudeAgentRuntime({
+      descriptor,
+      systemPrompt: "You are a Claude test runtime.",
+      callbacks: {
+        onStatusChange: async (_agentId, status, _pendingCount, contextUsage) => {
+          statusUpdates.push({
+            status,
+            contextUsage: contextUsage
+              ? {
+                  tokens: contextUsage.tokens,
+                  contextWindow: contextUsage.contextWindow,
+                  percent: contextUsage.percent
+                }
+              : undefined
+          });
+        }
+      },
+      dataDir: tempDir,
+      profileId: "profile-1",
+      sessionId: descriptor.agentId,
+      authResolver: {
+        buildEnv: async () => ({})
+      } as any
+    });
+
+    await runtime.sendMessage("hello");
+
+    await waitFor(() => {
+      expect(runtime.getContextUsage()).toEqual({
+        tokens: 4_321,
+        contextWindow: 200_000,
+        percent: 2.1605
+      });
+    });
+    expect(getContextUsage.mock.calls.length).toBeGreaterThanOrEqual(1);
+    expect(statusUpdates).toContainEqual({
+      status: "streaming",
+      contextUsage: {
+        tokens: 4_321,
+        contextWindow: 200_000,
+        percent: 2.1605
+      }
+    });
     expect(queryCalls).toHaveLength(1);
 
     await runtime.terminate({ abort: false });
