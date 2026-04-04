@@ -81,7 +81,8 @@ describe("ClaudeQuerySession", () => {
       }
     );
     const sdk: ClaudeSdkModule = {
-      query: query as unknown as ClaudeSdkModule["query"]
+      query: query as unknown as ClaudeSdkModule["query"],
+      pathToClaudeCodeExecutable: "/tmp/claude-sdk/cli.js"
     };
 
     const session = new ClaudeQuerySession({
@@ -106,6 +107,7 @@ describe("ClaudeQuerySession", () => {
         ANTHROPIC_API_KEY: "session-api-key",
         CLAUDE_CONFIG_DIR: "/session/config"
       });
+      expect(capturedOptions[0]?.pathToClaudeCodeExecutable).toBe("/tmp/claude-sdk/cli.js");
       expect(process.env.ANTHROPIC_API_KEY).toBe("global-api-key");
       expect(process.env.CLAUDE_CONFIG_DIR).toBe("/global/config");
 

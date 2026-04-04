@@ -288,6 +288,7 @@ describe("ClaudeAgentRuntime", () => {
       type: "enabled",
       budgetTokens: 16_384
     });
+    expect(queryCalls[0]?.options.pathToClaudeCodeExecutable).toMatch(/[/\\]cli\.js$/);
 
     await waitFor(() => {
       expect(runtime.getContextUsage()).toMatchObject({

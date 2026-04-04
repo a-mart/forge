@@ -350,6 +350,10 @@ export class ClaudeQuerySession {
       queryOptions.allowedTools = this.options.allowedTools;
     }
 
+    if (this.options.sdk.pathToClaudeCodeExecutable) {
+      queryOptions.pathToClaudeCodeExecutable = this.options.sdk.pathToClaudeCodeExecutable;
+    }
+
     queryOptions.abortController = this.abortController;
     queryOptions.stderr = (data: string) => {
       this.captureStderr(data);

@@ -1,6 +1,12 @@
+import { existsSync } from "node:fs";
+import { createRequire } from "node:module";
+import path from "node:path";
+
 const CLAUDE_SDK_SPECIFIER = "@anthropic-ai/claude-agent-sdk";
 const MISSING_SDK_MESSAGE = 'Claude backend requires "@anthropic-ai/claude-agent-sdk" to be installed.';
 const UNAVAILABLE_SDK_PREFIX = "Claude Agent SDK is unavailable in this environment.";
+
+const require = createRequire(import.meta.url);
 
 export interface ClaudeSdkMessage extends Record<string, unknown> {
   type: string;
@@ -36,6 +42,7 @@ export interface ClaudeSdkQueryOptions {
   debug?: boolean;
   debugFile?: string;
   stderr?: (data: string) => void;
+  pathToClaudeCodeExecutable?: string;
   [key: string]: unknown;
 }
 
@@ -51,6 +58,7 @@ export interface ClaudeSdkModule {
     prompt: AsyncIterable<ClaudeSdkUserMessage>;
     options: ClaudeSdkQueryOptions;
   }): ClaudeSdkQueryHandle;
+  pathToClaudeCodeExecutable?: string;
 }
 
 export interface ClaudeSdkMcpHelpers {
@@ -91,7 +99,8 @@ export async function loadClaudeSdkModule(): Promise<ClaudeSdkModule> {
   }
 
   return {
-    query: module.query as ClaudeSdkModule["query"]
+    query: module.query as ClaudeSdkModule["query"],
+    pathToClaudeCodeExecutable: resolveClaudeSdkCliPath()
   };
 }
 
@@ -193,4 +202,24 @@ export function resetClaudeSdkLoaderForTests(): void {
   importClaudeSdkImpl = defaultImporter;
   cachedModule = undefined;
   cachedLoad = undefined;
+}
+
+function resolveClaudeSdkCliPath(): string {
+  let sdkEntryPath: string;
+  try {
+    sdkEntryPath = require.resolve(CLAUDE_SDK_SPECIFIER);
+  } catch (error) {
+    throw new Error("Failed to resolve the Claude Agent SDK entrypoint for CLI path discovery.", {
+      cause: error
+    });
+  }
+
+  const cliPath = path.resolve(path.dirname(sdkEntryPath), "cli.js");
+  if (!existsSync(cliPath)) {
+    throw new Error(
+      `Claude Agent SDK CLI executable not found at ${cliPath}. Is the package installation complete?`
+    );
+  }
+
+  return cliPath;
 }
