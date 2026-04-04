@@ -1064,6 +1064,188 @@ describe("ClaudeAgentRuntime", () => {
     await runtime.terminate({ abort: false });
   });
 
+  it("returns a no-op smart compact result when refreshed SDK usage is already below threshold", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "forge-claude-runtime-"));
+    const descriptor = makeDescriptor(tempDir);
+    await mkdir(dirname(descriptor.sessionFile), { recursive: true });
+
+    const queryCalls: QueryCallRecord[] = [];
+    const getContextUsage = vi.fn().mockResolvedValue({
+      totalTokens: 4_321,
+      maxTokens: 200_000,
+      percentage: 2.1605
+    });
+    setClaudeSdkImporterForTests(
+      vi.fn().mockResolvedValue(
+        createControlAwareMockClaudeSdk(queryCalls, {
+          getContextUsage,
+          applyFlagSettings: vi.fn().mockResolvedValue(undefined)
+        })
+      )
+    );
+
+    const runtime = new ClaudeAgentRuntime({
+      descriptor,
+      systemPrompt: "You are a Claude test runtime.",
+      callbacks: {
+        onStatusChange: async () => {}
+      },
+      dataDir: tempDir,
+      profileId: "profile-1",
+      sessionId: descriptor.agentId,
+      authResolver: {
+        buildEnv: async () => ({})
+      } as any
+    });
+
+    const compactSpy = vi.spyOn(runtime, "compact");
+
+    await expect(runtime.smartCompact("trim older turns")).resolves.toEqual({
+      compacted: false,
+      reason: "claude_runtime_below_compaction_threshold"
+    });
+
+    expect(getContextUsage).toHaveBeenCalledTimes(1);
+    expect(compactSpy).not.toHaveBeenCalled();
+    expect(queryCalls).toHaveLength(1);
+
+    await runtime.terminate({ abort: false });
+  });
+
+  it("refreshes cached SDK usage before deciding whether Claude smart compaction is needed", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "forge-claude-runtime-"));
+    const descriptor = makeDescriptor(tempDir);
+    await mkdir(dirname(descriptor.sessionFile), { recursive: true });
+
+    const runtime = new ClaudeAgentRuntime({
+      descriptor,
+      systemPrompt: "You are a Claude test runtime.",
+      callbacks: {
+        onStatusChange: async () => {}
+      },
+      dataDir: tempDir,
+      profileId: "profile-1",
+      sessionId: descriptor.agentId,
+      authResolver: {
+        buildEnv: async () => ({})
+      } as any
+    });
+
+    (runtime as any).contextUsage = {
+      tokens: 190_000,
+      contextWindow: 200_000,
+      percent: 95
+    };
+
+    const refreshSpy = vi.spyOn(runtime as any, "refreshContextUsageFromSdk").mockResolvedValue({
+      tokens: 4_321,
+      contextWindow: 200_000,
+      percent: 2.1605
+    });
+    const compactSpy = vi.spyOn(runtime, "compact");
+
+    await expect(runtime.smartCompact("trim older turns")).resolves.toEqual({
+      compacted: false,
+      reason: "claude_runtime_below_compaction_threshold"
+    });
+
+    expect(refreshSpy).toHaveBeenCalledTimes(1);
+    expect(compactSpy).not.toHaveBeenCalled();
+
+    await runtime.terminate({ abort: false });
+  });
+
+  it("refreshes unknown SDK context usage before falling back to generation rollover", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "forge-claude-runtime-"));
+    const descriptor = makeDescriptor(tempDir);
+    await mkdir(dirname(descriptor.sessionFile), { recursive: true });
+
+    const queryCalls: QueryCallRecord[] = [];
+    const getContextUsage = vi.fn().mockResolvedValue({
+      totalTokens: 190_000,
+      maxTokens: 200_000,
+      percentage: 95
+    });
+    setClaudeSdkImporterForTests(
+      vi.fn().mockResolvedValue(
+        createControlAwareMockClaudeSdk(queryCalls, {
+          getContextUsage,
+          applyFlagSettings: vi.fn().mockResolvedValue(undefined)
+        })
+      )
+    );
+
+    const runtime = new ClaudeAgentRuntime({
+      descriptor,
+      systemPrompt: "You are a Claude test runtime.",
+      callbacks: {
+        onStatusChange: async () => {}
+      },
+      dataDir: tempDir,
+      profileId: "profile-1",
+      sessionId: descriptor.agentId,
+      authResolver: {
+        buildEnv: async () => ({})
+      } as any
+    });
+
+    const compactSpy = vi.spyOn(runtime, "compact").mockResolvedValue({ mode: "summary_rollover" });
+
+    await expect(runtime.smartCompact("trim older turns")).resolves.toEqual({
+      compacted: true
+    });
+
+    expect(getContextUsage).toHaveBeenCalledTimes(1);
+    expect(compactSpy).toHaveBeenCalledWith("trim older turns");
+    expect(queryCalls).toHaveLength(1);
+
+    await runtime.terminate({ abort: false });
+  });
+
+  it("reports unknown context usage after attempting an SDK refresh", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "forge-claude-runtime-"));
+    const descriptor = makeDescriptor(tempDir);
+    await mkdir(dirname(descriptor.sessionFile), { recursive: true });
+
+    const queryCalls: QueryCallRecord[] = [];
+    const getContextUsage = vi.fn().mockResolvedValue(undefined);
+    setClaudeSdkImporterForTests(
+      vi.fn().mockResolvedValue(
+        createControlAwareMockClaudeSdk(queryCalls, {
+          getContextUsage,
+          applyFlagSettings: vi.fn().mockResolvedValue(undefined)
+        })
+      )
+    );
+
+    const runtime = new ClaudeAgentRuntime({
+      descriptor,
+      systemPrompt: "You are a Claude test runtime.",
+      callbacks: {
+        onStatusChange: async () => {}
+      },
+      dataDir: tempDir,
+      profileId: "profile-1",
+      sessionId: descriptor.agentId,
+      authResolver: {
+        buildEnv: async () => ({})
+      } as any
+    });
+
+    const compactSpy = vi.spyOn(runtime, "compact");
+
+    await expect(runtime.smartCompact("trim older turns")).resolves.toEqual({
+      compacted: false,
+      reason: "claude_runtime_context_usage_unknown"
+    });
+
+    expect(getContextUsage).toHaveBeenCalledTimes(1);
+    expect(compactSpy).not.toHaveBeenCalled();
+    expect(queryCalls).toHaveLength(1);
+
+    await runtime.terminate({ abort: false });
+  });
+
   it("captures a hidden compaction summary, rolls to a fresh generation, and persists the summary context", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "forge-claude-runtime-"));
     const descriptor = makeDescriptor(tempDir);
@@ -1145,8 +1327,8 @@ describe("ClaudeAgentRuntime", () => {
     expect(restarted.getSystemPrompt()).toContain("## Current Objective");
 
     await expect(runtime.smartCompact("trim older turns")).resolves.toEqual({
-      compactionSucceeded: false,
-      compactionFailureReason: "claude_runtime_context_usage_unknown"
+      compacted: false,
+      reason: "claude_runtime_context_usage_unknown"
     });
 
     await runtime.terminate({ abort: false });

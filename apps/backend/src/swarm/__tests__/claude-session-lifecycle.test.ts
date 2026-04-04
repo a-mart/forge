@@ -7,7 +7,7 @@ import { CLAUDE_SDK_AUTH_USER_MESSAGE } from "../claude-startup-errors.js";
 import { getProfileMemoryPath } from "../data-paths.js";
 import { readSessionMeta } from "../session-manifest.js";
 import { SwarmManager } from "../swarm-manager.js";
-import type { RuntimeUserMessage, SwarmAgentRuntime } from "../runtime-types.js";
+import type { RuntimeUserMessage, SmartCompactResult, SwarmAgentRuntime } from "../runtime-types.js";
 import type {
   AgentContextUsage,
   AgentDescriptor,
@@ -21,6 +21,7 @@ class FakeClaudeRuntime {
 
   recycleCalls = 0;
   private systemPrompt: string;
+  private smartCompactResult: SmartCompactResult = { compacted: true };
 
   constructor(
     readonly descriptor: AgentDescriptor,
@@ -38,7 +39,7 @@ class FakeClaudeRuntime {
   }
 
   getContextUsage(): AgentContextUsage | undefined {
-    return undefined;
+    return this.descriptor.contextUsage;
   }
 
   getSystemPrompt(): string {
@@ -64,8 +65,12 @@ class FakeClaudeRuntime {
     return { status: "ok" };
   }
 
-  async smartCompact(): Promise<unknown> {
-    return { status: "ok" };
+  setSmartCompactResult(result: SmartCompactResult): void {
+    this.smartCompactResult = result;
+  }
+
+  async smartCompact(): Promise<SmartCompactResult> {
+    return this.smartCompactResult;
   }
 
   async stopInFlight(): Promise<void> {}
@@ -309,8 +314,43 @@ describe("Claude session lifecycle", () => {
     });
   });
 
-  it("drops persisted Claude runtime state when partially forking a session", async () => {
+  it("does not increment the compaction count when Claude smart compact is skipped below threshold", async () => {
     const config = await makeTempConfig(8904);
+    const manager = new TestSwarmManager(config);
+    const rootManager = await bootWithDefaultManager(manager, config);
+    const session = await manager.createManager(rootManager.agentId, {
+      name: "Claude Session",
+      cwd: config.defaultCwd
+    });
+    const conversationMessages: Array<{ type: string; text?: string; agentId?: string }> = [];
+    manager.on("conversation_message", (event) => {
+      conversationMessages.push(event as { type: string; text?: string; agentId?: string });
+    });
+
+    const runtime = manager.getFakeRuntime(session.agentId);
+    expect(runtime).toBeDefined();
+    runtime?.setSmartCompactResult({
+      compacted: false,
+      reason: "claude_runtime_below_compaction_threshold"
+    });
+
+    const beforeMeta = await readSessionMeta(config.paths.dataDir, session.profileId ?? session.agentId, session.agentId);
+    expect(beforeMeta?.compactionCount ?? 0).toBe(0);
+
+    await manager.smartCompactAgentContext(session.agentId);
+
+    const afterMeta = await readSessionMeta(config.paths.dataDir, session.profileId ?? session.agentId, session.agentId);
+    expect(afterMeta?.compactionCount ?? 0).toBe(0);
+    expect(manager.getAgent(session.agentId)?.compactionCount ?? 0).toBe(0);
+    expect(conversationMessages.at(-1)).toMatchObject({
+      type: "conversation_message",
+      agentId: session.agentId,
+      text: "Smart compaction skipped because context is already below the Claude compaction threshold."
+    });
+  });
+
+  it("drops persisted Claude runtime state when partially forking a session", async () => {
+    const config = await makeTempConfig(8905);
     const manager = new TestSwarmManager(config);
     const rootManager = await bootWithDefaultManager(manager, config);
     const source = await manager.createManager(rootManager.agentId, {

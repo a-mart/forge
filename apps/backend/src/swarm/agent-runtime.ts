@@ -351,8 +351,8 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
     let handoffContent: string | undefined;
     let completed = false;
-    let compactionSucceeded = false;
-    let compactionFailureReason: string | undefined;
+    let compacted = false;
+    let reason: string | undefined;
 
     try {
       // If streaming, abort current turn first
@@ -361,29 +361,29 @@ export class AgentRuntime implements SwarmAgentRuntime {
           await withTimeout(this.session.abort(), CONTEXT_GUARD_ABORT_TIMEOUT_MS, "smart_compact_abort");
         } catch (error) {
           await this.reportContextGuardError(error, { stage: "smart_compact_abort_failed" });
-          return { compactionSucceeded: false, compactionFailureReason: "Failed to abort current turn" };
+          return { compacted: false, reason: "Failed to abort current turn" };
         }
       }
 
-      if (signal.aborted) return { compactionSucceeded: false, compactionFailureReason: "Aborted" };
+      if (signal.aborted) return { compacted: false, reason: "Aborted" };
 
       // Run handoff turn
       handoffContent = await this.runHandoffTurn(handoffFilePath, signal);
 
-      if (signal.aborted) return { compactionSucceeded: false, compactionFailureReason: "Aborted" };
+      if (signal.aborted) return { compacted: false, reason: "Aborted" };
 
       // Compact
       try {
         await withTimeout(this.compact(customInstructions), CONTEXT_GUARD_COMPACT_TIMEOUT_MS, "smart_compact_compact", {
           onTimeout: () => this.abortCompactionSafely("smart_compact_compact_timeout_abort")
         });
-        compactionSucceeded = true;
+        compacted = true;
       } catch (error) {
         const normalized = normalizeRuntimeError(error);
         if (isAlreadyCompactedError(normalized.message)) {
-          compactionSucceeded = true;
+          reason = "runtime_already_compacted";
         } else {
-          compactionFailureReason = normalized.message;
+          reason = normalized.message;
           await this.reportContextGuardError(error, {
             stage: "smart_compact_compaction_failed",
             handoffWritten: handoffContent !== undefined
@@ -392,7 +392,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
         // Continue to resume prompt even if compaction failed/skipped
       }
 
-      if (signal.aborted) return { compactionSucceeded: false, compactionFailureReason: "Aborted" };
+      if (signal.aborted) return { compacted: false, reason: "Aborted" };
 
       // Resume prompt
       try {
@@ -407,14 +407,14 @@ export class AgentRuntime implements SwarmAgentRuntime {
       await this.cleanupGuard(handoffFilePath);
       if (completed) {
         this.logContextGuard("smart_compact_completed", {
-          compactionSucceeded,
+          compacted,
           handoffWritten: handoffContent !== undefined,
           handoffContentLength: handoffContent?.length ?? 0
         });
       }
     }
 
-    return { compactionSucceeded, compactionFailureReason };
+    return compacted ? { compacted: true } : { compacted: false, reason: reason ?? "compaction_not_performed" };
   }
 
   async compact(customInstructions?: string): Promise<unknown> {

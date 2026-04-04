@@ -299,30 +299,31 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
   async smartCompact(customInstructions?: string): Promise<SmartCompactResult> {
     this.ensureNotTerminated();
 
-    const usage = this.getContextUsage();
+    const usage = await this.refreshContextUsageFromSdk();
+
     if (!usage) {
       return {
-        compactionSucceeded: false,
-        compactionFailureReason: "claude_runtime_context_usage_unknown"
+        compacted: false,
+        reason: "claude_runtime_context_usage_unknown"
       };
     }
 
     if (usage.percent < CLAUDE_SMART_COMPACT_THRESHOLD_PERCENT) {
       return {
-        compactionSucceeded: false,
-        compactionFailureReason: "claude_runtime_below_compaction_threshold"
+        compacted: false,
+        reason: "claude_runtime_below_compaction_threshold"
       };
     }
 
     try {
       await this.compact(customInstructions);
       return {
-        compactionSucceeded: true
+        compacted: true
       };
     } catch (error) {
       return {
-        compactionSucceeded: false,
-        compactionFailureReason: error instanceof Error ? error.message : String(error)
+        compacted: false,
+        reason: error instanceof Error ? error.message : String(error)
       };
     }
   }
@@ -802,21 +803,22 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
     }
   }
 
-  private async refreshActiveSessionContextUsageFromSdk(): Promise<void> {
-    const session = this.activeSession;
-    if (!session) {
-      return;
-    }
-
+  private async refreshContextUsageFromSdk(): Promise<AgentContextUsage | undefined> {
+    const session = await this.ensureSessionStarted();
     await session.refreshContextUsageFromSdk();
 
     if (this.activeSession !== session) {
-      return;
+      return this.getContextUsage();
     }
 
     this.contextUsage = session.getContextUsage();
     this.descriptor.contextUsage = this.contextUsage;
     this.descriptor.updatedAt = nowIso();
+    return this.contextUsage;
+  }
+
+  private async refreshActiveSessionContextUsageFromSdk(): Promise<void> {
+    await this.refreshContextUsageFromSdk();
   }
 
   private clearSdkAutoCompactionState(): void {
