@@ -32,7 +32,11 @@ The dashboard panel is resizable — drag the left edge to adjust its width.
 
 Cortex runs alongside your regular sessions. It doesn't interrupt your work. When auto-review is enabled in Settings > General, Cortex checks for changes on a schedule and runs reviews automatically. You can also trigger reviews manually from the Review tab.
 
-The knowledge Cortex builds is available to all managers through the common knowledge file and per-profile memory. You can view and edit these files directly in the Knowledge tab.`,
+The knowledge Cortex builds is available to all managers through the common knowledge file and per-profile memory. You can view and edit these files directly in the Knowledge tab.
+
+## Disabling Cortex
+
+Set the \`FORGE_CORTEX_ENABLED\` environment variable to \`false\` to disable the entire Cortex subsystem. When disabled, no Cortex profile is created, auto-reviews don't run, and Cortex sections are hidden from Settings. Existing Cortex data is preserved on disk and restored if you re-enable it.`,
     keywords: [
       'cortex',
       'self-improvement',

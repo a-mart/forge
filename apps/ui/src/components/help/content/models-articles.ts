@@ -18,7 +18,7 @@ Three things affect the quality and speed of what you get back:
 ## Where models get configured
 
 - **Manager model:** Set when you create a session or change it in Settings. This controls the main orchestration agent.
-- **Specialist models:** Each specialist worker has its own model and reasoning level. Configure these in Settings > Specialists.
+- **Specialist models:** Each specialist worker has its own model and reasoning level. Configure these in Settings > Specialists. Specialists can use either the Pi-proxied Anthropic provider or the native Claude SDK provider independently.
 - **Fallback models:** Specialists can define a fallback model that kicks in if the primary is unavailable or rate-limited.
 
 Start with the defaults. Adjust when you notice a task is too slow, too expensive, or not producing good enough results.`,
@@ -32,7 +32,7 @@ const modelsProviders: HelpArticle = {
   title: 'Provider Guide',
   category: 'models',
   summary: 'What each AI provider offers and when to use their models.',
-  content: `Forge supports three AI providers. Each has a different set of models with different tradeoffs.
+  content: `Forge supports four AI providers. Each has a different set of models with different tradeoffs.
 
 ## OpenAI / Codex
 
@@ -45,11 +45,18 @@ OpenAI offers the GPT-5 model family through the Codex runtime.
 
 ## Anthropic
 
-Anthropic offers the Claude model family.
+Anthropic offers the Claude model family through the Pi-proxied path.
 
 - **Claude Opus 4.6** — Anthropic's top-tier model. Particularly strong at frontend work, UI polish, writing, and nuanced code review. Reasoning levels are limited to low, medium, and high (no "none" or "max").
 - **Claude Sonnet 4.5** — A mid-range model. Faster than Opus, still capable. Good for documentation, lighter code tasks, and cases where Opus is overkill.
 - **Claude Haiku 4.5** — The fast, affordable option. Use it for bulk tasks, formatting, and anything that does not need deep analysis.
+
+## Claude SDK
+
+Claude SDK uses the local Claude Code CLI OAuth session instead of an API key. It is a native path for Claude models and can be used independently from the Pi-proxied Anthropic path.
+
+- **sdk-opus** — Native Claude SDK preset for Opus-class work.
+- **sdk-sonnet** — Native Claude SDK preset for Sonnet-class work.
 
 ## xAI / Grok
 
@@ -59,7 +66,7 @@ xAI provides the Grok model family. Grok models are available for specialist wor
 - **Grok 4 Fast** — Optimized for speed at some quality tradeoff.
 - **Grok 4.20** — A newer variant with expanded capabilities.
 
-You need API credentials for each provider configured in Settings > Auth before its models appear in selectors.`,
+You need provider credentials for each provider configured in Settings > Auth before its models appear in selectors. Claude SDK uses Claude Code CLI OAuth, and SDK models can be disabled in Settings > Models if you do not want to see them.`,
   keywords: ['provider', 'OpenAI', 'Codex', 'Anthropic', 'Claude', 'Grok', 'xAI', 'GPT', 'Opus', 'Sonnet', 'Haiku'],
   relatedIds: ['models-overview', 'models-cost', 'models-reasoning'],
   contextKeys: ['settings.general', 'settings.auth', 'settings.specialists'],

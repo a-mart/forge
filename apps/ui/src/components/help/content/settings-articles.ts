@@ -128,7 +128,8 @@ If clicking a file link does nothing, check that the editor is installed and tha
 
 ## Supported providers
 
-- **Anthropic** — powers Claude-based workers and managers
+- **Anthropic** — powers Claude-based workers and managers through the Pi-proxied path
+- **Claude SDK** — native Claude Code CLI OAuth path for Claude models
 - **OpenAI** — powers Codex runtime sessions and voice transcription
 - **xAI** — powers Grok-based workers
 
@@ -147,11 +148,13 @@ Each provider also has a "Get key" link that opens the provider's key management
 
 Anthropic and OpenAI support OAuth as an alternative to API keys. Click **Login with OAuth**, follow the browser authorization flow, then paste the authorization code back into Forge. OAuth tokens are stored and refreshed automatically.
 
+Claude SDK uses Claude Code CLI OAuth instead of an API key. Run \`claude login\` first so Forge can read the local Claude credentials. If the SDK is unavailable, Forge falls back to the Pi-proxied Anthropic path automatically.
+
 If the OAuth flow gets stuck, click **Clear** to reset it and try again.
 
 ## Which key do I need?
 
-You need at least one provider key to run agents. Most setups use Anthropic for Claude-based workers. Add OpenAI if you want Codex runtime sessions or voice transcription. Add xAI if you want to use Grok models.`,
+You need at least one provider credential to run agents. Most setups use Anthropic for Claude-based workers. Add OpenAI if you want Codex runtime sessions or voice transcription. Add xAI if you want to use Grok models. Use Claude SDK if you want the native Claude Code CLI OAuth path instead of an API key.`,
     keywords: [
       'api key',
       'authentication',

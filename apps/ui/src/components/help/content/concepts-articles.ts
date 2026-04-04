@@ -6,7 +6,7 @@ const conceptsMultiAgent: HelpArticle = {
   category: 'concepts',
   summary:
     'How managers and workers coordinate to handle complex tasks.',
-  content: `Forge uses two kinds of agents: **managers** and **workers**. A manager is the agent you talk to in chat. Workers are agents the manager creates to do specific tasks.
+  content: `Forge uses two kinds of agents: **managers** and **workers**. A manager is the agent you talk to in chat. Workers are agents the manager creates to do specific tasks. Forge supports multiple runtime providers, including the native Claude SDK path alongside the Pi-proxied Anthropic path.
 
 When you send a message, the manager reads it, decides what needs to happen, and spawns one or more workers. Each worker gets a focused job — edit a file, run a command, research a topic. Workers run in parallel when their tasks are independent. The manager collects their results and responds to you.
 

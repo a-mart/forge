@@ -118,6 +118,7 @@ Once you're comfortable with sessions, you can promote them to **project agents*
 Open **Settings** (gear icon in the sidebar) and go to the **Auth** tab. You can sign in with OAuth or paste an API key for:
 
 - **Anthropic** — Claude models (Sonnet, Opus, Haiku)
+- **Claude SDK** — native Claude Code CLI OAuth; run \`claude login\` first
 - **OpenAI** — GPT models and Codex
 
 You need at least one provider connected. Both can be active at the same time — different managers or specialists can use different providers.
