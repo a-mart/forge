@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 const CLAUDE_SDK_SPECIFIER = "@anthropic-ai/claude-agent-sdk";
 const MISSING_SDK_MESSAGE = 'Claude backend requires "@anthropic-ai/claude-agent-sdk" to be installed.';
@@ -88,11 +89,23 @@ export function isClaudeSdkUnavailableError(error: unknown): error is ClaudeSdkU
 
 type ClaudeSdkImporter = (specifier: string) => Promise<unknown>;
 
-const defaultImporter = new Function("specifier", "return import(specifier);") as ClaudeSdkImporter;
+const dynamicImport = new Function("specifier", "return import(specifier);") as ClaudeSdkImporter;
+const defaultImporter: ClaudeSdkImporter = async (specifier) => {
+  if (specifier === CLAUDE_SDK_SPECIFIER) {
+    // Electron launches the packaged backend with cwd pointed at forge-resources,
+    // while staged runtime packages live under Resources/backend/node_modules.
+    // Resolve the SDK from this module's location, then import by file URL so
+    // packaged desktop builds do not depend on cwd-based resolution.
+    return await dynamicImport(pathToFileURL(resolveClaudeSdkEntryPath()).href);
+  }
+
+  return await dynamicImport(specifier);
+};
 
 let importClaudeSdkImpl: ClaudeSdkImporter = defaultImporter;
 let cachedModule: Record<string, unknown> | undefined;
 let cachedLoad: Promise<Record<string, unknown>> | undefined;
+let cachedSdkEntryPath: string | undefined;
 
 export async function loadClaudeSdkModule(): Promise<ClaudeSdkModule> {
   const module = await loadClaudeSdkExports();
@@ -200,28 +213,32 @@ export function setClaudeSdkImporterForTests(importer: ClaudeSdkImporter): void 
   importClaudeSdkImpl = importer;
   cachedModule = undefined;
   cachedLoad = undefined;
+  cachedSdkEntryPath = undefined;
 }
 
 export function resetClaudeSdkLoaderForTests(): void {
   importClaudeSdkImpl = defaultImporter;
   cachedModule = undefined;
   cachedLoad = undefined;
+  cachedSdkEntryPath = undefined;
+}
+
+function resolveClaudeSdkEntryPath(): string {
+  if (cachedSdkEntryPath) {
+    return cachedSdkEntryPath;
+  }
+
+  cachedSdkEntryPath = require.resolve(CLAUDE_SDK_SPECIFIER);
+  return cachedSdkEntryPath;
 }
 
 function resolveClaudeSdkCliPath(): string {
-  let sdkEntryPath: string;
-  try {
-    sdkEntryPath = require.resolve(CLAUDE_SDK_SPECIFIER);
-  } catch (error) {
-    throw new Error("Failed to resolve the Claude Agent SDK entrypoint for CLI path discovery.", {
-      cause: error
-    });
-  }
-
+  const sdkEntryPath = resolveClaudeSdkEntryPath();
   const cliPath = path.resolve(path.dirname(sdkEntryPath), "cli.js");
   if (!existsSync(cliPath)) {
-    throw new Error(
-      `Claude Agent SDK CLI executable not found at ${cliPath}. Is the package installation complete?`
+    throw new ClaudeSdkUnavailableError(
+      `${UNAVAILABLE_SDK_PREFIX} Claude Agent SDK CLI executable not found at ${cliPath}.`,
+      { code: "ENOENT" }
     );
   }
 

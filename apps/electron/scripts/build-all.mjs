@@ -44,6 +44,13 @@ const BACKEND_BUNDLE_EXTERNAL_PACKAGES = [
       typeof loadedModule?.spawn === 'function' ? null : 'expected a spawn() export',
   },
   {
+    name: '@anthropic-ai/claude-agent-sdk',
+    optional: false,
+    validateLoadedModule: (loadedModule) =>
+      typeof loadedModule?.query === 'function' ? null : 'expected a query() export',
+    validateStagedPackageDir: (stagedPackageDir) => validateStagedClaudeSdkPackageDir(stagedPackageDir),
+  },
+  {
     name: 'koffi',
     optional: true,
     validateLoadedModule: (loadedModule) =>
@@ -76,6 +83,7 @@ const PACKAGE_SPECIFIC_DIRS_TO_PRUNE = new Map([
   ['koffi', new Set(['src', 'vendor'])],
   ['sharp', new Set(['install', 'src'])],
 ])
+const PACKAGES_KEEP_DECLARATION_FILES = new Set(['@anthropic-ai/claude-agent-sdk'])
 const declarationSuffixes = ['.d.ts', '.d.mts', '.d.cts']
 const declarationMapSuffixes = ['.d.ts.map', '.d.mts.map', '.d.cts.map']
 const docsPrefixes = ['license', 'changelog', 'readme']
@@ -163,6 +171,13 @@ export async function validatePackagedRuntimePreflight() {
 
       throw new Error(
         `Packaged-runtime preflight failed: staged runtime package directory is missing for ${runtimePackage.name} (${stagedPackageDir})`,
+      )
+    }
+
+    const stagedPackageValidationFailure = runtimePackage.validateStagedPackageDir?.(stagedPackageDir)
+    if (stagedPackageValidationFailure) {
+      throw new Error(
+        `Packaged-runtime preflight failed: staged runtime package directory for "${runtimePackage.name}" is invalid: ${stagedPackageValidationFailure}`,
       )
     }
 
@@ -436,6 +451,27 @@ async function copyRuntimePackage(runtimePackage, targetDir) {
   })
 }
 
+function validateStagedClaudeSdkPackageDir(stagedPackageDir) {
+  const requiredPaths = [
+    'package.json',
+    'sdk.mjs',
+    'sdk.d.ts',
+    'cli.js',
+    'manifest.json',
+    'manifest.zst.json',
+    path.join('vendor', 'audio-capture'),
+    path.join('vendor', 'ripgrep'),
+  ]
+
+  for (const relativePath of requiredPaths) {
+    if (!existsSync(path.join(stagedPackageDir, relativePath))) {
+      return `missing required asset ${relativePath}`
+    }
+  }
+
+  return null
+}
+
 function shouldCopyRuntimePackagePath(packageName, packageRoot, sourcePath) {
   const relativePath = path.relative(packageRoot, sourcePath)
   if (relativePath.length === 0) {
@@ -457,18 +493,18 @@ function shouldCopyRuntimePackagePath(packageName, packageRoot, sourcePath) {
     return false
   }
 
-  return !shouldPruneNodeModulesFile(path.basename(sourcePath))
+  return !shouldPruneNodeModulesFile(packageName, sourcePath)
 }
 
-function shouldPruneNodeModulesFile(fileName) {
-  const normalizedFileName = fileName.toLowerCase()
+function shouldPruneNodeModulesFile(packageName, sourcePath) {
+  const normalizedFileName = path.basename(sourcePath).toLowerCase()
 
   if (declarationMapSuffixes.some((suffix) => normalizedFileName.endsWith(suffix))) {
     return true
   }
 
   if (declarationSuffixes.some((suffix) => normalizedFileName.endsWith(suffix))) {
-    return true
+    return !PACKAGES_KEEP_DECLARATION_FILES.has(packageName)
   }
 
   if (normalizedFileName.endsWith('.md')) {
