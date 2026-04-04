@@ -123,6 +123,7 @@ export interface RuntimeShutdownOptions {
 
 export interface SwarmAgentRuntime {
   readonly descriptor: AgentDescriptor;
+  readonly runtimeType?: "pi" | "claude" | "codex";
 
   getStatus(): AgentStatus;
   getPendingCount(): number;

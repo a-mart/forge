@@ -63,6 +63,7 @@ export type { RuntimeImageAttachment, RuntimeUserMessage, RuntimeUserMessageInpu
 
 export class AgentRuntime implements SwarmAgentRuntime {
   readonly descriptor: AgentDescriptor;
+  readonly runtimeType = "pi" as const;
 
   private readonly session: AgentSession;
   private readonly callbacks: SwarmRuntimeCallbacks;

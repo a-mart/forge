@@ -3,6 +3,7 @@ import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import {
   getCatalogProvider,
   type AgentRuntimeExtensionSnapshot,
+  type OnboardingState,
   type RuntimeExtensionMetadata,
   type RuntimeExtensionSource
 } from "@forge/protocol";
@@ -21,20 +22,30 @@ import { AgentRuntime } from "./agent-runtime.js";
 import { buildCreateProjectAgentTool } from "./agent-creator-tool.js";
 import { ensureCanonicalAuthFilePath } from "./auth-storage-paths.js";
 import { openSessionManagerWithSizeGuard } from "./session-file-guard.js";
+import { ClaudeAgentRuntime } from "./claude-agent-runtime.js";
+import { ClaudeAuthResolver } from "./claude-auth-resolver.js";
+import { createClaudeMcpToolBridge } from "./claude-mcp-tool-bridge.js";
+import { assembleClaudePrompt, discoverAgentsMd } from "./claude-prompt-assembler.js";
 import { CodexAgentRuntime } from "./codex-agent-runtime.js";
 import type { RuntimeErrorEvent, RuntimeSessionEvent, SwarmAgentRuntime } from "./runtime-types.js";
 import { buildSwarmTools, type SwarmToolHost } from "./swarm-tools.js";
-import { normalizeArchetypeId } from "./prompt-registry.js";
+import { normalizeArchetypeId, resolvePromptVariables } from "./prompt-registry.js";
 import { combineCompactionCustomInstructions, loadPins } from "./message-pins.js";
 import { createCatalogRequestBehaviorExtensionFactory } from "./model-catalog-request-behaviors.js";
+import { modelCatalogService } from "./model-catalog-service.js";
 import {
+  getCommonKnowledgePath,
+  getProfileMemoryPath,
   getProfilePiExtensionsDir,
   getProfilePiPromptsDir,
   getProfilePiSkillsDir,
   getProfilePiThemesDir,
-  getSessionDir
+  getSessionDir,
+  resolveMemoryFilePath
 } from "./data-paths.js";
 import { assertPiModelsProjectionAvailable } from "./model-catalog-projection.js";
+import { getOnboardingSnapshot } from "./onboarding-state.js";
+import { SkillMetadataService } from "./skill-metadata-service.js";
 import type {
   AgentContextUsage,
   AgentDescriptor,
@@ -81,6 +92,8 @@ interface RuntimeFactoryDependencies {
   };
 }
 
+const CLAUDE_RUNTIME_ENABLED = process.env.FORGE_CLAUDE_RUNTIME !== "false";
+
 export class RuntimeFactory {
   constructor(private readonly deps: RuntimeFactoryDependencies) {}
 
@@ -89,6 +102,17 @@ export class RuntimeFactory {
     systemPrompt: string,
     runtimeToken = 0
   ): Promise<SwarmAgentRuntime> {
+    if (isAnthropicModelDescriptor(descriptor.model)) {
+      if (CLAUDE_RUNTIME_ENABLED) {
+        return this.createClaudeRuntimeForDescriptor(descriptor, systemPrompt, runtimeToken);
+      }
+
+      this.deps.logDebug("runtime:create:claude:fallback_disabled", {
+        agentId: descriptor.agentId,
+        model: descriptor.model
+      });
+    }
+
     if (isCodexAppServerModelDescriptor(descriptor.model)) {
       return this.createCodexRuntimeForDescriptor(descriptor, systemPrompt, runtimeToken);
     }
@@ -322,6 +346,76 @@ export class RuntimeFactory {
     });
   }
 
+  private async createClaudeRuntimeForDescriptor(
+    descriptor: AgentDescriptor,
+    systemPrompt: string,
+    runtimeToken: number
+  ): Promise<SwarmAgentRuntime> {
+    const swarmTools = this.buildRuntimeTools(descriptor);
+    const profileId = descriptor.profileId ?? descriptor.agentId;
+    const sessionId = descriptor.role === "manager" ? descriptor.agentId : descriptor.managerId;
+    const workerId = descriptor.role === "worker" ? descriptor.agentId : undefined;
+    const authResolver = new ClaudeAuthResolver(this.deps.config.paths.dataDir);
+    const [mcpBridge, claudeSystemPrompt] = await Promise.all([
+      createClaudeMcpToolBridge(swarmTools, { serverName: `forge-swarm-${descriptor.agentId}` }),
+      this.buildClaudeRuntimeSystemPrompt(descriptor, systemPrompt)
+    ]);
+
+    this.deps.logDebug("runtime:create:start", {
+      runtime: "claude-sdk",
+      agentId: descriptor.agentId,
+      role: descriptor.role,
+      model: descriptor.model,
+      archetypeId: descriptor.archetypeId,
+      cwd: descriptor.cwd,
+      profileId,
+      sessionId,
+      workerId,
+      mcpServer: mcpBridge.serverName,
+      allowedToolCount: mcpBridge.allowedTools.length
+    });
+
+    const runtime = new ClaudeAgentRuntime({
+      descriptor: cloneRuntimeDescriptor(descriptor),
+      systemPrompt: claudeSystemPrompt,
+      callbacks: {
+        onStatusChange: async (agentId, status, pendingCount, contextUsage) => {
+          await this.deps.callbacks.onStatusChange(runtimeToken, agentId, status, pendingCount, contextUsage);
+        },
+        onSessionEvent: async (agentId, event) => {
+          await this.deps.callbacks.onSessionEvent(runtimeToken, agentId, event);
+        },
+        onAgentEnd: async (agentId) => {
+          await this.deps.callbacks.onAgentEnd(runtimeToken, agentId);
+        },
+        onRuntimeError: async (agentId, error) => {
+          await this.deps.callbacks.onRuntimeError(runtimeToken, agentId, error);
+        }
+      },
+      dataDir: this.deps.config.paths.dataDir,
+      profileId,
+      sessionId,
+      ...(workerId ? { workerId } : {}),
+      authResolver,
+      mcpServers: {
+        [mcpBridge.serverName]: mcpBridge.server
+      },
+      allowedTools: mcpBridge.allowedTools,
+      runtimeEnv: this.buildRuntimePromptVariables(this.resolveRuntimeMemoryFilePath(descriptor)),
+      modelContextWindow: modelCatalogService.getEffectiveContextWindow(descriptor.model.modelId)
+    });
+
+    this.deps.logDebug("runtime:create:ready", {
+      runtime: "claude-sdk",
+      agentId: descriptor.agentId,
+      activeTools: swarmTools.map((tool) => tool.name),
+      allowedTools: mcpBridge.allowedTools,
+      systemPromptPreview: previewForLog(claudeSystemPrompt, 240)
+    });
+
+    return runtime;
+  }
+
   private async createCodexRuntimeForDescriptor(
     descriptor: AgentDescriptor,
     systemPrompt: string,
@@ -532,6 +626,85 @@ export class RuntimeFactory {
     return sections.join("\n\n");
   }
 
+  private async buildClaudeRuntimeSystemPrompt(
+    descriptor: AgentDescriptor,
+    systemPrompt: string
+  ): Promise<string> {
+    const skillMetadataService = new SkillMetadataService({
+      config: this.deps.config
+    });
+    await skillMetadataService.ensureSkillMetadataLoaded();
+
+    const runtimeMemoryFilePath = this.resolveRuntimeMemoryFilePath(descriptor);
+    const profileId = descriptor.role === "manager" ? descriptor.profileId ?? descriptor.agentId : descriptor.profileId;
+    const resolvedBasePrompt = resolvePromptVariables(
+      systemPrompt,
+      this.buildRuntimePromptVariables(runtimeMemoryFilePath)
+    );
+    const [agentsMdPaths, swarmContextFiles, onboardingSnapshot] = await Promise.all([
+      discoverAgentsMd(descriptor.cwd),
+      this.deps.getSwarmContextFiles(descriptor.cwd),
+      this.buildClaudeOnboardingSnapshot(descriptor)
+    ]);
+
+    return await assembleClaudePrompt({
+      basePrompt: resolvedBasePrompt,
+      profileMemoryPath: profileId
+        ? getProfileMemoryPath(this.deps.config.paths.dataDir, profileId)
+        : undefined,
+      sessionMemoryPath: runtimeMemoryFilePath,
+      commonKnowledgePath: getCommonKnowledgePath(this.deps.config.paths.dataDir),
+      agentsMdPaths: [...agentsMdPaths, ...swarmContextFiles.map((entry) => entry.path)],
+      availableSkills: skillMetadataService.getSkillMetadata().map((skill) => ({
+        name: skill.skillName,
+        description: skill.description ?? "",
+        location: skill.path
+      })),
+      onboardingSnapshot,
+      role: descriptor.role,
+      agentId: descriptor.agentId,
+      cwd: descriptor.cwd
+    });
+  }
+
+  private buildRuntimePromptVariables(memoryFilePath: string): Record<string, string> {
+    return {
+      SWARM_DATA_DIR: this.deps.config.paths.dataDir,
+      SWARM_MEMORY_FILE: memoryFilePath,
+      SWARM_SCRIPTS_DIR: join(this.deps.config.paths.rootDir, "apps", "backend", "src", "swarm", "scripts")
+    };
+  }
+
+  private resolveRuntimeMemoryFilePath(descriptor: AgentDescriptor): string {
+    return resolveMemoryFilePath(
+      this.deps.config.paths.dataDir,
+      {
+        agentId: descriptor.agentId,
+        role: descriptor.role,
+        profileId: descriptor.profileId,
+        managerId: descriptor.managerId
+      },
+      descriptor.role === "worker"
+        ? {
+            profileId: descriptor.profileId
+          }
+        : undefined
+    );
+  }
+
+  private async buildClaudeOnboardingSnapshot(descriptor: AgentDescriptor): Promise<string | undefined> {
+    if (descriptor.role !== "manager") {
+      return undefined;
+    }
+
+    if (normalizeArchetypeId(descriptor.archetypeId ?? "") === CORTEX_ARCHETYPE_ID) {
+      return undefined;
+    }
+
+    const snapshot = await getOnboardingSnapshot(this.deps.config.paths.dataDir);
+    return shouldIncludeOnboardingSnapshot(snapshot) ? buildOnboardingSnapshotBlock(snapshot) : undefined;
+  }
+
   private resolveModel(modelRegistry: ModelRegistry, descriptor: AgentModelDescriptor): Model<any> {
     const direct = modelRegistry.find(descriptor.provider, descriptor.modelId);
     if (direct) {
@@ -727,9 +900,67 @@ function normalizeExtensionDisplayName(pathValue: string, resolvedPathValue: str
 
 const CORTEX_ARCHETYPE_ID = "cortex";
 const CORTEX_DISABLED_TOOL_NAMES = new Set(["list_agents", "kill_agent"]);
+const ONBOARDING_SNAPSHOT_MEMORY_HEADER =
+  "# Onboarding Snapshot (authoritative backend state — read-only reference)";
+
+function isAnthropicModelDescriptor(
+  descriptor: Pick<AgentModelDescriptor, "provider" | "modelId">
+): boolean {
+  const provider = descriptor.provider.trim().toLowerCase();
+  const modelId = descriptor.modelId.trim().toLowerCase();
+  return provider === "anthropic" || modelId.startsWith("claude-");
+}
 
 function isCodexAppServerModelDescriptor(descriptor: Pick<AgentModelDescriptor, "provider">): boolean {
   return descriptor.provider.trim().toLowerCase() === "openai-codex-app-server";
+}
+
+function shouldIncludeOnboardingSnapshot(snapshot: OnboardingState): boolean {
+  return (
+    snapshot.status === "completed" &&
+    (hasOnboardingPreferenceValue(snapshot.preferences?.preferredName) ||
+      snapshot.preferences?.technicalLevel !== null ||
+      hasOnboardingPreferenceValue(snapshot.preferences?.additionalPreferences))
+  );
+}
+
+function hasOnboardingPreferenceValue(value: string | null | undefined): boolean {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function buildOnboardingSnapshotBlock(snapshot: OnboardingState): string {
+  const lines = [ONBOARDING_SNAPSHOT_MEMORY_HEADER, "", `- status: ${snapshot.status}`];
+
+  if (snapshot.preferences?.preferredName) {
+    lines.push(`- preferred name: ${snapshot.preferences.preferredName}`);
+  }
+
+  if (snapshot.preferences?.technicalLevel) {
+    lines.push(`- technical level: ${humanizeOnboardingTechnicalLevel(snapshot.preferences.technicalLevel)}`);
+  }
+
+  if (snapshot.preferences?.additionalPreferences) {
+    lines.push(`- additional preferences: ${snapshot.preferences.additionalPreferences.replace(/\s+/g, " ").trim()}`);
+  }
+
+  return `${lines.join("\n")}\n`;
+}
+
+function humanizeOnboardingTechnicalLevel(
+  value: NonNullable<NonNullable<OnboardingState["preferences"]>["technicalLevel"]>
+): string {
+  switch (value) {
+    case "developer":
+      return "developer";
+    case "technical_non_developer":
+      return "technical (non-developer)";
+    case "semi_technical":
+      return "semi-technical";
+    case "non_technical":
+      return "non-technical";
+    default:
+      return value;
+  }
 }
 
 function normalizeThinkingLevel(level: string): string {

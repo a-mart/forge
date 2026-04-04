@@ -73,6 +73,7 @@ interface QueuedSteer {
 
 export class CodexAgentRuntime implements SwarmAgentRuntime {
   readonly descriptor: AgentDescriptor;
+  readonly runtimeType = "codex" as const;
 
   private readonly callbacks: SwarmRuntimeCallbacks;
   private readonly now: () => string;

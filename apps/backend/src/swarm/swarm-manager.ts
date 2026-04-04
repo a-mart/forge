@@ -112,6 +112,7 @@ import {
   generatePiProjection,
 } from "./model-catalog-projection.js";
 import { modelCatalogService } from "./model-catalog-service.js";
+import { CLAUDE_RUNTIME_STATE_ENTRY_TYPE } from "./claude-agent-runtime.js";
 import { RuntimeFactory } from "./runtime-factory.js";
 import {
   computePromptFingerprint,
@@ -2437,6 +2438,18 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     // Clear in-memory conversation history
     this.conversationProjector.resetConversationHistory(agentId);
 
+    const runtime = this.runtimes.get(agentId);
+    if (runtime?.runtimeType === "claude") {
+      try {
+        await runtime.recycle();
+      } catch (error) {
+        this.logDebug("session:clear:claude_recycle_error", {
+          agentId,
+          message: error instanceof Error ? error.message : String(error)
+        });
+      }
+    }
+
     // Notify connected clients to clear their message lists
     this.emitConversationReset(agentId, "api_reset");
 
@@ -4401,34 +4414,34 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   ): Promise<void> {
     await mkdir(dirname(targetSessionFile), { recursive: true });
 
-    if (!fromMessageId) {
-      try {
-        await copyFile(sourceSessionFile, targetSessionFile);
-      } catch (error) {
-        if (!isEnoentError(error)) {
-          throw error;
-        }
-
-        await writeFile(targetSessionFile, "", "utf8");
-      }
-      return;
-    }
-
     const sourceHandle = await open(sourceSessionFile, "r").catch((error: unknown) => {
       if (isEnoentError(error)) {
-        throw new Error("Message not found in session history");
+        return undefined;
       }
       throw error;
     });
 
+    if (!sourceHandle) {
+      if (fromMessageId) {
+        throw new Error("Message not found in session history");
+      }
+
+      await writeFile(targetSessionFile, "", "utf8");
+      return;
+    }
+
     const targetHandle = await open(targetSessionFile, "w");
-    let foundForkPoint = false;
+    let foundForkPoint = !fromMessageId;
 
     try {
       for await (const line of sourceHandle.readLines()) {
+        if (!this.shouldCopySessionHistoryLineForFork(line)) {
+          continue;
+        }
+
         await targetHandle.write(`${line}\n`);
 
-        if (this.isForkTargetConversationEntryLine(line, fromMessageId)) {
+        if (fromMessageId && this.isForkTargetConversationEntryLine(line, fromMessageId)) {
           foundForkPoint = true;
           break;
         }
@@ -4440,6 +4453,26 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     if (!foundForkPoint) {
       throw new Error("Message not found in session history");
     }
+  }
+
+  private shouldCopySessionHistoryLineForFork(line: string): boolean {
+    const trimmedLine = line.trim();
+    if (trimmedLine.length === 0) {
+      return true;
+    }
+
+    let parsedEntry: unknown;
+    try {
+      parsedEntry = JSON.parse(trimmedLine);
+    } catch {
+      return true;
+    }
+
+    return !(
+      isRecord(parsedEntry) &&
+      parsedEntry.type === "custom" &&
+      parsedEntry.customType === CLAUDE_RUNTIME_STATE_ENTRY_TYPE
+    );
   }
 
   private isForkTargetConversationEntryLine(line: string, fromMessageId: string): boolean {
