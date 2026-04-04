@@ -209,14 +209,18 @@ function getBarTrack(warning: boolean): string {
 interface MiniBarGaugeProps {
   sessionPercent: number | null
   weeklyPercent: number | null
+  weeklyDeltaPercent: number | null
   label: string
 }
 
-function MiniBarGauge({ sessionPercent, weeklyPercent, label }: MiniBarGaugeProps) {
+function MiniBarGauge({ sessionPercent, weeklyPercent, weeklyDeltaPercent, label }: MiniBarGaugeProps) {
   const sp = typeof sessionPercent === 'number' ? clamp(sessionPercent, 0, 100) : 0
   const wp = typeof weeklyPercent === 'number' ? clamp(weeklyPercent, 0, 100) : 0
   const sessionWarn = typeof sessionPercent === 'number' && sessionPercent >= WARNING_THRESHOLD
-  const weeklyWarn = typeof weeklyPercent === 'number' && weeklyPercent >= WARNING_THRESHOLD
+  // Weekly bar: use pace deficit status when available, fall back to raw % threshold
+  const weeklyWarn = typeof weeklyDeltaPercent === 'number'
+    ? weeklyDeltaPercent > 2 // in deficit (slightlyAhead or worse)
+    : typeof weeklyPercent === 'number' && weeklyPercent >= WARNING_THRESHOLD
 
   return (
     <Tooltip>
@@ -266,14 +270,18 @@ export function SidebarUsageRings({ providers, onToggle }: { providers: Provider
       className="inline-flex items-center gap-3 rounded-md px-1.5 py-1 transition-colors hover:bg-sidebar-accent/50"
       aria-label="Provider usage"
     >
-      {availableRows.map((row) => (
-        <MiniBarGauge
-          key={row.key}
-          sessionPercent={row.usage?.sessionUsage?.percent ?? null}
-          weeklyPercent={row.usage?.weeklyUsage?.percent ?? null}
-          label={row.label}
-        />
-      ))}
+      {availableRows.map((row) => {
+        const weeklyMetrics = getUsageMetrics(row.usage?.weeklyUsage, Date.now())
+        return (
+          <MiniBarGauge
+            key={row.key}
+            sessionPercent={row.usage?.sessionUsage?.percent ?? null}
+            weeklyPercent={row.usage?.weeklyUsage?.percent ?? null}
+            weeklyDeltaPercent={weeklyMetrics?.deltaPercent ?? null}
+            label={row.label}
+          />
+        )
+      })}
     </button>
   )
 }
