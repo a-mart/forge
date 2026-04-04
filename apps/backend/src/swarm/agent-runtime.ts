@@ -623,8 +623,9 @@ export class AgentRuntime implements SwarmAgentRuntime {
       return;
     }
 
-    if (this.callbacks.onSessionEvent) {
-      await this.callbacks.onSessionEvent(this.descriptor.agentId, event as unknown as RuntimeSessionEvent);
+    const normalizedEvent = normalizeRuntimeSessionEvent(event);
+    if (this.callbacks.onSessionEvent && normalizedEvent) {
+      await this.callbacks.onSessionEvent(this.descriptor.agentId, normalizedEvent);
     }
 
     if (event.type === "agent_start") {
@@ -1571,4 +1572,32 @@ function buildUserMessageContent(text: string, images: ImageContent[]): string |
 
 function isLikelyCompactionError(message: string): boolean {
   return /\bcompact(?:ion)?\b/i.test(message);
+}
+
+function normalizeRuntimeSessionEvent(event: AgentSessionEvent): RuntimeSessionEvent | null {
+  switch (event.type) {
+    case "compaction_start":
+      if (event.reason === "manual") {
+        return null;
+      }
+      return {
+        type: "auto_compaction_start",
+        reason: event.reason
+      };
+
+    case "compaction_end":
+      if (event.reason === "manual") {
+        return null;
+      }
+      return {
+        type: "auto_compaction_end",
+        result: event.result,
+        aborted: event.aborted,
+        willRetry: event.willRetry,
+        ...(typeof event.errorMessage === "string" ? { errorMessage: event.errorMessage } : {})
+      };
+
+    default:
+      return event as RuntimeSessionEvent;
+  }
 }

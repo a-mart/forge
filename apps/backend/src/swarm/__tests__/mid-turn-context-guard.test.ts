@@ -134,6 +134,7 @@ function makeDescriptor(): AgentDescriptor {
 function createRuntime(options?: {
   session?: FakeSession;
   onRuntimeError?: (error: { phase: string; message: string; details?: Record<string, unknown> }) => void;
+  onSessionEvent?: (event: any) => void;
 }): { runtime: AgentRuntime; session: FakeSession; runtimeErrors: Array<{ phase: string; message: string; details?: Record<string, unknown> }> } {
   const session = options?.session ?? new FakeSession();
   const runtimeErrors: Array<{ phase: string; message: string; details?: Record<string, unknown> }> = [];
@@ -143,6 +144,9 @@ function createRuntime(options?: {
     session: session as any,
     callbacks: {
       onStatusChange: () => {},
+      onSessionEvent: (_agentId, event) => {
+        options?.onSessionEvent?.(event);
+      },
       onRuntimeError: (_agentId, error) => {
         const payload = {
           phase: error.phase,
@@ -284,6 +288,69 @@ describe("mid-turn context guard", () => {
 
     await Promise.resolve();
     expect(checkSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("normalizes Pi auto-compaction events before forwarding them to callbacks", async () => {
+    const forwardedEvents: any[] = [];
+    const { session } = createRuntime({
+      onSessionEvent: (event) => {
+        forwardedEvents.push(event);
+      }
+    });
+
+    session.emit({
+      type: "compaction_start",
+      reason: "threshold"
+    });
+    session.emit({
+      type: "compaction_end",
+      reason: "overflow",
+      result: { ok: true },
+      aborted: false,
+      willRetry: true,
+      errorMessage: "retrying"
+    });
+
+    await Promise.resolve();
+
+    expect(forwardedEvents).toEqual([
+      {
+        type: "auto_compaction_start",
+        reason: "threshold"
+      },
+      {
+        type: "auto_compaction_end",
+        result: { ok: true },
+        aborted: false,
+        willRetry: true,
+        errorMessage: "retrying"
+      }
+    ]);
+  });
+
+  it("does not forward manual compaction events to runtime callbacks", async () => {
+    const forwardedEvents: any[] = [];
+    const { session } = createRuntime({
+      onSessionEvent: (event) => {
+        forwardedEvents.push(event);
+      }
+    });
+
+    session.emit({
+      type: "compaction_start",
+      reason: "manual"
+    });
+    session.emit({
+      type: "compaction_end",
+      reason: "manual",
+      result: { ok: true },
+      aborted: false,
+      willRetry: false
+    });
+
+    await Promise.resolve();
+
+    expect(forwardedEvents).toEqual([]);
   });
 
   it("prepareForSpecialistFallbackReplay includes queued follow-up turns", async () => {
