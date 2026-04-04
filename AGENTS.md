@@ -296,6 +296,7 @@ See `.env.example` for the full reference.
 
 - Review/design markdown artifacts (plans, review docs) should be kept in the `.internal/` directory locally. This directory is gitignored and must never be committed — it is strictly for local working documents.
 - A pre-commit hook is provided in `.githooks/pre-commit` to block accidental commits of internal files. Enable it with: `git config core.hooksPath .githooks`
+- Never run destructive git operations (`git reset --hard`, `git push --force`, `git rebase`) on `main` or `master` without first verifying there are no unpushed local commits. Check with `git log --oneline origin/main..HEAD` before any hard reset. If unpushed commits exist, push them first or move the work to a feature branch. A Pi extension (`protected-git.ts`) enforces this at runtime, but agents should avoid attempting these operations in the first place.
 
 ### UI Components
 
