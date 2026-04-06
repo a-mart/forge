@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Checkbox } from '@/components/ui/checkbox'
 import { useHelpContext } from '@/components/help/help-hooks'
 import { AlertTriangle, ChevronDown, ChevronUp, Copy, Eye, Loader2, Pencil, Pin, Plus, RotateCcw, Trash2 } from 'lucide-react'
 import {
@@ -447,6 +448,24 @@ export function SettingsSpecialists({
   const [expandedFallbackIds, setExpandedFallbackIds] = useState<Set<string>>(new Set())
   const [customizeInitiatedIds, setCustomizeInitiatedIds] = useState<Set<string>>(new Set())
   const [pendingSaveId, setPendingSaveId] = useState<string | null>(null)
+
+  // Hide disabled toggle (persisted in localStorage)
+  const HIDE_DISABLED_KEY = 'forge-specialists-hide-disabled'
+  const [hideDisabled, setHideDisabled] = useState(() => {
+    try {
+      return localStorage.getItem(HIDE_DISABLED_KEY) === 'true'
+    } catch {
+      return false
+    }
+  })
+  const handleToggleHideDisabled = useCallback((checked: boolean) => {
+    setHideDisabled(checked)
+    try {
+      localStorage.setItem(HIDE_DISABLED_KEY, String(checked))
+    } catch {
+      // Ignore storage errors
+    }
+  }, [])
 
   // Roster prompt dialog
   const [rosterOpen, setRosterOpen] = useState(false)
@@ -991,10 +1010,41 @@ export function SettingsSpecialists({
     }
   }, [specialists])
 
+  // Apply hide-disabled filter — never hide cards that are currently being edited
+  const filteredGlobalSpecialists = useMemo(() => {
+    if (!hideDisabled) return specialists
+    return specialists.filter((s) => s.enabled || editingIds.has(s.specialistId))
+  }, [specialists, hideDisabled, editingIds])
+
+  const filteredProfileOverrides = useMemo(() => {
+    if (!hideDisabled) return profileOverrides
+    return profileOverrides.filter((s) => s.enabled || editingIds.has(s.specialistId))
+  }, [profileOverrides, hideDisabled, editingIds])
+
+  const filteredInheritedSpecialists = useMemo(() => {
+    if (!hideDisabled) return inheritedSpecialists
+    return inheritedSpecialists.filter((s) => s.enabled)
+  }, [inheritedSpecialists, hideDisabled])
+
   /* ---- Render ---- */
 
+  const disabledCount = useMemo(() => {
+    if (isGlobal) return specialists.filter((s) => !s.enabled).length
+    return [...profileOverrides, ...inheritedSpecialists].filter((s) => !s.enabled).length
+  }, [isGlobal, specialists, profileOverrides, inheritedSpecialists])
+
   const headerButtons = (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-3">
+      {disabledCount > 0 && (
+        <label className="flex items-center gap-1.5 cursor-pointer select-none">
+          <Checkbox
+            checked={hideDisabled}
+            onCheckedChange={(checked) => handleToggleHideDisabled(checked === true)}
+            aria-label="Hide disabled specialists"
+          />
+          <span className="text-xs text-muted-foreground">Hide disabled</span>
+        </label>
+      )}
       {!isGlobal && (
         <Button
           variant="outline"
@@ -1110,13 +1160,15 @@ export function SettingsSpecialists({
             />
           )}
 
-          {specialists.length === 0 && !showNewForm ? (
+          {filteredGlobalSpecialists.length === 0 && !showNewForm ? (
             <p className="py-3 text-sm text-muted-foreground/70 italic">
-              No global specialists found.
+              {hideDisabled && specialists.length > 0
+                ? `All ${specialists.length} specialist${specialists.length === 1 ? '' : 's'} hidden by filter.`
+                : 'No global specialists found.'}
             </p>
           ) : (
             <div className="space-y-2">
-              {specialists.map((spec) => (
+              {filteredGlobalSpecialists.map((spec) => (
                 <SpecialistCard
                   key={spec.specialistId}
                   mode="global"
@@ -1175,13 +1227,15 @@ export function SettingsSpecialists({
               />
             )}
 
-            {profileOverrides.length === 0 && !showNewForm ? (
+            {filteredProfileOverrides.length === 0 && !showNewForm ? (
               <p className="py-3 text-sm text-muted-foreground/70 italic">
-                No profile customizations. Override a specialist below to customize it for this profile.
+                {hideDisabled && profileOverrides.length > 0
+                  ? `All ${profileOverrides.length} customization${profileOverrides.length === 1 ? '' : 's'} hidden by filter.`
+                  : 'No profile customizations. Override a specialist below to customize it for this profile.'}
               </p>
             ) : (
               <div className="space-y-2">
-                {profileOverrides.map((spec) => (
+                {filteredProfileOverrides.map((spec) => (
                   <SpecialistCard
                     key={spec.specialistId}
                     mode="profileOverride"
@@ -1220,8 +1274,13 @@ export function SettingsSpecialists({
               label="Inherited Specialists"
               description="Baseline specialists from builtin and global definitions. Customize any of these to create a profile-specific version."
             >
+              {filteredInheritedSpecialists.length === 0 ? (
+                <p className="py-3 text-sm text-muted-foreground/70 italic">
+                  All {inheritedSpecialists.length} inherited specialist{inheritedSpecialists.length === 1 ? '' : 's'} hidden by filter.
+                </p>
+              ) : (
               <div className="space-y-2">
-                {inheritedSpecialists.map((spec) => (
+                {filteredInheritedSpecialists.map((spec) => (
                   <SpecialistCard
                     key={spec.specialistId}
                     mode="inherited"
@@ -1247,6 +1306,7 @@ export function SettingsSpecialists({
                   />
                 ))}
               </div>
+              )}
             </SettingsSection>
           )}
         </div>
