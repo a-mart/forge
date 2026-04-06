@@ -104,6 +104,7 @@ These are briefly described for orientation. Most have both backend and UI compo
 | **Project Agents** | `swarm/project-agents.ts`, `swarm/project-agent-analysis.ts` | `components/chat/AgentSidebar.tsx`, `components/chat/MessageInput.tsx`, `components/chat/message-list/ConversationMessageRow.tsx` | Cross-session agent messaging via lightweight session promotion with discovery, AI-assisted configuration, and fire-and-forget async messaging. Promoted agents now live in dedicated per-handle storage directories with `config.json`, editable `prompt.md` files, and per-agent reference docs. Handles are immutable after promotion, so renaming the underlying session does not change the agent handle. |
 | **Project Agent Creator** | `swarm/agent-creator-context.ts`, `swarm/agent-creator-tool.ts`, `swarm/archetypes/builtins/agent-architect.md` | `components/chat/AgentSidebar.tsx` (context menu + violet Sparkles icon) | Conversational project agent creation flow. Right-click profile header to create a session with the Agent Architect archetype. Gathers context (existing agents + recent memory excerpts, 3,200-char seed context budget), interviews user about the new agent's role, then atomically creates and promotes the session via `create_project_agent` tool. Created agents are stored in dedicated per-handle directories with editable `prompt.md` files and scoped reference docs. Cannot be promoted, forked, or created in Cortex profile. |
 | **Provider usage monitoring** | `stats/provider-usage-service.ts` | `components/chat/SidebarUsageWidget.tsx`, `components/stats/sections/ProviderUsage.tsx` | OAuth-based subscription rate-limit monitoring for OpenAI Codex and Anthropic Claude. Uses a restart-persistent cache (`shared/cache/provider-usage-cache.json`), shows 5-hour rolling and weekly windows with deficit/reserve pace labels, supports manual refresh in the sidebar detail panel, and estimates weekly pace from historical usage curves. |
+| **Credential pool** | `swarm/credential-pool.ts`, `ws/routes/settings-routes.ts` | `components/settings/OpenAICredentialPool.tsx` | Multi-account OpenAI credential pooling with failover. Pool metadata stored in `shared/config/auth/credential-pool.json`; auth credentials in `auth.json` with suffixed keys for non-primary accounts. Supports add/remove/rename/set-primary and strategy selection (fill_first, least_used). OpenAI Codex scoped only (v1). |
 
 Backend paths above are relative to `apps/backend/src/`. UI paths are relative to `apps/ui/src/`.
 
@@ -140,7 +141,8 @@ All runtime state lives in `~/.forge` (or `%LOCALAPPDATA%\forge` on Windows), ov
 ├── shared/
 │   ├── config/
 │   │   ├── auth/
-│   │   │   └── auth.json                  # Authentication credentials
+│   │   │   ├── auth.json                  # Authentication credentials
+│   │   │   └── credential-pool.json       # Multi-account credential pool metadata
 │   │   ├── secrets.json                   # Encrypted secrets
 │   │   ├── model-overrides.json           # User model visibility/context caps
 │   │   ├── cortex-auto-review.json        # Cortex auto-review schedule settings
