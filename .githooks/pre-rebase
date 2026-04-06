@@ -1,0 +1,21 @@
+#!/bin/bash
+# Prevent rebases on protected branches when unpushed commits exist.
+
+PROTECTED_BRANCHES="main master"
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+
+for branch in $PROTECTED_BRANCHES; do
+  if [ "$CURRENT_BRANCH" = "$branch" ]; then
+    UNPUSHED=$(git log --oneline "origin/${branch}..HEAD" 2>/dev/null)
+    if [ -n "$UNPUSHED" ]; then
+      echo ""
+      echo "⛔ Rebase blocked: you have unpushed commits on '$branch'."
+      echo ""
+      echo "Unpushed commits:"
+      echo "$UNPUSHED"
+      echo ""
+      echo "Push first, or move work to a feature branch before rebasing."
+      exit 1
+    fi
+  fi
+done

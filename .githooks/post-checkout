@@ -1,0 +1,23 @@
+#!/bin/bash
+# Warn after branch switch if the new branch has unpushed commits.
+# $3 = 1 for branch switch, 0 for file checkout.
+
+if [ "$3" != "1" ]; then
+  exit 0
+fi
+
+PROTECTED_BRANCHES="main master"
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+
+for branch in $PROTECTED_BRANCHES; do
+  if [ "$CURRENT_BRANCH" = "$branch" ]; then
+    UNPUSHED=$(git log --oneline "origin/${branch}..HEAD" 2>/dev/null)
+    if [ -n "$UNPUSHED" ]; then
+      echo ""
+      echo "⚠️  Warning: '$branch' has unpushed local commits:"
+      echo "$UNPUSHED"
+      echo ""
+      echo "Be careful with destructive operations (reset, rebase, force-push)."
+    fi
+  fi
+done
