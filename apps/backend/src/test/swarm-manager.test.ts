@@ -4946,6 +4946,8 @@ describe('SwarmManager', () => {
       modelId: 'claude-opus-4-6',
       thinkingLevel: 'high',
     })
+    const spawnedSessionMeta = await readSessionMeta(config.paths.dataDir, 'manager', 'manager')
+    expect(spawnedSessionMeta?.workers.find((entry) => entry.id === worker.agentId)?.specialistId).toBe('planner')
     expect(managerRuntime).toBeDefined()
     expect(originalRuntime).toBeDefined()
 

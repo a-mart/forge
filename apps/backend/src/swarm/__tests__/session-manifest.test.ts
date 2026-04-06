@@ -148,6 +148,7 @@ describe("session-manifest", () => {
           updatedAt,
           cwd: "/tmp/root",
           model: DEFAULT_MODEL,
+          specialistId: "backend",
           sessionFile: join(dataDir, "profiles", profileId, "sessions", rootSessionId, "workers", "worker-a.jsonl")
         },
         {
@@ -185,6 +186,7 @@ describe("session-manifest", () => {
 
     const rootMeta = await readSessionMeta(dataDir, profileId, rootSessionId);
     expect(rootMeta?.workers.map((worker) => worker.id)).toEqual(["worker-a"]);
+    expect(rootMeta?.workers[0]?.specialistId).toBe("backend");
     expect(rootMeta?.workers[0]?.status).toBe("terminated");
     expect(rootMeta?.stats.sessionFileSize).toBe(String("root-session".length));
     expect(rootMeta?.stats.memoryFileSize).toBe(String("root-memory".length));
@@ -244,6 +246,7 @@ describe("session-manifest", () => {
         id: "worker-a",
         model: "openai-codex/gpt-5.3-codex",
         status: "streaming",
+        specialistId: "planner",
         createdAt: "2026-03-01T00:00:10.000Z",
         tokens: {
           input: 120,
@@ -273,6 +276,7 @@ describe("session-manifest", () => {
     const updated = await readSessionMeta(dataDir, profileId, sessionId);
     expect(updated?.workers).toHaveLength(1);
     expect(updated?.workers[0]?.status).toBe("terminated");
+    expect(updated?.workers[0]?.specialistId).toBe("planner");
     expect(updated?.workers[0]?.terminatedAt).toBe("2026-03-01T00:00:20.000Z");
     expect(updated?.workers[0]?.systemPrompt).toBe("You are the persisted worker prompt.");
     expect(updated?.stats.totalWorkers).toBe(1);

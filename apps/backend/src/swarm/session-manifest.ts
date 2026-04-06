@@ -23,6 +23,7 @@ export interface RebuildSessionMetaOptions {
 export interface SessionMetaWorkerUpdate {
   id: string;
   model?: string | null;
+  specialistId?: string | null;
   status?: SessionWorkerMeta["status"];
   createdAt?: string;
   terminatedAt?: string | null;
@@ -332,6 +333,10 @@ export async function updateSessionMetaWorker(
       update.model !== undefined
         ? update.model
         : existingWorker?.model ?? null,
+    specialistId:
+      update.specialistId !== undefined
+        ? update.specialistId
+        : existingWorker?.specialistId ?? null,
     status: nextStatus,
     createdAt: update.createdAt ?? existingWorker?.createdAt ?? now(),
     terminatedAt:
@@ -491,6 +496,7 @@ function buildWorkerMeta(
   return {
     id: descriptor.agentId,
     model: buildWorkerModelString(descriptor),
+    specialistId: normalizeOptionalString(descriptor.specialistId) ?? null,
     status: mapWorkerStatus(descriptor.status),
     createdAt: descriptor.createdAt,
     terminatedAt: descriptor.status === "terminated" ? descriptor.updatedAt : null,
@@ -655,6 +661,7 @@ function coerceAgentDescriptor(value: unknown): AgentDescriptor | undefined {
   const modelId = normalizeOptionalString(model?.modelId);
   const thinkingLevel = normalizeOptionalString(model?.thinkingLevel);
   const status = normalizeOptionalString(value.status);
+  const specialistId = normalizeOptionalString(value.specialistId);
   const projectAgentRecord = isRecord(value.projectAgent) ? value.projectAgent : undefined;
   const projectAgentHandle = normalizeOptionalString(projectAgentRecord?.handle);
   const projectAgentWhenToUse = normalizeOptionalString(projectAgentRecord?.whenToUse);
@@ -697,6 +704,7 @@ function coerceAgentDescriptor(value: unknown): AgentDescriptor | undefined {
           ? "agent_creator"
           : undefined,
     mergedAt: normalizeOptionalString(value.mergedAt),
+    specialistId,
     projectAgent:
       projectAgentHandle && projectAgentWhenToUse
         ? {
@@ -846,6 +854,7 @@ function coerceSessionWorkerMeta(value: unknown): SessionWorkerMeta | undefined 
   return {
     id,
     model: normalizeOptionalString(value.model) ?? null,
+    specialistId: normalizeOptionalNullableString(value.specialistId),
     status: normalizedStatus,
     createdAt,
     terminatedAt: normalizeOptionalString(value.terminatedAt) ?? null,

@@ -248,6 +248,7 @@ export interface SessionMemoryMergeResult {
 export interface SessionWorkerMeta {
   id: string
   model: string | null
+  specialistId?: string | null
   status: 'idle' | 'streaming' | 'terminated'
   createdAt: string
   terminatedAt: string | null
