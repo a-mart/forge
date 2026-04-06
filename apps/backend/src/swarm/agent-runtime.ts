@@ -5,6 +5,7 @@ import type { AgentSession, AgentSessionEvent } from "@mariozechner/pi-coding-ag
 import type { ImageContent, TextContent } from "@mariozechner/pi-ai";
 import {
   buildRuntimeMessageKey,
+  classifyRuntimeCapacityError,
   consumePendingDeliveryByMessageKey,
   extractMessageKeyFromRuntimeContent,
   normalizeRuntimeError,
@@ -15,6 +16,7 @@ import {
   trimConversationForEmergencyRecovery,
   type EmergencyContextTrimMessage
 } from "./emergency-context-trim.js";
+import type { CredentialPoolService } from "./credential-pool.js";
 import { transitionAgentStatus } from "./agent-state-machine.js";
 import type {
   RuntimeImageAttachment,
@@ -64,6 +66,11 @@ export type { RuntimeImageAttachment, RuntimeUserMessage, RuntimeUserMessageInpu
 export class AgentRuntime implements SwarmAgentRuntime {
   readonly descriptor: AgentDescriptor;
   readonly runtimeType = "pi" as const;
+
+  /** Credential pool fields for multi-account failover */
+  pooledCredentialId: string | undefined;
+  pooledCredentialProvider: string | undefined;
+  credentialPoolService: CredentialPoolService | undefined;
 
   private readonly session: AgentSession;
   private readonly callbacks: SwarmRuntimeCallbacks;
@@ -932,6 +939,13 @@ export class AgentRuntime implements SwarmAgentRuntime {
     dispatchMeta?: { attempt: number; maxAttempts: number }
   ): Promise<void> {
     const normalized = normalizeRuntimeError(error);
+
+    // ── Credential pool failover for rate-limit / quota errors ──
+    if (this.pooledCredentialId && this.credentialPoolService) {
+      const rotated = await this.attemptCredentialRotation(error, normalized.message, message);
+      if (rotated) return; // retry dispatched with new credential
+    }
+
     const phase: RuntimeErrorEvent["phase"] = isLikelyCompactionError(normalized.message)
       ? "compaction"
       : "prompt_dispatch";
@@ -975,6 +989,141 @@ export class AgentRuntime implements SwarmAgentRuntime {
           callback: "onAgentEnd"
         });
       }
+    }
+  }
+
+  /**
+   * Attempt to rotate to a different pooled OpenAI credential on rate-limit/quota errors.
+   * Returns true if a retry was dispatched with a new credential, false otherwise.
+   */
+  private async attemptCredentialRotation(
+    error: unknown,
+    errorMessage: string,
+    message: RuntimeUserMessage
+  ): Promise<boolean> {
+    const pool = this.credentialPoolService;
+    const currentCredId = this.pooledCredentialId;
+    const pooledProvider = normalizeProviderId(this.pooledCredentialProvider);
+    const failingProvider = normalizeProviderId(this.session.model?.provider ?? this.descriptor.model.provider);
+    if (!pool || !currentCredId || !pooledProvider || failingProvider !== pooledProvider) {
+      return false;
+    }
+
+    // Check for 401 auth errors first — mark auth_error, no rotation
+    const is401 = /\b401\b/.test(errorMessage) || /\bunauthorized\b/i.test(errorMessage);
+    if (is401) {
+      try {
+        await pool.markAuthError(pooledProvider, currentCredId);
+        this.logRuntimeError("prompt_dispatch", error, {
+          stage: "credential_pool:auth_error",
+          credentialId: currentCredId,
+          provider: pooledProvider,
+          failingProvider
+        });
+      } catch (markError) {
+        this.logRuntimeError("prompt_dispatch", markError, {
+          stage: "credential_pool:mark_auth_error_failed",
+          credentialId: currentCredId,
+          provider: pooledProvider,
+          failingProvider
+        });
+      }
+      return false;
+    }
+
+    // Check for rate-limit / quota errors
+    const classification = classifyRuntimeCapacityError(errorMessage);
+    if (!classification.isQuotaOrRateLimit) return false;
+
+    // Determine cooldown duration
+    const is402 = /\b402\b/.test(errorMessage) || /\bpayment required\b/i.test(errorMessage);
+    const defaultCooldownMs = is402 ? 3_600_000 : 60_000; // 1hr for 402, 1min for 429
+    const cooldownUntil = Date.now() + (classification.retryAfterMs ?? defaultCooldownMs);
+
+    try {
+      await pool.markExhausted(pooledProvider, currentCredId, { cooldownUntil });
+    } catch (markError) {
+      this.logRuntimeError("prompt_dispatch", markError, {
+        stage: "credential_pool:mark_exhausted_failed",
+        credentialId: currentCredId,
+        provider: pooledProvider,
+        failingProvider
+      });
+      return false;
+    }
+
+    // Try to select next healthy credential
+    const nextSelection = await pool.select(pooledProvider);
+    if (!nextSelection) {
+      const earliestExpiry = await pool.getEarliestCooldownExpiry(pooledProvider);
+      const resetInfo = earliestExpiry
+        ? ` Estimated reset: ${new Date(earliestExpiry).toLocaleTimeString()}.`
+        : "";
+
+      await this.reportRuntimeError({
+        phase: "prompt_dispatch",
+        message: `All OpenAI accounts are rate-limited.${resetInfo}`,
+        details: {
+          stage: "credential_pool:all_exhausted",
+          exhaustedCredentialId: currentCredId,
+          provider: pooledProvider,
+          failingProvider
+        }
+      });
+      return false;
+    }
+
+    // Build new auth data and inject into the session
+    try {
+      const authData = await pool.buildRuntimeAuthData(pooledProvider, nextSelection.credentialId);
+      await pool.markUsed(pooledProvider, nextSelection.credentialId);
+      const authStorage = this.session.modelRegistry?.authStorage;
+
+      if (authStorage) {
+        const newCredential = authData[pooledProvider];
+        if (newCredential) {
+          authStorage.set(pooledProvider, newCredential);
+        }
+      }
+
+      this.pooledCredentialId = nextSelection.credentialId;
+
+      this.logRuntimeError("prompt_dispatch", error, {
+        stage: "credential_pool:rotated",
+        fromCredentialId: currentCredId,
+        toCredentialId: nextSelection.credentialId,
+        provider: pooledProvider,
+        failingProvider
+      });
+
+      await this.reportRuntimeError({
+        phase: "prompt_dispatch",
+        message: `OpenAI rate limit hit — rotating to another account and retrying.`,
+        details: {
+          stage: "credential_pool:rotating",
+          fromCredentialId: currentCredId,
+          toCredentialId: nextSelection.credentialId,
+          provider: pooledProvider,
+          failingProvider
+        }
+      });
+
+      // Retry after the current dispatch promise unwinds so promptDispatchPending stays accurate.
+      setTimeout(() => {
+        if (this.status !== "terminated") {
+          this.dispatchPrompt(message);
+        }
+      }, 0);
+      return true;
+    } catch (rotationError) {
+      this.logRuntimeError("prompt_dispatch", rotationError, {
+        stage: "credential_pool:rotation_failed",
+        fromCredentialId: currentCredId,
+        toCredentialId: nextSelection.credentialId,
+        provider: pooledProvider,
+        failingProvider
+      });
+      return false;
     }
   }
 
@@ -1573,6 +1722,11 @@ function buildUserMessageContent(text: string, images: ImageContent[]): string |
 
 function isLikelyCompactionError(message: string): boolean {
   return /\bcompact(?:ion)?\b/i.test(message);
+}
+
+function normalizeProviderId(provider: string | undefined): string | undefined {
+  const normalized = provider?.trim().toLowerCase();
+  return normalized ? normalized : undefined;
 }
 
 function normalizeRuntimeSessionEvent(event: AgentSessionEvent): RuntimeSessionEvent | null {

@@ -2,6 +2,7 @@ import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { AuthStorage, type AuthCredential } from "@mariozechner/pi-coding-agent";
 import { copyFileIfMissing } from "./copy-file-if-missing.js";
+import { CredentialPoolService } from "./credential-pool.js";
 import { normalizeEnvVarName, type ParsedSkillEnvDeclaration } from "./skill-frontmatter.js";
 import { renameWithRetry } from "./retry-rename.js";
 import type {
@@ -57,8 +58,19 @@ interface SecretsEnvServiceDependencies {
 export class SecretsEnvService {
   private readonly originalProcessEnvByName = new Map<string, string | undefined>();
   private secrets: Record<string, string> = {};
+  private credentialPoolServiceInstance: CredentialPoolService | null = null;
 
   constructor(private readonly deps: SecretsEnvServiceDependencies) {}
+
+  getCredentialPoolService(): CredentialPoolService {
+    if (!this.credentialPoolServiceInstance) {
+      this.credentialPoolServiceInstance = new CredentialPoolService({
+        authDir: this.deps.config.paths.sharedAuthDir,
+        authFile: this.deps.config.paths.sharedAuthFile,
+      });
+    }
+    return this.credentialPoolServiceInstance;
+  }
 
   async listSettingsEnv(): Promise<SkillEnvRequirement[]> {
     await this.deps.ensureSkillMetadataLoaded();

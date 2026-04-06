@@ -4,10 +4,13 @@ import { existsSync } from "node:fs";
 import { appendFile, copyFile, mkdir, open, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { getModel, type Api, type AssistantMessage, type Model } from "@mariozechner/pi-ai";
-import { AuthStorage, ModelRegistry } from "@mariozechner/pi-coding-agent";
+import { AuthStorage, ModelRegistry, type AuthCredential } from "@mariozechner/pi-coding-agent";
 import type {
   AgentRuntimeExtensionSnapshot,
   ChoiceRequestEvent,
+  CredentialPoolState,
+  CredentialPoolStrategy,
+  PooledCredentialInfo,
   CortexReviewRunRecord,
   CortexReviewRunScope,
   CortexReviewRunTrigger,
@@ -1338,6 +1341,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       now: this.now,
       logDebug: (message, details) => this.logDebug(message, details),
       getPiModelsJsonPath: () => this.getPiModelsJsonPathOrThrow(),
+      getCredentialPoolService: () => this.secretsEnvService.getCredentialPoolService(),
       onSessionFileRotated: async (descriptor, sessionFile) => {
         if (descriptor.role !== "manager") {
           await this.refreshSessionMetaStatsBySessionId(descriptor.managerId);
@@ -5707,6 +5711,40 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   async deleteSettingsAuth(provider: string): Promise<void> {
     await this.secretsEnvService.deleteSettingsAuth(provider);
+  }
+
+  // ── Credential Pool pass-through ──
+
+  async listCredentialPool(provider: string): Promise<CredentialPoolState> {
+    return this.secretsEnvService.getCredentialPoolService().listPool(provider);
+  }
+
+  async renamePooledCredential(provider: string, credentialId: string, label: string): Promise<void> {
+    await this.secretsEnvService.getCredentialPoolService().renameCredential(provider, credentialId, label);
+  }
+
+  async removePooledCredential(provider: string, credentialId: string): Promise<void> {
+    await this.secretsEnvService.getCredentialPoolService().removeCredential(provider, credentialId);
+  }
+
+  async setPrimaryPooledCredential(provider: string, credentialId: string): Promise<void> {
+    await this.secretsEnvService.getCredentialPoolService().setPrimary(provider, credentialId);
+  }
+
+  async setCredentialPoolStrategy(provider: string, strategy: CredentialPoolStrategy): Promise<void> {
+    await this.secretsEnvService.getCredentialPoolService().setStrategy(provider, strategy);
+  }
+
+  async resetPooledCredentialCooldown(provider: string, credentialId: string): Promise<void> {
+    await this.secretsEnvService.getCredentialPoolService().resetCooldown(provider, credentialId);
+  }
+
+  async addPooledCredential(
+    provider: string,
+    oauthCredential: AuthCredential,
+    identity?: { label?: string; autoLabel?: string; accountId?: string }
+  ): Promise<PooledCredentialInfo> {
+    return this.secretsEnvService.getCredentialPoolService().addCredential(provider, oauthCredential, identity);
   }
 
   private emitConversationMessage(event: ConversationMessageEvent): void {
