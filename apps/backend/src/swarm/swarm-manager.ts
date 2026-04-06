@@ -978,6 +978,11 @@ interface WorkerWatchdogState {
   circuitOpen: boolean;
 }
 
+interface WatchdogBatchEntry {
+  workerId: string;
+  turnSeq: number;
+}
+
 interface WorkerStallState {
   lastProgressAt: number;
   nudgeSent: boolean;
@@ -1254,7 +1259,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private stallCheckInterval: NodeJS.Timeout | null = null;
   private stallCheckPromise: Promise<void> | null = null;
   private readonly watchdogTimerTokens = new Map<string, number>();
-  private readonly watchdogBatchQueueByManager = new Map<string, Set<string>>();
+  private readonly watchdogBatchQueueByManager = new Map<string, Map<string, WatchdogBatchEntry>>();
   private readonly watchdogBatchTimersByManager = new Map<string, NodeJS.Timeout>();
   private readonly modelCapacityBlocks = new Map<string, ModelCapacityBlock>();
   private readonly lastWorkerCompletionReportTimestampByAgentId = new Map<string, number>();
@@ -4727,10 +4732,21 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       origin
     );
 
+    const senderDescriptorAfterPrep = this.descriptors.get(sender.agentId);
+    const shouldTrackWorkerReportAfterPrep =
+      isWorkerReportToManager &&
+      watchdogTurnSeqAtDispatch !== undefined &&
+      senderDescriptorAfterPrep?.role === "worker" &&
+      !isNonRunningAgentStatus(senderDescriptorAfterPrep.status);
+
     if (isWorkerReportToManager && watchdogTurnSeqAtDispatch !== undefined) {
-      const watchdogState = this.getOrCreateWorkerWatchdogState(sender.agentId);
-      watchdogState.pendingReportTurnSeq = watchdogTurnSeqAtDispatch;
-      this.workerWatchdogState.set(sender.agentId, watchdogState);
+      const watchdogState = shouldTrackWorkerReportAfterPrep
+        ? this.workerWatchdogState.get(sender.agentId)
+        : undefined;
+      if (watchdogState && watchdogState.turnSeq === watchdogTurnSeqAtDispatch) {
+        watchdogState.pendingReportTurnSeq = watchdogTurnSeqAtDispatch;
+        this.workerWatchdogState.set(sender.agentId, watchdogState);
+      }
     }
 
     let receipt: SendMessageReceipt;
@@ -7527,6 +7543,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         this.workerWatchdogState.set(agentId, watchdogState);
         this.watchdogTimerTokens.set(agentId, (this.watchdogTimerTokens.get(agentId) ?? 0) + 1);
         this.clearWatchdogTimer(agentId);
+        this.removeWorkerFromWatchdogBatchQueues(agentId);
       } else if (nextStatus === "idle" && pendingCount === 0) {
         const watchdogState = this.workerWatchdogState.get(agentId);
         if (watchdogState?.hadStreamingThisTurn) {
@@ -9364,7 +9381,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     const autoReportOutcome = await this.tryAutoReportWorkerCompletion(descriptor);
-    if (autoReportOutcome === "sent" || autoReportOutcome === "duplicate") {
+    if (autoReportOutcome === "sent") {
       this.watchdogTimerTokens.set(agentId, (this.watchdogTimerTokens.get(agentId) ?? 0) + 1);
       this.clearWatchdogTimer(agentId);
       return;
@@ -9414,7 +9431,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   private async tryAutoReportWorkerCompletion(
     descriptor: AgentDescriptor
-  ): Promise<"sent" | "duplicate" | "skipped" | "failed"> {
+  ): Promise<"sent" | "skipped" | "failed"> {
     if (descriptor.role !== "worker") {
       return "skipped";
     }
@@ -9475,10 +9492,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         summaryTimestamp: report.summaryTimestamp,
         summaryKey: report.summaryKey
       });
-      return "duplicate";
     }
 
-    const message = hasFreshSummary
+    const includeSummary = hasFreshSummary && !isDuplicateSummary;
+    const message = includeSummary
       ? report.message
       : `SYSTEM: Worker ${descriptor.agentId} completed its turn.`;
 
@@ -9487,7 +9504,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         origin: "internal"
       });
 
-      if (hasFreshSummary && typeof report.summaryTimestamp === "number") {
+      if ((includeSummary || isDuplicateSummary) && typeof report.summaryTimestamp === "number") {
         this.lastWorkerCompletionReportTimestampByAgentId.set(descriptor.agentId, report.summaryTimestamp);
         if (report.summaryKey) {
           this.lastWorkerCompletionReportSummaryKeyByAgentId.set(descriptor.agentId, report.summaryKey);
@@ -9497,8 +9514,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       this.logDebug("worker:completion_report:sent", {
         workerAgentId: descriptor.agentId,
         managerId,
-        includedSummary: hasFreshSummary,
-        summaryTimestamp: hasFreshSummary ? report.summaryTimestamp : undefined,
+        includedSummary: includeSummary,
+        summaryTimestamp: includeSummary ? report.summaryTimestamp : undefined,
         textPreview: previewForLog(message)
       });
 
@@ -9560,16 +9577,16 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return;
     }
 
-    this.enqueueWatchdogForBatch(descriptor.managerId, descriptor.agentId);
+    this.enqueueWatchdogForBatch(descriptor.managerId, descriptor.agentId, turnSeq);
   }
 
-  private enqueueWatchdogForBatch(managerId: string, workerId: string): void {
+  private enqueueWatchdogForBatch(managerId: string, workerId: string, turnSeq: number): void {
     let queue = this.watchdogBatchQueueByManager.get(managerId);
     if (!queue) {
-      queue = new Set<string>();
+      queue = new Map<string, WatchdogBatchEntry>();
       this.watchdogBatchQueueByManager.set(managerId, queue);
     }
-    queue.add(workerId);
+    queue.set(workerId, { workerId, turnSeq });
 
     if (this.watchdogBatchTimersByManager.has(managerId)) {
       return;
@@ -9594,10 +9611,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       this.watchdogBatchTimersByManager.delete(managerId);
     }
 
-    const queuedWorkerIds = this.watchdogBatchQueueByManager.get(managerId);
+    const queuedWorkers = this.watchdogBatchQueueByManager.get(managerId);
     this.watchdogBatchQueueByManager.delete(managerId);
 
-    if (!queuedWorkerIds || queuedWorkerIds.size === 0) {
+    if (!queuedWorkers || queuedWorkers.size === 0) {
       return;
     }
 
@@ -9613,8 +9630,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const nowMs = Date.now();
     const eligibleWorkerIds: string[] = [];
 
-    for (const workerId of queuedWorkerIds) {
-      const workerDescriptor = this.descriptors.get(workerId);
+    for (const queuedWorker of queuedWorkers.values()) {
+      const workerDescriptor = this.descriptors.get(queuedWorker.workerId);
       if (!workerDescriptor || workerDescriptor.role !== "worker" || workerDescriptor.managerId !== managerId) {
         continue;
       }
@@ -9623,12 +9640,17 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         continue;
       }
 
-      if (this.isRuntimeInContextRecovery(workerId)) {
+      if (this.isRuntimeInContextRecovery(queuedWorker.workerId)) {
         continue;
       }
 
-      const watchdogState = this.workerWatchdogState.get(workerId);
-      if (!watchdogState || watchdogState.reportedThisTurn || watchdogState.circuitOpen) {
+      const watchdogState = this.workerWatchdogState.get(queuedWorker.workerId);
+      if (
+        !watchdogState ||
+        watchdogState.turnSeq !== queuedWorker.turnSeq ||
+        watchdogState.reportedThisTurn ||
+        watchdogState.circuitOpen
+      ) {
         continue;
       }
 
@@ -9636,7 +9658,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         continue;
       }
 
-      eligibleWorkerIds.push(workerId);
+      eligibleWorkerIds.push(queuedWorker.workerId);
     }
 
     if (eligibleWorkerIds.length === 0) {
@@ -9766,7 +9788,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     this.workerWatchdogState.delete(agentId);
     this.watchdogTimerTokens.delete(agentId);
+    this.removeWorkerFromWatchdogBatchQueues(agentId);
+  }
 
+  private removeWorkerFromWatchdogBatchQueues(agentId: string): void {
     for (const [managerId, queue] of this.watchdogBatchQueueByManager.entries()) {
       if (!queue.delete(agentId)) {
         continue;
