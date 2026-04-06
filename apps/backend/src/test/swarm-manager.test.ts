@@ -13,6 +13,7 @@ import {
   getCortexWorkerPromptsPath,
   getProfileKnowledgePath,
   getProfileMemoryPath,
+  getProfilePiSkillsDir,
   getProfileMergeAuditLogPath,
   getProfileReferencePath,
   getProjectAgentConfigPath,
@@ -2922,6 +2923,45 @@ describe('SwarmManager', () => {
     const chromeCdpSkill = await readFile(chromeCdpSkillPath!, 'utf8')
     expect(chromeCdpSkill).toContain('name: chrome-cdp')
     expect(chromeCdpSkill).toContain('scripts/cdp.mjs')
+  })
+
+  it('lists profile-scoped skill metadata from the profile pi skills directory only', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await manager.boot()
+
+    const profileId = 'profile-a'
+    const profileSkillsDir = getProfilePiSkillsDir(config.paths.dataDir, profileId)
+    await mkdir(join(profileSkillsDir, 'custom-profile-skill'), { recursive: true })
+    await writeFile(
+      join(profileSkillsDir, 'custom-profile-skill', 'SKILL.md'),
+      [
+        '---',
+        'name: custom-profile-skill',
+        'description: Profile-only custom skill',
+        'env:',
+        '  - name: PROFILE_ONLY_API_KEY',
+        '    description: Profile-only API key',
+        '---',
+        '',
+        '# Custom profile skill',
+      ].join('\n'),
+      'utf8',
+    )
+
+    const profileSkills = await manager.listSkillMetadata(profileId)
+    expect(profileSkills).toEqual([
+      {
+        name: 'custom-profile-skill',
+        description: 'Profile-only custom skill',
+        envCount: 1,
+        hasRichConfig: false,
+      },
+    ])
+
+    const globalSkills = await manager.listSkillMetadata()
+    expect(globalSkills.some((skill) => skill.name === 'custom-profile-skill')).toBe(false)
+    expect(globalSkills.some((skill) => skill.name === 'memory')).toBe(true)
   })
 
   it('loads skill env requirements and persists secrets to the settings store', async () => {

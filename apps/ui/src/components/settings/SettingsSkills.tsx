@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useHelpContext } from '@/components/help/help-hooks'
+import type { ManagerProfile } from '@forge/protocol'
 import {
   AlertTriangle,
   Check,
   ExternalLink,
   Eye,
   EyeOff,
+  FolderOpen,
   KeyRound,
   Loader2,
   Save,
@@ -40,6 +42,7 @@ import { SettingsChromeCdp } from './SettingsChromeCdp'
 /* ------------------------------------------------------------------ */
 
 const ALL_SKILLS_VALUE = '__all__'
+const SCOPE_GLOBAL = '__global__'
 
 /** Skills that have a dedicated rich configuration panel. */
 const RICH_CONFIG_SKILLS: Record<string, React.ComponentType<{ wsUrl: string; onConfigChanged?: () => void }>> = {
@@ -285,10 +288,14 @@ function SkillEnvVariables({
 
 interface SettingsSkillsProps {
   wsUrl: string
+  profiles: ManagerProfile[]
 }
 
-export function SettingsSkills({ wsUrl }: SettingsSkillsProps) {
+export function SettingsSkills({ wsUrl, profiles }: SettingsSkillsProps) {
   useHelpContext('settings.skills')
+
+  /* ---------- Scope state ---------- */
+  const [selectedScope, setSelectedScope] = useState<string>(SCOPE_GLOBAL)
 
   /* ---------- Skill list state ---------- */
   const [skills, setSkills] = useState<SkillInfo[]>([])
@@ -310,15 +317,17 @@ export function SettingsSkills({ wsUrl }: SettingsSkillsProps) {
   const loadSkills = useCallback(async () => {
     setSkillsLoading(true)
     try {
-      const result = await fetchSkillsList(wsUrl)
+      const profileId = selectedScope !== SCOPE_GLOBAL ? selectedScope : undefined
+      const result = await fetchSkillsList(wsUrl, profileId)
       setSkills(result)
     } catch {
       // Non-fatal — skill list failure shouldn't block env var loading.
       // The dropdown just won't appear.
+      setSkills([])
     } finally {
       setSkillsLoading(false)
     }
-  }, [wsUrl])
+  }, [wsUrl, selectedScope])
 
   const loadVariables = useCallback(async () => {
     setIsLoading(true)
@@ -337,6 +346,20 @@ export function SettingsSkills({ wsUrl }: SettingsSkillsProps) {
     void loadSkills()
     void loadVariables()
   }, [loadSkills, loadVariables])
+
+  /* Reset skill filter when scope changes */
+  useEffect(() => {
+    setSelectedSkill(ALL_SKILLS_VALUE)
+  }, [selectedScope])
+
+  /* Keep scope valid when profiles change */
+  useEffect(() => {
+    setSelectedScope((prev) => {
+      if (prev === SCOPE_GLOBAL) return prev
+      if (profiles.some((p) => p.profileId === prev)) return prev
+      return SCOPE_GLOBAL
+    })
+  }, [profiles])
 
   /* ---------- Filtered variables ---------- */
 
@@ -406,18 +429,45 @@ export function SettingsSkills({ wsUrl }: SettingsSkillsProps) {
 
   /* ---------- Render ---------- */
 
+  const selectedProfileName = selectedScope !== SCOPE_GLOBAL
+    ? profiles.find((p) => p.profileId === selectedScope)?.displayName || selectedScope
+    : null
+
   return (
     <div className="flex flex-col gap-8">
-      {/* Skill selector */}
+      {/* Scope selector */}
+      <SettingsSection
+        label="Skills"
+        description="Select a scope to view its skills and environment variables. Global skills are shared across all profiles."
+      >
+        <div className="flex flex-col gap-1.5">
+          <Label className="text-xs font-medium text-muted-foreground">Configuration scope</Label>
+          <Select value={selectedScope} onValueChange={setSelectedScope}>
+            <SelectTrigger className="w-full sm:w-64">
+              <SelectValue placeholder="Select scope" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={SCOPE_GLOBAL}>Global</SelectItem>
+              {profiles.map((profile) => (
+                <SelectItem key={profile.profileId} value={profile.profileId}>
+                  {profile.displayName || profile.profileId}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </SettingsSection>
+
+      {/* Skill filter */}
       {skills.length > 0 && (
         <SettingsSection
-          label="Skills"
-          description="Select a skill to view its configuration and environment variables"
+          label="Skill Filter"
+          description="Filter by skill to view its configuration and environment variables"
         >
           <div className="flex items-center gap-3">
             <Label className="text-sm font-medium text-muted-foreground">Skill</Label>
             <Select value={selectedSkill} onValueChange={setSelectedSkill}>
-              <SelectTrigger className="w-[240px]">
+              <SelectTrigger className="w-full sm:w-64">
                 <SelectValue placeholder="All Skills" />
               </SelectTrigger>
               <SelectContent position="popper">
@@ -443,6 +493,17 @@ export function SettingsSkills({ wsUrl }: SettingsSkillsProps) {
       {skillsLoading && skills.length === 0 && (
         <div className="flex items-center justify-center py-4">
           <Loader2 className="size-4 animate-spin text-muted-foreground" />
+        </div>
+      )}
+
+      {/* Empty state for profile scope with no skills */}
+      {!skillsLoading && skills.length === 0 && selectedScope !== SCOPE_GLOBAL && (
+        <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-12 text-center">
+          <FolderOpen className="mb-2 size-8 text-muted-foreground/40" />
+          <p className="text-sm text-muted-foreground">No skills found for {selectedProfileName}</p>
+          <p className="mt-1 text-xs text-muted-foreground/60">
+            Add skills to <code className="rounded bg-muted px-1 py-0.5">~/.forge/profiles/{selectedScope}/pi/skills/</code>
+          </p>
         </div>
       )}
 

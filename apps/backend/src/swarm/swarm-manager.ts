@@ -5672,7 +5672,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return this.secretsEnvService.listSettingsEnv();
   }
 
-  async listSkillMetadata(): Promise<
+  async listSkillMetadata(profileId?: string): Promise<
     Array<{
       name: string;
       description?: string;
@@ -5680,10 +5680,15 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       hasRichConfig: boolean;
     }>
   > {
-    await this.skillMetadataService.ensureSkillMetadataLoaded();
+    let metadata;
+    if (typeof profileId === "string") {
+      metadata = await this.skillMetadataService.getProfileSkillMetadata(profileId);
+    } else {
+      await this.skillMetadataService.ensureSkillMetadataLoaded();
+      metadata = this.skillMetadataService.getSkillMetadata();
+    }
 
-    return this.skillMetadataService
-      .getSkillMetadata()
+    return metadata
       .map((metadata) => ({
         name: metadata.skillName,
         description: metadata.description,

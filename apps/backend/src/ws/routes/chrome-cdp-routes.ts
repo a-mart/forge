@@ -86,7 +86,8 @@ async function handleChromeCdpHttpRequest(
   applyCorsHeaders(request, response, CHROME_CDP_METHODS);
 
   if (request.method === "GET" && requestUrl.pathname === SETTINGS_SKILLS_ENDPOINT_PATH) {
-    const skills = await swarmManager.listSkillMetadata();
+    const profileId = requestUrl.searchParams.get("profileId") ?? undefined;
+    const skills = await swarmManager.listSkillMetadata(profileId);
     sendJson(response, 200, { skills });
     return;
   }

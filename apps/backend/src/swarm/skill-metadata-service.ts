@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { getProfilePiSkillsDir } from "./data-paths.js";
 import { parseSkillFrontmatter, type ParsedSkillEnvDeclaration } from "./skill-frontmatter.js";
 import type { SwarmConfig } from "./types.js";
 
@@ -55,6 +56,23 @@ export class SkillMetadataService {
 
   getAdditionalSkillPaths(): string[] {
     return this.skillMetadata.map((metadata) => metadata.path);
+  }
+
+  async getProfileSkillMetadata(profileId: string): Promise<SkillMetadata[]> {
+    const profileSkillsDir = getProfilePiSkillsDir(this.deps.config.paths.dataDir, profileId);
+    const candidates = await this.scanSkillFilesInDirectory(profileSkillsDir);
+    const metadata: SkillMetadata[] = [];
+
+    for (const candidate of candidates) {
+      const loaded = await this.loadSkillMetadataFromPath(candidate.path);
+      if (!loaded) {
+        continue;
+      }
+
+      metadata.push(loaded);
+    }
+
+    return metadata;
   }
 
   async ensureSkillMetadataLoaded(): Promise<void> {

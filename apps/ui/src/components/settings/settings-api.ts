@@ -343,8 +343,11 @@ function isSkillInfo(value: unknown): value is SkillInfo {
   )
 }
 
-export async function fetchSkillsList(wsUrl: string): Promise<SkillInfo[]> {
-  const endpoint = resolveApiEndpoint(wsUrl, '/api/settings/skills')
+export async function fetchSkillsList(wsUrl: string, profileId?: string): Promise<SkillInfo[]> {
+  let endpoint = resolveApiEndpoint(wsUrl, '/api/settings/skills')
+  if (profileId) {
+    endpoint += `${endpoint.includes('?') ? '&' : '?'}profileId=${encodeURIComponent(profileId)}`
+  }
   const response = await fetch(endpoint)
   if (!response.ok) throw new Error(await readApiError(response))
   const payload = (await response.json()) as { skills?: unknown }
