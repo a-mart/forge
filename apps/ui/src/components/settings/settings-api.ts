@@ -14,7 +14,7 @@ import type {
   ChromeCdpProfile,
   ChromeCdpPreviewTab,
 } from './settings-types'
-import type { TelegramStatusEvent, SettingsExtensionsResponse } from '@forge/protocol'
+import type { TelegramStatusEvent, SettingsExtensionsResponse, CredentialPoolState, CredentialPoolStrategy } from '@forge/protocol'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
 
 /* ------------------------------------------------------------------ */
@@ -457,4 +457,53 @@ export async function fetchSettingsExtensions(wsUrl: string): Promise<SettingsEx
   if (!response.ok) throw new Error(await readApiError(response))
   const payload = (await response.json()) as SettingsExtensionsResponse
   return payload
+}
+
+/* ------------------------------------------------------------------ */
+/*  Credential Pool API                                               */
+/* ------------------------------------------------------------------ */
+
+export async function fetchCredentialPool(wsUrl: string, provider: string): Promise<CredentialPoolState> {
+  const endpoint = resolveApiEndpoint(wsUrl, `/api/settings/auth/${encodeURIComponent(provider)}/accounts`)
+  const response = await fetch(endpoint)
+  if (!response.ok) throw new Error(await readApiError(response))
+  return (await response.json()) as CredentialPoolState
+}
+
+export async function setCredentialPoolStrategy(wsUrl: string, provider: string, strategy: CredentialPoolStrategy): Promise<void> {
+  const endpoint = resolveApiEndpoint(wsUrl, `/api/settings/auth/${encodeURIComponent(provider)}/strategy`)
+  const response = await fetch(endpoint, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ strategy }),
+  })
+  if (!response.ok) throw new Error(await readApiError(response))
+}
+
+export async function renamePooledCredential(wsUrl: string, provider: string, id: string, label: string): Promise<void> {
+  const endpoint = resolveApiEndpoint(wsUrl, `/api/settings/auth/${encodeURIComponent(provider)}/accounts/${encodeURIComponent(id)}`)
+  const response = await fetch(endpoint, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ label }),
+  })
+  if (!response.ok) throw new Error(await readApiError(response))
+}
+
+export async function setPrimaryPooledCredential(wsUrl: string, provider: string, id: string): Promise<void> {
+  const endpoint = resolveApiEndpoint(wsUrl, `/api/settings/auth/${encodeURIComponent(provider)}/accounts/${encodeURIComponent(id)}/primary`)
+  const response = await fetch(endpoint, { method: 'PUT' })
+  if (!response.ok) throw new Error(await readApiError(response))
+}
+
+export async function resetPooledCredentialCooldown(wsUrl: string, provider: string, id: string): Promise<void> {
+  const endpoint = resolveApiEndpoint(wsUrl, `/api/settings/auth/${encodeURIComponent(provider)}/accounts/${encodeURIComponent(id)}/cooldown`)
+  const response = await fetch(endpoint, { method: 'DELETE' })
+  if (!response.ok) throw new Error(await readApiError(response))
+}
+
+export async function removePooledCredential(wsUrl: string, provider: string, id: string): Promise<void> {
+  const endpoint = resolveApiEndpoint(wsUrl, `/api/settings/auth/${encodeURIComponent(provider)}/accounts/${encodeURIComponent(id)}`)
+  const response = await fetch(endpoint, { method: 'DELETE' })
+  if (!response.ok) throw new Error(await readApiError(response))
 }

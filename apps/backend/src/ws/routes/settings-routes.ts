@@ -7,6 +7,7 @@ import {
 } from "@mariozechner/pi-ai/oauth";
 import { AuthStorage } from "@mariozechner/pi-coding-agent";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import type { CredentialPoolStrategy } from "@forge/protocol";
 import { ensureCanonicalAuthFilePath } from "../../swarm/auth-storage-paths.js";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
 import {
@@ -58,7 +59,7 @@ export interface SettingsRouteBundle {
 
 export function createSettingsRoutes(options: { swarmManager: SwarmManager }): SettingsRouteBundle {
   const { swarmManager } = options;
-  const activeSettingsAuthLoginFlows = new Map<OAuthLoginProviderId, SettingsAuthLoginFlow>();
+  const activeSettingsAuthLoginFlows = new Map<string, SettingsAuthLoginFlow>();
 
   const routes: HttpRoute[] = [
     {
@@ -153,11 +154,26 @@ async function handleSettingsEnvHttpRequest(
 
 async function handleSettingsAuthHttpRequest(
   swarmManager: SwarmManager,
-  activeSettingsAuthLoginFlows: Map<OAuthLoginProviderId, SettingsAuthLoginFlow>,
+  activeSettingsAuthLoginFlows: Map<string, SettingsAuthLoginFlow>,
   request: IncomingMessage,
   response: ServerResponse,
   requestUrl: URL
 ): Promise<void> {
+  // ── Credential pool routes: /api/settings/auth/openai-codex/accounts/* ──
+  const poolPrefix = `${SETTINGS_AUTH_ENDPOINT_PATH}/openai-codex/accounts`;
+  if (requestUrl.pathname === poolPrefix || requestUrl.pathname.startsWith(`${poolPrefix}/`)) {
+    await handleCredentialPoolHttpRequest(swarmManager, activeSettingsAuthLoginFlows, request, response, requestUrl, poolPrefix);
+    return;
+  }
+
+  // ── Pool strategy: /api/settings/auth/openai-codex/strategy ──
+  const strategyPath = `${SETTINGS_AUTH_ENDPOINT_PATH}/openai-codex/strategy`;
+  if (requestUrl.pathname === strategyPath) {
+    await handleCredentialPoolStrategyHttpRequest(swarmManager, request, response);
+    return;
+  }
+
+  // ── Legacy OAuth login flow ──
   if (
     requestUrl.pathname === SETTINGS_AUTH_LOGIN_ENDPOINT_PATH ||
     requestUrl.pathname.startsWith(`${SETTINGS_AUTH_LOGIN_ENDPOINT_PATH}/`)
@@ -210,9 +226,307 @@ async function handleSettingsAuthHttpRequest(
   sendJson(response, 405, { error: "Method Not Allowed" });
 }
 
+// ── Credential Pool Routes ──
+
+async function handleCredentialPoolHttpRequest(
+  swarmManager: SwarmManager,
+  activeSettingsAuthLoginFlows: Map<string, SettingsAuthLoginFlow>,
+  request: IncomingMessage,
+  response: ServerResponse,
+  requestUrl: URL,
+  poolPrefix: string
+): Promise<void> {
+  const methods = "GET, POST, PATCH, DELETE, OPTIONS";
+
+  if (request.method === "OPTIONS") {
+    applyCorsHeaders(request, response, methods);
+    response.statusCode = 204;
+    response.end();
+    return;
+  }
+
+  applyCorsHeaders(request, response, methods);
+
+  const relativePath = requestUrl.pathname.slice(poolPrefix.length);
+  // relativePath examples: "", "/login", "/:id", "/:id/label", "/:id/primary", "/:id/cooldown"
+
+  // GET /api/settings/auth/openai-codex/accounts — list pool
+  if (request.method === "GET" && relativePath === "") {
+    try {
+      const pool = await swarmManager.listCredentialPool("openai-codex");
+      sendJson(response, 200, { pool });
+    } catch (error) {
+      sendJson(response, 500, { error: error instanceof Error ? error.message : "Failed to list credential pool" });
+    }
+    return;
+  }
+
+  // POST /api/settings/auth/openai-codex/accounts/login — add account via OAuth SSE
+  if (request.method === "POST" && relativePath === "/login") {
+    await handlePoolAddAccountOAuthLogin(swarmManager, activeSettingsAuthLoginFlows, request, response);
+    return;
+  }
+
+  // Routes with :id segment
+  const idMatch = relativePath.match(/^\/([^/]+)(?:\/(.+))?$/);
+  if (!idMatch) {
+    sendJson(response, 404, { error: "Not found" });
+    return;
+  }
+
+  const credentialId = decodeURIComponent(idMatch[1]);
+  const action = idMatch[2]; // "label", "primary", "cooldown", or undefined
+
+  // PATCH /api/settings/auth/openai-codex/accounts/:id/label — rename
+  if (request.method === "PATCH" && action === "label") {
+    try {
+      const body = (await readJsonBody(request)) as { label?: unknown };
+      if (typeof body?.label !== "string" || !body.label.trim()) {
+        sendJson(response, 400, { error: "label must be a non-empty string" });
+        return;
+      }
+      await swarmManager.renamePooledCredential("openai-codex", credentialId, body.label);
+      const pool = await swarmManager.listCredentialPool("openai-codex");
+      sendJson(response, 200, { ok: true, pool });
+    } catch (error) {
+      sendJson(response, 400, { error: error instanceof Error ? error.message : "Failed to rename credential" });
+    }
+    return;
+  }
+
+  // POST /api/settings/auth/openai-codex/accounts/:id/primary — set primary
+  if (request.method === "POST" && action === "primary") {
+    try {
+      await swarmManager.setPrimaryPooledCredential("openai-codex", credentialId);
+      const pool = await swarmManager.listCredentialPool("openai-codex");
+      sendJson(response, 200, { ok: true, pool });
+    } catch (error) {
+      sendJson(response, 400, { error: error instanceof Error ? error.message : "Failed to set primary" });
+    }
+    return;
+  }
+
+  // DELETE /api/settings/auth/openai-codex/accounts/:id/cooldown — reset cooldown
+  if (request.method === "DELETE" && action === "cooldown") {
+    try {
+      await swarmManager.resetPooledCredentialCooldown("openai-codex", credentialId);
+      const pool = await swarmManager.listCredentialPool("openai-codex");
+      sendJson(response, 200, { ok: true, pool });
+    } catch (error) {
+      sendJson(response, 400, { error: error instanceof Error ? error.message : "Failed to reset cooldown" });
+    }
+    return;
+  }
+
+  // DELETE /api/settings/auth/openai-codex/accounts/:id — remove account
+  if (request.method === "DELETE" && action === undefined) {
+    try {
+      await swarmManager.removePooledCredential("openai-codex", credentialId);
+      const pool = await swarmManager.listCredentialPool("openai-codex");
+      sendJson(response, 200, { ok: true, pool });
+    } catch (error) {
+      sendJson(response, 400, { error: error instanceof Error ? error.message : "Failed to remove credential" });
+    }
+    return;
+  }
+
+  response.setHeader("Allow", methods);
+  sendJson(response, 405, { error: "Method Not Allowed" });
+}
+
+async function handleCredentialPoolStrategyHttpRequest(
+  swarmManager: SwarmManager,
+  request: IncomingMessage,
+  response: ServerResponse
+): Promise<void> {
+  const methods = "POST, OPTIONS";
+
+  if (request.method === "OPTIONS") {
+    applyCorsHeaders(request, response, methods);
+    response.statusCode = 204;
+    response.end();
+    return;
+  }
+
+  applyCorsHeaders(request, response, methods);
+
+  if (request.method !== "POST") {
+    response.setHeader("Allow", methods);
+    sendJson(response, 405, { error: "Method Not Allowed" });
+    return;
+  }
+
+  try {
+    const body = (await readJsonBody(request)) as { strategy?: unknown };
+    const strategy = body?.strategy;
+    if (strategy !== "fill_first" && strategy !== "least_used") {
+      sendJson(response, 400, { error: "strategy must be 'fill_first' or 'least_used'" });
+      return;
+    }
+    await swarmManager.setCredentialPoolStrategy("openai-codex", strategy as CredentialPoolStrategy);
+    const pool = await swarmManager.listCredentialPool("openai-codex");
+    sendJson(response, 200, { ok: true, pool });
+  } catch (error) {
+    sendJson(response, 400, { error: error instanceof Error ? error.message : "Failed to set strategy" });
+  }
+}
+
+/**
+ * Add-account OAuth SSE flow. Reuses the existing OAuth SSE pattern but
+ * stores the credential in the pool instead of directly in auth.json.
+ */
+async function handlePoolAddAccountOAuthLogin(
+  swarmManager: SwarmManager,
+  activeSettingsAuthLoginFlows: Map<string, SettingsAuthLoginFlow>,
+  request: IncomingMessage,
+  response: ServerResponse
+): Promise<void> {
+  if (request.method !== "POST") {
+    applyCorsHeaders(request, response, "POST, OPTIONS");
+    response.setHeader("Allow", "POST, OPTIONS");
+    sendJson(response, 405, { error: "Method Not Allowed" });
+    return;
+  }
+
+  // Use a nonce key to avoid collisions with existing login flows
+  const flowKey = `openai-codex:add-${Date.now()}`;
+
+  // Check if there's already an add-account flow running
+  for (const [key, existingFlow] of activeSettingsAuthLoginFlows.entries()) {
+    if (key.startsWith("openai-codex:add-") && !existingFlow.closed) {
+      applyCorsHeaders(request, response, "POST, OPTIONS");
+      sendJson(response, 409, { error: "An add-account OAuth flow is already in progress" });
+      return;
+    }
+  }
+
+  const flow: SettingsAuthLoginFlow = {
+    providerId: "openai-codex",
+    pendingPrompt: null,
+    abortController: new AbortController(),
+    closed: false
+  };
+  activeSettingsAuthLoginFlows.set(flowKey, flow);
+
+  const provider = SETTINGS_AUTH_LOGIN_PROVIDERS["openai-codex"];
+
+  applyCorsHeaders(request, response, "POST, OPTIONS");
+  response.statusCode = 200;
+  response.setHeader("Cache-Control", "no-cache, no-transform");
+  response.setHeader("Connection", "keep-alive");
+  response.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+  response.setHeader("X-Accel-Buffering", "no");
+
+  if (typeof response.flushHeaders === "function") {
+    response.flushHeaders();
+  }
+
+  const sendSseEvent = <TEventName extends SettingsAuthLoginEventName>(
+    eventName: TEventName,
+    data: SettingsAuthLoginEventPayload[TEventName]
+  ): void => {
+    if (flow.closed || response.writableEnded || response.destroyed) return;
+    response.write(`event: ${eventName}\n`);
+    response.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
+  const closeFlow = (reason: string): void => {
+    if (flow.closed) return;
+    flow.closed = true;
+    flow.abortController.abort();
+    if (flow.pendingPrompt) {
+      const pendingPrompt = flow.pendingPrompt;
+      flow.pendingPrompt = null;
+      pendingPrompt.reject(new Error(reason));
+    }
+    const activeFlow = activeSettingsAuthLoginFlows.get(flowKey);
+    if (activeFlow === flow) {
+      activeSettingsAuthLoginFlows.delete(flowKey);
+    }
+  };
+
+  const requestPromptInput = (prompt: {
+    message: string;
+    placeholder?: string;
+  }): Promise<string> =>
+    new Promise<string>((resolve, reject) => {
+      if (flow.closed) {
+        reject(new Error("OAuth login flow is closed"));
+        return;
+      }
+      if (flow.pendingPrompt) {
+        const previousPrompt = flow.pendingPrompt;
+        flow.pendingPrompt = null;
+        previousPrompt.reject(new Error("OAuth login prompt replaced"));
+      }
+      const wrappedResolve = (value: string): void => {
+        if (flow.pendingPrompt?.resolve === wrappedResolve) flow.pendingPrompt = null;
+        resolve(value);
+      };
+      const wrappedReject = (error: Error): void => {
+        if (flow.pendingPrompt?.reject === wrappedReject) flow.pendingPrompt = null;
+        reject(error);
+      };
+      flow.pendingPrompt = { resolve: wrappedResolve, reject: wrappedReject };
+      sendSseEvent("prompt", prompt);
+    });
+
+  const onClose = (): void => closeFlow("OAuth login stream closed");
+  request.on("close", onClose);
+  response.on("close", onClose);
+
+  sendSseEvent("progress", { message: "Starting OpenAI OAuth login for new account..." });
+
+  try {
+    const callbacks: OAuthLoginCallbacks = {
+      onAuth: (info) => {
+        sendSseEvent("auth_url", { url: info.url, instructions: info.instructions });
+      },
+      onPrompt: (prompt) =>
+        requestPromptInput({ message: prompt.message, placeholder: prompt.placeholder }),
+      onProgress: (message) => {
+        sendSseEvent("progress", { message });
+      },
+      signal: flow.abortController.signal
+    };
+
+    if (provider.usesCallbackServer) {
+      callbacks.onManualCodeInput = () =>
+        requestPromptInput({
+          message: "Paste redirect URL below, or complete login in browser:",
+          placeholder: "http://localhost:1455/auth/callback?code=..."
+        });
+    }
+
+    const credentials = (await provider.login(callbacks)) as OAuthCredentials;
+    if (flow.closed) return;
+
+    // Store in credential pool instead of directly in auth.json
+    await swarmManager.addPooledCredential(
+      "openai-codex",
+      { type: "oauth", ...credentials },
+      { label: undefined } // Will auto-label as "Account N"
+    );
+
+    sendSseEvent("complete", { provider: "openai-codex", status: "connected" });
+  } catch (error) {
+    if (!flow.closed) {
+      const message = error instanceof Error ? error.message : String(error);
+      sendSseEvent("error", { message });
+    }
+  } finally {
+    request.off("close", onClose);
+    response.off("close", onClose);
+    closeFlow("OAuth login flow closed");
+    if (!response.writableEnded) response.end();
+  }
+}
+
+// ── Legacy OAuth Login Routes ──
+
 async function handleSettingsAuthLoginHttpRequest(
   swarmManager: SwarmManager,
-  activeSettingsAuthLoginFlows: Map<OAuthLoginProviderId, SettingsAuthLoginFlow>,
+  activeSettingsAuthLoginFlows: Map<string, SettingsAuthLoginFlow>,
   request: IncomingMessage,
   response: ServerResponse,
   requestUrl: URL

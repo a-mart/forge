@@ -33,6 +33,7 @@ import {
   submitSettingsAuthOAuthPrompt,
   toErrorMessage,
 } from './settings-api'
+import { OpenAICredentialPool } from './OpenAICredentialPool'
 
 /* ------------------------------------------------------------------ */
 /*  Sub-components                                                    */
@@ -607,6 +608,25 @@ export function SettingsAuth({ wsUrl }: SettingsAuthProps) {
         ) : (
           <div className="space-y-3">
             {SETTINGS_AUTH_PROVIDER_ORDER.map((provider) => {
+              // OpenAI Codex uses the credential pool panel
+              if (provider === 'openai-codex') {
+                return (
+                  <OpenAICredentialPool
+                    key={provider}
+                    wsUrl={wsUrl}
+                    onError={(msg) => {
+                      setAuthError(msg)
+                      setAuthSuccess(null)
+                    }}
+                    onSuccess={(msg) => {
+                      setAuthSuccess(msg)
+                      setAuthError(null)
+                    }}
+                    onAuthReload={() => void loadAuth()}
+                  />
+                )
+              }
+
               const authStatus = authProviderById.get(provider) ?? {
                 provider,
                 configured: false,
