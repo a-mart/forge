@@ -82,6 +82,66 @@ describe("session-manifest", () => {
     await expect(readSessionMeta(dataDir, "manager", "manager")).resolves.toBeUndefined();
   });
 
+  it("preserves missing attribution provenance on legacy worker meta", async () => {
+    const root = await mkdtemp(join(tmpdir(), "session-manifest-"));
+    const dataDir = join(root, "data");
+    const profileId = "manager";
+    const sessionId = "manager";
+    const metaPath = getSessionMetaPath(dataDir, profileId, sessionId);
+
+    await mkdir(join(dataDir, "profiles", profileId, "sessions", sessionId), { recursive: true });
+    await writeFile(
+      metaPath,
+      `${JSON.stringify(
+        {
+          sessionId,
+          profileId,
+          label: null,
+          model: {
+            provider: "openai-codex",
+            modelId: "gpt-5.3-codex"
+          },
+          createdAt: "2026-03-01T00:00:00.000Z",
+          updatedAt: "2026-03-01T00:00:00.000Z",
+          cwd: "/tmp/project",
+          promptFingerprint: null,
+          promptComponents: null,
+          workers: [
+            {
+              id: "legacy-worker",
+              model: "openai-codex/gpt-5.3-codex",
+              specialistId: null,
+              status: "idle",
+              createdAt: "2026-03-01T00:00:10.000Z",
+              terminatedAt: null,
+              tokens: {
+                input: 10,
+                output: 2
+              }
+            }
+          ],
+          stats: {
+            totalWorkers: 1,
+            activeWorkers: 0,
+            totalTokens: {
+              input: 10,
+              output: 2
+            },
+            sessionFileSize: null,
+            memoryFileSize: null
+          }
+        },
+        null,
+        2
+      )}\n`,
+      "utf8"
+    );
+
+    const meta = await readSessionMeta(dataDir, profileId, sessionId);
+    expect(meta?.workers[0]?.specialistId).toBeNull();
+    expect(meta?.workers[0]?.specialistAttributionKnown).toBeUndefined();
+  });
+
   it("rebuilds meta files from agents.json and filesystem stats", async () => {
     const root = await mkdtemp(join(tmpdir(), "session-manifest-"));
     const dataDir = join(root, "data");
@@ -187,6 +247,7 @@ describe("session-manifest", () => {
     const rootMeta = await readSessionMeta(dataDir, profileId, rootSessionId);
     expect(rootMeta?.workers.map((worker) => worker.id)).toEqual(["worker-a"]);
     expect(rootMeta?.workers[0]?.specialistId).toBe("backend");
+    expect(rootMeta?.workers[0]?.specialistAttributionKnown).toBe(true);
     expect(rootMeta?.workers[0]?.status).toBe("terminated");
     expect(rootMeta?.stats.sessionFileSize).toBe(String("root-session".length));
     expect(rootMeta?.stats.memoryFileSize).toBe(String("root-memory".length));
@@ -196,6 +257,7 @@ describe("session-manifest", () => {
     const childMeta = await readSessionMeta(dataDir, profileId, nonRootSessionId);
     expect(childMeta?.label).toBe("Child");
     expect(childMeta?.workers.map((worker) => worker.id)).toEqual(["worker-b"]);
+    expect(childMeta?.workers[0]?.specialistAttributionKnown).toBe(true);
     expect(childMeta?.workers[0]?.status).toBe("streaming");
     expect(childMeta?.stats.activeWorkers).toBe(1);
     expect(childMeta?.stats.sessionFileSize).toBe(String("child-session".length));
@@ -277,6 +339,7 @@ describe("session-manifest", () => {
     expect(updated?.workers).toHaveLength(1);
     expect(updated?.workers[0]?.status).toBe("terminated");
     expect(updated?.workers[0]?.specialistId).toBe("planner");
+    expect(updated?.workers[0]?.specialistAttributionKnown).toBe(true);
     expect(updated?.workers[0]?.terminatedAt).toBe("2026-03-01T00:00:20.000Z");
     expect(updated?.workers[0]?.systemPrompt).toBe("You are the persisted worker prompt.");
     expect(updated?.stats.totalWorkers).toBe(1);

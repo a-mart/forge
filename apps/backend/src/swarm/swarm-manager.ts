@@ -9115,6 +9115,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
           id: descriptor.agentId,
           model: this.buildWorkerModelIdentifier(descriptor),
           specialistId: normalizeOptionalAgentId(descriptor.specialistId) ?? null,
+          specialistAttributionKnown: true,
           status: this.mapWorkerStatusForMeta(descriptor.status),
           createdAt: descriptor.createdAt,
           terminatedAt: descriptor.status === "terminated" ? descriptor.updatedAt : null,

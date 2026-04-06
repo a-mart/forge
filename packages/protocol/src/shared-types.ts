@@ -249,6 +249,7 @@ export interface SessionWorkerMeta {
   id: string
   model: string | null
   specialistId?: string | null
+  specialistAttributionKnown?: boolean
   status: 'idle' | 'streaming' | 'terminated'
   createdAt: string
   terminatedAt: string | null

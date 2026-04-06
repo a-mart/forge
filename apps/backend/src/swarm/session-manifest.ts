@@ -24,6 +24,7 @@ export interface SessionMetaWorkerUpdate {
   id: string;
   model?: string | null;
   specialistId?: string | null;
+  specialistAttributionKnown?: boolean;
   status?: SessionWorkerMeta["status"];
   createdAt?: string;
   terminatedAt?: string | null;
@@ -337,6 +338,10 @@ export async function updateSessionMetaWorker(
       update.specialistId !== undefined
         ? update.specialistId
         : existingWorker?.specialistId ?? null,
+    specialistAttributionKnown:
+      update.specialistAttributionKnown !== undefined
+        ? update.specialistAttributionKnown
+        : existingWorker?.specialistAttributionKnown ?? true,
     status: nextStatus,
     createdAt: update.createdAt ?? existingWorker?.createdAt ?? now(),
     terminatedAt:
@@ -497,6 +502,7 @@ function buildWorkerMeta(
     id: descriptor.agentId,
     model: buildWorkerModelString(descriptor),
     specialistId: normalizeOptionalString(descriptor.specialistId) ?? null,
+    specialistAttributionKnown: existingWorker?.specialistAttributionKnown ?? true,
     status: mapWorkerStatus(descriptor.status),
     createdAt: descriptor.createdAt,
     terminatedAt: descriptor.status === "terminated" ? descriptor.updatedAt : null,
@@ -855,6 +861,10 @@ function coerceSessionWorkerMeta(value: unknown): SessionWorkerMeta | undefined 
     id,
     model: normalizeOptionalString(value.model) ?? null,
     specialistId: normalizeOptionalNullableString(value.specialistId),
+    specialistAttributionKnown:
+      typeof value.specialistAttributionKnown === "boolean"
+        ? value.specialistAttributionKnown
+        : undefined,
     status: normalizedStatus,
     createdAt,
     terminatedAt: normalizeOptionalString(value.terminatedAt) ?? null,
