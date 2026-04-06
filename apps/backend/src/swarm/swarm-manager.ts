@@ -8,6 +8,8 @@ import { AuthStorage, ModelRegistry } from "@mariozechner/pi-coding-agent";
 import type {
   AgentRuntimeExtensionSnapshot,
   ChoiceRequestEvent,
+  CredentialPoolState,
+  CredentialPoolStrategy,
   CortexReviewRunRecord,
   CortexReviewRunScope,
   CortexReviewRunTrigger,
@@ -1338,6 +1340,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       now: this.now,
       logDebug: (message, details) => this.logDebug(message, details),
       getPiModelsJsonPath: () => this.getPiModelsJsonPathOrThrow(),
+      getCredentialPoolService: () => this.secretsEnvService.getCredentialPoolService(),
       onSessionFileRotated: async (descriptor, sessionFile) => {
         if (descriptor.role !== "manager") {
           await this.refreshSessionMetaStatsBySessionId(descriptor.managerId);
@@ -5707,6 +5710,32 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   async deleteSettingsAuth(provider: string): Promise<void> {
     await this.secretsEnvService.deleteSettingsAuth(provider);
+  }
+
+  // ── Credential Pool pass-through ──
+
+  async listCredentialPool(provider: string): Promise<CredentialPoolState> {
+    return this.secretsEnvService.getCredentialPoolService().listPool(provider);
+  }
+
+  async renamePooledCredential(provider: string, credentialId: string, label: string): Promise<void> {
+    await this.secretsEnvService.getCredentialPoolService().renameCredential(provider, credentialId, label);
+  }
+
+  async removePooledCredential(provider: string, credentialId: string): Promise<void> {
+    await this.secretsEnvService.getCredentialPoolService().removeCredential(provider, credentialId);
+  }
+
+  async setPrimaryPooledCredential(provider: string, credentialId: string): Promise<void> {
+    await this.secretsEnvService.getCredentialPoolService().setPrimary(provider, credentialId);
+  }
+
+  async setCredentialPoolStrategy(provider: string, strategy: CredentialPoolStrategy): Promise<void> {
+    await this.secretsEnvService.getCredentialPoolService().setStrategy(provider, strategy);
+  }
+
+  async resetPooledCredentialCooldown(provider: string, credentialId: string): Promise<void> {
+    await this.secretsEnvService.getCredentialPoolService().resetCooldown(provider, credentialId);
   }
 
   private emitConversationMessage(event: ConversationMessageEvent): void {

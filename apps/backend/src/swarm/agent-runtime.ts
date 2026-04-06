@@ -5,6 +5,7 @@ import type { AgentSession, AgentSessionEvent } from "@mariozechner/pi-coding-ag
 import type { ImageContent, TextContent } from "@mariozechner/pi-ai";
 import {
   buildRuntimeMessageKey,
+  classifyRuntimeCapacityError,
   consumePendingDeliveryByMessageKey,
   extractMessageKeyFromRuntimeContent,
   normalizeRuntimeError,
@@ -15,6 +16,7 @@ import {
   trimConversationForEmergencyRecovery,
   type EmergencyContextTrimMessage
 } from "./emergency-context-trim.js";
+import type { CredentialPoolService } from "./credential-pool.js";
 import { transitionAgentStatus } from "./agent-state-machine.js";
 import type {
   RuntimeImageAttachment,
@@ -64,6 +66,10 @@ export type { RuntimeImageAttachment, RuntimeUserMessage, RuntimeUserMessageInpu
 export class AgentRuntime implements SwarmAgentRuntime {
   readonly descriptor: AgentDescriptor;
   readonly runtimeType = "pi" as const;
+
+  /** Credential pool fields for multi-account failover */
+  pooledCredentialId: string | undefined;
+  credentialPoolService: CredentialPoolService | undefined;
 
   private readonly session: AgentSession;
   private readonly callbacks: SwarmRuntimeCallbacks;
@@ -932,6 +938,13 @@ export class AgentRuntime implements SwarmAgentRuntime {
     dispatchMeta?: { attempt: number; maxAttempts: number }
   ): Promise<void> {
     const normalized = normalizeRuntimeError(error);
+
+    // ── Credential pool failover for rate-limit / quota errors ──
+    if (this.pooledCredentialId && this.credentialPoolService) {
+      const rotated = await this.attemptCredentialRotation(error, normalized.message, message);
+      if (rotated) return; // retry dispatched with new credential
+    }
+
     const phase: RuntimeErrorEvent["phase"] = isLikelyCompactionError(normalized.message)
       ? "compaction"
       : "prompt_dispatch";
@@ -975,6 +988,120 @@ export class AgentRuntime implements SwarmAgentRuntime {
           callback: "onAgentEnd"
         });
       }
+    }
+  }
+
+  /**
+   * Attempt to rotate to a different pooled OpenAI credential on rate-limit/quota errors.
+   * Returns true if a retry was dispatched with a new credential, false otherwise.
+   */
+  private async attemptCredentialRotation(
+    error: unknown,
+    errorMessage: string,
+    message: RuntimeUserMessage
+  ): Promise<boolean> {
+    const pool = this.credentialPoolService;
+    const currentCredId = this.pooledCredentialId;
+    if (!pool || !currentCredId) return false;
+
+    // Check for 401 auth errors first — mark auth_error, no rotation
+    const is401 = /\b401\b/.test(errorMessage) || /\bunauthorized\b/i.test(errorMessage);
+    if (is401) {
+      try {
+        await pool.markAuthError("openai-codex", currentCredId);
+        this.logRuntimeError("prompt_dispatch", error, {
+          stage: "credential_pool:auth_error",
+          credentialId: currentCredId
+        });
+      } catch (markError) {
+        this.logRuntimeError("prompt_dispatch", markError, {
+          stage: "credential_pool:mark_auth_error_failed",
+          credentialId: currentCredId
+        });
+      }
+      return false;
+    }
+
+    // Check for rate-limit / quota errors
+    const classification = classifyRuntimeCapacityError(errorMessage);
+    if (!classification.isQuotaOrRateLimit) return false;
+
+    // Determine cooldown duration
+    const is402 = /\b402\b/.test(errorMessage) || /\bpayment required\b/i.test(errorMessage);
+    const defaultCooldownMs = is402 ? 3_600_000 : 60_000; // 1hr for 402, 1min for 429
+    const cooldownUntil = Date.now() + (classification.retryAfterMs ?? defaultCooldownMs);
+
+    try {
+      await pool.markExhausted("openai-codex", currentCredId, { cooldownUntil });
+    } catch (markError) {
+      this.logRuntimeError("prompt_dispatch", markError, {
+        stage: "credential_pool:mark_exhausted_failed",
+        credentialId: currentCredId
+      });
+      return false;
+    }
+
+    // Try to select next healthy credential
+    const nextSelection = await pool.select("openai-codex");
+    if (!nextSelection) {
+      // All exhausted
+      const earliestExpiry = await pool.getEarliestCooldownExpiry("openai-codex");
+      const resetInfo = earliestExpiry
+        ? ` Estimated reset: ${new Date(earliestExpiry).toLocaleTimeString()}.`
+        : "";
+
+      await this.reportRuntimeError({
+        phase: "prompt_dispatch",
+        message: `All OpenAI accounts are rate-limited.${resetInfo}`,
+        details: {
+          stage: "credential_pool:all_exhausted",
+          exhaustedCredentialId: currentCredId
+        }
+      });
+      return false;
+    }
+
+    // Build new auth data and inject into the session
+    try {
+      const authData = await pool.buildRuntimeAuthData("openai-codex", nextSelection.credentialId);
+      const authStorage = this.session.modelRegistry?.authStorage;
+
+      if (authStorage) {
+        // Replace the openai-codex credential in the existing auth storage
+        const newCredential = authData["openai-codex"];
+        if (newCredential) {
+          authStorage.set("openai-codex", newCredential);
+        }
+      }
+
+      this.pooledCredentialId = nextSelection.credentialId;
+
+      this.logRuntimeError("prompt_dispatch", error, {
+        stage: "credential_pool:rotated",
+        fromCredentialId: currentCredId,
+        toCredentialId: nextSelection.credentialId
+      });
+
+      await this.reportRuntimeError({
+        phase: "prompt_dispatch",
+        message: `OpenAI rate limit hit — rotating to another account and retrying.`,
+        details: {
+          stage: "credential_pool:rotating",
+          fromCredentialId: currentCredId,
+          toCredentialId: nextSelection.credentialId
+        }
+      });
+
+      // Retry the prompt with the new credential
+      this.dispatchPrompt(message);
+      return true;
+    } catch (rotationError) {
+      this.logRuntimeError("prompt_dispatch", rotationError, {
+        stage: "credential_pool:rotation_failed",
+        fromCredentialId: currentCredId,
+        toCredentialId: nextSelection.credentialId
+      });
+      return false;
     }
   }
 

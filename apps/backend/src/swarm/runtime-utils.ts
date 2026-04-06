@@ -158,7 +158,11 @@ const QUOTA_OR_RATE_LIMIT_PATTERNS = [
   /\bresource exhausted\b/i,
   /^\s*429\b/i,
   /\b429\s+too many requests\b/i,
-  /\b(?:status|http|code|error)\s*[:=]?\s*429\b/i
+  /\b(?:status|http|code|error)\s*[:=]?\s*429\b/i,
+  /\b402\s+payment required\b/i,
+  /\b(?:status|http|code|error)\s*[:=]?\s*402\b/i,
+  /\bpayment required\b/i,
+  /\binsufficient.{0,20}funds?\b/i
 ];
 
 const DURATION_RETRY_AFTER_PATTERN =

@@ -21,6 +21,7 @@ import {
 import { AgentRuntime } from "./agent-runtime.js";
 import { buildCreateProjectAgentTool } from "./agent-creator-tool.js";
 import { ensureCanonicalAuthFilePath } from "./auth-storage-paths.js";
+import type { CredentialPoolService } from "./credential-pool.js";
 import { openSessionManagerWithSizeGuard } from "./session-file-guard.js";
 import { ClaudeAgentRuntime } from "./claude-agent-runtime.js";
 import { ClaudeAuthResolver } from "./claude-auth-resolver.js";
@@ -61,6 +62,7 @@ interface RuntimeFactoryDependencies {
   now: () => string;
   logDebug: (message: string, details?: unknown) => void;
   getPiModelsJsonPath: () => string;
+  getCredentialPoolService?: () => CredentialPoolService;
   onSessionFileRotated?: (descriptor: AgentDescriptor, sessionFile: string) => Promise<void>;
   getMemoryRuntimeResources: (descriptor: AgentDescriptor) => Promise<{
     memoryContextFile: { path: string; content: string };
@@ -167,7 +169,11 @@ export class RuntimeFactory {
         descriptor.role === "manager" ? "archetype:manager" : undefined
     });
 
-    const authStorage = AuthStorage.create(authFilePath);
+    // Pool-aware credential selection for OpenAI Codex multi-account
+    const poolSelection = await this.selectPooledCredential(authFilePath);
+    const authStorage = poolSelection?.authStorage ?? AuthStorage.create(authFilePath);
+    const pooledCredentialId = poolSelection?.credentialId;
+
     const piModelsJsonPath = this.deps.getPiModelsJsonPath();
     assertPiModelsProjectionAvailable(piModelsJsonPath);
     const modelRegistry = new ModelRegistry(authStorage, piModelsJsonPath);
@@ -333,7 +339,7 @@ export class RuntimeFactory {
         descriptor.role === "manager" ? session.systemPrompt.includes("speak_to_user") : undefined
     });
 
-    return new AgentRuntime({
+    const runtime = new AgentRuntime({
       descriptor: cloneRuntimeDescriptor(descriptor),
       session: session as AgentSession,
       systemPrompt,
@@ -353,6 +359,13 @@ export class RuntimeFactory {
       },
       now: this.deps.now
     });
+
+    if (pooledCredentialId) {
+      runtime.pooledCredentialId = pooledCredentialId;
+      runtime.credentialPoolService = this.deps.getCredentialPoolService?.();
+    }
+
+    return runtime;
   }
 
   private async createClaudeRuntimeForDescriptor(
@@ -715,6 +728,48 @@ export class RuntimeFactory {
 
     const snapshot = await getOnboardingSnapshot(this.deps.config.paths.dataDir);
     return shouldIncludeOnboardingSnapshot(snapshot) ? buildOnboardingSnapshotBlock(snapshot) : undefined;
+  }
+
+  /**
+   * Select a pooled credential for the OpenAI Codex provider if multiple accounts exist.
+   * Returns null if pool has 0-1 credentials (use default file-backed auth).
+   */
+  private async selectPooledCredential(
+    authFilePath: string
+  ): Promise<{ authStorage: AuthStorage; credentialId: string } | null> {
+    const getPool = this.deps.getCredentialPoolService;
+    if (!getPool) return null;
+
+    const pool = getPool();
+    const poolSize = await pool.getPoolSize("openai-codex");
+    if (poolSize <= 1) return null;
+
+    const selection = await pool.select("openai-codex");
+    if (!selection) {
+      this.deps.logDebug("runtime:credential_pool:all_exhausted", {
+        message: "All OpenAI Codex credentials exhausted, falling back to file-backed auth"
+      });
+      return null;
+    }
+
+    try {
+      const authData = await pool.buildRuntimeAuthData("openai-codex", selection.credentialId);
+      const authStorage = AuthStorage.inMemory(authData);
+
+      this.deps.logDebug("runtime:credential_pool:selected", {
+        credentialId: selection.credentialId,
+        authStorageKey: selection.authStorageKey
+      });
+
+      return { authStorage, credentialId: selection.credentialId };
+    } catch (error) {
+      this.deps.logDebug("runtime:credential_pool:build_auth_error", {
+        credentialId: selection.credentialId,
+        message: error instanceof Error ? error.message : String(error)
+      });
+      // Fall back to file-backed auth
+      return null;
+    }
   }
 
   private resolveModel(modelRegistry: ModelRegistry, descriptor: AgentModelDescriptor): Model<any> {
