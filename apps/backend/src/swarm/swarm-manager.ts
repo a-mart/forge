@@ -971,6 +971,8 @@ interface WorkerWatchdogState {
   reportedThisTurn: boolean;
   pendingReportTurnSeq: number | null;
   deferredFinalizeTurnSeq: number | null;
+  hadStreamingThisTurn: boolean;
+  lastFinalizedTurnSeq: number | null;
   consecutiveNotifications: number;
   suppressedUntilMs: number;
   circuitOpen: boolean;
@@ -4716,12 +4718,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       ? this.getOrCreateWorkerWatchdogState(sender.agentId).turnSeq
       : undefined;
 
-    if (isWorkerReportToManager && watchdogTurnSeqAtDispatch !== undefined) {
-      const watchdogState = this.getOrCreateWorkerWatchdogState(sender.agentId);
-      watchdogState.pendingReportTurnSeq = watchdogTurnSeqAtDispatch;
-      this.workerWatchdogState.set(sender.agentId, watchdogState);
-    }
-
     const modelMessage = await this.prepareModelInboundMessage(
       targetAgentId,
       {
@@ -4730,37 +4726,56 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       },
       origin
     );
+
+    if (isWorkerReportToManager && watchdogTurnSeqAtDispatch !== undefined) {
+      const watchdogState = this.getOrCreateWorkerWatchdogState(sender.agentId);
+      watchdogState.pendingReportTurnSeq = watchdogTurnSeqAtDispatch;
+      this.workerWatchdogState.set(sender.agentId, watchdogState);
+    }
+
     let receipt: SendMessageReceipt;
     try {
       receipt = await runtime.sendMessage(modelMessage, delivery);
     } catch (error) {
       if (isWorkerReportToManager && watchdogTurnSeqAtDispatch !== undefined) {
-        const watchdogState = this.getOrCreateWorkerWatchdogState(sender.agentId);
-        if (watchdogState.pendingReportTurnSeq === watchdogTurnSeqAtDispatch) {
+        const currentSender = this.descriptors.get(sender.agentId);
+        const watchdogState =
+          currentSender &&
+          currentSender.role === "worker" &&
+          !isNonRunningAgentStatus(currentSender.status)
+            ? this.workerWatchdogState.get(sender.agentId)
+            : undefined;
+        if (watchdogState?.pendingReportTurnSeq === watchdogTurnSeqAtDispatch) {
           watchdogState.pendingReportTurnSeq = null;
           this.workerWatchdogState.set(sender.agentId, watchdogState);
+          await this.finalizeDeferredWorkerIdleTurn(sender.agentId, watchdogTurnSeqAtDispatch);
         }
-
-        await this.finalizeDeferredWorkerIdleTurn(sender.agentId, watchdogTurnSeqAtDispatch);
       }
 
       throw error;
     }
 
     if (isWorkerReportToManager && watchdogTurnSeqAtDispatch !== undefined) {
-      const watchdogState = this.getOrCreateWorkerWatchdogState(sender.agentId);
-      if (watchdogState.pendingReportTurnSeq === watchdogTurnSeqAtDispatch) {
+      const currentSender = this.descriptors.get(sender.agentId);
+      const watchdogState =
+        currentSender &&
+        currentSender.role === "worker" &&
+        !isNonRunningAgentStatus(currentSender.status)
+          ? this.workerWatchdogState.get(sender.agentId)
+          : undefined;
+      if (watchdogState?.pendingReportTurnSeq === watchdogTurnSeqAtDispatch) {
         watchdogState.pendingReportTurnSeq = null;
       }
-      if (watchdogState.turnSeq === watchdogTurnSeqAtDispatch) {
+      if (watchdogState && watchdogState.turnSeq === watchdogTurnSeqAtDispatch) {
         watchdogState.reportedThisTurn = true;
         watchdogState.consecutiveNotifications = 0;
         watchdogState.suppressedUntilMs = 0;
         watchdogState.circuitOpen = false;
       }
-      this.workerWatchdogState.set(sender.agentId, watchdogState);
-
-      await this.finalizeDeferredWorkerIdleTurn(sender.agentId, watchdogTurnSeqAtDispatch);
+      if (watchdogState) {
+        this.workerWatchdogState.set(sender.agentId, watchdogState);
+        await this.finalizeDeferredWorkerIdleTurn(sender.agentId, watchdogTurnSeqAtDispatch);
+      }
     }
 
     this.logDebug("agent:send_message", {
@@ -7505,6 +7520,21 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       contextUsage: descriptor.contextUsage
     });
 
+    if (descriptor.role === "worker") {
+      if (nextStatus === "streaming") {
+        const watchdogState = this.getOrCreateWorkerWatchdogState(agentId);
+        watchdogState.hadStreamingThisTurn = true;
+        this.workerWatchdogState.set(agentId, watchdogState);
+        this.watchdogTimerTokens.set(agentId, (this.watchdogTimerTokens.get(agentId) ?? 0) + 1);
+        this.clearWatchdogTimer(agentId);
+      } else if (nextStatus === "idle" && pendingCount === 0) {
+        const watchdogState = this.workerWatchdogState.get(agentId);
+        if (watchdogState?.hadStreamingThisTurn) {
+          await this.finalizeWorkerIdleTurn(agentId, descriptor, "status_idle");
+        }
+      }
+    }
+
     if (descriptor.role === "manager") {
       if (nextStatus === "idle" && pendingCount === 0) {
         this.scheduleCortexCloseoutReminder(descriptor.agentId);
@@ -8456,6 +8486,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     watchdogState.reportedThisTurn = false;
     watchdogState.pendingReportTurnSeq = null;
     watchdogState.deferredFinalizeTurnSeq = null;
+    watchdogState.hadStreamingThisTurn = false;
+    watchdogState.lastFinalizedTurnSeq = watchdogState.turnSeq;
     this.workerWatchdogState.set(agentId, watchdogState);
 
     this.watchdogTimerTokens.set(agentId, (this.watchdogTimerTokens.get(agentId) ?? 0) + 1);
@@ -9274,6 +9306,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       watchdogState.reportedThisTurn = false;
       watchdogState.pendingReportTurnSeq = null;
       watchdogState.deferredFinalizeTurnSeq = null;
+      watchdogState.hadStreamingThisTurn = false;
+      watchdogState.lastFinalizedTurnSeq = watchdogState.turnSeq;
       this.workerWatchdogState.set(agentId, watchdogState);
 
       this.watchdogTimerTokens.set(agentId, (this.watchdogTimerTokens.get(agentId) ?? 0) + 1);
@@ -9281,16 +9315,29 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return;
     }
 
-    await this.finalizeWorkerIdleTurn(agentId, descriptor);
+    await this.finalizeWorkerIdleTurn(agentId, descriptor, "agent_end");
   }
 
-  private async finalizeWorkerIdleTurn(agentId: string, descriptor: AgentDescriptor): Promise<void> {
+  private async finalizeWorkerIdleTurn(
+    agentId: string,
+    descriptor: AgentDescriptor,
+    source: "agent_end" | "status_idle" | "deferred"
+  ): Promise<void> {
     if (descriptor.role !== "worker") {
       return;
     }
 
     const watchdogState = this.getOrCreateWorkerWatchdogState(agentId);
     const currentTurnSeq = watchdogState.turnSeq;
+    if (watchdogState.lastFinalizedTurnSeq === currentTurnSeq && !watchdogState.hadStreamingThisTurn) {
+      this.logDebug("watchdog:finalize_skip_duplicate", {
+        agentId,
+        turnSeq: currentTurnSeq,
+        source
+      });
+      return;
+    }
+
     const reportedThisTurn = watchdogState.reportedThisTurn;
     const hasPendingReport = watchdogState.pendingReportTurnSeq === currentTurnSeq;
 
@@ -9305,7 +9352,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     watchdogState.reportedThisTurn = false;
     watchdogState.pendingReportTurnSeq = null;
     watchdogState.deferredFinalizeTurnSeq = null;
+    watchdogState.hadStreamingThisTurn = false;
     const turnSeq = watchdogState.turnSeq;
+    watchdogState.lastFinalizedTurnSeq = turnSeq;
     this.workerWatchdogState.set(agentId, watchdogState);
 
     if (reportedThisTurn) {
@@ -9316,12 +9365,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     const autoReportOutcome = await this.tryAutoReportWorkerCompletion(descriptor);
     if (autoReportOutcome === "sent" || autoReportOutcome === "duplicate") {
-      const postSendState = this.getOrCreateWorkerWatchdogState(agentId);
-      if (postSendState.turnSeq === turnSeq) {
-        postSendState.reportedThisTurn = true;
-        this.workerWatchdogState.set(agentId, postSendState);
-      }
-
       this.watchdogTimerTokens.set(agentId, (this.watchdogTimerTokens.get(agentId) ?? 0) + 1);
       this.clearWatchdogTimer(agentId);
       return;
@@ -9356,7 +9399,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return;
     }
 
-    await this.finalizeWorkerIdleTurn(agentId, descriptor);
+    await this.finalizeWorkerIdleTurn(agentId, descriptor, "deferred");
   }
 
   private seedWorkerCompletionReportTimestamp(agentId: string): void {
@@ -9691,6 +9734,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       reportedThisTurn: false,
       pendingReportTurnSeq: null,
       deferredFinalizeTurnSeq: null,
+      hadStreamingThisTurn: false,
+      lastFinalizedTurnSeq: null,
       consecutiveNotifications: 0,
       suppressedUntilMs: 0,
       circuitOpen: false
@@ -9715,6 +9760,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       watchdogState.pendingReportTurnSeq = null;
       watchdogState.deferredFinalizeTurnSeq = null;
       watchdogState.reportedThisTurn = false;
+      watchdogState.hadStreamingThisTurn = false;
+      watchdogState.lastFinalizedTurnSeq = null;
     }
 
     this.workerWatchdogState.delete(agentId);

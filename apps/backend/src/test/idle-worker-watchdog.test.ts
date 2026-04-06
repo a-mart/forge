@@ -253,6 +253,16 @@ async function advanceToWatchdogBatchFlush(): Promise<void> {
   await vi.advanceTimersByTimeAsync(750)
 }
 
+async function startWorkerTurn(manager: TestSwarmManager, worker: AgentDescriptor | string): Promise<void> {
+  const workerId = typeof worker === 'string' ? worker : worker.agentId
+  await (manager as any).handleRuntimeStatus(undefined, workerId, 'streaming', 1)
+}
+
+async function finishWorkerTurnViaIdleStatus(manager: TestSwarmManager, worker: AgentDescriptor | string): Promise<void> {
+  const workerId = typeof worker === 'string' ? worker : worker.agentId
+  await (manager as any).handleRuntimeStatus(undefined, workerId, 'idle', 0)
+}
+
 function buildExpectedAutoCompletionMessage(worker: AgentDescriptor): string {
   return `SYSTEM: Worker ${worker.agentId} completed its turn.`
 }
@@ -351,6 +361,38 @@ describe('idle worker watchdog', () => {
     expect(watchdogMessages[0]).toContain('1 worker went idle without reporting this turn.')
     expect(watchdogMessages[0]).toContain(`\`${validWorker.agentId}\``)
     expect(watchdogMessages[0]).not.toContain(`\`${staleWorker.agentId}\``)
+  })
+
+  it('consecutive silent turns with auto-report still auto-report every turn', async () => {
+    vi.useFakeTimers()
+
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', { agentId: 'Consecutive Silent Worker' })
+    const managerRuntime = manager.runtimeByAgentId.get('manager')
+    const workerRuntime = manager.runtimeByAgentId.get(worker.agentId)
+    expect(managerRuntime).toBeDefined()
+    expect(workerRuntime).toBeDefined()
+
+    await startWorkerTurn(manager, worker)
+    await finishWorkerTurnViaIdleStatus(manager, worker)
+
+    await manager.sendMessage('manager', worker.agentId, 'next instruction', 'auto', { origin: 'internal' })
+    await startWorkerTurn(manager, worker)
+    await finishWorkerTurnViaIdleStatus(manager, worker)
+
+    expect(workerRuntime?.sendCalls).toHaveLength(1)
+    expect(workerRuntime?.sendCalls[0]?.message).toBe('SYSTEM: next instruction')
+    expect(managerRuntime?.sendCalls.map((call) => call.message)).toEqual([
+      buildExpectedAutoCompletionMessage(worker),
+      buildExpectedAutoCompletionMessage(worker),
+    ])
+
+    await advanceToWatchdogBatchFlush()
+    expect(getBatchedWatchdogMessages(managerRuntime)).toHaveLength(0)
+    expect(getSystemWatchdogPublishes(manager)).toHaveLength(0)
   })
 
   it('suppresses watchdog scheduling while the worker runtime is in context recovery', async () => {
@@ -583,6 +625,29 @@ describe('idle worker watchdog', () => {
     expect(getSystemWatchdogPublishes(manager)).toHaveLength(0)
   })
 
+  it('message prep failure does not wedge pendingReportTurnSeq', async () => {
+    vi.useFakeTimers()
+
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', { agentId: 'Prep Failure Worker' })
+    const originalPrepareModelInboundMessage = (manager as any).prepareModelInboundMessage
+    ;(manager as any).prepareModelInboundMessage = async () => {
+      throw new Error('synthetic prep failure')
+    }
+
+    await expect(
+      manager.sendMessage(worker.agentId, 'manager', 'turn complete', 'auto', { origin: 'internal' }),
+    ).rejects.toThrow('synthetic prep failure')
+
+    const watchdogState = (manager as any).workerWatchdogState.get(worker.agentId)
+    expect(watchdogState?.pendingReportTurnSeq).toBeNull()
+
+    ;(manager as any).prepareModelInboundMessage = originalPrepareModelInboundMessage
+  })
+
   it('clearWatchdogState removes worker watchdog maps and pending batch queue entries', async () => {
     vi.useFakeTimers()
 
@@ -637,11 +702,13 @@ describe('idle worker watchdog', () => {
     expect(managerRuntime).toBeDefined()
     failAutoCompletionReports(managerRuntime!)
 
-    await (manager as any).handleRuntimeAgentEnd(worker.agentId)
+    await startWorkerTurn(manager, worker)
+    await finishWorkerTurnViaIdleStatus(manager, worker)
     await advanceToWatchdogBatchFlush()
     expect(getBatchedWatchdogMessages(managerRuntime)).toHaveLength(1)
 
-    await (manager as any).handleRuntimeAgentEnd(worker.agentId)
+    await startWorkerTurn(manager, worker)
+    await finishWorkerTurnViaIdleStatus(manager, worker)
     await advanceToWatchdogBatchFlush()
 
     expect(getBatchedWatchdogMessages(managerRuntime)).toHaveLength(1)
@@ -663,15 +730,18 @@ describe('idle worker watchdog', () => {
     expect(managerRuntime).toBeDefined()
     failAutoCompletionReports(managerRuntime!)
 
-    await (manager as any).handleRuntimeAgentEnd(worker.agentId)
+    await startWorkerTurn(manager, worker)
+    await finishWorkerTurnViaIdleStatus(manager, worker)
     await advanceToWatchdogBatchFlush()
 
     await vi.advanceTimersByTimeAsync(15_000)
-    await (manager as any).handleRuntimeAgentEnd(worker.agentId)
+    await startWorkerTurn(manager, worker)
+    await finishWorkerTurnViaIdleStatus(manager, worker)
     await advanceToWatchdogBatchFlush()
 
     await vi.advanceTimersByTimeAsync(30_000)
-    await (manager as any).handleRuntimeAgentEnd(worker.agentId)
+    await startWorkerTurn(manager, worker)
+    await finishWorkerTurnViaIdleStatus(manager, worker)
     await advanceToWatchdogBatchFlush()
 
     expect(getBatchedWatchdogMessages(managerRuntime)).toHaveLength(3)
@@ -680,7 +750,8 @@ describe('idle worker watchdog', () => {
     expect(afterThirdState?.circuitOpen).toBe(true)
 
     await vi.advanceTimersByTimeAsync(60_000)
-    await (manager as any).handleRuntimeAgentEnd(worker.agentId)
+    await startWorkerTurn(manager, worker)
+    await finishWorkerTurnViaIdleStatus(manager, worker)
     await advanceToWatchdogBatchFlush()
 
     expect(getBatchedWatchdogMessages(managerRuntime)).toHaveLength(3)
@@ -698,10 +769,12 @@ describe('idle worker watchdog', () => {
     expect(managerRuntime).toBeDefined()
     failAutoCompletionReports(managerRuntime!)
 
-    await (manager as any).handleRuntimeAgentEnd(worker.agentId)
+    await startWorkerTurn(manager, worker)
+    await finishWorkerTurnViaIdleStatus(manager, worker)
     await advanceToWatchdogBatchFlush()
     expect(getBatchedWatchdogMessages(managerRuntime)).toHaveLength(1)
 
+    await startWorkerTurn(manager, worker)
     await manager.sendMessage(worker.agentId, 'manager', 'done', 'auto', { origin: 'internal' })
 
     const resetState = (manager as any).workerWatchdogState.get(worker.agentId)
@@ -710,11 +783,12 @@ describe('idle worker watchdog', () => {
     expect(resetState?.circuitOpen).toBe(false)
 
     // End the reported turn (no watchdog expected), then a new silent turn should notify again immediately.
-    await (manager as any).handleRuntimeAgentEnd(worker.agentId)
+    await finishWorkerTurnViaIdleStatus(manager, worker)
     await advanceToWatchdogBatchFlush()
     expect(getBatchedWatchdogMessages(managerRuntime)).toHaveLength(1)
 
-    await (manager as any).handleRuntimeAgentEnd(worker.agentId)
+    await startWorkerTurn(manager, worker)
+    await finishWorkerTurnViaIdleStatus(manager, worker)
     await advanceToWatchdogBatchFlush()
 
     expect(getBatchedWatchdogMessages(managerRuntime)).toHaveLength(2)
@@ -833,6 +907,50 @@ describe('idle worker watchdog', () => {
     expect((manager as any).workerWatchdogState.size).toBe(0)
   })
 
+  it('clears an in-flight worker report without recreating watchdog state after kill', async () => {
+    vi.useFakeTimers()
+
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', { agentId: 'Killed Mid Send Worker' })
+    const managerRuntime = manager.runtimeByAgentId.get('manager')
+    expect(managerRuntime).toBeDefined()
+
+    const receipt = {
+      targetAgentId: 'manager',
+      deliveryId: 'killed-mid-send',
+      acceptedMode: 'prompt',
+    } satisfies SendMessageReceipt
+    const deferredSend = createDeferred<SendMessageReceipt>()
+    const sendStarted = createDeferred<void>()
+    let sendStartedSignaled = false
+
+    managerRuntime!.sendMessage = async (message, delivery = 'auto') => {
+      managerRuntime!.sendCalls.push({ message, delivery })
+      if (!sendStartedSignaled) {
+        sendStartedSignaled = true
+        sendStarted.resolve()
+      }
+      return deferredSend.promise
+    }
+
+    await startWorkerTurn(manager, worker)
+    const sendPromise = manager.sendMessage(worker.agentId, 'manager', 'turn complete', 'auto', { origin: 'internal' })
+    await sendStarted.promise
+
+    await manager.killAgent('manager', worker.agentId)
+
+    deferredSend.resolve(receipt)
+    await sendPromise
+    await vi.runAllTicks()
+
+    expect((manager as any).workerWatchdogState.has(worker.agentId)).toBe(false)
+    expect((manager as any).watchdogTimers.has(worker.agentId)).toBe(false)
+    expect((manager as any).watchdogTimerTokens.has(worker.agentId)).toBe(false)
+  })
+
   it('clears watchdog state in terminateDescriptor via killAgent', async () => {
     vi.useFakeTimers()
 
@@ -855,6 +973,55 @@ describe('idle worker watchdog', () => {
     expect((manager as any).workerWatchdogState.has(worker.agentId)).toBe(false)
     expect((manager as any).watchdogTimers.has(worker.agentId)).toBe(false)
     expect((manager as any).watchdogTimerTokens.has(worker.agentId)).toBe(false)
+  })
+
+  it('clears a stale watchdog timer when a new worker turn starts streaming', async () => {
+    vi.useFakeTimers()
+
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', { agentId: 'Timer Reset Worker' })
+    const managerRuntime = manager.runtimeByAgentId.get('manager')
+    expect(managerRuntime).toBeDefined()
+    failAutoCompletionReports(managerRuntime!)
+
+    await (manager as any).handleRuntimeAgentEnd(worker.agentId)
+
+    expect(((manager as any).watchdogTimers as Map<string, unknown>).has(worker.agentId)).toBe(true)
+
+    await startWorkerTurn(manager, worker)
+
+    expect(((manager as any).watchdogTimers as Map<string, unknown>).has(worker.agentId)).toBe(false)
+
+    await advanceToWatchdogBatchFlush()
+    expect(getBatchedWatchdogMessages(managerRuntime)).toHaveLength(0)
+    expect(getSystemWatchdogPublishes(manager)).toHaveLength(0)
+  })
+
+  it('status-idle fallback finalizes a streamed worker turn without agent_end', async () => {
+    vi.useFakeTimers()
+
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', { agentId: 'Status Idle Worker' })
+    const managerRuntime = manager.runtimeByAgentId.get('manager')
+    expect(managerRuntime).toBeDefined()
+    failAutoCompletionReports(managerRuntime!)
+
+    await startWorkerTurn(manager, worker)
+    await (manager as any).handleRuntimeStatus(undefined, worker.agentId, 'idle', 0)
+
+    expect(((manager as any).watchdogTimers as Map<string, unknown>).has(worker.agentId)).toBe(true)
+
+    await advanceToWatchdogBatchFlush()
+
+    const watchdogMessages = getBatchedWatchdogMessages(managerRuntime)
+    expect(watchdogMessages).toHaveLength(1)
+    expect(watchdogMessages[0]).toContain(`\`${worker.agentId}\``)
   })
 
   it('clears watchdog state in stopAllAgents for affected workers', async () => {
