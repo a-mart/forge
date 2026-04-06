@@ -41,8 +41,8 @@ import {
   removePooledCredential,
   toErrorMessage,
   SETTINGS_AUTH_PROVIDER_META,
-  startSettingsAuthOAuthLoginStream,
-  submitSettingsAuthOAuthPrompt,
+  startPoolAddAccountOAuthStream,
+  submitPoolAddAccountOAuthPrompt,
   createIdleSettingsAuthOAuthFlowState,
 } from './settings-api'
 import type { SettingsAuthOAuthFlowState } from './settings-types'
@@ -400,7 +400,7 @@ export function OpenAICredentialPool({ wsUrl, onError, onSuccess, onAuthReload }
 
     let completed = false
     try {
-      await startSettingsAuthOAuthLoginStream(
+      await startPoolAddAccountOAuthStream(
         wsUrl,
         'openai-codex',
         {
@@ -475,7 +475,7 @@ export function OpenAICredentialPool({ wsUrl, onError, onSuccess, onAuthReload }
     if (!value) return
     setOauthFlow((prev) => ({ ...prev, isSubmittingCode: true, errorMessage: undefined }))
     try {
-      await submitSettingsAuthOAuthPrompt(wsUrl, 'openai-codex', value)
+      await submitPoolAddAccountOAuthPrompt(wsUrl, 'openai-codex', value)
       setOauthFlow((prev) => ({
         ...prev,
         status: 'waiting_for_auth',

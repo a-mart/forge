@@ -467,13 +467,13 @@ export async function fetchCredentialPool(wsUrl: string, provider: string): Prom
   const endpoint = resolveApiEndpoint(wsUrl, `/api/settings/auth/${encodeURIComponent(provider)}/accounts`)
   const response = await fetch(endpoint)
   if (!response.ok) throw new Error(await readApiError(response))
-  return (await response.json()) as CredentialPoolState
+  return ((await response.json()) as { pool: CredentialPoolState }).pool
 }
 
 export async function setCredentialPoolStrategy(wsUrl: string, provider: string, strategy: CredentialPoolStrategy): Promise<void> {
   const endpoint = resolveApiEndpoint(wsUrl, `/api/settings/auth/${encodeURIComponent(provider)}/strategy`)
   const response = await fetch(endpoint, {
-    method: 'PUT',
+    method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ strategy }),
   })
@@ -481,7 +481,7 @@ export async function setCredentialPoolStrategy(wsUrl: string, provider: string,
 }
 
 export async function renamePooledCredential(wsUrl: string, provider: string, id: string, label: string): Promise<void> {
-  const endpoint = resolveApiEndpoint(wsUrl, `/api/settings/auth/${encodeURIComponent(provider)}/accounts/${encodeURIComponent(id)}`)
+  const endpoint = resolveApiEndpoint(wsUrl, `/api/settings/auth/${encodeURIComponent(provider)}/accounts/${encodeURIComponent(id)}/label`)
   const response = await fetch(endpoint, {
     method: 'PATCH',
     headers: { 'content-type': 'application/json' },
@@ -492,7 +492,7 @@ export async function renamePooledCredential(wsUrl: string, provider: string, id
 
 export async function setPrimaryPooledCredential(wsUrl: string, provider: string, id: string): Promise<void> {
   const endpoint = resolveApiEndpoint(wsUrl, `/api/settings/auth/${encodeURIComponent(provider)}/accounts/${encodeURIComponent(id)}/primary`)
-  const response = await fetch(endpoint, { method: 'PUT' })
+  const response = await fetch(endpoint, { method: 'POST' })
   if (!response.ok) throw new Error(await readApiError(response))
 }
 
@@ -505,5 +505,83 @@ export async function resetPooledCredentialCooldown(wsUrl: string, provider: str
 export async function removePooledCredential(wsUrl: string, provider: string, id: string): Promise<void> {
   const endpoint = resolveApiEndpoint(wsUrl, `/api/settings/auth/${encodeURIComponent(provider)}/accounts/${encodeURIComponent(id)}`)
   const response = await fetch(endpoint, { method: 'DELETE' })
+  if (!response.ok) throw new Error(await readApiError(response))
+}
+
+/**
+ * Start an OAuth SSE stream for adding a new account to the credential pool.
+ * POSTs to the pool-specific login endpoint, NOT the legacy per-provider login.
+ */
+export async function startPoolAddAccountOAuthStream(
+  wsUrl: string,
+  provider: string,
+  handlers: SettingsAuthOAuthStreamHandlers,
+  signal: AbortSignal,
+): Promise<void> {
+  const endpoint = resolveApiEndpoint(wsUrl, `/api/settings/auth/${encodeURIComponent(provider)}/accounts/login`)
+  const response = await fetch(endpoint, { method: 'POST', signal })
+  if (!response.ok) throw new Error(await readApiError(response))
+  if (!response.body) throw new Error('OAuth login stream is unavailable.')
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let lineBuffer = ''
+  let eventName = 'message'
+  let eventDataLines: string[] = []
+
+  const flushEvent = (): void => {
+    if (eventDataLines.length === 0) { eventName = 'message'; return }
+    const rawData = eventDataLines.join('\n')
+    eventDataLines = []
+
+    if (eventName === 'auth_url') {
+      const payload = parseSettingsAuthOAuthEventData(rawData)
+      if (typeof payload.url !== 'string' || !payload.url.trim()) throw new Error('OAuth auth_url event is missing a URL.')
+      handlers.onAuthUrl({ url: payload.url, instructions: typeof payload.instructions === 'string' ? payload.instructions : undefined })
+    } else if (eventName === 'prompt') {
+      const payload = parseSettingsAuthOAuthEventData(rawData)
+      if (typeof payload.message !== 'string' || !payload.message.trim()) throw new Error('OAuth prompt event is missing a message.')
+      handlers.onPrompt({ message: payload.message, placeholder: typeof payload.placeholder === 'string' ? payload.placeholder : undefined })
+    } else if (eventName === 'progress') {
+      const payload = parseSettingsAuthOAuthEventData(rawData)
+      if (typeof payload.message === 'string' && payload.message.trim()) handlers.onProgress({ message: payload.message })
+    } else if (eventName === 'complete') {
+      const payload = parseSettingsAuthOAuthEventData(rawData)
+      const providerId = normalizeSettingsAuthProviderId(payload.provider)
+      if (!providerId || payload.status !== 'connected') throw new Error('OAuth complete event payload is invalid.')
+      handlers.onComplete({ provider: providerId, status: 'connected' })
+    } else if (eventName === 'error') {
+      const payload = parseSettingsAuthOAuthEventData(rawData)
+      const message = typeof payload.message === 'string' && payload.message.trim() ? payload.message : 'OAuth login failed.'
+      handlers.onError(message)
+    }
+    eventName = 'message'
+  }
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    lineBuffer += decoder.decode(value, { stream: true })
+    let newlineIndex = lineBuffer.indexOf('\n')
+    while (newlineIndex >= 0) {
+      let line = lineBuffer.slice(0, newlineIndex)
+      lineBuffer = lineBuffer.slice(newlineIndex + 1)
+      if (line.endsWith('\r')) line = line.slice(0, -1)
+      if (!line) flushEvent()
+      else if (line.startsWith(':')) { /* comment */ }
+      else if (line.startsWith('event:')) eventName = line.slice('event:'.length).trim()
+      else if (line.startsWith('data:')) eventDataLines.push(line.slice('data:'.length).trimStart())
+      newlineIndex = lineBuffer.indexOf('\n')
+    }
+  }
+  flushEvent()
+}
+
+/**
+ * Submit a prompt response (e.g. authorization code) for the pool add-account OAuth flow.
+ */
+export async function submitPoolAddAccountOAuthPrompt(wsUrl: string, provider: string, value: string): Promise<void> {
+  const endpoint = resolveApiEndpoint(wsUrl, `/api/settings/auth/${encodeURIComponent(provider)}/accounts/login/respond`)
+  const response = await fetch(endpoint, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ value }) })
   if (!response.ok) throw new Error(await readApiError(response))
 }

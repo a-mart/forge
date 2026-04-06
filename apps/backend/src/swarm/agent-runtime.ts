@@ -69,6 +69,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
   /** Credential pool fields for multi-account failover */
   pooledCredentialId: string | undefined;
+  pooledCredentialProvider: string | undefined;
   credentialPoolService: CredentialPoolService | undefined;
 
   private readonly session: AgentSession;
@@ -1002,21 +1003,29 @@ export class AgentRuntime implements SwarmAgentRuntime {
   ): Promise<boolean> {
     const pool = this.credentialPoolService;
     const currentCredId = this.pooledCredentialId;
-    if (!pool || !currentCredId) return false;
+    const pooledProvider = normalizeProviderId(this.pooledCredentialProvider);
+    const failingProvider = normalizeProviderId(this.session.model?.provider ?? this.descriptor.model.provider);
+    if (!pool || !currentCredId || !pooledProvider || failingProvider !== pooledProvider) {
+      return false;
+    }
 
     // Check for 401 auth errors first — mark auth_error, no rotation
     const is401 = /\b401\b/.test(errorMessage) || /\bunauthorized\b/i.test(errorMessage);
     if (is401) {
       try {
-        await pool.markAuthError("openai-codex", currentCredId);
+        await pool.markAuthError(pooledProvider, currentCredId);
         this.logRuntimeError("prompt_dispatch", error, {
           stage: "credential_pool:auth_error",
-          credentialId: currentCredId
+          credentialId: currentCredId,
+          provider: pooledProvider,
+          failingProvider
         });
       } catch (markError) {
         this.logRuntimeError("prompt_dispatch", markError, {
           stage: "credential_pool:mark_auth_error_failed",
-          credentialId: currentCredId
+          credentialId: currentCredId,
+          provider: pooledProvider,
+          failingProvider
         });
       }
       return false;
@@ -1032,20 +1041,21 @@ export class AgentRuntime implements SwarmAgentRuntime {
     const cooldownUntil = Date.now() + (classification.retryAfterMs ?? defaultCooldownMs);
 
     try {
-      await pool.markExhausted("openai-codex", currentCredId, { cooldownUntil });
+      await pool.markExhausted(pooledProvider, currentCredId, { cooldownUntil });
     } catch (markError) {
       this.logRuntimeError("prompt_dispatch", markError, {
         stage: "credential_pool:mark_exhausted_failed",
-        credentialId: currentCredId
+        credentialId: currentCredId,
+        provider: pooledProvider,
+        failingProvider
       });
       return false;
     }
 
     // Try to select next healthy credential
-    const nextSelection = await pool.select("openai-codex");
+    const nextSelection = await pool.select(pooledProvider);
     if (!nextSelection) {
-      // All exhausted
-      const earliestExpiry = await pool.getEarliestCooldownExpiry("openai-codex");
+      const earliestExpiry = await pool.getEarliestCooldownExpiry(pooledProvider);
       const resetInfo = earliestExpiry
         ? ` Estimated reset: ${new Date(earliestExpiry).toLocaleTimeString()}.`
         : "";
@@ -1055,7 +1065,9 @@ export class AgentRuntime implements SwarmAgentRuntime {
         message: `All OpenAI accounts are rate-limited.${resetInfo}`,
         details: {
           stage: "credential_pool:all_exhausted",
-          exhaustedCredentialId: currentCredId
+          exhaustedCredentialId: currentCredId,
+          provider: pooledProvider,
+          failingProvider
         }
       });
       return false;
@@ -1063,14 +1075,14 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
     // Build new auth data and inject into the session
     try {
-      const authData = await pool.buildRuntimeAuthData("openai-codex", nextSelection.credentialId);
+      const authData = await pool.buildRuntimeAuthData(pooledProvider, nextSelection.credentialId);
+      await pool.markUsed(pooledProvider, nextSelection.credentialId);
       const authStorage = this.session.modelRegistry?.authStorage;
 
       if (authStorage) {
-        // Replace the openai-codex credential in the existing auth storage
-        const newCredential = authData["openai-codex"];
+        const newCredential = authData[pooledProvider];
         if (newCredential) {
-          authStorage.set("openai-codex", newCredential);
+          authStorage.set(pooledProvider, newCredential);
         }
       }
 
@@ -1079,7 +1091,9 @@ export class AgentRuntime implements SwarmAgentRuntime {
       this.logRuntimeError("prompt_dispatch", error, {
         stage: "credential_pool:rotated",
         fromCredentialId: currentCredId,
-        toCredentialId: nextSelection.credentialId
+        toCredentialId: nextSelection.credentialId,
+        provider: pooledProvider,
+        failingProvider
       });
 
       await this.reportRuntimeError({
@@ -1088,18 +1102,26 @@ export class AgentRuntime implements SwarmAgentRuntime {
         details: {
           stage: "credential_pool:rotating",
           fromCredentialId: currentCredId,
-          toCredentialId: nextSelection.credentialId
+          toCredentialId: nextSelection.credentialId,
+          provider: pooledProvider,
+          failingProvider
         }
       });
 
-      // Retry the prompt with the new credential
-      this.dispatchPrompt(message);
+      // Retry after the current dispatch promise unwinds so promptDispatchPending stays accurate.
+      setTimeout(() => {
+        if (this.status !== "terminated") {
+          this.dispatchPrompt(message);
+        }
+      }, 0);
       return true;
     } catch (rotationError) {
       this.logRuntimeError("prompt_dispatch", rotationError, {
         stage: "credential_pool:rotation_failed",
         fromCredentialId: currentCredId,
-        toCredentialId: nextSelection.credentialId
+        toCredentialId: nextSelection.credentialId,
+        provider: pooledProvider,
+        failingProvider
       });
       return false;
     }
@@ -1700,6 +1722,11 @@ function buildUserMessageContent(text: string, images: ImageContent[]): string |
 
 function isLikelyCompactionError(message: string): boolean {
   return /\bcompact(?:ion)?\b/i.test(message);
+}
+
+function normalizeProviderId(provider: string | undefined): string | undefined {
+  const normalized = provider?.trim().toLowerCase();
+  return normalized ? normalized : undefined;
 }
 
 function normalizeRuntimeSessionEvent(event: AgentSessionEvent): RuntimeSessionEvent | null {

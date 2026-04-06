@@ -170,7 +170,7 @@ export class RuntimeFactory {
     });
 
     // Pool-aware credential selection for OpenAI Codex multi-account
-    const poolSelection = await this.selectPooledCredential(authFilePath);
+    const poolSelection = await this.selectPooledCredential(descriptor);
     const authStorage = poolSelection?.authStorage ?? AuthStorage.create(authFilePath);
     const pooledCredentialId = poolSelection?.credentialId;
 
@@ -362,6 +362,7 @@ export class RuntimeFactory {
 
     if (pooledCredentialId) {
       runtime.pooledCredentialId = pooledCredentialId;
+      runtime.pooledCredentialProvider = descriptor.model.provider;
       runtime.credentialPoolService = this.deps.getCredentialPoolService?.();
     }
 
@@ -735,28 +736,42 @@ export class RuntimeFactory {
    * Returns null if pool has 0-1 credentials (use default file-backed auth).
    */
   private async selectPooledCredential(
-    authFilePath: string
+    descriptor: AgentDescriptor
   ): Promise<{ authStorage: AuthStorage; credentialId: string } | null> {
+    if (descriptor.model.provider !== SUPPORTED_POOLED_PROVIDER) {
+      return null;
+    }
+
     const getPool = this.deps.getCredentialPoolService;
     if (!getPool) return null;
 
     const pool = getPool();
-    const poolSize = await pool.getPoolSize("openai-codex");
+    const poolSize = await pool.getPoolSize(SUPPORTED_POOLED_PROVIDER);
     if (poolSize <= 1) return null;
 
-    const selection = await pool.select("openai-codex");
+    const selection = await pool.select(SUPPORTED_POOLED_PROVIDER);
     if (!selection) {
+      const earliestCooldownExpiry = await pool.getEarliestCooldownExpiry(SUPPORTED_POOLED_PROVIDER);
+      const resetMessage = earliestCooldownExpiry
+        ? ` Earliest cooldown reset: ${new Date(earliestCooldownExpiry).toISOString()}.`
+        : " No cooldown reset time is currently available.";
+
       this.deps.logDebug("runtime:credential_pool:all_exhausted", {
-        message: "All OpenAI Codex credentials exhausted, falling back to file-backed auth"
+        provider: SUPPORTED_POOLED_PROVIDER,
+        earliestCooldownExpiry,
+        message: `All pooled ${SUPPORTED_POOLED_PROVIDER} credentials are unavailable.${resetMessage}`
       });
-      return null;
+
+      throw new Error(`All pooled ${SUPPORTED_POOLED_PROVIDER} credentials are unavailable.${resetMessage}`);
     }
 
     try {
-      const authData = await pool.buildRuntimeAuthData("openai-codex", selection.credentialId);
+      const authData = await pool.buildRuntimeAuthData(SUPPORTED_POOLED_PROVIDER, selection.credentialId);
       const authStorage = AuthStorage.inMemory(authData);
+      await pool.markUsed(SUPPORTED_POOLED_PROVIDER, selection.credentialId);
 
       this.deps.logDebug("runtime:credential_pool:selected", {
+        provider: SUPPORTED_POOLED_PROVIDER,
         credentialId: selection.credentialId,
         authStorageKey: selection.authStorageKey
       });
@@ -764,10 +779,11 @@ export class RuntimeFactory {
       return { authStorage, credentialId: selection.credentialId };
     } catch (error) {
       this.deps.logDebug("runtime:credential_pool:build_auth_error", {
+        provider: SUPPORTED_POOLED_PROVIDER,
         credentialId: selection.credentialId,
         message: error instanceof Error ? error.message : String(error)
       });
-      // Fall back to file-backed auth
+      // Fall back to file-backed auth only when building pooled auth failed.
       return null;
     }
   }
@@ -969,6 +985,7 @@ const CORTEX_ARCHETYPE_ID = "cortex";
 const CORTEX_DISABLED_TOOL_NAMES = new Set(["list_agents", "kill_agent"]);
 const ONBOARDING_SNAPSHOT_MEMORY_HEADER =
   "# Onboarding Snapshot (authoritative backend state — read-only reference)";
+const SUPPORTED_POOLED_PROVIDER = "openai-codex";
 
 function isClaudeSdkModelDescriptor(
   descriptor: Pick<AgentModelDescriptor, "provider">

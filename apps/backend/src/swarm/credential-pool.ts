@@ -324,18 +324,15 @@ export class CredentialPoolService {
     }
 
     const removed = providerPool.credentials[index];
-
-    // Remove from auth.json
-    const authStorage = AuthStorage.create(this.deps.authFile);
-    const key = authStorageKey(provider, removed.id, removed.isPrimary);
-    authStorage.remove(key);
-
     providerPool.credentials.splice(index, 1);
 
-    // If we removed the primary, auto-promote the next one
     if (removed.isPrimary && providerPool.credentials.length > 0) {
       const newPrimary = providerPool.credentials[0];
-      await this.swapPrimary(provider, newPrimary.id, authStorage);
+      await this.promotePrimaryAfterRemoval(provider, newPrimary.id);
+      newPrimary.isPrimary = true;
+    } else {
+      const authStorage = AuthStorage.create(this.deps.authFile);
+      authStorage.remove(authStorageKey(provider, removed.id, false));
     }
 
     await this.persist();
@@ -348,8 +345,7 @@ export class CredentialPoolService {
     const entry = this.findCredential(provider, credentialId);
     if (entry.isPrimary) return; // Already primary
 
-    const authStorage = AuthStorage.create(this.deps.authFile);
-    await this.swapPrimary(provider, credentialId, authStorage);
+    await this.swapPrimary(provider, credentialId);
     await this.persist();
   }
 
@@ -452,7 +448,7 @@ export class CredentialPoolService {
    * Swap primary designation: moves the new primary's credential to the bare provider key
    * and the old primary's credential to a suffixed key, all atomically in auth.json.
    */
-  private async swapPrimary(provider: string, newPrimaryId: string, authStorage: AuthStorage): Promise<void> {
+  private async swapPrimary(provider: string, newPrimaryId: string): Promise<void> {
     const providerPool = this.pool[provider];
     if (!providerPool) return;
 
@@ -461,28 +457,29 @@ export class CredentialPoolService {
     if (!newPrimary) throw new Error(`Credential not found: ${newPrimaryId}`);
     if (newPrimary.isPrimary) return;
 
-    // Read both credentials from auth.json before any mutations
-    const oldPrimaryKey = oldPrimary ? authStorageKey(provider, oldPrimary.id, true) : null;
+    const rawAuth = await readAuthFileRaw(this.deps.authFile);
     const newPrimaryOldKey = authStorageKey(provider, newPrimary.id, false);
-
-    const oldPrimaryCred = oldPrimaryKey ? authStorage.get(oldPrimaryKey) : null;
-    const newPrimaryCred = authStorage.get(newPrimaryOldKey);
-
-    // Remove old keys
-    if (oldPrimaryKey) authStorage.remove(oldPrimaryKey);
-    authStorage.remove(newPrimaryOldKey);
-
-    // Write with swapped keys
-    if (newPrimaryCred) {
-      authStorage.set(provider, newPrimaryCred); // new primary at bare key
-    }
-    if (oldPrimary && oldPrimaryCred) {
-      const demotedKey = authStorageKey(provider, oldPrimary.id, false);
-      authStorage.set(demotedKey, oldPrimaryCred); // old primary at suffixed key
+    const newPrimaryCred = getAuthCredentialFromRaw(rawAuth, newPrimaryOldKey);
+    if (!newPrimaryCred) {
+      throw new Error(`Credential payload missing from auth store: ${newPrimaryOldKey}`);
     }
 
-    // Update in-memory flags
-    if (oldPrimary) oldPrimary.isPrimary = false;
+    const oldPrimaryCred = oldPrimary ? getAuthCredentialFromRaw(rawAuth, authStorageKey(provider, oldPrimary.id, true)) : undefined;
+
+    delete rawAuth[newPrimaryOldKey];
+    if (oldPrimary) {
+      delete rawAuth[authStorageKey(provider, oldPrimary.id, true)];
+    }
+    rawAuth[provider] = newPrimaryCred;
+
+    if (oldPrimary) {
+      if (oldPrimaryCred) {
+        rawAuth[authStorageKey(provider, oldPrimary.id, false)] = oldPrimaryCred;
+      }
+      oldPrimary.isPrimary = false;
+    }
+
+    await writeJsonFileAtomic(this.deps.authFile, rawAuth);
     newPrimary.isPrimary = true;
   }
 
@@ -500,18 +497,28 @@ export class CredentialPoolService {
   }
 
   private async persist(): Promise<void> {
-    const dir = dirname(this.poolFilePath);
-    await mkdir(dir, { recursive: true });
-
-    const tmp = `${this.poolFilePath}.tmp`;
-    await writeFile(tmp, `${JSON.stringify(this.pool, null, 2)}\n`, "utf8");
-    await renameWithRetry(tmp, this.poolFilePath, { retries: 8, baseDelayMs: 15 });
+    await writeJsonFileAtomic(this.poolFilePath, this.pool);
   }
 
   private assertSupportedProvider(provider: string): void {
     if (provider !== SUPPORTED_PROVIDER) {
       throw new Error(`Credential pooling is only supported for '${SUPPORTED_PROVIDER}', got '${provider}'`);
     }
+  }
+
+  private async promotePrimaryAfterRemoval(provider: string, newPrimaryId: string): Promise<void> {
+    const rawAuth = await readAuthFileRaw(this.deps.authFile);
+    const newPrimaryKey = authStorageKey(provider, newPrimaryId, false);
+    const newPrimaryCred = getAuthCredentialFromRaw(rawAuth, newPrimaryKey);
+    if (!newPrimaryCred) {
+      throw new Error(`Credential payload missing from auth store: ${newPrimaryKey}`);
+    }
+
+    delete rawAuth[provider];
+    delete rawAuth[newPrimaryKey];
+    rawAuth[provider] = newPrimaryCred;
+
+    await writeJsonFileAtomic(this.deps.authFile, rawAuth);
   }
 }
 
@@ -539,6 +546,27 @@ function extractAuthCredentialToken(credential: AuthCredential | undefined): str
   const accessToken = (credential as { access?: unknown }).access;
   if (typeof accessToken === "string" && accessToken.trim().length > 0) return accessToken.trim();
   return undefined;
+}
+
+function getAuthCredentialFromRaw(
+  rawAuth: Record<string, unknown>,
+  key: string
+): AuthCredential | undefined {
+  const value = rawAuth[key];
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+
+  return value as AuthCredential;
+}
+
+async function writeJsonFileAtomic(target: string, data: unknown): Promise<void> {
+  const dir = dirname(target);
+  await mkdir(dir, { recursive: true });
+
+  const tmp = `${target}.tmp.${Date.now()}.${randomUUID()}`;
+  await writeFile(tmp, `${JSON.stringify(data, null, 2)}\n`, "utf8");
+  await renameWithRetry(tmp, target, { retries: 8, baseDelayMs: 15 });
 }
 
 async function readAuthFileRaw(authFile: string): Promise<Record<string, unknown>> {

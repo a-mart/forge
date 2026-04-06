@@ -22,6 +22,7 @@ const SETTINGS_AUTH_ENDPOINT_PATH = "/api/settings/auth";
 const SETTINGS_AUTH_LOGIN_ENDPOINT_PATH = "/api/settings/auth/login";
 const SETTINGS_AUTH_LOGIN_METHODS = "POST, OPTIONS";
 const SETTINGS_AUTH_METHODS = "GET, PUT, DELETE, POST, OPTIONS";
+const OPENAI_CODEX_POOL_ADD_FLOW_KEY = "openai-codex:pool-add";
 
 type OAuthLoginProviderId = "anthropic" | "openai-codex";
 
@@ -215,6 +216,11 @@ async function handleSettingsAuthHttpRequest(
       return;
     }
 
+    if (provider === "openai-codex") {
+      sendJson(response, 400, { error: "Use pool management to remove OpenAI Codex accounts." });
+      return;
+    }
+
     await swarmManager.deleteSettingsAuth(provider);
     const providers = await swarmManager.listSettingsAuth();
     sendJson(response, 200, { ok: true, providers });
@@ -264,6 +270,32 @@ async function handleCredentialPoolHttpRequest(
   // POST /api/settings/auth/openai-codex/accounts/login — add account via OAuth SSE
   if (request.method === "POST" && relativePath === "/login") {
     await handlePoolAddAccountOAuthLogin(swarmManager, activeSettingsAuthLoginFlows, request, response);
+    return;
+  }
+
+  // POST /api/settings/auth/openai-codex/accounts/login/respond — submit prompt input for pool OAuth flow
+  if (request.method === "POST" && relativePath === "/login/respond") {
+    const payload = parseSettingsAuthLoginRespondBody(await readJsonBody(request));
+    // Find the active pool add-account flow (keyed as "openai-codex:add-<nonce>")
+    let poolFlow: SettingsAuthLoginFlow | undefined;
+    for (const [key, flow] of activeSettingsAuthLoginFlows.entries()) {
+      if (key.startsWith("openai-codex:add-") && !flow.closed) {
+        poolFlow = flow;
+        break;
+      }
+    }
+    if (!poolFlow) {
+      sendJson(response, 409, { error: "No active pool add-account OAuth flow" });
+      return;
+    }
+    if (!poolFlow.pendingPrompt) {
+      sendJson(response, 409, { error: "OAuth login flow is not waiting for input" });
+      return;
+    }
+    const pendingPrompt = poolFlow.pendingPrompt;
+    poolFlow.pendingPrompt = null;
+    pendingPrompt.resolve(payload.value);
+    sendJson(response, 200, { ok: true });
     return;
   }
 
@@ -391,11 +423,14 @@ async function handlePoolAddAccountOAuthLogin(
   // Use a nonce key to avoid collisions with existing login flows
   const flowKey = `openai-codex:add-${Date.now()}`;
 
-  // Check if there's already an add-account flow running
+  // Check if there's already an add-account flow running or a provider-scoped login using the same provider.
   for (const [key, existingFlow] of activeSettingsAuthLoginFlows.entries()) {
-    if (key.startsWith("openai-codex:add-") && !existingFlow.closed) {
+    if (
+      !existingFlow.closed &&
+      (key.startsWith("openai-codex:add-") || key === OPENAI_CODEX_POOL_ADD_FLOW_KEY || key === "openai-codex")
+    ) {
       applyCorsHeaders(request, response, "POST, OPTIONS");
-      sendJson(response, 409, { error: "An add-account OAuth flow is already in progress" });
+      sendJson(response, 409, { error: "An OpenAI OAuth flow is already in progress" });
       return;
     }
   }
@@ -407,6 +442,7 @@ async function handlePoolAddAccountOAuthLogin(
     closed: false
   };
   activeSettingsAuthLoginFlows.set(flowKey, flow);
+  activeSettingsAuthLoginFlows.set(OPENAI_CODEX_POOL_ADD_FLOW_KEY, flow);
 
   const provider = SETTINGS_AUTH_LOGIN_PROVIDERS["openai-codex"];
 
@@ -442,6 +478,10 @@ async function handlePoolAddAccountOAuthLogin(
     const activeFlow = activeSettingsAuthLoginFlows.get(flowKey);
     if (activeFlow === flow) {
       activeSettingsAuthLoginFlows.delete(flowKey);
+    }
+    const aliasFlow = activeSettingsAuthLoginFlows.get(OPENAI_CODEX_POOL_ADD_FLOW_KEY);
+    if (aliasFlow === flow) {
+      activeSettingsAuthLoginFlows.delete(OPENAI_CODEX_POOL_ADD_FLOW_KEY);
     }
   };
 
@@ -566,7 +606,9 @@ async function handleSettingsAuthLoginHttpRequest(
     }
 
     const payload = parseSettingsAuthLoginRespondBody(await readJsonBody(request));
-    const flow = activeSettingsAuthLoginFlows.get(providerId);
+    const flow =
+      activeSettingsAuthLoginFlows.get(providerId) ??
+      (providerId === "openai-codex" ? activeSettingsAuthLoginFlows.get(OPENAI_CODEX_POOL_ADD_FLOW_KEY) : undefined);
     if (!flow) {
       sendJson(response, 409, { error: "No active OAuth login flow for provider" });
       return;
@@ -595,7 +637,10 @@ async function handleSettingsAuthLoginHttpRequest(
     return;
   }
 
-  if (activeSettingsAuthLoginFlows.has(providerId)) {
+  if (
+    activeSettingsAuthLoginFlows.has(providerId) ||
+    (providerId === "openai-codex" && activeSettingsAuthLoginFlows.has(OPENAI_CODEX_POOL_ADD_FLOW_KEY))
+  ) {
     sendJson(response, 409, { error: "OAuth login already in progress for provider" });
     return;
   }
