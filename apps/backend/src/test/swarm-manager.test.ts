@@ -7639,6 +7639,82 @@ describe('SwarmManager', () => {
     expect(state.runtimes.has(sessionAgent.agentId)).toBe(true)
   })
 
+  it('does not recycle manager runtimes when a cwd update resolves to the current cwd', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    const rootSession = await bootWithDefaultManager(manager, config)
+    const { sessionAgent } = await manager.createSession('manager', { label: 'Alt Session' })
+
+    const rootRuntime = manager.runtimeByAgentId.get(rootSession.agentId)
+    const sessionRuntime = manager.runtimeByAgentId.get(sessionAgent.agentId)
+    const state = manager as unknown as {
+      runtimes: Map<string, SwarmAgentRuntime>
+    }
+
+    expect(rootRuntime).toBeDefined()
+    expect(sessionRuntime).toBeDefined()
+    expect(state.runtimes.has(rootSession.agentId)).toBe(true)
+    expect(state.runtimes.has(sessionAgent.agentId)).toBe(true)
+
+    const unchangedCwd = manager.getAgent(rootSession.agentId)?.cwd
+    expect(unchangedCwd).toBeTypeOf('string')
+
+    await expect(manager.updateManagerCwd('manager', unchangedCwd as string)).resolves.toBe(unchangedCwd)
+
+    expect(rootRuntime?.recycleCalls).toBe(0)
+    expect(sessionRuntime?.recycleCalls).toBe(0)
+    expect(state.runtimes.has(rootSession.agentId)).toBe(true)
+    expect(state.runtimes.has(sessionAgent.agentId)).toBe(true)
+  })
+
+  it('persists cwd updates even when one runtime recycle fails', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    const rootSession = await bootWithDefaultManager(manager, config)
+    const { sessionAgent } = await manager.createSession('manager', { label: 'Alt Session' })
+    const nextCwd = join(config.defaultCwd, 'worktrees', 'next-cwd')
+
+    await mkdir(nextCwd, { recursive: true })
+
+    const originalApplyManagerRuntimeRecyclePolicy = (
+      manager as unknown as {
+        applyManagerRuntimeRecyclePolicy: (agentId: string, reason: string) => Promise<'recycled' | 'deferred' | 'none'>
+      }
+    ).applyManagerRuntimeRecyclePolicy.bind(manager)
+    const applyManagerRuntimeRecyclePolicySpy = vi
+      .spyOn(manager as unknown as { applyManagerRuntimeRecyclePolicy: (agentId: string, reason: string) => Promise<'recycled' | 'deferred' | 'none'> }, 'applyManagerRuntimeRecyclePolicy')
+      .mockImplementation(async (agentId, reason) => {
+        if (agentId === rootSession.agentId) {
+          throw new Error('recycle boom')
+        }
+        return originalApplyManagerRuntimeRecyclePolicy(agentId, reason)
+      })
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    const resolvedCwd = await manager.updateManagerCwd('manager', nextCwd)
+
+    expect(applyManagerRuntimeRecyclePolicySpy).toHaveBeenCalledTimes(2)
+    expect(manager.getAgent(rootSession.agentId)?.cwd).toBe(resolvedCwd)
+    expect(manager.getAgent(sessionAgent.agentId)?.cwd).toBe(resolvedCwd)
+    expect(manager.runtimeByAgentId.get(rootSession.agentId)?.recycleCalls).toBe(0)
+    expect(manager.runtimeByAgentId.get(sessionAgent.agentId)?.recycleCalls).toBe(1)
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('manager:update_cwd:recycle_failed'))
+
+    const store = JSON.parse(await readFile(config.paths.agentsStoreFile, 'utf8')) as { agents: AgentDescriptor[] }
+    expect(store.agents.find((agent) => agent.agentId === rootSession.agentId)?.cwd).toBe(resolvedCwd)
+    expect(store.agents.find((agent) => agent.agentId === sessionAgent.agentId)?.cwd).toBe(resolvedCwd)
+  })
+
+  it('rejects cwd updates for the Cortex profile', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await expect(manager.updateManagerCwd('cortex', config.defaultCwd)).rejects.toThrow(
+      'Cannot change working directory for Cortex profile',
+    )
+  })
+
   it('recycles or defers manager runtimes when the project-agent directory changes', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)

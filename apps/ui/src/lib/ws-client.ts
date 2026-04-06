@@ -44,6 +44,7 @@ export interface DirectoryValidationResult {
   path: string
   valid: boolean
   message: string | null
+  resolvedPath?: string
 }
 
 type Listener = (state: ManagerWsState) => void
@@ -73,6 +74,7 @@ type WsRequestResultMap = {
   create_manager: AgentDescriptor
   delete_manager: { managerId: string }
   update_manager_model: { managerId: string }
+  update_manager_cwd: { managerId: string; cwd: string }
   stop_all_agents: { managerId: string; stoppedWorkerIds: string[]; managerStopped: boolean }
   create_session: SessionCreatedResult
   stop_session: SessionActionResult
@@ -102,6 +104,7 @@ const WS_REQUEST_TYPES: WsRequestType[] = [
   'create_manager',
   'delete_manager',
   'update_manager_model',
+  'update_manager_cwd',
   'stop_all_agents',
   'create_session',
   'stop_session',
@@ -130,6 +133,7 @@ const WS_REQUEST_ERROR_HINTS: Array<{ requestType: WsRequestType; codeFragment: 
   { requestType: 'create_manager', codeFragment: 'create_manager' },
   { requestType: 'delete_manager', codeFragment: 'delete_manager' },
   { requestType: 'update_manager_model', codeFragment: 'update_manager_model' },
+  { requestType: 'update_manager_cwd', codeFragment: 'update_manager_cwd' },
   { requestType: 'stop_all_agents', codeFragment: 'stop_all_agents' },
   { requestType: 'create_session', codeFragment: 'create_session' },
   { requestType: 'stop_session', codeFragment: 'stop_session' },
@@ -510,6 +514,21 @@ export class ManagerWsClient {
         reasoningLevel,
         requestId,
       }))
+  }
+
+  async updateManagerCwd(managerId: string, cwd: string): Promise<{ managerId: string; cwd: string }> {
+    const trimmed = managerId.trim()
+    if (!trimmed) throw new Error('Manager id is required.')
+    if (!cwd.trim()) throw new Error('Working directory is required.')
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+      throw new Error('WebSocket is disconnected. Reconnecting...')
+    }
+    return this.enqueueRequest('update_manager_cwd', (requestId) => ({
+      type: 'update_manager_cwd',
+      managerId: trimmed,
+      cwd: cwd.trim(),
+      requestId,
+    }))
   }
 
   reorderProfiles(profileIds: string[]): boolean {
@@ -1342,6 +1361,14 @@ export class ManagerWsClient {
         break
       }
 
+      case 'manager_cwd_updated': {
+        this.requestTracker.resolve('update_manager_cwd', event.requestId, {
+          managerId: event.managerId,
+          cwd: event.cwd,
+        })
+        break
+      }
+
       case 'session_created': {
         this.requestTracker.resolve('create_session', event.requestId, {
           sessionAgent: event.sessionAgent,
@@ -1544,6 +1571,7 @@ export class ManagerWsClient {
           path: event.path,
           valid: event.valid,
           message: event.message ?? null,
+          resolvedPath: event.resolvedPath,
         })
         break
       }

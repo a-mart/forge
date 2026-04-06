@@ -3584,6 +3584,76 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     });
   }
 
+  async updateManagerCwd(managerId: string, newCwd: string): Promise<string> {
+    const profile = this.profiles.get(managerId);
+    if (!profile) {
+      throw new Error(`Unknown manager profile: ${managerId}`);
+    }
+
+    const sessions = this.getSessionsForProfile(profile.profileId);
+    if (
+      profile.profileId === CORTEX_PROFILE_ID ||
+      sessions.some((descriptor) => normalizeArchetypeId(descriptor.archetypeId ?? "") === CORTEX_ARCHETYPE_ID)
+    ) {
+      throw new Error("Cannot change working directory for Cortex profile");
+    }
+
+    const resolvedCwd = await this.resolveAndValidateCwd(newCwd);
+    if (sessions.every((session) => session.cwd === resolvedCwd)) {
+      this.logDebug("manager:update_cwd:noop", {
+        managerId,
+        newCwd: resolvedCwd,
+        updatedSessions: []
+      });
+      return resolvedCwd;
+    }
+
+    const recycledSessions: string[] = [];
+    const deferredSessions: string[] = [];
+    const recycleFailures: Array<{ agentId: string; error: string }> = [];
+
+    for (const session of sessions) {
+      session.cwd = resolvedCwd;
+      // Intentionally do NOT bump updatedAt — CWD changes are config updates,
+      // not user-visible activity, and bumping would scramble session sort order.
+      this.descriptors.set(session.agentId, session);
+    }
+
+    for (const session of sessions) {
+      try {
+        const recycleDisposition = await this.applyManagerRuntimeRecyclePolicy(session.agentId, "cwd_change");
+        if (recycleDisposition === "recycled") {
+          recycledSessions.push(session.agentId);
+        } else if (recycleDisposition === "deferred") {
+          deferredSessions.push(session.agentId);
+        }
+      } catch (error) {
+        recycleFailures.push({
+          agentId: session.agentId,
+          error: errorToMessage(error)
+        });
+      }
+    }
+
+    await this.saveStore();
+    this.emitAgentsSnapshot();
+
+    if (recycleFailures.length > 0) {
+      console.warn(`[swarm] manager:update_cwd:recycle_failed managerId=${managerId} failures=${JSON.stringify(recycleFailures)}`);
+    }
+
+    this.logDebug("manager:update_cwd", {
+      managerId,
+      newCwd: resolvedCwd,
+      updatedSessions: sessions.map((s) => s.agentId),
+      recycledSessions,
+      deferredSessions,
+      recycleFailures
+    });
+
+    return resolvedCwd;
+  }
+
   async notifySpecialistRosterChanged(profileId: string): Promise<void> {
     try {
       const roster = await this.resolveSpecialistRosterForProfile(profileId);
@@ -3678,6 +3748,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     agentId: string,
     reason:
       | "model_change"
+      | "cwd_change"
       | "idle_transition"
       | "prompt_mode_change"
       | "project_agent_directory_change"
@@ -3726,6 +3797,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     runtime: SwarmAgentRuntime,
     reason:
       | "model_change"
+      | "cwd_change"
       | "idle_transition"
       | "prompt_mode_change"
       | "project_agent_directory_change"

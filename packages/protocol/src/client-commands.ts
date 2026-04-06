@@ -24,6 +24,7 @@ export type ClientCommand =
   | { type: 'create_manager'; name: string; cwd: string; model?: ManagerModelPreset; requestId?: string }
   | { type: 'delete_manager'; managerId: string; requestId?: string }
   | { type: 'update_manager_model'; managerId: string; model: ManagerModelPreset; reasoningLevel?: ManagerReasoningLevel; requestId?: string }
+  | { type: 'update_manager_cwd'; managerId: string; cwd: string; requestId?: string }
   | { type: 'create_session'; profileId: string; label?: string; name?: string; sessionPurpose?: AgentSessionPurpose; requestId?: string }
   | { type: 'stop_session'; agentId: string; requestId?: string }
   | { type: 'resume_session'; agentId: string; requestId?: string }

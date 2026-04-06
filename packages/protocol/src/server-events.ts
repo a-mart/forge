@@ -141,6 +141,13 @@ export interface ManagerModelUpdatedEvent {
   requestId?: string
 }
 
+export interface ManagerCwdUpdatedEvent {
+  type: 'manager_cwd_updated'
+  managerId: string
+  cwd: string
+  requestId?: string
+}
+
 export interface SessionCreatedEvent {
   type: 'session_created'
   profile: ManagerProfile
@@ -479,6 +486,7 @@ export type ServerEvent =
   | ManagerCreatedEvent
   | ManagerDeletedEvent
   | ManagerModelUpdatedEvent
+  | ManagerCwdUpdatedEvent
   | SessionCreatedEvent
   | SessionStoppedEvent
   | SessionResumedEvent

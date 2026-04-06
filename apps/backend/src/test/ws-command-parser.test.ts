@@ -169,6 +169,47 @@ describe('ws command parser session commands', () => {
     })
   })
 
+  it('parses update_manager_cwd commands', () => {
+    const parsed = parseJsonCommand({
+      type: 'update_manager_cwd',
+      managerId: ' project-alpha ',
+      cwd: ' ./apps/backend ',
+      requestId: 'req-cwd',
+    })
+
+    expect(parsed).toEqual({
+      ok: true,
+      command: {
+        type: 'update_manager_cwd',
+        managerId: 'project-alpha',
+        cwd: './apps/backend',
+        requestId: 'req-cwd',
+      },
+    })
+  })
+
+  it('rejects invalid update_manager_cwd payloads', () => {
+    const invalidPayloads: Array<{ payload: unknown; message: string }> = [
+      {
+        payload: { type: 'update_manager_cwd', managerId: '', cwd: '/tmp/project' },
+        message: 'update_manager_cwd.managerId must be a non-empty string',
+      },
+      {
+        payload: { type: 'update_manager_cwd', managerId: 'project-alpha', cwd: '   ' },
+        message: 'update_manager_cwd.cwd must be a non-empty string',
+      },
+      {
+        payload: { type: 'update_manager_cwd', managerId: 'project-alpha', cwd: '/tmp/project', requestId: 42 },
+        message: 'update_manager_cwd.requestId must be a string when provided',
+      },
+    ]
+
+    for (const testCase of invalidPayloads) {
+      const parsed = parseJsonCommand(testCase.payload)
+      expect(parsed).toEqual({ ok: false, error: testCase.message })
+    }
+  })
+
   it('parses mark_unread commands', () => {
     expect(parseJsonCommand({
       type: 'mark_unread',
@@ -525,6 +566,7 @@ describe('ws command parser session commands', () => {
       { type: 'merge_session_memory', agentId: 'manager--s2', requestId: 'req-merge' },
       { type: 'get_session_workers', sessionAgentId: 'manager--s2', requestId: 'req-workers' },
       { type: 'mark_unread', agentId: 'manager--s2', requestId: 'req-mark-unread' },
+      { type: 'update_manager_cwd', managerId: 'manager', cwd: '/tmp/project', requestId: 'req-update-cwd' },
     ] as const
 
     for (const command of commands) {

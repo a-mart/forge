@@ -1158,12 +1158,14 @@ describe('ManagerWsClient', () => {
       requestId: validatePayload.requestId,
       path: '/tmp/a',
       valid: true,
+      resolvedPath: '/private/tmp/a',
     })
 
     await expect(validatePromise).resolves.toEqual({
       path: '/tmp/a',
       valid: true,
       message: null,
+      resolvedPath: '/private/tmp/a',
     })
 
     const pickPromise = client.pickDirectory('/tmp')

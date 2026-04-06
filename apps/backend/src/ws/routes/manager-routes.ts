@@ -142,6 +142,42 @@ export async function handleManagerCommand(context: ManagerCommandRouteContext):
     return true;
   }
 
+  if (command.type === "update_manager_cwd") {
+    const managerContextId = resolveManagerContextAgentId(subscribedAgentId);
+    if (!managerContextId) {
+      send(socket, {
+        type: "error",
+        code: "UNKNOWN_AGENT",
+        message: `Agent ${subscribedAgentId} does not exist.`,
+        requestId: command.requestId
+      });
+      return true;
+    }
+
+    try {
+      const resolvedCwd = await swarmManager.updateManagerCwd(
+        command.managerId,
+        command.cwd
+      );
+
+      broadcastToSubscribed({
+        type: "manager_cwd_updated",
+        managerId: command.managerId,
+        cwd: resolvedCwd,
+        requestId: command.requestId
+      });
+    } catch (error) {
+      send(socket, {
+        type: "error",
+        code: "UPDATE_MANAGER_CWD_FAILED",
+        message: error instanceof Error ? error.message : String(error),
+        requestId: command.requestId
+      });
+    }
+
+    return true;
+  }
+
   if (command.type === "rename_profile") {
     try {
       await swarmManager.renameProfile(command.profileId, command.displayName);

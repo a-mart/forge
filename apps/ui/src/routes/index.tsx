@@ -898,6 +898,25 @@ export function IndexPage() {
     }
   }, [clientRef, setState])
 
+  const handleUpdateManagerCwd = useCallback(async (managerId: string, cwd: string) => {
+    const client = clientRef.current
+    if (!client) throw new Error('WebSocket is not connected.')
+
+    await client.updateManagerCwd(managerId, cwd)
+  }, [clientRef])
+
+  const handleBrowseDirectoryForCwd = useCallback(async (defaultPath: string) => {
+    const client = clientRef.current
+    if (!client) return null
+    return client.pickDirectory(defaultPath)
+  }, [clientRef])
+
+  const handleValidateDirectoryForCwd = useCallback(async (path: string) => {
+    const client = clientRef.current
+    if (!client) throw new Error('WebSocket is not connected.')
+    return client.validateDirectory(path)
+  }, [clientRef])
+
   const handleReorderProfiles = useCallback((profileIds: string[]) => {
     clientRef.current?.reorderProfiles(profileIds)
   }, [clientRef])
@@ -1152,6 +1171,9 @@ export function IndexPage() {
           onForkSession={handleForkSession}
           onMarkUnread={handleMarkUnread}
           onUpdateManagerModel={handleUpdateManagerModel}
+          onUpdateManagerCwd={handleUpdateManagerCwd}
+          onBrowseDirectory={handleBrowseDirectoryForCwd}
+          onValidateDirectory={handleValidateDirectoryForCwd}
           onRequestSessionWorkers={handleRequestSessionWorkers}
           onReorderProfiles={handleReorderProfiles}
           onSetSessionProjectAgent={handleSetSessionProjectAgent}

@@ -221,6 +221,32 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
     };
   }
 
+  if (maybe.type === "update_manager_cwd") {
+    const managerId = (maybe as { managerId?: unknown }).managerId;
+    const cwd = (maybe as { cwd?: unknown }).cwd;
+    const requestId = (maybe as { requestId?: unknown }).requestId;
+
+    if (typeof managerId !== "string" || managerId.trim().length === 0) {
+      return { ok: false, error: "update_manager_cwd.managerId must be a non-empty string" };
+    }
+    if (typeof cwd !== "string" || cwd.trim().length === 0) {
+      return { ok: false, error: "update_manager_cwd.cwd must be a non-empty string" };
+    }
+    if (requestId !== undefined && typeof requestId !== "string") {
+      return { ok: false, error: "update_manager_cwd.requestId must be a string when provided" };
+    }
+
+    return {
+      ok: true,
+      command: {
+        type: "update_manager_cwd",
+        managerId: managerId.trim(),
+        cwd: cwd.trim(),
+        requestId
+      }
+    };
+  }
+
   if (maybe.type === "create_session") {
     const profileId = (maybe as { profileId?: unknown }).profileId;
     const label = (maybe as { label?: unknown }).label;
@@ -988,6 +1014,7 @@ export function extractRequestId(command: ClientCommand): string | undefined {
     case "create_manager":
     case "delete_manager":
     case "update_manager_model":
+    case "update_manager_cwd":
     case "create_session":
     case "stop_session":
     case "resume_session":

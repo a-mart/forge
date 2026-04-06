@@ -10,6 +10,7 @@ import {
   CircleHelp,
   Copy,
   Edit3,
+  FolderOpen,
   EyeOff,
   GitFork,
   History,
@@ -34,6 +35,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '
 import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { ChangeCwdDialog } from './ChangeCwdDialog'
 import { ForkSessionDialog } from './ForkSessionDialog'
 import { SidebarUsageRings, SidebarUsagePanel } from './SidebarUsageWidget'
 import { SpecialistBadge } from './SpecialistBadge'
@@ -123,6 +125,9 @@ interface AgentSidebarProps {
   onForkSession?: (sourceAgentId: string, name?: string) => void
   onMarkUnread?: (agentId: string) => void
   onUpdateManagerModel?: (managerId: string, model: ManagerModelPreset, reasoningLevel?: ManagerReasoningLevel) => void
+  onUpdateManagerCwd?: (managerId: string, cwd: string) => Promise<void>
+  onBrowseDirectory?: (defaultPath: string) => Promise<string | null>
+  onValidateDirectory?: (path: string) => Promise<import('@/lib/ws-client').DirectoryValidationResult>
   onRequestSessionWorkers?: (sessionId: string) => void
   onReorderProfiles?: (profileIds: string[]) => void
   onSetSessionProjectAgent?: (agentId: string, projectAgent: { whenToUse: string; systemPrompt?: string; handle?: string } | null) => Promise<void>
@@ -805,6 +810,7 @@ function ProfileGroup({
   onForkSession,
   onMarkUnread,
   onChangeModel,
+  onChangeCwd,
   showModelIcons,
   highlightQuery,
   dragHandleRef,
@@ -842,6 +848,7 @@ function ProfileGroup({
   onForkSession?: (sourceAgentId: string) => void
   onMarkUnread?: (agentId: string) => void
   onChangeModel?: (profileId: string) => void
+  onChangeCwd?: (profileId: string) => void
   showModelIcons?: boolean
   highlightQuery?: string
   dragHandleRef?: (element: HTMLElement | null) => void
@@ -981,6 +988,12 @@ function ProfileGroup({
             <ContextMenuItem onClick={() => onChangeModel(profile.profileId)}>
               <RefreshCw className="mr-2 size-3.5" />
               Change Model
+            </ContextMenuItem>
+          ) : null}
+          {onChangeCwd && !isCortexProfile(treeRow) ? (
+            <ContextMenuItem onClick={() => onChangeCwd(profile.profileId)}>
+              <FolderOpen className="mr-2 size-3.5" />
+              Change Working Directory
             </ContextMenuItem>
           ) : null}
           {onCreateAgentCreator ? (
@@ -2529,6 +2542,9 @@ export function AgentSidebar({
   onForkSession,
   onMarkUnread,
   onUpdateManagerModel,
+  onUpdateManagerCwd,
+  onBrowseDirectory,
+  onValidateDirectory,
   onRequestSessionWorkers,
   onReorderProfiles,
   onSetSessionProjectAgent,
@@ -2652,6 +2668,11 @@ export function AgentSidebar({
     profileLabel: string
     currentPreset: ManagerModelPreset | undefined
     currentReasoningLevel: ManagerReasoningLevel | undefined
+  } | null>(null)
+  const [changeCwdTarget, setChangeCwdTarget] = useState<{
+    profileId: string
+    profileLabel: string
+    currentCwd: string
   } | null>(null)
   const [projectAgentTarget, setProjectAgentTarget] = useState<{
     agentId: string
@@ -2823,6 +2844,24 @@ export function AgentSidebar({
     onUpdateManagerModel?.(profileId, model, reasoningLevel)
     setChangeModelTarget(null)
   }, [onUpdateManagerModel])
+
+  const handleRequestChangeCwd = useCallback((profileId: string) => {
+    const profile = profiles.find((p) => p.profileId === profileId)
+    const defaultSession = agents.find(
+      (a) => a.role === 'manager' && (a.profileId === profileId || a.agentId === profileId),
+    )
+    setChangeCwdTarget({
+      profileId,
+      profileLabel: profile?.displayName || profileId,
+      currentCwd: defaultSession?.cwd || '',
+    })
+  }, [agents, profiles])
+
+  const handleConfirmChangeCwd = useCallback(async (profileId: string, cwd: string) => {
+    if (!onUpdateManagerCwd) return
+    await onUpdateManagerCwd(profileId, cwd)
+    setChangeCwdTarget(null)
+  }, [onUpdateManagerCwd])
 
   const handlePromoteToProjectAgent = useCallback((agentId: string) => {
     const agent = agents.find((a) => a.agentId === agentId)
@@ -3041,6 +3080,7 @@ export function AgentSidebar({
               onForkSession={onForkSession ? (sourceAgentId: string) => setForkTarget({ sourceAgentId }) : undefined}
               onMarkUnread={onMarkUnread}
               onChangeModel={onUpdateManagerModel ? handleRequestChangeModel : undefined}
+              onChangeCwd={onUpdateManagerCwd ? handleRequestChangeCwd : undefined}
               showModelIcons={showModelIcons}
               highlightQuery={isSearchActive ? parsedSearch.term : undefined}
               dragHandleRef={dragHandleRef}
@@ -3275,6 +3315,19 @@ export function AgentSidebar({
           currentReasoningLevel={changeModelTarget.currentReasoningLevel}
           onConfirm={handleConfirmChangeModel}
           onClose={() => setChangeModelTarget(null)}
+        />
+      ) : null}
+
+      {/* Change CWD dialog */}
+      {changeCwdTarget && onUpdateManagerCwd && onBrowseDirectory && onValidateDirectory ? (
+        <ChangeCwdDialog
+          profileId={changeCwdTarget.profileId}
+          profileLabel={changeCwdTarget.profileLabel}
+          currentCwd={changeCwdTarget.currentCwd}
+          onConfirm={handleConfirmChangeCwd}
+          onClose={() => setChangeCwdTarget(null)}
+          onBrowseDirectory={onBrowseDirectory}
+          onValidateDirectory={onValidateDirectory}
         />
       ) : null}
 
