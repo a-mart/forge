@@ -3573,7 +3573,7 @@ describe('SwarmWebSocketServer', () => {
         models: Array<{ presetId: string }>
       }
 
-      expect(initialPayload.models.map((model) => model.presetId)).toEqual([])
+      expect(initialPayload.models.map((model) => model.presetId)).toEqual(['sdk-opus', 'sdk-sonnet'])
 
       const authUpdateResponse = await fetch(`http://${config.host}:${config.port}/api/settings/auth`, {
         method: 'PUT',
@@ -4792,7 +4792,7 @@ describe('SwarmWebSocketServer', () => {
       (event) =>
         event.type === 'error' &&
         event.code === 'INVALID_COMMAND' &&
-        event.message.includes('create_manager.model must be one of pi-codex|pi-5.4|pi-opus|pi-grok|codex-app'),
+        event.message.includes('create_manager.model must be one of pi-codex|pi-5.4|pi-opus|sdk-opus|sdk-sonnet|pi-grok|codex-app'),
     )
 
     expect(errorEvent.type).toBe('error')
