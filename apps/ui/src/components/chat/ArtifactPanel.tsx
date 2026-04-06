@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { FrontMatterBlock } from '@/components/ui/FrontMatterBlock'
+import { parseFrontMatter } from '@/lib/parse-front-matter'
 import * as DialogPrimitive from '@radix-ui/react-dialog'
 import { ExternalLink, FileCode2, FileImage, FileText, FolderOpen, Loader2, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -153,6 +155,11 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
     [artifact?.fileName, displayPath],
   )
   const isMarkdown = useMemo(() => MARKDOWN_FILE_PATTERN.test(displayPath), [displayPath])
+  const frontMatter = useMemo(
+    () => (isMarkdown && content ? parseFrontMatter(content) : null),
+    [isMarkdown, content],
+  )
+  const markdownBody = frontMatter ? frontMatter.body : content
   const imageFileUrl = useMemo(() => {
     if (!isImage || !displayPath) {
       return null
@@ -317,8 +324,11 @@ export function ArtifactPanel({ artifact, wsUrl, activeAgentId, onClose, onArtif
                 )
               ) : isMarkdown ? (
                 <article className="mx-auto max-w-[680px]">
+                  {frontMatter && frontMatter.entries.length > 0 && (
+                    <FrontMatterBlock entries={frontMatter.entries} />
+                  )}
                   <MarkdownMessage
-                    content={content}
+                    content={markdownBody}
                     variant="document"
                     enableMermaid
                     artifactSourceAgentId={artifact?.sourceAgentId ?? activeAgentId}
