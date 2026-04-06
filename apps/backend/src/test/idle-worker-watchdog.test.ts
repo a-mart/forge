@@ -273,6 +273,21 @@ function failAutoCompletionReports(runtime: FakeRuntime): void {
   }
 }
 
+function createDeferred<T>(): {
+  promise: Promise<T>
+  resolve: (value: T) => void
+  reject: (error: unknown) => void
+} {
+  let resolve!: (value: T) => void
+  let reject!: (error: unknown) => void
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+
+  return { promise, resolve, reject }
+}
+
 afterEach(() => {
   vi.useRealTimers()
 })
@@ -399,6 +414,114 @@ describe('idle worker watchdog', () => {
     await (manager as any).handleRuntimeAgentEnd(worker.agentId)
     await advanceToWatchdogBatchFlush()
 
+    expect(getBatchedWatchdogMessages(managerRuntime)).toHaveLength(0)
+    expect(getSystemWatchdogPublishes(manager)).toHaveLength(0)
+  })
+
+  it('suppresses watchdog arming while a worker report to the parent manager is still in flight', async () => {
+    vi.useFakeTimers()
+
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', { agentId: 'Racing Reporter' })
+    const managerRuntime = manager.runtimeByAgentId.get('manager')
+    expect(managerRuntime).toBeDefined()
+
+    const receipt = {
+      targetAgentId: 'manager',
+      deliveryId: 'deferred-delivery',
+      acceptedMode: 'prompt',
+    } satisfies SendMessageReceipt
+    const deferredSend = createDeferred<SendMessageReceipt>()
+    const sendStarted = createDeferred<void>()
+    let sendStartedSignaled = false
+
+    managerRuntime!.sendMessage = async (message, delivery = 'auto') => {
+      managerRuntime!.sendCalls.push({ message, delivery })
+      if (!sendStartedSignaled) {
+        sendStartedSignaled = true
+        sendStarted.resolve()
+      }
+      return deferredSend.promise
+    }
+
+    const sendPromise = manager.sendMessage(worker.agentId, 'manager', 'turn complete', 'auto', { origin: 'internal' })
+    await sendStarted.promise
+
+    const stateWhilePending = (manager as any).workerWatchdogState.get(worker.agentId)
+    expect(stateWhilePending?.pendingReportTurnSeq).toBe(0)
+
+    await (manager as any).handleRuntimeAgentEnd(worker.agentId)
+
+    const stateAfterEnd = (manager as any).workerWatchdogState.get(worker.agentId)
+    expect(stateAfterEnd?.turnSeq).toBe(0)
+    expect(stateAfterEnd?.deferredFinalizeTurnSeq).toBe(0)
+    expect(((manager as any).watchdogTimers as Map<string, unknown>).has(worker.agentId)).toBe(false)
+
+    deferredSend.resolve(receipt)
+    await sendPromise
+    await vi.runAllTicks()
+    await advanceToWatchdogBatchFlush()
+
+    const finalState = (manager as any).workerWatchdogState.get(worker.agentId)
+    expect(finalState?.turnSeq).toBe(1)
+    expect(finalState?.pendingReportTurnSeq).toBeNull()
+    expect(finalState?.deferredFinalizeTurnSeq).toBeNull()
+    expect(getBatchedWatchdogMessages(managerRuntime)).toHaveLength(0)
+    expect(getSystemWatchdogPublishes(manager)).toHaveLength(0)
+  })
+
+  it('finalizes a deferred idle worker turn if the in-flight parent report send fails', async () => {
+    vi.useFakeTimers()
+
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', { agentId: 'Failing Reporter' })
+    const managerRuntime = manager.runtimeByAgentId.get('manager')
+    expect(managerRuntime).toBeDefined()
+
+    const originalSendMessage = managerRuntime!.sendMessage.bind(managerRuntime)
+    const deferredSend = createDeferred<SendMessageReceipt>()
+    const sendStarted = createDeferred<void>()
+    let callCount = 0
+    let sendStartedSignaled = false
+
+    managerRuntime!.sendMessage = async (message, delivery = 'auto') => {
+      callCount += 1
+      if (callCount === 1) {
+        managerRuntime!.sendCalls.push({ message, delivery })
+        if (!sendStartedSignaled) {
+          sendStartedSignaled = true
+          sendStarted.resolve()
+        }
+        return deferredSend.promise
+      }
+
+      return originalSendMessage(message, delivery)
+    }
+
+    const sendPromise = manager.sendMessage(worker.agentId, 'manager', 'turn complete', 'auto', { origin: 'internal' })
+    await sendStarted.promise
+    await (manager as any).handleRuntimeAgentEnd(worker.agentId)
+
+    deferredSend.reject(new Error('synthetic send failure'))
+    await expect(sendPromise).rejects.toThrow('synthetic send failure')
+    await vi.runAllTicks()
+    await advanceToWatchdogBatchFlush()
+
+    expect(managerRuntime!.sendCalls).toHaveLength(2)
+    expect(String(managerRuntime!.sendCalls[0]?.message)).toContain('turn complete')
+    expect(managerRuntime!.sendCalls[1]?.message).toBe(buildExpectedAutoCompletionMessage(worker))
+
+    const finalState = (manager as any).workerWatchdogState.get(worker.agentId)
+    expect(finalState?.turnSeq).toBe(1)
+    expect(finalState?.pendingReportTurnSeq).toBeNull()
+    expect(finalState?.deferredFinalizeTurnSeq).toBeNull()
+    expect(((manager as any).watchdogTimers as Map<string, unknown>).has(worker.agentId)).toBe(false)
     expect(getBatchedWatchdogMessages(managerRuntime)).toHaveLength(0)
     expect(getSystemWatchdogPublishes(manager)).toHaveLength(0)
   })
