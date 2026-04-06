@@ -324,7 +324,10 @@ export async function getManagedModelProviderCredentialAvailability(
     availability.set(provider, hasStoredEnv || hasStoredAuth);
   }
 
-  availability.set("claude-sdk", availability.get("anthropic") ?? false);
+  // Native Claude SDK runtimes do not require Anthropic API credentials. Keep the provider
+  // selectable even when managed auth is absent; runtime initialization handles missing SDK
+  // binaries/dependencies separately with actionable errors.
+  availability.set("claude-sdk", true);
 
   return availability;
 }
