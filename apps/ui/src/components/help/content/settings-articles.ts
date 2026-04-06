@@ -498,6 +498,10 @@ Use the scope dropdown to switch between:
 - **Global** — specialists shared across all profiles. Builtin specialists live here.
 - **Per-profile** — overrides that apply to one profile only, taking priority over global definitions.
 
+## Filtering the roster
+
+When you have disabled specialists, a **Hide disabled** checkbox appears next to the toolbar buttons. Check it to filter disabled specialists from all sections. The preference persists across sessions.
+
 ## Enabling specialists
 
 The global toggle at the top turns the specialist system on or off. When disabled, the manager uses legacy model routing guidance instead. Leave it enabled unless you have a specific reason to turn it off.
