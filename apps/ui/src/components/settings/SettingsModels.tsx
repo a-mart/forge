@@ -9,6 +9,16 @@ import {
 } from '@forge/protocol'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
@@ -408,6 +418,7 @@ export function SettingsModels({ wsUrl, modelConfigChangeKey }: SettingsModelsPr
   const [expandedModelIds, setExpandedModelIds] = useState<Record<string, boolean>>({})
   const [collapsedProviderIds, setCollapsedProviderIds] = useState<Record<string, boolean>>({})
   const [resettingAll, setResettingAll] = useState(false)
+  const [isResetAllDialogOpen, setIsResetAllDialogOpen] = useState(false)
 
   const loadOverrides = useCallback(async () => {
     setError(null)
@@ -438,11 +449,14 @@ export function SettingsModels({ wsUrl, modelConfigChangeKey }: SettingsModelsPr
       .filter((group) => group.models.length > 0)
   }, [])
 
+  useEffect(() => {
+    setCollapsedProviderIds(Object.fromEntries(providerGroups.map((group) => [group.providerId, true])))
+  }, [providerGroups])
+
   const hasAnyOverrides = Object.keys(overrides).length > 0
 
   const handleResetAll = useCallback(async () => {
     if (!hasAnyOverrides) return
-    if (!window.confirm('Reset all model overrides?')) return
 
     setError(null)
     setResettingAll(true)
@@ -453,6 +467,7 @@ export function SettingsModels({ wsUrl, modelConfigChangeKey }: SettingsModelsPr
       setError(resetError instanceof Error ? resetError.message : String(resetError))
     } finally {
       setResettingAll(false)
+      setIsResetAllDialogOpen(false)
     }
   }, [hasAnyOverrides, loadOverrides, wsUrl])
 
@@ -465,7 +480,7 @@ export function SettingsModels({ wsUrl, modelConfigChangeKey }: SettingsModelsPr
           type="button"
           variant="outline"
           size="sm"
-          onClick={() => void handleResetAll()}
+          onClick={() => setIsResetAllDialogOpen(true)}
           disabled={!hasAnyOverrides || resettingAll}
         >
           {resettingAll ? <Loader2 className="size-4 animate-spin" /> : <RotateCcw className="size-4" />}
@@ -473,6 +488,28 @@ export function SettingsModels({ wsUrl, modelConfigChangeKey }: SettingsModelsPr
         </Button>
       )}
     >
+      <AlertDialog open={isResetAllDialogOpen} onOpenChange={setIsResetAllDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Reset All Model Overrides</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will remove all custom context window caps, re-enable any disabled models, and clear all model-specific prompt instructions. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={resettingAll}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => void handleResetAll()}
+              disabled={resettingAll}
+            >
+              {resettingAll ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+              Reset All
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {error ? (
         <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
           {error}
