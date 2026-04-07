@@ -984,6 +984,27 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
     };
   }
 
+  if (maybe.type === "mark_all_read") {
+    const profileId = (maybe as { profileId?: unknown }).profileId;
+    const requestId = (maybe as { requestId?: unknown }).requestId;
+
+    if (typeof profileId !== "string" || profileId.trim().length === 0) {
+      return { ok: false, error: "mark_all_read.profileId must be a non-empty string" };
+    }
+    if (requestId !== undefined && typeof requestId !== "string") {
+      return { ok: false, error: "mark_all_read.requestId must be a string when provided" };
+    }
+
+    return {
+      ok: true,
+      command: {
+        type: "mark_all_read",
+        profileId: profileId.trim(),
+        requestId,
+      }
+    };
+  }
+
   return { ok: false, error: "Unknown command type" };
 }
 
@@ -1039,6 +1060,7 @@ export function extractRequestId(command: ClientCommand): string | undefined {
     case "validate_directory":
     case "pick_directory":
     case "mark_unread":
+    case "mark_all_read":
       return command.requestId;
 
     case "pin_message":

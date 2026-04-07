@@ -28,6 +28,7 @@ import {
   X,
   Pin,
   Zap,
+  CheckCheck,
 } from 'lucide-react'
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from '@/components/ui/context-menu'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -124,6 +125,7 @@ interface AgentSidebarProps {
   onRenameProfile?: (profileId: string, displayName: string) => void
   onForkSession?: (sourceAgentId: string, name?: string) => void
   onMarkUnread?: (agentId: string) => void
+  onMarkAllRead?: (profileId: string) => void
   onUpdateManagerModel?: (managerId: string, model: ManagerModelPreset, reasoningLevel?: ManagerReasoningLevel) => void
   onUpdateManagerCwd?: (managerId: string, cwd: string) => Promise<void>
   onBrowseDirectory?: (defaultPath: string) => Promise<string | null>
@@ -809,6 +811,7 @@ function ProfileGroup({
   onRequestRenameProfile,
   onForkSession,
   onMarkUnread,
+  onMarkAllRead,
   onChangeModel,
   onChangeCwd,
   showModelIcons,
@@ -847,6 +850,7 @@ function ProfileGroup({
   onRequestRenameProfile?: (profileId: string) => void
   onForkSession?: (sourceAgentId: string) => void
   onMarkUnread?: (agentId: string) => void
+  onMarkAllRead?: (profileId: string) => void
   onChangeModel?: (profileId: string) => void
   onChangeCwd?: (profileId: string) => void
   showModelIcons?: boolean
@@ -1000,6 +1004,12 @@ function ProfileGroup({
             <ContextMenuItem onClick={() => onCreateAgentCreator(profile.profileId)}>
               <Sparkles className="mr-2 size-3.5" />
               Create Project Agent
+            </ContextMenuItem>
+          ) : null}
+          {onMarkAllRead && sessions.some((s) => (unreadCounts[s.sessionAgent.agentId] ?? 0) > 0) ? (
+            <ContextMenuItem onClick={() => onMarkAllRead(profile.profileId)}>
+              <CheckCheck className="mr-2 size-3.5" />
+              Mark All as Read
             </ContextMenuItem>
           ) : null}
           {!isCortexProfile(treeRow) ? (
@@ -2133,6 +2143,7 @@ function CortexSection({
   onRequestRenameProfile,
   onForkSession,
   onMarkUnread,
+  onMarkAllRead,
   onChangeModel,
   highlightQuery,
 }: {
@@ -2163,6 +2174,7 @@ function CortexSection({
   onRequestRenameProfile?: (profileId: string) => void
   onForkSession?: (sourceAgentId: string) => void
   onMarkUnread?: (agentId: string) => void
+  onMarkAllRead?: (profileId: string) => void
   onChangeModel?: (profileId: string) => void
   highlightQuery?: string
 }) {
@@ -2342,6 +2354,12 @@ function CortexSection({
             <ContextMenuItem onClick={() => onStopSession(targetId)}>
               <Pause className="mr-2 size-3.5" />
               Stop Root Session
+            </ContextMenuItem>
+          ) : null}
+          {onMarkAllRead && visibleSessions.some((s) => (unreadCounts[s.sessionAgent.agentId] ?? 0) > 0) ? (
+            <ContextMenuItem onClick={() => onMarkAllRead(profile.profileId)}>
+              <CheckCheck className="mr-2 size-3.5" />
+              Mark All as Read
             </ContextMenuItem>
           ) : null}
         </ContextMenuContent>
@@ -2541,6 +2559,7 @@ export function AgentSidebar({
   onRenameProfile,
   onForkSession,
   onMarkUnread,
+  onMarkAllRead,
   onUpdateManagerModel,
   onUpdateManagerCwd,
   onBrowseDirectory,
@@ -3017,6 +3036,7 @@ export function AgentSidebar({
               onRequestRenameProfile={onRenameProfile ? handleRequestRenameProfile : undefined}
               onForkSession={onForkSession ? (sourceAgentId: string) => setForkTarget({ sourceAgentId }) : undefined}
               onMarkUnread={onMarkUnread}
+              onMarkAllRead={onMarkAllRead}
               onChangeModel={onUpdateManagerModel ? handleRequestChangeModel : undefined}
               highlightQuery={isSearchActive ? parsedSearch.term : undefined}
             />
@@ -3079,6 +3099,7 @@ export function AgentSidebar({
               onRequestRenameProfile={onRenameProfile ? handleRequestRenameProfile : undefined}
               onForkSession={onForkSession ? (sourceAgentId: string) => setForkTarget({ sourceAgentId }) : undefined}
               onMarkUnread={onMarkUnread}
+              onMarkAllRead={onMarkAllRead}
               onChangeModel={onUpdateManagerModel ? handleRequestChangeModel : undefined}
               onChangeCwd={onUpdateManagerCwd ? handleRequestChangeCwd : undefined}
               showModelIcons={showModelIcons}

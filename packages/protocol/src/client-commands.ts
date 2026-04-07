@@ -91,4 +91,5 @@ export type ClientCommand =
   | { type: 'choice_response'; agentId: string; choiceId: string; answers: ChoiceAnswer[] }
   | { type: 'choice_cancel'; agentId: string; choiceId: string }
   | { type: 'mark_unread'; agentId: string; requestId?: string }
+  | { type: 'mark_all_read'; profileId: string; requestId?: string }
   | { type: 'ping' }

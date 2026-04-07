@@ -886,6 +886,10 @@ export function IndexPage() {
     clientRef.current?.markUnread(agentId)
   }, [clientRef])
 
+  const handleMarkAllRead = useCallback((profileId: string) => {
+    clientRef.current?.markAllRead(profileId)
+  }, [clientRef])
+
   const handleUpdateManagerModel = useCallback(async (managerId: string, model: ManagerModelPreset, reasoningLevel?: ManagerReasoningLevel) => {
     const client = clientRef.current
     if (!client) return
@@ -1172,6 +1176,7 @@ export function IndexPage() {
           onRenameProfile={handleRenameProfile}
           onForkSession={handleForkSession}
           onMarkUnread={handleMarkUnread}
+          onMarkAllRead={handleMarkAllRead}
           onUpdateManagerModel={handleUpdateManagerModel}
           onUpdateManagerCwd={handleUpdateManagerCwd}
           onBrowseDirectory={handleBrowseDirectoryForCwd}

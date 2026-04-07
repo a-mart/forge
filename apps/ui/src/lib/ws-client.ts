@@ -209,6 +209,21 @@ export class ManagerWsClient {
     this.send({ type: 'mark_unread', agentId })
   }
 
+  markAllRead(profileId: string): void {
+    const nextUnread = { ...this.state.unreadCounts }
+    let changed = false
+    for (const agent of this.state.agents) {
+      if (agent.profileId === profileId && agent.role === 'manager' && nextUnread[agent.agentId]) {
+        delete nextUnread[agent.agentId]
+        changed = true
+      }
+    }
+    if (changed) {
+      this.updateState({ unreadCounts: nextUnread })
+    }
+    this.send({ type: 'mark_all_read', profileId })
+  }
+
   hasExplicitSelection(): boolean {
     return this.hasExplicitAgentSelection
   }

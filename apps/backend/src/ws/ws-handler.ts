@@ -286,6 +286,31 @@ export class WsHandler {
       return;
     }
 
+    if (command.type === "mark_all_read") {
+      if (!this.unreadTracker) {
+        return;
+      }
+
+      const { profileId } = command;
+      for (const agent of this.swarmManager.listAgents()) {
+        if (agent.role !== "manager") {
+          continue;
+        }
+
+        const agentProfileId = this.resolveProfileIdFromDescriptor(agent);
+        if (agentProfileId !== profileId) {
+          continue;
+        }
+
+        const count = this.unreadTracker.getCount(profileId, agent.agentId);
+        if (count > 0) {
+          this.unreadTracker.markRead(profileId, agent.agentId);
+          this.broadcastUnreadCountUpdate(agent.agentId, 0);
+        }
+      }
+      return;
+    }
+
     const subscribedAgentId = this.resolveSubscribedAgentId(socket);
     if (!subscribedAgentId) {
       this.logDebug("command:rejected:not_subscribed", {
