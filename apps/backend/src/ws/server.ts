@@ -96,6 +96,7 @@ export class SwarmWebSocketServer {
   private readonly shouldManageControlPid: boolean;
 
   private statsRefreshInterval: NodeJS.Timeout | null = null;
+  private tokenAnalyticsRefreshInterval: NodeJS.Timeout | null = null;
 
   private ownsControlPidFile = false;
 
@@ -482,14 +483,22 @@ export class SwarmWebSocketServer {
     const refreshStatsInBackground = () => {
       void this.statsService.refreshAllRangesInBackground().catch(() => false);
     };
+    const refreshTokenAnalyticsInBackground = () => {
+      void this.tokenAnalyticsService.refreshScanInBackground().catch(() => false);
+    };
 
     // Backstop behavior: keep an automatic refresh cadence (every cache TTL) so telemetry still
     // gets refresh-completion triggers even when nobody calls /api/stats/refresh manually.
     refreshStatsInBackground();
+    void this.tokenAnalyticsService.prewarmInBackground().catch(() => false);
     this.statsRefreshInterval = setInterval(() => {
       refreshStatsInBackground();
     }, STATS_CACHE_TTL_MS);
     this.statsRefreshInterval.unref?.();
+    this.tokenAnalyticsRefreshInterval = setInterval(() => {
+      refreshTokenAnalyticsInBackground();
+    }, STATS_CACHE_TTL_MS);
+    this.tokenAnalyticsRefreshInterval.unref?.();
 
     await this.telemetryService?.start();
   }
@@ -502,6 +511,10 @@ export class SwarmWebSocketServer {
     if (this.statsRefreshInterval) {
       clearInterval(this.statsRefreshInterval);
       this.statsRefreshInterval = null;
+    }
+    if (this.tokenAnalyticsRefreshInterval) {
+      clearInterval(this.tokenAnalyticsRefreshInterval);
+      this.tokenAnalyticsRefreshInterval = null;
     }
 
     this.swarmManager.off("conversation_message", this.onConversationMessage);

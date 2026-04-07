@@ -1,10 +1,9 @@
 import { createReadStream } from "node:fs";
-import { readdir, readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import type {
   ManagerProfile,
-  ResolvedSpecialistDefinition,
   TokenAnalyticsAttributionFilter,
   TokenAnalyticsAttributionKind,
   TokenAnalyticsAttributionSummary,
@@ -28,7 +27,12 @@ import type {
   TokenUsageTotals,
 } from "@forge/protocol";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
-import { getProfilesDir, getSessionMetaPath, getSessionsDir, getWorkersDir } from "../swarm/data-paths.js";
+import {
+  getSessionMetaPath,
+  getSessionsDir,
+  getSharedTokenAnalyticsCachePath,
+  getWorkersDir,
+} from "../swarm/data-paths.js";
 import { resolveRoster } from "../swarm/specialists/specialist-registry.js";
 import { modelCatalogService } from "../swarm/model-catalog-service.js";
 import {
@@ -106,17 +110,26 @@ interface ScanCacheEntry {
   result: TokenAnalyticsScanResult;
 }
 
+interface PersistedTokenAnalyticsScanResult {
+  scannedAt: string;
+  events: TokenAnalyticsEventRecord[];
+  workers: TokenAnalyticsWorkerRecord[];
+  profiles: ManagerProfile[];
+  specialistMetadataByProfile: Record<string, Record<string, SpecialistDisplayMeta>>;
+}
+
+interface PersistedTokenAnalyticsCache {
+  version: number;
+  entry: {
+    expiresAt: number;
+    result: PersistedTokenAnalyticsScanResult;
+  } | null;
+}
+
 interface ResolvedQueryWindow {
   query: TokenAnalyticsResolvedQuery;
   startMs: number | null;
   endExclusiveMs: number | null;
-}
-
-interface EventGroupStats {
-  eventCount: number;
-  usage: TokenUsageTotals;
-  costTotals: TokenCostTotals | null;
-  costCoveredEventCount: number;
 }
 
 interface WorkerAggregate {
@@ -138,16 +151,39 @@ interface DecodedCursor {
 
 const DEFAULT_WORKER_PAGE_LIMIT = 25;
 const MAX_WORKER_PAGE_LIMIT = 100;
-const SERVER_TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
+const TOKEN_ANALYTICS_CACHE_VERSION = 1;
 
 export class TokenAnalyticsService {
   private scanCache: ScanCacheEntry | null = null;
   private inFlightScan: Promise<TokenAnalyticsScanResult> | null = null;
+  private readonly cacheFilePath: string;
 
-  constructor(private readonly swarmManager: SwarmManager) {}
+  private persistentCacheLoaded = false;
+  private persistQueue: Promise<void> = Promise.resolve();
+
+  constructor(private readonly swarmManager: SwarmManager) {
+    this.cacheFilePath = getSharedTokenAnalyticsCachePath(this.swarmManager.getConfig().paths.dataDir);
+  }
 
   clearCache(): void {
     this.scanCache = null;
+  }
+
+  async prewarmInBackground(): Promise<void> {
+    await this.ensurePersistentCacheLoaded();
+    void this.refreshScanInBackground().catch(() => {
+      // best-effort startup prewarm
+    });
+  }
+
+  async refreshScanInBackground(): Promise<TokenAnalyticsScanResult | null> {
+    await this.ensurePersistentCacheLoaded();
+
+    try {
+      return await this.getScanResult(true);
+    } catch {
+      return null;
+    }
   }
 
   async getSnapshot(
@@ -269,9 +305,20 @@ export class TokenAnalyticsService {
   }
 
   private async getScanResult(forceRefresh: boolean): Promise<TokenAnalyticsScanResult> {
+    await this.ensurePersistentCacheLoaded();
+
     const nowMs = Date.now();
-    if (!forceRefresh && this.scanCache && this.scanCache.expiresAt > nowMs) {
-      return this.scanCache.result;
+    if (!forceRefresh) {
+      if (this.scanCache && this.scanCache.expiresAt > nowMs) {
+        return this.scanCache.result;
+      }
+
+      if (this.scanCache) {
+        void this.refreshScanInBackground().catch(() => {
+          // best-effort stale-while-revalidate refresh
+        });
+        return this.scanCache.result;
+      }
     }
 
     if (this.inFlightScan) {
@@ -284,6 +331,7 @@ export class TokenAnalyticsService {
           expiresAt: Date.now() + STATS_CACHE_TTL_MS,
           result,
         };
+        this.queuePersistCacheWrite();
         return result;
       })
       .finally(() => {
@@ -292,6 +340,57 @@ export class TokenAnalyticsService {
 
     this.inFlightScan = computePromise;
     return computePromise;
+  }
+
+  private async ensurePersistentCacheLoaded(): Promise<void> {
+    if (this.persistentCacheLoaded) {
+      return;
+    }
+    this.persistentCacheLoaded = true;
+
+    try {
+      const raw = await readFile(this.cacheFilePath, "utf8");
+      const parsed = JSON.parse(raw) as PersistedTokenAnalyticsCache;
+      if (!isRecord(parsed) || parsed.version !== TOKEN_ANALYTICS_CACHE_VERSION || !parsed.entry || !isRecord(parsed.entry)) {
+        return;
+      }
+
+      const expiresAt = toSafeInteger(parsed.entry.expiresAt);
+      const result = hydratePersistedScanResult(parsed.entry.result);
+      if (expiresAt <= 0 || !result) {
+        return;
+      }
+
+      this.scanCache = {
+        expiresAt,
+        result,
+      };
+    } catch (error) {
+      if (isEnoentError(error)) {
+        return;
+      }
+    }
+  }
+
+  private queuePersistCacheWrite(): void {
+    this.persistQueue = this.persistQueue
+      .then(async () => {
+        const payload: PersistedTokenAnalyticsCache = {
+          version: TOKEN_ANALYTICS_CACHE_VERSION,
+          entry: this.scanCache
+            ? {
+                expiresAt: this.scanCache.expiresAt,
+                result: serializePersistedScanResult(this.scanCache.result),
+              }
+            : null,
+        };
+
+        await mkdir(dirname(this.cacheFilePath), { recursive: true });
+        await writeFile(this.cacheFilePath, JSON.stringify(payload), "utf8");
+      })
+      .catch(() => {
+        // best-effort persistent cache write
+      });
   }
 
   private async scanProfiles(): Promise<TokenAnalyticsScanResult> {
@@ -767,6 +866,75 @@ export class TokenAnalyticsError extends Error {
     super(message);
     this.name = "TokenAnalyticsError";
   }
+}
+
+function serializePersistedScanResult(result: TokenAnalyticsScanResult): PersistedTokenAnalyticsScanResult {
+  const specialistMetadataByProfile: Record<string, Record<string, SpecialistDisplayMeta>> = {};
+
+  for (const [profileId, roster] of result.specialistMetadataByProfile.entries()) {
+    const serializedRoster: Record<string, SpecialistDisplayMeta> = {};
+    for (const [specialistId, metadata] of roster.entries()) {
+      serializedRoster[specialistId] = {
+        displayName: metadata.displayName,
+        color: metadata.color,
+      };
+    }
+    specialistMetadataByProfile[profileId] = serializedRoster;
+  }
+
+  return {
+    scannedAt: result.scannedAt,
+    events: result.events,
+    workers: result.workers,
+    profiles: result.profiles,
+    specialistMetadataByProfile,
+  };
+}
+
+function hydratePersistedScanResult(value: unknown): TokenAnalyticsScanResult | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const scannedAt = typeof value.scannedAt === "string" ? value.scannedAt : null;
+  const events = Array.isArray(value.events) ? (value.events as TokenAnalyticsEventRecord[]) : null;
+  const workers = Array.isArray(value.workers) ? (value.workers as TokenAnalyticsWorkerRecord[]) : null;
+  const profiles = Array.isArray(value.profiles) ? (value.profiles as ManagerProfile[]) : null;
+  if (!scannedAt || !events || !workers || !profiles || !isRecord(value.specialistMetadataByProfile)) {
+    return null;
+  }
+
+  const specialistMetadataByProfile = new Map<string, Map<string, SpecialistDisplayMeta>>();
+  for (const [profileId, rawRoster] of Object.entries(value.specialistMetadataByProfile)) {
+    if (!isRecord(rawRoster)) {
+      continue;
+    }
+
+    const roster = new Map<string, SpecialistDisplayMeta>();
+    for (const [specialistId, rawMetadata] of Object.entries(rawRoster)) {
+      if (!isRecord(rawMetadata) || typeof rawMetadata.displayName !== "string") {
+        continue;
+      }
+
+      roster.set(specialistId, {
+        displayName: rawMetadata.displayName,
+        color: normalizeOptionalString(rawMetadata.color),
+      });
+    }
+    specialistMetadataByProfile.set(profileId, roster);
+  }
+
+  return {
+    scannedAt,
+    events,
+    workers,
+    profiles,
+    specialistMetadataByProfile,
+  };
+}
+
+function toSafeInteger(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.round(value) : 0;
 }
 
 function filterEvents(

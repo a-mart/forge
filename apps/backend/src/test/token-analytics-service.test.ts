@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ManagerProfile } from "@forge/protocol";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import { TokenAnalyticsService } from "../stats/token-analytics-service.js";
+import { getSharedTokenAnalyticsCachePath } from "../swarm/data-paths.js";
 import { getProfileSpecialistsDir, getSharedSpecialistsDir } from "../swarm/specialists/specialist-paths.js";
 
 interface TestContext {
@@ -21,19 +22,10 @@ describe("TokenAnalyticsService", () => {
     const dataDir = join(rootDir, "data");
     await seedAnalyticsFixture(dataDir);
 
-    const swarmManager = {
-      getConfig: () => ({
-        paths: {
-          dataDir,
-        },
-      }),
-      listProfiles: () => createProfiles(),
-    } as Pick<SwarmManager, "getConfig" | "listProfiles"> as SwarmManager;
-
     context = {
       rootDir,
       dataDir,
-      service: new TokenAnalyticsService(swarmManager),
+      service: createService(dataDir),
     };
   });
 
@@ -297,7 +289,119 @@ describe("TokenAnalyticsService", () => {
     );
     expect(refreshed.totals.usage.total).toBe(60);
   });
+
+  it("loads persisted scan results from disk before recomputing", async () => {
+    const initial = await context.service.getSnapshot({ rangePreset: "all", timezone: "UTC" });
+    expect(initial.totals.usage.total).toBe(55);
+
+    const cachePath = getSharedTokenAnalyticsCachePath(context.dataDir);
+    await waitFor(async () => {
+      const raw = await readFile(cachePath, "utf8");
+      const parsed = JSON.parse(raw) as { version?: number };
+      return parsed.version === 1;
+    });
+
+    await appendWorkerEvent(
+      join(context.dataDir, "profiles", "alpha", "sessions", "alpha", "workers", "worker-adhoc.jsonl"),
+      {
+        type: "message",
+        timestamp: "2026-04-06T11:05:00.000Z",
+        message: {
+          provider: "openai-codex",
+          model: "gpt-5.4",
+          usage: {
+            input: 3,
+            output: 2,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 5,
+          },
+        },
+      }
+    );
+
+    const reloadedService = createService(context.dataDir);
+    const cached = await reloadedService.getSnapshot({ rangePreset: "all", timezone: "UTC" });
+    expect(cached.totals.usage.total).toBe(55);
+
+    const refreshed = await reloadedService.getSnapshot(
+      { rangePreset: "all", timezone: "UTC" },
+      { forceRefresh: true }
+    );
+    expect(refreshed.totals.usage.total).toBe(60);
+  });
+
+  it("serves stale cached data immediately while refreshing in the background", async () => {
+    const initial = await context.service.getSnapshot({ rangePreset: "all", timezone: "UTC" });
+    expect(initial.totals.usage.total).toBe(55);
+
+    await appendWorkerEvent(
+      join(context.dataDir, "profiles", "alpha", "sessions", "alpha", "workers", "worker-adhoc.jsonl"),
+      {
+        type: "message",
+        timestamp: "2026-04-06T11:05:00.000Z",
+        message: {
+          provider: "openai-codex",
+          model: "gpt-5.4",
+          usage: {
+            input: 3,
+            output: 2,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 5,
+          },
+        },
+      }
+    );
+
+    const scanCache = (context.service as TokenAnalyticsService & {
+      scanCache: { expiresAt: number } | null;
+    }).scanCache;
+    expect(scanCache).not.toBeNull();
+    if (scanCache) {
+      scanCache.expiresAt = Date.now() - 1;
+    }
+
+    const stale = await context.service.getSnapshot({ rangePreset: "all", timezone: "UTC" });
+    expect(stale.totals.usage.total).toBe(55);
+
+    await waitFor(async () => {
+      const refreshed = await context.service.getSnapshot({ rangePreset: "all", timezone: "UTC" });
+      return refreshed.totals.usage.total === 60;
+    });
+  });
 });
+
+function createService(dataDir: string): TokenAnalyticsService {
+  const swarmManager = {
+    getConfig: () => ({
+      paths: {
+        dataDir,
+      },
+    }),
+    listProfiles: () => createProfiles(),
+  } as Pick<SwarmManager, "getConfig" | "listProfiles"> as SwarmManager;
+
+  return new TokenAnalyticsService(swarmManager);
+}
+
+async function waitFor(predicate: () => Promise<boolean>, timeoutMs = 2000): Promise<void> {
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      if (await predicate()) {
+        return;
+      }
+    } catch {
+      // retry until timeout
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+
+  throw new Error("Timed out waiting for condition");
+}
 
 function createProfiles(): ManagerProfile[] {
   return [
