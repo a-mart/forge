@@ -97,6 +97,10 @@ interface TokenAnalyticsScanResult {
   specialistMetadataByProfile: Map<string, Map<string, SpecialistDisplayMeta>>;
 }
 
+interface TokenAnalyticsScanDiagnostics {
+  skippedMissingTimestampEvents: number;
+}
+
 interface ScanCacheEntry {
   expiresAt: number;
   result: TokenAnalyticsScanResult;
@@ -159,11 +163,13 @@ export class TokenAnalyticsService {
       includeProvider: false,
       includeModel: false,
       includeAttribution: false,
+      includeSpecialist: false,
     });
     const scopedEvents = filterEvents(scanResult.events, resolved, {
       includeProvider: true,
       includeModel: true,
       includeAttribution: true,
+      includeSpecialist: true,
     });
     const scopedWorkerMap = buildWorkerMap(scanResult.workers);
     const scopedWorkerAggregates = aggregateWorkers(scopedEvents, scopedWorkerMap);
@@ -195,6 +201,7 @@ export class TokenAnalyticsService {
       includeProvider: true,
       includeModel: true,
       includeAttribution: true,
+      includeSpecialist: true,
     });
     const workerMap = buildWorkerMap(scanResult.workers);
     const workerAggregates = aggregateWorkers(scopedEvents, workerMap);
@@ -293,6 +300,9 @@ export class TokenAnalyticsService {
     const events: TokenAnalyticsEventRecord[] = [];
     const workers: TokenAnalyticsWorkerRecord[] = [];
     const specialistMetadataByProfile = new Map<string, Map<string, SpecialistDisplayMeta>>();
+    const diagnostics: TokenAnalyticsScanDiagnostics = {
+      skippedMissingTimestampEvents: 0,
+    };
 
     for (const profile of profiles) {
       specialistMetadataByProfile.set(profile.profileId, await this.readSpecialistMetadata(profile.profileId, dataDir));
@@ -351,6 +361,7 @@ export class TokenAnalyticsService {
               specialistId,
               attributionKind,
               fallbackThinkingLevel: context.thinkingLevel,
+              diagnostics,
             });
             if (event) {
               events.push(event);
@@ -363,6 +374,12 @@ export class TokenAnalyticsService {
     const workerMap = buildWorkerMap(workers);
     for (const fallback of buildFallbackWorkersFromEvents(events, workerMap)) {
       workers.push(fallback);
+    }
+
+    if (diagnostics.skippedMissingTimestampEvents > 0) {
+      console.debug(
+        `[token-analytics] Skipped ${diagnostics.skippedMissingTimestampEvents} usage event${diagnostics.skippedMissingTimestampEvents === 1 ? "" : "s"} with missing or invalid timestamps during scan`
+      );
     }
 
     return {
@@ -383,7 +400,7 @@ export class TokenAnalyticsService {
     const provider = normalizeOptionalString(input.provider);
     const modelId = normalizeOptionalString(input.modelId);
     const attribution = parseAttributionFilter(input.attribution);
-    const specialistId = attribution === "specialist" ? normalizeOptionalString(input.specialistId) : null;
+    const specialistId = normalizeOptionalString(input.specialistId);
 
     if (profileId && !knownProfileIds.has(profileId)) {
       throw new TokenAnalyticsError(400, `Unknown profileId: ${profileId}`);
@@ -759,6 +776,7 @@ function filterEvents(
     includeProvider: boolean;
     includeModel: boolean;
     includeAttribution: boolean;
+    includeSpecialist: boolean;
   }
 ): TokenAnalyticsEventRecord[] {
   return events.filter((event) => {
@@ -777,13 +795,11 @@ function filterEvents(
     if (options.includeModel && resolved.query.modelId && event.modelId !== resolved.query.modelId) {
       return false;
     }
-    if (options.includeAttribution && resolved.query.attribution !== "all") {
-      if (event.attributionKind !== resolved.query.attribution) {
-        return false;
-      }
-      if (resolved.query.attribution === "specialist" && resolved.query.specialistId && event.specialistId !== resolved.query.specialistId) {
-        return false;
-      }
+    if (options.includeAttribution && resolved.query.attribution !== "all" && event.attributionKind !== resolved.query.attribution) {
+      return false;
+    }
+    if (options.includeSpecialist && resolved.query.specialistId && event.specialistId !== resolved.query.specialistId) {
+      return false;
     }
     return true;
   });
@@ -1112,23 +1128,26 @@ function toEventRecord(
     specialistId: string | null;
     attributionKind: TokenAnalyticsAttributionKind;
     fallbackThinkingLevel: string | null;
+    diagnostics: TokenAnalyticsScanDiagnostics;
   }
 ): TokenAnalyticsEventRecord | null {
   if (!isRecord(entry) || entry.type !== "message" || !isRecord(entry.message)) {
     return null;
   }
 
-  const usage = extractUsage(entry.message.usage);
+  const message = entry.message;
+  const usage = extractUsage(message.usage);
   if (!usage) {
     return null;
   }
 
-  const { provider, modelId } = extractProviderAndModel(entry.message);
-  const timestampMs =
-    toTimestampMs(entry.timestamp) ??
-    toTimestampMs((entry.message as Record<string, unknown>).timestamp) ??
-    Date.now();
-  const reasoningLevel = extractReasoningLevel(entry.message, options.fallbackThinkingLevel);
+  const { provider, modelId } = extractProviderAndModel(message);
+  const timestampMs = toTimestampMs(entry.timestamp) ?? toTimestampMs(message.timestamp);
+  if (timestampMs === null) {
+    options.diagnostics.skippedMissingTimestampEvents += 1;
+    return null;
+  }
+  const reasoningLevel = extractReasoningLevel(message, options.fallbackThinkingLevel);
 
   return {
     timestampMs,
@@ -1141,7 +1160,7 @@ function toEventRecord(
     specialistId: options.specialistId,
     attributionKind: options.attributionKind,
     usage: cloneUsageTotals(usage),
-    cost: extractCostTotals(entry.message.usage),
+    cost: extractCostTotals(message.usage),
   };
 }
 

@@ -1,6 +1,7 @@
 import type {
   StatsRange,
   TokenAnalyticsAttributionFilter,
+  TokenAnalyticsQuery,
   TokenAnalyticsRangePreset,
   TokenAnalyticsSortDirection,
   TokenAnalyticsWorkerSort,
@@ -275,8 +276,8 @@ function parseTimezone(value: string | null): string | null {
   return timezone.length > 0 ? timezone : null;
 }
 
-function parseTokenAnalyticsQuery(requestUrl: URL) {
-  return {
+function parseTokenAnalyticsQuery(requestUrl: URL): TokenAnalyticsQuery {
+  const query: TokenAnalyticsQuery = {
     rangePreset: parseTokenRangePreset(requestUrl.searchParams.get("rangePreset")),
     startDate: trimOptional(requestUrl.searchParams.get("startDate")),
     endDate: trimOptional(requestUrl.searchParams.get("endDate")),
@@ -287,6 +288,9 @@ function parseTokenAnalyticsQuery(requestUrl: URL) {
     attribution: parseAttribution(requestUrl.searchParams.get("attribution")),
     specialistId: trimOptional(requestUrl.searchParams.get("specialistId")),
   };
+
+  validateTokenAnalyticsQuery(query);
+  return query;
 }
 
 function parseTokenAnalyticsWorkerPageQuery(requestUrl: URL) {
@@ -305,6 +309,27 @@ function parseTokenAnalyticsWorkerEventsQuery(requestUrl: URL) {
     sessionId: trimOptional(requestUrl.searchParams.get("sessionId")) ?? "",
     workerId: trimOptional(requestUrl.searchParams.get("workerId")) ?? "",
   };
+}
+
+function validateTokenAnalyticsQuery(query: TokenAnalyticsQuery): void {
+  if (
+    query.specialistId &&
+    (query.attribution === "ad_hoc" || query.attribution === "unknown")
+  ) {
+    throw new TokenAnalyticsError(
+      400,
+      `specialistId cannot be combined with attribution=${query.attribution}; use attribution=all or attribution=specialist`
+    );
+  }
+
+  if (query.rangePreset === "custom") {
+    if (!query.startDate || !query.endDate) {
+      throw new TokenAnalyticsError(400, "custom rangePreset requires startDate and endDate");
+    }
+    if (query.endDate < query.startDate) {
+      throw new TokenAnalyticsError(400, "endDate must be on or after startDate");
+    }
+  }
 }
 
 function parseTokenRangePreset(value: string | null): TokenAnalyticsRangePreset {

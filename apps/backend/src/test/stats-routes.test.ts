@@ -149,6 +149,42 @@ describe('createStatsRoutes', () => {
       workerId: 'w1',
     })
   })
+
+  it('returns 400 for contradictory specialistId and attribution params', async () => {
+    const getSnapshot = vi.fn(async () => createStatsSnapshot())
+    const refreshAllRangesInBackground = vi.fn(async () => createStatsSnapshot())
+    const getProviderUsage = vi.fn(async () => ({}))
+    const tokenGetSnapshot = vi.fn(async () => ({ computedAt: '2026-04-03T00:00:00.000Z' }))
+    const server = await createRouteServer(
+      { getSnapshot, refreshAllRangesInBackground, getProviderUsage },
+      { getSnapshot: tokenGetSnapshot, getWorkerPage: vi.fn(), getWorkerEvents: vi.fn() },
+    )
+
+    const response = await fetch(`${server.baseUrl}/api/stats/tokens?rangePreset=all&attribution=ad_hoc&specialistId=backend`)
+    expect(response.status).toBe(400)
+    await expect(response.json()).resolves.toEqual({
+      error: 'specialistId cannot be combined with attribution=ad_hoc; use attribution=all or attribution=specialist',
+    })
+    expect(tokenGetSnapshot).not.toHaveBeenCalled()
+  })
+
+  it('returns 400 for custom token ranges with missing dates', async () => {
+    const getSnapshot = vi.fn(async () => createStatsSnapshot())
+    const refreshAllRangesInBackground = vi.fn(async () => createStatsSnapshot())
+    const getProviderUsage = vi.fn(async () => ({}))
+    const tokenGetSnapshot = vi.fn(async () => ({ computedAt: '2026-04-03T00:00:00.000Z' }))
+    const server = await createRouteServer(
+      { getSnapshot, refreshAllRangesInBackground, getProviderUsage },
+      { getSnapshot: tokenGetSnapshot, getWorkerPage: vi.fn(), getWorkerEvents: vi.fn() },
+    )
+
+    const response = await fetch(`${server.baseUrl}/api/stats/tokens?rangePreset=custom&startDate=2026-04-01`)
+    expect(response.status).toBe(400)
+    await expect(response.json()).resolves.toEqual({
+      error: 'custom rangePreset requires startDate and endDate',
+    })
+    expect(tokenGetSnapshot).not.toHaveBeenCalled()
+  })
 })
 
 async function createRouteServer(

@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ManagerProfile } from "@forge/protocol";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import { TokenAnalyticsService } from "../stats/token-analytics-service.js";
@@ -39,6 +39,7 @@ describe("TokenAnalyticsService", () => {
 
   afterEach(async () => {
     context.service.clearCache();
+    vi.restoreAllMocks();
   });
 
   it("builds token analytics snapshots with attribution, filters, specialist metadata, and cost coverage", async () => {
@@ -88,6 +89,100 @@ describe("TokenAnalyticsService", () => {
         topProfileId: "beta",
         topProfileDisplayName: "Beta",
       })
+    );
+  });
+
+  it("filters snapshots by specialistId even without an attribution filter", async () => {
+    const snapshot = await context.service.getSnapshot({
+      rangePreset: "all",
+      timezone: "UTC",
+      specialistId: "backend",
+    });
+
+    expect(snapshot.query.specialistId).toBe("backend");
+    expect(snapshot.query.attribution).toBe("all");
+    expect(snapshot.totals.runCount).toBe(2);
+    expect(snapshot.totals.eventCount).toBe(3);
+    expect(snapshot.totals.usage.total).toBe(39);
+    expect(snapshot.attribution.specialist.runCount).toBe(2);
+    expect(snapshot.attribution.adHoc.runCount).toBe(0);
+    expect(snapshot.attribution.unknown.runCount).toBe(0);
+    expect(snapshot.specialistBreakdown).toEqual([
+      expect.objectContaining({
+        specialistId: "backend",
+        attributionKind: "specialist",
+        runCount: 2,
+        usage: expect.objectContaining({ total: 39 }),
+      }),
+    ]);
+  });
+
+  it("composes specialistId with attribution filters instead of discarding it", async () => {
+    const snapshot = await context.service.getSnapshot({
+      rangePreset: "all",
+      timezone: "UTC",
+      specialistId: "backend",
+      attribution: "ad_hoc",
+    });
+
+    expect(snapshot.query.specialistId).toBe("backend");
+    expect(snapshot.query.attribution).toBe("ad_hoc");
+    expect(snapshot.totals.runCount).toBe(0);
+    expect(snapshot.totals.eventCount).toBe(0);
+    expect(snapshot.totals.usage.total).toBe(0);
+    expect(snapshot.specialistBreakdown).toEqual([]);
+  });
+
+  it("skips malformed usage rows with missing or invalid timestamps", async () => {
+    const debugSpy = vi.spyOn(console, "debug").mockImplementation(() => {});
+
+    await appendWorkerEvent(
+      join(context.dataDir, "profiles", "alpha", "sessions", "alpha", "workers", "worker-adhoc.jsonl"),
+      {
+        type: "message",
+        message: {
+          provider: "openai-codex",
+          model: "gpt-5.4",
+          usage: {
+            input: 8,
+            output: 5,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 13,
+          },
+        },
+      }
+    );
+    await appendWorkerEvent(
+      join(context.dataDir, "profiles", "alpha", "sessions", "alpha", "workers", "worker-adhoc.jsonl"),
+      {
+        type: "message",
+        timestamp: "not-a-timestamp",
+        message: {
+          timestamp: "still-not-a-timestamp",
+          provider: "openai-codex",
+          model: "gpt-5.4",
+          usage: {
+            input: 4,
+            output: 3,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 7,
+          },
+        },
+      }
+    );
+
+    const snapshot = await context.service.getSnapshot(
+      { rangePreset: "all", timezone: "UTC" },
+      { forceRefresh: true }
+    );
+
+    expect(snapshot.totals.eventCount).toBe(5);
+    expect(snapshot.totals.usage.total).toBe(55);
+    expect(debugSpy).toHaveBeenCalledTimes(1);
+    expect(debugSpy.mock.calls[0]?.[0]).toContain(
+      "Skipped 2 usage events with missing or invalid timestamps during scan"
     );
   });
 
