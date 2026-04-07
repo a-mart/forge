@@ -58,6 +58,14 @@ export const SHORTCUTS: ShortcutDef[] = [
     scope: 'terminal',
   },
   {
+    id: 'chat-find-in-chat',
+    keys: 'Ctrl+F',
+    keysMac: '⌘+F',
+    label: 'Find in chat',
+    group: 'Chat',
+    scope: 'chat',
+  },
+  {
     id: 'help-toggle-drawer',
     keys: 'Ctrl+/',
     keysMac: '⌘+/',

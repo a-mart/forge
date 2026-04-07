@@ -21,6 +21,10 @@ Three things affect the quality and speed of what you get back:
 - **Specialist models:** Each specialist worker has its own model and reasoning level. Configure these in Settings > Specialists. Specialists can use either the Pi-proxied Anthropic provider or the native Claude SDK provider independently.
 - **Fallback models:** Specialists can define a fallback model that kicks in if the primary is unavailable or rate-limited.
 
+## Model-specific instructions
+
+Each model card in Settings > Models has a "Model-specific instructions" field. These are prompt instructions automatically injected into the manager prompt when that model is active. Built-in defaults exist for GPT-5 and Claude families. You can override, clear (to suppress defaults), or leave unchanged to use the built-in.
+
 Start with the defaults. Adjust when you notice a task is too slow, too expensive, or not producing good enough results.`,
   keywords: ['model', 'models', 'select', 'choose', 'AI', 'provider', 'overview'],
   relatedIds: ['models-providers', 'models-reasoning', 'models-routing'],
