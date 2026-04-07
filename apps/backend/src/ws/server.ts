@@ -49,6 +49,7 @@ import { createSchedulerRoutes } from "./routes/scheduler-routes.js";
 import { createSettingsRoutes, type SettingsRouteBundle } from "./routes/settings-routes.js";
 import { createSpecialistRoutes } from "./routes/specialist-routes.js";
 import { createSlashCommandRoutes } from "./routes/slash-command-routes.js";
+import { createSkillRoutes } from "./routes/skill-routes.js";
 import { createTranscriptionRoutes } from "./routes/transcription-routes.js";
 import { STATS_CACHE_TTL_MS, StatsService } from "../stats/stats-service.js";
 import type { TelemetryService } from "../telemetry/telemetry-service.js";
@@ -384,6 +385,7 @@ export class SwarmWebSocketServer {
         broadcastEvent: (event) => this.wsHandler.broadcastToSubscribed(event),
       }),
       ...createExtensionRoutes({ swarmManager: this.swarmManager }),
+      ...createSkillRoutes({ swarmManager: this.swarmManager }),
       ...createChromeCdpRoutes({ swarmManager: this.swarmManager }),
       ...createPlaywrightRoutes({
         discoveryService: this.playwrightDiscovery,

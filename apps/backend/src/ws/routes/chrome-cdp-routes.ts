@@ -15,7 +15,6 @@ const CHROME_CDP_SETTINGS_ENDPOINT_PATH = "/api/settings/chrome-cdp";
 const CHROME_CDP_TEST_ENDPOINT_PATH = "/api/settings/chrome-cdp/test";
 const CHROME_CDP_PROFILES_ENDPOINT_PATH = "/api/settings/chrome-cdp/profiles";
 const CHROME_CDP_PREVIEW_ENDPOINT_PATH = "/api/settings/chrome-cdp/preview";
-const SETTINGS_SKILLS_ENDPOINT_PATH = "/api/settings/skills";
 const CHROME_CDP_METHODS = "GET, PUT, POST, OPTIONS";
 
 interface ChromeCdpConfig {
@@ -53,8 +52,7 @@ export function createChromeCdpRoutes(options: { swarmManager: SwarmManager }): 
         pathname === CHROME_CDP_SETTINGS_ENDPOINT_PATH ||
         pathname === CHROME_CDP_TEST_ENDPOINT_PATH ||
         pathname === CHROME_CDP_PROFILES_ENDPOINT_PATH ||
-        pathname === CHROME_CDP_PREVIEW_ENDPOINT_PATH ||
-        pathname === SETTINGS_SKILLS_ENDPOINT_PATH,
+        pathname === CHROME_CDP_PREVIEW_ENDPOINT_PATH,
       handle: async (request, response, requestUrl) => {
         try {
           await handleChromeCdpHttpRequest(swarmManager, request, response, requestUrl);
@@ -84,13 +82,6 @@ async function handleChromeCdpHttpRequest(
   }
 
   applyCorsHeaders(request, response, CHROME_CDP_METHODS);
-
-  if (request.method === "GET" && requestUrl.pathname === SETTINGS_SKILLS_ENDPOINT_PATH) {
-    const profileId = requestUrl.searchParams.get("profileId") ?? undefined;
-    const skills = await swarmManager.listSkillMetadata(profileId);
-    sendJson(response, 200, { skills });
-    return;
-  }
 
   if (request.method === "GET" && requestUrl.pathname === CHROME_CDP_SETTINGS_ENDPOINT_PATH) {
     const config = readCurrentChromeCdpConfig();
