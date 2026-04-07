@@ -1,16 +1,6 @@
 import { StatCard } from '../cards/StatCard'
 import { abbreviateNumber } from '../charts/chart-utils'
-import { AlertTriangle } from 'lucide-react'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import type { TokenAnalyticsTotals, TokenAnalyticsAttributionSummary } from '@forge/protocol'
-
-function formatCost(value: number): string {
-  if (value >= 100) return `$${value.toFixed(0)}`
-  if (value >= 1) return `$${value.toFixed(2)}`
-  if (value >= 0.01) return `$${value.toFixed(3)}`
-  if (value > 0) return `$${value.toFixed(4)}`
-  return '$0'
-}
 
 function formatDuration(ms: number | null): string {
   if (ms == null) return '—'
@@ -31,9 +21,11 @@ export function TokenAnalyticsHeaderCards({
   totals,
   attribution,
 }: TokenAnalyticsHeaderCardsProps) {
-  const costTotal = totals.cost.totals?.total ?? 0
-  const isPartialCost = totals.cost.costCoverage === 'partial'
-  const noCost = totals.cost.costCoverage === 'none'
+  const cacheRead = totals.usage.cacheRead
+  const inputSideTokens = cacheRead + totals.usage.input
+  const cacheHitRate = inputSideTokens > 0
+    ? (cacheRead / inputSideTokens) * 100
+    : 0
 
   const specialistRunPct = totals.runCount > 0
     ? attribution.specialist.runPercentage
@@ -57,29 +49,9 @@ export function TokenAnalyticsHeaderCards({
         variant="accent"
       />
       <StatCard
-        title="Estimated Cost"
-        value={noCost ? '—' : formatCost(costTotal)}
-        subtitle={
-          noCost ? (
-            'No cost data available'
-          ) : isPartialCost ? (
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span className="inline-flex items-center gap-1 text-amber-400">
-                    <AlertTriangle className="size-3" />
-                    Partial coverage ({totals.cost.costCoveredEventCount} events)
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p className="text-xs">Not all events have cost data — total may be underestimated</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          ) : (
-            `${totals.cost.costCoveredEventCount} events`
-          )
-        }
+        title="Cache Hit Rate"
+        value={inputSideTokens > 0 ? `${cacheHitRate.toFixed(1)}%` : '—'}
+        subtitle={`${abbreviateNumber(cacheRead)} cache read tokens`}
         variant="accent"
       />
       <StatCard
