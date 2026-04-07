@@ -136,7 +136,7 @@ The search bar at the top filters sessions and workers by name. Prefix shortcuts
 
 ## Profile actions
 
-Right-click a profile header to access: New Session, Create Project Agent, Rename, Change Model, Change Working Directory, or Delete Manager. Changing the working directory updates the CWD for all sessions in the profile — active workers keep their old CWD, but new spawns inherit the new path.
+Right-click a profile header to access: New Session, Create Project Agent, Rename, Change Model, Change Working Directory, Mark All as Read, or Delete Manager. Changing the working directory updates the CWD for all sessions in the profile — active workers keep their old CWD, but new spawns inherit the new path.
 
 You can also drag profiles to reorder them. The **+** button on a profile header creates a new session.
 
