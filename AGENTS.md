@@ -105,6 +105,7 @@ These are briefly described for orientation. Most have both backend and UI compo
 | **Project Agent Creator** | `swarm/agent-creator-context.ts`, `swarm/agent-creator-tool.ts`, `swarm/archetypes/builtins/agent-architect.md` | `components/chat/AgentSidebar.tsx` (context menu + violet Sparkles icon) | Conversational project agent creation flow. Right-click profile header to create a session with the Agent Architect archetype. Gathers context (existing agents + recent memory excerpts, 3,200-char seed context budget), interviews user about the new agent's role, then atomically creates and promotes the session via `create_project_agent` tool. Created agents are stored in dedicated per-handle directories with editable `prompt.md` files and scoped reference docs. Cannot be promoted, forked, or created in Cortex profile. |
 | **Provider usage monitoring** | `stats/provider-usage-service.ts` | `components/chat/SidebarUsageWidget.tsx`, `components/stats/sections/ProviderUsage.tsx` | OAuth-based subscription rate-limit monitoring for OpenAI Codex and Anthropic Claude. Uses a restart-persistent cache (`shared/cache/provider-usage-cache.json`), shows 5-hour rolling and weekly windows with deficit/reserve pace labels, supports manual refresh in the sidebar detail panel, and estimates weekly pace from historical usage curves. |
 | **Credential pool** | `swarm/credential-pool.ts`, `ws/routes/settings-routes.ts` | `components/settings/OpenAICredentialPool.tsx` | Multi-account OpenAI credential pooling with failover. Pool metadata stored in `shared/config/auth/credential-pool.json`; auth credentials in `auth.json` with suffixed keys for non-primary accounts. Supports add/remove/rename/set-primary and strategy selection (fill_first, least_used). OpenAI Codex scoped only (v1). |
+| **Token analytics** | `stats/token-analytics-service.ts` | `components/stats/token-analytics/` | Per-worker and per-specialist token usage analytics with attribution tracking, filtering, drill-down, and disk-cached scanning. Stats page adds an Overview \| Token Analytics tab layout. |
 
 Backend paths above are relative to `apps/backend/src/`. UI paths are relative to `apps/ui/src/`.
 
@@ -156,7 +157,7 @@ All runtime state lives in `~/.forge` (or `%LOCALAPPDATA%\forge` on Windows), ov
 │   │   │   └── pi-models.json             # Generated Pi-compatible model projection
 │   │   ├── stats-cache.json               # Cached dashboard statistics
 │   │   ├── provider-usage-cache.json      # Cached provider subscription usage snapshots
-│   │   └── provider-usage-history.jsonl   # Historical provider usage samples
+│   │   ├── provider-usage-history.jsonl   # Historical provider usage samples\n│   │   └── token-analytics-cache.json    # Cached token analytics scan results
 │   ├── state/
 │   │   ├── mobile-devices.json            # Registered mobile devices
 │   │   ├── .compaction-count-backfill-v2-done  # Compaction-count backfill sentinel
