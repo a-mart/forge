@@ -43,6 +43,14 @@ interface UsageWindow {
   window_seconds?: number;
 }
 
+/** Pi AuthStorage credential shape (stored in ~/.forge/shared/config/auth/auth.json) */
+interface PiAuthCredential {
+  access?: string;
+  refresh?: string;
+  expires?: number;
+  accountId?: string;
+}
+
 interface CodexAuthFile {
   tokens?: {
     access_token?: string;
@@ -134,14 +142,14 @@ export class ProviderUsageService {
           for (const cred of poolState.credentials) {
             try {
               const authData = await pool.buildRuntimeAuthData("openai-codex", cred.id);
-              const codexAuth = authData["openai-codex"] as CodexAuthFile | undefined;
-              const accessToken = codexAuth?.tokens?.access_token?.trim();
+              const piAuth = authData["openai-codex"] as PiAuthCredential | undefined;
+              const accessToken = piAuth?.access?.trim();
               if (!accessToken) {
                 entries.push({ data: { ...unavailableProviderUsage("openai"), accountId: cred.id, accountLabel: cred.label }, fetchedAtMs: nowMs, lastAttemptMs: nowMs });
                 continue;
               }
               const headers: Record<string, string> = { Authorization: `Bearer ${accessToken}`, Accept: "application/json" };
-              const acctId = codexAuth?.tokens?.account_id?.trim();
+              const acctId = piAuth?.accountId?.trim();
               if (acctId) headers["ChatGPT-Account-Id"] = acctId;
               const response = await fetch(OPENAI_USAGE_URL, { headers, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
               if (!response.ok) {
