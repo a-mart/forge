@@ -13,16 +13,8 @@ import { abbreviateNumber } from '../charts/chart-utils'
 import { cn } from '@/lib/utils'
 import type { TokenAnalyticsSpecialistSummary } from '@forge/protocol'
 
-type SortField = 'runCount' | 'averageTokensPerRun' | 'totalTokens' | 'percentOfScopedTokens' | 'cost'
+type SortField = 'runCount' | 'averageTokensPerRun' | 'totalTokens' | 'percentOfScopedTokens'
 type SortDir = 'asc' | 'desc'
-
-function formatCost(value: number): string {
-  if (value >= 100) return `$${value.toFixed(0)}`
-  if (value >= 1) return `$${value.toFixed(2)}`
-  if (value >= 0.01) return `$${value.toFixed(3)}`
-  if (value > 0) return `$${value.toFixed(4)}`
-  return '—'
-}
 
 function getDisplayNameForAttribution(summary: TokenAnalyticsSpecialistSummary): string {
   if (summary.attributionKind === 'ad_hoc') return 'Ad-hoc Workers'
@@ -105,10 +97,6 @@ export function SpecialistBreakdownTable({
           aVal = a.percentOfScopedTokens
           bVal = b.percentOfScopedTokens
           break
-        case 'cost':
-          aVal = a.cost.totals?.total ?? 0
-          bVal = b.cost.totals?.total ?? 0
-          break
         default:
           aVal = a.usage.total
           bVal = b.usage.total
@@ -137,7 +125,6 @@ export function SpecialistBreakdownTable({
               <SortableHeader label="Avg/Run" field="averageTokensPerRun" currentSort={sortField} currentDir={sortDir} onSort={handleSort} className="text-right" />
               <SortableHeader label="Total Tokens" field="totalTokens" currentSort={sortField} currentDir={sortDir} onSort={handleSort} className="text-right" />
               <SortableHeader label="% of Total" field="percentOfScopedTokens" currentSort={sortField} currentDir={sortDir} onSort={handleSort} className="text-right" />
-              <SortableHeader label="Cost" field="cost" currentSort={sortField} currentDir={sortDir} onSort={handleSort} className="text-right" />
               <TableHead>Top Model</TableHead>
             </TableRow>
           </TableHeader>
@@ -178,9 +165,6 @@ export function SpecialistBreakdownTable({
                   </TableCell>
                   <TableCell className="text-right font-mono text-xs">
                     {row.percentOfScopedTokens.toFixed(1)}%
-                  </TableCell>
-                  <TableCell className="text-right font-mono text-xs">
-                    {formatCost(row.cost.totals?.total ?? 0)}
                   </TableCell>
                   <TableCell className="text-xs text-muted-foreground">
                     {row.topModelId ?? '—'}
