@@ -45,11 +45,13 @@ describe('useProviderUsage', () => {
 
   it('keeps the last successful provider snapshot when a later poll fails', async () => {
     const goodSnapshot: ProviderUsageStats = {
-      openai: {
-        provider: 'openai',
-        available: true,
-        plan: 'pro',
-      },
+      openai: [
+        {
+          provider: 'openai',
+          available: true,
+          plan: 'pro',
+        },
+      ],
       anthropic: {
         provider: 'anthropic',
         available: true,

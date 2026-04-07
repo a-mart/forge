@@ -106,15 +106,17 @@ function buildStatsSnapshot(overrides: Partial<StatsSnapshot> = {}): StatsSnapsh
     models: [],
     dailyUsage: [],
     providers: {
-      openai: {
-        provider: 'openai',
-        available: true,
-        plan: 'Plus',
-        sessionUsage: {
-          percent: 42,
-          resetInfo: 'Resets in 1h 0m',
+      openai: [
+        {
+          provider: 'openai',
+          available: true,
+          plan: 'Plus',
+          sessionUsage: {
+            percent: 42,
+            resetInfo: 'Resets in 1h 0m',
+          },
         },
-      },
+      ],
       anthropic: {
         provider: 'anthropic',
         available: false,

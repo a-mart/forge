@@ -60,6 +60,7 @@ import {
   type PinRegistry
 } from "./message-pins.js";
 import { ensureCanonicalAuthFilePath } from "./auth-storage-paths.js";
+import type { CredentialPoolService } from "./credential-pool.js";
 import { migrateDataDirectory } from "./data-migration.js";
 import { cleanupOldSharedConfigPaths, migrateSharedConfigLayout } from "./shared-config-migration.js";
 import {
@@ -5719,6 +5720,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   // ── Credential Pool pass-through ──
+
+  getCredentialPoolService(): CredentialPoolService {
+    return this.secretsEnvService.getCredentialPoolService();
+  }
 
   async listCredentialPool(provider: string): Promise<CredentialPoolState> {
     return this.secretsEnvService.getCredentialPoolService().listPool(provider);

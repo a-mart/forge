@@ -94,7 +94,7 @@ export interface DailyUsageBucket {
 
 export interface ProviderUsageStats {
   anthropic?: ProviderAccountUsage;
-  openai?: ProviderAccountUsage;
+  openai?: ProviderAccountUsage[];
 }
 
 export interface ProviderUsagePace {
@@ -116,6 +116,8 @@ export interface ProviderUsageWindow {
 
 export interface ProviderAccountUsage {
   provider: string;
+  accountId?: string;
+  accountLabel?: string;
   accountEmail?: string;
   plan?: string;
   sessionUsage?: ProviderUsageWindow;

@@ -1,6 +1,6 @@
 import { Card } from '@/components/ui/card'
 import { StatCard } from '../cards/StatCard'
-import type { ProviderUsageStats } from '@forge/protocol'
+import type { ProviderAccountUsage, ProviderUsageStats } from '@forge/protocol'
 
 interface ProviderUsageProps {
   providers: ProviderUsageStats
@@ -39,16 +39,24 @@ function UsageMeter({
   )
 }
 
+function getOpenAIAccountHeading(account: ProviderAccountUsage, index: number, total: number): string {
+  if (total <= 1) return 'OpenAI'
+  return account.accountLabel || account.accountEmail || account.accountId || `Account ${index + 1}`
+}
+
 export function ProviderUsage({ providers }: ProviderUsageProps) {
+  // Normalize: handle both old single-object and new array shape
+  const openaiAccounts: ProviderAccountUsage[] = providers.openai
+    ? (Array.isArray(providers.openai) ? providers.openai : [providers.openai as ProviderAccountUsage])
+    : []
+  const anthropic = providers.anthropic
+
   const hasAnyProvider =
-    (providers.anthropic?.available ?? false) || (providers.openai?.available ?? false)
+    (anthropic?.available ?? false) || openaiAccounts.some((a) => a.available)
 
   if (!hasAnyProvider) {
     return null
   }
-
-  const openai = providers.openai
-  const anthropic = providers.anthropic
 
   return (
     <div>
@@ -56,34 +64,22 @@ export function ProviderUsage({ providers }: ProviderUsageProps) {
         <h3 className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
           Account Limits
         </h3>
-        {openai?.accountEmail ? (
+        {openaiAccounts.length === 1 && openaiAccounts[0].accountEmail ? (
           <span className="text-xs text-muted-foreground">
-            {openai.accountEmail}
+            {openaiAccounts[0].accountEmail}
           </span>
         ) : null}
       </div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        {openai?.available && openai.sessionUsage ? (
-          <UsageMeter
-            title="Session Usage"
-            percent={openai.sessionUsage.percent}
-            subtitle={openai.sessionUsage.resetInfo}
-          />
-        ) : null}
-        {openai?.available && openai.weeklyUsage ? (
-          <UsageMeter
-            title="Weekly Usage"
-            percent={openai.weeklyUsage.percent}
-            subtitle={openai.weeklyUsage.resetInfo}
-          />
-        ) : null}
-        {openai?.available && openai.plan ? (
-          <StatCard
-            title="Plan"
-            value={openai.plan}
-            subtitle="ChatGPT account"
-          />
-        ) : null}
+        {openaiAccounts.map((account, index) => {
+          if (!account.available) return null
+          const heading = openaiAccounts.length > 1
+            ? getOpenAIAccountHeading(account, index, openaiAccounts.length)
+            : undefined
+          return (
+            <OpenAIAccountCards key={account.accountId ?? index} account={account} heading={heading} />
+          )
+        })}
         {anthropic?.available && anthropic.sessionUsage ? (
           <UsageMeter
             title="Anthropic Session"
@@ -107,5 +103,34 @@ export function ProviderUsage({ providers }: ProviderUsageProps) {
         ) : null}
       </div>
     </div>
+  )
+}
+
+function OpenAIAccountCards({ account, heading }: { account: ProviderAccountUsage; heading?: string }) {
+  const prefix = heading ? `${heading} — ` : ''
+  return (
+    <>
+      {account.sessionUsage ? (
+        <UsageMeter
+          title={`${prefix}Session Usage`}
+          percent={account.sessionUsage.percent}
+          subtitle={account.sessionUsage.resetInfo}
+        />
+      ) : null}
+      {account.weeklyUsage ? (
+        <UsageMeter
+          title={`${prefix}Weekly Usage`}
+          percent={account.weeklyUsage.percent}
+          subtitle={account.weeklyUsage.resetInfo}
+        />
+      ) : null}
+      {account.plan ? (
+        <StatCard
+          title={heading ? `${heading} Plan` : 'Plan'}
+          value={account.plan}
+          subtitle={account.accountEmail ?? 'ChatGPT account'}
+        />
+      ) : null}
+    </>
   )
 }

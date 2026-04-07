@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ProviderUsageStats } from '@forge/protocol'
+import type { ProviderAccountUsage, ProviderUsageStats } from '@forge/protocol'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
 import { resolveBackendWsUrl } from '@/lib/backend-url'
 
@@ -53,6 +53,10 @@ export function useProviderUsage(enabled: boolean): ProviderUsageResult {
         }
 
         const data = (await response.json()) as ProviderUsageStats
+        // Backward compat: if openai is a single object (old cached data), wrap in array
+        if (data.openai && !Array.isArray(data.openai)) {
+          data.openai = [data.openai as ProviderAccountUsage]
+        }
         if (!cancelled) {
           setProviders(data)
         }

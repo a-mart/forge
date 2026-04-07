@@ -90,6 +90,11 @@ export class StatsService {
       join(config.paths.sharedCacheDir, "provider-usage-history.jsonl"),
       join(config.paths.sharedCacheDir, "provider-usage-cache.json")
     );
+
+    // Wire credential pool for multi-account usage monitoring
+    this.providerUsageService.setCredentialPoolGetter(() =>
+      this.swarmManager.getCredentialPoolService()
+    );
   }
 
   async getSnapshot(

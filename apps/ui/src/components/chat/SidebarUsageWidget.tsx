@@ -5,7 +5,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { cn } from '@/lib/utils'
 
 interface ProviderRowConfig {
-  key: 'anthropic' | 'openai'
+  key: string
   label: string
   iconSrc: string
   iconClassName?: string
@@ -395,20 +395,34 @@ export function SidebarUsagePanel({ providers, open, onClose, loading, onRefresh
   )
 }
 
+function getOpenAIAccountLabel(account: ProviderAccountUsage, index: number, total: number): string {
+  if (total <= 1) return 'OpenAI'
+  const suffix = account.accountLabel || account.accountEmail || account.accountId || `Account ${index + 1}`
+  return `OpenAI — ${suffix}`
+}
+
 function buildRows(providers: ProviderUsageStats | null): ProviderRowConfig[] {
-  return [
+  const rows: ProviderRowConfig[] = [
     {
       key: 'anthropic',
       label: 'Anthropic',
       iconSrc: '/agents/claude-logo.svg',
       usage: providers?.anthropic,
     },
-    {
-      key: 'openai',
-      label: 'OpenAI',
-      iconSrc: '/agents/codex-logo.svg',
-      iconClassName: 'dark:invert',
-      usage: providers?.openai,
-    },
   ]
+
+  const openaiAccounts = providers?.openai
+  if (openaiAccounts && openaiAccounts.length > 0) {
+    for (let i = 0; i < openaiAccounts.length; i++) {
+      rows.push({
+        key: `openai-${openaiAccounts[i].accountId ?? i}`,
+        label: getOpenAIAccountLabel(openaiAccounts[i], i, openaiAccounts.length),
+        iconSrc: '/agents/codex-logo.svg',
+        iconClassName: 'dark:invert',
+        usage: openaiAccounts[i],
+      })
+    }
+  }
+
+  return rows
 }

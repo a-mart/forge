@@ -53,15 +53,15 @@ describe("ProviderUsageService", () => {
     const { ProviderUsageService } = await import("../stats/provider-usage-service.js");
     const service = new ProviderUsageService("/tmp/shared-auth.json", makeHistoryFilePath()) as any;
 
-    service.setCached("openai", {
-      provider: "openai",
-      available: true,
-      plan: "Plus"
-    }, 1_000);
+    service.cache.openai = [{
+      data: { provider: "openai", available: true, plan: "Plus" },
+      fetchedAtMs: 1_000,
+      lastAttemptMs: 1_000
+    }];
 
-    service.recordFailedAttempt("openai", 5_000);
+    service.recordOpenAIFailedAttempt(5_000);
 
-    expect(service.cache.openai).toEqual({
+    expect(service.cache.openai).toEqual([{
       data: {
         provider: "openai",
         available: true,
@@ -69,7 +69,7 @@ describe("ProviderUsageService", () => {
       },
       fetchedAtMs: 1_000,
       lastAttemptMs: 5_000
-    });
+    }]);
   });
 
   it("stores unavailable data when no good cache exists", async () => {
@@ -139,12 +139,16 @@ describe("ProviderUsageService", () => {
     const firstSnapshot = await firstService.getSnapshot();
     await firstService.persistQueue;
 
-    expect(firstSnapshot.openai).toMatchObject({
-      provider: "openai",
-      accountEmail: "adam@example.com",
-      plan: "pro",
-      available: true
-    });
+    expect(firstSnapshot.openai).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          provider: "openai",
+          accountEmail: "adam@example.com",
+          plan: "pro",
+          available: true
+        })
+      ])
+    );
 
     openAiFetchMode = "failure";
     nowMs += 4 * 60 * 1000;
@@ -160,12 +164,16 @@ describe("ProviderUsageService", () => {
 
     const secondSnapshot = await secondService.getSnapshot();
 
-    expect(secondSnapshot.openai).toMatchObject({
-      provider: "openai",
-      accountEmail: "adam@example.com",
-      plan: "pro",
-      available: true
-    });
+    expect(secondSnapshot.openai).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          provider: "openai",
+          accountEmail: "adam@example.com",
+          plan: "pro",
+          available: true
+        })
+      ])
+    );
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
@@ -273,20 +281,24 @@ describe("ProviderUsageService", () => {
 
     const snapshot = await service.getSnapshot();
 
-    expect(snapshot.openai).toMatchObject({
-      provider: "openai",
-      accountEmail: "adam@example.com",
-      plan: "pro",
-      available: true,
-      sessionUsage: {
-        percent: 20,
-        resetInfo: "20m"
-      },
-      weeklyUsage: {
-        percent: 15,
-        resetInfo: "5.0d"
-      }
-    });
+    expect(snapshot.openai).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          provider: "openai",
+          accountEmail: "adam@example.com",
+          plan: "pro",
+          available: true,
+          sessionUsage: expect.objectContaining({
+            percent: 20,
+            resetInfo: "20m"
+          }),
+          weeklyUsage: expect.objectContaining({
+            percent: 15,
+            resetInfo: "5.0d"
+          })
+        })
+      ])
+    );
     expect(snapshot.anthropic).toMatchObject({
       provider: "anthropic",
       available: true,

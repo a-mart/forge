@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { ProviderAccountUsage, ProviderUsageStats } from "@forge/protocol";
+import type { CredentialPoolService } from "../swarm/credential-pool.js";
 import {
   evaluateHistoricalProviderUsagePace,
   ProviderUsageHistoryStore,
@@ -63,7 +64,7 @@ interface CachedProviderUsageEntry {
 }
 
 interface CachedProviderUsage {
-  openai?: CachedProviderUsageEntry;
+  openai?: CachedProviderUsageEntry[];
   anthropic?: CachedProviderUsageEntry;
 }
 
@@ -73,17 +74,18 @@ interface PersistedProviderUsageCache {
 }
 
 const TEST_PROVIDER_USAGE_SNAPSHOT: ProviderUsageStats = {
-  openai: unavailableProviderUsage("openai"),
+  openai: [unavailableProviderUsage("openai")],
   anthropic: unavailableProviderUsage("anthropic")
 };
 
-const PERSISTED_CACHE_VERSION = 1;
+const PERSISTED_CACHE_VERSION = 2;
 
 export class ProviderUsageService {
   private readonly cache: CachedProviderUsage = {};
   private readonly historyStore: ProviderUsageHistoryStore;
   private persistentCacheLoaded = false;
   private persistQueue: Promise<void> = Promise.resolve();
+  private credentialPoolGetter?: () => CredentialPoolService;
 
   constructor(
     private readonly sharedAuthFilePath: string,
@@ -91,6 +93,10 @@ export class ProviderUsageService {
     private readonly cacheFilePath?: string
   ) {
     this.historyStore = new ProviderUsageHistoryStore(historyFilePath);
+  }
+
+  setCredentialPoolGetter(getter: () => CredentialPoolService): void {
+    this.credentialPoolGetter = getter;
   }
 
   async getSnapshot(): Promise<ProviderUsageStats> {
@@ -108,23 +114,66 @@ export class ProviderUsageService {
     ]);
 
     return {
-      openai: this.cache.openai?.data,
+      openai: this.cache.openai?.map(e => e.data),
       anthropic: this.cache.anthropic?.data
     };
   }
 
   private async refreshOpenAIIfStale(nowMs: number): Promise<void> {
-    if (isFresh(this.cache.openai, nowMs)) {
+    if (this.cache.openai?.length && this.cache.openai.every(e => isFresh(e, nowMs))) {
       return;
     }
 
+    // Multi-account path: fetch usage for each pooled credential
+    const pool = this.credentialPoolGetter?.();
+    if (pool) {
+      try {
+        const poolState = await pool.listPool("openai-codex");
+        if (poolState.credentials.length > 1) {
+          const entries: CachedProviderUsageEntry[] = [];
+          for (const cred of poolState.credentials) {
+            try {
+              const authData = await pool.buildRuntimeAuthData("openai-codex", cred.id);
+              const codexAuth = authData["openai-codex"] as CodexAuthFile | undefined;
+              const accessToken = codexAuth?.tokens?.access_token?.trim();
+              if (!accessToken) {
+                entries.push({ data: { ...unavailableProviderUsage("openai"), accountId: cred.id, accountLabel: cred.label }, fetchedAtMs: nowMs, lastAttemptMs: nowMs });
+                continue;
+              }
+              const headers: Record<string, string> = { Authorization: `Bearer ${accessToken}`, Accept: "application/json" };
+              const acctId = codexAuth?.tokens?.account_id?.trim();
+              if (acctId) headers["ChatGPT-Account-Id"] = acctId;
+              const response = await fetch(OPENAI_USAGE_URL, { headers, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+              if (!response.ok) {
+                entries.push({ data: { ...unavailableProviderUsage("openai"), accountId: cred.id, accountLabel: cred.label }, fetchedAtMs: nowMs, lastAttemptMs: nowMs });
+                continue;
+              }
+              const body = (await response.json()) as OpenAIUsageResponse;
+              const usage = await this.withHistoricalPace("openai", mapOpenAIResponse(body), nowMs);
+              usage.accountId = cred.id;
+              usage.accountLabel = cred.label;
+              entries.push({ data: usage, fetchedAtMs: nowMs, lastAttemptMs: nowMs });
+            } catch {
+              entries.push({ data: { ...unavailableProviderUsage("openai"), accountId: cred.id, accountLabel: cred.label }, fetchedAtMs: nowMs, lastAttemptMs: nowMs });
+            }
+          }
+          this.cache.openai = entries;
+          this.queuePersistCacheWrite();
+          return;
+        }
+      } catch {
+        // fall through to single-account path
+      }
+    }
+
+    // Single-account path
     const auth = await this.readOpenAIAuth();
     const accessToken = auth?.tokens?.access_token?.trim();
     if (!accessToken) {
       if (auth) {
-        this.invalidateProvider("openai", nowMs);
+        this.invalidateOpenAI(nowMs);
       } else {
-        this.recordFailedAttempt("openai", nowMs);
+        this.recordOpenAIFailedAttempt(nowMs);
       }
       return;
     }
@@ -148,19 +197,20 @@ export class ProviderUsageService {
       if (!response.ok) {
         console.warn(`[provider-usage] OpenAI usage API returned ${response.status}`);
         if (response.status === 401 || response.status === 403) {
-          this.invalidateProvider("openai", nowMs);
+          this.invalidateOpenAI(nowMs);
         } else {
-          this.recordFailedAttempt("openai", nowMs);
+          this.recordOpenAIFailedAttempt(nowMs);
         }
         return;
       }
 
       const body = (await response.json()) as OpenAIUsageResponse;
       const usage = await this.withHistoricalPace("openai", mapOpenAIResponse(body), nowMs);
-      this.setCached("openai", usage, nowMs);
+      this.cache.openai = [{ data: usage, fetchedAtMs: nowMs, lastAttemptMs: nowMs }];
+      this.queuePersistCacheWrite();
     } catch (error) {
       console.warn(`[provider-usage] OpenAI usage fetch failed: ${toErrorMessage(error)}`);
-      this.recordFailedAttempt("openai", nowMs);
+      this.recordOpenAIFailedAttempt(nowMs);
     }
   }
 
@@ -247,12 +297,27 @@ export class ProviderUsageService {
     }
   }
 
-  private setCached(provider: keyof CachedProviderUsage, data: ProviderAccountUsage, fetchedAtMs: number): void {
+  private setCached(provider: "anthropic", data: ProviderAccountUsage, fetchedAtMs: number): void {
     this.cache[provider] = {
       data,
       fetchedAtMs,
       lastAttemptMs: fetchedAtMs
     };
+    this.queuePersistCacheWrite();
+  }
+
+  private invalidateOpenAI(nowMs: number): void {
+    this.cache.openai = [{ data: unavailableProviderUsage("openai"), fetchedAtMs: nowMs, lastAttemptMs: nowMs }];
+    this.queuePersistCacheWrite();
+  }
+
+  private recordOpenAIFailedAttempt(nowMs: number): void {
+    const existing = this.cache.openai;
+    if (existing?.length && existing[0].data.available) {
+      this.cache.openai = existing.map(e => ({ ...e, lastAttemptMs: nowMs }));
+    } else {
+      this.cache.openai = [{ data: unavailableProviderUsage("openai"), fetchedAtMs: nowMs, lastAttemptMs: nowMs }];
+    }
     this.queuePersistCacheWrite();
   }
 
@@ -287,7 +352,7 @@ export class ProviderUsageService {
     };
   }
 
-  private recordFailedAttempt(provider: keyof CachedProviderUsage, nowMs: number): void {
+  private recordFailedAttempt(provider: "anthropic", nowMs: number): void {
     const existing = this.cache[provider];
 
     if (existing?.data.available) {
@@ -307,7 +372,7 @@ export class ProviderUsageService {
     this.queuePersistCacheWrite();
   }
 
-  private invalidateProvider(provider: keyof CachedProviderUsage, nowMs: number): void {
+  private invalidateProvider(provider: "anthropic", nowMs: number): void {
     this.cache[provider] = {
       data: unavailableProviderUsage(provider),
       fetchedAtMs: nowMs,
@@ -330,9 +395,17 @@ export class ProviderUsageService {
         return;
       }
 
-      const openai = parseCachedProviderUsageEntry(parsed.entries.openai);
-      if (openai) {
-        this.cache.openai = openai;
+      const openaiRaw = parsed.entries.openai;
+      if (Array.isArray(openaiRaw)) {
+        const openaiEntries = openaiRaw.map(parseCachedProviderUsageEntry).filter((e): e is CachedProviderUsageEntry => e !== null);
+        if (openaiEntries.length > 0) {
+          this.cache.openai = openaiEntries;
+        }
+      } else if (openaiRaw) {
+        const single = parseCachedProviderUsageEntry(openaiRaw);
+        if (single) {
+          this.cache.openai = [single];
+        }
       }
 
       const anthropic = parseCachedProviderUsageEntry(parsed.entries.anthropic);
