@@ -2009,7 +2009,7 @@ describe('SwarmManager', () => {
     expect(systemPrompt).toContain('When evidence is sufficient, state the conclusion plainly instead of over-hedging.')
   })
 
-  it('omits the model-specific instructions block when the active model has no built-in default', async () => {
+  it('includes the model-specific instructions block for Claude SDK managers in prompt preview', async () => {
     const config = await makeTempConfig()
     config.defaultModel = {
       provider: 'claude-sdk',
@@ -2022,8 +2022,9 @@ describe('SwarmManager', () => {
     const preview = await manager.previewManagerSystemPrompt('manager')
     const systemPrompt = preview.sections.find((section) => section.label === 'System Prompt')?.content
 
-    expect(systemPrompt).not.toContain('# Model-Specific Instructions')
-    expect(systemPrompt).not.toContain('Prefer concise, direct answers over essay-style framing.')
+    expect(systemPrompt).toContain('# Model-Specific Instructions')
+    expect(systemPrompt).toContain('Prefer concise, direct answers over essay-style framing.')
+    expect(systemPrompt).toContain('When evidence is sufficient, state the conclusion plainly instead of over-hedging.')
   })
 
   it('leaves custom manager prompts unchanged when they do not opt into model-specific instructions', async () => {
@@ -3225,6 +3226,54 @@ describe('SwarmManager', () => {
     expect(resources.additionalSkillPaths).not.toContain(repoBraveSkillFile)
   })
 
+  it('injects GPT-5 model-specific instructions into the default manager prompt', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const prompt = manager.systemPromptByAgentId.get('manager')
+
+    expect(prompt).toContain('# Model-Specific Instructions')
+    expect(prompt).toContain('Return the requested sections only, in the requested order.')
+    expect(prompt).toContain('Do not use em dashes unless the user explicitly asks for them')
+  })
+
+  it('injects Claude model-specific instructions for pi-opus managers', async () => {
+    const config = await makeTempConfig()
+    config.defaultModel = {
+      provider: 'anthropic',
+      modelId: 'claude-opus-4-6',
+      thinkingLevel: 'high',
+    }
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const prompt = manager.systemPromptByAgentId.get('manager')
+
+    expect(prompt).toContain('# Model-Specific Instructions')
+    expect(prompt).toContain('Prefer concise, direct answers over essay-style framing.')
+    expect(prompt).toContain('When evidence is sufficient, state the conclusion plainly instead of over-hedging.')
+  })
+
+  it('omits model-specific instructions when the manager model has no built-in default', async () => {
+    const config = await makeTempConfig()
+    config.defaultModel = {
+      provider: 'xai',
+      modelId: 'grok-4',
+      thinkingLevel: 'high',
+    }
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const prompt = manager.systemPromptByAgentId.get('manager')
+
+    expect(prompt).not.toContain('# Model-Specific Instructions')
+    expect(prompt).not.toContain('Return the requested sections only, in the requested order.')
+    expect(prompt).not.toContain('Prefer concise, direct answers over essay-style framing.')
+  })
+
   it('uses repo manager archetype overrides on boot', async () => {
     const config = await makeTempConfig()
     const managerOverride = 'You are the repo manager override.'
@@ -3234,6 +3283,24 @@ describe('SwarmManager', () => {
     await bootWithDefaultManager(manager, config)
 
     expect(manager.systemPromptByAgentId.get('manager')).toContain(managerOverride)
+  })
+
+  it('does not inject model-specific instructions when a custom manager prompt omits the placeholder', async () => {
+    const config = await makeTempConfig()
+    await writeFile(
+      join(config.paths.repoArchetypesDir, 'manager.md'),
+      'You are the repo manager override.\n\n${SPECIALIST_ROSTER}\n',
+      'utf8',
+    )
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const prompt = manager.systemPromptByAgentId.get('manager')
+
+    expect(prompt).toContain('You are the repo manager override.')
+    expect(prompt).not.toContain('# Model-Specific Instructions')
+    expect(prompt).not.toContain('Return the requested sections only, in the requested order.')
   })
 
   it('uses merger archetype prompt for merger workers', async () => {

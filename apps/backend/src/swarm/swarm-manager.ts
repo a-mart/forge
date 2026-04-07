@@ -3154,9 +3154,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     this.descriptors.set(agentId, descriptor);
     await this.ensureSessionFileParentDirectory(descriptor.sessionFile);
-    await this.updateSessionMetaForWorkerDescriptor(descriptor, undefined, {
-      specialistAttributionKnown: true
-    });
+    await this.updateSessionMetaForWorkerDescriptor(descriptor);
     await this.saveStore();
     // Emit early snapshot so the UI sees the updated workerCount immediately,
     // before the potentially slow runtime creation.
@@ -7030,7 +7028,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       prompt = `${prompt.trimEnd()}\n\n${delegationContextBlock}`;
     }
 
-    if (prompt.includes("${model_specific_instructions}")) {
+    if (prompt.includes("${MODEL_SPECIFIC_INSTRUCTIONS}")) {
       const effectiveModelSpecificInstructions = modelCatalogService.getEffectiveModelSpecificInstructions(
         descriptor.model.modelId,
         descriptor.model.provider
@@ -7038,7 +7036,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       const modelSpecificInstructionsBlock = effectiveModelSpecificInstructions
         ? `# Model-Specific Instructions\n${effectiveModelSpecificInstructions}`
         : "";
-      prompt = prompt.replaceAll("${model_specific_instructions}", modelSpecificInstructionsBlock);
+      prompt = prompt.replaceAll("${MODEL_SPECIFIC_INSTRUCTIONS}", modelSpecificInstructionsBlock);
     }
 
     if (this.integrationContextProvider) {
@@ -9106,10 +9104,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   private async updateSessionMetaForWorkerDescriptor(
     descriptor: AgentDescriptor,
-    resolvedSystemPrompt?: string | null,
-    options: {
-      specialistAttributionKnown?: boolean;
-    } = {}
+    resolvedSystemPrompt?: string | null
   ): Promise<void> {
     if (descriptor.role !== "worker") {
       return;
@@ -9131,7 +9126,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
           id: descriptor.agentId,
           model: this.buildWorkerModelIdentifier(descriptor),
           specialistId: normalizeOptionalAgentId(descriptor.specialistId) ?? null,
-          specialistAttributionKnown: options.specialistAttributionKnown,
           status: this.mapWorkerStatusForMeta(descriptor.status),
           createdAt: descriptor.createdAt,
           terminatedAt: descriptor.status === "terminated" ? descriptor.updatedAt : null,
