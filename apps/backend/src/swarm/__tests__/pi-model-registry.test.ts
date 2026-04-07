@@ -4,22 +4,24 @@ import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const modelRegistryMockState = vi.hoisted(() => ({
-  create: vi.fn(),
+  construct: vi.fn(),
 }));
 
-vi.mock("@mariozechner/pi-coding-agent", () => ({
-  ModelRegistry: class {
-    static create(authStorage: unknown, modelsJsonPath?: string): unknown {
-      return modelRegistryMockState.create(authStorage, modelsJsonPath);
-    }
-  },
-}));
+vi.mock("@mariozechner/pi-coding-agent", () => {
+  return {
+    ModelRegistry: new Proxy(class {}, {
+      construct(_target, args) {
+        return modelRegistryMockState.construct(...args);
+      },
+    }),
+  };
+});
 
 import { createPiModelRegistry } from "../pi-model-registry.js";
 
 describe("createPiModelRegistry", () => {
   beforeEach(() => {
-    modelRegistryMockState.create.mockReset();
+    modelRegistryMockState.construct.mockReset();
   });
 
   it("throws before creating a registry when the generated projection file is missing", () => {
@@ -28,7 +30,7 @@ describe("createPiModelRegistry", () => {
     expect(() => createPiModelRegistry({} as never, projectionPath)).toThrow(
       `Pi model projection file is missing: ${projectionPath}. Regenerate it before creating a ModelRegistry.`,
     );
-    expect(modelRegistryMockState.create).not.toHaveBeenCalled();
+    expect(modelRegistryMockState.construct).not.toHaveBeenCalled();
   });
 
   it("creates a registry from the generated projection file", async () => {
@@ -40,10 +42,10 @@ describe("createPiModelRegistry", () => {
       getError: () => undefined,
     };
     const authStorage = { tag: "auth" };
-    modelRegistryMockState.create.mockReturnValue(registry);
+    modelRegistryMockState.construct.mockReturnValue(registry);
 
     expect(createPiModelRegistry(authStorage as never, projectionPath)).toBe(registry);
-    expect(modelRegistryMockState.create).toHaveBeenCalledWith(authStorage, projectionPath);
+    expect(modelRegistryMockState.construct).toHaveBeenCalledWith(authStorage, projectionPath);
   });
 
   it("surfaces ModelRegistry errors after creation", async () => {
@@ -51,7 +53,7 @@ describe("createPiModelRegistry", () => {
     const projectionPath = join(rootDir, "pi-models.json");
     await writeFile(projectionPath, '{"providers":{}}\n', "utf8");
 
-    modelRegistryMockState.create.mockReturnValue({
+    modelRegistryMockState.construct.mockReturnValue({
       getError: () => "projection invalid",
     });
 

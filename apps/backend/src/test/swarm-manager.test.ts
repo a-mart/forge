@@ -2989,7 +2989,7 @@ describe('SwarmManager', () => {
     expect(chromeCdpSkill).toContain('scripts/cdp.mjs')
   })
 
-  it('lists effective profile-scoped skill metadata including inherited global skills', async () => {
+  it('lists only profile-scoped skill metadata when a profile is selected', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await manager.boot()
@@ -3015,8 +3015,8 @@ describe('SwarmManager', () => {
 
     const profileSkills = await manager.listSkillMetadata(profileId)
     const customSkill = profileSkills.find((skill) => skill.directoryName === 'custom-profile-skill')
-    const inheritedMemorySkill = profileSkills.find((skill) => skill.directoryName === 'memory')
 
+    expect(profileSkills).toHaveLength(1)
     expect(customSkill).toMatchObject({
       name: 'custom-profile-skill',
       directoryName: 'custom-profile-skill',
@@ -3029,13 +3029,7 @@ describe('SwarmManager', () => {
       isEffective: true,
     })
     expect(typeof customSkill?.skillId).toBe('string')
-    expect(inheritedMemorySkill).toMatchObject({
-      name: 'memory',
-      directoryName: 'memory',
-      sourceKind: 'builtin',
-      isInherited: true,
-      isEffective: true,
-    })
+    expect(profileSkills.some((skill) => skill.directoryName === 'memory')).toBe(false)
 
     const globalSkills = await manager.listSkillMetadata()
     expect(globalSkills.some((skill) => skill.directoryName === 'custom-profile-skill')).toBe(false)

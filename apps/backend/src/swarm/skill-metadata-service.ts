@@ -76,8 +76,7 @@ export class SkillMetadataService {
 
     const profileCandidates = await this.scanProfileSkillPathCandidates(profileId);
     const profileMetadata = await this.loadEffectiveMetadata(profileCandidates, profileId);
-    const combined = await this.mergeInheritedMetadata(profileMetadata, this.skillMetadata, profileId);
-    return combined.map((metadata) => cloneSkillMetadata(metadata));
+    return profileMetadata.map((metadata) => cloneSkillMetadata(metadata));
   }
 
   async resolveSkillById(skillId: string): Promise<SkillMetadata | null> {
@@ -234,32 +233,6 @@ export class SkillMetadataService {
     );
 
     return metadata;
-  }
-
-  private async mergeInheritedMetadata(
-    prioritizedMetadata: SkillMetadata[],
-    inheritedMetadata: SkillMetadata[],
-    profileId: string
-  ): Promise<SkillMetadata[]> {
-    const merged: SkillMetadata[] = [];
-    const seenDirectoryNames = new Set<string>();
-
-    for (const metadata of [...prioritizedMetadata, ...inheritedMetadata]) {
-      const normalizedDirectoryName = normalizeSkillName(metadata.directoryName);
-      if (seenDirectoryNames.has(normalizedDirectoryName)) {
-        continue;
-      }
-
-      seenDirectoryNames.add(normalizedDirectoryName);
-      merged.push({
-        ...cloneSkillMetadata(metadata),
-        isInherited: metadata.sourceKind !== "profile",
-        isEffective: true,
-        ...(metadata.sourceKind === "profile" ? { profileId } : metadata.profileId ? { profileId: metadata.profileId } : {})
-      });
-    }
-
-    return merged;
   }
 
   private async loadSkillMetadataFromCandidate(

@@ -54,12 +54,7 @@ vi.mock("@mariozechner/pi-coding-agent", () => ({
   },
   createAgentSession: (...args: unknown[]) => piCodingAgentMockState.createAgentSession(...args),
   compact: (...args: unknown[]) => piCodingAgentMockState.compact(...args),
-  ModelRegistry: class {
-    static create(_authStorage: unknown, modelsJsonPath?: unknown): InstanceType<typeof this> {
-      piCodingAgentMockState.modelRegistryCreateArgs(_authStorage, modelsJsonPath);
-      return new this();
-    }
-
+  ModelRegistry: new Proxy(class {
     getError(): undefined {
       return undefined;
     }
@@ -71,7 +66,24 @@ vi.mock("@mariozechner/pi-coding-agent", () => ({
     getAll(): unknown[] {
       return piCodingAgentMockState.modelRegistryGetAll();
     }
-  },
+  }, {
+    construct(_target, args) {
+      piCodingAgentMockState.modelRegistryCreateArgs(...args);
+      return new (class {
+        getError(): undefined {
+          return undefined;
+        }
+
+        find(provider: string, modelId: string): unknown {
+          return piCodingAgentMockState.modelRegistryFind(provider, modelId);
+        }
+
+        getAll(): unknown[] {
+          return piCodingAgentMockState.modelRegistryGetAll();
+        }
+      })();
+    },
+  }),
 }));
 
 import { resetClaudeSdkLoaderForTests, setClaudeSdkImporterForTests } from "../claude-sdk-loader.js";

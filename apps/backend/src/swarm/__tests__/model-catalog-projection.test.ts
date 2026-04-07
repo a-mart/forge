@@ -1,9 +1,43 @@
 import { mkdir, mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { getModels } from "@mariozechner/pi-ai";
 import { ModelRegistry } from "@mariozechner/pi-coding-agent";
+
+const modelRegistryMockState = vi.hoisted(() => ({
+  construct: vi.fn(),
+}));
+
+vi.mock("@mariozechner/pi-coding-agent", () => ({
+  ModelRegistry: new Proxy(class {}, {
+    construct(_target, args) {
+      modelRegistryMockState.construct(...args);
+      return {
+        getError: () => undefined,
+        find: (provider: string, modelId: string) => {
+          const models: Record<string, Record<string, unknown>> = {
+            xai: {
+              "grok-4": { api: "openai-responses", contextWindow: 256_000 },
+            },
+            "openai-codex": {
+              "gpt-5.3-codex": { contextWindow: 272_000, maxTokens: 128_000 },
+            },
+            anthropic: {
+              "claude-opus-4-6": { contextWindow: 1_000_000 },
+            },
+            openrouter: {
+              "anthropic/claude-3.5-sonnet": { contextWindow: 200_000, api: "openai-completions" },
+            },
+          };
+          return (models[provider]?.[modelId] as Record<string, unknown> | undefined) ?? undefined;
+        },
+        getAll: () => [],
+      };
+    },
+  }),
+}));
+
 import {
   generatePiProjection,
   getPiModelsProjectionPath,
@@ -45,7 +79,10 @@ describe("model-catalog-projection", () => {
     expect(projectedXaiModels.find((model) => model.id === "grok-4-fast")?.cost).toEqual(upstreamGrok4Fast?.cost);
     expect(projection.providers.openrouter).toBeUndefined();
 
-    const registry = ModelRegistry.create(authStorageStub as any, projectionPath);
+    const registry = new (ModelRegistry as unknown as new (...args: unknown[]) => unknown)(authStorageStub as any, projectionPath) as {
+      getError: () => unknown;
+      find: (provider: string, modelId: string) => { api?: string; contextWindow?: number; maxTokens?: number } | undefined;
+    };
 
     expect(registry.getError()).toBeUndefined();
     expect(registry.find("xai", "grok-4")?.api).toBe("openai-responses");
@@ -53,6 +90,7 @@ describe("model-catalog-projection", () => {
     expect(registry.find("openai-codex", "gpt-5.3-codex")?.contextWindow).toBe(272_000);
     expect(registry.find("openai-codex", "gpt-5.3-codex")?.maxTokens).toBe(128_000);
     expect(registry.find("anthropic", "claude-opus-4-6")?.contextWindow).toBe(1_000_000);
+    expect(modelRegistryMockState.construct).toHaveBeenCalledWith(authStorageStub, projectionPath);
   });
 
   it("adds user-selected OpenRouter models as a custom provider merge block", async () => {
@@ -87,10 +125,14 @@ describe("model-catalog-projection", () => {
       }),
     ]);
 
-    const registry = ModelRegistry.create(authStorageStub as any, projectionPath);
+    const registry = new (ModelRegistry as unknown as new (...args: unknown[]) => unknown)(authStorageStub as any, projectionPath) as {
+      getError: () => unknown;
+      find: (provider: string, modelId: string) => { api?: string; contextWindow?: number } | undefined;
+    };
     expect(registry.getError()).toBeUndefined();
     expect(registry.find("openrouter", "anthropic/claude-3.5-sonnet")?.contextWindow).toBe(200_000);
     expect(registry.find("openrouter", "anthropic/claude-3.5-sonnet")?.api).toBe("openai-completions");
+    expect(modelRegistryMockState.construct).toHaveBeenCalledWith(authStorageStub, projectionPath);
   });
 
   it("keeps disabled curated models in the projection so existing configs retain Forge-owned runtime behavior", async () => {
@@ -106,11 +148,15 @@ describe("model-catalog-projection", () => {
     });
 
     const projectionPath = await generatePiProjection(dataDir);
-    const registry = ModelRegistry.create(authStorageStub as any, projectionPath);
+    const registry = new (ModelRegistry as unknown as new (...args: unknown[]) => unknown)(authStorageStub as any, projectionPath) as {
+      getError: () => unknown;
+      find: (provider: string, modelId: string) => { api?: string; contextWindow?: number } | undefined;
+    };
 
     expect(registry.getError()).toBeUndefined();
     expect(registry.find("xai", "grok-4")?.api).toBe("openai-responses");
     expect(registry.find("xai", "grok-4")?.contextWindow).toBe(256_000);
     expect(registry.find("openai-codex", "gpt-5.3-codex")?.contextWindow).toBe(272_000);
+    expect(modelRegistryMockState.construct).toHaveBeenCalledWith(authStorageStub, projectionPath);
   });
 });

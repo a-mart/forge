@@ -65,7 +65,7 @@ describe("skill routes", () => {
     });
   });
 
-  it("passes profileId through and returns inherited profile inventory rows", async () => {
+  it("passes profileId through and returns only profile-scoped inventory rows", async () => {
     const swarmManager = {
       listProfiles: vi.fn(() => [{ profileId: "profile-a", displayName: "Profile A" }]),
       listSkillMetadata: vi.fn(async (profileId?: string) => {
@@ -83,18 +83,6 @@ describe("skill routes", () => {
             rootPath: "/data/profiles/profile-a/pi/skills/custom-profile-skill",
             skillFilePath: "/data/profiles/profile-a/pi/skills/custom-profile-skill/SKILL.md",
             isInherited: false,
-            isEffective: true,
-          },
-          {
-            skillId: "builtin-skill-1",
-            name: "memory",
-            directoryName: "memory",
-            envCount: 0,
-            hasRichConfig: false,
-            sourceKind: "builtin",
-            rootPath: "/repo/apps/backend/src/swarm/skills/builtins/memory",
-            skillFilePath: "/repo/apps/backend/src/swarm/skills/builtins/memory/SKILL.md",
-            isInherited: true,
             isEffective: true,
           },
         ];
@@ -121,18 +109,6 @@ describe("skill routes", () => {
           rootPath: "/data/profiles/profile-a/pi/skills/custom-profile-skill",
           skillFilePath: "/data/profiles/profile-a/pi/skills/custom-profile-skill/SKILL.md",
           isInherited: false,
-          isEffective: true,
-        },
-        {
-          skillId: "builtin-skill-1",
-          name: "memory",
-          directoryName: "memory",
-          envCount: 0,
-          hasRichConfig: false,
-          sourceKind: "builtin",
-          rootPath: "/repo/apps/backend/src/swarm/skills/builtins/memory",
-          skillFilePath: "/repo/apps/backend/src/swarm/skills/builtins/memory/SKILL.md",
-          isInherited: true,
           isEffective: true,
         },
       ],

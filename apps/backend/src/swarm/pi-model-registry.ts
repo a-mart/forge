@@ -2,11 +2,11 @@ import { ModelRegistry } from "@mariozechner/pi-coding-agent";
 import { assertPiModelsProjectionAvailable } from "./model-catalog-projection.js";
 
 export function createPiModelRegistry(
-  authStorage: Parameters<typeof ModelRegistry.create>[0],
+  authStorage: ConstructorParameters<typeof ModelRegistry>[0],
   piModelsJsonPath: string,
 ): ModelRegistry {
   assertPiModelsProjectionAvailable(piModelsJsonPath);
-  const modelRegistry = ModelRegistry.create(authStorage, piModelsJsonPath);
+  const modelRegistry = new ModelRegistry(authStorage, piModelsJsonPath);
   const modelRegistryError = modelRegistry.getError?.();
   if (modelRegistryError) {
     throw new Error(modelRegistryError);
