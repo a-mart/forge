@@ -337,7 +337,7 @@ function isSkillInfo(value: unknown): value is SkillInfo {
   const v = value as Partial<SkillInfo>
   return (
     typeof v.name === 'string' && v.name.trim().length > 0 &&
-    typeof v.description === 'string' &&
+    (v.description === undefined || typeof v.description === 'string') &&
     typeof v.envCount === 'number' &&
     typeof v.hasRichConfig === 'boolean'
   )

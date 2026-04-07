@@ -2992,7 +2992,7 @@ describe('SwarmManager', () => {
     expect(chromeCdpSkill).toContain('scripts/cdp.mjs')
   })
 
-  it('lists profile-scoped skill metadata from the profile pi skills directory only', async () => {
+  it('lists effective profile-scoped skill metadata including inherited global skills', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await manager.boot()
@@ -3017,18 +3017,109 @@ describe('SwarmManager', () => {
     )
 
     const profileSkills = await manager.listSkillMetadata(profileId)
-    expect(profileSkills).toEqual([
-      {
-        name: 'custom-profile-skill',
-        description: 'Profile-only custom skill',
-        envCount: 1,
-        hasRichConfig: false,
-      },
-    ])
+    const customSkill = profileSkills.find((skill) => skill.directoryName === 'custom-profile-skill')
+    const inheritedMemorySkill = profileSkills.find((skill) => skill.directoryName === 'memory')
+
+    expect(customSkill).toMatchObject({
+      name: 'custom-profile-skill',
+      directoryName: 'custom-profile-skill',
+      description: 'Profile-only custom skill',
+      envCount: 1,
+      hasRichConfig: false,
+      sourceKind: 'profile',
+      profileId,
+      isInherited: false,
+      isEffective: true,
+    })
+    expect(typeof customSkill?.skillId).toBe('string')
+    expect(inheritedMemorySkill).toMatchObject({
+      name: 'memory',
+      directoryName: 'memory',
+      sourceKind: 'builtin',
+      isInherited: true,
+      isEffective: true,
+    })
 
     const globalSkills = await manager.listSkillMetadata()
-    expect(globalSkills.some((skill) => skill.name === 'custom-profile-skill')).toBe(false)
-    expect(globalSkills.some((skill) => skill.name === 'memory')).toBe(true)
+    expect(globalSkills.some((skill) => skill.directoryName === 'custom-profile-skill')).toBe(false)
+    expect(globalSkills.some((skill) => skill.directoryName === 'memory')).toBe(true)
+  })
+
+  it('applies skill precedence profile > machine-local > repo > builtin and collapses duplicate directory names', async () => {
+    const config = await makeTempConfig()
+    const profileId = 'profile-a'
+    const localBraveSkillDir = join(config.paths.dataDir, 'skills', 'brave-search')
+    const repoBraveSkillDir = join(config.paths.rootDir, '.swarm', 'skills', 'brave-search')
+    const profileBraveSkillDir = join(getProfilePiSkillsDir(config.paths.dataDir, profileId), 'brave-search')
+
+    await mkdir(localBraveSkillDir, { recursive: true })
+    await mkdir(repoBraveSkillDir, { recursive: true })
+    await mkdir(profileBraveSkillDir, { recursive: true })
+
+    await writeFile(
+      join(localBraveSkillDir, 'SKILL.md'),
+      [
+        '---',
+        'name: Brave Search Local',
+        'description: Machine-local brave-search workflow.',
+        '---',
+        '',
+        '# Local brave-search override',
+      ].join('\n'),
+      'utf8',
+    )
+    await writeFile(
+      join(repoBraveSkillDir, 'SKILL.md'),
+      [
+        '---',
+        'name: Brave Search Repo',
+        'description: Repo brave-search workflow.',
+        '---',
+        '',
+        '# Repo brave-search override',
+      ].join('\n'),
+      'utf8',
+    )
+    await writeFile(
+      join(profileBraveSkillDir, 'SKILL.md'),
+      [
+        '---',
+        'name: Brave Search Profile',
+        'description: Profile brave-search workflow.',
+        '---',
+        '',
+        '# Profile brave-search override',
+      ].join('\n'),
+      'utf8',
+    )
+
+    const manager = new TestSwarmManager(config)
+    await manager.boot()
+
+    const globalSkills = await manager.listSkillMetadata()
+    const globalBraveSkills = globalSkills.filter((skill) => skill.directoryName === 'brave-search')
+    expect(globalBraveSkills).toHaveLength(1)
+    expect(globalBraveSkills[0]).toMatchObject({
+      name: 'Brave Search Local',
+      directoryName: 'brave-search',
+      description: 'Machine-local brave-search workflow.',
+      sourceKind: 'machine-local',
+      isInherited: false,
+      isEffective: true,
+    })
+
+    const profileSkills = await manager.listSkillMetadata(profileId)
+    const profileBraveSkills = profileSkills.filter((skill) => skill.directoryName === 'brave-search')
+    expect(profileBraveSkills).toHaveLength(1)
+    expect(profileBraveSkills[0]).toMatchObject({
+      name: 'Brave Search Profile',
+      directoryName: 'brave-search',
+      description: 'Profile brave-search workflow.',
+      sourceKind: 'profile',
+      profileId,
+      isInherited: false,
+      isEffective: true,
+    })
   })
 
   it('loads skill env requirements and persists secrets to the settings store', async () => {

@@ -5675,10 +5675,18 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   async listSkillMetadata(profileId?: string): Promise<
     Array<{
+      skillId: string;
       name: string;
+      directoryName: string;
       description?: string;
       envCount: number;
       hasRichConfig: boolean;
+      sourceKind: "builtin" | "repo" | "machine-local" | "profile";
+      profileId?: string;
+      rootPath: string;
+      skillFilePath: string;
+      isInherited: boolean;
+      isEffective: boolean;
     }>
   > {
     let metadata;
@@ -5691,12 +5699,27 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     return metadata
       .map((metadata) => ({
+        skillId: metadata.skillId,
         name: metadata.skillName,
+        directoryName: metadata.directoryName,
         description: metadata.description,
         envCount: metadata.env.length,
-        hasRichConfig: metadata.skillName.trim().toLowerCase() === "chrome-cdp"
+        hasRichConfig: metadata.directoryName.trim().toLowerCase() === "chrome-cdp",
+        sourceKind: metadata.sourceKind,
+        ...(metadata.profileId ? { profileId: metadata.profileId } : {}),
+        rootPath: metadata.rootPath,
+        skillFilePath: metadata.path,
+        isInherited: metadata.isInherited,
+        isEffective: metadata.isEffective
       }))
-      .sort((left, right) => left.name.localeCompare(right.name));
+      .sort((left, right) => {
+        const byName = left.name.localeCompare(right.name);
+        if (byName !== 0) {
+          return byName;
+        }
+
+        return left.directoryName.localeCompare(right.directoryName);
+      });
   }
 
   async updateSettingsEnv(values: Record<string, string>): Promise<void> {

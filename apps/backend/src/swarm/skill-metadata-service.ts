@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getProfilePiSkillsDir } from "./data-paths.js";
 import { parseSkillFrontmatter, type ParsedSkillEnvDeclaration } from "./skill-frontmatter.js";
@@ -24,11 +24,20 @@ const SKILL_METADATA_SERVICE_DIR = fileURLToPath(new URL(".", import.meta.url));
 const BACKEND_PACKAGE_DIR = resolve(SKILL_METADATA_SERVICE_DIR, "..", "..");
 const BUILT_IN_SKILLS_FALLBACK_DIR = resolve(BACKEND_PACKAGE_DIR, "src", "swarm", "skills", "builtins");
 
+export type SkillSourceKind = "builtin" | "repo" | "machine-local" | "profile";
+
 export interface SkillMetadata {
+  skillId: string;
   skillName: string;
+  directoryName: string;
   description?: string;
   path: string;
+  rootPath: string;
   env: ParsedSkillEnvDeclaration[];
+  sourceKind: SkillSourceKind;
+  profileId?: string;
+  isInherited: boolean;
+  isEffective: boolean;
 }
 
 interface SkillMetadataServiceDependencies {
@@ -36,8 +45,17 @@ interface SkillMetadataServiceDependencies {
 }
 
 interface SkillPathCandidate {
-  skillDirectoryName: string;
+  directoryName: string;
   path: string;
+  rootPath: string;
+  sourceKind: SkillSourceKind;
+  profileId?: string;
+}
+
+interface DecodedSkillId {
+  sourceKind: SkillSourceKind;
+  profileId?: string;
+  skillRootPath: string;
 }
 
 export class SkillMetadataService {
@@ -46,12 +64,7 @@ export class SkillMetadataService {
   constructor(private readonly deps: SkillMetadataServiceDependencies) {}
 
   getSkillMetadata(): SkillMetadata[] {
-    return this.skillMetadata.map((metadata) => ({
-      skillName: metadata.skillName,
-      description: metadata.description,
-      path: metadata.path,
-      env: [...metadata.env]
-    }));
+    return this.skillMetadata.map((metadata) => cloneSkillMetadata(metadata));
   }
 
   getAdditionalSkillPaths(): string[] {
@@ -59,20 +72,31 @@ export class SkillMetadataService {
   }
 
   async getProfileSkillMetadata(profileId: string): Promise<SkillMetadata[]> {
-    const profileSkillsDir = getProfilePiSkillsDir(this.deps.config.paths.dataDir, profileId);
-    const candidates = await this.scanSkillFilesInDirectory(profileSkillsDir);
-    const metadata: SkillMetadata[] = [];
+    await this.ensureSkillMetadataLoaded();
 
-    for (const candidate of candidates) {
-      const loaded = await this.loadSkillMetadataFromPath(candidate.path);
-      if (!loaded) {
-        continue;
-      }
+    const profileCandidates = await this.scanProfileSkillPathCandidates(profileId);
+    const profileMetadata = await this.loadEffectiveMetadata(profileCandidates, profileId);
+    const combined = await this.mergeInheritedMetadata(profileMetadata, this.skillMetadata, profileId);
+    return combined.map((metadata) => cloneSkillMetadata(metadata));
+  }
 
-      metadata.push(loaded);
+  async resolveSkillById(skillId: string): Promise<SkillMetadata | null> {
+    const decoded = decodeSkillId(skillId);
+    if (!decoded) {
+      return null;
     }
 
-    return metadata;
+    if (decoded.sourceKind === "profile") {
+      if (typeof decoded.profileId !== "string" || decoded.profileId.trim().length === 0) {
+        return null;
+      }
+
+      const profileMetadata = await this.getProfileSkillMetadata(decoded.profileId);
+      return profileMetadata.find((metadata) => metadata.skillId === skillId) ?? null;
+    }
+
+    await this.ensureSkillMetadataLoaded();
+    return this.skillMetadata.find((metadata) => metadata.skillId === skillId) ?? null;
   }
 
   async ensureSkillMetadataLoaded(): Promise<void> {
@@ -84,118 +108,36 @@ export class SkillMetadataService {
   }
 
   async reloadSkillMetadata(): Promise<void> {
-    const scannedCandidates = await this.scanSkillPathCandidates();
-    const skillPathIndex = this.buildSkillPathIndex(scannedCandidates);
-
-    const requiredSkillPaths = [
-      this.resolveMemorySkillPath(skillPathIndex),
-      this.resolveBraveSearchSkillPath(skillPathIndex),
-      this.resolveCronSchedulingSkillPath(skillPathIndex),
-      this.resolveAgentBrowserSkillPath(skillPathIndex),
-      this.resolveImageGenerationSkillPath(skillPathIndex),
-      this.resolveSlashCommandsSkillPath(skillPathIndex),
-      this.resolveChromeCdpSkillPath(skillPathIndex)
-    ];
-
-    const metadata: SkillMetadata[] = [];
-    const seenSkillNames = new Set<string>();
-
-    for (const skillPath of requiredSkillPaths) {
-      const loaded = await this.loadSkillMetadataFromPath(skillPath);
-      if (!loaded) {
-        continue;
-      }
-
-      const normalizedSkillName = normalizeSkillName(loaded.skillName);
-      if (seenSkillNames.has(normalizedSkillName)) {
-        continue;
-      }
-
-      seenSkillNames.add(normalizedSkillName);
-      metadata.push(loaded);
-    }
-
-    for (const candidate of scannedCandidates) {
-      const loaded = await this.loadSkillMetadataFromPath(candidate.path);
-      if (!loaded) {
-        continue;
-      }
-
-      const normalizedSkillName = normalizeSkillName(loaded.skillName);
-      if (seenSkillNames.has(normalizedSkillName)) {
-        continue;
-      }
-
-      seenSkillNames.add(normalizedSkillName);
-      metadata.push(loaded);
-    }
-
-    this.skillMetadata = metadata;
+    const scannedCandidates = await this.scanGlobalSkillPathCandidates();
+    const candidates = this.injectExplicitRequiredSkillOverrides(scannedCandidates);
+    this.validateRequiredSkillsPresent(candidates);
+    this.skillMetadata = await this.loadEffectiveMetadata(candidates, undefined);
   }
 
-  private resolveMemorySkillPath(skillPathIndex: Map<string, string[]>): string {
-    return this.resolveRequiredSkillPath("memory", skillPathIndex, this.deps.config.paths.repoMemorySkillFile);
-  }
-
-  private resolveBraveSearchSkillPath(skillPathIndex: Map<string, string[]>): string {
-    return this.resolveRequiredSkillPath("brave-search", skillPathIndex);
-  }
-
-  private resolveCronSchedulingSkillPath(skillPathIndex: Map<string, string[]>): string {
-    return this.resolveRequiredSkillPath("cron-scheduling", skillPathIndex);
-  }
-
-  private resolveAgentBrowserSkillPath(skillPathIndex: Map<string, string[]>): string {
-    return this.resolveRequiredSkillPath("agent-browser", skillPathIndex);
-  }
-
-  private resolveImageGenerationSkillPath(skillPathIndex: Map<string, string[]>): string {
-    return this.resolveRequiredSkillPath("image-generation", skillPathIndex);
-  }
-
-  private resolveSlashCommandsSkillPath(skillPathIndex: Map<string, string[]>): string {
-    return this.resolveRequiredSkillPath("slash-commands", skillPathIndex);
-  }
-
-  private resolveChromeCdpSkillPath(skillPathIndex: Map<string, string[]>): string {
-    return this.resolveRequiredSkillPath("chrome-cdp", skillPathIndex);
-  }
-
-  private resolveRequiredSkillPath(
-    skillName: (typeof REQUIRED_SKILL_NAMES)[number],
-    skillPathIndex: Map<string, string[]>,
-    explicitOverridePath?: string
-  ): string {
-    if (typeof explicitOverridePath === "string" && existsSync(explicitOverridePath)) {
-      return explicitOverridePath;
-    }
-
-    const normalizedSkillName = normalizeSkillName(skillName);
-    const paths = skillPathIndex.get(normalizedSkillName) ?? [];
-    if (paths.length > 0) {
-      return paths[0];
-    }
-
-    throw new Error(`Missing built-in ${skillName} skill file`);
-  }
-
-  private async scanSkillPathCandidates(): Promise<SkillPathCandidate[]> {
-    const candidates: SkillPathCandidate[] = [];
-
+  private async scanGlobalSkillPathCandidates(): Promise<SkillPathCandidate[]> {
     const resourcesDir = this.deps.config.paths.resourcesDir ?? this.deps.config.paths.rootDir;
     const localSkillsDir = resolve(this.deps.config.paths.dataDir, LOCAL_DATA_DIR_SKILLS_RELATIVE_DIR);
     const repositorySkillsDir = resolve(resourcesDir, REPO_SKILLS_RELATIVE_DIR);
     const repositoryBuiltInSkillsDir = resolve(resourcesDir, REPO_BUILT_IN_SKILLS_RELATIVE_DIR);
 
-    candidates.push(...(await this.scanSkillFilesInDirectory(localSkillsDir)));
-    candidates.push(...(await this.scanSkillFilesInDirectory(repositorySkillsDir)));
-    candidates.push(...(await this.scanSkillFilesInDirectory(repositoryBuiltInSkillsDir)));
-    candidates.push(...(await this.scanSkillFilesInDirectory(BUILT_IN_SKILLS_FALLBACK_DIR)));
-
-    return candidates;
+    return [
+      ...(await this.scanSkillFilesInDirectory(localSkillsDir, "machine-local")),
+      ...(await this.scanSkillFilesInDirectory(repositorySkillsDir, "repo")),
+      ...(await this.scanSkillFilesInDirectory(repositoryBuiltInSkillsDir, "builtin")),
+      ...(await this.scanSkillFilesInDirectory(BUILT_IN_SKILLS_FALLBACK_DIR, "builtin"))
+    ];
   }
 
-  private async scanSkillFilesInDirectory(directory: string): Promise<SkillPathCandidate[]> {
+  private async scanProfileSkillPathCandidates(profileId: string): Promise<SkillPathCandidate[]> {
+    const profileSkillsDir = getProfilePiSkillsDir(this.deps.config.paths.dataDir, profileId);
+    return this.scanSkillFilesInDirectory(profileSkillsDir, "profile", profileId);
+  }
+
+  private async scanSkillFilesInDirectory(
+    directory: string,
+    sourceKind: SkillSourceKind,
+    profileId?: string
+  ): Promise<SkillPathCandidate[]> {
     let entries: Array<{ isDirectory: () => boolean; name: string }>;
 
     try {
@@ -214,26 +156,145 @@ export class SkillMetadataService {
       .sort((left, right) => left.localeCompare(right));
 
     const candidates: SkillPathCandidate[] = [];
-    for (const skillDirectoryName of skillDirectories) {
-      const skillPath = join(directory, skillDirectoryName, SKILL_FILE_NAME);
+    for (const directoryName of skillDirectories) {
+      const rootPath = join(directory, directoryName);
+      const skillPath = join(rootPath, SKILL_FILE_NAME);
       if (!existsSync(skillPath)) {
         continue;
       }
 
       candidates.push({
-        skillDirectoryName,
-        path: skillPath
+        directoryName,
+        path: skillPath,
+        rootPath,
+        sourceKind,
+        ...(profileId ? { profileId } : {})
       });
     }
 
     return candidates;
   }
 
+  private injectExplicitRequiredSkillOverrides(candidates: SkillPathCandidate[]): SkillPathCandidate[] {
+    const overriddenCandidates = [...candidates];
+    const explicitMemoryPath = this.deps.config.paths.repoMemorySkillFile;
+    if (!existsSync(explicitMemoryPath)) {
+      return overriddenCandidates;
+    }
+
+    const explicitRootPath = resolve(explicitMemoryPath, "..");
+    const explicitCandidate: SkillPathCandidate = {
+      directoryName: basename(explicitRootPath),
+      path: explicitMemoryPath,
+      rootPath: explicitRootPath,
+      sourceKind: "repo"
+    };
+
+    const existingIndex = overriddenCandidates.findIndex((candidate) => candidate.path === explicitMemoryPath);
+    if (existingIndex >= 0) {
+      const [existing] = overriddenCandidates.splice(existingIndex, 1);
+      overriddenCandidates.unshift(existing);
+      return overriddenCandidates;
+    }
+
+    overriddenCandidates.unshift(explicitCandidate);
+    return overriddenCandidates;
+  }
+
+  private validateRequiredSkillsPresent(candidates: SkillPathCandidate[]): void {
+    const index = this.buildSkillPathIndex(candidates);
+
+    for (const requiredSkillName of REQUIRED_SKILL_NAMES) {
+      const normalizedSkillName = normalizeSkillName(requiredSkillName);
+      if ((index.get(normalizedSkillName) ?? []).length === 0) {
+        throw new Error(`Missing built-in ${requiredSkillName} skill file`);
+      }
+    }
+  }
+
+  private async loadEffectiveMetadata(
+    prioritizedCandidates: SkillPathCandidate[],
+    profileId: string | undefined
+  ): Promise<SkillMetadata[]> {
+    const seenDirectoryNames = new Set<string>();
+    const effectiveCandidates: SkillPathCandidate[] = [];
+
+    for (const candidate of prioritizedCandidates) {
+      const normalizedDirectoryName = normalizeSkillName(candidate.directoryName);
+      if (seenDirectoryNames.has(normalizedDirectoryName)) {
+        continue;
+      }
+
+      seenDirectoryNames.add(normalizedDirectoryName);
+      effectiveCandidates.push(candidate);
+    }
+
+    const metadata = await Promise.all(
+      effectiveCandidates.map(async (candidate) => this.loadSkillMetadataFromCandidate(candidate, profileId))
+    );
+
+    return metadata;
+  }
+
+  private async mergeInheritedMetadata(
+    prioritizedMetadata: SkillMetadata[],
+    inheritedMetadata: SkillMetadata[],
+    profileId: string
+  ): Promise<SkillMetadata[]> {
+    const merged: SkillMetadata[] = [];
+    const seenDirectoryNames = new Set<string>();
+
+    for (const metadata of [...prioritizedMetadata, ...inheritedMetadata]) {
+      const normalizedDirectoryName = normalizeSkillName(metadata.directoryName);
+      if (seenDirectoryNames.has(normalizedDirectoryName)) {
+        continue;
+      }
+
+      seenDirectoryNames.add(normalizedDirectoryName);
+      merged.push({
+        ...cloneSkillMetadata(metadata),
+        isInherited: metadata.sourceKind !== "profile",
+        isEffective: true,
+        ...(metadata.sourceKind === "profile" ? { profileId } : metadata.profileId ? { profileId: metadata.profileId } : {})
+      });
+    }
+
+    return merged;
+  }
+
+  private async loadSkillMetadataFromCandidate(
+    candidate: SkillPathCandidate,
+    profileId: string | undefined
+  ): Promise<SkillMetadata> {
+    const markdown = await readFile(candidate.path, "utf8");
+    const parsed = parseSkillFrontmatter(markdown);
+    const fallbackSkillName = candidate.directoryName;
+    const skillName = (parsed.name ?? fallbackSkillName).trim();
+
+    return {
+      skillId: buildSkillId({
+        sourceKind: candidate.sourceKind,
+        ...(candidate.profileId ? { profileId: candidate.profileId } : {}),
+        skillRootPath: candidate.rootPath
+      }),
+      skillName,
+      directoryName: candidate.directoryName,
+      description: parsed.description,
+      path: candidate.path,
+      rootPath: candidate.rootPath,
+      env: parsed.env.map((declaration) => ({ ...declaration })),
+      sourceKind: candidate.sourceKind,
+      ...(candidate.profileId ? { profileId: candidate.profileId } : {}),
+      isInherited: typeof profileId === "string" && candidate.sourceKind !== "profile",
+      isEffective: true
+    };
+  }
+
   private buildSkillPathIndex(candidates: SkillPathCandidate[]): Map<string, string[]> {
     const index = new Map<string, string[]>();
 
     for (const candidate of candidates) {
-      const normalizedSkillName = normalizeSkillName(candidate.skillDirectoryName);
+      const normalizedSkillName = normalizeSkillName(candidate.directoryName);
       const existing = index.get(normalizedSkillName) ?? [];
       if (!existing.includes(candidate.path)) {
         existing.push(candidate.path);
@@ -243,32 +304,72 @@ export class SkillMetadataService {
 
     return index;
   }
-
-  private async loadSkillMetadataFromPath(path: string): Promise<SkillMetadata | null> {
-    const markdown = await readFile(path, "utf8");
-    const parsed = parseSkillFrontmatter(markdown);
-    const fallbackSkillName = this.resolveSkillNameFromPath(path);
-    const skillName = (parsed.name ?? fallbackSkillName).trim();
-
-    return {
-      skillName,
-      description: parsed.description,
-      path,
-      env: parsed.env
-    };
-  }
-
-  private resolveSkillNameFromPath(path: string): string {
-    const segments = path.split(/[\\/]+/g).filter((segment) => segment.length > 0);
-    if (segments.length < 2) {
-      return "unknown";
-    }
-
-    // .../<skill-name>/SKILL.md
-    return segments[segments.length - 2] ?? "unknown";
-  }
 }
 
 function normalizeSkillName(skillName: string): string {
   return skillName.trim().toLowerCase();
+}
+
+function cloneSkillMetadata(metadata: SkillMetadata): SkillMetadata {
+  return {
+    skillId: metadata.skillId,
+    skillName: metadata.skillName,
+    directoryName: metadata.directoryName,
+    description: metadata.description,
+    path: metadata.path,
+    rootPath: metadata.rootPath,
+    env: metadata.env.map((declaration) => ({ ...declaration })),
+    sourceKind: metadata.sourceKind,
+    ...(metadata.profileId ? { profileId: metadata.profileId } : {}),
+    isInherited: metadata.isInherited,
+    isEffective: metadata.isEffective
+  };
+}
+
+function buildSkillId(options: {
+  sourceKind: SkillSourceKind;
+  profileId?: string;
+  skillRootPath: string;
+}): string {
+  const payload = {
+    sourceKind: options.sourceKind,
+    ...(options.profileId ? { profileId: options.profileId } : {}),
+    skillRootPath: resolve(options.skillRootPath)
+  };
+
+  return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+}
+
+function decodeSkillId(skillId: string): DecodedSkillId | null {
+  try {
+    const parsed = JSON.parse(Buffer.from(skillId, "base64url").toString("utf8")) as Partial<DecodedSkillId>;
+    if (!parsed || typeof parsed !== "object") {
+      return null;
+    }
+
+    if (
+      parsed.sourceKind !== "builtin" &&
+      parsed.sourceKind !== "repo" &&
+      parsed.sourceKind !== "machine-local" &&
+      parsed.sourceKind !== "profile"
+    ) {
+      return null;
+    }
+
+    if (typeof parsed.skillRootPath !== "string" || parsed.skillRootPath.trim().length === 0) {
+      return null;
+    }
+
+    if (parsed.profileId !== undefined && typeof parsed.profileId !== "string") {
+      return null;
+    }
+
+    return {
+      sourceKind: parsed.sourceKind,
+      ...(parsed.profileId ? { profileId: parsed.profileId } : {}),
+      skillRootPath: resolve(parsed.skillRootPath)
+    };
+  } catch {
+    return null;
+  }
 }

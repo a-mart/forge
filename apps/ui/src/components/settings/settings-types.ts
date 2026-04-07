@@ -87,7 +87,7 @@ export interface TelegramDraft {
 
 export interface SkillInfo {
   name: string
-  description: string
+  description?: string
   envCount: number
   hasRichConfig: boolean
 }
