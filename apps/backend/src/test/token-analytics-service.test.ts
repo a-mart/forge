@@ -331,6 +331,81 @@ describe("TokenAnalyticsService", () => {
     expect(refreshed.totals.usage.total).toBe(60);
   });
 
+  it("filters malformed persisted cache rows before building snapshots", async () => {
+    const initial = await context.service.getSnapshot({ rangePreset: "all", timezone: "UTC" });
+    expect(initial.totals.usage.total).toBe(55);
+
+    const cachePath = getSharedTokenAnalyticsCachePath(context.dataDir);
+    await waitFor(async () => {
+      const raw = await readFile(cachePath, "utf8");
+      const parsed = JSON.parse(raw) as { version?: number };
+      return parsed.version === 1;
+    });
+
+    type PersistedCachePayload = {
+      version: number;
+      entry: {
+        expiresAt: number;
+        result: {
+          scannedAt: string;
+          events: Array<{ usage: { total: number } } | null>;
+          workers: unknown[];
+          profiles: unknown[];
+          specialistMetadataByProfile: Record<string, Record<string, { displayName: string; color: string | null }>>;
+        };
+      } | null;
+    };
+
+    const raw = await readFile(cachePath, "utf8");
+    const parsed = JSON.parse(raw) as PersistedCachePayload;
+    if (!parsed.entry || parsed.entry.result.events.length === 0 || !parsed.entry.result.events[0]) {
+      throw new Error("Expected persisted cache to include at least one event");
+    }
+
+    const validEvent = parsed.entry.result.events[0];
+    parsed.entry.result.events = [null, validEvent];
+    await writeFile(cachePath, JSON.stringify(parsed), "utf8");
+
+    const debugSpy = vi.spyOn(console, "debug").mockImplementation(() => {});
+    const reloadedService = createService(context.dataDir);
+    const snapshot = await reloadedService.getSnapshot({ rangePreset: "all", timezone: "UTC" });
+
+    expect(snapshot.totals.eventCount).toBe(1);
+    expect(snapshot.totals.usage.total).toBe(validEvent.usage.total);
+    expect(debugSpy).toHaveBeenCalledTimes(1);
+    expect(debugSpy.mock.calls[0]?.[0]).toContain("Dropped 1 malformed persisted cache row");
+  });
+
+  it("falls back to a live scan when the persisted cache structure is malformed", async () => {
+    const expected = await context.service.getSnapshot({ rangePreset: "all", timezone: "UTC" });
+    const cachePath = getSharedTokenAnalyticsCachePath(context.dataDir);
+
+    await mkdir(dirname(cachePath), { recursive: true });
+    await writeFile(
+      cachePath,
+      JSON.stringify({
+        version: 1,
+        entry: {
+          expiresAt: Date.now() + 60_000,
+          result: {
+            scannedAt: new Date().toISOString(),
+            events: "not-an-array",
+            workers: [],
+            profiles: [],
+            specialistMetadataByProfile: {},
+          },
+        },
+      }),
+      "utf8"
+    );
+
+    const reloadedService = createService(context.dataDir);
+    const snapshot = await reloadedService.getSnapshot({ rangePreset: "all", timezone: "UTC" });
+
+    expect(snapshot.totals).toEqual(expected.totals);
+    expect(snapshot.availableFilters).toEqual(expected.availableFilters);
+  });
+
   it("serves stale cached data immediately while refreshing in the background", async () => {
     const initial = await context.service.getSnapshot({ rangePreset: "all", timezone: "UTC" });
     expect(initial.totals.usage.total).toBe(55);
