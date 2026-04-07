@@ -3122,6 +3122,72 @@ describe('SwarmManager', () => {
     })
   })
 
+  it('rescans skill metadata when a skill moves from machine-local scope into a profile scope', async () => {
+    const config = await makeTempConfig()
+    const profileId = 'profile-a'
+    const localSkillDir = join(config.paths.dataDir, 'skills', 'movable-skill')
+    const profileSkillDir = join(getProfilePiSkillsDir(config.paths.dataDir, profileId), 'movable-skill')
+
+    await mkdir(localSkillDir, { recursive: true })
+    await writeFile(
+      join(localSkillDir, 'SKILL.md'),
+      [
+        '---',
+        'name: Movable Skill Local',
+        'description: Machine-local skill before move.',
+        '---',
+        '',
+        '# Movable skill',
+      ].join('\n'),
+      'utf8',
+    )
+
+    const manager = new TestSwarmManager(config)
+    await manager.boot()
+
+    expect(await manager.listSkillMetadata()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          directoryName: 'movable-skill',
+          name: 'Movable Skill Local',
+          sourceKind: 'machine-local',
+        }),
+      ]),
+    )
+
+    await mkdir(profileSkillDir, { recursive: true })
+    await writeFile(
+      join(profileSkillDir, 'SKILL.md'),
+      [
+        '---',
+        'name: Movable Skill Profile',
+        'description: Profile-scoped skill after move.',
+        '---',
+        '',
+        '# Movable skill',
+      ].join('\n'),
+      'utf8',
+    )
+    await rm(localSkillDir, { recursive: true, force: true })
+
+    const globalSkills = await manager.listSkillMetadata()
+    expect(globalSkills.some((skill) => skill.directoryName === 'movable-skill')).toBe(false)
+
+    const profileSkills = await manager.listSkillMetadata(profileId)
+    expect(profileSkills).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          directoryName: 'movable-skill',
+          name: 'Movable Skill Profile',
+          sourceKind: 'profile',
+          profileId,
+          isInherited: false,
+          isEffective: true,
+        }),
+      ]),
+    )
+  })
+
   it('loads skill env requirements and persists secrets to the settings store', async () => {
     const previousBraveApiKey = process.env.BRAVE_API_KEY
     const previousGeminiApiKey = process.env.GEMINI_API_KEY

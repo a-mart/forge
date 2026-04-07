@@ -45,6 +45,7 @@ async function handleSkillHttpRequest(
   }
 
   applyCorsHeaders(request, response, SKILL_ROUTE_METHODS);
+  response.setHeader("Cache-Control", "no-store");
 
   if (request.method === "GET" && requestUrl.pathname === SETTINGS_SKILLS_ENDPOINT_PATH) {
     const profileId = requestUrl.searchParams.get("profileId")?.trim() || undefined;

@@ -45,7 +45,7 @@ export function SettingsPanel({
       activeTab={activeTab}
       onTabChange={setActiveTab}
       onBack={onBack}
-      contentWidthClassName={activeTab === 'skills' ? 'max-w-6xl' : undefined}
+      contentWidthClassName={activeTab === 'skills' ? 'max-w-full' : undefined}
     >
       {activeTab === 'general' && <SettingsGeneral wsUrl={wsUrl} onPlaywrightSnapshotUpdate={onPlaywrightSnapshotUpdate} onPlaywrightSettingsLoaded={onPlaywrightSettingsLoaded} />}
       {activeTab === 'notifications' && <SettingsNotifications managers={managers} />}

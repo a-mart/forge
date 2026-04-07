@@ -45,6 +45,7 @@ describe("skill routes", () => {
     const response = await fetch(`${server.baseUrl}/api/settings/skills`);
 
     expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
     expect(swarmManager.listSkillMetadata).toHaveBeenCalledWith(undefined);
     await expect(response.json()).resolves.toEqual({
       skills: [

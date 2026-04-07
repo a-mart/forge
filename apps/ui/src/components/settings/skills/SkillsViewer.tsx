@@ -61,7 +61,6 @@ export function SkillsViewer({ wsUrl, profiles }: SkillsViewerProps) {
   const [skills, setSkills] = useState<SkillInventoryEntry[]>([])
   const [skillsLoading, setSkillsLoading] = useState(false)
   const loadSkillsRequestIdRef = useRef(0)
-  const hasInitializedScopeRef = useRef(false)
   const [selectedSkillId, setSelectedSkillId] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
 
@@ -96,26 +95,25 @@ export function SkillsViewer({ wsUrl, profiles }: SkillsViewerProps) {
 
   /* ---------- Data loading ---------- */
 
-  const loadSkills = useCallback(async () => {
+  const loadSkills = useCallback(async (scope: string) => {
     const requestId = ++loadSkillsRequestIdRef.current
     setSkillsLoading(true)
     try {
-      const profileId =
-        selectedScope !== SCOPE_GLOBAL ? selectedScope : undefined
+      const profileId = scope !== SCOPE_GLOBAL ? scope : undefined
       const result = await fetchSkillInventory(wsUrl, profileId)
       if (requestId !== loadSkillsRequestIdRef.current) {
         return
       }
       setSkills(result)
-      // Auto-select first skill
       if (result.length > 0) {
         setSelectedSkillId((prev) => {
-          // Keep selection if it still exists
           if (prev && result.some((s) => s.skillId === prev)) return prev
           return result[0].skillId
         })
+        setSelectedFilePath('SKILL.md')
       } else {
         setSelectedSkillId(null)
+        setSelectedFilePath(null)
       }
     } catch {
       if (requestId !== loadSkillsRequestIdRef.current) {
@@ -123,12 +121,13 @@ export function SkillsViewer({ wsUrl, profiles }: SkillsViewerProps) {
       }
       setSkills([])
       setSelectedSkillId(null)
+      setSelectedFilePath(null)
     } finally {
       if (requestId === loadSkillsRequestIdRef.current) {
         setSkillsLoading(false)
       }
     }
-  }, [wsUrl, selectedScope])
+  }, [wsUrl])
 
   const loadVariables = useCallback(async () => {
     setEnvLoading(true)
@@ -144,24 +143,18 @@ export function SkillsViewer({ wsUrl, profiles }: SkillsViewerProps) {
   }, [wsUrl])
 
   useEffect(() => {
-    void loadSkills()
+    void loadSkills(selectedScope)
+  }, [loadSkills, selectedScope])
+
+  useEffect(() => {
     void loadVariables()
-  }, [loadSkills, loadVariables])
+  }, [loadVariables])
 
   /* Reset on scope change */
   useEffect(() => {
-    if (!hasInitializedScopeRef.current) {
-      hasInitializedScopeRef.current = true
-    }
     setSearchQuery('')
     setSelectedFilePath(null)
   }, [selectedScope])
-
-  /* Reset file selection when skill changes */
-  useEffect(() => {
-    // Auto-open SKILL.md if it exists
-    setSelectedFilePath('SKILL.md')
-  }, [selectedSkillId])
 
   /* Keep scope valid when profiles change */
   useEffect(() => {

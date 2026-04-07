@@ -9,6 +9,8 @@ import type {
   SkillFileContentResponse,
 } from './skills-viewer-types'
 
+const SKILLS_FETCH_OPTIONS = { cache: 'no-store' } as const
+
 async function readApiError(response: Response): Promise<string> {
   try {
     const payload = (await response.json()) as { error?: unknown; message?: unknown }
@@ -34,7 +36,7 @@ export async function fetchSkillInventory(
   if (profileId) {
     endpoint += `${endpoint.includes('?') ? '&' : '?'}profileId=${encodeURIComponent(profileId)}`
   }
-  const response = await fetch(endpoint)
+  const response = await fetch(endpoint, SKILLS_FETCH_OPTIONS)
   if (!response.ok) throw new Error(await readApiError(response))
   const payload = (await response.json()) as { skills?: unknown }
   if (!payload || !Array.isArray(payload.skills)) return []
@@ -57,7 +59,7 @@ export async function fetchSkillFiles(
   const url = relativePath
     ? `${base}?path=${encodeURIComponent(relativePath)}`
     : base
-  const response = await fetch(url)
+  const response = await fetch(url, SKILLS_FETCH_OPTIONS)
   if (!response.ok) throw new Error(await readApiError(response))
   return (await response.json()) as SkillFilesResponse
 }
@@ -76,7 +78,7 @@ export async function fetchSkillFileContent(
     `/api/settings/skills/${encodeURIComponent(skillId)}/content`,
   )
   const url = `${base}?path=${encodeURIComponent(relativePath)}`
-  const response = await fetch(url)
+  const response = await fetch(url, SKILLS_FETCH_OPTIONS)
   if (!response.ok) throw new Error(await readApiError(response))
   return (await response.json()) as SkillFileContentResponse
 }

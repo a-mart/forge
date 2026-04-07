@@ -5692,11 +5692,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       isEffective: boolean;
     }>
   > {
+    await this.skillMetadataService.reloadSkillMetadata();
+
     let metadata;
     if (typeof profileId === "string") {
       metadata = await this.skillMetadataService.getProfileSkillMetadata(profileId);
     } else {
-      await this.skillMetadataService.ensureSkillMetadataLoaded();
       metadata = this.skillMetadataService.getSkillMetadata();
     }
 
