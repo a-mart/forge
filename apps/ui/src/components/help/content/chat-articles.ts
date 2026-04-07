@@ -136,13 +136,13 @@ The search bar at the top filters sessions and workers by name. Prefix shortcuts
 
 ## Profile actions
 
-Right-click a profile header to access: New Session, Create Project Agent, Rename, Change Model, Change Working Directory, Mark All as Read, or Delete Manager. Changing the working directory updates the CWD for all sessions in the profile — active workers keep their old CWD, but new spawns inherit the new path.
+Right-click a profile header to access: New Session, Create Project Agent, Rename, Change Model, Change Working Directory, Mark All as Read, Mute/Unmute All Sessions, or Delete Manager. Changing the working directory updates the CWD for all sessions in the profile — active workers keep their old CWD, but new spawns inherit the new path.
 
 You can also drag profiles to reorder them. The **+** button on a profile header creates a new session.
 
 ## Session actions
 
-Right-click any session to access: Copy Path, Rename, Fork, Stop, Resume, Mark as Unread, or Delete. The Main (default) session in each profile cannot be deleted.
+Right-click any session to access: Copy Path, Rename, Fork, Stop, Resume, Mark as Unread, Mute/Unmute, or Delete. The Main (default) session in each profile cannot be deleted. Muting a session suppresses notification sounds while keeping the unread badge visible.
 
 ## Workers
 
