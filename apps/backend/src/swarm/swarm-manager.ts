@@ -7096,7 +7096,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       prompt = `${prompt.trimEnd()}\n\n${delegationContextBlock}`;
     }
 
-    if (prompt.includes("${MODEL_SPECIFIC_INSTRUCTIONS}")) {
+    const modelSpecificInstructionsPlaceholders = [
+      "${MODEL_SPECIFIC_INSTRUCTIONS}",
+      "${Model_Specific_Instructions}",
+      "${model_specific_instructions}",
+    ];
+    if (modelSpecificInstructionsPlaceholders.some((placeholder) => prompt.includes(placeholder))) {
       const effectiveModelSpecificInstructions = modelCatalogService.getEffectiveModelSpecificInstructions(
         descriptor.model.modelId,
         descriptor.model.provider
@@ -7104,7 +7109,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       const modelSpecificInstructionsBlock = effectiveModelSpecificInstructions
         ? `# Model-Specific Instructions\n${effectiveModelSpecificInstructions}`
         : "";
-      prompt = prompt.replaceAll("${MODEL_SPECIFIC_INSTRUCTIONS}", modelSpecificInstructionsBlock);
+      for (const placeholder of modelSpecificInstructionsPlaceholders) {
+        prompt = prompt.replaceAll(placeholder, modelSpecificInstructionsBlock);
+      }
     }
 
     if (this.integrationContextProvider) {

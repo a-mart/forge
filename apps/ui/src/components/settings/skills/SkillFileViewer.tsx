@@ -99,6 +99,7 @@ export function SkillFileViewer({
     }
 
     let cancelled = false
+    setContent(null)
     setIsLoading(true)
     setError(null)
 
@@ -373,14 +374,18 @@ function ViewerHeader({
               )}
               {isLast ? (
                 <span className="truncate font-medium text-foreground">{segment}</span>
-              ) : (
+              ) : onNavigateToDirectory ? (
                 <button
                   type="button"
                   className="shrink-0 truncate text-muted-foreground transition-colors hover:text-foreground"
-                  onClick={() => onNavigateToDirectory?.(dirPath)}
+                  onClick={() => onNavigateToDirectory(dirPath)}
                 >
                   {segment}
                 </button>
+              ) : (
+                <span className="shrink-0 truncate text-muted-foreground">
+                  {segment}
+                </span>
               )}
             </Fragment>
           )

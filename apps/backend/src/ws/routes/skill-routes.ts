@@ -47,7 +47,12 @@ async function handleSkillHttpRequest(
   applyCorsHeaders(request, response, SKILL_ROUTE_METHODS);
 
   if (request.method === "GET" && requestUrl.pathname === SETTINGS_SKILLS_ENDPOINT_PATH) {
-    const profileId = requestUrl.searchParams.get("profileId") ?? undefined;
+    const profileId = requestUrl.searchParams.get("profileId")?.trim() || undefined;
+    if (profileId && !swarmManager.listProfiles().some((profile) => profile.profileId === profileId)) {
+      sendJson(response, 404, { error: `Unknown profile: ${profileId}` });
+      return;
+    }
+
     const skills = await swarmManager.listSkillMetadata(profileId);
     sendJson(response, 200, { skills });
     return;
@@ -91,10 +96,14 @@ function parseSkillRoutePath(pathname: string): { skillId: string; action: Skill
     return null;
   }
 
-  return {
-    skillId: decodeURIComponent(encodedSkillId),
-    action
-  };
+  try {
+    return {
+      skillId: decodeURIComponent(encodedSkillId),
+      action
+    };
+  } catch {
+    return null;
+  }
 }
 
 function resolveSkillRouteStatusCode(message: string): number {

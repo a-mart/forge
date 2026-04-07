@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useHelpContext } from '@/components/help/help-hooks'
 import { FolderOpen, Loader2 } from 'lucide-react'
 import {
@@ -60,6 +60,8 @@ export function SkillsViewer({ wsUrl, profiles }: SkillsViewerProps) {
   /* ---------- Skills ---------- */
   const [skills, setSkills] = useState<SkillInventoryEntry[]>([])
   const [skillsLoading, setSkillsLoading] = useState(false)
+  const loadSkillsRequestIdRef = useRef(0)
+  const hasInitializedScopeRef = useRef(false)
   const [selectedSkillId, setSelectedSkillId] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
 
@@ -95,11 +97,15 @@ export function SkillsViewer({ wsUrl, profiles }: SkillsViewerProps) {
   /* ---------- Data loading ---------- */
 
   const loadSkills = useCallback(async () => {
+    const requestId = ++loadSkillsRequestIdRef.current
     setSkillsLoading(true)
     try {
       const profileId =
         selectedScope !== SCOPE_GLOBAL ? selectedScope : undefined
       const result = await fetchSkillInventory(wsUrl, profileId)
+      if (requestId !== loadSkillsRequestIdRef.current) {
+        return
+      }
       setSkills(result)
       // Auto-select first skill
       if (result.length > 0) {
@@ -112,10 +118,15 @@ export function SkillsViewer({ wsUrl, profiles }: SkillsViewerProps) {
         setSelectedSkillId(null)
       }
     } catch {
+      if (requestId !== loadSkillsRequestIdRef.current) {
+        return
+      }
       setSkills([])
       setSelectedSkillId(null)
     } finally {
-      setSkillsLoading(false)
+      if (requestId === loadSkillsRequestIdRef.current) {
+        setSkillsLoading(false)
+      }
     }
   }, [wsUrl, selectedScope])
 
@@ -139,6 +150,11 @@ export function SkillsViewer({ wsUrl, profiles }: SkillsViewerProps) {
 
   /* Reset on scope change */
   useEffect(() => {
+    if (hasInitializedScopeRef.current) {
+      loadSkillsRequestIdRef.current += 1
+    } else {
+      hasInitializedScopeRef.current = true
+    }
     setSearchQuery('')
     setSelectedFilePath(null)
   }, [selectedScope])

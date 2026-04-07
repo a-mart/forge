@@ -1279,7 +1279,9 @@ describe('SwarmWebSocketServer', () => {
       })
 
       expect(response.status).toBe(200)
-      await new Promise((resolve) => setTimeout(resolve, 60))
+      for (let attempt = 0; attempt < 20 && consoleErrorSpy.mock.calls.length === 0; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 25))
+      }
 
       expect(killSpy).not.toHaveBeenCalledWith(foreignPid, 'SIGUSR1')
       expect(killSpy).not.toHaveBeenCalledWith(foreignPid, 0)

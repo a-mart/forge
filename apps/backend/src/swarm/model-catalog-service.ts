@@ -174,7 +174,7 @@ export class ModelCatalogService {
   }
 
   getEffectiveModelSpecificInstructions(modelId: string, provider?: string): string | undefined {
-    const model = getCatalogModel(modelId, provider);
+    const model = getCatalogModel(modelId.trim(), provider);
     if (!model) {
       return undefined;
     }

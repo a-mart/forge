@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ChevronRight, Loader2, AlertTriangle, FolderOpen } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { FileIcon } from '@/components/file-browser/FileIcon'
@@ -40,6 +40,11 @@ export function SkillFileTree({
   // Track expanded directory children keyed by directory path
   const [expandedDirs, setExpandedDirs] = useState<Record<string, TreeNode[]>>({})
   const [loadingDirs, setLoadingDirs] = useState<Set<string>>(new Set())
+  const currentSkillIdRef = useRef(skillId)
+
+  useEffect(() => {
+    currentSkillIdRef.current = skillId
+  }, [skillId])
 
   // Load root entries when skill changes
   useEffect(() => {
@@ -80,14 +85,21 @@ export function SkillFileTree({
       }
 
       // Load directory contents
+      const requestedSkillId = skillId
       setLoadingDirs((prev) => new Set(prev).add(dirPath))
       try {
-        const result = await fetchSkillFiles(wsUrl, skillId, dirPath)
+        const result = await fetchSkillFiles(wsUrl, requestedSkillId, dirPath)
+        if (currentSkillIdRef.current !== requestedSkillId) {
+          return
+        }
         const nodes = entriesToNodes(result.entries)
         setExpandedDirs((prev) => ({ ...prev, [dirPath]: nodes }))
       } catch {
         // Silently fail — directory just won't expand
       } finally {
+        if (currentSkillIdRef.current !== requestedSkillId) {
+          return
+        }
         setLoadingDirs((prev) => {
           const next = new Set(prev)
           next.delete(dirPath)
