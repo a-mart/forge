@@ -11,7 +11,7 @@ const ATTRIBUTION_COLORS: Record<string, string> = {
 const ATTRIBUTION_LABELS: Record<string, string> = {
   specialist: 'Specialist',
   adHoc: 'Ad-hoc',
-  unknown: 'Unknown',
+  unknown: 'Legacy',
 }
 
 interface BarSegment {

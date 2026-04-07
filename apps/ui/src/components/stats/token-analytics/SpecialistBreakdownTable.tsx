@@ -18,7 +18,7 @@ type SortDir = 'asc' | 'desc'
 
 function getDisplayNameForAttribution(summary: TokenAnalyticsSpecialistSummary): string {
   if (summary.attributionKind === 'ad_hoc') return 'Ad-hoc Workers'
-  if (summary.attributionKind === 'unknown') return 'Unknown'
+  if (summary.attributionKind === 'unknown') return 'Legacy'
   return summary.displayName
 }
 

@@ -296,7 +296,7 @@ interface WorkerRowProps {
 
 function WorkerRow({ worker, primaryModel, isExpanded, onToggle, wsUrl }: WorkerRowProps) {
   const specialistLabel = worker.specialistDisplayName
-    ?? (worker.attributionKind === 'ad_hoc' ? 'Ad-hoc' : worker.attributionKind === 'unknown' ? 'Unknown' : '—')
+    ?? (worker.attributionKind === 'ad_hoc' ? 'Ad-hoc' : worker.attributionKind === 'unknown' ? 'Legacy' : '—')
 
   return (
     <>
