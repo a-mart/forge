@@ -35,7 +35,7 @@ export function SkillListRail({
   }, [skills, searchQuery])
 
   return (
-    <div className="flex flex-col overflow-hidden">
+    <div className="flex min-h-0 flex-col overflow-hidden">
       {/* Search */}
       <div className="shrink-0 border-b border-border/40 p-2">
         <div className="relative">
@@ -53,7 +53,7 @@ export function SkillListRail({
       {/* Skill list */}
       <div
         className={cn(
-          'flex-1 overflow-y-auto',
+          'min-h-0 flex-1 overflow-y-auto',
           '[&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-track]:bg-transparent',
           '[&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-transparent',
           '[scrollbar-width:thin] [scrollbar-color:transparent_transparent]',

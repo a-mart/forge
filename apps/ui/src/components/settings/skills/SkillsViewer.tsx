@@ -150,9 +150,7 @@ export function SkillsViewer({ wsUrl, profiles }: SkillsViewerProps) {
 
   /* Reset on scope change */
   useEffect(() => {
-    if (hasInitializedScopeRef.current) {
-      loadSkillsRequestIdRef.current += 1
-    } else {
+    if (!hasInitializedScopeRef.current) {
       hasInitializedScopeRef.current = true
     }
     setSearchQuery('')
@@ -400,7 +398,7 @@ function SkillExplorerDesktop({
   return (
     <div
       className="overflow-hidden rounded-lg border border-border bg-card/30"
-      style={{ height: '520px' }}
+      style={{ height: 'calc(100vh - 280px)' }}
     >
       <div className="flex h-full">
         {/* Left: Skill list */}
