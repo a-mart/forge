@@ -26,6 +26,12 @@ export function ChatSearchBar({ search }: ChatSearchBarProps) {
       if (e.key === 'Escape') {
         e.preventDefault()
         search.close()
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        search.prev()
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        search.next()
       } else if (e.key === 'Enter' && e.shiftKey) {
         e.preventDefault()
         search.prev()
