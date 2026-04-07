@@ -581,6 +581,7 @@ function createMainWindow(): BrowserWindow {
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
+      spellcheck: true,
     },
   })
 
@@ -616,6 +617,25 @@ function createMainWindow(): BrowserWindow {
     if (!isAppOrigin) {
       event.preventDefault()
       void shell.openExternal(url)
+    }
+  })
+
+  // Native spell-check context menu with suggestions
+  window.webContents.on('context-menu', (_event, params) => {
+    console.log('[spell-check] context-menu event:', { misspelledWord: params.misspelledWord, suggestions: params.dictionarySuggestions, isEditable: params.isEditable })
+    if (params.misspelledWord) {
+      const menuItems: Electron.MenuItemConstructorOptions[] = [
+        ...params.dictionarySuggestions.map((suggestion) => ({
+          label: suggestion,
+          click: () => window.webContents.replaceMisspelling(suggestion),
+        })),
+        ...(params.dictionarySuggestions.length > 0 ? [{ type: 'separator' as const }] : []),
+        {
+          label: 'Add to Dictionary',
+          click: () => window.webContents.session.addWordToSpellCheckerDictionary(params.misspelledWord),
+        },
+      ]
+      Menu.buildFromTemplate(menuItems).popup()
     }
   })
 

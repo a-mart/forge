@@ -1187,6 +1187,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
               <textarea
                 ref={textareaRef}
                 value={input}
+                spellCheck
                 onChange={(event) => handleInputChange(event.target.value)}
                 onKeyDown={handleKeyDown}
                 onPaste={handlePaste}
