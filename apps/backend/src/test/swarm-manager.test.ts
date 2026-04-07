@@ -222,10 +222,7 @@ class FallbackReplaySession {
   readonly thinkingLevel = 'medium'
   readonly state = { messages: [] as Array<{ role?: string; stopReason?: string }> }
   readonly agent = {
-    replaceMessages: (messages: unknown[]) => {
-      this.sessionMessages = structuredClone(messages)
-      this.state.messages = structuredClone(messages) as Array<{ role?: string; stopReason?: string }>
-    },
+    state: this.state,
   }
 
   async prompt(message: string): Promise<void> {

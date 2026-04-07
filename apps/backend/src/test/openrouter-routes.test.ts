@@ -3,6 +3,7 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { getModels } from "@mariozechner/pi-ai";
 import { SessionManager } from "@mariozechner/pi-coding-agent";
 import type {
   AgentDescriptor,
@@ -19,6 +20,9 @@ import { SwarmManager } from "../swarm/swarm-manager.js";
 import { SwarmWebSocketServer } from "../ws/server.js";
 
 const tempRoots: string[] = [];
+const TEST_OPENROUTER_MODEL_ID =
+  getModels("openrouter").find((model) => model.id === "anthropic/claude-3.7-sonnet")?.id ??
+  "anthropic/claude-3.7-sonnet";
 
 class FakeRuntime {
   readonly descriptor: AgentDescriptor;
@@ -271,9 +275,9 @@ describe("openrouter-routes", () => {
       };
 
       expect(payload.models.length).toBeGreaterThan(0);
-      const claude = payload.models.find((model) => model.modelId === "anthropic/claude-3.5-sonnet");
+      const claude = payload.models.find((model) => model.modelId === TEST_OPENROUTER_MODEL_ID);
       expect(claude).toMatchObject({
-        modelId: "anthropic/claude-3.5-sonnet",
+        modelId: TEST_OPENROUTER_MODEL_ID,
         upstreamProvider: "anthropic",
       });
       expect(claude?.displayName.length ?? 0).toBeGreaterThan(0);
@@ -332,7 +336,7 @@ describe("openrouter-routes", () => {
   it("adds and removes URL-encoded model ids, regenerates the projection, and exposes OpenRouter selector entries", async () => {
     process.env.OPENROUTER_API_KEY = "sk-or-test";
     const { config, manager, server } = await startServer();
-    const modelId = "anthropic/claude-3.5-sonnet";
+    const modelId = TEST_OPENROUTER_MODEL_ID;
     const projectionPath = getPiModelsProjectionPath(config.paths.dataDir);
     const reloadSpy = vi.spyOn(manager, "reloadOpenRouterModelsAndProjection");
 
@@ -445,7 +449,7 @@ describe("openrouter-routes", () => {
   it("rolls back the stored model file when projection regeneration fails", async () => {
     process.env.OPENROUTER_API_KEY = "sk-or-test";
     const { config, manager, server } = await startServer();
-    const modelId = "anthropic/claude-3.5-sonnet";
+    const modelId = TEST_OPENROUTER_MODEL_ID;
     const projectionPath = getPiModelsProjectionPath(config.paths.dataDir);
     const reloadSpy = vi
       .spyOn(manager, "reloadOpenRouterModelsAndProjection")

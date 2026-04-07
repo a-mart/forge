@@ -1302,7 +1302,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
     }
 
     const rebuiltContext = this.session.sessionManager.buildSessionContext();
-    this.session.agent.replaceMessages(rebuiltContext.messages);
+    this.replaceSessionAgentMessages(rebuiltContext.messages);
   }
 
   private dropTrailingOverflowErrorIfPresent(
@@ -1315,8 +1315,12 @@ export class AgentRuntime implements SwarmAgentRuntime {
     const messages = this.session.state.messages;
     const lastMessage = messages[messages.length - 1];
     if (lastMessage?.role === "assistant" && lastMessage.stopReason === "error") {
-      this.session.agent.replaceMessages(messages.slice(0, -1));
+      this.replaceSessionAgentMessages(messages.slice(0, -1));
     }
+  }
+
+  private replaceSessionAgentMessages(messages: unknown[]): void {
+    (this.session.state as { messages: unknown[] }).messages = messages;
   }
 
   private consumePendingMessage(messageKey: string): PendingDelivery | undefined {

@@ -1,7 +1,8 @@
 diff --git a/dist/core/agent-session.js b/dist/core/agent-session.js
+index 9fa4cf9cef443f286e80dd54f5a8deaec0ea96b3..1cc6d1382a5b25001ef3c943b699ed66f2f0aebd 100644
 --- a/dist/core/agent-session.js
 +++ b/dist/core/agent-session.js
-@@ -1472,9 +1472,16 @@ export class AgentSession {
+@@ -1436,9 +1436,16 @@ export class AgentSession {
       * Internal: Run auto-compaction with events.
       */
      async _runAutoCompaction(reason, willRetry) {
@@ -19,7 +20,7 @@ diff --git a/dist/core/agent-session.js b/dist/core/agent-session.js
          try {
              if (!this.model) {
                  this._emit({
-@@ -1518,7 +1525,7 @@ export class AgentSession {
+@@ -1482,7 +1489,7 @@ export class AgentSession {
                      preparation,
                      branchEntries: pathEntries,
                      customInstructions: undefined,
@@ -28,7 +29,7 @@ diff --git a/dist/core/agent-session.js b/dist/core/agent-session.js
                  }));
                  if (extensionResult?.cancel) {
                      this._emit({
-@@ -1548,13 +1555,13 @@ export class AgentSession {
+@@ -1512,13 +1519,13 @@ export class AgentSession {
              }
              else {
                  // Generate compaction result
@@ -44,7 +45,7 @@ diff --git a/dist/core/agent-session.js b/dist/core/agent-session.js
                  this._emit({
                      type: "compaction_end",
                      reason,
-@@ -1616,7 +1623,10 @@ export class AgentSession {
+@@ -1580,7 +1587,10 @@ export class AgentSession {
              });
          }
          finally {
