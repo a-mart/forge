@@ -54,36 +54,24 @@ vi.mock("@mariozechner/pi-coding-agent", () => ({
   },
   createAgentSession: (...args: unknown[]) => piCodingAgentMockState.createAgentSession(...args),
   compact: (...args: unknown[]) => piCodingAgentMockState.compact(...args),
-  ModelRegistry: new Proxy(class {
-    getError(): undefined {
-      return undefined;
-    }
-
-    find(provider: string, modelId: string): unknown {
-      return piCodingAgentMockState.modelRegistryFind(provider, modelId);
-    }
-
-    getAll(): unknown[] {
-      return piCodingAgentMockState.modelRegistryGetAll();
-    }
-  }, {
-    construct(_target, args) {
-      piCodingAgentMockState.modelRegistryCreateArgs(...args);
-      return new (class {
+  ModelRegistry: {
+    create: (...args: unknown[]) => {
+      piCodingAgentMockState.modelRegistryCreateArgs(...args)
+      return {
         getError(): undefined {
-          return undefined;
-        }
+          return undefined
+        },
 
         find(provider: string, modelId: string): unknown {
-          return piCodingAgentMockState.modelRegistryFind(provider, modelId);
-        }
+          return piCodingAgentMockState.modelRegistryFind(provider, modelId)
+        },
 
         getAll(): unknown[] {
-          return piCodingAgentMockState.modelRegistryGetAll();
-        }
-      })();
+          return piCodingAgentMockState.modelRegistryGetAll()
+        },
+      }
     },
-  }),
+  },
 }));
 
 import { resetClaudeSdkLoaderForTests, setClaudeSdkImporterForTests } from "../claude-sdk-loader.js";

@@ -14,7 +14,7 @@ interface OpenRouterBrowseRowProps {
   model: AvailableOpenRouterModel
   isAdded: boolean
   isAdding: boolean
-  onAdd: (modelId: string) => void
+  onAdd: (model: AvailableOpenRouterModel) => void
 }
 
 export function OpenRouterBrowseRow({ model, isAdded, isAdding, onAdd }: OpenRouterBrowseRowProps) {
@@ -56,7 +56,7 @@ export function OpenRouterBrowseRow({ model, isAdded, isAdding, onAdd }: OpenRou
             variant="outline"
             size="sm"
             className="h-7 gap-1 px-2 text-xs"
-            onClick={() => onAdd(model.modelId)}
+            onClick={() => onAdd(model)}
           >
             <Plus className="size-3" />
             Add

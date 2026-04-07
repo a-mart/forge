@@ -17,6 +17,7 @@ import { getScheduleFilePath } from "../scheduler/schedule-storage.js";
 import { getOpenRouterModelsPath } from "../swarm/data-paths.js";
 import { getPiModelsProjectionPath } from "../swarm/model-catalog-projection.js";
 import { SwarmManager } from "../swarm/swarm-manager.js";
+import { resetLiveOpenRouterModelsCacheForTests } from "../ws/routes/openrouter-routes.js";
 import { SwarmWebSocketServer } from "../ws/server.js";
 
 const tempRoots: string[] = [];
@@ -85,6 +86,8 @@ class TestSwarmManager extends SwarmManager {
 }
 
 afterEach(async () => {
+  resetLiveOpenRouterModelsCacheForTests();
+  vi.restoreAllMocks();
   await Promise.all(tempRoots.splice(0).map((root) => removeTempRoot(root)));
   delete process.env.OPENROUTER_API_KEY;
 });
@@ -254,6 +257,16 @@ async function startServer(): Promise<{
 
 describe("openrouter-routes", () => {
   it("lists available OpenRouter models from Pi's built-in catalog", async () => {
+    const originalFetch = globalThis.fetch;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url === "https://openrouter.ai/api/v1/models") {
+        throw new Error("network unavailable in test");
+      }
+
+      return originalFetch(input as Parameters<typeof fetch>[0], init);
+    });
+
     const { config, server } = await startServer();
 
     try {
@@ -292,6 +305,139 @@ describe("openrouter-routes", () => {
         expect(claude.pricing.inputPerMillion).toBeLessThan(1_000);
       }
     } finally {
+      await server.stop();
+    }
+  });
+
+  it("merges live OpenRouter API models into the available catalog and caches the live response", async () => {
+    const originalFetch = globalThis.fetch;
+    const liveModel = {
+      id: "z-ai/glm-5.1",
+      name: "Z.ai: GLM 5.1",
+      context_length: 202_752,
+      max_completion_tokens: 202_752,
+      pricing: {
+        prompt: 0.000001,
+        completion: 0.0000032,
+      },
+      supported_parameters: ["reasoning", "tools"],
+      architecture: {
+        modality: "text->text",
+      },
+      top_provider: {
+        max_completion_tokens: 202_752,
+      },
+    };
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url === "https://openrouter.ai/api/v1/models") {
+        return new Response(JSON.stringify({ data: [liveModel] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      return originalFetch(input as Parameters<typeof fetch>[0], init);
+    });
+
+    const { config, server } = await startServer();
+
+    try {
+      const firstResponse = await fetch(`http://${config.host}:${config.port}/api/settings/openrouter/available-models`);
+      expect(firstResponse.status).toBe(200);
+      const firstPayload = (await firstResponse.json()) as {
+        models: Array<{ modelId: string; displayName: string; supportsReasoning: boolean; supportsTools: boolean }>;
+      };
+
+      expect(firstPayload.models).toContainEqual(
+        expect.objectContaining({
+          modelId: TEST_OPENROUTER_MODEL_ID,
+        }),
+      );
+      expect(firstPayload.models).toContainEqual(
+        expect.objectContaining({
+          modelId: "z-ai/glm-5.1",
+          displayName: "Z.ai: GLM 5.1",
+          supportsReasoning: true,
+          supportsTools: true,
+        }),
+      );
+
+      const secondResponse = await fetch(`http://${config.host}:${config.port}/api/settings/openrouter/available-models`);
+      expect(secondResponse.status).toBe(200);
+      await secondResponse.json();
+
+      expect(fetchSpy.mock.calls.filter(([input]) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        return url === "https://openrouter.ai/api/v1/models";
+      })).toHaveLength(1);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("adds live-only OpenRouter models from request metadata", async () => {
+    process.env.OPENROUTER_API_KEY = "sk-or-test";
+    const { config, manager, server } = await startServer();
+    const modelId = "z-ai/glm-5.1";
+    const projectionPath = getPiModelsProjectionPath(config.paths.dataDir);
+    const reloadSpy = vi.spyOn(manager, "reloadOpenRouterModelsAndProjection");
+
+    try {
+      const addResponse = await fetch(
+        `http://${config.host}:${config.port}/api/settings/openrouter/models/${encodeURIComponent(modelId)}`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: {
+              modelId,
+              displayName: "Z.ai: GLM 5.1",
+              upstreamProvider: "z-ai",
+              contextWindow: 202_752,
+              maxOutputTokens: 202_752,
+              supportsReasoning: true,
+              supportsTools: true,
+              inputModes: ["text"],
+              pricing: {
+                inputPerMillion: 1,
+                outputPerMillion: 3.2,
+              },
+            },
+          }),
+        },
+      );
+      expect(addResponse.status).toBe(200);
+      const added = (await addResponse.json()) as {
+        modelId: string;
+        displayName: string;
+        supportedReasoningLevels: string[];
+        inputModes: string[];
+      };
+      expect(added).toMatchObject({
+        modelId,
+        displayName: "Z.ai: GLM 5.1",
+        supportedReasoningLevels: ["none", "low", "medium", "high"],
+        inputModes: ["text"],
+      });
+      expect(reloadSpy).toHaveBeenCalledTimes(1);
+
+      const storedFile = JSON.parse(await readFile(getOpenRouterModelsPath(config.paths.dataDir), "utf8")) as {
+        models: Record<string, { modelId: string; displayName: string }>;
+      };
+      expect(storedFile.models[modelId]).toMatchObject({
+        modelId,
+        displayName: "Z.ai: GLM 5.1",
+      });
+
+      const projection = JSON.parse(await readFile(projectionPath, "utf8")) as {
+        providers: Record<string, { models?: Array<{ id: string }> }>;
+      };
+      expect(projection.providers.openrouter?.models).toEqual([
+        expect.objectContaining({ id: modelId }),
+      ]);
+    } finally {
+      reloadSpy.mockRestore();
       await server.stop();
     }
   });

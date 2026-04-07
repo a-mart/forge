@@ -53,9 +53,16 @@ export async function fetchAvailableOpenRouterModels(wsUrl: string | undefined):
   return Array.isArray(data.models) ? data.models : []
 }
 
-export async function addOpenRouterModel(wsUrl: string | undefined, modelId: string): Promise<void> {
-  const endpoint = resolveApiEndpoint(wsUrl, `/api/settings/openrouter/models/${encodeURIComponent(modelId)}`)
-  const response = await fetch(endpoint, { method: 'PUT' })
+export async function addOpenRouterModel(
+  wsUrl: string | undefined,
+  model: AvailableOpenRouterModel,
+): Promise<void> {
+  const endpoint = resolveApiEndpoint(wsUrl, `/api/settings/openrouter/models/${encodeURIComponent(model.modelId)}`)
+  const response = await fetch(endpoint, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model }),
+  })
   if (!response.ok) throw new Error(await readApiError(response))
 }
 

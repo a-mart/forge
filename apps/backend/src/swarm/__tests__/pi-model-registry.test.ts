@@ -9,11 +9,9 @@ const modelRegistryMockState = vi.hoisted(() => ({
 
 vi.mock("@mariozechner/pi-coding-agent", () => {
   return {
-    ModelRegistry: new Proxy(class {}, {
-      construct(_target, args) {
-        return modelRegistryMockState.construct(...args);
-      },
-    }),
+    ModelRegistry: {
+      create: (...args: unknown[]) => modelRegistryMockState.construct(...args),
+    },
   };
 });
 

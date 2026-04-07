@@ -143,12 +143,12 @@ export function OpenRouterBrowseDialog({
     return { groups: sortedGroups, filteredCount: filtered.length, totalCount: total }
   }, [allModels, debouncedQuery, activeFilters])
 
-  const handleAdd = useCallback(async (modelId: string) => {
+  const handleAdd = useCallback(async (model: AvailableOpenRouterModel) => {
     setActionError(null)
-    setAddingModelId(modelId)
+    setAddingModelId(model.modelId)
     try {
-      await addOpenRouterModel(wsUrl, modelId)
-      setLocalAddedIds((prev) => new Set(prev).add(modelId))
+      await addOpenRouterModel(wsUrl, model)
+      setLocalAddedIds((prev) => new Set(prev).add(model.modelId))
       onModelAdded()
     } catch (addError) {
       setActionError(addError instanceof Error ? addError.message : String(addError))
@@ -293,7 +293,7 @@ export function OpenRouterBrowseDialog({
                               model={model}
                               isAdded={localAddedIds.has(model.modelId)}
                               isAdding={addingModelId === model.modelId}
-                              onAdd={(id) => void handleAdd(id)}
+                              onAdd={(availableModel) => void handleAdd(availableModel)}
                             />
                           ))}
                         </div>
