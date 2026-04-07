@@ -130,6 +130,7 @@ import {
   writeSessionMeta
 } from "./session-manifest.js";
 import { SecretsEnvService } from "./secrets-env-service.js";
+import { SkillFileService } from "./skill-file-service.js";
 import { SkillMetadataService } from "./skill-metadata-service.js";
 import {
   listDirectories,
@@ -1278,6 +1279,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly runtimeFactory: RuntimeFactory;
   private piModelsJsonPath: string | null = null;
   private readonly skillMetadataService: SkillMetadataService;
+  private readonly skillFileService: SkillFileService;
   private readonly secretsEnvService: SecretsEnvService;
   readonly promptRegistry: PromptRegistry;
 
@@ -1331,6 +1333,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.skillMetadataService = new SkillMetadataService({
       config: this.config
     });
+    this.skillFileService = new SkillFileService();
     this.secretsEnvService = new SecretsEnvService({
       config: this.config,
       ensureSkillMetadataLoaded: () => this.skillMetadataService.ensureSkillMetadataLoaded(),
@@ -5720,6 +5723,43 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
         return left.directoryName.localeCompare(right.directoryName);
       });
+  }
+
+  async listSkillFiles(skillId: string, relativePath = ""): Promise<{
+    skillId: string;
+    rootPath: string;
+    path: string;
+    entries: Array<{
+      name: string;
+      path: string;
+      absolutePath: string;
+      type: "file" | "directory";
+      size?: number;
+      extension?: string;
+    }>;
+  }> {
+    const skill = await this.skillMetadataService.resolveSkillById(skillId);
+    if (!skill) {
+      throw new Error("Unknown skill.");
+    }
+
+    return this.skillFileService.listDirectory(skill, relativePath);
+  }
+
+  async getSkillFileContent(skillId: string, relativePath: string): Promise<{
+    path: string;
+    absolutePath: string;
+    content: string | null;
+    binary: boolean;
+    size: number;
+    lines?: number;
+  }> {
+    const skill = await this.skillMetadataService.resolveSkillById(skillId);
+    if (!skill) {
+      throw new Error("Unknown skill.");
+    }
+
+    return this.skillFileService.getFileContent(skill, relativePath);
   }
 
   async updateSettingsEnv(values: Record<string, string>): Promise<void> {
