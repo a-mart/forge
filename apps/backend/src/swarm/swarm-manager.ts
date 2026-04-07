@@ -3154,7 +3154,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     this.descriptors.set(agentId, descriptor);
     await this.ensureSessionFileParentDirectory(descriptor.sessionFile);
-    await this.updateSessionMetaForWorkerDescriptor(descriptor);
+    await this.updateSessionMetaForWorkerDescriptor(descriptor, undefined, {
+      specialistAttributionKnown: true
+    });
     await this.saveStore();
     // Emit early snapshot so the UI sees the updated workerCount immediately,
     // before the potentially slow runtime creation.
@@ -7028,6 +7030,17 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       prompt = `${prompt.trimEnd()}\n\n${delegationContextBlock}`;
     }
 
+    if (prompt.includes("${model_specific_instructions}")) {
+      const effectiveModelSpecificInstructions = modelCatalogService.getEffectiveModelSpecificInstructions(
+        descriptor.model.modelId,
+        descriptor.model.provider
+      );
+      const modelSpecificInstructionsBlock = effectiveModelSpecificInstructions
+        ? `# Model-Specific Instructions\n${effectiveModelSpecificInstructions}`
+        : "";
+      prompt = prompt.replaceAll("${model_specific_instructions}", modelSpecificInstructionsBlock);
+    }
+
     if (this.integrationContextProvider) {
       try {
         const integrationContext = this.integrationContextProvider(profileId).trim();
@@ -9093,7 +9106,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   private async updateSessionMetaForWorkerDescriptor(
     descriptor: AgentDescriptor,
-    resolvedSystemPrompt?: string | null
+    resolvedSystemPrompt?: string | null,
+    options: {
+      specialistAttributionKnown?: boolean;
+    } = {}
   ): Promise<void> {
     if (descriptor.role !== "worker") {
       return;
@@ -9115,7 +9131,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
           id: descriptor.agentId,
           model: this.buildWorkerModelIdentifier(descriptor),
           specialistId: normalizeOptionalAgentId(descriptor.specialistId) ?? null,
-          specialistAttributionKnown: true,
+          specialistAttributionKnown: options.specialistAttributionKnown,
           status: this.mapWorkerStatusForMeta(descriptor.status),
           createdAt: descriptor.createdAt,
           terminatedAt: descriptor.status === "terminated" ? descriptor.updatedAt : null,

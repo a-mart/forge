@@ -341,7 +341,9 @@ export async function updateSessionMetaWorker(
     specialistAttributionKnown:
       update.specialistAttributionKnown !== undefined
         ? update.specialistAttributionKnown
-        : existingWorker?.specialistAttributionKnown ?? true,
+        : existingWorker
+          ? existingWorker.specialistAttributionKnown
+          : true,
     status: nextStatus,
     createdAt: update.createdAt ?? existingWorker?.createdAt ?? now(),
     terminatedAt:
@@ -502,7 +504,7 @@ function buildWorkerMeta(
     id: descriptor.agentId,
     model: buildWorkerModelString(descriptor),
     specialistId: normalizeOptionalString(descriptor.specialistId) ?? null,
-    specialistAttributionKnown: existingWorker?.specialistAttributionKnown ?? true,
+    specialistAttributionKnown: existingWorker ? existingWorker.specialistAttributionKnown : true,
     status: mapWorkerStatus(descriptor.status),
     createdAt: descriptor.createdAt,
     terminatedAt: descriptor.status === "terminated" ? descriptor.updatedAt : null,

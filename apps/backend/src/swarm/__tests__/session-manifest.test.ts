@@ -237,6 +237,46 @@ describe("session-manifest", () => {
 
     await writeFile(agentsStoreFile, `${JSON.stringify(agentsStore, null, 2)}\n`, "utf8");
 
+    await writeSessionMeta(dataDir, {
+      sessionId: nonRootSessionId,
+      profileId,
+      label: "Child",
+      model: {
+        provider: "openai-codex",
+        modelId: "gpt-5.3-codex"
+      },
+      createdAt,
+      updatedAt,
+      cwd: "/tmp/child",
+      promptFingerprint: null,
+      promptComponents: null,
+      workers: [
+        {
+          id: "worker-b",
+          model: "openai-codex/gpt-5.3-codex",
+          specialistId: null,
+          status: "idle",
+          createdAt,
+          terminatedAt: null,
+          tokens: {
+            input: 5,
+            output: 1
+          },
+          systemPrompt: null
+        }
+      ],
+      stats: {
+        totalWorkers: 1,
+        activeWorkers: 0,
+        totalTokens: {
+          input: 5,
+          output: 1
+        },
+        sessionFileSize: null,
+        memoryFileSize: null
+      }
+    });
+
     const rebuilt = await rebuildSessionMeta({
       dataDir,
       agentsStoreFile
@@ -257,7 +297,7 @@ describe("session-manifest", () => {
     const childMeta = await readSessionMeta(dataDir, profileId, nonRootSessionId);
     expect(childMeta?.label).toBe("Child");
     expect(childMeta?.workers.map((worker) => worker.id)).toEqual(["worker-b"]);
-    expect(childMeta?.workers[0]?.specialistAttributionKnown).toBe(true);
+    expect(childMeta?.workers[0]?.specialistAttributionKnown).toBeUndefined();
     expect(childMeta?.workers[0]?.status).toBe("streaming");
     expect(childMeta?.stats.activeWorkers).toBe(1);
     expect(childMeta?.stats.sessionFileSize).toBe(String("child-session".length));
@@ -345,6 +385,73 @@ describe("session-manifest", () => {
     expect(updated?.stats.totalWorkers).toBe(1);
     expect(updated?.stats.activeWorkers).toBe(0);
     expect(updated?.stats.totalTokens).toEqual({ input: 180, output: 25 });
+  });
+
+  it("preserves missing attribution provenance when updating legacy worker metadata", async () => {
+    const root = await mkdtemp(join(tmpdir(), "session-manifest-"));
+    const dataDir = join(root, "data");
+    const profileId = "manager";
+    const sessionId = "manager--s2";
+
+    await writeSessionMeta(dataDir, {
+      sessionId,
+      profileId,
+      label: "Session",
+      model: {
+        provider: "openai-codex",
+        modelId: "gpt-5.3-codex"
+      },
+      createdAt: "2026-03-01T00:00:00.000Z",
+      updatedAt: "2026-03-01T00:00:00.000Z",
+      cwd: "/tmp/project",
+      promptFingerprint: null,
+      promptComponents: null,
+      workers: [
+        {
+          id: "legacy-worker",
+          model: "openai-codex/gpt-5.3-codex",
+          specialistId: null,
+          status: "idle",
+          createdAt: "2026-03-01T00:00:10.000Z",
+          terminatedAt: null,
+          tokens: {
+            input: 10,
+            output: 2
+          },
+          systemPrompt: null
+        }
+      ],
+      stats: {
+        totalWorkers: 1,
+        activeWorkers: 0,
+        totalTokens: {
+          input: 10,
+          output: 2
+        },
+        sessionFileSize: null,
+        memoryFileSize: null
+      }
+    });
+
+    await updateSessionMetaWorker(
+      dataDir,
+      profileId,
+      sessionId,
+      {
+        id: "legacy-worker",
+        status: "streaming",
+        tokens: {
+          input: 42,
+          output: 7
+        }
+      },
+      () => "2026-03-01T00:00:11.000Z"
+    );
+
+    const updated = await readSessionMeta(dataDir, profileId, sessionId);
+    expect(updated?.workers[0]?.status).toBe("streaming");
+    expect(updated?.workers[0]?.specialistAttributionKnown).toBeUndefined();
+    expect(updated?.stats.totalTokens).toEqual({ input: 42, output: 7 });
   });
 
   it("refreshes file size stats", async () => {

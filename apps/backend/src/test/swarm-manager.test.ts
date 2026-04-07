@@ -51,7 +51,7 @@ vi.mock('../swarm/project-agent-analysis.js', async () => {
   }
 })
 
-import { readSessionMeta } from '../swarm/session-manifest.js'
+import { readSessionMeta, writeSessionMeta } from '../swarm/session-manifest.js'
 import { loadOnboardingState, saveOnboardingPreferences } from '../swarm/onboarding-state.js'
 import { AgentRuntime } from '../swarm/agent-runtime.js'
 import { buildSessionMemoryRuntimeView, SwarmManager } from '../swarm/swarm-manager.js'
@@ -1976,6 +1976,72 @@ describe('SwarmManager', () => {
     expect(systemPrompt).toContain('Draft release notes and changelog copy.')
     expect(systemPrompt).not.toContain('Coordinate the main manager session.')
     expect(systemPrompt).not.toContain('`@manager`')
+  })
+
+  it('includes GPT-5 model-specific instructions in the resolved manager prompt', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const preview = await manager.previewManagerSystemPrompt('manager')
+    const systemPrompt = preview.sections.find((section) => section.label === 'System Prompt')?.content
+
+    expect(systemPrompt).toContain('# Model-Specific Instructions')
+    expect(systemPrompt).toContain('Return the requested sections only, in the requested order.')
+    expect(systemPrompt).toContain('Do not use em dashes unless the user explicitly asks for them')
+  })
+
+  it('includes Claude model-specific instructions for pi-opus managers', async () => {
+    const config = await makeTempConfig()
+    config.defaultModel = {
+      provider: 'anthropic',
+      modelId: 'claude-opus-4-6',
+      thinkingLevel: 'high',
+    }
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const preview = await manager.previewManagerSystemPrompt('manager')
+    const systemPrompt = preview.sections.find((section) => section.label === 'System Prompt')?.content
+
+    expect(systemPrompt).toContain('# Model-Specific Instructions')
+    expect(systemPrompt).toContain('Prefer concise, direct answers over essay-style framing.')
+    expect(systemPrompt).toContain('When evidence is sufficient, state the conclusion plainly instead of over-hedging.')
+  })
+
+  it('omits the model-specific instructions block when the active model has no built-in default', async () => {
+    const config = await makeTempConfig()
+    config.defaultModel = {
+      provider: 'claude-sdk',
+      modelId: 'claude-opus-4-6',
+      thinkingLevel: 'high',
+    }
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const preview = await manager.previewManagerSystemPrompt('manager')
+    const systemPrompt = preview.sections.find((section) => section.label === 'System Prompt')?.content
+
+    expect(systemPrompt).not.toContain('# Model-Specific Instructions')
+    expect(systemPrompt).not.toContain('Prefer concise, direct answers over essay-style framing.')
+  })
+
+  it('leaves custom manager prompts unchanged when they do not opt into model-specific instructions', async () => {
+    const config = await makeTempConfig()
+    const manager = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await manager.setSessionProjectAgent('manager', {
+      whenToUse: 'Coordinate the main manager session.',
+      systemPrompt: 'You are a custom manager prompt without the model instructions slot.',
+    })
+
+    const preview = await manager.previewManagerSystemPrompt('manager')
+    const systemPrompt = preview.sections.find((section) => section.label === 'System Prompt')?.content
+
+    expect(systemPrompt).toContain('You are a custom manager prompt without the model instructions slot.')
+    expect(systemPrompt).not.toContain('# Model-Specific Instructions')
+    expect(systemPrompt).not.toContain('Return the requested sections only, in the requested order.')
   })
 
   it('labels prompt preview sections with the project-agent system prompt source when overridden', async () => {
@@ -5033,6 +5099,56 @@ describe('SwarmManager', () => {
             entry.text.includes('Worker reply failed:'),
         ),
     ).toBe(false)
+  })
+
+  it('preserves missing attribution provenance on descriptor-backed worker meta updates', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', {
+      agentId: 'Legacy Attribution Worker',
+    })
+
+    const sessionMeta = await readSessionMeta(config.paths.dataDir, 'manager', 'manager')
+    expect(sessionMeta).toBeDefined()
+    if (!sessionMeta) {
+      throw new Error('Expected session meta')
+    }
+
+    await writeSessionMeta(config.paths.dataDir, {
+      ...sessionMeta,
+      workers: sessionMeta.workers.map((entry) => {
+        if (entry.id !== worker.agentId) {
+          return entry
+        }
+
+        const { specialistAttributionKnown: _ignored, ...legacyEntry } = entry
+        return legacyEntry
+      }),
+    })
+
+    const workerDescriptor = manager.getAgent(worker.agentId)
+    expect(workerDescriptor?.role).toBe('worker')
+    if (!workerDescriptor || workerDescriptor.role !== 'worker') {
+      throw new Error('Expected worker descriptor')
+    }
+
+    workerDescriptor.status = 'streaming'
+    workerDescriptor.contextUsage = {
+      tokens: 321,
+      contextWindow: 1000,
+      percent: 32.1,
+    }
+
+    await (manager as any).updateSessionMetaForWorkerDescriptor(workerDescriptor)
+
+    const updatedMeta = await readSessionMeta(config.paths.dataDir, 'manager', 'manager')
+    const updatedWorkerMeta = updatedMeta?.workers.find((entry) => entry.id === worker.agentId)
+    expect(updatedWorkerMeta?.status).toBe('streaming')
+    expect(updatedWorkerMeta?.tokens.input).toBe(321)
+    expect(updatedWorkerMeta?.specialistAttributionKnown).toBeUndefined()
   })
 
   it('keeps the live worker descriptor healthy after old-runtime terminate mutates its own descriptor during fallback', async () => {
