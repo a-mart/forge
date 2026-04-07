@@ -12,11 +12,14 @@ import { WorkerStatsCards } from './cards/WorkerStatsCards'
 import { DailyUsageChart } from './charts/DailyUsageChart'
 import { ModelDistribution } from './sections/ModelDistribution'
 import type { StatsRange } from '@forge/protocol'
+import type { StatsTab } from '@/hooks/index-page/use-route-state'
 import { cn } from '@/lib/utils'
 
 interface StatsPanelProps {
   wsUrl: string
   onBack: () => void
+  activeTab?: StatsTab
+  onTabChange?: (tab: StatsTab) => void
 }
 
 function StatsSkeleton() {
@@ -109,7 +112,7 @@ function isEmptyStats(stats: {
   return !hasTokenUsage && !hasCodeUsage
 }
 
-export function StatsPanel({ wsUrl, onBack }: StatsPanelProps) {
+export function StatsPanel({ wsUrl, onBack, activeTab, onTabChange }: StatsPanelProps) {
   const [range, setRange] = useState<StatsRange>('7d')
   const { stats, isLoading, error, isRefreshing, isSwitchingRange, refresh } = useStats(wsUrl, range)
   const isUpdating = isRefreshing || isSwitchingRange
@@ -123,6 +126,8 @@ export function StatsPanel({ wsUrl, onBack }: StatsPanelProps) {
       onRefresh={refresh}
       range={range}
       onRangeChange={setRange}
+      activeTab={activeTab}
+      onTabChange={onTabChange}
     >
       {isLoading && !stats ? (
         <StatsSkeleton />

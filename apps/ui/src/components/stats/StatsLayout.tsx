@@ -3,11 +3,17 @@ import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { timeAgo } from './charts/chart-utils'
 import type { StatsRange } from '@forge/protocol'
+import type { StatsTab } from '@/hooks/index-page/use-route-state'
 
 const RANGE_OPTIONS: { value: StatsRange; label: string }[] = [
   { value: '7d', label: '7 days' },
   { value: '30d', label: '30 days' },
   { value: 'all', label: 'All time' },
+]
+
+const TAB_OPTIONS: { value: StatsTab; label: string }[] = [
+  { value: 'overview', label: 'Overview' },
+  { value: 'tokens', label: 'Token Analytics' },
 ]
 
 interface StatsLayoutProps {
@@ -16,8 +22,12 @@ interface StatsLayoutProps {
   isRefreshing?: boolean
   isSwitchingRange?: boolean
   onRefresh?: () => void
-  range: StatsRange
-  onRangeChange: (range: StatsRange) => void
+  range?: StatsRange
+  onRangeChange?: (range: StatsRange) => void
+  activeTab?: StatsTab
+  onTabChange?: (tab: StatsTab) => void
+  /** When true, the range selector row is hidden (token analytics manages its own filters) */
+  hideRangeSelector?: boolean
   children: React.ReactNode
 }
 
@@ -29,6 +39,9 @@ export function StatsLayout({
   onRefresh,
   range,
   onRangeChange,
+  activeTab = 'overview',
+  onTabChange,
+  hideRangeSelector,
   children,
 }: StatsLayoutProps) {
   return (
@@ -74,36 +87,62 @@ export function StatsLayout({
         </div>
       </header>
 
-      {/* Range selector */}
-      <div className="flex shrink-0 items-center gap-1 border-b border-border/60 bg-card/30 px-3 py-2 md:px-5">
-        <span className="mr-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-          View
-        </span>
-        {RANGE_OPTIONS.map((option) => {
-          const isActive = range === option.value
-          const isLoadingThis = isActive && isSwitchingRange
-          return (
-            <button
-              key={option.value}
-              type="button"
-              onClick={() => onRangeChange(option.value)}
-              disabled={isSwitchingRange}
-              className={cn(
-                'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
-                isActive
-                  ? 'bg-muted text-foreground'
-                  : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground',
-                isSwitchingRange && !isActive && 'opacity-50',
-              )}
-            >
-              {isLoadingThis && (
-                <Loader2 className="size-3 animate-spin" />
-              )}
-              {option.label}
-            </button>
-          )
-        })}
-      </div>
+      {/* Tab row */}
+      {onTabChange ? (
+        <div className="flex shrink-0 items-center gap-1 border-b border-border/60 bg-card/30 px-3 py-2 md:px-5">
+          {TAB_OPTIONS.map((tab) => {
+            const isActive = activeTab === tab.value
+            return (
+              <button
+                key={tab.value}
+                type="button"
+                onClick={() => onTabChange(tab.value)}
+                className={cn(
+                  'rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+                  isActive
+                    ? 'bg-muted text-foreground'
+                    : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground',
+                )}
+              >
+                {tab.label}
+              </button>
+            )
+          })}
+        </div>
+      ) : null}
+
+      {/* Range selector (overview only) */}
+      {!hideRangeSelector && range && onRangeChange ? (
+        <div className="flex shrink-0 items-center gap-1 border-b border-border/60 bg-card/30 px-3 py-2 md:px-5">
+          <span className="mr-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            View
+          </span>
+          {RANGE_OPTIONS.map((option) => {
+            const isActive = range === option.value
+            const isLoadingThis = isActive && isSwitchingRange
+            return (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => onRangeChange(option.value)}
+                disabled={isSwitchingRange}
+                className={cn(
+                  'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+                  isActive
+                    ? 'bg-muted text-foreground'
+                    : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground',
+                  isSwitchingRange && !isActive && 'opacity-50',
+                )}
+              >
+                {isLoadingThis && (
+                  <Loader2 className="size-3 animate-spin" />
+                )}
+                {option.label}
+              </button>
+            )
+          })}
+        </div>
+      ) : null}
 
       {/* Scrollable content */}
       <div className="min-h-0 flex-1 overflow-y-auto">

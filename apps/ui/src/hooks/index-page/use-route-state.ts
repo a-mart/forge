@@ -6,17 +6,19 @@ export const DEFAULT_MANAGER_AGENT_ID = '__default__'
 
 export type ActiveView = 'chat' | 'settings' | 'playwright' | 'stats'
 export type PlaywrightViewMode = 'split' | 'focus' | 'tiles'
+export type StatsTab = 'overview' | 'tokens'
 export type AppRouteState =
   | { view: 'chat'; agentId: string }
   | { view: 'settings' }
   | { view: 'playwright'; playwrightSession?: string; playwrightMode?: PlaywrightViewMode }
-  | { view: 'stats' }
+  | { view: 'stats'; statsTab?: StatsTab }
 
 type AppRouteSearch = {
   view?: string
   agent?: string
   playwrightSession?: string
   playwrightMode?: string
+  statsTab?: string
 }
 
 function normalizeAgentId(agentId?: string): string {
@@ -63,7 +65,10 @@ function parseRouteStateFromLocation(pathname: string, search: unknown): AppRout
   }
 
   if (view === 'stats') {
-    return { view: 'stats' }
+    const statsTab = typeof routeSearch.statsTab === 'string' && ['overview', 'tokens'].includes(routeSearch.statsTab)
+      ? (routeSearch.statsTab as 'overview' | 'tokens')
+      : undefined
+    return { view: 'stats', statsTab }
   }
 
   if (view === 'playwright') {
@@ -90,7 +95,7 @@ function normalizeRouteState(routeState: AppRouteState): AppRouteState {
   }
 
   if (routeState.view === 'stats') {
-    return { view: 'stats' }
+    return { view: 'stats', statsTab: routeState.statsTab }
   }
 
   if (routeState.view === 'playwright') {
@@ -109,7 +114,9 @@ function toRouteSearch(routeState: AppRouteState): AppRouteSearch {
   }
 
   if (routeState.view === 'stats') {
-    return { view: 'stats' }
+    const search: AppRouteSearch = { view: 'stats' }
+    if (routeState.statsTab && routeState.statsTab !== 'overview') search.statsTab = routeState.statsTab
+    return search
   }
 
   if (routeState.view === 'playwright') {
@@ -133,7 +140,7 @@ function routeStatesEqual(left: AppRouteState, right: AppRouteState): boolean {
   }
 
   if (left.view === 'stats' && right.view === 'stats') {
-    return true
+    return (left.statsTab ?? 'overview') === (right.statsTab ?? 'overview')
   }
 
   if (left.view === 'playwright' && right.view === 'playwright') {

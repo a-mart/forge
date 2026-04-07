@@ -31,6 +31,7 @@ import { TerminalPanel } from '@/components/terminal/TerminalPanel'
 import type { TerminalSelectionContext } from '@/components/terminal/TerminalViewport'
 import { SettingsPanel } from '@/components/chat/SettingsDialog'
 import { StatsPanel } from '@/components/stats/StatsPanel'
+import { TokenAnalyticsPanel } from '@/components/stats/token-analytics/TokenAnalyticsPanel'
 import { chooseFallbackAgentId } from '@/lib/agent-hierarchy'
 import type { ArtifactReference } from '@/lib/artifacts'
 import { collectArtifactsFromMessages } from '@/lib/collect-artifacts'
@@ -39,6 +40,7 @@ import { useFeedback } from '@/lib/use-feedback'
 import {
   DEFAULT_MANAGER_AGENT_ID,
   useRouteState,
+  type StatsTab,
 } from '@/hooks/index-page/use-route-state'
 import { useWsConnection } from '@/hooks/index-page/use-ws-connection'
 import { useManagerActions } from '@/hooks/index-page/use-manager-actions'
@@ -1233,13 +1235,17 @@ export function IndexPage() {
                 }
               />
             ) : activeView === 'stats' ? (
-              <StatsPanel
+              <StatsPage
                 wsUrl={wsUrl}
+                routeState={routeState as { view: 'stats'; statsTab?: StatsTab }}
                 onBack={() =>
                   navigateToRoute({
                     view: 'chat',
                     agentId: activeAgentId ?? DEFAULT_MANAGER_AGENT_ID,
                   })
+                }
+                onTabChange={(tab) =>
+                  navigateToRoute({ view: 'stats', statsTab: tab })
                 }
               />
             ) : (
@@ -1565,6 +1571,40 @@ function parseCompactSlashCommand(
   }
 
   return { customInstructions }
+}
+
+function StatsPage({
+  wsUrl,
+  routeState,
+  onBack,
+  onTabChange,
+}: {
+  wsUrl: string
+  routeState: { view: 'stats'; statsTab?: StatsTab }
+  onBack: () => void
+  onTabChange: (tab: StatsTab) => void
+}) {
+  const tab = routeState.statsTab ?? 'overview'
+
+  if (tab === 'tokens') {
+    return (
+      <TokenAnalyticsPanel
+        wsUrl={wsUrl}
+        onBack={onBack}
+        activeTab={tab}
+        onTabChange={onTabChange}
+      />
+    )
+  }
+
+  return (
+    <StatsPanel
+      wsUrl={wsUrl}
+      onBack={onBack}
+      activeTab={tab}
+      onTabChange={onTabChange}
+    />
+  )
 }
 
 function useOptionalLocation(): { pathname: string; search: unknown } {
