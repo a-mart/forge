@@ -161,7 +161,7 @@ function collectRenderableEntries(
     renderableEntries.push({
       timestamp: entry.timestamp,
       line: renderedLine,
-      event: entry
+      event: entry as ConversationMessageEvent | AgentMessageEvent
     });
   }
 

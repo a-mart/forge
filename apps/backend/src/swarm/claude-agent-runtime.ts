@@ -1122,14 +1122,15 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
     }
   }
 
-  private logDebug(message: string, details?: Record<string, unknown>): void {
+  private logDebug(message: string, details?: unknown): void {
     if (process.env.FORGE_DEBUG !== "true") {
       return;
     }
 
+    const normalizedDetails = details && typeof details === "object" ? details : { details };
     console.log(`[swarm][${nowIso()}] claude_runtime:${message}`, {
       agentId: this.descriptor.agentId,
-      ...details
+      ...normalizedDetails
     });
   }
 }
