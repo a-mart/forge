@@ -7,6 +7,10 @@ import {
   type ClaudeRecoveryPendingTurnExclusion
 } from "./claude-recovery-context.js";
 import { claudeSessionDir, claudeWorkerDir } from "./claude-data-paths.js";
+import {
+  probeClaudeSdkPersistence,
+  type ClaudeSdkPersistenceProbeResult
+} from "./claude-sdk-persistence.js";
 import { isEnoentError, normalizeOptionalString } from "./claude-utils.js";
 import { isConversationEntryEvent } from "./conversation-validators.js";
 import { getSessionFilePath, getWorkerSessionFilePath } from "./data-paths.js";
@@ -474,6 +478,23 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
       return await this.startQuerySession({ sdk, runtimeEnv, thinkingConfig });
     }
 
+    const probeResult = await probeClaudeSdkPersistence({
+      cwd: this.descriptor.cwd,
+      claudeSessionId: resumeSessionId
+    });
+    this.logDebug("thread_resume:probe", probeResult);
+
+    if (probeResult.status === "missing") {
+      return await this.startFreshSessionWithRecovery({
+        sdk,
+        runtimeEnv,
+        thinkingConfig,
+        pendingTurnExclusion: options?.pendingTurnExclusion,
+        probeResult,
+        reason: "missing_persistence"
+      });
+    }
+
     try {
       return await this.startQuerySession({ sdk, runtimeEnv, thinkingConfig, resumeSessionId });
     } catch (error) {
@@ -482,7 +503,9 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
         message: error instanceof Error ? error.message : String(error),
         ...(error instanceof Error && error.stack ? { stack: error.stack } : {}),
         details: {
-          claudeSessionId: resumeSessionId
+          claudeSessionId: resumeSessionId,
+          probeStatus: probeResult.status,
+          sessionFilePath: probeResult.sessionFilePath
         }
       });
 
@@ -491,6 +514,7 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
         runtimeEnv,
         thinkingConfig,
         pendingTurnExclusion: options?.pendingTurnExclusion,
+        probeResult,
         reason: "resume_failed"
       });
     }
@@ -501,12 +525,13 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
     runtimeEnv: Record<string, string>;
     thinkingConfig: ReturnType<typeof buildClaudeReasoningConfig>;
     pendingTurnExclusion?: ClaudeRecoveryPendingTurnExclusion;
-    reason: "resume_failed";
+    probeResult: ClaudeSdkPersistenceProbeResult;
+    reason: "missing_persistence" | "resume_failed";
   }): Promise<ClaudeQuerySession> {
     this.generation += 1;
     this.persistRuntimeState({ claudeSessionId: null, generationId: this.generation });
 
-    const systemPromptOverride = this.buildRecoverySystemPrompt(options.pendingTurnExclusion, options.reason);
+    const systemPromptOverride = this.buildRecoverySystemPrompt(options.pendingTurnExclusion, options.reason, options.probeResult);
     return await this.startQuerySession({
       sdk: options.sdk,
       runtimeEnv: options.runtimeEnv,
@@ -517,7 +542,8 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
 
   private buildRecoverySystemPrompt(
     pendingTurnExclusion: ClaudeRecoveryPendingTurnExclusion | undefined,
-    reason: "resume_failed"
+    reason: "missing_persistence" | "resume_failed",
+    probeResult: ClaudeSdkPersistenceProbeResult
   ): string | undefined {
     try {
       const conversationEntries = this.getCustomEntries(CLAUDE_CONVERSATION_ENTRY_TYPE).filter(isConversationEntryEvent);
@@ -533,6 +559,8 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
 
       this.logDebug("thread_resume:recovery_context", {
         reason,
+        probeStatus: probeResult.status,
+        sessionFilePath: probeResult.sessionFilePath,
         eligibleEntryCount: recoveryContext.eligibleEntryCount,
         includedEntryCount: recoveryContext.includedEntryCount,
         omittedEntryCount: recoveryContext.omittedEntryCount,
@@ -549,6 +577,8 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
     } catch (error) {
       this.logDebug("thread_resume:recovery_context_error", {
         reason,
+        probeStatus: probeResult.status,
+        sessionFilePath: probeResult.sessionFilePath,
         error: error instanceof Error ? error.message : String(error)
       });
       return undefined;
