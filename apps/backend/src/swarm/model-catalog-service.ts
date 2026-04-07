@@ -1,5 +1,6 @@
 import {
   FORGE_MODEL_CATALOG,
+  getBuiltInModelSpecificInstructions,
   getCatalogFamily,
   getCatalogModel,
   getCatalogModelsByFamily,
@@ -170,6 +171,25 @@ export class ModelCatalogService {
   getModelDisplayName(modelId: string, provider?: string): string {
     const normalizedModelId = modelId.trim();
     return getCatalogModel(normalizedModelId, provider)?.displayName ?? this.openRouterModels[normalizedModelId]?.displayName ?? modelId;
+  }
+
+  getEffectiveModelSpecificInstructions(modelId: string, provider?: string): string | undefined {
+    const model = getCatalogModel(modelId, provider);
+    if (!model) {
+      return undefined;
+    }
+
+    const overrideValue = this.overrides[getOverrideKey(model)]?.modelSpecificInstructions;
+    if (overrideValue !== undefined) {
+      return overrideValue.length > 0 ? overrideValue : undefined;
+    }
+
+    const family = getCatalogFamily(model.familyId);
+    if (!family) {
+      return undefined;
+    }
+
+    return getBuiltInModelSpecificInstructions(family.familyId) ?? undefined;
   }
 
   supportsNativeWebSearch(modelId: string, provider?: string): boolean {

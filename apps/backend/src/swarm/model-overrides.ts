@@ -39,7 +39,14 @@ function sanitizeOverrideEntry(value: unknown): ModelOverrideEntry | null {
     next.contextWindowCap = candidate.contextWindowCap;
   }
 
-  return Object.keys(next).length > 0 ? next : {};
+  if (candidate.modelSpecificInstructions !== undefined) {
+    if (typeof candidate.modelSpecificInstructions !== "string") {
+      return null;
+    }
+    next.modelSpecificInstructions = normalizeModelSpecificInstructions(candidate.modelSpecificInstructions);
+  }
+
+  return next;
 }
 
 function sanitizeModelOverridesFile(value: unknown): ModelOverridesFile {
@@ -123,6 +130,11 @@ export async function resetModelOverride(dataDir: string, modelId: string): Prom
 
 export async function resetAllModelOverrides(dataDir: string): Promise<void> {
   await writeModelOverrides(dataDir, emptyModelOverridesFile());
+}
+
+function normalizeModelSpecificInstructions(value: string): string {
+  const normalized = value.replace(/\r\n?/g, "\n").trim();
+  return normalized.length > 0 ? normalized : "";
 }
 
 function isEnoentError(error: unknown): boolean {

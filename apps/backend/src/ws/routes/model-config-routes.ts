@@ -161,8 +161,9 @@ async function mergeModelOverridePatch(
 ): Promise<ModelOverrideEntry | null> {
   const hasEnabled = Object.prototype.hasOwnProperty.call(patch, "enabled");
   const hasContextWindowCap = Object.prototype.hasOwnProperty.call(patch, "contextWindowCap");
+  const hasModelSpecificInstructions = Object.prototype.hasOwnProperty.call(patch, "modelSpecificInstructions");
 
-  if (!hasEnabled && !hasContextWindowCap) {
+  if (!hasEnabled && !hasContextWindowCap && !hasModelSpecificInstructions) {
     throw new Error("At least one override field is required");
   }
 
@@ -194,6 +195,17 @@ async function mergeModelOverridePatch(
       next.contextWindowCap = contextWindowCap;
     } else {
       throw new Error("contextWindowCap must be a positive integer or null");
+    }
+  }
+
+  if (hasModelSpecificInstructions) {
+    const modelSpecificInstructions = patch.modelSpecificInstructions;
+    if (modelSpecificInstructions === null) {
+      delete next.modelSpecificInstructions;
+    } else if (typeof modelSpecificInstructions === "string") {
+      next.modelSpecificInstructions = modelSpecificInstructions;
+    } else {
+      throw new Error("modelSpecificInstructions must be a string or null");
     }
   }
 

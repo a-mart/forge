@@ -80,6 +80,7 @@ export interface ForgeModelCatalog {
 export interface ModelOverrideEntry {
   enabled?: boolean
   contextWindowCap?: number
+  modelSpecificInstructions?: string
 }
 
 export interface ModelOverridesFile {

@@ -71,4 +71,69 @@ describe("model-overrides", () => {
       thinkingLevel: "medium",
     });
   });
+
+  it("preserves empty and non-empty model-specific instruction overrides", async () => {
+    const dataDir = await makeTempDataDir();
+    await writeModelOverrides(dataDir, {
+      version: 1,
+      overrides: {
+        "gpt-5.3-codex": {
+          modelSpecificInstructions: "Line one\r\nLine two",
+        },
+        "claude-opus-4-6": {
+          modelSpecificInstructions: "",
+        },
+        "claude-sdk/claude-opus-4-6": {
+          modelSpecificInstructions: "   \r\n\t  ",
+        },
+        empty: {},
+      },
+    });
+
+    await expect(readModelOverrides(dataDir)).resolves.toEqual({
+      version: 1,
+      overrides: {
+        "gpt-5.3-codex": {
+          modelSpecificInstructions: "Line one\nLine two",
+        },
+        "claude-opus-4-6": {
+          modelSpecificInstructions: "",
+        },
+        "claude-sdk/claude-opus-4-6": {
+          modelSpecificInstructions: "",
+        },
+      },
+    });
+  });
+
+  it("resolves built-in, override, and explicit-clear model-specific instructions", async () => {
+    const dataDir = await makeTempDataDir();
+    await writeModelOverrides(dataDir, {
+      version: 1,
+      overrides: {
+        "gpt-5.3-codex": {
+          modelSpecificInstructions: "Custom GPT instructions",
+        },
+        "claude-opus-4-6": {
+          modelSpecificInstructions: "",
+        },
+      },
+    });
+
+    const service = new ModelCatalogService();
+    await service.loadOverrides(dataDir);
+
+    expect(service.getEffectiveModelSpecificInstructions("gpt-5.4")).toContain(
+      "Return the requested sections only, in the requested order.",
+    );
+    expect(service.getEffectiveModelSpecificInstructions("claude-haiku-4-5-20251001")).toContain(
+      "Prefer concise, direct answers over essay-style framing.",
+    );
+    expect(service.getEffectiveModelSpecificInstructions("claude-opus-4-6", "claude-sdk")).toContain(
+      "Prefer concise, direct answers over essay-style framing.",
+    );
+    expect(service.getEffectiveModelSpecificInstructions("grok-4")).toBeUndefined();
+    expect(service.getEffectiveModelSpecificInstructions("gpt-5.3-codex")).toBe("Custom GPT instructions");
+    expect(service.getEffectiveModelSpecificInstructions("claude-opus-4-6")).toBeUndefined();
+  });
 });
