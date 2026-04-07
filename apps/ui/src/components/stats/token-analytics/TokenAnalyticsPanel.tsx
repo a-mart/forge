@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback } from 'react'
-import { AlertCircle, BarChart3 } from 'lucide-react'
+import { AlertCircle, BarChart3, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -54,7 +54,32 @@ function TokenAnalyticsSkeleton() {
   )
 }
 
-function EmptyState() {
+function EmptyState({ hasActiveFilters, onClearFilters }: { hasActiveFilters: boolean; onClearFilters: () => void }) {
+  if (hasActiveFilters) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-center">
+        <div className="mb-4 flex size-14 items-center justify-center rounded-full bg-muted/50">
+          <BarChart3 className="size-7 text-muted-foreground" />
+        </div>
+        <h2 className="mb-1 text-sm font-medium text-foreground">
+          No results match the current filters
+        </h2>
+        <p className="mb-4 max-w-sm text-xs text-muted-foreground">
+          Try adjusting or clearing your filters to see token data.
+        </p>
+        <Button
+          variant="outline"
+          size="sm"
+          className="gap-1.5"
+          onClick={onClearFilters}
+        >
+          <X className="size-3" />
+          Clear filters
+        </Button>
+      </div>
+    )
+  }
+
   return (
     <div className="flex flex-col items-center justify-center py-20 text-center">
       <div className="mb-4 flex size-14 items-center justify-center rounded-full bg-muted/50">
@@ -134,9 +159,34 @@ export function TokenAnalyticsPanel({
 
   const isEmpty = snapshot && snapshot.totals.runCount === 0 && snapshot.totals.usage.total === 0
 
+  const hasActiveFilters = Boolean(
+    filters.profileId ||
+      filters.provider ||
+      filters.modelId ||
+      (filters.attribution && filters.attribution !== 'all') ||
+      filters.specialistId,
+  )
+
+  const handleClearFilters = useCallback(() => {
+    setFilters((prev) => ({
+      rangePreset: prev.rangePreset,
+      startDate: prev.startDate,
+      endDate: prev.endDate,
+    }))
+  }, [])
+
+  // When on Token Analytics, back goes to Stats Overview instead of chat
+  const handleBack = useCallback(() => {
+    if (onTabChange) {
+      onTabChange('overview')
+    } else {
+      onBack()
+    }
+  }, [onBack, onTabChange])
+
   return (
     <StatsLayout
-      onBack={onBack}
+      onBack={handleBack}
       computedAt={snapshot?.computedAt}
       isRefreshing={isRefreshing}
       onRefresh={refresh}
@@ -150,17 +200,17 @@ export function TokenAnalyticsPanel({
         <ErrorState error={error} onRetry={refresh} />
       ) : snapshot ? (
         <div className={cn('space-y-4 transition-opacity duration-200', isRefreshing && 'opacity-60')}>
+          {/* Filter bar — always visible so user can adjust/clear filters */}
+          <TokenAnalyticsFilters
+            filters={filters}
+            availableFilters={snapshot.availableFilters}
+            onFiltersChange={setFilters}
+          />
+
           {isEmpty ? (
-            <EmptyState />
+            <EmptyState hasActiveFilters={hasActiveFilters} onClearFilters={handleClearFilters} />
           ) : (
             <>
-              {/* Filter bar */}
-              <TokenAnalyticsFilters
-                filters={filters}
-                availableFilters={snapshot.availableFilters}
-                onFiltersChange={setFilters}
-              />
-
               {/* Headline cards */}
               <TokenAnalyticsHeaderCards
                 totals={snapshot.totals}

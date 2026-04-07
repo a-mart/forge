@@ -56,7 +56,7 @@ export function StatsLayout({
               size="icon"
               className="h-9 w-9 shrink-0 text-muted-foreground hover:bg-accent/70 hover:text-foreground"
               onClick={onBack}
-              aria-label="Back to chat"
+              aria-label={activeTab === 'tokens' ? 'Back to overview' : 'Back to chat'}
             >
               <ArrowLeft className="size-4" />
             </Button>
