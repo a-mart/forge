@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ChevronDown, ChevronUp, Loader2, RotateCcw } from 'lucide-react'
 import {
   FORGE_MODEL_CATALOG,
+  getBuiltInModelSpecificInstructions,
   getCatalogModelKey,
   type ForgeModelDefinition,
   type ModelOverrideEntry,
@@ -10,6 +11,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
+import { Textarea } from '@/components/ui/textarea'
 import { formatTokenCount } from '@/lib/format-utils'
 import { SettingsSection } from './settings-row'
 import {
@@ -42,6 +44,14 @@ function getEffectiveContextWindow(model: ForgeModelDefinition, override?: Model
 
 function getEffectiveEnabled(model: ForgeModelDefinition, override?: ModelOverrideEntry): boolean {
   return override?.enabled ?? model.enabledByDefault
+}
+
+function getBuiltInInstructionsForModel(model: ForgeModelDefinition): string | null {
+  return getBuiltInModelSpecificInstructions(model.familyId)
+}
+
+function getActiveModelSpecificInstructions(model: ForgeModelDefinition, override?: ModelOverrideEntry): string {
+  return override?.modelSpecificInstructions ?? getBuiltInInstructionsForModel(model) ?? ''
 }
 
 function hasOverrideField<K extends keyof ModelOverrideEntry>(
@@ -100,18 +110,30 @@ function ModelCard({
   onRefresh: () => Promise<void>
 }) {
   const [contextCapDraft, setContextCapDraft] = useState(override?.contextWindowCap?.toString() ?? '')
+  const [instructionsDraft, setInstructionsDraft] = useState(getActiveModelSpecificInstructions(model, override))
   const [isSavingEnabled, setIsSavingEnabled] = useState(false)
   const [isSavingCap, setIsSavingCap] = useState(false)
+  const [isSavingInstructions, setIsSavingInstructions] = useState(false)
   const [isResettingAll, setIsResettingAll] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const enabled = getEffectiveEnabled(model, override)
   const effectiveContextWindow = getEffectiveContextWindow(model, override)
+  const builtInInstructions = getBuiltInInstructionsForModel(model)
   const hasAnyOverride = Boolean(override && Object.keys(override).length > 0)
+  const instructionsStatusText = hasOverrideField(override, 'modelSpecificInstructions')
+    ? 'Custom override active'
+    : builtInInstructions
+      ? 'Using built-in default'
+      : 'No built-in instructions for this model'
 
   useEffect(() => {
     setContextCapDraft(override?.contextWindowCap?.toString() ?? '')
   }, [modelKey, override?.contextWindowCap])
+
+  useEffect(() => {
+    setInstructionsDraft(getActiveModelSpecificInstructions(model, override))
+  }, [model, modelKey, override?.modelSpecificInstructions])
 
   const saveEnabled = useCallback(
     async (checked: boolean) => {
@@ -155,6 +177,42 @@ function ModelCard({
       setIsSavingCap(false)
     }
   }, [contextCapDraft, model.contextWindow, modelKey, onRefresh, wsUrl])
+
+  const applyModelSpecificInstructions = useCallback(async () => {
+    setError(null)
+
+    const normalizedDraft = instructionsDraft.replace(/\r\n?/g, '\n')
+    const nextInstructions = normalizedDraft.trim().length === 0
+      ? ''
+      : builtInInstructions !== null && normalizedDraft === builtInInstructions
+        ? null
+        : normalizedDraft
+
+    setIsSavingInstructions(true)
+    try {
+      await updateModelOverride(wsUrl, modelKey, { modelSpecificInstructions: nextInstructions })
+      await onRefresh()
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : String(saveError))
+    } finally {
+      setIsSavingInstructions(false)
+    }
+  }, [builtInInstructions, instructionsDraft, modelKey, onRefresh, wsUrl])
+
+  const resetModelSpecificInstructions = useCallback(async () => {
+    setError(null)
+    setInstructionsDraft(builtInInstructions ?? '')
+
+    setIsSavingInstructions(true)
+    try {
+      await updateModelOverride(wsUrl, modelKey, { modelSpecificInstructions: null })
+      await onRefresh()
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : String(saveError))
+    } finally {
+      setIsSavingInstructions(false)
+    }
+  }, [builtInInstructions, modelKey, onRefresh, wsUrl])
 
   const resetModel = useCallback(async () => {
     setError(null)
@@ -274,6 +332,44 @@ function ModelCard({
             </div>
           </div>
 
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-2 text-sm font-medium">
+              <span>Model-specific instructions</span>
+              <OverrideBadge active={hasOverrideField(override, 'modelSpecificInstructions')} />
+            </div>
+            <p className="text-xs text-muted-foreground">{instructionsStatusText}</p>
+            <p className="text-xs text-muted-foreground">
+              Delete the text and click Apply to suppress instructions for this model. Reset restores the built-in default.
+            </p>
+            <Textarea
+              value={instructionsDraft}
+              onChange={(event) => setInstructionsDraft(event.target.value)}
+              rows={5}
+              placeholder={builtInInstructions ? undefined : 'No built-in instructions for this model.'}
+              className="resize-y font-mono text-xs"
+            />
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => void applyModelSpecificInstructions()}
+                disabled={isSavingInstructions || isResettingAll}
+              >
+                {isSavingInstructions ? <Loader2 className="size-4 animate-spin" /> : null}
+                Apply
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => void resetModelSpecificInstructions()}
+                disabled={!hasOverrideField(override, 'modelSpecificInstructions') || isSavingInstructions || isResettingAll}
+              >
+                Reset
+              </Button>
+            </div>
+          </div>
+
           <div className="grid gap-2 text-xs text-muted-foreground md:grid-cols-2">
             <div>Effective context window: {numberFormatter.format(effectiveContextWindow)}</div>
             <div>Supported reasoning levels: {model.supportedReasoningLevels.join(', ')}</div>
@@ -290,7 +386,7 @@ function ModelCard({
               variant="outline"
               size="sm"
               onClick={() => void resetModel()}
-              disabled={!hasAnyOverride || isResettingAll || isSavingEnabled || isSavingCap}
+              disabled={!hasAnyOverride || isResettingAll || isSavingEnabled || isSavingCap || isSavingInstructions}
             >
               {isResettingAll ? <Loader2 className="size-4 animate-spin" /> : <RotateCcw className="size-4" />}
               Reset model
@@ -363,7 +459,7 @@ export function SettingsModels({ wsUrl, modelConfigChangeKey }: SettingsModelsPr
   return (
     <SettingsSection
       label="Models"
-      description="Review the checked-in model catalog and apply local visibility or context-window caps without editing source code."
+      description="Review the checked-in model catalog and apply local visibility, context-window caps, or model-specific prompt instructions without editing source code."
       cta={(
         <Button
           type="button"

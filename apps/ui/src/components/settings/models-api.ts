@@ -4,6 +4,7 @@ import type { ModelOverrideEntry } from '@forge/protocol'
 export interface ModelOverridePatch {
   enabled?: boolean | null
   contextWindowCap?: number | null
+  modelSpecificInstructions?: string | null
 }
 
 export interface ModelOverridesResponse {
