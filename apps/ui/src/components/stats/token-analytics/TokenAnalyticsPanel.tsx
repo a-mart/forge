@@ -142,7 +142,7 @@ export function TokenAnalyticsPanel({
     [filters],
   )
 
-  const { snapshot, isLoading, error, isRefreshing, refresh } = useTokenAnalytics(wsUrl, query)
+  const { snapshot, isLoading, error, isRefreshing, isSwitchingQuery, refresh } = useTokenAnalytics(wsUrl, query)
 
   const handleSpecialistClick = useCallback(
     (specialistId: string | null) => {
@@ -184,6 +184,8 @@ export function TokenAnalyticsPanel({
     }
   }, [onBack, onTabChange])
 
+  const isUpdating = isRefreshing || isSwitchingQuery
+
   return (
     <StatsLayout
       onBack={handleBack}
@@ -199,7 +201,7 @@ export function TokenAnalyticsPanel({
       ) : error && !snapshot ? (
         <ErrorState error={error} onRetry={refresh} />
       ) : snapshot ? (
-        <div className={cn('space-y-4 transition-opacity duration-200', isRefreshing && 'opacity-60')}>
+        <div className={cn('space-y-4 transition-opacity duration-200', isUpdating && 'opacity-60')}>
           {/* Filter bar — always visible so user can adjust/clear filters */}
           <TokenAnalyticsFilters
             filters={filters}

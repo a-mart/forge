@@ -7,6 +7,7 @@ export function useTokenAnalytics(wsUrl: string, query: TokenAnalyticsQuery) {
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const [isSwitchingQuery, setIsSwitchingQuery] = useState(false)
   const prevQueryRef = useRef<string>('')
 
   // Suppress fetches when custom range is selected but dates are incomplete/invalid
@@ -17,6 +18,7 @@ export function useTokenAnalytics(wsUrl: string, query: TokenAnalyticsQuery) {
     if (isCustomIncomplete) {
       // Don't fetch — keep showing existing snapshot (if any) without error
       setIsLoading(false)
+      setIsSwitchingQuery(false)
       return
     }
 
@@ -26,9 +28,8 @@ export function useTokenAnalytics(wsUrl: string, query: TokenAnalyticsQuery) {
     prevQueryRef.current = queryKey
 
     if (snapshot && queryChanged) {
-      // Show loading overlay rather than full skeleton when filters change
-      setIsLoading(true)
-    } else if (!snapshot) {
+      setIsSwitchingQuery(true)
+    } else {
       setIsLoading(true)
     }
     setError(null)
@@ -48,13 +49,14 @@ export function useTokenAnalytics(wsUrl: string, query: TokenAnalyticsQuery) {
       .finally(() => {
         if (!cancelled) {
           setIsLoading(false)
+          setIsSwitchingQuery(false)
         }
       })
 
     return () => {
       cancelled = true
     }
-  }, [wsUrl, query, isCustomIncomplete]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [wsUrl, query, isCustomIncomplete]) // eslint-disable-line react-hooks/exhaustive-deps -- intentionally using snapshot ref
 
   const refresh = useCallback(async () => {
     setIsRefreshing(true)
@@ -69,5 +71,5 @@ export function useTokenAnalytics(wsUrl: string, query: TokenAnalyticsQuery) {
     }
   }, [wsUrl, query])
 
-  return { snapshot, isLoading, error, isRefreshing, refresh }
+  return { snapshot, isLoading, error, isRefreshing, isSwitchingQuery, refresh }
 }
