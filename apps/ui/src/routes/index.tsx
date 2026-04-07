@@ -21,6 +21,9 @@ import { DeleteManagerDialog } from '@/components/chat/DeleteManagerDialog'
 import { ForkSessionDialog } from '@/components/chat/ForkSessionDialog'
 import { MessageInput, type MessageInputHandle, type ProjectAgentSuggestion } from '@/components/chat/MessageInput'
 import { MessageList, type MessageListHandle } from '@/components/chat/MessageList'
+import { ChatSearchBar } from '@/components/chat/ChatSearchBar'
+import { useChatSearch } from '@/components/chat/useChatSearch'
+import { useSearchHighlight } from '@/components/chat/useSearchHighlight'
 import { WorkerBackBar } from '@/components/chat/WorkerBackBar'
 import { WorkerPillBar } from '@/components/chat/WorkerPillBar'
 import { DiffViewerDialog, type DiffViewerInitialState } from '@/components/diff-viewer/DiffViewerDialog'
@@ -371,6 +374,54 @@ export function IndexPage() {
   }, [visibleMessages])
 
   const pinnedCount = pinnedMessageIds.length
+
+  // ── Find-in-chat search ──
+  const chatSearch = useChatSearch(visibleMessages)
+
+  const searchContainerRef = useRef<HTMLElement | null>(null)
+
+  useEffect(() => {
+    searchContainerRef.current = messageListRef.current?.getScrollContainer() ?? null
+  })
+
+  useSearchHighlight(
+    searchContainerRef,
+    chatSearch.matches,
+    chatSearch.currentMatchIndex,
+    chatSearch.isOpen,
+  )
+
+  // Scroll to the message containing the current match
+  useEffect(() => {
+    if (!chatSearch.isOpen || chatSearch.matches.length === 0) return
+    const match = chatSearch.matches[chatSearch.currentMatchIndex]
+    if (match) {
+      messageListRef.current?.scrollToMessage(match.messageId)
+    }
+  }, [chatSearch.isOpen, chatSearch.matches, chatSearch.currentMatchIndex])
+
+  // Close search on session switch
+  useEffect(() => {
+    chatSearch.close()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeAgentId])
+
+  // Keyboard shortcut: Ctrl+F / Cmd+F to toggle find-in-chat
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && (e.key === 'f' || e.key === 'F')) {
+        if (activeView !== 'chat') return
+        e.preventDefault()
+        if (chatSearch.isOpen) {
+          chatSearch.close()
+        } else {
+          chatSearch.open()
+        }
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [activeView, chatSearch])
 
   const handleScrollToMessage = useCallback((messageId: string) => {
     messageListRef.current?.scrollToMessage(messageId)
@@ -1326,6 +1377,8 @@ export function IndexPage() {
                     {state.lastSuccess}
                   </div>
                 ) : null}
+
+                <ChatSearchBar search={chatSearch} />
 
                 {shouldShowWelcomeForm && onboardingState ? (
                   <OnboardingCallout

@@ -71,6 +71,8 @@ interface MessageListProps {
 export interface MessageListHandle {
   scrollToBottom: (behavior?: ScrollBehavior) => void
   scrollToMessage: (messageId: string) => void
+  /** Returns the scroll container element for DOM-based operations (e.g. search highlighting) */
+  getScrollContainer: () => HTMLElement | null
 }
 
 const AUTO_SCROLL_THRESHOLD_PX = 100
@@ -386,6 +388,7 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
     () => ({
       scrollToBottom,
       scrollToMessage,
+      getScrollContainer: () => scrollContainerRef.current,
     }),
     [scrollToBottom, scrollToMessage],
   )

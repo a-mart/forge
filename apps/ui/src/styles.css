@@ -140,3 +140,13 @@ body {
 .pin-nav-highlight {
   animation: pin-nav-flash 1.5s ease-out;
 }
+
+/* Find-in-chat: CSS Custom Highlight API styles */
+::highlight(chat-search) {
+  background-color: rgba(250, 204, 21, 0.4);
+  color: inherit;
+}
+::highlight(chat-search-current) {
+  background-color: rgba(251, 146, 60, 0.6);
+  color: inherit;
+}
