@@ -1789,8 +1789,17 @@ describe("ClaudeAgentRuntime", () => {
         } as any
       });
 
+      restarted.appendCustomEntry("swarm_conversation_entry", {
+        type: "conversation_message",
+        agentId: descriptor.agentId,
+        role: "user",
+        text: "hello again",
+        timestamp: "2026-04-07T09:59:20.000Z",
+        source: "user_input"
+      });
+
       const activeSystemPromptBeforeSend = restarted.getSystemPrompt();
-      await restarted.sendMessage("hello again");
+      await restarted.sendMessage('[sourceContext] {"channel":"web"}\n\nhello again');
 
       expect(resumedQueryCalls).toHaveLength(2);
       expect(resumedQueryCalls[0]?.options.resume).toBe(firstSessionId);
@@ -1822,6 +1831,203 @@ describe("ClaudeAgentRuntime", () => {
           generationId: 1
         });
       });
+
+      await restarted.terminate({ abort: false });
+    } finally {
+      if (previousClaudeConfigDir === undefined) {
+        delete process.env.CLAUDE_CONFIG_DIR;
+      } else {
+        process.env.CLAUDE_CONFIG_DIR = previousClaudeConfigDir;
+      }
+    }
+  });
+
+  it("skips resume entirely when the persistence probe reports missing", async () => {
+    const previousClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
+    const tempDir = await mkdtemp(join(tmpdir(), "forge-claude-runtime-"));
+    const claudeConfigDir = await mkdtemp(join(tmpdir(), "forge-claude-config-"));
+    process.env.CLAUDE_CONFIG_DIR = claudeConfigDir;
+
+    try {
+      const descriptor = makeDescriptor(tempDir);
+      await mkdir(dirname(descriptor.sessionFile), { recursive: true });
+
+      const initialQueryCalls: QueryCallRecord[] = [];
+      setClaudeSdkImporterForTests(vi.fn().mockResolvedValue(createTurnCompletingMockClaudeSdk(initialQueryCalls)));
+
+      const runtime = new ClaudeAgentRuntime({
+        descriptor,
+        systemPrompt: "You are a Claude test runtime.",
+        callbacks: {
+          onStatusChange: async () => {}
+        },
+        dataDir: tempDir,
+        profileId: "profile-1",
+        sessionId: descriptor.agentId,
+        authResolver: {
+          buildEnv: async () => ({})
+        } as any
+      });
+
+      runtime.appendCustomEntry("swarm_conversation_entry", {
+        type: "conversation_message",
+        agentId: descriptor.agentId,
+        role: "user",
+        text: "persisted prior turn",
+        timestamp: "2026-04-07T09:59:00.000Z",
+        source: "user_input"
+      });
+
+      await runtime.sendMessage("hello");
+      const firstSessionId = initialQueryCalls[0]?.options.sessionId;
+      await mkdir(join(claudeConfigDir, "projects", toClaudeProjectSubdir(descriptor.cwd)), { recursive: true });
+      await runtime.terminate({ abort: false });
+
+      const queryCalls: QueryCallRecord[] = [];
+      const runtimeErrors: Array<{ phase?: string; message?: string }> = [];
+      const sdkThatWouldFailResume: ClaudeSdkModule = {
+        query(args: { prompt: AsyncIterable<ClaudeSdkUserMessage>; options: ClaudeSdkQueryOptions }) {
+          queryCalls.push({ options: { ...args.options } });
+          if (args.options.resume) {
+            throw new Error("resume should have been skipped");
+          }
+          return createMockQueryHandle(args.prompt, args.options, {
+            onPrompt: async (_message, pushEvent) => {
+              pushEvent({ type: "result", subtype: "result" });
+            }
+          });
+        }
+      };
+      setClaudeSdkImporterForTests(vi.fn().mockResolvedValue(sdkThatWouldFailResume));
+
+      const restarted = new ClaudeAgentRuntime({
+        descriptor: {
+          ...descriptor,
+          status: "idle",
+          updatedAt: "2026-01-01T00:00:01.000Z"
+        },
+        systemPrompt: "You are a Claude test runtime.",
+        callbacks: {
+          onStatusChange: async () => {},
+          onRuntimeError: async (_agentId, error) => {
+            runtimeErrors.push(error);
+          }
+        },
+        dataDir: tempDir,
+        profileId: "profile-1",
+        sessionId: descriptor.agentId,
+        authResolver: {
+          buildEnv: async () => ({})
+        } as any
+      });
+
+      await restarted.sendMessage("next turn");
+
+      expect(firstSessionId).toBeTruthy();
+      expect(queryCalls).toHaveLength(1);
+      expect(queryCalls[0]?.options.resume).toBeUndefined();
+      expect(queryCalls[0]?.options.systemPrompt).toContain("# Recovered Forge Conversation Context");
+      expect(runtimeErrors).not.toContainEqual(expect.objectContaining({ phase: "thread_resume" }));
+
+      await restarted.terminate({ abort: false });
+    } finally {
+      if (previousClaudeConfigDir === undefined) {
+        delete process.env.CLAUDE_CONFIG_DIR;
+      } else {
+        process.env.CLAUDE_CONFIG_DIR = previousClaudeConfigDir;
+      }
+    }
+  });
+
+  it("attempts resume once when the persistence probe reports unknown", async () => {
+    const previousClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
+    const tempDir = await mkdtemp(join(tmpdir(), "forge-claude-runtime-"));
+    const claudeConfigDir = await mkdtemp(join(tmpdir(), "forge-claude-config-"));
+    process.env.CLAUDE_CONFIG_DIR = claudeConfigDir;
+
+    try {
+      const descriptor = makeDescriptor(tempDir);
+      await mkdir(dirname(descriptor.sessionFile), { recursive: true });
+
+      const initialQueryCalls: QueryCallRecord[] = [];
+      setClaudeSdkImporterForTests(vi.fn().mockResolvedValue(createTurnCompletingMockClaudeSdk(initialQueryCalls)));
+
+      const runtime = new ClaudeAgentRuntime({
+        descriptor,
+        systemPrompt: "You are a Claude test runtime.",
+        callbacks: {
+          onStatusChange: async () => {}
+        },
+        dataDir: tempDir,
+        profileId: "profile-1",
+        sessionId: descriptor.agentId,
+        authResolver: {
+          buildEnv: async () => ({})
+        } as any
+      });
+
+      runtime.appendCustomEntry("swarm_conversation_entry", {
+        type: "conversation_message",
+        agentId: descriptor.agentId,
+        role: "user",
+        text: "persisted prior turn",
+        timestamp: "2026-04-07T09:59:00.000Z",
+        source: "user_input"
+      });
+
+      await runtime.sendMessage("hello");
+      const firstSessionId = initialQueryCalls[0]?.options.sessionId;
+      await runtime.terminate({ abort: false });
+
+      const resumedQueryCalls: QueryCallRecord[] = [];
+      const runtimeErrors: Array<{ phase?: string; message?: string }> = [];
+      const failingResumeSdk: ClaudeSdkModule = {
+        query(args: { prompt: AsyncIterable<ClaudeSdkUserMessage>; options: ClaudeSdkQueryOptions }) {
+          resumedQueryCalls.push({ options: { ...args.options } });
+          if (args.options.resume) {
+            throw new Error("resume failed after unknown probe");
+          }
+          return createMockQueryHandle(args.prompt, args.options, {
+            onPrompt: async (_message, pushEvent) => {
+              pushEvent({ type: "result", subtype: "result" });
+            }
+          });
+        }
+      };
+      setClaudeSdkImporterForTests(vi.fn().mockResolvedValue(failingResumeSdk));
+
+      const restarted = new ClaudeAgentRuntime({
+        descriptor: {
+          ...descriptor,
+          status: "idle",
+          updatedAt: "2026-01-01T00:00:01.000Z"
+        },
+        systemPrompt: "You are a Claude test runtime.",
+        callbacks: {
+          onStatusChange: async () => {},
+          onRuntimeError: async (_agentId, error) => {
+            runtimeErrors.push(error);
+          }
+        },
+        dataDir: tempDir,
+        profileId: "profile-1",
+        sessionId: descriptor.agentId,
+        authResolver: {
+          buildEnv: async () => ({})
+        } as any
+      });
+
+      await restarted.sendMessage("next turn");
+
+      expect(resumedQueryCalls).toHaveLength(2);
+      expect(resumedQueryCalls[0]?.options.resume).toBe(firstSessionId);
+      expect(resumedQueryCalls[1]?.options.resume).toBeUndefined();
+      expect(runtimeErrors).toContainEqual(
+        expect.objectContaining({
+          phase: "thread_resume",
+          message: "resume failed after unknown probe"
+        })
+      );
 
       await restarted.terminate({ abort: false });
     } finally {

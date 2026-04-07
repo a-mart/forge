@@ -1,6 +1,6 @@
 import { stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { isEnoentError, normalizeOptionalString } from "./claude-utils.js";
 
 export type ClaudeSdkPersistenceProbeStatus = "verified" | "missing" | "unknown";
@@ -24,17 +24,65 @@ export async function probeClaudeSdkPersistence(
 ): Promise<ClaudeSdkPersistenceProbeResult> {
   const configDir = resolveClaudeConfigRoot();
   const projectsDir = join(configDir, "projects");
-  const projectSubdir = toClaudeProjectSubdir(options.cwd);
-  const sessionFilePath = join(projectsDir, projectSubdir, `${options.claudeSessionId}.jsonl`);
+  const derivation = deriveClaudeProjectSubdir(options.cwd);
+  const sessionFilePath = join(projectsDir, derivation.projectSubdir, `${options.claudeSessionId}.jsonl`);
 
-  try {
-    const stats = await stat(sessionFilePath);
+  if (!derivation.confident) {
     return {
-      status: stats.isFile() ? "verified" : "missing",
+      status: "unknown",
       configDir,
       projectsDir,
-      projectSubdir,
-      sessionFilePath
+      projectSubdir: derivation.projectSubdir,
+      sessionFilePath,
+      error: "Claude project directory derivation is not confident for this cwd"
+    };
+  }
+
+  let projectsStats: Awaited<ReturnType<typeof stat>>;
+  try {
+    projectsStats = await stat(projectsDir);
+  } catch (error) {
+    if (isEnoentError(error)) {
+      return {
+        status: "unknown",
+        configDir,
+        projectsDir,
+        projectSubdir: derivation.projectSubdir,
+        sessionFilePath,
+        error: "Claude projects directory does not exist"
+      };
+    }
+
+    return {
+      status: "unknown",
+      configDir,
+      projectsDir,
+      projectSubdir: derivation.projectSubdir,
+      sessionFilePath,
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+
+  if (!projectsStats.isDirectory()) {
+    return {
+      status: "unknown",
+      configDir,
+      projectsDir,
+      projectSubdir: derivation.projectSubdir,
+      sessionFilePath,
+      error: "Claude projects path is not a directory"
+    };
+  }
+
+  try {
+    const sessionStats = await stat(sessionFilePath);
+    return {
+      status: sessionStats.isFile() ? "verified" : "unknown",
+      configDir,
+      projectsDir,
+      projectSubdir: derivation.projectSubdir,
+      sessionFilePath,
+      ...(sessionStats.isFile() ? {} : { error: "Claude session path exists but is not a file" })
     };
   } catch (error) {
     if (isEnoentError(error)) {
@@ -42,7 +90,7 @@ export async function probeClaudeSdkPersistence(
         status: "missing",
         configDir,
         projectsDir,
-        projectSubdir,
+        projectSubdir: derivation.projectSubdir,
         sessionFilePath
       };
     }
@@ -51,7 +99,7 @@ export async function probeClaudeSdkPersistence(
       status: "unknown",
       configDir,
       projectsDir,
-      projectSubdir,
+      projectSubdir: derivation.projectSubdir,
       sessionFilePath,
       error: error instanceof Error ? error.message : String(error)
     };
@@ -68,7 +116,16 @@ export function resolveClaudeConfigRoot(): string {
 }
 
 export function toClaudeProjectSubdir(cwd: string): string {
+  return deriveClaudeProjectSubdir(cwd).projectSubdir;
+}
+
+function deriveClaudeProjectSubdir(cwd: string): { projectSubdir: string; confident: boolean } {
+  const normalizedCwd = normalizeOptionalString(cwd);
   const resolvedCwd = resolve(cwd);
   const sanitized = resolvedCwd.replaceAll("\\", "/").replace(/[:/]+/g, "-");
-  return sanitized.length > 0 ? sanitized : "-";
+
+  return {
+    projectSubdir: sanitized.length > 0 ? sanitized : "-",
+    confident: Boolean(normalizedCwd) && isAbsolute(cwd)
+  };
 }

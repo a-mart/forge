@@ -405,17 +405,34 @@ function fitTranscriptToBudget(
     };
   }
 
-  for (let startIndex = 0; startIndex < lines.length; startIndex += 1) {
-    const candidateLines = lines.slice(startIndex);
-    const candidateBody = buildTranscriptBody(candidateLines, startIndex);
-    if (candidateBody.length <= transcriptBudgetChars) {
-      return {
-        text: candidateBody,
-        includedEntryCount: candidateLines.length,
-        omittedEntryCount: startIndex,
-        truncated: startIndex > 0
-      };
+  let startIndex = lines.length;
+  let includedEntryCount = 0;
+  let bodyLength = 0;
+
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index]!;
+    const separatorLength = includedEntryCount > 0 ? 1 : 0;
+    const nextIncludedEntryCount = includedEntryCount + 1;
+    const omittedEntryCount = index;
+    const omissionMarkerLength = omittedEntryCount > 0 ? buildOmittedMarker(omittedEntryCount).length + 1 : 0;
+    const nextBodyLength = bodyLength + line.length + separatorLength + omissionMarkerLength;
+
+    if (nextBodyLength > transcriptBudgetChars) {
+      break;
     }
+
+    startIndex = index;
+    includedEntryCount = nextIncludedEntryCount;
+    bodyLength += line.length + separatorLength;
+  }
+
+  if (includedEntryCount > 0) {
+    return {
+      text: buildTranscriptBody(lines.slice(startIndex), startIndex),
+      includedEntryCount,
+      omittedEntryCount: startIndex,
+      truncated: startIndex > 0
+    };
   }
 
   const latestLine = lines.at(-1);

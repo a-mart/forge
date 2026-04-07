@@ -1342,13 +1342,14 @@ function toReplayMessageFromConversationEntry(entry: unknown, agentId: string): 
 function buildPendingTurnExclusion(
   input: RuntimeUserMessage
 ): ClaudeRecoveryPendingTurnExclusion | undefined {
-  const normalizedText = normalizeOptionalString(input.text);
+  const normalizedText = deriveRawPendingTurnText(input.text);
   const imageCount = input.images?.length ?? 0;
-  const attachmentCount = imageCount;
 
-  if (!normalizedText && attachmentCount === 0) {
+  if (!normalizedText && imageCount === 0) {
     return undefined;
   }
+
+  const attachmentCount = imageCount > 0 ? imageCount : undefined;
 
   return {
     sourceHint: "user_input",
@@ -1356,6 +1357,47 @@ function buildPendingTurnExclusion(
     attachmentCount,
     imageCount
   };
+}
+
+function deriveRawPendingTurnText(text: string): string | undefined {
+  const managerBody = stripManagerSourceContextPrefix(text);
+  const withoutAttachmentSuffix = stripManagerAttachmentSuffix(managerBody);
+  return normalizeOptionalString(withoutAttachmentSuffix);
+}
+
+function stripManagerSourceContextPrefix(text: string): string {
+  const sourceContextPrefixMatch = text.match(/^\[sourceContext\]\s+[^\n]*(?:\n\n)?/u);
+  if (!sourceContextPrefixMatch) {
+    return text;
+  }
+
+  return text.slice(sourceContextPrefixMatch[0].length);
+}
+
+function stripManagerAttachmentSuffix(text: string): string {
+  const attachmentSectionMarkers = ["\n\nThe user attached the following files:\n", "\n\n[Attached file saved to:"];
+  let cutIndex = -1;
+
+  for (const marker of attachmentSectionMarkers) {
+    const markerIndex = text.indexOf(marker);
+    if (markerIndex === -1) {
+      continue;
+    }
+
+    if (cutIndex === -1 || markerIndex < cutIndex) {
+      cutIndex = markerIndex;
+    }
+  }
+
+  if (cutIndex >= 0) {
+    return text.slice(0, cutIndex);
+  }
+
+  if (text.startsWith("The user attached the following files:\n") || text.startsWith("[Attached file saved to:")) {
+    return "";
+  }
+
+  return text;
 }
 
 function appendLiveReplaySuffix(

@@ -41,12 +41,13 @@ describe("probeClaudeSdkPersistence", () => {
     });
   });
 
-  it("returns missing when the Claude session jsonl file does not exist", async () => {
+  it("returns missing when the projects directory exists but the Claude session jsonl file does not", async () => {
     const configDir = await mkdtemp(join(tmpdir(), "forge-claude-config-"));
     process.env.CLAUDE_CONFIG_DIR = configDir;
 
     const cwd = join(configDir, "worktree", "project");
     const claudeSessionId = "missing-session";
+    await mkdir(join(configDir, "projects", toClaudeProjectSubdir(cwd)), { recursive: true });
 
     const result = await probeClaudeSdkPersistence({ cwd, claudeSessionId });
 
@@ -54,6 +55,19 @@ describe("probeClaudeSdkPersistence", () => {
     expect(result.sessionFilePath).toBe(
       join(configDir, "projects", toClaudeProjectSubdir(cwd), `${claudeSessionId}.jsonl`)
     );
+  });
+
+  it("returns unknown when the Claude projects directory does not exist", async () => {
+    const configDir = await mkdtemp(join(tmpdir(), "forge-claude-config-"));
+    process.env.CLAUDE_CONFIG_DIR = configDir;
+
+    const result = await probeClaudeSdkPersistence({
+      cwd: join(configDir, "worktree", "project"),
+      claudeSessionId: "session-unknown"
+    });
+
+    expect(result.status).toBe("unknown");
+    expect(result.error).toContain("does not exist");
   });
 
   it("returns unknown when the probe cannot stat the expected session path", async () => {
@@ -68,5 +82,19 @@ describe("probeClaudeSdkPersistence", () => {
 
     expect(result.status).toBe("unknown");
     expect(result.error).toBeTruthy();
+  });
+
+  it("returns unknown when the project subdir derivation is not confident", async () => {
+    const configDir = await mkdtemp(join(tmpdir(), "forge-claude-config-"));
+    process.env.CLAUDE_CONFIG_DIR = configDir;
+    await mkdir(join(configDir, "projects"), { recursive: true });
+
+    const result = await probeClaudeSdkPersistence({
+      cwd: "relative/project",
+      claudeSessionId: "session-relative"
+    });
+
+    expect(result.status).toBe("unknown");
+    expect(result.error).toContain("not confident");
   });
 });
