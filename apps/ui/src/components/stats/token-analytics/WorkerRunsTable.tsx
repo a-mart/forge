@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { ChevronDown, ChevronUp, ChevronRight, Loader2 } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -101,6 +101,31 @@ export function WorkerRunsTable({ wsUrl, query }: WorkerRunsTableProps) {
   const [sort, setSort] = useState<TokenAnalyticsWorkerSort>('startedAt')
   const [direction, setDirection] = useState<TokenAnalyticsSortDirection>('desc')
   const [expandedWorkerId, setExpandedWorkerId] = useState<string | null>(null)
+
+  // Reset all table state when query filters change so stale data/cursors don't leak
+  const queryKey = JSON.stringify({
+    rangePreset: query.rangePreset,
+    startDate: query.startDate,
+    endDate: query.endDate,
+    profileId: query.profileId,
+    provider: query.provider,
+    modelId: query.modelId,
+    attribution: query.attribution,
+    specialistId: query.specialistId,
+  })
+  const prevQueryKeyRef = useRef(queryKey)
+
+  useEffect(() => {
+    if (prevQueryKeyRef.current !== queryKey) {
+      prevQueryKeyRef.current = queryKey
+      setItems([])
+      setTotalCount(0)
+      setNextCursor(null)
+      setHasLoaded(false)
+      setExpandedWorkerId(null)
+      setError(null)
+    }
+  }, [queryKey])
 
   const loadWorkers = useCallback(async (
     sortOverride?: TokenAnalyticsWorkerSort,

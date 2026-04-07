@@ -1,5 +1,5 @@
-import { useMemo } from 'react'
-import { X, Calendar } from 'lucide-react'
+import { useMemo, useState, useCallback } from 'react'
+import { X, Calendar, Check } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Select,
@@ -8,7 +8,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Popover, PopoverContent, PopoverTrigger, PopoverClose } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
 import type {
   TokenAnalyticsRangePreset,
@@ -45,6 +45,10 @@ export function TokenAnalyticsFilters({
   availableFilters,
   onFiltersChange,
 }: TokenAnalyticsFiltersProps) {
+  // Draft state for custom date range — only committed on Apply
+  const [draftStart, setDraftStart] = useState(filters.startDate ?? '')
+  const [draftEnd, setDraftEnd] = useState(filters.endDate ?? '')
+
   const hasActiveFilters = useMemo(() => {
     return Boolean(
       filters.profileId ||
@@ -66,6 +70,31 @@ export function TokenAnalyticsFilters({
   const updateFilter = (patch: Partial<TokenAnalyticsFilterState>) => {
     onFiltersChange({ ...filters, ...patch })
   }
+
+  // Validation for custom date range draft
+  const draftValid = Boolean(draftStart && draftEnd && draftEnd >= draftStart)
+  const showInvertedError = Boolean(draftStart && draftEnd && draftEnd < draftStart)
+
+  const handleApplyCustomRange = useCallback(() => {
+    if (!draftValid) return
+    onFiltersChange({
+      ...filters,
+      rangePreset: 'custom',
+      startDate: draftStart,
+      endDate: draftEnd,
+    })
+  }, [filters, draftStart, draftEnd, draftValid, onFiltersChange])
+
+  // When opening the popover, sync draft from committed filters
+  const handlePopoverOpen = useCallback(
+    (open: boolean) => {
+      if (open) {
+        setDraftStart(filters.startDate ?? '')
+        setDraftEnd(filters.endDate ?? '')
+      }
+    },
+    [filters.startDate, filters.endDate],
+  )
 
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -96,12 +125,30 @@ export function TokenAnalyticsFilters({
             key={preset.value}
             type="button"
             onClick={() => {
-              const patch: Partial<TokenAnalyticsFilterState> = { rangePreset: preset.value }
-              if (preset.value !== 'custom') {
+              if (preset.value === 'custom') {
+                // Just switch the visual preset — don't commit dates yet.
+                // The popover will handle date entry and Apply.
+                if (filters.rangePreset !== 'custom') {
+                  // Switch to custom preset but keep the last non-custom query active
+                  // until user applies valid dates. We set rangePreset locally but
+                  // don't fire onFiltersChange with custom + no dates.
+                  // Instead, we still need the preset button to appear selected,
+                  // so we set custom but keep the old dates if present.
+                  if (filters.startDate && filters.endDate) {
+                    updateFilter({ rangePreset: 'custom' })
+                  } else {
+                    // No dates yet — switch preset visually but suppress the fetch
+                    // by keeping rangePreset as custom with existing (undefined) dates.
+                    // The panel will suppress fetches for incomplete custom ranges.
+                    updateFilter({ rangePreset: 'custom', startDate: undefined, endDate: undefined })
+                  }
+                }
+              } else {
+                const patch: Partial<TokenAnalyticsFilterState> = { rangePreset: preset.value }
                 patch.startDate = undefined
                 patch.endDate = undefined
+                updateFilter(patch)
               }
-              updateFilter(patch)
             }}
             className={cn(
               'rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
@@ -117,7 +164,7 @@ export function TokenAnalyticsFilters({
 
       {/* Custom date range */}
       {filters.rangePreset === 'custom' ? (
-        <Popover>
+        <Popover onOpenChange={handlePopoverOpen}>
           <PopoverTrigger asChild>
             <Button
               variant="outline"
@@ -138,8 +185,8 @@ export function TokenAnalyticsFilters({
                 </label>
                 <input
                   type="date"
-                  value={filters.startDate ?? ''}
-                  onChange={(e) => updateFilter({ startDate: e.target.value || undefined })}
+                  value={draftStart}
+                  onChange={(e) => setDraftStart(e.target.value)}
                   className="h-8 rounded-md border border-border/50 bg-card px-2 text-xs text-foreground"
                 />
               </div>
@@ -149,11 +196,27 @@ export function TokenAnalyticsFilters({
                 </label>
                 <input
                   type="date"
-                  value={filters.endDate ?? ''}
-                  onChange={(e) => updateFilter({ endDate: e.target.value || undefined })}
+                  value={draftEnd}
+                  onChange={(e) => setDraftEnd(e.target.value)}
                   className="h-8 rounded-md border border-border/50 bg-card px-2 text-xs text-foreground"
                 />
               </div>
+            </div>
+            {showInvertedError ? (
+              <p className="mt-1.5 text-[11px] text-destructive">End date must be on or after start date</p>
+            ) : null}
+            <div className="mt-2 flex justify-end">
+              <PopoverClose asChild>
+                <Button
+                  size="sm"
+                  className="h-7 gap-1 text-xs"
+                  disabled={!draftValid}
+                  onClick={handleApplyCustomRange}
+                >
+                  <Check className="size-3" />
+                  Apply
+                </Button>
+              </PopoverClose>
             </div>
           </PopoverContent>
         </Popover>

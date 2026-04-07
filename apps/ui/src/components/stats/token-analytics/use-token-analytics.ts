@@ -9,7 +9,17 @@ export function useTokenAnalytics(wsUrl: string, query: TokenAnalyticsQuery) {
   const [isRefreshing, setIsRefreshing] = useState(false)
   const prevQueryRef = useRef<string>('')
 
+  // Suppress fetches when custom range is selected but dates are incomplete/invalid
+  const isCustomIncomplete =
+    query.rangePreset === 'custom' && (!query.startDate || !query.endDate)
+
   useEffect(() => {
+    if (isCustomIncomplete) {
+      // Don't fetch — keep showing existing snapshot (if any) without error
+      setIsLoading(false)
+      return
+    }
+
     let cancelled = false
     const queryKey = JSON.stringify(query)
     const queryChanged = prevQueryRef.current !== queryKey
@@ -44,7 +54,7 @@ export function useTokenAnalytics(wsUrl: string, query: TokenAnalyticsQuery) {
     return () => {
       cancelled = true
     }
-  }, [wsUrl, query]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [wsUrl, query, isCustomIncomplete]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const refresh = useCallback(async () => {
     setIsRefreshing(true)

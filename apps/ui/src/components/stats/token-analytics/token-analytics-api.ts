@@ -23,7 +23,7 @@ function buildQueryParams(query: TokenAnalyticsQuery): URLSearchParams {
   if (query.startDate) params.set('startDate', query.startDate)
   if (query.endDate) params.set('endDate', query.endDate)
   const tz = query.timezone ?? getBrowserTimezone()
-  if (tz) params.set('timezone', tz)
+  if (tz) params.set('tz', tz)
   if (query.profileId) params.set('profileId', query.profileId)
   if (query.provider) params.set('provider', query.provider)
   if (query.modelId) params.set('modelId', query.modelId)

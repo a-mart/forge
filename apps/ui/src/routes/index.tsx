@@ -1628,7 +1628,7 @@ function useOptionalLocation(): { pathname: string; search: unknown } {
 
 type NavigateFn = (options: {
   to: string
-  search?: { view?: string; agent?: string }
+  search?: { view?: string; agent?: string; statsTab?: string }
   replace?: boolean
   resetScroll?: boolean
 }) => void | Promise<void>
@@ -1645,6 +1645,9 @@ function useOptionalNavigate(): NavigateFn {
     }
     if (search?.agent) {
       params.set('agent', search.agent)
+    }
+    if (search?.statsTab) {
+      params.set('statsTab', search.statsTab)
     }
 
     const query = params.toString()
@@ -1671,7 +1674,7 @@ function useOptionalNavigate(): NavigateFn {
   }
 }
 
-function parseWindowRouteSearch(search: string): { view?: string; agent?: string } {
+function parseWindowRouteSearch(search: string): { view?: string; agent?: string; statsTab?: string } {
   if (!search) {
     return {}
   }
@@ -1679,10 +1682,12 @@ function parseWindowRouteSearch(search: string): { view?: string; agent?: string
   const params = new URLSearchParams(search)
   const view = params.get('view')
   const agent = params.get('agent')
+  const statsTab = params.get('statsTab')
 
   return {
     view: view ?? undefined,
     agent: agent ?? undefined,
+    statsTab: statsTab ?? undefined,
   }
 }
 
