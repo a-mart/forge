@@ -57,6 +57,7 @@ import { TerminalSettingsService } from "../terminal/terminal-settings-service.j
 import type { TerminalService } from "../terminal/terminal-service.js";
 import { TerminalWsProxy } from "../terminal/terminal-ws-proxy.js";
 import { createStatsRoutes } from "./routes/stats-routes.js";
+import { TokenAnalyticsService } from "../stats/token-analytics-service.js";
 import { createTelemetryRoutes } from "./routes/telemetry-routes.js";
 import { createTerminalRoutes } from "./routes/terminal-routes.js";
 import { resolveSessionAgentIdForUnread } from "./unread-utils.js";
@@ -87,6 +88,7 @@ export class SwarmWebSocketServer {
   private readonly mobilePushService: MobilePushService;
   private readonly settingsRoutes: SettingsRouteBundle;
   private readonly statsService: StatsService;
+  private readonly tokenAnalyticsService: TokenAnalyticsService;
   private readonly telemetryService: TelemetryService | null;
   private readonly httpRoutes: HttpRoute[];
   private readonly controlPidFile: string;
@@ -338,6 +340,7 @@ export class SwarmWebSocketServer {
         void this.telemetryService?.sendOnStatsRefresh(allStats);
       },
     });
+    this.tokenAnalyticsService = new TokenAnalyticsService(this.swarmManager);
     this.httpRoutes = [
       ...createHealthRoutes({
         resolveControlPidFile: () => this.controlPidFile,
@@ -359,6 +362,7 @@ export class SwarmWebSocketServer {
       ...createTranscriptionRoutes({ swarmManager: this.swarmManager }),
       ...createStatsRoutes({
         statsService: this.statsService,
+        tokenAnalyticsService: this.tokenAnalyticsService,
       }),
       ...(this.telemetryService ? createTelemetryRoutes({ telemetryService: this.telemetryService }) : []),
       ...createSchedulerRoutes({ swarmManager: this.swarmManager }),

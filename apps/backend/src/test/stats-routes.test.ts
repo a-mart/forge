@@ -76,15 +76,100 @@ describe('createStatsRoutes', () => {
     expect(response.status).toBe(500)
     expect(refreshAllRangesInBackground).not.toHaveBeenCalled()
   })
+
+  it('wires token analytics endpoints to the dedicated service', async () => {
+    const getSnapshot = vi.fn(async () => createStatsSnapshot())
+    const refreshAllRangesInBackground = vi.fn(async () => createStatsSnapshot())
+    const getProviderUsage = vi.fn(async () => ({}))
+    const tokenGetSnapshot = vi.fn(async () => ({ computedAt: '2026-04-03T00:00:00.000Z' }))
+    const tokenGetWorkerPage = vi.fn(async () => ({ computedAt: '2026-04-03T00:00:00.000Z', items: [], nextCursor: null, totalCount: 0 }))
+    const tokenGetWorkerEvents = vi.fn(async () => ({ computedAt: '2026-04-03T00:00:00.000Z', worker: {}, events: [] }))
+    const server = await createRouteServer(
+      { getSnapshot, refreshAllRangesInBackground, getProviderUsage },
+      { getSnapshot: tokenGetSnapshot, getWorkerPage: tokenGetWorkerPage, getWorkerEvents: tokenGetWorkerEvents },
+    )
+
+    const snapshotResponse = await fetch(
+      `${server.baseUrl}/api/stats/tokens?rangePreset=custom&startDate=2026-04-01&endDate=2026-04-03&tz=UTC&provider=openai-codex`,
+    )
+    expect(snapshotResponse.status).toBe(200)
+    expect(tokenGetSnapshot).toHaveBeenCalledWith({
+      rangePreset: 'custom',
+      startDate: '2026-04-01',
+      endDate: '2026-04-03',
+      timezone: 'UTC',
+      profileId: undefined,
+      provider: 'openai-codex',
+      modelId: undefined,
+      attribution: 'all',
+      specialistId: undefined,
+    })
+
+    const refreshResponse = await fetch(`${server.baseUrl}/api/stats/tokens/refresh?rangePreset=all`, { method: 'POST' })
+    expect(refreshResponse.status).toBe(200)
+    expect(tokenGetSnapshot).toHaveBeenNthCalledWith(2, {
+      rangePreset: 'all',
+      startDate: undefined,
+      endDate: undefined,
+      timezone: null,
+      profileId: undefined,
+      provider: undefined,
+      modelId: undefined,
+      attribution: 'all',
+      specialistId: undefined,
+    }, { forceRefresh: true })
+
+    const pageResponse = await fetch(
+      `${server.baseUrl}/api/stats/tokens/workers?rangePreset=7d&sort=totalTokens&direction=desc&limit=10&cursor=abc123`,
+    )
+    expect(pageResponse.status).toBe(200)
+    expect(tokenGetWorkerPage).toHaveBeenCalledWith({
+      rangePreset: '7d',
+      startDate: undefined,
+      endDate: undefined,
+      timezone: null,
+      profileId: undefined,
+      provider: undefined,
+      modelId: undefined,
+      attribution: 'all',
+      specialistId: undefined,
+      limit: 10,
+      cursor: 'abc123',
+      sort: 'totalTokens',
+      direction: 'desc',
+    })
+
+    const workerEventsResponse = await fetch(
+      `${server.baseUrl}/api/stats/tokens/worker-events?profileId=alpha&sessionId=s1&workerId=w1`,
+    )
+    expect(workerEventsResponse.status).toBe(200)
+    expect(tokenGetWorkerEvents).toHaveBeenCalledWith({
+      profileId: 'alpha',
+      sessionId: 's1',
+      workerId: 'w1',
+    })
+  })
 })
 
-async function createRouteServer(statsService: {
-  getSnapshot: (range: string, options?: Record<string, unknown>) => Promise<StatsSnapshot>
-  refreshAllRangesInBackground: () => Promise<StatsSnapshot | null>
-  getProviderUsage: () => Promise<Record<string, unknown>>
-}): Promise<TestServer> {
+async function createRouteServer(
+  statsService: {
+    getSnapshot: (range: string, options?: Record<string, unknown>) => Promise<StatsSnapshot>
+    refreshAllRangesInBackground: () => Promise<StatsSnapshot | null>
+    getProviderUsage: () => Promise<Record<string, unknown>>
+  },
+  tokenAnalyticsService: {
+    getSnapshot: (...args: unknown[]) => Promise<Record<string, unknown>>
+    getWorkerPage: (...args: unknown[]) => Promise<Record<string, unknown>>
+    getWorkerEvents: (...args: unknown[]) => Promise<Record<string, unknown>>
+  } = {
+    getSnapshot: async () => ({ computedAt: '2026-04-03T00:00:00.000Z' }),
+    getWorkerPage: async () => ({ computedAt: '2026-04-03T00:00:00.000Z', items: [], nextCursor: null, totalCount: 0 }),
+    getWorkerEvents: async () => ({ computedAt: '2026-04-03T00:00:00.000Z', worker: {}, events: [] }),
+  },
+): Promise<TestServer> {
   const routes = createStatsRoutes({
     statsService: statsService as never,
+    tokenAnalyticsService: tokenAnalyticsService as never,
   })
   const server = createServer((request, response) => {
     void handleRouteRequest(routes, request, response)
