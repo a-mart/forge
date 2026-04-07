@@ -1,5 +1,5 @@
 import { chooseFallbackAgentId } from './agent-hierarchy'
-import { handleManagerIdleTransition, handleUnreadNotification } from './notification-service'
+import { handleManagerIdleTransition, handleUnreadNotification, removeMutedAgent, removeMutedAgents } from './notification-service'
 import { WsRequestTracker } from './ws-request-tracker'
 import {
   createInitialManagerWsState,
@@ -1854,6 +1854,15 @@ export class ManagerWsClient {
     nextLoadedSessionIds.delete(managerId)
     this.clearQueuedSessionWorkerRefetch(managerId)
 
+    // Prune muted-agent IDs for the deleted manager and all its sessions/workers
+    const deletedAgentIds = [managerId]
+    for (const agent of this.state.agents) {
+      if (agent.managerId === managerId) {
+        deletedAgentIds.push(agent.agentId)
+      }
+    }
+    removeMutedAgents(deletedAgentIds)
+
     if (wasSelected) {
       const fallbackId = chooseFallbackAgentId(nextAgents)
 
@@ -1925,6 +1934,9 @@ export class ManagerWsClient {
     const nextLoadedSessionIds = new Set(this.state.loadedSessionIds)
     nextLoadedSessionIds.delete(agentId)
     this.clearQueuedSessionWorkerRefetch(agentId)
+
+    // Prune the deleted session from muted-agent state
+    removeMutedAgent(agentId)
 
     if (wasSelected) {
       const fallbackId =

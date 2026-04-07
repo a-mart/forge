@@ -2,6 +2,7 @@ import {
   ArrowDownToLine,
   ArrowUpFromLine,
   BarChart3,
+  BellOff,
   Brain,
   ChevronDown,
   ChevronRight,
@@ -79,6 +80,7 @@ import { inferModelPreset, useModelPresets } from '@/lib/model-preset'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
 import { useProviderUsage } from '@/hooks/use-provider-usage'
 import { readSidebarModelIconsPref, readSidebarProviderUsagePref } from '@/lib/sidebar-prefs'
+import { toggleMute, getMutedAgents, setMutedAgents, MUTE_CHANGE_EVENT } from '@/lib/notification-service'
 import { cn } from '@/lib/utils'
 import {
   MANAGER_REASONING_LEVELS,
@@ -458,6 +460,8 @@ function SessionRowItem({
   onOpenProjectAgentSettings,
   onDemoteProjectAgent,
   onViewCreationHistory,
+  isMutedSession,
+  onToggleMute,
 }: {
   session: SessionRow
   statuses: Record<string, { status: AgentStatus; pendingCount: number; contextUsage?: AgentContextUsage }>
@@ -484,6 +488,8 @@ function SessionRowItem({
   onOpenProjectAgentSettings?: () => void
   onDemoteProjectAgent?: () => void
   onViewCreationHistory?: () => void
+  isMutedSession?: boolean
+  onToggleMute?: () => void
 }) {
   const { sessionAgent, workers, isDefault } = session
   const running = isSessionRunning(sessionAgent)
@@ -581,6 +587,9 @@ function SessionRowItem({
                     {isPinned && !isProjectAgent && sessionAgent.profileId ? (
                       <Pin className="size-3 shrink-0 text-muted-foreground/60" aria-label="Pinned" />
                     ) : null}
+                    {isMutedSession ? (
+                      <BellOff className="size-3 shrink-0 text-muted-foreground opacity-60" aria-label="Muted" />
+                    ) : null}
                     {isProjectAgent ? (
                       <Zap className="size-3 shrink-0 text-blue-400 dark:text-blue-400" aria-label="Project Agent" />
                     ) : null}
@@ -621,6 +630,12 @@ function SessionRowItem({
             <ContextMenuItem onClick={() => onPinSession(sessionAgent.agentId, !isPinned)}>
               <Pin className="mr-2 size-3.5" />
               {isPinned ? 'Unpin' : 'Pin'}
+            </ContextMenuItem>
+          ) : null}
+          {onToggleMute ? (
+            <ContextMenuItem onClick={onToggleMute}>
+              <BellOff className="mr-2 size-3.5" />
+              {isMutedSession ? 'Unmute' : 'Mute'}
             </ContextMenuItem>
           ) : null}
           {onRename ? (
@@ -823,6 +838,9 @@ function ProfileGroup({
   onOpenProjectAgentSettings,
   onDemoteProjectAgent,
   onCreateAgentCreator,
+  mutedAgents,
+  onToggleMute,
+  onMuteAllSessions,
 }: {
   treeRow: ProfileTreeRow
   statuses: Record<string, { status: AgentStatus; pendingCount: number; contextUsage?: AgentContextUsage }>
@@ -862,6 +880,9 @@ function ProfileGroup({
   onOpenProjectAgentSettings?: (agentId: string) => void
   onDemoteProjectAgent?: (agentId: string) => void | Promise<void>
   onCreateAgentCreator?: (profileId: string) => void
+  mutedAgents?: Set<string>
+  onToggleMute?: (agentId: string) => void
+  onMuteAllSessions?: (sessionAgentIds: string[], mute: boolean) => void
 }) {
   const { profile, sessions } = treeRow
   const hasAnySessions = sessions.length > 0
@@ -1012,6 +1033,16 @@ function ProfileGroup({
               Mark All as Read
             </ContextMenuItem>
           ) : null}
+          {onMuteAllSessions ? (() => {
+            const sessionIds = sessions.map((s) => s.sessionAgent.agentId)
+            const allMuted = sessionIds.length > 0 && sessionIds.every((id) => mutedAgents?.has(id))
+            return (
+              <ContextMenuItem onClick={() => onMuteAllSessions(sessionIds, !allMuted)}>
+                <BellOff className="mr-2 size-3.5" />
+                {allMuted ? 'Unmute All Sessions' : 'Mute All Sessions'}
+              </ContextMenuItem>
+            )
+          })() : null}
           {!isCortexProfile(treeRow) ? (
             <>
               <ContextMenuSeparator />
@@ -1137,6 +1168,8 @@ function ProfileGroup({
                       ? () => onSelect(session.sessionAgent.projectAgent!.creatorSessionId!)
                       : undefined
                   }
+                  isMutedSession={mutedAgents?.has(session.sessionAgent.agentId)}
+                  onToggleMute={onToggleMute ? () => onToggleMute(session.sessionAgent.agentId) : undefined}
                 />
               )
             }
@@ -2146,6 +2179,9 @@ function CortexSection({
   onMarkAllRead,
   onChangeModel,
   highlightQuery,
+  mutedAgents,
+  onToggleMute,
+  onMuteAllSessions,
 }: {
   cortexRow: ProfileTreeRow
   statuses: Record<string, { status: AgentStatus; pendingCount: number; contextUsage?: AgentContextUsage }>
@@ -2177,6 +2213,9 @@ function CortexSection({
   onMarkAllRead?: (profileId: string) => void
   onChangeModel?: (profileId: string) => void
   highlightQuery?: string
+  mutedAgents?: Set<string>
+  onToggleMute?: (agentId: string) => void
+  onMuteAllSessions?: (sessionAgentIds: string[], mute: boolean) => void
 }) {
   const { profile, sessions } = cortexRow
   const reviewRunSessions = sessions.filter((session) => session.sessionAgent.sessionPurpose === 'cortex_review')
@@ -2362,6 +2401,16 @@ function CortexSection({
               Mark All as Read
             </ContextMenuItem>
           ) : null}
+          {onMuteAllSessions ? (() => {
+            const sessionIds = visibleSessions.map((s) => s.sessionAgent.agentId)
+            const allMuted = sessionIds.length > 0 && sessionIds.every((id) => mutedAgents?.has(id))
+            return (
+              <ContextMenuItem onClick={() => onMuteAllSessions(sessionIds, !allMuted)}>
+                <BellOff className="mr-2 size-3.5" />
+                {allMuted ? 'Unmute All Sessions' : 'Mute All Sessions'}
+              </ContextMenuItem>
+            )
+          })() : null}
         </ContextMenuContent>
       </ContextMenu>
 
@@ -2430,6 +2479,8 @@ function CortexSection({
                         onStopWorker={onStopSession}
                         onResumeWorker={onResumeSession}
                         highlightQuery={highlightQuery}
+                        isMutedSession={mutedAgents?.has(session.sessionAgent.agentId)}
+                        onToggleMute={onToggleMute ? () => onToggleMute(session.sessionAgent.agentId) : undefined}
                       />
                     )
                   })}
@@ -2589,6 +2640,7 @@ export function AgentSidebar({
   const [showProviderUsage, setShowProviderUsage] = useState(() => readSidebarProviderUsagePref())
   const [usagePanelOpen, setUsagePanelOpen] = useState(false)
   const { data: providerUsage, loading: providerUsageLoading, refetch: refetchProviderUsage } = useProviderUsage(showProviderUsage)
+  const [mutedAgentsState, setMutedAgentsState] = useState<Set<string>>(() => getMutedAgents())
 
   // Re-read pref on custom event (same-tab) and storage event (cross-tab)
   useEffect(() => {
@@ -2601,6 +2653,17 @@ export function AgentSidebar({
     return () => {
       window.removeEventListener('forge-sidebar-pref-change', update)
       window.removeEventListener('storage', update)
+    }
+  }, [])
+
+  // Re-read mute state on custom event (same-tab) and storage event (cross-tab)
+  useEffect(() => {
+    const updateMuted = () => setMutedAgentsState(getMutedAgents())
+    window.addEventListener(MUTE_CHANGE_EVENT, updateMuted)
+    window.addEventListener('storage', updateMuted)
+    return () => {
+      window.removeEventListener(MUTE_CHANGE_EVENT, updateMuted)
+      window.removeEventListener('storage', updateMuted)
     }
   }, [])
 
@@ -2910,6 +2973,22 @@ export function AgentSidebar({
     await onSetSessionProjectAgent?.(agentId, projectAgent)
   }, [onSetSessionProjectAgent])
 
+  const handleToggleMute = useCallback((agentId: string) => {
+    toggleMute(agentId)
+  }, [])
+
+  const handleMuteAllSessions = useCallback((sessionAgentIds: string[], mute: boolean) => {
+    const current = getMutedAgents()
+    for (const id of sessionAgentIds) {
+      if (mute) {
+        current.add(id)
+      } else {
+        current.delete(id)
+      }
+    }
+    setMutedAgents(current)
+  }, [])
+
   const handleDragEnd = useCallback((event: DragEndEvent) => {
     setActiveDragId(null)
     const { active, over } = event
@@ -3039,6 +3118,9 @@ export function AgentSidebar({
               onMarkAllRead={onMarkAllRead}
               onChangeModel={onUpdateManagerModel ? handleRequestChangeModel : undefined}
               highlightQuery={isSearchActive ? parsedSearch.term : undefined}
+              mutedAgents={mutedAgentsState}
+              onToggleMute={handleToggleMute}
+              onMuteAllSessions={handleMuteAllSessions}
             />
           )
         })()}
@@ -3111,6 +3193,9 @@ export function AgentSidebar({
               onPinSession={onPinSession}
               onDemoteProjectAgent={onSetSessionProjectAgent ? handleDemoteProjectAgent : undefined}
               onCreateAgentCreator={onCreateAgentCreator}
+              mutedAgents={mutedAgentsState}
+              onToggleMute={handleToggleMute}
+              onMuteAllSessions={handleMuteAllSessions}
             />
           )
 

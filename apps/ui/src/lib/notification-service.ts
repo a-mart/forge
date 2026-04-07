@@ -28,11 +28,13 @@ export interface NotificationStore {
   defaults: AgentNotificationPrefs
   agents: Record<string, AgentNotificationPrefs>
   customSounds: CustomSound[]
+  mutedAgents?: string[]
 }
 
 // ── Constants ──
 
 const STORAGE_KEY = 'swarm-notifications'
+const MUTE_CHANGE_EVENT = 'forge-mute-change'
 
 const DEBOUNCE_MS = 2_000
 
@@ -61,6 +63,81 @@ const DEFAULT_STORE: NotificationStore = {
   defaults: { ...DEFAULT_AGENT_PREFS },
   agents: {},
   customSounds: [],
+  mutedAgents: [],
+}
+
+// ── Mute state (runtime cache) ──
+
+let mutedAgentsCache: Set<string> | null = null
+
+function loadMutedAgents(): Set<string> {
+  if (mutedAgentsCache) return mutedAgentsCache
+  const store = readNotificationStore()
+  mutedAgentsCache = new Set(store.mutedAgents ?? [])
+  return mutedAgentsCache
+}
+
+function persistMutedAgents(muted: Set<string>): void {
+  mutedAgentsCache = muted
+  const store = readNotificationStore()
+  store.mutedAgents = [...muted]
+  writeNotificationStoreRaw(store)
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(MUTE_CHANGE_EVENT))
+  }
+}
+
+export function isMuted(agentId: string): boolean {
+  return loadMutedAgents().has(agentId)
+}
+
+export function toggleMute(agentId: string): void {
+  const muted = new Set(loadMutedAgents())
+  if (muted.has(agentId)) {
+    muted.delete(agentId)
+  } else {
+    muted.add(agentId)
+  }
+  persistMutedAgents(muted)
+}
+
+export function getMutedAgents(): Set<string> {
+  return new Set(loadMutedAgents())
+}
+
+export function setMutedAgents(agentIds: Set<string>): void {
+  persistMutedAgents(new Set(agentIds))
+}
+
+/** Remove a single agent from the muted set (e.g. on session deletion). */
+export function removeMutedAgent(agentId: string): void {
+  const muted = new Set(loadMutedAgents())
+  if (muted.delete(agentId)) {
+    persistMutedAgents(muted)
+  }
+}
+
+/** Bulk-remove multiple agents from the muted set (e.g. on manager deletion). */
+export function removeMutedAgents(agentIds: string[]): void {
+  const muted = new Set(loadMutedAgents())
+  let changed = false
+  for (const id of agentIds) {
+    if (muted.delete(id)) changed = true
+  }
+  if (changed) {
+    persistMutedAgents(muted)
+  }
+}
+
+export { MUTE_CHANGE_EVENT }
+
+// Invalidate mute cache on cross-tab storage changes
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (e) => {
+    if (e.key === STORAGE_KEY) {
+      mutedAgentsCache = null
+    }
+  })
 }
 
 // ── Storage ──
@@ -79,6 +156,7 @@ export function readNotificationStore(): NotificationStore {
         : { ...DEFAULT_AGENT_PREFS },
       agents: parsed.agents && typeof parsed.agents === 'object' ? parsed.agents : {},
       customSounds: Array.isArray(parsed.customSounds) ? parsed.customSounds : [],
+      mutedAgents: Array.isArray(parsed.mutedAgents) ? parsed.mutedAgents : [],
     }
     // Migration: persist defaults field if it was missing in stored data
     let needsPersist = !parsed.defaults
@@ -109,7 +187,36 @@ export function readNotificationStore(): NotificationStore {
   }
 }
 
+/**
+ * Write the notification store, preserving the current mutedAgents from
+ * localStorage. This prevents callers that snapshot the store once (e.g.
+ * SettingsNotifications) from accidentally overwriting mute changes made
+ * elsewhere. Mute state should be modified exclusively via the dedicated
+ * mute APIs (toggleMute, setMutedAgents, removeMutedAgent, etc.).
+ */
 export function writeNotificationStore(store: NotificationStore): void {
+  if (typeof window === 'undefined') return
+  try {
+    // Re-read the current mutedAgents so we don't clobber concurrent changes
+    const raw = window.localStorage.getItem(STORAGE_KEY)
+    if (raw) {
+      try {
+        const current = JSON.parse(raw)
+        if (Array.isArray(current.mutedAgents)) {
+          store = { ...store, mutedAgents: current.mutedAgents }
+        }
+      } catch {
+        // Ignore parse errors — write the full store as-is
+      }
+    }
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(store))
+  } catch {
+    // Ignore write failures (storage full, restricted env, etc.)
+  }
+}
+
+/** Internal: write the store exactly as-is, including mutedAgents. */
+function writeNotificationStoreRaw(store: NotificationStore): void {
   if (typeof window === 'undefined') return
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(store))
@@ -368,6 +475,9 @@ export function handleUnreadNotification(
   const agent = state.agents.find((a) => a.agentId === resolvedAgentId)
   const prefsKey = agent?.profileId ?? resolvedAgentId
 
+  // Check if the session agent is muted — suppress all sounds
+  if (isMuted(resolvedAgentId)) return
+
   // Choice-request events get their own branch — never enter the all-done path.
   if (reason === 'choice_request') {
     if (shouldPlayQuestion(prefsKey, agentId, state, store)) {
@@ -420,6 +530,9 @@ export function handleManagerIdleTransition(
 
   const store = readNotificationStore()
   if (!store.globalEnabled) return
+
+  // Check mute state before playing deferred sound
+  if (isMuted(agentId)) return
 
   const agent = state.agents.find((a) => a.agentId === agentId)
   const prefsKey = agent?.profileId ?? agentId
