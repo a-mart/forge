@@ -41,7 +41,12 @@ export function SettingsPanel({
   const [activeTab, setActiveTab] = useState<SettingsTab>('general')
 
   return (
-    <SettingsLayout activeTab={activeTab} onTabChange={setActiveTab} onBack={onBack}>
+    <SettingsLayout
+      activeTab={activeTab}
+      onTabChange={setActiveTab}
+      onBack={onBack}
+      contentWidthClassName={activeTab === 'skills' ? 'max-w-6xl' : undefined}
+    >
       {activeTab === 'general' && <SettingsGeneral wsUrl={wsUrl} onPlaywrightSnapshotUpdate={onPlaywrightSnapshotUpdate} onPlaywrightSettingsLoaded={onPlaywrightSettingsLoaded} />}
       {activeTab === 'notifications' && <SettingsNotifications managers={managers} />}
       {activeTab === 'auth' && <SettingsAuth wsUrl={wsUrl} />}

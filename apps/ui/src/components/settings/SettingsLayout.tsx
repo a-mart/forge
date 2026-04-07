@@ -30,9 +30,11 @@ interface SettingsLayoutProps {
   onTabChange: (tab: SettingsTab) => void
   onBack?: () => void
   children: React.ReactNode
+  /** Override the max-width class on the content area. Defaults to 'max-w-3xl'. */
+  contentWidthClassName?: string
 }
 
-export function SettingsLayout({ activeTab, onTabChange, onBack, children }: SettingsLayoutProps) {
+export function SettingsLayout({ activeTab, onTabChange, onBack, children, contentWidthClassName }: SettingsLayoutProps) {
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
       <header className="flex h-[62px] shrink-0 items-center border-b border-border/80 bg-card/80 px-2 backdrop-blur md:px-4">
@@ -115,7 +117,7 @@ export function SettingsLayout({ activeTab, onTabChange, onBack, children }: Set
             'hover:[&::-webkit-scrollbar-thumb]:bg-border hover:[scrollbar-color:var(--color-border)_transparent]',
           )}
         >
-          <div className="mx-auto max-w-3xl px-4 py-4 md:px-6 md:py-5">
+          <div className={cn('mx-auto px-4 py-4 md:px-6 md:py-5', contentWidthClassName || 'max-w-3xl')}>
             {children}
           </div>
         </div>
