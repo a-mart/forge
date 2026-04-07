@@ -1016,7 +1016,7 @@ function parseNumstatTotals(output: string): { linesAdded: number; linesDeleted:
   return { linesAdded, linesDeleted };
 }
 
-function extractUsage(value: unknown): { input: number; output: number; cacheRead: number; cacheWrite: number; total: number } | null {
+export function extractUsage(value: unknown): { input: number; output: number; cacheRead: number; cacheWrite: number; total: number } | null {
   if (!isRecord(value)) {
     return null;
   }
@@ -1058,7 +1058,7 @@ function extractModelId(message: unknown): string {
   return modelId || provider || "unknown";
 }
 
-function extractReasoningLevel(message: unknown, fallbackThinkingLevel: string | null): string {
+export function extractReasoningLevel(message: unknown, fallbackThinkingLevel: string | null): string {
   if (!isRecord(message)) {
     return fallbackThinkingLevel ?? "default";
   }
@@ -1082,7 +1082,7 @@ function normalizeReasoningLevel(value: unknown): string | null {
   return normalized.length > 0 ? normalized : null;
 }
 
-function extractThinkingLevelChange(entry: Record<string, unknown>): string | null {
+export function extractThinkingLevelChange(entry: Record<string, unknown>): string | null {
   if (entry.type === "thinking_level_change") {
     return normalizeReasoningLevel(entry.thinkingLevel);
   }
@@ -1192,7 +1192,7 @@ function emptyDailyTotals(): DailyTotals {
   };
 }
 
-function toTimestampMs(value: unknown): number | null {
+export function toTimestampMs(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value) && value > 0) {
     return value > 10_000_000_000 ? Math.round(value) : Math.round(value * 1000);
   }
@@ -1205,7 +1205,7 @@ function toTimestampMs(value: unknown): number | null {
   return null;
 }
 
-function normalizeTimezone(value: unknown): string {
+export function normalizeTimezone(value: unknown): string {
   if (typeof value !== "string" || value.trim().length === 0) {
     return SERVER_TIMEZONE;
   }
@@ -1221,7 +1221,7 @@ function normalizeTimezone(value: unknown): string {
 
 const dayKeyFormatters = new Map<string, Intl.DateTimeFormat>();
 
-function toDayKey(timestampMs: number, timezone: string): string {
+export function toDayKey(timestampMs: number, timezone: string): string {
   const formatter = getDayKeyFormatter(timezone);
   const parts = formatter.formatToParts(new Date(timestampMs));
 
@@ -1261,7 +1261,7 @@ function startOfDayMs(timestampMs: number, timezone: string): number {
   return dayKeyToStartMs(toDayKey(timestampMs, timezone), timezone);
 }
 
-function dayKeyToStartMs(dayKey: string, timezone: string): number {
+export function dayKeyToStartMs(dayKey: string, timezone: string): number {
   const baseMs = dayKeyToMs(dayKey);
   if (baseMs <= 0) {
     return 0;
@@ -1341,7 +1341,7 @@ function getDateTimePartFormatter(timezone: string): Intl.DateTimeFormat {
   return formatter;
 }
 
-function shiftDayKey(dayKey: string, offsetDays: number): string {
+export function shiftDayKey(dayKey: string, offsetDays: number): string {
   const ms = dayKeyToMs(dayKey);
   if (!Number.isFinite(ms) || ms <= 0) {
     return dayKey;
@@ -1448,11 +1448,11 @@ function round2(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isEnoentError(error: unknown): boolean {
+export function isEnoentError(error: unknown): boolean {
   return (
     typeof error === "object" &&
     error !== null &&
