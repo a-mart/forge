@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   AlertTriangle,
   Check,
   ChevronDown,
   CircleAlert,
+  Clipboard,
   Loader2,
   Pencil,
   Plus,
@@ -276,6 +277,52 @@ function CredentialRow({
         </DialogContent>
       </Dialog>
     </>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/*  Copy URL button                                                   */
+/* ------------------------------------------------------------------ */
+
+function CopyUrlButton({ url }: { url: string }) {
+  const [copied, setCopied] = useState(false)
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current)
+    }
+  }, [])
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(url)
+      setCopied(true)
+      if (timerRef.current) clearTimeout(timerRef.current)
+      timerRef.current = setTimeout(() => setCopied(false), 1500)
+    } catch {
+      // Clipboard write can fail in insecure contexts — ignore silently
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => void handleCopy()}
+      className="inline-flex items-center gap-1 rounded-md border border-border/70 bg-muted/30 px-2 py-1 text-[11px] text-primary hover:bg-muted/50"
+    >
+      {copied ? (
+        <>
+          <Check className="size-3" />
+          Copied!
+        </>
+      ) : (
+        <>
+          <Clipboard className="size-3" />
+          Copy URL
+        </>
+      )}
+    </button>
   )
 }
 
@@ -615,14 +662,17 @@ export function OpenAICredentialPool({ wsUrl, onError, onSuccess, onAuthReload }
         {(oauthInProgress || oauthFlow.status === 'complete' || oauthFlow.status === 'error') && (
           <div className="space-y-2 rounded-md border border-border/70 bg-background/40 p-3">
             {oauthFlow.authUrl && (
-              <a
-                href={oauthFlow.authUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1 rounded-md border border-border/70 bg-muted/30 px-2 py-1 text-[11px] text-primary hover:bg-muted/50"
-              >
-                Open authorization URL
-              </a>
+              <div className="flex items-center gap-1.5">
+                <a
+                  href={oauthFlow.authUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 rounded-md border border-border/70 bg-muted/30 px-2 py-1 text-[11px] text-primary hover:bg-muted/50"
+                >
+                  Open authorization URL
+                </a>
+                <CopyUrlButton url={oauthFlow.authUrl} />
+              </div>
             )}
 
             {oauthFlow.instructions && (
