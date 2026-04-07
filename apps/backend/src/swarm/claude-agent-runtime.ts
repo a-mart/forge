@@ -2,8 +2,13 @@ import { appendFileSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { ClaudeAuthResolver } from "./claude-auth-resolver.js";
+import {
+  buildClaudeRecoveryContext,
+  type ClaudeRecoveryPendingTurnExclusion
+} from "./claude-recovery-context.js";
 import { claudeSessionDir, claudeWorkerDir } from "./claude-data-paths.js";
 import { isEnoentError, normalizeOptionalString } from "./claude-utils.js";
+import { isConversationEntryEvent } from "./conversation-validators.js";
 import { getSessionFilePath, getWorkerSessionFilePath } from "./data-paths.js";
 import { ClaudeQuerySession, type ClaudeEffort, type ClaudeThinkingConfig } from "./claude-query-session.js";
 import { loadClaudeSdkModule } from "./claude-sdk-loader.js";
@@ -67,6 +72,10 @@ interface HiddenTurnCapture {
   kind: "compaction_summary";
   assistantText: string;
   runtimeError: Error | undefined;
+}
+
+interface ClaudeSessionStartupOptions {
+  pendingTurnExclusion?: ClaudeRecoveryPendingTurnExclusion;
 }
 
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 5_000;
@@ -228,8 +237,9 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
     return await this.runExclusive(async () => {
       this.ensureNotTerminated();
 
-      const session = await this.ensureSessionStarted();
       const normalizedInput = await this.normalizeAndResizeMessage(input);
+      const pendingTurnExclusion = buildPendingTurnExclusion(normalizedInput);
+      const session = await this.ensureSessionStarted({ pendingTurnExclusion });
 
       try {
         const receipt = await session.sendInput(normalizedInput, requestedMode);
@@ -435,7 +445,7 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
     // Phase 5 will restore preserved replay snapshots.
   }
 
-  private async ensureSessionStarted(): Promise<ClaudeQuerySession> {
+  private async ensureSessionStarted(options?: ClaudeSessionStartupOptions): Promise<ClaudeQuerySession> {
     const activeSession = this.activeSession;
     if (activeSession && !isUnusableClaudeSessionStatus(activeSession.getStatus())) {
       return activeSession;
@@ -446,7 +456,7 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
     }
 
     if (!this.startupPromise) {
-      this.startupPromise = this.createAndStartSession().finally(() => {
+      this.startupPromise = this.createAndStartSession(options).finally(() => {
         this.startupPromise = undefined;
       });
     }
@@ -454,7 +464,7 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
     return await this.startupPromise;
   }
 
-  private async createAndStartSession(): Promise<ClaudeQuerySession> {
+  private async createAndStartSession(options?: ClaudeSessionStartupOptions): Promise<ClaudeQuerySession> {
     const sdk = await loadClaudeSdkModule();
     const runtimeEnv = await this.initializeRuntimeEnv();
     const thinkingConfig = buildClaudeReasoningConfig(this.descriptor.model.thinkingLevel);
@@ -476,9 +486,72 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
         }
       });
 
-      this.generation += 1;
-      this.persistRuntimeState({ claudeSessionId: null, generationId: this.generation });
-      return await this.startQuerySession({ sdk, runtimeEnv, thinkingConfig });
+      return await this.startFreshSessionWithRecovery({
+        sdk,
+        runtimeEnv,
+        thinkingConfig,
+        pendingTurnExclusion: options?.pendingTurnExclusion,
+        reason: "resume_failed"
+      });
+    }
+  }
+
+  private async startFreshSessionWithRecovery(options: {
+    sdk: Awaited<ReturnType<typeof loadClaudeSdkModule>>;
+    runtimeEnv: Record<string, string>;
+    thinkingConfig: ReturnType<typeof buildClaudeReasoningConfig>;
+    pendingTurnExclusion?: ClaudeRecoveryPendingTurnExclusion;
+    reason: "resume_failed";
+  }): Promise<ClaudeQuerySession> {
+    this.generation += 1;
+    this.persistRuntimeState({ claudeSessionId: null, generationId: this.generation });
+
+    const systemPromptOverride = this.buildRecoverySystemPrompt(options.pendingTurnExclusion, options.reason);
+    return await this.startQuerySession({
+      sdk: options.sdk,
+      runtimeEnv: options.runtimeEnv,
+      thinkingConfig: options.thinkingConfig,
+      systemPromptOverride
+    });
+  }
+
+  private buildRecoverySystemPrompt(
+    pendingTurnExclusion: ClaudeRecoveryPendingTurnExclusion | undefined,
+    reason: "resume_failed"
+  ): string | undefined {
+    try {
+      const conversationEntries = this.getCustomEntries(CLAUDE_CONVERSATION_ENTRY_TYPE).filter(isConversationEntryEvent);
+      const recoveryContext = buildClaudeRecoveryContext({
+        descriptor: this.descriptor,
+        entries: conversationEntries,
+        compactedAt: this.persistedCompactionSummary?.compactedAt,
+        pendingTurnExclusion,
+        modelContextWindow: this.modelContextWindow,
+        existingPrompt: this.activeSystemPrompt,
+        hasPinnedContent: Boolean(this.pinnedMessageContent)
+      });
+
+      this.logDebug("thread_resume:recovery_context", {
+        reason,
+        eligibleEntryCount: recoveryContext.eligibleEntryCount,
+        includedEntryCount: recoveryContext.includedEntryCount,
+        omittedEntryCount: recoveryContext.omittedEntryCount,
+        pendingTurnExcluded: recoveryContext.pendingTurnExcluded,
+        truncated: recoveryContext.truncated,
+        approxTokenCount: recoveryContext.approxTokenCount
+      });
+
+      if (!recoveryContext.blockText) {
+        return undefined;
+      }
+
+      return [this.activeSystemPrompt, recoveryContext.blockText].filter(Boolean).join("\n\n");
+    } catch (error) {
+      this.logDebug("thread_resume:recovery_context_error", {
+        reason,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      return undefined;
     }
   }
 
@@ -487,6 +560,7 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
     runtimeEnv: Record<string, string>;
     thinkingConfig: ReturnType<typeof buildClaudeReasoningConfig>;
     resumeSessionId?: string;
+    systemPromptOverride?: string;
   }): Promise<ClaudeQuerySession> {
     const sessionToken = this.activeSessionToken + 1;
     this.clearSdkAutoCompactionState();
@@ -494,7 +568,7 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
       sdk: options.sdk,
       config: {
         model: this.descriptor.model.modelId,
-        systemPrompt: this.activeSystemPrompt,
+        systemPrompt: options.systemPromptOverride ?? this.activeSystemPrompt,
         cwd: this.descriptor.cwd,
         contextWindow: this.modelContextWindow,
         autoCompactWindow: this.autoCompactWindow,
@@ -1017,6 +1091,17 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
       release?.();
     }
   }
+
+  private logDebug(message: string, details?: Record<string, unknown>): void {
+    if (process.env.FORGE_DEBUG !== "true") {
+      return;
+    }
+
+    console.log(`[swarm][${nowIso()}] claude_runtime:${message}`, {
+      agentId: this.descriptor.agentId,
+      ...details
+    });
+  }
 }
 
 const CLAUDE_HIGH_THINKING_BUDGET_TOKENS = 4_096;
@@ -1221,6 +1306,25 @@ function toReplayMessageFromConversationEntry(entry: unknown, agentId: string): 
   }
 
   return undefined;
+}
+
+function buildPendingTurnExclusion(
+  input: RuntimeUserMessage
+): ClaudeRecoveryPendingTurnExclusion | undefined {
+  const normalizedText = normalizeOptionalString(input.text);
+  const imageCount = input.images?.length ?? 0;
+  const attachmentCount = imageCount;
+
+  if (!normalizedText && attachmentCount === 0) {
+    return undefined;
+  }
+
+  return {
+    sourceHint: "user_input",
+    text: normalizedText,
+    attachmentCount,
+    imageCount
+  };
 }
 
 function appendLiveReplaySuffix(
