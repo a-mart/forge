@@ -45,7 +45,7 @@ describe("model-catalog-projection", () => {
     expect(projectedXaiModels.find((model) => model.id === "grok-4-fast")?.cost).toEqual(upstreamGrok4Fast?.cost);
     expect(projection.providers.openrouter).toBeUndefined();
 
-    const registry = new ModelRegistry(authStorageStub as any, projectionPath);
+    const registry = ModelRegistry.create(authStorageStub as any, projectionPath);
 
     expect(registry.getError()).toBeUndefined();
     expect(registry.find("xai", "grok-4")?.api).toBe("openai-responses");
@@ -87,7 +87,7 @@ describe("model-catalog-projection", () => {
       }),
     ]);
 
-    const registry = new ModelRegistry(authStorageStub as any, projectionPath);
+    const registry = ModelRegistry.create(authStorageStub as any, projectionPath);
     expect(registry.getError()).toBeUndefined();
     expect(registry.find("openrouter", "anthropic/claude-3.5-sonnet")?.contextWindow).toBe(200_000);
     expect(registry.find("openrouter", "anthropic/claude-3.5-sonnet")?.api).toBe("openai-completions");
@@ -106,7 +106,7 @@ describe("model-catalog-projection", () => {
     });
 
     const projectionPath = await generatePiProjection(dataDir);
-    const registry = new ModelRegistry(authStorageStub as any, projectionPath);
+    const registry = ModelRegistry.create(authStorageStub as any, projectionPath);
 
     expect(registry.getError()).toBeUndefined();
     expect(registry.find("xai", "grok-4")?.api).toBe("openai-responses");

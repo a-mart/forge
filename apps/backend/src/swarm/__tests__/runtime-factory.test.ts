@@ -29,7 +29,7 @@ const piAiMockState = vi.hoisted(() => ({
 const piCodingAgentMockState = vi.hoisted(() => ({
   createAgentSession: vi.fn(),
   compact: vi.fn(),
-  modelRegistryConstructorArgs: vi.fn(),
+  modelRegistryCreateArgs: vi.fn(),
   modelRegistryFind: vi.fn(),
   modelRegistryGetAll: vi.fn(),
 }));
@@ -55,8 +55,9 @@ vi.mock("@mariozechner/pi-coding-agent", () => ({
   createAgentSession: (...args: unknown[]) => piCodingAgentMockState.createAgentSession(...args),
   compact: (...args: unknown[]) => piCodingAgentMockState.compact(...args),
   ModelRegistry: class {
-    constructor(_authStorage: unknown, modelsJsonPath?: unknown) {
-      piCodingAgentMockState.modelRegistryConstructorArgs(_authStorage, modelsJsonPath);
+    static create(_authStorage: unknown, modelsJsonPath?: unknown): InstanceType<typeof this> {
+      piCodingAgentMockState.modelRegistryCreateArgs(_authStorage, modelsJsonPath);
+      return new this();
     }
 
     getError(): undefined {
@@ -227,7 +228,7 @@ describe("RuntimeFactory", () => {
     piAiMockState.getModels.mockClear();
     piCodingAgentMockState.createAgentSession.mockReset();
     piCodingAgentMockState.compact.mockReset();
-    piCodingAgentMockState.modelRegistryConstructorArgs.mockReset();
+    piCodingAgentMockState.modelRegistryCreateArgs.mockReset();
     piCodingAgentMockState.modelRegistryFind.mockReset();
     piCodingAgentMockState.modelRegistryGetAll.mockReset();
   });
@@ -279,7 +280,7 @@ describe("RuntimeFactory", () => {
       'Model "gpt-5.4-mini" not found for provider "openai-codex".',
     );
 
-    expect(piCodingAgentMockState.modelRegistryConstructorArgs).toHaveBeenCalledWith(
+    expect(piCodingAgentMockState.modelRegistryCreateArgs).toHaveBeenCalledWith(
       expect.anything(),
       getPiModelsProjectionPath(join(rootDir, "data")),
     );
@@ -297,7 +298,7 @@ describe("RuntimeFactory", () => {
       `Pi model projection file is missing: ${getPiModelsProjectionPath(join(rootDir, "data"))}. Regenerate it before creating a ModelRegistry.`,
     );
 
-    expect(piCodingAgentMockState.modelRegistryConstructorArgs).not.toHaveBeenCalled();
+    expect(piCodingAgentMockState.modelRegistryCreateArgs).not.toHaveBeenCalled();
     expect(piCodingAgentMockState.createAgentSession).not.toHaveBeenCalled();
   });
 

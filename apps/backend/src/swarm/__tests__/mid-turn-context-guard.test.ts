@@ -55,7 +55,7 @@ class FakeSession {
   readonly thinkingLevel = "medium";
   readonly state = { messages: [] as Array<{ role?: string; stopReason?: string }> };
   readonly agent = {
-    replaceMessages: () => {},
+    state: this.state,
     continue: async () => {}
   };
 
@@ -439,7 +439,6 @@ describe("mid-turn context guard", () => {
   it("prepareForSpecialistFallbackReplay replays consumed steers exactly once and prunes the failed turn suffix", async () => {
     const { runtime, session } = createRuntime();
     session.isStreaming = false;
-    const replaceMessagesSpy = vi.spyOn(session.agent, "replaceMessages");
 
     const dispatchDeferred = createDeferred<void>();
     session.promptImpl = async () => {
@@ -480,7 +479,8 @@ describe("mid-turn context guard", () => {
         }
       ]
     });
-    expect(replaceMessagesSpy).toHaveBeenCalledWith([]);
+    expect(session.state.messages).toEqual([]);
+    expect(session.agent.state.messages).toEqual([]);
   });
 
   it("sendMessage buffers deliveries while context recovery is actively in progress", async () => {
@@ -1069,7 +1069,6 @@ describe("mid-turn context guard", () => {
       .spyOn(runtime as any, "retryCompactionOnceAfterAutoFailure")
       .mockResolvedValue({ recovered: true });
     const continueSpy = vi.spyOn(session.agent, "continue");
-    const replaceSpy = vi.spyOn(session.agent, "replaceMessages");
 
     session.state.messages.push({ role: "assistant", stopReason: "error" });
     (runtime as any).latestAutoCompactionReason = "overflow";
@@ -1085,7 +1084,8 @@ describe("mid-turn context guard", () => {
     await vi.runAllTimersAsync();
 
     expect(retrySpy).toHaveBeenCalledTimes(1);
-    expect(replaceSpy).toHaveBeenCalledTimes(1);
+    expect(session.state.messages).toEqual([]);
+    expect(session.agent.state.messages).toEqual([]);
     expect(continueSpy).not.toHaveBeenCalled();
   });
 

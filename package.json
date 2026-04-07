@@ -38,15 +38,15 @@
       "@tanstack/router-plugin>zod": "3.25.76",
       "@tanstack/start-plugin-core>zod": "3.25.76"
     },
-    "patchedDependencies": {
-      "@mariozechner/pi-coding-agent@0.63.1": "patches/@mariozechner__pi-coding-agent@0.63.1.patch"
-    },
     "onlyBuiltDependencies": [
       "sharp",
       "esbuild",
       "electron",
       "node-pty"
-    ]
+    ],
+    "patchedDependencies": {
+      "@mariozechner/pi-coding-agent@0.65.2": "patches/@mariozechner__pi-coding-agent@0.65.2.patch"
+    }
   },
   "devDependencies": {
     "concurrently": "^9.2.1",

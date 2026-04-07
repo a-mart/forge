@@ -45,7 +45,7 @@ import {
   getSessionDir,
   resolveMemoryFilePath
 } from "./data-paths.js";
-import { assertPiModelsProjectionAvailable } from "./model-catalog-projection.js";
+import { createPiModelRegistry } from "./pi-model-registry.js";
 import { getOnboardingSnapshot } from "./onboarding-state.js";
 import { SkillMetadataService } from "./skill-metadata-service.js";
 import type {
@@ -175,12 +175,7 @@ export class RuntimeFactory {
     const pooledCredentialId = poolSelection?.credentialId;
 
     const piModelsJsonPath = this.deps.getPiModelsJsonPath();
-    assertPiModelsProjectionAvailable(piModelsJsonPath);
-    const modelRegistry = new ModelRegistry(authStorage, piModelsJsonPath);
-    const modelRegistryError = modelRegistry.getError?.();
-    if (modelRegistryError) {
-      throw new Error(modelRegistryError);
-    }
+    const modelRegistry = createPiModelRegistry(authStorage, piModelsJsonPath);
     const swarmContextFiles = await this.deps.getSwarmContextFiles(descriptor.cwd);
     const applyRuntimeContext = (base: { agentsFiles: Array<{ path: string; content: string }> }) => ({
       agentsFiles: this.deps.mergeRuntimeContextFiles(base.agentsFiles, {

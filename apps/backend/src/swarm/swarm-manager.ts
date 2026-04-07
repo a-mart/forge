@@ -112,13 +112,11 @@ import {
   writeProjectAgentReferenceDoc
 } from "./reference-docs.js";
 import { scanCortexReviewStatus } from "./scripts/cortex-scan.js";
-import {
-  assertPiModelsProjectionAvailable,
-  generatePiProjection,
-} from "./model-catalog-projection.js";
+import { generatePiProjection } from "./model-catalog-projection.js";
 import { modelCatalogService } from "./model-catalog-service.js";
 import { CLAUDE_RUNTIME_STATE_ENTRY_TYPE } from "./claude-agent-runtime.js";
 import { RuntimeFactory } from "./runtime-factory.js";
+import { createPiModelRegistry } from "./pi-model-registry.js";
 import {
   computePromptFingerprint,
   backfillCompactionCounts,
@@ -10227,12 +10225,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const authFilePath = await ensureCanonicalAuthFilePath(this.config);
     const authStorage = AuthStorage.create(authFilePath);
     const piModelsJsonPath = this.getPiModelsJsonPathOrThrow();
-    assertPiModelsProjectionAvailable(piModelsJsonPath);
-    const modelRegistry = new ModelRegistry(authStorage, piModelsJsonPath);
-    const modelRegistryError = modelRegistry.getError?.();
-    if (modelRegistryError) {
-      throw new Error(modelRegistryError);
-    }
+    const modelRegistry = createPiModelRegistry(authStorage, piModelsJsonPath);
 
     const candidates = [
       { provider: "anthropic", modelId: "claude-opus-4-6" },
@@ -10282,12 +10275,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const authFilePath = await ensureCanonicalAuthFilePath(this.config);
     const authStorage = AuthStorage.create(authFilePath);
     const piModelsJsonPath = this.getPiModelsJsonPathOrThrow();
-    assertPiModelsProjectionAvailable(piModelsJsonPath);
-    const modelRegistry = new ModelRegistry(authStorage, piModelsJsonPath);
-    const modelRegistryError = modelRegistry.getError?.();
-    if (modelRegistryError) {
-      throw new Error(modelRegistryError);
-    }
+    const modelRegistry = createPiModelRegistry(authStorage, piModelsJsonPath);
     const model = resolveModel(modelRegistry, descriptor.model);
 
     if (!model) {
