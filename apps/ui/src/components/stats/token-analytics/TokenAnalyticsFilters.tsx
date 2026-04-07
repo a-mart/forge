@@ -99,7 +99,7 @@ export function TokenAnalyticsFilters({
   return (
     <div className="flex flex-wrap items-center gap-2">
       {/* Profile */}
-      {availableFilters && availableFilters.profiles.length > 1 ? (
+      {availableFilters && availableFilters.profiles.length > 0 ? (
         <Select
           value={filters.profileId ?? '__all__'}
           onValueChange={(v) => updateFilter({ profileId: v === '__all__' ? undefined : v })}
@@ -223,7 +223,7 @@ export function TokenAnalyticsFilters({
       ) : null}
 
       {/* Provider */}
-      {availableFilters && availableFilters.providers.length > 1 ? (
+      {availableFilters && availableFilters.providers.length > 0 ? (
         <Select
           value={filters.provider ?? '__all__'}
           onValueChange={(v) => updateFilter({ provider: v === '__all__' ? undefined : v })}
@@ -243,7 +243,7 @@ export function TokenAnalyticsFilters({
       ) : null}
 
       {/* Model */}
-      {availableFilters && availableFilters.models.length > 1 ? (
+      {availableFilters && availableFilters.models.length > 0 ? (
         <Select
           value={filters.modelId ?? '__all__'}
           onValueChange={(v) => updateFilter({ modelId: v === '__all__' ? undefined : v })}
@@ -263,7 +263,7 @@ export function TokenAnalyticsFilters({
       ) : null}
 
       {/* Attribution */}
-      {availableFilters && availableFilters.attributions.length > 1 ? (
+      {availableFilters && availableFilters.attributions.length > 0 ? (
         <Select
           value={filters.attribution ?? 'all'}
           onValueChange={(v) => {
