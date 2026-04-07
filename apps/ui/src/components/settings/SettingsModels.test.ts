@@ -80,6 +80,24 @@ async function renderSettingsModels(overrides: Record<string, ModelOverrideEntry
   await flushPromises()
 }
 
+async function expandProvider(providerDisplayName: string): Promise<void> {
+  const button = Array.from(container.querySelectorAll('button')).find(
+    (candidate) =>
+      candidate.getAttribute('aria-expanded') === 'false' &&
+      candidate.textContent?.includes(providerDisplayName),
+  )
+
+  if (!button) {
+    // Already expanded or not found — silently skip
+    return
+  }
+
+  flushSync(() => {
+    fireEvent.click(button)
+  })
+  await flushPromises()
+}
+
 async function expandModel(displayName: string): Promise<void> {
   const button = Array.from(container.querySelectorAll('button')).find(
     (candidate) => candidate.textContent?.includes(displayName) && candidate.textContent?.includes('Context'),
@@ -98,6 +116,7 @@ async function expandModel(displayName: string): Promise<void> {
 describe('SettingsModels', () => {
   it('shows the built-in default instructions when no override exists', async () => {
     await renderSettingsModels({})
+    await expandProvider('OpenAI Codex')
     await expandModel('GPT-5.3 Codex')
 
     expect(getByText(container, 'Using built-in default')).toBeTruthy()
@@ -111,6 +130,7 @@ describe('SettingsModels', () => {
         modelSpecificInstructions: 'Custom override text',
       },
     })
+    await expandProvider('OpenAI Codex')
     await expandModel('GPT-5.3 Codex')
 
     expect(getByText(container, 'Custom override active')).toBeTruthy()
@@ -120,6 +140,7 @@ describe('SettingsModels', () => {
 
   it('shows an empty state for models without built-in defaults', async () => {
     await renderSettingsModels({})
+    await expandProvider('xAI')
     await expandModel('Grok 4')
 
     expect(getByText(container, 'No built-in instructions for this model')).toBeTruthy()
@@ -161,6 +182,7 @@ describe('SettingsModels', () => {
     await flushPromises()
     await flushPromises()
 
+    await expandProvider('OpenAI Codex')
     await expandModel('GPT-5.3 Codex')
     const textarea = getByRole(container, 'textbox') as HTMLTextAreaElement
     const section = textarea.parentElement
