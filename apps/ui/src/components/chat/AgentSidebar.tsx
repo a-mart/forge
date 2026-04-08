@@ -1,7 +1,7 @@
 import { SquarePen, X } from 'lucide-react'
 import { ChangeCwdDialog } from './ChangeCwdDialog'
 import { ForkSessionDialog } from './ForkSessionDialog'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   DndContext,
   closestCenter,
@@ -18,15 +18,10 @@ import {
   sortableKeyboardCoordinates,
   arrayMove,
 } from '@dnd-kit/sortable'
-import {
-  buildProfileTreeRows,
-  isCortexProfile,
-} from '@/lib/agent-hierarchy'
+import { buildProfileTreeRows } from '@/lib/agent-hierarchy'
 import type { ProfileTreeRow } from '@/lib/agent-hierarchy'
 import { inferModelPreset } from '@/lib/model-preset'
-import { resolveApiEndpoint } from '@/lib/api-endpoint'
 import { useProviderUsage } from '@/hooks/use-provider-usage'
-import { readSidebarModelIconsPref, readSidebarProviderUsagePref } from '@/lib/sidebar-prefs'
 import { toggleMute, getMutedAgents, setMutedAgents, MUTE_CHANGE_EVENT } from '@/lib/notification-service'
 import { cn } from '@/lib/utils'
 import type {
@@ -49,14 +44,9 @@ import {
   ChangeModelDialog,
 } from './agent-sidebar/dialogs'
 import { ProjectAgentSettingsSheet } from './project-agent/ProjectAgentSettingsSheet'
-import {
-  MAX_VISIBLE_SESSIONS,
-  SESSION_PAGE_SIZE,
-  injectGlowPulseStyle,
-  parseSearchQuery,
-  filterTreeRows,
-} from './agent-sidebar'
-import type { AgentSidebarProps, CortexScanBadgeResponse } from './agent-sidebar/types'
+import { injectGlowPulseStyle } from './agent-sidebar'
+import { useCortexReviewBadge, useSidebarPrefs, useSidebarTreeState } from './agent-sidebar/hooks'
+import type { AgentSidebarProps } from './agent-sidebar/types'
 
 // Inject subtle glow pulse keyframes once
 injectGlowPulseStyle()
@@ -116,27 +106,39 @@ export function AgentSidebar({
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   )
-  const [activeDragId, setActiveDragId] = useState<string | null>(null)
-  const [cortexOutstandingReviewCount, setCortexOutstandingReviewCount] = useState<number | null>(null)
-  const [showModelIcons, setShowModelIcons] = useState(() => readSidebarModelIconsPref())
-  const [showProviderUsage, setShowProviderUsage] = useState(() => readSidebarProviderUsagePref())
+  const {
+    collapsedProfileIds,
+    toggleProfileCollapsed,
+    searchQuery,
+    setSearchQuery,
+    searchInputRef,
+    showModelIcons,
+    showProviderUsage,
+  } = useSidebarPrefs()
+  const {
+    activeDragId,
+    setActiveDragId,
+    expandedSessionIds,
+    expandedWorkerListSessionIds,
+    regularRows,
+    cortexRow,
+    parsedSearch,
+    isSearchActive,
+    matchCount,
+    toggleSessionCollapsed,
+    showMoreSessions,
+    showLessSessions,
+    toggleWorkerListExpanded,
+    getVisibleSessionLimit,
+  } = useSidebarTreeState({
+    treeRows,
+    searchQuery,
+    onRequestSessionWorkers,
+  })
+  const cortexOutstandingReviewCount = useCortexReviewBadge({ connected, hasCortexProfile, wsUrl })
   const [usagePanelOpen, setUsagePanelOpen] = useState(false)
   const { data: providerUsage, loading: providerUsageLoading, refetch: refetchProviderUsage } = useProviderUsage(showProviderUsage)
   const [mutedAgentsState, setMutedAgentsState] = useState<Set<string>>(() => getMutedAgents())
-
-  // Re-read pref on custom event (same-tab) and storage event (cross-tab)
-  useEffect(() => {
-    const update = () => {
-      setShowModelIcons(readSidebarModelIconsPref())
-      setShowProviderUsage(readSidebarProviderUsagePref())
-    }
-    window.addEventListener('forge-sidebar-pref-change', update)
-    window.addEventListener('storage', update)
-    return () => {
-      window.removeEventListener('forge-sidebar-pref-change', update)
-      window.removeEventListener('storage', update)
-    }
-  }, [])
 
   // Re-read mute state on custom event (same-tab) and storage event (cross-tab)
   useEffect(() => {
@@ -149,79 +151,6 @@ export function AgentSidebar({
     }
   }, [])
 
-  const [searchQuery, setSearchQuery] = useState('')
-  const searchInputRef = useRef<HTMLInputElement>(null)
-
-  // Cmd+K / Ctrl+K to focus search
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-        e.preventDefault()
-        searchInputRef.current?.focus()
-      }
-    }
-    document.addEventListener('keydown', handler)
-    return () => document.removeEventListener('keydown', handler)
-  }, [])
-
-  // Parse the search query for the highlight term (strip prefix)
-  const parsedSearch = useMemo(() => parseSearchQuery(searchQuery), [searchQuery])
-  const isSearchActive = parsedSearch.term.length > 0
-
-  useEffect(() => {
-    if (!connected || !hasCortexProfile) {
-      setCortexOutstandingReviewCount(null)
-      return
-    }
-
-    const controller = new AbortController()
-    const endpoint = resolveApiEndpoint(wsUrl, '/api/cortex/scan')
-
-    void fetch(endpoint, { signal: controller.signal })
-      .then(async (response) => {
-        if (!response.ok) {
-          throw new Error(`Cortex scan failed (${response.status})`)
-        }
-        return response.json() as Promise<CortexScanBadgeResponse>
-      })
-      .then((payload) => {
-        if (controller.signal.aborted) return
-        setCortexOutstandingReviewCount(
-          typeof payload.scan?.summary?.needsReview === 'number' ? payload.scan.summary.needsReview : 0,
-        )
-      })
-      .catch(() => {
-        if (controller.signal.aborted) return
-        setCortexOutstandingReviewCount(null)
-      })
-
-    return () => controller.abort()
-  }, [connected, hasCortexProfile, wsUrl])
-
-  // Filter tree rows when search is active
-  const { filtered: filteredTreeRows, matchCount } = useMemo(
-    () => filterTreeRows(treeRows, searchQuery),
-    [treeRows, searchQuery],
-  )
-
-  const [collapsedProfileIds, setCollapsedProfileIds] = useState<Set<string>>(() => {
-    try {
-      const stored = localStorage.getItem('forge-sidebar-collapsed-profiles')
-      if (stored) {
-        const parsed = JSON.parse(stored)
-        if (Array.isArray(parsed)) return new Set(parsed)
-      }
-    } catch {
-      // Ignore corrupt/missing localStorage
-    }
-    return new Set()
-  })
-  // Track explicitly expanded sessions — everything defaults to collapsed
-  const [expandedSessionIds, setExpandedSessionIds] = useState<Set<string>>(() => new Set())
-  // Track how many sessions are visible per profile (default: MAX_VISIBLE_SESSIONS, increments by SESSION_PAGE_SIZE)
-  const [sessionListLimits, setSessionListLimits] = useState<Record<string, number>>({})
-  // Track which sessions have their full worker list expanded (default: collapsed to MAX_VISIBLE_WORKERS)
-  const [expandedWorkerListSessionIds, setExpandedWorkerListSessionIds] = useState<Set<string>>(() => new Set())
   const [createTarget, setCreateTarget] = useState<{ profileId: string; profileLabel: string } | null>(null)
   const [renameTarget, setRenameTarget] = useState<{ agentId: string; label: string } | null>(null)
   const [renameProfileTarget, setRenameProfileTarget] = useState<{ profileId: string; displayName: string } | null>(null)
@@ -243,71 +172,6 @@ export function AgentSidebar({
     sessionLabel: string
     currentProjectAgent: ProjectAgentInfo | null
   } | null>(null)
-
-  const toggleProfileCollapsed = useCallback((profileId: string) => {
-    setCollapsedProfileIds((prev) => {
-      const next = new Set(prev)
-      if (next.has(profileId)) {
-        next.delete(profileId)
-      } else {
-        next.add(profileId)
-      }
-      return next
-    })
-  }, [])
-
-  const toggleSessionCollapsed = useCallback((sessionId: string) => {
-    setExpandedSessionIds((prev) => {
-      const next = new Set(prev)
-      if (next.has(sessionId)) {
-        next.delete(sessionId)
-      } else {
-        next.add(sessionId)
-        onRequestSessionWorkers?.(sessionId)
-      }
-      return next
-    })
-  }, [onRequestSessionWorkers])
-
-  const showMoreSessions = useCallback((profileId: string) => {
-    setSessionListLimits((prev) => ({
-      ...prev,
-      [profileId]: (prev[profileId] ?? MAX_VISIBLE_SESSIONS) + SESSION_PAGE_SIZE,
-    }))
-  }, [])
-
-  const showLessSessions = useCallback((profileId: string) => {
-    setSessionListLimits((prev) => {
-      const next = { ...prev }
-      delete next[profileId]
-      return next
-    })
-  }, [])
-
-  const toggleWorkerListExpanded = useCallback((sessionId: string) => {
-    setExpandedWorkerListSessionIds((prev) => {
-      const next = new Set(prev)
-      if (next.has(sessionId)) {
-        next.delete(sessionId)
-      } else {
-        next.add(sessionId)
-        onRequestSessionWorkers?.(sessionId)
-      }
-      return next
-    })
-  }, [onRequestSessionWorkers])
-
-  // Persist profile collapse state to localStorage
-  useEffect(() => {
-    try {
-      localStorage.setItem(
-        'forge-sidebar-collapsed-profiles',
-        JSON.stringify([...collapsedProfileIds]),
-      )
-    } catch {
-      // Ignore localStorage write failures (quota, etc.)
-    }
-  }, [collapsedProfileIds])
 
   const handleSelectAgent = useCallback((agentId: string) => {
     onSelectAgent(agentId)
@@ -476,16 +340,14 @@ export function AgentSidebar({
     const { active, over } = event
     if (!over || active.id === over.id || !onReorderProfiles) return
 
-    const sourceRows = isSearchActive ? filteredTreeRows : treeRows
-    const regularRows = sourceRows.filter((row) => !isCortexProfile(row))
-    const currentIds = regularRows.map((r) => r.profile.profileId)
+    const currentIds = regularRows.map((row) => row.profile.profileId)
     const oldIndex = currentIds.indexOf(active.id as string)
     const newIndex = currentIds.indexOf(over.id as string)
     if (oldIndex === -1 || newIndex === -1) return
 
     const newOrder = arrayMove(currentIds, oldIndex, newIndex)
     onReorderProfiles(newOrder)
-  }, [onReorderProfiles, treeRows, filteredTreeRows, isSearchActive])
+  }, [onReorderProfiles, regularRows, setActiveDragId])
 
   const profileGroupContent = useCallback((treeRow: ProfileTreeRow, dragHandleRef?: (element: HTMLElement | null) => void, dragHandleListeners?: Record<string, unknown>) => (
     <ProfileGroup
@@ -496,7 +358,7 @@ export function AgentSidebar({
       isSettingsActive={isSettingsActive}
       isCollapsed={isSearchActive ? false : collapsedProfileIds.has(treeRow.profile.profileId)}
       collapsedSessionIds={expandedSessionIds}
-      visibleSessionLimit={isSearchActive ? Infinity : (sessionListLimits[treeRow.profile.profileId] ?? MAX_VISIBLE_SESSIONS)}
+      visibleSessionLimit={getVisibleSessionLimit(treeRow.profile.profileId)}
       expandedWorkerListSessionIds={expandedWorkerListSessionIds}
       onToggleProfileCollapsed={() => toggleProfileCollapsed(treeRow.profile.profileId)}
       onToggleSessionCollapsed={toggleSessionCollapsed}
@@ -533,13 +395,14 @@ export function AgentSidebar({
     />
   ), [
     statuses, unreadCounts, selectedAgentId, isSettingsActive, isSearchActive,
-    collapsedProfileIds, expandedSessionIds, sessionListLimits, expandedWorkerListSessionIds,
+    collapsedProfileIds, expandedSessionIds, expandedWorkerListSessionIds,
     toggleProfileCollapsed, toggleSessionCollapsed, showMoreSessions, showLessSessions,
     toggleWorkerListExpanded, handleSelectAgent, onDeleteAgent, onDeleteManager, handleOpenSettings,
     onCreateSession, handleRequestCreateSession, onStopSession, onResumeSession, handleRequestDelete,
     handleRequestRename, onRenameProfile, handleRequestRenameProfile, onForkSession,
     onMarkUnread, onMarkAllRead, onUpdateManagerModel, handleRequestChangeModel,
     onUpdateManagerCwd, handleRequestChangeCwd, showModelIcons, parsedSearch.term,
+    getVisibleSessionLimit,
     onSetSessionProjectAgent, handlePromoteToProjectAgent, handleOpenProjectAgentSettings,
     onPinSession, handleDemoteProjectAgent, onCreateAgentCreator, mutedAgentsState,
     handleToggleMute, handleMuteAllSessions,
@@ -601,21 +464,16 @@ export function AgentSidebar({
         }}
       >
         {/* Pinned Cortex entry */}
-        {(() => {
-          const sourceRows = isSearchActive ? filteredTreeRows : treeRows
-          const cortexRow = sourceRows.find((row) => isCortexProfile(row))
-          if (!cortexRow) return null
-
-          return (
-            <CortexSection
-              cortexRow={cortexRow}
+        {cortexRow ? (
+          <CortexSection
+            cortexRow={cortexRow}
               statuses={statuses}
               unreadCounts={unreadCounts}
               selectedAgentId={selectedAgentId}
               isSettingsActive={isSettingsActive}
               isCollapsed={isSearchActive ? false : collapsedProfileIds.has('cortex')}
               collapsedSessionIds={expandedSessionIds}
-              visibleSessionLimit={isSearchActive ? Infinity : (sessionListLimits['cortex'] ?? MAX_VISIBLE_SESSIONS)}
+              visibleSessionLimit={getVisibleSessionLimit('cortex')}
               expandedWorkerListSessionIds={expandedWorkerListSessionIds}
               onToggleCollapsed={() => toggleProfileCollapsed('cortex')}
               onToggleSessionCollapsed={toggleSessionCollapsed}
@@ -642,8 +500,7 @@ export function AgentSidebar({
               onToggleMute={handleToggleMute}
               onMuteAllSessions={handleMuteAllSessions}
             />
-          )
-        })()}
+        ) : null}
 
         {isSearchActive ? (
           <div className="px-1 pb-1">
@@ -653,29 +510,18 @@ export function AgentSidebar({
           </div>
         ) : null}
 
-        {(() => {
-          const sourceRows = isSearchActive ? filteredTreeRows : treeRows
-          const regularRows = sourceRows.filter((row) => !isCortexProfile(row))
-
-          if (isSearchActive && regularRows.length === 0 && !sourceRows.some((r) => isCortexProfile(r))) {
-            return (
-              <p className="rounded-md px-3 py-4 text-center text-xs text-muted-foreground">
-                No matches found.
-              </p>
-            )
-          }
-
-          if (regularRows.length === 0 && !isSearchActive) {
-            return (
-              <p className="rounded-md bg-sidebar-accent/50 px-3 py-4 text-center text-xs text-muted-foreground">
-                No active agents.
-              </p>
-            )
-          }
-
+        {isSearchActive && regularRows.length === 0 && !cortexRow ? (
+          <p className="rounded-md px-3 py-4 text-center text-xs text-muted-foreground">
+            No matches found.
+          </p>
+        ) : regularRows.length === 0 && !isSearchActive ? (
+          <p className="rounded-md bg-sidebar-accent/50 px-3 py-4 text-center text-xs text-muted-foreground">
+            No active agents.
+          </p>
+        ) : (() => {
           const dndEnabled = !isSearchActive && onReorderProfiles && regularRows.length > 1
-          const sortableIds = regularRows.map((r) => r.profile.profileId)
-          const activeDragRow = activeDragId ? regularRows.find((r) => r.profile.profileId === activeDragId) : null
+          const sortableIds = regularRows.map((row) => row.profile.profileId)
+          const activeDragRow = activeDragId ? regularRows.find((row) => row.profile.profileId === activeDragId) : null
 
           if (dndEnabled) {
             return (
