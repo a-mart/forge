@@ -449,13 +449,6 @@ export function AgentSidebar({
         ) : null}
       </div>
 
-      {/* Search bar */}
-      <SidebarSearch
-        searchQuery={searchQuery}
-        onSearchChange={setSearchQuery}
-        searchInputRef={searchInputRef}
-      />
-
       <div
         className="flex-1 overflow-y-auto px-2 pb-2 [color-scheme:light] dark:[color-scheme:dark] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-sidebar-border [&::-webkit-scrollbar-thumb:hover]:bg-sidebar-border/80"
         style={{
@@ -501,6 +494,13 @@ export function AgentSidebar({
               onMuteAllSessions={handleMuteAllSessions}
             />
         ) : null}
+
+        {/* Search bar below Cortex, above profile sections */}
+        <SidebarSearch
+          searchQuery={searchQuery}
+          onSearchChange={setSearchQuery}
+          searchInputRef={searchInputRef}
+        />
 
         {isSearchActive ? (
           <div className="px-1 pb-1">
