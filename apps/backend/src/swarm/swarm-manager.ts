@@ -91,6 +91,14 @@ import {
   SwarmRuntimeController,
   type SwarmRuntimeControllerHost
 } from "./swarm-runtime-controller.js";
+import { SwarmSpecialistFallbackManager } from "./swarm-specialist-fallback-manager.js";
+import {
+  SwarmWorkerHealthService,
+  type WatchdogBatchEntry,
+  type WorkerActivityState,
+  type WorkerStallState,
+  type WorkerWatchdogState
+} from "./swarm-worker-health-service.js";
 import { createPiModelRegistry } from "./pi-model-registry.js";
 import { SecretsEnvService } from "./secrets-env-service.js";
 import { SwarmMemoryMergeService, type SessionMemoryMergeAuditEntry } from "./swarm-memory-merge-service.js";
@@ -896,42 +904,6 @@ interface SessionRenameHistoryEntry {
   renamedAt: string;
 }
 
-interface WorkerWatchdogState {
-  turnSeq: number;
-  reportedThisTurn: boolean;
-  pendingReportTurnSeq: number | null;
-  deferredFinalizeTurnSeq: number | null;
-  hadStreamingThisTurn: boolean;
-  lastFinalizedTurnSeq: number | null;
-  consecutiveNotifications: number;
-  suppressedUntilMs: number;
-  circuitOpen: boolean;
-}
-
-interface WatchdogBatchEntry {
-  workerId: string;
-  turnSeq: number;
-}
-
-interface WorkerStallState {
-  lastProgressAt: number;
-  nudgeSent: boolean;
-  nudgeSentAt: number | null;
-  lastToolName: string | null;
-  lastToolInput: string | null;
-  lastToolOutput: string | null;
-  lastDetailedReportAt: number | null;
-}
-
-interface WorkerActivityState {
-  currentToolName: string | null;
-  currentToolStartedAt: number | null;
-  lastProgressAt: number;
-  toolCallCount: number;
-  errorCount: number;
-  turnCount: number;
-}
-
 interface ModelCapacityBlock {
   provider: string;
   modelId: string;
@@ -1002,18 +974,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly pendingManualManagerStopNoticeTimersByAgentId = new Map<string, NodeJS.Timeout>();
   private readonly conversationEntriesByAgentId = new Map<string, ConversationEntryEvent[]>();
   private readonly pinnedMessageIdsBySessionAgentId = new Map<string, Set<string>>();
-  private readonly workerWatchdogState = new Map<string, WorkerWatchdogState>();
-  private readonly workerStallState = new Map<string, WorkerStallState>();
-  private readonly workerActivityState = new Map<string, WorkerActivityState>();
-  private readonly watchdogTimers = new Map<string, NodeJS.Timeout>();
-  private stallCheckInterval: NodeJS.Timeout | null = null;
-  private stallCheckPromise: Promise<void> | null = null;
-  private readonly watchdogTimerTokens = new Map<string, number>();
-  private readonly watchdogBatchQueueByManager = new Map<string, Map<string, WatchdogBatchEntry>>();
-  private readonly watchdogBatchTimersByManager = new Map<string, NodeJS.Timeout>();
+  private readonly workerHealthService: SwarmWorkerHealthService;
+  private readonly specialistFallbackManager: SwarmSpecialistFallbackManager;
   private readonly modelCapacityBlocks = new Map<string, ModelCapacityBlock>();
-  private readonly lastWorkerCompletionReportTimestampByAgentId = new Map<string, number>();
-  private readonly lastWorkerCompletionReportSummaryKeyByAgentId = new Map<string, string>();
   private readonly conversationProjector: ConversationProjector;
   private readonly persistenceService: PersistenceService;
   private piModelsJsonPath: string | null = null;
@@ -1060,6 +1023,57 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.runtimeCreationPromisesByAgentId = this.runtimeController.runtimeCreationPromisesByAgentId;
     this.runtimeTokensByAgentId = this.runtimeController.runtimeTokensByAgentId;
     this.runtimeExtensionSnapshotsByAgentId = this.runtimeController.runtimeExtensionSnapshotsByAgentId;
+    this.workerHealthService = new SwarmWorkerHealthService({
+      descriptors: this.descriptors,
+      runtimes: this.runtimes,
+      now: this.now,
+      getConversationHistory: (agentId) => this.getConversationHistory(agentId),
+      sendMessage: (fromAgentId, targetAgentId, message, delivery, sendOptions) =>
+        this.sendMessage(fromAgentId, targetAgentId, message, delivery, sendOptions),
+      publishToUser: (agentId, text, source) => this.publishToUser(agentId, text, source),
+      terminateDescriptor: (descriptor, terminateOptions) => this.terminateDescriptor(descriptor, terminateOptions),
+      saveStore: () => this.saveStore(),
+      emitAgentsSnapshot: () => {
+        this.emitAgentsSnapshot();
+      },
+      resolvePromptWithFallback: (category, promptId, profileId, fallback) =>
+        this.resolvePromptWithFallback(category, promptId, profileId, fallback),
+      isRuntimeInContextRecovery: (agentId) => this.isRuntimeInContextRecovery(agentId),
+      logDebug: (message, details) => this.logDebug(message, details)
+    });
+    this.specialistFallbackManager = new SwarmSpecialistFallbackManager({
+      descriptors: this.descriptors,
+      runtimes: this.runtimes,
+      runtimeCreationPromisesByAgentId: this.runtimeCreationPromisesByAgentId,
+      runtimeTokensByAgentId: this.runtimeTokensByAgentId,
+      workerHealthService: this.workerHealthService,
+      now: this.now,
+      resolveSpecialistRosterForProfile: (profileId) => this.resolveSpecialistRosterForProfile(profileId),
+      resolveSpawnModelWithCapacityFallback: (model) => this.resolveSpawnModelWithCapacityFallback(model),
+      resolveSystemPromptForDescriptor: (descriptor) => this.resolveSystemPromptForDescriptor(descriptor),
+      injectWorkerIdentityContext: (descriptor, systemPrompt) =>
+        this.injectWorkerIdentityContext(descriptor, systemPrompt),
+      createRuntimeForDescriptor: (descriptor, systemPrompt, runtimeToken) =>
+        this.createRuntimeForDescriptor(descriptor, systemPrompt, runtimeToken),
+      attachRuntime: (agentId, runtime) => {
+        this.runtimeController.attachRuntime(agentId, runtime);
+      },
+      detachRuntime: (agentId, runtimeToken) => this.runtimeController.detachRuntime(agentId, runtimeToken),
+      updateSessionMetaForWorkerDescriptor: (descriptor, resolvedSystemPrompt) =>
+        this.updateSessionMetaForWorkerDescriptor(descriptor, resolvedSystemPrompt ?? undefined),
+      refreshSessionMetaStatsBySessionId: (sessionAgentId) => this.refreshSessionMetaStatsBySessionId(sessionAgentId),
+      saveStore: () => this.saveStore(),
+      emitStatus: (agentId, status, pendingCount, contextUsage) =>
+        this.emitStatus(agentId, status, pendingCount, contextUsage),
+      emitAgentsSnapshot: () => {
+        this.emitAgentsSnapshot();
+      },
+      clearTrackedToolPaths: (agentId) => {
+        this.runtimeController.clearTrackedToolPaths(agentId);
+      },
+      logDebug: (message, details) => this.logDebug(message, details)
+    });
+    this.runtimeController.setSpecialistFallbackManager(this.specialistFallbackManager);
     this.persistenceService = new PersistenceService({
       config: this.config,
       descriptors: this.descriptors,
@@ -1281,14 +1295,13 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         this.clearWatchdogState(agentId);
       },
       deleteWorkerStallState: (agentId) => {
-        this.workerStallState.delete(agentId);
+        this.workerHealthService.deleteWorkerStallState(agentId);
       },
       deleteWorkerActivityState: (agentId) => {
-        this.workerActivityState.delete(agentId);
+        this.workerHealthService.deleteWorkerActivityState(agentId);
       },
       deleteWorkerCompletionReportState: (agentId) => {
-        this.lastWorkerCompletionReportTimestampByAgentId.delete(agentId);
-        this.lastWorkerCompletionReportSummaryKeyByAgentId.delete(agentId);
+        this.workerHealthService.deleteWorkerCompletionReportState(agentId);
       },
       markPendingManualManagerStopNotice: (agentId) => this.markPendingManualManagerStopNotice(agentId),
       cancelAllPendingChoicesForAgent: (agentId) => {
@@ -1520,16 +1533,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.emitProfilesSnapshot();
     this.cortexService.scheduleReviewRunQueueCheck(0);
 
-    if (!this.stallCheckInterval) {
-      this.stallCheckInterval = setInterval(() => {
-        void this.checkForStalledWorkers().catch((error) => {
-          this.logDebug("stall:check:error", {
-            message: error instanceof Error ? error.message : String(error)
-          });
-        });
-      }, STALL_CHECK_INTERVAL_MS);
-      this.stallCheckInterval.unref();
-    }
+    this.workerHealthService.ensureStarted();
 
     this.logDebug("boot:ready", {
       managerId: managerDescriptor?.agentId,
@@ -1554,7 +1558,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private async resolveSpecialistFallbackModelForDescriptor(
     descriptor: AgentDescriptor,
   ): Promise<AgentModelDescriptor | undefined> {
-    return this.runtimeController.resolveSpecialistFallbackModelForDescriptor(descriptor)
+    return this.specialistFallbackManager.resolveSpecialistFallbackModelForDescriptor(descriptor);
   }
 
   getWorkerActivity(agentId: string): {
@@ -1565,27 +1569,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     turns: number;
     idleSec: number;
   } | undefined {
-    const state = this.workerActivityState.get(agentId);
-    if (!state) {
-      return undefined;
-    }
-
-    const now = Date.now();
-    const currentToolElapsedSec = state.currentToolStartedAt !== null
-      ? Math.round((now - state.currentToolStartedAt) / 1000)
-      : 0;
-    const idleSec = state.currentToolName !== null
-      ? 0
-      : Math.round((now - state.lastProgressAt) / 1000);
-
-    return {
-      currentTool: state.currentToolName,
-      currentToolElapsedSec,
-      toolCalls: state.toolCallCount,
-      errors: state.errorCount,
-      turns: state.turnCount,
-      idleSec
-    };
+    return this.workerHealthService.getWorkerActivity(agentId);
   }
 
   listBootstrapAgents(): AgentDescriptor[] {
@@ -2687,15 +2671,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const managerContextIds = this.resolveActivityManagerContextIds(sender, target);
     const runtime = await this.getOrCreateRuntimeForDescriptor(target);
 
-    const isWorkerReportToManager =
-      sender.role === "worker" && target.role === "manager" && sender.managerId === target.agentId;
-    const currentSenderAtDispatch = this.descriptors.get(sender.agentId);
-    const watchdogTurnSeqAtDispatch =
-      isWorkerReportToManager &&
-      currentSenderAtDispatch?.role === "worker" &&
-      !isNonRunningAgentStatus(currentSenderAtDispatch.status)
-        ? this.getOrCreateWorkerWatchdogState(sender.agentId).turnSeq
-        : undefined;
+    const watchdogTurnSeqAtDispatch = this.workerHealthService.getWorkerReportDispatchTurnSeq(sender, target);
 
     const modelMessage = await this.prepareModelInboundMessage(
       targetAgentId,
@@ -2706,67 +2682,17 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       origin
     );
 
-    const senderDescriptorAfterPrep = this.descriptors.get(sender.agentId);
-    const shouldTrackWorkerReportAfterPrep =
-      isWorkerReportToManager &&
-      watchdogTurnSeqAtDispatch !== undefined &&
-      senderDescriptorAfterPrep?.role === "worker" &&
-      !isNonRunningAgentStatus(senderDescriptorAfterPrep.status);
-
-    if (isWorkerReportToManager && watchdogTurnSeqAtDispatch !== undefined) {
-      const watchdogState = shouldTrackWorkerReportAfterPrep
-        ? this.workerWatchdogState.get(sender.agentId)
-        : undefined;
-      if (watchdogState && watchdogState.turnSeq === watchdogTurnSeqAtDispatch) {
-        watchdogState.pendingReportTurnSeq = watchdogTurnSeqAtDispatch;
-        this.workerWatchdogState.set(sender.agentId, watchdogState);
-      }
-    }
+    this.workerHealthService.markPendingWorkerReportDispatch(sender.agentId, watchdogTurnSeqAtDispatch);
 
     let receipt: SendMessageReceipt;
     try {
       receipt = await runtime.sendMessage(modelMessage, delivery);
     } catch (error) {
-      if (isWorkerReportToManager && watchdogTurnSeqAtDispatch !== undefined) {
-        const currentSender = this.descriptors.get(sender.agentId);
-        const watchdogState =
-          currentSender &&
-          currentSender.role === "worker" &&
-          !isNonRunningAgentStatus(currentSender.status)
-            ? this.workerWatchdogState.get(sender.agentId)
-            : undefined;
-        if (watchdogState?.pendingReportTurnSeq === watchdogTurnSeqAtDispatch) {
-          watchdogState.pendingReportTurnSeq = null;
-          this.workerWatchdogState.set(sender.agentId, watchdogState);
-          await this.finalizeDeferredWorkerIdleTurn(sender.agentId, watchdogTurnSeqAtDispatch);
-        }
-      }
-
+      await this.workerHealthService.handleFailedWorkerReportDispatch(sender.agentId, watchdogTurnSeqAtDispatch);
       throw error;
     }
 
-    if (isWorkerReportToManager && watchdogTurnSeqAtDispatch !== undefined) {
-      const currentSender = this.descriptors.get(sender.agentId);
-      const watchdogState =
-        currentSender &&
-        currentSender.role === "worker" &&
-        !isNonRunningAgentStatus(currentSender.status)
-          ? this.workerWatchdogState.get(sender.agentId)
-          : undefined;
-      if (watchdogState?.pendingReportTurnSeq === watchdogTurnSeqAtDispatch) {
-        watchdogState.pendingReportTurnSeq = null;
-      }
-      if (watchdogState && watchdogState.turnSeq === watchdogTurnSeqAtDispatch) {
-        watchdogState.reportedThisTurn = true;
-        watchdogState.consecutiveNotifications = 0;
-        watchdogState.suppressedUntilMs = 0;
-        watchdogState.circuitOpen = false;
-      }
-      if (watchdogState) {
-        this.workerWatchdogState.set(sender.agentId, watchdogState);
-        await this.finalizeDeferredWorkerIdleTurn(sender.agentId, watchdogTurnSeqAtDispatch);
-      }
-    }
+    await this.workerHealthService.handleSuccessfulWorkerReportDispatch(sender.agentId, watchdogTurnSeqAtDispatch);
 
     this.logDebug("agent:send_message", {
       fromAgentId,
@@ -4988,294 +4914,19 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   private async checkForStalledWorkers(): Promise<void> {
-    if (this.stallCheckPromise) {
-      return this.stallCheckPromise;
-    }
-
-    const run = this.runStalledWorkerCheck().finally(() => {
-      if (this.stallCheckPromise === run) {
-        this.stallCheckPromise = null;
-      }
-    });
-
-    this.stallCheckPromise = run;
-    return run;
-  }
-
-  private async runStalledWorkerCheck(): Promise<void> {
-    const now = Date.now();
-
-    for (const [agentId, descriptor] of this.descriptors.entries()) {
-      if (descriptor.role !== "worker" || descriptor.status !== "streaming") {
-        continue;
-      }
-
-      const stallState = this.workerStallState.get(agentId);
-      if (!stallState) {
-        continue;
-      }
-
-      if (this.isRuntimeInContextRecovery(agentId)) {
-        continue;
-      }
-
-      const elapsedSinceProgressMs = now - stallState.lastProgressAt;
-      if (stallState.nudgeSent && stallState.nudgeSentAt !== null) {
-        const elapsedSinceNudgeMs = now - stallState.nudgeSentAt;
-        if (elapsedSinceNudgeMs >= STALL_KILL_AFTER_NUDGE_MS) {
-          await this.handleStallAutoKill(agentId, elapsedSinceProgressMs);
-          continue;
-        }
-
-        const detailedReportDue =
-          elapsedSinceProgressMs >= STALL_DETAILED_REPORT_INTERVAL_MS &&
-          (
-            stallState.lastDetailedReportAt === null ||
-            now - stallState.lastDetailedReportAt >= STALL_DETAILED_REPORT_INTERVAL_MS
-          );
-
-        if (detailedReportDue) {
-          await this.handleStallDetailedReport(agentId, elapsedSinceProgressMs);
-          continue;
-        }
-      }
-
-      if (!stallState.nudgeSent && elapsedSinceProgressMs >= STALL_NUDGE_THRESHOLD_MS) {
-        await this.handleStallNudge(agentId, elapsedSinceProgressMs);
-      }
-    }
+    return this.workerHealthService.checkForStalledWorkers();
   }
 
   private async handleStallNudge(agentId: string, elapsedMs: number): Promise<void> {
-    const descriptor = this.descriptors.get(agentId);
-    if (!descriptor || descriptor.role !== "worker") {
-      this.workerStallState.delete(agentId);
-      this.workerActivityState.delete(agentId);
-      return;
-    }
-
-    if (descriptor.status !== "streaming" || this.isRuntimeInContextRecovery(agentId)) {
-      return;
-    }
-
-    const stallState = this.workerStallState.get(agentId);
-    if (!stallState || stallState.nudgeSent) {
-      return;
-    }
-
-    const managerId = normalizeOptionalAgentId(descriptor.managerId);
-    if (!managerId) {
-      return;
-    }
-
-    const managerDescriptor = this.descriptors.get(managerId);
-    if (!managerDescriptor || managerDescriptor.role !== "manager" || isNonRunningAgentStatus(managerDescriptor.status)) {
-      return;
-    }
-
-    const elapsedText = this.formatDuration(elapsedMs);
-    const managerMessage = `SYSTEM: ⚠️ [WORKER STALL DETECTED]\nWorker \`${agentId}\` has made no progress for ${elapsedText}.\nIt may be stuck in a long-running tool call or hung process.\nConsider: send_message_to_agent to check on it, or kill_agent(\"${agentId}\") to terminate.`;
-
-    try {
-      await this.sendMessage(managerId, managerId, managerMessage, "auto", { origin: "internal" });
-      stallState.nudgeSent = true;
-      stallState.nudgeSentAt = Date.now();
-      stallState.lastDetailedReportAt = null;
-      this.workerStallState.set(agentId, stallState);
-    } catch (error) {
-      this.logDebug("stall:nudge:send_message:error", {
-        agentId,
-        managerId,
-        message: error instanceof Error ? error.message : String(error)
-      });
-    }
-
-    try {
-      await this.publishToUser(
-        managerId,
-        `⚠️ Worker \`${agentId}\` appears stalled — no progress for ${elapsedText}.`,
-        "system"
-      );
-    } catch (error) {
-      this.logDebug("stall:nudge:publish_to_user:error", {
-        agentId,
-        managerId,
-        message: error instanceof Error ? error.message : String(error)
-      });
-    }
+    await this.workerHealthService.handleStallNudge(agentId, elapsedMs);
   }
 
   private async handleStallDetailedReport(agentId: string, elapsedMs: number): Promise<void> {
-    const descriptor = this.descriptors.get(agentId);
-    if (!descriptor || descriptor.role !== "worker") {
-      this.workerStallState.delete(agentId);
-      this.workerActivityState.delete(agentId);
-      return;
-    }
-
-    if (descriptor.status !== "streaming" || this.isRuntimeInContextRecovery(agentId)) {
-      return;
-    }
-
-    const stallState = this.workerStallState.get(agentId);
-    if (!stallState || !stallState.nudgeSent) {
-      return;
-    }
-
-    const managerId = normalizeOptionalAgentId(descriptor.managerId);
-    if (!managerId) {
-      return;
-    }
-
-    const managerDescriptor = this.descriptors.get(managerId);
-    if (!managerDescriptor || managerDescriptor.role !== "manager" || isNonRunningAgentStatus(managerDescriptor.status)) {
-      return;
-    }
-
-    const elapsedText = this.formatDuration(elapsedMs);
-    const toolInfo = stallState.lastToolName
-      ? `Tool: ${toDisplayToolName(stallState.lastToolName)}`
-      : "Tool: unknown (no tool execution events received)";
-    const inputPreview = stallState.lastToolInput
-      ? `Input (truncated): ${trimToMaxChars(stallState.lastToolInput, 200)}`
-      : "Input: not available";
-    const outputPreview = stallState.lastToolOutput
-      ? `Last output (truncated): ${trimToMaxCharsFromEnd(stallState.lastToolOutput, 200)}`
-      : "Output: none received";
-
-    const managerMessage =
-      `SYSTEM: ⚠️ [WORKER STALL REPORT]\n` +
-      `Worker \`${agentId}\` has made no progress for ${elapsedText}.\n\n` +
-      `${toolInfo}\n${inputPreview}\n${outputPreview}\n\n` +
-      `If this looks like a hung process, terminate with: kill_agent("${agentId}")\n` +
-      "If it's a legitimate long-running operation, no action needed — auto-termination will occur at 30 minutes total.";
-
-    try {
-      await this.sendMessage(managerId, managerId, managerMessage, "auto", { origin: "internal" });
-      stallState.lastDetailedReportAt = Date.now();
-      this.workerStallState.set(agentId, stallState);
-    } catch (error) {
-      this.logDebug("stall:detailed_report:send_message:error", {
-        agentId,
-        managerId,
-        message: error instanceof Error ? error.message : String(error)
-      });
-    }
-
-    try {
-      await this.publishToUser(
-        managerId,
-        `⚠️ Worker \`${agentId}\` still appears stalled — no progress for ${elapsedText}.`,
-        "system"
-      );
-    } catch (error) {
-      this.logDebug("stall:detailed_report:publish_to_user:error", {
-        agentId,
-        managerId,
-        message: error instanceof Error ? error.message : String(error)
-      });
-    }
+    await this.workerHealthService.handleStallDetailedReport(agentId, elapsedMs);
   }
 
   private async handleStallAutoKill(agentId: string, elapsedMs: number): Promise<void> {
-    const descriptor = this.descriptors.get(agentId);
-    if (!descriptor || descriptor.role !== "worker") {
-      this.workerStallState.delete(agentId);
-      this.workerActivityState.delete(agentId);
-      return;
-    }
-
-    if (descriptor.status !== "streaming" || this.isRuntimeInContextRecovery(agentId)) {
-      if (descriptor.status !== "streaming") {
-        this.workerStallState.delete(agentId);
-        this.workerActivityState.delete(agentId);
-      }
-      return;
-    }
-
-    const managerId = normalizeOptionalAgentId(descriptor.managerId);
-    const elapsedText = this.formatDuration(elapsedMs);
-
-    try {
-      await this.terminateDescriptor(descriptor, { abort: true, emitStatus: true });
-      await this.saveStore();
-      this.emitAgentsSnapshot();
-    } catch (error) {
-      this.logDebug("stall:auto_kill:error", {
-        agentId,
-        managerId,
-        message: error instanceof Error ? error.message : String(error)
-      });
-
-      if (managerId) {
-        try {
-          await this.publishToUser(
-            managerId,
-            `⚠️ Failed to auto-terminate stalled worker \`${agentId}\` — manual intervention needed.`,
-            "system"
-          );
-        } catch (publishError) {
-          this.logDebug("stall:auto_kill:publish_to_user:error", {
-            agentId,
-            managerId,
-            message: publishError instanceof Error ? publishError.message : String(publishError)
-          });
-        }
-      }
-      return;
-    }
-
-    if (!managerId) {
-      return;
-    }
-
-    const managerDescriptor = this.descriptors.get(managerId);
-    if (!managerDescriptor || managerDescriptor.role !== "manager" || isNonRunningAgentStatus(managerDescriptor.status)) {
-      return;
-    }
-
-    const managerMessage = `SYSTEM: 🛑 [STALLED WORKER AUTO-TERMINATED]\nWorker \`${agentId}\` was automatically terminated after ${elapsedText} with no progress.\nThe worker was stuck in a tool execution that never completed.\nYou may need to spawn a replacement worker or handle the incomplete task.`;
-
-    try {
-      await this.sendMessage(managerId, managerId, managerMessage, "auto", { origin: "internal" });
-    } catch (error) {
-      this.logDebug("stall:auto_kill:send_message:error", {
-        agentId,
-        managerId,
-        message: error instanceof Error ? error.message : String(error)
-      });
-    }
-
-    try {
-      await this.publishToUser(
-        managerId,
-        `🛑 Worker \`${agentId}\` auto-terminated after ${elapsedText} stall.`,
-        "system"
-      );
-    } catch (error) {
-      this.logDebug("stall:auto_kill:publish_to_user:error", {
-        agentId,
-        managerId,
-        message: error instanceof Error ? error.message : String(error)
-      });
-    }
-  }
-
-  private formatDuration(ms: number): string {
-    const totalSeconds = Math.max(0, Math.floor(ms / 1_000));
-    const hours = Math.floor(totalSeconds / 3_600);
-    const minutes = Math.floor((totalSeconds % 3_600) / 60);
-    const seconds = totalSeconds % 60;
-
-    if (hours > 0) {
-      return `${hours}h ${minutes}m ${seconds}s`;
-    }
-
-    if (minutes > 0) {
-      return `${minutes}m ${seconds}s`;
-    }
-
-    return `${seconds}s`;
+    await this.workerHealthService.handleStallAutoKill(agentId, elapsedMs);
   }
 
   private async finalizeWorkerIdleTurn(
@@ -5283,475 +4934,55 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     descriptor: AgentDescriptor,
     source: "agent_end" | "status_idle" | "deferred"
   ): Promise<void> {
-    if (descriptor.role !== "worker") {
-      return;
-    }
-
-    const watchdogState = this.getOrCreateWorkerWatchdogState(agentId);
-    const currentTurnSeq = watchdogState.turnSeq;
-    if (watchdogState.lastFinalizedTurnSeq === currentTurnSeq && !watchdogState.hadStreamingThisTurn) {
-      this.logDebug("watchdog:finalize_skip_duplicate", {
-        agentId,
-        turnSeq: currentTurnSeq,
-        source
-      });
-      return;
-    }
-
-    const reportedThisTurn = watchdogState.reportedThisTurn;
-    const hasPendingReport = watchdogState.pendingReportTurnSeq === currentTurnSeq;
-
-    if (hasPendingReport) {
-      watchdogState.deferredFinalizeTurnSeq = currentTurnSeq;
-      this.workerWatchdogState.set(agentId, watchdogState);
-      return;
-    }
-
-    // Reset watchdog state for the next agentic loop.
-    watchdogState.turnSeq += 1;
-    watchdogState.reportedThisTurn = false;
-    watchdogState.pendingReportTurnSeq = null;
-    watchdogState.deferredFinalizeTurnSeq = null;
-    watchdogState.hadStreamingThisTurn = false;
-    const turnSeq = watchdogState.turnSeq;
-    watchdogState.lastFinalizedTurnSeq = turnSeq;
-    this.workerWatchdogState.set(agentId, watchdogState);
-
-    if (reportedThisTurn) {
-      this.watchdogTimerTokens.set(agentId, (this.watchdogTimerTokens.get(agentId) ?? 0) + 1);
-      this.clearWatchdogTimer(agentId);
-      return;
-    }
-
-    const autoReportOutcome = await this.tryAutoReportWorkerCompletion(descriptor);
-    if (autoReportOutcome === "sent") {
-      this.watchdogTimerTokens.set(agentId, (this.watchdogTimerTokens.get(agentId) ?? 0) + 1);
-      this.clearWatchdogTimer(agentId);
-      return;
-    }
-
-    const nextToken = (this.watchdogTimerTokens.get(agentId) ?? 0) + 1;
-    this.watchdogTimerTokens.set(agentId, nextToken);
-    this.clearWatchdogTimer(agentId);
-
-    const timer = setTimeout(() => {
-      this.handleIdleWorkerWatchdogTimer(agentId, turnSeq, nextToken).catch((error) => {
-        this.logDebug("watchdog:error", { agentId, error: String(error) });
-      });
-    }, IDLE_WORKER_WATCHDOG_GRACE_MS);
-
-    this.watchdogTimers.set(agentId, timer);
-  }
-
-  private async finalizeDeferredWorkerIdleTurn(agentId: string, turnSeq: number): Promise<void> {
-    const descriptor = this.descriptors.get(agentId);
-    if (!descriptor || descriptor.role !== "worker") {
-      return;
-    }
-
-    const watchdogState = this.workerWatchdogState.get(agentId);
-    if (
-      !watchdogState ||
-      watchdogState.turnSeq !== turnSeq ||
-      watchdogState.pendingReportTurnSeq !== null ||
-      watchdogState.deferredFinalizeTurnSeq !== turnSeq
-    ) {
-      return;
-    }
-
-    await this.finalizeWorkerIdleTurn(agentId, descriptor, "deferred");
+    await this.workerHealthService.finalizeWorkerIdleTurn(agentId, descriptor, source);
   }
 
   private seedWorkerCompletionReportTimestamp(agentId: string): void {
-    const descriptor = this.descriptors.get(agentId);
-    if (!descriptor || descriptor.role !== "worker") {
-      return;
-    }
-
-    this.lastWorkerCompletionReportTimestampByAgentId.set(agentId, parseTimestampToMillis(this.now()) ?? Date.now());
-    this.lastWorkerCompletionReportSummaryKeyByAgentId.delete(agentId);
-  }
-
-  private async tryAutoReportWorkerCompletion(
-    descriptor: AgentDescriptor
-  ): Promise<"sent" | "skipped" | "failed"> {
-    if (descriptor.role !== "worker") {
-      return "skipped";
-    }
-
-    const managerId = normalizeOptionalAgentId(descriptor.managerId);
-    if (!managerId) {
-      return "skipped";
-    }
-
-    const managerDescriptor = this.descriptors.get(managerId);
-    const managerRuntime = this.runtimes.get(managerId);
-    if (
-      !managerDescriptor ||
-      managerDescriptor.role !== "manager" ||
-      isNonRunningAgentStatus(managerDescriptor.status) ||
-      !managerRuntime
-    ) {
-      this.logDebug("worker:completion_report:skip_manager_unavailable", {
-        workerAgentId: descriptor.agentId,
-        managerId,
-        managerStatus: managerDescriptor?.status,
-        hasManagerRuntime: Boolean(managerRuntime)
-      });
-      return "skipped";
-    }
-
-    const workerRuntime = this.runtimes.get(descriptor.agentId);
-    if (!workerRuntime) {
-      this.logDebug("worker:completion_report:skip_worker_runtime_missing", {
-        workerAgentId: descriptor.agentId,
-        managerId
-      });
-      return "skipped";
-    }
-
-    if (workerRuntime.getStatus() !== "idle" || workerRuntime.getPendingCount() > 0) {
-      this.logDebug("worker:completion_report:skip_worker_runtime_active", {
-        workerAgentId: descriptor.agentId,
-        managerId,
-        workerStatus: workerRuntime.getStatus(),
-        pendingCount: workerRuntime.getPendingCount()
-      });
-      return "skipped";
-    }
-
-    const report = buildWorkerCompletionReport(descriptor.agentId, this.getConversationHistory(descriptor.agentId));
-    const lastReportedTimestamp = this.lastWorkerCompletionReportTimestampByAgentId.get(descriptor.agentId);
-    const lastReportedSummaryKey = this.lastWorkerCompletionReportSummaryKeyByAgentId.get(descriptor.agentId);
-    const hasFreshSummary =
-      typeof report.summaryTimestamp === "number" &&
-      (typeof lastReportedTimestamp !== "number" || report.summaryTimestamp > lastReportedTimestamp);
-    const isDuplicateSummary = typeof report.summaryKey === "string" && report.summaryKey === lastReportedSummaryKey;
-
-    if (isDuplicateSummary) {
-      this.logDebug("worker:completion_report:suppress_duplicate_summary", {
-        workerAgentId: descriptor.agentId,
-        managerId,
-        summaryTimestamp: report.summaryTimestamp,
-        summaryKey: report.summaryKey
-      });
-    }
-
-    const includeSummary = hasFreshSummary && !isDuplicateSummary;
-    const message = includeSummary
-      ? report.message
-      : `SYSTEM: Worker ${descriptor.agentId} completed its turn.`;
-
-    try {
-      await this.sendMessage(managerId, managerId, message, "auto", {
-        origin: "internal"
-      });
-
-      if ((includeSummary || isDuplicateSummary) && typeof report.summaryTimestamp === "number") {
-        this.lastWorkerCompletionReportTimestampByAgentId.set(descriptor.agentId, report.summaryTimestamp);
-        if (report.summaryKey) {
-          this.lastWorkerCompletionReportSummaryKeyByAgentId.set(descriptor.agentId, report.summaryKey);
-        }
-      }
-
-      this.logDebug("worker:completion_report:sent", {
-        workerAgentId: descriptor.agentId,
-        managerId,
-        includedSummary: includeSummary,
-        summaryTimestamp: includeSummary ? report.summaryTimestamp : undefined,
-        textPreview: previewForLog(message)
-      });
-
-      return "sent";
-    } catch (error) {
-      this.logDebug("worker:completion_report:error", {
-        workerAgentId: descriptor.agentId,
-        managerId,
-        message: error instanceof Error ? error.message : String(error)
-      });
-      return "failed";
-    }
-  }
-
-  private async handleIdleWorkerWatchdogTimer(
-    agentId: string,
-    turnSeq: number,
-    token: number
-  ): Promise<void> {
-    if (this.watchdogTimerTokens.get(agentId) !== token) {
-      return;
-    }
-
-    this.watchdogTimers.delete(agentId);
-
-    const descriptor = this.descriptors.get(agentId);
-    if (!descriptor || descriptor.role !== "worker") {
-      this.clearWatchdogState(agentId);
-      return;
-    }
-
-    const watchdogState = this.workerWatchdogState.get(agentId);
-    if (!watchdogState || watchdogState.turnSeq !== turnSeq || watchdogState.reportedThisTurn) {
-      return;
-    }
-
-    if (watchdogState.circuitOpen) {
-      return;
-    }
-
-    if (Date.now() < watchdogState.suppressedUntilMs) {
-      return;
-    }
-
-    if (descriptor.status !== "idle") {
-      return;
-    }
-
-    if (this.isRuntimeInContextRecovery(descriptor.agentId)) {
-      return;
-    }
-
-    const parentDescriptor = this.descriptors.get(descriptor.managerId);
-    if (!parentDescriptor || isNonRunningAgentStatus(parentDescriptor.status)) {
-      return;
-    }
-
-    if (this.isRuntimeInContextRecovery(parentDescriptor.agentId)) {
-      return;
-    }
-
-    this.enqueueWatchdogForBatch(descriptor.managerId, descriptor.agentId, turnSeq);
-  }
-
-  private enqueueWatchdogForBatch(managerId: string, workerId: string, turnSeq: number): void {
-    let queue = this.watchdogBatchQueueByManager.get(managerId);
-    if (!queue) {
-      queue = new Map<string, WatchdogBatchEntry>();
-      this.watchdogBatchQueueByManager.set(managerId, queue);
-    }
-    queue.set(workerId, { workerId, turnSeq });
-
-    if (this.watchdogBatchTimersByManager.has(managerId)) {
-      return;
-    }
-
-    const timer = setTimeout(() => {
-      this.flushWatchdogBatch(managerId).catch((error) => {
-        this.logDebug("watchdog:batch_flush:error", {
-          managerId,
-          message: error instanceof Error ? error.message : String(error)
-        });
-      });
-    }, WATCHDOG_BATCH_WINDOW_MS);
-
-    this.watchdogBatchTimersByManager.set(managerId, timer);
-  }
-
-  private async flushWatchdogBatch(managerId: string): Promise<void> {
-    const batchTimer = this.watchdogBatchTimersByManager.get(managerId);
-    if (batchTimer) {
-      clearTimeout(batchTimer);
-      this.watchdogBatchTimersByManager.delete(managerId);
-    }
-
-    const queuedWorkers = this.watchdogBatchQueueByManager.get(managerId);
-    this.watchdogBatchQueueByManager.delete(managerId);
-
-    if (!queuedWorkers || queuedWorkers.size === 0) {
-      return;
-    }
-
-    const managerDescriptor = this.descriptors.get(managerId);
-    if (!managerDescriptor || managerDescriptor.role !== "manager" || isNonRunningAgentStatus(managerDescriptor.status)) {
-      return;
-    }
-
-    if (this.isRuntimeInContextRecovery(managerId)) {
-      return;
-    }
-
-    const nowMs = Date.now();
-    const eligibleWorkerIds: string[] = [];
-
-    for (const queuedWorker of queuedWorkers.values()) {
-      const workerDescriptor = this.descriptors.get(queuedWorker.workerId);
-      if (!workerDescriptor || workerDescriptor.role !== "worker" || workerDescriptor.managerId !== managerId) {
-        continue;
-      }
-
-      if (workerDescriptor.status !== "idle") {
-        continue;
-      }
-
-      if (this.isRuntimeInContextRecovery(queuedWorker.workerId)) {
-        continue;
-      }
-
-      const watchdogState = this.workerWatchdogState.get(queuedWorker.workerId);
-      if (
-        !watchdogState ||
-        watchdogState.turnSeq !== queuedWorker.turnSeq ||
-        watchdogState.reportedThisTurn ||
-        watchdogState.circuitOpen
-      ) {
-        continue;
-      }
-
-      if (nowMs < watchdogState.suppressedUntilMs) {
-        continue;
-      }
-
-      eligibleWorkerIds.push(queuedWorker.workerId);
-    }
-
-    if (eligibleWorkerIds.length === 0) {
-      return;
-    }
-
-    const previewWorkerIds = eligibleWorkerIds.slice(0, WATCHDOG_BATCH_PREVIEW_LIMIT);
-    const omittedCount = eligibleWorkerIds.length - previewWorkerIds.length;
-    const workersPreview =
-      previewWorkerIds.map((workerId) => `\`${workerId}\``).join(", ") +
-      (omittedCount > 0 ? ` (+${omittedCount} more)` : "");
-
-    const workerWord = eligibleWorkerIds.length === 1 ? "worker" : "workers";
-    const profileId = managerDescriptor.profileId ?? managerId;
-    const watchdogTemplate = await this.resolvePromptWithFallback(
-      "operational",
-      "idle-watchdog",
-      profileId,
-      IDLE_WORKER_WATCHDOG_MESSAGE_TEMPLATE
-    );
-    const watchdogMessage = resolvePromptVariables(watchdogTemplate, {
-      WORKER_COUNT: String(eligibleWorkerIds.length),
-      WORKER_WORD: workerWord,
-      WORKER_IDS: workersPreview
-    });
-
-    if (this.isRuntimeInContextRecovery(managerId)) {
-      return;
-    }
-
-    let managerNotified = false;
-    try {
-      await this.sendMessage(managerId, managerId, watchdogMessage, "auto", { origin: "internal" });
-      managerNotified = true;
-    } catch (error) {
-      this.logDebug("watchdog:notify:error", {
-        managerId,
-        workerCount: eligibleWorkerIds.length,
-        message: error instanceof Error ? error.message : String(error)
-      });
-    }
-
-    const userVisibleMessage = managerNotified
-      ? `⚠️ Idle worker watchdog detected ${eligibleWorkerIds.length} ${workerWord} without a report this turn. Workers: ${workersPreview}.`
-      : `⚠️ Idle worker watchdog detected ${eligibleWorkerIds.length} ${workerWord} without a report this turn. An automated manager notification was attempted.`;
-
-    try {
-      await this.publishToUser(managerId, userVisibleMessage, "system");
-    } catch (error) {
-      this.logDebug("watchdog:publish_to_user:error", {
-        managerId,
-        workerCount: eligibleWorkerIds.length,
-        message: error instanceof Error ? error.message : String(error)
-      });
-    }
-
-    const suppressionAppliedAtMs = Date.now();
-
-    for (const workerId of eligibleWorkerIds) {
-      const watchdogState = this.workerWatchdogState.get(workerId);
-      if (!watchdogState) {
-        continue;
-      }
-
-      watchdogState.consecutiveNotifications += 1;
-
-      if (watchdogState.consecutiveNotifications >= WATCHDOG_MAX_CONSECUTIVE_NOTIFICATIONS) {
-        watchdogState.circuitOpen = true;
-        watchdogState.suppressedUntilMs = Number.MAX_SAFE_INTEGER;
-        this.logDebug("watchdog:circuit_open", {
-          workerAgentId: workerId,
-          managerId,
-          consecutiveNotifications: watchdogState.consecutiveNotifications
-        });
-      } else {
-        const backoffMs = Math.min(
-          WATCHDOG_BACKOFF_BASE_MS * 2 ** (watchdogState.consecutiveNotifications - 1),
-          WATCHDOG_BACKOFF_MAX_MS
-        );
-        watchdogState.suppressedUntilMs = suppressionAppliedAtMs + backoffMs;
-      }
-
-      this.workerWatchdogState.set(workerId, watchdogState);
-    }
+    this.workerHealthService.seedWorkerCompletionReportTimestamp(agentId);
   }
 
   private getOrCreateWorkerWatchdogState(agentId: string): WorkerWatchdogState {
-    const existing = this.workerWatchdogState.get(agentId);
-    if (existing) {
-      return existing;
-    }
-
-    const initialized: WorkerWatchdogState = {
-      turnSeq: 0,
-      reportedThisTurn: false,
-      pendingReportTurnSeq: null,
-      deferredFinalizeTurnSeq: null,
-      hadStreamingThisTurn: false,
-      lastFinalizedTurnSeq: null,
-      consecutiveNotifications: 0,
-      suppressedUntilMs: 0,
-      circuitOpen: false
-    };
-    this.workerWatchdogState.set(agentId, initialized);
-    return initialized;
+    return this.workerHealthService.getOrCreateWorkerWatchdogState(agentId);
   }
 
   private clearWatchdogTimer(agentId: string): void {
-    const timer = this.watchdogTimers.get(agentId);
-    if (timer) {
-      clearTimeout(timer);
-      this.watchdogTimers.delete(agentId);
-    }
+    this.workerHealthService.clearWatchdogTimer(agentId);
   }
 
   private clearWatchdogState(agentId: string): void {
-    this.clearWatchdogTimer(agentId);
-
-    const watchdogState = this.workerWatchdogState.get(agentId);
-    if (watchdogState) {
-      watchdogState.pendingReportTurnSeq = null;
-      watchdogState.deferredFinalizeTurnSeq = null;
-      watchdogState.reportedThisTurn = false;
-      watchdogState.hadStreamingThisTurn = false;
-      watchdogState.lastFinalizedTurnSeq = null;
-    }
-
-    this.workerWatchdogState.delete(agentId);
-    this.watchdogTimerTokens.delete(agentId);
-    this.removeWorkerFromWatchdogBatchQueues(agentId);
+    this.workerHealthService.clearWatchdogState(agentId);
   }
 
   private removeWorkerFromWatchdogBatchQueues(agentId: string): void {
-    for (const [managerId, queue] of this.watchdogBatchQueueByManager.entries()) {
-      if (!queue.delete(agentId)) {
-        continue;
-      }
+    this.workerHealthService.removeWorkerFromWatchdogBatchQueues(agentId);
+  }
 
-      if (queue.size > 0) {
-        continue;
-      }
+  private get workerWatchdogState(): Map<string, WorkerWatchdogState> {
+    return this.workerHealthService.workerWatchdogState;
+  }
 
-      this.watchdogBatchQueueByManager.delete(managerId);
+  private get workerStallState(): Map<string, WorkerStallState> {
+    return this.workerHealthService.workerStallState;
+  }
 
-      const batchTimer = this.watchdogBatchTimersByManager.get(managerId);
-      if (batchTimer) {
-        clearTimeout(batchTimer);
-        this.watchdogBatchTimersByManager.delete(managerId);
-      }
-    }
+  private get workerActivityState(): Map<string, WorkerActivityState> {
+    return this.workerHealthService.workerActivityState;
+  }
+
+  private get watchdogTimers(): Map<string, NodeJS.Timeout> {
+    return this.workerHealthService.watchdogTimers;
+  }
+
+  private get watchdogTimerTokens(): Map<string, number> {
+    return this.workerHealthService.watchdogTimerTokens;
+  }
+
+  private get watchdogBatchQueueByManager(): Map<string, Map<string, WatchdogBatchEntry>> {
+    return this.workerHealthService.watchdogBatchQueueByManager;
+  }
+
+  private get watchdogBatchTimersByManager(): Map<string, NodeJS.Timeout> {
+    return this.workerHealthService.watchdogBatchTimersByManager;
   }
 
   private async ensureDirectories(): Promise<void> {

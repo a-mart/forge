@@ -49,6 +49,7 @@ import {
   extractRole
 } from "./message-utils.js";
 import type { VersioningMutation } from "../versioning/versioning-types.js";
+import type { SwarmSpecialistFallbackManager } from "./swarm-specialist-fallback-manager.js";
 
 const MANUAL_MANAGER_STOP_NOTICE = "Session stopped.";
 const RUNTIME_SHUTDOWN_TIMEOUT_MS = 1_500;
@@ -191,7 +192,7 @@ export class SwarmRuntimeController {
   readonly runtimeTokensByAgentId = new Map<string, number>();
   readonly runtimeExtensionSnapshotsByAgentId = new Map<string, AgentRuntimeExtensionSnapshot>();
 
-  private readonly specialistFallbackHandoffsByAgentId = new Map<string, SpecialistFallbackHandoffState>();
+  private specialistFallbackManager: SwarmSpecialistFallbackManager | null = null;
   private readonly trackedToolPathsByAgentId = new Map<string, Map<string, { toolName: string; path: string }>>();
   private nextRuntimeToken = 1;
   private readonly runtimeFactory: RuntimeFactory;
@@ -240,6 +241,10 @@ export class SwarmRuntimeController {
     });
   }
 
+  setSpecialistFallbackManager(manager: SwarmSpecialistFallbackManager): void {
+    this.specialistFallbackManager = manager;
+  }
+
   listRuntimeExtensionSnapshots(): AgentRuntimeExtensionSnapshot[] {
     return Array.from(this.runtimeExtensionSnapshotsByAgentId.values())
       .map((snapshot) => ({
@@ -256,6 +261,10 @@ export class SwarmRuntimeController {
 
   attachRuntime(agentId: string, runtime: SwarmAgentRuntime): void {
     this.runtimes.set(agentId, runtime);
+  }
+
+  clearTrackedToolPaths(agentId: string): void {
+    this.trackedToolPathsByAgentId.delete(agentId);
   }
 
   async createRuntimeForDescriptor(
@@ -364,7 +373,15 @@ export class SwarmRuntimeController {
     pendingCount: number,
     contextUsage?: AgentContextUsage
   ): Promise<void> {
-    if (this.bufferSpecialistFallbackStatusDuringHandoff(agentId, runtimeToken, status, pendingCount, contextUsage)) {
+    if (
+      this.specialistFallbackManager?.bufferStatusDuringHandoff(
+        agentId,
+        runtimeToken,
+        status,
+        pendingCount,
+        contextUsage
+      )
+    ) {
       return;
     }
 
@@ -710,7 +727,7 @@ export class SwarmRuntimeController {
 
     if (
       runtimeToken !== undefined &&
-      this.bufferSpecialistFallbackAgentEndDuringHandoff(agentId, runtimeToken)
+      this.specialistFallbackManager?.bufferAgentEndDuringHandoff(agentId, runtimeToken)
     ) {
       return;
     }
@@ -847,113 +864,16 @@ export class SwarmRuntimeController {
     return this.runtimeTokensByAgentId.get(agentId) === runtimeToken;
   }
 
-  private getSuppressedSpecialistFallbackHandoff(
-    agentId: string,
-    runtimeToken?: number
-  ): SpecialistFallbackHandoffState | undefined {
-    if (runtimeToken === undefined) {
-      return undefined;
-    }
-
-    const handoff = this.specialistFallbackHandoffsByAgentId.get(agentId);
-    if (handoff?.suppressedRuntimeToken === runtimeToken) {
-      return handoff;
-    }
-
-    return undefined;
-  }
-
   private shouldIgnoreRuntimeCallback(agentId: string, runtimeToken?: number): boolean {
     if (runtimeToken === undefined) {
       return false;
     }
 
-    if (this.getSuppressedSpecialistFallbackHandoff(agentId, runtimeToken)) {
+    if (this.specialistFallbackManager?.isSuppressedRuntimeCallback(agentId, runtimeToken)) {
       return true;
     }
 
     return !this.isCurrentRuntimeToken(agentId, runtimeToken);
-  }
-
-  private beginSpecialistFallbackHandoff(agentId: string, suppressedRuntimeToken: number): void {
-    this.specialistFallbackHandoffsByAgentId.set(agentId, {
-      suppressedRuntimeToken,
-      startedAt: this.now()
-    });
-  }
-
-  private bufferSpecialistFallbackStatusDuringHandoff(
-    agentId: string,
-    runtimeToken: number,
-    status: AgentStatus,
-    pendingCount: number,
-    contextUsage?: AgentContextUsage
-  ): boolean {
-    const handoff = this.getSuppressedSpecialistFallbackHandoff(agentId, runtimeToken);
-    if (!handoff) {
-      return false;
-    }
-
-    handoff.bufferedStatus = {
-      status,
-      pendingCount,
-      contextUsage: normalizeContextUsage(contextUsage)
-    };
-    this.specialistFallbackHandoffsByAgentId.set(agentId, handoff);
-    return true;
-  }
-
-  private bufferSpecialistFallbackAgentEndDuringHandoff(agentId: string, runtimeToken: number): boolean {
-    const handoff = this.getSuppressedSpecialistFallbackHandoff(agentId, runtimeToken);
-    if (!handoff) {
-      return false;
-    }
-
-    handoff.receivedAgentEnd = true;
-    this.specialistFallbackHandoffsByAgentId.set(agentId, handoff);
-    return true;
-  }
-
-  private endSpecialistFallbackHandoff(agentId: string, suppressedRuntimeToken?: number): void {
-    const handoff = this.specialistFallbackHandoffsByAgentId.get(agentId);
-    if (!handoff) {
-      return;
-    }
-
-    if (suppressedRuntimeToken !== undefined && handoff.suppressedRuntimeToken !== suppressedRuntimeToken) {
-      return;
-    }
-
-    this.specialistFallbackHandoffsByAgentId.delete(agentId);
-  }
-
-  private async reconcileBufferedSpecialistFallbackCallbacksOnAbort(
-    agentId: string,
-    suppressedRuntimeToken: number | undefined
-  ): Promise<void> {
-    if (suppressedRuntimeToken === undefined) {
-      return;
-    }
-
-    const handoffState = this.getSuppressedSpecialistFallbackHandoff(agentId, suppressedRuntimeToken);
-    this.endSpecialistFallbackHandoff(agentId, suppressedRuntimeToken);
-    if (!handoffState) {
-      return;
-    }
-
-    if (handoffState.bufferedStatus) {
-      await this.handleRuntimeStatus(
-        suppressedRuntimeToken,
-        agentId,
-        handoffState.bufferedStatus.status,
-        handoffState.bufferedStatus.pendingCount,
-        handoffState.bufferedStatus.contextUsage
-      );
-    }
-
-    if (handoffState.receivedAgentEnd) {
-      await this.handleRuntimeAgentEnd(suppressedRuntimeToken, agentId);
-    }
   }
 
   private handleRuntimeExtensionSnapshot(
@@ -1144,36 +1064,7 @@ export class SwarmRuntimeController {
   async resolveSpecialistFallbackModelForDescriptor(
     descriptor: AgentDescriptor
   ): Promise<AgentModelDescriptor | undefined> {
-    if (descriptor.role !== "worker" || !descriptor.specialistId || !descriptor.profileId) {
-      return undefined;
-    }
-
-    const specialistId = normalizeOptionalAgentId(descriptor.specialistId)?.toLowerCase();
-    if (!specialistId) {
-      return undefined;
-    }
-
-    const roster = await this.host.resolveSpecialistRosterForProfile(descriptor.profileId);
-    const specialist = roster.find((entry) => entry.specialistId === specialistId);
-    if (!specialist?.fallbackModelId) {
-      return undefined;
-    }
-
-    const inferredFallbackProvider = inferProviderFromModelId(specialist.fallbackModelId);
-    if (!inferredFallbackProvider) {
-      return undefined;
-    }
-
-    let fallbackModel: AgentModelDescriptor = {
-      provider: inferredFallbackProvider,
-      modelId: specialist.fallbackModelId,
-      thinkingLevel: specialist.fallbackReasoningLevel ?? descriptor.model.thinkingLevel
-    };
-    fallbackModel.thinkingLevel = normalizeThinkingLevelForProvider(
-      fallbackModel.provider,
-      fallbackModel.thinkingLevel
-    );
-    return this.host.resolveSpawnModelWithCapacityFallback(fallbackModel);
+    return this.specialistFallbackManager?.resolveSpecialistFallbackModelForDescriptor(descriptor);
   }
 
   private async maybeRecoverWorkerWithSpecialistFallback(
@@ -1182,441 +1073,14 @@ export class SwarmRuntimeController {
     sourcePhase: "prompt_dispatch" | "prompt_start",
     runtimeToken?: number
   ): Promise<boolean> {
-    const descriptor = this.descriptors.get(agentId);
-    if (!descriptor || descriptor.role !== "worker") {
-      return false;
-    }
-
-    if (!shouldRetrySpecialistSpawnWithFallback(new Error(errorMessage), descriptor.model)) {
-      return false;
-    }
-
-    const currentRuntime = this.runtimes.get(agentId);
-    const suppressedRuntimeToken = runtimeToken ?? this.runtimeTokensByAgentId.get(agentId);
-    if (!currentRuntime) {
-      return false;
-    }
-
-    const previousModel = { ...descriptor.model };
-    const previousStatus = descriptor.status;
-    const previousUpdatedAt = descriptor.updatedAt;
-    const previousStreamingStartedAt = descriptor.streamingStartedAt;
-    const previousContextUsage = descriptor.contextUsage ? { ...descriptor.contextUsage } : undefined;
-    const previousRuntimeSystemPrompt = currentRuntime.getSystemPrompt?.();
-
-    let fallbackModel: AgentModelDescriptor | undefined;
-    let replaySnapshot: SpecialistFallbackReplaySnapshot | undefined;
-    let replacementRuntime: SwarmAgentRuntime | undefined;
-    let replacementRuntimeToken: number | undefined;
-    let runtimeSystemPrompt = "";
-    let recovered = false;
-    let handoffStarted = false;
-    let deferredSettled = false;
-    const fallbackRuntimeDeferred = createDeferred<SwarmAgentRuntime>();
-    fallbackRuntimeDeferred.promise.catch(() => {});
-    const resolveWaiters = (runtime: SwarmAgentRuntime): void => {
-      if (deferredSettled) {
-        return;
-      }
-      deferredSettled = true;
-      fallbackRuntimeDeferred.resolve(runtime);
-    };
-    const rejectWaiters = (reason: unknown): void => {
-      if (deferredSettled) {
-        return;
-      }
-      deferredSettled = true;
-      fallbackRuntimeDeferred.reject(reason);
-    };
-
-    this.runtimeCreationPromisesByAgentId.set(agentId, fallbackRuntimeDeferred.promise);
-
-    if (suppressedRuntimeToken !== undefined) {
-      this.beginSpecialistFallbackHandoff(agentId, suppressedRuntimeToken);
-      handoffStarted = true;
-    }
-
-    try {
-      fallbackModel = await this.host.resolveSpecialistFallbackModelForDescriptor(descriptor);
-      if (!fallbackModel) {
-        await this.reconcileBufferedSpecialistFallbackCallbacksOnAbort(agentId, suppressedRuntimeToken);
-        resolveWaiters(currentRuntime);
-        return false;
-      }
-
-      if (
-        fallbackModel.provider === descriptor.model.provider &&
-        fallbackModel.modelId === descriptor.model.modelId &&
-        fallbackModel.thinkingLevel === descriptor.model.thinkingLevel
-      ) {
-        await this.reconcileBufferedSpecialistFallbackCallbacksOnAbort(agentId, suppressedRuntimeToken);
-        resolveWaiters(currentRuntime);
-        return false;
-      }
-
-      replaySnapshot = await currentRuntime.prepareForSpecialistFallbackReplay?.();
-      if (!replaySnapshot) {
-        await this.reconcileBufferedSpecialistFallbackCallbacksOnAbort(agentId, suppressedRuntimeToken);
-        resolveWaiters(currentRuntime);
-        return false;
-      }
-
-      const fallbackDescriptor: AgentDescriptor = {
-        ...descriptor,
-        model: { ...fallbackModel },
-        status: "idle",
-        updatedAt: this.now(),
-        contextUsage: undefined
-      };
-      delete fallbackDescriptor.streamingStartedAt;
-
-      const baseSystemPrompt = await this.host.resolveSystemPromptForDescriptor(fallbackDescriptor);
-      runtimeSystemPrompt = this.host.injectWorkerIdentityContext(fallbackDescriptor, baseSystemPrompt);
-      replacementRuntime = await this.host.createRuntimeForDescriptor(fallbackDescriptor, runtimeSystemPrompt);
-      replacementRuntimeToken = this.runtimeTokensByAgentId.get(agentId);
-
-      if (!this.isSpecialistFallbackHandoffStillValid(agentId, currentRuntime)) {
-        await this.discardSpecialistFallbackReplacementRuntime(agentId, replacementRuntime, replacementRuntimeToken);
-        rejectWaiters(new Error(`Specialist fallback handoff was cancelled for ${agentId}`));
-        if (suppressedRuntimeToken !== undefined) {
-          this.endSpecialistFallbackHandoff(agentId, suppressedRuntimeToken);
-        }
-        recovered = true;
-        return true;
-      }
-
-      descriptor.model = { ...fallbackDescriptor.model };
-      descriptor.status = fallbackDescriptor.status;
-      descriptor.updatedAt = fallbackDescriptor.updatedAt;
-      descriptor.contextUsage = undefined;
-      delete descriptor.streamingStartedAt;
-      this.descriptors.set(agentId, descriptor);
-      await this.saveStore();
-
-      this.attachRuntime(agentId, replacementRuntime);
-
-      const persistedSystemPrompt = replacementRuntime.getSystemPrompt?.() ?? runtimeSystemPrompt;
-      await this.updateSessionMetaForWorkerDescriptor(descriptor, persistedSystemPrompt);
-      await this.refreshSessionMetaStatsBySessionId(descriptor.managerId);
-
-      this.emitStatus(agentId, descriptor.status, replacementRuntime.getPendingCount(), replacementRuntime.getContextUsage());
-      this.emitAgentsSnapshot();
-
-      if (!this.isSpecialistFallbackHandoffStillValid(agentId, replacementRuntime)) {
-        await this.discardSpecialistFallbackReplacementRuntime(agentId, replacementRuntime, replacementRuntimeToken);
-        rejectWaiters(new Error(`Specialist fallback replay was cancelled for ${agentId}`));
-        if (suppressedRuntimeToken !== undefined) {
-          this.endSpecialistFallbackHandoff(agentId, suppressedRuntimeToken);
-        }
-        recovered = true;
-        return true;
-      }
-
-      this.logDebug("worker:specialist_fallback:rerouted", {
-        agentId,
-        specialistId: descriptor.specialistId,
-        sourcePhase,
-        previousModel,
-        fallbackModel: descriptor.model,
-        message: errorMessage,
-        replayPreview: previewForLog(extractRuntimeMessageText(replaySnapshot.messages[0]), 160),
-        replayMessageCount: replaySnapshot.messages.length
-      });
-
-      await this.replaySpecialistFallbackSnapshot(replacementRuntime, replaySnapshot);
-      resolveWaiters(replacementRuntime);
-      if (suppressedRuntimeToken !== undefined) {
-        this.endSpecialistFallbackHandoff(agentId, suppressedRuntimeToken);
-      }
-
-      void currentRuntime.terminate({ abort: true }).catch((shutdownError) => {
-        this.logDebug("worker:specialist_fallback:previous_runtime_shutdown_error", {
-          agentId,
-          specialistId: descriptor.specialistId,
-          message: shutdownError instanceof Error ? shutdownError.message : String(shutdownError)
-        });
-      });
-
-      recovered = true;
-      return true;
-    } catch (fallbackError) {
-      const failureDisposition = this.getSpecialistFallbackFailureDisposition(
-        agentId,
-        currentRuntime,
-        replacementRuntime,
-        suppressedRuntimeToken
-      );
-      await this.discardSpecialistFallbackReplacementRuntime(agentId, replacementRuntime, replacementRuntimeToken);
-      let rollbackError: unknown;
-      try {
-        if (failureDisposition === "restore_original_runtime") {
-          await currentRuntime.restorePreparedSpecialistFallbackReplay?.();
-          await this.restoreWorkerAfterFailedSpecialistFallback(
-            descriptor,
-            currentRuntime,
-            suppressedRuntimeToken,
-            {
-              previousModel,
-              previousStatus,
-              previousUpdatedAt,
-              previousStreamingStartedAt,
-              previousContextUsage,
-              previousRuntimeSystemPrompt
-            }
-          );
-          resolveWaiters(currentRuntime);
-        } else {
-          await this.terminateSuppressedSpecialistFallbackRuntime(agentId, currentRuntime);
-          rejectWaiters(
-            new Error(
-              failureDisposition === "interrupted"
-                ? `Specialist fallback replay was interrupted for ${agentId}`
-                : `Specialist fallback replay failed and original runtime is unavailable for ${agentId}`
-            )
-          );
-          if (suppressedRuntimeToken !== undefined) {
-            this.endSpecialistFallbackHandoff(agentId, suppressedRuntimeToken);
-          }
-          recovered = failureDisposition === "interrupted";
-        }
-      } catch (restoreError) {
-        rollbackError = restoreError;
-        rejectWaiters(restoreError);
-      }
-
-      this.logDebug("worker:specialist_fallback:failed", {
-        agentId,
-        specialistId: descriptor.specialistId,
-        sourcePhase,
-        previousModel,
-        fallbackModel,
-        message: errorMessage,
-        replayPreview: replaySnapshot
-          ? previewForLog(extractRuntimeMessageText(replaySnapshot.messages[0]), 160)
-          : undefined,
-        replayMessageCount: replaySnapshot?.messages.length ?? 0,
-        failureDisposition,
-        fallbackError: fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
-        rollbackError: rollbackError instanceof Error ? rollbackError.message : String(rollbackError ?? "")
-      });
-      return failureDisposition === "interrupted";
-    } finally {
-      if (handoffStarted && !recovered && suppressedRuntimeToken !== undefined) {
-        this.endSpecialistFallbackHandoff(agentId, suppressedRuntimeToken);
-      }
-
-      if (!deferredSettled) {
-        rejectWaiters(new Error(`Specialist fallback handoff did not settle for ${agentId}`));
-      }
-
-      if (this.runtimeCreationPromisesByAgentId.get(agentId) === fallbackRuntimeDeferred.promise) {
-        this.runtimeCreationPromisesByAgentId.delete(agentId);
-      }
-    }
-  }
-
-  private async replaySpecialistFallbackSnapshot(
-    runtime: SwarmAgentRuntime,
-    replaySnapshot: SpecialistFallbackReplaySnapshot
-  ): Promise<void> {
-    for (const [index, replayMessage] of replaySnapshot.messages.entries()) {
-      await runtime.sendMessage(replayMessage, index === 0 ? "auto" : "steer");
-    }
-  }
-
-  private isSpecialistFallbackHandoffStillValid(
-    agentId: string,
-    expectedRuntime: SwarmAgentRuntime
-  ): boolean {
-    const latestDescriptor = this.descriptors.get(agentId);
-    if (!latestDescriptor || latestDescriptor.role !== "worker") {
-      return false;
-    }
-
-    if (isNonRunningAgentStatus(latestDescriptor.status)) {
-      return false;
-    }
-
-    return this.runtimes.get(agentId) === expectedRuntime;
-  }
-
-  private async discardSpecialistFallbackReplacementRuntime(
-    agentId: string,
-    replacementRuntime: SwarmAgentRuntime | undefined,
-    replacementRuntimeToken: number | undefined
-  ): Promise<void> {
-    if (replacementRuntime) {
-      try {
-        await replacementRuntime.terminate({
-          abort: true,
-          shutdownTimeoutMs: RUNTIME_SHUTDOWN_TIMEOUT_MS,
-          drainTimeoutMs: RUNTIME_SHUTDOWN_DRAIN_TIMEOUT_MS,
-        });
-      } catch (shutdownError) {
-        this.logDebug("worker:specialist_fallback:replacement_runtime_shutdown_error", {
-          agentId,
-          message: shutdownError instanceof Error ? shutdownError.message : String(shutdownError)
-        });
-      }
-    }
-
-    if (replacementRuntimeToken !== undefined) {
-      this.detachRuntime(agentId, replacementRuntimeToken);
-    } else if (replacementRuntime && this.runtimes.get(agentId) === replacementRuntime) {
-      this.runtimes.delete(agentId);
-    }
-  }
-
-  private async terminateSuppressedSpecialistFallbackRuntime(
-    agentId: string,
-    runtime: SwarmAgentRuntime
-  ): Promise<void> {
-    try {
-      await runtime.terminate({
-        abort: true,
-        shutdownTimeoutMs: RUNTIME_SHUTDOWN_TIMEOUT_MS,
-        drainTimeoutMs: RUNTIME_SHUTDOWN_DRAIN_TIMEOUT_MS,
-      });
-    } catch (shutdownError) {
-      this.logDebug("worker:specialist_fallback:suppressed_runtime_shutdown_error", {
-        agentId,
-        message: shutdownError instanceof Error ? shutdownError.message : String(shutdownError)
-      });
-    }
-  }
-
-  private getSpecialistFallbackFailureDisposition(
-    agentId: string,
-    currentRuntime: SwarmAgentRuntime,
-    replacementRuntime: SwarmAgentRuntime | undefined,
-    suppressedRuntimeToken: number | undefined
-  ): "restore_original_runtime" | "interrupted" | "original_runtime_unavailable" {
-    const latestDescriptor = this.descriptors.get(agentId);
-    if (!latestDescriptor || latestDescriptor.role !== "worker") {
-      return "interrupted";
-    }
-
-    if (isNonRunningAgentStatus(latestDescriptor.status)) {
-      return "interrupted";
-    }
-
-    if (replacementRuntime && this.runtimes.get(agentId) !== replacementRuntime) {
-      return "interrupted";
-    }
-
-    const handoffState =
-      suppressedRuntimeToken !== undefined
-        ? this.getSuppressedSpecialistFallbackHandoff(agentId, suppressedRuntimeToken)
-        : undefined;
-    const originalRuntimeStatus = handoffState?.bufferedStatus?.status ?? currentRuntime.getStatus();
-    if (isNonRunningAgentStatus(originalRuntimeStatus)) {
-      return "original_runtime_unavailable";
-    }
-
-    return "restore_original_runtime";
-  }
-
-  private async restoreWorkerAfterFailedSpecialistFallback(
-    descriptor: AgentDescriptor,
-    currentRuntime: SwarmAgentRuntime,
-    suppressedRuntimeToken: number | undefined,
-    previousState: {
-      previousModel: AgentModelDescriptor;
-      previousStatus: AgentStatus;
-      previousUpdatedAt: string;
-      previousStreamingStartedAt?: number;
-      previousContextUsage?: AgentContextUsage;
-      previousRuntimeSystemPrompt?: string | null;
-    }
-  ): Promise<void> {
-    const handoffState =
-      suppressedRuntimeToken !== undefined
-        ? this.getSuppressedSpecialistFallbackHandoff(descriptor.agentId, suppressedRuntimeToken)
-        : undefined;
-    const reconciledStatus = handoffState?.bufferedStatus?.status ?? currentRuntime.getStatus();
-    const reconciledContextUsage =
-      handoffState?.bufferedStatus?.contextUsage ?? currentRuntime.getContextUsage() ?? previousState.previousContextUsage;
-
-    descriptor.model = previousState.previousModel;
-    descriptor.status = reconciledStatus;
-    descriptor.updatedAt = previousState.previousUpdatedAt;
-    descriptor.contextUsage = isNonRunningAgentStatus(reconciledStatus) ? undefined : reconciledContextUsage;
-    if (reconciledStatus === "streaming" && previousState.previousStreamingStartedAt !== undefined) {
-      descriptor.streamingStartedAt = previousState.previousStreamingStartedAt;
-    } else {
-      delete descriptor.streamingStartedAt;
-    }
-    this.descriptors.set(descriptor.agentId, descriptor);
-    this.attachRuntime(descriptor.agentId, currentRuntime);
-    if (suppressedRuntimeToken !== undefined) {
-      this.runtimeTokensByAgentId.set(descriptor.agentId, suppressedRuntimeToken);
-    }
-
-    this.reconcileWorkerRuntimeStateAfterFallbackRollback(descriptor.agentId, reconciledStatus, handoffState);
-
-    try {
-      await this.saveStore();
-    } catch (saveError) {
-      this.logDebug("worker:specialist_fallback:rollback_save_failed", {
-        agentId: descriptor.agentId,
-        specialistId: descriptor.specialistId,
-        message: saveError instanceof Error ? saveError.message : String(saveError)
-      });
-    }
-
-    await this.updateSessionMetaForWorkerDescriptor(
-      descriptor,
-      previousState.previousRuntimeSystemPrompt ?? undefined
-    );
-    await this.refreshSessionMetaStatsBySessionId(descriptor.managerId);
-
-    this.emitStatus(
-      descriptor.agentId,
-      descriptor.status,
-      handoffState?.bufferedStatus?.pendingCount ?? currentRuntime.getPendingCount(),
-      descriptor.contextUsage
-    );
-    this.emitAgentsSnapshot();
-  }
-
-  private reconcileWorkerRuntimeStateAfterFallbackRollback(
-    agentId: string,
-    restoredStatus: AgentStatus,
-    handoffState?: SpecialistFallbackHandoffState
-  ): void {
-    if (restoredStatus === "streaming") {
-      if (!this.workerStallState.has(agentId)) {
-        this.workerStallState.set(agentId, {
-          lastProgressAt: Date.now(),
-          nudgeSent: false,
-          nudgeSentAt: null,
-          lastToolName: null,
-          lastToolInput: null,
-          lastToolOutput: null,
-          lastDetailedReportAt: null
-        });
-      }
-    } else {
-      this.workerStallState.delete(agentId);
-      this.workerActivityState.delete(agentId);
-    }
-
-    if (!handoffState?.receivedAgentEnd) {
-      return;
-    }
-
-    this.trackedToolPathsByAgentId.delete(agentId);
-
-    const watchdogState = this.getOrCreateWorkerWatchdogState(agentId);
-    watchdogState.turnSeq += 1;
-    watchdogState.reportedThisTurn = false;
-    watchdogState.pendingReportTurnSeq = null;
-    watchdogState.deferredFinalizeTurnSeq = null;
-    watchdogState.hadStreamingThisTurn = false;
-    watchdogState.lastFinalizedTurnSeq = watchdogState.turnSeq;
-    this.workerWatchdogState.set(agentId, watchdogState);
-
-    this.watchdogTimerTokens.set(agentId, (this.watchdogTimerTokens.get(agentId) ?? 0) + 1);
-    this.clearWatchdogTimer(agentId);
+    return this.specialistFallbackManager?.maybeRecoverWorkerWithSpecialistFallback({
+      agentId,
+      errorMessage,
+      sourcePhase,
+      runtimeToken,
+      handleRuntimeStatus: (token, targetAgentId, status, pendingCount, contextUsage) =>
+        this.handleRuntimeStatus(token, targetAgentId, status, pendingCount, contextUsage),
+      handleRuntimeAgentEnd: (token, targetAgentId) => this.handleRuntimeAgentEnd(token, targetAgentId)
+    }) ?? false;
   }
 }
