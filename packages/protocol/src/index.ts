@@ -1,4 +1,5 @@
 export * from './attachments.js'
+export * from './chrome-cdp.js'
 export * from './client-commands.js'
 export * from './cortex-auto-review.js'
 export * from './feedback.js'

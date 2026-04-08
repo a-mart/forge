@@ -9,12 +9,17 @@ import type {
   SettingsAuthOAuthFlowState,
   TelegramSettingsConfig,
   SkillInfo,
-  ChromeCdpConfig,
-  ChromeCdpStatus,
-  ChromeCdpProfile,
-  ChromeCdpPreviewTab,
 } from './settings-types'
-import type { TelegramStatusEvent, SettingsExtensionsResponse, CredentialPoolState, CredentialPoolStrategy } from '@forge/protocol'
+import type {
+  ChromeCdpConfig,
+  ChromeCdpPreviewTab,
+  ChromeCdpProfile,
+  ChromeCdpStatus,
+  TelegramStatusEvent,
+  SettingsExtensionsResponse,
+  CredentialPoolState,
+  CredentialPoolStrategy,
+} from '@forge/protocol'
 import { SHARED_INTEGRATION_MANAGER_ID } from '@forge/protocol'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
 
