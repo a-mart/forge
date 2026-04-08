@@ -1,12 +1,6 @@
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
-import { homedir, tmpdir } from "node:os";
 import type { ServerEvent } from "@forge/protocol";
-import {
-  isPathWithinRoots,
-  normalizeAllowlistRoots,
-  resolveDirectoryPath
-} from "../../../swarm/cwd-policy.js";
 import { writeTrackedCortexPromptSurfaceFile } from "../../../swarm/cortex-prompt-surfaces.js";
 import type { SwarmManager } from "../../../swarm/swarm-manager.js";
 import {
@@ -15,6 +9,11 @@ import {
   resolveReadFileContentType,
   sendJson
 } from "../../http-utils.js";
+import {
+  MAX_READ_FILE_CONTENT_BYTES,
+  resolveLegacyWriteFilePath,
+  resolveReadFilePath,
+} from "../../ws-file-access.js";
 import type { HttpRoute } from "../shared/http-route.js";
 
 const ATTACHMENT_ENDPOINT_PREFIX = "/api/attachments/";
@@ -22,79 +21,10 @@ const ATTACHMENT_METHODS = "GET, OPTIONS";
 const READ_FILE_ENDPOINT_PATH = "/api/read-file";
 const READ_FILE_METHODS = "GET, POST, OPTIONS";
 const MAX_READ_FILE_BODY_BYTES = 64 * 1024;
-const MAX_READ_FILE_CONTENT_BYTES = 2 * 1024 * 1024;
 
 const WRITE_FILE_ENDPOINT_PATH = "/api/write-file";
 const WRITE_FILE_METHODS = "POST, OPTIONS";
 const MAX_WRITE_FILE_BODY_BYTES = 2 * 1024 * 1024;
-
-interface FileAccessContext {
-  rootDir: string;
-  allowedRoots: string[];
-}
-
-export function normalizeFileAccessPath(pathValue: string): string {
-  const trimmed = pathValue.trim();
-  if (!trimmed) {
-    return "";
-  }
-
-  if (/^\/+[A-Za-z]:[\\/]/.test(trimmed)) {
-    return trimmed.replace(/^\/+/, "");
-  }
-
-  return trimmed;
-}
-
-function resolveFileAccessContext(swarmManager: SwarmManager, agentId?: string): FileAccessContext {
-  const config = swarmManager.getConfig();
-  const normalizedAgentId = agentId?.trim();
-  const baseAllowedRoots = [config.paths.dataDir, config.paths.uploadsDir];
-
-  if (!normalizedAgentId) {
-    return {
-      rootDir: config.paths.rootDir,
-      allowedRoots: normalizeAllowlistRoots([
-        ...config.cwdAllowlistRoots,
-        config.paths.rootDir,
-        ...baseAllowedRoots,
-      ])
-    };
-  }
-
-  const descriptor = swarmManager.getAgent(normalizedAgentId);
-  if (!descriptor) {
-    throw new Error(`Unknown agent: ${normalizedAgentId}`);
-  }
-
-  const contextualRoots = [descriptor.cwd];
-  if (descriptor.role === "worker") {
-    const owner = swarmManager.getAgent(descriptor.managerId);
-    if (owner?.role === "manager") {
-      contextualRoots.push(owner.cwd);
-    }
-  }
-
-  return {
-    rootDir: descriptor.cwd,
-    allowedRoots: normalizeAllowlistRoots([...contextualRoots, ...baseAllowedRoots])
-  };
-}
-
-function resolveLegacyFileAccessContext(swarmManager: SwarmManager): FileAccessContext {
-  const config = swarmManager.getConfig();
-  return {
-    rootDir: config.paths.rootDir,
-    allowedRoots: normalizeAllowlistRoots([
-      ...config.cwdAllowlistRoots,
-      config.paths.rootDir,
-      config.paths.dataDir,
-      config.paths.uploadsDir,
-      homedir(),
-      tmpdir(),
-    ])
-  };
-}
 
 export function createFileRoutes(options: {
   swarmManager: SwarmManager;
@@ -103,65 +33,13 @@ export function createFileRoutes(options: {
   const { swarmManager, broadcastEvent } = options;
 
   const resolveAllowedPath = async (requestedPath: string, agentId?: string): Promise<string> => {
-    const accessContext = resolveFileAccessContext(swarmManager, agentId);
-    const normalizedRequestedPath = normalizeFileAccessPath(requestedPath);
-    const resolvedPath = resolveDirectoryPath(normalizedRequestedPath, accessContext.rootDir);
-
-    if (await isPathWithinRoots(resolvedPath, accessContext.allowedRoots)) {
-      return resolvedPath;
-    }
-
-    let existingAncestor = resolvedPath;
-    while (true) {
-      try {
-        await stat(existingAncestor);
-        break;
-      } catch {
-        const parentPath = dirname(existingAncestor);
-        if (parentPath === existingAncestor) {
-          break;
-        }
-
-        existingAncestor = parentPath;
-      }
-    }
-
-    if (!(await isPathWithinRoots(existingAncestor, accessContext.allowedRoots))) {
-      throw new Error("Path is outside allowed roots.");
-    }
-
-    return resolvedPath;
+    return resolveReadFilePath(requestedPath, swarmManager, agentId, {
+      includeCwdAllowlistRootsForAgent: false,
+    });
   };
 
   const resolveWriteAllowedPath = async (requestedPath: string): Promise<string> => {
-    const accessContext = resolveLegacyFileAccessContext(swarmManager);
-    const normalizedRequestedPath = normalizeFileAccessPath(requestedPath);
-    const resolvedPath = resolveDirectoryPath(normalizedRequestedPath, accessContext.rootDir);
-
-    if (await isPathWithinRoots(resolvedPath, accessContext.allowedRoots)) {
-      return resolvedPath;
-    }
-
-    let existingAncestor = resolvedPath;
-    while (true) {
-      try {
-        await stat(existingAncestor);
-        break;
-      } catch {
-        const parentPath = dirname(existingAncestor);
-        if (parentPath === existingAncestor) {
-          break;
-        }
-
-        existingAncestor = parentPath;
-      }
-    }
-
-    if (!(await isPathWithinRoots(existingAncestor, accessContext.allowedRoots))) {
-      throw new Error("Path is outside allowed roots.");
-    }
-
-    return resolvedPath;
+    return resolveLegacyWriteFilePath(requestedPath, swarmManager);
   };
 
   const resolveAttachmentPath = (fileRef: string): string => {
