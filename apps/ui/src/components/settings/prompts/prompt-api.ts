@@ -7,9 +7,11 @@ import type {
   CortexPromptSurfaceContentResponse,
   CortexPromptSurfaceListResponse,
   PromptCategory,
-  PromptSourceLayer,
-  PromptListEntry,
   PromptContentResponse,
+  PromptListEntry,
+  PromptPreviewResponse,
+  PromptPreviewSection,
+  PromptSourceLayer,
 } from '@forge/protocol'
 
 async function readApiError(response: Response): Promise<string> {
@@ -77,15 +79,7 @@ export async function savePromptOverride(
   if (!response.ok) throw new Error(await readApiError(response))
 }
 
-export interface PromptPreviewSection {
-  label: string
-  content: string
-  source: string
-}
-
-export interface PromptPreviewResponse {
-  sections: PromptPreviewSection[]
-}
+export type { PromptPreviewResponse, PromptPreviewSection } from '@forge/protocol'
 
 export async function fetchPromptPreview(
   wsUrl: string | undefined,

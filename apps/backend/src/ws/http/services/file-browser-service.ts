@@ -2,6 +2,13 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { basename, extname, relative, resolve } from "node:path";
+import type {
+  FileContentResult,
+  FileCountResult,
+  FileEntry,
+  FileListResult,
+  FileSearchResult,
+} from "@forge/protocol";
 import { isPathWithinRoots } from "../../../swarm/cwd-policy.js";
 import { GitCli } from "../../../versioning/git-cli.js";
 
@@ -21,13 +28,6 @@ const NON_GIT_EXCLUDED_NAMES = new Set([
   "Thumbs.db"
 ]);
 
-export interface FileBrowserEntry {
-  name: string;
-  type: "file" | "directory";
-  size?: number;
-  extension?: string;
-}
-
 export interface RepoMetadata {
   isGitRepo: boolean;
   repoName: string;
@@ -41,35 +41,8 @@ interface RepoContext {
   repoRoot?: string;
 }
 
-export interface DirectoryListResult {
-  cwd: string;
-  path: string;
-  entries: FileBrowserEntry[];
-  isGitRepo?: boolean;
-  repoName?: string;
-  branch?: string | null;
-}
-
-export interface FileCountResult {
-  count: number;
-  method: "git" | "none";
-}
-
-export interface FileSearchResult {
-  results: Array<{ path: string; type: "file" }>;
-  totalMatches: number;
-  unavailable?: true;
-}
-
-export interface FileContentResult {
-  content: string | null;
-  binary: boolean;
-  size: number;
-  lines?: number;
-}
-
 export class FileBrowserService {
-  async listDirectory(cwd: string, relativePath: string): Promise<DirectoryListResult> {
+  async listDirectory(cwd: string, relativePath: string): Promise<FileListResult> {
     const normalizedCwd = resolve(cwd);
     const normalizedRelativePath = normalizeRelativePath(relativePath);
     const resolvedPath = await this.resolvePathWithinCwd(normalizedCwd, normalizedRelativePath);
@@ -121,7 +94,7 @@ export class FileBrowserService {
           ignoredNames
         }))
       )
-    ).filter((entry): entry is FileBrowserEntry => entry !== null);
+    ).filter((entry): entry is FileEntry => entry !== null);
 
     entries.sort((left, right) => {
       if (left.type !== right.type) {
@@ -131,7 +104,7 @@ export class FileBrowserService {
       return left.name.localeCompare(right.name, undefined, { sensitivity: "base" });
     });
 
-    const base: DirectoryListResult = {
+    const base: FileListResult = {
       cwd: normalizedCwd,
       path: normalizedRelativePath,
       entries
@@ -315,7 +288,7 @@ export class FileBrowserService {
     parentDir: string;
     isGitRepo: boolean;
     ignoredNames: Set<string>;
-  }): Promise<FileBrowserEntry | null> {
+  }): Promise<FileEntry | null> {
     const { entry, cwd, parentDir, isGitRepo, ignoredNames } = options;
     const name = entry.name;
 
@@ -366,7 +339,7 @@ export class FileBrowserService {
     return null;
   }
 
-  private async resolveSymlinkEntry(absolutePath: string, name: string, cwd: string): Promise<FileBrowserEntry | null> {
+  private async resolveSymlinkEntry(absolutePath: string, name: string, cwd: string): Promise<FileEntry | null> {
     let targetStats;
     try {
       targetStats = await stat(absolutePath);

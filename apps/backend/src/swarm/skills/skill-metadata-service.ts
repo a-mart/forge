@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { SkillSourceKind } from "@forge/protocol";
 import { getProfilePiSkillsDir } from "../data-paths.js";
 import { parseSkillFrontmatter, type ParsedSkillEnvDeclaration } from "./skill-frontmatter.js";
 import type { SwarmConfig } from "../types.js";
@@ -24,7 +25,7 @@ const SKILL_METADATA_SERVICE_DIR = fileURLToPath(new URL(".", import.meta.url));
 const BACKEND_PACKAGE_DIR = resolve(SKILL_METADATA_SERVICE_DIR, "..", "..", "..");
 const BUILT_IN_SKILLS_FALLBACK_DIR = resolve(BACKEND_PACKAGE_DIR, "src", "swarm", "skills", "builtins");
 
-export type SkillSourceKind = "builtin" | "repo" | "machine-local" | "profile";
+export type { SkillSourceKind } from "@forge/protocol";
 
 export interface SkillMetadata {
   skillId: string;

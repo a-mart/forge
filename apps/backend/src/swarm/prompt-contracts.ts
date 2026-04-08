@@ -1,4 +1,11 @@
-import type { PromptCategory, PromptSourceLayer } from "@forge/protocol";
+import type {
+  PromptCategory,
+  PromptPreviewResponse,
+  PromptPreviewSection,
+  PromptSourceLayer,
+} from "@forge/protocol";
+
+export type { PromptPreviewResponse, PromptPreviewSection } from "@forge/protocol";
 
 export interface PromptEntry {
   category: PromptCategory;
@@ -55,16 +62,6 @@ export interface PromptRegistryWriter {
 export interface PromptRegistryContract extends PromptRegistryReader, PromptRegistryWriter {}
 
 export type PromptRegistryForRoutes = PromptRegistryContract;
-
-export interface PromptPreviewSection {
-  label: string;
-  content: string;
-  source: string;
-}
-
-export interface PromptPreviewResponse {
-  sections: PromptPreviewSection[];
-}
 
 export interface PromptPreviewProvider {
   previewManagerSystemPrompt(profileId: string): Promise<PromptPreviewResponse>;

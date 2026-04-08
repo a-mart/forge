@@ -1,5 +1,10 @@
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { basename, extname, isAbsolute, relative, resolve, win32 } from "node:path";
+import type {
+  SkillFileContentResponse,
+  SkillFileEntry,
+  SkillFilesResponse,
+} from "@forge/protocol";
 import { isPathWithinRoots } from "../cwd-policy.js";
 import type { SkillMetadata } from "./skill-metadata-service.js";
 
@@ -7,33 +12,8 @@ const BINARY_SNIFF_BYTES = 8 * 1024;
 const MAX_FILE_CONTENT_BYTES = 2 * 1024 * 1024;
 const FILTERED_ENTRY_NAMES = new Set([".DS_Store", "node_modules", ".git"]);
 
-export interface SkillFileEntry {
-  name: string;
-  path: string;
-  absolutePath: string;
-  type: "file" | "directory";
-  size?: number;
-  extension?: string;
-}
-
-export interface SkillFileListResult {
-  skillId: string;
-  rootPath: string;
-  path: string;
-  entries: SkillFileEntry[];
-}
-
-export interface SkillFileContentResult {
-  path: string;
-  absolutePath: string;
-  content: string | null;
-  binary: boolean;
-  size: number;
-  lines?: number;
-}
-
 export class SkillFileService {
-  async listDirectory(skill: SkillMetadata, relativePath: string): Promise<SkillFileListResult> {
+  async listDirectory(skill: SkillMetadata, relativePath: string): Promise<SkillFilesResponse> {
     const normalizedRelativePath = normalizeRelativeSkillPath(relativePath, { allowEmpty: true });
     const resolvedPath = await this.resolvePathWithinSkillRoot(skill.rootPath, normalizedRelativePath);
 
@@ -93,7 +73,7 @@ export class SkillFileService {
     };
   }
 
-  async getFileContent(skill: SkillMetadata, relativePath: string): Promise<SkillFileContentResult> {
+  async getFileContent(skill: SkillMetadata, relativePath: string): Promise<SkillFileContentResponse> {
     const normalizedRelativePath = normalizeRelativeSkillPath(relativePath, { allowEmpty: false });
     const resolvedPath = await this.resolvePathWithinSkillRoot(skill.rootPath, normalizedRelativePath);
 

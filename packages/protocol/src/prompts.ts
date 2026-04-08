@@ -26,6 +26,16 @@ export interface PromptContentResponse {
   variables: PromptVariableDeclaration[]
 }
 
+export interface PromptPreviewSection {
+  label: string
+  content: string
+  source: string
+}
+
+export interface PromptPreviewResponse {
+  sections: PromptPreviewSection[]
+}
+
 export type CortexPromptSurfaceKind = 'registry' | 'file'
 export type CortexPromptSurfaceGroup = 'system' | 'seed' | 'live' | 'scratch'
 export type CortexPromptSurfaceRuntimeEffect =

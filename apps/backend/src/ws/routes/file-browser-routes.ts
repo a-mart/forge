@@ -1,3 +1,9 @@
+import type {
+  FileContentResult,
+  FileCountResult,
+  FileListResult,
+  FileSearchResult,
+} from "@forge/protocol";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
 import { applyCorsHeaders, sendJson } from "../http-utils.js";
 import { FileBrowserService } from "./file-browser-service.js";
@@ -50,12 +56,14 @@ export function createFileBrowserRoutes(options: { swarmManager: SwarmManager })
       const agentId = requireNonEmptyQuery(requestUrl.searchParams, "agentId");
       const requestedPath = requestUrl.searchParams.get("path")?.trim() ?? "";
       const cwd = resolveCwdFromAgent(swarmManager, agentId);
-      return service.listDirectory(cwd, requestedPath);
+      const result: FileListResult = await service.listDirectory(cwd, requestedPath);
+      return result;
     }),
     handleGet("/api/files/count", async (requestUrl) => {
       const agentId = requireNonEmptyQuery(requestUrl.searchParams, "agentId");
       const cwd = resolveCwdFromAgent(swarmManager, agentId);
-      return service.getFileCount(cwd);
+      const result: FileCountResult = await service.getFileCount(cwd);
+      return result;
     }),
     handleGet("/api/files/search", async (requestUrl) => {
       const agentId = requireNonEmptyQuery(requestUrl.searchParams, "agentId");
@@ -68,13 +76,15 @@ export function createFileBrowserRoutes(options: { swarmManager: SwarmManager })
         "limit"
       );
       const cwd = resolveCwdFromAgent(swarmManager, agentId);
-      return service.searchFiles(cwd, query, limit);
+      const result: FileSearchResult = await service.searchFiles(cwd, query, limit);
+      return result;
     }),
     handleGet("/api/files/content", async (requestUrl) => {
       const agentId = requireNonEmptyQuery(requestUrl.searchParams, "agentId");
       const filePath = requireNonEmptyQuery(requestUrl.searchParams, "path");
       const cwd = resolveCwdFromAgent(swarmManager, agentId);
-      return service.getFileContent(cwd, filePath);
+      const result: FileContentResult = await service.getFileContent(cwd, filePath);
+      return result;
     })
   ];
 }

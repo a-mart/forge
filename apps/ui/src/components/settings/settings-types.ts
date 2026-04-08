@@ -3,6 +3,9 @@ import type {
   ChromeCdpPreviewTab,
   ChromeCdpProfile,
   ChromeCdpStatus,
+  SettingsAuthProvider,
+  SettingsAuthProviderId,
+  SettingsEnvVariable,
 } from '@forge/protocol'
 
 /* ------------------------------------------------------------------ */
@@ -16,23 +19,10 @@ export type {
   ChromeCdpStatus,
 }
 
-export interface SettingsEnvVariable {
-  name: string
-  description?: string
-  required: boolean
-  helpUrl?: string
-  skillName: string
-  isSet: boolean
-  maskedValue?: string
-}
-
-export type SettingsAuthProviderId = 'anthropic' | 'openai-codex' | 'xai' | 'openrouter'
-
-export interface SettingsAuthProvider {
-  provider: SettingsAuthProviderId
-  configured: boolean
-  authType?: 'api_key' | 'oauth' | 'unknown'
-  maskedValue?: string
+export type {
+  SettingsAuthProvider,
+  SettingsAuthProviderId,
+  SettingsEnvVariable,
 }
 
 export type SettingsAuthOAuthFlowStatus =

@@ -1,4 +1,9 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import type {
+  SkillFileContentResponse,
+  SkillFilesResponse,
+  SkillInventoryResponse,
+} from "@forge/protocol";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
 import { applyCorsHeaders, sendJson } from "../http-utils.js";
 import type { HttpRoute } from "./http-route.js";
@@ -55,7 +60,8 @@ async function handleSkillHttpRequest(
     }
 
     const skills = await swarmManager.listSkillMetadata(profileId);
-    sendJson(response, 200, { skills });
+    const payload: SkillInventoryResponse = { skills };
+    sendJson(response, 200, payload as unknown as Record<string, unknown>);
     return;
   }
 
@@ -63,8 +69,8 @@ async function handleSkillHttpRequest(
     const parsedRoute = parseSkillRoutePath(requestUrl.pathname);
     if (parsedRoute?.action === "files") {
       const relativePath = requestUrl.searchParams.get("path") ?? "";
-      const result = await swarmManager.listSkillFiles(parsedRoute.skillId, relativePath);
-      sendJson(response, 200, result);
+      const result: SkillFilesResponse = await swarmManager.listSkillFiles(parsedRoute.skillId, relativePath);
+      sendJson(response, 200, result as unknown as Record<string, unknown>);
       return;
     }
 
@@ -75,8 +81,8 @@ async function handleSkillHttpRequest(
         return;
       }
 
-      const result = await swarmManager.getSkillFileContent(parsedRoute.skillId, relativePath);
-      sendJson(response, 200, result);
+      const result: SkillFileContentResponse = await swarmManager.getSkillFileContent(parsedRoute.skillId, relativePath);
+      sendJson(response, 200, result as unknown as Record<string, unknown>);
       return;
     }
   }

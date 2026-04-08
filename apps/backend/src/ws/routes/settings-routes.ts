@@ -7,7 +7,16 @@ import {
 } from "@mariozechner/pi-ai/oauth";
 import { AuthStorage } from "@mariozechner/pi-coding-agent";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { CredentialPoolStrategy } from "@forge/protocol";
+import type {
+  CredentialPoolStrategy,
+  SettingsAuthLoginEventName,
+  SettingsAuthLoginEventPayload,
+  SettingsAuthLoginProviderId,
+  SettingsAuthMutationResponse,
+  SettingsAuthResponse,
+  SettingsEnvMutationResponse,
+  SettingsEnvResponse,
+} from "@forge/protocol";
 import { ensureCanonicalAuthFilePath } from "../../swarm/auth-storage-paths.js";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
 import {
@@ -24,20 +33,8 @@ const SETTINGS_AUTH_LOGIN_METHODS = "POST, OPTIONS";
 const SETTINGS_AUTH_METHODS = "GET, PUT, DELETE, POST, OPTIONS";
 const OPENAI_CODEX_POOL_ADD_FLOW_KEY = "openai-codex:pool-add";
 
-type OAuthLoginProviderId = "anthropic" | "openai-codex";
-
-type SettingsAuthLoginEventName = "auth_url" | "prompt" | "progress" | "complete" | "error";
-
-type SettingsAuthLoginEventPayload = {
-  auth_url: { url: string; instructions?: string };
-  prompt: { message: string; placeholder?: string };
-  progress: { message: string };
-  complete: { provider: OAuthLoginProviderId; status: "connected" };
-  error: { message: string };
-};
-
 interface SettingsAuthLoginFlow {
-  providerId: OAuthLoginProviderId;
+  providerId: SettingsAuthLoginProviderId;
   pendingPrompt:
     | {
         resolve: (value: string) => void;
@@ -48,7 +45,7 @@ interface SettingsAuthLoginFlow {
   closed: boolean;
 }
 
-const SETTINGS_AUTH_LOGIN_PROVIDERS: Record<OAuthLoginProviderId, OAuthProviderInterface> = {
+const SETTINGS_AUTH_LOGIN_PROVIDERS: Record<SettingsAuthLoginProviderId, OAuthProviderInterface> = {
   anthropic: anthropicOAuthProvider,
   "openai-codex": openaiCodexOAuthProvider
 };
@@ -121,7 +118,8 @@ async function handleSettingsEnvHttpRequest(
   if (request.method === "GET" && requestUrl.pathname === SETTINGS_ENV_ENDPOINT_PATH) {
     applyCorsHeaders(request, response, methods);
     const variables = await swarmManager.listSettingsEnv();
-    sendJson(response, 200, { variables });
+    const payload: SettingsEnvResponse = { variables };
+    sendJson(response, 200, payload as unknown as Record<string, unknown>);
     return;
   }
 
@@ -130,7 +128,8 @@ async function handleSettingsEnvHttpRequest(
     const payload = parseSettingsEnvUpdateBody(await readJsonBody(request));
     await swarmManager.updateSettingsEnv(payload);
     const variables = await swarmManager.listSettingsEnv();
-    sendJson(response, 200, { ok: true, variables });
+    const responsePayload: SettingsEnvMutationResponse = { ok: true, variables };
+    sendJson(response, 200, responsePayload as unknown as Record<string, unknown>);
     return;
   }
 
@@ -144,7 +143,8 @@ async function handleSettingsEnvHttpRequest(
 
     await swarmManager.deleteSettingsEnv(variableName);
     const variables = await swarmManager.listSettingsEnv();
-    sendJson(response, 200, { ok: true, variables });
+    const payload: SettingsEnvMutationResponse = { ok: true, variables };
+    sendJson(response, 200, payload as unknown as Record<string, unknown>);
     return;
   }
 
@@ -195,7 +195,8 @@ async function handleSettingsAuthHttpRequest(
   if (request.method === "GET" && requestUrl.pathname === SETTINGS_AUTH_ENDPOINT_PATH) {
     applyCorsHeaders(request, response, methods);
     const providers = await swarmManager.listSettingsAuth();
-    sendJson(response, 200, { providers });
+    const payload: SettingsAuthResponse = { providers };
+    sendJson(response, 200, payload as unknown as Record<string, unknown>);
     return;
   }
 
@@ -204,7 +205,8 @@ async function handleSettingsAuthHttpRequest(
     const payload = parseSettingsAuthUpdateBody(await readJsonBody(request));
     await swarmManager.updateSettingsAuth(payload);
     const providers = await swarmManager.listSettingsAuth();
-    sendJson(response, 200, { ok: true, providers });
+    const responsePayload: SettingsAuthMutationResponse = { ok: true, providers };
+    sendJson(response, 200, responsePayload as unknown as Record<string, unknown>);
     return;
   }
 
@@ -223,7 +225,8 @@ async function handleSettingsAuthHttpRequest(
 
     await swarmManager.deleteSettingsAuth(provider);
     const providers = await swarmManager.listSettingsAuth();
-    sendJson(response, 200, { ok: true, providers });
+    const payload: SettingsAuthMutationResponse = { ok: true, providers };
+    sendJson(response, 200, payload as unknown as Record<string, unknown>);
     return;
   }
 
@@ -871,7 +874,7 @@ function parseSettingsAuthLoginRespondBody(value: unknown): { value: string } {
   return { value: normalized };
 }
 
-function resolveSettingsAuthLoginProviderId(rawProvider: string): OAuthLoginProviderId | undefined {
+function resolveSettingsAuthLoginProviderId(rawProvider: string): SettingsAuthLoginProviderId | undefined {
   const normalized = rawProvider.trim().toLowerCase();
   if (normalized === "anthropic" || normalized === "openai-codex") {
     return normalized;

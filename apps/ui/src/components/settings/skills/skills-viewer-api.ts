@@ -4,10 +4,11 @@
 
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
 import type {
-  SkillInventoryEntry,
-  SkillFilesResponse,
   SkillFileContentResponse,
-} from './skills-viewer-types'
+  SkillFilesResponse,
+  SkillInventoryEntry,
+  SkillInventoryResponse,
+} from '@forge/protocol'
 
 const SKILLS_FETCH_OPTIONS = { cache: 'no-store' } as const
 
@@ -38,7 +39,7 @@ export async function fetchSkillInventory(
   }
   const response = await fetch(endpoint, SKILLS_FETCH_OPTIONS)
   if (!response.ok) throw new Error(await readApiError(response))
-  const payload = (await response.json()) as { skills?: unknown }
+  const payload = (await response.json()) as Partial<SkillInventoryResponse>
   if (!payload || !Array.isArray(payload.skills)) return []
   return payload.skills as SkillInventoryEntry[]
 }

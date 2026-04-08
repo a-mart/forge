@@ -16,12 +16,17 @@ import type {
   CortexReviewRunTrigger,
   OnboardingState,
   PersistedProjectAgentConfig,
+  PromptPreviewResponse,
+  PromptPreviewSection,
   ServerEvent,
   SessionMemoryMergeAttemptStatus,
   SessionMemoryMergeFailureStage,
   SessionMemoryMergeResult,
   SessionMemoryMergeStrategy,
-  SessionMeta
+  SessionMeta,
+  SkillFileContentResponse,
+  SkillFilesResponse,
+  SkillInventoryEntry
 } from "@forge/protocol";
 import { persistConversationAttachments } from "../ws/attachment-parser.js";
 import type { VersioningMutation, VersioningMutationSink } from "../versioning/versioning-types.js";
@@ -32,7 +37,6 @@ import {
   type PromptCategory,
   type PromptRegistry
 } from "./prompt-registry.js";
-import type { PromptPreviewResponse, PromptPreviewSection } from "./prompt-contracts.js";
 import { ConversationProjector } from "./conversation-projector.js";
 import {
   getCommonKnowledgePath,
@@ -5669,22 +5673,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return this.secretsEnvService.listSettingsEnv();
   }
 
-  async listSkillMetadata(profileId?: string): Promise<
-    Array<{
-      skillId: string;
-      name: string;
-      directoryName: string;
-      description?: string;
-      envCount: number;
-      hasRichConfig: boolean;
-      sourceKind: "builtin" | "repo" | "machine-local" | "profile";
-      profileId?: string;
-      rootPath: string;
-      skillFilePath: string;
-      isInherited: boolean;
-      isEffective: boolean;
-    }>
-  > {
+  async listSkillMetadata(profileId?: string): Promise<SkillInventoryEntry[]> {
     await this.skillMetadataService.reloadSkillMetadata();
 
     let metadata;
@@ -5719,19 +5708,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       });
   }
 
-  async listSkillFiles(skillId: string, relativePath = ""): Promise<{
-    skillId: string;
-    rootPath: string;
-    path: string;
-    entries: Array<{
-      name: string;
-      path: string;
-      absolutePath: string;
-      type: "file" | "directory";
-      size?: number;
-      extension?: string;
-    }>;
-  }> {
+  async listSkillFiles(skillId: string, relativePath = ""): Promise<SkillFilesResponse> {
     const skill = await this.skillMetadataService.resolveSkillById(skillId);
     if (!skill) {
       throw new Error("Unknown skill.");
@@ -5740,14 +5717,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return this.skillFileService.listDirectory(skill, relativePath);
   }
 
-  async getSkillFileContent(skillId: string, relativePath: string): Promise<{
-    path: string;
-    absolutePath: string;
-    content: string | null;
-    binary: boolean;
-    size: number;
-    lines?: number;
-  }> {
+  async getSkillFileContent(skillId: string, relativePath: string): Promise<SkillFileContentResponse> {
     const skill = await this.skillMetadataService.resolveSkillById(skillId);
     if (!skill) {
       throw new Error("Unknown skill.");

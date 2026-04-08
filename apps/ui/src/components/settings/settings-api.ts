@@ -3,9 +3,6 @@
 /* ------------------------------------------------------------------ */
 
 import type {
-  SettingsEnvVariable,
-  SettingsAuthProviderId,
-  SettingsAuthProvider,
   SettingsAuthOAuthFlowState,
   TelegramSettingsConfig,
   SkillInfo,
@@ -16,9 +13,21 @@ import type {
   ChromeCdpProfile,
   ChromeCdpStatus,
   TelegramStatusEvent,
+  SettingsAuthLoginAuthUrlEvent,
+  SettingsAuthLoginCompleteEvent,
+  SettingsAuthLoginEventName,
+  SettingsAuthLoginProgressEvent,
+  SettingsAuthLoginPromptEvent,
+  SettingsAuthLoginProviderId,
+  SettingsAuthProvider,
+  SettingsAuthProviderId,
+  SettingsAuthResponse,
+  SettingsEnvResponse,
+  SettingsEnvVariable,
   SettingsExtensionsResponse,
   CredentialPoolState,
   CredentialPoolStrategy,
+  SkillInventoryResponse,
 } from '@forge/protocol'
 import { SHARED_INTEGRATION_MANAGER_ID } from '@forge/protocol'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
@@ -86,6 +95,11 @@ function normalizeSettingsAuthProviderId(value: unknown): SettingsAuthProviderId
   return undefined
 }
 
+function normalizeSettingsAuthLoginProviderId(value: unknown): SettingsAuthLoginProviderId | undefined {
+  if (value === 'anthropic' || value === 'openai-codex') return value
+  return undefined
+}
+
 async function readApiError(response: Response): Promise<string> {
   try {
     const payload = (await response.json()) as { error?: unknown; message?: unknown }
@@ -146,10 +160,10 @@ function isTelegramSettingsConfig(value: unknown): value is TelegramSettingsConf
 /* ------------------------------------------------------------------ */
 
 interface SettingsAuthOAuthStreamHandlers {
-  onAuthUrl: (event: { url: string; instructions?: string }) => void
-  onPrompt: (event: { message: string; placeholder?: string }) => void
-  onProgress: (event: { message: string }) => void
-  onComplete: (event: { provider: SettingsAuthProviderId; status: 'connected' }) => void
+  onAuthUrl: (event: SettingsAuthLoginAuthUrlEvent) => void
+  onPrompt: (event: SettingsAuthLoginPromptEvent) => void
+  onProgress: (event: SettingsAuthLoginProgressEvent) => void
+  onComplete: (event: SettingsAuthLoginCompleteEvent) => void
   onError: (message: string) => void
 }
 
@@ -160,6 +174,13 @@ function parseSettingsAuthOAuthEventData(rawData: string): Record<string, unknow
   return parsed as Record<string, unknown>
 }
 
+function parseSettingsAuthEventName(value: string): SettingsAuthLoginEventName | 'message' {
+  if (value === 'auth_url' || value === 'prompt' || value === 'progress' || value === 'complete' || value === 'error') {
+    return value
+  }
+  return 'message'
+}
+
 /* ------------------------------------------------------------------ */
 /*  Env variables API                                                 */
 /* ------------------------------------------------------------------ */
@@ -168,7 +189,7 @@ export async function fetchSettingsEnvVariables(wsUrl: string): Promise<Settings
   const endpoint = resolveApiEndpoint(wsUrl, '/api/settings/env')
   const response = await fetch(endpoint)
   if (!response.ok) throw new Error(await readApiError(response))
-  const payload = (await response.json()) as { variables?: unknown }
+  const payload = (await response.json()) as Partial<SettingsEnvResponse>
   if (!payload || !Array.isArray(payload.variables)) return []
   return payload.variables.filter(isSettingsEnvVariable)
 }
@@ -193,7 +214,7 @@ export async function fetchSettingsAuthProviders(wsUrl: string): Promise<Setting
   const endpoint = resolveApiEndpoint(wsUrl, '/api/settings/auth')
   const response = await fetch(endpoint)
   if (!response.ok) throw new Error(await readApiError(response))
-  const payload = (await response.json()) as { providers?: unknown }
+  const payload = (await response.json()) as Partial<SettingsAuthResponse>
   if (!payload || !Array.isArray(payload.providers)) return []
   const parsed = payload.providers.map((v) => parseSettingsAuthProvider(v)).filter((v): v is SettingsAuthProvider => v !== null)
   const configuredByProvider = new Map(parsed.map((entry) => [entry.provider, entry]))
@@ -226,7 +247,7 @@ export async function startSettingsAuthOAuthLoginStream(
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
   let lineBuffer = ''
-  let eventName = 'message'
+  let eventName: SettingsAuthLoginEventName | 'message' = 'message'
   let eventDataLines: string[] = []
 
   const flushEvent = (): void => {
@@ -247,7 +268,7 @@ export async function startSettingsAuthOAuthLoginStream(
       if (typeof payload.message === 'string' && payload.message.trim()) handlers.onProgress({ message: payload.message })
     } else if (eventName === 'complete') {
       const payload = parseSettingsAuthOAuthEventData(rawData)
-      const providerId = normalizeSettingsAuthProviderId(payload.provider)
+      const providerId = normalizeSettingsAuthLoginProviderId(payload.provider)
       if (!providerId || payload.status !== 'connected') throw new Error('OAuth complete event payload is invalid.')
       handlers.onComplete({ provider: providerId, status: 'connected' })
     } else if (eventName === 'error') {
@@ -269,7 +290,7 @@ export async function startSettingsAuthOAuthLoginStream(
       if (line.endsWith('\r')) line = line.slice(0, -1)
       if (!line) flushEvent()
       else if (line.startsWith(':')) { /* comment */ }
-      else if (line.startsWith('event:')) eventName = line.slice('event:'.length).trim()
+      else if (line.startsWith('event:')) eventName = parseSettingsAuthEventName(line.slice('event:'.length).trim())
       else if (line.startsWith('data:')) eventDataLines.push(line.slice('data:'.length).trimStart())
       newlineIndex = lineBuffer.indexOf('\n')
     }
@@ -356,7 +377,7 @@ export async function fetchSkillsList(wsUrl: string, profileId?: string): Promis
   }
   const response = await fetch(endpoint)
   if (!response.ok) throw new Error(await readApiError(response))
-  const payload = (await response.json()) as { skills?: unknown }
+  const payload = (await response.json()) as Partial<SkillInventoryResponse>
   if (!payload || !Array.isArray(payload.skills)) return []
   return payload.skills.filter(isSkillInfo)
 }
@@ -535,7 +556,7 @@ export async function startPoolAddAccountOAuthStream(
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
   let lineBuffer = ''
-  let eventName = 'message'
+  let eventName: SettingsAuthLoginEventName | 'message' = 'message'
   let eventDataLines: string[] = []
 
   const flushEvent = (): void => {
@@ -556,7 +577,7 @@ export async function startPoolAddAccountOAuthStream(
       if (typeof payload.message === 'string' && payload.message.trim()) handlers.onProgress({ message: payload.message })
     } else if (eventName === 'complete') {
       const payload = parseSettingsAuthOAuthEventData(rawData)
-      const providerId = normalizeSettingsAuthProviderId(payload.provider)
+      const providerId = normalizeSettingsAuthLoginProviderId(payload.provider)
       if (!providerId || payload.status !== 'connected') throw new Error('OAuth complete event payload is invalid.')
       handlers.onComplete({ provider: providerId, status: 'connected' })
     } else if (eventName === 'error') {
@@ -578,7 +599,7 @@ export async function startPoolAddAccountOAuthStream(
       if (line.endsWith('\r')) line = line.slice(0, -1)
       if (!line) flushEvent()
       else if (line.startsWith(':')) { /* comment */ }
-      else if (line.startsWith('event:')) eventName = line.slice('event:'.length).trim()
+      else if (line.startsWith('event:')) eventName = parseSettingsAuthEventName(line.slice('event:'.length).trim())
       else if (line.startsWith('data:')) eventDataLines.push(line.slice('data:'.length).trimStart())
       newlineIndex = lineBuffer.indexOf('\n')
     }
