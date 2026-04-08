@@ -327,6 +327,25 @@ Generated components go to `apps/ui/src/components/ui/`. Check that directory fo
    cd apps/ui && pnpm exec tsc --noEmit
    ```
 
+## Structural Refactor Conventions
+
+When changing file layout or module boundaries, keep the old surface stable until callers have moved.
+
+### Core rules
+
+- **Test first for risky refactors:** add characterization tests before structural changes so behavior stays pinned.
+- **Seam first:** keep facades thin and stable, then delegate into extracted services or modules behind compatibility seams.
+- **Compatibility shims:** use re-exports from old paths during moves; remove them only after dependent imports are updated.
+- **Protocol DTO placement:** shared message and transport types live in `packages/protocol/`; keep domain-specific leaf modules there and re-export through package barrels.
+- **Worktree and rollback:** use isolated git worktree branches for non-trivial or high-risk structural changes, and keep a rollback path before merging.
+
+### Directory-specific rules
+
+- **`swarm/`:** treat `swarm-manager.ts` as the facade/orchestrator. Extract runtime, agents, storage, catalog, skills, prompts, and session logic into dedicated subdirectories and services.
+- **`ws/`:** keep HTTP routes in `ws/http/routes/`, WebSocket commands in `ws/commands/`, and shared HTTP services in `ws/http/services/`.
+- **`packages/protocol/`:** organize by domain leaf modules, with barrel re-exports at package boundaries and event-family files grouped by protocol surface.
+- **Frontend:** decompose large components into leaf components and hooks, then expose stable barrel exports for shared UI surfaces.
+
 ## Platform Support
 
 Forge supports **macOS**, **Linux**, and **Windows**. When working on cross-platform code:
