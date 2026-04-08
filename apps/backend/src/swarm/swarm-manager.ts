@@ -2027,6 +2027,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return this.settingsService.updateManagerCwd(managerId, newCwd);
   }
 
+  async notifyModelSpecificInstructionsChanged(modelKeys: string[]): Promise<void> {
+    await this.settingsService.notifyModelSpecificInstructionsChanged(modelKeys);
+  }
+
   private assertCanChangeManagerCwd(
     profileId: string,
     sessions: Array<AgentDescriptor & { role: "manager"; profileId: string }>

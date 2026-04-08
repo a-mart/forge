@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { AuthStorage, SessionManager } from '@mariozechner/pi-coding-agent'
+import { getCatalogModelKey } from '@forge/protocol'
 import { getScheduleFilePath } from '../scheduler/schedule-storage.js'
 import { getConversationHistoryCacheFilePath } from '../swarm/conversation-history-cache.js'
 import {
@@ -54,6 +55,7 @@ vi.mock('../swarm/project-agent-analysis.js', async () => {
 import { readSessionMeta, writeSessionMeta } from '../swarm/session-manifest.js'
 import { loadOnboardingState, saveOnboardingPreferences } from '../swarm/onboarding-state.js'
 import { AgentRuntime } from '../swarm/agent-runtime.js'
+import { modelCatalogService } from '../swarm/model-catalog-service.js'
 import { buildSessionMemoryRuntimeView, SwarmManager } from '../swarm/swarm-manager.js'
 import type {
   AgentContextUsage,
@@ -8403,6 +8405,86 @@ describe('SwarmManager', () => {
     expect(state.runtimes.has(sessionAgent.agentId)).toBe(true)
   })
 
+  it('recycles only sessions using models whose specific instructions changed, deferring busy sessions until idle', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    const rootSession = await bootWithDefaultManager(manager, config)
+    const { sessionAgent } = await manager.createSession('manager', { label: 'Streaming Session' })
+    const otherManager = await manager.createManager('manager', {
+      name: 'Other Manager',
+      cwd: config.defaultCwd,
+      model: 'pi-opus',
+    })
+
+    const rootRuntime = manager.runtimeByAgentId.get(rootSession.agentId)
+    const sessionRuntime = manager.runtimeByAgentId.get(sessionAgent.agentId)
+    const otherRuntime = manager.runtimeByAgentId.get(otherManager.agentId)
+    const descriptor = manager.getAgent(sessionAgent.agentId)
+    const rootModel = manager.getAgent(rootSession.agentId)?.model
+    const state = manager as unknown as {
+      runtimes: Map<string, SwarmAgentRuntime>
+      runtimeTokensByAgentId: Map<string, number>
+      pendingManagerRuntimeRecycleAgentIds: Set<string>
+      handleRuntimeStatus: (
+        runtimeToken: number,
+        agentId: string,
+        status: AgentDescriptor['status'],
+        pendingCount: number,
+        contextUsage?: AgentContextUsage,
+      ) => Promise<void>
+    }
+
+    expect(rootRuntime).toBeDefined()
+    expect(sessionRuntime).toBeDefined()
+    expect(otherRuntime).toBeDefined()
+    expect(descriptor?.role).toBe('manager')
+    expect(rootModel).toBeDefined()
+
+    if (!rootRuntime || !sessionRuntime || !otherRuntime || !descriptor || descriptor.role !== 'manager' || !rootModel) {
+      throw new Error('Expected manager session runtimes to exist')
+    }
+
+    const catalogModel = modelCatalogService.getModel(rootModel.modelId, rootModel.provider)
+    expect(catalogModel).toBeDefined()
+
+    if (!catalogModel) {
+      throw new Error('Expected root session model to exist in the model catalog')
+    }
+
+    descriptor.status = 'streaming'
+    descriptor.updatedAt = new Date().toISOString()
+    sessionRuntime.busy = true
+
+    await manager.notifyModelSpecificInstructionsChanged([getCatalogModelKey(catalogModel)])
+
+    expect(rootRuntime.recycleCalls).toBe(1)
+    expect(sessionRuntime.recycleCalls).toBe(0)
+    expect(otherRuntime.recycleCalls).toBe(0)
+    expect(state.runtimes.has(rootSession.agentId)).toBe(false)
+    expect(state.runtimes.has(sessionAgent.agentId)).toBe(true)
+    expect(state.runtimes.has(otherManager.agentId)).toBe(true)
+    expect(state.pendingManagerRuntimeRecycleAgentIds.has(sessionAgent.agentId)).toBe(true)
+    expect(state.pendingManagerRuntimeRecycleAgentIds.has(otherManager.agentId)).toBe(false)
+
+    const runtimeToken = state.runtimeTokensByAgentId.get(sessionAgent.agentId)
+    expect(runtimeToken).toBeTypeOf('number')
+
+    sessionRuntime.busy = false
+    await state.handleRuntimeStatus(runtimeToken as number, sessionAgent.agentId, 'idle', 0)
+
+    expect(sessionRuntime.recycleCalls).toBe(1)
+    expect(state.pendingManagerRuntimeRecycleAgentIds.has(sessionAgent.agentId)).toBe(false)
+    expect(state.runtimes.has(sessionAgent.agentId)).toBe(false)
+    expect(manager.runtimeByAgentId.get(otherManager.agentId)).toBe(otherRuntime)
+
+    const createdRuntimeCountBeforePrompt = manager.createdRuntimeIds.length
+    await manager.handleUserMessage('Use refreshed instructions', { targetAgentId: sessionAgent.agentId })
+
+    expect(manager.createdRuntimeIds.length).toBe(createdRuntimeCountBeforePrompt + 1)
+    expect(manager.runtimeByAgentId.get(sessionAgent.agentId)).not.toBe(sessionRuntime)
+    expect(manager.runtimeByAgentId.get(otherManager.agentId)).toBe(otherRuntime)
+  })
+
   it('does not recycle manager runtimes when a cwd update resolves to the current cwd', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
@@ -8541,6 +8623,21 @@ describe('SwarmManager', () => {
       },
     },
     {
+      label: 'model-specific instruction changes',
+      expectedReason: 'prompt_mode_change' as const,
+      expectedAgentIds: ['cortex', 'manager', 'manager--s2'],
+      invoke: async (manager: TestSwarmManager, rootSession: AgentDescriptor, _sessionAgent: AgentDescriptor, _config: SwarmConfig) => {
+        const catalogModel = modelCatalogService.getModel(rootSession.model.modelId, rootSession.model.provider)
+        expect(catalogModel).toBeDefined()
+
+        if (!catalogModel) {
+          throw new Error('Expected root session model to exist in the model catalog')
+        }
+
+        await manager.notifyModelSpecificInstructionsChanged([getCatalogModelKey(catalogModel)])
+      },
+    },
+    {
       label: 'working-directory changes',
       expectedReason: 'cwd_change' as const,
       invoke: async (manager: TestSwarmManager, _rootSession: AgentDescriptor, _sessionAgent: AgentDescriptor, config: SwarmConfig) => {
@@ -8563,7 +8660,7 @@ describe('SwarmManager', () => {
         await manager.notifyProjectAgentsChanged('manager')
       },
     },
-  ])('routes manager runtime recycle policy through $label', async ({ invoke, expectedReason }) => {
+  ])('routes manager runtime recycle policy through $label', async ({ invoke, expectedReason, expectedAgentIds }) => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     const rootSession = await bootWithDefaultManager(manager, config)
@@ -8589,10 +8686,10 @@ describe('SwarmManager', () => {
 
     await invoke(manager, rootSession, sessionAgent, config)
 
-    expect(applyRecyclePolicySpy.mock.calls).toEqual([
-      [rootSession.agentId, expectedReason],
-      [sessionAgent.agentId, expectedReason],
-    ])
+    const expectedTargets = expectedAgentIds ?? [rootSession.agentId, sessionAgent.agentId]
+    expect(applyRecyclePolicySpy.mock.calls).toEqual(
+      expectedTargets.map((agentId) => [agentId, expectedReason]),
+    )
   })
 
   it('maps spawn_agent model presets to canonical runtime models with highest reasoning', async () => {

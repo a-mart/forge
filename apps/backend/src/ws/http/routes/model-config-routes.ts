@@ -98,8 +98,12 @@ async function handleModelOverridesRequest(
         return;
       }
 
+      const patch = body as Record<string, unknown>;
       const catalogModelKey = getCatalogModelKey(catalogModel);
-      const nextOverride = await mergeModelOverridePatch(dataDir, catalogModelKey, body as Record<string, unknown>);
+      const modelSpecificInstructionSnapshots = captureEffectiveModelSpecificInstructionSnapshots(
+        hasModelSpecificInstructionsPatch(patch) ? [catalogModelKey] : []
+      );
+      const nextOverride = await mergeModelOverridePatch(dataDir, catalogModelKey, patch);
       if (nextOverride) {
         await setModelOverride(dataDir, catalogModelKey, nextOverride);
       } else {
@@ -107,6 +111,7 @@ async function handleModelOverridesRequest(
       }
 
       await swarmManager.reloadModelCatalogOverridesAndProjection();
+      await notifyManagersForModelSpecificInstructionChanges(swarmManager, modelSpecificInstructionSnapshots);
       broadcastModelConfigChanged(broadcastEvent);
 
       sendJson(response, 200, {
@@ -123,6 +128,17 @@ async function handleModelOverridesRequest(
 
   if (request.method === "DELETE") {
     try {
+      const modelSpecificInstructionSnapshots = requestUrl.pathname === MODEL_OVERRIDES_ENDPOINT_PATH
+        ? captureEffectiveModelSpecificInstructionSnapshots(await listModelKeysWithModelSpecificInstructionsOverrides(dataDir))
+        : captureEffectiveModelSpecificInstructionSnapshots(
+            modelId
+              ? (() => {
+                  const catalogModel = modelCatalogService.getModel(modelId);
+                  return catalogModel ? [getCatalogModelKey(catalogModel)] : [];
+                })()
+              : []
+          );
+
       if (requestUrl.pathname === MODEL_OVERRIDES_ENDPOINT_PATH) {
         await resetAllModelOverrides(dataDir);
       } else {
@@ -141,6 +157,7 @@ async function handleModelOverridesRequest(
       }
 
       await swarmManager.reloadModelCatalogOverridesAndProjection();
+      await notifyManagersForModelSpecificInstructionChanges(swarmManager, modelSpecificInstructionSnapshots);
       broadcastModelConfigChanged(broadcastEvent);
       sendJson(response, 200, { ok: true });
     } catch (error) {
@@ -210,6 +227,63 @@ async function mergeModelOverridePatch(
   }
 
   return Object.keys(next).length > 0 ? next : null;
+}
+
+function hasModelSpecificInstructionsPatch(patch: Record<string, unknown>): boolean {
+  return Object.prototype.hasOwnProperty.call(patch, "modelSpecificInstructions");
+}
+
+function captureEffectiveModelSpecificInstructionSnapshots(modelKeys: string[]): Map<string, string | undefined> {
+  const snapshots = new Map<string, string | undefined>();
+
+  for (const modelKey of new Set(modelKeys.map((value) => value.trim()).filter((value) => value.length > 0))) {
+    const catalogModel = modelCatalogService.getModel(modelKey);
+    if (!catalogModel) {
+      continue;
+    }
+
+    snapshots.set(
+      getCatalogModelKey(catalogModel),
+      modelCatalogService.getEffectiveModelSpecificInstructions(catalogModel.modelId, catalogModel.provider)
+    );
+  }
+
+  return snapshots;
+}
+
+async function listModelKeysWithModelSpecificInstructionsOverrides(dataDir: string): Promise<string[]> {
+  const file = await readModelOverrides(dataDir);
+  return Object.entries(file.overrides)
+    .filter(([, override]) => Object.prototype.hasOwnProperty.call(override, "modelSpecificInstructions"))
+    .map(([modelKey]) => modelKey);
+}
+
+async function notifyManagersForModelSpecificInstructionChanges(
+  swarmManager: SwarmManager,
+  previousSnapshots: Map<string, string | undefined>
+): Promise<void> {
+  if (previousSnapshots.size === 0) {
+    return;
+  }
+
+  const changedModelKeys: string[] = [];
+  for (const [modelKey, previousValue] of previousSnapshots.entries()) {
+    const catalogModel = modelCatalogService.getModel(modelKey);
+    if (!catalogModel) {
+      continue;
+    }
+
+    const nextValue = modelCatalogService.getEffectiveModelSpecificInstructions(catalogModel.modelId, catalogModel.provider);
+    if (nextValue !== previousValue) {
+      changedModelKeys.push(getCatalogModelKey(catalogModel));
+    }
+  }
+
+  if (changedModelKeys.length === 0) {
+    return;
+  }
+
+  await swarmManager.notifyModelSpecificInstructionsChanged(changedModelKeys);
 }
 
 function broadcastModelConfigChanged(broadcastEvent: (event: ServerEvent) => void): void {

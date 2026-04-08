@@ -1,11 +1,12 @@
 import type { AuthCredential } from "@mariozechner/pi-coding-agent";
-import type {
-  CredentialPoolState,
-  CredentialPoolStrategy,
-  PooledCredentialInfo,
-  SkillFileContentResponse,
-  SkillFilesResponse,
-  SkillInventoryEntry
+import {
+  getCatalogModelKey,
+  type CredentialPoolState,
+  type CredentialPoolStrategy,
+  type PooledCredentialInfo,
+  type SkillFileContentResponse,
+  type SkillFilesResponse,
+  type SkillInventoryEntry
 } from "@forge/protocol";
 import type { CredentialPoolService } from "./credential-pool.js";
 import {
@@ -21,6 +22,7 @@ import { resolveModelDescriptorFromPreset } from "./model-presets.js";
 import type { SecretsEnvService } from "./secrets-env-service.js";
 import type { SkillFileService } from "./skill-file-service.js";
 import type { SkillMetadataService } from "./skill-metadata-service.js";
+import { modelCatalogService } from "./model-catalog-service.js";
 import type {
   AgentDescriptor,
   ManagerProfile,
@@ -31,7 +33,7 @@ import type {
   SwarmReasoningLevel
 } from "./types.js";
 
-export type ManagerRuntimeRecycleReason = "model_change" | "cwd_change";
+export type ManagerRuntimeRecycleReason = "model_change" | "cwd_change" | "prompt_mode_change";
 
 type ManagerRuntimeRecycleDisposition = "recycled" | "deferred" | "none";
 type SessionDescriptor = AgentDescriptor & { role: "manager"; profileId: string };
@@ -162,6 +164,62 @@ export class SwarmSettingsService {
     });
 
     return resolvedCwd;
+  }
+
+  async notifyModelSpecificInstructionsChanged(modelKeys: string[]): Promise<void> {
+    const normalizedModelKeys = new Set(
+      modelKeys
+        .map((modelKey) => modelKey.trim())
+        .filter((modelKey) => modelKey.length > 0)
+    );
+
+    if (normalizedModelKeys.size === 0) {
+      return;
+    }
+
+    const sessions = Array.from(this.options.profiles.values()).flatMap((profile) =>
+      this.options.getSessionsForProfile(profile.profileId)
+    );
+    const affectedSessions = sessions.filter((session) => {
+      const catalogModel = modelCatalogService.getModel(session.model.modelId, session.model.provider);
+      return catalogModel ? normalizedModelKeys.has(getCatalogModelKey(catalogModel)) : false;
+    });
+
+    if (affectedSessions.length === 0) {
+      this.options.logDebug("manager:model_specific_instructions_change:noop", {
+        modelKeys: Array.from(normalizedModelKeys),
+        affectedSessions: []
+      });
+      return;
+    }
+
+    const recycledSessions: string[] = [];
+    const deferredSessions: string[] = [];
+    const recycleFailures: Array<{ agentId: string; error: string }> = [];
+
+    for (const session of affectedSessions) {
+      try {
+        const recycleDisposition = await this.options.applyManagerRuntimeRecyclePolicy(session.agentId, "prompt_mode_change");
+        if (recycleDisposition === "recycled") {
+          recycledSessions.push(session.agentId);
+        } else if (recycleDisposition === "deferred") {
+          deferredSessions.push(session.agentId);
+        }
+      } catch (error) {
+        recycleFailures.push({
+          agentId: session.agentId,
+          error: errorToMessage(error)
+        });
+      }
+    }
+
+    this.options.logDebug("manager:model_specific_instructions_change", {
+      modelKeys: Array.from(normalizedModelKeys),
+      affectedSessions: affectedSessions.map((session) => session.agentId),
+      recycledSessions,
+      deferredSessions,
+      recycleFailures
+    });
   }
 
   async listDirectories(path?: string): Promise<DirectoryListingResult> {
