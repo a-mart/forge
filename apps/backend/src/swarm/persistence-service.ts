@@ -4,6 +4,8 @@ import { dirname, resolve, sep } from "node:path";
 import { getScheduleFilePath } from "../scheduler/schedule-storage.js";
 import { getConversationHistoryCacheFilePath } from "./conversation-history-cache.js";
 import {
+  getGlobalForgeExtensionsDir,
+  getProfileForgeExtensionsDir,
   getProfileKnowledgeDir,
   getProfileMemoryPath,
   getProfilePiExtensionsDir,
@@ -50,6 +52,7 @@ export class PersistenceService {
   async ensureDirectories(): Promise<void> {
     const dirs = [
       this.deps.config.paths.dataDir,
+      getGlobalForgeExtensionsDir(this.deps.config.paths.dataDir),
       this.deps.config.paths.swarmDir,
       this.deps.config.paths.profilesDir,
       this.deps.config.paths.sharedDir,
@@ -120,7 +123,7 @@ export class PersistenceService {
     }
 
     for (const profileId of knownProfileIds) {
-      await this.ensureProfilePiDirectories(profileId);
+      await this.ensureProfileDirectories(profileId);
     }
 
     for (const [memoryFilePath, profileId] of memoryFilePaths.entries()) {
@@ -223,18 +226,23 @@ export class PersistenceService {
     await renameWithRetry(tmp, target, { retries: 8, baseDelayMs: 15 });
   }
 
-  async ensureProfilePiDirectories(profileId: string): Promise<void> {
+  async ensureProfileDirectories(profileId: string): Promise<void> {
     const dataDir = this.deps.config.paths.dataDir;
-    const profilePiDirs = [
+    const profileDirs = [
+      getProfileForgeExtensionsDir(dataDir, profileId),
       getProfilePiExtensionsDir(dataDir, profileId),
       getProfilePiSkillsDir(dataDir, profileId),
       getProfilePiPromptsDir(dataDir, profileId),
       getProfilePiThemesDir(dataDir, profileId)
     ];
 
-    for (const dir of profilePiDirs) {
+    for (const dir of profileDirs) {
       await mkdir(dir, { recursive: true });
     }
+  }
+
+  async ensureProfilePiDirectories(profileId: string): Promise<void> {
+    await this.ensureProfileDirectories(profileId);
   }
 
   private getAgentMemoryPath(

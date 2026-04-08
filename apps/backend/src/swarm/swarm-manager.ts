@@ -83,6 +83,8 @@ import {
   normalizeProjectAgentInlineText
 } from "./project-agents.js";
 import { PersistenceService } from "./persistence-service.js";
+import { ForgeExtensionHost } from "./forge-extension-host.js";
+import type { VersioningCommitEvent as ForgeVersioningCommitEvent } from "./forge-extension-types.js";
 import { migrateLegacyProfileKnowledgeToReferenceDoc } from "./reference-docs.js";
 import { generatePiProjection } from "./model-catalog-projection.js";
 import { modelCatalogService } from "./model-catalog-service.js";
@@ -979,6 +981,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly modelCapacityBlocks = new Map<string, ModelCapacityBlock>();
   private readonly conversationProjector: ConversationProjector;
   private readonly persistenceService: PersistenceService;
+  private readonly forgeExtensionHost: ForgeExtensionHost;
   private piModelsJsonPath: string | null = null;
   private readonly skillMetadataService: SkillMetadataService;
   private readonly skillFileService: SkillFileService;
@@ -1017,6 +1020,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       builtinArchetypesDir: join(resourcesDir, "apps", "backend", "src", "swarm", "archetypes", "builtins"),
       builtinOperationalDir: join(resourcesDir, "apps", "backend", "src", "swarm", "operational", "builtins"),
       versioning: this.versioningService
+    });
+    this.forgeExtensionHost = new ForgeExtensionHost({
+      dataDir: this.config.paths.dataDir,
+      now: this.now
     });
     this.runtimeController = new SwarmRuntimeController(this as unknown as SwarmRuntimeControllerHost);
     this.runtimes = this.runtimeController.runtimes;
@@ -1561,6 +1568,23 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return this.specialistFallbackManager.resolveSpecialistFallbackModelForDescriptor(descriptor);
   }
 
+  private async maybeRecoverWorkerWithSpecialistFallback(
+    agentId: string,
+    errorMessage: string,
+    sourcePhase: "prompt_dispatch" | "prompt_start",
+    runtimeToken?: number
+  ): Promise<boolean> {
+    return this.specialistFallbackManager.maybeRecoverWorkerWithSpecialistFallback({
+      agentId,
+      errorMessage,
+      sourcePhase,
+      runtimeToken,
+      handleRuntimeStatus: (token, targetAgentId, status, pendingCount, contextUsage) =>
+        this.handleRuntimeStatus(token, targetAgentId, status, pendingCount, contextUsage),
+      handleRuntimeAgentEnd: (token, targetAgentId) => this.handleRuntimeAgentEnd(token, targetAgentId)
+    });
+  }
+
   getWorkerActivity(agentId: string): {
     currentTool: string | null;
     currentToolElapsedSec: number;
@@ -1707,14 +1731,24 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     profileId: string,
     options?: { label?: string; name?: string; sessionPurpose?: AgentDescriptor["sessionPurpose"] }
   ): Promise<{ profile: ManagerProfile; sessionAgent: AgentDescriptor }> {
-    return this.sessionService.createSession(profileId, options);
+    const createdSession = await this.sessionService.createSession(profileId, options);
+    await this.forgeExtensionHost.dispatchSessionLifecycle({
+      action: "created",
+      sessionDescriptor: createdSession.sessionAgent
+    });
+    return createdSession;
   }
 
   async createAndPromoteProjectAgent(
     creatorAgentId: string,
     params: { sessionName: string; handle?: string; whenToUse: string; systemPrompt: string }
   ): Promise<{ agentId: string; handle: string; profileId: string }> {
-    return this.projectAgentService.createAndPromoteProjectAgent(creatorAgentId, params);
+    const createdProjectAgent = await this.projectAgentService.createAndPromoteProjectAgent(creatorAgentId, params);
+    await this.forgeExtensionHost.dispatchSessionLifecycle({
+      action: "created",
+      sessionDescriptor: cloneDescriptor(this.getRequiredSessionDescriptor(createdProjectAgent.agentId))
+    });
+    return createdProjectAgent;
   }
 
   async stopSession(agentId: string): Promise<{ terminatedWorkerIds: string[] }> {
@@ -1726,7 +1760,13 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   async deleteSession(agentId: string): Promise<{ terminatedWorkerIds: string[] }> {
-    return this.sessionService.deleteSession(agentId);
+    const deletedSessionDescriptor = cloneDescriptor(this.getRequiredSessionDescriptor(agentId));
+    const result = await this.sessionService.deleteSession(agentId);
+    await this.forgeExtensionHost.dispatchSessionLifecycle({
+      action: "deleted",
+      sessionDescriptor: deletedSessionDescriptor
+    });
+    return result;
   }
 
   async pinMessage(
@@ -1866,6 +1906,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   async renameSession(agentId: string, label: string): Promise<void> {
     await this.sessionService.renameSession(agentId, label);
+    await this.forgeExtensionHost.dispatchSessionLifecycle({
+      action: "renamed",
+      sessionDescriptor: cloneDescriptor(this.getRequiredSessionDescriptor(agentId))
+    });
   }
 
   async renameProfile(profileId: string, displayName: string): Promise<void> {
@@ -1893,7 +1937,14 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     sourceAgentId: string,
     options?: { label?: string; fromMessageId?: string }
   ): Promise<{ profile: ManagerProfile; sessionAgent: AgentDescriptor }> {
-    return this.sessionService.forkSession(sourceAgentId, options);
+    const sourceDescriptor = cloneDescriptor(this.getRequiredSessionDescriptor(sourceAgentId));
+    const forkedSession = await this.sessionService.forkSession(sourceAgentId, options);
+    await this.forgeExtensionHost.dispatchSessionLifecycle({
+      action: "forked",
+      sessionDescriptor: forkedSession.sessionAgent,
+      sourceDescriptor
+    });
+    return forkedSession;
   }
 
   async spawnAgent(callerAgentId: string, input: SpawnAgentInput): Promise<AgentDescriptor> {
@@ -1929,14 +1980,39 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     callerAgentId: string,
     input: { name: string; cwd: string; model?: SwarmModelPreset }
   ): Promise<AgentDescriptor> {
-    return this.lifecycleService.createManager(callerAgentId, input);
+    const createdManager = await this.lifecycleService.createManager(callerAgentId, input);
+    await this.forgeExtensionHost.dispatchSessionLifecycle({
+      action: "created",
+      sessionDescriptor: createdManager
+    });
+    return createdManager;
   }
 
   async deleteManager(
     callerAgentId: string,
     targetManagerId: string
   ): Promise<{ managerId: string; terminatedWorkerIds: string[] }> {
-    return this.lifecycleService.deleteManager(callerAgentId, targetManagerId);
+    const profile = this.profiles.get(targetManagerId);
+    const sessionDescriptors = profile ? this.getSessionsForProfile(profile.profileId) : [];
+
+    if (sessionDescriptors.length === 0) {
+      const target = this.descriptors.get(targetManagerId);
+      if (target?.role === "manager") {
+        sessionDescriptors.push(target);
+      }
+    }
+
+    const deletedSessionDescriptors = sessionDescriptors.map((sessionDescriptor) => cloneDescriptor(sessionDescriptor));
+    const result = await this.lifecycleService.deleteManager(callerAgentId, targetManagerId);
+
+    for (const sessionDescriptor of deletedSessionDescriptors) {
+      await this.forgeExtensionHost.dispatchSessionLifecycle({
+        action: "deleted",
+        sessionDescriptor
+      });
+    }
+
+    return result;
   }
 
   async updateManagerModel(
@@ -3398,6 +3474,14 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   listRuntimeExtensionSnapshots(): AgentRuntimeExtensionSnapshot[] {
     return this.runtimeController.listRuntimeExtensionSnapshots();
+  }
+
+  async buildForgeExtensionSettingsSnapshot(options: { cwdValues: string[] }) {
+    return this.forgeExtensionHost.buildSettingsSnapshot(options);
+  }
+
+  async dispatchForgeVersioningCommit(event: ForgeVersioningCommitEvent): Promise<void> {
+    await this.forgeExtensionHost.dispatchVersioningCommit(event);
   }
 
   setIntegrationContextProvider(provider?: (profileId: string) => string): void {

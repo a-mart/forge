@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it, vi } from "vitest";
+import { parseVersioningCommitMetadata } from "../versioning-commit-metadata.js";
 import { EmbeddedGitVersioningService } from "../embedded-git-versioning-service.js";
 
 const execFileAsync = promisify(execFile);
@@ -197,6 +198,128 @@ describe("EmbeddedGitVersioningService", () => {
     } finally {
       await service.stop();
     }
+  });
+
+  it("emits post-commit observer payloads with sha, metadata, and deduped profile ids", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "embedded-git-versioning-"));
+    const onCommit = vi.fn();
+    const service = new EmbeddedGitVersioningService({
+      dataDir,
+      debounceMs: 10,
+      reconcileIntervalMs: 0,
+      onCommit,
+    });
+
+    await service.start();
+
+    const alphaMemoryPath = join(dataDir, "profiles", "alpha", "memory.md");
+    const betaMemoryPath = join(dataDir, "profiles", "beta", "memory.md");
+    await mkdir(join(dataDir, "profiles", "alpha"), { recursive: true });
+    await mkdir(join(dataDir, "profiles", "beta"), { recursive: true });
+    await writeFile(alphaMemoryPath, "# Swarm Memory\n", "utf8");
+    await writeFile(betaMemoryPath, "# Swarm Memory\n", "utf8");
+
+    await service.recordMutation({
+      path: alphaMemoryPath,
+      action: "write",
+      source: "profile-memory-merge",
+      profileId: "alpha",
+      sessionId: "alpha--s1",
+    });
+    await service.recordMutation({
+      path: betaMemoryPath,
+      action: "write",
+      source: "reference-doc",
+      profileId: "beta",
+    });
+    await service.flushPending("observer-test");
+
+    expect(onCommit).toHaveBeenCalledTimes(1);
+    const [event] = onCommit.mock.calls[0];
+    expect(event.sha).toMatch(/^[0-9a-f]{40}$/);
+    expect(event.reason).toBe("observer-test");
+    expect(event.paths).toEqual(["profiles/alpha/memory.md", "profiles/beta/memory.md"]);
+    expect(event.profileIds).toEqual(["alpha", "beta"]);
+    expect(event.subject).toContain("tracked files");
+    expect(parseVersioningCommitMetadata(event.body)).toMatchObject({
+      reason: "observer-test",
+      paths: ["profiles/alpha/memory.md", "profiles/beta/memory.md"],
+    });
+
+    await service.stop();
+  });
+
+  it("keeps commits fail-open when the post-commit observer throws", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "embedded-git-versioning-"));
+    const onCommit = vi.fn(async () => {
+      throw new Error("observer failed");
+    });
+    const warn = vi.fn();
+    const service = new EmbeddedGitVersioningService({
+      dataDir,
+      debounceMs: 10,
+      reconcileIntervalMs: 0,
+      onCommit,
+      logger: {
+        info: vi.fn(),
+        warn,
+        error: vi.fn(),
+      },
+    });
+
+    await service.start();
+
+    const commonKnowledgePath = join(dataDir, "shared", "knowledge", "common.md");
+    await mkdir(join(dataDir, "shared", "knowledge"), { recursive: true });
+    await writeFile(commonKnowledgePath, "# Common Knowledge\n", "utf8");
+
+    await service.recordMutation({
+      path: commonKnowledgePath,
+      action: "write",
+      source: "api-write-file",
+    });
+    await service.flushPending("observer-failure");
+
+    expect(onCommit).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("Post-commit observer failed: observer failed"));
+    const commitCount = await execGit(dataDir, ["rev-list", "--count", "HEAD"]);
+    expect(commitCount.stdout.trim()).toBe("1");
+
+    await service.stop();
+  });
+
+  it("reports empty profile ids when a commit batch has no profile-scoped metadata", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "embedded-git-versioning-"));
+    const onCommit = vi.fn();
+    const service = new EmbeddedGitVersioningService({
+      dataDir,
+      debounceMs: 10,
+      reconcileIntervalMs: 0,
+      onCommit,
+    });
+
+    await service.start();
+
+    const sharedNotesPath = join(dataDir, "shared", "notes.md");
+    await mkdir(join(dataDir, "shared"), { recursive: true });
+    await writeFile(sharedNotesPath, "notes\n", "utf8");
+
+    await (service as any).stageAndCommit({
+      explicitPaths: ["shared/notes.md"],
+      mutations: [{
+        path: "shared/notes.md",
+        action: "write",
+        source: "reconcile",
+      }],
+      reason: "shared-only",
+    });
+
+    expect(onCommit).toHaveBeenCalledTimes(1);
+    const [event] = onCommit.mock.calls[0];
+    expect(event.paths).toEqual(["shared/notes.md"]);
+    expect(event.profileIds).toEqual([]);
+
+    await service.stop();
   });
 
   it("catches background debounce failures and disables versioning fail-open", async () => {

@@ -190,9 +190,15 @@ Skill API keys can be configured in the dashboard under Settings → Environment
 
 Forge also supports custom skills. Place them in `${FORGE_DATA_DIR}/skills` (default: `~/.forge/skills`) using the standard `SKILL.md` frontmatter format and they'll be available to all agents. You can even have agents create new skills for you. See [docs/CONFIGURATION.md](docs/CONFIGURATION.md#machine-local-skills).
 
-### Pi Extensions & Packages
+### Extensions
 
-Beyond skills, Forge exposes the full [Pi extension and package system](docs/PI_EXTENSIONS.md). Extensions let you deeply customize agent behavior:
+Forge has two extension systems:
+- [Forge Extensions](docs/FORGE_EXTENSIONS.md) for Forge-native hooks like session lifecycle, runtime errors, versioning commits, and cross-runtime tool interception
+- [Pi Extensions & Packages](docs/PI_EXTENSIONS.md) for Pi-native custom tools, event handlers, packages, skills, prompts, and themes
+
+Forge Extensions are fail-open for normal thrown or rejected load, setup, and handler errors, so one bad hook usually does not take down a session. They still run in-process with no sandbox or timeout isolation, so process-level side effects like `process.exit()` or synchronous infinite loops can still affect the backend.
+
+Beyond skills, Forge also exposes the full Pi extension and package system. Pi extensions let you deeply customize agent behavior:
 
 - **Custom tools** — Register new tools the LLM can call (ticket lookups, API integrations, internal databases)
 - **Event interception** — Block dangerous commands, redact secrets from output, audit every tool call
@@ -242,7 +248,7 @@ Forge runs three layers on your machine:
 | **Backend Daemon** (`apps/backend`) | Node.js HTTP + WebSocket server. Agent orchestration, message routing, persistence, scheduler. |
 | **Agents** | Manager and worker agents powered by [pi](https://github.com/badlogic/pi-mono). Each worker runs in its own worktree. |
 
-Communication between UI and backend is over WebSocket. The backend spawns and manages agent processes, persists all state to disk, and handles integrations and scheduling. Agents are extensible through Pi's [extension system](docs/PI_EXTENSIONS.md) — custom tools, event handlers, and model providers loaded in-process at session start.
+Communication between UI and backend is over WebSocket. The backend spawns and manages agent processes, persists all state to disk, and handles integrations and scheduling. Agents are extensible through both [Forge Extensions](docs/FORGE_EXTENSIONS.md) and Pi's [extension system](docs/PI_EXTENSIONS.md).
 
 All runtime data lives locally. No cloud, no database. Just JSON, JSONL, and markdown files under `~/.forge` (or `%LOCALAPPDATA%\forge` on Windows). Backup means copying a folder. Recovery means pasting it back. See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for the full data layout.
 

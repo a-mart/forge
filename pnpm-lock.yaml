@@ -64,6 +64,9 @@ importers:
       dotenv:
         specifier: ^17.3.1
         version: 17.3.1
+      jiti:
+        specifier: ^2.6.1
+        version: 2.6.1
       jsdom:
         specifier: ^27.0.1
         version: 27.4.0(@noble/hashes@1.8.0)

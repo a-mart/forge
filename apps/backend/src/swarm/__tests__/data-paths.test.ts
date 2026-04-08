@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   getAgentsStoreFilePath,
+  getGlobalForgeExtensionsDir,
   getLegacyAgentMemoryPath,
   getLegacyAuthDirPath,
   getLegacyAuthFilePath,
@@ -11,10 +12,12 @@ import {
   getLegacySessionFilePath,
   getLegacySessionsDirPath,
   getProfileDir,
+  getProfileForgeExtensionsDir,
   getProfileIntegrationsDir,
   getProfileMemoryPath,
   getProfileMergeAuditLogPath,
   getProfilePiDir,
+  getProjectLocalForgeExtensionsDir,
   getProjectAgentConfigPath,
   getProjectAgentDir,
   getProjectAgentPromptPath,
@@ -79,6 +82,12 @@ describe("data-paths", () => {
     expect(getSharedConfigDir(DATA_DIR)).toBe(join(DATA_DIR, "shared", "config"));
     expect(getSharedCacheDir(DATA_DIR)).toBe(join(DATA_DIR, "shared", "cache"));
     expect(getSharedStateDir(DATA_DIR)).toBe(join(DATA_DIR, "shared", "state"));
+
+    expect(getGlobalForgeExtensionsDir(DATA_DIR)).toBe(join(DATA_DIR, "extensions"));
+    expect(getProfileForgeExtensionsDir(DATA_DIR, PROFILE_ID)).toBe(join(DATA_DIR, "profiles", PROFILE_ID, "extensions"));
+    expect(getProjectLocalForgeExtensionsDir(join(DATA_DIR, "repo"))).toBe(
+      join(DATA_DIR, "repo", ".forge", "extensions")
+    );
 
     expect(getProfileMemoryPath(DATA_DIR, PROFILE_ID)).toBe(join(DATA_DIR, "profiles", PROFILE_ID, "memory.md"));
     expect(getProfileMergeAuditLogPath(DATA_DIR, PROFILE_ID)).toBe(

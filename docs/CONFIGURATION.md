@@ -116,6 +116,7 @@ All persistent state lives in a single data directory:
 │       └── workers/           # Worker session logs
 ├── swarm/
 │   └── agents.json            # Agent registry
+├── extensions/                # Forge extensions (global, auto-created)
 ├── agent/                     # Pi agent runtime config (extensions, skills, packages)
 │   ├── extensions/            #   Global worker extensions (auto-created at startup)
 │   ├── manager/extensions/    #   Global manager extensions (auto-created at startup)
@@ -163,9 +164,25 @@ On a default macOS/Linux install this becomes:
 ~/.forge/skills/<skillName>/SKILL.md
 ```
 
+### Forge Extensions
+
+Forge exposes a Forge-native hook system for session lifecycle, runtime errors, versioning commits, and tool interception.
+
+**Forge extension directories**:
+
+| Path | Scope |
+|------|-------|
+| `${FORGE_DATA_DIR}/extensions/` | Global |
+| `${FORGE_DATA_DIR}/profiles/<id>/extensions/` | Profile |
+| `<cwd>/.forge/extensions/` | Project-local |
+
+Global and profile Forge extension directories are auto-created. Project-local directories are not.
+
+See [FORGE_EXTENSIONS.md](FORGE_EXTENSIONS.md) for the full guide.
+
 ### Pi Extensions & Packages
 
-Forge exposes Pi's extension and package system for deeper customization — custom tools, event interception, context modification, and more.
+Forge also exposes Pi's extension and package system for deeper customization — custom tools, event interception, context modification, and more.
 
 **Extension auto-discovery directories** (created automatically on startup):
 

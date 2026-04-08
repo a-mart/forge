@@ -540,9 +540,26 @@ This enables an "always-on" workflow. Dump tasks before bed, wake up to complete
 
 If you don't have the mobile app, Telegram works for remote access. Create a bot via [@BotFather](https://t.me/botfather), add the token in **Settings → Integrations → Telegram**, and you can chat with your manager directly from Telegram with full bidirectional messaging.
 
-### Pi Extensions
+### Extensions
 
-For power users who want to go beyond skills and built-in tools: Forge exposes the full [Pi extension system](PI_EXTENSIONS.md). Extensions are TypeScript modules that hook into the agent lifecycle and can:
+Forge has two extension systems:
+- [Forge Extensions](FORGE_EXTENSIONS.md) for Forge-native hooks like session lifecycle, runtime errors, versioning commits, and cross-runtime tool interception
+- [Pi Extensions & Packages](PI_EXTENSIONS.md) for Pi-native runtime extensibility
+
+If you want safety policies, local automation, or versioning/session hooks that follow Forge itself, start with Forge Extensions.
+
+```typescript
+// ~/.forge/extensions/protect-env.ts
+export default function (forge) {
+  forge.on("tool:before", (event) => {
+    if (event.toolName !== "write") return
+    if (event.input?.path !== ".env") return
+    return { block: true, reason: "Blocked: .env writes are protected" }
+  })
+}
+```
+
+For power users who want Pi-native custom tools, event handlers, packages, prompts, and themes: Forge also exposes the full [Pi extension system](PI_EXTENSIONS.md). Pi extensions are TypeScript modules that hook into the agent lifecycle and can:
 
 - **Register custom tools** — Give agents access to your ticket tracker, internal APIs, databases, or any external service
 - **Intercept tool calls** — Block dangerous commands (`rm -rf /`), prevent writes to sensitive files (`.env`, `.git/`), or require approval for specific operations
@@ -668,7 +685,7 @@ Once you're comfortable with the basics:
 4. **Experiment with parallel execution** — Give your manager multiple tasks and watch it coordinate workers.
 5. **Adjust review frequency** — Check **Settings → General** to configure how often automatic Cortex reviews run or turn them off if you prefer manual control.
 6. **Explore multi-model routing** — If you have OpenAI, Anthropic, or Claude SDK configured, teach your manager which providers and models to use for which kinds of work. `claude-sdk` is a separate provider option from `anthropic`, so specialists can be configured with either independently.
-7. **Try Pi extensions** — Drop a TypeScript file into `~/.forge/agent/extensions/` to add custom tools or safety guardrails. See the [Pi Extensions guide](PI_EXTENSIONS.md).
+7. **Try extensions** — Use `~/.forge/extensions/` for Forge-native hooks or `~/.forge/agent/extensions/` for Pi-native runtime extensions. See [FORGE_EXTENSIONS.md](FORGE_EXTENSIONS.md) and [PI_EXTENSIONS.md](PI_EXTENSIONS.md).
 
 > "Forge builds Forge. When I'm working on other projects, as soon as I run into something that's either a bug or a little feature I want, I just pop down, click the conversation with Forge, tell it, and then it chews on it, plans it, whatever."
 

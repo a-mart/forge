@@ -1,5 +1,7 @@
 import { basename } from "node:path";
 import type { AgentRuntimeExtensionSnapshot } from "@forge/protocol";
+import type { ForgeExtensionHost } from "./forge-extension-host.js";
+import { createForgeBindingToken } from "./forge-extension-types.js";
 import type { CredentialPoolService } from "./credential-pool.js";
 import { isNonRunningAgentStatus, transitionAgentStatus } from "./agent-state-machine.js";
 import type {
@@ -104,6 +106,7 @@ export interface WorkerActivityStateLike {
 
 export interface SwarmRuntimeControllerHost extends SwarmToolHost {
   config: SwarmConfig;
+  forgeExtensionHost: ForgeExtensionHost;
   now: () => string;
   descriptors: Map<string, AgentDescriptor>;
   workerWatchdogState: Map<string, WorkerWatchdogStateLike>;
@@ -140,6 +143,12 @@ export interface SwarmRuntimeControllerHost extends SwarmToolHost {
   resolveSpecialistFallbackModelForDescriptor(
     descriptor: AgentDescriptor
   ): Promise<AgentModelDescriptor | undefined>;
+  maybeRecoverWorkerWithSpecialistFallback(
+    agentId: string,
+    errorMessage: string,
+    sourcePhase: "prompt_dispatch" | "prompt_start",
+    runtimeToken?: number
+  ): Promise<boolean>;
   resolveSpawnModelWithCapacityFallback(model: AgentModelDescriptor): AgentModelDescriptor;
   createRuntimeForDescriptor(
     descriptor: AgentDescriptor,
@@ -200,10 +209,12 @@ export class SwarmRuntimeController {
   constructor(private readonly host: SwarmRuntimeControllerHost) {
     this.runtimeFactory = new RuntimeFactory({
       host,
+      forgeExtensionHost: host.forgeExtensionHost,
       config: host.config,
       now: host.now,
       logDebug: (message, details) => this.logDebug(message, details),
       getPiModelsJsonPath: () => this.host.getPiModelsJsonPathOrThrow(),
+      getAgentDescriptor: (agentId) => this.host.descriptors.get(agentId),
       getCredentialPoolService: () => this.host.secretsEnvService.getCredentialPoolService(),
       onSessionFileRotated: async (descriptor, sessionFile) => {
         if (descriptor.role !== "manager") {
@@ -292,7 +303,13 @@ export class SwarmRuntimeController {
   }
 
   clearRuntimeToken(agentId: string, runtimeToken?: number): void {
-    if (runtimeToken !== undefined && !this.isCurrentRuntimeToken(agentId, runtimeToken)) {
+    const isCurrentRuntime = runtimeToken === undefined || this.isCurrentRuntimeToken(agentId, runtimeToken);
+
+    if (runtimeToken !== undefined) {
+      this.host.forgeExtensionHost.deactivateRuntimeBindings(createForgeBindingToken(runtimeToken));
+    }
+
+    if (!isCurrentRuntime) {
       return;
     }
 
@@ -302,6 +319,7 @@ export class SwarmRuntimeController {
 
   detachRuntime(agentId: string, runtimeToken?: number): boolean {
     if (runtimeToken !== undefined && !this.isCurrentRuntimeToken(agentId, runtimeToken)) {
+      this.clearRuntimeToken(agentId, runtimeToken);
       return false;
     }
 
@@ -637,6 +655,14 @@ export class SwarmRuntimeController {
       ...error,
       message
     });
+
+    const forgeBindingRuntimeToken = runtimeToken ?? this.runtimeTokensByAgentId.get(agentId);
+    if (forgeBindingRuntimeToken !== undefined) {
+      await this.host.forgeExtensionHost.dispatchRuntimeError(createForgeBindingToken(forgeBindingRuntimeToken), {
+        ...error,
+        message
+      });
+    }
 
     if (error.phase === "prompt_dispatch" || error.phase === "prompt_start") {
       const recoveredWithFallback = await this.maybeRecoverWorkerWithSpecialistFallback(
@@ -1073,14 +1099,11 @@ export class SwarmRuntimeController {
     sourcePhase: "prompt_dispatch" | "prompt_start",
     runtimeToken?: number
   ): Promise<boolean> {
-    return this.specialistFallbackManager?.maybeRecoverWorkerWithSpecialistFallback({
+    return this.host.maybeRecoverWorkerWithSpecialistFallback(
       agentId,
       errorMessage,
       sourcePhase,
-      runtimeToken,
-      handleRuntimeStatus: (token, targetAgentId, status, pendingCount, contextUsage) =>
-        this.handleRuntimeStatus(token, targetAgentId, status, pendingCount, contextUsage),
-      handleRuntimeAgentEnd: (token, targetAgentId) => this.handleRuntimeAgentEnd(token, targetAgentId)
-    }) ?? false;
+      runtimeToken
+    );
   }
 }

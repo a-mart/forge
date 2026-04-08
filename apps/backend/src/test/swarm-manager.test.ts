@@ -315,6 +315,30 @@ class TestSwarmManager extends SwarmManager {
 
 }
 
+class ForgeRuntimeHookTestManager extends TestSwarmManager {
+  protected override async createRuntimeForDescriptor(
+    descriptor: AgentDescriptor,
+    systemPrompt: string,
+    runtimeToken?: number,
+  ): Promise<SwarmAgentRuntime> {
+    const runtime = await super.createRuntimeForDescriptor(descriptor, systemPrompt, runtimeToken)
+
+    if (runtimeToken !== undefined) {
+      const forgeExtensionHost = (this as any).forgeExtensionHost
+      const bindings = await forgeExtensionHost.prepareRuntimeBindings({
+        descriptor,
+        runtimeType: 'pi',
+        runtimeToken,
+      })
+      if (bindings) {
+        forgeExtensionHost.activateRuntimeBindings(bindings)
+      }
+    }
+
+    return runtime
+  }
+}
+
 class RuntimeFallbackReplayTestManager extends TestSwarmManager {
   fallbackReplaySessionByAgentId = new Map<string, FallbackReplaySession>()
   fallbackReplayRuntimeByAgentId = new Map<string, AgentRuntime>()
@@ -590,6 +614,49 @@ async function makeTempConfig(port = 8790): Promise<SwarmConfig> {
       schedulesFile: getScheduleFilePath(dataDir, 'manager'),
     },
   }
+}
+
+async function installForgeLifecycleLogger(config: SwarmConfig, logPath: string): Promise<void> {
+  const extensionsDir = join(config.paths.dataDir, 'extensions')
+  await mkdir(extensionsDir, { recursive: true })
+  await writeFile(
+    join(extensionsDir, 'lifecycle.ts'),
+    `
+      import { appendFileSync } from "node:fs"
+      export default (forge) => {
+        forge.on("session:lifecycle", (event) => {
+          appendFileSync(${JSON.stringify(logPath)}, JSON.stringify(event) + "\\n", "utf8")
+        })
+      }
+    `,
+    'utf8',
+  )
+}
+
+async function installForgeRuntimeErrorLogger(config: SwarmConfig, logPath: string): Promise<void> {
+  const extensionsDir = join(config.paths.dataDir, 'extensions')
+  await mkdir(extensionsDir, { recursive: true })
+  await writeFile(
+    join(extensionsDir, 'runtime-error.ts'),
+    `
+      import { appendFileSync } from "node:fs"
+      export default (forge) => {
+        forge.on("runtime:error", (event) => {
+          appendFileSync(${JSON.stringify(logPath)}, JSON.stringify(event) + "\\n", "utf8")
+        })
+      }
+    `,
+    'utf8',
+  )
+}
+
+async function readJsonlFile<T>(path: string): Promise<T[]> {
+  const content = await readFile(path, 'utf8')
+  return content
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as T)
 }
 
 async function bootWithDefaultManager(
@@ -1710,6 +1777,36 @@ describe('SwarmManager', () => {
     })
     expect(await readFile(getProjectAgentPromptPath(config.paths.dataDir, 'manager', 'release-notes'), 'utf8')).toBe(
       'You are the release notes project agent.',
+    )
+  })
+
+  it('emits Forge session lifecycle hooks for createAndPromoteProjectAgent', async () => {
+    const config = await makeTempConfig()
+    const logPath = join(config.paths.dataDir, 'project-agent-lifecycle.jsonl')
+    await installForgeLifecycleLogger(config, logPath)
+
+    const manager = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const creator = await manager.createSession('manager', {
+      label: 'Agent Creator',
+      sessionPurpose: 'agent_creator',
+    })
+
+    const result = await manager.createAndPromoteProjectAgent(creator.sessionAgent.agentId, {
+      sessionName: 'Release Notes',
+      whenToUse: 'Draft release notes',
+      systemPrompt: 'You are the release notes project agent.',
+    })
+
+    const events = await readJsonlFile<any>(logPath)
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action: 'created',
+          session: expect.objectContaining({ sessionAgentId: result.agentId, profileId: 'manager' }),
+        }),
+      ]),
     )
   })
 
@@ -5230,6 +5327,100 @@ describe('SwarmManager', () => {
     })
   })
 
+  it('dispatches Forge runtime:error before specialist fallback recovery short-circuits the user-facing error path', async () => {
+    const config = await makeTempConfig()
+    const logPath = join(config.paths.dataDir, 'runtime-error-hook.jsonl')
+    await installForgeRuntimeErrorLogger(config, logPath)
+
+    const manager = new ForgeRuntimeHookTestManager(config)
+
+    await mkdir(join(config.paths.sharedDir, 'specialists'), { recursive: true })
+    await writeFile(
+      join(config.paths.sharedDir, 'specialists', 'planner.md'),
+      [
+        '---',
+        'displayName: Planner',
+        'color: "#7c3aed"',
+        'enabled: true',
+        'whenToUse: Planning work.',
+        'modelId: claude-opus-4-6',
+        'reasoningLevel: high',
+        'fallbackModelId: gpt-5.4',
+        'fallbackReasoningLevel: high',
+        '---',
+        'You are the planner specialist.'
+      ].join('\n'),
+      'utf8',
+    )
+
+    await bootWithDefaultManager(manager, config)
+    await writeFile(logPath, '', 'utf8')
+
+    const worker = await manager.spawnAgent('manager', {
+      agentId: 'Planner Hook Worker',
+      specialist: 'planner',
+    })
+    const originalRuntime = manager.runtimeByAgentId.get(worker.agentId)
+    const managerRuntime = manager.runtimeByAgentId.get('manager')
+    const managerState = manager as unknown as {
+      runtimeTokensByAgentId: Map<string, number>
+      handleRuntimeError: (runtimeToken: number, agentId: string, error: RuntimeErrorEvent) => Promise<void>
+    }
+    const workerDescriptor = manager.getAgent(worker.agentId)
+    const workerRuntimeToken = managerState.runtimeTokensByAgentId.get(worker.agentId) ?? 101
+    managerState.runtimeTokensByAgentId.set(worker.agentId, workerRuntimeToken)
+    const forgeExtensionHost = (manager as any).forgeExtensionHost
+    if (workerDescriptor && workerRuntimeToken !== undefined) {
+      const bindings = await forgeExtensionHost.prepareRuntimeBindings({
+        descriptor: workerDescriptor,
+        runtimeType: 'pi',
+        runtimeToken: workerRuntimeToken,
+      })
+      if (bindings) {
+        forgeExtensionHost.activateRuntimeBindings(bindings)
+      }
+    }
+
+    originalRuntime!.specialistFallbackReplayMessage = {
+      text: 'Draft the implementation plan.',
+      images: [],
+    }
+    managerRuntime!.sendCalls = []
+    const dispatchRuntimeErrorSpy = vi.spyOn(forgeExtensionHost, 'dispatchRuntimeError')
+    const fallbackSpy = vi
+      .spyOn(manager as any, 'maybeRecoverWorkerWithSpecialistFallback')
+      .mockImplementation(async () => {
+        expect(dispatchRuntimeErrorSpy).toHaveBeenCalledTimes(1)
+        return true
+      })
+
+    await managerState.handleRuntimeError(workerRuntimeToken, worker.agentId, {
+      phase: 'prompt_dispatch',
+      message: '429 {"type":"error","error":{"type":"rate_limit_error","message":"This request would exceed your account\'s rate limit. Please try again later."}}',
+    })
+
+    expect(dispatchRuntimeErrorSpy).toHaveBeenCalledTimes(1)
+    expect(dispatchRuntimeErrorSpy).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        phase: 'prompt_dispatch',
+        message: expect.stringContaining('rate limit'),
+      }),
+    )
+    expect(fallbackSpy).toHaveBeenCalledTimes(1)
+    expect(managerRuntime?.sendCalls).toHaveLength(0)
+    expect(
+      manager
+        .getConversationHistory(worker.agentId)
+        .some(
+          (entry) =>
+            entry.type === 'conversation_message' &&
+            entry.role === 'system' &&
+            entry.text.includes('Worker reply failed:'),
+        ),
+    ).toBe(false)
+  })
+
   it('reroutes recoverable specialist prompt_dispatch failures to the fallback model without surfacing an error', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
@@ -7932,6 +8123,99 @@ describe('SwarmManager', () => {
     expect(deleted.terminatedWorkerIds).toContain(ownedWorker.agentId)
     expect(manager.listAgents().some((agent) => agent.agentId === secondary.agentId)).toBe(false)
     expect(manager.listAgents().some((agent) => agent.agentId === ownedWorker.agentId)).toBe(false)
+  })
+
+  it('emits Forge session lifecycle hooks for create, rename, fork, and delete with fork source ids', async () => {
+    const config = await makeTempConfig()
+    const logPath = join(config.paths.dataDir, 'session-lifecycle-matrix.jsonl')
+    await installForgeLifecycleLogger(config, logPath)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    await writeFile(logPath, '', 'utf8')
+
+    const created = await manager.createSession('manager', { label: 'QA Session' })
+    await manager.renameSession(created.sessionAgent.agentId, 'QA Session Renamed')
+    const forked = await manager.forkSession(created.sessionAgent.agentId, { label: 'QA Session Fork' })
+    await manager.deleteSession(created.sessionAgent.agentId)
+
+    const events = await readJsonlFile<any>(logPath)
+    expect(events).toEqual([
+      {
+        action: 'created',
+        session: {
+          sessionAgentId: created.sessionAgent.agentId,
+          profileId: 'manager',
+          label: 'QA Session',
+          cwd: created.sessionAgent.cwd,
+        },
+      },
+      {
+        action: 'renamed',
+        session: {
+          sessionAgentId: created.sessionAgent.agentId,
+          profileId: 'manager',
+          label: 'QA Session Renamed',
+          cwd: created.sessionAgent.cwd,
+        },
+      },
+      {
+        action: 'forked',
+        session: {
+          sessionAgentId: forked.sessionAgent.agentId,
+          profileId: 'manager',
+          label: 'QA Session Fork',
+          cwd: forked.sessionAgent.cwd,
+        },
+        sourceSessionAgentId: created.sessionAgent.agentId,
+      },
+      {
+        action: 'deleted',
+        session: {
+          sessionAgentId: created.sessionAgent.agentId,
+          profileId: 'manager',
+          label: 'QA Session Renamed',
+          cwd: created.sessionAgent.cwd,
+        },
+      },
+    ])
+  })
+
+  it('emits Forge session lifecycle hooks for root manager create/delete and per-session delete', async () => {
+    const config = await makeTempConfig()
+    const logPath = join(config.paths.dataDir, 'lifecycle.jsonl')
+    await installForgeLifecycleLogger(config, logPath)
+
+    const manager = new TestSwarmManager(config)
+    await manager.boot()
+
+    const created = await manager.createManager('cortex', {
+      name: 'Ops Manager',
+      cwd: config.defaultCwd,
+    })
+    const childSession = await manager.createSession(created.profileId ?? created.agentId, {
+      label: 'Ops Child',
+    })
+
+    await manager.deleteManager('cortex', created.agentId)
+
+    const events = await readJsonlFile<any>(logPath)
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action: 'created',
+          session: expect.objectContaining({ sessionAgentId: created.agentId }),
+        }),
+        expect.objectContaining({
+          action: 'deleted',
+          session: expect.objectContaining({ sessionAgentId: created.agentId }),
+        }),
+        expect.objectContaining({
+          action: 'deleted',
+          session: expect.objectContaining({ sessionAgentId: childSession.sessionAgent.agentId }),
+        }),
+      ]),
+    )
   })
 
   it('maps create_manager model presets to canonical runtime models with highest reasoning', async () => {

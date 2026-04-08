@@ -34,6 +34,21 @@ const piCodingAgentMockState = vi.hoisted(() => ({
   modelRegistryCreateArgs: vi.fn(),
   modelRegistryFind: vi.fn(),
   modelRegistryGetAll: vi.fn(),
+  defaultResourceLoaderCtor: vi.fn(),
+}));
+
+const claudeRuntimeMockState = vi.hoisted(() => ({
+  constructorArgs: [] as unknown[],
+  createMcpBridge: vi.fn(),
+  constructImpl: undefined as ((options: unknown) => unknown) | undefined,
+}));
+
+const codexRuntimeMockState = vi.hoisted(() => ({
+  create: vi.fn(),
+}));
+
+const sessionFileGuardMockState = vi.hoisted(() => ({
+  openSessionManagerWithSizeGuard: vi.fn(() => ({})),
 }));
 
 vi.mock("@mariozechner/pi-ai", () => ({
@@ -47,7 +62,12 @@ vi.mock("@mariozechner/pi-coding-agent", () => ({
     inMemory: (...args: unknown[]) => piCodingAgentMockState.authStorageInMemory(...args),
   },
   DefaultResourceLoader: class {
-    constructor(_options: unknown) {}
+    readonly options: unknown
+
+    constructor(options: unknown) {
+      this.options = options
+      piCodingAgentMockState.defaultResourceLoaderCtor(options)
+    }
 
     async reload(): Promise<void> {}
 
@@ -77,8 +97,51 @@ vi.mock("@mariozechner/pi-coding-agent", () => ({
   },
 }));
 
-import { resetClaudeSdkLoaderForTests, setClaudeSdkImporterForTests } from "../claude-sdk-loader.js";
+vi.mock("../session-file-guard.js", () => ({
+  openSessionManagerWithSizeGuard: (...args: unknown[]) => sessionFileGuardMockState.openSessionManagerWithSizeGuard(...args),
+}));
+
+vi.mock("../claude-mcp-tool-bridge.js", () => ({
+  createClaudeMcpToolBridge: (...args: unknown[]) => claudeRuntimeMockState.createMcpBridge(...args),
+}));
+
+vi.mock("../claude-agent-runtime.js", () => ({
+  ClaudeAgentRuntime: class {
+    constructor(options: unknown) {
+      claudeRuntimeMockState.constructorArgs.push(options)
+      return claudeRuntimeMockState.constructImpl?.(options) as object | undefined
+    }
+  },
+}));
+
+vi.mock("../codex-agent-runtime.js", () => ({
+  CodexAgentRuntime: {
+    create: (...args: unknown[]) => codexRuntimeMockState.create(...args),
+  },
+}));
+
+vi.mock("../claude-prompt-assembler.js", () => ({
+  assembleClaudePrompt: vi.fn(async ({ basePrompt }: { basePrompt: string }) => basePrompt),
+  discoverAgentsMd: vi.fn(async () => []),
+}));
+
+vi.mock("../skill-metadata-service.js", () => ({
+  SkillMetadataService: class {
+    async ensureSkillMetadataLoaded(): Promise<void> {}
+
+    getSkillMetadata(): unknown[] {
+      return []
+    }
+  },
+}));
+
+vi.mock("../onboarding-state.js", () => ({
+  getOnboardingSnapshot: vi.fn(async () => ({ status: "pending" })),
+}));
+
+import { ClaudeSdkUnavailableError, resetClaudeSdkLoaderForTests, setClaudeSdkImporterForTests } from "../claude-sdk-loader.js";
 import { savePins } from "../message-pins.js";
+import { ForgeExtensionHost } from "../forge-extension-host.js";
 import { RuntimeFactory } from "../runtime-factory.js";
 import type { AgentDescriptor, SwarmConfig } from "../types.js";
 
@@ -152,13 +215,15 @@ function createDescriptor(
   };
 }
 
-function createManagerDescriptor(rootDir: string): AgentDescriptor {
+function createManagerDescriptor(rootDir: string, overrides: Partial<AgentDescriptor> = {}): AgentDescriptor {
   return createDescriptor(rootDir, {
     agentId: "manager-1",
     displayName: "Manager 1",
     role: "manager",
     managerId: "manager-1",
+    sessionLabel: "Manager 1",
     sessionFile: join(rootDir, "manager-session.jsonl"),
+    ...overrides,
   });
 }
 
@@ -173,31 +238,42 @@ function createFactory(
   rootDir: string,
   overrides: {
     logDebug?: (message: string, details?: unknown) => void;
+    hostOverrides?: Record<string, unknown>;
+    forgeExtensionHost?: ForgeExtensionHost;
+    getAgentDescriptor?: (agentId: string) => AgentDescriptor | undefined;
     getCredentialPoolService?: () => any;
   } = {},
 ): RuntimeFactory {
-  return new RuntimeFactory({
-    host: {
-      listAgents: () => [],
-      getWorkerActivity: () => undefined,
-      spawnAgent: async () => {
-        throw new Error("not implemented");
-      },
-      killAgent: async () => {},
-      sendMessage: async () => ({
-        targetAgentId: "worker-1",
-        deliveryId: "delivery-1",
-        acceptedMode: "prompt",
-      }),
-      publishToUser: async () => ({
-        targetContext: { channel: "web" },
-      }),
-      requestUserChoice: async () => [],
+  const host = {
+    listAgents: () => [],
+    getWorkerActivity: () => undefined,
+    spawnAgent: async () => {
+      throw new Error("not implemented");
     },
+    killAgent: async () => {},
+    sendMessage: async () => ({
+      targetAgentId: "worker-1",
+      deliveryId: "delivery-1",
+      acceptedMode: "prompt",
+    }),
+    publishToUser: async () => ({
+      targetContext: { channel: "web" },
+    }),
+    requestUserChoice: async () => [],
+    ...overrides.hostOverrides,
+  };
+
+  return new RuntimeFactory({
+    host: host as any,
+    forgeExtensionHost: overrides.forgeExtensionHost ?? new ForgeExtensionHost({
+      dataDir: join(rootDir, "data"),
+      now: () => "2026-01-01T00:00:00.000Z",
+    }),
     config: createConfig(rootDir),
     now: () => "2026-01-01T00:00:00.000Z",
     logDebug: overrides.logDebug ?? (() => {}),
     getPiModelsJsonPath: () => getPiModelsProjectionPath(join(rootDir, "data")),
+    getAgentDescriptor: overrides.getAgentDescriptor,
     getCredentialPoolService: overrides.getCredentialPoolService,
     getMemoryRuntimeResources: async () => ({
       memoryContextFile: {
@@ -220,6 +296,21 @@ function createFactory(
   });
 }
 
+function createMockPiSession() {
+  return {
+    bindExtensions: vi.fn(async () => undefined),
+    getActiveToolNames: vi.fn(() => []),
+    setActiveToolsByName: vi.fn(),
+    subscribe: vi.fn(() => () => undefined),
+    prompt: vi.fn(async () => undefined),
+    steer: vi.fn(async () => undefined),
+    interrupt: vi.fn(async () => undefined),
+    abort: vi.fn(async () => undefined),
+    sessionManager: {},
+    systemPrompt: "system prompt",
+  };
+}
+
 function buildExtensionFactories(factory: RuntimeFactory, descriptor: AgentDescriptor) {
   return (
     factory as unknown as {
@@ -240,6 +331,18 @@ describe("RuntimeFactory", () => {
     piCodingAgentMockState.modelRegistryCreateArgs.mockReset();
     piCodingAgentMockState.modelRegistryFind.mockReset();
     piCodingAgentMockState.modelRegistryGetAll.mockReset();
+    piCodingAgentMockState.defaultResourceLoaderCtor.mockReset();
+    claudeRuntimeMockState.constructorArgs = [];
+    claudeRuntimeMockState.constructImpl = undefined;
+    claudeRuntimeMockState.createMcpBridge.mockReset();
+    claudeRuntimeMockState.createMcpBridge.mockResolvedValue({
+      serverName: "forge-test",
+      server: {},
+      allowedTools: [],
+    });
+    codexRuntimeMockState.create.mockReset();
+    sessionFileGuardMockState.openSessionManagerWithSizeGuard.mockReset();
+    sessionFileGuardMockState.openSessionManagerWithSizeGuard.mockReturnValue({});
   });
 
   it("surfaces Claude SDK installation guidance when the native runtime is unavailable", async () => {
@@ -249,6 +352,11 @@ describe("RuntimeFactory", () => {
     setClaudeSdkImporterForTests(
       vi.fn().mockRejectedValue(Object.assign(new Error("missing"), { code: "ERR_MODULE_NOT_FOUND" }))
     );
+    claudeRuntimeMockState.constructImpl = () => {
+      throw new ClaudeSdkUnavailableError('Claude backend requires "@anthropic-ai/claude-agent-sdk" to be installed.', {
+        code: 'ERR_MODULE_NOT_FOUND',
+      })
+    }
 
     const factory = createFactory(rootDir);
 
@@ -585,5 +693,214 @@ describe("RuntimeFactory", () => {
     }
 
     expect(handlers.has("before_provider_request")).toBe(true);
+  });
+
+  it("reloads Forge extension behavior on Pi runtime recreation boundaries", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    await mkdir(rootDir, { recursive: true });
+    await seedProjectionFile(rootDir);
+
+    const extensionPath = join(rootDir, "data", "extensions", "rewrite.ts");
+    await mkdir(join(rootDir, "data", "extensions"), { recursive: true });
+    await writeFile(
+      extensionPath,
+      'export default (forge) => { forge.on("tool:before", (event) => event.toolName === "send_message_to_agent" ? ({ input: { ...event.input, targetAgentId: "worker-first" } }) : undefined) }\n',
+      "utf8"
+    );
+
+    const descriptor = createDescriptor(rootDir);
+    await writeFile(descriptor.sessionFile, "", "utf8");
+
+    piCodingAgentMockState.modelRegistryFind.mockReturnValue({ provider: "openai-codex", modelId: "gpt-5.4-mini" });
+    piCodingAgentMockState.createAgentSession.mockResolvedValue({
+      session: createMockPiSession(),
+      extensionsResult: { extensions: [], errors: [] },
+    });
+
+    const sendMessage = vi.fn(async (_sourceAgentId: string, targetAgentId: string) => ({
+      targetAgentId,
+      deliveryId: `delivery-${targetAgentId}`,
+      acceptedMode: "prompt",
+    }));
+    const factory = createFactory(rootDir, {
+      hostOverrides: {
+        sendMessage,
+      },
+    });
+
+    await factory.createRuntimeForDescriptor(descriptor, "system prompt", 1);
+    const firstTools = piCodingAgentMockState.createAgentSession.mock.calls.at(-1)?.[0]?.customTools as Array<{ name: string; execute: (...args: any[]) => Promise<unknown> }>;
+    const firstSendTool = firstTools.find((tool) => tool.name === "send_message_to_agent");
+    await firstSendTool?.execute("tool-1", { targetAgentId: "worker-original", message: "hello" });
+
+    await writeFile(
+      extensionPath,
+      'export default (forge) => { forge.on("tool:before", (event) => event.toolName === "send_message_to_agent" ? ({ input: { ...event.input, targetAgentId: "worker-second" } }) : undefined) }\n',
+      "utf8"
+    );
+
+    await factory.createRuntimeForDescriptor(descriptor, "system prompt", 2);
+    const secondTools = piCodingAgentMockState.createAgentSession.mock.calls.at(-1)?.[0]?.customTools as Array<{ name: string; execute: (...args: any[]) => Promise<unknown> }>;
+    const secondSendTool = secondTools.find((tool) => tool.name === "send_message_to_agent");
+    await secondSendTool?.execute("tool-2", { targetAgentId: "worker-original", message: "hello" });
+
+    expect(sendMessage.mock.calls.map((call) => call[1])).toEqual(["worker-first", "worker-second"]);
+  });
+
+  it("passes worker runtime context with worker agent data and owning manager session data on Pi runtimes", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    await mkdir(rootDir, { recursive: true });
+    await seedProjectionFile(rootDir);
+
+    await mkdir(join(rootDir, "data", "extensions"), { recursive: true });
+    await writeFile(
+      join(rootDir, "data", "extensions", "context.ts"),
+      'export default (forge) => { forge.on("tool:before", (event, ctx) => event.toolName === "send_message_to_agent" ? ({ input: { ...event.input, targetAgentId: ctx.agent.agentId, message: JSON.stringify({ sessionAgentId: ctx.session.sessionAgentId, sessionLabel: ctx.session.label, sessionCwd: ctx.session.cwd, agentCwd: ctx.agent.cwd }) } }) : undefined) }\n',
+      "utf8"
+    );
+
+    const managerCwd = join(rootDir, "manager-cwd");
+    const workerCwd = join(rootDir, "worker-cwd");
+    await mkdir(managerCwd, { recursive: true });
+    await mkdir(workerCwd, { recursive: true });
+
+    const descriptor = createDescriptor(rootDir, { cwd: workerCwd });
+    const managerDescriptor = createManagerDescriptor(rootDir, {
+      cwd: managerCwd,
+      sessionLabel: "Manager Session",
+      profileId: "profile-1",
+    });
+    await writeFile(descriptor.sessionFile, "", "utf8");
+
+    piCodingAgentMockState.modelRegistryFind.mockReturnValue({ provider: "openai-codex", modelId: "gpt-5.4-mini" });
+    piCodingAgentMockState.createAgentSession.mockResolvedValue({
+      session: createMockPiSession(),
+      extensionsResult: { extensions: [], errors: [] },
+    });
+
+    const sendMessage = vi.fn(async (_sourceAgentId: string, targetAgentId: string, message: string) => ({
+      targetAgentId,
+      deliveryId: "delivery-1",
+      acceptedMode: "prompt",
+      message,
+    }));
+    const factory = createFactory(rootDir, {
+      hostOverrides: {
+        sendMessage,
+      },
+      getAgentDescriptor: (agentId) => (agentId === managerDescriptor.agentId ? managerDescriptor : undefined),
+    });
+
+    await factory.createRuntimeForDescriptor(descriptor, "system prompt", 1);
+    const tools = piCodingAgentMockState.createAgentSession.mock.calls.at(-1)?.[0]?.customTools as Array<{ name: string; execute: (...args: any[]) => Promise<unknown> }>;
+    const sendTool = tools.find((tool) => tool.name === "send_message_to_agent");
+    await sendTool?.execute("tool-context", { targetAgentId: "worker-original", message: "ignored" });
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      "worker-1",
+      "worker-1",
+      JSON.stringify({
+        sessionAgentId: "manager-1",
+        sessionLabel: "Manager Session",
+        sessionCwd: managerCwd,
+        agentCwd: workerCwd,
+      }),
+      undefined
+    );
+  });
+
+  it("does not leave active Forge runtime snapshots behind when Pi runtime creation fails", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    await mkdir(rootDir, { recursive: true });
+    await seedProjectionFile(rootDir);
+
+    await mkdir(join(rootDir, "data", "extensions"), { recursive: true });
+    await writeFile(join(rootDir, "data", "extensions", "hooks.ts"), 'export default () => {}\n', "utf8");
+
+    const descriptor = createDescriptor(rootDir);
+    await writeFile(descriptor.sessionFile, "", "utf8");
+
+    piCodingAgentMockState.modelRegistryFind.mockReturnValue({ provider: "openai-codex", modelId: "gpt-5.4-mini" });
+    piCodingAgentMockState.createAgentSession.mockRejectedValue(new Error("createAgentSession failed"));
+
+    const forgeExtensionHost = new ForgeExtensionHost({
+      dataDir: join(rootDir, "data"),
+      now: () => "2026-01-01T00:00:00.000Z",
+    });
+    const factory = createFactory(rootDir, { forgeExtensionHost });
+
+    await expect(factory.createRuntimeForDescriptor(descriptor, "system prompt", 1)).rejects.toThrow(
+      "createAgentSession failed"
+    );
+
+    const snapshot = await forgeExtensionHost.buildSettingsSnapshot({ cwdValues: [rootDir] });
+    expect(snapshot.snapshots).toEqual([]);
+  });
+
+  it("wraps Forge-owned tools for Claude and Codex runtimes", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    await mkdir(rootDir, { recursive: true });
+
+    await mkdir(join(rootDir, "data", "extensions"), { recursive: true });
+    await writeFile(
+      join(rootDir, "data", "extensions", "rewrite.ts"),
+      'export default (forge) => { forge.on("tool:before", (event) => event.toolName === "send_message_to_agent" ? ({ input: { ...event.input, targetAgentId: "worker-rewritten" } }) : undefined) }\n',
+      "utf8"
+    );
+
+    const sendMessage = vi.fn(async (_sourceAgentId: string, targetAgentId: string) => ({
+      targetAgentId,
+      deliveryId: "delivery-1",
+      acceptedMode: "prompt",
+    }));
+    const factory = createFactory(rootDir, {
+      hostOverrides: {
+        sendMessage,
+      },
+    });
+
+    claudeRuntimeMockState.createMcpBridge.mockImplementation(async (tools: Array<{ name: string; execute: (...args: any[]) => Promise<unknown> }>) => ({
+      serverName: "forge-test",
+      server: {},
+      allowedTools: tools.map((tool) => tool.name),
+      tools,
+    }));
+    codexRuntimeMockState.create.mockImplementation(async (options: { tools: Array<{ name: string; execute: (...args: any[]) => Promise<unknown> }> }) => options as unknown);
+
+    await factory.createRuntimeForDescriptor(
+      createDescriptor(rootDir, {
+        model: {
+          provider: "claude-sdk",
+          modelId: "claude-opus-4-6",
+          thinkingLevel: "high",
+        },
+      }),
+      "system prompt",
+      1
+    );
+    const claudeTools = claudeRuntimeMockState.createMcpBridge.mock.calls.at(-1)?.[0] as Array<{ name: string; execute: (...args: any[]) => Promise<unknown> }>;
+    await claudeTools.find((tool) => tool.name === "send_message_to_agent")?.execute("tool-claude", {
+      targetAgentId: "worker-original",
+      message: "hello",
+    });
+
+    await factory.createRuntimeForDescriptor(
+      createDescriptor(rootDir, {
+        model: {
+          provider: "openai-codex-app-server",
+          modelId: "gpt-5-codex",
+          thinkingLevel: "high",
+        },
+      }),
+      "system prompt",
+      2
+    );
+    const codexOptions = codexRuntimeMockState.create.mock.calls.at(-1)?.[0] as { tools: Array<{ name: string; execute: (...args: any[]) => Promise<unknown> }> };
+    await codexOptions.tools.find((tool) => tool.name === "send_message_to_agent")?.execute("tool-codex", {
+      targetAgentId: "worker-original",
+      message: "hello",
+    });
+
+    expect(sendMessage.mock.calls.map((call) => call[1])).toEqual(["worker-rewritten", "worker-rewritten"]);
   });
 });

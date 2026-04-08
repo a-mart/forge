@@ -72,17 +72,21 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
   process.once("SIGINT", emergencyRelease);
   process.once("SIGTERM", emergencyRelease);
 
+  let swarmManager: SwarmManager | undefined;
   const versioningService = new EmbeddedGitVersioningService({
     dataDir: config.paths.dataDir,
     logger,
+    onCommit: async (event) => {
+      await swarmManager?.dispatchForgeVersioningCommit(event);
+    },
   });
-  await versioningService.start();
 
   await seedBuiltins(config.paths.dataDir);
 
-  const swarmManager = new SwarmManager(config, {
+  swarmManager = new SwarmManager(config, {
     versioningService,
   });
+  await versioningService.start();
 
   const schedulersByProfileId = new Map<string, CronSchedulerService>();
   let schedulerLifecycle: Promise<void> = Promise.resolve();
@@ -364,10 +368,10 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
     if (server) {
       await server.stop();
     } else {
-      swarmManager.off("agents_snapshot", handleAgentsSnapshot);
+      swarmManager?.off("agents_snapshot", handleAgentsSnapshot);
       if (terminalService) {
-        swarmManager.off("session_lifecycle", handleTerminalSessionLifecycle);
-        swarmManager.off("agents_snapshot", handleTerminalAgentsSnapshot);
+        swarmManager?.off("session_lifecycle", handleTerminalSessionLifecycle);
+        swarmManager?.off("agents_snapshot", handleTerminalAgentsSnapshot);
       }
       await Promise.allSettled([
         queueSchedulerSync(new Set<string>()),

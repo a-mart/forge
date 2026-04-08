@@ -1,5 +1,6 @@
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import type { VersioningCommitEvent } from "../swarm/forge-extension-types.js";
 import { GitCli } from "./git-cli.js";
 import {
   enumerateExistingTrackedPaths,
@@ -34,6 +35,7 @@ export interface EmbeddedGitVersioningServiceOptions extends VersionedPathsOptio
   reconcileIntervalMs?: number;
   gitBinary?: string;
   logger?: Partial<LoggerLike>;
+  onCommit?: (event: VersioningCommitEvent) => Promise<void> | void;
 }
 
 export class EmbeddedGitVersioningService implements VersioningMutationSink {
@@ -43,6 +45,7 @@ export class EmbeddedGitVersioningService implements VersioningMutationSink {
   private readonly git: GitCli;
   private readonly logger: LoggerLike;
   private readonly trackSessionMemory: boolean;
+  private readonly onCommit?: (event: VersioningCommitEvent) => Promise<void> | void;
 
   private enabled: boolean;
   private started = false;
@@ -68,6 +71,7 @@ export class EmbeddedGitVersioningService implements VersioningMutationSink {
       error: options.logger?.error ?? ((message) => console.error(message))
     };
     this.trackSessionMemory = options.trackSessionMemory ?? parseTrackSessionMemoryEnv();
+    this.onCommit = options.onCommit;
   }
 
   async start(): Promise<void> {
@@ -245,6 +249,35 @@ export class EmbeddedGitVersioningService implements VersioningMutationSink {
 
     const message = await this.buildCommitMessage(stagedPaths, normalizedMutations, options.reason);
     await this.git.run(["commit", "--quiet", "-m", message.subject, ...(message.body ? ["-m", message.body] : [])]);
+
+    const commitSha = (await this.git.run(["rev-parse", "HEAD"]))
+      .stdout
+      .trim();
+    const profileIds = Array.from(
+      new Set(
+        normalizedMutations
+          .map((mutation) => mutation.profileId)
+          .filter((value): value is string => Boolean(value))
+      )
+    ).sort((left, right) => left.localeCompare(right));
+
+    const commitEvent: VersioningCommitEvent = {
+      sha: commitSha,
+      subject: message.subject,
+      body: message.body,
+      paths: stagedPaths,
+      mutations: normalizedMutations,
+      reason: options.reason,
+      profileIds
+    };
+
+    if (this.onCommit) {
+      try {
+        await this.onCommit(commitEvent);
+      } catch (error) {
+        this.logger.warn(`[versioning] Post-commit observer failed: ${stringifyError(error)}`);
+      }
+    }
   }
 
   private async buildCommitMessage(
