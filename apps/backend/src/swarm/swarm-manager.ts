@@ -121,17 +121,8 @@ import { modelCatalogService } from "./model-catalog-service.js";
 import { CLAUDE_RUNTIME_STATE_ENTRY_TYPE } from "./claude-agent-runtime.js";
 import { RuntimeFactory } from "./runtime-factory.js";
 import { createPiModelRegistry } from "./pi-model-registry.js";
-import {
-  computePromptFingerprint,
-  backfillCompactionCounts,
-  incrementSessionCompactionCount,
-  readSessionMeta,
-  rebuildSessionMeta,
-  updateSessionMetaStats,
-  updateSessionMetaWorker,
-  writeSessionMeta
-} from "./session-manifest.js";
 import { SecretsEnvService } from "./secrets-env-service.js";
+import { SwarmSessionMetaService, type SessionMemoryMergeAttemptMetaUpdate } from "./swarm-session-meta-service.js";
 import { SkillFileService } from "./skill-file-service.js";
 import { SkillMetadataService } from "./skill-metadata-service.js";
 import { SwarmChoiceService } from "./swarm-choice-service.js";
@@ -1226,6 +1217,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly skillMetadataService: SkillMetadataService;
   private readonly skillFileService: SkillFileService;
   private readonly secretsEnvService: SecretsEnvService;
+  private readonly sessionMetaService: SwarmSessionMetaService;
   private readonly settingsService: SwarmSettingsService;
   private readonly choiceService: SwarmChoiceService;
   readonly promptRegistry: PromptRegistry;
@@ -1285,6 +1277,21 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       config: this.config,
       ensureSkillMetadataLoaded: () => this.skillMetadataService.ensureSkillMetadataLoaded(),
       getSkillMetadata: () => this.skillMetadataService.getSkillMetadata()
+    });
+    this.sessionMetaService = new SwarmSessionMetaService({
+      dataDir: this.config.paths.dataDir,
+      agentsStoreFile: this.config.paths.agentsStoreFile,
+      descriptors: this.descriptors,
+      getSortedDescriptors: () => this.sortedDescriptors(),
+      now: this.now,
+      logDebug: (message, details) => this.logDebug(message, details),
+      emitAgentsSnapshot: () => {
+        this.emitAgentsSnapshot();
+      },
+      ensureSkillMetadataLoaded: () => this.skillMetadataService.ensureSkillMetadataLoaded(),
+      getAdditionalSkillPaths: () => this.skillMetadataService.getAdditionalSkillPaths(),
+      getAgentMemoryPath: (agentId) => this.getAgentMemoryPath(agentId),
+      resolveSystemPromptForDescriptor: (descriptor) => this.resolveSystemPromptForDescriptor(descriptor)
     });
     this.settingsService = new SwarmSettingsService({
       config: this.config,
@@ -1455,23 +1462,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     await this.saveStore();
     await this.rebuildSessionManifestForBoot();
     await this.hydrateCompactionCountsForBoot();
-
-    // Fire-and-forget: one-time backfill of historical compaction counts from JSONL
-    void backfillCompactionCounts(this.config.paths.dataDir).then((result) => {
-      // Update in-memory descriptors with backfilled counts
-      for (const [sessionId, count] of result.counts) {
-        const descriptor = this.descriptors.get(sessionId);
-        if (descriptor && descriptor.role === "manager") {
-          descriptor.compactionCount = count;
-        }
-      }
-      if (result.counts.size > 0) {
-        this.emitAgentsSnapshot();
-      }
-      this.logDebug("boot:compaction-count-backfill:done", { sessionsUpdated: result.counts.size });
-    }).catch((err) => {
-      this.logDebug("boot:compaction-count-backfill:error", { error: String(err) });
-    });
+    this.startCompactionCountBackfill();
 
     this.loadConversationHistoriesFromStore();
     await this.restoreRuntimesForBoot();
@@ -2608,7 +2599,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       const [sessionMemoryContent, profileMemoryContent, existingMeta] = await Promise.all([
         readFile(sessionMemoryPath, "utf8"),
         readFile(profileMemoryPath, "utf8"),
-        readSessionMeta(this.config.paths.dataDir, profileId, descriptor.agentId)
+        this.readSessionMetaForDescriptor(descriptor)
       ]);
 
       const sessionContentHash = hashMemoryMergeContent(sessionMemoryContent);
@@ -4959,14 +4950,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       const result = await runtime.compact(customInstructions);
 
       // Track successful compaction count
-      const newCount = await incrementSessionCompactionCount(
-        this.config.paths.dataDir,
+      const newCount = await this.incrementSessionCompactionCount(
         descriptor.profileId!,
-        agentId
-      ).catch((err) => {
-        this.logDebug("manager:compact:count-increment-failed", { agentId, error: String(err) });
-        return undefined;
-      });
+        agentId,
+        "manager:compact:count-increment-failed"
+      );
       if (newCount !== undefined) {
         descriptor.compactionCount = newCount;
       }
@@ -5062,14 +5050,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
       if (result.compacted) {
         // Track successful smart compaction
-        const smartCount = await incrementSessionCompactionCount(
-          this.config.paths.dataDir,
+        const smartCount = await this.incrementSessionCompactionCount(
           descriptor.profileId!,
-          agentId
-        ).catch((err) => {
-          this.logDebug("manager:smart_compact:count-increment-failed", { agentId, error: String(err) });
-          return undefined;
-        });
+          agentId,
+          "manager:smart_compact:count-increment-failed"
+        );
         if (smartCount !== undefined) {
           descriptor.compactionCount = smartCount;
         }
@@ -8582,14 +8567,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     // Track successful auto-compaction
     if (error.phase === "compaction" && recoveryStage === "auto_compaction_succeeded" && descriptor.profileId) {
-      const autoCount = await incrementSessionCompactionCount(
-        this.config.paths.dataDir,
+      const autoCount = await this.incrementSessionCompactionCount(
         descriptor.profileId,
-        agentId
-      ).catch((err) => {
-        this.logDebug("runtime:compact:count-increment-failed", { agentId, error: String(err) });
-        return undefined;
-      });
+        agentId,
+        "runtime:compact:count-increment-failed"
+      );
       if (autoCount !== undefined) {
         descriptor.compactionCount = autoCount;
       }
@@ -8706,305 +8688,59 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   private async rebuildSessionManifestForBoot(): Promise<void> {
-    try {
-      await rebuildSessionMeta({
-        dataDir: this.config.paths.dataDir,
-        agentsStoreFile: this.config.paths.agentsStoreFile,
-        descriptors: this.sortedDescriptors(),
-        now: this.now
-      });
-    } catch (error) {
-      this.logDebug("session:meta:rebuild_error", {
-        message: error instanceof Error ? error.message : String(error)
-      });
-    }
+    await this.sessionMetaService.rebuildSessionManifestForBoot();
   }
 
   private async hydrateCompactionCountsForBoot(): Promise<void> {
-    for (const descriptor of this.descriptors.values()) {
-      if (descriptor.role !== "manager") continue;
-      const profileId = descriptor.profileId ?? descriptor.agentId;
-      try {
-        const meta = await readSessionMeta(this.config.paths.dataDir, profileId, descriptor.agentId);
-        if (meta?.compactionCount) {
-          descriptor.compactionCount = meta.compactionCount;
-        }
-      } catch {
-        // Ignore — compactionCount remains undefined
-      }
-    }
+    await this.sessionMetaService.hydrateCompactionCountsForBoot();
+  }
+
+  private startCompactionCountBackfill(): void {
+    this.sessionMetaService.startCompactionCountBackfill();
   }
 
   private async writeInitialSessionMeta(descriptor: AgentDescriptor): Promise<void> {
-    if (descriptor.role !== "manager") {
-      return;
-    }
-
-    const profileId = descriptor.profileId ?? descriptor.agentId;
-    const existingMeta = await readSessionMeta(this.config.paths.dataDir, profileId, descriptor.agentId);
-    const base = existingMeta ?? this.createSessionMetaSkeleton(descriptor);
-
-    const next: SessionMeta = {
-      ...base,
-      sessionId: descriptor.agentId,
-      profileId,
-      label: normalizeOptionalAgentId(descriptor.sessionLabel) ?? base.label,
-      model: {
-        provider: descriptor.model.provider,
-        modelId: descriptor.model.modelId
-      },
-      createdAt: descriptor.createdAt,
-      updatedAt: this.now(),
-      cwd: descriptor.cwd,
-      stats: this.buildSessionMetaStats(base.workers, {
-        sessionFileSize: base.stats.sessionFileSize,
-        memoryFileSize: base.stats.memoryFileSize
-      })
-    };
-
-    await writeSessionMeta(this.config.paths.dataDir, next);
+    await this.sessionMetaService.writeInitialSessionMeta(descriptor);
   }
 
   private async captureSessionRuntimePromptMeta(
     descriptor: AgentDescriptor,
     resolvedSystemPrompt?: string | null
   ): Promise<void> {
-    if (descriptor.role !== "manager") {
-      return;
-    }
-
-    const profileId = descriptor.profileId ?? descriptor.agentId;
-
-    try {
-      await this.skillMetadataService.ensureSkillMetadataLoaded();
-
-      const memoryFilePath = this.getAgentMemoryPath(descriptor.agentId);
-      const profileMemoryPath = getProfileMemoryPath(this.config.paths.dataDir, profileId);
-
-      const agentsFileCandidate = join(descriptor.cwd, "AGENTS.md");
-      const promptComponents: NonNullable<SessionMeta["promptComponents"]> = {
-        archetype: descriptor.archetypeId ?? MANAGER_ARCHETYPE_ID,
-        agentsFile: existsSync(agentsFileCandidate) ? agentsFileCandidate : null,
-        skills: this.skillMetadataService.getAdditionalSkillPaths(),
-        memoryFile: memoryFilePath,
-        profileMemoryFile: profileMemoryPath
-      };
-
-      const resolvedSystemPromptForMeta =
-        resolvedSystemPrompt === undefined ? await this.resolveSystemPromptForDescriptor(descriptor) : resolvedSystemPrompt;
-      const existingMeta = await readSessionMeta(this.config.paths.dataDir, profileId, descriptor.agentId);
-      const base = existingMeta ?? this.createSessionMetaSkeleton(descriptor);
-
-      const next: SessionMeta = {
-        ...base,
-        sessionId: descriptor.agentId,
-        profileId,
-        label: normalizeOptionalAgentId(descriptor.sessionLabel) ?? base.label,
-        model: {
-          provider: descriptor.model.provider,
-          modelId: descriptor.model.modelId
-        },
-        cwd: descriptor.cwd,
-        resolvedSystemPrompt: resolvedSystemPromptForMeta,
-        promptComponents,
-        promptFingerprint: computePromptFingerprint(promptComponents),
-        updatedAt: this.now()
-      };
-
-      await writeSessionMeta(this.config.paths.dataDir, next);
-    } catch (error) {
-      this.logDebug("session:meta:prompt_capture_error", {
-        sessionAgentId: descriptor.agentId,
-        message: error instanceof Error ? error.message : String(error)
-      });
-    }
-  }
-
-  private createSessionMetaSkeleton(descriptor: AgentDescriptor): SessionMeta {
-    const profileId = descriptor.profileId ?? descriptor.agentId;
-    const timestamp = this.now();
-
-    return {
-      sessionId: descriptor.agentId,
-      profileId,
-      label: normalizeOptionalAgentId(descriptor.sessionLabel) ?? null,
-      model: {
-        provider: descriptor.model.provider,
-        modelId: descriptor.model.modelId
-      },
-      createdAt: descriptor.createdAt,
-      updatedAt: timestamp,
-      cwd: descriptor.cwd,
-      resolvedSystemPrompt: null,
-      promptFingerprint: null,
-      promptComponents: null,
-      feedbackFileSize: null,
-      lastFeedbackAt: null,
-      cortexReviewedFeedbackBytes: 0,
-      cortexReviewedFeedbackAt: null,
-      memoryMergeAttemptCount: 0,
-      lastMemoryMergeAttemptId: null,
-      lastMemoryMergeAttemptAt: null,
-      lastMemoryMergeAppliedAt: null,
-      lastMemoryMergeStatus: null,
-      lastMemoryMergeStrategy: null,
-      lastMemoryMergeFailureStage: null,
-      lastMemoryMergeSourceHash: null,
-      lastMemoryMergeProfileHashBefore: null,
-      lastMemoryMergeProfileHashAfter: null,
-      lastMemoryMergeAppliedSourceHash: null,
-      lastMemoryMergeError: null,
-      workers: [],
-      stats: {
-        totalWorkers: 0,
-        activeWorkers: 0,
-        totalTokens: {
-          input: null,
-          output: null
-        },
-        sessionFileSize: null,
-        memoryFileSize: null
-      }
-    };
-  }
-
-  private buildSessionMetaStats(
-    workers: SessionMeta["workers"],
-    fileSizes: { sessionFileSize: string | null; memoryFileSize: string | null }
-  ): SessionMeta["stats"] {
-    const inputTokens = workers
-      .map((worker) => worker.tokens.input)
-      .filter((value): value is number => typeof value === "number");
-    const outputTokens = workers
-      .map((worker) => worker.tokens.output)
-      .filter((value): value is number => typeof value === "number");
-
-    return {
-      totalWorkers: workers.length,
-      activeWorkers: workers.filter((worker) => worker.status === "streaming").length,
-      totalTokens: {
-        input: inputTokens.length > 0 ? inputTokens.reduce((sum, value) => sum + value, 0) : null,
-        output: outputTokens.length > 0 ? outputTokens.reduce((sum, value) => sum + value, 0) : null
-      },
-      sessionFileSize: fileSizes.sessionFileSize,
-      memoryFileSize: fileSizes.memoryFileSize
-    };
+    await this.sessionMetaService.captureSessionRuntimePromptMeta(descriptor, resolvedSystemPrompt);
   }
 
   private async updateSessionMetaForWorkerDescriptor(
     descriptor: AgentDescriptor,
     resolvedSystemPrompt?: string | null
   ): Promise<void> {
-    if (descriptor.role !== "worker") {
-      return;
-    }
-
-    const managerDescriptor = this.descriptors.get(descriptor.managerId);
-    if (!managerDescriptor || managerDescriptor.role !== "manager") {
-      return;
-    }
-
-    const profileId = managerDescriptor.profileId ?? managerDescriptor.agentId;
-
-    try {
-      await updateSessionMetaWorker(
-        this.config.paths.dataDir,
-        profileId,
-        managerDescriptor.agentId,
-        {
-          id: descriptor.agentId,
-          model: this.buildWorkerModelIdentifier(descriptor),
-          specialistId: normalizeOptionalAgentId(descriptor.specialistId) ?? null,
-          status: this.mapWorkerStatusForMeta(descriptor.status),
-          createdAt: descriptor.createdAt,
-          terminatedAt: descriptor.status === "terminated" ? descriptor.updatedAt : null,
-          tokens: {
-            input:
-              typeof descriptor.contextUsage?.tokens === "number"
-                ? Math.max(0, Math.round(descriptor.contextUsage.tokens))
-                : null,
-            output: null
-          },
-          systemPrompt: resolvedSystemPrompt
-        },
-        this.now
-      );
-    } catch (error) {
-      this.logDebug("session:meta:worker_update_error", {
-        workerId: descriptor.agentId,
-        managerId: descriptor.managerId,
-        message: error instanceof Error ? error.message : String(error)
-      });
-    }
-  }
-
-  private mapWorkerStatusForMeta(status: AgentStatus): SessionMeta["workers"][number]["status"] {
-    if (status === "terminated") {
-      return "terminated";
-    }
-
-    if (status === "streaming") {
-      return "streaming";
-    }
-
-    return "idle";
-  }
-
-  private buildWorkerModelIdentifier(descriptor: AgentDescriptor): string | null {
-    const provider = normalizeOptionalAgentId(descriptor.model.provider);
-    const modelId = normalizeOptionalAgentId(descriptor.model.modelId);
-
-    if (!provider || !modelId) {
-      return null;
-    }
-
-    return `${provider}/${modelId}`;
+    await this.sessionMetaService.updateSessionMetaForWorkerDescriptor(descriptor, resolvedSystemPrompt);
   }
 
   private async refreshSessionMetaStats(
     descriptor: AgentDescriptor,
     sessionFileOverride?: string
   ): Promise<void> {
-    if (descriptor.role !== "manager") {
-      return;
-    }
-
-    const profileId = descriptor.profileId ?? descriptor.agentId;
-    const memoryFilePath = this.getAgentMemoryPath(descriptor.agentId);
-
-    try {
-      const updated = await updateSessionMetaStats(this.config.paths.dataDir, profileId, descriptor.agentId, {
-        sessionFilePath: sessionFileOverride ?? descriptor.sessionFile,
-        memoryFilePath,
-        now: this.now
-      });
-
-      if (!updated) {
-        await this.writeInitialSessionMeta(descriptor);
-        await updateSessionMetaStats(this.config.paths.dataDir, profileId, descriptor.agentId, {
-          sessionFilePath: sessionFileOverride ?? descriptor.sessionFile,
-          memoryFilePath,
-          now: this.now
-        });
-      }
-    } catch (error) {
-      this.logDebug("session:meta:stats_update_error", {
-        sessionAgentId: descriptor.agentId,
-        message: error instanceof Error ? error.message : String(error)
-      });
-    }
+    await this.sessionMetaService.refreshSessionMetaStats(descriptor, sessionFileOverride);
   }
 
   private async refreshSessionMetaStatsBySessionId(
     sessionAgentId: string,
     sessionFileOverride?: string
   ): Promise<void> {
-    const descriptor = this.descriptors.get(sessionAgentId);
-    if (!descriptor || descriptor.role !== "manager") {
-      return;
-    }
+    await this.sessionMetaService.refreshSessionMetaStatsBySessionId(sessionAgentId, sessionFileOverride);
+  }
 
-    await this.refreshSessionMetaStats(descriptor, sessionFileOverride);
+  private async incrementSessionCompactionCount(
+    profileId: string,
+    sessionId: string,
+    failureLogKey: string
+  ): Promise<number | undefined> {
+    return this.sessionMetaService.incrementSessionCompactionCount(profileId, sessionId, failureLogKey);
+  }
+
+  private async readSessionMetaForDescriptor(descriptor: AgentDescriptor): Promise<SessionMeta | undefined> {
+    return this.sessionMetaService.readSessionMetaForDescriptor(descriptor);
   }
 
   private isRuntimeInContextRecovery(agentId: string): boolean {
@@ -10024,56 +9760,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   private async writeSessionMemoryMergeAttemptMeta(
     descriptor: AgentDescriptor,
-    attempt: {
-      attemptId?: string | null;
-      timestamp: string;
-      status: SessionMemoryMergeAttemptStatus;
-      strategy?: SessionMemoryMergeStrategy | null;
-      failureStage?: SessionMemoryMergeFailureStage | null;
-      sessionContentHash?: string | null;
-      profileContentHashBefore?: string | null;
-      profileContentHashAfter?: string | null;
-      appliedSourceHash?: string | null;
-      error?: string;
-    }
+    attempt: SessionMemoryMergeAttemptMetaUpdate
   ): Promise<void> {
-    const profileId = descriptor.profileId ?? descriptor.agentId;
-    const existingMeta = await readSessionMeta(this.config.paths.dataDir, profileId, descriptor.agentId);
-    const base = existingMeta ?? this.createSessionMetaSkeleton(descriptor);
-
-    const next: SessionMeta = {
-      ...base,
-      sessionId: descriptor.agentId,
-      profileId,
-      label: normalizeOptionalAgentId(descriptor.sessionLabel) ?? base.label,
-      model: {
-        provider: descriptor.model.provider,
-        modelId: descriptor.model.modelId
-      },
-      cwd: descriptor.cwd,
-      updatedAt: attempt.timestamp,
-      memoryMergeAttemptCount: (base.memoryMergeAttemptCount ?? 0) + 1,
-      lastMemoryMergeAttemptId: attempt.attemptId ?? (base.lastMemoryMergeAttemptId ?? null),
-      lastMemoryMergeAttemptAt: attempt.timestamp,
-      lastMemoryMergeAppliedAt:
-        attempt.status === "applied"
-          ? attempt.timestamp
-          : attempt.appliedSourceHash
-            ? attempt.timestamp
-            : (base.lastMemoryMergeAppliedAt ?? null),
-      lastMemoryMergeStatus: attempt.status,
-      lastMemoryMergeStrategy: attempt.strategy ?? null,
-      lastMemoryMergeFailureStage: attempt.failureStage ?? null,
-      lastMemoryMergeSourceHash: attempt.sessionContentHash ?? null,
-      lastMemoryMergeProfileHashBefore:
-        attempt.profileContentHashBefore ?? (base.lastMemoryMergeProfileHashBefore ?? null),
-      lastMemoryMergeProfileHashAfter:
-        attempt.profileContentHashAfter ?? (base.lastMemoryMergeProfileHashAfter ?? null),
-      lastMemoryMergeAppliedSourceHash: attempt.appliedSourceHash ?? (base.lastMemoryMergeAppliedSourceHash ?? null),
-      lastMemoryMergeError: attempt.error ?? null
-    };
-
-    await writeSessionMeta(this.config.paths.dataDir, next);
+    await this.sessionMetaService.writeSessionMemoryMergeAttemptMeta(descriptor, attempt);
   }
 
   private async recordSessionMemoryMergeAttempt(
