@@ -65,18 +65,6 @@ import type { CredentialPoolService } from "./credential-pool.js";
 import { migrateDataDirectory } from "./data-migration.js";
 import { cleanupOldSharedConfigPaths, migrateSharedConfigLayout } from "./shared-config-migration.js";
 import {
-  appendCortexReviewRun,
-  buildCortexReviewRunRequestText,
-  buildCortexReviewRunScopeLabel,
-  buildLiveCortexReviewRunRecord,
-  createCortexReviewRunId,
-  deriveLiveStatus,
-  parseCortexReviewRunScopeFromText,
-  parseScheduledTaskEnvelope,
-  readStoredCortexReviewRuns,
-  type StoredCortexReviewRun
-} from "./cortex-review-runs.js";
-import {
   formatAgentCreatorContextMessage,
   gatherAgentCreatorContext
 } from "./agent-creator-context.js";
@@ -109,7 +97,6 @@ import {
   readProjectAgentReferenceDoc,
   writeProjectAgentReferenceDoc
 } from "./reference-docs.js";
-import { scanCortexReviewStatus } from "./scripts/cortex-scan.js";
 import { generatePiProjection } from "./model-catalog-projection.js";
 import { modelCatalogService } from "./model-catalog-service.js";
 import { CLAUDE_RUNTIME_STATE_ENTRY_TYPE } from "./claude-agent-runtime.js";
@@ -121,6 +108,7 @@ import { SwarmSessionMetaService, type SessionMemoryMergeAttemptMetaUpdate } fro
 import { SkillFileService } from "./skill-file-service.js";
 import { SkillMetadataService } from "./skill-metadata-service.js";
 import { SwarmChoiceService } from "./swarm-choice-service.js";
+import { SwarmCortexService } from "./swarm-cortex-service.js";
 import { SwarmPromptService } from "./swarm-prompt-service.js";
 import { SwarmSettingsService } from "./swarm-settings-service.js";
 import {
@@ -208,7 +196,6 @@ import type {
   SwarmReasoningLevel
 } from "./types.js";
 import {
-  analyzeLatestCortexCloseoutNeed,
   areContextUsagesEqual,
   buildModelCapacityBlockKey,
   buildWorkerCompletionReport,
@@ -303,7 +290,6 @@ const MERGER_ARCHETYPE_ID = "merger";
 const CORTEX_ARCHETYPE_ID = "cortex";
 const CORTEX_PROFILE_ID = "cortex";
 const CORTEX_DISPLAY_NAME = "Cortex";
-const CORTEX_REVIEW_RUN_QUEUE_RETRY_MS = 250;
 const INTERNAL_MODEL_MESSAGE_PREFIX = "SYSTEM: ";
 const MANAGER_BOOTSTRAP_INTERVIEW_MESSAGE = `You are a newly created manager agent for this specific project/profile.
 
@@ -888,8 +874,6 @@ const IDLE_WORKER_WATCHDOG_MESSAGE_TEMPLATE = `⚠️ [IDLE WORKER WATCHDOG — 
 Workers: \${WORKER_IDS}
 
 Use list_agents({"verbose":true,"limit":50,"offset":0}) for a paged full list.`;
-const CORTEX_USER_CLOSEOUT_REMINDER_MESSAGE = `SYSTEM: Before ending this direct review, publish a concise speak_to_user closeout. State the reviewed scope, whether anything was promoted, which files changed (or NONE), and whether follow-up remains. Report changed files as paths relative to the active data dir only — never absolute host paths. If exact files are uncertain, prefer NONE over guessing. Do this even for a no-op review.`;
-
 // Retain recent non-web activity while preserving the full user-facing web transcript.
 // Integration services add ~2 event listeners per profile (Telegram conversation_message,
 // Telegram session_lifecycle). Keep this limit above base listeners +
@@ -1033,8 +1017,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   private readonly descriptors = new Map<string, AgentDescriptor>();
   private readonly profiles = new Map<string, ManagerProfile>();
-  private cortexReviewRunStartMutex: Promise<void> = Promise.resolve();
-  private cortexReviewRunQueueTimer: NodeJS.Timeout | null = null;
   private readonly runtimes = new Map<string, SwarmAgentRuntime>();
   private readonly runtimeCreationPromisesByAgentId = new Map<string, Promise<SwarmAgentRuntime>>();
   private readonly runtimeTokensByAgentId = new Map<string, number>();
@@ -1058,8 +1040,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly modelCapacityBlocks = new Map<string, ModelCapacityBlock>();
   private readonly lastWorkerCompletionReportTimestampByAgentId = new Map<string, number>();
   private readonly lastWorkerCompletionReportSummaryKeyByAgentId = new Map<string, string>();
-  private readonly lastCortexCloseoutReminderUserTimestampByAgentId = new Map<string, number>();
-  private readonly cortexCloseoutReminderTimersByAgentId = new Map<string, NodeJS.Timeout>();
   private readonly conversationProjector: ConversationProjector;
   private readonly persistenceService: PersistenceService;
   private readonly runtimeFactory: RuntimeFactory;
@@ -1068,6 +1048,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly skillFileService: SkillFileService;
   private readonly secretsEnvService: SecretsEnvService;
   private readonly sessionMetaService: SwarmSessionMetaService;
+  private readonly cortexService: SwarmCortexService;
   private readonly memoryMergeService: SwarmMemoryMergeService;
   private readonly settingsService: SwarmSettingsService;
   private readonly choiceService: SwarmChoiceService;
@@ -1144,6 +1125,20 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       getAgentMemoryPath: (agentId) => this.getAgentMemoryPath(agentId),
       resolveSystemPromptForDescriptor: (descriptor) => this.resolveSystemPromptForDescriptor(descriptor)
     });
+    this.cortexService = new SwarmCortexService({
+      config: this.config,
+      now: this.now,
+      descriptors: this.descriptors,
+      runtimes: this.runtimes,
+      getWorkersForManager: (managerId) => this.getWorkersForManager(managerId),
+      getConversationHistory: (agentId) => this.getConversationHistory(agentId),
+      createSession: (profileId, options) => this.createSession(profileId, options),
+      handleUserMessage: (text, options) => this.handleUserMessage(text, options),
+      ensureCortexProfile: () => this.ensureCortexProfile(),
+      sendMessage: (fromAgentId, targetAgentId, message, delivery, options) =>
+        this.sendMessage(fromAgentId, targetAgentId, message, delivery, options),
+      logDebug: (message, details) => this.logDebug(message, details)
+    });
     this.memoryMergeService = new SwarmMemoryMergeService({
       config: this.config,
       now: this.now,
@@ -1174,7 +1169,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         this.queueVersioningMutation(mutation);
       },
       resolveActiveCortexReviewRunIdForDescriptor: (descriptor) =>
-        this.resolveActiveCortexReviewRunIdForDescriptor(descriptor),
+        this.cortexService.resolveActiveReviewRunIdForDescriptor(descriptor),
       saveStore: async () => {
         await this.saveStore();
       },
@@ -1341,7 +1336,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     // normalizeStreamingStatusesForBoot — reconciliation relies on descriptors
     // still having status "streaming" to detect interrupted review runs.
     // Reordering these calls will silently break interrupted-run detection.
-    await this.reconcileInterruptedCortexReviewRunsForBoot();
+    await this.cortexService.reconcileInterruptedReviewRunsForBoot();
     this.normalizeStreamingStatusesForBoot();
     await this.recoverMissingWorkerDescriptorsForBoot();
 
@@ -1388,7 +1383,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     this.emitAgentsSnapshot();
     this.emitProfilesSnapshot();
-    this.scheduleCortexReviewRunQueueCheck(0);
+    this.cortexService.scheduleReviewRunQueueCheck(0);
 
     if (!this.stallCheckInterval) {
       this.stallCheckInterval = setInterval(() => {
@@ -1466,100 +1461,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return this.sortedProfiles().map((profile) => ({ ...profile }));
   }
 
-  private async reconcileInterruptedCortexReviewRunsForBoot(): Promise<void> {
-    if (!this.config.cortexEnabled) {
-      return;
-    }
-
-    const storedRuns = await readStoredCortexReviewRuns(this.config.paths.dataDir);
-    const interruptedRuns = storedRuns
-      .slice()
-      .reverse()
-      .filter((stored) => {
-        if (!stored.sessionAgentId) {
-          return false;
-        }
-
-        const sessionDescriptor = this.descriptors.get(stored.sessionAgentId);
-        const activeWorkerCount = this.getWorkersForManager(stored.sessionAgentId)
-          .filter((worker) => worker.status === "streaming")
-          .length;
-
-        return deriveLiveStatus(stored, sessionDescriptor, activeWorkerCount) === "running";
-      });
-
-    if (interruptedRuns.length === 0) {
-      return;
-    }
-
-    const reconciledAt = this.now();
-    const interruptionReason = "Interrupted by backend restart; request requeued automatically.";
-    const reconciledPairs: Array<{ interruptedRunId: string; requeuedRunId: string; sessionAgentId: string | null }> = [];
-
-    for (const stored of interruptedRuns) {
-      const requeuedRunId = createCortexReviewRunId();
-
-      await appendCortexReviewRun(this.config.paths.dataDir, {
-        ...stored,
-        interruptedAt: reconciledAt,
-        interruptionReason
-      });
-
-      await appendCortexReviewRun(this.config.paths.dataDir, {
-        runId: requeuedRunId,
-        trigger: stored.trigger,
-        scope: stored.scope,
-        scopeLabel: stored.scopeLabel,
-        requestText: stored.requestText,
-        requestedAt: reconciledAt,
-        sessionAgentId: null,
-        sourceContext: stored.sourceContext ?? { channel: "web" },
-        scheduleName: stored.scheduleName ?? null
-      });
-
-      reconciledPairs.push({
-        interruptedRunId: stored.runId,
-        requeuedRunId,
-        sessionAgentId: stored.sessionAgentId
-      });
-    }
-
-    console.warn(`[swarm][${reconciledAt}] cortex:review_runs:reconciled_interrupted`, {
-      count: reconciledPairs.length,
-      runs: reconciledPairs
-    });
-  }
-
   async listCortexReviewRuns(): Promise<CortexReviewRunRecord[]> {
-    if (!this.config.cortexEnabled) {
-      return [];
-    }
-
-    const storedRuns = await readStoredCortexReviewRuns(this.config.paths.dataDir);
-    const queuedRunIdsByPosition = new Map<string, number>();
-
-    storedRuns
-      .filter((stored) => !stored.blockedReason && !stored.sessionAgentId)
-      .slice()
-      .reverse()
-      .forEach((stored, index) => {
-        queuedRunIdsByPosition.set(stored.runId, index + 1);
-      });
-
-    return storedRuns.map((stored) => {
-      const sessionDescriptor = stored.sessionAgentId ? this.descriptors.get(stored.sessionAgentId) : undefined;
-      const activeWorkerCount = stored.sessionAgentId
-        ? this.getWorkersForManager(stored.sessionAgentId).filter((worker) => worker.status === "streaming").length
-        : 0;
-
-      return buildLiveCortexReviewRunRecord({
-        stored,
-        sessionDescriptor,
-        activeWorkerCount,
-        history: stored.sessionAgentId ? this.getConversationHistory(stored.sessionAgentId) : [],
-        queuePosition: queuedRunIdsByPosition.get(stored.runId) ?? null
-      });
-    });
+    return this.cortexService.listReviewRuns();
   }
 
   async startCortexReviewRun(input: {
@@ -1569,213 +1472,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     requestText?: string;
     scheduleName?: string | null;
   }): Promise<CortexReviewRunRecord | null> {
-    if (!this.config.cortexEnabled) {
-      return null;
-    }
-
-    const runId = createCortexReviewRunId();
-    let startedRunId: string | null = null;
-
-    await this.withCortexReviewRunStartLock(async () => {
-      if (input.trigger === "scheduled" && input.scope.mode === "all") {
-        const storedRuns = await readStoredCortexReviewRuns(this.config.paths.dataDir);
-        const queuedAllScopeRun = storedRuns.find((stored) => (
-          !stored.blockedReason &&
-          !stored.interruptedAt &&
-          !stored.sessionAgentId &&
-          stored.scope.mode === "all"
-        ));
-
-        if (queuedAllScopeRun) {
-          this.logDebug("cortex:review_run:coalesced", {
-            reason: "all-scope run already queued",
-            existingRunId: queuedAllScopeRun.runId
-          });
-          return;
-        }
-
-        const activeReviewSession = this.getActiveCortexReviewSession();
-        if (activeReviewSession) {
-          const activeAllScopeRun = storedRuns.find((stored) => (
-            !stored.blockedReason &&
-            !stored.interruptedAt &&
-            stored.sessionAgentId === activeReviewSession.agentId &&
-            stored.scope.mode === "all"
-          ));
-
-          if (activeAllScopeRun) {
-            this.logDebug("cortex:review_run:coalesced", {
-              reason: "all-scope run already active",
-              activeRunId: activeAllScopeRun.runId
-            });
-            return;
-          }
-        }
-      }
-
-      await this.ensureCortexProfile();
-
-      await appendCortexReviewRun(this.config.paths.dataDir, {
-        runId,
-        trigger: input.trigger,
-        scope: input.scope,
-        scopeLabel: buildCortexReviewRunScopeLabel(input.scope),
-        requestText: input.requestText?.trim() || buildCortexReviewRunRequestText(input.scope),
-        requestedAt: this.now(),
-        sessionAgentId: null,
-        sourceContext: input.sourceContext ?? { channel: "web" },
-        scheduleName: input.scheduleName ?? null
-      });
-
-      startedRunId = runId;
-      await this.startNextQueuedCortexReviewRun();
-    });
-
-    if (!startedRunId) {
-      return null;
-    }
-
-    this.scheduleCortexReviewRunQueueCheck();
-    return this.getCortexReviewRunByIdOrThrow(startedRunId);
-  }
-
-  private async withCortexReviewRunStartLock<T>(operation: () => Promise<T>): Promise<T> {
-    const previous = this.cortexReviewRunStartMutex;
-    let release: (() => void) | undefined;
-    this.cortexReviewRunStartMutex = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-
-    await previous;
-
-    try {
-      return await operation();
-    } finally {
-      release?.();
-    }
-  }
-
-  private getActiveCortexReviewSession(): AgentDescriptor | undefined {
-    return Array.from(this.descriptors.values()).find((descriptor) => (
-      descriptor.role === "manager" &&
-      descriptor.profileId === CORTEX_PROFILE_ID &&
-      descriptor.sessionPurpose === "cortex_review" &&
-      (
-        descriptor.status === "streaming" ||
-        this.getWorkersForManager(descriptor.agentId).some((worker) => worker.status === "streaming")
-      )
-    ));
-  }
-
-  private async getCortexReviewRunByIdOrThrow(runId: string): Promise<CortexReviewRunRecord> {
-    const runs = await this.listCortexReviewRuns();
-    const run = runs.find((entry) => entry.runId === runId);
-    if (!run) {
-      throw new Error(`Unable to load Cortex review run ${runId}`);
-    }
-    return run;
-  }
-
-  private async startNextQueuedCortexReviewRun(): Promise<CortexReviewRunRecord | null> {
-    const activeReviewSession = this.getActiveCortexReviewSession();
-    if (activeReviewSession) {
-      return null;
-    }
-
-    const queuedRun = await this.findNextQueuedCortexReviewRun();
-    if (!queuedRun) {
-      this.clearCortexReviewRunQueueCheck();
-      return null;
-    }
-
-    const label = queuedRun.scope.mode === "all"
-      ? "Review Run · Full Queue"
-      : `Review Run · ${queuedRun.scope.profileId}/${queuedRun.scope.sessionId}`;
-
-    const { sessionAgent } = await this.createSession(CORTEX_PROFILE_ID, {
-      label,
-      sessionPurpose: "cortex_review"
-    });
-
-    await appendCortexReviewRun(this.config.paths.dataDir, {
-      ...queuedRun,
-      sessionAgentId: sessionAgent.agentId,
-      sourceContext: queuedRun.sourceContext ?? { channel: "web" }
-    });
-
-    await this.handleUserMessage(queuedRun.requestText, {
-      targetAgentId: sessionAgent.agentId,
-      sourceContext: queuedRun.sourceContext ?? { channel: "web" }
-    });
-
-    return this.getCortexReviewRunByIdOrThrow(queuedRun.runId);
-  }
-
-  private async findNextQueuedCortexReviewRun(): Promise<StoredCortexReviewRun | null> {
-    const storedRuns = await readStoredCortexReviewRuns(this.config.paths.dataDir);
-    const nextQueued = storedRuns
-      .slice()
-      .reverse()
-      .find((stored) => !stored.blockedReason && !stored.sessionAgentId);
-
-    return nextQueued ?? null;
-  }
-
-  private scheduleCortexReviewRunQueueCheck(delayMs = CORTEX_REVIEW_RUN_QUEUE_RETRY_MS): void {
-    if (!this.config.cortexEnabled) {
-      this.clearCortexReviewRunQueueCheck();
-      return;
-    }
-
-    this.clearCortexReviewRunQueueCheck();
-
-    const timer = setTimeout(() => {
-      this.cortexReviewRunQueueTimer = null;
-      void this.processCortexReviewRunQueue().catch((error) => {
-        this.logDebug("cortex:review_queue:error", {
-          message: error instanceof Error ? error.message : String(error),
-          stack: error instanceof Error ? error.stack : undefined
-        });
-      });
-    }, Math.max(0, delayMs));
-
-    timer.unref?.();
-    this.cortexReviewRunQueueTimer = timer;
-  }
-
-  private clearCortexReviewRunQueueCheck(): void {
-    if (!this.cortexReviewRunQueueTimer) {
-      return;
-    }
-
-    clearTimeout(this.cortexReviewRunQueueTimer);
-    this.cortexReviewRunQueueTimer = null;
-  }
-
-  private async processCortexReviewRunQueue(): Promise<void> {
-    if (!this.config.cortexEnabled) {
-      this.clearCortexReviewRunQueueCheck();
-      return;
-    }
-
-    await this.withCortexReviewRunStartLock(async () => {
-      const activeReviewSession = this.getActiveCortexReviewSession();
-      const queuedRun = await this.findNextQueuedCortexReviewRun();
-
-      if (!queuedRun) {
-        this.clearCortexReviewRunQueueCheck();
-        return;
-      }
-
-      if (activeReviewSession) {
-        this.scheduleCortexReviewRunQueueCheck();
-        return;
-      }
-
-      await this.ensureCortexProfile();
-      await this.startNextQueuedCortexReviewRun();
-      this.scheduleCortexReviewRunQueueCheck();
-    });
+    return this.cortexService.startReviewRun(input);
   }
 
   getConversationHistory(agentId?: string): ConversationEntryEvent[] {
@@ -4877,54 +4574,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     target: AgentDescriptor,
     sourceContext: MessageSourceContext
   ): Promise<boolean> {
-    if (!this.config.cortexEnabled) {
-      return false;
-    }
-
-    if (!this.isCortexRootInteractiveSession(target)) {
-      return false;
-    }
-
-    const scheduledEnvelope = parseScheduledTaskEnvelope(text);
-    const reviewText = scheduledEnvelope?.body ?? text;
-    const scope = parseCortexReviewRunScopeFromText(reviewText);
-    if (!scope) {
-      return false;
-    }
-
-    const trigger: CortexReviewRunTrigger = scheduledEnvelope ? "scheduled" : "manual";
-    if (trigger === "scheduled" && scope.mode === "all") {
-      const scanResult = await scanCortexReviewStatus(this.config.paths.dataDir);
-      if (scanResult.summary.needsReview === 0) {
-        this.logDebug("cortex:auto_review:skipped", {
-          reason: "nothing needs review",
-          upToDate: scanResult.summary.upToDate,
-          excluded: scanResult.summary.excluded,
-          scheduleName: scheduledEnvelope?.scheduleName ?? null
-        });
-        return true;
-      }
-    }
-
-    await this.startCortexReviewRun({
-      scope,
-      trigger,
-      sourceContext,
-      requestText: text.trim(),
-      scheduleName: scheduledEnvelope?.scheduleName ?? null
-    });
-    return true;
+    return this.cortexService.maybeStartReviewRunFromIncomingMessage(text, target, sourceContext);
   }
 
   private isCortexRootInteractiveSession(descriptor: AgentDescriptor): boolean {
-    return (
-      descriptor.role === "manager" &&
-      descriptor.agentId === CORTEX_PROFILE_ID &&
-      descriptor.profileId === CORTEX_PROFILE_ID &&
-      normalizeArchetypeId(descriptor.archetypeId ?? "") === CORTEX_ARCHETYPE_ID &&
-      descriptor.sessionPurpose !== "cortex_review" &&
-      descriptor.sessionPurpose !== "agent_creator"
-    );
+    return this.cortexService.isCortexRootInteractiveSession(descriptor);
   }
 
   async resetManagerSession(
@@ -6798,82 +6452,14 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     if (descriptor.role === "manager") {
+      this.cortexService.handleManagerStatusTransition(descriptor, nextStatus, pendingCount);
       if (nextStatus === "idle" && pendingCount === 0) {
-        this.scheduleCortexCloseoutReminder(descriptor.agentId);
         const recycleDisposition = await this.applyManagerRuntimeRecyclePolicy(descriptor.agentId, "idle_transition");
         if (recycleDisposition === "recycled") {
           await this.saveStore();
           this.emitAgentsSnapshot();
         }
-      } else {
-        this.clearCortexCloseoutReminder(descriptor.agentId);
       }
-    }
-  }
-
-  private scheduleCortexCloseoutReminder(agentId: string): void {
-    this.clearCortexCloseoutReminder(agentId);
-
-    const timer = setTimeout(() => {
-      this.cortexCloseoutReminderTimersByAgentId.delete(agentId);
-      void this.maybeRemindCortexCloseout(agentId);
-    }, 250);
-
-    this.cortexCloseoutReminderTimersByAgentId.set(agentId, timer);
-  }
-
-  private clearCortexCloseoutReminder(agentId: string): void {
-    const timer = this.cortexCloseoutReminderTimersByAgentId.get(agentId);
-    if (!timer) {
-      return;
-    }
-    clearTimeout(timer);
-    this.cortexCloseoutReminderTimersByAgentId.delete(agentId);
-  }
-
-  private async maybeRemindCortexCloseout(agentId: string): Promise<void> {
-    const descriptor = this.descriptors.get(agentId);
-    if (!descriptor) {
-      return;
-    }
-    if (normalizeArchetypeId(descriptor.archetypeId ?? "") !== CORTEX_ARCHETYPE_ID) {
-      return;
-    }
-    if (descriptor.status !== "idle") {
-      return;
-    }
-
-    const runtime = this.runtimes.get(agentId);
-    if (runtime && runtime.getPendingCount() > 0) {
-      return;
-    }
-
-    const analysis = analyzeLatestCortexCloseoutNeed(this.getConversationHistory(descriptor.agentId));
-    if (!analysis.needsReminder || typeof analysis.userTimestamp !== "number") {
-      return;
-    }
-
-    if (this.lastCortexCloseoutReminderUserTimestampByAgentId.get(descriptor.agentId) === analysis.userTimestamp) {
-      return;
-    }
-
-    try {
-      await this.sendMessage(descriptor.agentId, descriptor.agentId, CORTEX_USER_CLOSEOUT_REMINDER_MESSAGE, "auto", {
-        origin: "internal"
-      });
-      this.lastCortexCloseoutReminderUserTimestampByAgentId.set(descriptor.agentId, analysis.userTimestamp);
-      this.logDebug("cortex:closeout_reminder:sent", {
-        agentId: descriptor.agentId,
-        userTimestamp: analysis.userTimestamp,
-        reason: analysis.reason
-      });
-    } catch (error) {
-      this.logDebug("cortex:closeout_reminder:error", {
-        agentId: descriptor.agentId,
-        userTimestamp: analysis.userTimestamp,
-        reason: analysis.reason,
-        message: error instanceof Error ? error.message : String(error)
-      });
     }
   }
 
@@ -7247,21 +6833,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   private async resolveActiveCortexReviewRunIdForDescriptor(descriptor: AgentDescriptor): Promise<string | undefined> {
-    const sessionAgentId = descriptor.role === "manager" ? descriptor.agentId : descriptor.managerId;
-    if (!sessionAgentId) {
-      return undefined;
-    }
-
-    try {
-      const storedRuns = await readStoredCortexReviewRuns(this.config.paths.dataDir);
-      return storedRuns.find((run) => run.sessionAgentId === sessionAgentId)?.runId;
-    } catch (error) {
-      this.logDebug("cortex:review_run:resolve_failed", {
-        sessionAgentId,
-        message: error instanceof Error ? error.message : String(error)
-      });
-      return undefined;
-    }
+    return this.cortexService.resolveActiveReviewRunIdForDescriptor(descriptor);
   }
 
   private queueVersioningMutation(mutation: VersioningMutation): void {
@@ -7893,14 +7465,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     this.emit("agent_status", payload satisfies ServerEvent);
 
-    const reviewSessionDescriptor = descriptor?.sessionPurpose === "cortex_review"
-      ? descriptor
-      : descriptor?.role === "worker"
-        ? this.descriptors.get(descriptor.managerId)
-        : undefined;
-    if (reviewSessionDescriptor?.sessionPurpose === "cortex_review") {
-      this.scheduleCortexReviewRunQueueCheck(status === "streaming" ? CORTEX_REVIEW_RUN_QUEUE_RETRY_MS : 0);
-    }
+    this.cortexService.handleAgentStatusEvent(descriptor, status);
   }
 
   private emitAgentsSnapshot(): void {
