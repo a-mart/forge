@@ -1,0 +1,4 @@
+export const MAX_VISIBLE_SESSIONS = 8
+export const SESSION_PAGE_SIZE = 15
+export const MAX_VISIBLE_WORKERS = 15
+export const PROJECT_AGENT_WHEN_TO_USE_MAX = 280
