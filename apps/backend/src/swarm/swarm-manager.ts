@@ -98,6 +98,11 @@ import { SwarmChoiceService } from "./swarm-choice-service.js";
 import { SwarmCortexService } from "./swarm-cortex-service.js";
 import { SwarmPromptService } from "./swarm-prompt-service.js";
 import { SwarmSettingsService } from "./swarm-settings-service.js";
+import {
+  SwarmAgentLifecycleService,
+  type AgentLifecycleStopSessionOptions,
+  type ManagerRuntimeRecycleReason
+} from "./swarm-agent-lifecycle-service.js";
 import { SessionProvisioner } from "./session-provisioner.js";
 import { SwarmSessionService } from "./swarm-session-service.js";
 import { SwarmProjectAgentService } from "./swarm-project-agent-service.js";
@@ -1041,6 +1046,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly cortexService: SwarmCortexService;
   private readonly memoryMergeService: SwarmMemoryMergeService;
   private readonly sessionProvisioner: SessionProvisioner;
+  private readonly lifecycleService: SwarmAgentLifecycleService;
   private readonly settingsService: SwarmSettingsService;
   private readonly choiceService: SwarmChoiceService;
   private readonly promptService: SwarmPromptService;
@@ -1233,6 +1239,99 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       loadSpecialistRegistryModule: () => this.loadSpecialistRegistryModule(),
       getIntegrationContext: (profileId) => this.integrationContextProvider?.(profileId),
       logDebug: (message, details) => this.logDebug(message, details)
+    });
+    this.lifecycleService = new SwarmAgentLifecycleService({
+      dataDir: this.config.paths.dataDir,
+      descriptors: this.descriptors,
+      profiles: this.profiles,
+      runtimes: this.runtimes,
+      runtimeCreationPromisesByAgentId: this.runtimeCreationPromisesByAgentId,
+      pendingManagerRuntimeRecycleAgentIds: this.pendingManagerRuntimeRecycleAgentIds,
+      modelCapacityBlocks: this.modelCapacityBlocks,
+      sessionProvisioner: this.sessionProvisioner,
+      now: this.now,
+      getRequiredSessionDescriptor: (agentId) => this.getRequiredSessionDescriptor(agentId),
+      assertManager: (agentId, action) => this.assertManager(agentId, action),
+      hasRunningManagers: (options) => this.hasRunningManagers(options),
+      generateUniqueAgentId: (source) => this.generateUniqueAgentId(source),
+      generateUniqueManagerId: (source) => this.generateUniqueManagerId(source),
+      resolveAndValidateCwd: (cwd) => this.resolveAndValidateCwd(cwd),
+      resolveDefaultModelDescriptor: () => this.resolveDefaultModelDescriptor(),
+      resolveSpawnWorkerArchetypeId: (input, normalizedAgentId, profileId) =>
+        this.resolveSpawnWorkerArchetypeId(input, normalizedAgentId, profileId),
+      resolveSpecialistRosterForProfile: (profileId) => this.resolveSpecialistRosterForProfile(profileId),
+      normalizeSpecialistHandle: async (value) => {
+        const specialistModule = await this.loadSpecialistRegistryModule();
+        return specialistModule.normalizeSpecialistHandle(value) || undefined;
+      },
+      resolveSystemPromptForDescriptor: (descriptor) => this.resolveSystemPromptForDescriptor(descriptor),
+      injectWorkerIdentityContext: (descriptor, systemPrompt) =>
+        this.injectWorkerIdentityContext(descriptor, systemPrompt),
+      createRuntimeForDescriptor: (descriptor, systemPrompt, runtimeToken) =>
+        this.createRuntimeForDescriptor(descriptor, systemPrompt, runtimeToken),
+      allocateRuntimeToken: (agentId) => this.allocateRuntimeToken(agentId),
+      clearRuntimeToken: (agentId, runtimeToken) => this.clearRuntimeToken(agentId, runtimeToken),
+      getRuntimeToken: (agentId) => this.runtimeTokensByAgentId.get(agentId),
+      ensureSessionFileParentDirectory: (sessionFile) => this.ensureSessionFileParentDirectory(sessionFile),
+      updateSessionMetaForWorkerDescriptor: (descriptor, resolvedSystemPrompt) =>
+        this.updateSessionMetaForWorkerDescriptor(descriptor, resolvedSystemPrompt),
+      refreshSessionMetaStatsBySessionId: (sessionAgentId) => this.refreshSessionMetaStatsBySessionId(sessionAgentId),
+      refreshSessionMetaStats: (descriptor) => this.refreshSessionMetaStats(descriptor),
+      captureSessionRuntimePromptMeta: (descriptor, resolvedSystemPrompt) =>
+        this.captureSessionRuntimePromptMeta(descriptor, resolvedSystemPrompt),
+      saveStore: async () => {
+        await this.saveStore();
+      },
+      emitStatus: (agentId, status, pendingCount, contextUsage) =>
+        this.emitStatus(agentId, status, pendingCount, contextUsage),
+      emitAgentsSnapshot: () => {
+        this.emitAgentsSnapshot();
+      },
+      emitProfilesSnapshot: () => {
+        this.emitProfilesSnapshot();
+      },
+      logDebug: (message, details) => this.logDebug(message, details),
+      seedWorkerCompletionReportTimestamp: (agentId) => this.seedWorkerCompletionReportTimestamp(agentId),
+      clearWatchdogState: (agentId) => {
+        this.clearWatchdogState(agentId);
+      },
+      deleteWorkerStallState: (agentId) => {
+        this.workerStallState.delete(agentId);
+      },
+      deleteWorkerActivityState: (agentId) => {
+        this.workerActivityState.delete(agentId);
+      },
+      deleteWorkerCompletionReportState: (agentId) => {
+        this.lastWorkerCompletionReportTimestampByAgentId.delete(agentId);
+        this.lastWorkerCompletionReportSummaryKeyByAgentId.delete(agentId);
+      },
+      markPendingManualManagerStopNotice: (agentId) => this.markPendingManualManagerStopNotice(agentId),
+      cancelAllPendingChoicesForAgent: (agentId) => {
+        this.cancelAllPendingChoicesForAgent(agentId);
+      },
+      runRuntimeShutdown: (descriptor, action, options) => this.runRuntimeShutdown(descriptor, action, options),
+      detachRuntime: (agentId, runtimeToken) => this.detachRuntime(agentId, runtimeToken),
+      syncPinnedContentForManagerRuntime: async (descriptor, options) => {
+        await this.syncPinnedContentForManagerRuntime(descriptor, options);
+      },
+      sendMessage: (fromAgentId, targetAgentId, message, delivery, options) =>
+        this.sendMessage(fromAgentId, targetAgentId, message, delivery, options),
+      sendManagerBootstrapMessage: (managerId) => this.sendManagerBootstrapMessage(managerId),
+      materializeSortOrder: () => {
+        this.materializeSortOrder();
+      },
+      getSessionsForProfile: (profileId) =>
+        this.getSessionsForProfile(profileId) as Array<AgentDescriptor & { role: "manager"; profileId: string }>,
+      getWorkersForManager: (managerId) => this.getWorkersForManager(managerId),
+      deleteConversationHistory: (agentId, sessionFile) => {
+        this.conversationProjector.deleteConversationHistory(agentId, sessionFile);
+      },
+      deleteManagerSchedulesFile: (profileId) => this.deleteManagerSchedulesFile(profileId),
+      migrateLegacyProfileKnowledgeToReferenceDoc: async (profileId) => {
+        await migrateLegacyProfileKnowledgeToReferenceDoc(this.config.paths.dataDir, profileId, {
+          versioning: this.versioningService
+        });
+      }
     });
     this.sessionService = new SwarmSessionService({
       profiles: this.profiles,
@@ -1681,55 +1780,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   async stopSession(agentId: string): Promise<{ terminatedWorkerIds: string[] }> {
-    const { terminatedWorkerIds } = await this.stopSessionInternal(agentId, {
-      saveStore: true,
-      emitSnapshots: true
-    });
-
-    return { terminatedWorkerIds };
+    return this.lifecycleService.stopSession(agentId);
   }
 
   async resumeSession(agentId: string): Promise<void> {
-    const descriptor = this.getRequiredSessionDescriptor(agentId);
-
-    if (this.runtimes.has(agentId)) {
-      throw new Error(`Session is already running: ${agentId}`);
-    }
-
-    const previousStatus = descriptor.status;
-    if (descriptor.status === "error") {
-      throw new Error(`Session is not resumable from error status: ${agentId}`);
-    }
-
-    if (
-      descriptor.status !== "idle" &&
-      descriptor.status !== "terminated" &&
-      descriptor.status !== "stopped"
-    ) {
-      throw new Error(`Session is not resumable from status ${descriptor.status}: ${agentId}`);
-    }
-
-    if (isNonRunningAgentStatus(descriptor.status)) {
-      descriptor.status = transitionAgentStatus(descriptor.status, "idle");
-    }
-
-    descriptor.updatedAt = this.now();
-    this.descriptors.set(agentId, descriptor);
-
-    try {
-      const runtime = await this.getOrCreateRuntimeForDescriptor(descriptor);
-      descriptor.contextUsage = runtime.getContextUsage();
-      this.descriptors.set(agentId, descriptor);
-    } catch (error) {
-      descriptor.status = previousStatus;
-      descriptor.updatedAt = this.now();
-      this.descriptors.set(agentId, descriptor);
-      throw error;
-    }
-
-    await this.saveStore();
-    this.emitAgentsSnapshot();
-    this.emitProfilesSnapshot();
+    await this.lifecycleService.resumeSession(agentId);
   }
 
   async deleteSession(agentId: string): Promise<{ terminatedWorkerIds: string[] }> {
@@ -1904,355 +1959,19 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   async spawnAgent(callerAgentId: string, input: SpawnAgentInput): Promise<AgentDescriptor> {
-    const manager = this.assertManager(callerAgentId, "spawn agents");
-
-    const requestedAgentId = input.agentId?.trim();
-    if (!requestedAgentId) {
-      throw new Error("spawn_agent requires a non-empty agentId");
-    }
-
-    const agentId = this.generateUniqueAgentId(requestedAgentId);
-    const createdAt = this.now();
-    const managerProfileId = manager.profileId ?? manager.agentId;
-    const rawSpecialist = input.specialist?.trim();
-    let requestedSpecialistId: string | undefined;
-
-    if (rawSpecialist) {
-      const specialistModule = await this.loadSpecialistRegistryModule();
-      requestedSpecialistId = specialistModule.normalizeSpecialistHandle(rawSpecialist) || undefined;
-    }
-
-    if (
-      requestedSpecialistId &&
-      (
-        input.model !== undefined ||
-        input.modelId !== undefined ||
-        input.systemPrompt !== undefined ||
-        input.archetypeId !== undefined
-      )
-    ) {
-      throw new Error(
-        "Cannot combine 'specialist' with model/prompt/archetype overrides. Use specialist mode or ad-hoc mode, not both. reasoningLevel is the only allowed override in specialist mode."
-      );
-    }
-
-    let model: AgentModelDescriptor;
-    let archetypeId: string | undefined;
-    let specialist: ResolvedSpecialistDefinitionLike | undefined;
-    let specialistFallbackModel: AgentModelDescriptor | undefined;
-    let explicitSystemPrompt: string | undefined;
-    let webSearch = false;
-
-    if (requestedSpecialistId) {
-      const roster = await this.resolveSpecialistRosterForProfile(managerProfileId);
-      specialist = roster.find((entry) => entry.specialistId === requestedSpecialistId);
-      if (!specialist) {
-        throw new Error(
-          `Unknown specialist: ${requestedSpecialistId}. See manager system prompt for available specialists.`
-        );
-      }
-
-      if (!specialist.enabled) {
-        throw new Error(
-          `Specialist "${requestedSpecialistId}" is disabled for this profile. Enable it before spawning.`
-        );
-      }
-
-      if (!specialist.available) {
-        const reason =
-          specialist.availabilityMessage?.trim() ||
-          (specialist.availabilityCode
-            ? `availability code: ${specialist.availabilityCode}`
-            : "unavailable with current auth/configuration");
-        throw new Error(`Specialist "${requestedSpecialistId}" is currently unavailable: ${reason}`);
-      }
-
-      const inferredProvider = specialist.provider || inferProviderFromModelId(specialist.modelId);
-      if (!inferredProvider) {
-        throw new Error(
-          `Specialist "${requestedSpecialistId}" has an unknown modelId provider mapping: ${specialist.modelId}`
-        );
-      }
-
-      const reasoningLevelOverride = parseSwarmReasoningLevel(
-        input.reasoningLevel,
-        "spawn_agent.reasoningLevel"
-      );
-
-      model = {
-        provider: inferredProvider,
-        modelId: specialist.modelId,
-        thinkingLevel: reasoningLevelOverride ?? specialist.reasoningLevel ?? "xhigh"
-      };
-      model.thinkingLevel = normalizeThinkingLevelForProvider(model.provider, model.thinkingLevel);
-      model = this.resolveSpawnModelWithCapacityFallback(model);
-
-      if (specialist.fallbackModelId) {
-        const inferredFallbackProvider = specialist.fallbackProvider || inferProviderFromModelId(specialist.fallbackModelId);
-        if (inferredFallbackProvider) {
-          specialistFallbackModel = {
-            provider: inferredFallbackProvider,
-            modelId: specialist.fallbackModelId,
-            thinkingLevel: specialist.fallbackReasoningLevel ?? model.thinkingLevel
-          };
-          specialistFallbackModel.thinkingLevel = normalizeThinkingLevelForProvider(
-            specialistFallbackModel.provider,
-            specialistFallbackModel.thinkingLevel
-          );
-          specialistFallbackModel = this.resolveSpawnModelWithCapacityFallback(specialistFallbackModel);
-        }
-      }
-
-      archetypeId = undefined;
-      explicitSystemPrompt = specialist.promptBody;
-    } else {
-      const requestedModel = this.resolveSpawnModel(input, manager.model);
-      model = this.resolveSpawnModelWithCapacityFallback(requestedModel);
-      archetypeId = await this.resolveSpawnWorkerArchetypeId(input, agentId, managerProfileId);
-      explicitSystemPrompt = input.systemPrompt?.trim();
-      webSearch = input.webSearch === true;
-    }
-
-    const descriptor: AgentDescriptor = {
-      agentId,
-      displayName: agentId,
-      role: "worker",
-      managerId: manager.agentId,
-      profileId: manager.profileId ?? manager.agentId,
-      archetypeId,
-      status: "idle",
-      createdAt,
-      updatedAt: createdAt,
-      cwd: input.cwd ? await this.resolveAndValidateCwd(input.cwd) : manager.cwd,
-      model,
-      sessionFile: getWorkerSessionFilePath(
-        this.config.paths.dataDir,
-        manager.profileId ?? manager.agentId,
-        manager.agentId,
-        agentId
-      ),
-      ...(webSearch ? { webSearch: true } : {})
-    };
-
-    if (specialist) {
-      descriptor.specialistId = specialist.specialistId;
-      descriptor.specialistDisplayName = specialist.displayName;
-      descriptor.specialistColor = specialist.color;
-      if (specialist.webSearch) {
-        descriptor.webSearch = true;
-      }
-    }
-
-    this.descriptors.set(agentId, descriptor);
-    await this.ensureSessionFileParentDirectory(descriptor.sessionFile);
-    await this.updateSessionMetaForWorkerDescriptor(descriptor);
-    await this.saveStore();
-    // Emit early snapshot so the UI sees the updated workerCount immediately,
-    // before the potentially slow runtime creation.
-    this.emitAgentsSnapshot();
-
-    this.logDebug("agent:spawn", {
-      callerAgentId,
-      agentId,
-      managerId: descriptor.managerId,
-      displayName: descriptor.displayName,
-      archetypeId: descriptor.archetypeId,
-      specialistId: descriptor.specialistId,
-      model: descriptor.model,
-      cwd: descriptor.cwd
-    });
-
-    try {
-      const baseSystemPrompt =
-        explicitSystemPrompt && explicitSystemPrompt.length > 0
-          ? explicitSystemPrompt
-          : await this.resolveSystemPromptForDescriptor(descriptor);
-
-      const runtimeSystemPrompt = this.injectWorkerIdentityContext(descriptor, baseSystemPrompt);
-
-      let runtime: SwarmAgentRuntime;
-      try {
-        runtime = await this.createRuntimeForDescriptor(descriptor, runtimeSystemPrompt);
-      } catch (error) {
-        if (specialistFallbackModel && shouldRetrySpecialistSpawnWithFallback(error, descriptor.model)) {
-          const previousModel = { ...descriptor.model };
-          descriptor.model = { ...specialistFallbackModel };
-          this.descriptors.set(agentId, descriptor);
-          await this.saveStore();
-
-          this.logDebug("agent:spawn:specialist_fallback_retry", {
-            agentId,
-            specialistId: specialist?.specialistId,
-            previousModel,
-            fallbackModel: descriptor.model,
-            error: error instanceof Error ? error.message : String(error)
-          });
-
-          runtime = await this.createRuntimeForDescriptor(descriptor, runtimeSystemPrompt);
-        } else {
-          throw error;
-        }
-      }
-
-      this.runtimes.set(agentId, runtime);
-      this.seedWorkerCompletionReportTimestamp(agentId);
-
-      const persistedSystemPrompt = runtime.getSystemPrompt?.() ?? runtimeSystemPrompt;
-      const contextUsage = runtime.getContextUsage();
-      descriptor.contextUsage = contextUsage;
-      this.descriptors.set(agentId, descriptor);
-      await this.updateSessionMetaForWorkerDescriptor(descriptor, persistedSystemPrompt);
-      await this.refreshSessionMetaStatsBySessionId(descriptor.managerId);
-
-      this.emitStatus(agentId, descriptor.status, runtime.getPendingCount(), contextUsage);
-      this.emitAgentsSnapshot();
-    } catch (error) {
-      try {
-        if (this.runtimes.has(agentId)) {
-          const shutdown = await this.runRuntimeShutdown(descriptor, "terminate", { abort: true });
-          this.detachRuntime(agentId, shutdown.runtimeToken);
-        }
-      } catch (shutdownError) {
-        this.logDebug("agent:spawn:rollback_runtime_error", {
-          agentId,
-          error: String(shutdownError)
-        });
-      }
-
-      this.clearWatchdogState(agentId);
-      this.workerStallState.delete(agentId);
-      this.workerActivityState.delete(agentId);
-      this.lastWorkerCompletionReportTimestampByAgentId.delete(agentId);
-      this.lastWorkerCompletionReportSummaryKeyByAgentId.delete(agentId);
-
-      this.descriptors.delete(agentId);
-      this.emitAgentsSnapshot();
-      await this.saveStore();
-
-      try {
-        await this.refreshSessionMetaStatsBySessionId(descriptor.managerId);
-      } catch (metaError) {
-        this.logDebug("agent:spawn:rollback_meta_error", {
-          agentId,
-          managerId: descriptor.managerId,
-          error: String(metaError)
-        });
-      }
-
-      throw error;
-    }
-
-    if (input.initialMessage && input.initialMessage.trim().length > 0) {
-      await this.sendMessage(callerAgentId, agentId, input.initialMessage, "auto", { origin: "internal" });
-    }
-
-    return cloneDescriptor(descriptor);
+    return this.lifecycleService.spawnAgent(callerAgentId, input);
   }
 
   async killAgent(callerAgentId: string, targetAgentId: string): Promise<void> {
-    const manager = this.assertManager(callerAgentId, "kill agents");
-
-    const target = this.descriptors.get(targetAgentId);
-    if (!target) {
-      throw new Error(`Unknown agent: ${targetAgentId}`);
-    }
-    if (target.role === "manager") {
-      throw new Error("Manager cannot be killed");
-    }
-
-    if (target.managerId !== manager.agentId) {
-      throw new Error(`Only owning manager can kill agent ${targetAgentId}`);
-    }
-
-    await this.terminateDescriptor(target, { abort: true, emitStatus: false });
-    await this.saveStore();
-
-    this.logDebug("agent:kill", {
-      callerAgentId,
-      targetAgentId,
-      managerId: manager.agentId
-    });
-
-    this.emitStatus(targetAgentId, target.status, 0);
-    this.emitAgentsSnapshot();
+    await this.lifecycleService.killAgent(callerAgentId, targetAgentId);
   }
 
   async stopWorker(agentId: string): Promise<void> {
-    const descriptor = this.descriptors.get(agentId);
-    if (!descriptor || descriptor.role !== "worker") {
-      throw new Error(`Unknown worker agent: ${agentId}`);
-    }
-
-    const runtime = this.runtimes.get(agentId);
-    if (runtime) {
-      const shutdown = await this.runRuntimeShutdown(descriptor, "terminate", { abort: true });
-      this.detachRuntime(agentId, shutdown.runtimeToken);
-    }
-
-    if (descriptor.role === "worker") {
-      this.clearWatchdogState(agentId);
-      this.workerStallState.delete(agentId);
-      this.workerActivityState.delete(agentId);
-      this.lastWorkerCompletionReportTimestampByAgentId.delete(agentId);
-      this.lastWorkerCompletionReportSummaryKeyByAgentId.delete(agentId);
-    }
-
-    descriptor.status = transitionAgentStatus(descriptor.status, "idle");
-    descriptor.contextUsage = undefined;
-    descriptor.updatedAt = this.now();
-    this.descriptors.set(agentId, descriptor);
-
-    await this.updateSessionMetaForWorkerDescriptor(descriptor);
-    await this.refreshSessionMetaStatsBySessionId(descriptor.managerId);
-    await this.saveStore();
-
-    this.emitStatus(agentId, descriptor.status, 0);
-    this.emitAgentsSnapshot();
+    await this.lifecycleService.stopWorker(agentId);
   }
 
   async resumeWorker(agentId: string): Promise<void> {
-    const descriptor = this.descriptors.get(agentId);
-    if (!descriptor || descriptor.role !== "worker") {
-      throw new Error(`Unknown worker agent: ${agentId}`);
-    }
-
-    if (this.runtimes.has(agentId)) {
-      throw new Error(`Worker is already running: ${agentId}`);
-    }
-
-    const previousStatus = descriptor.status;
-    if (descriptor.status === "error") {
-      throw new Error(`Worker is not resumable from error status: ${agentId}`);
-    }
-
-    if (
-      descriptor.status !== "idle" &&
-      descriptor.status !== "terminated" &&
-      descriptor.status !== "stopped"
-    ) {
-      throw new Error(`Worker is not resumable from status ${descriptor.status}: ${agentId}`);
-    }
-
-    if (isNonRunningAgentStatus(descriptor.status)) {
-      descriptor.status = transitionAgentStatus(descriptor.status, "idle");
-    }
-
-    descriptor.updatedAt = this.now();
-    this.descriptors.set(agentId, descriptor);
-
-    try {
-      const runtime = await this.getOrCreateRuntimeForDescriptor(descriptor);
-      descriptor.contextUsage = runtime.getContextUsage();
-      this.descriptors.set(agentId, descriptor);
-    } catch (error) {
-      descriptor.status = previousStatus;
-      descriptor.updatedAt = this.now();
-      this.descriptors.set(agentId, descriptor);
-      throw error;
-    }
-
-    await this.saveStore();
-    this.emitAgentsSnapshot();
+    await this.lifecycleService.resumeWorker(agentId);
   }
 
   async stopAllAgents(
@@ -2265,254 +1984,21 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     terminatedWorkerIds: string[];
     managerTerminated: boolean;
   }> {
-    const manager = this.assertManager(callerAgentId, "stop all agents");
-
-    const target = this.descriptors.get(targetManagerId);
-    if (!target || target.role !== "manager") {
-      throw new Error(`Unknown manager: ${targetManagerId}`);
-    }
-
-    if (target.agentId !== manager.agentId) {
-      throw new Error(`Only selected manager can stop all agents for ${targetManagerId}`);
-    }
-
-    const stoppedWorkerIds: string[] = [];
-    const managerRuntime = this.runtimes.get(target.agentId);
-    if (managerRuntime && (target.status === "streaming" || managerRuntime.getStatus() === "streaming")) {
-      this.markPendingManualManagerStopNotice(target.agentId);
-    }
-
-    this.cancelAllPendingChoicesForAgent(targetManagerId);
-
-    for (const descriptor of Array.from(this.descriptors.values())) {
-      if (descriptor.role !== "worker") {
-        continue;
-      }
-
-      if (descriptor.managerId !== targetManagerId) {
-        continue;
-      }
-
-      this.clearWatchdogState(descriptor.agentId);
-      this.workerStallState.delete(descriptor.agentId);
-      this.workerActivityState.delete(descriptor.agentId);
-
-      if (isNonRunningAgentStatus(descriptor.status)) {
-        continue;
-      }
-
-      const runtime = this.runtimes.get(descriptor.agentId);
-      if (runtime) {
-        const shutdown = await this.runRuntimeShutdown(descriptor, "stopInFlight", { abort: true });
-        this.detachRuntime(descriptor.agentId, shutdown.runtimeToken);
-      }
-
-      descriptor.status = transitionAgentStatus(descriptor.status, "idle");
-      descriptor.contextUsage = undefined;
-      descriptor.updatedAt = this.now();
-      this.descriptors.set(descriptor.agentId, descriptor);
-      await this.updateSessionMetaForWorkerDescriptor(descriptor);
-      this.emitStatus(descriptor.agentId, descriptor.status, 0, descriptor.contextUsage);
-
-      stoppedWorkerIds.push(descriptor.agentId);
-    }
-
-    let managerStopped = false;
-    if (!isNonRunningAgentStatus(target.status)) {
-      if (managerRuntime) {
-        const shutdown = await this.runRuntimeShutdown(target, "stopInFlight", { abort: true });
-        this.detachRuntime(target.agentId, shutdown.runtimeToken);
-      }
-
-      target.status = transitionAgentStatus(target.status, "idle");
-      target.contextUsage = undefined;
-      target.updatedAt = this.now();
-      this.descriptors.set(target.agentId, target);
-      this.emitStatus(target.agentId, target.status, 0, target.contextUsage);
-      managerStopped = true;
-    }
-
-    await this.refreshSessionMetaStatsBySessionId(targetManagerId);
-    await this.saveStore();
-    this.emitAgentsSnapshot();
-
-    this.logDebug("manager:stop_all", {
-      callerAgentId,
-      targetManagerId,
-      stoppedWorkerIds,
-      managerStopped
-    });
-
-    return {
-      managerId: targetManagerId,
-      stoppedWorkerIds,
-      managerStopped,
-      // Backward compatibility for older clients still expecting terminated-oriented fields.
-      terminatedWorkerIds: stoppedWorkerIds,
-      managerTerminated: managerStopped
-    };
+    return this.lifecycleService.stopAllAgents(callerAgentId, targetManagerId);
   }
 
   async createManager(
     callerAgentId: string,
     input: { name: string; cwd: string; model?: SwarmModelPreset }
   ): Promise<AgentDescriptor> {
-    const callerDescriptor = this.descriptors.get(callerAgentId);
-    if (!callerDescriptor || callerDescriptor.role !== "manager") {
-      const canBootstrap = !this.hasRunningManagers({ excludeCortex: true });
-      if (!canBootstrap) {
-        throw new Error("Only manager can create managers");
-      }
-    } else if (isNonRunningAgentStatus(callerDescriptor.status)) {
-      throw new Error(`Manager is not running: ${callerAgentId}`);
-    }
-
-    const requestedName = input.name?.trim();
-    if (!requestedName) {
-      throw new Error("create_manager requires a non-empty name");
-    }
-
-    const normalizedRequestedName = normalizeAgentId(requestedName);
-    if (normalizedRequestedName === CORTEX_PROFILE_ID) {
-      throw new Error('The manager name "cortex" is reserved');
-    }
-
-    const requestedModelPreset = parseSwarmModelPreset(input.model, "create_manager.model");
-    const managerId = this.generateUniqueManagerId(requestedName);
-    const createdAt = this.now();
-    const cwd = await this.resolveAndValidateCwd(input.cwd);
-
-    const descriptor: AgentDescriptor = {
-      agentId: managerId,
-      displayName: managerId,
-      role: "manager",
-      managerId,
-      profileId: managerId,
-      archetypeId: MANAGER_ARCHETYPE_ID,
-      status: "idle",
-      createdAt,
-      updatedAt: createdAt,
-      cwd,
-      model: requestedModelPreset
-        ? resolveModelDescriptorFromPreset(requestedModelPreset)
-        : this.resolveDefaultModelDescriptor(),
-      sessionFile: getSessionFilePath(this.config.paths.dataDir, managerId, managerId)
-    };
-
-    // Canonicalize sortOrder for all existing profiles if any lack it,
-    // so the new profile's sortOrder correctly places it at the bottom.
-    this.materializeSortOrder();
-
-    const maxSortOrder = Array.from(this.profiles.values()).reduce(
-      (max, p) => Math.max(max, p.sortOrder ?? -1),
-      -1
-    );
-
-    const profile: ManagerProfile = {
-      profileId: descriptor.agentId,
-      displayName: descriptor.displayName,
-      defaultSessionAgentId: descriptor.agentId,
-      createdAt: descriptor.createdAt,
-      updatedAt: descriptor.createdAt,
-      sortOrder: maxSortOrder + 1
-    };
-
-    let runtime: SwarmAgentRuntime | undefined;
-    let persistedSystemPrompt: string | undefined;
-    await this.sessionProvisioner.provisionSession({
-      descriptor: descriptor as AgentDescriptor & { role: "manager"; profileId: string },
-      profile,
-      ensureProfilePiDirectories: true,
-      initializeRuntime: async () => {
-        const systemPrompt = await this.resolveSystemPromptForDescriptor(descriptor);
-        runtime = await this.createRuntimeForDescriptor(descriptor, systemPrompt);
-        this.runtimes.set(managerId, runtime);
-        persistedSystemPrompt = runtime.getSystemPrompt?.() ?? systemPrompt;
-      }
-    });
-
-    const contextUsage = runtime?.getContextUsage();
-    descriptor.contextUsage = contextUsage;
-    this.descriptors.set(managerId, descriptor);
-
-    await this.captureSessionRuntimePromptMeta(descriptor, persistedSystemPrompt);
-    await this.refreshSessionMetaStats(descriptor);
-    await migrateLegacyProfileKnowledgeToReferenceDoc(this.config.paths.dataDir, profile.profileId, {
-      versioning: this.versioningService
-    });
-    await this.saveStore();
-
-    this.emitStatus(managerId, descriptor.status, runtime?.getPendingCount() ?? 0, contextUsage);
-    this.emitAgentsSnapshot();
-    this.emitProfilesSnapshot();
-
-    this.logDebug("manager:create", {
-      callerAgentId,
-      managerId,
-      cwd: descriptor.cwd
-    });
-
-    await this.sendManagerBootstrapMessage(managerId);
-
-    return cloneDescriptor(descriptor);
+    return this.lifecycleService.createManager(callerAgentId, input);
   }
 
   async deleteManager(
     callerAgentId: string,
     targetManagerId: string
   ): Promise<{ managerId: string; terminatedWorkerIds: string[] }> {
-    this.assertManager(callerAgentId, "delete managers");
-
-    const profile = this.profiles.get(targetManagerId);
-    const sessionDescriptors = profile ? this.getSessionsForProfile(profile.profileId) : [];
-
-    if (sessionDescriptors.length === 0) {
-      const target = this.descriptors.get(targetManagerId);
-      if (!target || target.role !== "manager") {
-        throw new Error(`Unknown manager: ${targetManagerId}`);
-      }
-      sessionDescriptors.push(target);
-    }
-
-    if (sessionDescriptors.some((descriptor) => normalizeArchetypeId(descriptor.archetypeId ?? "") === CORTEX_ARCHETYPE_ID)) {
-      throw new Error("Cortex manager cannot be deleted");
-    }
-
-    const terminatedWorkerIds: string[] = [];
-
-    for (const sessionDescriptor of sessionDescriptors) {
-      for (const workerDescriptor of this.getWorkersForManager(sessionDescriptor.agentId)) {
-        terminatedWorkerIds.push(workerDescriptor.agentId);
-        await this.terminateDescriptor(workerDescriptor, { abort: true, emitStatus: true });
-        this.descriptors.delete(workerDescriptor.agentId);
-        this.conversationProjector.deleteConversationHistory(workerDescriptor.agentId, workerDescriptor.sessionFile);
-      }
-
-      await this.terminateDescriptor(sessionDescriptor, { abort: true, emitStatus: true });
-      this.descriptors.delete(sessionDescriptor.agentId);
-      this.conversationProjector.deleteConversationHistory(sessionDescriptor.agentId, sessionDescriptor.sessionFile);
-    }
-
-    if (profile) {
-      this.profiles.delete(profile.profileId);
-    } else {
-      this.profiles.delete(targetManagerId);
-    }
-
-    const schedulesProfileId = profile?.profileId ?? sessionDescriptors[0]?.profileId ?? targetManagerId;
-    await this.deleteManagerSchedulesFile(schedulesProfileId);
-
-    await this.saveStore();
-    this.emitAgentsSnapshot();
-    this.emitProfilesSnapshot();
-
-    this.logDebug("manager:delete", {
-      callerAgentId,
-      targetManagerId,
-      terminatedWorkerIds
-    });
-
-    return { managerId: targetManagerId, terminatedWorkerIds };
+    return this.lifecycleService.deleteManager(callerAgentId, targetManagerId);
   }
 
   async updateManagerModel(
@@ -2542,7 +2028,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   async notifySpecialistRosterChanged(profileId: string): Promise<void> {
     try {
       const roster = await this.resolveSpecialistRosterForProfile(profileId);
-      await this.syncWorkerSpecialistMetadata(profileId, roster);
+      await this.lifecycleService.syncWorkerSpecialistMetadata(profileId, roster);
     } catch (error) {
       this.logDebug("specialist:roster_change:sync:error", {
         profileId,
@@ -2584,140 +2070,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     });
   }
 
-  private async syncWorkerSpecialistMetadata(
-    profileId: string,
-    roster: ResolvedSpecialistDefinitionLike[]
-  ): Promise<void> {
-    const rosterById = new Map(roster.map((entry) => [entry.specialistId, entry]));
-    let changed = false;
-
-    for (const descriptor of this.descriptors.values()) {
-      if (descriptor.role !== "worker" || descriptor.profileId !== profileId) {
-        continue;
-      }
-
-      const specialistId = normalizeOptionalAgentId(descriptor.specialistId)?.toLowerCase();
-      if (!specialistId) {
-        continue;
-      }
-
-      const specialist = rosterById.get(specialistId);
-      if (!specialist) {
-        continue;
-      }
-
-      if (
-        descriptor.specialistId === specialist.specialistId &&
-        descriptor.specialistDisplayName === specialist.displayName &&
-        descriptor.specialistColor === specialist.color
-      ) {
-        continue;
-      }
-
-      descriptor.specialistId = specialist.specialistId;
-      descriptor.specialistDisplayName = specialist.displayName;
-      descriptor.specialistColor = specialist.color;
-      this.descriptors.set(descriptor.agentId, descriptor);
-      changed = true;
-    }
-
-    if (!changed) {
-      return;
-    }
-
-    await this.saveStore();
-    this.emitAgentsSnapshot();
-  }
-
   private async applyManagerRuntimeRecyclePolicy(
     agentId: string,
-    reason:
-      | "model_change"
-      | "cwd_change"
-      | "idle_transition"
-      | "prompt_mode_change"
-      | "project_agent_directory_change"
-      | "specialist_roster_change"
+    reason: ManagerRuntimeRecycleReason
   ): Promise<"recycled" | "deferred" | "none"> {
-    const descriptor = this.descriptors.get(agentId);
-    if (!descriptor || descriptor.role !== "manager") {
-      this.pendingManagerRuntimeRecycleAgentIds.delete(agentId);
-      return "none";
-    }
-
-    if (reason === "idle_transition" && !this.pendingManagerRuntimeRecycleAgentIds.has(agentId)) {
-      return "none";
-    }
-
-    const runtime = this.runtimes.get(agentId);
-    if (!runtime) {
-      this.pendingManagerRuntimeRecycleAgentIds.delete(agentId);
-      return "none";
-    }
-
-    if (!this.canRecycleManagerRuntimeImmediately(descriptor, runtime)) {
-      this.pendingManagerRuntimeRecycleAgentIds.add(agentId);
-      return "deferred";
-    }
-
-    await this.recycleManagerRuntime(descriptor, runtime, reason);
-    return "recycled";
-  }
-
-  private canRecycleManagerRuntimeImmediately(
-    descriptor: AgentDescriptor,
-    runtime: SwarmAgentRuntime
-  ): boolean {
-    return (
-      descriptor.role === "manager" &&
-      descriptor.status === "idle" &&
-      runtime.getStatus() === "idle" &&
-      runtime.getPendingCount() === 0 &&
-      !runtime.isContextRecoveryInProgress?.()
-    );
-  }
-
-  private async recycleManagerRuntime(
-    descriptor: AgentDescriptor,
-    runtime: SwarmAgentRuntime,
-    reason:
-      | "model_change"
-      | "cwd_change"
-      | "idle_transition"
-      | "prompt_mode_change"
-      | "project_agent_directory_change"
-      | "specialist_roster_change"
-  ): Promise<void> {
-    if (descriptor.role !== "manager") {
-      return;
-    }
-
-    const runtimeToken = this.runtimeTokensByAgentId.get(descriptor.agentId);
-    this.pendingManagerRuntimeRecycleAgentIds.delete(descriptor.agentId);
-
-    try {
-      await runtime.recycle();
-    } catch (error) {
-      this.pendingManagerRuntimeRecycleAgentIds.add(descriptor.agentId);
-      throw error;
-    }
-
-    this.detachRuntime(descriptor.agentId, runtimeToken);
-
-    if (descriptor.contextUsage) {
-      descriptor.contextUsage = undefined;
-      this.descriptors.set(descriptor.agentId, descriptor);
-    }
-
-    await this.refreshSessionMetaStats(descriptor);
-
-    this.emitStatus(descriptor.agentId, descriptor.status, 0);
-    this.logDebug("manager:runtime_recycled", {
-      agentId: descriptor.agentId,
-      profileId: descriptor.profileId,
-      reason,
-      model: descriptor.model
-    });
+    return this.lifecycleService.applyManagerRuntimeRecyclePolicy(agentId, reason);
   }
 
   async previewManagerSystemPrompt(profileId: string): Promise<PromptPreviewResponse> {
@@ -3049,57 +2406,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   private async stopSessionInternal(
     agentId: string,
-    options: { saveStore: boolean; emitSnapshots: boolean; emitStatus?: boolean; deleteWorkers?: boolean }
+    options: AgentLifecycleStopSessionOptions
   ): Promise<{ terminatedWorkerIds: string[] }> {
-    const descriptor = this.getRequiredSessionDescriptor(agentId);
-    const terminatedWorkerIds: string[] = [];
-    const runtime = this.runtimes.get(agentId);
-    if (
-      runtime &&
-      !options.deleteWorkers &&
-      (descriptor.status === "streaming" || runtime.getStatus() === "streaming")
-    ) {
-      this.markPendingManualManagerStopNotice(agentId);
-    }
-
-    for (const workerDescriptor of this.getWorkersForManager(agentId)) {
-      terminatedWorkerIds.push(workerDescriptor.agentId);
-      await this.terminateDescriptor(workerDescriptor, { abort: true, emitStatus: true });
-      if (options.deleteWorkers) {
-        this.descriptors.delete(workerDescriptor.agentId);
-      }
-      this.conversationProjector.deleteConversationHistory(workerDescriptor.agentId, workerDescriptor.sessionFile);
-    }
-
-    if (runtime) {
-      const shutdown = await this.runRuntimeShutdown(descriptor, "terminate", { abort: true });
-      this.detachRuntime(agentId, shutdown.runtimeToken);
-    }
-    this.pendingManagerRuntimeRecycleAgentIds.delete(agentId);
-
-    descriptor.status = descriptor.status === "error"
-      ? "idle"
-      : transitionAgentStatus(descriptor.status, "idle");
-    descriptor.contextUsage = undefined;
-    descriptor.updatedAt = this.now();
-    this.descriptors.set(agentId, descriptor);
-
-    if (options.emitStatus ?? true) {
-      this.emitStatus(agentId, descriptor.status, 0);
-    }
-
-    await this.refreshSessionMetaStatsBySessionId(agentId);
-
-    if (options.saveStore) {
-      await this.saveStore();
-    }
-
-    if (options.emitSnapshots) {
-      this.emitAgentsSnapshot();
-      this.emitProfilesSnapshot();
-    }
-
-    return { terminatedWorkerIds };
+    return this.lifecycleService.stopSessionInternal(agentId, options);
   }
 
   private async copySessionHistoryForFork(
@@ -3426,9 +2735,13 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     const isWorkerReportToManager =
       sender.role === "worker" && target.role === "manager" && sender.managerId === target.agentId;
-    const watchdogTurnSeqAtDispatch = isWorkerReportToManager
-      ? this.getOrCreateWorkerWatchdogState(sender.agentId).turnSeq
-      : undefined;
+    const currentSenderAtDispatch = this.descriptors.get(sender.agentId);
+    const watchdogTurnSeqAtDispatch =
+      isWorkerReportToManager &&
+      currentSenderAtDispatch?.role === "worker" &&
+      !isNonRunningAgentStatus(currentSenderAtDispatch.status)
+        ? this.getOrCreateWorkerWatchdogState(sender.agentId).turnSeq
+        : undefined;
 
     const modelMessage = await this.prepareModelInboundMessage(
       targetAgentId,
@@ -5117,94 +4430,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   private shouldRestoreRuntimeForDescriptor(descriptor: AgentDescriptor): boolean {
-    return descriptor.status === "streaming";
+    return this.lifecycleService.shouldRestoreRuntimeForDescriptor(descriptor);
   }
 
   private async getOrCreateRuntimeForDescriptor(descriptor: AgentDescriptor): Promise<SwarmAgentRuntime> {
-    const inFlightCreation = this.runtimeCreationPromisesByAgentId.get(descriptor.agentId);
-    if (inFlightCreation) {
-      return inFlightCreation;
-    }
-
-    const existingRuntime = this.runtimes.get(descriptor.agentId);
-    if (existingRuntime) {
-      return existingRuntime;
-    }
-
-    const creationPromise = this.createAndAttachRuntimeForDescriptor(descriptor);
-    this.runtimeCreationPromisesByAgentId.set(descriptor.agentId, creationPromise);
-
-    try {
-      return await creationPromise;
-    } finally {
-      if (this.runtimeCreationPromisesByAgentId.get(descriptor.agentId) === creationPromise) {
-        this.runtimeCreationPromisesByAgentId.delete(descriptor.agentId);
-      }
-    }
-  }
-
-  private async createAndAttachRuntimeForDescriptor(descriptor: AgentDescriptor): Promise<SwarmAgentRuntime> {
-    await this.ensureSessionFileParentDirectory(descriptor.sessionFile);
-
-    const existingRuntime = this.runtimes.get(descriptor.agentId);
-    if (existingRuntime) {
-      return existingRuntime;
-    }
-
-    const systemPrompt = await this.resolveSystemPromptForDescriptor(descriptor);
-    const runtimeBeforeCreate = this.runtimes.get(descriptor.agentId);
-    if (runtimeBeforeCreate) {
-      return runtimeBeforeCreate;
-    }
-
-    const runtimeToken = this.allocateRuntimeToken(descriptor.agentId);
-    const runtime = await this.createRuntimeForDescriptor(descriptor, systemPrompt, runtimeToken);
-    if (descriptor.role === "manager") {
-      await this.syncPinnedContentForManagerRuntime(descriptor as AgentDescriptor & { role: "manager" }, { runtime });
-    }
-    const persistedSystemPrompt = runtime.getSystemPrompt?.() ?? systemPrompt;
-
-    const latestDescriptor = this.descriptors.get(descriptor.agentId);
-    if (!latestDescriptor || isNonRunningAgentStatus(latestDescriptor.status)) {
-      await runtime.terminate({
-        abort: true,
-        shutdownTimeoutMs: RUNTIME_SHUTDOWN_TIMEOUT_MS,
-        drainTimeoutMs: RUNTIME_SHUTDOWN_DRAIN_TIMEOUT_MS,
-      });
-      this.clearRuntimeToken(descriptor.agentId, runtimeToken);
-      throw new Error(`Target agent is not running: ${descriptor.agentId}`);
-    }
-
-    const concurrentRuntime = this.runtimes.get(descriptor.agentId);
-    if (concurrentRuntime) {
-      await runtime.terminate({
-        abort: true,
-        shutdownTimeoutMs: RUNTIME_SHUTDOWN_TIMEOUT_MS,
-        drainTimeoutMs: RUNTIME_SHUTDOWN_DRAIN_TIMEOUT_MS,
-      });
-      this.clearRuntimeToken(descriptor.agentId, runtimeToken);
-      return concurrentRuntime;
-    }
-
-    this.runtimes.set(descriptor.agentId, runtime);
-    if (latestDescriptor.role === "worker") {
-      this.seedWorkerCompletionReportTimestamp(latestDescriptor.agentId);
-    }
-
-    const contextUsage = runtime.getContextUsage();
-    latestDescriptor.contextUsage = contextUsage;
-    this.descriptors.set(descriptor.agentId, latestDescriptor);
-
-    if (latestDescriptor.role === "manager") {
-      await this.captureSessionRuntimePromptMeta(latestDescriptor, persistedSystemPrompt);
-      await this.refreshSessionMetaStats(latestDescriptor);
-    } else {
-      await this.updateSessionMetaForWorkerDescriptor(latestDescriptor, persistedSystemPrompt);
-      await this.refreshSessionMetaStatsBySessionId(latestDescriptor.managerId);
-    }
-
-    this.emitStatus(descriptor.agentId, latestDescriptor.status, runtime.getPendingCount(), contextUsage);
-    return runtime;
+    return this.lifecycleService.getOrCreateRuntimeForDescriptor(descriptor);
   }
 
   private getBootLogManagerDescriptor(): AgentDescriptor | undefined {
@@ -5241,102 +4471,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   private resolveSpawnModel(input: SpawnAgentInput, fallback: AgentModelDescriptor): AgentModelDescriptor {
-    const requestedPreset = parseSwarmModelPreset(input.model, "spawn_agent.model");
-    const requestedReasoningLevel = parseSwarmReasoningLevel(
-      input.reasoningLevel,
-      "spawn_agent.reasoningLevel"
-    );
-
-    const descriptor = requestedPreset
-      ? resolveModelDescriptorFromPreset(requestedPreset)
-      : this.normalizePersistedModelDescriptor(fallback);
-
-    const requestedModelId = normalizeOptionalModelId(input.modelId);
-    if (requestedModelId) {
-      descriptor.modelId = requestedModelId;
-    }
-
-    if (requestedReasoningLevel) {
-      descriptor.thinkingLevel = requestedReasoningLevel;
-    }
-
-    descriptor.thinkingLevel = normalizeThinkingLevelForProvider(
-      descriptor.provider,
-      descriptor.thinkingLevel
-    );
-
-    return descriptor;
+    return this.lifecycleService.resolveSpawnModel(input, this.normalizePersistedModelDescriptor(fallback));
   }
 
   private resolveSpawnModelWithCapacityFallback(model: AgentModelDescriptor): AgentModelDescriptor {
-    const provider = normalizeOptionalAgentId(model.provider)?.toLowerCase();
-    const requestedModelId = normalizeOptionalModelId(model.modelId)?.toLowerCase();
-    if (!provider || !requestedModelId) {
-      return model;
-    }
-
-    const requestedBlock = this.getActiveModelCapacityBlock(provider, requestedModelId);
-    if (!requestedBlock) {
-      return model;
-    }
-
-    const attemptedModelIds: string[] = [requestedModelId];
-    let candidateModelId = requestedModelId;
-
-    while (true) {
-      const nextModelId = resolveNextCapacityFallbackModelId(provider, candidateModelId);
-      if (!nextModelId) {
-        this.logDebug("agent:spawn:model_blocked_no_fallback", {
-          provider,
-          requestedModelId,
-          blockedUntil: new Date(requestedBlock.blockedUntilMs).toISOString(),
-          attemptedModelIds
-        });
-        return model;
-      }
-
-      attemptedModelIds.push(nextModelId);
-
-      const nextBlock = this.getActiveModelCapacityBlock(provider, nextModelId);
-      if (!nextBlock) {
-        this.logDebug("agent:spawn:model_reroute", {
-          provider,
-          requestedModelId,
-          selectedModelId: nextModelId,
-          attemptedModelIds
-        });
-        return {
-          ...model,
-          modelId: nextModelId
-        };
-      }
-
-      candidateModelId = nextModelId;
-    }
-  }
-
-  private getActiveModelCapacityBlock(provider: string, modelId: string): ModelCapacityBlock | undefined {
-    const key = buildModelCapacityBlockKey(provider, modelId);
-    if (!key) {
-      return undefined;
-    }
-
-    const block = this.modelCapacityBlocks.get(key);
-    if (!block) {
-      return undefined;
-    }
-
-    if (Date.now() >= block.blockedUntilMs) {
-      this.modelCapacityBlocks.delete(key);
-      this.logDebug("model_capacity:block_expired", {
-        provider: block.provider,
-        modelId: block.modelId,
-        blockedUntil: new Date(block.blockedUntilMs).toISOString()
-      });
-      return undefined;
-    }
-
-    return block;
+    return this.lifecycleService.resolveSpawnModelWithCapacityFallback(model);
   }
 
   private maybeRecordModelCapacityBlock(agentId: string, descriptor: AgentDescriptor, error: RuntimeErrorEvent): void {
@@ -5609,38 +4748,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     descriptor: AgentDescriptor,
     options: { abort: boolean; emitStatus: boolean }
   ): Promise<void> {
-    this.cancelAllPendingChoicesForAgent(descriptor.agentId);
-
-    if (descriptor.role === "worker") {
-      this.clearWatchdogState(descriptor.agentId);
-      this.workerStallState.delete(descriptor.agentId);
-      this.workerActivityState.delete(descriptor.agentId);
-      this.lastWorkerCompletionReportTimestampByAgentId.delete(descriptor.agentId);
-      this.lastWorkerCompletionReportSummaryKeyByAgentId.delete(descriptor.agentId);
-    }
-
-    const runtime = this.runtimes.get(descriptor.agentId);
-    if (runtime) {
-      const shutdown = await this.runRuntimeShutdown(descriptor, "terminate", { abort: options.abort });
-      this.detachRuntime(descriptor.agentId, shutdown.runtimeToken);
-    }
-    this.pendingManagerRuntimeRecycleAgentIds.delete(descriptor.agentId);
-
-    descriptor.status = transitionAgentStatus(descriptor.status, "terminated");
-    descriptor.contextUsage = undefined;
-    descriptor.updatedAt = this.now();
-    this.descriptors.set(descriptor.agentId, descriptor);
-
-    if (descriptor.role === "worker") {
-      await this.updateSessionMetaForWorkerDescriptor(descriptor);
-      await this.refreshSessionMetaStatsBySessionId(descriptor.managerId);
-    } else {
-      await this.refreshSessionMetaStats(descriptor);
-    }
-
-    if (options.emitStatus) {
-      this.emitStatus(descriptor.agentId, descriptor.status, 0);
-    }
+    await this.lifecycleService.terminateDescriptor(descriptor, options);
   }
 
   protected async getMemoryRuntimeResources(descriptor: AgentDescriptor): Promise<{
