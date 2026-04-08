@@ -1,4 +1,4 @@
-// Local feedback types (will be replaced with @forge/protocol imports after integration)
+export { FEEDBACK_REASON_CODES, type FeedbackReasonCode } from '@forge/protocol'
 
 export interface FeedbackEvent {
   id: string
@@ -13,22 +13,6 @@ export interface FeedbackEvent {
   channel: 'web' | 'telegram'
   actor: 'user'
 }
-
-export const FEEDBACK_REASON_CODES = [
-  'accuracy',
-  'instruction_following',
-  'autonomy',
-  'speed',
-  'verbosity',
-  'formatting',
-  'product_ux_direction',
-  'needs_clarification',
-  'over_engineered',
-  'great_outcome',
-  'poor_outcome',
-] as const
-
-export type FeedbackReasonCode = (typeof FEEDBACK_REASON_CODES)[number]
 
 export interface FeedbackState {
   targetId: string
