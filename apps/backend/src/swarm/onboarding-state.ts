@@ -4,6 +4,7 @@ import type { OnboardingPreferences, OnboardingState, OnboardingStatus, Onboardi
 import { ONBOARDING_STATUSES, ONBOARDING_TECHNICAL_LEVEL_VALUES } from "@forge/protocol";
 import { getCommonKnowledgePath, getSharedKnowledgeDir } from "./data-paths.js";
 import { renameWithRetry } from "./retry-rename.js";
+import { isEnoentError } from "../utils/fs-errors.js";
 
 export const ONBOARDING_STATE_FILE_NAME = "onboarding-state.json";
 export const ONBOARDING_COMMON_BLOCK_START = "<!-- BEGIN MANAGED:ONBOARDING -->";
@@ -451,6 +452,3 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isEnoentError(error: unknown): boolean {
-  return typeof error === "object" && error !== null && "code" in error && (error as { code?: string }).code === "ENOENT";
-}

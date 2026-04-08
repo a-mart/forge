@@ -2,6 +2,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { ModelOverrideEntry, ModelOverridesFile } from "@forge/protocol";
 import { getSharedModelOverridesPath } from "./data-paths.js";
+import { isEnoentError } from "../utils/fs-errors.js";
 
 const MODEL_OVERRIDES_VERSION = 1 as const;
 
@@ -137,11 +138,3 @@ function normalizeModelSpecificInstructions(value: string): string {
   return normalized.length > 0 ? normalized : "";
 }
 
-function isEnoentError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: unknown }).code === "ENOENT"
-  );
-}

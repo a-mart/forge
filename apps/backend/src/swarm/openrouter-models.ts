@@ -9,6 +9,7 @@ import type {
 } from "@forge/protocol";
 import { getOpenRouterModelsPath } from "./data-paths.js";
 import { renameWithRetry } from "./retry-rename.js";
+import { isEnoentError } from "../utils/fs-errors.js";
 
 const OPENROUTER_MODELS_VERSION = 1 as const;
 const VALID_REASONING_LEVELS = new Set<ForgeReasoningLevel>(["none", "low", "medium", "high", "xhigh"]);
@@ -214,11 +215,3 @@ async function withOpenRouterModelsWriteLock<T>(operation: () => Promise<T>): Pr
   }
 }
 
-function isEnoentError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: unknown }).code === "ENOENT"
-  );
-}

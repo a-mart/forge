@@ -10,6 +10,7 @@ export default defineConfig({
       "src/swarm/specialists/__tests__/**/*.test.ts",
       "src/telemetry/__tests__/**/*.test.ts",
       "src/terminal/__tests__/**/*.test.ts",
+      "src/utils/__tests__/**/*.test.ts",
       "src/versioning/__tests__/**/*.test.ts",
       "../../scripts/__tests__/**/*.test.mjs"
     ],

@@ -6,6 +6,7 @@ import { basename, dirname, join } from "node:path";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { getTerminalSettingsPath } from "../swarm/data-paths.js";
 import { renameWithRetry } from "../swarm/retry-rename.js";
+import { isEnoentError } from "../utils/fs-errors.js";
 
 export interface PersistedTerminalSettings {
   defaultShell?: string;
@@ -180,8 +181,3 @@ async function writeTerminalSettingsFile(targetPath: string, settings: Persisted
   await renameWithRetry(tempPath, targetPath, { retries: 8, baseDelayMs: 15 });
 }
 
-function isEnoentError(error: unknown): boolean {
-  return Boolean(
-    error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "ENOENT",
-  );
-}

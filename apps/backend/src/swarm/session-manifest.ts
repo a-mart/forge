@@ -12,6 +12,7 @@ import {
 } from "./data-paths.js";
 import { renameWithRetry } from "./retry-rename.js";
 import type { AgentDescriptor } from "./types.js";
+import { isEnoentError } from "../utils/fs-errors.js";
 
 export interface RebuildSessionMetaOptions {
   dataDir: string;
@@ -939,15 +940,6 @@ function normalizeOptionalString(value: unknown): string | undefined {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isEnoentError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: string }).code === "ENOENT"
-  );
 }
 
 function errorToMessage(error: unknown): string {
