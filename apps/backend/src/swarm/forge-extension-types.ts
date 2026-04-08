@@ -142,13 +142,24 @@ export interface ForgeBoundHandlerRegistry {
   readonly "versioning:commit": ForgeEventHandler<"versioning:commit">[];
 }
 
+export interface ForgeBoundExtension {
+  readonly module: LoadedForgeExtensionModule;
+  readonly handlers: ForgeBoundHandlerRegistry;
+}
+
 export interface ForgePreparedRuntimeBindings {
   readonly agentId: string;
   readonly runtimeType: ForgeRuntimeType;
   readonly loadedAt: string;
   readonly discovered: readonly DiscoveredForgeExtension[];
-  readonly loadedModules: readonly LoadedForgeExtensionModule[];
-  readonly handlers: ForgeBoundHandlerRegistry;
+  readonly extensions: readonly ForgeBoundExtension[];
+  readonly snapshot: ForgeRuntimeExtensionSnapshot;
+  readonly runtimeContext: {
+    readonly agent: AgentSnapshot;
+    readonly session: SessionSnapshot;
+    readonly runtime: { readonly type: ForgeRuntimeType };
+  };
+  readonly diagnostics: readonly ForgeDiagnosticErrorRecord[];
 }
 
 export interface ForgeRuntimeBindingSnapshot {

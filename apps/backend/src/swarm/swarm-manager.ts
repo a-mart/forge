@@ -1345,6 +1345,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     });
     this.runtimeFactory = new RuntimeFactory({
       host: this,
+      forgeExtensionHost: this.forgeExtensionHost,
       config: this.config,
       now: this.now,
       logDebug: (message, details) => this.logDebug(message, details),
@@ -7661,6 +7662,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     this.runtimeTokensByAgentId.delete(agentId);
     this.runtimeExtensionSnapshotsByAgentId.delete(agentId);
+    this.forgeExtensionHost.deactivateRuntimeBindings(agentId);
   }
 
   private handleRuntimeExtensionSnapshot(

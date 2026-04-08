@@ -7,13 +7,34 @@ import type {
 import { getGlobalForgeExtensionsDir, getProfilesDir } from "./data-paths.js";
 import { discoverForgeExtensions, listForgeProfileIdsOnDisk } from "./forge-extension-discovery.js";
 import { loadForgeExtensionModules } from "./forge-extension-loader.js";
+import type { AgentDescriptor } from "./types.js";
 import type {
+  ForgeApi,
+  ForgeBoundExtension,
+  ForgeBoundHandlerRegistry,
   ForgeDiagnosticErrorRecord,
+  ForgeEventName,
   ForgePreparedRuntimeBindings,
-  ForgeRuntimeType
+  ForgeRuntimeType,
+  HostContext,
+  RuntimeContext,
+  ToolAfterResultEnvelope,
+  ToolBeforeResult
 } from "./forge-extension-types.js";
 
 const MAX_RECENT_ERRORS = 50;
+const FORGE_SCOPE_SORT_ORDER = {
+  global: 0,
+  profile: 1,
+  "project-local": 2
+} as const;
+const KNOWN_FORGE_EVENT_NAMES: ForgeEventName[] = [
+  "session:lifecycle",
+  "tool:before",
+  "tool:after",
+  "runtime:error",
+  "versioning:commit"
+];
 
 interface ForgeExtensionHostOptions {
   dataDir: string;
@@ -25,6 +46,7 @@ export class ForgeExtensionHost {
   private readonly dataDir: string;
   private readonly now: () => string;
   private readonly version: string;
+  private readonly activeRuntimeBindingsByAgentId = new Map<string, ForgePreparedRuntimeBindings>();
   private readonly runtimeSnapshotsByAgentId = new Map<string, ForgeRuntimeExtensionSnapshot>();
   private readonly recentErrors: ForgeDiagnosticErrorRecord[] = [];
 
@@ -57,7 +79,7 @@ export class ForgeExtensionHost {
     return {
       discovered: discoveredWithDiagnostics,
       snapshots: Array.from(this.runtimeSnapshotsByAgentId.values()).map(cloneForgeRuntimeSnapshot),
-      recentErrors: this.recentErrors.map((error) => ({ ...error })),
+      recentErrors: this.recentErrors.map((entry) => ({ ...entry })),
       directories: {
         global: getGlobalForgeExtensionsDir(this.dataDir),
         profileTemplate: join(getProfilesDir(this.dataDir), "<profileId>", "extensions"),
@@ -77,21 +99,186 @@ export class ForgeExtensionHost {
     }
   }
 
-  async prepareRuntimeBindings(_options: {
-    agentId: string;
+  async prepareRuntimeBindings(options: {
+    descriptor: AgentDescriptor;
     runtimeType: ForgeRuntimeType;
-    profileId?: string;
-    cwd?: string;
   }): Promise<ForgePreparedRuntimeBindings | null> {
-    return null;
+    const runtimeContext = {
+      agent: this.buildAgentSnapshot(options.descriptor),
+      session: this.buildSessionSnapshot(options.descriptor),
+      runtime: { type: options.runtimeType } as const
+    };
+
+    const discovered = await discoverForgeExtensions({
+      dataDir: this.dataDir,
+      scopes: [
+        "global",
+        ...(runtimeContext.session.profileId ? (["profile"] as const) : []),
+        ...(runtimeContext.session.cwd ? (["project-local"] as const) : [])
+      ],
+      profileId: runtimeContext.session.profileId,
+      cwd: runtimeContext.session.cwd
+    });
+
+    if (discovered.length === 0) {
+      return null;
+    }
+
+    const loadedAt = this.now();
+    const loadResults = await loadForgeExtensionModules(discovered);
+    const diagnostics: ForgeDiagnosticErrorRecord[] = loadResults.errors.map((entry) => ({
+      timestamp: loadedAt,
+      phase: "load",
+      message: entry.error,
+      path: entry.discovered.path,
+      scope: entry.discovered.scope,
+      agentId: options.descriptor.agentId,
+      runtimeType: options.runtimeType
+    }));
+
+    const extensions: ForgeBoundExtension[] = [];
+
+    for (const loadedModule of loadResults.loaded) {
+      const handlers = createEmptyHandlerRegistry();
+      try {
+        await loadedModule.setup(this.createForgeApi(handlers));
+        extensions.push({
+          module: loadedModule,
+          handlers
+        });
+      } catch (error) {
+        diagnostics.push({
+          timestamp: loadedAt,
+          phase: "setup",
+          message: normalizeErrorMessage(error),
+          path: loadedModule.discovered.path,
+          scope: loadedModule.discovered.scope,
+          agentId: options.descriptor.agentId,
+          runtimeType: options.runtimeType
+        });
+      }
+    }
+
+    return {
+      agentId: options.descriptor.agentId,
+      runtimeType: options.runtimeType,
+      loadedAt,
+      discovered,
+      extensions,
+      snapshot: {
+        agentId: options.descriptor.agentId,
+        role: options.descriptor.role,
+        managerId: options.descriptor.managerId,
+        profileId: options.descriptor.profileId,
+        runtimeType: options.runtimeType,
+        loadedAt,
+        extensions: extensions.map((extension) => ({
+          displayName: extension.module.discovered.displayName,
+          path: extension.module.discovered.path,
+          scope: extension.module.discovered.scope,
+          name: extension.module.metadata.name,
+          description: extension.module.metadata.description,
+          hooks: getRegisteredHookNames(extension.handlers)
+        }))
+      },
+      runtimeContext,
+      diagnostics
+    };
   }
 
-  activateRuntimeBindings(agentId: string, snapshot: ForgeRuntimeExtensionSnapshot): void {
-    this.runtimeSnapshotsByAgentId.set(agentId, cloneForgeRuntimeSnapshot(snapshot));
+  activateRuntimeBindings(bindings: ForgePreparedRuntimeBindings): void {
+    this.activeRuntimeBindingsByAgentId.set(bindings.agentId, bindings);
+    this.runtimeSnapshotsByAgentId.set(bindings.agentId, cloneForgeRuntimeSnapshot(bindings.snapshot));
+
+    for (const diagnostic of bindings.diagnostics) {
+      this.recordDiagnosticError(diagnostic);
+    }
   }
 
   deactivateRuntimeBindings(agentId: string): void {
+    this.activeRuntimeBindingsByAgentId.delete(agentId);
     this.runtimeSnapshotsByAgentId.delete(agentId);
+  }
+
+  async dispatchToolBefore(
+    agentId: string,
+    options: {
+      toolName: string;
+      toolCallId: string;
+      input: Record<string, unknown>;
+    }
+  ): Promise<ToolBeforeResult | undefined> {
+    const bindings = this.activeRuntimeBindingsByAgentId.get(agentId);
+    if (!bindings) {
+      return undefined;
+    }
+
+    let workingInput = cloneToolInput(options.input);
+    let changed = false;
+
+    for (const extension of bindings.extensions) {
+      for (const handler of extension.handlers["tool:before"]) {
+        try {
+          const result = await handler(
+            Object.freeze({
+              toolName: options.toolName,
+              toolCallId: options.toolCallId,
+              input: Object.freeze(cloneToolInput(workingInput))
+            }),
+            this.buildRuntimeContext(bindings, "tool:before", extension.module.discovered.path)
+          );
+
+          if (result?.block === true) {
+            return {
+              block: true,
+              reason: result.reason?.trim() || `Tool ${options.toolName} was blocked by a Forge extension.`
+            };
+          }
+
+          if (result?.input) {
+            workingInput = cloneToolInput(result.input);
+            changed = true;
+          }
+        } catch (error) {
+          this.recordHandlerDiagnosticError(bindings, "tool:before", extension.module.discovered.path, error);
+        }
+      }
+    }
+
+    return changed ? { input: workingInput } : undefined;
+  }
+
+  async dispatchToolAfter(
+    agentId: string,
+    options: {
+      toolName: string;
+      toolCallId: string;
+      input: Record<string, unknown>;
+      result: ToolAfterResultEnvelope;
+    }
+  ): Promise<void> {
+    const bindings = this.activeRuntimeBindingsByAgentId.get(agentId);
+    if (!bindings) {
+      return;
+    }
+
+    const event = Object.freeze({
+      toolName: options.toolName,
+      toolCallId: options.toolCallId,
+      input: Object.freeze(cloneToolInput(options.input)),
+      result: Object.freeze({ ...options.result }),
+      isError: options.result.ok === false
+    });
+
+    for (const extension of bindings.extensions) {
+      for (const handler of extension.handlers["tool:after"]) {
+        try {
+          await handler(event, this.buildRuntimeContext(bindings, "tool:after", extension.module.discovered.path));
+        } catch (error) {
+          this.recordHandlerDiagnosticError(bindings, "tool:after", extension.module.discovered.path, error);
+        }
+      }
+    }
   }
 
   async dispatchSessionLifecycle(): Promise<void> {
@@ -104,6 +291,109 @@ export class ForgeExtensionHost {
 
   async dispatchVersioningCommit(): Promise<void> {
     return undefined;
+  }
+
+  getVersion(): string {
+    return this.version;
+  }
+
+  private createForgeApi(handlers: ForgeBoundHandlerRegistry): ForgeApi {
+    return {
+      dataDir: this.dataDir,
+      version: this.version,
+      on: (event, handler) => {
+        handlers[event].push(handler as never);
+      }
+    };
+  }
+
+  private buildAgentSnapshot(descriptor: AgentDescriptor): RuntimeContext["agent"] {
+    return Object.freeze({
+      agentId: descriptor.agentId,
+      role: descriptor.role,
+      managerId: descriptor.managerId,
+      profileId: descriptor.profileId,
+      cwd: descriptor.cwd,
+      specialistId: descriptor.specialistId,
+      model: Object.freeze({
+        provider: descriptor.model.provider,
+        modelId: descriptor.model.modelId,
+        reasoningLevel: descriptor.model.thinkingLevel
+      })
+    });
+  }
+
+  private buildSessionSnapshot(descriptor: AgentDescriptor): RuntimeContext["session"] {
+    const sessionAgentId = descriptor.role === "manager" ? descriptor.agentId : descriptor.managerId;
+    return Object.freeze({
+      sessionAgentId,
+      profileId: descriptor.profileId ?? sessionAgentId,
+      label: descriptor.role === "manager" ? descriptor.sessionLabel ?? null : null,
+      cwd: descriptor.cwd
+    });
+  }
+
+  private buildRuntimeContext(
+    bindings: ForgePreparedRuntimeBindings,
+    hook: string,
+    extensionPath: string
+  ): RuntimeContext {
+    return Object.freeze({
+      agent: bindings.runtimeContext.agent,
+      session: bindings.runtimeContext.session,
+      runtime: bindings.runtimeContext.runtime,
+      log: this.buildLogger({
+        agentId: bindings.agentId,
+        runtimeType: bindings.runtimeType,
+        hook,
+        path: extensionPath
+      })
+    });
+  }
+
+  private buildLogger(options: {
+    agentId: string;
+    runtimeType: ForgeRuntimeType;
+    hook: string;
+    path: string;
+  }): RuntimeContext["log"] & HostContext["log"] {
+    const baseData = {
+      agentId: options.agentId,
+      runtimeType: options.runtimeType,
+      hook: options.hook,
+      path: options.path
+    };
+
+    return {
+      debug: (message, data) => this.logDiagnostic("debug", message, { ...baseData, ...data }),
+      info: (message, data) => this.logDiagnostic("info", message, { ...baseData, ...data }),
+      warn: (message, data) => this.logDiagnostic("warn", message, { ...baseData, ...data }),
+      error: (message, data) => this.logDiagnostic("error", message, { ...baseData, ...data })
+    };
+  }
+
+  private recordHandlerDiagnosticError(
+    bindings: ForgePreparedRuntimeBindings,
+    hook: string,
+    extensionPath: string,
+    error: unknown
+  ): void {
+    const message = normalizeErrorMessage(error);
+    this.recordDiagnosticError({
+      phase: "handler",
+      message,
+      hook,
+      path: extensionPath,
+      agentId: bindings.agentId,
+      runtimeType: bindings.runtimeType
+    });
+    this.logDiagnostic("warn", "forge_extension:handler_failed", {
+      agentId: bindings.agentId,
+      runtimeType: bindings.runtimeType,
+      hook,
+      path: extensionPath,
+      message
+    });
   }
 
   private async discoverForSettings(cwdValues: string[]): Promise<Awaited<ReturnType<typeof discoverForgeExtensions>>> {
@@ -143,16 +433,24 @@ export class ForgeExtensionHost {
     });
   }
 
-  getVersion(): string {
-    return this.version;
+  private logDiagnostic(level: "debug" | "info" | "warn" | "error", message: string, data?: Record<string, unknown>): void {
+    const payload = data ? ` ${JSON.stringify(data)}` : "";
+    const text = `[forge-extension] ${message}${payload}`;
+
+    switch (level) {
+      case "debug":
+      case "info":
+        console.log(text);
+        return;
+      case "warn":
+        console.warn(text);
+        return;
+      case "error":
+        console.error(text);
+        return;
+    }
   }
 }
-
-const FORGE_SCOPE_SORT_ORDER = {
-  global: 0,
-  profile: 1,
-  "project-local": 2
-} as const;
 
 function getDiscoveredKey(entry: {
   path: string;
@@ -186,4 +484,34 @@ function cloneForgeRuntimeSnapshot(snapshot: ForgeRuntimeExtensionSnapshot): For
       hooks: [...extension.hooks]
     }))
   };
+}
+
+function createEmptyHandlerRegistry(): ForgeBoundHandlerRegistry {
+  return {
+    "session:lifecycle": [],
+    "tool:before": [],
+    "tool:after": [],
+    "runtime:error": [],
+    "versioning:commit": []
+  };
+}
+
+function getRegisteredHookNames(handlers: ForgeBoundHandlerRegistry): string[] {
+  return KNOWN_FORGE_EVENT_NAMES.filter((eventName) => handlers[eventName].length > 0);
+}
+
+function cloneToolInput(input: Record<string, unknown>): Record<string, unknown> {
+  return { ...input };
+}
+
+function normalizeErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message.trim();
+  }
+
+  if (typeof error === "string" && error.trim().length > 0) {
+    return error.trim();
+  }
+
+  return "Unknown Forge extension error";
 }

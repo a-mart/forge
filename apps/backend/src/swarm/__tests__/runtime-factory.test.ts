@@ -76,6 +76,7 @@ vi.mock("@mariozechner/pi-coding-agent", () => ({
 
 import { resetClaudeSdkLoaderForTests, setClaudeSdkImporterForTests } from "../claude-sdk-loader.js";
 import { savePins } from "../message-pins.js";
+import { ForgeExtensionHost } from "../forge-extension-host.js";
 import { RuntimeFactory } from "../runtime-factory.js";
 import type { AgentDescriptor, SwarmConfig } from "../types.js";
 
@@ -190,6 +191,10 @@ function createFactory(
       }),
       requestUserChoice: async () => [],
     },
+    forgeExtensionHost: new ForgeExtensionHost({
+      dataDir: join(rootDir, "data"),
+      now: () => "2026-01-01T00:00:00.000Z",
+    }),
     config: createConfig(rootDir),
     now: () => "2026-01-01T00:00:00.000Z",
     logDebug: overrides.logDebug ?? (() => {}),

@@ -48,6 +48,26 @@ async function flushPromises(): Promise<void> {
 }
 
 describe('SettingsExtensions', () => {
+  it('does not show empty states before the first payload arrives', async () => {
+    settingsApiMock.fetchSettingsExtensions.mockReturnValue(new Promise(() => {}))
+
+    root = createRoot(container)
+    flushSync(() => {
+      root?.render(
+        createElement(
+          HelpProvider,
+          null,
+          createElement(SettingsExtensions, {
+            wsUrl: 'ws://127.0.0.1:47187',
+          }),
+        ),
+      )
+    })
+
+    expect(queryByText(container, 'No Forge extensions found on disk')).toBeNull()
+    expect(queryByText(container, 'No Pi extensions found on disk')).toBeNull()
+  })
+
   it('renders Forge and Pi sections from the combined payload', async () => {
     settingsApiMock.fetchSettingsExtensions.mockResolvedValue({
       generatedAt: '2026-04-07T00:00:00.000Z',

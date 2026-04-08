@@ -58,12 +58,8 @@ export async function loadForgeExtensionModules(discovered: readonly DiscoveredF
 }
 
 function toModuleNamespace(value: unknown): Record<string, unknown> {
-  if (isPlainObject(value)) {
-    return value;
-  }
-
-  if (typeof value === "function") {
-    return { default: value };
+  if (value !== null && (typeof value === "object" || typeof value === "function")) {
+    return value as Record<string, unknown>;
   }
 
   return {};

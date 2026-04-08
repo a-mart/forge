@@ -26,6 +26,9 @@ import { openSessionManagerWithSizeGuard } from "./session-file-guard.js";
 import { ClaudeAgentRuntime } from "./claude-agent-runtime.js";
 import { ClaudeAuthResolver } from "./claude-auth-resolver.js";
 import { createClaudeMcpToolBridge } from "./claude-mcp-tool-bridge.js";
+import type { ForgeExtensionHost } from "./forge-extension-host.js";
+import { wrapForgeToolsWithExtensionHooks } from "./forge-instrumented-tools.js";
+import { buildForgePiToolBridgeExtensionFactory } from "./forge-pi-tool-bridge.js";
 import { assembleClaudePrompt, discoverAgentsMd } from "./claude-prompt-assembler.js";
 import { isClaudeSdkUnavailableError } from "./claude-sdk-loader.js";
 import { CodexAgentRuntime } from "./codex-agent-runtime.js";
@@ -58,6 +61,7 @@ import type {
 
 interface RuntimeFactoryDependencies {
   host: SwarmToolHost;
+  forgeExtensionHost: ForgeExtensionHost;
   config: SwarmConfig;
   now: () => string;
   logDebug: (message: string, details?: unknown) => void;
@@ -136,7 +140,18 @@ export class RuntimeFactory {
     systemPrompt: string,
     runtimeToken: number
   ): Promise<SwarmAgentRuntime> {
-    const swarmTools = this.buildRuntimeTools(descriptor);
+    const preparedForgeBindings = await this.deps.forgeExtensionHost.prepareRuntimeBindings({
+      descriptor,
+      runtimeType: "pi"
+    });
+    const baseSwarmTools = this.buildRuntimeTools(descriptor);
+    const swarmTools = preparedForgeBindings
+      ? wrapForgeToolsWithExtensionHooks({
+          tools: baseSwarmTools,
+          forgeExtensionHost: this.deps.forgeExtensionHost,
+          agentId: descriptor.agentId
+        })
+      : baseSwarmTools;
     const thinkingLevel = normalizeThinkingLevel(descriptor.model.thinkingLevel);
     const runtimeAgentDir =
       descriptor.role === "manager" ? this.deps.config.paths.managerAgentDir : this.deps.config.paths.agentDir;
@@ -184,7 +199,15 @@ export class RuntimeFactory {
       })
     });
 
-    const extensionFactories = this.buildExtensionFactories(descriptor);
+    const extensionFactories = this.buildExtensionFactories(descriptor, {
+      forgePiToolBridgeFactory: preparedForgeBindings
+        ? buildForgePiToolBridgeExtensionFactory({
+            forgeExtensionHost: this.deps.forgeExtensionHost,
+            agentId: descriptor.agentId,
+            skippedToolNames: baseSwarmTools.map((tool) => tool.name)
+          })
+        : undefined
+    });
     const additionalSkillPaths = [
       ...memoryResources.additionalSkillPaths,
       ...(dirHasFiles(profilePiSkillsDir) ? [profilePiSkillsDir] : [])
@@ -361,6 +384,10 @@ export class RuntimeFactory {
       runtime.credentialPoolService = this.deps.getCredentialPoolService?.();
     }
 
+    if (preparedForgeBindings) {
+      this.deps.forgeExtensionHost.activateRuntimeBindings(preparedForgeBindings);
+    }
+
     return runtime;
   }
 
@@ -369,7 +396,18 @@ export class RuntimeFactory {
     systemPrompt: string,
     runtimeToken: number
   ): Promise<SwarmAgentRuntime> {
-    const swarmTools = this.buildRuntimeTools(descriptor);
+    const preparedForgeBindings = await this.deps.forgeExtensionHost.prepareRuntimeBindings({
+      descriptor,
+      runtimeType: "claude"
+    });
+    const baseSwarmTools = this.buildRuntimeTools(descriptor);
+    const swarmTools = preparedForgeBindings
+      ? wrapForgeToolsWithExtensionHooks({
+          tools: baseSwarmTools,
+          forgeExtensionHost: this.deps.forgeExtensionHost,
+          agentId: descriptor.agentId
+        })
+      : baseSwarmTools;
     const profileId = descriptor.profileId ?? descriptor.agentId;
     const sessionId = descriptor.role === "manager" ? descriptor.agentId : descriptor.managerId;
     const workerId = descriptor.role === "worker" ? descriptor.agentId : undefined;
@@ -434,6 +472,10 @@ export class RuntimeFactory {
       systemPromptPreview: previewForLog(claudeSystemPrompt, 240)
     });
 
+    if (preparedForgeBindings) {
+      this.deps.forgeExtensionHost.activateRuntimeBindings(preparedForgeBindings);
+    }
+
     return runtime;
   }
 
@@ -442,7 +484,18 @@ export class RuntimeFactory {
     systemPrompt: string,
     runtimeToken: number
   ): Promise<SwarmAgentRuntime> {
-    const swarmTools = this.buildRuntimeTools(descriptor);
+    const preparedForgeBindings = await this.deps.forgeExtensionHost.prepareRuntimeBindings({
+      descriptor,
+      runtimeType: "codex"
+    });
+    const baseSwarmTools = this.buildRuntimeTools(descriptor);
+    const swarmTools = preparedForgeBindings
+      ? wrapForgeToolsWithExtensionHooks({
+          tools: baseSwarmTools,
+          forgeExtensionHost: this.deps.forgeExtensionHost,
+          agentId: descriptor.agentId
+        })
+      : baseSwarmTools;
     const memoryResources = await this.deps.getMemoryRuntimeResources(descriptor);
     const swarmContextFiles = await this.deps.getSwarmContextFiles(descriptor.cwd);
 
@@ -495,6 +548,10 @@ export class RuntimeFactory {
       systemPromptPreview: previewForLog(codexSystemPrompt, 240)
     });
 
+    if (preparedForgeBindings) {
+      this.deps.forgeExtensionHost.activateRuntimeBindings(preparedForgeBindings);
+    }
+
     return runtime;
   }
 
@@ -516,7 +573,12 @@ export class RuntimeFactory {
     return swarmTools.filter((tool) => !CORTEX_DISABLED_TOOL_NAMES.has(tool.name));
   }
 
-  private buildExtensionFactories(descriptor: AgentDescriptor): ExtensionFactory[] {
+  private buildExtensionFactories(
+    descriptor: AgentDescriptor,
+    options?: {
+      forgePiToolBridgeFactory?: ExtensionFactory;
+    }
+  ): ExtensionFactory[] {
     const factories: ExtensionFactory[] = [];
 
     if (descriptor.role === "manager" && descriptor.profileId) {
@@ -588,6 +650,11 @@ export class RuntimeFactory {
           }
         });
       });
+    }
+
+    if (options?.forgePiToolBridgeFactory) {
+      // Ordering relative to user Pi extensions is intentionally unspecified in v1.
+      factories.push(options.forgePiToolBridgeFactory);
     }
 
     const provider = getCatalogProvider(descriptor.model.provider);

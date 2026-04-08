@@ -424,6 +424,7 @@ function ForgeExtensionsSection({
   error: string | null
   onRefresh: () => void
 }) {
+  const hasPayload = Boolean(forge)
   const discovered = forge?.discovered ?? []
   const snapshots = forge?.snapshots ?? []
   const recentErrors = forge?.recentErrors ?? []
@@ -473,7 +474,7 @@ function ForgeExtensionsSection({
         </div>
       )}
 
-      {!isLoading && discovered.length === 0 && (
+      {!isLoading && hasPayload && discovered.length === 0 && (
         <EmptyState
           title="No Forge extensions found on disk"
           description="Drop .ts or .js files into the directories below. Forge also supports folders with index.ts or index.js entrypoints."
@@ -571,6 +572,7 @@ function ForgeExtensionsSection({
 }
 
 function PiExtensionsSection({ data }: { data: SettingsExtensionsResponse | null }) {
+  const hasPayload = data !== null
   const runtimeOverlayByPath = useMemo(() => {
     return buildRuntimeOverlayMap(data?.snapshots ?? [])
   }, [data?.snapshots])
@@ -608,7 +610,7 @@ function PiExtensionsSection({ data }: { data: SettingsExtensionsResponse | null
           : 'Pi extensions discovered from disk'
       }
     >
-      {discoveredExtensions.length === 0 ? (
+      {hasPayload && discoveredExtensions.length === 0 ? (
         <EmptyState
           title="No Pi extensions found on disk"
           description="Drop Pi extension files into the directories below. Pi supports single .ts/.js files and folders with index.ts or index.js."
@@ -624,7 +626,7 @@ function PiExtensionsSection({ data }: { data: SettingsExtensionsResponse | null
             </div>
           )}
         </EmptyState>
-      ) : (
+      ) : hasPayload ? (
         <div className="space-y-4">
           <p className="text-[11px] text-muted-foreground/70">
             Runtime details are overlaid when matching active sessions have loaded an extension.
@@ -664,7 +666,7 @@ function PiExtensionsSection({ data }: { data: SettingsExtensionsResponse | null
             </a>
           </div>
         </div>
-      )}
+      ) : null}
 
       {data?.directories && (
         <div className="space-y-2 rounded-lg border border-border/60 bg-card/30 p-4">
