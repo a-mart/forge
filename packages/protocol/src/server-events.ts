@@ -75,6 +75,20 @@ import type {
   ReadyEvent,
 } from './transport-events.js'
 
+// Compatibility re-exports from leaf modules
+export * from './conversation-events.js'
+export * from './agent-events.js'
+export * from './manager-events.js'
+export * from './session-events.js'
+export * from './project-agent-events.js'
+export * from './profile-events.js'
+export * from './directory-events.js'
+export * from './notification-events.js'
+export * from './integration-events.js'
+export * from './playwright-events.js'
+export * from './config-events.js'
+export * from './transport-events.js'
+
 export type ServerEvent =
   | ReadyEvent
   | ConversationResetEvent
