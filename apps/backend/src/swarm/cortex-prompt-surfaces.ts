@@ -13,7 +13,7 @@ import {
   getCortexNotesPath,
   getCortexWorkerPromptsPath,
 } from "./data-paths.js";
-import type { PromptRegistryForRoutes } from "../ws/routes/prompt-routes.js";
+import type { PromptRegistryForRoutes } from "./prompt-contracts.js";
 
 const CORTEX_PROFILE_ID = "cortex";
 

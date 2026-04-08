@@ -3,6 +3,7 @@ import { access, mkdir, readdir, readFile, unlink, writeFile } from "node:fs/pro
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { VersioningMutationSink } from "../versioning/versioning-types.js";
+import type { PromptEntry, PromptRegistryContract } from "./prompt-contracts.js";
 import { sanitizePathSegment } from "./data-paths.js";
 
 const PROMPT_REGISTRY_DIR = fileURLToPath(new URL(".", import.meta.url));
@@ -12,13 +13,7 @@ export type PromptCategory = "archetype" | "operational";
 
 export type PromptSourceLayer = "profile" | "repo" | "builtin";
 
-export interface PromptEntry {
-  category: PromptCategory;
-  promptId: string;
-  content: string;
-  sourceLayer: PromptSourceLayer;
-  sourcePath: string;
-}
+export type { PromptEntry } from "./prompt-contracts.js";
 
 export interface PromptRegistryOptions {
   dataDir: string;
@@ -28,19 +23,7 @@ export interface PromptRegistryOptions {
   versioning?: VersioningMutationSink;
 }
 
-export interface PromptRegistry {
-  resolve(category: PromptCategory, promptId: string, profileId?: string): Promise<string>;
-  resolveEntry(category: PromptCategory, promptId: string, profileId?: string): Promise<PromptEntry | undefined>;
-  resolveAtLayer(
-    category: PromptCategory,
-    promptId: string,
-    layer: PromptSourceLayer,
-    profileId?: string
-  ): Promise<string | undefined>;
-  listAll(profileId?: string): Promise<PromptEntry[]>;
-  save(category: PromptCategory, promptId: string, content: string, profileId: string): Promise<void>;
-  deleteOverride(category: PromptCategory, promptId: string, profileId: string): Promise<void>;
-  hasOverride(category: PromptCategory, promptId: string, profileId: string): Promise<boolean>;
+export interface PromptRegistry extends PromptRegistryContract {
   invalidate(category?: PromptCategory, promptId?: string): void;
 }
 

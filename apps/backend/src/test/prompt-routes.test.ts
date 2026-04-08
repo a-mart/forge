@@ -17,7 +17,8 @@ vi.mock("../swarm/cortex-prompt-surfaces.js", () => ({
   saveCortexPromptSurface: (...args: unknown[]) => cortexPromptSurfaceState.saveCortexPromptSurface(...args),
 }));
 
-import { createPromptRoutes, type PromptRegistryForRoutes } from "../ws/routes/prompt-routes.js";
+import type { PromptRegistryForRoutes } from "../swarm/prompt-contracts.js";
+import { createPromptRoutes } from "../ws/routes/prompt-routes.js";
 
 interface TestServer {
   readonly baseUrl: string;

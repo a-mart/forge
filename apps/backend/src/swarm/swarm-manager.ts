@@ -32,6 +32,7 @@ import {
   type PromptCategory,
   type PromptRegistry
 } from "./prompt-registry.js";
+import type { PromptPreviewResponse, PromptPreviewSection } from "./prompt-contracts.js";
 import { ConversationProjector } from "./conversation-projector.js";
 import {
   getCommonKnowledgePath,
@@ -1017,12 +1018,6 @@ interface SpecialistFallbackHandoffState {
     contextUsage?: AgentContextUsage;
   };
   receivedAgentEnd?: boolean;
-}
-
-interface PromptPreviewSection {
-  label: string;
-  content: string;
-  source: string;
 }
 
 interface ModelCapacityBlock {
@@ -3931,7 +3926,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     });
   }
 
-  async previewManagerSystemPrompt(profileId: string): Promise<{ sections: PromptPreviewSection[] }> {
+  async previewManagerSystemPrompt(profileId: string): Promise<PromptPreviewResponse> {
     const profile = this.profiles.get(profileId);
     if (!profile) {
       throw new Error(`Unknown profile: ${profileId}`);
