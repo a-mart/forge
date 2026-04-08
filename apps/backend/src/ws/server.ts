@@ -26,7 +26,7 @@ import { isPidAlive } from "../swarm/platform.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import { UnreadTracker } from "../swarm/unread-tracker.js";
 import { applyCorsHeaders, resolveRequestUrl, sendJson } from "./http-utils.js";
-import { createAgentHttpRoutes } from "./routes/agent-routes.js";
+import { createAgentHttpRoutes } from "./http/routes/agent-http-routes.js";
 import { createChromeCdpRoutes } from "./routes/chrome-cdp-routes.js";
 import { createCortexAutoReviewRoutes } from "./routes/cortex-auto-review-routes.js";
 import { createCortexRoutes } from "./routes/cortex-routes.js";
