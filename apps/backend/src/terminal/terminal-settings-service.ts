@@ -2,11 +2,10 @@ import type {
   TerminalSettings,
   UpdateTerminalSettingsRequest,
 } from "@forge/protocol";
-import { basename, dirname, join } from "node:path";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { getTerminalSettingsPath } from "../swarm/data-paths.js";
-import { renameWithRetry } from "../swarm/retry-rename.js";
+import { stat } from "node:fs/promises";
+import { readJsonFileIfExists, writeJsonFileAtomic } from "../utils/atomic-files.js";
 import { isEnoentError } from "../utils/fs-errors.js";
+import { getTerminalSettingsPath } from "../swarm/data-paths.js";
 
 export interface PersistedTerminalSettings {
   defaultShell?: string;
@@ -125,14 +124,18 @@ export async function loadPersistedTerminalSettingsFromPath(
   onWarning?: (message: string) => void,
 ): Promise<PersistedTerminalSettings> {
   try {
-    const raw = await readFile(settingsPath, "utf8");
-    const parsed = JSON.parse(raw) as unknown;
+    const parsed = await readJsonFileIfExists(settingsPath);
+    if (parsed === undefined) {
+      if (await pathExists(settingsPath)) {
+        onWarning?.(`Failed to load settings from ${settingsPath}: invalid JSON`);
+      }
+      return createDefaultPersistedTerminalSettings();
+    }
+
     return normalizeLoadedTerminalSettings(parsed);
   } catch (error) {
-    if (!isEnoentError(error)) {
-      const message = error instanceof Error ? error.message : String(error);
-      onWarning?.(`Failed to load settings from ${settingsPath}: ${message}`);
-    }
+    const message = error instanceof Error ? error.message : String(error);
+    onWarning?.(`Failed to load settings from ${settingsPath}: ${message}`);
     return createDefaultPersistedTerminalSettings();
   }
 }
@@ -173,11 +176,18 @@ async function writeTerminalSettingsFile(targetPath: string, settings: Persisted
     payload.defaultShell = settings.defaultShell;
   }
 
-  const fileName = basename(targetPath);
-  const tempPath = join(dirname(targetPath), `${fileName}.tmp`);
-
-  await mkdir(dirname(targetPath), { recursive: true });
-  await writeFile(tempPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
-  await renameWithRetry(tempPath, targetPath, { retries: 8, baseDelayMs: 15 });
+  await writeJsonFileAtomic(targetPath, payload);
 }
 
+async function pathExists(targetPath: string): Promise<boolean> {
+  try {
+    await stat(targetPath);
+    return true;
+  } catch (error) {
+    if (isEnoentError(error)) {
+      return false;
+    }
+
+    throw error;
+  }
+}

@@ -1,10 +1,10 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import type { OnboardingPreferences, OnboardingState, OnboardingStatus, OnboardingTechnicalLevel } from "@forge/protocol";
 import { ONBOARDING_STATUSES, ONBOARDING_TECHNICAL_LEVEL_VALUES } from "@forge/protocol";
-import { getCommonKnowledgePath, getSharedKnowledgeDir } from "./data-paths.js";
-import { renameWithRetry } from "./retry-rename.js";
+import { readJsonFileIfExists, writeFileAtomic, writeJsonFileAtomic } from "../utils/atomic-files.js";
 import { isEnoentError } from "../utils/fs-errors.js";
+import { getCommonKnowledgePath, getSharedKnowledgeDir } from "./data-paths.js";
 
 export const ONBOARDING_STATE_FILE_NAME = "onboarding-state.json";
 export const ONBOARDING_COMMON_BLOCK_START = "<!-- BEGIN MANAGED:ONBOARDING -->";
@@ -18,19 +18,11 @@ export interface SaveOnboardingPreferencesInput {
 
 export async function loadOnboardingState(dataDir: string): Promise<OnboardingState> {
   const onboardingStatePath = getOnboardingStatePath(dataDir);
+  const parsed = await readJsonFileIfExists(onboardingStatePath);
+  const normalized = normalizeStoredOnboardingState(parsed);
 
-  let raw: string | null = null;
-  try {
-    raw = await readFile(onboardingStatePath, "utf8");
-  } catch (error) {
-    if (!isEnoentError(error)) {
-      throw error;
-    }
-  }
-
-  const normalized = normalizeStoredOnboardingState(raw);
-  if (raw === null || normalized.shouldPersist) {
-    await writeJsonAtomic(onboardingStatePath, normalized.state);
+  if (parsed === undefined || normalized.shouldPersist) {
+    await writeJsonFileAtomic(onboardingStatePath, normalized.state);
   }
 
   return normalized.state;
@@ -64,7 +56,7 @@ export async function saveOnboardingPreferences(
     }
   };
 
-  await writeJsonAtomic(getOnboardingStatePath(dataDir), state);
+  await writeJsonFileAtomic(getOnboardingStatePath(dataDir), state);
   return state;
 }
 
@@ -77,7 +69,7 @@ export async function skipOnboarding(dataDir: string): Promise<OnboardingState> 
     preferences: currentState.preferences
   };
 
-  await writeJsonAtomic(getOnboardingStatePath(dataDir), state);
+  await writeJsonFileAtomic(getOnboardingStatePath(dataDir), state);
   return state;
 }
 
@@ -101,7 +93,7 @@ export async function renderOnboardingCommonKnowledge(
   const nextContent = ensureTrailingNewline(
     upsertCommonKnowledgeHeader(upsertManagedOnboardingBlock(existing, managedBlock), renderedAt)
   );
-  await writeTextAtomic(commonKnowledgePath, nextContent);
+  await writeFileAtomic(commonKnowledgePath, nextContent);
 
   return {
     path: commonKnowledgePath,
@@ -113,18 +105,8 @@ function getOnboardingStatePath(dataDir: string): string {
   return join(getSharedKnowledgeDir(dataDir), ONBOARDING_STATE_FILE_NAME);
 }
 
-function normalizeStoredOnboardingState(raw: string | null): { state: OnboardingState; shouldPersist: boolean } {
-  if (raw === null) {
-    return {
-      state: createDefaultOnboardingState(),
-      shouldPersist: true
-    };
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
+function normalizeStoredOnboardingState(parsed: unknown): { state: OnboardingState; shouldPersist: boolean } {
+  if (parsed === undefined) {
     return {
       state: createDefaultOnboardingState(),
       shouldPersist: true
@@ -391,20 +373,6 @@ function upsertCommonKnowledgeHeader(content: string, renderedAt: string): strin
 
 function ensureTrailingNewline(content: string): string {
   return content.endsWith("\n") ? content : `${content}\n`;
-}
-
-async function writeJsonAtomic(path: string, payload: unknown): Promise<void> {
-  const tmpPath = `${path}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(tmpPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
-  await renameWithRetry(tmpPath, path, { retries: 8, baseDelayMs: 15 });
-}
-
-async function writeTextAtomic(path: string, content: string): Promise<void> {
-  const tmpPath = `${path}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(tmpPath, content, "utf8");
-  await renameWithRetry(tmpPath, path, { retries: 8, baseDelayMs: 15 });
 }
 
 function normalizeOptionalString(value: unknown): string | undefined {

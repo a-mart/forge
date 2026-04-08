@@ -1,6 +1,5 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
 import type { ModelOverrideEntry, ModelOverridesFile } from "@forge/protocol";
+import { readJsonFileIfExists, writeJsonFileAtomic } from "../utils/atomic-files.js";
 import { getSharedModelOverridesPath } from "./data-paths.js";
 import { isEnoentError } from "../utils/fs-errors.js";
 
@@ -79,27 +78,14 @@ function sanitizeModelOverridesFile(value: unknown): ModelOverridesFile {
 
 export async function readModelOverrides(dataDir: string): Promise<ModelOverridesFile> {
   const filePath = getSharedModelOverridesPath(dataDir);
-
-  try {
-    const raw = await readFile(filePath, "utf8");
-    return sanitizeModelOverridesFile(JSON.parse(raw));
-  } catch (error) {
-    if (isEnoentError(error) || error instanceof SyntaxError) {
-      return emptyModelOverridesFile();
-    }
-    throw error;
-  }
+  const parsed = await readJsonFileIfExists(filePath);
+  return parsed === undefined ? emptyModelOverridesFile() : sanitizeModelOverridesFile(parsed);
 }
 
 export async function writeModelOverrides(dataDir: string, overrides: ModelOverridesFile): Promise<void> {
   const filePath = getSharedModelOverridesPath(dataDir);
-  const directory = dirname(filePath);
-  const tempPath = join(directory, "model-overrides.json.tmp");
   const normalized = sanitizeModelOverridesFile(overrides);
-
-  await mkdir(directory, { recursive: true });
-  await writeFile(tempPath, `${JSON.stringify(normalized, null, 2)}\n`, "utf8");
-  await rename(tempPath, filePath);
+  await writeJsonFileAtomic(filePath, normalized);
 }
 
 export async function setModelOverride(

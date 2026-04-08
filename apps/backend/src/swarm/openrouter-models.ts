@@ -1,15 +1,11 @@
-import { randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
 import type {
   ForgeInputMode,
   ForgeReasoningLevel,
   OpenRouterModelEntry,
   OpenRouterModelsFile,
 } from "@forge/protocol";
+import { readJsonFileIfExists, writeJsonFileAtomic } from "../utils/atomic-files.js";
 import { getOpenRouterModelsPath } from "./data-paths.js";
-import { renameWithRetry } from "./retry-rename.js";
-import { isEnoentError } from "../utils/fs-errors.js";
 
 const OPENROUTER_MODELS_VERSION = 1 as const;
 const VALID_REASONING_LEVELS = new Set<ForgeReasoningLevel>(["none", "low", "medium", "high", "xhigh"]);
@@ -141,27 +137,14 @@ function sanitizeOpenRouterModelsFile(value: unknown): OpenRouterModelsFile {
 
 export async function readOpenRouterModels(dataDir: string): Promise<OpenRouterModelsFile> {
   const filePath = getOpenRouterModelsPath(dataDir);
-
-  try {
-    const raw = await readFile(filePath, "utf8");
-    return sanitizeOpenRouterModelsFile(JSON.parse(raw));
-  } catch (error) {
-    if (isEnoentError(error) || error instanceof SyntaxError) {
-      return emptyOpenRouterModelsFile();
-    }
-    throw error;
-  }
+  const parsed = await readJsonFileIfExists(filePath);
+  return parsed === undefined ? emptyOpenRouterModelsFile() : sanitizeOpenRouterModelsFile(parsed);
 }
 
 export async function writeOpenRouterModels(dataDir: string, file: OpenRouterModelsFile): Promise<void> {
   const filePath = getOpenRouterModelsPath(dataDir);
-  const directory = dirname(filePath);
-  const tempPath = join(directory, `openrouter-models.${process.pid}.${randomUUID()}.tmp`);
   const normalized = sanitizeOpenRouterModelsFile(file);
-
-  await mkdir(directory, { recursive: true });
-  await writeFile(tempPath, `${JSON.stringify(normalized, null, 2)}\n`, "utf8");
-  await renameWithRetry(tempPath, filePath, { retries: 8, baseDelayMs: 15 });
+  await writeJsonFileAtomic(filePath, normalized);
 }
 
 export async function addOpenRouterModel(dataDir: string, entry: OpenRouterModelEntry): Promise<void> {
