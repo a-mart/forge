@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { SessionMeta, SessionWorkerMeta } from "@forge/protocol";
+import { writeJsonFileAtomic } from "../utils/atomic-files.js";
 import {
   getProfilesDir,
   getSessionFilePath,
@@ -10,7 +11,6 @@ import {
   getSharedStateDir,
   resolveMemoryFilePath
 } from "./data-paths.js";
-import { renameWithRetry } from "./retry-rename.js";
 import type { AgentDescriptor } from "./types.js";
 
 export interface RebuildSessionMetaOptions {
@@ -45,11 +45,7 @@ const SESSION_META_REBUILD_BATCH_SIZE = 10;
 
 export async function writeSessionMeta(dataDir: string, meta: SessionMeta): Promise<void> {
   const target = getSessionMetaPath(dataDir, meta.profileId, meta.sessionId);
-  const tmp = `${target}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
-
-  await mkdir(dirname(target), { recursive: true });
-  await writeFile(tmp, `${JSON.stringify(meta, null, 2)}\n`, "utf8");
-  await renameWithRetry(tmp, target, { retries: 8, baseDelayMs: 15 });
+  await writeJsonFileAtomic(target, meta);
 }
 
 export async function readSessionMeta(
