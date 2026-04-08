@@ -1352,6 +1352,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       now: this.now,
       logDebug: (message, details) => this.logDebug(message, details),
       getPiModelsJsonPath: () => this.getPiModelsJsonPathOrThrow(),
+      getAgentDescriptor: (agentId) => this.getAgent(agentId),
       getCredentialPoolService: () => this.secretsEnvService.getCredentialPoolService(),
       onSessionFileRotated: async (descriptor, sessionFile) => {
         if (descriptor.role !== "manager") {

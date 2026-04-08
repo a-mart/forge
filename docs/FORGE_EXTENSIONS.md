@@ -102,15 +102,25 @@ Behavior rules:
   - success: `{ ok: true, value, raw? }`
   - failure: `{ ok: false, error, raw? }`
 
+Payload semantics:
+- Hook payloads and `ctx` snapshots are immutable read-only views.
+- Mutating `event.input` does not change the live tool call.
+- To rewrite tool input, return `{ input }` from `tool:before` with a replacement plain object.
+- `versioning:commit` handlers must not blindly write back to Forge-versioned tracked paths. Doing so can trigger follow-on commits and create commit loops.
+
 ## Failure model
 
-Forge Extensions are **fail-open**.
+Forge Extensions are **fail-open for thrown or rejected discovery, load, setup, and handler errors**.
 
 That means:
 - A discovery or load failure skips that extension.
-- A handler error is logged and recorded in Settings diagnostics.
+- A setup or handler error is logged and recorded in Settings diagnostics.
 - Other extensions still run.
-- The session or runtime keeps going.
+- The session or runtime keeps going when the failure is an ordinary thrown or rejected error.
+
+Important boundary:
+- Forge extensions run in-process inside the backend with no sandbox or timeout isolation.
+- A top-level `process.exit()`, synchronous infinite loop, or other process-level side effect can still hang or terminate the backend.
 
 Forge does not hot-reload an active session. Runtime-bound hooks refresh on the next runtime or session creation boundary.
 
@@ -289,7 +299,7 @@ export default (forge) => {
 - Start a new session, recycle the affected runtime, or recreate the worker.
 
 ### One extension broke, but the session kept running
-That is expected. Forge extensions are fail-open.
+That is expected for normal thrown or rejected extension errors. Forge extensions are fail-open for those paths, but they are not sandboxed from process-level side effects.
 
 ### My Pi-native tool ordering is inconsistent
 That is a v1 limitation. Forge's Pi bridge ordering relative to user Pi extensions is unspecified.

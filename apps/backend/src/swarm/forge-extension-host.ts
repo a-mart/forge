@@ -106,12 +106,16 @@ export class ForgeExtensionHost {
 
   async prepareRuntimeBindings(options: {
     descriptor: AgentDescriptor;
+    sessionDescriptor?: AgentDescriptor;
     runtimeType: ForgeRuntimeType;
     runtimeToken: number;
   }): Promise<ForgePreparedRuntimeBindings | null> {
     const runtimeContext = {
       agent: this.buildAgentSnapshot(options.descriptor),
-      session: this.buildSessionSnapshot(options.descriptor),
+      session: this.buildSessionSnapshot(
+        options.descriptor,
+        options.descriptor.role === "worker" ? options.sessionDescriptor : options.descriptor
+      ),
       runtime: { type: options.runtimeType } as const
     };
 
@@ -215,7 +219,12 @@ export class ForgeExtensionHost {
             };
           }
 
-          if (result?.input) {
+          if (result?.input !== undefined) {
+            if (!isPlainObject(result.input)) {
+              this.recordInvalidToolBeforeMutationDiagnostic(bindings, extension.module.discovered.path);
+              continue;
+            }
+
             workingInput = cloneStructured(result.input);
             changed = true;
           }
@@ -379,6 +388,12 @@ export class ForgeExtensionHost {
       dataDir: this.dataDir,
       version: this.version,
       on: (event, handler) => {
+        if (!isKnownForgeEventName(event)) {
+          throw new Error(
+            `Unknown Forge hook "${String(event)}". Valid hooks: ${KNOWN_FORGE_EVENT_NAMES.join(", ")}`
+          );
+        }
+
         handlers[event].push(handler as never);
       }
     };
@@ -448,13 +463,28 @@ export class ForgeExtensionHost {
     });
   }
 
-  private buildSessionSnapshot(descriptor: AgentDescriptor): RuntimeContext["session"] {
-    const sessionAgentId = descriptor.role === "manager" ? descriptor.agentId : descriptor.managerId;
+  private buildSessionSnapshot(
+    descriptor: AgentDescriptor,
+    sessionDescriptor?: AgentDescriptor
+  ): RuntimeContext["session"] {
+    const sessionAgentId =
+      descriptor.role === "manager"
+        ? descriptor.agentId
+        : sessionDescriptor?.role === "manager"
+          ? sessionDescriptor.agentId
+          : descriptor.managerId;
+    const resolvedSessionDescriptor =
+      sessionDescriptor?.role === "manager"
+        ? sessionDescriptor
+        : descriptor.role === "manager"
+          ? descriptor
+          : undefined;
+
     return Object.freeze({
       sessionAgentId,
-      profileId: descriptor.profileId ?? sessionAgentId,
-      label: descriptor.role === "manager" ? descriptor.sessionLabel ?? null : null,
-      cwd: descriptor.cwd
+      profileId: resolvedSessionDescriptor?.profileId ?? descriptor.profileId ?? sessionAgentId,
+      label: resolvedSessionDescriptor?.sessionLabel ?? null,
+      cwd: resolvedSessionDescriptor?.cwd ?? descriptor.cwd
     });
   }
 
@@ -528,6 +558,28 @@ export class ForgeExtensionHost {
       agentId: bindings.agentId,
       runtimeType: bindings.runtimeType,
       hook,
+      path: extensionPath,
+      message
+    });
+  }
+
+  private recordInvalidToolBeforeMutationDiagnostic(
+    bindings: ForgePreparedRuntimeBindings,
+    extensionPath: string
+  ): void {
+    const message = 'Forge extension tool:before handler returned invalid input mutation. Expected a plain object.';
+    this.recordDiagnosticError({
+      phase: "validation",
+      message,
+      hook: "tool:before",
+      path: extensionPath,
+      agentId: bindings.agentId,
+      runtimeType: bindings.runtimeType
+    });
+    this.logDiagnostic("warn", "forge_extension:handler_validation_failed", {
+      agentId: bindings.agentId,
+      runtimeType: bindings.runtimeType,
+      hook: "tool:before",
       path: extensionPath,
       message
     });
@@ -648,7 +700,7 @@ export class ForgeExtensionHost {
   }
 
   private logDiagnostic(level: "debug" | "info" | "warn" | "error", message: string, data?: Record<string, unknown>): void {
-    const payload = data ? ` ${JSON.stringify(data)}` : "";
+    const payload = data ? ` ${safeSerializeDiagnosticData(data)}` : "";
     const text = `[forge-extension] ${message}${payload}`;
 
     switch (level) {
@@ -736,6 +788,19 @@ function getRegisteredHookNames(handlers: ForgeBoundHandlerRegistry): string[] {
   return KNOWN_FORGE_EVENT_NAMES.filter((eventName) => handlers[eventName].length > 0);
 }
 
+function isKnownForgeEventName(value: string): value is ForgeEventName {
+  return KNOWN_FORGE_EVENT_NAMES.includes(value as ForgeEventName);
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== "object") {
+    return false;
+  }
+
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
 function cloneStructured<T>(value: T): T {
   return structuredClone(value);
 }
@@ -750,4 +815,12 @@ function normalizeErrorMessage(error: unknown): string {
   }
 
   return "Unknown Forge extension error";
+}
+
+function safeSerializeDiagnosticData(data: Record<string, unknown>): string {
+  try {
+    return JSON.stringify(data);
+  } catch {
+    return '"<unserializable>"';
+  }
 }

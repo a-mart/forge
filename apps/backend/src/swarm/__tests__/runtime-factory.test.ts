@@ -212,13 +212,15 @@ function createDescriptor(
   };
 }
 
-function createManagerDescriptor(rootDir: string): AgentDescriptor {
+function createManagerDescriptor(rootDir: string, overrides: Partial<AgentDescriptor> = {}): AgentDescriptor {
   return createDescriptor(rootDir, {
     agentId: "manager-1",
     displayName: "Manager 1",
     role: "manager",
     managerId: "manager-1",
+    sessionLabel: "Manager 1",
     sessionFile: join(rootDir, "manager-session.jsonl"),
+    ...overrides,
   });
 }
 
@@ -235,6 +237,7 @@ function createFactory(
     logDebug?: (message: string, details?: unknown) => void;
     hostOverrides?: Record<string, unknown>;
     forgeExtensionHost?: ForgeExtensionHost;
+    getAgentDescriptor?: (agentId: string) => AgentDescriptor | undefined;
   } = {},
 ): RuntimeFactory {
   const host = {
@@ -266,6 +269,7 @@ function createFactory(
     now: () => "2026-01-01T00:00:00.000Z",
     logDebug: overrides.logDebug ?? (() => {}),
     getPiModelsJsonPath: () => getPiModelsProjectionPath(join(rootDir, "data")),
+    getAgentDescriptor: overrides.getAgentDescriptor,
     getMemoryRuntimeResources: async () => ({
       memoryContextFile: {
         path: join(rootDir, "memory.md"),
@@ -680,7 +684,7 @@ describe("RuntimeFactory", () => {
     expect(sendMessage.mock.calls.map((call) => call[1])).toEqual(["worker-first", "worker-second"]);
   });
 
-  it("passes worker runtime context with worker agent id and owning manager session id on Pi runtimes", async () => {
+  it("passes worker runtime context with worker agent data and owning manager session data on Pi runtimes", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
     await mkdir(rootDir, { recursive: true });
     await seedProjectionFile(rootDir);
@@ -688,11 +692,21 @@ describe("RuntimeFactory", () => {
     await mkdir(join(rootDir, "data", "extensions"), { recursive: true });
     await writeFile(
       join(rootDir, "data", "extensions", "context.ts"),
-      'export default (forge) => { forge.on("tool:before", (event, ctx) => event.toolName === "send_message_to_agent" ? ({ input: { ...event.input, targetAgentId: ctx.agent.agentId, message: ctx.session.sessionAgentId } }) : undefined) }\n',
+      'export default (forge) => { forge.on("tool:before", (event, ctx) => event.toolName === "send_message_to_agent" ? ({ input: { ...event.input, targetAgentId: ctx.agent.agentId, message: JSON.stringify({ sessionAgentId: ctx.session.sessionAgentId, sessionLabel: ctx.session.label, sessionCwd: ctx.session.cwd, agentCwd: ctx.agent.cwd }) } }) : undefined) }\n',
       "utf8"
     );
 
-    const descriptor = createDescriptor(rootDir);
+    const managerCwd = join(rootDir, "manager-cwd");
+    const workerCwd = join(rootDir, "worker-cwd");
+    await mkdir(managerCwd, { recursive: true });
+    await mkdir(workerCwd, { recursive: true });
+
+    const descriptor = createDescriptor(rootDir, { cwd: workerCwd });
+    const managerDescriptor = createManagerDescriptor(rootDir, {
+      cwd: managerCwd,
+      sessionLabel: "Manager Session",
+      profileId: "profile-1",
+    });
     await writeFile(descriptor.sessionFile, "", "utf8");
 
     piCodingAgentMockState.modelRegistryFind.mockReturnValue({ provider: "openai-codex", modelId: "gpt-5.4-mini" });
@@ -711,6 +725,7 @@ describe("RuntimeFactory", () => {
       hostOverrides: {
         sendMessage,
       },
+      getAgentDescriptor: (agentId) => (agentId === managerDescriptor.agentId ? managerDescriptor : undefined),
     });
 
     await factory.createRuntimeForDescriptor(descriptor, "system prompt", 1);
@@ -718,7 +733,17 @@ describe("RuntimeFactory", () => {
     const sendTool = tools.find((tool) => tool.name === "send_message_to_agent");
     await sendTool?.execute("tool-context", { targetAgentId: "worker-original", message: "ignored" });
 
-    expect(sendMessage).toHaveBeenCalledWith("worker-1", "worker-1", "manager-1", undefined);
+    expect(sendMessage).toHaveBeenCalledWith(
+      "worker-1",
+      "worker-1",
+      JSON.stringify({
+        sessionAgentId: "manager-1",
+        sessionLabel: "Manager Session",
+        sessionCwd: managerCwd,
+        agentCwd: workerCwd,
+      }),
+      undefined
+    );
   });
 
   it("does not leave active Forge runtime snapshots behind when Pi runtime creation fails", async () => {

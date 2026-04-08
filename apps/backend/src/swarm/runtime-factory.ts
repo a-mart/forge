@@ -66,6 +66,7 @@ interface RuntimeFactoryDependencies {
   now: () => string;
   logDebug: (message: string, details?: unknown) => void;
   getPiModelsJsonPath: () => string;
+  getAgentDescriptor?: (agentId: string) => AgentDescriptor | undefined;
   getCredentialPoolService?: () => CredentialPoolService;
   onSessionFileRotated?: (descriptor: AgentDescriptor, sessionFile: string) => Promise<void>;
   getMemoryRuntimeResources: (descriptor: AgentDescriptor) => Promise<{
@@ -135,6 +136,15 @@ export class RuntimeFactory {
     return this.createPiRuntimeForDescriptor(descriptor, systemPrompt, runtimeToken);
   }
 
+  private getForgeSessionDescriptor(descriptor: AgentDescriptor): AgentDescriptor | undefined {
+    if (descriptor.role === "manager") {
+      return descriptor;
+    }
+
+    const sessionDescriptor = this.deps.getAgentDescriptor?.(descriptor.managerId);
+    return sessionDescriptor?.role === "manager" ? sessionDescriptor : undefined;
+  }
+
   private async createPiRuntimeForDescriptor(
     descriptor: AgentDescriptor,
     systemPrompt: string,
@@ -142,6 +152,7 @@ export class RuntimeFactory {
   ): Promise<SwarmAgentRuntime> {
     const preparedForgeBindings = await this.deps.forgeExtensionHost.prepareRuntimeBindings({
       descriptor,
+      sessionDescriptor: this.getForgeSessionDescriptor(descriptor),
       runtimeType: "pi",
       runtimeToken
     });
@@ -399,6 +410,7 @@ export class RuntimeFactory {
   ): Promise<SwarmAgentRuntime> {
     const preparedForgeBindings = await this.deps.forgeExtensionHost.prepareRuntimeBindings({
       descriptor,
+      sessionDescriptor: this.getForgeSessionDescriptor(descriptor),
       runtimeType: "claude",
       runtimeToken
     });
@@ -488,6 +500,7 @@ export class RuntimeFactory {
   ): Promise<SwarmAgentRuntime> {
     const preparedForgeBindings = await this.deps.forgeExtensionHost.prepareRuntimeBindings({
       descriptor,
+      sessionDescriptor: this.getForgeSessionDescriptor(descriptor),
       runtimeType: "codex",
       runtimeToken
     });

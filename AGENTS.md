@@ -133,6 +133,7 @@ All runtime state lives in `~/.forge` (or `%LOCALAPPDATA%\forge` on Windows), ov
 ~/.forge/
 ├── swarm/
 │   └── agents.json                        # Global agent registry
+├── extensions/                            # Global Forge extensions (auto-created)
 ├── agent/                                 # Pi agent runtime config
 │   ├── extensions/                        #   Global worker extensions (auto-created)
 │   ├── manager/extensions/                #   Global manager extensions (auto-created)
@@ -172,6 +173,7 @@ All runtime state lives in `~/.forge` (or `%LOCALAPPDATA%\forge` on Windows), ov
 │   └── specialists/                       # Global specialist definitions (.md files)
 └── profiles/<profileId>/
     ├── memory.md                          # Profile-level memory
+    ├── extensions/                        # Profile-scoped Forge extensions (auto-created)
     ├── specialists/                       # Profile-specific specialist overrides
     ├── project-agents/<handle>/
     │   ├── config.json                    # Agent config (handle, whenToUse, agentId, timestamps)

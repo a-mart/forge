@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ForgeExtensionHost } from "../forge-extension-host.js";
 import type { AgentDescriptor } from "../types.js";
 
@@ -591,12 +591,16 @@ describe("ForgeExtensionHost", () => {
     ).resolves.toEqual({ input: { command: "second" } });
   });
 
-  it("uses the worker id for ctx.agent and the owning manager session id for ctx.session", async () => {
+  it("uses the worker id for ctx.agent and the owning manager session data for ctx.session", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-extension-host-"));
     tempDirs.push(rootDir);
     const dataDir = join(rootDir, "data");
     const extensionsDir = join(dataDir, "extensions");
+    const managerCwd = join(rootDir, "manager-cwd");
+    const workerCwd = join(rootDir, "worker-cwd");
     await mkdir(extensionsDir, { recursive: true });
+    await mkdir(managerCwd, { recursive: true });
+    await mkdir(workerCwd, { recursive: true });
 
     await writeFile(
       join(extensionsDir, "context.ts"),
@@ -605,7 +609,10 @@ describe("ForgeExtensionHost", () => {
         forge.on("tool:before", (_event, ctx) => ({
           input: {
             seenAgentId: ctx.agent.agentId,
-            seenSessionAgentId: ctx.session.sessionAgentId
+            seenAgentCwd: ctx.agent.cwd,
+            seenSessionAgentId: ctx.session.sessionAgentId,
+            seenSessionLabel: ctx.session.label,
+            seenSessionCwd: ctx.session.cwd
           }
         }))
       }
@@ -615,7 +622,8 @@ describe("ForgeExtensionHost", () => {
 
     const host = new ForgeExtensionHost({ dataDir, now: () => "2026-04-08T00:00:00.000Z" });
     const bindings = await host.prepareRuntimeBindings({
-      descriptor: createDescriptor(rootDir),
+      descriptor: createDescriptor(workerCwd),
+      sessionDescriptor: createManagerDescriptor(managerCwd, { sessionLabel: "Manager Session" }),
       runtimeType: "codex",
       runtimeToken: 1
     });
@@ -630,9 +638,159 @@ describe("ForgeExtensionHost", () => {
     expect(result).toEqual({
       input: {
         seenAgentId: "worker-1",
-        seenSessionAgentId: "manager-1"
+        seenAgentCwd: workerCwd,
+        seenSessionAgentId: "manager-1",
+        seenSessionLabel: "Manager Session",
+        seenSessionCwd: managerCwd
       }
     });
+  });
+
+  it("records a setup diagnostic with a clear message for unknown Forge hook names", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-extension-host-"));
+    tempDirs.push(rootDir);
+    const dataDir = join(rootDir, "data");
+    const extensionsDir = join(dataDir, "extensions");
+    await mkdir(extensionsDir, { recursive: true });
+
+    await writeFile(
+      join(extensionsDir, "bad-hook.ts"),
+      `
+      export default (forge) => {
+        forge.on("tool:befor", () => undefined)
+      }
+      `,
+      "utf8"
+    );
+
+    const host = new ForgeExtensionHost({ dataDir, now: () => "2026-04-08T00:00:00.000Z" });
+    const bindings = await host.prepareRuntimeBindings({
+      descriptor: createDescriptor(rootDir),
+      runtimeType: "pi",
+      runtimeToken: 1
+    });
+
+    expect(bindings?.extensions).toEqual([]);
+    expect(bindings?.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          phase: "setup",
+          message:
+            'Unknown Forge hook "tool:befor". Valid hooks: session:lifecycle, tool:before, tool:after, runtime:error, versioning:commit'
+        })
+      ])
+    );
+  });
+
+  it("ignores invalid tool:before mutations that do not return a plain object", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-extension-host-"));
+    tempDirs.push(rootDir);
+    const dataDir = join(rootDir, "data");
+    const extensionsDir = join(dataDir, "extensions");
+    await mkdir(extensionsDir, { recursive: true });
+
+    await writeFile(
+      join(extensionsDir, "01-invalid.ts"),
+      `
+      export default (forge) => {
+        forge.on("tool:before", () => ({ input: ["bad"] }))
+      }
+      `,
+      "utf8"
+    );
+    await writeFile(
+      join(extensionsDir, "02-valid.ts"),
+      `
+      export default (forge) => {
+        forge.on("tool:before", (event) => ({
+          input: {
+            ...event.input,
+            path: "patched.txt"
+          }
+        }))
+      }
+      `,
+      "utf8"
+    );
+
+    const host = new ForgeExtensionHost({ dataDir, now: () => "2026-04-08T00:00:00.000Z" });
+    const bindings = await host.prepareRuntimeBindings({
+      descriptor: createDescriptor(rootDir),
+      runtimeType: "pi",
+      runtimeToken: 1
+    });
+    host.activateRuntimeBindings(bindings!);
+
+    const result = await host.dispatchToolBefore(bindings!.bindingToken, {
+      toolName: "write",
+      toolCallId: "tool-invalid-mutation",
+      input: { path: "original.txt" }
+    });
+
+    expect(result).toEqual({
+      input: {
+        path: "patched.txt"
+      }
+    });
+
+    const snapshot = await host.buildSettingsSnapshot({ cwdValues: [rootDir] });
+    expect(snapshot.recentErrors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          phase: "validation",
+          hook: "tool:before",
+          message: "Forge extension tool:before handler returned invalid input mutation. Expected a plain object.",
+          agentId: "worker-1",
+          runtimeType: "pi"
+        })
+      ])
+    );
+  });
+
+  it("keeps ctx.log.* fail-open when diagnostic data is circular", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-extension-host-"));
+    tempDirs.push(rootDir);
+    const dataDir = join(rootDir, "data");
+    const extensionsDir = join(dataDir, "extensions");
+    await mkdir(extensionsDir, { recursive: true });
+
+    await writeFile(
+      join(extensionsDir, "circular-log.ts"),
+      `
+      export default (forge) => {
+        forge.on("tool:before", (_event, ctx) => {
+          const value = {}
+          value.self = value
+          ctx.log.info("circular", { value })
+          return { input: { ok: true } }
+        })
+      }
+      `,
+      "utf8"
+    );
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    try {
+      const host = new ForgeExtensionHost({ dataDir, now: () => "2026-04-08T00:00:00.000Z" });
+      const bindings = await host.prepareRuntimeBindings({
+        descriptor: createDescriptor(rootDir),
+        runtimeType: "pi",
+        runtimeToken: 1
+      });
+      host.activateRuntimeBindings(bindings!);
+
+      const result = await host.dispatchToolBefore(bindings!.bindingToken, {
+        toolName: "write",
+        toolCallId: "tool-circular-log",
+        input: {}
+      });
+
+      expect(result).toEqual({ input: { ok: true } });
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"<unserializable>"'));
+    } finally {
+      logSpy.mockRestore();
+    }
   });
 
   it("records only the most recent Forge diagnostic errors", async () => {
@@ -743,16 +901,17 @@ function createDescriptor(rootDir: string): AgentDescriptor {
   };
 }
 
-function createManagerDescriptor(rootDir: string): AgentDescriptor {
+function createManagerDescriptor(rootDir: string, overrides: Partial<AgentDescriptor> = {}): AgentDescriptor {
   return {
     ...createDescriptor(rootDir),
-    agentId: "session-1",
+    agentId: "manager-1",
     displayName: "Session 1",
     role: "manager",
-    managerId: "session-1",
+    managerId: "manager-1",
     profileId: "profile-1",
     sessionLabel: "Session 1",
-    sessionFile: join(rootDir, "manager-session.jsonl")
+    sessionFile: join(rootDir, "manager-session.jsonl"),
+    ...overrides
   };
 }
 

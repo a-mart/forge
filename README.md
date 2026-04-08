@@ -196,6 +196,8 @@ Forge has two extension systems:
 - [Forge Extensions](docs/FORGE_EXTENSIONS.md) for Forge-native hooks like session lifecycle, runtime errors, versioning commits, and cross-runtime tool interception
 - [Pi Extensions & Packages](docs/PI_EXTENSIONS.md) for Pi-native custom tools, event handlers, packages, skills, prompts, and themes
 
+Forge Extensions are fail-open for normal thrown or rejected load, setup, and handler errors, so one bad hook usually does not take down a session. They still run in-process with no sandbox or timeout isolation, so process-level side effects like `process.exit()` or synchronous infinite loops can still affect the backend.
+
 Beyond skills, Forge also exposes the full Pi extension and package system. Pi extensions let you deeply customize agent behavior:
 
 - **Custom tools** — Register new tools the LLM can call (ticket lookups, API integrations, internal databases)
