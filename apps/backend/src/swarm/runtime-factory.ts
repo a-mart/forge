@@ -30,7 +30,8 @@ import { assembleClaudePrompt, discoverAgentsMd } from "./claude-prompt-assemble
 import { isClaudeSdkUnavailableError } from "./claude-sdk-loader.js";
 import { CodexAgentRuntime } from "./codex-agent-runtime.js";
 import type { RuntimeErrorEvent, RuntimeSessionEvent, SwarmAgentRuntime } from "./runtime-types.js";
-import { buildSwarmTools, type SwarmToolHost } from "./swarm-tools.js";
+import type { SwarmToolHost } from "./swarm-tool-host.js";
+import { buildSwarmTools } from "./swarm-tools.js";
 import { normalizeArchetypeId, resolvePromptVariables } from "./prompt-registry.js";
 import { combineCompactionCustomInstructions, loadPins } from "./message-pins.js";
 import { createCatalogRequestBehaviorExtensionFactory } from "./model-catalog-request-behaviors.js";

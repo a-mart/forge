@@ -187,7 +187,7 @@ import type {
   SpecialistFallbackReplaySnapshot,
   SwarmAgentRuntime
 } from "./runtime-types.js";
-import type { SwarmToolHost } from "./swarm-tools.js";
+import type { SwarmToolHost } from "./swarm-tool-host.js";
 import type {
   AgentMessageEvent,
   AgentContextUsage,

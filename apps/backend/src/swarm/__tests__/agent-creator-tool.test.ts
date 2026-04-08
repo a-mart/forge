@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { buildCreateProjectAgentTool } from '../agent-creator-tool.js'
-import type { SwarmToolHost } from '../swarm-tools.js'
+import type { SwarmToolHost } from '../swarm-tool-host.js'
 import type { AgentDescriptor } from '../types.js'
 
 describe('buildCreateProjectAgentTool', () => {
