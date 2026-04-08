@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { AuthCredential } from "@mariozechner/pi-coding-agent";
 import {
   getCatalogModelKey,
@@ -19,6 +20,12 @@ import {
 } from "./cwd-policy.js";
 import { pickDirectory as pickNativeDirectory } from "./directory-picker.js";
 import { resolveModelDescriptorFromPreset } from "./model-presets.js";
+import {
+  appendModelChangeContinuityRequest,
+  createModelChangeContinuityRequest,
+  findLatestUnappliedModelChangeContinuityRequestForSession,
+  loadModelChangeContinuityState
+} from "./runtime/model-change-continuity.js";
 import type { SecretsEnvService } from "./secrets-env-service.js";
 import type { SkillFileService } from "./skill-file-service.js";
 import type { SkillMetadataService } from "./skill-metadata-service.js";
@@ -51,6 +58,7 @@ export interface SwarmSettingsServiceOptions {
     agentId: string,
     reason: ManagerRuntimeRecycleReason
   ) => Promise<ManagerRuntimeRecycleDisposition>;
+  now?: () => string;
   saveStore: () => Promise<void>;
   emitAgentsSnapshot: () => void;
   logDebug: (message: string, details?: Record<string, unknown>) => void;
@@ -75,19 +83,67 @@ export class SwarmSettingsService {
     }
 
     const sessions = this.options.getSessionsForProfile(profile.profileId);
+    const affectedSessions = sessions.filter((session) => !sameModelDescriptor(session.model, modelDescriptor));
+
+    if (affectedSessions.length === 0) {
+      this.options.logDebug("manager:update_model:noop", {
+        managerId,
+        modelPreset,
+        reasoningLevel,
+        updatedSessions: []
+      });
+      return;
+    }
+
+    const now = this.options.now ?? (() => new Date().toISOString());
+    const continuityWrites = await Promise.all(
+      affectedSessions.map(async (session) => {
+        const continuityState = await loadModelChangeContinuityState(session.sessionFile);
+        const latestPendingRequest = findLatestUnappliedModelChangeContinuityRequestForSession({
+          sessionAgentId: session.agentId,
+          requests: continuityState.requests,
+          applied: continuityState.applied
+        });
+        const createdAt = now();
+        return {
+          session,
+          targetModel: { ...modelDescriptor },
+          request: createModelChangeContinuityRequest({
+            requestId: randomUUID(),
+            createdAt,
+            sessionAgentId: session.agentId,
+            sourceModel: latestPendingRequest?.sourceModel ?? session.model,
+            targetModel: modelDescriptor
+          })
+        };
+      })
+    );
+
+    for (const pendingWrite of continuityWrites) {
+      await appendModelChangeContinuityRequest({
+        sessionFile: pendingWrite.session.sessionFile,
+        cwd: pendingWrite.session.cwd,
+        request: pendingWrite.request,
+        now: this.options.now
+      });
+    }
+
     const recycledSessions: string[] = [];
     const deferredSessions: string[] = [];
 
-    for (const session of sessions) {
-      session.model = { ...modelDescriptor };
+    for (const pendingWrite of continuityWrites) {
+      pendingWrite.session.model = { ...pendingWrite.targetModel };
     }
 
-    for (const session of sessions) {
-      const recycleDisposition = await this.options.applyManagerRuntimeRecyclePolicy(session.agentId, "model_change");
+    for (const pendingWrite of continuityWrites) {
+      const recycleDisposition = await this.options.applyManagerRuntimeRecyclePolicy(
+        pendingWrite.session.agentId,
+        "model_change"
+      );
       if (recycleDisposition === "recycled") {
-        recycledSessions.push(session.agentId);
+        recycledSessions.push(pendingWrite.session.agentId);
       } else if (recycleDisposition === "deferred") {
-        deferredSessions.push(session.agentId);
+        deferredSessions.push(pendingWrite.session.agentId);
       }
     }
 
@@ -98,7 +154,7 @@ export class SwarmSettingsService {
       managerId,
       modelPreset,
       reasoningLevel,
-      updatedSessions: sessions.map((session) => session.agentId),
+      updatedSessions: affectedSessions.map((session) => session.agentId),
       recycledSessions,
       deferredSessions
     });
@@ -363,4 +419,16 @@ export class SwarmSettingsService {
 
 function errorToMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function sameModelDescriptor(left: AgentDescriptor["model"], right: AgentDescriptor["model"]): boolean {
+  return (
+    left.provider === right.provider &&
+    left.modelId === right.modelId &&
+    normalizeThinkingLevel(left.thinkingLevel) === normalizeThinkingLevel(right.thinkingLevel)
+  );
+}
+
+function normalizeThinkingLevel(level: string): string {
+  return level === "x-high" ? "xhigh" : level;
 }

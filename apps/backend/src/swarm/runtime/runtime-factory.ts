@@ -30,7 +30,13 @@ import { wrapForgeToolsWithExtensionHooks } from "../forge-instrumented-tools.js
 import { buildForgePiToolBridgeExtensionFactory } from "../forge-pi-tool-bridge.js";
 import { isClaudeSdkUnavailableError } from "../claude-sdk-loader.js";
 import { CodexAgentRuntime } from "../codex-agent-runtime.js";
-import type { RuntimeErrorEvent, RuntimeSessionEvent, SwarmAgentRuntime } from "../runtime-contracts.js";
+import type {
+  RuntimeCreationOptions,
+  RuntimeErrorEvent,
+  RuntimeSessionEvent,
+  SwarmAgentRuntime,
+  RuntimeStartupRecoveryContext
+} from "../runtime-contracts.js";
 import type { SwarmToolHost } from "../swarm-tool-host.js";
 import { buildSwarmTools } from "../swarm-tools.js";
 import { normalizeArchetypeId } from "../prompt-registry.js";
@@ -102,11 +108,12 @@ export class RuntimeFactory {
   async createRuntimeForDescriptor(
     descriptor: AgentDescriptor,
     systemPrompt: string,
-    runtimeToken = 0
+    runtimeToken = 0,
+    options?: RuntimeCreationOptions
   ): Promise<SwarmAgentRuntime> {
     if (isClaudeSdkModelDescriptor(descriptor.model)) {
       try {
-        return await this.createClaudeRuntimeForDescriptor(descriptor, systemPrompt, runtimeToken);
+        return await this.createClaudeRuntimeForDescriptor(descriptor, systemPrompt, runtimeToken, options);
       } catch (error) {
         if (!isClaudeSdkUnavailableError(error)) {
           throw error;
@@ -126,10 +133,10 @@ export class RuntimeFactory {
     }
 
     if (isCodexAppServerModelDescriptor(descriptor.model)) {
-      return this.createCodexRuntimeForDescriptor(descriptor, systemPrompt, runtimeToken);
+      return this.createCodexRuntimeForDescriptor(descriptor, systemPrompt, runtimeToken, options);
     }
 
-    return this.createPiRuntimeForDescriptor(descriptor, systemPrompt, runtimeToken);
+    return this.createPiRuntimeForDescriptor(descriptor, systemPrompt, runtimeToken, options);
   }
 
   private getForgeSessionDescriptor(descriptor: AgentDescriptor): AgentDescriptor | undefined {
@@ -144,7 +151,8 @@ export class RuntimeFactory {
   private async createPiRuntimeForDescriptor(
     descriptor: AgentDescriptor,
     systemPrompt: string,
-    runtimeToken: number
+    runtimeToken: number,
+    options?: RuntimeCreationOptions
   ): Promise<SwarmAgentRuntime> {
     const preparedForgeBindings = await this.deps.forgeExtensionHost.prepareRuntimeBindings({
       descriptor,
@@ -169,7 +177,12 @@ export class RuntimeFactory {
     const profilePiSkillsDir = getProfilePiSkillsDir(this.deps.config.paths.dataDir, profileId);
     const profilePiPromptsDir = getProfilePiPromptsDir(this.deps.config.paths.dataDir, profileId);
     const profilePiThemesDir = getProfilePiThemesDir(this.deps.config.paths.dataDir, profileId);
-
+    const startupRecoveryContextFile = options?.startupRecoveryContext?.blockText
+      ? {
+          path: join(descriptor.cwd, ".forge", "ephemeral-model-change-recovery.md"),
+          content: options.startupRecoveryContext.blockText
+        }
+      : undefined;
     const authFilePath = await ensureCanonicalAuthFilePath(this.deps.config);
 
     this.deps.logDebug("runtime:create:start", {
@@ -201,10 +214,13 @@ export class RuntimeFactory {
     const modelRegistry = createPiModelRegistry(authStorage, piModelsJsonPath);
     const swarmContextFiles = await this.deps.getSwarmContextFiles(descriptor.cwd);
     const applyRuntimeContext = (base: { agentsFiles: Array<{ path: string; content: string }> }) => ({
-      agentsFiles: this.deps.mergeRuntimeContextFiles(base.agentsFiles, {
-        memoryContextFile: memoryResources.memoryContextFile,
-        swarmContextFiles
-      })
+      agentsFiles: [
+        ...this.deps.mergeRuntimeContextFiles(base.agentsFiles, {
+          memoryContextFile: memoryResources.memoryContextFile,
+          swarmContextFiles
+        }),
+        ...(startupRecoveryContextFile ? [startupRecoveryContextFile] : [])
+      ]
     });
 
     const extensionFactories = this.buildExtensionFactories(descriptor, {
@@ -402,7 +418,8 @@ export class RuntimeFactory {
   private async createClaudeRuntimeForDescriptor(
     descriptor: AgentDescriptor,
     systemPrompt: string,
-    runtimeToken: number
+    runtimeToken: number,
+    options?: RuntimeCreationOptions
   ): Promise<SwarmAgentRuntime> {
     const preparedForgeBindings = await this.deps.forgeExtensionHost.prepareRuntimeBindings({
       descriptor,
@@ -442,6 +459,11 @@ export class RuntimeFactory {
       allowedToolCount: mcpBridge.allowedTools.length
     });
 
+    const startupSystemPromptOverride = appendStartupRecoveryContext(
+      claudeSystemPrompt,
+      options?.startupRecoveryContext
+    );
+    const skipInitialSessionResume = Boolean(options?.startupRecoveryContext);
     const runtime = new ClaudeAgentRuntime({
       descriptor: cloneRuntimeDescriptor(descriptor),
       systemPrompt: claudeSystemPrompt,
@@ -475,7 +497,10 @@ export class RuntimeFactory {
       modelContextWindow: modelCatalogService.getEffectiveContextWindow(
         descriptor.model.modelId,
         descriptor.model.provider
-      )
+      ),
+      startupSystemPromptOverride:
+        startupSystemPromptOverride !== claudeSystemPrompt ? startupSystemPromptOverride : undefined,
+      skipInitialSessionResume
     });
 
     this.deps.logDebug("runtime:create:ready", {
@@ -496,7 +521,8 @@ export class RuntimeFactory {
   private async createCodexRuntimeForDescriptor(
     descriptor: AgentDescriptor,
     systemPrompt: string,
-    runtimeToken: number
+    runtimeToken: number,
+    options?: RuntimeCreationOptions
   ): Promise<SwarmAgentRuntime> {
     const preparedForgeBindings = await this.deps.forgeExtensionHost.prepareRuntimeBindings({
       descriptor,
@@ -514,6 +540,11 @@ export class RuntimeFactory {
       : baseSwarmTools;
     const memoryResources = await this.deps.getMemoryRuntimeResources(descriptor);
     const codexSystemPrompt = await this.deps.buildCodexRuntimeSystemPrompt(descriptor, systemPrompt);
+    const startupSystemPromptOverride = appendStartupRecoveryContext(
+      codexSystemPrompt,
+      options?.startupRecoveryContext
+    );
+    const skipInitialThreadResume = Boolean(options?.startupRecoveryContext);
 
     this.deps.logDebug("runtime:create:start", {
       runtime: "codex-app-server",
@@ -549,7 +580,10 @@ export class RuntimeFactory {
       },
       onSessionFileRotated: async (sessionFile) => {
         await this.deps.onSessionFileRotated?.(descriptor, sessionFile);
-      }
+      },
+      startupSystemPromptOverride:
+        startupSystemPromptOverride !== codexSystemPrompt ? startupSystemPromptOverride : undefined,
+      skipInitialThreadResume
     });
 
     this.deps.logDebug("runtime:create:ready", {
@@ -930,6 +964,17 @@ function normalizeExtensionDisplayName(pathValue: string, resolvedPathValue: str
   }
 
   return normalizedBase || candidate;
+}
+
+function appendStartupRecoveryContext(
+  systemPrompt: string,
+  startupRecoveryContext: RuntimeStartupRecoveryContext | undefined
+): string {
+  if (!startupRecoveryContext?.blockText) {
+    return systemPrompt;
+  }
+
+  return [systemPrompt, startupRecoveryContext.blockText].filter(Boolean).join("\n\n");
 }
 
 const CORTEX_ARCHETYPE_ID = "cortex";

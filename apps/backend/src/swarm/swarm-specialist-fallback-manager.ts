@@ -7,7 +7,11 @@ import type {
   AgentStatus,
   SwarmReasoningLevel
 } from "./types.js";
-import type { SpecialistFallbackReplaySnapshot, SwarmAgentRuntime } from "./runtime-contracts.js";
+import type {
+  RuntimeCreationOptions,
+  SpecialistFallbackReplaySnapshot,
+  SwarmAgentRuntime
+} from "./runtime-contracts.js";
 import {
   createDeferred,
   extractRuntimeMessageText,
@@ -55,7 +59,8 @@ export interface SwarmSpecialistFallbackManagerOptions {
   createRuntimeForDescriptor(
     descriptor: AgentDescriptor,
     systemPrompt: string,
-    runtimeToken?: number
+    runtimeToken?: number,
+    options?: RuntimeCreationOptions
   ): Promise<SwarmAgentRuntime>;
   attachRuntime(agentId: string, runtime: SwarmAgentRuntime): void;
   detachRuntime(agentId: string, runtimeToken?: number): boolean;

@@ -90,6 +90,12 @@ import { generatePiProjection } from "./model-catalog-projection.js";
 import { modelCatalogService } from "./model-catalog-service.js";
 import { CLAUDE_RUNTIME_STATE_ENTRY_TYPE } from "./claude-agent-runtime.js";
 import {
+  appendModelChangeContinuityApplied,
+  createModelChangeContinuityApplied,
+  type ModelChangeContinuityRequest
+} from "./runtime/model-change-continuity.js";
+import { resolvePendingModelChangeRuntimeStartup } from "./runtime/model-change-runtime-startup.js";
+import {
   SwarmRuntimeController,
   type SwarmRuntimeControllerHost
 } from "./swarm-runtime-controller.js";
@@ -162,6 +168,7 @@ import {
 } from "./agent-state-machine.js";
 import type {
   RuntimeImageAttachment,
+  RuntimeCreationOptions,
   RuntimeErrorEvent,
   RuntimeSessionEvent,
   RuntimeShutdownOptions,
@@ -972,6 +979,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly runtimeTokensByAgentId: Map<string, number>;
   private readonly runtimeExtensionSnapshotsByAgentId: Map<string, AgentRuntimeExtensionSnapshot>;
   private readonly pendingManagerRuntimeRecycleAgentIds = new Set<string>();
+  private readonly pendingManagerRuntimeRecycleReasonsByAgentId = new Map<string, ManagerRuntimeRecycleReason>();
   private readonly projectAgentMessageTimestampsBySender = new Map<string, number[]>();
   private readonly pendingManualManagerStopNoticeTimersByAgentId = new Map<string, NodeJS.Timeout>();
   private readonly conversationEntriesByAgentId = new Map<string, ConversationEntryEvent[]>();
@@ -1060,8 +1068,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       resolveSystemPromptForDescriptor: (descriptor) => this.resolveSystemPromptForDescriptor(descriptor),
       injectWorkerIdentityContext: (descriptor, systemPrompt) =>
         this.injectWorkerIdentityContext(descriptor, systemPrompt),
-      createRuntimeForDescriptor: (descriptor, systemPrompt, runtimeToken) =>
-        this.createRuntimeForDescriptor(descriptor, systemPrompt, runtimeToken),
+      createRuntimeForDescriptor: (descriptor, systemPrompt, runtimeToken, options) =>
+        this.createRuntimeForDescriptor(descriptor, systemPrompt, runtimeToken, options),
       attachRuntime: (agentId, runtime) => {
         this.runtimeController.attachRuntime(agentId, runtime);
       },
@@ -1206,6 +1214,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       resolveAndValidateCwd: (cwd) => this.resolveAndValidateCwd(cwd),
       assertCanChangeManagerCwd: (profileId, sessions) => this.assertCanChangeManagerCwd(profileId, sessions),
       applyManagerRuntimeRecyclePolicy: (agentId, reason) => this.applyManagerRuntimeRecyclePolicy(agentId, reason),
+      now: this.now,
       saveStore: async () => {
         await this.saveStore();
       },
@@ -1250,6 +1259,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       runtimes: this.runtimes,
       runtimeCreationPromisesByAgentId: this.runtimeCreationPromisesByAgentId,
       pendingManagerRuntimeRecycleAgentIds: this.pendingManagerRuntimeRecycleAgentIds,
+      pendingManagerRuntimeRecycleReasonsByAgentId: this.pendingManagerRuntimeRecycleReasonsByAgentId,
       modelCapacityBlocks: this.modelCapacityBlocks,
       sessionProvisioner: this.sessionProvisioner,
       now: this.now,
@@ -1270,8 +1280,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       resolveSystemPromptForDescriptor: (descriptor) => this.resolveSystemPromptForDescriptor(descriptor),
       injectWorkerIdentityContext: (descriptor, systemPrompt) =>
         this.injectWorkerIdentityContext(descriptor, systemPrompt),
-      createRuntimeForDescriptor: (descriptor, systemPrompt, runtimeToken) =>
-        this.createRuntimeForDescriptor(descriptor, systemPrompt, runtimeToken),
+      createRuntimeForDescriptor: (descriptor, systemPrompt, runtimeToken, options) =>
+        this.createRuntimeForDescriptor(descriptor, systemPrompt, runtimeToken, options),
       allocateRuntimeToken: (agentId) => this.allocateRuntimeToken(agentId),
       clearRuntimeToken: (agentId, runtimeToken) => this.clearRuntimeToken(agentId, runtimeToken),
       getRuntimeToken: (agentId) => this.runtimeTokensByAgentId.get(agentId),
@@ -1282,6 +1292,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       refreshSessionMetaStats: (descriptor) => this.refreshSessionMetaStats(descriptor),
       captureSessionRuntimePromptMeta: (descriptor, resolvedSystemPrompt) =>
         this.captureSessionRuntimePromptMeta(descriptor, resolvedSystemPrompt),
+      prepareManagerRuntimeCreation: (descriptor, systemPrompt) =>
+        this.prepareManagerRuntimeCreation(descriptor, systemPrompt),
+      appendAppliedModelChangeContinuity: (descriptor, request, runtime) =>
+        this.appendAppliedModelChangeContinuity(descriptor, request, runtime),
       attachRuntime: (agentId, runtime) => {
         this.runtimeController.attachRuntime(agentId, runtime);
       },
@@ -4731,9 +4745,76 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   protected async createRuntimeForDescriptor(
     descriptor: AgentDescriptor,
     systemPrompt: string,
-    runtimeToken = this.allocateRuntimeToken(descriptor.agentId)
+    runtimeToken = this.allocateRuntimeToken(descriptor.agentId),
+    options?: RuntimeCreationOptions
   ): Promise<SwarmAgentRuntime> {
-    return this.runtimeController.createRuntimeForDescriptor(descriptor, systemPrompt, runtimeToken);
+    return this.runtimeController.createRuntimeForDescriptor(descriptor, systemPrompt, runtimeToken, options);
+  }
+
+  private async prepareManagerRuntimeCreation(
+    descriptor: AgentDescriptor & { role: "manager"; profileId: string },
+    systemPrompt: string
+  ): Promise<{
+    continuityRequest?: ModelChangeContinuityRequest;
+    runtimeCreationOptions?: RuntimeCreationOptions;
+  }> {
+    const recovery = await resolvePendingModelChangeRuntimeStartup({
+      descriptor,
+      targetModel: descriptor.model,
+      existingPrompt: systemPrompt,
+      modelContextWindow: modelCatalogService.getEffectiveContextWindow(
+        descriptor.model.modelId,
+        descriptor.model.provider
+      ),
+      hasPinnedContent: this.pinnedMessageIdsBySessionAgentId.has(descriptor.agentId)
+    });
+
+    if (!recovery.request) {
+      return {};
+    }
+
+    this.logDebug("manager:model_change_continuity:prepare", {
+      agentId: descriptor.agentId,
+      requestId: recovery.request.requestId,
+      sourceModel: recovery.request.sourceModel,
+      targetModel: recovery.request.targetModel,
+      policy: recovery.policy,
+      eligibleEntryCount: recovery.recoveryContext?.eligibleEntryCount,
+      includedEntryCount: recovery.recoveryContext?.includedEntryCount,
+      omittedEntryCount: recovery.recoveryContext?.omittedEntryCount,
+      truncated: recovery.recoveryContext?.truncated,
+      approxTokenCount: recovery.recoveryContext?.approxTokenCount
+    });
+
+    return {
+      continuityRequest: recovery.request,
+      runtimeCreationOptions: recovery.policy === "skip_pi_to_pi"
+        ? undefined
+        : {
+            startupRecoveryContext: {
+              reason: "model_change",
+              blockText: recovery.recoveryContext?.blockText ?? ""
+            }
+          }
+    };
+  }
+
+  private async appendAppliedModelChangeContinuity(
+    descriptor: AgentDescriptor & { role: "manager"; profileId: string },
+    request: ModelChangeContinuityRequest,
+    runtime: SwarmAgentRuntime
+  ): Promise<void> {
+    await appendModelChangeContinuityApplied({
+      sessionFile: descriptor.sessionFile,
+      cwd: descriptor.cwd,
+      applied: createModelChangeContinuityApplied({
+        requestId: request.requestId,
+        appliedAt: this.now(),
+        sessionAgentId: descriptor.agentId,
+        attachedRuntime: runtime.descriptor.model
+      }),
+      now: this.now
+    });
   }
 
   private allocateRuntimeToken(agentId: string): number {

@@ -27,6 +27,15 @@ export interface SpecialistFallbackReplaySnapshot {
   messages: RuntimeUserMessage[];
 }
 
+export interface RuntimeStartupRecoveryContext {
+  reason: "model_change";
+  blockText: string;
+}
+
+export interface RuntimeCreationOptions {
+  startupRecoveryContext?: RuntimeStartupRecoveryContext;
+}
+
 export type RuntimeSessionEvent =
   | { type: "agent_start" }
   | { type: "agent_end" }
@@ -155,6 +164,8 @@ export interface SwarmAgentRuntime {
   stopInFlight(options?: RuntimeShutdownOptions): Promise<void>;
 
   terminate(options?: RuntimeShutdownOptions): Promise<void>;
+
+  shutdownForReplacement(options?: RuntimeShutdownOptions): Promise<void>;
 
   recycle(): Promise<void>;
 

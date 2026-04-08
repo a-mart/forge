@@ -246,22 +246,25 @@ export class AgentRuntime implements SwarmAgentRuntime {
     await this.emitStatus();
   }
 
+  async shutdownForReplacement(): Promise<void> {
+    if (this.status === "terminated") {
+      return;
+    }
+
+    this.assertIdleForReplacementShutdown();
+    this.endContextRecovery();
+    this.guardAbortController?.abort();
+    this.guardAbortController = undefined;
+    this.lastContextBudgetCheckAtMs = 0;
+    await this.disposeSessionResources();
+  }
+
   async recycle(): Promise<void> {
     if (this.status === "terminated") {
       return;
     }
 
-    if (
-      this.status !== "idle" ||
-      this.session.isStreaming ||
-      this.promptDispatchPending ||
-      this.pendingDeliveries.length > 0 ||
-      this.recoveryBufferedMessages.length > 0 ||
-      this.isContextRecoveryActive()
-    ) {
-      throw new Error(`Agent ${this.descriptor.agentId} runtime is not idle and cannot be recycled`);
-    }
-
+    this.assertIdleForReplacementShutdown();
     this.endContextRecovery();
     this.guardAbortController?.abort();
     this.guardAbortController = undefined;
@@ -306,6 +309,19 @@ export class AgentRuntime implements SwarmAgentRuntime {
     this.inFlightPrompts.clear();
 
     await this.updateStatus("idle");
+  }
+
+  private assertIdleForReplacementShutdown(): void {
+    if (
+      this.status !== "idle" ||
+      this.session.isStreaming ||
+      this.promptDispatchPending ||
+      this.pendingDeliveries.length > 0 ||
+      this.recoveryBufferedMessages.length > 0 ||
+      this.isContextRecoveryActive()
+    ) {
+      throw new Error(`Agent ${this.descriptor.agentId} runtime is not idle and cannot be recycled`);
+    }
   }
 
   private async disposeSessionResources(): Promise<void> {

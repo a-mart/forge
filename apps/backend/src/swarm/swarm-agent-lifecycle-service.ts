@@ -1,7 +1,13 @@
 import { getSessionFilePath, getWorkerSessionFilePath } from "./data-paths.js";
 import { resolveModelDescriptorFromPreset, inferProviderFromModelId, parseSwarmModelPreset, parseSwarmReasoningLevel } from "./model-presets.js";
 import { normalizeArchetypeId } from "./prompt-registry.js";
-import type { RuntimeShutdownOptions, SetPinnedContentOptions, SwarmAgentRuntime } from "./runtime-contracts.js";
+import type {
+  RuntimeCreationOptions,
+  RuntimeShutdownOptions,
+  SetPinnedContentOptions,
+  SwarmAgentRuntime
+} from "./runtime-contracts.js";
+import type { ModelChangeContinuityRequest } from "./runtime/model-change-continuity.js";
 import { SessionProvisioner, type ProvisionedSessionDescriptor } from "./session-provisioner.js";
 import { isNonRunningAgentStatus, transitionAgentStatus } from "./agent-state-machine.js";
 import type {
@@ -79,6 +85,7 @@ export interface SwarmAgentLifecycleServiceOptions {
   runtimes: Map<string, SwarmAgentRuntime>;
   runtimeCreationPromisesByAgentId: Map<string, Promise<SwarmAgentRuntime>>;
   pendingManagerRuntimeRecycleAgentIds: Set<string>;
+  pendingManagerRuntimeRecycleReasonsByAgentId: Map<string, ManagerRuntimeRecycleReason>;
   modelCapacityBlocks: Map<string, ModelCapacityBlockLike>;
   sessionProvisioner: SessionProvisioner;
   now: () => string;
@@ -101,7 +108,8 @@ export interface SwarmAgentLifecycleServiceOptions {
   createRuntimeForDescriptor: (
     descriptor: AgentDescriptor,
     systemPrompt: string,
-    runtimeToken?: number
+    runtimeToken?: number,
+    options?: RuntimeCreationOptions
   ) => Promise<SwarmAgentRuntime>;
   allocateRuntimeToken: (agentId: string) => number;
   clearRuntimeToken: (agentId: string, runtimeToken?: number) => void;
@@ -116,6 +124,18 @@ export interface SwarmAgentLifecycleServiceOptions {
   captureSessionRuntimePromptMeta: (
     descriptor: AgentDescriptor,
     resolvedSystemPrompt?: string | null
+  ) => Promise<void>;
+  prepareManagerRuntimeCreation?: (
+    descriptor: ProvisionedSessionDescriptor,
+    systemPrompt: string
+  ) => Promise<{
+    continuityRequest?: ModelChangeContinuityRequest;
+    runtimeCreationOptions?: RuntimeCreationOptions;
+  }>;
+  appendAppliedModelChangeContinuity?: (
+    descriptor: ProvisionedSessionDescriptor,
+    request: ModelChangeContinuityRequest,
+    runtime: SwarmAgentRuntime
   ) => Promise<void>;
   attachRuntime: (agentId: string, runtime: SwarmAgentRuntime) => void;
   saveStore: () => Promise<void>;
@@ -1000,7 +1020,7 @@ export class SwarmAgentLifecycleService {
       const shutdown = await this.options.runRuntimeShutdown(descriptor, "terminate", { abort: true });
       this.options.detachRuntime(agentId, shutdown.runtimeToken);
     }
-    this.options.pendingManagerRuntimeRecycleAgentIds.delete(agentId);
+    this.clearPendingManagerRuntimeRecycle(agentId);
 
     descriptor.status = descriptor.status === "error"
       ? "idle"
@@ -1033,7 +1053,7 @@ export class SwarmAgentLifecycleService {
   ): Promise<"recycled" | "deferred" | "none"> {
     const descriptor = this.options.descriptors.get(agentId);
     if (!descriptor || descriptor.role !== "manager") {
-      this.options.pendingManagerRuntimeRecycleAgentIds.delete(agentId);
+      this.clearPendingManagerRuntimeRecycle(agentId);
       return "none";
     }
 
@@ -1041,18 +1061,23 @@ export class SwarmAgentLifecycleService {
       return "none";
     }
 
+    const effectiveReason =
+      reason === "idle_transition"
+        ? this.options.pendingManagerRuntimeRecycleReasonsByAgentId.get(agentId) ?? reason
+        : reason;
+
     const runtime = this.options.runtimes.get(agentId);
     if (!runtime) {
-      this.options.pendingManagerRuntimeRecycleAgentIds.delete(agentId);
+      this.clearPendingManagerRuntimeRecycle(agentId);
       return "none";
     }
 
     if (!this.canRecycleManagerRuntimeImmediately(descriptor, runtime)) {
-      this.options.pendingManagerRuntimeRecycleAgentIds.add(agentId);
+      this.setPendingManagerRuntimeRecycle(agentId, effectiveReason);
       return "deferred";
     }
 
-    await this.recycleManagerRuntime(descriptor, runtime, reason);
+    await this.recycleManagerRuntime(descriptor, runtime, effectiveReason);
     return "recycled";
   }
 
@@ -1074,7 +1099,7 @@ export class SwarmAgentLifecycleService {
       const shutdown = await this.options.runRuntimeShutdown(descriptor, "terminate", { abort: options.abort });
       this.options.detachRuntime(descriptor.agentId, shutdown.runtimeToken);
     }
-    this.options.pendingManagerRuntimeRecycleAgentIds.delete(descriptor.agentId);
+    this.clearPendingManagerRuntimeRecycle(descriptor.agentId);
 
     descriptor.status = transitionAgentStatus(descriptor.status, "terminated");
     descriptor.contextUsage = undefined;
@@ -1161,12 +1186,16 @@ export class SwarmAgentLifecycleService {
     }
 
     const runtimeToken = this.options.getRuntimeToken(descriptor.agentId);
-    this.options.pendingManagerRuntimeRecycleAgentIds.delete(descriptor.agentId);
+    this.clearPendingManagerRuntimeRecycle(descriptor.agentId);
 
     try {
-      await runtime.recycle();
+      if (reason === "model_change") {
+        await runtime.shutdownForReplacement();
+      } else {
+        await runtime.recycle();
+      }
     } catch (error) {
-      this.options.pendingManagerRuntimeRecycleAgentIds.add(descriptor.agentId);
+      this.setPendingManagerRuntimeRecycle(descriptor.agentId, reason);
       throw error;
     }
 
@@ -1188,6 +1217,16 @@ export class SwarmAgentLifecycleService {
     });
   }
 
+  private setPendingManagerRuntimeRecycle(agentId: string, reason: ManagerRuntimeRecycleReason): void {
+    this.options.pendingManagerRuntimeRecycleAgentIds.add(agentId);
+    this.options.pendingManagerRuntimeRecycleReasonsByAgentId.set(agentId, reason);
+  }
+
+  private clearPendingManagerRuntimeRecycle(agentId: string): void {
+    this.options.pendingManagerRuntimeRecycleAgentIds.delete(agentId);
+    this.options.pendingManagerRuntimeRecycleReasonsByAgentId.delete(agentId);
+  }
+
   private async createAndAttachRuntimeForDescriptor(descriptor: AgentDescriptor): Promise<SwarmAgentRuntime> {
     await this.options.ensureSessionFileParentDirectory(descriptor.sessionFile);
 
@@ -1202,8 +1241,17 @@ export class SwarmAgentLifecycleService {
       return runtimeBeforeCreate;
     }
 
+    const managerRuntimeCreation = descriptor.role === "manager"
+      ? await this.options.prepareManagerRuntimeCreation?.(descriptor as ProvisionedSessionDescriptor, systemPrompt)
+      : undefined;
+
     const runtimeToken = this.options.allocateRuntimeToken(descriptor.agentId);
-    const runtime = await this.options.createRuntimeForDescriptor(descriptor, systemPrompt, runtimeToken);
+    const runtime = await this.options.createRuntimeForDescriptor(
+      descriptor,
+      systemPrompt,
+      runtimeToken,
+      managerRuntimeCreation?.runtimeCreationOptions
+    );
     if (descriptor.role === "manager") {
       await this.options.syncPinnedContentForManagerRuntime(descriptor as ProvisionedSessionDescriptor, { runtime });
     }
@@ -1231,24 +1279,70 @@ export class SwarmAgentLifecycleService {
       return concurrentRuntime;
     }
 
+    if (latestDescriptor.role === "manager" && managerRuntimeCreation?.continuityRequest) {
+      try {
+        await this.options.appendAppliedModelChangeContinuity?.(
+          latestDescriptor as ProvisionedSessionDescriptor,
+          managerRuntimeCreation.continuityRequest,
+          runtime
+        );
+      } catch (error) {
+        this.options.logDebug("manager:model_change_continuity:applied_write_error", {
+          agentId: latestDescriptor.agentId,
+          requestId: managerRuntimeCreation.continuityRequest.requestId,
+          message: error instanceof Error ? error.message : String(error)
+        });
+        await runtime.terminate({
+          abort: true,
+          shutdownTimeoutMs: 1_500,
+          drainTimeoutMs: 500,
+        });
+        this.options.clearRuntimeToken(descriptor.agentId, runtimeToken);
+        throw error;
+      }
+    }
+
+    const attachDescriptor = this.options.descriptors.get(descriptor.agentId);
+    if (!attachDescriptor || isNonRunningAgentStatus(attachDescriptor.status)) {
+      await runtime.terminate({
+        abort: true,
+        shutdownTimeoutMs: 1_500,
+        drainTimeoutMs: 500,
+      });
+      this.options.clearRuntimeToken(descriptor.agentId, runtimeToken);
+      throw new Error(`Target agent is not running: ${descriptor.agentId}`);
+    }
+
+    const attachConcurrentRuntime = this.options.runtimes.get(descriptor.agentId);
+    if (attachConcurrentRuntime) {
+      await runtime.terminate({
+        abort: true,
+        shutdownTimeoutMs: 1_500,
+        drainTimeoutMs: 500,
+      });
+      this.options.clearRuntimeToken(descriptor.agentId, runtimeToken);
+      return attachConcurrentRuntime;
+    }
+
     this.options.attachRuntime(descriptor.agentId, runtime);
-    if (latestDescriptor.role === "worker") {
-      this.options.seedWorkerCompletionReportTimestamp(latestDescriptor.agentId);
+
+    if (attachDescriptor.role === "worker") {
+      this.options.seedWorkerCompletionReportTimestamp(attachDescriptor.agentId);
     }
 
     const contextUsage = runtime.getContextUsage();
-    latestDescriptor.contextUsage = contextUsage;
-    this.options.descriptors.set(descriptor.agentId, latestDescriptor);
+    attachDescriptor.contextUsage = contextUsage;
+    this.options.descriptors.set(descriptor.agentId, attachDescriptor);
 
-    if (latestDescriptor.role === "manager") {
-      await this.options.captureSessionRuntimePromptMeta(latestDescriptor, persistedSystemPrompt);
-      await this.options.refreshSessionMetaStats(latestDescriptor);
+    if (attachDescriptor.role === "manager") {
+      await this.options.captureSessionRuntimePromptMeta(attachDescriptor, persistedSystemPrompt);
+      await this.options.refreshSessionMetaStats(attachDescriptor);
     } else {
-      await this.options.updateSessionMetaForWorkerDescriptor(latestDescriptor, persistedSystemPrompt);
-      await this.options.refreshSessionMetaStatsBySessionId(latestDescriptor.managerId);
+      await this.options.updateSessionMetaForWorkerDescriptor(attachDescriptor, persistedSystemPrompt);
+      await this.options.refreshSessionMetaStatsBySessionId(attachDescriptor.managerId);
     }
 
-    this.options.emitStatus(descriptor.agentId, latestDescriptor.status, runtime.getPendingCount(), contextUsage);
+    this.options.emitStatus(descriptor.agentId, attachDescriptor.status, runtime.getPendingCount(), contextUsage);
     return runtime;
   }
 

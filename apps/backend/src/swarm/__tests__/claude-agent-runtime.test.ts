@@ -842,8 +842,7 @@ describe("ClaudeAgentRuntime", () => {
 
     runtime.setPinnedContent("Keep this exact wording.");
 
-    expect(runtime.getSystemPrompt()).toContain("# Pinned Messages (preserve across compaction)");
-    expect(runtime.getSystemPrompt()).toContain("Keep this exact wording.");
+    expect(runtime.getSystemPrompt()).toBe("You are a Claude test runtime.");
 
     await waitFor(() => {
       expect(queryCalls).toHaveLength(2);
@@ -855,7 +854,7 @@ describe("ClaudeAgentRuntime", () => {
     await waitFor(() => {
       expect(queryCalls).toHaveLength(3);
     });
-    expect(runtime.getSystemPrompt()).not.toContain("# Pinned Messages (preserve across compaction)");
+    expect(runtime.getSystemPrompt()).toBe("You are a Claude test runtime.");
     expect(queryCalls[2]?.options.systemPrompt).not.toContain("# Pinned Messages (preserve across compaction)");
 
     await runtime.terminate({ abort: false });
@@ -933,9 +932,7 @@ describe("ClaudeAgentRuntime", () => {
     await runtime.compact();
 
     expect(hiddenPrompts).toHaveLength(1);
-    expect(runtime.getSystemPrompt()).toContain("# Compacted Conversation Summary");
-    expect(runtime.getSystemPrompt()).toContain("# Pinned Messages (preserve across compaction)");
-    expect(runtime.getSystemPrompt()).toContain("Keep this exact wording.");
+    expect(runtime.getSystemPrompt()).toBe("You are a Claude test runtime.");
     expect(queryCalls[1]?.options.systemPrompt).toContain("# Compacted Conversation Summary");
     expect(queryCalls[1]?.options.systemPrompt).toContain("# Pinned Messages (preserve across compaction)");
     expect(queryCalls[1]?.options.systemPrompt).toContain("Keep this exact wording.");
@@ -1476,8 +1473,7 @@ describe("ClaudeAgentRuntime", () => {
     expect(queryCalls).toHaveLength(2);
     expect(queryCalls[1]?.options.resume).toBeUndefined();
     expect(queryCalls[1]?.options.sessionId).not.toBe(firstSessionId);
-    expect(runtime.getSystemPrompt()).toContain("# Compacted Conversation Summary");
-    expect(runtime.getSystemPrompt()).toContain("## Current Objective");
+    expect(runtime.getSystemPrompt()).toBe("You are a Claude test runtime.");
     expect(forwardedAssistantTexts).not.toContain("## Current Objective\nContinue the task safely.");
 
     const restarted = new ClaudeAgentRuntime({
@@ -1498,8 +1494,7 @@ describe("ClaudeAgentRuntime", () => {
       } as any
     });
 
-    expect(restarted.getSystemPrompt()).toContain("# Compacted Conversation Summary");
-    expect(restarted.getSystemPrompt()).toContain("## Current Objective");
+    expect(restarted.getSystemPrompt()).toBe("You are a Claude test runtime.");
 
     await expect(runtime.smartCompact("trim older turns")).resolves.toEqual({
       compacted: false,
@@ -1640,6 +1635,80 @@ describe("ClaudeAgentRuntime", () => {
     }
   });
 
+  it("skips resume and uses the startup-only system prompt override for model-change continuity startups", async () => {
+    const previousClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
+    const tempDir = await mkdtemp(join(tmpdir(), "forge-claude-runtime-"));
+    const claudeConfigDir = await mkdtemp(join(tmpdir(), "forge-claude-config-"));
+    process.env.CLAUDE_CONFIG_DIR = claudeConfigDir;
+
+    try {
+      const descriptor = makeDescriptor(tempDir);
+      await mkdir(dirname(descriptor.sessionFile), { recursive: true });
+
+      const initialQueryCalls: QueryCallRecord[] = [];
+      setClaudeSdkImporterForTests(vi.fn().mockResolvedValue(createTurnCompletingMockClaudeSdk(initialQueryCalls)));
+
+      const runtime = new ClaudeAgentRuntime({
+        descriptor,
+        systemPrompt: "You are a Claude test runtime.",
+        callbacks: {
+          onStatusChange: async () => {}
+        },
+        dataDir: tempDir,
+        profileId: "profile-1",
+        sessionId: descriptor.agentId,
+        authResolver: {
+          buildEnv: async () => ({})
+        } as any
+      });
+
+      await runtime.sendMessage("hello");
+      const firstSessionId = initialQueryCalls[0]?.options.sessionId;
+      expect(typeof firstSessionId).toBe("string");
+      expect(firstSessionId).toBeTruthy();
+      await writeMockClaudePersistenceFile(claudeConfigDir, descriptor.cwd, firstSessionId!);
+      await runtime.terminate({ abort: false });
+
+      const restartedQueryCalls: QueryCallRecord[] = [];
+      setClaudeSdkImporterForTests(vi.fn().mockResolvedValue(createTurnCompletingMockClaudeSdk(restartedQueryCalls)));
+
+      const restarted = new ClaudeAgentRuntime({
+        descriptor: {
+          ...descriptor,
+          status: "idle",
+          updatedAt: "2026-01-01T00:00:01.000Z"
+        },
+        systemPrompt: "You are a Claude test runtime.",
+        callbacks: {
+          onStatusChange: async () => {}
+        },
+        dataDir: tempDir,
+        profileId: "profile-1",
+        sessionId: descriptor.agentId,
+        authResolver: {
+          buildEnv: async () => ({})
+        } as any,
+        startupSystemPromptOverride: "You are a Claude test runtime.\n\n# Recovered Forge Conversation Context\nrecovered",
+        skipInitialSessionResume: true
+      });
+
+      await restarted.sendMessage("hello again");
+
+      expect(restartedQueryCalls).toHaveLength(1);
+      expect(restartedQueryCalls[0]?.options.resume).toBeUndefined();
+      expect(restartedQueryCalls[0]?.options.systemPrompt).toContain("# Recovered Forge Conversation Context");
+      expect(restarted.getSystemPrompt()).toBe("You are a Claude test runtime.");
+
+      await restarted.terminate({ abort: false });
+    } finally {
+      if (previousClaudeConfigDir === undefined) {
+        delete process.env.CLAUDE_CONFIG_DIR;
+      } else {
+        process.env.CLAUDE_CONFIG_DIR = previousClaudeConfigDir;
+      }
+    }
+  });
+
   it("clears the persisted Claude session id before recycle starts a fresh session", async () => {
     const tempDir = await mkdtemp(join(tmpdir(), "forge-claude-runtime-"));
     const descriptor = makeDescriptor(tempDir);
@@ -1686,6 +1755,87 @@ describe("ClaudeAgentRuntime", () => {
     });
 
     await runtime.terminate({ abort: false });
+  });
+
+  it("clears persisted Claude resume state during replacement shutdown so the next runtime does not resume the previous session", async () => {
+    const previousClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
+    const tempDir = await mkdtemp(join(tmpdir(), "forge-claude-runtime-"));
+    const claudeConfigDir = await mkdtemp(join(tmpdir(), "forge-claude-config-"));
+    process.env.CLAUDE_CONFIG_DIR = claudeConfigDir;
+
+    try {
+      const descriptor = makeDescriptor(tempDir);
+      await mkdir(dirname(descriptor.sessionFile), { recursive: true });
+
+      const queryCalls: QueryCallRecord[] = [];
+      setClaudeSdkImporterForTests(vi.fn().mockResolvedValue(createTurnCompletingMockClaudeSdk(queryCalls)));
+
+      const runtime = new ClaudeAgentRuntime({
+        descriptor,
+        systemPrompt: "You are a Claude test runtime.",
+        callbacks: {
+          onStatusChange: async () => {}
+        },
+        dataDir: tempDir,
+        profileId: "profile-1",
+        sessionId: descriptor.agentId,
+        authResolver: {
+          buildEnv: async () => ({})
+        } as any
+      });
+
+      await runtime.sendMessage("hello");
+      const firstSessionId = queryCalls[0]?.options.sessionId;
+      expect(typeof firstSessionId).toBe("string");
+      expect(firstSessionId).toBeTruthy();
+      await writeMockClaudePersistenceFile(claudeConfigDir, descriptor.cwd, firstSessionId!);
+
+      await runtime.shutdownForReplacement({ abort: false });
+
+      await waitFor(() => {
+        const sessionManager = SessionManager.open(descriptor.sessionFile);
+        const runtimeStateEntries = sessionManager
+          .getEntries()
+          .filter((entry) => entry.type === "custom" && entry.customType === "swarm_claude_session_state")
+          .map((entry) => (entry.type === "custom" ? entry.data : undefined));
+
+        expect(runtimeStateEntries.at(-1)).toMatchObject({
+          claudeSessionId: null,
+          generationId: 1
+        });
+      });
+
+      const restarted = new ClaudeAgentRuntime({
+        descriptor: {
+          ...descriptor,
+          status: "idle",
+          updatedAt: "2026-01-01T00:00:01.000Z"
+        },
+        systemPrompt: "You are a Claude test runtime.",
+        callbacks: {
+          onStatusChange: async () => {}
+        },
+        dataDir: tempDir,
+        profileId: "profile-1",
+        sessionId: descriptor.agentId,
+        authResolver: {
+          buildEnv: async () => ({})
+        } as any
+      });
+
+      await restarted.sendMessage("hello again");
+
+      expect(queryCalls[1]?.options.resume).toBeUndefined();
+      expect(queryCalls[1]?.options.sessionId).not.toBe(firstSessionId);
+
+      await restarted.terminate({ abort: false });
+    } finally {
+      if (previousClaudeConfigDir === undefined) {
+        delete process.env.CLAUDE_CONFIG_DIR;
+      } else {
+        process.env.CLAUDE_CONFIG_DIR = previousClaudeConfigDir;
+      }
+    }
   });
 
   it("falls back to a fresh Claude session with recovered context when resume fails", async () => {

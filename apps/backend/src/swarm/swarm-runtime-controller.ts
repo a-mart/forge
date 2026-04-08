@@ -5,6 +5,7 @@ import { createForgeBindingToken } from "./forge-extension-types.js";
 import type { CredentialPoolService } from "./credential-pool.js";
 import { isNonRunningAgentStatus, transitionAgentStatus } from "./agent-state-machine.js";
 import type {
+  RuntimeCreationOptions,
   RuntimeErrorEvent,
   RuntimeSessionEvent,
   RuntimeShutdownOptions,
@@ -281,10 +282,11 @@ export class SwarmRuntimeController {
   async createRuntimeForDescriptor(
     descriptor: AgentDescriptor,
     systemPrompt: string,
-    runtimeToken = this.allocateRuntimeToken(descriptor.agentId)
+    runtimeToken = this.allocateRuntimeToken(descriptor.agentId),
+    options?: RuntimeCreationOptions
   ): Promise<SwarmAgentRuntime> {
     try {
-      return await this.runtimeFactory.createRuntimeForDescriptor(descriptor, systemPrompt, runtimeToken);
+      return await this.runtimeFactory.createRuntimeForDescriptor(descriptor, systemPrompt, runtimeToken, options);
     } catch (error) {
       this.clearRuntimeToken(descriptor.agentId, runtimeToken);
       throw error;

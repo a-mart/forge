@@ -56,6 +56,7 @@ import { readSessionMeta, writeSessionMeta } from '../swarm/session-manifest.js'
 import { loadOnboardingState, saveOnboardingPreferences } from '../swarm/onboarding-state.js'
 import { AgentRuntime } from '../swarm/agent-runtime.js'
 import { modelCatalogService } from '../swarm/model-catalog-service.js'
+import { loadModelChangeContinuityState } from '../swarm/runtime/model-change-continuity.js'
 import { buildSessionMemoryRuntimeView, SwarmManager } from '../swarm/swarm-manager.js'
 import type {
   AgentContextUsage,
@@ -66,6 +67,7 @@ import type {
   SwarmConfig,
 } from '../swarm/types.js'
 import type {
+  RuntimeCreationOptions,
   RuntimeErrorEvent,
   RuntimeSessionEvent,
   RuntimeUserMessage,
@@ -77,6 +79,7 @@ class FakeRuntime {
   readonly descriptor: AgentDescriptor
   private readonly sessionManager: SessionManager
   terminateCalls: Array<{ abort?: boolean; shutdownTimeoutMs?: number; drainTimeoutMs?: number } | undefined> = []
+  shutdownForReplacementCalls: Array<{ abort?: boolean; shutdownTimeoutMs?: number; drainTimeoutMs?: number } | undefined> = []
   stopInFlightCalls: Array<{ abort?: boolean; shutdownTimeoutMs?: number; drainTimeoutMs?: number } | undefined> = []
   recycleCalls = 0
   sendCalls: Array<{ message: string | RuntimeUserMessage; delivery: RequestedDeliveryMode }> = []
@@ -164,6 +167,10 @@ class FakeRuntime {
     if (this.terminateMutatesDescriptorStatus) {
       this.descriptor.status = 'terminated'
     }
+  }
+
+  async shutdownForReplacement(options?: { abort?: boolean; shutdownTimeoutMs?: number; drainTimeoutMs?: number }): Promise<void> {
+    this.shutdownForReplacementCalls.push(options)
   }
 
   async recycle(): Promise<void> {
@@ -263,6 +270,7 @@ class TestSwarmManager extends SwarmManager {
   readonly runtimeByAgentId = new Map<string, FakeRuntime>()
   readonly createdRuntimeIds: string[] = []
   readonly runtimeCreationCountByAgentId = new Map<string, number>()
+  readonly runtimeCreationOptionsByAgentId = new Map<string, RuntimeCreationOptions | undefined>()
   readonly systemPromptByAgentId = new Map<string, string>()
   onCreateRuntime:
     | ((options: { descriptor: AgentDescriptor; runtime: FakeRuntime; creationCount: number; runtimeToken?: number }) => Promise<void> | void)
@@ -296,6 +304,7 @@ class TestSwarmManager extends SwarmManager {
     descriptor: AgentDescriptor,
     systemPrompt: string,
     runtimeToken?: number,
+    options?: RuntimeCreationOptions,
   ): Promise<SwarmAgentRuntime> {
     const runtime = new FakeRuntime(structuredClone(descriptor))
     const creationCount = (this.runtimeCreationCountByAgentId.get(descriptor.agentId) ?? 0) + 1
@@ -303,6 +312,7 @@ class TestSwarmManager extends SwarmManager {
     await this.onCreateRuntime?.({ descriptor, runtime, creationCount, runtimeToken })
     this.createdRuntimeIds.push(descriptor.agentId)
     this.runtimeByAgentId.set(descriptor.agentId, runtime)
+    this.runtimeCreationOptionsByAgentId.set(descriptor.agentId, options)
     this.systemPromptByAgentId.set(descriptor.agentId, systemPrompt)
     return runtime as unknown as SwarmAgentRuntime
   }
@@ -8302,7 +8312,7 @@ describe('SwarmManager', () => {
      ).rejects.toThrow('create_manager.model must be one of pi-codex|pi-5.4|pi-opus|sdk-opus|sdk-sonnet|pi-grok|codex-app')
   })
 
-  it('recycles idle manager session runtimes after a profile model change and recreates them on the next prompt', async () => {
+  it('replacement-shuts down idle manager session runtimes after a profile model change and recreates them on the next prompt', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     const rootSession = await bootWithDefaultManager(manager, config)
@@ -8319,12 +8329,21 @@ describe('SwarmManager', () => {
     expect(state.runtimes.has(rootSession.agentId)).toBe(true)
     expect(state.runtimes.has(sessionAgent.agentId)).toBe(true)
 
+    rootRuntime!.terminateMutatesDescriptorStatus = true
+    sessionRuntime!.terminateMutatesDescriptorStatus = true
+
     await manager.updateManagerModel('manager', 'pi-5.4')
 
-    expect(rootRuntime?.recycleCalls).toBe(1)
-    expect(sessionRuntime?.recycleCalls).toBe(1)
+    expect(rootRuntime?.shutdownForReplacementCalls).toHaveLength(1)
+    expect(sessionRuntime?.shutdownForReplacementCalls).toHaveLength(1)
+    expect(rootRuntime?.recycleCalls).toBe(0)
+    expect(sessionRuntime?.recycleCalls).toBe(0)
+    expect(rootRuntime?.terminateCalls).toHaveLength(0)
+    expect(sessionRuntime?.terminateCalls).toHaveLength(0)
     expect(state.runtimes.has(rootSession.agentId)).toBe(false)
     expect(state.runtimes.has(sessionAgent.agentId)).toBe(false)
+    expect(manager.getAgent(rootSession.agentId)?.status).toBe('idle')
+    expect(manager.getAgent(sessionAgent.agentId)?.status).toBe('idle')
     expect(manager.getAgent(rootSession.agentId)?.model).toEqual({
       provider: 'openai-codex',
       modelId: 'gpt-5.4',
@@ -8344,7 +8363,7 @@ describe('SwarmManager', () => {
     expect(state.runtimes.has(sessionAgent.agentId)).toBe(true)
   })
 
-  it('defers runtime recycle for active manager sessions until they return to idle', async () => {
+  it('defers model-change replacement shutdown for active manager sessions until they return to idle', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -8375,10 +8394,13 @@ describe('SwarmManager', () => {
     descriptor.status = 'streaming'
     descriptor.updatedAt = new Date().toISOString()
     sessionRuntime.busy = true
+    sessionRuntime.terminateMutatesDescriptorStatus = true
 
     await manager.updateManagerModel('manager', 'pi-opus')
 
+    expect(sessionRuntime.shutdownForReplacementCalls).toHaveLength(0)
     expect(sessionRuntime.recycleCalls).toBe(0)
+    expect(sessionRuntime.terminateCalls).toHaveLength(0)
     expect(state.pendingManagerRuntimeRecycleAgentIds.has(sessionAgent.agentId)).toBe(true)
     expect(state.runtimes.has(sessionAgent.agentId)).toBe(true)
 
@@ -8388,9 +8410,12 @@ describe('SwarmManager', () => {
     sessionRuntime.busy = false
     await state.handleRuntimeStatus(runtimeToken as number, sessionAgent.agentId, 'idle', 0)
 
-    expect(sessionRuntime.recycleCalls).toBe(1)
+    expect(sessionRuntime.shutdownForReplacementCalls).toHaveLength(1)
+    expect(sessionRuntime.recycleCalls).toBe(0)
+    expect(sessionRuntime.terminateCalls).toHaveLength(0)
     expect(state.pendingManagerRuntimeRecycleAgentIds.has(sessionAgent.agentId)).toBe(false)
     expect(state.runtimes.has(sessionAgent.agentId)).toBe(false)
+    expect(manager.getAgent(sessionAgent.agentId)?.status).toBe('idle')
     expect(manager.getAgent(sessionAgent.agentId)?.model).toEqual({
       provider: 'anthropic',
       modelId: 'claude-opus-4-6',
@@ -8403,6 +8428,224 @@ describe('SwarmManager', () => {
     expect(manager.createdRuntimeIds.length).toBe(createdRuntimeCountBeforePrompt + 1)
     expect(manager.runtimeByAgentId.get(sessionAgent.agentId)).not.toBe(sessionRuntime)
     expect(state.runtimes.has(sessionAgent.agentId)).toBe(true)
+  })
+
+  it('injects startup-only recovery context on cross-runtime model changes while leaving prompt metadata and preview base-only', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await manager.updateManagerModel('manager', 'sdk-opus')
+    await manager.handleUserMessage('Switch the root session to Claude first', { targetAgentId: 'manager' })
+
+    const { sessionAgent } = await manager.createSession('manager', { label: 'Continuity Session' })
+    appendSessionConversationMessage(sessionAgent.sessionFile, sessionAgent.agentId, 'Durable context from Claude.')
+
+    await manager.updateManagerModel('manager', 'pi-5.4')
+
+    const beforeState = await loadModelChangeContinuityState(sessionAgent.sessionFile)
+    expect(beforeState.requests).toHaveLength(1)
+    expect(beforeState.applied).toHaveLength(0)
+
+    await manager.handleUserMessage('Continue after switching to Pi', { targetAgentId: sessionAgent.agentId })
+
+    const recoveryOptions = manager.runtimeCreationOptionsByAgentId.get(sessionAgent.agentId)
+    expect(recoveryOptions?.startupRecoveryContext?.reason).toBe('model_change')
+    expect(recoveryOptions?.startupRecoveryContext?.blockText).toContain('# Recovered Forge Conversation Context')
+    expect(recoveryOptions?.startupRecoveryContext?.blockText).toContain('Durable context from Claude.')
+    expect(manager.systemPromptByAgentId.get(sessionAgent.agentId)).not.toContain('# Recovered Forge Conversation Context')
+
+    const afterState = await loadModelChangeContinuityState(sessionAgent.sessionFile)
+    expect(afterState.applied).toHaveLength(1)
+    expect(afterState.applied[0]?.requestId).toBe(beforeState.requests[0]?.requestId)
+
+    const meta = await readSessionMeta(config.paths.dataDir, 'manager', sessionAgent.agentId)
+    expect(meta?.resolvedSystemPrompt).toBeTypeOf('string')
+    expect(meta?.resolvedSystemPrompt).not.toContain('# Recovered Forge Conversation Context')
+
+    const preview = await manager.previewManagerSystemPrompt('manager')
+    expect(preview.sections.find((section) => section.label === 'System Prompt')?.content).not.toContain(
+      '# Recovered Forge Conversation Context',
+    )
+  })
+
+  it('consumes inactive-session continuity requests when the runtime is later recreated', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const { sessionAgent } = await manager.createSession('manager', { label: 'Inactive Continuity Session' })
+    appendSessionConversationMessage(sessionAgent.sessionFile, sessionAgent.agentId, 'Durable context from an inactive session.')
+
+    await manager.stopSession(sessionAgent.agentId)
+    await manager.updateManagerModel('manager', 'sdk-opus')
+
+    const beforeState = await loadModelChangeContinuityState(sessionAgent.sessionFile)
+    expect(beforeState.requests).toHaveLength(1)
+    expect(beforeState.applied).toHaveLength(0)
+
+    await manager.resumeSession(sessionAgent.agentId)
+
+    const recoveryOptions = manager.runtimeCreationOptionsByAgentId.get(sessionAgent.agentId)
+    expect(recoveryOptions?.startupRecoveryContext?.reason).toBe('model_change')
+    expect(recoveryOptions?.startupRecoveryContext?.blockText).toContain('# Recovered Forge Conversation Context')
+    expect(recoveryOptions?.startupRecoveryContext?.blockText).toContain('Durable context from an inactive session.')
+    expect(manager.systemPromptByAgentId.get(sessionAgent.agentId)).not.toContain('# Recovered Forge Conversation Context')
+
+    const afterState = await loadModelChangeContinuityState(sessionAgent.sessionFile)
+    expect(afterState.applied).toHaveLength(1)
+    expect(afterState.applied[0]?.requestId).toBe(beforeState.requests[0]?.requestId)
+  })
+
+  it('consumes only the latest matching pending continuity request when model changes are deferred twice', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await manager.updateManagerModel('manager', 'sdk-opus')
+    await manager.handleUserMessage('Switch the root session to Claude first', { targetAgentId: 'manager' })
+
+    const { sessionAgent } = await manager.createSession('manager', { label: 'Deferred Continuity Session' })
+    appendSessionConversationMessage(sessionAgent.sessionFile, sessionAgent.agentId, 'Most recent durable context.')
+
+    await manager.updateManagerModel('manager', 'pi-5.4')
+    await manager.updateManagerModel('manager', 'pi-opus')
+
+    const beforeState = await loadModelChangeContinuityState(sessionAgent.sessionFile)
+    expect(beforeState.requests).toHaveLength(2)
+    expect(beforeState.applied).toHaveLength(0)
+
+    await manager.handleUserMessage('Continue after the second deferred model switch', { targetAgentId: sessionAgent.agentId })
+
+    const afterState = await loadModelChangeContinuityState(sessionAgent.sessionFile)
+    expect(afterState.applied).toHaveLength(1)
+    expect(afterState.applied[0]?.requestId).toBe(beforeState.requests[1]?.requestId)
+    expect(afterState.applied[0]?.requestId).not.toBe(beforeState.requests[0]?.requestId)
+    expect(manager.runtimeCreationOptionsByAgentId.get(sessionAgent.agentId)?.startupRecoveryContext?.blockText).toContain(
+      'Most recent durable context.',
+    )
+  })
+
+  it('leaves model-change continuity requests pending when replacement runtime creation fails before attach', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await manager.updateManagerModel('manager', 'sdk-opus')
+    await manager.handleUserMessage('Switch the root session to Claude first', { targetAgentId: 'manager' })
+
+    const { sessionAgent } = await manager.createSession('manager', { label: 'Failing Continuity Session' })
+    appendSessionConversationMessage(sessionAgent.sessionFile, sessionAgent.agentId, 'Durable context before failure.')
+
+    manager.onCreateRuntime = async ({ descriptor, creationCount }) => {
+      if (descriptor.agentId === sessionAgent.agentId && creationCount > 1) {
+        throw new Error('simulated continuity startup failure')
+      }
+    }
+
+    await manager.updateManagerModel('manager', 'pi-5.4')
+
+    await expect(
+      manager.handleUserMessage('Try to recreate the failing session', { targetAgentId: sessionAgent.agentId }),
+    ).rejects.toThrow('simulated continuity startup failure')
+
+    const afterState = await loadModelChangeContinuityState(sessionAgent.sessionFile)
+    expect(afterState.requests).toHaveLength(1)
+    expect(afterState.applied).toHaveLength(0)
+  })
+
+  it('persists the applied continuity marker before attaching the replacement runtime', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await manager.updateManagerModel('manager', 'sdk-opus')
+    await manager.handleUserMessage('Switch the root session to Claude first', { targetAgentId: 'manager' })
+
+    const { sessionAgent } = await manager.createSession('manager', { label: 'Ordered Continuity Session' })
+    appendSessionConversationMessage(sessionAgent.sessionFile, sessionAgent.agentId, 'Durable context before ordered attach.')
+
+    await manager.updateManagerModel('manager', 'pi-5.4')
+
+    const state = manager as unknown as {
+      runtimes: Map<string, SwarmAgentRuntime>
+      lifecycleService: {
+        options: {
+          appendAppliedModelChangeContinuity: (
+            descriptor: AgentDescriptor & { role: 'manager'; profileId: string },
+            request: any,
+            runtime: SwarmAgentRuntime,
+          ) => Promise<void>
+          attachRuntime: (agentId: string, runtime: SwarmAgentRuntime) => void
+        }
+      }
+    }
+    const order: string[] = []
+    const originalAppendApplied = state.lifecycleService.options.appendAppliedModelChangeContinuity
+    const originalAttachRuntime = state.lifecycleService.options.attachRuntime
+
+    state.lifecycleService.options.appendAppliedModelChangeContinuity = async (descriptor, request, runtime) => {
+      order.push('append:start')
+      expect(state.runtimes.has(descriptor.agentId)).toBe(false)
+      await originalAppendApplied(descriptor, request, runtime)
+      order.push('append:end')
+      expect(state.runtimes.has(descriptor.agentId)).toBe(false)
+    }
+    state.lifecycleService.options.attachRuntime = (agentId, runtime) => {
+      order.push('attach')
+      originalAttachRuntime(agentId, runtime)
+    }
+
+    await manager.handleUserMessage('Continue after the ordered handoff', { targetAgentId: sessionAgent.agentId })
+
+    expect(order).toEqual(['append:start', 'append:end', 'attach'])
+
+    const afterState = await loadModelChangeContinuityState(sessionAgent.sessionFile)
+    expect(afterState.applied).toHaveLength(1)
+  })
+
+  it('does not attach a replacement runtime when applied-marker persistence fails', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await manager.updateManagerModel('manager', 'sdk-opus')
+    await manager.handleUserMessage('Switch the root session to Claude first', { targetAgentId: 'manager' })
+
+    const { sessionAgent } = await manager.createSession('manager', { label: 'Applied Write Failure Session' })
+    appendSessionConversationMessage(sessionAgent.sessionFile, sessionAgent.agentId, 'Durable context before applied write failure.')
+
+    await manager.updateManagerModel('manager', 'pi-5.4')
+
+    const state = manager as unknown as {
+      runtimes: Map<string, SwarmAgentRuntime>
+      lifecycleService: {
+        options: {
+          appendAppliedModelChangeContinuity: (
+            descriptor: AgentDescriptor & { role: 'manager'; profileId: string },
+            request: any,
+            runtime: SwarmAgentRuntime,
+          ) => Promise<void>
+        }
+      }
+    }
+    const originalAppendApplied = state.lifecycleService.options.appendAppliedModelChangeContinuity
+    state.lifecycleService.options.appendAppliedModelChangeContinuity = async (descriptor, request, runtime) => {
+      if (descriptor.agentId === sessionAgent.agentId) {
+        throw new Error('simulated applied write failure')
+      }
+      await originalAppendApplied(descriptor, request, runtime)
+    }
+
+    await expect(
+      manager.handleUserMessage('Try to recreate after applied write failure', { targetAgentId: sessionAgent.agentId }),
+    ).rejects.toThrow('simulated applied write failure')
+
+    const afterState = await loadModelChangeContinuityState(sessionAgent.sessionFile)
+    expect(afterState.requests).toHaveLength(1)
+    expect(afterState.applied).toHaveLength(0)
+    expect(state.runtimes.has(sessionAgent.agentId)).toBe(false)
+    expect(manager.runtimeByAgentId.get(sessionAgent.agentId)?.terminateCalls).toHaveLength(1)
   })
 
   it('recycles only sessions using models whose specific instructions changed, deferring busy sessions until idle', async () => {

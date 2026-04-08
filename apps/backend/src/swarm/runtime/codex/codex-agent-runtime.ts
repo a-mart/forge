@@ -78,6 +78,8 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
   private readonly callbacks: SwarmRuntimeCallbacks;
   private readonly now: () => string;
   private readonly systemPrompt: string;
+  private readonly startupSystemPromptOverride: string | undefined;
+  private readonly skipInitialThreadResume: boolean;
   private readonly sessionManager: SessionManager;
   private readonly toolBridge: CodexToolBridge;
   private readonly sandboxSettings: CodexSandboxSettings;
@@ -106,11 +108,15 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
     tools: ToolDefinition[];
     runtimeEnv?: Record<string, string | undefined>;
     onSessionFileRotated?: (sessionFile: string) => Promise<void> | void;
+    startupSystemPromptOverride?: string;
+    skipInitialThreadResume?: boolean;
   }) {
     this.descriptor = options.descriptor;
     this.callbacks = options.callbacks;
     this.now = options.now ?? (() => new Date().toISOString());
     this.systemPrompt = options.systemPrompt;
+    this.startupSystemPromptOverride = options.startupSystemPromptOverride;
+    this.skipInitialThreadResume = options.skipInitialThreadResume === true;
     this.status = options.descriptor.status;
 
     const sessionManager = openSessionManagerWithSizeGuard(options.descriptor.sessionFile, {
@@ -179,6 +185,8 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
     tools: ToolDefinition[];
     runtimeEnv?: Record<string, string | undefined>;
     onSessionFileRotated?: (sessionFile: string) => Promise<void> | void;
+    startupSystemPromptOverride?: string;
+    skipInitialThreadResume?: boolean;
   }): Promise<CodexAgentRuntime> {
     const runtime = new CodexAgentRuntime(options);
 
@@ -312,20 +320,29 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
     await this.emitStatus();
   }
 
+  async shutdownForReplacement(): Promise<void> {
+    if (this.status === "terminated") {
+      return;
+    }
+
+    this.assertIdleForReplacementShutdown();
+
+    if (process.platform === "win32") {
+      await this.tryGracefulShutdownRpc();
+    }
+
+    await this.disposeRpcResources(
+      DEFAULT_CUSTOM_ENTRY_WRITE_DRAIN_TIMEOUT_MS,
+      "shutdown_for_replacement_pending_custom_entry_writes_failed"
+    );
+  }
+
   async recycle(): Promise<void> {
     if (this.status === "terminated") {
       return;
     }
 
-    if (
-      this.status !== "idle" ||
-      this.startRequestPending ||
-      this.activeTurnId ||
-      this.pendingDeliveries.length > 0 ||
-      this.queuedSteers.length > 0
-    ) {
-      throw new Error(`Agent ${this.descriptor.agentId} runtime is not idle and cannot be recycled`);
-    }
+    this.assertIdleForReplacementShutdown();
 
     if (process.platform === "win32") {
       await this.tryGracefulShutdownRpc();
@@ -335,6 +352,18 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
       DEFAULT_CUSTOM_ENTRY_WRITE_DRAIN_TIMEOUT_MS,
       "recycle_pending_custom_entry_writes_failed"
     );
+  }
+
+  private assertIdleForReplacementShutdown(): void {
+    if (
+      this.status !== "idle" ||
+      this.startRequestPending ||
+      this.activeTurnId ||
+      this.pendingDeliveries.length > 0 ||
+      this.queuedSteers.length > 0
+    ) {
+      throw new Error(`Agent ${this.descriptor.agentId} runtime is not idle and cannot be recycled`);
+    }
   }
 
   private async tryGracefulShutdownRpc(): Promise<void> {
@@ -499,8 +528,9 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
   }
 
   private async bootstrapThread(): Promise<void> {
+    const startupDeveloperInstructions = this.startupSystemPromptOverride ?? this.systemPrompt;
     const persisted = this.readPersistedRuntimeState();
-    if (persisted?.threadId) {
+    if (persisted?.threadId && !this.skipInitialThreadResume) {
       try {
         const resumed = await this.rpc.request<{ thread?: { id?: unknown } }>("thread/resume", {
           threadId: persisted.threadId,
@@ -508,7 +538,7 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
           approvalPolicy: "never",
           sandbox: this.sandboxSettings.sandboxMode,
           config: this.sandboxSettings.threadConfig,
-          developerInstructions: this.systemPrompt
+          developerInstructions: startupDeveloperInstructions
         });
 
         const resumedThreadId = parseThreadId(resumed.thread?.id);
@@ -530,7 +560,7 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
       approvalPolicy: "never",
       sandbox: this.sandboxSettings.sandboxMode,
       config: this.sandboxSettings.threadConfig,
-      developerInstructions: this.systemPrompt,
+      developerInstructions: startupDeveloperInstructions,
       dynamicTools: this.toolBridge.dynamicTools
     });
 

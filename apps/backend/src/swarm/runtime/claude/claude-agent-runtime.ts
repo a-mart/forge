@@ -53,6 +53,8 @@ export interface ClaudeAgentRuntimeOptions {
   allowedTools?: string[];
   runtimeEnv?: Record<string, string>;
   modelContextWindow?: number;
+  startupSystemPromptOverride?: string;
+  skipInitialSessionResume?: boolean;
 }
 
 interface RuntimeCustomEntry {
@@ -84,7 +86,7 @@ interface ClaudeSessionStartupOptions {
 
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 5_000;
 export const CLAUDE_RUNTIME_STATE_ENTRY_TYPE = "swarm_claude_session_state";
-const CLAUDE_COMPACTION_SUMMARY_ENTRY_TYPE = "swarm_claude_compaction_summary";
+export const CLAUDE_COMPACTION_SUMMARY_ENTRY_TYPE = "swarm_claude_compaction_summary";
 const CLAUDE_CONVERSATION_ENTRY_TYPE = "swarm_conversation_entry";
 const CLAUDE_SMART_COMPACT_THRESHOLD_PERCENT = 80;
 const SESSION_HEADER_VERSION = 3;
@@ -111,6 +113,8 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
   private lastSessionEntryId: string | null = null;
 
   private activeSystemPrompt: string;
+  private startupSystemPromptOverride: string | undefined;
+  private skipInitialSessionResume = false;
   private pinnedMessageContent: string | undefined;
   private activeSession: ClaudeQuerySession | undefined;
   private activeSessionToken = 0;
@@ -178,6 +182,8 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
     this.persistedCompactionSummary = this.readPersistedCompactionSummary();
     this.generation = this.persistedRuntimeState?.generationId ?? 0;
     this.activeSystemPrompt = this.buildActiveSystemPrompt(this.persistedCompactionSummary?.summary);
+    this.startupSystemPromptOverride = normalizeOptionalString(options.startupSystemPromptOverride);
+    this.skipInitialSessionResume = options.skipInitialSessionResume === true;
   }
 
   getStatus(): AgentStatus {
@@ -205,7 +211,7 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
   }
 
   getSystemPrompt(): string {
-    return this.activeSystemPrompt;
+    return this.baseSystemPrompt;
   }
 
   setPinnedContent(content: string | undefined, options?: SetPinnedContentOptions): void {
@@ -382,6 +388,27 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
     });
   }
 
+  async shutdownForReplacement(options?: RuntimeShutdownOptions): Promise<void> {
+    await this.runExclusive(async () => {
+      this.ensureNotTerminated();
+      this.pendingRecycleForPins = false;
+
+      this.resetPersistedStateIfSessionFileWasExternallyCleared();
+
+      const session = this.detachActiveSession();
+      await this.stopDetachedSession(session, {
+        abort: options?.abort ?? true,
+        shutdownTimeoutMs: options?.shutdownTimeoutMs ?? DEFAULT_SHUTDOWN_TIMEOUT_MS
+      });
+
+      this.liveReplayMessages.length = 0;
+      this.activeSystemPrompt = this.buildActiveSystemPrompt(this.persistedCompactionSummary?.summary);
+      this.resetToIdleState({ emitStatus: false });
+      this.generation += 1;
+      this.persistRuntimeState({ claudeSessionId: null, generationId: this.generation });
+    });
+  }
+
   async recycle(): Promise<void> {
     await this.runExclusive(async () => {
       this.ensureNotTerminated();
@@ -397,7 +424,7 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
 
       this.liveReplayMessages.length = 0;
       this.activeSystemPrompt = this.buildActiveSystemPrompt(this.persistedCompactionSummary?.summary);
-      await this.resetToIdleState();
+      this.resetToIdleState();
       this.generation += 1;
       this.persistRuntimeState({ claudeSessionId: null, generationId: this.generation });
       await this.ensureSessionStarted();
@@ -472,10 +499,20 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
     const sdk = await loadClaudeSdkModule();
     const runtimeEnv = await this.initializeRuntimeEnv();
     const thinkingConfig = buildClaudeReasoningConfig(this.descriptor.model.thinkingLevel);
-    const resumeSessionId = this.persistedRuntimeState?.claudeSessionId ?? undefined;
+    const resumeSessionId = this.skipInitialSessionResume
+      ? undefined
+      : this.persistedRuntimeState?.claudeSessionId ?? undefined;
+    const startupSystemPromptOverride = this.startupSystemPromptOverride;
 
     if (!resumeSessionId) {
-      return await this.startQuerySession({ sdk, runtimeEnv, thinkingConfig });
+      const session = await this.startQuerySession({
+        sdk,
+        runtimeEnv,
+        thinkingConfig,
+        systemPromptOverride: startupSystemPromptOverride
+      });
+      this.clearStartupSessionOverrides();
+      return session;
     }
 
     const probeResult = await probeClaudeSdkPersistence({
@@ -518,6 +555,11 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
         reason: "resume_failed"
       });
     }
+  }
+
+  private clearStartupSessionOverrides(): void {
+    this.startupSystemPromptOverride = undefined;
+    this.skipInitialSessionResume = false;
   }
 
   private async startFreshSessionWithRecovery(options: {
@@ -841,7 +883,7 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
     this.lastSessionEntryId = null;
   }
 
-  private async resetToIdleState(): Promise<void> {
+  private resetToIdleState(options?: { emitStatus?: boolean }): void | Promise<void> {
     this.pendingCount = 0;
     this.contextUsage = undefined;
     this.contextRecoveryInProgress = false;
@@ -850,7 +892,10 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
     this.descriptor.status = "idle";
     this.descriptor.contextUsage = undefined;
     this.descriptor.updatedAt = nowIso();
-    await this.emitStatus();
+    if (options?.emitStatus === false) {
+      return;
+    }
+    return this.emitStatus();
   }
 
   private async initializeRuntimeEnv(): Promise<Record<string, string>> {

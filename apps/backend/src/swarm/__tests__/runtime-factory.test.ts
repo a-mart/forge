@@ -837,6 +837,140 @@ describe("RuntimeFactory", () => {
     expect(snapshot.snapshots).toEqual([]);
   });
 
+  it("injects startup-only recovery context into Pi manager runtime creation without changing the stored base prompt", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    await mkdir(rootDir, { recursive: true });
+    await seedProjectionFile(rootDir);
+
+    const descriptor = createManagerDescriptor(rootDir);
+    await writeFile(descriptor.sessionFile, "", "utf8");
+
+    piCodingAgentMockState.modelRegistryFind.mockReturnValue({ provider: "openai-codex", modelId: "gpt-5.4-mini" });
+    piCodingAgentMockState.createAgentSession.mockResolvedValue({
+      session: createMockPiSession(),
+      extensionsResult: { extensions: [], errors: [] },
+    });
+
+    const factory = createFactory(rootDir);
+    const runtime = await factory.createRuntimeForDescriptor(descriptor, "Base system prompt", 1, {
+      startupRecoveryContext: {
+        reason: "model_change",
+        blockText: "# Recovered Forge Conversation Context\nRecovered history"
+      }
+    });
+
+    const resourceLoaderOptions = piCodingAgentMockState.defaultResourceLoaderCtor.mock.calls.at(-1)?.[0] as {
+      systemPrompt: string;
+      agentsFilesOverride: (base: { agentsFiles: Array<{ path: string; content: string }> }) => {
+        agentsFiles: Array<{ path: string; content: string }>;
+      };
+    };
+    const agentsFiles = resourceLoaderOptions.agentsFilesOverride({ agentsFiles: [] }).agentsFiles;
+
+    expect(resourceLoaderOptions.systemPrompt).toBe("Base system prompt");
+    expect(agentsFiles).toContainEqual({
+      path: join(rootDir, ".forge", "ephemeral-model-change-recovery.md"),
+      content: "# Recovered Forge Conversation Context\nRecovered history"
+    });
+    expect(runtime.getSystemPrompt?.()).toBe("Base system prompt");
+  });
+
+  it("passes startup-only recovery overrides to Claude and Codex runtimes while preserving the base prompt", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    await mkdir(rootDir, { recursive: true });
+
+    claudeRuntimeMockState.createMcpBridge.mockResolvedValue({
+      serverName: "forge-test",
+      server: {},
+      allowedTools: [],
+    });
+    codexRuntimeMockState.create.mockResolvedValue({} as any);
+
+    const factory = createFactory(rootDir);
+    const startupRecoveryContext = {
+      reason: "model_change" as const,
+      blockText: "# Recovered Forge Conversation Context\nRecovered history"
+    };
+
+    await factory.createRuntimeForDescriptor(
+      createDescriptor(rootDir, {
+        model: {
+          provider: "claude-sdk",
+          modelId: "claude-opus-4-6",
+          thinkingLevel: "high",
+        },
+      }),
+      "Base Claude prompt",
+      1,
+      { startupRecoveryContext }
+    );
+
+    const claudeOptions = claudeRuntimeMockState.constructorArgs.at(-1) as {
+      systemPrompt: string;
+      startupSystemPromptOverride?: string;
+      skipInitialSessionResume?: boolean;
+    };
+    expect(claudeOptions.systemPrompt).toBe("Base Claude prompt");
+    expect(claudeOptions.startupSystemPromptOverride).toContain("# Recovered Forge Conversation Context");
+    expect(claudeOptions.skipInitialSessionResume).toBe(true);
+
+    await factory.createRuntimeForDescriptor(
+      createDescriptor(rootDir, {
+        model: {
+          provider: "openai-codex-app-server",
+          modelId: "gpt-5-codex",
+          thinkingLevel: "high",
+        },
+      }),
+      "Base Codex prompt",
+      2,
+      { startupRecoveryContext }
+    );
+
+    const codexOptions = codexRuntimeMockState.create.mock.calls.at(-1)?.[0] as {
+      systemPrompt: string;
+      startupSystemPromptOverride?: string;
+      skipInitialThreadResume?: boolean;
+    };
+    expect(codexOptions.systemPrompt).toBe("Base Codex prompt");
+    expect(codexOptions.startupSystemPromptOverride).toContain("# Recovered Forge Conversation Context");
+    expect(codexOptions.skipInitialThreadResume).toBe(true);
+  });
+
+  it("does not inject a Pi recovery file when the startup recovery block is empty", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    await mkdir(rootDir, { recursive: true });
+    await seedProjectionFile(rootDir);
+
+    const descriptor = createManagerDescriptor(rootDir);
+    await writeFile(descriptor.sessionFile, "", "utf8");
+
+    piCodingAgentMockState.modelRegistryFind.mockReturnValue({ provider: "openai-codex", modelId: "gpt-5.4-mini" });
+    piCodingAgentMockState.createAgentSession.mockResolvedValue({
+      session: createMockPiSession(),
+      extensionsResult: { extensions: [], errors: [] },
+    });
+
+    const factory = createFactory(rootDir);
+    await factory.createRuntimeForDescriptor(descriptor, "Base system prompt", 1, {
+      startupRecoveryContext: {
+        reason: "model_change",
+        blockText: ""
+      }
+    });
+
+    const resourceLoaderOptions = piCodingAgentMockState.defaultResourceLoaderCtor.mock.calls.at(-1)?.[0] as {
+      agentsFilesOverride: (base: { agentsFiles: Array<{ path: string; content: string }> }) => {
+        agentsFiles: Array<{ path: string; content: string }>;
+      };
+    };
+    const agentsFiles = resourceLoaderOptions.agentsFilesOverride({ agentsFiles: [] }).agentsFiles;
+
+    expect(agentsFiles).not.toContainEqual(
+      expect.objectContaining({ path: join(rootDir, ".forge", "ephemeral-model-change-recovery.md") })
+    );
+  });
+
   it("wraps Forge-owned tools for Claude and Codex runtimes", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
     await mkdir(rootDir, { recursive: true });
