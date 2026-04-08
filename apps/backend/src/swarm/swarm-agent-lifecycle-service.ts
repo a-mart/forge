@@ -117,6 +117,7 @@ export interface SwarmAgentLifecycleServiceOptions {
     descriptor: AgentDescriptor,
     resolvedSystemPrompt?: string | null
   ) => Promise<void>;
+  attachRuntime: (agentId: string, runtime: SwarmAgentRuntime) => void;
   saveStore: () => Promise<void>;
   emitStatus: (
     agentId: string,
@@ -406,7 +407,7 @@ export class SwarmAgentLifecycleService {
         }
       }
 
-      this.options.runtimes.set(agentId, runtime);
+      this.options.attachRuntime(agentId, runtime);
       this.options.seedWorkerCompletionReportTimestamp(agentId);
 
       const persistedSystemPrompt = runtime.getSystemPrompt?.() ?? runtimeSystemPrompt;
@@ -733,7 +734,7 @@ export class SwarmAgentLifecycleService {
       initializeRuntime: async () => {
         const systemPrompt = await this.options.resolveSystemPromptForDescriptor(descriptor);
         runtime = await this.options.createRuntimeForDescriptor(descriptor, systemPrompt);
-        this.options.runtimes.set(managerId, runtime);
+        this.options.attachRuntime(managerId, runtime);
         persistedSystemPrompt = runtime.getSystemPrompt?.() ?? systemPrompt;
       }
     });
@@ -1230,7 +1231,7 @@ export class SwarmAgentLifecycleService {
       return concurrentRuntime;
     }
 
-    this.options.runtimes.set(descriptor.agentId, runtime);
+    this.options.attachRuntime(descriptor.agentId, runtime);
     if (latestDescriptor.role === "worker") {
       this.options.seedWorkerCompletionReportTimestamp(latestDescriptor.agentId);
     }
