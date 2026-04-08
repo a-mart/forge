@@ -15,6 +15,8 @@ import type { RuntimeUserMessage, SwarmAgentRuntime } from "../runtime-types.js"
 import type { AgentContextUsage, AgentDescriptor, RequestedDeliveryMode, SendMessageReceipt, SwarmConfig } from "../types.js";
 
 class FakeRuntime {
+  sendCalls: Array<{ message: string | RuntimeUserMessage; delivery: RequestedDeliveryMode }> = [];
+
   constructor(private readonly systemPrompt: string) {}
 
   getStatus(): AgentDescriptor["status"] {
@@ -34,9 +36,10 @@ class FakeRuntime {
   }
 
   async sendMessage(
-    _message: string | RuntimeUserMessage,
-    _delivery: RequestedDeliveryMode = "auto"
+    message: string | RuntimeUserMessage,
+    delivery: RequestedDeliveryMode = "auto"
   ): Promise<SendMessageReceipt> {
+    this.sendCalls.push({ message, delivery });
     return {
       targetAgentId: "unused",
       deliveryId: "unused",
@@ -64,12 +67,16 @@ class FakeRuntime {
 }
 
 class TestSwarmManager extends SwarmManager {
+  readonly runtimeByAgentId = new Map<string, FakeRuntime>();
+
   protected override async createRuntimeForDescriptor(
-    _descriptor: AgentDescriptor,
+    descriptor: AgentDescriptor,
     systemPrompt: string,
     _runtimeToken?: number
   ): Promise<SwarmAgentRuntime> {
-    return new FakeRuntime(systemPrompt) as unknown as SwarmAgentRuntime;
+    const runtime = new FakeRuntime(systemPrompt);
+    this.runtimeByAgentId.set(descriptor.agentId, runtime);
+    return runtime as unknown as SwarmAgentRuntime;
   }
 
   protected override async executeSessionMemoryLLMMerge(): Promise<{ mergedContent: string; model: string }> {
@@ -299,8 +306,82 @@ describe("SwarmManager project-agent regressions", () => {
     expect(manager.getAgent(target.agentId)?.projectAgent?.handle).toBe("docs");
   });
 
-  it("treats an empty prompt.md as an intentionally blank override instead of falling back to descriptor cache", async () => {
+  it("scopes project-agent fire-and-forget delivery limits to the sending session across targets", async () => {
     const config = await makeTempConfig(8901);
+    const manager = new TestSwarmManager(config);
+    await bootWithDefaultManager(manager, config);
+
+    const { sessionAgent: docsAgent } = await manager.createSession("manager", { label: "Docs" });
+    const { sessionAgent: qaAgent } = await manager.createSession("manager", { label: "QA" });
+    const { sessionAgent: secondSender } = await manager.createSession("manager", { label: "Ops" });
+
+    await manager.setSessionProjectAgent(docsAgent.agentId, {
+      handle: "docs",
+      whenToUse: "Maintain docs",
+      systemPrompt: "Document the system."
+    });
+    await manager.setSessionProjectAgent(qaAgent.agentId, {
+      handle: "qa",
+      whenToUse: "Reproduce issues",
+      systemPrompt: "Reproduce the bug."
+    });
+
+    const deliveryReceipts: SendMessageReceipt[] = [];
+    for (let index = 0; index < 6; index += 1) {
+      const targetAgentId = index % 2 === 0 ? docsAgent.agentId : qaAgent.agentId;
+      deliveryReceipts.push(await manager.sendMessage("manager", targetAgentId, `note-${index + 1}`, "auto"));
+    }
+
+    expect(deliveryReceipts).toHaveLength(6);
+    expect(deliveryReceipts.every((receipt) => receipt.acceptedMode === "prompt")).toBe(true);
+
+    await expect(
+      manager.sendMessage("manager", docsAgent.agentId, "note-7", "auto")
+    ).rejects.toThrow(
+      "Project-agent messaging rate limit exceeded for this session. Batch your message or involve the user before continuing."
+    );
+
+    const independentReceipt = await manager.sendMessage(secondSender.agentId, docsAgent.agentId, "ops-follow-up", "auto");
+    expect(independentReceipt.acceptedMode).toBe("prompt");
+
+    const docsRuntime = manager.runtimeByAgentId.get(docsAgent.agentId);
+    const qaRuntime = manager.runtimeByAgentId.get(qaAgent.agentId);
+    expect(docsRuntime?.sendCalls.map((call) => call.message)).toEqual([
+      `[projectAgentContext] ${JSON.stringify({
+        fromAgentId: "manager",
+        fromDisplayName: "manager"
+      })}\n\nnote-1`,
+      `[projectAgentContext] ${JSON.stringify({
+        fromAgentId: "manager",
+        fromDisplayName: "manager"
+      })}\n\nnote-3`,
+      `[projectAgentContext] ${JSON.stringify({
+        fromAgentId: "manager",
+        fromDisplayName: "manager"
+      })}\n\nnote-5`,
+      `[projectAgentContext] ${JSON.stringify({
+        fromAgentId: secondSender.agentId,
+        fromDisplayName: "Ops"
+      })}\n\nops-follow-up`
+    ]);
+    expect(qaRuntime?.sendCalls.map((call) => call.message)).toEqual([
+      `[projectAgentContext] ${JSON.stringify({
+        fromAgentId: "manager",
+        fromDisplayName: "manager"
+      })}\n\nnote-2`,
+      `[projectAgentContext] ${JSON.stringify({
+        fromAgentId: "manager",
+        fromDisplayName: "manager"
+      })}\n\nnote-4`,
+      `[projectAgentContext] ${JSON.stringify({
+        fromAgentId: "manager",
+        fromDisplayName: "manager"
+      })}\n\nnote-6`
+    ]);
+  });
+
+  it("treats an empty prompt.md as an intentionally blank override instead of falling back to descriptor cache", async () => {
+    const config = await makeTempConfig(8902);
     const manager = new TestSwarmManager(config);
     const rootManager = await bootWithDefaultManager(manager, config);
     const target = await manager.createManager(rootManager.agentId, {

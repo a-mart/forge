@@ -611,6 +611,102 @@ describe("worker stall detector", () => {
     expect(readWorkerStallState(manager, workerForStopAll.agentId)).toBeUndefined();
   });
 
+  it("clears stall tracking and suppresses watchdog fallback when auto-report succeeds", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-22T12:00:00.000Z"));
+
+    const { manager, worker, managerRuntime } = await setupManagerWithStreamingWorker();
+    const state = manager as any;
+    const runtimeToken = state.runtimeTokensByAgentId.get(worker.agentId);
+
+    await emitRuntimeEvent(manager, worker.agentId, {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "Finished cleanly." }]
+      }
+    });
+
+    managerRuntime.sendCalls = [];
+
+    await state.handleRuntimeStatus(runtimeToken, worker.agentId, "idle", 0);
+    await state.handleRuntimeAgentEnd(runtimeToken, worker.agentId);
+    await vi.advanceTimersByTimeAsync(3_800);
+
+    const managerMessages = managerRuntime.sendCalls
+      .map((call) => call.message)
+      .filter((message): message is string => typeof message === "string");
+
+    expect(managerMessages.some((message) => message.includes(`SYSTEM: Worker ${worker.agentId} completed its turn.`))).toBe(true);
+    expect(managerMessages.some((message) => message.includes("[IDLE WORKER WATCHDOG"))).toBe(false);
+    expect(managerMessages.some((message) => message.includes("[WORKER STALL DETECTED]"))).toBe(false);
+    expect(readWorkerStallState(manager, worker.agentId)).toBeUndefined();
+  });
+
+  it("keeps stall detector and idle watchdog scoped to stuck versus completed-but-unreported turns", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-22T12:00:00.000Z"));
+
+    const config = await makeTempConfig();
+    const manager = new TestSwarmManager(config);
+    const managerDescriptor = await bootWithDefaultManager(manager, config);
+    const stalledWorker = await manager.spawnAgent(managerDescriptor.agentId, { agentId: "stalled-worker" });
+    const silentWorker = await manager.spawnAgent(managerDescriptor.agentId, { agentId: "silent-worker" });
+    const state = manager as any;
+
+    const stalledRuntimeToken = state.runtimeTokensByAgentId.get(stalledWorker.agentId);
+    const silentRuntimeToken = state.runtimeTokensByAgentId.get(silentWorker.agentId);
+    await state.handleRuntimeStatus(stalledRuntimeToken, stalledWorker.agentId, "streaming", 0);
+    await state.handleRuntimeStatus(silentRuntimeToken, silentWorker.agentId, "streaming", 0);
+
+    const stalledState = readWorkerStallState(manager, stalledWorker.agentId);
+    expect(stalledState).toBeDefined();
+    stalledState!.lastProgressAt = Date.now() - 5 * 60_000;
+
+    const managerRuntime = manager.runtimeByAgentId.get(managerDescriptor.agentId);
+    expect(managerRuntime).toBeDefined();
+    if (!managerRuntime) {
+      throw new Error("Expected manager runtime");
+    }
+
+    const originalSendMessage = managerRuntime.sendMessage.bind(managerRuntime);
+    managerRuntime.sendMessage = async (message, delivery = "auto") => {
+      if (
+        typeof message === "string" &&
+        message.startsWith(`SYSTEM: Worker ${silentWorker.agentId} completed its turn.`) &&
+        !message.includes("[IDLE WORKER WATCHDOG — BATCHED]")
+      ) {
+        throw new Error("synthetic auto-report failure");
+      }
+
+      return originalSendMessage(message, delivery);
+    };
+    managerRuntime.sendCalls = [];
+
+    await state.handleRuntimeStatus(silentRuntimeToken, silentWorker.agentId, "idle", 0);
+    await state.handleRuntimeAgentEnd(silentRuntimeToken, silentWorker.agentId);
+
+    expect(readWorkerStallState(manager, silentWorker.agentId)).toBeUndefined();
+    expect(readWorkerStallState(manager, stalledWorker.agentId)).toBeDefined();
+
+    await (manager as any).checkForStalledWorkers();
+    await vi.advanceTimersByTimeAsync(3_800);
+
+    const managerMessages = managerRuntime.sendCalls
+      .map((call) => call.message)
+      .filter((message): message is string => typeof message === "string");
+    const stallMessages = managerMessages.filter((message) => message.includes("[WORKER STALL DETECTED]"));
+    const watchdogMessages = managerMessages.filter((message) => message.includes("[IDLE WORKER WATCHDOG — BATCHED]"));
+
+    expect(stallMessages).toHaveLength(1);
+    expect(stallMessages[0]).toContain(stalledWorker.agentId);
+    expect(stallMessages[0]).not.toContain(silentWorker.agentId);
+
+    expect(watchdogMessages).toHaveLength(1);
+    expect(watchdogMessages[0]).toContain(`\`${silentWorker.agentId}\``);
+    expect(watchdogMessages[0]).not.toContain(`\`${stalledWorker.agentId}\``);
+  });
+
   it("does not mark nudge as sent when sendMessage fails", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-03-22T12:00:00.000Z"));
