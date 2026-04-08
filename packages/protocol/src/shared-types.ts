@@ -175,6 +175,60 @@ export interface AgentRuntimeExtensionSnapshot {
   loadErrors: RuntimeExtensionLoadError[]
 }
 
+export type ForgeScope = 'global' | 'profile' | 'project-local'
+export type ForgeRuntimeType = 'pi' | 'claude' | 'codex'
+
+export interface ForgeDiscoveredExtensionMetadata {
+  displayName: string
+  path: string
+  scope: ForgeScope
+  profileId?: string
+  cwd?: string
+  name?: string
+  description?: string
+  loadError?: string
+}
+
+export interface ForgeRuntimeExtensionMetadata {
+  displayName: string
+  path: string
+  scope: ForgeScope
+  name?: string
+  description?: string
+  hooks: string[]
+}
+
+export interface ForgeRuntimeExtensionSnapshot {
+  agentId: string
+  role: 'manager' | 'worker'
+  managerId: string
+  profileId?: string
+  runtimeType: ForgeRuntimeType
+  loadedAt: string
+  extensions: ForgeRuntimeExtensionMetadata[]
+}
+
+export interface ForgeExtensionDiagnosticError {
+  timestamp: string
+  phase: string
+  message: string
+  path?: string
+  hook?: string
+  agentId?: string
+  runtimeType?: ForgeRuntimeType
+}
+
+export interface ForgeSettingsExtensionsPayload {
+  discovered: ForgeDiscoveredExtensionMetadata[]
+  snapshots: ForgeRuntimeExtensionSnapshot[]
+  recentErrors: ForgeExtensionDiagnosticError[]
+  directories: {
+    global: string
+    profileTemplate: string
+    projectLocalRelative: string
+  }
+}
+
 export interface SettingsExtensionsResponse {
   generatedAt: string
   discovered: DiscoveredExtensionMetadata[]
@@ -185,6 +239,7 @@ export interface SettingsExtensionsResponse {
     profileTemplate: string
     projectLocalRelative: string
   }
+  forge?: ForgeSettingsExtensionsPayload
 }
 
 export type CortexReviewRunTrigger = 'manual' | 'scheduled'

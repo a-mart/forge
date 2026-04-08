@@ -9,7 +9,7 @@ import type { HttpRoute } from "./http-route.js";
 const SETTINGS_EXTENSIONS_ENDPOINT_PATH = "/api/settings/extensions";
 const SETTINGS_EXTENSIONS_METHODS = "GET, OPTIONS";
 
-const DISCOVERY_SOURCE_SORT_ORDER: Record<DiscoveredExtensionMetadata["source"], number> = {
+const PI_DISCOVERY_SOURCE_SORT_ORDER: Record<DiscoveredExtensionMetadata["source"], number> = {
   "global-worker": 0,
   "global-manager": 1,
   profile: 2,
@@ -40,12 +40,16 @@ export function createExtensionRoutes(options: { swarmManager: SwarmManager }): 
 
         const config = swarmManager.getConfig();
         const snapshots = swarmManager.listRuntimeExtensionSnapshots();
-        const discovered = await discoverExtensionsOnDisk({
+        const discovered = await discoverPiExtensionsOnDisk({
           swarmManager,
           dataDir: config.paths.dataDir,
           globalWorkerDir: join(config.paths.agentDir, "extensions"),
           globalManagerDir: join(config.paths.managerAgentDir, "extensions")
         });
+        const cwdValues = swarmManager
+          .listAgents()
+          .map((descriptor) => descriptor.cwd.trim())
+          .filter((cwd) => cwd.length > 0);
 
         const payload: SettingsExtensionsResponse = {
           generatedAt: new Date().toISOString(),
@@ -56,7 +60,8 @@ export function createExtensionRoutes(options: { swarmManager: SwarmManager }): 
             globalManager: join(config.paths.managerAgentDir, "extensions"),
             profileTemplate: join(getProfilesDir(config.paths.dataDir), "<profileId>", "pi", "extensions"),
             projectLocalRelative: ".pi/extensions"
-          }
+          },
+          forge: await swarmManager.buildForgeExtensionSettingsSnapshot({ cwdValues })
         };
 
         applyCorsHeaders(request, response, SETTINGS_EXTENSIONS_METHODS);
@@ -66,7 +71,7 @@ export function createExtensionRoutes(options: { swarmManager: SwarmManager }): 
   ];
 }
 
-async function discoverExtensionsOnDisk(options: {
+async function discoverPiExtensionsOnDisk(options: {
   swarmManager: SwarmManager;
   dataDir: string;
   globalWorkerDir: string;
@@ -74,12 +79,12 @@ async function discoverExtensionsOnDisk(options: {
 }): Promise<DiscoveredExtensionMetadata[]> {
   const discovered: DiscoveredExtensionMetadata[] = [];
 
-  await collectExtensionsFromDirectory(options.globalWorkerDir, "global-worker", discovered);
-  await collectExtensionsFromDirectory(options.globalManagerDir, "global-manager", discovered);
+  await collectPiExtensionsFromDirectory(options.globalWorkerDir, "global-worker", discovered);
+  await collectPiExtensionsFromDirectory(options.globalManagerDir, "global-manager", discovered);
 
   const profileIds = await listProfileIds(options.dataDir);
   for (const profileId of profileIds) {
-    await collectExtensionsFromDirectory(getProfilePiExtensionsDir(options.dataDir, profileId), "profile", discovered, {
+    await collectPiExtensionsFromDirectory(getProfilePiExtensionsDir(options.dataDir, profileId), "profile", discovered, {
       profileId
     });
   }
@@ -92,13 +97,13 @@ async function discoverExtensionsOnDisk(options: {
   );
 
   for (const cwd of Array.from(cwdValues).sort((left, right) => left.localeCompare(right))) {
-    await collectExtensionsFromDirectory(join(cwd, ".pi", "extensions"), "project-local", discovered, { cwd });
+    await collectPiExtensionsFromDirectory(join(cwd, ".pi", "extensions"), "project-local", discovered, { cwd });
   }
 
-  return dedupeAndSortDiscoveredExtensions(discovered);
+  return dedupeAndSortDiscoveredPiExtensions(discovered);
 }
 
-async function collectExtensionsFromDirectory(
+async function collectPiExtensionsFromDirectory(
   extensionsDir: string,
   source: DiscoveredExtensionMetadata["source"],
   target: DiscoveredExtensionMetadata[],
@@ -180,7 +185,7 @@ async function listProfileIds(dataDir: string): Promise<string[]> {
     .sort((left, right) => left.localeCompare(right));
 }
 
-function dedupeAndSortDiscoveredExtensions(
+function dedupeAndSortDiscoveredPiExtensions(
   extensions: DiscoveredExtensionMetadata[]
 ): DiscoveredExtensionMetadata[] {
   const unique = new Map<string, DiscoveredExtensionMetadata>();
@@ -196,7 +201,7 @@ function dedupeAndSortDiscoveredExtensions(
   }
 
   return Array.from(unique.values()).sort((left, right) => {
-    const bySource = DISCOVERY_SOURCE_SORT_ORDER[left.source] - DISCOVERY_SOURCE_SORT_ORDER[right.source];
+    const bySource = PI_DISCOVERY_SOURCE_SORT_ORDER[left.source] - PI_DISCOVERY_SOURCE_SORT_ORDER[right.source];
     if (bySource !== 0) {
       return bySource;
     }

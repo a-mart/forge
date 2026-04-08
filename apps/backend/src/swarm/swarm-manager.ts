@@ -104,6 +104,7 @@ import {
   normalizeProjectAgentInlineText
 } from "./project-agents.js";
 import { PersistenceService } from "./persistence-service.js";
+import { ForgeExtensionHost } from "./forge-extension-host.js";
 import {
   deleteProjectAgentReferenceDoc,
   listProjectAgentReferenceDocs,
@@ -1274,6 +1275,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly cortexCloseoutReminderTimersByAgentId = new Map<string, NodeJS.Timeout>();
   private readonly conversationProjector: ConversationProjector;
   private readonly persistenceService: PersistenceService;
+  private readonly forgeExtensionHost: ForgeExtensionHost;
   private readonly runtimeFactory: RuntimeFactory;
   private piModelsJsonPath: string | null = null;
   private readonly skillMetadataService: SkillMetadataService;
@@ -1316,6 +1318,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       validateAgentDescriptor,
       extractDescriptorAgentId,
       logDebug: (message, details) => this.logDebug(message, details)
+    });
+    this.forgeExtensionHost = new ForgeExtensionHost({
+      dataDir: this.config.paths.dataDir,
+      now: this.now
     });
     this.conversationProjector = new ConversationProjector({
       descriptors: this.descriptors,
@@ -3531,7 +3537,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.descriptors.set(descriptor.agentId, descriptor);
     this.profiles.set(profile.profileId, profile);
 
-    await this.ensureProfilePiDirectories(profile.profileId);
+    await this.ensureProfileDirectories(profile.profileId);
     await this.ensureSessionFileParentDirectory(descriptor.sessionFile);
     await this.ensureAgentMemoryFile(this.getAgentMemoryPath(descriptor.agentId), profile.profileId);
     await this.ensureAgentMemoryFile(getProfileMemoryPath(this.config.paths.dataDir, profile.profileId), profile.profileId);
@@ -5670,6 +5676,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.integrationContextProvider = provider;
   }
 
+  async buildForgeExtensionSettingsSnapshot(options: { cwdValues: string[] }) {
+    return this.forgeExtensionHost.buildSettingsSnapshot(options);
+  }
+
   async listSettingsEnv(): Promise<SkillEnvRequirement[]> {
     return this.secretsEnvService.listSettingsEnv();
   }
@@ -6288,7 +6298,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.descriptors.set(descriptor.agentId, descriptor);
     this.profiles.set(profile.profileId, profile);
 
-    await this.ensureProfilePiDirectories(profile.profileId);
+    await this.ensureProfileDirectories(profile.profileId);
     await this.ensureSessionFileParentDirectory(descriptor.sessionFile);
     await this.ensureAgentMemoryFile(this.getAgentMemoryPath(descriptor.agentId), profile.profileId);
     await this.ensureAgentMemoryFile(getProfileMemoryPath(this.config.paths.dataDir, profile.profileId), profile.profileId);
@@ -10598,8 +10608,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     await this.persistenceService.ensureAgentMemoryFile(memoryFilePath, memoryTemplateContent);
   }
 
-  private async ensureProfilePiDirectories(profileId: string): Promise<void> {
-    await this.persistenceService.ensureProfilePiDirectories(profileId);
+  private async ensureProfileDirectories(profileId: string): Promise<void> {
+    await this.persistenceService.ensureProfileDirectories(profileId);
   }
 
   private async deleteManagerSessionFile(sessionFile: string): Promise<void> {

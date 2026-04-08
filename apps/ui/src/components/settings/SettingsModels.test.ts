@@ -78,6 +78,19 @@ async function renderSettingsModels(overrides: Record<string, ModelOverrideEntry
 
   await flushPromises()
   await flushPromises()
+  await expandAllProviderGroups()
+}
+
+async function expandAllProviderGroups(): Promise<void> {
+  const collapsedButtons = Array.from(container.querySelectorAll('button[aria-expanded="false"]'))
+
+  for (const button of collapsedButtons) {
+    flushSync(() => {
+      fireEvent.click(button)
+    })
+  }
+
+  await flushPromises()
 }
 
 async function expandModel(displayName: string): Promise<void> {
@@ -160,6 +173,7 @@ describe('SettingsModels', () => {
 
     await flushPromises()
     await flushPromises()
+    await expandAllProviderGroups()
 
     await expandModel('GPT-5.3 Codex')
     const textarea = getByRole(container, 'textbox') as HTMLTextAreaElement

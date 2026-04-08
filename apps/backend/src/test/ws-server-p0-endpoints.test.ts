@@ -7,6 +7,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { SHARED_INTEGRATION_MANAGER_ID } from '../integrations/shared-config.js'
 import { getScheduleFilePath } from '../scheduler/schedule-storage.js'
 import {
+  getGlobalForgeExtensionsDir,
+  getProfileForgeExtensionsDir,
   getProfilePiExtensionsDir,
   getSharedMobileDevicesPath,
   getSharedMobileNotificationPreferencesPath,
@@ -42,13 +44,28 @@ class FakeSwarmManager extends EventEmitter {
   private readonly config: SwarmConfig
   private readonly agents: AgentDescriptor[]
   private readonly runtimeExtensionSnapshots: unknown[]
+  private readonly forgeSettingsSnapshot: Record<string, unknown>
   readonly pooledCredentialAdds: Array<{ provider: string; credential: unknown; identity?: unknown }> = []
 
-  constructor(config: SwarmConfig, agents: AgentDescriptor[], options?: { runtimeExtensionSnapshots?: unknown[] }) {
+  constructor(
+    config: SwarmConfig,
+    agents: AgentDescriptor[],
+    options?: { runtimeExtensionSnapshots?: unknown[]; forgeSettingsSnapshot?: Record<string, unknown> }
+  ) {
     super()
     this.config = config
     this.agents = agents
     this.runtimeExtensionSnapshots = options?.runtimeExtensionSnapshots ?? []
+    this.forgeSettingsSnapshot = options?.forgeSettingsSnapshot ?? {
+      discovered: [],
+      snapshots: [],
+      recentErrors: [],
+      directories: {
+        global: getGlobalForgeExtensionsDir(config.paths.dataDir),
+        profileTemplate: join(config.paths.dataDir, 'profiles', '<profileId>', 'extensions'),
+        projectLocalRelative: '.forge/extensions',
+      },
+    }
   }
 
   getConfig(): SwarmConfig {
@@ -69,6 +86,10 @@ class FakeSwarmManager extends EventEmitter {
 
   listRuntimeExtensionSnapshots(): unknown[] {
     return this.runtimeExtensionSnapshots.map((snapshot) => ({ ...(snapshot as Record<string, unknown>) }))
+  }
+
+  async buildForgeExtensionSettingsSnapshot(): Promise<Record<string, unknown>> {
+    return JSON.parse(JSON.stringify(this.forgeSettingsSnapshot)) as Record<string, unknown>
   }
 
   getPendingChoiceIdsForSession(): string[] {
@@ -1010,21 +1031,77 @@ describe('SwarmWebSocketServer P0 endpoints', () => {
     const globalManagerExtensionsDir = join(config.paths.managerAgentDir, 'extensions')
     const profileExtensionsDir = getProfilePiExtensionsDir(config.paths.dataDir, 'manager')
     const projectExtensionsDir = join(config.paths.rootDir, '.pi', 'extensions')
+    const forgeGlobalExtensionsDir = getGlobalForgeExtensionsDir(config.paths.dataDir)
+    const forgeProfileExtensionsDir = getProfileForgeExtensionsDir(config.paths.dataDir, 'manager')
+    const forgeProjectExtensionsDir = join(config.paths.rootDir, '.forge', 'extensions')
 
     await mkdir(globalWorkerExtensionsDir, { recursive: true })
     await mkdir(globalManagerExtensionsDir, { recursive: true })
     await mkdir(profileExtensionsDir, { recursive: true })
     await mkdir(join(projectExtensionsDir, 'project-pack'), { recursive: true })
+    await mkdir(forgeGlobalExtensionsDir, { recursive: true })
+    await mkdir(forgeProfileExtensionsDir, { recursive: true })
+    await mkdir(join(forgeProjectExtensionsDir, 'forge-pack'), { recursive: true })
 
     await writeFile(join(globalWorkerExtensionsDir, 'worker-ext.ts'), 'export default () => {}\n', 'utf8')
     await writeFile(join(globalManagerExtensionsDir, 'manager-ext.js'), 'module.exports = () => {}\n', 'utf8')
     await writeFile(join(profileExtensionsDir, 'profile-ext.ts'), 'export default () => {}\n', 'utf8')
     await writeFile(join(projectExtensionsDir, 'project-pack', 'index.ts'), 'export default () => {}\n', 'utf8')
+    await writeFile(
+      join(forgeGlobalExtensionsDir, 'protect-env.ts'),
+      'export const extension = { name: "protect-env", description: "Protect env" }\nexport default () => {}\n',
+      'utf8',
+    )
+    await writeFile(join(forgeProfileExtensionsDir, 'broken-ext.ts'), 'export const extension = 42\nexport default () => {}\n', 'utf8')
+    await writeFile(
+      join(forgeProjectExtensionsDir, 'forge-pack', 'index.ts'),
+      'export const extension = { name: "forge-pack" }\nexport default () => {}\n',
+      'utf8',
+    )
 
     const manager = new FakeSwarmManager(
       config,
       [createManagerDescriptor(config.paths.rootDir, 'manager')],
       {
+        forgeSettingsSnapshot: {
+          discovered: [
+            {
+              displayName: 'protect-env.ts',
+              path: join(forgeGlobalExtensionsDir, 'protect-env.ts'),
+              scope: 'global',
+              name: 'protect-env',
+              description: 'Protect env',
+            },
+            {
+              displayName: 'broken-ext.ts',
+              path: join(forgeProfileExtensionsDir, 'broken-ext.ts'),
+              scope: 'profile',
+              profileId: 'manager',
+              loadError: "Forge extension named export 'extension' must be an object when provided",
+            },
+            {
+              displayName: 'forge-pack',
+              path: join(forgeProjectExtensionsDir, 'forge-pack', 'index.ts'),
+              scope: 'project-local',
+              cwd: config.paths.rootDir,
+              name: 'forge-pack',
+            },
+          ],
+          snapshots: [],
+          recentErrors: [
+            {
+              timestamp: '2026-03-24T00:00:00.000Z',
+              phase: 'load',
+              message: 'Example Forge host diagnostic',
+              path: join(forgeProfileExtensionsDir, 'broken-ext.ts'),
+            },
+          ],
+          directories: {
+            global: forgeGlobalExtensionsDir,
+            profileTemplate: join(config.paths.dataDir, 'profiles', '<profileId>', 'extensions'),
+            projectLocalRelative: '.forge/extensions',
+          },
+        },
         runtimeExtensionSnapshots: [
           {
             agentId: 'manager',
@@ -1112,6 +1189,46 @@ describe('SwarmWebSocketServer P0 endpoints', () => {
         profileTemplate: join(config.paths.dataDir, 'profiles', '<profileId>', 'pi', 'extensions'),
         projectLocalRelative: '.pi/extensions',
       })
+
+      expect(payload.json.forge).toMatchObject({
+        directories: {
+          global: forgeGlobalExtensionsDir,
+          profileTemplate: join(config.paths.dataDir, 'profiles', '<profileId>', 'extensions'),
+          projectLocalRelative: '.forge/extensions',
+        },
+      })
+
+      expect(payload.json.forge).toEqual(
+        expect.objectContaining({
+          discovered: expect.arrayContaining([
+            expect.objectContaining({
+              displayName: 'protect-env.ts',
+              path: join(forgeGlobalExtensionsDir, 'protect-env.ts'),
+              scope: 'global',
+              name: 'protect-env',
+            }),
+            expect.objectContaining({
+              displayName: 'broken-ext.ts',
+              path: join(forgeProfileExtensionsDir, 'broken-ext.ts'),
+              scope: 'profile',
+              profileId: 'manager',
+              loadError: "Forge extension named export 'extension' must be an object when provided",
+            }),
+            expect.objectContaining({
+              displayName: 'forge-pack',
+              path: join(forgeProjectExtensionsDir, 'forge-pack', 'index.ts'),
+              scope: 'project-local',
+              cwd: config.paths.rootDir,
+            }),
+          ]),
+          recentErrors: expect.arrayContaining([
+            expect.objectContaining({
+              phase: 'load',
+              message: 'Example Forge host diagnostic',
+            }),
+          ]),
+        }),
+      )
     } finally {
       await server.stop()
     }

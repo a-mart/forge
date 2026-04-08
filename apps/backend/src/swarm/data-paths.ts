@@ -39,6 +39,18 @@ export function getSharedStateDir(dataDir: string): string {
 
 // ── Profile-level paths ────────────────────────────────────────────────────────
 
+export function getGlobalForgeExtensionsDir(dataDir: string): string {
+  return join(dataDir, "extensions");
+}
+
+export function getProfileForgeExtensionsDir(dataDir: string, profileId: string): string {
+  return join(getProfileDir(dataDir, profileId), "extensions");
+}
+
+export function getProjectLocalForgeExtensionsDir(cwd: string): string {
+  return join(cwd, ".forge", "extensions");
+}
+
 export function getProfilePiDir(dataDir: string, profileId: string): string {
   return join(getProfileDir(dataDir, profileId), "pi");
 }
