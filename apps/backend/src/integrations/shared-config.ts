@@ -1,7 +1,8 @@
 import { resolve } from "node:path";
+import { SHARED_INTEGRATION_MANAGER_ID } from "@forge/protocol";
 import { getSharedIntegrationsDir } from "../swarm/data-paths.js";
 
-export const SHARED_INTEGRATION_MANAGER_ID = "__shared__";
+export { SHARED_INTEGRATION_MANAGER_ID };
 
 const LEGACY_INTEGRATIONS_DIR_NAME = "integrations";
 const LEGACY_INTEGRATIONS_SHARED_DIR_NAME = "shared";

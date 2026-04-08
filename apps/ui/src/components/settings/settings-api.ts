@@ -15,6 +15,7 @@ import type {
   ChromeCdpPreviewTab,
 } from './settings-types'
 import type { TelegramStatusEvent, SettingsExtensionsResponse, CredentialPoolState, CredentialPoolStrategy } from '@forge/protocol'
+import { SHARED_INTEGRATION_MANAGER_ID } from '@forge/protocol'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
 
 /* ------------------------------------------------------------------ */
@@ -55,7 +56,7 @@ export const SETTINGS_AUTH_PROVIDER_META: Record<
 
 export const SETTINGS_AUTH_PROVIDER_ORDER: SettingsAuthProviderId[] = ['anthropic', 'openai-codex', 'xai', 'openrouter']
 
-export const SHARED_INTEGRATION_MANAGER_ID = '__shared__'
+export { SHARED_INTEGRATION_MANAGER_ID }
 
 export const DEFAULT_SETTINGS_AUTH_OAUTH_FLOW_STATE: SettingsAuthOAuthFlowState = {
   status: 'idle',
