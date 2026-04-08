@@ -1,6 +1,20 @@
+import type {
+  ChromeCdpConfig,
+  ChromeCdpPreviewTab,
+  ChromeCdpProfile,
+  ChromeCdpStatus,
+} from '@forge/protocol'
+
 /* ------------------------------------------------------------------ */
 /*  Shared types for settings components                              */
 /* ------------------------------------------------------------------ */
+
+export type {
+  ChromeCdpConfig,
+  ChromeCdpPreviewTab,
+  ChromeCdpProfile,
+  ChromeCdpStatus,
+}
 
 export interface SettingsEnvVariable {
   name: string
@@ -92,34 +106,3 @@ export interface SkillInfo {
   hasRichConfig: boolean
 }
 
-/* ------------------------------------------------------------------ */
-/*  Chrome CDP types                                                  */
-/* ------------------------------------------------------------------ */
-
-export interface ChromeCdpConfig {
-  contextId: string | null
-  urlAllow: string[]
-  urlBlock: string[]
-}
-
-export interface ChromeCdpStatus {
-  connected: boolean
-  port?: number
-  browser?: string
-  version?: string
-  tabCount?: number
-  error?: string
-}
-
-export interface ChromeCdpProfile {
-  contextId: string
-  tabCount: number
-  sampleUrls: string[]
-  isDefault: boolean
-}
-
-export interface ChromeCdpPreviewTab {
-  targetId: string
-  title: string
-  url: string
-}

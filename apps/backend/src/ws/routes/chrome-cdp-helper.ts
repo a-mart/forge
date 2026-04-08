@@ -1,32 +1,10 @@
 import { access, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { ChromeCdpEndpoint, ChromeCdpTargetInfo, ChromeCdpVersionInfo } from "@forge/protocol";
 import { WebSocket, type RawData } from "ws";
 
 const DEFAULT_CDP_TIMEOUT_MS = 5_000;
-
-export interface ChromeCdpEndpoint {
-  portFile: string;
-  port: number;
-  wsPath: string;
-  wsUrl: string;
-}
-
-export interface ChromeCdpTargetInfo {
-  targetId: string;
-  type: string;
-  title: string;
-  url: string;
-  browserContextId?: string;
-}
-
-export interface ChromeCdpVersionInfo {
-  Browser?: string;
-  product?: string;
-  revision?: string;
-  userAgent?: string;
-  jsVersion?: string;
-}
 
 interface CdpErrorPayload {
   code?: number;

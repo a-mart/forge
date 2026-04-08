@@ -1,12 +1,18 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import type {
+  ChromeCdpConfig,
+  ChromeCdpPreviewTab,
+  ChromeCdpProfile,
+  ChromeCdpStatus,
+  ChromeCdpTargetInfo,
+  ChromeCdpVersionInfo
+} from "@forge/protocol";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
 import {
   queryChromeBrowserContexts,
   queryChromeCdpTargets,
   queryChromeCdpVersion,
-  resolveChromeCdpEndpoint,
-  type ChromeCdpTargetInfo,
-  type ChromeCdpVersionInfo
+  resolveChromeCdpEndpoint
 } from "./chrome-cdp-helper.js";
 import { applyCorsHeaders, readJsonBody, sendJson } from "../http-utils.js";
 import type { HttpRoute } from "./http-route.js";
@@ -17,29 +23,10 @@ const CHROME_CDP_PROFILES_ENDPOINT_PATH = "/api/settings/chrome-cdp/profiles";
 const CHROME_CDP_PREVIEW_ENDPOINT_PATH = "/api/settings/chrome-cdp/preview";
 const CHROME_CDP_METHODS = "GET, PUT, POST, OPTIONS";
 
-interface ChromeCdpConfig {
-  contextId: string | null;
-  urlAllow: string[];
-  urlBlock: string[];
-}
-
 interface ChromeCdpConfigUpdate {
   contextId?: string | null;
   urlAllow?: string[];
   urlBlock?: string[];
-}
-
-interface ChromeCdpPreviewTab {
-  targetId: string;
-  title: string;
-  url: string;
-}
-
-interface ChromeCdpProfileSummary {
-  contextId: string;
-  tabCount: number;
-  sampleUrls: string[];
-  isDefault: boolean;
 }
 
 export function createChromeCdpRoutes(options: { swarmManager: SwarmManager }): HttpRoute[] {
@@ -99,7 +86,7 @@ async function handleChromeCdpHttpRequest(
 
   if (request.method === "POST" && requestUrl.pathname === CHROME_CDP_TEST_ENDPOINT_PATH) {
     const result = await runChromeCdpConnectionTest();
-    sendJson(response, 200, result);
+    sendJson(response, 200, { ...result });
     return;
   }
 
@@ -134,12 +121,7 @@ function readCurrentChromeCdpConfig(): ChromeCdpConfig {
   };
 }
 
-async function readChromeCdpStatus(): Promise<{
-  connected: boolean;
-  port?: number;
-  browser?: string;
-  version?: string;
-}> {
+async function readChromeCdpStatus(): Promise<ChromeCdpStatus> {
   try {
     const endpoint = await resolveChromeCdpEndpoint();
     const { version } = await queryChromeCdpVersion({ endpoint });
@@ -201,14 +183,7 @@ async function saveChromeCdpConfigUpdate(
   }
 }
 
-async function runChromeCdpConnectionTest(): Promise<{
-  connected: boolean;
-  port?: number;
-  browser?: string;
-  version?: string;
-  tabCount?: number;
-  error?: string;
-}> {
+async function runChromeCdpConnectionTest(): Promise<ChromeCdpStatus> {
   try {
     const endpoint = await resolveChromeCdpEndpoint();
     const [{ version }, { targets }] = await Promise.all([
@@ -235,7 +210,7 @@ async function runChromeCdpConnectionTest(): Promise<{
 }
 
 async function discoverChromeCdpProfiles(): Promise<{
-  profiles: ChromeCdpProfileSummary[];
+  profiles: ChromeCdpProfile[];
   error?: string;
 }> {
   try {
@@ -275,7 +250,7 @@ async function discoverChromeCdpProfiles(): Promise<{
       });
     }
 
-    const profiles: ChromeCdpProfileSummary[] = Array.from(groupedProfiles.values())
+    const profiles: ChromeCdpProfile[] = Array.from(groupedProfiles.values())
       .map((group) => ({
         contextId: group.contextId,
         tabCount: group.tabs.length,
