@@ -8248,6 +8248,69 @@ describe('SwarmManager', () => {
     expect(state.runtimes.has(sessionAgent.agentId)).toBe(false)
   })
 
+  it.each([
+    {
+      label: 'profile model changes',
+      expectedReason: 'model_change' as const,
+      invoke: async (manager: TestSwarmManager, _rootSession: AgentDescriptor, _sessionAgent: AgentDescriptor, config: SwarmConfig) => {
+        await manager.updateManagerModel('manager', 'pi-5.4')
+      },
+    },
+    {
+      label: 'working-directory changes',
+      expectedReason: 'cwd_change' as const,
+      invoke: async (manager: TestSwarmManager, _rootSession: AgentDescriptor, _sessionAgent: AgentDescriptor, config: SwarmConfig) => {
+        const nextCwd = join(config.defaultCwd, 'worktrees', 'triggered-recycle')
+        await mkdir(nextCwd, { recursive: true })
+        await manager.updateManagerCwd('manager', nextCwd)
+      },
+    },
+    {
+      label: 'specialist roster changes',
+      expectedReason: 'specialist_roster_change' as const,
+      invoke: async (manager: TestSwarmManager, _rootSession: AgentDescriptor, _sessionAgent: AgentDescriptor, _config: SwarmConfig) => {
+        await manager.notifySpecialistRosterChanged('manager')
+      },
+    },
+    {
+      label: 'project-agent directory changes',
+      expectedReason: 'project_agent_directory_change' as const,
+      invoke: async (manager: TestSwarmManager, _rootSession: AgentDescriptor, _sessionAgent: AgentDescriptor, _config: SwarmConfig) => {
+        await manager.notifyProjectAgentsChanged('manager')
+      },
+    },
+  ])('routes manager runtime recycle policy through $label', async ({ invoke, expectedReason }) => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    const rootSession = await bootWithDefaultManager(manager, config)
+    const { sessionAgent } = await manager.createSession('manager', { label: 'Alt Session' })
+
+    const applyRecyclePolicySpy = vi
+      .spyOn(
+        manager as unknown as {
+          applyManagerRuntimeRecyclePolicy: (
+            agentId: string,
+            reason:
+              | 'model_change'
+              | 'cwd_change'
+              | 'idle_transition'
+              | 'prompt_mode_change'
+              | 'project_agent_directory_change'
+              | 'specialist_roster_change',
+          ) => Promise<'recycled' | 'deferred' | 'none'>
+        },
+        'applyManagerRuntimeRecyclePolicy',
+      )
+      .mockResolvedValue('deferred')
+
+    await invoke(manager, rootSession, sessionAgent, config)
+
+    expect(applyRecyclePolicySpy.mock.calls).toEqual([
+      [rootSession.agentId, expectedReason],
+      [sessionAgent.agentId, expectedReason],
+    ])
+  })
+
   it('maps spawn_agent model presets to canonical runtime models with highest reasoning', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
