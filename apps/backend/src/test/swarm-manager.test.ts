@@ -592,6 +592,32 @@ async function makeTempConfig(port = 8790): Promise<SwarmConfig> {
   }
 }
 
+async function installForgeLifecycleLogger(config: SwarmConfig, logPath: string): Promise<void> {
+  const extensionsDir = join(config.paths.dataDir, 'extensions')
+  await mkdir(extensionsDir, { recursive: true })
+  await writeFile(
+    join(extensionsDir, 'lifecycle.ts'),
+    `
+      import { appendFileSync } from "node:fs"
+      export default (forge) => {
+        forge.on("session:lifecycle", (event) => {
+          appendFileSync(${JSON.stringify(logPath)}, JSON.stringify(event) + "\\n", "utf8")
+        })
+      }
+    `,
+    'utf8',
+  )
+}
+
+async function readJsonlFile<T>(path: string): Promise<T[]> {
+  const content = await readFile(path, 'utf8')
+  return content
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as T)
+}
+
 async function bootWithDefaultManager(
   manager: SwarmManager & { runtimeByAgentId?: Map<string, FakeRuntime> },
   config: SwarmConfig,
@@ -1710,6 +1736,36 @@ describe('SwarmManager', () => {
     })
     expect(await readFile(getProjectAgentPromptPath(config.paths.dataDir, 'manager', 'release-notes'), 'utf8')).toBe(
       'You are the release notes project agent.',
+    )
+  })
+
+  it('emits Forge session lifecycle hooks for createAndPromoteProjectAgent', async () => {
+    const config = await makeTempConfig()
+    const logPath = join(config.paths.dataDir, 'project-agent-lifecycle.jsonl')
+    await installForgeLifecycleLogger(config, logPath)
+
+    const manager = new ProjectAgentAwareSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const creator = await manager.createSession('manager', {
+      label: 'Agent Creator',
+      sessionPurpose: 'agent_creator',
+    })
+
+    const result = await manager.createAndPromoteProjectAgent(creator.sessionAgent.agentId, {
+      sessionName: 'Release Notes',
+      whenToUse: 'Draft release notes',
+      systemPrompt: 'You are the release notes project agent.',
+    })
+
+    const events = await readJsonlFile<any>(logPath)
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action: 'created',
+          session: expect.objectContaining({ sessionAgentId: result.agentId, profileId: 'manager' }),
+        }),
+      ]),
     )
   })
 
@@ -7932,6 +7988,43 @@ describe('SwarmManager', () => {
     expect(deleted.terminatedWorkerIds).toContain(ownedWorker.agentId)
     expect(manager.listAgents().some((agent) => agent.agentId === secondary.agentId)).toBe(false)
     expect(manager.listAgents().some((agent) => agent.agentId === ownedWorker.agentId)).toBe(false)
+  })
+
+  it('emits Forge session lifecycle hooks for root manager create/delete and per-session delete', async () => {
+    const config = await makeTempConfig()
+    const logPath = join(config.paths.dataDir, 'lifecycle.jsonl')
+    await installForgeLifecycleLogger(config, logPath)
+
+    const manager = new TestSwarmManager(config)
+    await manager.boot()
+
+    const created = await manager.createManager('cortex', {
+      name: 'Ops Manager',
+      cwd: config.defaultCwd,
+    })
+    const childSession = await manager.createSession(created.profileId ?? created.agentId, {
+      label: 'Ops Child',
+    })
+
+    await manager.deleteManager('cortex', created.agentId)
+
+    const events = await readJsonlFile<any>(logPath)
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action: 'created',
+          session: expect.objectContaining({ sessionAgentId: created.agentId }),
+        }),
+        expect.objectContaining({
+          action: 'deleted',
+          session: expect.objectContaining({ sessionAgentId: created.agentId }),
+        }),
+        expect.objectContaining({
+          action: 'deleted',
+          session: expect.objectContaining({ sessionAgentId: childSession.sessionAgent.agentId }),
+        }),
+      ]),
+    )
   })
 
   it('maps create_manager model presets to canonical runtime models with highest reasoning', async () => {
