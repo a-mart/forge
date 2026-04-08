@@ -19,6 +19,11 @@ import {
   resetCortexPromptSurface,
   saveCortexPromptSurface,
 } from "../../swarm/cortex-prompt-surfaces.js";
+import type {
+  PromptEntry,
+  PromptPreviewProvider,
+  PromptRegistryForRoutes,
+} from "../../swarm/prompt-contracts.js";
 import type { VersioningMutationSink } from "../../versioning/versioning-types.js";
 import {
   applyCorsHeaders,
@@ -26,63 +31,6 @@ import {
   sendJson,
 } from "../http-utils.js";
 import type { HttpRoute } from "./http-route.js";
-
-// ---------------------------------------------------------------------------
-// Minimal PromptRegistry interface consumed by these routes.
-// The full implementation lives in `swarm/prompt-registry.ts` (built by
-// another worker).  We define just the surface we need here so that the
-// routes compile independently.
-// ---------------------------------------------------------------------------
-
-export interface PromptEntry {
-  category: PromptCategory;
-  promptId: string;
-  content: string;
-  sourceLayer: PromptSourceLayer;
-  sourcePath: string;
-}
-
-export interface PromptRegistryForRoutes {
-  resolve(
-    category: PromptCategory,
-    promptId: string,
-    profileId?: string,
-  ): Promise<string>;
-
-  resolveEntry(
-    category: PromptCategory,
-    promptId: string,
-    profileId?: string,
-  ): Promise<PromptEntry | undefined>;
-
-  resolveAtLayer(
-    category: PromptCategory,
-    promptId: string,
-    layer: PromptSourceLayer,
-    profileId?: string,
-  ): Promise<string | undefined>;
-
-  listAll(profileId?: string): Promise<PromptEntry[]>;
-
-  save(
-    category: PromptCategory,
-    promptId: string,
-    content: string,
-    profileId: string,
-  ): Promise<void>;
-
-  deleteOverride(
-    category: PromptCategory,
-    promptId: string,
-    profileId: string,
-  ): Promise<void>;
-
-  hasOverride(
-    category: PromptCategory,
-    promptId: string,
-    profileId: string,
-  ): Promise<boolean>;
-}
 
 // ---------------------------------------------------------------------------
 // Route path patterns
@@ -99,20 +47,6 @@ const PROMPT_ITEM_PATTERN = /^\/api\/prompts\/([^/]+)\/([^/]+)$/;
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
-
-export interface PromptPreviewSection {
-  label: string;
-  content: string;
-  source: string;
-}
-
-export interface PromptPreviewResponse {
-  sections: PromptPreviewSection[];
-}
-
-export interface PromptPreviewProvider {
-  previewManagerSystemPrompt(profileId: string): Promise<PromptPreviewResponse>;
-}
 
 export function createPromptRoutes(options: {
   promptRegistry: PromptRegistryForRoutes;
