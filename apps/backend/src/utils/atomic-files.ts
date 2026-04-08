@@ -1,4 +1,5 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+// Atomic refers to the write operation (temp file + rename), not to concurrent access.
 import { basename, dirname, join } from "node:path";
 import { renameWithRetry } from "../swarm/retry-rename.js";
 import { isEnoentError } from "./fs-errors.js";
@@ -37,6 +38,12 @@ export async function readJsonFileIfExists<T = unknown>(filePath: string): Promi
   }
 }
 
+/**
+ * Read-modify-write a JSON file. The write itself is atomic (temp+rename),
+ * but there is no per-file lock — concurrent callers may observe stale reads.
+ * Safe for single-caller-at-a-time use (e.g., startup, settings save).
+ * Do NOT use in hot paths with concurrent writers without external serialization.
+ */
 export async function updateJsonFileAtomic<T>(
   filePath: string,
   defaultValue: T,

@@ -1,4 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+// Compatibility re-exports — these types were extracted to prompt-contracts.ts
+export type { PromptEntry, PromptRegistryForRoutes, PromptPreviewProvider, PromptPreviewResponse, PromptPreviewSection } from "../../swarm/prompt-contracts.js";
 import type {
   PromptCategory,
   PromptSourceLayer,
