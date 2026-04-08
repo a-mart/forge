@@ -15,6 +15,9 @@ const repoRoot = path.resolve(electronDir, '..', '..')
 const backendWorkspaceDir = path.join(repoRoot, 'apps', 'backend')
 const backendWorkspaceManifestPath = path.join(backendWorkspaceDir, 'package.json')
 const backendBuildEntry = path.join(backendWorkspaceDir, 'dist', 'index.js')
+const uiWorkspaceDir = path.join(repoRoot, 'apps', 'ui')
+const uiBuildOutputDir = path.join(uiWorkspaceDir, '.output')
+const uiPublicOutputDir = path.join(uiBuildOutputDir, 'public')
 const stageDir = path.join(electronDir, '.stage')
 const releaseDir = path.join(electronDir, 'release')
 const backendStageDir = path.join(stageDir, 'backend')
@@ -102,6 +105,7 @@ async function main() {
   await cleanReleaseDir()
   await rm(stageDir, { recursive: true, force: true })
   await mkdir(stageDir, { recursive: true })
+  await cleanUiBuildOutput()
 
   await run(pnpmCommand, ['--dir', repoRoot, '--filter', '@forge/protocol', 'build'])
   await run(pnpmCommand, ['--dir', repoRoot, '--filter', '@forge/backend', 'build'])
@@ -554,13 +558,115 @@ async function countFiles(rootDir) {
   return fileCount
 }
 
-async function stageRendererAssets() {
-  await copyDirectory(path.join(repoRoot, 'apps', 'ui', '.output', 'public'), uiStageDir)
+async function cleanUiBuildOutput() {
+  await rm(uiBuildOutputDir, { recursive: true, force: true })
+  console.log(`[electron/build-all] Cleaned UI build output directory ${uiBuildOutputDir}`)
+}
 
-  const shellPath = path.join(uiStageDir, '_shell.html')
+async function stageRendererAssets() {
+  const nextUiStageDir = `${uiStageDir}.tmp`
+  await rm(nextUiStageDir, { recursive: true, force: true })
+  await copyDirectory(uiPublicOutputDir, nextUiStageDir)
+
+  const shellPath = path.join(nextUiStageDir, '_shell.html')
   if (existsSync(shellPath)) {
-    await cp(shellPath, path.join(uiStageDir, 'index.html'))
+    await cp(shellPath, path.join(nextUiStageDir, 'index.html'))
   }
+
+  await synchronizeStagedRendererIndex(nextUiStageDir)
+  await assertStagedRendererAssetReferences(nextUiStageDir)
+  await rm(uiStageDir, { recursive: true, force: true })
+  await fs.promises.rename(nextUiStageDir, uiStageDir)
+}
+
+async function synchronizeStagedRendererIndex(stagedRendererDir) {
+  const indexPath = path.join(stagedRendererDir, 'index.html')
+  const shellPath = path.join(stagedRendererDir, '_shell.html')
+  const stagedAssetsDir = path.join(stagedRendererDir, 'assets')
+  const stagedAssetEntries = existsSync(stagedAssetsDir) ? await fs.promises.readdir(stagedAssetsDir) : []
+  const selectedAssets = {
+    mainJs: selectUniqueStagedRendererAsset(stagedAssetEntries, /^main-[A-Za-z0-9_-]+\.js$/, 'main JavaScript bundle'),
+    mainCss: selectUniqueStagedRendererAsset(stagedAssetEntries, /^main-[A-Za-z0-9_-]+\.css$/, 'main stylesheet bundle'),
+    stylesCss: selectUniqueStagedRendererAsset(stagedAssetEntries, /^styles-[A-Za-z0-9_-]+\.css$/, 'styles stylesheet bundle'),
+  }
+
+  let html = await readFile(indexPath, 'utf8')
+  html = html
+    .replace(/((?:\.\/|\/\.\/|\/)?assets\/)main-[A-Za-z0-9_-]+\.js/g, `$1${selectedAssets.mainJs}`)
+    .replace(/((?:\.\/|\/\.\/|\/)?assets\/)main-[A-Za-z0-9_-]+\.css/g, `$1${selectedAssets.mainCss}`)
+    .replace(/((?:\.\/|\/\.\/|\/)?assets\/)styles-[A-Za-z0-9_-]+\.css/g, `$1${selectedAssets.stylesCss}`)
+
+  await writeFile(indexPath, html, 'utf8')
+  if (existsSync(shellPath)) {
+    await writeFile(shellPath, html, 'utf8')
+  }
+}
+
+function selectUniqueStagedRendererAsset(stagedAssetEntries, pattern, label) {
+  const matches = stagedAssetEntries.filter((entry) => pattern.test(entry)).sort()
+
+  if (matches.length !== 1) {
+    throw new Error(
+      `Packaged renderer synchronization failed: expected exactly one ${label} in staged assets but found ${matches.length} (${matches.join(', ') || 'none'})`,
+    )
+  }
+
+  return matches[0]
+}
+
+async function assertStagedRendererAssetReferences(stagedRendererDir) {
+  const indexPath = path.join(stagedRendererDir, 'index.html')
+  const html = await readFile(indexPath, 'utf8')
+  const assetReferenceRegex = /(?:\.\/|\/\.\/|\/)?assets\/[^"'()?#\s\\]+/g
+  const referencedAssetPaths = Array.from(
+    new Set((html.match(assetReferenceRegex) ?? []).map((reference) => normalizeRendererAssetReference(reference))),
+  ).sort()
+
+  if (referencedAssetPaths.length === 0) {
+    throw new Error(`Packaged renderer validation failed: no staged asset references were found in ${indexPath}`)
+  }
+
+  const missingAssetPaths = []
+  for (const relativeAssetPath of referencedAssetPaths) {
+    const resolvedAssetPath = path.resolve(stagedRendererDir, relativeAssetPath)
+    assertPathIsWithinDirectory(
+      resolvedAssetPath,
+      stagedRendererDir,
+      'Packaged renderer validation failed: staged renderer asset reference resolved outside the staged UI directory',
+    )
+
+    if (!existsSync(resolvedAssetPath)) {
+      missingAssetPaths.push(relativeAssetPath)
+    }
+  }
+
+  if (missingAssetPaths.length > 0) {
+    const stagedAssetsDir = path.join(stagedRendererDir, 'assets')
+    const stagedAssetEntries = existsSync(stagedAssetsDir) ? (await fs.promises.readdir(stagedAssetsDir)).sort() : []
+    throw new Error(
+      `Packaged renderer validation failed: ${path.relative(repoRoot, indexPath)} references missing staged asset(s): ${missingAssetPaths.join(', ')}. Available staged assets: ${stagedAssetEntries.join(', ') || '(none)'}`,
+    )
+  }
+
+  console.log(
+    `[electron/build-all] Verified staged renderer asset references in ${path.relative(repoRoot, indexPath)} (${referencedAssetPaths.length} files)`,
+  )
+}
+
+function normalizeRendererAssetReference(reference) {
+  if (reference.startsWith('/./')) {
+    return reference.slice(3)
+  }
+
+  if (reference.startsWith('./')) {
+    return reference.slice(2)
+  }
+
+  if (reference.startsWith('/')) {
+    return reference.slice(1)
+  }
+
+  return reference
 }
 
 async function stageBackendResources() {
