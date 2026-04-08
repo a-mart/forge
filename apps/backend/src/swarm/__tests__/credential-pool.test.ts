@@ -31,6 +31,13 @@ function makeOAuthCredential(accessToken: string = "access_tok_123"): AuthCreden
   } as AuthCredential;
 }
 
+function makeApiKeyCredential(apiKey: string = "sk-test-123"): AuthCredential {
+  return {
+    type: "api_key",
+    key: apiKey,
+  } as AuthCredential;
+}
+
 function writeAuthFile(data: Record<string, unknown>): Promise<void> {
   return writeFile(authFile, JSON.stringify(data, null, 2), "utf8");
 }
@@ -101,6 +108,29 @@ describe("CredentialPoolService — migration", () => {
     expect(pool.credentials).toHaveLength(1);
     expect(pool.credentials[0].id).toBe("cred_existing");
     expect(pool.credentials[0].requestCount).toBe(99);
+  });
+
+  it("auto-migrates anthropic OAuth credentials into a one-account pool", async () => {
+    await writeAuthFile({ anthropic: makeOAuthCredential("anthropic_oauth_token") });
+
+    const service = new CredentialPoolService(deps);
+    const pool = await service.listPool("anthropic");
+
+    expect(pool.strategy).toBe("fill_first");
+    expect(pool.credentials).toHaveLength(1);
+    expect(pool.credentials[0].isPrimary).toBe(true);
+    expect(pool.credentials[0].health).toBe("healthy");
+    expect(pool.credentials[0].label).toBe("Primary Account");
+  });
+
+  it("does not auto-migrate anthropic API-key credentials into a pool", async () => {
+    await writeAuthFile({ anthropic: makeApiKeyCredential("sk-ant-api-key") });
+
+    const service = new CredentialPoolService(deps);
+    const pool = await service.listPool("anthropic");
+
+    expect(pool.strategy).toBe("fill_first");
+    expect(pool.credentials).toHaveLength(0);
   });
 });
 
@@ -267,6 +297,24 @@ describe("CredentialPoolService — mutations", () => {
     expect(cred).toBeDefined();
   });
 
+  it("addCredential rejects when a bare Anthropic API key already exists", async () => {
+    await writeAuthFile({ anthropic: makeApiKeyCredential("sk-ant-api-key") });
+
+    const service = new CredentialPoolService(deps);
+
+    await expect(
+      service.addCredential("anthropic", makeOAuthCredential("anthropic_oauth"), {
+        label: "Anthropic OAuth Account",
+      })
+    ).rejects.toThrow("Remove the existing Anthropic API key before adding OAuth accounts");
+
+    const pool = await service.listPool("anthropic");
+    expect(pool.credentials).toHaveLength(0);
+
+    const authStorage = AuthStorage.create(authFile);
+    expect((authStorage.get("anthropic") as any)?.key).toBe("sk-ant-api-key");
+  });
+
   it("removeCredential removes from pool and auth.json", async () => {
     await writeAuthFile({ "openai-codex": makeOAuthCredential() });
 
@@ -287,16 +335,23 @@ describe("CredentialPoolService — mutations", () => {
     expect(authStorage.get(`openai-codex:${added.id}`)).toBeUndefined();
   });
 
-  it("removeCredential rejects when only one credential remains", async () => {
-    await writeAuthFile({ "openai-codex": makeOAuthCredential() });
+  it("removeCredential allows removing the last pooled Anthropic credential and disconnects the provider", async () => {
+    await writeAuthFile({ anthropic: makeOAuthCredential("anthropic_primary") });
 
     const service = new CredentialPoolService(deps);
-    const pool = await service.listPool("openai-codex");
+    const pool = await service.listPool("anthropic");
     const credId = pool.credentials[0].id;
 
-    await expect(service.removeCredential("openai-codex", credId)).rejects.toThrow(
-      /Cannot remove the only credential/
-    );
+    await service.removeCredential("anthropic", credId);
+
+    const updatedPool = await service.listPool("anthropic");
+    expect(updatedPool.credentials).toHaveLength(0);
+
+    const authStorage = AuthStorage.create(authFile);
+    expect(authStorage.get("anthropic")).toBeUndefined();
+    expect(authStorage.get(`anthropic:${credId}`)).toBeUndefined();
+
+    await expect(readPoolFile()).resolves.toEqual({});
   });
 
   it("removeCredential auto-promotes next credential when primary is removed", async () => {
@@ -497,15 +552,69 @@ describe("CredentialPoolService — provider guard", () => {
   it("rejects unsupported providers", async () => {
     const service = new CredentialPoolService(deps);
 
-    await expect(service.listPool("anthropic")).rejects.toThrow(/only supported for 'openai-codex'/);
-    await expect(service.select("anthropic")).rejects.toThrow(/only supported for 'openai-codex'/);
-    await expect(service.setStrategy("anthropic", "fill_first")).rejects.toThrow(
-      /only supported for 'openai-codex'/
-    );
+    await expect(service.listPool("xai")).rejects.toThrow(/only supported for/);
+    await expect(service.select("xai")).rejects.toThrow(/only supported for/);
+    await expect(service.setStrategy("xai", "fill_first")).rejects.toThrow(/only supported for/);
   });
 });
 
 // ── Persistence round-trip ──
+
+describe("CredentialPoolService — anthropic", () => {
+  it("supports anthropic selection, primary swap, and removal behavior", async () => {
+    await writeAuthFile({ anthropic: makeOAuthCredential("anthropic_primary") });
+
+    const service = new CredentialPoolService(deps);
+    const initialPool = await service.listPool("anthropic");
+    const originalPrimaryId = initialPool.credentials[0].id;
+
+    const second = await service.addCredential("anthropic", makeOAuthCredential("anthropic_second"), {
+      label: "Second Anthropic Account",
+    });
+
+    const selection = await service.select("anthropic");
+    expect(selection).not.toBeNull();
+    expect(selection!.credentialId).toBe(originalPrimaryId);
+    expect(selection!.authStorageKey).toBe("anthropic");
+
+    await service.setPrimary("anthropic", second.id);
+
+    let authStorage = AuthStorage.create(authFile);
+    expect((authStorage.get("anthropic") as any).access).toBe("anthropic_second");
+    expect((authStorage.get(`anthropic:${originalPrimaryId}`) as any).access).toBe("anthropic_primary");
+
+    await service.removeCredential("anthropic", second.id);
+
+    const updatedPool = await service.listPool("anthropic");
+    expect(updatedPool.credentials).toHaveLength(1);
+    expect(updatedPool.credentials[0].id).toBe(originalPrimaryId);
+    expect(updatedPool.credentials[0].isPrimary).toBe(true);
+    authStorage = AuthStorage.create(authFile);
+    expect((authStorage.get("anthropic") as any).access).toBe("anthropic_primary");
+  });
+
+  it("buildRuntimeAuthData maps selected anthropic credential to the bare provider key", async () => {
+    await writeAuthFile({
+      anthropic: makeOAuthCredential("anthropic_primary"),
+      "openai-codex": makeOAuthCredential("openai_primary"),
+      xai: makeApiKeyCredential("xai_api_key"),
+    });
+
+    const service = new CredentialPoolService(deps);
+    await service.listPool("anthropic");
+
+    const second = await service.addCredential("anthropic", makeOAuthCredential("anthropic_second"), {
+      label: "Second Anthropic Account",
+    });
+
+    const authData = await service.buildRuntimeAuthData("anthropic", second.id);
+
+    expect((authData["anthropic"] as any).access).toBe("anthropic_second");
+    expect(Object.keys(authData).filter((key) => key.startsWith("anthropic:"))).toHaveLength(0);
+    expect((authData["openai-codex"] as any).access).toBe("openai_primary");
+    expect((authData["xai"] as any).key).toBe("xai_api_key");
+  });
+});
 
 describe("CredentialPoolService — persistence", () => {
   it("persists and reloads pool state across service instances", async () => {

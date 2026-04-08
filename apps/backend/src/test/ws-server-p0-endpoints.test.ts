@@ -79,6 +79,34 @@ class FakeSwarmManager extends EventEmitter {
     return []
   }
 
+  async listCredentialPool(provider: string): Promise<{ strategy: 'fill_first'; credentials: Array<Record<string, unknown>> }> {
+    if (provider === 'openai-codex') {
+      return {
+        strategy: 'fill_first',
+        credentials: [
+          {
+            id: 'cred-openai-primary',
+            label: 'Primary Account',
+            isPrimary: true,
+            health: 'healthy',
+            cooldownUntil: null,
+            requestCount: 0,
+            createdAt: '2026-01-01T00:00:00.000Z',
+          },
+        ],
+      }
+    }
+
+    if (provider === 'anthropic') {
+      return {
+        strategy: 'fill_first',
+        credentials: [],
+      }
+    }
+
+    throw new Error(`Credential pooling is only supported for 'openai-codex', 'anthropic', got '${provider}'`)
+  }
+
   async deleteSettingsAuth(_provider: string): Promise<void> {}
 
   async addPooledCredential(provider: string, credential: unknown, identity?: unknown): Promise<{ id: string }> {
@@ -721,6 +749,88 @@ describe('SwarmWebSocketServer P0 endpoints', () => {
           type: 'oauth',
           accessToken: 'pooled-oauth-access-token',
           refreshToken: 'pooled-oauth-refresh-token',
+        },
+      })
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('supports Anthropic pool add-account OAuth prompt responses via the existing respond endpoint', async () => {
+    oauthMockState.anthropicLogin.mockImplementation(async (callbacks: any) => {
+      callbacks.onProgress?.('Preparing pooled Anthropic login')
+      callbacks.onAuth?.({
+        url: 'https://auth.example.test/anthropic',
+        instructions: 'Open the URL in your browser.',
+      })
+
+      const code = await callbacks.onPrompt?.({
+        message: 'Paste the Anthropic code',
+        placeholder: 'anthropic-code-123',
+      })
+
+      callbacks.onProgress?.(`Received code: ${code}`)
+
+      return {
+        accessToken: 'anthropic-pooled-oauth-access-token',
+        refreshToken: 'anthropic-pooled-oauth-refresh-token',
+      }
+    })
+
+    const config = await makeTempConfig({ managerId: 'manager' })
+    const manager = new FakeSwarmManager(config, [createManagerDescriptor(config.paths.rootDir, 'manager')])
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager as unknown as never,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: false,
+    })
+
+    await server.start()
+
+    try {
+      const streamResponse = await fetch(
+        `http://${config.host}:${config.port}/api/settings/auth/anthropic/accounts/login`,
+        {
+          method: 'POST',
+        },
+      )
+
+      expect(streamResponse.status).toBe(200)
+      expect(streamResponse.headers.get('content-type')).toContain('text/event-stream')
+
+      let responded = false
+      const events = await readSseEvents(streamResponse, async (event) => {
+        if (event.event !== 'prompt' || responded) {
+          return
+        }
+
+        responded = true
+        const respondResponse = await fetch(
+          `http://${config.host}:${config.port}/api/settings/auth/login/anthropic/respond`,
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ value: 'anthropic-pool-code-from-user' }),
+          },
+        )
+
+        const payload = await parseJsonResponse(respondResponse)
+        expect(payload.status).toBe(200)
+        expect(payload.json.ok).toBe(true)
+      })
+
+      expect(events.map((event) => event.event)).toEqual(
+        expect.arrayContaining(['progress', 'auth_url', 'prompt', 'complete']),
+      )
+      expect(oauthMockState.anthropicLogin).toHaveBeenCalledTimes(1)
+      expect(manager.pooledCredentialAdds).toHaveLength(1)
+      expect(manager.pooledCredentialAdds[0]).toMatchObject({
+        provider: 'anthropic',
+        credential: {
+          type: 'oauth',
+          accessToken: 'anthropic-pooled-oauth-access-token',
+          refreshToken: 'anthropic-pooled-oauth-refresh-token',
         },
       })
     } finally {

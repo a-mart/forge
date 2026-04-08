@@ -12,7 +12,7 @@ import { getAgentsStoreFilePath, getProfilesDir, getSharedStatsCachePath } from 
 
 export const STATS_CACHE_TTL_MS = 2 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
-const STATS_CACHE_VERSION = 6;
+const STATS_CACHE_VERSION = 7;
 const SERVER_TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
 const GIT_COMMAND_TIMEOUT_MS = 10_000;
 const GIT_COMMAND_MAX_BUFFER_BYTES = 10 * 1024 * 1024;

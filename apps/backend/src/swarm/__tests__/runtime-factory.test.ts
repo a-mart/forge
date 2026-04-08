@@ -27,6 +27,8 @@ const piAiMockState = vi.hoisted(() => ({
 }));
 
 const piCodingAgentMockState = vi.hoisted(() => ({
+  authStorageCreate: vi.fn(() => ({})),
+  authStorageInMemory: vi.fn((data: unknown) => ({ kind: "in-memory", data })),
   createAgentSession: vi.fn(),
   compact: vi.fn(),
   modelRegistryCreateArgs: vi.fn(),
@@ -41,7 +43,8 @@ vi.mock("@mariozechner/pi-ai", () => ({
 
 vi.mock("@mariozechner/pi-coding-agent", () => ({
   AuthStorage: {
-    create: vi.fn(() => ({})),
+    create: (...args: unknown[]) => piCodingAgentMockState.authStorageCreate(...args),
+    inMemory: (...args: unknown[]) => piCodingAgentMockState.authStorageInMemory(...args),
   },
   DefaultResourceLoader: class {
     constructor(_options: unknown) {}
@@ -170,6 +173,7 @@ function createFactory(
   rootDir: string,
   overrides: {
     logDebug?: (message: string, details?: unknown) => void;
+    getCredentialPoolService?: () => any;
   } = {},
 ): RuntimeFactory {
   return new RuntimeFactory({
@@ -194,6 +198,7 @@ function createFactory(
     now: () => "2026-01-01T00:00:00.000Z",
     logDebug: overrides.logDebug ?? (() => {}),
     getPiModelsJsonPath: () => getPiModelsProjectionPath(join(rootDir, "data")),
+    getCredentialPoolService: overrides.getCredentialPoolService,
     getMemoryRuntimeResources: async () => ({
       memoryContextFile: {
         path: join(rootDir, "memory.md"),
@@ -226,6 +231,8 @@ describe("RuntimeFactory", () => {
     resetClaudeSdkLoaderForTests();
     piAiMockState.getModel.mockReset();
     piAiMockState.getModels.mockClear();
+    piCodingAgentMockState.authStorageCreate.mockClear();
+    piCodingAgentMockState.authStorageInMemory.mockClear();
     piCodingAgentMockState.createAgentSession.mockReset();
     piCodingAgentMockState.compact.mockReset();
     piCodingAgentMockState.modelRegistryCreateArgs.mockReset();
@@ -301,6 +308,60 @@ describe("RuntimeFactory", () => {
     expect(piCodingAgentMockState.modelRegistryCreateArgs).not.toHaveBeenCalled();
     expect(piCodingAgentMockState.createAgentSession).not.toHaveBeenCalled();
   });
+
+  it("selects pooled Anthropic credentials for Pi runtimes", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    await mkdir(rootDir, { recursive: true });
+
+    const pool = {
+      getPoolSize: vi.fn().mockResolvedValue(2),
+      select: vi.fn().mockResolvedValue({
+        credentialId: "cred_anthropic_second",
+        authStorageKey: "anthropic:cred_anthropic_second",
+      }),
+      getEarliestCooldownExpiry: vi.fn(),
+      buildRuntimeAuthData: vi.fn().mockResolvedValue({
+        anthropic: { type: "oauth", access: "anthropic-token" },
+        "openai-codex": { type: "oauth", access: "openai-token" },
+      }),
+      markUsed: vi.fn().mockResolvedValue(undefined),
+    }
+
+    const factory = createFactory(rootDir, {
+      getCredentialPoolService: () => pool as any,
+    })
+
+    const selection = await (factory as unknown as {
+      selectPooledCredential: (descriptor: AgentDescriptor) => Promise<unknown>
+    }).selectPooledCredential(
+      createDescriptor(rootDir, {
+        model: {
+          provider: "anthropic",
+          modelId: "claude-opus-4-6",
+          thinkingLevel: "high",
+        },
+      }),
+    )
+
+    expect(pool.getPoolSize).toHaveBeenCalledWith("anthropic")
+    expect(pool.select).toHaveBeenCalledWith("anthropic")
+    expect(pool.buildRuntimeAuthData).toHaveBeenCalledWith("anthropic", "cred_anthropic_second")
+    expect(pool.markUsed).toHaveBeenCalledWith("anthropic", "cred_anthropic_second")
+    expect(piCodingAgentMockState.authStorageInMemory).toHaveBeenCalledWith({
+      anthropic: { type: "oauth", access: "anthropic-token" },
+      "openai-codex": { type: "oauth", access: "openai-token" },
+    })
+    expect(selection).toEqual({
+      authStorage: {
+        kind: "in-memory",
+        data: {
+          anthropic: { type: "oauth", access: "anthropic-token" },
+          "openai-codex": { type: "oauth", access: "openai-token" },
+        },
+      },
+      credentialId: "cred_anthropic_second",
+    })
+  })
 
   it("passes auth headers and custom instructions to Pi compaction in the correct argument order", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));

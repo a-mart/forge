@@ -11,6 +11,7 @@ import type { SwarmConfig } from '../swarm/types.js'
 
 interface TestPaths {
   sharedDir: string
+  sharedAuthDir: string
   sharedAuthFile: string
   sharedSecretsFile: string
   authFile: string
@@ -19,9 +20,11 @@ interface TestPaths {
 
 function buildPaths(root: string): TestPaths {
   const sharedDir = join(root, 'shared')
+  const sharedAuthDir = join(sharedDir, 'config', 'auth')
   return {
     sharedDir,
-    sharedAuthFile: join(sharedDir, 'config', 'auth', 'auth.json'),
+    sharedAuthDir,
+    sharedAuthFile: join(sharedAuthDir, 'auth.json'),
     sharedSecretsFile: join(sharedDir, 'config', 'secrets.json'),
     authFile: join(root, 'auth', 'auth.json'),
     secretsFile: join(root, 'secrets.json'),
@@ -32,6 +35,7 @@ function createConfig(paths: TestPaths): SwarmConfig {
   return {
     paths: {
       sharedDir: paths.sharedDir,
+      sharedAuthDir: paths.sharedAuthDir,
       sharedAuthFile: paths.sharedAuthFile,
       sharedSecretsFile: paths.sharedSecretsFile,
       authFile: paths.authFile,
@@ -46,6 +50,15 @@ function createService(paths: TestPaths): SecretsEnvService {
     ensureSkillMetadataLoaded: async () => undefined,
     getSkillMetadata: () => [],
   })
+}
+
+function makeOAuthCredential(accessToken = 'anthropic-oauth-token') {
+  return {
+    type: 'oauth',
+    access: accessToken,
+    refresh: 'refresh-token',
+    expires: new Date(Date.now() + 60_000).toISOString(),
+  } as any
 }
 
 describe('SecretsEnvService path migration', () => {
@@ -122,6 +135,27 @@ describe('SecretsEnvService path migration', () => {
 
     expect((anthropic as any)?.key ?? (anthropic as any)?.access).toBe('legacy-anthropic-key')
     expect((openai as any)?.key ?? (openai as any)?.access).toBe('new-openai-key')
+  })
+
+  it('rejects setting an Anthropic API key while pooled Anthropic OAuth accounts exist', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'secrets-env-service-pooled-anthropic-'))
+    const paths = buildPaths(root)
+    const service = createService(paths)
+
+    await mkdir(join(root, 'shared', 'config', 'auth'), { recursive: true })
+    await service.getCredentialPoolService().addCredential('anthropic', makeOAuthCredential(), {
+      label: 'Anthropic OAuth Account',
+    })
+
+    await expect(service.updateSettingsAuth({ anthropic: 'sk-ant-api-key' })).rejects.toThrow(
+      'Remove pooled accounts before setting an API key',
+    )
+
+    const authStorage = AuthStorage.create(paths.sharedAuthFile)
+    expect((authStorage.get('anthropic') as any)?.access).toBe('anthropic-oauth-token')
+
+    const pool = await service.getCredentialPoolService().listPool('anthropic')
+    expect(pool.credentials).toHaveLength(1)
   })
 
   it('reports managed model provider availability from canonical secrets/auth plus process env fallback', async () => {

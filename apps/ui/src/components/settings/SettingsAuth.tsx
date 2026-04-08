@@ -33,6 +33,7 @@ import {
   submitSettingsAuthOAuthPrompt,
   toErrorMessage,
 } from './settings-api'
+import { CredentialPoolPanel } from './CredentialPoolPanel'
 import { OpenAICredentialPool } from './OpenAICredentialPool'
 
 /* ------------------------------------------------------------------ */
@@ -362,6 +363,21 @@ export function SettingsAuth({ wsUrl }: SettingsAuthProps) {
     }
   }, [abortAllOAuthLoginFlows])
 
+  // Stable callbacks for CredentialPoolPanel to avoid refetch churn
+  const handlePoolError = useCallback((msg: string) => {
+    setAuthError(msg)
+    setAuthSuccess(null)
+  }, [])
+
+  const handlePoolSuccess = useCallback((msg: string) => {
+    setAuthSuccess(msg)
+    setAuthError(null)
+  }, [])
+
+  const handlePoolAuthReload = useCallback(() => {
+    void loadAuth()
+  }, [loadAuth])
+
   const handleSaveAuth = async (provider: SettingsAuthProviderId) => {
     const value = authDraftByProvider[provider]?.trim() ?? ''
     if (!value) {
@@ -608,21 +624,29 @@ export function SettingsAuth({ wsUrl }: SettingsAuthProps) {
         ) : (
           <div className="space-y-3">
             {SETTINGS_AUTH_PROVIDER_ORDER.map((provider) => {
-              // OpenAI Codex uses the credential pool panel
+              // OpenAI and Anthropic use the credential pool panel
               if (provider === 'openai-codex') {
                 return (
                   <OpenAICredentialPool
                     key={provider}
                     wsUrl={wsUrl}
-                    onError={(msg) => {
-                      setAuthError(msg)
-                      setAuthSuccess(null)
-                    }}
-                    onSuccess={(msg) => {
-                      setAuthSuccess(msg)
-                      setAuthError(null)
-                    }}
-                    onAuthReload={() => void loadAuth()}
+                    onError={handlePoolError}
+                    onSuccess={handlePoolSuccess}
+                    onAuthReload={handlePoolAuthReload}
+                  />
+                )
+              }
+
+              if (provider === 'anthropic') {
+                return (
+                  <CredentialPoolPanel
+                    key={provider}
+                    provider="anthropic"
+                    providerLabel="Anthropic"
+                    wsUrl={wsUrl}
+                    onError={handlePoolError}
+                    onSuccess={handlePoolSuccess}
+                    onAuthReload={handlePoolAuthReload}
                   />
                 )
               }

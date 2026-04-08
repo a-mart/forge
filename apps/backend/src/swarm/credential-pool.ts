@@ -28,7 +28,7 @@ type PersistedPoolFile = Record<string, PersistedProviderPool>;
 
 // ── Constants ──
 
-const SUPPORTED_PROVIDER = "openai-codex";
+const SUPPORTED_PROVIDERS = new Set(["openai-codex", "anthropic"]);
 const POOL_FILENAME = "credential-pool.json";
 
 function generateCredentialId(): string {
@@ -89,26 +89,25 @@ export class CredentialPoolService {
       this.pool = {};
     }
 
-    // Auto-migrate: if no pool for openai-codex but auth.json has a credential
-    if (!this.pool[SUPPORTED_PROVIDER]) {
-      await this.migrateFromAuthFile();
+    // Auto-migrate: if no pool for a supported provider but auth.json has a credential
+    for (const provider of SUPPORTED_PROVIDERS) {
+      if (!this.pool[provider]) {
+        await this.migrateFromAuthFile(provider);
+      }
     }
 
     this.loaded = true;
   }
 
-  private async migrateFromAuthFile(): Promise<void> {
+  private async migrateFromAuthFile(provider: string): Promise<void> {
     const authStorage = AuthStorage.create(this.deps.authFile);
-    const credential = authStorage.get(SUPPORTED_PROVIDER);
-    if (!credential) return;
-
-    const token = extractAuthCredentialToken(credential);
-    if (!token) return;
+    const credential = authStorage.get(provider);
+    if (!shouldMigrateCredential(provider, credential)) return;
 
     const id = generateCredentialId();
     const now = new Date().toISOString();
 
-    this.pool[SUPPORTED_PROVIDER] = {
+    this.pool[provider] = {
       strategy: "fill_first",
       credentials: [
         {
@@ -278,6 +277,11 @@ export class CredentialPoolService {
     this.assertSupportedProvider(provider);
     await this.ensureLoaded();
 
+    const existingCredentialCount = this.pool[provider]?.credentials.length ?? 0;
+    if (existingCredentialCount === 0) {
+      this.assertNoBareCredentialConflict(provider);
+    }
+
     const id = generateCredentialId();
     const now = new Date().toISOString();
 
@@ -319,14 +323,17 @@ export class CredentialPoolService {
     const index = providerPool.credentials.findIndex((c) => c.id === credentialId);
     if (index === -1) throw new Error(`Credential not found: ${credentialId}`);
 
-    if (providerPool.credentials.length === 1) {
-      throw new Error("Cannot remove the only credential. Delete the provider authentication instead.");
-    }
-
     const removed = providerPool.credentials[index];
     providerPool.credentials.splice(index, 1);
 
-    if (removed.isPrimary && providerPool.credentials.length > 0) {
+    if (providerPool.credentials.length === 0) {
+      await this.clearProviderAuth(provider);
+      delete this.pool[provider];
+      await this.persist();
+      return;
+    }
+
+    if (removed.isPrimary) {
       const newPrimary = providerPool.credentials[0];
       await this.promotePrimaryAfterRemoval(provider, newPrimary.id);
       newPrimary.isPrimary = true;
@@ -500,9 +507,20 @@ export class CredentialPoolService {
     await writeJsonFileAtomic(this.poolFilePath, this.pool);
   }
 
+  private assertNoBareCredentialConflict(provider: string): void {
+    const authStorage = AuthStorage.create(this.deps.authFile);
+    const existingCredential = authStorage.get(provider);
+    if (!hasConflictingBareCredential(existingCredential)) {
+      return;
+    }
+
+    throw new Error(getAddCredentialConflictMessage(provider));
+  }
+
   private assertSupportedProvider(provider: string): void {
-    if (provider !== SUPPORTED_PROVIDER) {
-      throw new Error(`Credential pooling is only supported for '${SUPPORTED_PROVIDER}', got '${provider}'`);
+    if (!SUPPORTED_PROVIDERS.has(provider)) {
+      const supportedProviders = Array.from(SUPPORTED_PROVIDERS).map((entry) => `'${entry}'`).join(", ");
+      throw new Error(`Credential pooling is only supported for ${supportedProviders}, got '${provider}'`);
     }
   }
 
@@ -517,6 +535,19 @@ export class CredentialPoolService {
     delete rawAuth[provider];
     delete rawAuth[newPrimaryKey];
     rawAuth[provider] = newPrimaryCred;
+
+    await writeJsonFileAtomic(this.deps.authFile, rawAuth);
+  }
+
+  private async clearProviderAuth(provider: string): Promise<void> {
+    const rawAuth = await readAuthFileRaw(this.deps.authFile);
+    delete rawAuth[provider];
+
+    for (const key of Object.keys(rawAuth)) {
+      if (key.startsWith(`${provider}:`)) {
+        delete rawAuth[key];
+      }
+    }
 
     await writeJsonFileAtomic(this.deps.authFile, rawAuth);
   }
@@ -535,6 +566,17 @@ function toPooledCredentialInfo(entry: PersistedCredentialEntry): PooledCredenti
     requestCount: entry.requestCount,
     createdAt: entry.createdAt,
   };
+}
+
+function shouldMigrateCredential(provider: string, credential: AuthCredential | undefined): boolean {
+  const token = extractAuthCredentialToken(credential);
+  if (!token) return false;
+
+  if (provider === "anthropic") {
+    return credential?.type === "oauth";
+  }
+
+  return provider === "openai-codex";
 }
 
 function extractAuthCredentialToken(credential: AuthCredential | undefined): string | undefined {
@@ -558,6 +600,23 @@ function getAuthCredentialFromRaw(
   }
 
   return value as AuthCredential;
+}
+
+function hasConflictingBareCredential(credential: AuthCredential | undefined): boolean {
+  const token = extractAuthCredentialToken(credential);
+  return Boolean(token) && credential?.type !== "oauth";
+}
+
+function getAddCredentialConflictMessage(provider: string): string {
+  if (provider === "anthropic") {
+    return "Remove the existing Anthropic API key before adding OAuth accounts";
+  }
+
+  if (provider === "openai-codex") {
+    return "Remove the existing OpenAI API key before adding OAuth accounts";
+  }
+
+  return "Remove the existing API key before adding OAuth accounts";
 }
 
 async function writeJsonFileAtomic(target: string, data: unknown): Promise<void> {

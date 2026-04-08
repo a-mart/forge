@@ -993,7 +993,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
   }
 
   /**
-   * Attempt to rotate to a different pooled OpenAI credential on rate-limit/quota errors.
+   * Attempt to rotate to a different pooled provider credential on rate-limit/quota errors.
    * Returns true if a retry was dispatched with a new credential, false otherwise.
    */
   private async attemptCredentialRotation(
@@ -1059,10 +1059,11 @@ export class AgentRuntime implements SwarmAgentRuntime {
       const resetInfo = earliestExpiry
         ? ` Estimated reset: ${new Date(earliestExpiry).toLocaleTimeString()}.`
         : "";
+      const providerLabel = getPooledProviderLabel(pooledProvider);
 
       await this.reportRuntimeError({
         phase: "prompt_dispatch",
-        message: `All OpenAI accounts are rate-limited.${resetInfo}`,
+        message: `All ${providerLabel} accounts are rate-limited.${resetInfo}`,
         details: {
           stage: "credential_pool:all_exhausted",
           exhaustedCredentialId: currentCredId,
@@ -1096,9 +1097,11 @@ export class AgentRuntime implements SwarmAgentRuntime {
         failingProvider
       });
 
+      const providerLabel = getPooledProviderLabel(pooledProvider);
+
       await this.reportRuntimeError({
         phase: "prompt_dispatch",
-        message: `OpenAI rate limit hit — rotating to another account and retrying.`,
+        message: `${providerLabel} rate limit hit — rotating to another account and retrying.`,
         details: {
           stage: "credential_pool:rotating",
           fromCredentialId: currentCredId,
@@ -1731,6 +1734,17 @@ function isLikelyCompactionError(message: string): boolean {
 function normalizeProviderId(provider: string | undefined): string | undefined {
   const normalized = provider?.trim().toLowerCase();
   return normalized ? normalized : undefined;
+}
+
+function getPooledProviderLabel(provider: string | undefined): string {
+  switch (normalizeProviderId(provider)) {
+    case "openai-codex":
+      return "OpenAI";
+    case "anthropic":
+      return "Anthropic";
+    default:
+      return provider?.trim() || "Provider";
+  }
 }
 
 function normalizeRuntimeSessionEvent(event: AgentSessionEvent): RuntimeSessionEvent | null {

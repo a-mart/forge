@@ -532,6 +532,151 @@ describe('AgentRuntime', () => {
     expect(runtime.getStatus()).toBe('idle')
   })
 
+  it('uses provider-neutral Anthropic rotation messages for pooled failover', async () => {
+    const session = new FakeSession()
+    const runtimeErrors: Array<{ phase: string; message: string }> = []
+    const authStorageSet = vi.fn()
+    let promptAttempts = 0
+
+    session.prompt = async (message: string): Promise<void> => {
+      session.promptCalls.push(message)
+      promptAttempts += 1
+      if (promptAttempts < 3) {
+        throw new Error('Request failed with status: 529 {"type":"overloaded_error"}')
+      }
+    }
+
+    ;(session as any).model = { provider: 'anthropic', id: 'claude-opus-4-6' }
+    ;(session as any).modelRegistry = {
+      authStorage: {
+        set: authStorageSet,
+      },
+    }
+
+    const pool = {
+      markAuthError: vi.fn(),
+      markExhausted: vi.fn().mockResolvedValue(undefined),
+      select: vi.fn().mockResolvedValue({
+        credentialId: 'cred_second',
+        authStorageKey: 'anthropic:cred_second',
+      }),
+      getEarliestCooldownExpiry: vi.fn().mockResolvedValue(undefined),
+      buildRuntimeAuthData: vi.fn().mockResolvedValue({
+        anthropic: { type: 'oauth', access: 'anthropic-second-token' },
+      }),
+      markUsed: vi.fn().mockResolvedValue(undefined),
+    }
+
+    const runtime = new AgentRuntime({
+      descriptor: {
+        ...makeDescriptor(),
+        model: {
+          provider: 'anthropic',
+          modelId: 'claude-opus-4-6',
+          thinkingLevel: 'medium',
+        },
+      },
+      session: session as any,
+      callbacks: {
+        onStatusChange: () => {},
+        onRuntimeError: (_agentId, error) => {
+          runtimeErrors.push({
+            phase: error.phase,
+            message: error.message,
+          })
+        },
+      },
+    })
+
+    runtime.pooledCredentialId = 'cred_primary'
+    runtime.pooledCredentialProvider = 'anthropic'
+    runtime.credentialPoolService = pool as any
+
+    const receipt = await runtime.sendMessage('retry with rotation')
+    expect(receipt.acceptedMode).toBe('prompt')
+
+    await waitForCondition(() => session.promptCalls.length === 3)
+
+    expect(pool.markExhausted).toHaveBeenCalledWith(
+      'anthropic',
+      'cred_primary',
+      expect.objectContaining({
+        cooldownUntil: expect.any(Number),
+      }),
+    )
+    expect(pool.select).toHaveBeenCalledWith('anthropic')
+    expect(pool.buildRuntimeAuthData).toHaveBeenCalledWith('anthropic', 'cred_second')
+    expect(pool.markUsed).toHaveBeenCalledWith('anthropic', 'cred_second')
+    expect(authStorageSet).toHaveBeenCalledWith('anthropic', {
+      type: 'oauth',
+      access: 'anthropic-second-token',
+    })
+    expect(runtime.pooledCredentialId).toBe('cred_second')
+    expect(runtimeErrors).toContainEqual({
+      phase: 'prompt_dispatch',
+      message: 'Anthropic rate limit hit — rotating to another account and retrying.',
+    })
+  })
+
+  it('uses provider-neutral Anthropic exhaustion messages when every pooled account is cooling down', async () => {
+    const session = new FakeSession()
+    const runtimeErrors: Array<{ phase: string; message: string }> = []
+
+    session.prompt = async (message: string): Promise<void> => {
+      session.promptCalls.push(message)
+      throw new Error('HTTP 429 too many requests')
+    }
+
+    ;(session as any).model = { provider: 'anthropic', id: 'claude-opus-4-6' }
+
+    const pool = {
+      markAuthError: vi.fn(),
+      markExhausted: vi.fn().mockResolvedValue(undefined),
+      select: vi.fn().mockResolvedValue(null),
+      getEarliestCooldownExpiry: vi.fn().mockResolvedValue(undefined),
+    }
+
+    const runtime = new AgentRuntime({
+      descriptor: {
+        ...makeDescriptor(),
+        model: {
+          provider: 'anthropic',
+          modelId: 'claude-opus-4-6',
+          thinkingLevel: 'medium',
+        },
+      },
+      session: session as any,
+      callbacks: {
+        onStatusChange: () => {},
+        onRuntimeError: (_agentId, error) => {
+          runtimeErrors.push({
+            phase: error.phase,
+            message: error.message,
+          })
+        },
+      },
+    })
+
+    runtime.pooledCredentialId = 'cred_primary'
+    runtime.pooledCredentialProvider = 'anthropic'
+    runtime.credentialPoolService = pool as any
+
+    await runtime.sendMessage('still limited')
+    await waitForCondition(() => runtimeErrors.length >= 2)
+
+    expect(pool.markExhausted).toHaveBeenCalledWith(
+      'anthropic',
+      'cred_primary',
+      expect.objectContaining({
+        cooldownUntil: expect.any(Number),
+      }),
+    )
+    expect(runtimeErrors).toContainEqual({
+      phase: 'prompt_dispatch',
+      message: 'All Anthropic accounts are rate-limited.',
+    })
+  })
+
   it('reports compaction-related prompt failures with compaction phase', async () => {
     const session = new FakeSession()
     const phases: string[] = []

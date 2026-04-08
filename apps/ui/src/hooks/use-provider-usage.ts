@@ -53,9 +53,12 @@ export function useProviderUsage(enabled: boolean): ProviderUsageResult {
         }
 
         const data = (await response.json()) as ProviderUsageStats
-        // Backward compat: if openai is a single object (old cached data), wrap in array
+        // Backward compat: if openai/anthropic is a single object (old cached data), wrap in array
         if (data.openai && !Array.isArray(data.openai)) {
           data.openai = [data.openai as ProviderAccountUsage]
+        }
+        if (data.anthropic && !Array.isArray(data.anthropic)) {
+          data.anthropic = [data.anthropic as ProviderAccountUsage]
         }
         if (!cancelled) {
           setProviders(data)

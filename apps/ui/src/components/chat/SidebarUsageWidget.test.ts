@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { ProviderUsageWindow } from '@forge/protocol'
-import { getUsageMetrics } from './SidebarUsageWidget'
+import type { ProviderAccountUsage, ProviderUsageWindow } from '@forge/protocol'
+import { getAccountLabel, getUsageMetrics } from './SidebarUsageWidget'
 
 const WEEK_SECONDS = 7 * 24 * 60 * 60
 
@@ -57,5 +57,28 @@ describe('getUsageMetrics', () => {
     }
 
     expect(getUsageMetrics(window, nowMs)).toBeNull()
+  })
+})
+
+describe('getAccountLabel', () => {
+  const base: ProviderAccountUsage = { provider: 'anthropic', available: true }
+
+  it('returns just the provider name for a single account', () => {
+    expect(getAccountLabel('Anthropic', base, 0, 1)).toBe('Anthropic')
+  })
+
+  it('includes the account label when there are multiple accounts', () => {
+    const account: ProviderAccountUsage = { ...base, accountLabel: 'Work' }
+    expect(getAccountLabel('Anthropic', account, 0, 2)).toBe('Anthropic — Work')
+  })
+
+  it('falls back to accountEmail then accountId then index', () => {
+    const withEmail: ProviderAccountUsage = { ...base, accountEmail: 'a@b.com' }
+    expect(getAccountLabel('Anthropic', withEmail, 0, 2)).toBe('Anthropic — a@b.com')
+
+    const withId: ProviderAccountUsage = { ...base, accountId: 'acct_123' }
+    expect(getAccountLabel('Anthropic', withId, 1, 3)).toBe('Anthropic — acct_123')
+
+    expect(getAccountLabel('Anthropic', base, 2, 3)).toBe('Anthropic — Account 3')
   })
 })

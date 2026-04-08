@@ -117,10 +117,12 @@ function buildStatsSnapshot(overrides: Partial<StatsSnapshot> = {}): StatsSnapsh
           },
         },
       ],
-      anthropic: {
-        provider: 'anthropic',
-        available: false,
-      },
+      anthropic: [
+        {
+          provider: 'anthropic',
+          available: false,
+        },
+      ],
     },
     system: {
       uptimeFormatted: '1s',

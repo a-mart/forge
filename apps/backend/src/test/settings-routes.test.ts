@@ -132,6 +132,7 @@ describe("settings routes", () => {
     const swarmManager = {
       deleteSettingsAuth: vi.fn(async () => undefined),
       listSettingsAuth: vi.fn(async () => []),
+      listCredentialPool: vi.fn(async () => createPoolState([makeCredential()])),
     };
 
     const server = await createSettingsRouteTestServer(swarmManager);
@@ -146,12 +147,28 @@ describe("settings routes", () => {
     expect(swarmManager.deleteSettingsAuth).not.toHaveBeenCalled();
   });
 
-  it("renames pooled OpenAI Codex credentials and returns the refreshed pool", async () => {
-    const pool = {
-      provider: "openai-codex",
-      strategy: "fill_first",
-      accounts: [{ id: "acct-1", label: "Primary", isPrimary: true }],
+  it("lists pooled Anthropic credentials via the provider-scoped route", async () => {
+    const pool = createPoolState([
+      makeCredential({ id: "acct-ant-1", label: "Primary Anthropic", isPrimary: true }),
+    ]);
+    const swarmManager = {
+      listCredentialPool: vi.fn(async (provider: string) => {
+        expect(provider).toBe("anthropic");
+        return pool;
+      }),
     };
+
+    const server = await createSettingsRouteTestServer(swarmManager);
+    const response = await fetch(`${server.baseUrl}/api/settings/auth/anthropic/accounts`);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ pool });
+  });
+
+  it("renames pooled OpenAI Codex credentials and returns the refreshed pool", async () => {
+    const pool = createPoolState([
+      makeCredential({ id: "acct-1", label: "Primary", isPrimary: true }),
+    ]);
     const swarmManager = {
       renamePooledCredential: vi.fn(async () => undefined),
       listCredentialPool: vi.fn(async () => pool),
@@ -169,10 +186,118 @@ describe("settings routes", () => {
     await expect(response.json()).resolves.toEqual({ ok: true, pool });
   });
 
+  it("updates Anthropic pool strategy and returns the refreshed pool", async () => {
+    const pool = createPoolState([makeCredential({ id: "acct-ant-1", label: "Anthropic Account" })], "least_used");
+    const swarmManager = {
+      setCredentialPoolStrategy: vi.fn(async () => undefined),
+      listCredentialPool: vi.fn(async () => pool),
+    };
+
+    const server = await createSettingsRouteTestServer(swarmManager);
+    const response = await fetch(`${server.baseUrl}/api/settings/auth/anthropic/strategy`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ strategy: "least_used" }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(swarmManager.setCredentialPoolStrategy).toHaveBeenCalledWith("anthropic", "least_used");
+    await expect(response.json()).resolves.toEqual({ ok: true, pool });
+  });
+
+  it("manages pooled Anthropic credentials through rename, primary, cooldown, and remove routes", async () => {
+    const pool = createPoolState([
+      makeCredential({ id: "acct-ant-1", label: "Anthropic Primary", isPrimary: true }),
+      makeCredential({ id: "acct-ant-2", label: "Anthropic Backup", isPrimary: false }),
+    ]);
+    const swarmManager = {
+      renamePooledCredential: vi.fn(async () => undefined),
+      setPrimaryPooledCredential: vi.fn(async () => undefined),
+      resetPooledCredentialCooldown: vi.fn(async () => undefined),
+      removePooledCredential: vi.fn(async () => undefined),
+      listCredentialPool: vi.fn(async () => pool),
+    };
+
+    const server = await createSettingsRouteTestServer(swarmManager);
+
+    const renameResponse = await fetch(`${server.baseUrl}/api/settings/auth/anthropic/accounts/acct-ant-2/label`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ label: "Renamed Anthropic Backup" }),
+    });
+    expect(renameResponse.status).toBe(200);
+    expect(swarmManager.renamePooledCredential).toHaveBeenCalledWith(
+      "anthropic",
+      "acct-ant-2",
+      "Renamed Anthropic Backup"
+    );
+    await expect(renameResponse.json()).resolves.toEqual({ ok: true, pool });
+
+    const primaryResponse = await fetch(`${server.baseUrl}/api/settings/auth/anthropic/accounts/acct-ant-2/primary`, {
+      method: "POST",
+    });
+    expect(primaryResponse.status).toBe(200);
+    expect(swarmManager.setPrimaryPooledCredential).toHaveBeenCalledWith("anthropic", "acct-ant-2");
+    await expect(primaryResponse.json()).resolves.toEqual({ ok: true, pool });
+
+    const cooldownResponse = await fetch(`${server.baseUrl}/api/settings/auth/anthropic/accounts/acct-ant-2/cooldown`, {
+      method: "DELETE",
+    });
+    expect(cooldownResponse.status).toBe(200);
+    expect(swarmManager.resetPooledCredentialCooldown).toHaveBeenCalledWith("anthropic", "acct-ant-2");
+    await expect(cooldownResponse.json()).resolves.toEqual({ ok: true, pool });
+
+    const removeResponse = await fetch(`${server.baseUrl}/api/settings/auth/anthropic/accounts/acct-ant-2`, {
+      method: "DELETE",
+    });
+    expect(removeResponse.status).toBe(200);
+    expect(swarmManager.removePooledCredential).toHaveBeenCalledWith("anthropic", "acct-ant-2");
+    await expect(removeResponse.json()).resolves.toEqual({ ok: true, pool });
+  });
+
+  it("rejects generic auth deletion when pooled Anthropic accounts exist", async () => {
+    const swarmManager = {
+      deleteSettingsAuth: vi.fn(async () => undefined),
+      listSettingsAuth: vi.fn(async () => []),
+      listCredentialPool: vi.fn(async () => createPoolState([makeCredential({ id: "acct-ant-1" })])),
+    };
+
+    const server = await createSettingsRouteTestServer(swarmManager);
+    const response = await fetch(`${server.baseUrl}/api/settings/auth/anthropic`, {
+      method: "DELETE",
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "Use pool management to remove Anthropic accounts.",
+    });
+    expect(swarmManager.deleteSettingsAuth).not.toHaveBeenCalled();
+  });
+
+  it("allows legacy Anthropic auth deletion when only plain API-key mode is configured", async () => {
+    const swarmManager = {
+      deleteSettingsAuth: vi.fn(async () => undefined),
+      listSettingsAuth: vi.fn(async () => [{ provider: "anthropic", type: "api_key", connected: false }]),
+      listCredentialPool: vi.fn(async () => createPoolState([])),
+    };
+
+    const server = await createSettingsRouteTestServer(swarmManager);
+    const response = await fetch(`${server.baseUrl}/api/settings/auth/anthropic`, {
+      method: "DELETE",
+    });
+
+    expect(response.status).toBe(200);
+    expect(swarmManager.deleteSettingsAuth).toHaveBeenCalledWith("anthropic");
+    await expect(response.json()).resolves.toEqual({
+      ok: true,
+      providers: [{ provider: "anthropic", type: "api_key", connected: false }],
+    });
+  });
+
   it("validates pool strategy payloads", async () => {
     const swarmManager = {
       setCredentialPoolStrategy: vi.fn(async () => undefined),
-      listCredentialPool: vi.fn(async () => ({ accounts: [] })),
+      listCredentialPool: vi.fn(async () => createPoolState([])),
     };
 
     const server = await createSettingsRouteTestServer(swarmManager);
@@ -189,6 +314,33 @@ describe("settings routes", () => {
     expect(swarmManager.setCredentialPoolStrategy).not.toHaveBeenCalled();
   });
 });
+
+function createPoolState(credentials: Array<ReturnType<typeof makeCredential>>, strategy = "fill_first") {
+  return {
+    strategy,
+    credentials,
+  };
+}
+
+function makeCredential(overrides?: Partial<{
+  id: string;
+  label: string;
+  isPrimary: boolean;
+  health: "healthy" | "cooldown" | "auth_error";
+  cooldownUntil: number | null;
+  requestCount: number;
+  createdAt: string;
+}>) {
+  return {
+    id: overrides?.id ?? "acct-1",
+    label: overrides?.label ?? "Primary Account",
+    isPrimary: overrides?.isPrimary ?? true,
+    health: overrides?.health ?? "healthy",
+    cooldownUntil: overrides?.cooldownUntil ?? null,
+    requestCount: overrides?.requestCount ?? 0,
+    createdAt: overrides?.createdAt ?? "2026-01-01T00:00:00.000Z",
+  };
+}
 
 async function createSettingsRouteTestServer(swarmManager: Record<string, unknown>): Promise<TestServer> {
   const bundle = createSettingsRoutes({ swarmManager: swarmManager as never });

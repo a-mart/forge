@@ -395,28 +395,33 @@ export function SidebarUsagePanel({ providers, open, onClose, loading, onRefresh
   )
 }
 
-function getOpenAIAccountLabel(account: ProviderAccountUsage, index: number, total: number): string {
-  if (total <= 1) return 'OpenAI'
+export function getAccountLabel(providerName: string, account: ProviderAccountUsage, index: number, total: number): string {
+  if (total <= 1) return providerName
   const suffix = account.accountLabel || account.accountEmail || account.accountId || `Account ${index + 1}`
-  return `OpenAI — ${suffix}`
+  return `${providerName} — ${suffix}`
 }
 
 function buildRows(providers: ProviderUsageStats | null): ProviderRowConfig[] {
-  const rows: ProviderRowConfig[] = [
-    {
-      key: 'anthropic',
-      label: 'Anthropic',
-      iconSrc: '/agents/claude-logo.svg',
-      usage: providers?.anthropic,
-    },
-  ]
+  const rows: ProviderRowConfig[] = []
+
+  const anthropicAccounts = providers?.anthropic
+  if (anthropicAccounts && anthropicAccounts.length > 0) {
+    for (let i = 0; i < anthropicAccounts.length; i++) {
+      rows.push({
+        key: `anthropic-${anthropicAccounts[i].accountId ?? i}`,
+        label: getAccountLabel('Anthropic', anthropicAccounts[i], i, anthropicAccounts.length),
+        iconSrc: '/agents/claude-logo.svg',
+        usage: anthropicAccounts[i],
+      })
+    }
+  }
 
   const openaiAccounts = providers?.openai
   if (openaiAccounts && openaiAccounts.length > 0) {
     for (let i = 0; i < openaiAccounts.length; i++) {
       rows.push({
         key: `openai-${openaiAccounts[i].accountId ?? i}`,
-        label: getOpenAIAccountLabel(openaiAccounts[i], i, openaiAccounts.length),
+        label: getAccountLabel('OpenAI', openaiAccounts[i], i, openaiAccounts.length),
         iconSrc: '/agents/codex-logo.svg',
         iconClassName: 'dark:invert',
         usage: openaiAccounts[i],

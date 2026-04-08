@@ -170,7 +170,7 @@ export class RuntimeFactory {
         descriptor.role === "manager" ? "archetype:manager" : undefined
     });
 
-    // Pool-aware credential selection for OpenAI Codex multi-account
+    // Pool-aware credential selection for supported Pi multi-account providers.
     const poolSelection = await this.selectPooledCredential(descriptor);
     const authStorage = poolSelection?.authStorage ?? AuthStorage.create(authFilePath);
     const pooledCredentialId = poolSelection?.credentialId;
@@ -728,13 +728,14 @@ export class RuntimeFactory {
   }
 
   /**
-   * Select a pooled credential for the OpenAI Codex provider if multiple accounts exist.
-   * Returns null if pool has 0-1 credentials (use default file-backed auth).
+   * Select a pooled credential for supported Pi providers if multiple accounts exist.
+   * Returns null if the provider is not pool-enabled or the pool has 0-1 credentials.
    */
   private async selectPooledCredential(
     descriptor: AgentDescriptor
   ): Promise<{ authStorage: AuthStorage; credentialId: string } | null> {
-    if (descriptor.model.provider !== SUPPORTED_POOLED_PROVIDER) {
+    const provider = descriptor.model.provider.trim().toLowerCase();
+    if (!POOLED_PROVIDERS.has(provider)) {
       return null;
     }
 
@@ -742,32 +743,32 @@ export class RuntimeFactory {
     if (!getPool) return null;
 
     const pool = getPool();
-    const poolSize = await pool.getPoolSize(SUPPORTED_POOLED_PROVIDER);
+    const poolSize = await pool.getPoolSize(provider);
     if (poolSize <= 1) return null;
 
-    const selection = await pool.select(SUPPORTED_POOLED_PROVIDER);
+    const selection = await pool.select(provider);
     if (!selection) {
-      const earliestCooldownExpiry = await pool.getEarliestCooldownExpiry(SUPPORTED_POOLED_PROVIDER);
+      const earliestCooldownExpiry = await pool.getEarliestCooldownExpiry(provider);
       const resetMessage = earliestCooldownExpiry
         ? ` Earliest cooldown reset: ${new Date(earliestCooldownExpiry).toISOString()}.`
         : " No cooldown reset time is currently available.";
 
       this.deps.logDebug("runtime:credential_pool:all_exhausted", {
-        provider: SUPPORTED_POOLED_PROVIDER,
+        provider,
         earliestCooldownExpiry,
-        message: `All pooled ${SUPPORTED_POOLED_PROVIDER} credentials are unavailable.${resetMessage}`
+        message: `All pooled ${provider} credentials are unavailable.${resetMessage}`
       });
 
-      throw new Error(`All pooled ${SUPPORTED_POOLED_PROVIDER} credentials are unavailable.${resetMessage}`);
+      throw new Error(`All pooled ${provider} credentials are unavailable.${resetMessage}`);
     }
 
     try {
-      const authData = await pool.buildRuntimeAuthData(SUPPORTED_POOLED_PROVIDER, selection.credentialId);
+      const authData = await pool.buildRuntimeAuthData(provider, selection.credentialId);
       const authStorage = AuthStorage.inMemory(authData);
-      await pool.markUsed(SUPPORTED_POOLED_PROVIDER, selection.credentialId);
+      await pool.markUsed(provider, selection.credentialId);
 
       this.deps.logDebug("runtime:credential_pool:selected", {
-        provider: SUPPORTED_POOLED_PROVIDER,
+        provider,
         credentialId: selection.credentialId,
         authStorageKey: selection.authStorageKey
       });
@@ -775,7 +776,7 @@ export class RuntimeFactory {
       return { authStorage, credentialId: selection.credentialId };
     } catch (error) {
       this.deps.logDebug("runtime:credential_pool:build_auth_error", {
-        provider: SUPPORTED_POOLED_PROVIDER,
+        provider,
         credentialId: selection.credentialId,
         message: error instanceof Error ? error.message : String(error)
       });
@@ -981,7 +982,7 @@ const CORTEX_ARCHETYPE_ID = "cortex";
 const CORTEX_DISABLED_TOOL_NAMES = new Set(["list_agents", "kill_agent"]);
 const ONBOARDING_SNAPSHOT_MEMORY_HEADER =
   "# Onboarding Snapshot (authoritative backend state — read-only reference)";
-const SUPPORTED_POOLED_PROVIDER = "openai-codex";
+const POOLED_PROVIDERS = new Set(["openai-codex", "anthropic"]);
 
 function isClaudeSdkModelDescriptor(
   descriptor: Pick<AgentModelDescriptor, "provider">

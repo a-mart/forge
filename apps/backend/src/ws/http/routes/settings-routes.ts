@@ -8,6 +8,7 @@ import {
 import { AuthStorage } from "@mariozechner/pi-coding-agent";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type {
+  CredentialPoolState,
   CredentialPoolStrategy,
   SettingsAuthLoginEventName,
   SettingsAuthLoginEventPayload,
@@ -31,7 +32,8 @@ const SETTINGS_AUTH_ENDPOINT_PATH = "/api/settings/auth";
 const SETTINGS_AUTH_LOGIN_ENDPOINT_PATH = "/api/settings/auth/login";
 const SETTINGS_AUTH_LOGIN_METHODS = "POST, OPTIONS";
 const SETTINGS_AUTH_METHODS = "GET, PUT, DELETE, POST, OPTIONS";
-const OPENAI_CODEX_POOL_ADD_FLOW_KEY = "openai-codex:pool-add";
+
+type PooledSettingsAuthProviderId = SettingsAuthLoginProviderId;
 
 interface SettingsAuthLoginFlow {
   providerId: SettingsAuthLoginProviderId;
@@ -160,17 +162,33 @@ async function handleSettingsAuthHttpRequest(
   response: ServerResponse,
   requestUrl: URL
 ): Promise<void> {
-  // ── Credential pool routes: /api/settings/auth/openai-codex/accounts/* ──
-  const poolPrefix = `${SETTINGS_AUTH_ENDPOINT_PATH}/openai-codex/accounts`;
-  if (requestUrl.pathname === poolPrefix || requestUrl.pathname.startsWith(`${poolPrefix}/`)) {
-    await handleCredentialPoolHttpRequest(swarmManager, activeSettingsAuthLoginFlows, request, response, requestUrl, poolPrefix);
+  const authRelativePath = requestUrl.pathname.startsWith(`${SETTINGS_AUTH_ENDPOINT_PATH}/`)
+    ? requestUrl.pathname.slice(SETTINGS_AUTH_ENDPOINT_PATH.length + 1)
+    : "";
+  const authPathSegments = authRelativePath.split("/").filter((segment) => segment.length > 0);
+  const rawProviderSegment = authPathSegments[0] ?? "";
+
+  if (authPathSegments[1] === "accounts") {
+    const poolPrefix = `${SETTINGS_AUTH_ENDPOINT_PATH}/${rawProviderSegment}/accounts`;
+    await handleCredentialPoolHttpRequest(
+      swarmManager,
+      activeSettingsAuthLoginFlows,
+      request,
+      response,
+      requestUrl,
+      decodeURIComponent(rawProviderSegment),
+      poolPrefix
+    );
     return;
   }
 
-  // ── Pool strategy: /api/settings/auth/openai-codex/strategy ──
-  const strategyPath = `${SETTINGS_AUTH_ENDPOINT_PATH}/openai-codex/strategy`;
-  if (requestUrl.pathname === strategyPath) {
-    await handleCredentialPoolStrategyHttpRequest(swarmManager, request, response);
+  if (authPathSegments[1] === "strategy" && authPathSegments.length === 2) {
+    await handleCredentialPoolStrategyHttpRequest(
+      swarmManager,
+      request,
+      response,
+      decodeURIComponent(rawProviderSegment)
+    );
     return;
   }
 
@@ -218,8 +236,9 @@ async function handleSettingsAuthHttpRequest(
       return;
     }
 
-    if (provider === "openai-codex") {
-      sendJson(response, 400, { error: "Use pool management to remove OpenAI Codex accounts." });
+    const pooledState = await tryListPooledCredentialState(swarmManager, provider);
+    if (pooledState && pooledState.credentials.length > 0) {
+      sendJson(response, 400, { error: `Use pool management to remove ${getSettingsAuthProviderLabel(provider)} accounts.` });
       return;
     }
 
@@ -243,6 +262,7 @@ async function handleCredentialPoolHttpRequest(
   request: IncomingMessage,
   response: ServerResponse,
   requestUrl: URL,
+  rawProvider: string,
   poolPrefix: string
 ): Promise<void> {
   const methods = "GET, POST, PATCH, DELETE, OPTIONS";
@@ -256,37 +276,34 @@ async function handleCredentialPoolHttpRequest(
 
   applyCorsHeaders(request, response, methods);
 
+  const resolvedProvider = await resolvePooledSettingsAuthProvider(swarmManager, rawProvider);
+  if (!resolvedProvider) {
+    sendJson(response, 400, { error: "Invalid pooled auth provider" });
+    return;
+  }
+
+  const { providerId, pool: initialPool } = resolvedProvider;
   const relativePath = requestUrl.pathname.slice(poolPrefix.length);
-  // relativePath examples: "", "/login", "/:id", "/:id/label", "/:id/primary", "/:id/cooldown"
 
-  // GET /api/settings/auth/openai-codex/accounts — list pool
   if (request.method === "GET" && relativePath === "") {
-    try {
-      const pool = await swarmManager.listCredentialPool("openai-codex");
-      sendJson(response, 200, { pool });
-    } catch (error) {
-      sendJson(response, 500, { error: error instanceof Error ? error.message : "Failed to list credential pool" });
-    }
+    sendJson(response, 200, { pool: initialPool });
     return;
   }
 
-  // POST /api/settings/auth/openai-codex/accounts/login — add account via OAuth SSE
   if (request.method === "POST" && relativePath === "/login") {
-    await handlePoolAddAccountOAuthLogin(swarmManager, activeSettingsAuthLoginFlows, request, response);
+    await handlePoolAddAccountOAuthLogin(
+      swarmManager,
+      activeSettingsAuthLoginFlows,
+      request,
+      response,
+      providerId
+    );
     return;
   }
 
-  // POST /api/settings/auth/openai-codex/accounts/login/respond — submit prompt input for pool OAuth flow
   if (request.method === "POST" && relativePath === "/login/respond") {
     const payload = parseSettingsAuthLoginRespondBody(await readJsonBody(request));
-    // Find the active pool add-account flow (keyed as "openai-codex:add-<nonce>")
-    let poolFlow: SettingsAuthLoginFlow | undefined;
-    for (const [key, flow] of activeSettingsAuthLoginFlows.entries()) {
-      if (key.startsWith("openai-codex:add-") && !flow.closed) {
-        poolFlow = flow;
-        break;
-      }
-    }
+    const poolFlow = findActivePoolAddFlow(activeSettingsAuthLoginFlows, providerId);
     if (!poolFlow) {
       sendJson(response, 409, { error: "No active pool add-account OAuth flow" });
       return;
@@ -302,7 +319,6 @@ async function handleCredentialPoolHttpRequest(
     return;
   }
 
-  // Routes with :id segment
   const idMatch = relativePath.match(/^\/([^/]+)(?:\/(.+))?$/);
   if (!idMatch) {
     sendJson(response, 404, { error: "Not found" });
@@ -310,9 +326,8 @@ async function handleCredentialPoolHttpRequest(
   }
 
   const credentialId = decodeURIComponent(idMatch[1]);
-  const action = idMatch[2]; // "label", "primary", "cooldown", or undefined
+  const action = idMatch[2];
 
-  // PATCH /api/settings/auth/openai-codex/accounts/:id/label — rename
   if (request.method === "PATCH" && action === "label") {
     try {
       const body = (await readJsonBody(request)) as { label?: unknown };
@@ -320,8 +335,8 @@ async function handleCredentialPoolHttpRequest(
         sendJson(response, 400, { error: "label must be a non-empty string" });
         return;
       }
-      await swarmManager.renamePooledCredential("openai-codex", credentialId, body.label);
-      const pool = await swarmManager.listCredentialPool("openai-codex");
+      await swarmManager.renamePooledCredential(providerId, credentialId, body.label);
+      const pool = await swarmManager.listCredentialPool(providerId);
       sendJson(response, 200, { ok: true, pool });
     } catch (error) {
       sendJson(response, 400, { error: error instanceof Error ? error.message : "Failed to rename credential" });
@@ -329,11 +344,10 @@ async function handleCredentialPoolHttpRequest(
     return;
   }
 
-  // POST /api/settings/auth/openai-codex/accounts/:id/primary — set primary
   if (request.method === "POST" && action === "primary") {
     try {
-      await swarmManager.setPrimaryPooledCredential("openai-codex", credentialId);
-      const pool = await swarmManager.listCredentialPool("openai-codex");
+      await swarmManager.setPrimaryPooledCredential(providerId, credentialId);
+      const pool = await swarmManager.listCredentialPool(providerId);
       sendJson(response, 200, { ok: true, pool });
     } catch (error) {
       sendJson(response, 400, { error: error instanceof Error ? error.message : "Failed to set primary" });
@@ -341,11 +355,10 @@ async function handleCredentialPoolHttpRequest(
     return;
   }
 
-  // DELETE /api/settings/auth/openai-codex/accounts/:id/cooldown — reset cooldown
   if (request.method === "DELETE" && action === "cooldown") {
     try {
-      await swarmManager.resetPooledCredentialCooldown("openai-codex", credentialId);
-      const pool = await swarmManager.listCredentialPool("openai-codex");
+      await swarmManager.resetPooledCredentialCooldown(providerId, credentialId);
+      const pool = await swarmManager.listCredentialPool(providerId);
       sendJson(response, 200, { ok: true, pool });
     } catch (error) {
       sendJson(response, 400, { error: error instanceof Error ? error.message : "Failed to reset cooldown" });
@@ -353,11 +366,10 @@ async function handleCredentialPoolHttpRequest(
     return;
   }
 
-  // DELETE /api/settings/auth/openai-codex/accounts/:id — remove account
   if (request.method === "DELETE" && action === undefined) {
     try {
-      await swarmManager.removePooledCredential("openai-codex", credentialId);
-      const pool = await swarmManager.listCredentialPool("openai-codex");
+      await swarmManager.removePooledCredential(providerId, credentialId);
+      const pool = await swarmManager.listCredentialPool(providerId);
       sendJson(response, 200, { ok: true, pool });
     } catch (error) {
       sendJson(response, 400, { error: error instanceof Error ? error.message : "Failed to remove credential" });
@@ -372,7 +384,8 @@ async function handleCredentialPoolHttpRequest(
 async function handleCredentialPoolStrategyHttpRequest(
   swarmManager: SwarmManager,
   request: IncomingMessage,
-  response: ServerResponse
+  response: ServerResponse,
+  rawProvider: string
 ): Promise<void> {
   const methods = "POST, OPTIONS";
 
@@ -384,6 +397,14 @@ async function handleCredentialPoolStrategyHttpRequest(
   }
 
   applyCorsHeaders(request, response, methods);
+
+  const resolvedProvider = await resolvePooledSettingsAuthProvider(swarmManager, rawProvider);
+  if (!resolvedProvider) {
+    sendJson(response, 400, { error: "Invalid pooled auth provider" });
+    return;
+  }
+
+  const { providerId } = resolvedProvider;
 
   if (request.method !== "POST") {
     response.setHeader("Allow", methods);
@@ -398,8 +419,8 @@ async function handleCredentialPoolStrategyHttpRequest(
       sendJson(response, 400, { error: "strategy must be 'fill_first' or 'least_used'" });
       return;
     }
-    await swarmManager.setCredentialPoolStrategy("openai-codex", strategy as CredentialPoolStrategy);
-    const pool = await swarmManager.listCredentialPool("openai-codex");
+    await swarmManager.setCredentialPoolStrategy(providerId, strategy as CredentialPoolStrategy);
+    const pool = await swarmManager.listCredentialPool(providerId);
     sendJson(response, 200, { ok: true, pool });
   } catch (error) {
     sendJson(response, 400, { error: error instanceof Error ? error.message : "Failed to set strategy" });
@@ -414,7 +435,8 @@ async function handlePoolAddAccountOAuthLogin(
   swarmManager: SwarmManager,
   activeSettingsAuthLoginFlows: Map<string, SettingsAuthLoginFlow>,
   request: IncomingMessage,
-  response: ServerResponse
+  response: ServerResponse,
+  providerId: PooledSettingsAuthProviderId
 ): Promise<void> {
   if (request.method !== "POST") {
     applyCorsHeaders(request, response, "POST, OPTIONS");
@@ -423,31 +445,29 @@ async function handlePoolAddAccountOAuthLogin(
     return;
   }
 
-  // Use a nonce key to avoid collisions with existing login flows
-  const flowKey = `openai-codex:add-${Date.now()}`;
+  const flowKey = `${getPoolAddFlowKeyPrefix(providerId)}${Date.now()}`;
+  const flowAliasKey = getPoolAddFlowAliasKey(providerId);
+  const provider = SETTINGS_AUTH_LOGIN_PROVIDERS[providerId];
 
-  // Check if there's already an add-account flow running or a provider-scoped login using the same provider.
   for (const [key, existingFlow] of activeSettingsAuthLoginFlows.entries()) {
     if (
       !existingFlow.closed &&
-      (key.startsWith("openai-codex:add-") || key === OPENAI_CODEX_POOL_ADD_FLOW_KEY || key === "openai-codex")
+      (key.startsWith(getPoolAddFlowKeyPrefix(providerId)) || key === flowAliasKey || key === providerId)
     ) {
       applyCorsHeaders(request, response, "POST, OPTIONS");
-      sendJson(response, 409, { error: "An OpenAI OAuth flow is already in progress" });
+      sendJson(response, 409, { error: `${provider.name} OAuth flow is already in progress` });
       return;
     }
   }
 
   const flow: SettingsAuthLoginFlow = {
-    providerId: "openai-codex",
+    providerId,
     pendingPrompt: null,
     abortController: new AbortController(),
     closed: false
   };
   activeSettingsAuthLoginFlows.set(flowKey, flow);
-  activeSettingsAuthLoginFlows.set(OPENAI_CODEX_POOL_ADD_FLOW_KEY, flow);
-
-  const provider = SETTINGS_AUTH_LOGIN_PROVIDERS["openai-codex"];
+  activeSettingsAuthLoginFlows.set(flowAliasKey, flow);
 
   applyCorsHeaders(request, response, "POST, OPTIONS");
   response.statusCode = 200;
@@ -482,9 +502,9 @@ async function handlePoolAddAccountOAuthLogin(
     if (activeFlow === flow) {
       activeSettingsAuthLoginFlows.delete(flowKey);
     }
-    const aliasFlow = activeSettingsAuthLoginFlows.get(OPENAI_CODEX_POOL_ADD_FLOW_KEY);
+    const aliasFlow = activeSettingsAuthLoginFlows.get(flowAliasKey);
     if (aliasFlow === flow) {
-      activeSettingsAuthLoginFlows.delete(OPENAI_CODEX_POOL_ADD_FLOW_KEY);
+      activeSettingsAuthLoginFlows.delete(flowAliasKey);
     }
   };
 
@@ -518,7 +538,7 @@ async function handlePoolAddAccountOAuthLogin(
   request.on("close", onClose);
   response.on("close", onClose);
 
-  sendSseEvent("progress", { message: "Starting OpenAI OAuth login for new account..." });
+  sendSseEvent("progress", { message: `Starting ${provider.name} OAuth login for new account...` });
 
   try {
     const callbacks: OAuthLoginCallbacks = {
@@ -544,14 +564,13 @@ async function handlePoolAddAccountOAuthLogin(
     const credentials = (await provider.login(callbacks)) as OAuthCredentials;
     if (flow.closed) return;
 
-    // Store in credential pool instead of directly in auth.json
     await swarmManager.addPooledCredential(
-      "openai-codex",
+      providerId,
       { type: "oauth", ...credentials },
-      { label: undefined } // Will auto-label as "Account N"
+      { label: undefined }
     );
 
-    sendSseEvent("complete", { provider: "openai-codex", status: "connected" });
+    sendSseEvent("complete", { provider: providerId, status: "connected" });
   } catch (error) {
     if (!flow.closed) {
       const message = error instanceof Error ? error.message : String(error);
@@ -609,9 +628,7 @@ async function handleSettingsAuthLoginHttpRequest(
     }
 
     const payload = parseSettingsAuthLoginRespondBody(await readJsonBody(request));
-    const flow =
-      activeSettingsAuthLoginFlows.get(providerId) ??
-      (providerId === "openai-codex" ? activeSettingsAuthLoginFlows.get(OPENAI_CODEX_POOL_ADD_FLOW_KEY) : undefined);
+    const flow = activeSettingsAuthLoginFlows.get(providerId) ?? findActivePoolAddFlow(activeSettingsAuthLoginFlows, providerId);
     if (!flow) {
       sendJson(response, 409, { error: "No active OAuth login flow for provider" });
       return;
@@ -640,10 +657,7 @@ async function handleSettingsAuthLoginHttpRequest(
     return;
   }
 
-  if (
-    activeSettingsAuthLoginFlows.has(providerId) ||
-    (providerId === "openai-codex" && activeSettingsAuthLoginFlows.has(OPENAI_CODEX_POOL_ADD_FLOW_KEY))
-  ) {
+  if (activeSettingsAuthLoginFlows.has(providerId) || hasActivePoolAddFlow(activeSettingsAuthLoginFlows, providerId)) {
     sendJson(response, 409, { error: "OAuth login already in progress for provider" });
     return;
   }
@@ -803,6 +817,98 @@ async function handleSettingsAuthLoginHttpRequest(
       response.end();
     }
   }
+}
+
+async function resolvePooledSettingsAuthProvider(
+  swarmManager: SwarmManager,
+  rawProvider: string
+): Promise<{ providerId: PooledSettingsAuthProviderId; pool: CredentialPoolState } | undefined> {
+  const provider = rawProvider.trim().toLowerCase();
+  if (!provider) {
+    return undefined;
+  }
+
+  try {
+    const pool = await swarmManager.listCredentialPool(provider);
+    const providerId = resolveSettingsAuthLoginProviderId(provider);
+    if (!providerId) {
+      return undefined;
+    }
+
+    return {
+      providerId,
+      pool
+    };
+  } catch (error) {
+    if (isUnsupportedPooledProviderError(error)) {
+      return undefined;
+    }
+    throw error;
+  }
+}
+
+async function tryListPooledCredentialState(
+  swarmManager: SwarmManager,
+  provider: string
+): Promise<CredentialPoolState | undefined> {
+  try {
+    return await swarmManager.listCredentialPool(provider.trim().toLowerCase());
+  } catch (error) {
+    if (isUnsupportedPooledProviderError(error)) {
+      return undefined;
+    }
+    throw error;
+  }
+}
+
+function hasActivePoolAddFlow(
+  activeSettingsAuthLoginFlows: Map<string, SettingsAuthLoginFlow>,
+  providerId: PooledSettingsAuthProviderId
+): boolean {
+  return findActivePoolAddFlow(activeSettingsAuthLoginFlows, providerId) !== undefined;
+}
+
+function findActivePoolAddFlow(
+  activeSettingsAuthLoginFlows: Map<string, SettingsAuthLoginFlow>,
+  providerId: PooledSettingsAuthProviderId
+): SettingsAuthLoginFlow | undefined {
+  const aliasFlow = activeSettingsAuthLoginFlows.get(getPoolAddFlowAliasKey(providerId));
+  if (aliasFlow && !aliasFlow.closed) {
+    return aliasFlow;
+  }
+
+  const flowKeyPrefix = getPoolAddFlowKeyPrefix(providerId);
+  for (const [key, flow] of activeSettingsAuthLoginFlows.entries()) {
+    if (key.startsWith(flowKeyPrefix) && !flow.closed) {
+      return flow;
+    }
+  }
+
+  return undefined;
+}
+
+function getPoolAddFlowKeyPrefix(providerId: PooledSettingsAuthProviderId): string {
+  return `${providerId}:add-`;
+}
+
+function getPoolAddFlowAliasKey(providerId: PooledSettingsAuthProviderId): string {
+  return `${providerId}:pool-add`;
+}
+
+function getSettingsAuthProviderLabel(provider: string): string {
+  const providerId = resolveSettingsAuthLoginProviderId(provider);
+  switch (providerId) {
+    case "anthropic":
+      return "Anthropic";
+    case "openai-codex":
+      return "OpenAI Codex";
+    default:
+      return provider;
+  }
+}
+
+function isUnsupportedPooledProviderError(error: unknown): boolean {
+  return error instanceof Error && error.message.startsWith("Credential pooling is only supported for");
 }
 
 function parseSettingsEnvUpdateBody(value: unknown): Record<string, string> {

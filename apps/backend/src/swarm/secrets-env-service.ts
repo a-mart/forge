@@ -14,6 +14,8 @@ import type {
 
 const SETTINGS_ENV_MASK = "********";
 const SETTINGS_AUTH_MASK = "********";
+const API_KEY_POOL_CONFLICT_MESSAGE = "Remove pooled accounts before setting an API key";
+const POOLED_SETTINGS_AUTH_PROVIDERS = new Set<string>(["anthropic", "openai-codex"]);
 
 const SETTINGS_AUTH_PROVIDER_DEFINITIONS: Array<{
   provider: SettingsAuthProviderName;
@@ -177,10 +179,9 @@ export class SecretsEnvService {
       return;
     }
 
-    const authFile = await this.resolveAuthFileForWrite();
-    const authStorage = AuthStorage.create(authFile);
+    await this.resolveAuthFileForWrite();
 
-    for (const [rawProvider, rawValue] of entries) {
+    const resolvedEntries = await Promise.all(entries.map(async ([rawProvider, rawValue]) => {
       const resolvedProvider = resolveSettingsAuthProvider(rawProvider);
       if (!resolvedProvider) {
         throw new Error(`Invalid auth provider: ${rawProvider}`);
@@ -191,6 +192,17 @@ export class SecretsEnvService {
         throw new Error(`Auth value for ${resolvedProvider.provider} must be a non-empty string`);
       }
 
+      await this.assertNoPooledCredentialConflict(resolvedProvider.storageProvider);
+
+      return {
+        resolvedProvider,
+        normalizedValue,
+      };
+    }));
+
+    const authStorage = AuthStorage.create(this.deps.config.paths.sharedAuthFile);
+
+    for (const { resolvedProvider, normalizedValue } of resolvedEntries) {
       const credential = {
         type: "api_key",
         key: normalizedValue,
@@ -298,6 +310,21 @@ export class SecretsEnvService {
 
   private async pathExists(path: string): Promise<boolean> {
     return pathExists(path);
+  }
+
+  private async assertNoPooledCredentialConflict(storageProvider: string): Promise<void> {
+    if (!POOLED_SETTINGS_AUTH_PROVIDERS.has(storageProvider)) {
+      return;
+    }
+
+    const poolService = new CredentialPoolService({
+      authDir: this.deps.config.paths.sharedAuthDir,
+      authFile: this.deps.config.paths.sharedAuthFile,
+    });
+    const pool = await poolService.listPool(storageProvider);
+    if (pool.credentials.length > 0) {
+      throw new Error(API_KEY_POOL_CONFLICT_MESSAGE);
+    }
   }
 
   private applySecretToProcessEnv(name: string, value: string): void {
