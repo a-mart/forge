@@ -11,7 +11,7 @@ import {
   type SpawnAgentInput
 } from "./types.js";
 
-export { SwarmToolHost } from "./swarm-tool-host.js";
+export type { SwarmToolHost } from "./swarm-tool-host.js";
 
 const deliveryModeSchema = Type.Union([
   Type.Literal("auto"),
