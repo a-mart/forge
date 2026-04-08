@@ -2,7 +2,7 @@ import { mkdir, mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { RuntimeErrorEvent, RuntimeSessionEvent } from '../swarm/runtime-types.js'
+import type { RuntimeErrorEvent, RuntimeSessionEvent } from '../swarm/runtime-contracts.js'
 import type { AgentDescriptor, AgentStatus } from '../swarm/types.js'
 import { withPlatform } from './test-helpers.js'
 

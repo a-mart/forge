@@ -52,10 +52,12 @@ describe('useProviderUsage', () => {
           plan: 'pro',
         },
       ],
-      anthropic: {
-        provider: 'anthropic',
-        available: true,
-      },
+      anthropic: [
+        {
+          provider: 'anthropic',
+          available: true,
+        },
+      ],
     }
 
     const fetchMock = vi
@@ -84,5 +86,75 @@ describe('useProviderUsage', () => {
     expect(container.textContent).toContain('openai')
     expect(container.textContent).toContain('anthropic')
     expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('normalizes anthropic as a single object (old format) into an array', async () => {
+    const oldFormatSnapshot = {
+      openai: [{ provider: 'openai', available: true }],
+      // Old cached data: anthropic is a single object, not an array
+      anthropic: { provider: 'anthropic', available: true, plan: 'max_5x' } as unknown,
+    }
+
+    globalThis.fetch = vi.fn<typeof fetch>().mockResolvedValueOnce({
+      ok: true,
+      json: async () => oldFormatSnapshot,
+    } as Response)
+
+    root = createRoot(container)
+    flushSync(() => {
+      root?.render(createElement(TestHarness, { enabled: true }))
+    })
+
+    await vi.waitFor(() => {
+      const parsed = JSON.parse(container.textContent ?? 'null')
+      expect(Array.isArray(parsed.anthropic)).toBe(true)
+      expect(parsed.anthropic).toHaveLength(1)
+      expect(parsed.anthropic[0].plan).toBe('max_5x')
+    })
+  })
+
+  it('keeps anthropic as null when not present in response', async () => {
+    const noAnthropicSnapshot = {
+      openai: [{ provider: 'openai', available: true }],
+    }
+
+    globalThis.fetch = vi.fn<typeof fetch>().mockResolvedValueOnce({
+      ok: true,
+      json: async () => noAnthropicSnapshot,
+    } as Response)
+
+    root = createRoot(container)
+    flushSync(() => {
+      root?.render(createElement(TestHarness, { enabled: true }))
+    })
+
+    await vi.waitFor(() => {
+      const parsed = JSON.parse(container.textContent ?? 'null')
+      expect(parsed).not.toBeNull()
+      expect(parsed.anthropic).toBeUndefined()
+    })
+  })
+
+  it('keeps anthropic as an empty array when response has an empty array', async () => {
+    const emptyArraySnapshot: ProviderUsageStats = {
+      openai: [{ provider: 'openai', available: true }],
+      anthropic: [],
+    }
+
+    globalThis.fetch = vi.fn<typeof fetch>().mockResolvedValueOnce({
+      ok: true,
+      json: async () => emptyArraySnapshot,
+    } as Response)
+
+    root = createRoot(container)
+    flushSync(() => {
+      root?.render(createElement(TestHarness, { enabled: true }))
+    })
+
+    await vi.waitFor(() => {
+      const parsed = JSON.parse(container.textContent ?? 'null')
+      expect(Array.isArray(parsed.anthropic)).toBe(true)
+      expect(parsed.anthropic).toHaveLength(0)
+    })
   })
 })

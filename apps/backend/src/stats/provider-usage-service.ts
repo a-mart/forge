@@ -73,7 +73,7 @@ interface CachedProviderUsageEntry {
 
 interface CachedProviderUsage {
   openai?: CachedProviderUsageEntry[];
-  anthropic?: CachedProviderUsageEntry;
+  anthropic?: CachedProviderUsageEntry[];
 }
 
 interface PersistedProviderUsageCache {
@@ -83,10 +83,11 @@ interface PersistedProviderUsageCache {
 
 const TEST_PROVIDER_USAGE_SNAPSHOT: ProviderUsageStats = {
   openai: [unavailableProviderUsage("openai")],
-  anthropic: unavailableProviderUsage("anthropic")
+  anthropic: [unavailableProviderUsage("anthropic")]
 };
 
-const PERSISTED_CACHE_VERSION = 2;
+const PERSISTED_CACHE_VERSION = 3;
+const LEGACY_PERSISTED_CACHE_VERSION = 2;
 
 export class ProviderUsageService {
   private readonly cache: CachedProviderUsage = {};
@@ -123,7 +124,7 @@ export class ProviderUsageService {
 
     return {
       openai: this.cache.openai?.map(e => e.data),
-      anthropic: this.cache.anthropic?.data
+      anthropic: this.cache.anthropic?.map(e => e.data)
     };
   }
 
@@ -223,8 +224,76 @@ export class ProviderUsageService {
   }
 
   private async refreshAnthropicIfStale(nowMs: number): Promise<void> {
-    if (isFresh(this.cache.anthropic, nowMs)) {
+    if (this.cache.anthropic?.length && this.cache.anthropic.every(e => isFresh(e, nowMs))) {
       return;
+    }
+
+    const pool = this.credentialPoolGetter?.();
+    if (pool) {
+      try {
+        const poolState = await pool.listPool("anthropic");
+        if (poolState.credentials.length > 1) {
+          const entries: CachedProviderUsageEntry[] = [];
+          for (const cred of poolState.credentials) {
+            try {
+              const authData = await pool.buildRuntimeAuthData("anthropic", cred.id);
+              const piAuth = authData.anthropic as PiAuthCredential | undefined;
+              const accessToken = piAuth?.access?.trim();
+              const expiresMs = piAuth?.expires;
+              if (!accessToken || (typeof expiresMs === "number" && Number.isFinite(expiresMs) && nowMs > expiresMs)) {
+                if (typeof expiresMs === "number" && Number.isFinite(expiresMs) && nowMs > expiresMs) {
+                  console.debug(`[provider-usage] Anthropic OAuth token expired for pooled account ${cred.id}`);
+                }
+                entries.push(makeCachedEntry({
+                  ...unavailableProviderUsage("anthropic"),
+                  accountId: cred.id,
+                  accountLabel: cred.label
+                }, nowMs));
+                continue;
+              }
+
+              const response = await fetch(ANTHROPIC_USAGE_URL, {
+                headers: {
+                  Authorization: `Bearer ${accessToken}`,
+                  Accept: "application/json",
+                  "Content-Type": "application/json",
+                  "anthropic-beta": "oauth-2025-04-20"
+                },
+                signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
+              });
+
+              if (!response.ok) {
+                entries.push(makeCachedEntry({
+                  ...unavailableProviderUsage("anthropic"),
+                  accountId: cred.id,
+                  accountLabel: cred.label
+                }, nowMs));
+                continue;
+              }
+
+              const body = (await response.json()) as AnthropicUsageResponse;
+              const usage = await this.withHistoricalPace("anthropic", {
+                ...mapAnthropicResponse(body),
+                accountId: cred.id,
+                accountLabel: cred.label
+              }, nowMs);
+              entries.push(makeCachedEntry(usage, nowMs));
+            } catch {
+              entries.push(makeCachedEntry({
+                ...unavailableProviderUsage("anthropic"),
+                accountId: cred.id,
+                accountLabel: cred.label
+              }, nowMs));
+            }
+          }
+
+          this.cache.anthropic = entries;
+          this.queuePersistCacheWrite();
+          return;
+        }
+      } catch {
+        // fall through to single-account path
+      }
     }
 
     const auth = await this.readAnthropicAuth();
@@ -239,7 +308,7 @@ export class ProviderUsageService {
     }
 
     const expiresMs = auth?.anthropic?.expires;
-    if (typeof expiresMs === "number" && Number.isFinite(expiresMs) && Date.now() > expiresMs) {
+    if (typeof expiresMs === "number" && Number.isFinite(expiresMs) && nowMs > expiresMs) {
       console.debug("[provider-usage] Anthropic OAuth token expired");
       this.invalidateProvider("anthropic", nowMs);
       return;
@@ -268,7 +337,7 @@ export class ProviderUsageService {
 
       const body = (await response.json()) as AnthropicUsageResponse;
       const usage = await this.withHistoricalPace("anthropic", mapAnthropicResponse(body), nowMs);
-      this.setCached("anthropic", usage, nowMs);
+      this.setCached("anthropic", [usage], nowMs);
     } catch (error) {
       console.warn(`[provider-usage] Anthropic usage fetch failed: ${toErrorMessage(error)}`);
       this.recordFailedAttempt("anthropic", nowMs);
@@ -305,12 +374,8 @@ export class ProviderUsageService {
     }
   }
 
-  private setCached(provider: "anthropic", data: ProviderAccountUsage, fetchedAtMs: number): void {
-    this.cache[provider] = {
-      data,
-      fetchedAtMs,
-      lastAttemptMs: fetchedAtMs
-    };
+  private setCached(provider: "anthropic", data: ProviderAccountUsage[], fetchedAtMs: number): void {
+    this.cache[provider] = data.map(entry => makeCachedEntry(entry, fetchedAtMs));
     this.queuePersistCacheWrite();
   }
 
@@ -339,7 +404,7 @@ export class ProviderUsageService {
       return data;
     }
 
-    const accountKey = toHistoryAccountKey(data.accountEmail);
+    const accountKey = toHistoryAccountKey(data.accountEmail, data.accountId);
     const dataset = await this.historyStore.recordWeeklyWindow({
       provider,
       window: weeklyUsage,
@@ -363,29 +428,21 @@ export class ProviderUsageService {
   private recordFailedAttempt(provider: "anthropic", nowMs: number): void {
     const existing = this.cache[provider];
 
-    if (existing?.data.available) {
-      this.cache[provider] = {
-        ...existing,
+    if (existing?.length && existing.some(entry => entry.data.available)) {
+      this.cache[provider] = existing.map(entry => ({
+        ...entry,
         lastAttemptMs: nowMs
-      };
+      }));
       this.queuePersistCacheWrite();
       return;
     }
 
-    this.cache[provider] = {
-      data: unavailableProviderUsage(provider),
-      fetchedAtMs: nowMs,
-      lastAttemptMs: nowMs
-    };
+    this.cache[provider] = [makeCachedEntry(unavailableProviderUsage(provider), nowMs)];
     this.queuePersistCacheWrite();
   }
 
   private invalidateProvider(provider: "anthropic", nowMs: number): void {
-    this.cache[provider] = {
-      data: unavailableProviderUsage(provider),
-      fetchedAtMs: nowMs,
-      lastAttemptMs: nowMs
-    };
+    this.cache[provider] = [makeCachedEntry(unavailableProviderUsage(provider), nowMs)];
     this.queuePersistCacheWrite();
   }
 
@@ -399,7 +456,11 @@ export class ProviderUsageService {
     try {
       const raw = await readFile(this.cacheFilePath, "utf8");
       const parsed = JSON.parse(raw) as PersistedProviderUsageCache;
-      if (!isRecord(parsed) || parsed.version !== PERSISTED_CACHE_VERSION || !isRecord(parsed.entries)) {
+      if (
+        !isRecord(parsed) ||
+        (parsed.version !== PERSISTED_CACHE_VERSION && parsed.version !== LEGACY_PERSISTED_CACHE_VERSION) ||
+        !isRecord(parsed.entries)
+      ) {
         return;
       }
 
@@ -416,9 +477,17 @@ export class ProviderUsageService {
         }
       }
 
-      const anthropic = parseCachedProviderUsageEntry(parsed.entries.anthropic);
-      if (anthropic) {
-        this.cache.anthropic = anthropic;
+      const anthropicRaw = parsed.entries.anthropic;
+      if (Array.isArray(anthropicRaw)) {
+        const anthropicEntries = anthropicRaw.map(parseCachedProviderUsageEntry).filter((e): e is CachedProviderUsageEntry => e !== null);
+        if (anthropicEntries.length > 0) {
+          this.cache.anthropic = anthropicEntries;
+        }
+      } else if (anthropicRaw) {
+        const single = parseCachedProviderUsageEntry(anthropicRaw);
+        if (single) {
+          this.cache.anthropic = [single];
+        }
       }
     } catch (error) {
       if (!isEnoentError(error)) {
@@ -571,6 +640,14 @@ function unavailableProviderUsage(provider: string): ProviderAccountUsage {
   };
 }
 
+function makeCachedEntry(data: ProviderAccountUsage, timestampMs: number): CachedProviderUsageEntry {
+  return {
+    data,
+    fetchedAtMs: timestampMs,
+    lastAttemptMs: timestampMs
+  };
+}
+
 function normalizeString(value: unknown): string | undefined {
   if (typeof value !== "string") {
     return undefined;
@@ -580,13 +657,15 @@ function normalizeString(value: unknown): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function toHistoryAccountKey(accountEmail: string | undefined): string | undefined {
-  const normalized = normalizeString(accountEmail)?.toLowerCase();
-  if (!normalized) {
+function toHistoryAccountKey(accountEmail: string | undefined, accountId?: string | undefined): string | undefined {
+  const normalizedEmail = normalizeString(accountEmail)?.toLowerCase();
+  const fallbackId = normalizeString(accountId);
+  const identity = normalizedEmail ?? fallbackId;
+  if (!identity) {
     return undefined;
   }
 
-  return createHash("sha256").update(normalized).digest("hex");
+  return createHash("sha256").update(identity).digest("hex");
 }
 
 function parseCachedProviderUsageEntry(value: unknown): CachedProviderUsageEntry | null {

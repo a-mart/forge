@@ -1,41 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import type {
+  FileContentResult,
+  FileCountResult,
+  FileEntry,
+  FileListResult,
+  FileSearchResult,
+} from '@forge/protocol'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
 
-/* ------------------------------------------------------------------ */
-/*  Types                                                              */
-/* ------------------------------------------------------------------ */
-
-export interface FileEntry {
-  name: string
-  type: 'file' | 'directory'
-  size?: number
-}
-
-export interface FileListResult {
-  cwd: string
-  path: string
-  entries: FileEntry[]
-  isGitRepo?: boolean
-  repoName?: string
-  branch?: string | null
-}
-
-export interface FileCountResult {
-  count: number
-  method: 'git' | 'none'
-}
-
-export interface FileSearchResult {
-  results: Array<{ path: string; type: 'file' }>
-  totalMatches: number
-  unavailable?: true
-}
-
-export interface FileContentResult {
-  content: string | null
-  binary: boolean
-  size: number
-  lines?: number
+export type {
+  FileContentResult,
+  FileCountResult,
+  FileEntry,
+  FileListResult,
+  FileSearchResult,
 }
 
 /* ------------------------------------------------------------------ */

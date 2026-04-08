@@ -34,6 +34,11 @@ describe('runtime capacity error parsing', () => {
     expect(parseRetryAfterMsFromErrorMessage('HTTP 429. retry-after: 120')).toBe(120_000)
   })
 
+  it('classifies Anthropic overloaded_error 529 responses as capacity errors', () => {
+    const result = classifyRuntimeCapacityError('Request failed with status: 529 {"type":"overloaded_error"}')
+    expect(result).toEqual({ isQuotaOrRateLimit: true })
+  })
+
   it('does not classify unrelated mentions of 429 as quota/rate limits', () => {
     const result = classifyRuntimeCapacityError('Parser failed near line 429 in config file.')
     expect(result).toEqual({ isQuotaOrRateLimit: false })

@@ -265,17 +265,11 @@ describe("credential pool rotation flow", () => {
     expect(selection).toBeNull();
   });
 
-  it("non-OpenAI providers are unaffected by pool operations", async () => {
+  it("unsupported providers are rejected by pool operations", async () => {
     const pool = new CredentialPoolService(deps);
-    await expect(pool.select("anthropic")).rejects.toThrow(
-      /only supported for 'openai-codex'/
-    );
-    await expect(pool.getPoolSize("anthropic")).rejects.toThrow(
-      /only supported for 'openai-codex'/
-    );
-    await expect(pool.buildRuntimeAuthData("anthropic", "cred_123")).rejects.toThrow(
-      /only supported for 'openai-codex'/
-    );
+    await expect(pool.select("xai")).rejects.toThrow(/only supported for/);
+    await expect(pool.getPoolSize("xai")).rejects.toThrow(/only supported for/);
+    await expect(pool.buildRuntimeAuthData("xai", "cred_123")).rejects.toThrow(/only supported for/);
   });
 
   it("buildRuntimeAuthData works with rotated credential for retry", async () => {

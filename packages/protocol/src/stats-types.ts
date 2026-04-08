@@ -93,7 +93,7 @@ export interface DailyUsageBucket {
 }
 
 export interface ProviderUsageStats {
-  anthropic?: ProviderAccountUsage;
+  anthropic?: ProviderAccountUsage[];
   openai?: ProviderAccountUsage[];
 }
 

@@ -7,7 +7,7 @@ import { CLAUDE_SDK_AUTH_USER_MESSAGE } from "../claude-startup-errors.js";
 import { getProfileMemoryPath } from "../data-paths.js";
 import { readSessionMeta } from "../session-manifest.js";
 import { SwarmManager } from "../swarm-manager.js";
-import type { RuntimeUserMessage, SmartCompactResult, SwarmAgentRuntime } from "../runtime-types.js";
+import type { RuntimeUserMessage, SmartCompactResult, SwarmAgentRuntime } from "../runtime-contracts.js";
 import type {
   AgentContextUsage,
   AgentDescriptor,

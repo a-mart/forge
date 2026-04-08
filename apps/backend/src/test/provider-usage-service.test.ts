@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -72,20 +72,20 @@ describe("ProviderUsageService", () => {
     }]);
   });
 
-  it("stores unavailable data when no good cache exists", async () => {
+  it("stores unavailable anthropic data as an array when no good cache exists", async () => {
     const { ProviderUsageService } = await import("../stats/provider-usage-service.js");
     const service = new ProviderUsageService("/tmp/shared-auth.json", makeHistoryFilePath()) as any;
 
     service.recordFailedAttempt("anthropic", 8_000);
 
-    expect(service.cache.anthropic).toEqual({
+    expect(service.cache.anthropic).toEqual([{
       data: {
         provider: "anthropic",
         available: false
       },
       fetchedAtMs: 8_000,
       lastAttemptMs: 8_000
-    });
+    }]);
   });
 
   it("loads last-known-good data from disk and keeps it through a failed cold-start refresh", async () => {
@@ -177,7 +177,7 @@ describe("ProviderUsageService", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it("invalidates persisted snapshots when auth is definitively expired", async () => {
+  it("invalidates persisted anthropic snapshots when auth is definitively expired", async () => {
     vi.stubEnv("NODE_ENV", "development");
     vi.stubEnv("VITEST", "");
 
@@ -188,7 +188,7 @@ describe("ProviderUsageService", () => {
     const cacheFilePath = makeCacheFilePath();
     const firstService = new ProviderUsageService("/tmp/shared-auth.json", makeHistoryFilePath(), cacheFilePath) as any;
 
-    firstService.setCached("anthropic", {
+    firstService.setCached("anthropic", [{
       provider: "anthropic",
       available: true,
       sessionUsage: {
@@ -197,7 +197,7 @@ describe("ProviderUsageService", () => {
         resetAtMs: nowMs + 90 * 60 * 1000,
         windowSeconds: 5 * 60 * 60
       }
-    }, nowMs);
+    }], nowMs);
     await firstService.persistQueue;
 
     nowMs += 4 * 60 * 1000;
@@ -213,10 +213,10 @@ describe("ProviderUsageService", () => {
 
     const snapshot = await secondService.getSnapshot();
 
-    expect(snapshot.anthropic).toEqual({
+    expect(snapshot.anthropic).toEqual([{
       provider: "anthropic",
       available: false
-    });
+    }]);
   });
 
   it("maps current OpenAI and Anthropic usage payloads into sidebar-ready usage windows", async () => {
@@ -299,19 +299,263 @@ describe("ProviderUsageService", () => {
         })
       ])
     );
-    expect(snapshot.anthropic).toMatchObject({
-      provider: "anthropic",
-      available: true,
-      sessionUsage: {
-        percent: 40,
-        resetInfo: "1.5h"
-      },
-      weeklyUsage: {
-        percent: 94,
-        resetInfo: "2.1d"
+    expect(snapshot.anthropic).toEqual([
+      expect.objectContaining({
+        provider: "anthropic",
+        available: true,
+        sessionUsage: {
+          percent: 40,
+          resetInfo: "1.5h",
+          resetAtMs: Date.parse("2026-04-01T01:30:00.000Z"),
+          windowSeconds: 5 * 60 * 60
+        },
+        weeklyUsage: {
+          percent: 94,
+          resetInfo: "2.1d",
+          resetAtMs: Date.parse("2026-04-03T03:00:00.000Z"),
+          windowSeconds: 7 * 24 * 60 * 60
+        }
+      })
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("fetches pooled anthropic usage for multiple accounts and keys history by credential id", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("VITEST", "");
+
+    const nowMs = Date.parse("2026-04-01T00:00:00.000Z");
+    vi.spyOn(Date, "now").mockReturnValue(nowMs);
+
+    const historyFilePath = makeHistoryFilePath();
+    const fetchMock = vi.fn(async (_input: string | URL, init?: RequestInit) => {
+      const headers = init?.headers as Record<string, string> | undefined;
+      const authHeader = headers?.Authorization;
+      if (authHeader === "Bearer anthropic-token-1") {
+        return new Response(JSON.stringify({
+          five_hour: {
+            utilization: 25,
+            resets_at: "2026-04-01T02:00:00.000Z"
+          },
+          seven_day: {
+            utilization: 61,
+            resets_at: "2026-04-06T00:00:00.000Z"
+          }
+        }), { status: 200 });
+      }
+
+      if (authHeader === "Bearer anthropic-token-2") {
+        return new Response(JSON.stringify({
+          five_hour: {
+            utilization: 55,
+            resets_at: "2026-04-01T03:00:00.000Z"
+          },
+          seven_day: {
+            utilization: 72,
+            resets_at: "2026-04-07T00:00:00.000Z"
+          }
+        }), { status: 200 });
+      }
+
+      throw new Error(`Unexpected authorization header: ${String(authHeader)}`);
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { ProviderUsageService } = await import("../stats/provider-usage-service.js");
+    const service = new ProviderUsageService("/tmp/shared-auth.json", historyFilePath) as any;
+    const pool = {
+      listPool: vi.fn(async (provider: string) => {
+        if (provider === "anthropic") {
+          return {
+            strategy: "fill_first",
+            credentials: [
+              { id: "cred_a", label: "Anthropic A", isPrimary: true, health: "healthy", requestCount: 0, createdAt: "2026-04-01T00:00:00.000Z" },
+              { id: "cred_b", label: "Anthropic B", isPrimary: false, health: "healthy", requestCount: 0, createdAt: "2026-04-01T00:00:00.000Z" }
+            ]
+          };
+        }
+
+        return { strategy: "fill_first", credentials: [] };
+      }),
+      buildRuntimeAuthData: vi.fn(async (provider: string, credentialId: string) => {
+        if (provider !== "anthropic") {
+          throw new Error(`Unexpected provider: ${provider}`);
+        }
+
+        return {
+          anthropic: {
+            type: "oauth",
+            access: credentialId === "cred_a" ? "anthropic-token-1" : "anthropic-token-2",
+            refresh: `refresh-${credentialId}`,
+            expires: nowMs + 60_000
+          }
+        };
+      })
+    };
+
+    service.setCredentialPoolGetter(() => pool as any);
+    vi.spyOn(service, "readOpenAIAuth").mockResolvedValue(null);
+    const readAnthropicAuthSpy = vi.spyOn(service, "readAnthropicAuth").mockResolvedValue(null);
+
+    const snapshot = await service.getSnapshot();
+
+    expect(snapshot.anthropic).toEqual([
+      expect.objectContaining({
+        provider: "anthropic",
+        accountId: "cred_a",
+        accountLabel: "Anthropic A",
+        available: true,
+        sessionUsage: expect.objectContaining({ percent: 25 }),
+        weeklyUsage: expect.objectContaining({ percent: 61 })
+      }),
+      expect.objectContaining({
+        provider: "anthropic",
+        accountId: "cred_b",
+        accountLabel: "Anthropic B",
+        available: true,
+        sessionUsage: expect.objectContaining({ percent: 55 }),
+        weeklyUsage: expect.objectContaining({ percent: 72 })
+      })
+    ]);
+    expect(pool.listPool).toHaveBeenCalledWith("anthropic");
+    expect(pool.buildRuntimeAuthData).toHaveBeenCalledTimes(2);
+    expect(readAnthropicAuthSpy).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    const historyLines = (await readFile(historyFilePath, "utf8")).trim().split("\n").map(line => JSON.parse(line) as { accountKey?: string });
+    const distinctAccountKeys = new Set(historyLines.map(line => line.accountKey).filter(Boolean));
+    expect(distinctAccountKeys.size).toBe(2);
+  });
+
+  it("falls back to single-account anthropic auth when only one pooled credential exists", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("VITEST", "");
+
+    const nowMs = Date.parse("2026-04-01T00:00:00.000Z");
+    vi.spyOn(Date, "now").mockReturnValue(nowMs);
+
+    const fetchMock = vi.fn(async (input: string | URL, init?: RequestInit) => {
+      const url = String(input);
+      const headers = init?.headers as Record<string, string> | undefined;
+      if (!url.includes("api.anthropic.com/api/oauth/usage")) {
+        throw new Error(`Unexpected fetch URL: ${url}`);
+      }
+
+      expect(headers?.Authorization).toBe("Bearer shared-auth-token");
+      return new Response(JSON.stringify({
+        five_hour: {
+          utilization: 33,
+          resets_at: "2026-04-01T01:00:00.000Z"
+        },
+        seven_day: {
+          utilization: 66,
+          resets_at: "2026-04-05T00:00:00.000Z"
+        }
+      }), { status: 200 });
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { ProviderUsageService } = await import("../stats/provider-usage-service.js");
+    const service = new ProviderUsageService("/tmp/shared-auth.json", makeHistoryFilePath()) as any;
+    const pool = {
+      listPool: vi.fn(async (provider: string) => {
+        if (provider === "anthropic") {
+          return {
+            strategy: "fill_first",
+            credentials: [
+              { id: "cred_only", label: "Only Account", isPrimary: true, health: "healthy", requestCount: 0, createdAt: "2026-04-01T00:00:00.000Z" }
+            ]
+          };
+        }
+
+        return { strategy: "fill_first", credentials: [] };
+      }),
+      buildRuntimeAuthData: vi.fn()
+    };
+
+    service.setCredentialPoolGetter(() => pool as any);
+    vi.spyOn(service, "readOpenAIAuth").mockResolvedValue(null);
+    const readAnthropicAuthSpy = vi.spyOn(service, "readAnthropicAuth").mockResolvedValue({
+      anthropic: {
+        access: "shared-auth-token",
+        expires: nowMs + 60_000
       }
     });
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    const snapshot = await service.getSnapshot();
+
+    expect(snapshot.anthropic).toEqual([
+      expect.objectContaining({
+        provider: "anthropic",
+        available: true,
+        sessionUsage: expect.objectContaining({ percent: 33 }),
+        weeklyUsage: expect.objectContaining({ percent: 66 })
+      })
+    ]);
+    expect(pool.listPool).toHaveBeenCalledWith("anthropic");
+    expect(pool.buildRuntimeAuthData).not.toHaveBeenCalled();
+    expect(readAnthropicAuthSpy).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("loads legacy v2 anthropic cache entries and rewrites them as v3 arrays", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("VITEST", "");
+
+    const nowMs = Date.parse("2026-04-01T00:00:00.000Z");
+    vi.spyOn(Date, "now").mockReturnValue(nowMs);
+
+    const cacheFilePath = makeCacheFilePath();
+    await writeFile(cacheFilePath, JSON.stringify({
+      version: 2,
+      entries: {
+        anthropic: {
+          data: {
+            provider: "anthropic",
+            available: true,
+            accountId: "cred_legacy",
+            accountLabel: "Legacy Account",
+            sessionUsage: {
+              percent: 42,
+              resetInfo: "2.0h",
+              resetAtMs: nowMs + 2 * 60 * 60 * 1000,
+              windowSeconds: 5 * 60 * 60
+            }
+          },
+          fetchedAtMs: nowMs - 60_000,
+          lastAttemptMs: nowMs - 60_000
+        }
+      }
+    }), "utf8");
+
+    const { ProviderUsageService } = await import("../stats/provider-usage-service.js");
+    const service = new ProviderUsageService("/tmp/shared-auth.json", makeHistoryFilePath(), cacheFilePath) as any;
+
+    vi.spyOn(service, "readOpenAIAuth").mockResolvedValue(null);
+    vi.spyOn(service, "readAnthropicAuth").mockResolvedValue(null);
+
+    const snapshot = await service.getSnapshot();
+
+    expect(snapshot.anthropic).toEqual([
+      expect.objectContaining({
+        provider: "anthropic",
+        available: true,
+        accountId: "cred_legacy",
+        accountLabel: "Legacy Account"
+      })
+    ]);
+
+    service.setCached("anthropic", snapshot.anthropic, nowMs);
+    await service.persistQueue;
+
+    const persisted = JSON.parse(await readFile(cacheFilePath, "utf8")) as {
+      version: number;
+      entries: { anthropic?: unknown };
+    };
+    expect(persisted.version).toBe(3);
+    expect(Array.isArray(persisted.entries.anthropic)).toBe(true);
   });
 
   it("keeps 07:45 and 07:46 weekly resets as separate historical weeks", async () => {

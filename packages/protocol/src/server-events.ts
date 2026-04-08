@@ -1,480 +1,99 @@
-import type { ConversationMessageAttachment } from './attachments.js'
 import type {
-  PlaywrightDiscoverySettings,
-  PlaywrightDiscoverySnapshot,
-} from './playwright.js'
+  AgentStatusEvent,
+  AgentsSnapshotEvent,
+  SessionWorkersSnapshotEvent,
+} from './agent-events.js'
 import type {
-  AcceptedDeliveryMode,
-  AgentContextUsage,
-  AgentDescriptor,
-  AgentStatus,
-  ChoiceAnswer,
-  ChoiceQuestion,
-  ChoiceRequestStatus,
-  DeliveryMode,
-  DirectoryItem,
-  ManagerModelPreset,
-  ManagerReasoningLevel,
-  MessageSourceContext,
-  ManagerProfile,
-  PersistedProjectAgentConfig,
-  ProjectAgentInfo,
-  PromptCategory,
-  PromptSourceLayer,
-  SessionMemoryMergeFailureStage,
-  SessionMemoryMergeResult,
-  SessionMemoryMergeStrategy,
-} from './shared-types.js'
+  ConversationEntry,
+  MessagePinnedEvent,
+} from './conversation-events.js'
+import type {
+  CortexPromptSurfaceChangedEvent,
+  ModelConfigChangedEvent,
+  PromptChangedEvent,
+  SpecialistRosterChangedEvent,
+} from './config-events.js'
+import type {
+  DirectoriesListedEvent,
+  DirectoryPickedEvent,
+  DirectoryValidatedEvent,
+} from './directory-events.js'
+import type { TelegramStatusEvent } from './integration-events.js'
+import type {
+  ManagerCreatedEvent,
+  ManagerCwdUpdatedEvent,
+  ManagerDeletedEvent,
+  ManagerModelUpdatedEvent,
+  StopAllAgentsResultEvent,
+} from './manager-events.js'
+import type {
+  UnreadCountUpdateEvent,
+  UnreadCountsSnapshotEvent,
+  UnreadNotificationEvent,
+} from './notification-events.js'
+import type {
+  PlaywrightDiscoverySettingsUpdatedEvent,
+  PlaywrightDiscoverySnapshotEvent,
+  PlaywrightDiscoveryUpdatedEvent,
+} from './playwright-events.js'
+import type { ProfileRenamedEvent, ProfilesSnapshotEvent } from './profile-events.js'
+import type {
+  ProjectAgentConfigEvent,
+  ProjectAgentRecommendationsErrorEvent,
+  ProjectAgentRecommendationsEvent,
+  ProjectAgentReferenceDeletedEvent,
+  ProjectAgentReferenceEvent,
+  ProjectAgentReferencesEvent,
+  ProjectAgentReferenceSavedEvent,
+  SessionProjectAgentUpdatedEvent,
+} from './project-agent-events.js'
+import type {
+  SessionClearedEvent,
+  SessionCreatedEvent,
+  SessionDeletedEvent,
+  SessionForkedEvent,
+  SessionMemoryMergeFailedEvent,
+  SessionMemoryMergedEvent,
+  SessionMemoryMergeStartedEvent,
+  SessionPinnedEvent,
+  SessionRenamedEvent,
+  SessionResumedEvent,
+  SessionStoppedEvent,
+} from './session-events.js'
 import type {
   TerminalClosedEvent,
   TerminalCreatedEvent,
   TerminalsSnapshotEvent,
   TerminalUpdatedEvent,
 } from './terminal-types.js'
+import type {
+  ApiProxyResponseEvent,
+  ConversationHistoryEvent,
+  ConversationResetEvent,
+  ErrorEvent,
+  PendingChoicesSnapshotEvent,
+  ReadyEvent,
+} from './transport-events.js'
 
-export interface ProjectAgentMessageContext {
-  fromAgentId: string
-  fromDisplayName: string
-}
-
-export interface ConversationMessageEvent {
-  type: 'conversation_message'
-  agentId: string
-  id?: string
-  role: 'user' | 'assistant' | 'system'
-  text: string
-  attachments?: ConversationMessageAttachment[]
-  timestamp: string
-  source: 'user_input' | 'speak_to_user' | 'system' | 'project_agent_input'
-  sourceContext?: MessageSourceContext
-  projectAgentContext?: ProjectAgentMessageContext
-  pinned?: boolean
-}
-
-export interface MessagePinnedEvent {
-  type: 'message_pinned'
-  agentId: string
-  messageId: string
-  pinned: boolean
-  timestamp: string
-}
-
-export type ConversationLogKind =
-  | 'message_start'
-  | 'message_end'
-  | 'tool_execution_start'
-  | 'tool_execution_update'
-  | 'tool_execution_end'
-
-export interface ConversationLogEvent {
-  type: 'conversation_log'
-  agentId: string
-  timestamp: string
-  source: 'runtime_log'
-  kind: ConversationLogKind
-  role?: 'user' | 'assistant' | 'system'
-  toolName?: string
-  toolCallId?: string
-  text: string
-  isError?: boolean
-}
-
-export interface AgentMessageEvent {
-  type: 'agent_message'
-  agentId: string
-  timestamp: string
-  source: 'user_to_agent' | 'agent_to_agent'
-  fromAgentId?: string
-  toAgentId: string
-  text: string
-  sourceContext?: MessageSourceContext
-  requestedDelivery?: DeliveryMode
-  acceptedMode?: AcceptedDeliveryMode
-  attachmentCount?: number
-}
-
-export type AgentToolCallKind = Extract<
-  ConversationLogKind,
-  'tool_execution_start' | 'tool_execution_update' | 'tool_execution_end'
->
-
-export interface AgentToolCallEvent {
-  type: 'agent_tool_call'
-  agentId: string
-  actorAgentId: string
-  timestamp: string
-  kind: AgentToolCallKind
-  toolName?: string
-  toolCallId?: string
-  text: string
-  isError?: boolean
-}
-
-export interface ChoiceRequestEvent {
-  type: 'choice_request'
-  agentId: string
-  choiceId: string
-  questions: ChoiceQuestion[]
-  status: ChoiceRequestStatus
-  answers?: ChoiceAnswer[]
-  timestamp: string
-}
-
-export interface ManagerCreatedEvent {
-  type: 'manager_created'
-  manager: AgentDescriptor
-  requestId?: string
-}
-
-export interface ManagerDeletedEvent {
-  type: 'manager_deleted'
-  managerId: string
-  terminatedWorkerIds: string[]
-  requestId?: string
-}
-
-export interface ManagerModelUpdatedEvent {
-  type: 'manager_model_updated'
-  managerId: string
-  model: ManagerModelPreset
-  reasoningLevel?: ManagerReasoningLevel
-  requestId?: string
-}
-
-export interface ManagerCwdUpdatedEvent {
-  type: 'manager_cwd_updated'
-  managerId: string
-  cwd: string
-  requestId?: string
-}
-
-export interface SessionCreatedEvent {
-  type: 'session_created'
-  profile: ManagerProfile
-  sessionAgent: AgentDescriptor
-  requestId?: string
-}
-
-export interface SessionStoppedEvent {
-  type: 'session_stopped'
-  agentId: string
-  profileId: string
-  terminatedWorkerIds: string[]
-  requestId?: string
-}
-
-export interface SessionResumedEvent {
-  type: 'session_resumed'
-  agentId: string
-  profileId: string
-  requestId?: string
-}
-
-export interface SessionDeletedEvent {
-  type: 'session_deleted'
-  agentId: string
-  profileId: string
-  terminatedWorkerIds: string[]
-  requestId?: string
-}
-
-export interface SessionClearedEvent {
-  type: 'session_cleared'
-  agentId: string
-  requestId?: string
-}
-
-export interface SessionRenamedEvent {
-  type: 'session_renamed'
-  agentId: string
-  label: string
-  requestId?: string
-}
-
-export interface SessionPinnedEvent {
-  type: 'session_pinned'
-  agentId: string
-  pinned: boolean
-  pinnedAt: string | null
-  requestId?: string
-}
-
-export interface SessionProjectAgentUpdatedEvent {
-  type: 'session_project_agent_updated'
-  agentId: string
-  profileId: string
-  projectAgent: ProjectAgentInfo | null
-  requestId?: string
-}
-
-export interface ProjectAgentRecommendationsEvent {
-  type: 'project_agent_recommendations'
-  agentId: string
-  whenToUse: string
-  systemPrompt: string
-  requestId?: string
-}
-
-export interface ProjectAgentRecommendationsErrorEvent {
-  type: 'project_agent_recommendations_error'
-  agentId: string
-  message: string
-  requestId?: string
-}
-
-export interface ProjectAgentConfigEvent {
-  type: 'project_agent_config'
-  agentId: string
-  config: PersistedProjectAgentConfig
-  systemPrompt: string | null
-  references: string[]
-  requestId?: string
-}
-
-export interface ProjectAgentReferencesEvent {
-  type: 'project_agent_references'
-  agentId: string
-  references: string[]
-  requestId?: string
-}
-
-export interface ProjectAgentReferenceEvent {
-  type: 'project_agent_reference'
-  agentId: string
-  fileName: string
-  content: string
-  requestId?: string
-}
-
-export interface ProjectAgentReferenceSavedEvent {
-  type: 'project_agent_reference_saved'
-  agentId: string
-  fileName: string
-  requestId?: string
-}
-
-export interface ProjectAgentReferenceDeletedEvent {
-  type: 'project_agent_reference_deleted'
-  agentId: string
-  fileName: string
-  requestId?: string
-}
-
-export interface ProfileRenamedEvent {
-  type: 'profile_renamed'
-  profileId: string
-  displayName: string
-  requestId?: string
-}
-
-export interface SessionForkedEvent {
-  type: 'session_forked'
-  sourceAgentId: string
-  newSessionAgent: AgentDescriptor
-  profile: ManagerProfile
-  fromMessageId?: string
-  requestId?: string
-}
-
-export interface SessionMemoryMergeStartedEvent {
-  type: 'session_memory_merge_started'
-  agentId: string
-  requestId?: string
-}
-
-export interface SessionMemoryMergedEvent extends SessionMemoryMergeResult {
-  type: 'session_memory_merged'
-  requestId?: string
-}
-
-export interface SessionMemoryMergeFailedEvent {
-  type: 'session_memory_merge_failed'
-  agentId: string
-  message: string
-  status: 'failed'
-  strategy?: SessionMemoryMergeStrategy
-  stage?: SessionMemoryMergeFailureStage
-  auditPath?: string
-  requestId?: string
-}
-
-export interface StopAllAgentsResultEvent {
-  type: 'stop_all_agents_result'
-  managerId: string
-  stoppedWorkerIds: string[]
-  managerStopped: boolean
-  terminatedWorkerIds?: string[]
-  managerTerminated?: boolean
-  requestId?: string
-}
-
-export interface DirectoriesListedEvent {
-  type: 'directories_listed'
-  path: string
-  directories: string[]
-  requestId?: string
-  requestedPath?: string
-  resolvedPath?: string
-  roots?: string[]
-  entries?: DirectoryItem[]
-}
-
-export interface DirectoryValidatedEvent {
-  type: 'directory_validated'
-  path: string
-  valid: boolean
-  message?: string
-  requestId?: string
-  requestedPath?: string
-  roots?: string[]
-  resolvedPath?: string
-}
-
-export interface DirectoryPickedEvent {
-  type: 'directory_picked'
-  path: string | null
-  requestId?: string
-}
-
-export type TelegramConnectionState =
-  | 'disabled'
-  | 'connecting'
-  | 'connected'
-  | 'disconnected'
-  | 'error'
-
-export interface TelegramStatusEvent {
-  type: 'telegram_status'
-  managerId?: string
-  integrationProfileId?: string
-  state: TelegramConnectionState
-  enabled: boolean
-  updatedAt: string
-  message?: string
-  botId?: string
-  botUsername?: string
-}
-
-export type ConversationEntry =
-  | ConversationMessageEvent
-  | ConversationLogEvent
-  | AgentMessageEvent
-  | AgentToolCallEvent
-  | ChoiceRequestEvent
-
-export type ConversationEntryEvent = ConversationEntry
-
-export interface AgentStatusEvent {
-  type: 'agent_status'
-  agentId: string
-  managerId?: string
-  status: AgentStatus
-  pendingCount: number
-  contextUsage?: AgentContextUsage
-  contextRecoveryInProgress?: boolean
-  streamingStartedAt?: number
-}
-
-export interface AgentsSnapshotEvent {
-  type: 'agents_snapshot'
-  agents: AgentDescriptor[]
-}
-
-export interface SessionWorkersSnapshotEvent {
-  type: 'session_workers_snapshot'
-  sessionAgentId: string
-  workers: AgentDescriptor[]
-  requestId?: string
-}
-
-export interface ProfilesSnapshotEvent {
-  type: 'profiles_snapshot'
-  profiles: ManagerProfile[]
-}
-
-export interface UnreadNotificationEvent {
-  type: 'unread_notification'
-  agentId: string
-  /** What triggered this notification. Absent for legacy compat (treat as 'message'). */
-  reason?: 'message' | 'choice_request'
-  /** The session/manager agent this notification belongs to. Needed for per-manager prefs on worker-originated events. */
-  sessionAgentId?: string
-}
-
-/** Sent during bootstrap — full authoritative state for all profiles. */
-export interface UnreadCountsSnapshotEvent {
-  type: 'unread_counts_snapshot'
-  /** sessionAgentId → count (sparse: only entries with count > 0) */
-  counts: Record<string, number>
-}
-
-/** Sent live after any mutation — single session update. */
-export interface UnreadCountUpdateEvent {
-  type: 'unread_count_update'
-  agentId: string   // sessionAgentId
-  count: number
-}
-
-export interface PlaywrightDiscoverySnapshotEvent {
-  type: 'playwright_discovery_snapshot'
-  snapshot: PlaywrightDiscoverySnapshot
-}
-
-export interface PlaywrightDiscoveryUpdatedEvent {
-  type: 'playwright_discovery_updated'
-  snapshot: PlaywrightDiscoverySnapshot
-}
-
-export interface PlaywrightDiscoverySettingsUpdatedEvent {
-  type: 'playwright_discovery_settings_updated'
-  settings: PlaywrightDiscoverySettings
-}
-
-export interface PromptChangedEvent {
-  type: 'prompt_changed'
-  category: PromptCategory
-  promptId: string
-  layer: PromptSourceLayer
-  action: 'saved' | 'deleted'
-}
-
-export interface CortexPromptSurfaceChangedEvent {
-  type: 'cortex_prompt_surface_changed'
-  profileId: string
-  surfaceId: string
-  filePath: string
-  updatedAt: string
-}
-
-export interface SpecialistRosterChangedEvent {
-  type: 'specialist_roster_changed'
-  profileId: string
-  specialistIds: string[]
-  updatedAt: string
-}
-
-export interface ModelConfigChangedEvent {
-  type: 'model_config_changed'
-  updatedAt: string
-}
-
-export interface ApiProxyResponseEvent {
-  type: 'api_proxy_response'
-  requestId: string
-  status: number
-  body: string
-  headers?: Record<string, string>
-}
+// Compatibility re-exports from leaf modules
+export * from './conversation-events.js'
+export * from './agent-events.js'
+export * from './manager-events.js'
+export * from './session-events.js'
+export * from './project-agent-events.js'
+export * from './profile-events.js'
+export * from './directory-events.js'
+export * from './notification-events.js'
+export * from './integration-events.js'
+export * from './playwright-events.js'
+export * from './config-events.js'
+export * from './transport-events.js'
 
 export type ServerEvent =
-  | { type: 'ready'; serverTime: string; subscribedAgentId: string }
-  | { type: 'conversation_reset'; agentId: string; timestamp: string; reason: 'user_new_command' | 'api_reset' }
-  | {
-      type: 'conversation_history'
-      agentId: string
-      messages: ConversationEntry[]
-    }
-  | { type: 'pending_choices_snapshot'; agentId: string; choiceIds: string[] }
+  | ReadyEvent
+  | ConversationResetEvent
+  | ConversationHistoryEvent
+  | PendingChoicesSnapshotEvent
   | ConversationEntry
   | AgentStatusEvent
   | AgentsSnapshotEvent
@@ -525,4 +144,5 @@ export type ServerEvent =
   | ModelConfigChangedEvent
   | ApiProxyResponseEvent
   | MessagePinnedEvent
-  | { type: 'error'; code: string; message: string; requestId?: string }
+  | ErrorEvent
+

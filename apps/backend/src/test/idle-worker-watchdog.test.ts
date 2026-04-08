@@ -14,7 +14,7 @@ import type {
   SendMessageReceipt,
   SwarmConfig,
 } from '../swarm/types.js'
-import type { RuntimeUserMessage, SwarmAgentRuntime } from '../swarm/runtime-types.js'
+import type { RuntimeUserMessage, SwarmAgentRuntime } from '../swarm/runtime-contracts.js'
 
 class FakeRuntime {
   readonly descriptor: AgentDescriptor

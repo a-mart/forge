@@ -14,7 +14,7 @@ import type {
   SendMessageReceipt,
   SwarmConfig,
 } from '../swarm/types.js'
-import type { SwarmAgentRuntime } from '../swarm/runtime-types.js'
+import type { SwarmAgentRuntime } from '../swarm/runtime-contracts.js'
 import { DAEMONIZED_ENV_VAR, getControlPidFilePath } from '../reboot/control-pid.js'
 import { getScheduleFilePath } from '../scheduler/schedule-storage.js'
 import {

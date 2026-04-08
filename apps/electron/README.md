@@ -69,12 +69,13 @@ This is a build step only. It does **not** publish a GitHub Release.
 The packaging pipeline:
 
 1. Clears `apps/electron/release/` so stale installers, blockmaps, and unpacked directories do not leak into the next validation/upload pass
-2. Builds `@forge/protocol`, `@forge/backend`, `@forge/ui`, and the Electron main process
-3. Stages backend runtime assets into `apps/electron/.stage/backend/`
-4. Stages renderer assets into `apps/electron/.stage/ui/`
-5. Stages Forge runtime resources into `apps/electron/.stage/forge-resources/`
-6. Runs a packaged-runtime preflight that resolves and loads the staged native/runtime externals from `.stage/backend/node_modules/`, ensuring they do not silently fall back to repo-level `node_modules`
-7. Runs `electron-builder --publish never`
+2. Clears `apps/ui/.output/` so the packaged renderer always starts from a fresh UI build output
+3. Builds `@forge/protocol`, `@forge/backend`, `@forge/ui`, and the Electron main process
+4. Stages backend runtime assets into `apps/electron/.stage/backend/`
+5. Stages renderer assets into `apps/electron/.stage/ui/`, then validates that every asset referenced by the staged `index.html` actually exists in the staged `assets/` directory before packaging continues
+6. Stages Forge runtime resources into `apps/electron/.stage/forge-resources/`
+7. Runs a packaged-runtime preflight that resolves and loads the staged native/runtime externals from `.stage/backend/node_modules/`, ensuring they do not silently fall back to repo-level `node_modules`
+8. Runs `electron-builder --publish never`
 
 Packaged outputs are written to `apps/electron/release/`, which is treated as ephemeral build output for the current run.
 

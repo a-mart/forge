@@ -12,18 +12,18 @@ import {
   Trash2,
   X,
 } from 'lucide-react'
+import type {
+  ChromeCdpConfig,
+  ChromeCdpPreviewTab,
+  ChromeCdpProfile,
+  ChromeCdpStatus,
+} from '@forge/protocol'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { SettingsSection } from './settings-row'
-import type {
-  ChromeCdpConfig,
-  ChromeCdpStatus,
-  ChromeCdpProfile,
-  ChromeCdpPreviewTab,
-} from './settings-types'
 import {
   fetchChromeCdpSettings,
   updateChromeCdpSettings,

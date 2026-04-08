@@ -3,56 +3,15 @@ import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { getSpawnPresetFamilies } from "@forge/protocol";
 import { parseSwarmModelPreset, parseSwarmReasoningLevel } from "./model-presets.js";
 import { ChoiceRequestCancelledError } from "./swarm-manager.js";
+import type { SwarmToolHost } from "./swarm-tool-host.js";
 import {
   type AgentDescriptor,
-  type ChoiceAnswer,
-  type ChoiceQuestion,
   type MessageChannel,
-  type MessageSourceContext,
-  type MessageTargetContext,
   type RequestedDeliveryMode,
-  type SendMessageReceipt,
   type SpawnAgentInput
 } from "./types.js";
 
-export interface SwarmToolHost {
-  listAgents(): AgentDescriptor[];
-  getWorkerActivity(agentId: string): {
-    currentTool: string | null;
-    currentToolElapsedSec: number;
-    toolCalls: number;
-    errors: number;
-    turns: number;
-    idleSec: number;
-  } | undefined;
-  spawnAgent(callerAgentId: string, input: SpawnAgentInput): Promise<AgentDescriptor>;
-  killAgent(callerAgentId: string, targetAgentId: string): Promise<void>;
-  sendMessage(
-    fromAgentId: string,
-    targetAgentId: string,
-    message: string,
-    delivery?: RequestedDeliveryMode
-  ): Promise<SendMessageReceipt>;
-  createAndPromoteProjectAgent?(
-    creatorAgentId: string,
-    params: {
-      sessionName: string;
-      handle?: string;
-      whenToUse: string;
-      systemPrompt: string;
-    }
-  ): Promise<{ agentId: string; handle: string }>;
-  publishToUser(
-    agentId: string,
-    text: string,
-    source?: "speak_to_user" | "system",
-    targetContext?: MessageTargetContext
-  ): Promise<{ targetContext: MessageSourceContext }>;
-  requestUserChoice(
-    agentId: string,
-    questions: ChoiceQuestion[],
-  ): Promise<ChoiceAnswer[]>;
-}
+export type { SwarmToolHost } from "./swarm-tool-host.js";
 
 const deliveryModeSchema = Type.Union([
   Type.Literal("auto"),

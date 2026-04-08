@@ -1,162 +1,112 @@
-import { chooseFallbackAgentId } from './agent-hierarchy'
-import { handleManagerIdleTransition, handleUnreadNotification, removeMutedAgent, removeMutedAgents } from './notification-service'
+import { handleManagerIdleTransition, removeMutedAgent, removeMutedAgents } from './notification-service'
+import {
+  assertConnectedSocket,
+  assertReconnectableSocket,
+  buildChoiceCancelCommand,
+  buildChoiceResponseCommand,
+  buildClearAllPinsCommand,
+  buildCreateManagerCommand,
+  buildCreateSessionCommand,
+  buildDeleteManagerCommand,
+  buildDeleteProjectAgentReferenceCommand,
+  buildForkSessionCommand,
+  buildGetProjectAgentConfigCommand,
+  buildGetProjectAgentReferenceCommand,
+  buildGetSessionWorkersCommand,
+  buildKillAgentCommand,
+  buildListDirectoriesCommand,
+  buildListProjectAgentReferencesCommand,
+  buildMarkAllReadCommand,
+  buildMarkUnreadCommand,
+  buildMergeSessionMemoryCommand,
+  buildPickDirectoryCommand,
+  buildPinMessageCommand,
+  buildPinSessionCommand,
+  buildRenameProfileCommand,
+  buildRenameSessionCommand,
+  buildReorderProfilesCommand,
+  buildRequestProjectAgentRecommendationsCommand,
+  buildSessionActionCommand,
+  buildSetProjectAgentReferenceCommand,
+  buildSetSessionProjectAgentCommand,
+  buildStopAllAgentsCommand,
+  buildSubscribeCommand,
+  buildUpdateManagerCwdCommand,
+  buildUpdateManagerModelCommand,
+  buildUserMessageCommand,
+  buildValidateDirectoryCommand,
+  isSocketOpen,
+  RECONNECTING_SOCKET_ERROR,
+} from './ws-client/request-definitions'
+import {
+  INITIAL_CONNECT_DELAY_MS,
+  RECONNECT_MS,
+  REQUEST_TIMEOUT_MS,
+  SESSION_WORKERS_REFETCH_DEBOUNCE_MS,
+  WS_REQUEST_ERROR_HINTS,
+  WS_REQUEST_TYPES,
+} from './ws-client/runtime-types'
+import {
+  reduceAgentStatus,
+  reduceAgentsSnapshot,
+  reduceManagerDeleted,
+  reduceSessionDeleted,
+  reduceSessionWorkersSnapshot,
+} from './ws-client/snapshot-reducers'
+import type {
+  DirectoriesListedResult,
+  DirectoryValidationResult,
+  Listener,
+  ProjectAgentConfigResult,
+  ProjectAgentReferenceDeletedResult,
+  ProjectAgentReferenceResult,
+  ProjectAgentReferencesResult,
+  ProjectAgentReferenceSavedResult,
+  SessionActionResult,
+  SessionCreatedResult,
+  SessionForkedResult,
+  SessionProjectAgentResult,
+  SessionWorkersResult,
+  WsRequestResultMap,
+  WsRequestType,
+} from './ws-client/types'
+import { createSystemConversationMessage, normalizeAgentId, normalizeConversationAttachments, resolveTerminalScopeAgentId } from './ws-client/utils'
 import { WsRequestTracker } from './ws-request-tracker'
 import {
   createInitialManagerWsState,
-  type AgentActivityEntry,
-  type ConversationHistoryEntry,
   type ManagerWsState,
 } from './ws-state'
-import {
-  MANAGER_MODEL_PRESETS,
-  MANAGER_REASONING_LEVELS,
-  type AgentDescriptor,
-  type AgentSessionPurpose,
-  type ChoiceAnswer,
-  type ClientCommand,
-  type ConversationAttachment,
-  type ConversationEntry,
-  type ConversationMessageEvent,
-  type DeliveryMode,
-  type ManagerModelPreset,
-  type ManagerReasoningLevel,
-  type PersistedProjectAgentConfig,
-  type ProjectAgentInfo,
-  type ServerEvent,
-  type SessionMemoryMergeResult,
+import { handleConversationEvent } from './ws-client/event-handlers/conversation-event-handlers'
+import { handleTerminalEvent } from './ws-client/event-handlers/terminal-event-handlers'
+import { handleAgentEvent } from './ws-client/event-handlers/agent-event-handlers'
+import { handleSessionEvent } from './ws-client/event-handlers/session-event-handlers'
+import { handleProjectAgentEvent } from './ws-client/event-handlers/project-agent-event-handlers'
+import { handleConfigEvent } from './ws-client/event-handlers/config-event-handlers'
+import { handleDirectoryEvent } from './ws-client/event-handlers/directory-event-handlers'
+import { handleSystemEvent } from './ws-client/event-handlers/system-event-handlers'
+import type {
+  AgentDescriptor,
+  AgentSessionPurpose,
+  ChoiceAnswer,
+  ClientCommand,
+  ConversationAttachment,
+  DeliveryMode,
+  ManagerModelPreset,
+  ManagerReasoningLevel,
+  ServerEvent,
+  SessionMemoryMergeResult,
 } from '@forge/protocol'
 
 export type { ManagerWsState } from './ws-state'
-
-const INITIAL_CONNECT_DELAY_MS = 50
-const RECONNECT_MS = 1200
-const REQUEST_TIMEOUT_MS = 300_000
-const SESSION_WORKERS_REFETCH_DEBOUNCE_MS = 250
-// Keep client-side activity retention aligned with backend history retention.
-const MAX_CLIENT_CONVERSATION_HISTORY = 2000
-
-export interface DirectoriesListedResult {
-  path: string
-  directories: string[]
-}
-
-export interface DirectoryValidationResult {
-  path: string
-  valid: boolean
-  message: string | null
-  resolvedPath?: string
-}
-
-type Listener = (state: ManagerWsState) => void
-
-type SessionCreatedResult = { sessionAgent: AgentDescriptor; profileId: string }
-type SessionActionResult = { agentId: string }
-type SessionForkedResult = { sourceAgentId: string; newSessionAgent: AgentDescriptor }
-type SessionWorkersResult = { sessionAgentId: string; workers: AgentDescriptor[] }
-
-type SessionProjectAgentResult = { agentId: string; profileId: string; projectAgent: ProjectAgentInfo | null }
-
-export type ProjectAgentConfigResult = {
-  agentId: string
-  config: PersistedProjectAgentConfig
-  systemPrompt: string | null
-  references: string[]
-}
-
-export type ProjectAgentReferencesResult = { agentId: string; references: string[] }
-export type ProjectAgentReferenceResult = { agentId: string; fileName: string; content: string }
-export type ProjectAgentReferenceSavedResult = { agentId: string; fileName: string }
-export type ProjectAgentReferenceDeletedResult = { agentId: string; fileName: string }
-
-type ProjectAgentRecommendationsResult = { agentId: string; whenToUse: string; systemPrompt: string }
-
-type WsRequestResultMap = {
-  create_manager: AgentDescriptor
-  delete_manager: { managerId: string }
-  update_manager_model: { managerId: string }
-  update_manager_cwd: { managerId: string; cwd: string }
-  stop_all_agents: { managerId: string; stoppedWorkerIds: string[]; managerStopped: boolean }
-  create_session: SessionCreatedResult
-  stop_session: SessionActionResult
-  resume_session: SessionActionResult
-  delete_session: SessionActionResult
-  clear_session: SessionActionResult
-  rename_session: SessionActionResult
-  pin_session: { pinnedAt: string | null }
-  rename_profile: { profileId: string }
-  fork_session: SessionForkedResult
-  merge_session_memory: SessionMemoryMergeResult
-  set_session_project_agent: SessionProjectAgentResult
-  get_project_agent_config: ProjectAgentConfigResult
-  list_project_agent_references: ProjectAgentReferencesResult
-  get_project_agent_reference: ProjectAgentReferenceResult
-  set_project_agent_reference: ProjectAgentReferenceSavedResult
-  delete_project_agent_reference: ProjectAgentReferenceDeletedResult
-  request_project_agent_recommendations: ProjectAgentRecommendationsResult
-  get_session_workers: { sessionAgentId: string; workers: AgentDescriptor[] }
-  list_directories: DirectoriesListedResult
-  validate_directory: DirectoryValidationResult
-  pick_directory: string | null
-}
-
-type WsRequestType = Extract<keyof WsRequestResultMap, string>
-const WS_REQUEST_TYPES: WsRequestType[] = [
-  'create_manager',
-  'delete_manager',
-  'update_manager_model',
-  'update_manager_cwd',
-  'stop_all_agents',
-  'create_session',
-  'stop_session',
-  'resume_session',
-  'delete_session',
-  'clear_session',
-  'rename_session',
-  'pin_session',
-  'rename_profile',
-  'fork_session',
-  'merge_session_memory',
-  'set_session_project_agent',
-  'get_project_agent_config',
-  'list_project_agent_references',
-  'get_project_agent_reference',
-  'set_project_agent_reference',
-  'delete_project_agent_reference',
-  'request_project_agent_recommendations',
-  'get_session_workers',
-  'list_directories',
-  'validate_directory',
-  'pick_directory',
-]
-
-const WS_REQUEST_ERROR_HINTS: Array<{ requestType: WsRequestType; codeFragment: string }> = [
-  { requestType: 'create_manager', codeFragment: 'create_manager' },
-  { requestType: 'delete_manager', codeFragment: 'delete_manager' },
-  { requestType: 'update_manager_model', codeFragment: 'update_manager_model' },
-  { requestType: 'update_manager_cwd', codeFragment: 'update_manager_cwd' },
-  { requestType: 'stop_all_agents', codeFragment: 'stop_all_agents' },
-  { requestType: 'create_session', codeFragment: 'create_session' },
-  { requestType: 'stop_session', codeFragment: 'stop_session' },
-  { requestType: 'resume_session', codeFragment: 'resume_session' },
-  { requestType: 'delete_session', codeFragment: 'delete_session' },
-  { requestType: 'clear_session', codeFragment: 'clear_session' },
-  { requestType: 'rename_session', codeFragment: 'rename_session' },
-  { requestType: 'pin_session', codeFragment: 'pin_session' },
-  { requestType: 'rename_profile', codeFragment: 'rename_profile' },
-  { requestType: 'fork_session', codeFragment: 'fork_session' },
-  { requestType: 'merge_session_memory', codeFragment: 'merge_session_memory' },
-  { requestType: 'set_session_project_agent', codeFragment: 'set_session_project_agent' },
-  { requestType: 'get_project_agent_config', codeFragment: 'project_agent_config' },
-  { requestType: 'list_project_agent_references', codeFragment: 'project_agent_references' },
-  { requestType: 'get_project_agent_reference', codeFragment: 'project_agent_reference' },
-  { requestType: 'set_project_agent_reference', codeFragment: 'project_agent_reference_saved' },
-  { requestType: 'delete_project_agent_reference', codeFragment: 'project_agent_reference_deleted' },
-  { requestType: 'request_project_agent_recommendations', codeFragment: 'project_agent_recommendations' },
-  { requestType: 'get_session_workers', codeFragment: 'get_session_workers' },
-  { requestType: 'list_directories', codeFragment: 'list_directories' },
-  { requestType: 'validate_directory', codeFragment: 'validate_directory' },
-  { requestType: 'pick_directory', codeFragment: 'pick_directory' },
-]
+export type {
+  DirectoriesListedResult,
+  DirectoryValidationResult,
+  ProjectAgentConfigResult,
+  ProjectAgentReferenceDeletedResult,
+  ProjectAgentReferenceResult,
+  ProjectAgentReferencesResult,
+  ProjectAgentReferenceSavedResult,
+} from './ws-client/types'
 
 export class ManagerWsClient {
   private readonly url: string
@@ -170,7 +120,6 @@ export class ManagerWsClient {
   private shouldReloadOnReconnect = false
   private hasExplicitAgentSelection = false
   private explicitAgentSelectionAgentId: string | null = null
-  private hasReceivedAgentsSnapshot = false
 
   private state: ManagerWsState
   private readonly listeners = new Set<Listener>()
@@ -194,10 +143,6 @@ export class ManagerWsClient {
     return this.state
   }
 
-  /**
-   * Manually mark a session as having unread messages.
-   * Sets the unread count to at least 1 so the badge appears.
-   */
   markUnread(agentId: string): void {
     const current = this.state.unreadCounts[agentId] ?? 0
     if (current === 0) {
@@ -205,8 +150,7 @@ export class ManagerWsClient {
         unreadCounts: { ...this.state.unreadCounts, [agentId]: 1 },
       })
     }
-    // Persist to server
-    this.send({ type: 'mark_unread', agentId })
+    this.send(buildMarkUnreadCommand(agentId))
   }
 
   markAllRead(profileId: string): void {
@@ -221,7 +165,7 @@ export class ManagerWsClient {
     if (changed) {
       this.updateState({ unreadCounts: nextUnread })
     }
-    this.send({ type: 'mark_all_read', profileId })
+    this.send(buildMarkAllReadCommand(profileId))
   }
 
   hasExplicitSelection(): boolean {
@@ -236,27 +180,7 @@ export class ManagerWsClient {
     agentId: string | null | undefined,
     agents: AgentDescriptor[] = this.state.agents,
   ): string | null {
-    if (!agentId) {
-      return null
-    }
-
-    const descriptor = agents.find((agent) => agent.agentId === agentId)
-    if (!descriptor) {
-      return null
-    }
-
-    if (descriptor.role === 'manager') {
-      return descriptor.profileId ?? descriptor.agentId
-    }
-
-    const managerDescriptor = agents.find(
-      (agent) => agent.role === 'manager' && agent.agentId === descriptor.managerId,
-    )
-    if (managerDescriptor) {
-      return managerDescriptor.profileId ?? managerDescriptor.agentId
-    }
-
-    return descriptor.managerId
+    return resolveTerminalScopeAgentId(agentId, agents)
   }
 
   subscribe(listener: Listener): () => void {
@@ -321,14 +245,11 @@ export class ManagerWsClient {
       unreadCounts: nextUnread,
     })
 
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+    if (!isSocketOpen(this.socket)) {
       return
     }
 
-    this.send({
-      type: 'subscribe',
-      agentId: trimmed,
-    })
+    this.send(buildSubscribeCommand(trimmed))
   }
 
   sendUserMessage(
@@ -339,9 +260,9 @@ export class ManagerWsClient {
     const attachments = normalizeConversationAttachments(options?.attachments)
     if (!trimmed && attachments.length === 0) return
 
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+    if (!isSocketOpen(this.socket)) {
       this.updateState({
-        lastError: 'WebSocket is disconnected. Reconnecting...'
+        lastError: RECONNECTING_SOCKET_ERROR,
       })
       return
     }
@@ -379,63 +300,44 @@ export class ManagerWsClient {
       return
     }
 
-    this.send({
-      type: 'user_message',
-      text: trimmed,
-      attachments: attachments.length > 0 ? attachments : undefined,
-      agentId,
-      delivery: options?.delivery,
-    })
+    this.send(
+      buildUserMessageCommand({
+        text: trimmed,
+        attachments,
+        agentId,
+        delivery: options?.delivery,
+      }),
+    )
   }
 
   sendChoiceResponse(agentId: string, choiceId: string, answers: ChoiceAnswer[]): void {
-    this.send({
-      type: 'choice_response',
-      agentId,
-      choiceId,
-      answers,
-    })
+    this.send(buildChoiceResponseCommand(agentId, choiceId, answers))
   }
 
   sendChoiceCancel(agentId: string, choiceId: string): void {
-    this.send({
-      type: 'choice_cancel',
-      agentId,
-      choiceId,
-    })
+    this.send(buildChoiceCancelCommand(agentId, choiceId))
   }
 
   pinMessage(agentId: string, messageId: string, pinned: boolean): void {
-    this.send({
-      type: 'pin_message',
-      agentId,
-      messageId,
-      pinned,
-    })
+    this.send(buildPinMessageCommand(agentId, messageId, pinned))
   }
 
   clearAllPins(agentId: string): void {
-    this.send({
-      type: 'clear_all_pins',
-      agentId,
-    })
+    this.send(buildClearAllPinsCommand(agentId))
   }
 
   deleteAgent(agentId: string): void {
     const trimmed = agentId.trim()
     if (!trimmed) return
 
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+    if (!isSocketOpen(this.socket)) {
       this.updateState({
-        lastError: 'WebSocket is disconnected. Reconnecting...'
+        lastError: RECONNECTING_SOCKET_ERROR,
       })
       return
     }
 
-    this.send({
-      type: 'kill_agent',
-      agentId: trimmed,
-    })
+    this.send(buildKillAgentCommand(trimmed))
   }
 
   async stopAllAgents(
@@ -446,145 +348,69 @@ export class ManagerWsClient {
       throw new Error('Manager id is required.')
     }
 
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-      throw new Error('WebSocket is disconnected. Reconnecting...')
-    }
+    assertReconnectableSocket(this.socket)
 
-    return this.enqueueRequest('stop_all_agents', (requestId) => ({
-      type: 'stop_all_agents',
-      managerId: trimmed,
-      requestId,
-    }))
+    return this.enqueueRequest('stop_all_agents', (requestId) =>
+      buildStopAllAgentsCommand(trimmed, requestId),
+    )
   }
 
-  async createManager(input: { name: string; cwd: string; model: ManagerModelPreset }): Promise<AgentDescriptor> {
-    const name = input.name.trim()
-    const cwd = input.cwd.trim()
-    const model = input.model
-
-    if (!name) {
-      throw new Error('Manager name is required.')
-    }
-
-    if (!cwd) {
-      throw new Error('Manager working directory is required.')
-    }
-
-    if (!MANAGER_MODEL_PRESETS.includes(model)) {
-      throw new Error('Manager model is required.')
-    }
-
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-      throw new Error('WebSocket is disconnected. Reconnecting...')
-    }
-
-    return this.enqueueRequest('create_manager', (requestId) => ({
-        type: 'create_manager',
-        name,
-        cwd,
-        model,
-        requestId,
-      }))
+  async createManager(input: {
+    name: string
+    cwd: string
+    model: ManagerModelPreset
+  }): Promise<AgentDescriptor> {
+    assertReconnectableSocket(this.socket)
+    return this.enqueueRequest('create_manager', (requestId) =>
+      buildCreateManagerCommand(input, requestId),
+    )
   }
 
   async deleteManager(managerId: string): Promise<{ managerId: string }> {
-    const trimmed = managerId.trim()
-    if (!trimmed) {
-      throw new Error('Manager id is required.')
-    }
-
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-      throw new Error('WebSocket is disconnected. Reconnecting...')
-    }
-
-    return this.enqueueRequest('delete_manager', (requestId) => ({
-        type: 'delete_manager',
-        managerId: trimmed,
-        requestId,
-      }))
+    assertReconnectableSocket(this.socket)
+    return this.enqueueRequest('delete_manager', (requestId) =>
+      buildDeleteManagerCommand(managerId, requestId),
+    )
   }
 
-  async updateManagerModel(managerId: string, model: ManagerModelPreset, reasoningLevel?: ManagerReasoningLevel): Promise<{ managerId: string }> {
-    const trimmed = managerId.trim()
-    if (!trimmed) {
-      throw new Error('Manager id is required.')
-    }
-
-    if (!MANAGER_MODEL_PRESETS.includes(model)) {
-      throw new Error('Invalid model preset.')
-    }
-
-    if (reasoningLevel && !MANAGER_REASONING_LEVELS.includes(reasoningLevel)) {
-      throw new Error('Invalid reasoning level.')
-    }
-
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-      throw new Error('WebSocket is disconnected. Reconnecting...')
-    }
-
-    return this.enqueueRequest('update_manager_model', (requestId) => ({
-        type: 'update_manager_model',
-        managerId: trimmed,
-        model,
-        reasoningLevel,
-        requestId,
-      }))
+  async updateManagerModel(
+    managerId: string,
+    model: ManagerModelPreset,
+    reasoningLevel?: ManagerReasoningLevel,
+  ): Promise<{ managerId: string }> {
+    assertReconnectableSocket(this.socket)
+    return this.enqueueRequest('update_manager_model', (requestId) =>
+      buildUpdateManagerModelCommand(managerId, model, reasoningLevel, requestId),
+    )
   }
 
   async updateManagerCwd(managerId: string, cwd: string): Promise<{ managerId: string; cwd: string }> {
-    const trimmed = managerId.trim()
-    if (!trimmed) throw new Error('Manager id is required.')
-    if (!cwd.trim()) throw new Error('Working directory is required.')
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-      throw new Error('WebSocket is disconnected. Reconnecting...')
-    }
-    return this.enqueueRequest('update_manager_cwd', (requestId) => ({
-      type: 'update_manager_cwd',
-      managerId: trimmed,
-      cwd: cwd.trim(),
-      requestId,
-    }))
+    assertReconnectableSocket(this.socket)
+    return this.enqueueRequest('update_manager_cwd', (requestId) =>
+      buildUpdateManagerCwdCommand(managerId, cwd, requestId),
+    )
   }
 
   reorderProfiles(profileIds: string[]): boolean {
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return false
-    return this.send({
-      type: 'reorder_profiles',
-      profileIds,
-    })
+    if (!isSocketOpen(this.socket)) return false
+    return this.send(buildReorderProfilesCommand(profileIds))
   }
 
   async listDirectories(path?: string): Promise<DirectoriesListedResult> {
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-      throw new Error('WebSocket is disconnected. Reconnecting...')
-    }
-
-    return this.enqueueRequest('list_directories', (requestId) => ({
-        type: 'list_directories',
-        path: path?.trim() || undefined,
-        requestId,
-      }))
+    assertReconnectableSocket(this.socket)
+    return this.enqueueRequest('list_directories', (requestId) =>
+      buildListDirectoriesCommand(path, requestId),
+    )
   }
 
   async validateDirectory(path: string): Promise<DirectoryValidationResult> {
-    const trimmed = path.trim()
-    if (!trimmed) {
-      throw new Error('Directory path is required.')
-    }
-
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-      throw new Error('WebSocket is disconnected. Reconnecting...')
-    }
-
-    return this.enqueueRequest('validate_directory', (requestId) => ({
-        type: 'validate_directory',
-        path: trimmed,
-        requestId,
-      }))
+    assertReconnectableSocket(this.socket)
+    return this.enqueueRequest('validate_directory', (requestId) =>
+      buildValidateDirectoryCommand(path, requestId),
+    )
   }
 
   async pickDirectory(defaultPath?: string): Promise<string | null> {
-    // Use native Electron dialog when available
     const bridge = typeof window !== 'undefined' ? window.electronBridge : undefined
     if (bridge?.showOpenDialog) {
       const result = await bridge.showOpenDialog({
@@ -595,342 +421,150 @@ export class ManagerWsClient {
       return result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0]
     }
 
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-      throw new Error('WebSocket is disconnected. Reconnecting...')
-    }
-
-    return this.enqueueRequest('pick_directory', (requestId) => ({
-        type: 'pick_directory',
-        defaultPath: defaultPath?.trim() || undefined,
-        requestId,
-      }))
+    assertReconnectableSocket(this.socket)
+    return this.enqueueRequest('pick_directory', (requestId) =>
+      buildPickDirectoryCommand(defaultPath, requestId),
+    )
   }
 
-  async createSession(profileId: string, name?: string, opts?: { sessionPurpose?: AgentSessionPurpose; label?: string }): Promise<SessionCreatedResult> {
-    const trimmed = profileId.trim()
-    if (!trimmed) {
-      throw new Error('Profile id is required.')
-    }
-
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-      throw new Error('WebSocket is disconnected. Reconnecting...')
-    }
-
-    return this.enqueueRequest('create_session', (requestId) => ({
-      type: 'create_session',
-      profileId: trimmed,
-      name: name?.trim() || undefined,
-      label: opts?.label,
-      sessionPurpose: opts?.sessionPurpose,
-      requestId,
-    }))
+  async createSession(
+    profileId: string,
+    name?: string,
+    opts?: { sessionPurpose?: AgentSessionPurpose; label?: string },
+  ): Promise<SessionCreatedResult> {
+    assertReconnectableSocket(this.socket)
+    return this.enqueueRequest('create_session', (requestId) =>
+      buildCreateSessionCommand(profileId, name, opts, requestId),
+    )
   }
 
   async stopSession(agentId: string): Promise<SessionActionResult> {
-    const trimmed = agentId.trim()
-    if (!trimmed) {
-      throw new Error('Agent id is required.')
-    }
-
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-      throw new Error('WebSocket is disconnected. Reconnecting...')
-    }
-
-    return this.enqueueRequest('stop_session', (requestId) => ({
-      type: 'stop_session',
-      agentId: trimmed,
-      requestId,
-    }))
+    assertReconnectableSocket(this.socket)
+    return this.enqueueRequest('stop_session', (requestId) =>
+      buildSessionActionCommand('stop_session', agentId, requestId),
+    )
   }
 
   async resumeSession(agentId: string): Promise<SessionActionResult> {
-    const trimmed = agentId.trim()
-    if (!trimmed) {
-      throw new Error('Agent id is required.')
-    }
-
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-      throw new Error('WebSocket is disconnected. Reconnecting...')
-    }
-
-    return this.enqueueRequest('resume_session', (requestId) => ({
-      type: 'resume_session',
-      agentId: trimmed,
-      requestId,
-    }))
+    assertReconnectableSocket(this.socket)
+    return this.enqueueRequest('resume_session', (requestId) =>
+      buildSessionActionCommand('resume_session', agentId, requestId),
+    )
   }
 
   async deleteSession(agentId: string): Promise<SessionActionResult> {
-    const trimmed = agentId.trim()
-    if (!trimmed) {
-      throw new Error('Agent id is required.')
-    }
-
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-      throw new Error('WebSocket is disconnected. Reconnecting...')
-    }
-
-    return this.enqueueRequest('delete_session', (requestId) => ({
-      type: 'delete_session',
-      agentId: trimmed,
-      requestId,
-    }))
+    assertReconnectableSocket(this.socket)
+    return this.enqueueRequest('delete_session', (requestId) =>
+      buildSessionActionCommand('delete_session', agentId, requestId),
+    )
   }
 
   async clearSession(agentId: string): Promise<SessionActionResult> {
-    const trimmed = agentId.trim()
-    if (!trimmed) {
-      throw new Error('Agent id is required.')
-    }
-
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-      throw new Error('WebSocket is disconnected. Reconnecting...')
-    }
-
-    return this.enqueueRequest('clear_session', (requestId) => ({
-      type: 'clear_session',
-      agentId: trimmed,
-      requestId,
-    }))
+    assertReconnectableSocket(this.socket)
+    return this.enqueueRequest('clear_session', (requestId) =>
+      buildSessionActionCommand('clear_session', agentId, requestId),
+    )
   }
 
   async renameSession(agentId: string, label: string): Promise<SessionActionResult> {
-    const trimmed = agentId.trim()
-    const trimmedLabel = label.trim()
-    if (!trimmed) {
-      throw new Error('Agent id is required.')
-    }
-
-    if (!trimmedLabel) {
-      throw new Error('Session label is required.')
-    }
-
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-      throw new Error('WebSocket is disconnected. Reconnecting...')
-    }
-
-    return this.enqueueRequest('rename_session', (requestId) => ({
-      type: 'rename_session',
-      agentId: trimmed,
-      label: trimmedLabel,
-      requestId,
-    }))
+    assertReconnectableSocket(this.socket)
+    return this.enqueueRequest('rename_session', (requestId) =>
+      buildRenameSessionCommand(agentId, label, requestId),
+    )
   }
 
   async pinSession(agentId: string, pinned: boolean): Promise<{ pinnedAt: string | null }> {
-    const trimmed = agentId.trim()
-    if (!trimmed) {
-      throw new Error('Agent id is required.')
-    }
-
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-      throw new Error('WebSocket is disconnected. Reconnecting...')
-    }
-
-    return this.enqueueRequest('pin_session', (requestId) => ({
-      type: 'pin_session',
-      agentId: trimmed,
-      pinned,
-      requestId,
-    }))
+    assertReconnectableSocket(this.socket)
+    return this.enqueueRequest('pin_session', (requestId) =>
+      buildPinSessionCommand(agentId, pinned, requestId),
+    )
   }
 
   async renameProfile(profileId: string, displayName: string): Promise<{ profileId: string }> {
-    const trimmedId = profileId.trim()
-    const trimmedName = displayName.trim()
-    if (!trimmedId) {
-      throw new Error('Profile id is required.')
-    }
-
-    if (!trimmedName) {
-      throw new Error('Profile display name is required.')
-    }
-
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-      throw new Error('WebSocket is disconnected. Reconnecting...')
-    }
-
-    return this.enqueueRequest('rename_profile', (requestId) => ({
-      type: 'rename_profile',
-      profileId: trimmedId,
-      displayName: trimmedName,
-      requestId,
-    }))
+    assertReconnectableSocket(this.socket)
+    return this.enqueueRequest('rename_profile', (requestId) =>
+      buildRenameProfileCommand(profileId, displayName, requestId),
+    )
   }
 
-  async forkSession(sourceAgentId: string, label?: string, fromMessageId?: string): Promise<SessionForkedResult> {
-    const trimmed = sourceAgentId.trim()
-    if (!trimmed) {
-      throw new Error('Source agent id is required.')
-    }
-
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-      throw new Error('WebSocket is disconnected. Reconnecting...')
-    }
-
-    return this.enqueueRequest('fork_session', (requestId) => ({
-      type: 'fork_session',
-      sourceAgentId: trimmed,
-      label: label?.trim() || undefined,
-      fromMessageId: fromMessageId?.trim() || undefined,
-      requestId,
-    }))
+  async forkSession(
+    sourceAgentId: string,
+    label?: string,
+    fromMessageId?: string,
+  ): Promise<SessionForkedResult> {
+    assertReconnectableSocket(this.socket)
+    return this.enqueueRequest('fork_session', (requestId) =>
+      buildForkSessionCommand(sourceAgentId, label, fromMessageId, requestId),
+    )
   }
 
   async setSessionProjectAgent(
     agentId: string,
     projectAgent: { whenToUse: string; systemPrompt?: string; handle?: string } | null,
   ): Promise<SessionProjectAgentResult> {
-    const trimmed = agentId.trim()
-    if (!trimmed) {
-      throw new Error('Agent id is required.')
-    }
-
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-      throw new Error('WebSocket is disconnected. Reconnecting...')
-    }
-
-    return this.enqueueRequest('set_session_project_agent', (requestId) => ({
-      type: 'set_session_project_agent',
-      agentId: trimmed,
-      projectAgent,
-      requestId,
-    }))
+    assertReconnectableSocket(this.socket)
+    return this.enqueueRequest('set_session_project_agent', (requestId) =>
+      buildSetSessionProjectAgentCommand(agentId, projectAgent, requestId),
+    )
   }
 
   async getProjectAgentConfig(agentId: string): Promise<ProjectAgentConfigResult> {
-    const trimmed = agentId.trim()
-    if (!trimmed) {
-      throw new Error('Agent id is required.')
-    }
-
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-      throw new Error('WebSocket is disconnected. Reconnecting...')
-    }
-
-    return this.enqueueRequest('get_project_agent_config', (requestId) => ({
-      type: 'get_project_agent_config',
-      agentId: trimmed,
-      requestId,
-    }))
+    assertReconnectableSocket(this.socket)
+    return this.enqueueRequest('get_project_agent_config', (requestId) =>
+      buildGetProjectAgentConfigCommand(agentId, requestId),
+    )
   }
 
   async listProjectAgentReferences(agentId: string): Promise<ProjectAgentReferencesResult> {
-    const trimmed = agentId.trim()
-    if (!trimmed) {
-      throw new Error('Agent id is required.')
-    }
-
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-      throw new Error('WebSocket is disconnected. Reconnecting...')
-    }
-
-    return this.enqueueRequest('list_project_agent_references', (requestId) => ({
-      type: 'list_project_agent_references',
-      agentId: trimmed,
-      requestId,
-    }))
+    assertReconnectableSocket(this.socket)
+    return this.enqueueRequest('list_project_agent_references', (requestId) =>
+      buildListProjectAgentReferencesCommand(agentId, requestId),
+    )
   }
 
-  async getProjectAgentReference(agentId: string, fileName: string): Promise<ProjectAgentReferenceResult> {
-    const trimmedAgentId = agentId.trim()
-    const trimmedFileName = fileName.trim()
-    if (!trimmedAgentId) {
-      throw new Error('Agent id is required.')
-    }
-    if (!trimmedFileName) {
-      throw new Error('File name is required.')
-    }
-
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-      throw new Error('WebSocket is disconnected. Reconnecting...')
-    }
-
-    return this.enqueueRequest('get_project_agent_reference', (requestId) => ({
-      type: 'get_project_agent_reference',
-      agentId: trimmedAgentId,
-      fileName: trimmedFileName,
-      requestId,
-    }))
+  async getProjectAgentReference(
+    agentId: string,
+    fileName: string,
+  ): Promise<ProjectAgentReferenceResult> {
+    assertReconnectableSocket(this.socket)
+    return this.enqueueRequest('get_project_agent_reference', (requestId) =>
+      buildGetProjectAgentReferenceCommand(agentId, fileName, requestId),
+    )
   }
 
-  async setProjectAgentReference(agentId: string, fileName: string, content: string): Promise<ProjectAgentReferenceSavedResult> {
-    const trimmedAgentId = agentId.trim()
-    const trimmedFileName = fileName.trim()
-    if (!trimmedAgentId) {
-      throw new Error('Agent id is required.')
-    }
-    if (!trimmedFileName) {
-      throw new Error('File name is required.')
-    }
-
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-      throw new Error('WebSocket is disconnected. Reconnecting...')
-    }
-
-    return this.enqueueRequest('set_project_agent_reference', (requestId) => ({
-      type: 'set_project_agent_reference',
-      agentId: trimmedAgentId,
-      fileName: trimmedFileName,
-      content,
-      requestId,
-    }))
+  async setProjectAgentReference(
+    agentId: string,
+    fileName: string,
+    content: string,
+  ): Promise<ProjectAgentReferenceSavedResult> {
+    assertReconnectableSocket(this.socket)
+    return this.enqueueRequest('set_project_agent_reference', (requestId) =>
+      buildSetProjectAgentReferenceCommand(agentId, fileName, content, requestId),
+    )
   }
 
-  async deleteProjectAgentReference(agentId: string, fileName: string): Promise<ProjectAgentReferenceDeletedResult> {
-    const trimmedAgentId = agentId.trim()
-    const trimmedFileName = fileName.trim()
-    if (!trimmedAgentId) {
-      throw new Error('Agent id is required.')
-    }
-    if (!trimmedFileName) {
-      throw new Error('File name is required.')
-    }
-
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-      throw new Error('WebSocket is disconnected. Reconnecting...')
-    }
-
-    return this.enqueueRequest('delete_project_agent_reference', (requestId) => ({
-      type: 'delete_project_agent_reference',
-      agentId: trimmedAgentId,
-      fileName: trimmedFileName,
-      requestId,
-    }))
+  async deleteProjectAgentReference(
+    agentId: string,
+    fileName: string,
+  ): Promise<ProjectAgentReferenceDeletedResult> {
+    assertReconnectableSocket(this.socket)
+    return this.enqueueRequest('delete_project_agent_reference', (requestId) =>
+      buildDeleteProjectAgentReferenceCommand(agentId, fileName, requestId),
+    )
   }
 
-  async requestProjectAgentRecommendations(agentId: string): Promise<ProjectAgentRecommendationsResult> {
-    const trimmed = agentId.trim()
-    if (!trimmed) {
-      throw new Error('Agent id is required.')
-    }
-
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-      throw new Error('WebSocket is disconnected. Reconnecting...')
-    }
-
-    return this.enqueueRequest('request_project_agent_recommendations', (requestId) => ({
-      type: 'request_project_agent_recommendations',
-      agentId: trimmed,
-      requestId,
-    }))
+  async requestProjectAgentRecommendations(agentId: string): Promise<{ agentId: string; whenToUse: string; systemPrompt: string }> {
+    assertReconnectableSocket(this.socket)
+    return this.enqueueRequest('request_project_agent_recommendations', (requestId) =>
+      buildRequestProjectAgentRecommendationsCommand(agentId, requestId),
+    )
   }
 
   async mergeSessionMemory(agentId: string): Promise<SessionMemoryMergeResult> {
-    const trimmed = agentId.trim()
-    if (!trimmed) {
-      throw new Error('Agent id is required.')
-    }
-
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-      throw new Error('WebSocket is disconnected. Reconnecting...')
-    }
-
-    return this.enqueueRequest('merge_session_memory', (requestId) => ({
-      type: 'merge_session_memory',
-      agentId: trimmed,
-      requestId,
-    }))
+    assertReconnectableSocket(this.socket)
+    return this.enqueueRequest('merge_session_memory', (requestId) =>
+      buildMergeSessionMemoryCommand(agentId, requestId),
+    )
   }
 
   async getSessionWorkers(sessionAgentId: string): Promise<SessionWorkersResult> {
@@ -940,8 +574,6 @@ export class ManagerWsClient {
     }
 
     if (this.state.loadedSessionIds.has(trimmed)) {
-      // Validate cache: if the manager's advertised workerCount doesn't match
-      // the number of cached workers, the cache is stale — bypass and re-fetch.
       const cachedWorkers = this.state.agents.filter(
         (agent) => agent.role === 'worker' && agent.managerId === trimmed,
       )
@@ -952,7 +584,6 @@ export class ManagerWsClient {
         const nextLoadedSessionIds = new Set(this.state.loadedSessionIds)
         nextLoadedSessionIds.delete(trimmed)
         this.updateState({ loadedSessionIds: nextLoadedSessionIds })
-        // Fall through to fetch fresh data below
       } else {
         return {
           sessionAgentId: trimmed,
@@ -966,15 +597,11 @@ export class ManagerWsClient {
       return existingRequest
     }
 
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-      throw new Error('WebSocket is disconnected.')
-    }
+    assertConnectedSocket(this.socket)
 
-    const request = this.enqueueRequest('get_session_workers', (requestId) => ({
-      type: 'get_session_workers',
-      sessionAgentId: trimmed,
-      requestId,
-    }))
+    const request = this.enqueueRequest('get_session_workers', (requestId) =>
+      buildGetSessionWorkersCommand(trimmed, requestId),
+    )
 
     this.pendingWorkerFetches.set(trimmed, request)
 
@@ -997,7 +624,6 @@ export class ManagerWsClient {
       this.shouldReloadOnReconnect = false
       this.hasExplicitAgentSelection = false
       this.explicitAgentSelectionAgentId = null
-      this.hasReceivedAgentsSnapshot = false
 
       this.updateState({
         connected: true,
@@ -1006,10 +632,7 @@ export class ManagerWsClient {
         lastError: null,
       })
 
-      this.send({
-        type: 'subscribe',
-        agentId: this.desiredAgentId ?? undefined,
-      })
+      this.send(buildSubscribeCommand(this.desiredAgentId))
 
       if (shouldReload && typeof window !== 'undefined' && typeof window.location?.reload === 'function') {
         window.location.reload()
@@ -1027,7 +650,6 @@ export class ManagerWsClient {
 
       this.hasExplicitAgentSelection = false
       this.explicitAgentSelectionAgentId = null
-      this.hasReceivedAgentsSnapshot = false
 
       this.updateState({
         connected: false,
@@ -1071,733 +693,125 @@ export class ManagerWsClient {
       return
     }
 
-    switch (event.type) {
-      case 'ready':
-        this.updateState({
-          connected: true,
-          targetAgentId: event.subscribedAgentId,
-          subscribedAgentId: event.subscribedAgentId,
-          lastError: null,
-        })
-        break
-
-      case 'conversation_message':
-      case 'conversation_log': {
-        if (event.agentId !== this.state.targetAgentId) {
-          break
-        }
-
-        const messages = [...this.state.messages, event]
-        this.updateState({ messages })
-        break
-      }
-
-      case 'message_pinned': {
-        if (event.agentId !== this.state.targetAgentId) {
-          break
-        }
-
-        const pinnedMessages = this.state.messages.map((msg) => {
-          if (msg.type === 'conversation_message' && msg.id === event.messageId) {
-            return { ...msg, pinned: event.pinned }
-          }
-          return msg
-        })
-        this.updateState({ messages: pinnedMessages })
-        break
-      }
-
-      case 'choice_request': {
-        if (event.agentId !== this.state.targetAgentId) {
-          break
-        }
-
-        const existingIdx = this.state.messages.findIndex(
-          (message) => message.type === 'choice_request' && message.choiceId === event.choiceId,
-        )
-
-        let nextMessages: ConversationHistoryEntry[]
-        if (existingIdx >= 0) {
-          nextMessages = [...this.state.messages]
-          nextMessages[existingIdx] = event
-        } else {
-          nextMessages = [...this.state.messages, event]
-        }
-
-        const nextPendingChoiceIds = new Set(this.state.pendingChoiceIds)
-        if (event.status === 'pending') {
-          nextPendingChoiceIds.add(event.choiceId)
-        } else {
-          nextPendingChoiceIds.delete(event.choiceId)
-        }
-
-        this.updateState({ messages: nextMessages, pendingChoiceIds: nextPendingChoiceIds })
-        break
-      }
-
-      case 'unread_notification': {
-        // Sound/notification side-effects only.
-        // Count is managed by unread_count_update from server.
-        handleUnreadNotification(event.agentId, this.state, event.reason, event.sessionAgentId)
-        break
-      }
-
-      case 'unread_counts_snapshot': {
-        const counts = { ...event.counts }
-        if (this.state.targetAgentId) {
-          delete counts[this.state.targetAgentId]
-        }
-        this.updateState({
-          unreadCounts: counts,
-        })
-        break
-      }
-
-      case 'unread_count_update': {
-        // Skip update for the currently-viewed session
-        if (event.agentId === this.state.targetAgentId) {
-          break
-        }
-        const nextUnread = { ...this.state.unreadCounts }
-        if (event.count > 0) {
-          nextUnread[event.agentId] = event.count
-        } else {
-          delete nextUnread[event.agentId]
-        }
-        this.updateState({ unreadCounts: nextUnread })
-        break
-      }
-
-      case 'agent_message':
-      case 'agent_tool_call': {
-        if (event.agentId !== this.state.targetAgentId) {
-          break
-        }
-
-        const activityMessages = clampConversationHistory([...this.state.activityMessages, event])
-        this.updateState({ activityMessages })
-        break
-      }
-
-      case 'conversation_history':
-        if (event.agentId !== this.state.targetAgentId) {
-          break
-        }
-
-        {
-          const { messages, activityMessages } = splitConversationHistory(event.messages)
-          this.updateState({
-            messages,
-            activityMessages: clampConversationHistory(activityMessages),
-          })
-        }
-        break
-
-      case 'pending_choices_snapshot':
-        if (event.agentId !== this.state.targetAgentId) {
-          break
-        }
-
-        this.updateState({ pendingChoiceIds: new Set(event.choiceIds) })
-        break
-
-      case 'conversation_reset':
-        if (event.agentId !== this.state.targetAgentId) {
-          break
-        }
-
-        this.updateState({
-          messages: [],
-          activityMessages: [],
-          pendingChoiceIds: new Set(),
-          lastError: null,
-        })
-        break
-
-      case 'terminals_snapshot':
-        this.updateState({
-          terminals: event.terminals,
-          terminalSessionScopeId: event.sessionAgentId,
-        })
-        break
-
-      case 'terminal_created': {
-        if (event.sessionAgentId !== this.state.terminalSessionScopeId) {
-          break
-        }
-
-        const existingIndex = this.state.terminals.findIndex(
-          (terminal) => terminal.terminalId === event.terminal.terminalId,
-        )
-        const terminals = existingIndex >= 0
-          ? this.state.terminals.map((terminal, index) => index === existingIndex ? event.terminal : terminal)
-          : [...this.state.terminals, event.terminal]
-        this.updateState({ terminals })
-        break
-      }
-
-      case 'terminal_updated': {
-        if (event.sessionAgentId !== this.state.terminalSessionScopeId) {
-          break
-        }
-
-        const existingIndex = this.state.terminals.findIndex(
-          (terminal) => terminal.terminalId === event.terminal.terminalId,
-        )
-        const terminals = existingIndex >= 0
-          ? this.state.terminals.map((terminal, index) => index === existingIndex ? event.terminal : terminal)
-          : [...this.state.terminals, event.terminal]
-        this.updateState({ terminals })
-        break
-      }
-
-      case 'terminal_closed': {
-        if (event.sessionAgentId !== this.state.terminalSessionScopeId) {
-          break
-        }
-
-        const terminals = this.state.terminals.filter((terminal) => terminal.terminalId !== event.terminalId)
-        this.updateState({ terminals })
-        break
-      }
-
-      case 'agent_status': {
-        const prevEntry = this.state.statuses[event.agentId]
-        const prevStatus = prevEntry?.status
-        const isKnownAgent = this.state.agents.some((agent) => agent.agentId === event.agentId)
-
-        const statuses = {
-          ...this.state.statuses,
-          [event.agentId]: {
-            status: event.status,
-            pendingCount: event.pendingCount,
-            contextUsage: event.contextUsage,
-            contextRecoveryInProgress: event.contextRecoveryInProgress,
-            streamingStartedAt: resolveStreamingStartedAt(prevEntry, event.status, event.streamingStartedAt),
-          },
-        }
-
-        let nextAgents = this.state.agents
-        let nextLoadedSessionIds = this.state.loadedSessionIds
-        if (event.managerId) {
-          const managerSessionWasLoaded = this.state.loadedSessionIds.has(event.managerId)
-          if (!isKnownAgent && managerSessionWasLoaded) {
-            nextLoadedSessionIds = new Set(this.state.loadedSessionIds)
-            nextLoadedSessionIds.delete(event.managerId)
-            this.queueSessionWorkersRefetch(event.managerId)
-          }
-
-          nextAgents = this.state.agents.map((agent) => {
-            // Update the worker's own status in state.agents
-            if (agent.agentId === event.agentId && agent.status !== event.status) {
-              return { ...agent, status: event.status, contextUsage: event.contextUsage }
-            }
-
-            if (agent.role !== 'manager' || agent.agentId !== event.managerId) {
-              return agent
-            }
-
-            const delta =
-              event.status === 'streaming' && prevStatus !== 'streaming'
-                ? 1
-                : event.status !== 'streaming' && prevStatus === 'streaming'
-                  ? -1
-                  : 0
-
-            if (delta === 0) {
-              return agent
-            }
-
-            return {
-              ...agent,
-              activeWorkerCount: Math.max(0, (agent.activeWorkerCount ?? 0) + delta),
-            }
-          })
-        }
-
-        const nextState = {
-          statuses,
-          ...(nextAgents !== this.state.agents ? { agents: nextAgents } : {}),
-          ...(nextLoadedSessionIds !== this.state.loadedSessionIds
-            ? { loadedSessionIds: nextLoadedSessionIds }
-            : {}),
-        }
-        this.updateState(nextState)
-
-        // Detect manager streaming → idle transition for deferred notification evaluation.
-        // When a manager goes idle, check if a pending all-done sound should play now.
-        if (prevStatus === 'streaming' && event.status === 'idle') {
-          const stateForNotifications = {
-            ...this.state,
-            ...(nextAgents !== this.state.agents ? { agents: nextAgents } : {}),
-            ...(nextLoadedSessionIds !== this.state.loadedSessionIds
-              ? { loadedSessionIds: nextLoadedSessionIds }
-              : {}),
-            statuses,
-          }
-          const agent = stateForNotifications.agents.find((a) => a.agentId === event.agentId)
-          if (agent?.role === 'manager') {
-            handleManagerIdleTransition(event.agentId, stateForNotifications)
-          }
-        }
-        break
-      }
-
-      case 'agents_snapshot':
-        this.applyAgentsSnapshot(event.agents)
-        break
-
-      case 'session_workers_snapshot':
-        this.applySessionWorkersSnapshot(event.sessionAgentId, event.workers, event.requestId)
-        break
-
-      case 'profiles_snapshot':
-        this.updateState({ profiles: event.profiles })
-        break
-
-      case 'manager_created': {
-        this.applyManagerCreated(event.manager)
-        this.requestTracker.resolve('create_manager', event.requestId, event.manager)
-        break
-      }
-
-      case 'manager_deleted': {
-        this.applyManagerDeleted(event.managerId)
-        this.requestTracker.resolve('delete_manager', event.requestId, {
-          managerId: event.managerId,
-        })
-        break
-      }
-
-      case 'manager_model_updated': {
-        this.requestTracker.resolve('update_manager_model', event.requestId, {
-          managerId: event.managerId,
-        })
-        break
-      }
-
-      case 'manager_cwd_updated': {
-        this.requestTracker.resolve('update_manager_cwd', event.requestId, {
-          managerId: event.managerId,
-          cwd: event.cwd,
-        })
-        break
-      }
-
-      case 'session_created': {
-        this.requestTracker.resolve('create_session', event.requestId, {
-          sessionAgent: event.sessionAgent,
-          profileId: event.profile.profileId,
-        })
-        break
-      }
-
-      case 'session_stopped': {
-        this.requestTracker.resolve('stop_session', event.requestId, {
-          agentId: event.agentId,
-        })
-        break
-      }
-
-      case 'session_resumed': {
-        this.requestTracker.resolve('resume_session', event.requestId, {
-          agentId: event.agentId,
-        })
-        break
-      }
-
-      case 'session_deleted': {
-        this.applySessionDeleted(event.agentId, event.profileId)
-        this.requestTracker.resolve('delete_session', event.requestId, {
-          agentId: event.agentId,
-        })
-        break
-      }
-
-      case 'session_cleared': {
-        this.requestTracker.resolve('clear_session', event.requestId, {
-          agentId: event.agentId,
-        })
-        // conversation_reset event handles clearing the message list
-        break
-      }
-
-      case 'session_renamed': {
-        this.requestTracker.resolve('rename_session', event.requestId, {
-          agentId: event.agentId,
-        })
-        break
-      }
-
-      case 'session_pinned': {
-        this.requestTracker.resolve('pin_session', event.requestId, {
-          pinnedAt: event.pinnedAt,
-        })
-        break
-      }
-
-      case 'session_project_agent_updated': {
-        if (event.requestId) {
-          this.requestTracker.resolve('set_session_project_agent', event.requestId, {
-            agentId: event.agentId,
-            profileId: event.profileId,
-            projectAgent: event.projectAgent,
-          })
-        }
-        break
-      }
-
-      case 'project_agent_config': {
-        if (event.requestId) {
-          this.requestTracker.resolve('get_project_agent_config', event.requestId, {
-            agentId: event.agentId,
-            config: event.config,
-            systemPrompt: event.systemPrompt,
-            references: event.references,
-          })
-        }
-        break
-      }
-
-      case 'project_agent_references': {
-        if (event.requestId) {
-          this.requestTracker.resolve('list_project_agent_references', event.requestId, {
-            agentId: event.agentId,
-            references: event.references,
-          })
-        }
-        break
-      }
-
-      case 'project_agent_reference': {
-        if (event.requestId) {
-          this.requestTracker.resolve('get_project_agent_reference', event.requestId, {
-            agentId: event.agentId,
-            fileName: event.fileName,
-            content: event.content,
-          })
-        }
-        break
-      }
-
-      case 'project_agent_reference_saved': {
-        if (event.requestId) {
-          this.requestTracker.resolve('set_project_agent_reference', event.requestId, {
-            agentId: event.agentId,
-            fileName: event.fileName,
-          })
-        }
-        break
-      }
-
-      case 'project_agent_reference_deleted': {
-        if (event.requestId) {
-          this.requestTracker.resolve('delete_project_agent_reference', event.requestId, {
-            agentId: event.agentId,
-            fileName: event.fileName,
-          })
-        }
-        break
-      }
-
-      case 'project_agent_recommendations': {
-        this.requestTracker.resolve('request_project_agent_recommendations', event.requestId, {
-          agentId: event.agentId,
-          whenToUse: event.whenToUse,
-          systemPrompt: event.systemPrompt,
-        })
-        break
-      }
-
-      case 'project_agent_recommendations_error': {
-        if (event.requestId) {
-          this.requestTracker.reject(
-            'request_project_agent_recommendations',
-            event.requestId,
-            new Error(event.message || 'Failed to generate project agent recommendations.'),
-          )
-        }
-        break
-      }
-
-      case 'profile_renamed': {
-        this.requestTracker.resolve('rename_profile', event.requestId, {
-          profileId: event.profileId,
-        })
-        break
-      }
-
-      case 'session_forked': {
-        this.requestTracker.resolve('fork_session', event.requestId, {
-          sourceAgentId: event.sourceAgentId,
-          newSessionAgent: event.newSessionAgent,
-        })
-        break
-      }
-
-      case 'session_memory_merge_started': {
-        break
-      }
-
-      case 'session_memory_merged': {
-        this.requestTracker.resolve('merge_session_memory', event.requestId, {
-          agentId: event.agentId,
-          status: event.status,
-          strategy: event.strategy,
-          mergedAt: event.mergedAt,
-          auditPath: event.auditPath,
-        })
-        break
-      }
-
-      case 'session_memory_merge_failed': {
-        if (event.requestId) {
-          this.requestTracker.reject(
-            'merge_session_memory',
-            event.requestId,
-            new Error(event.message || 'Session memory merge failed.'),
-          )
-        }
-        break
-      }
-
-      case 'stop_all_agents_result': {
-        const stoppedWorkerIds = event.stoppedWorkerIds ?? event.terminatedWorkerIds ?? []
-        const managerStopped = event.managerStopped ?? event.managerTerminated ?? false
-
-        this.requestTracker.resolve('stop_all_agents', event.requestId, {
-          managerId: event.managerId,
-          stoppedWorkerIds,
-          managerStopped,
-        })
-        break
-      }
-
-      case 'directories_listed': {
-        this.requestTracker.resolve('list_directories', event.requestId, {
-          path: event.path,
-          directories: event.directories,
-        })
-        break
-      }
-
-      case 'directory_validated': {
-        this.requestTracker.resolve('validate_directory', event.requestId, {
-          path: event.path,
-          valid: event.valid,
-          message: event.message ?? null,
-          resolvedPath: event.resolvedPath,
-        })
-        break
-      }
-
-      case 'directory_picked': {
-        this.requestTracker.resolve('pick_directory', event.requestId, event.path ?? null)
-        break
-      }
-
-      case 'telegram_status':
-        this.updateState({ telegramStatus: event })
-        break
-
-      case 'playwright_discovery_snapshot':
-      case 'playwright_discovery_updated':
-        this.updateState({
-          playwrightSnapshot: event.snapshot,
-          playwrightSettings: event.snapshot.settings,
-        })
-        break
-
-      case 'playwright_discovery_settings_updated':
-        this.updateState({
-          playwrightSettings: event.settings,
-          playwrightSnapshot: this.state.playwrightSnapshot
-            ? { ...this.state.playwrightSnapshot, settings: event.settings }
-            : this.state.playwrightSnapshot,
-        })
-        break
-
-      case 'prompt_changed':
-      case 'cortex_prompt_surface_changed':
-        this.updateState({ promptChangeKey: this.state.promptChangeKey + 1 })
-        break
-
-      case 'specialist_roster_changed':
-        this.updateState({ specialistChangeKey: this.state.specialistChangeKey + 1 })
-        break
-
-      case 'model_config_changed':
-        this.updateState({ modelConfigChangeKey: this.state.modelConfigChangeKey + 1 })
-        break
-
-      case 'error':
-        this.updateState({ lastError: event.message })
-        this.pushSystemMessage(`${event.code}: ${event.message}`)
-        this.rejectPendingFromError(event.code, event.message, event.requestId)
-        break
+    if (
+      handleConversationEvent(event, {
+        state: this.state,
+        updateState: (patch) => this.updateState(patch),
+      })
+    ) {
+      return
+    }
+
+    if (
+      handleTerminalEvent(event, {
+        state: this.state,
+        updateState: (patch) => this.updateState(patch),
+      })
+    ) {
+      return
+    }
+
+    if (
+      handleAgentEvent(event, {
+        applyAgentStatus: (agentEvent) => this.applyAgentStatus(agentEvent),
+        applyAgentsSnapshot: (agents) => this.applyAgentsSnapshot(agents),
+        applySessionWorkersSnapshot: (sessionAgentId, workers, requestId) =>
+          this.applySessionWorkersSnapshot(sessionAgentId, workers, requestId),
+        applyManagerCreated: (manager) => this.applyManagerCreated(manager),
+        applyManagerDeleted: (managerId) => this.applyManagerDeleted(managerId),
+        requestTracker: this.requestTracker,
+      })
+    ) {
+      return
+    }
+
+    if (
+      handleSessionEvent(event, {
+        applySessionDeleted: (agentId, profileId) => this.applySessionDeleted(agentId, profileId),
+        requestTracker: this.requestTracker,
+      })
+    ) {
+      return
+    }
+
+    if (handleProjectAgentEvent(event, { requestTracker: this.requestTracker })) {
+      return
+    }
+
+    if (
+      handleConfigEvent(event, {
+        state: this.state,
+        updateState: (patch) => this.updateState(patch),
+        requestTracker: this.requestTracker,
+      })
+    ) {
+      return
+    }
+
+    if (handleDirectoryEvent(event, { requestTracker: this.requestTracker })) {
+      return
+    }
+
+    handleSystemEvent(event, {
+      updateState: (patch) => this.updateState(patch),
+      pushSystemMessage: (text) => this.pushSystemMessage(text),
+      rejectPendingFromError: (code, message, requestId) =>
+        this.rejectPendingFromError(code, message, requestId),
+    })
+  }
+
+  private applyAgentStatus(
+    event: Extract<ServerEvent, { type: 'agent_status' }>,
+  ): void {
+    const result = reduceAgentStatus({ state: this.state, event })
+    this.updateState(result.patch)
+
+    if (result.queueSessionWorkersRefetchId) {
+      this.queueSessionWorkersRefetch(result.queueSessionWorkersRefetchId)
+    }
+
+    if (result.managerIdleTransitionAgentId) {
+      handleManagerIdleTransition(result.managerIdleTransitionAgentId, result.nextState)
     }
   }
 
   private applyAgentsSnapshot(agents: AgentDescriptor[]): void {
-    const incomingAgentIds = new Set(agents.map((agent) => agent.agentId))
-    const preservedWorkers = this.state.agents.filter(
-      (agent) =>
-        agent.role === 'worker' &&
-        !incomingAgentIds.has(agent.agentId) &&
-        this.isWorkerFromLoadedSession(agent),
-    )
+    const result = reduceAgentsSnapshot({
+      state: this.state,
+      desiredAgentId: this.desiredAgentId,
+      explicitAgentSelectionAgentId: this.explicitAgentSelectionAgentId,
+      agents,
+    })
 
-    const mergedAgents = [...agents, ...preservedWorkers]
-    const mergedAgentIds = new Set(mergedAgents.map((agent) => agent.agentId))
-    const nextLoadedSessionIds = new Set(this.state.loadedSessionIds)
-
-    for (const manager of agents) {
-      if (manager.role !== 'manager' || manager.workerCount === undefined) {
-        continue
-      }
-
-      const cachedWorkers = this.state.agents.filter(
-        (agent) => agent.role === 'worker' && agent.managerId === manager.agentId,
-      )
-
-      if (nextLoadedSessionIds.has(manager.agentId) && cachedWorkers.length !== manager.workerCount) {
-        nextLoadedSessionIds.delete(manager.agentId)
-        this.queueSessionWorkersRefetch(manager.agentId)
-      }
+    for (const sessionAgentId of result.queueSessionWorkersRefetchIds) {
+      this.queueSessionWorkersRefetch(sessionAgentId)
     }
 
-    const previousAgentIds = new Set(this.state.agents.map((agent) => agent.agentId))
-    const preservedUnloadedStatuses = Object.fromEntries(
-      Object.entries(this.state.statuses).filter(
-        ([agentId]) => !mergedAgentIds.has(agentId) && !previousAgentIds.has(agentId),
-      ),
-    )
-    const statuses = {
-      ...preservedUnloadedStatuses,
-      ...Object.fromEntries(
-        mergedAgents.map((agent) => {
-          const previous = this.state.statuses[agent.agentId]
-          const status = (agent.role === 'worker' && previous) ? previous.status : agent.status
-          return [
-            agent.agentId,
-            {
-              status,
-              pendingCount: previous && previous.status === status ? previous.pendingCount : 0,
-              contextUsage: agent.contextUsage,
-              contextRecoveryInProgress: previous?.contextRecoveryInProgress,
-              streamingStartedAt: resolveStreamingStartedAt(previous, status, agent.streamingStartedAt),
-            },
-          ]
-        }),
-      ),
-    }
-
-    const currentTarget = this.state.targetAgentId ?? this.state.subscribedAgentId ?? this.desiredAgentId ?? undefined
-    const currentTargetStillExists = currentTarget ? mergedAgentIds.has(currentTarget) : false
-    const currentTargetIsIntentionalWorkerSubscription = Boolean(
-      currentTarget &&
-      currentTarget === this.state.subscribedAgentId &&
-      !agents.some((agent) => agent.agentId === currentTarget && agent.role === 'manager'),
-    )
-    const fallbackTarget = currentTargetStillExists
-      ? currentTarget
-      : currentTargetIsIntentionalWorkerSubscription
-        ? currentTarget
-        : chooseFallbackAgentId(mergedAgents, currentTarget)
-    const targetChanged = fallbackTarget !== this.state.targetAgentId
-    const nextSubscribedAgentId =
-      this.state.subscribedAgentId && mergedAgentIds.has(this.state.subscribedAgentId)
-        ? this.state.subscribedAgentId
-        : currentTargetIsIntentionalWorkerSubscription
-          ? this.state.subscribedAgentId
-          : fallbackTarget ?? null
-
-    if (targetChanged && fallbackTarget !== this.explicitAgentSelectionAgentId) {
+    if (result.shouldClearExplicitSelection) {
       this.hasExplicitAgentSelection = false
       this.explicitAgentSelectionAgentId = null
     }
 
-    this.hasReceivedAgentsSnapshot = true
+    this.desiredAgentId = result.nextDesiredAgentId
+    this.updateState(result.patch)
 
-    const patch: Partial<ManagerWsState> = {
-      agents: mergedAgents,
-      statuses,
-      loadedSessionIds: nextLoadedSessionIds,
-      hasReceivedAgentsSnapshot: this.hasReceivedAgentsSnapshot,
-    }
-
-    if (targetChanged) {
-      patch.targetAgentId = fallbackTarget
-      patch.messages = []
-      patch.activityMessages = []
-      patch.pendingChoiceIds = new Set()
-
-      const previousTerminalScopeId = this.resolveTerminalScopeAgentId(this.state.targetAgentId, this.state.agents)
-      const nextTerminalScopeId = this.resolveTerminalScopeAgentId(fallbackTarget, mergedAgents)
-      if (previousTerminalScopeId !== nextTerminalScopeId) {
-        patch.terminals = []
-        patch.terminalSessionScopeId = null
-      }
-    }
-
-    if (nextSubscribedAgentId !== this.state.subscribedAgentId) {
-      patch.subscribedAgentId = nextSubscribedAgentId
-    }
-
-    this.desiredAgentId = fallbackTarget ?? null
-
-    this.updateState(patch)
-
-    if (
-      targetChanged &&
-      fallbackTarget &&
-      this.socket?.readyState === WebSocket.OPEN &&
-      !currentTargetIsIntentionalWorkerSubscription
-    ) {
-      this.send({
-        type: 'subscribe',
-        agentId: fallbackTarget,
-      })
+    if (result.subscribeToAgentId && isSocketOpen(this.socket)) {
+      this.send(buildSubscribeCommand(result.subscribeToAgentId))
     }
   }
 
-  private applySessionWorkersSnapshot(sessionAgentId: string, workers: AgentDescriptor[], requestId?: string): void {
-    const nextLoadedSessionIds = new Set(this.state.loadedSessionIds)
-    nextLoadedSessionIds.add(sessionAgentId)
-
-    const incomingWorkerIds = new Set(workers.map((worker) => worker.agentId))
-    const preserved = this.state.agents.filter(
-      (agent) =>
-        !(agent.role === 'worker' && agent.managerId === sessionAgentId && !incomingWorkerIds.has(agent.agentId)),
-    )
-    const nextAgents = [
-      ...preserved.filter((agent) => !(agent.role === 'worker' && agent.managerId === sessionAgentId)),
-      ...workers,
-    ]
-
-    const nextStatuses = { ...this.state.statuses }
-    for (const worker of this.state.agents) {
-      if (worker.role === 'worker' && worker.managerId === sessionAgentId && !incomingWorkerIds.has(worker.agentId)) {
-        delete nextStatuses[worker.agentId]
-      }
-    }
-
-    for (const worker of workers) {
-      const previous = nextStatuses[worker.agentId]
-      nextStatuses[worker.agentId] = {
-        status: worker.status,
-        pendingCount: previous && previous.status === worker.status ? previous.pendingCount : 0,
-        contextUsage: worker.contextUsage,
-        contextRecoveryInProgress: previous?.contextRecoveryInProgress,
-        streamingStartedAt: resolveStreamingStartedAt(previous, worker.status, worker.streamingStartedAt),
-      }
-    }
-
-    this.updateState({
-      agents: nextAgents,
-      statuses: nextStatuses,
-      loadedSessionIds: nextLoadedSessionIds,
+  private applySessionWorkersSnapshot(
+    sessionAgentId: string,
+    workers: AgentDescriptor[],
+    requestId?: string,
+  ): void {
+    const result = reduceSessionWorkersSnapshot({
+      state: this.state,
+      sessionAgentId,
+      workers,
     })
+
+    this.updateState(result.patch)
 
     if (requestId) {
       this.requestTracker.resolve('get_session_workers', requestId, {
@@ -1806,22 +820,12 @@ export class ManagerWsClient {
       })
     }
 
-    // Post-load consistency check: if the manager's advertised workerCount
-    // doesn't match the loaded count, the snapshot is stale (e.g., workers
-    // spawned between the request and response). Invalidate and re-fetch.
-    const managerDescriptor = this.state.agents.find(
-      (a) => a.role === 'manager' && a.agentId === sessionAgentId,
-    )
-    if (managerDescriptor?.workerCount !== undefined && workers.length !== managerDescriptor.workerCount) {
+    if (result.shouldQueueSessionWorkersRefetch) {
       const staleFixupIds = new Set(this.state.loadedSessionIds)
       staleFixupIds.delete(sessionAgentId)
       this.updateState({ loadedSessionIds: staleFixupIds })
       this.queueSessionWorkersRefetch(sessionAgentId)
     }
-  }
-
-  private isWorkerFromLoadedSession(worker: AgentDescriptor): boolean {
-    return worker.role === 'worker' && this.state.loadedSessionIds.has(worker.managerId)
   }
 
   private applyManagerCreated(manager: AgentDescriptor): void {
@@ -1833,148 +837,50 @@ export class ManagerWsClient {
   }
 
   private applyManagerDeleted(managerId: string): void {
-    const wasSelected =
-      this.state.targetAgentId === managerId || this.state.subscribedAgentId === managerId
+    const result = reduceManagerDeleted({
+      state: this.state,
+      managerId,
+      socketOpen: isSocketOpen(this.socket),
+    })
 
-    const nextAgents = this.state.agents.filter(
-      (agent) => agent.agentId !== managerId && agent.managerId !== managerId,
-    )
-    const nextStatuses = { ...this.state.statuses }
-    delete nextStatuses[managerId]
-    // Clean up unread counts for deleted manager and all its sessions/workers
-    const nextUnread = { ...this.state.unreadCounts }
-    delete nextUnread[managerId]
-    for (const agent of this.state.agents) {
-      if (agent.managerId === managerId) {
-        delete nextStatuses[agent.agentId]
-        delete nextUnread[agent.agentId]
-      }
-    }
-    const nextLoadedSessionIds = new Set(this.state.loadedSessionIds)
-    nextLoadedSessionIds.delete(managerId)
     this.clearQueuedSessionWorkerRefetch(managerId)
+    removeMutedAgents(result.deletedAgentIds)
 
-    // Prune muted-agent IDs for the deleted manager and all its sessions/workers
-    const deletedAgentIds = [managerId]
-    for (const agent of this.state.agents) {
-      if (agent.managerId === managerId) {
-        deletedAgentIds.push(agent.agentId)
-      }
-    }
-    removeMutedAgents(deletedAgentIds)
-
-    if (wasSelected) {
-      const fallbackId = chooseFallbackAgentId(nextAgents)
-
-      if (fallbackId && this.socket?.readyState === WebSocket.OPEN) {
-        this.hasExplicitAgentSelection = false
-        this.explicitAgentSelectionAgentId = null
-        this.desiredAgentId = fallbackId
-        this.send({ type: 'subscribe', agentId: fallbackId })
-        this.updateState({
-          agents: nextAgents,
-          statuses: nextStatuses,
-          unreadCounts: nextUnread,
-          loadedSessionIds: nextLoadedSessionIds,
-          targetAgentId: fallbackId,
-          subscribedAgentId: fallbackId,
-          messages: [],
-          activityMessages: [],
-          pendingChoiceIds: new Set(),
-          terminals: [],
-          terminalSessionScopeId: null,
-        })
-        return
-      }
-
+    if (result.nextDesiredAgentId !== undefined) {
       this.hasExplicitAgentSelection = false
       this.explicitAgentSelectionAgentId = null
-      this.desiredAgentId = null
-      this.updateState({
-        agents: nextAgents,
-        statuses: nextStatuses,
-        unreadCounts: nextUnread,
-        loadedSessionIds: nextLoadedSessionIds,
-        targetAgentId: null,
-        subscribedAgentId: null,
-        messages: [],
-        activityMessages: [],
-        pendingChoiceIds: new Set(),
-        terminals: [],
-        terminalSessionScopeId: null,
-      })
-      return
+      this.desiredAgentId = result.nextDesiredAgentId
     }
 
-    this.updateState({
-      agents: nextAgents,
-      statuses: nextStatuses,
-      unreadCounts: nextUnread,
-      loadedSessionIds: nextLoadedSessionIds,
-    })
+    if (result.subscribeToAgentId) {
+      this.send(buildSubscribeCommand(result.subscribeToAgentId))
+    }
+
+    this.updateState(result.patch)
   }
 
   private applySessionDeleted(agentId: string, profileId: string): void {
-    const wasSelected =
-      this.state.targetAgentId === agentId || this.state.subscribedAgentId === agentId
-
-    const nextAgents = this.state.agents.filter(
-      (agent) => agent.agentId !== agentId && agent.managerId !== agentId,
-    )
-    const nextStatuses = { ...this.state.statuses }
-    delete nextStatuses[agentId]
-    // Clean up unread count for the deleted session
-    const nextUnread = { ...this.state.unreadCounts }
-    delete nextUnread[agentId]
-    for (const worker of this.state.agents) {
-      if (worker.role === 'worker' && worker.managerId === agentId) {
-        delete nextStatuses[worker.agentId]
-      }
-    }
-    const nextLoadedSessionIds = new Set(this.state.loadedSessionIds)
-    nextLoadedSessionIds.delete(agentId)
-    this.clearQueuedSessionWorkerRefetch(agentId)
-
-    // Prune the deleted session from muted-agent state
-    removeMutedAgent(agentId)
-
-    if (wasSelected) {
-      const fallbackId =
-        chooseMostRecentSessionAgentId(nextAgents, profileId, agentId) ?? chooseFallbackAgentId(nextAgents)
-
-      if (fallbackId && this.socket?.readyState === WebSocket.OPEN) {
-        this.hasExplicitAgentSelection = false
-        this.explicitAgentSelectionAgentId = null
-        this.desiredAgentId = fallbackId
-        this.send({ type: 'subscribe', agentId: fallbackId })
-
-        const previousTerminalScopeId = this.resolveTerminalScopeAgentId(agentId, this.state.agents)
-        const nextTerminalScopeId = this.resolveTerminalScopeAgentId(fallbackId, nextAgents)
-
-        this.updateState({
-          agents: nextAgents,
-          statuses: nextStatuses,
-          unreadCounts: nextUnread,
-          loadedSessionIds: nextLoadedSessionIds,
-          targetAgentId: fallbackId,
-          subscribedAgentId: fallbackId,
-          messages: [],
-          activityMessages: [],
-          pendingChoiceIds: new Set(),
-          ...(previousTerminalScopeId !== nextTerminalScopeId
-            ? { terminals: [], terminalSessionScopeId: null }
-            : {}),
-        })
-        return
-      }
-    }
-
-    this.updateState({
-      agents: nextAgents,
-      statuses: nextStatuses,
-      unreadCounts: nextUnread,
-      loadedSessionIds: nextLoadedSessionIds,
+    const result = reduceSessionDeleted({
+      state: this.state,
+      agentId,
+      profileId,
+      socketOpen: isSocketOpen(this.socket),
     })
+
+    this.clearQueuedSessionWorkerRefetch(agentId)
+    removeMutedAgent(result.mutedAgentIdToRemove)
+
+    if (result.nextDesiredAgentId !== undefined) {
+      this.hasExplicitAgentSelection = false
+      this.explicitAgentSelectionAgentId = null
+      this.desiredAgentId = result.nextDesiredAgentId
+    }
+
+    if (result.subscribeToAgentId) {
+      this.send(buildSubscribeCommand(result.subscribeToAgentId))
+    }
+
+    this.updateState(result.patch)
   }
 
   private queueSessionWorkersRefetch(sessionAgentId: string): void {
@@ -2019,21 +925,17 @@ export class ManagerWsClient {
   }
 
   private pushSystemMessage(text: string): void {
-    const message: ConversationMessageEvent = {
-      type: 'conversation_message',
-      agentId: (this.state.targetAgentId ?? this.state.subscribedAgentId ?? this.desiredAgentId) || 'system',
-      role: 'system',
+    const message = createSystemConversationMessage(
+      this.state.targetAgentId,
+      this.state.subscribedAgentId,
+      this.desiredAgentId,
       text,
-      timestamp: new Date().toISOString(),
-      source: 'system',
-    }
-
-    const messages = [...this.state.messages, message]
-    this.updateState({ messages })
+    )
+    this.updateState({ messages: [...this.state.messages, message] })
   }
 
   private send(command: ClientCommand): boolean {
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return false
+    if (!isSocketOpen(this.socket)) return false
     this.socket.send(JSON.stringify(command))
     return true
   }
@@ -2064,7 +966,7 @@ export class ManagerWsClient {
         this.requestTracker.reject(
           requestType,
           requestId,
-          new Error('WebSocket is disconnected. Reconnecting...'),
+          new Error(RECONNECTING_SOCKET_ERROR),
         )
       }
     })
@@ -2095,165 +997,4 @@ export class ManagerWsClient {
   private rejectAllPendingRequests(reason: string): void {
     this.requestTracker.rejectAll(new Error(reason))
   }
-}
-
-function resolveStreamingStartedAt(
-  previous: ManagerWsState['statuses'][string] | undefined,
-  nextStatus: AgentDescriptor['status'],
-  serverTimestamp?: number,
-): number | undefined {
-  if (nextStatus !== 'streaming') {
-    return previous?.streamingStartedAt
-  }
-
-  // Prefer server-provided timestamp (survives reconnect/reload)
-  if (serverTimestamp != null) {
-    return serverTimestamp
-  }
-
-  if (previous?.status === 'streaming' && previous.streamingStartedAt !== undefined) {
-    return previous.streamingStartedAt
-  }
-
-  return Date.now()
-}
-
-function chooseMostRecentSessionAgentId(
-  agents: AgentDescriptor[],
-  profileId: string,
-  excludedAgentId?: string,
-): string | null {
-  const sessions = agents
-    .filter((agent) => {
-      if (agent.role !== 'manager') {
-        return false
-      }
-
-      if (agent.agentId === excludedAgentId) {
-        return false
-      }
-
-      const agentProfileId = agent.profileId?.trim() || agent.agentId
-      return agentProfileId === profileId
-    })
-    .sort((left, right) => {
-      const leftTime = Date.parse(left.updatedAt)
-      const rightTime = Date.parse(right.updatedAt)
-
-      const normalizedLeftTime = Number.isFinite(leftTime) ? leftTime : 0
-      const normalizedRightTime = Number.isFinite(rightTime) ? rightTime : 0
-
-      if (normalizedLeftTime !== normalizedRightTime) {
-        return normalizedRightTime - normalizedLeftTime
-      }
-
-      return right.agentId.localeCompare(left.agentId)
-    })
-
-  return sessions[0]?.agentId ?? null
-}
-
-function normalizeConversationAttachments(
-  attachments: ConversationAttachment[] | undefined,
-): ConversationAttachment[] {
-  if (!attachments || attachments.length === 0) {
-    return []
-  }
-
-  const normalized: ConversationAttachment[] = []
-
-  for (const attachment of attachments) {
-    if (!attachment || typeof attachment !== 'object') {
-      continue
-    }
-
-    const maybe = attachment as {
-      type?: unknown
-      mimeType?: unknown
-      data?: unknown
-      text?: unknown
-      fileName?: unknown
-    }
-
-    const attachmentType = typeof maybe.type === 'string' ? maybe.type.trim() : ''
-    const mimeType = typeof maybe.mimeType === 'string' ? maybe.mimeType.trim() : ''
-    const fileName = typeof maybe.fileName === 'string' ? maybe.fileName.trim() : ''
-
-    if (attachmentType === 'text') {
-      const text = typeof maybe.text === 'string' ? maybe.text : ''
-      if (!mimeType || text.trim().length === 0) {
-        continue
-      }
-
-      normalized.push({
-        type: 'text',
-        mimeType,
-        text,
-        fileName: fileName || undefined,
-      })
-      continue
-    }
-
-    if (attachmentType === 'binary') {
-      const data = typeof maybe.data === 'string' ? maybe.data.trim() : ''
-      if (!mimeType || data.length === 0) {
-        continue
-      }
-
-      normalized.push({
-        type: 'binary',
-        mimeType,
-        data,
-        fileName: fileName || undefined,
-      })
-      continue
-    }
-
-    const data = typeof maybe.data === 'string' ? maybe.data.trim() : ''
-    if (!mimeType || !mimeType.startsWith('image/') || !data) {
-      continue
-    }
-
-    normalized.push({
-      mimeType,
-      data,
-      fileName: fileName || undefined,
-    })
-  }
-
-  return normalized
-}
-
-function splitConversationHistory(
-  messages: ConversationEntry[],
-): { messages: ConversationHistoryEntry[]; activityMessages: AgentActivityEntry[] } {
-  const conversationMessages: ConversationHistoryEntry[] = []
-  const activityMessages: AgentActivityEntry[] = []
-
-  for (const entry of messages) {
-    if (entry.type === 'agent_message' || entry.type === 'agent_tool_call') {
-      activityMessages.push(entry)
-      continue
-    }
-
-    conversationMessages.push(entry)
-  }
-
-  return {
-    messages: conversationMessages,
-    activityMessages,
-  }
-}
-
-function clampConversationHistory(messages: AgentActivityEntry[]): AgentActivityEntry[] {
-  if (messages.length <= MAX_CLIENT_CONVERSATION_HISTORY) {
-    return messages
-  }
-
-  return messages.slice(-MAX_CLIENT_CONVERSATION_HISTORY)
-}
-
-function normalizeAgentId(agentId: string | null | undefined): string | null {
-  const trimmed = agentId?.trim()
-  return trimmed ? trimmed : null
 }

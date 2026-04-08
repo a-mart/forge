@@ -39,8 +39,8 @@ function UsageMeter({
   )
 }
 
-function getOpenAIAccountHeading(account: ProviderAccountUsage, index: number, total: number): string {
-  if (total <= 1) return 'OpenAI'
+function getAccountHeading(providerName: string, account: ProviderAccountUsage, index: number, total: number): string {
+  if (total <= 1) return providerName
   return account.accountLabel || account.accountEmail || account.accountId || `Account ${index + 1}`
 }
 
@@ -49,10 +49,12 @@ export function ProviderUsage({ providers }: ProviderUsageProps) {
   const openaiAccounts: ProviderAccountUsage[] = providers.openai
     ? (Array.isArray(providers.openai) ? providers.openai : [providers.openai as ProviderAccountUsage])
     : []
-  const anthropic = providers.anthropic
+  const anthropicAccounts: ProviderAccountUsage[] = providers.anthropic
+    ? (Array.isArray(providers.anthropic) ? providers.anthropic : [providers.anthropic as ProviderAccountUsage])
+    : []
 
   const hasAnyProvider =
-    (anthropic?.available ?? false) || openaiAccounts.some((a) => a.available)
+    anthropicAccounts.some((a) => a.available) || openaiAccounts.some((a) => a.available)
 
   if (!hasAnyProvider) {
     return null
@@ -64,49 +66,32 @@ export function ProviderUsage({ providers }: ProviderUsageProps) {
         <h3 className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
           Account Limits
         </h3>
-        {openaiAccounts.length === 1 && openaiAccounts[0].accountEmail ? (
-          <span className="text-xs text-muted-foreground">
-            {openaiAccounts[0].accountEmail}
-          </span>
-        ) : null}
       </div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        {anthropicAccounts.map((account, index) => {
+          if (!account.available) return null
+          const heading = anthropicAccounts.length > 1
+            ? getAccountHeading('Anthropic', account, index, anthropicAccounts.length)
+            : undefined
+          return (
+            <AccountCards key={`anthropic-${account.accountId ?? index}`} account={account} heading={heading} providerLabel="Anthropic" />
+          )
+        })}
         {openaiAccounts.map((account, index) => {
           if (!account.available) return null
           const heading = openaiAccounts.length > 1
-            ? getOpenAIAccountHeading(account, index, openaiAccounts.length)
+            ? getAccountHeading('OpenAI', account, index, openaiAccounts.length)
             : undefined
           return (
-            <OpenAIAccountCards key={account.accountId ?? index} account={account} heading={heading} />
+            <AccountCards key={`openai-${account.accountId ?? index}`} account={account} heading={heading} providerLabel="OpenAI" />
           )
         })}
-        {anthropic?.available && anthropic.sessionUsage ? (
-          <UsageMeter
-            title="Anthropic Session"
-            percent={anthropic.sessionUsage.percent}
-            subtitle={anthropic.sessionUsage.resetInfo}
-          />
-        ) : null}
-        {anthropic?.available && anthropic.weeklyUsage ? (
-          <UsageMeter
-            title="Anthropic Weekly"
-            percent={anthropic.weeklyUsage.percent}
-            subtitle={anthropic.weeklyUsage.resetInfo}
-          />
-        ) : null}
-        {anthropic?.available && anthropic.plan ? (
-          <StatCard
-            title="Plan"
-            value={anthropic.plan}
-            subtitle="Anthropic account"
-          />
-        ) : null}
       </div>
     </div>
   )
 }
 
-function OpenAIAccountCards({ account, heading }: { account: ProviderAccountUsage; heading?: string }) {
+function AccountCards({ account, heading, providerLabel }: { account: ProviderAccountUsage; heading?: string; providerLabel: string }) {
   const prefix = heading ? `${heading} — ` : ''
   return (
     <>
@@ -128,7 +113,7 @@ function OpenAIAccountCards({ account, heading }: { account: ProviderAccountUsag
         <StatCard
           title={heading ? `${heading} Plan` : 'Plan'}
           value={account.plan}
-          subtitle={account.accountEmail ?? 'ChatGPT account'}
+          subtitle={account.accountEmail ?? `${providerLabel} account`}
         />
       ) : null}
     </>

@@ -106,7 +106,7 @@ These are briefly described for orientation. Most have both backend and UI compo
 | **Project Agents** | `swarm/project-agents.ts`, `swarm/project-agent-analysis.ts` | `components/chat/AgentSidebar.tsx`, `components/chat/MessageInput.tsx`, `components/chat/message-list/ConversationMessageRow.tsx` | Cross-session agent messaging via lightweight session promotion with discovery, AI-assisted configuration, and fire-and-forget async messaging. Promoted agents now live in dedicated per-handle storage directories with `config.json`, editable `prompt.md` files, and per-agent reference docs. Handles are immutable after promotion, so renaming the underlying session does not change the agent handle. |
 | **Project Agent Creator** | `swarm/agent-creator-context.ts`, `swarm/agent-creator-tool.ts`, `swarm/archetypes/builtins/agent-architect.md` | `components/chat/AgentSidebar.tsx` (context menu + violet Sparkles icon) | Conversational project agent creation flow. Right-click profile header to create a session with the Agent Architect archetype. Gathers context (existing agents + recent memory excerpts, 3,200-char seed context budget), interviews user about the new agent's role, then atomically creates and promotes the session via `create_project_agent` tool. Created agents are stored in dedicated per-handle directories with editable `prompt.md` files and scoped reference docs. Cannot be promoted, forked, or created in Cortex profile. |
 | **Provider usage monitoring** | `stats/provider-usage-service.ts` | `components/chat/SidebarUsageWidget.tsx`, `components/stats/sections/ProviderUsage.tsx` | OAuth-based subscription rate-limit monitoring for OpenAI Codex and Anthropic Claude. Uses a restart-persistent cache (`shared/cache/provider-usage-cache.json`), shows 5-hour rolling and weekly windows with deficit/reserve pace labels, supports manual refresh in the sidebar detail panel, and estimates weekly pace from historical usage curves. |
-| **Credential pool** | `swarm/credential-pool.ts`, `ws/routes/settings-routes.ts` | `components/settings/OpenAICredentialPool.tsx` | Multi-account OpenAI credential pooling with failover. Pool metadata stored in `shared/config/auth/credential-pool.json`; auth credentials in `auth.json` with suffixed keys for non-primary accounts. Supports add/remove/rename/set-primary and strategy selection (fill_first, least_used). OpenAI Codex scoped only (v1). |
+| **Credential pool** | `swarm/credential-pool.ts`, `ws/routes/settings-routes.ts` | `components/settings/CredentialPoolPanel.tsx` | Multi-account OpenAI and Anthropic OAuth credential pooling with failover. Pool metadata stored in `shared/config/auth/credential-pool.json`; auth credentials in `auth.json` with suffixed keys for non-primary accounts. Supports add/remove/rename/set-primary and strategy selection (fill_first, least_used). Auth modes are mutually exclusive per provider (API key or pooled OAuth, not both). |
 | **Token analytics** | `stats/token-analytics-service.ts` | `components/stats/token-analytics/` | Per-worker and per-specialist token usage analytics with attribution tracking, filtering, drill-down, and disk-cached scanning. Stats page adds an Overview \| Token Analytics tab layout. |
 
 Backend paths above are relative to `apps/backend/src/`. UI paths are relative to `apps/ui/src/`.
@@ -329,6 +329,25 @@ Generated components go to `apps/ui/src/components/ui/`. Check that directory fo
    cd apps/backend && pnpm exec tsc -p tsconfig.build.json --noEmit   # production-only backend typecheck; tests are covered by pnpm test
    cd apps/ui && pnpm exec tsc --noEmit
    ```
+
+## Structural Refactor Conventions
+
+When changing file layout or module boundaries, keep the old surface stable until callers have moved.
+
+### Core rules
+
+- **Test first for risky refactors:** add characterization tests before structural changes so behavior stays pinned.
+- **Seam first:** keep facades thin and stable, then delegate into extracted services or modules behind compatibility seams.
+- **Compatibility shims:** use re-exports from old paths during moves; remove them only after dependent imports are updated.
+- **Protocol DTO placement:** shared message and transport types live in `packages/protocol/`; keep domain-specific leaf modules there and re-export through package barrels.
+- **Worktree and rollback:** use isolated git worktree branches for non-trivial or high-risk structural changes, and keep a rollback path before merging.
+
+### Directory-specific rules
+
+- **`swarm/`:** treat `swarm-manager.ts` as the facade/orchestrator. Extract runtime, agents, storage, catalog, skills, prompts, and session logic into dedicated subdirectories and services.
+- **`ws/`:** keep HTTP routes in `ws/http/routes/`, WebSocket commands in `ws/commands/`, and shared HTTP services in `ws/http/services/`.
+- **`packages/protocol/`:** organize by domain leaf modules, with barrel re-exports at package boundaries and event-family files grouped by protocol surface.
+- **Frontend:** decompose large components into leaf components and hooks, then expose stable barrel exports for shared UI surfaces.
 
 ## Platform Support
 

@@ -160,24 +160,11 @@ export interface SwarmPaths {
   schedulesFile?: string;
 }
 
-export interface SkillEnvRequirement {
-  name: string;
-  description?: string;
-  required: boolean;
-  helpUrl?: string;
-  skillName: string;
-  isSet: boolean;
-  maskedValue?: string;
-}
-
-export type SettingsAuthProviderName = "anthropic" | "openai-codex" | "xai" | "openrouter";
-
-export interface SettingsAuthProvider {
-  provider: SettingsAuthProviderName;
-  configured: boolean;
-  authType?: "api_key" | "oauth" | "unknown";
-  maskedValue?: string;
-}
+export type {
+  SettingsAuthProvider,
+  SettingsAuthProviderId as SettingsAuthProviderName,
+  SettingsEnvVariable as SkillEnvRequirement,
+} from "@forge/protocol";
 
 export interface SwarmConfig {
   host: string;

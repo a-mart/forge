@@ -12,7 +12,7 @@ import type {
   SendMessageReceipt,
   SwarmConfig,
 } from "../swarm/types.js";
-import type { SwarmAgentRuntime } from "../swarm/runtime-types.js";
+import type { SwarmAgentRuntime } from "../swarm/runtime-contracts.js";
 import { getScheduleFilePath } from "../scheduler/schedule-storage.js";
 import { getOpenRouterModelsPath } from "../swarm/data-paths.js";
 import { getPiModelsProjectionPath } from "../swarm/model-catalog-projection.js";
