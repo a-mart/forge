@@ -1,6 +1,10 @@
 # Pi Extensions & Packages in Forge
 
-Forge uses [Pi](https://github.com/badlogic/pi-mono) as its agent runtime. Pi's extension and package systems are available to Forge users, allowing you to add custom tools, event handlers, skills, and more to your agent sessions.
+Forge has two extension systems:
+- [**Forge Extensions**](FORGE_EXTENSIONS.md) for Forge-native hooks like session lifecycle, runtime errors, versioning commits, and cross-runtime tool interception
+- **Pi Extensions & Packages** for Pi-native runtime extensibility like custom tools, Pi event handlers, packages, skills, prompts, and themes
+
+Forge uses [Pi](https://github.com/badlogic/pi-mono) as its agent runtime. This guide covers the Pi side.
 
 > **Important:** Extensions and packages run with **full system access**. They can execute arbitrary code, read/write files, and run shell commands. Only install extensions and packages you trust.
 
@@ -289,7 +293,11 @@ If an extension registers a tool with one of these names, the extension's versio
 
 ## Extensions in the Settings UI
 
-Forge provides a read-only **Extensions** tab in Settings that shows which extensions are currently loaded in active agent runtimes. This view reflects live runtime state — it shows extensions that are actually loaded, not a scan of what's on disk.
+Forge provides a read-only **Extensions** tab in Settings with two sections:
+- **Forge Extensions**
+- **Pi Extensions & Packages**
+
+The Pi section overlays active runtime state on top of discovered Pi extension files. The Forge section shows Forge-native discovery, active bindings, and recent errors. See [FORGE_EXTENSIONS.md](FORGE_EXTENSIONS.md) for that system.
 
 The Extensions tab does not install, remove, enable, or disable extensions. The filesystem is the configuration surface: drop files into the appropriate directory and start a new session. The Settings tab is for visibility and debugging.
 

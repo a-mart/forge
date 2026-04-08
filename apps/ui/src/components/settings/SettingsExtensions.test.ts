@@ -68,6 +68,53 @@ describe('SettingsExtensions', () => {
     expect(queryByText(container, 'No Pi extensions found on disk')).toBeNull()
   })
 
+  it('renders Forge and Pi empty states once an empty payload arrives', async () => {
+    settingsApiMock.fetchSettingsExtensions.mockResolvedValue({
+      generatedAt: '2026-04-07T00:00:00.000Z',
+      discovered: [],
+      snapshots: [],
+      directories: {
+        globalWorker: '/tmp/pi/worker',
+        globalManager: '/tmp/pi/manager',
+        profileTemplate: '/tmp/data/profiles/<profileId>/pi/extensions',
+        projectLocalRelative: '.pi/extensions',
+      },
+      forge: {
+        discovered: [],
+        snapshots: [],
+        recentErrors: [],
+        directories: {
+          global: '/tmp/forge/global',
+          profileTemplate: '/tmp/data/profiles/<profileId>/extensions',
+          projectLocalRelative: '.forge/extensions',
+        },
+      },
+    })
+
+    root = createRoot(container)
+    flushSync(() => {
+      root?.render(
+        createElement(
+          HelpProvider,
+          null,
+          createElement(SettingsExtensions, {
+            wsUrl: 'ws://127.0.0.1:47187',
+          }),
+        ),
+      )
+    })
+
+    await flushPromises()
+    await flushPromises()
+
+    expect(getByText(container, 'No Forge extensions found on disk')).toBeTruthy()
+    expect(getByText(container, 'No Pi extensions found on disk')).toBeTruthy()
+    expect(getAllByText(container, '.forge/extensions').length).toBeGreaterThan(0)
+    expect(getAllByText(container, '.pi/extensions').length).toBeGreaterThan(0)
+    expect(getByText(container, 'No active Forge runtime bindings yet.')).toBeTruthy()
+    expect(getByText(container, 'No recent Forge extension errors.')).toBeTruthy()
+  })
+
   it('renders Forge and Pi sections from the combined payload', async () => {
     settingsApiMock.fetchSettingsExtensions.mockResolvedValue({
       generatedAt: '2026-04-07T00:00:00.000Z',

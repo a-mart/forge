@@ -12,6 +12,56 @@ afterEach(async () => {
 });
 
 describe("ForgeExtensionHost", () => {
+  it("builds runtime binding snapshots with metadata and registered hooks", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-extension-host-"));
+    tempDirs.push(rootDir);
+    const dataDir = join(rootDir, "data");
+    const extensionsDir = join(dataDir, "extensions");
+    await mkdir(extensionsDir, { recursive: true });
+
+    await writeFile(
+      join(extensionsDir, "hooks.ts"),
+      `
+      export const extension = {
+        name: "hooks",
+        description: "Registers multiple Forge hooks"
+      }
+      export default (forge) => {
+        forge.on("tool:before", () => undefined)
+        forge.on("tool:after", () => undefined)
+      }
+      `,
+      "utf8"
+    );
+
+    const host = new ForgeExtensionHost({ dataDir, now: () => "2026-04-08T00:00:00.000Z" });
+    const bindings = await host.prepareRuntimeBindings({
+      descriptor: createDescriptor(rootDir),
+      runtimeType: "pi",
+      runtimeToken: 1
+    });
+
+    expect(bindings).not.toBeNull();
+    expect(bindings?.snapshot).toEqual({
+      agentId: "worker-1",
+      role: "worker",
+      managerId: "manager-1",
+      profileId: "profile-1",
+      runtimeType: "pi",
+      loadedAt: "2026-04-08T00:00:00.000Z",
+      extensions: [
+        {
+          displayName: "hooks.ts",
+          path: join(extensionsDir, "hooks.ts"),
+          scope: "global",
+          name: "hooks",
+          description: "Registers multiple Forge hooks",
+          hooks: ["tool:before", "tool:after"]
+        }
+      ]
+    });
+  });
+
   it("chains tool:before input mutations across handlers in discovery order", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-extension-host-"));
     tempDirs.push(rootDir);
@@ -69,6 +119,62 @@ describe("ForgeExtensionHost", () => {
         command: "echo first second"
       }
     });
+  });
+
+  it("keeps tool:before event inputs isolated across handlers", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-extension-host-"));
+    tempDirs.push(rootDir);
+    const dataDir = join(rootDir, "data");
+    const extensionsDir = join(dataDir, "extensions");
+    await mkdir(extensionsDir, { recursive: true });
+
+    await writeFile(
+      join(extensionsDir, "01-mutate.ts"),
+      `
+      export default (forge) => {
+        forge.on("tool:before", (event) => {
+          event.input.nested.flag = false
+          return undefined
+        })
+      }
+      `,
+      "utf8"
+    );
+    await writeFile(
+      join(extensionsDir, "02-observe.ts"),
+      `
+      export default (forge) => {
+        forge.on("tool:before", (event) => ({
+          input: {
+            seenFlag: event.input.nested.flag
+          }
+        }))
+      }
+      `,
+      "utf8"
+    );
+
+    const host = new ForgeExtensionHost({ dataDir, now: () => "2026-04-08T00:00:00.000Z" });
+    const bindings = await host.prepareRuntimeBindings({
+      descriptor: createDescriptor(rootDir),
+      runtimeType: "pi",
+      runtimeToken: 1
+    });
+    host.activateRuntimeBindings(bindings!);
+
+    const originalInput = { nested: { flag: true } };
+    const result = await host.dispatchToolBefore(bindings!.bindingToken, {
+      toolName: "write",
+      toolCallId: "tool-clone",
+      input: originalInput as unknown as Record<string, unknown>
+    });
+
+    expect(result).toEqual({
+      input: {
+        seenFlag: true
+      }
+    });
+    expect(originalInput).toEqual({ nested: { flag: true } });
   });
 
   it("short-circuits remaining tool:before handlers after the first block", async () => {
@@ -212,6 +318,86 @@ describe("ForgeExtensionHost", () => {
     expect(events.map((entry) => entry.scope)).toEqual(["global", "profile"]);
   });
 
+  it("dispatches tool:after with the stable result envelope and keeps observing after handler failures", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-extension-host-"));
+    tempDirs.push(rootDir);
+    const dataDir = join(rootDir, "data");
+    const extensionsDir = join(dataDir, "extensions");
+    const logPath = join(rootDir, "tool-after.jsonl");
+    await mkdir(extensionsDir, { recursive: true });
+
+    await writeFile(
+      join(extensionsDir, "01-throw.ts"),
+      `
+      export default (forge) => {
+        forge.on("tool:after", () => {
+          throw new Error("after boom")
+        })
+      }
+      `,
+      "utf8"
+    );
+    await writeFile(
+      join(extensionsDir, "02-log.ts"),
+      `
+      import { appendFileSync } from "node:fs"
+      export default (forge) => {
+        forge.on("tool:after", (event) => {
+          appendFileSync(${JSON.stringify(logPath)}, JSON.stringify(event) + "\\n", "utf8")
+        })
+      }
+      `,
+      "utf8"
+    );
+
+    const host = new ForgeExtensionHost({ dataDir, now: () => "2026-04-08T00:00:00.000Z" });
+    const bindings = await host.prepareRuntimeBindings({
+      descriptor: createDescriptor(rootDir),
+      runtimeType: "claude",
+      runtimeToken: 1
+    });
+    host.activateRuntimeBindings(bindings!);
+
+    await host.dispatchToolAfter(bindings!.bindingToken, {
+      toolName: "write",
+      toolCallId: "tool-after-1",
+      input: { path: "notes.md" },
+      result: {
+        ok: false,
+        error: "write failed",
+        raw: { code: "EACCES" }
+      }
+    });
+
+    const events = await readJsonl(logPath);
+    expect(events).toEqual([
+      {
+        toolName: "write",
+        toolCallId: "tool-after-1",
+        input: { path: "notes.md" },
+        result: {
+          ok: false,
+          error: "write failed",
+          raw: { code: "EACCES" }
+        },
+        isError: true
+      }
+    ]);
+
+    const snapshot = await host.buildSettingsSnapshot({ cwdValues: [rootDir] });
+    expect(snapshot.recentErrors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          phase: "handler",
+          hook: "tool:after",
+          message: "after boom",
+          agentId: "worker-1",
+          runtimeType: "claude"
+        })
+      ])
+    );
+  });
+
   it("dispatches runtime:error through the active runtime binding token", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-extension-host-"));
     tempDirs.push(rootDir);
@@ -251,6 +437,63 @@ describe("ForgeExtensionHost", () => {
     expect(events).toEqual([
       expect.objectContaining({ phase: "prompt_start", message: "boom", details: { attempt: 1 } })
     ]);
+  });
+
+  it("records runtime:error handler failures without recursively redispatching runtime:error", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-extension-host-"));
+    tempDirs.push(rootDir);
+    const dataDir = join(rootDir, "data");
+    const extensionsDir = join(dataDir, "extensions");
+    const logPath = join(rootDir, "runtime-error-recursion.jsonl");
+    await mkdir(extensionsDir, { recursive: true });
+
+    await writeFile(
+      join(extensionsDir, "01-throw.ts"),
+      `
+      export default (forge) => {
+        forge.on("runtime:error", () => {
+          throw new Error("runtime handler failed")
+        })
+      }
+      `,
+      "utf8"
+    );
+    await writeFile(
+      join(extensionsDir, "02-log.ts"),
+      `
+      import { appendFileSync } from "node:fs"
+      export default (forge) => {
+        forge.on("runtime:error", (event) => {
+          appendFileSync(${JSON.stringify(logPath)}, JSON.stringify(event) + "\\n", "utf8")
+        })
+      }
+      `,
+      "utf8"
+    );
+
+    const host = new ForgeExtensionHost({ dataDir, now: () => "2026-04-08T00:00:00.000Z" });
+    const bindings = await host.prepareRuntimeBindings({
+      descriptor: createDescriptor(rootDir),
+      runtimeType: "pi",
+      runtimeToken: 1
+    });
+    host.activateRuntimeBindings(bindings!);
+
+    await host.dispatchRuntimeError(bindings!.bindingToken, {
+      phase: "tool_result",
+      message: "boom"
+    });
+
+    expect(await readJsonl(logPath)).toEqual([
+      expect.objectContaining({ phase: "tool_result", message: "boom" })
+    ]);
+
+    const snapshot = await host.buildSettingsSnapshot({ cwdValues: [rootDir] });
+    expect(
+      snapshot.recentErrors.filter(
+        (entry) => entry.phase === "handler" && entry.hook === "runtime:error" && entry.message === "runtime handler failed"
+      )
+    ).toHaveLength(1);
   });
 
   it("dispatches versioning:commit to global and affected profile scopes only", async () => {
@@ -390,6 +633,25 @@ describe("ForgeExtensionHost", () => {
         seenSessionAgentId: "manager-1"
       }
     });
+  });
+
+  it("records only the most recent Forge diagnostic errors", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-extension-host-"));
+    tempDirs.push(rootDir);
+    const dataDir = join(rootDir, "data");
+    const host = new ForgeExtensionHost({ dataDir, now: () => "2026-04-08T00:00:00.000Z" });
+
+    for (let index = 0; index < 55; index += 1) {
+      host.recordDiagnosticError({
+        phase: "handler",
+        message: `error-${index}`
+      });
+    }
+
+    const snapshot = await host.buildSettingsSnapshot({ cwdValues: [] });
+    expect(snapshot.recentErrors).toHaveLength(50);
+    expect(snapshot.recentErrors[0]).toEqual(expect.objectContaining({ message: "error-54" }));
+    expect(snapshot.recentErrors.at(-1)).toEqual(expect.objectContaining({ message: "error-5" }));
   });
 
   it("records handler errors and continues fail-open", async () => {
