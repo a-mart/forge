@@ -10,7 +10,7 @@ import { FeedbackService } from "../swarm/feedback-service.js";
 import type { UnreadTracker } from "../swarm/unread-tracker.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import { TerminalServiceError, type TerminalService } from "../terminal/terminal-service.js";
-import { resolveTerminalServiceStatusCode } from "./routes/terminal-routes.js";
+import { resolveTerminalServiceStatusCode } from "./http/routes/terminal-routes.js";
 import {
   decodeApiProxyPathSegment,
   isRecord,

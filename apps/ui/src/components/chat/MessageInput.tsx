@@ -1,10 +1,4 @@
-import {
-  forwardRef,
-  useCallback,
-  useImperativeHandle,
-  useRef,
-  type KeyboardEvent,
-} from 'react'
+import { forwardRef, useCallback, useImperativeHandle, type KeyboardEvent } from 'react'
 import { ALargeSmall, ArrowUp, List, ListOrdered, Loader2, Mic, Paperclip, Square } from 'lucide-react'
 import { AttachedFiles } from '@/components/chat/AttachedFiles'
 import { Button } from '@/components/ui/button'
@@ -21,7 +15,6 @@ import { useMentions } from './message-input/hooks/use-mentions'
 import { useVoiceInput } from './message-input/hooks/use-voice-input'
 import { useAttachments } from './message-input/hooks/use-attachments'
 import { useComposer } from './message-input/hooks/use-composer'
-import { persistDrafts } from './message-input/draft-storage'
 
 // Re-export public types for external consumers
 export type { ProjectAgentSuggestion, MessageInputHandle, MessageInputProps } from './message-input/types'
@@ -55,9 +48,6 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
     attachedFilesRef,
   } = useDraft({ agentId })
 
-  // Stable ref for drafts that voice transcription can write to
-  const draftsRef = useRef<Record<string, string>>({})
-
   // --- Voice input ---
   const appendTranscription = useCallback(
     (transcribedText: string): boolean => {
@@ -74,16 +64,9 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
       }
 
       setInputWithDraft(next)
-
-      // Sync draft for the current agent
-      if (agentId) {
-        draftsRef.current[agentId] = next
-        persistDrafts(draftsRef.current)
-      }
-
       return true
     },
-    [agentId, inputRef, setInputWithDraft],
+    [inputRef, setInputWithDraft],
   )
 
   const voice = useVoiceInput({

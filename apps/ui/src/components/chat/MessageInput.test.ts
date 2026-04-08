@@ -44,6 +44,44 @@ vi.mock('@/lib/api-endpoint', () => ({
   resolveApiEndpoint: (_ws: string, path: string) => `http://127.0.0.1:47187${path}`,
 }))
 
+const voiceInputMockState: {
+  transcribedText: string | null
+} = {
+  transcribedText: null,
+}
+
+vi.mock('./message-input/hooks/use-voice-input', () => ({
+  useVoiceInput: ({
+    disabled,
+    blockedByLoading,
+    onTranscription,
+  }: {
+    disabled: boolean
+    blockedByLoading: boolean
+    onTranscription: (text: string) => boolean
+  }) => ({
+    isRecording: false,
+    isRequestingMicrophone: false,
+    isTranscribingVoice: false,
+    voiceError: null,
+    voiceRecordingDurationMs: 0,
+    recordingWaveformBars: [],
+    voiceButtonDisabled: disabled || blockedByLoading,
+    handleVoiceButtonClick: () => {
+      if (disabled || blockedByLoading) return
+      if (voiceInputMockState.transcribedText) {
+        onTranscription(voiceInputMockState.transcribedText)
+      }
+    },
+    stopAndTranscribeRecording: async () => {
+      if (disabled || blockedByLoading) return
+      if (voiceInputMockState.transcribedText) {
+        onTranscription(voiceInputMockState.transcribedText)
+      }
+    },
+  }),
+}))
+
 /* ------------------------------------------------------------------ */
 /*  Setup                                                             */
 /* ------------------------------------------------------------------ */
@@ -77,6 +115,7 @@ beforeEach(() => {
   container = document.createElement('div')
   document.body.appendChild(container)
   localStorageMock.clear()
+  voiceInputMockState.transcribedText = null
   vi.clearAllMocks()
 })
 
@@ -250,6 +289,26 @@ describe('MessageInput', () => {
       typeInTextarea('')
       await flush()
       expect(JSON.parse(localStorageMock.getItem(DRAFTS_KEY) ?? '{}')['agent-1']).toBeUndefined()
+    })
+
+    it('preserves other session drafts when voice transcription updates the current draft', async () => {
+      localStorageMock.setItem(DRAFTS_KEY, JSON.stringify({ 'agent-2': 'keep this draft' }))
+      voiceInputMockState.transcribedText = 'voice transcript'
+
+      renderMessageInput({ agentId: 'agent-1' })
+      await flush()
+
+      const voiceBtn = getByLabelText(container, 'Record voice input')
+      flushSync(() => {
+        fireEvent.click(voiceBtn)
+      })
+      await flush()
+
+      expect(getTextarea().value).toBe('voice transcript')
+      expect(JSON.parse(localStorageMock.getItem(DRAFTS_KEY) ?? '{}')).toEqual({
+        'agent-1': 'voice transcript',
+        'agent-2': 'keep this draft',
+      })
     })
   })
 
