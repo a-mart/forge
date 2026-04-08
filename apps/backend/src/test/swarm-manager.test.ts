@@ -69,7 +69,7 @@ import type {
   RuntimeUserMessage,
   SpecialistFallbackReplaySnapshot,
   SwarmAgentRuntime,
-} from '../swarm/runtime-types.js'
+} from '../swarm/runtime-contracts.js'
 
 class FakeRuntime {
   readonly descriptor: AgentDescriptor

@@ -7,7 +7,7 @@ import {
 } from "./claude-utils.js";
 import type { ClaudeSdkMessage } from "./claude-sdk-loader.js";
 import type { AgentContextUsage, AgentStatus } from "./types.js";
-import type { RuntimeSessionEvent } from "./runtime-types.js";
+import type { RuntimeSessionEvent } from "./runtime-contracts.js";
 
 export interface ClaudeEventMapperContext {
   agentId: string;

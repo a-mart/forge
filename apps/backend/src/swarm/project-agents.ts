@@ -1,4 +1,4 @@
-import type { SwarmAgentRuntime } from "./runtime-types.js";
+import type { SwarmAgentRuntime } from "./runtime-contracts.js";
 import type {
   AgentDescriptor,
   ConversationMessageEvent,

@@ -186,7 +186,7 @@ import type {
   SetPinnedContentOptions,
   SpecialistFallbackReplaySnapshot,
   SwarmAgentRuntime
-} from "./runtime-types.js";
+} from "./runtime-contracts.js";
 import type { SwarmToolHost } from "./swarm-tools.js";
 import type {
   AgentMessageEvent,

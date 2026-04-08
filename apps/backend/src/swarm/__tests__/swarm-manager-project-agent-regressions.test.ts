@@ -11,7 +11,7 @@ import {
 } from "../data-paths.js";
 import { readProjectAgentRecord } from "../project-agent-storage.js";
 import { SwarmManager } from "../swarm-manager.js";
-import type { RuntimeUserMessage, SwarmAgentRuntime } from "../runtime-types.js";
+import type { RuntimeUserMessage, SwarmAgentRuntime } from "../runtime-contracts.js";
 import type { AgentContextUsage, AgentDescriptor, RequestedDeliveryMode, SendMessageReceipt, SwarmConfig } from "../types.js";
 
 class FakeRuntime {

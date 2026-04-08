@@ -28,7 +28,7 @@ import type {
   SpecialistFallbackReplaySnapshot,
   SwarmAgentRuntime,
   SwarmRuntimeCallbacks
-} from "./runtime-types.js";
+} from "./runtime-contracts.js";
 import type {
   AgentContextUsage,
   AgentDescriptor,
@@ -61,7 +61,7 @@ const MAX_HANDOFF_CONTENT_CHARS = 3_000;
 const MAX_RECOVERY_BUFFERED_MESSAGES = 25;
 const DEFAULT_ABORT_TIMEOUT_MS = 5_000;
 
-export type { RuntimeImageAttachment, RuntimeUserMessage, RuntimeUserMessageInput } from "./runtime-types.js";
+export type { RuntimeImageAttachment, RuntimeUserMessage, RuntimeUserMessageInput } from "./runtime-contracts.js";
 
 export class AgentRuntime implements SwarmAgentRuntime {
   readonly descriptor: AgentDescriptor;

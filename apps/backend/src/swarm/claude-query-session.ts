@@ -24,7 +24,7 @@ import type {
   RuntimeUserMessage,
   RuntimeUserMessageInput,
   SwarmRuntimeCallbacks
-} from "./runtime-types.js";
+} from "./runtime-contracts.js";
 import type { AgentContextUsage, AgentStatus, RequestedDeliveryMode, SendMessageReceipt } from "./types.js";
 
 export type DeliveryMode = RequestedDeliveryMode;

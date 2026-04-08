@@ -16,7 +16,7 @@ import {
   isStrictContextOverflowMessage,
   normalizeProviderErrorMessage
 } from "./message-utils.js";
-import type { RuntimeSessionEvent, SwarmAgentRuntime } from "./runtime-types.js";
+import type { RuntimeSessionEvent, SwarmAgentRuntime } from "./runtime-contracts.js";
 import type {
   AgentDescriptor,
   AgentMessageEvent,

@@ -29,7 +29,7 @@ import { createClaudeMcpToolBridge } from "./claude-mcp-tool-bridge.js";
 import { assembleClaudePrompt, discoverAgentsMd } from "./claude-prompt-assembler.js";
 import { isClaudeSdkUnavailableError } from "./claude-sdk-loader.js";
 import { CodexAgentRuntime } from "./codex-agent-runtime.js";
-import type { RuntimeErrorEvent, RuntimeSessionEvent, SwarmAgentRuntime } from "./runtime-types.js";
+import type { RuntimeErrorEvent, RuntimeSessionEvent, SwarmAgentRuntime } from "./runtime-contracts.js";
 import { buildSwarmTools, type SwarmToolHost } from "./swarm-tools.js";
 import { normalizeArchetypeId, resolvePromptVariables } from "./prompt-registry.js";
 import { combineCompactionCustomInstructions, loadPins } from "./message-pins.js";

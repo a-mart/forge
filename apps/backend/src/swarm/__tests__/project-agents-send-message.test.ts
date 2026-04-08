@@ -8,7 +8,7 @@ import { getProfileMemoryPath } from "../data-paths.js";
 import { getConversationHistoryCacheFilePath } from "../conversation-history-cache.js";
 import { SwarmManager } from "../swarm-manager.js";
 import type { AgentContextUsage, AgentDescriptor, RequestedDeliveryMode, SendMessageReceipt, SwarmConfig } from "../types.js";
-import type { RuntimeUserMessage, SwarmAgentRuntime } from "../runtime-types.js";
+import type { RuntimeUserMessage, SwarmAgentRuntime } from "../runtime-contracts.js";
 
 class FakeRuntime {
   readonly descriptor: AgentDescriptor;

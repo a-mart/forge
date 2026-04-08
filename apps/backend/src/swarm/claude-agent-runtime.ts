@@ -31,7 +31,7 @@ import type {
   SpecialistFallbackReplaySnapshot,
   SwarmAgentRuntime,
   SwarmRuntimeCallbacks
-} from "./runtime-types.js";
+} from "./runtime-contracts.js";
 import type {
   AgentContextUsage,
   AgentDescriptor,

@@ -2,7 +2,7 @@ import type {
   RuntimeImageAttachment,
   RuntimeUserMessage,
   RuntimeUserMessageInput
-} from "./runtime-types.js";
+} from "./runtime-contracts.js";
 
 export function normalizeRuntimeUserMessage(input: RuntimeUserMessageInput): RuntimeUserMessage {
   if (typeof input === "string") {

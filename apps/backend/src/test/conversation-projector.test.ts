@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest'
 import { SessionManager } from '@mariozechner/pi-coding-agent'
 import { ConversationProjector } from '../swarm/conversation-projector.js'
 import { getConversationHistoryCacheFilePath } from '../swarm/conversation-history-cache.js'
-import type { SwarmAgentRuntime } from '../swarm/runtime-types.js'
+import type { SwarmAgentRuntime } from '../swarm/runtime-contracts.js'
 import type { AgentDescriptor, ConversationEntryEvent } from '../swarm/types.js'
 
 const FIXED_NOW = '2026-01-01T00:00:00.000Z'
