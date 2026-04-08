@@ -3,7 +3,7 @@ import type { ForgeExtensionHost } from "./forge-extension-host.js";
 
 interface BuildForgePiToolBridgeExtensionFactoryOptions {
   forgeExtensionHost: ForgeExtensionHost;
-  agentId: string;
+  bindingToken: string;
   skippedToolNames: Iterable<string>;
 }
 
@@ -30,7 +30,7 @@ export function buildForgePiToolBridgeExtensionFactory(
         return undefined;
       }
 
-      const beforeResult = await options.forgeExtensionHost.dispatchToolBefore(options.agentId, {
+      const beforeResult = await options.forgeExtensionHost.dispatchToolBefore(options.bindingToken, {
         toolName: event.toolName,
         toolCallId: event.toolCallId,
         input: normalizeToolInput(event.input)
@@ -55,13 +55,13 @@ export function buildForgePiToolBridgeExtensionFactory(
         return undefined;
       }
 
-      const rawResult = {
+      const rawResult = cloneStructured({
         content: event.content,
         details: event.details,
         isError: event.isError
-      };
+      });
 
-      await options.forgeExtensionHost.dispatchToolAfter(options.agentId, {
+      await options.forgeExtensionHost.dispatchToolAfter(options.bindingToken, {
         toolName: event.toolName,
         toolCallId: event.toolCallId,
         input: normalizeToolInput(event.input),
@@ -73,10 +73,10 @@ export function buildForgePiToolBridgeExtensionFactory(
             }
           : {
               ok: true,
-              value: {
+              value: cloneStructured({
                 content: event.content,
                 details: event.details
-              },
+              }),
               raw: rawResult
             }
       });
@@ -109,7 +109,11 @@ function normalizeToolInput(value: unknown): Record<string, unknown> {
     return {};
   }
 
-  return { ...(value as Record<string, unknown>) };
+  return cloneStructured(value as Record<string, unknown>);
+}
+
+function cloneStructured<T>(value: T): T {
+  return structuredClone(value);
 }
 
 function extractToolErrorMessage(event: PiToolResultEvent): string {

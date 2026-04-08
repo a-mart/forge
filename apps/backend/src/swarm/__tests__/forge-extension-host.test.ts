@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -51,13 +51,14 @@ describe("ForgeExtensionHost", () => {
     const host = new ForgeExtensionHost({ dataDir, now: () => "2026-04-08T00:00:00.000Z" });
     const bindings = await host.prepareRuntimeBindings({
       descriptor: createDescriptor(rootDir),
-      runtimeType: "codex"
+      runtimeType: "codex",
+      runtimeToken: 1
     });
 
     expect(bindings).not.toBeNull();
     host.activateRuntimeBindings(bindings!);
 
-    const result = await host.dispatchToolBefore("worker-1", {
+    const result = await host.dispatchToolBefore(bindings!.bindingToken, {
       toolName: "bash",
       toolCallId: "tool-1",
       input: { command: "echo" }
@@ -104,12 +105,13 @@ describe("ForgeExtensionHost", () => {
     const host = new ForgeExtensionHost({ dataDir, now: () => "2026-04-08T00:00:00.000Z" });
     const bindings = await host.prepareRuntimeBindings({
       descriptor: createDescriptor(rootDir),
-      runtimeType: "pi"
+      runtimeType: "pi",
+      runtimeToken: 1
     });
 
     host.activateRuntimeBindings(bindings!);
 
-    const result = await host.dispatchToolBefore("worker-1", {
+    const result = await host.dispatchToolBefore(bindings!.bindingToken, {
       toolName: "write",
       toolCallId: "tool-2",
       input: { path: "x.txt" }
@@ -141,19 +143,20 @@ describe("ForgeExtensionHost", () => {
 
     const firstBindings = await host.prepareRuntimeBindings({
       descriptor: createDescriptor(rootDir),
-      runtimeType: "pi"
+      runtimeType: "pi",
+      runtimeToken: 1
     });
     host.activateRuntimeBindings(firstBindings!);
 
     await expect(
-      host.dispatchToolBefore("worker-1", {
+      host.dispatchToolBefore(firstBindings!.bindingToken, {
         toolName: "bash",
         toolCallId: "tool-reload-1",
         input: { command: "original" }
       })
     ).resolves.toEqual({ input: { command: "first" } });
 
-    host.deactivateRuntimeBindings("worker-1");
+    host.deactivateRuntimeBindings(firstBindings!.bindingToken);
 
     await writeFile(
       extensionPath,
@@ -167,14 +170,179 @@ describe("ForgeExtensionHost", () => {
 
     const secondBindings = await host.prepareRuntimeBindings({
       descriptor: createDescriptor(rootDir),
-      runtimeType: "pi"
+      runtimeType: "pi",
+      runtimeToken: 2
     });
     host.activateRuntimeBindings(secondBindings!);
 
     await expect(
-      host.dispatchToolBefore("worker-1", {
+      host.dispatchToolBefore(secondBindings!.bindingToken, {
         toolName: "bash",
         toolCallId: "tool-reload-2",
+        input: { command: "original" }
+      })
+    ).resolves.toEqual({ input: { command: "second" } });
+  });
+
+  it("dispatches session:lifecycle using exact cwd project-local resolution", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-extension-host-"));
+    tempDirs.push(rootDir);
+    const sessionCwd = join(rootDir, "nested");
+    const dataDir = join(rootDir, "data");
+    const globalExtensionsDir = join(dataDir, "extensions");
+    const profileExtensionsDir = join(dataDir, "profiles", "profile-1", "extensions");
+    const rootProjectExtensionsDir = join(rootDir, ".forge", "extensions");
+    const logPath = join(rootDir, "lifecycle.jsonl");
+    await mkdir(globalExtensionsDir, { recursive: true });
+    await mkdir(profileExtensionsDir, { recursive: true });
+    await mkdir(rootProjectExtensionsDir, { recursive: true });
+    await mkdir(sessionCwd, { recursive: true });
+
+    await writeLifecycleExtension(join(globalExtensionsDir, "global.ts"), logPath, "global");
+    await writeLifecycleExtension(join(profileExtensionsDir, "profile.ts"), logPath, "profile");
+    await writeLifecycleExtension(join(rootProjectExtensionsDir, "project.ts"), logPath, "project-local");
+
+    const host = new ForgeExtensionHost({ dataDir, now: () => "2026-04-08T00:00:00.000Z" });
+    await host.dispatchSessionLifecycle({
+      action: "created",
+      sessionDescriptor: createManagerDescriptor(sessionCwd)
+    });
+
+    const events = await readJsonl(logPath);
+    expect(events.map((entry) => entry.scope)).toEqual(["global", "profile"]);
+  });
+
+  it("dispatches runtime:error through the active runtime binding token", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-extension-host-"));
+    tempDirs.push(rootDir);
+    const dataDir = join(rootDir, "data");
+    const extensionsDir = join(dataDir, "extensions");
+    const logPath = join(rootDir, "runtime-error.jsonl");
+    await mkdir(extensionsDir, { recursive: true });
+
+    await writeFile(
+      join(extensionsDir, "runtime-error.ts"),
+      `
+      import { appendFileSync } from "node:fs"
+      export default (forge) => {
+        forge.on("runtime:error", (event) => {
+          appendFileSync(${JSON.stringify(logPath)}, JSON.stringify(event) + "\\n", "utf8")
+        })
+      }
+      `,
+      "utf8"
+    );
+
+    const host = new ForgeExtensionHost({ dataDir, now: () => "2026-04-08T00:00:00.000Z" });
+    const bindings = await host.prepareRuntimeBindings({
+      descriptor: createDescriptor(rootDir),
+      runtimeType: "claude",
+      runtimeToken: 1
+    });
+    host.activateRuntimeBindings(bindings!);
+
+    await host.dispatchRuntimeError(bindings!.bindingToken, {
+      phase: "prompt_start",
+      message: "boom",
+      details: { attempt: 1 }
+    });
+
+    const events = await readJsonl(logPath);
+    expect(events).toEqual([
+      expect.objectContaining({ phase: "prompt_start", message: "boom", details: { attempt: 1 } })
+    ]);
+  });
+
+  it("dispatches versioning:commit to global and affected profile scopes only", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-extension-host-"));
+    tempDirs.push(rootDir);
+    const dataDir = join(rootDir, "data");
+    const globalExtensionsDir = join(dataDir, "extensions");
+    const alphaExtensionsDir = join(dataDir, "profiles", "alpha", "extensions");
+    const betaExtensionsDir = join(dataDir, "profiles", "beta", "extensions");
+    const projectExtensionsDir = join(rootDir, ".forge", "extensions");
+    const logPath = join(rootDir, "versioning.jsonl");
+    await mkdir(globalExtensionsDir, { recursive: true });
+    await mkdir(alphaExtensionsDir, { recursive: true });
+    await mkdir(betaExtensionsDir, { recursive: true });
+    await mkdir(projectExtensionsDir, { recursive: true });
+
+    await writeVersioningExtension(join(globalExtensionsDir, "global.ts"), logPath, "global");
+    await writeVersioningExtension(join(alphaExtensionsDir, "alpha.ts"), logPath, "alpha");
+    await writeVersioningExtension(join(betaExtensionsDir, "beta.ts"), logPath, "beta");
+    await writeVersioningExtension(join(projectExtensionsDir, "project.ts"), logPath, "project-local");
+
+    const host = new ForgeExtensionHost({ dataDir, now: () => "2026-04-08T00:00:00.000Z" });
+    await host.dispatchVersioningCommit({
+      sha: "a".repeat(40),
+      subject: "subject",
+      body: "body",
+      paths: ["profiles/alpha/memory.md"],
+      mutations: [{ path: "profiles/alpha/memory.md", action: "write", source: "profile-memory-merge", profileId: "alpha" }],
+      reason: "manual",
+      profileIds: ["alpha"]
+    });
+
+    const events = await readJsonl(logPath);
+    expect(events.map((entry) => entry.scope)).toEqual(["global", "alpha"]);
+  });
+
+  it("keeps overlapping runtime bindings isolated by binding token", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-extension-host-"));
+    tempDirs.push(rootDir);
+    const dataDir = join(rootDir, "data");
+    const extensionsDir = join(dataDir, "extensions");
+    const extensionPath = join(extensionsDir, "rewrite.ts");
+    await mkdir(extensionsDir, { recursive: true });
+
+    const host = new ForgeExtensionHost({ dataDir, now: () => "2026-04-08T00:00:00.000Z" });
+
+    await writeFile(
+      extensionPath,
+      `
+      export default (forge) => {
+        forge.on("tool:before", () => ({ input: { command: "first" } }))
+      }
+      `,
+      "utf8"
+    );
+
+    const firstBindings = await host.prepareRuntimeBindings({
+      descriptor: createDescriptor(rootDir),
+      runtimeType: "pi",
+      runtimeToken: 1
+    });
+    host.activateRuntimeBindings(firstBindings!);
+
+    await writeFile(
+      extensionPath,
+      `
+      export default (forge) => {
+        forge.on("tool:before", () => ({ input: { command: "second" } }))
+      }
+      `,
+      "utf8"
+    );
+
+    const secondBindings = await host.prepareRuntimeBindings({
+      descriptor: createDescriptor(rootDir),
+      runtimeType: "pi",
+      runtimeToken: 2
+    });
+    host.activateRuntimeBindings(secondBindings!);
+
+    await expect(
+      host.dispatchToolBefore(firstBindings!.bindingToken, {
+        toolName: "bash",
+        toolCallId: "tool-overlap-1",
+        input: { command: "original" }
+      })
+    ).resolves.toEqual({ input: { command: "first" } });
+
+    await expect(
+      host.dispatchToolBefore(secondBindings!.bindingToken, {
+        toolName: "bash",
+        toolCallId: "tool-overlap-2",
         input: { command: "original" }
       })
     ).resolves.toEqual({ input: { command: "second" } });
@@ -205,11 +373,12 @@ describe("ForgeExtensionHost", () => {
     const host = new ForgeExtensionHost({ dataDir, now: () => "2026-04-08T00:00:00.000Z" });
     const bindings = await host.prepareRuntimeBindings({
       descriptor: createDescriptor(rootDir),
-      runtimeType: "codex"
+      runtimeType: "codex",
+      runtimeToken: 1
     });
     host.activateRuntimeBindings(bindings!);
 
-    const result = await host.dispatchToolBefore("worker-1", {
+    const result = await host.dispatchToolBefore(bindings!.bindingToken, {
       toolName: "list_agents",
       toolCallId: "tool-context",
       input: {}
@@ -259,12 +428,13 @@ describe("ForgeExtensionHost", () => {
     const host = new ForgeExtensionHost({ dataDir, now: () => "2026-04-08T00:00:00.000Z" });
     const bindings = await host.prepareRuntimeBindings({
       descriptor: createDescriptor(rootDir),
-      runtimeType: "claude"
+      runtimeType: "claude",
+      runtimeToken: 1
     });
 
     host.activateRuntimeBindings(bindings!);
 
-    const result = await host.dispatchToolBefore("worker-1", {
+    const result = await host.dispatchToolBefore(bindings!.bindingToken, {
       toolName: "write",
       toolCallId: "tool-3",
       input: { path: "original.txt" }
@@ -309,4 +479,56 @@ function createDescriptor(rootDir: string): AgentDescriptor {
     },
     sessionFile: join(rootDir, "session.jsonl")
   };
+}
+
+function createManagerDescriptor(rootDir: string): AgentDescriptor {
+  return {
+    ...createDescriptor(rootDir),
+    agentId: "session-1",
+    displayName: "Session 1",
+    role: "manager",
+    managerId: "session-1",
+    profileId: "profile-1",
+    sessionLabel: "Session 1",
+    sessionFile: join(rootDir, "manager-session.jsonl")
+  };
+}
+
+async function readJsonl(path: string): Promise<Array<Record<string, unknown>>> {
+  const content = await readFile(path, "utf8");
+  return content
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
+async function writeLifecycleExtension(path: string, logPath: string, scope: string): Promise<void> {
+  await writeFile(
+    path,
+    `
+    import { appendFileSync } from "node:fs"
+    export default (forge) => {
+      forge.on("session:lifecycle", (event) => {
+        appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ scope: ${JSON.stringify(scope)}, event }) + "\\n", "utf8")
+      })
+    }
+    `,
+    "utf8"
+  );
+}
+
+async function writeVersioningExtension(path: string, logPath: string, scope: string): Promise<void> {
+  await writeFile(
+    path,
+    `
+    import { appendFileSync } from "node:fs"
+    export default (forge) => {
+      forge.on("versioning:commit", (event) => {
+        appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ scope: ${JSON.stringify(scope)}, event }) + "\\n", "utf8")
+      })
+    }
+    `,
+    "utf8"
+  );
 }

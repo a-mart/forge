@@ -5,7 +5,7 @@ import type { ToolAfterResultEnvelope } from "./forge-extension-types.js";
 interface WrapForgeToolsWithExtensionHooksOptions {
   tools: ToolDefinition[];
   forgeExtensionHost: ForgeExtensionHost;
-  agentId: string;
+  bindingToken: string;
 }
 
 export function wrapForgeToolsWithExtensionHooks(
@@ -22,10 +22,10 @@ function wrapForgeToolWithExtensionHooks(
     ...tool,
     async execute(toolCallId, params, ...rest) {
       const originalInput = normalizeToolInput(params);
-      const beforeResult = await options.forgeExtensionHost.dispatchToolBefore(options.agentId, {
+      const beforeResult = await options.forgeExtensionHost.dispatchToolBefore(options.bindingToken, {
         toolName: tool.name,
         toolCallId,
-        input: originalInput
+        input: cloneStructured(originalInput)
       });
 
       if (beforeResult?.block === true) {
@@ -36,18 +36,18 @@ function wrapForgeToolWithExtensionHooks(
 
       try {
         const result = await tool.execute(toolCallId, executedInput, ...rest);
-        await options.forgeExtensionHost.dispatchToolAfter(options.agentId, {
+        await options.forgeExtensionHost.dispatchToolAfter(options.bindingToken, {
           toolName: tool.name,
           toolCallId,
-          input: executedInput,
+          input: cloneStructured(executedInput),
           result: buildSuccessEnvelope(result)
         });
         return result;
       } catch (error) {
-        await options.forgeExtensionHost.dispatchToolAfter(options.agentId, {
+        await options.forgeExtensionHost.dispatchToolAfter(options.bindingToken, {
           toolName: tool.name,
           toolCallId,
-          input: executedInput,
+          input: cloneStructured(executedInput),
           result: buildFailureEnvelope(error)
         });
         throw error;
@@ -61,13 +61,15 @@ function normalizeToolInput(value: unknown): Record<string, unknown> {
     return {};
   }
 
-  return { ...(value as Record<string, unknown>) };
+  return cloneStructured(value as Record<string, unknown>);
 }
 
 function buildSuccessEnvelope(result: unknown): ToolAfterResultEnvelope {
+  const clonedResult = cloneStructured(result);
   return {
     ok: true,
-    value: result
+    value: clonedResult,
+    raw: clonedResult
   };
 }
 
@@ -75,8 +77,12 @@ function buildFailureEnvelope(error: unknown): ToolAfterResultEnvelope {
   return {
     ok: false,
     error: normalizeErrorMessage(error),
-    raw: error
+    raw: cloneStructured(error)
   };
+}
+
+function cloneStructured<T>(value: T): T {
+  return structuredClone(value);
 }
 
 function normalizeErrorMessage(error: unknown): string {

@@ -142,14 +142,15 @@ export class RuntimeFactory {
   ): Promise<SwarmAgentRuntime> {
     const preparedForgeBindings = await this.deps.forgeExtensionHost.prepareRuntimeBindings({
       descriptor,
-      runtimeType: "pi"
+      runtimeType: "pi",
+      runtimeToken
     });
     const baseSwarmTools = this.buildRuntimeTools(descriptor);
     const swarmTools = preparedForgeBindings
       ? wrapForgeToolsWithExtensionHooks({
           tools: baseSwarmTools,
           forgeExtensionHost: this.deps.forgeExtensionHost,
-          agentId: descriptor.agentId
+          bindingToken: preparedForgeBindings.bindingToken
         })
       : baseSwarmTools;
     const thinkingLevel = normalizeThinkingLevel(descriptor.model.thinkingLevel);
@@ -203,7 +204,7 @@ export class RuntimeFactory {
       forgePiToolBridgeFactory: preparedForgeBindings
         ? buildForgePiToolBridgeExtensionFactory({
             forgeExtensionHost: this.deps.forgeExtensionHost,
-            agentId: descriptor.agentId,
+            bindingToken: preparedForgeBindings.bindingToken,
             skippedToolNames: baseSwarmTools.map((tool) => tool.name)
           })
         : undefined
@@ -398,14 +399,15 @@ export class RuntimeFactory {
   ): Promise<SwarmAgentRuntime> {
     const preparedForgeBindings = await this.deps.forgeExtensionHost.prepareRuntimeBindings({
       descriptor,
-      runtimeType: "claude"
+      runtimeType: "claude",
+      runtimeToken
     });
     const baseSwarmTools = this.buildRuntimeTools(descriptor);
     const swarmTools = preparedForgeBindings
       ? wrapForgeToolsWithExtensionHooks({
           tools: baseSwarmTools,
           forgeExtensionHost: this.deps.forgeExtensionHost,
-          agentId: descriptor.agentId
+          bindingToken: preparedForgeBindings.bindingToken
         })
       : baseSwarmTools;
     const profileId = descriptor.profileId ?? descriptor.agentId;
@@ -486,14 +488,15 @@ export class RuntimeFactory {
   ): Promise<SwarmAgentRuntime> {
     const preparedForgeBindings = await this.deps.forgeExtensionHost.prepareRuntimeBindings({
       descriptor,
-      runtimeType: "codex"
+      runtimeType: "codex",
+      runtimeToken
     });
     const baseSwarmTools = this.buildRuntimeTools(descriptor);
     const swarmTools = preparedForgeBindings
       ? wrapForgeToolsWithExtensionHooks({
           tools: baseSwarmTools,
           forgeExtensionHost: this.deps.forgeExtensionHost,
-          agentId: descriptor.agentId
+          bindingToken: preparedForgeBindings.bindingToken
         })
       : baseSwarmTools;
     const memoryResources = await this.deps.getMemoryRuntimeResources(descriptor);

@@ -148,6 +148,7 @@ export interface ForgeBoundExtension {
 }
 
 export interface ForgePreparedRuntimeBindings {
+  readonly bindingToken: string;
   readonly agentId: string;
   readonly runtimeType: ForgeRuntimeType;
   readonly loadedAt: string;
@@ -160,6 +161,10 @@ export interface ForgePreparedRuntimeBindings {
     readonly runtime: { readonly type: ForgeRuntimeType };
   };
   readonly diagnostics: readonly ForgeDiagnosticErrorRecord[];
+}
+
+export function createForgeBindingToken(runtimeToken: number): string {
+  return `forge-runtime-${runtimeToken}`;
 }
 
 export interface ForgeRuntimeBindingSnapshot {

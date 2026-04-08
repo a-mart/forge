@@ -105,6 +105,8 @@ import {
 } from "./project-agents.js";
 import { PersistenceService } from "./persistence-service.js";
 import { ForgeExtensionHost } from "./forge-extension-host.js";
+import type { VersioningCommitEvent as ForgeVersioningCommitEvent } from "./forge-extension-types.js";
+import { createForgeBindingToken } from "./forge-extension-types.js";
 import {
   deleteProjectAgentReferenceDoc,
   listProjectAgentReferenceDocs,
@@ -2113,6 +2115,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     await this.saveStore();
+    await this.forgeExtensionHost.dispatchSessionLifecycle({
+      action: "created",
+      sessionDescriptor
+    });
     this.emitSessionLifecycle({
       action: "created",
       sessionAgentId: sessionDescriptor.agentId,
@@ -2253,6 +2259,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
       throw error;
     }
+    await this.forgeExtensionHost.dispatchSessionLifecycle({
+      action: "created",
+      sessionDescriptor
+    });
     this.emitSessionLifecycle({
       action: "created",
       sessionAgentId: sessionDescriptor.agentId,
@@ -2326,6 +2336,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   async deleteSession(agentId: string): Promise<{ terminatedWorkerIds: string[] }> {
     const descriptor = this.getRequiredSessionDescriptor(agentId);
     this.assertSessionIsDeletable(descriptor);
+    const forgeLifecycleSessionDescriptor = cloneDescriptor(descriptor);
     const wasProjectAgent = Boolean(descriptor.projectAgent);
     const projectAgentHandle = descriptor.projectAgent?.handle;
 
@@ -2367,6 +2378,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     await this.saveStore();
+    await this.forgeExtensionHost.dispatchSessionLifecycle({
+      action: "deleted",
+      sessionDescriptor: forgeLifecycleSessionDescriptor
+    });
     this.emitSessionLifecycle({
       action: "deleted",
       sessionAgentId: descriptor.agentId,
@@ -2659,6 +2674,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       renamedAt
     });
     await this.saveStore();
+    await this.forgeExtensionHost.dispatchSessionLifecycle({
+      action: "renamed",
+      sessionDescriptor: descriptor
+    });
     this.emitSessionLifecycle({
       action: "renamed",
       sessionAgentId: descriptor.agentId,
@@ -3005,6 +3024,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       throw error;
     }
 
+    await this.forgeExtensionHost.dispatchSessionLifecycle({
+      action: "forked",
+      sessionDescriptor: forkedDescriptor,
+      sourceDescriptor
+    });
     this.emitSessionLifecycle({
       action: "forked",
       sessionAgentId: forkedDescriptor.agentId,
@@ -3568,6 +3592,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       versioning: this.versioningService
     });
     await this.saveStore();
+    await this.forgeExtensionHost.dispatchSessionLifecycle({
+      action: "created",
+      sessionDescriptor: descriptor
+    });
 
     this.emitStatus(managerId, descriptor.status, runtime.getPendingCount(), contextUsage);
     this.emitAgentsSnapshot();
@@ -3606,6 +3634,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     const terminatedWorkerIds: string[] = [];
+    const forgeLifecycleSessionDescriptors = sessionDescriptors.map((sessionDescriptor) => cloneDescriptor(sessionDescriptor));
 
     for (const sessionDescriptor of sessionDescriptors) {
       for (const workerDescriptor of this.getWorkersForManager(sessionDescriptor.agentId)) {
@@ -3630,6 +3659,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     await this.deleteManagerSchedulesFile(schedulesProfileId);
 
     await this.saveStore();
+    for (const sessionDescriptor of forgeLifecycleSessionDescriptors) {
+      await this.forgeExtensionHost.dispatchSessionLifecycle({
+        action: "deleted",
+        sessionDescriptor
+      });
+    }
     this.emitAgentsSnapshot();
     this.emitProfilesSnapshot();
 
@@ -5681,6 +5716,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return this.forgeExtensionHost.buildSettingsSnapshot(options);
   }
 
+  async dispatchForgeVersioningCommit(event: ForgeVersioningCommitEvent): Promise<void> {
+    await this.forgeExtensionHost.dispatchVersioningCommit(event);
+  }
+
   async listSettingsEnv(): Promise<SkillEnvRequirement[]> {
     return this.secretsEnvService.listSettingsEnv();
   }
@@ -7656,13 +7695,18 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   private clearRuntimeToken(agentId: string, runtimeToken?: number): void {
-    if (runtimeToken !== undefined && !this.isCurrentRuntimeToken(agentId, runtimeToken)) {
+    const isCurrentRuntime = runtimeToken === undefined || this.isCurrentRuntimeToken(agentId, runtimeToken);
+
+    if (runtimeToken !== undefined) {
+      this.forgeExtensionHost.deactivateRuntimeBindings(createForgeBindingToken(runtimeToken));
+    }
+
+    if (!isCurrentRuntime) {
       return;
     }
 
     this.runtimeTokensByAgentId.delete(agentId);
     this.runtimeExtensionSnapshotsByAgentId.delete(agentId);
-    this.forgeExtensionHost.deactivateRuntimeBindings(agentId);
   }
 
   private handleRuntimeExtensionSnapshot(
@@ -7687,6 +7731,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   private detachRuntime(agentId: string, runtimeToken?: number): boolean {
     if (runtimeToken !== undefined && !this.isCurrentRuntimeToken(agentId, runtimeToken)) {
+      this.clearRuntimeToken(agentId, runtimeToken);
       return false;
     }
 
@@ -8842,6 +8887,14 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       ...error,
       message
     });
+
+    const forgeBindingRuntimeToken = runtimeToken ?? this.runtimeTokensByAgentId.get(agentId);
+    if (forgeBindingRuntimeToken !== undefined) {
+      await this.forgeExtensionHost.dispatchRuntimeError(createForgeBindingToken(forgeBindingRuntimeToken), {
+        ...error,
+        message
+      });
+    }
 
     if (error.phase === "prompt_dispatch" || error.phase === "prompt_start") {
       const recoveredWithFallback = await this.maybeRecoverWorkerWithSpecialistFallback(
