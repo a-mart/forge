@@ -3,7 +3,6 @@ import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import {
   getCatalogProvider,
   type AgentRuntimeExtensionSnapshot,
-  type OnboardingState,
   type RuntimeExtensionMetadata,
   type RuntimeExtensionSource
 } from "@forge/protocol";
@@ -26,29 +25,23 @@ import { openSessionManagerWithSizeGuard } from "../session-file-guard.js";
 import { ClaudeAgentRuntime } from "../claude-agent-runtime.js";
 import { ClaudeAuthResolver } from "../claude-auth-resolver.js";
 import { createClaudeMcpToolBridge } from "../claude-mcp-tool-bridge.js";
-import { assembleClaudePrompt, discoverAgentsMd } from "../claude-prompt-assembler.js";
 import { isClaudeSdkUnavailableError } from "../claude-sdk-loader.js";
 import { CodexAgentRuntime } from "../codex-agent-runtime.js";
 import type { RuntimeErrorEvent, RuntimeSessionEvent, SwarmAgentRuntime } from "../runtime-contracts.js";
 import type { SwarmToolHost } from "../swarm-tool-host.js";
 import { buildSwarmTools } from "../swarm-tools.js";
-import { normalizeArchetypeId, resolvePromptVariables } from "../prompt-registry.js";
+import { normalizeArchetypeId } from "../prompt-registry.js";
 import { combineCompactionCustomInstructions, loadPins } from "../message-pins.js";
 import { createCatalogRequestBehaviorExtensionFactory } from "../model-catalog-request-behaviors.js";
 import { modelCatalogService } from "../model-catalog-service.js";
 import {
-  getCommonKnowledgePath,
-  getProfileMemoryPath,
   getProfilePiExtensionsDir,
   getProfilePiPromptsDir,
   getProfilePiSkillsDir,
   getProfilePiThemesDir,
   getSessionDir,
-  resolveMemoryFilePath
 } from "../data-paths.js";
 import { createPiModelRegistry } from "../pi-model-registry.js";
-import { getOnboardingSnapshot } from "../onboarding-state.js";
-import { SkillMetadataService } from "../skill-metadata-service.js";
 import type {
   AgentContextUsage,
   AgentDescriptor,
@@ -70,6 +63,8 @@ interface RuntimeFactoryDependencies {
     additionalSkillPaths: string[];
   }>;
   getSwarmContextFiles: (cwd: string) => Promise<Array<{ path: string; content: string }>>;
+  buildClaudeRuntimeSystemPrompt: (descriptor: AgentDescriptor, systemPrompt: string) => Promise<string>;
+  buildCodexRuntimeSystemPrompt: (descriptor: AgentDescriptor, systemPrompt: string) => Promise<string>;
   mergeRuntimeContextFiles: (
     baseAgentsFiles: Array<{ path: string; content: string }>,
     options: {
@@ -375,9 +370,10 @@ export class RuntimeFactory {
     const sessionId = descriptor.role === "manager" ? descriptor.agentId : descriptor.managerId;
     const workerId = descriptor.role === "worker" ? descriptor.agentId : undefined;
     const authResolver = new ClaudeAuthResolver(this.deps.config.paths.dataDir);
-    const [mcpBridge, claudeSystemPrompt] = await Promise.all([
+    const [mcpBridge, claudeSystemPrompt, memoryResources] = await Promise.all([
       createClaudeMcpToolBridge(swarmTools, { serverName: `forge-swarm-${descriptor.agentId}` }),
-      this.buildClaudeRuntimeSystemPrompt(descriptor, systemPrompt)
+      this.deps.buildClaudeRuntimeSystemPrompt(descriptor, systemPrompt),
+      this.deps.getMemoryRuntimeResources(descriptor)
     ]);
 
     this.deps.logDebug("runtime:create:start", {
@@ -420,7 +416,10 @@ export class RuntimeFactory {
         [mcpBridge.serverName]: mcpBridge.server
       },
       allowedTools: mcpBridge.allowedTools,
-      runtimeEnv: this.buildRuntimePromptVariables(this.resolveRuntimeMemoryFilePath(descriptor)),
+      runtimeEnv: {
+        SWARM_DATA_DIR: this.deps.config.paths.dataDir,
+        SWARM_MEMORY_FILE: memoryResources.memoryContextFile.path
+      },
       modelContextWindow: modelCatalogService.getEffectiveContextWindow(
         descriptor.model.modelId,
         descriptor.model.provider
@@ -445,12 +444,7 @@ export class RuntimeFactory {
   ): Promise<SwarmAgentRuntime> {
     const swarmTools = this.buildRuntimeTools(descriptor);
     const memoryResources = await this.deps.getMemoryRuntimeResources(descriptor);
-    const swarmContextFiles = await this.deps.getSwarmContextFiles(descriptor.cwd);
-
-    const codexSystemPrompt = this.buildCodexRuntimeSystemPrompt(systemPrompt, {
-      memoryContextFile: memoryResources.memoryContextFile,
-      swarmContextFiles
-    });
+    const codexSystemPrompt = await this.deps.buildCodexRuntimeSystemPrompt(descriptor, systemPrompt);
 
     this.deps.logDebug("runtime:create:start", {
       runtime: "codex-app-server",
@@ -603,129 +597,6 @@ export class RuntimeFactory {
     return factories;
   }
 
-  private buildCodexRuntimeSystemPrompt(
-    baseSystemPrompt: string,
-    options: {
-      memoryContextFile: { path: string; content: string };
-      swarmContextFiles: Array<{ path: string; content: string }>;
-    }
-  ): string {
-    const sections: string[] = [];
-
-    const trimmedBase = baseSystemPrompt.trim();
-    if (trimmedBase.length > 0) {
-      sections.push(trimmedBase);
-    }
-
-    for (const contextFile of options.swarmContextFiles) {
-      const content = contextFile.content.trim();
-      if (!content) {
-        continue;
-      }
-
-      sections.push(
-        [
-          `Repository swarm policy (${contextFile.path}):`,
-          "----- BEGIN SWARM CONTEXT -----",
-          content,
-          "----- END SWARM CONTEXT -----"
-        ].join("\n")
-      );
-    }
-
-    const memoryContent = options.memoryContextFile.content.trim();
-    if (memoryContent) {
-      sections.push(
-        [
-          `Persistent swarm memory (${options.memoryContextFile.path}):`,
-          "----- BEGIN SWARM MEMORY -----",
-          memoryContent,
-          "----- END SWARM MEMORY -----"
-        ].join("\n")
-      );
-    }
-
-    return sections.join("\n\n");
-  }
-
-  private async buildClaudeRuntimeSystemPrompt(
-    descriptor: AgentDescriptor,
-    systemPrompt: string
-  ): Promise<string> {
-    const skillMetadataService = new SkillMetadataService({
-      config: this.deps.config
-    });
-    await skillMetadataService.ensureSkillMetadataLoaded();
-
-    const runtimeMemoryFilePath = this.resolveRuntimeMemoryFilePath(descriptor);
-    const profileId = descriptor.role === "manager" ? descriptor.profileId ?? descriptor.agentId : descriptor.profileId;
-    const resolvedBasePrompt = resolvePromptVariables(
-      systemPrompt,
-      this.buildRuntimePromptVariables(runtimeMemoryFilePath)
-    );
-    const [agentsMdPaths, swarmContextFiles, onboardingSnapshot] = await Promise.all([
-      discoverAgentsMd(descriptor.cwd),
-      this.deps.getSwarmContextFiles(descriptor.cwd),
-      this.buildClaudeOnboardingSnapshot(descriptor)
-    ]);
-
-    return await assembleClaudePrompt({
-      basePrompt: resolvedBasePrompt,
-      profileMemoryPath: profileId
-        ? getProfileMemoryPath(this.deps.config.paths.dataDir, profileId)
-        : undefined,
-      sessionMemoryPath: runtimeMemoryFilePath,
-      commonKnowledgePath: getCommonKnowledgePath(this.deps.config.paths.dataDir),
-      agentsMdPaths: [...agentsMdPaths, ...swarmContextFiles.map((entry) => entry.path)],
-      availableSkills: skillMetadataService.getSkillMetadata().map((skill) => ({
-        name: skill.skillName,
-        description: skill.description ?? "",
-        location: skill.path
-      })),
-      onboardingSnapshot,
-      role: descriptor.role,
-      agentId: descriptor.agentId,
-      cwd: descriptor.cwd
-    });
-  }
-
-  private buildRuntimePromptVariables(memoryFilePath: string): Record<string, string> {
-    return {
-      SWARM_DATA_DIR: this.deps.config.paths.dataDir,
-      SWARM_MEMORY_FILE: memoryFilePath,
-      SWARM_SCRIPTS_DIR: join(this.deps.config.paths.rootDir, "apps", "backend", "src", "swarm", "scripts")
-    };
-  }
-
-  private resolveRuntimeMemoryFilePath(descriptor: AgentDescriptor): string {
-    return resolveMemoryFilePath(
-      this.deps.config.paths.dataDir,
-      {
-        agentId: descriptor.agentId,
-        role: descriptor.role,
-        profileId: descriptor.profileId,
-        managerId: descriptor.managerId
-      },
-      descriptor.role === "worker"
-        ? {
-            profileId: descriptor.profileId
-          }
-        : undefined
-    );
-  }
-
-  private async buildClaudeOnboardingSnapshot(descriptor: AgentDescriptor): Promise<string | undefined> {
-    if (descriptor.role !== "manager") {
-      return undefined;
-    }
-
-    if (normalizeArchetypeId(descriptor.archetypeId ?? "") === CORTEX_ARCHETYPE_ID) {
-      return undefined;
-    }
-
-    const snapshot = await getOnboardingSnapshot(this.deps.config.paths.dataDir);
-    return shouldIncludeOnboardingSnapshot(snapshot) ? buildOnboardingSnapshotBlock(snapshot) : undefined;
-  }
 
   /**
    * Select a pooled credential for supported Pi providers if multiple accounts exist.
@@ -980,8 +851,6 @@ function normalizeExtensionDisplayName(pathValue: string, resolvedPathValue: str
 
 const CORTEX_ARCHETYPE_ID = "cortex";
 const CORTEX_DISABLED_TOOL_NAMES = new Set(["list_agents", "kill_agent"]);
-const ONBOARDING_SNAPSHOT_MEMORY_HEADER =
-  "# Onboarding Snapshot (authoritative backend state — read-only reference)";
 const POOLED_PROVIDERS = new Set(["openai-codex", "anthropic"]);
 
 function isClaudeSdkModelDescriptor(
@@ -992,54 +861,6 @@ function isClaudeSdkModelDescriptor(
 
 function isCodexAppServerModelDescriptor(descriptor: Pick<AgentModelDescriptor, "provider">): boolean {
   return descriptor.provider.trim().toLowerCase() === "openai-codex-app-server";
-}
-
-function shouldIncludeOnboardingSnapshot(snapshot: OnboardingState): boolean {
-  return (
-    snapshot.status === "completed" &&
-    (hasOnboardingPreferenceValue(snapshot.preferences?.preferredName) ||
-      snapshot.preferences?.technicalLevel !== null ||
-      hasOnboardingPreferenceValue(snapshot.preferences?.additionalPreferences))
-  );
-}
-
-function hasOnboardingPreferenceValue(value: string | null | undefined): boolean {
-  return typeof value === "string" && value.trim().length > 0;
-}
-
-function buildOnboardingSnapshotBlock(snapshot: OnboardingState): string {
-  const lines = [ONBOARDING_SNAPSHOT_MEMORY_HEADER, "", `- status: ${snapshot.status}`];
-
-  if (snapshot.preferences?.preferredName) {
-    lines.push(`- preferred name: ${snapshot.preferences.preferredName}`);
-  }
-
-  if (snapshot.preferences?.technicalLevel) {
-    lines.push(`- technical level: ${humanizeOnboardingTechnicalLevel(snapshot.preferences.technicalLevel)}`);
-  }
-
-  if (snapshot.preferences?.additionalPreferences) {
-    lines.push(`- additional preferences: ${snapshot.preferences.additionalPreferences.replace(/\s+/g, " ").trim()}`);
-  }
-
-  return `${lines.join("\n")}\n`;
-}
-
-function humanizeOnboardingTechnicalLevel(
-  value: NonNullable<NonNullable<OnboardingState["preferences"]>["technicalLevel"]>
-): string {
-  switch (value) {
-    case "developer":
-      return "developer";
-    case "technical_non_developer":
-      return "technical (non-developer)";
-    case "semi_technical":
-      return "semi-technical";
-    case "non_technical":
-      return "non-technical";
-    default:
-      return value;
-  }
 }
 
 function normalizeThinkingLevel(level: string): string {

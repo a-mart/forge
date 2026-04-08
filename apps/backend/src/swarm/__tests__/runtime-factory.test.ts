@@ -207,6 +207,8 @@ function createFactory(
       additionalSkillPaths: [],
     }),
     getSwarmContextFiles: async () => [],
+    buildClaudeRuntimeSystemPrompt: async (_descriptor, systemPrompt) => systemPrompt,
+    buildCodexRuntimeSystemPrompt: async (_descriptor, systemPrompt) => systemPrompt,
     mergeRuntimeContextFiles: (base) => base,
     callbacks: {
       onStatusChange: async () => {},
