@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
 import { appendFile, copyFile, mkdir, open, readdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -135,15 +135,14 @@ import {
 import { SecretsEnvService } from "./secrets-env-service.js";
 import { SkillFileService } from "./skill-file-service.js";
 import { SkillMetadataService } from "./skill-metadata-service.js";
+import { SwarmChoiceService } from "./swarm-choice-service.js";
+import { SwarmSettingsService } from "./swarm-settings-service.js";
 import {
-  listDirectories,
   normalizeAllowlistRoots,
-  validateDirectory as validateDirectoryInput,
   validateDirectoryPath,
   type DirectoryListingResult,
   type DirectoryValidationResult
 } from "./cwd-policy.js";
-import { pickDirectory as pickNativeDirectory } from "./directory-picker.js";
 import {
   isConversationBinaryAttachment,
   isConversationImageAttachment,
@@ -964,12 +963,7 @@ class SessionMemoryMergeFailure extends Error {
   }
 }
 
-export class ChoiceRequestCancelledError extends Error {
-  constructor(public readonly reason: "cancelled" | "expired") {
-    super(`Choice request ${reason}`);
-    this.name = "ChoiceRequestCancelledError";
-  }
-}
+export { ChoiceRequestCancelledError } from "./swarm-choice-service.js";
 
 interface SessionRenameHistoryEntry {
   from: string;
@@ -1246,15 +1240,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly pendingManagerRuntimeRecycleAgentIds = new Set<string>();
   private readonly projectAgentMessageTimestampsBySender = new Map<string, number[]>();
   private readonly pendingManualManagerStopNoticeTimersByAgentId = new Map<string, NodeJS.Timeout>();
-  private readonly pendingChoiceRequests = new Map<string, {
-    choiceId: string;
-    agentId: string;
-    sessionAgentId: string;
-    questions: ChoiceQuestion[];
-    resolve: (answers: ChoiceAnswer[]) => void;
-    reject: (reason: Error) => void;
-    createdAt: string;
-  }>();
   private readonly conversationEntriesByAgentId = new Map<string, ConversationEntryEvent[]>();
   private readonly pinnedMessageIdsBySessionAgentId = new Map<string, Set<string>>();
   private readonly workerWatchdogState = new Map<string, WorkerWatchdogState>();
@@ -1278,6 +1263,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly skillMetadataService: SkillMetadataService;
   private readonly skillFileService: SkillFileService;
   private readonly secretsEnvService: SecretsEnvService;
+  private readonly settingsService: SwarmSettingsService;
+  private readonly choiceService: SwarmChoiceService;
   readonly promptRegistry: PromptRegistry;
 
   private defaultMemoryTemplateNormalizedLines = DEFAULT_MEMORY_TEMPLATE_NORMALIZED_LINES;
@@ -1335,6 +1322,34 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       config: this.config,
       ensureSkillMetadataLoaded: () => this.skillMetadataService.ensureSkillMetadataLoaded(),
       getSkillMetadata: () => this.skillMetadataService.getSkillMetadata()
+    });
+    this.settingsService = new SwarmSettingsService({
+      config: this.config,
+      profiles: this.profiles,
+      skillMetadataService: this.skillMetadataService,
+      skillFileService: this.skillFileService,
+      secretsEnvService: this.secretsEnvService,
+      getSessionsForProfile: (profileId) => this.getSessionsForProfile(profileId) as Array<AgentDescriptor & { role: "manager"; profileId: string }>,
+      resolveAndValidateCwd: (cwd) => this.resolveAndValidateCwd(cwd),
+      assertCanChangeManagerCwd: (profileId, sessions) => this.assertCanChangeManagerCwd(profileId, sessions),
+      applyManagerRuntimeRecyclePolicy: (agentId, reason) => this.applyManagerRuntimeRecyclePolicy(agentId, reason),
+      saveStore: async () => {
+        await this.saveStore();
+      },
+      emitAgentsSnapshot: () => {
+        this.emitAgentsSnapshot();
+      },
+      logDebug: (message, details) => this.logDebug(message, details)
+    });
+    this.choiceService = new SwarmChoiceService({
+      now: this.now,
+      getDescriptor: (agentId) => this.descriptors.get(agentId),
+      emitChoiceRequest: (event) => {
+        this.emitChoiceRequest(event);
+      },
+      emitAgentsSnapshot: () => {
+        this.emitAgentsSnapshot();
+      }
     });
     this.runtimeFactory = new RuntimeFactory({
       host: this,
@@ -1961,109 +1976,31 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     agentId: string,
     questions: ChoiceQuestion[],
   ): Promise<ChoiceAnswer[]> {
-    const descriptor = this.descriptors.get(agentId);
-    if (!descriptor) throw new Error(`Agent not found: ${agentId}`);
-
-    const sessionAgentId = descriptor.role === "manager"
-      ? agentId
-      : descriptor.managerId;
-
-    const choiceId = randomUUID().slice(0, 12);
-
-    const pendingEvent: ChoiceRequestEvent = {
-      type: "choice_request",
-      agentId,
-      choiceId,
-      questions,
-      status: "pending",
-      timestamp: this.now(),
-    };
-    this.emitChoiceRequest(pendingEvent);
-
-    return new Promise<ChoiceAnswer[]>((resolve, reject) => {
-      this.pendingChoiceRequests.set(choiceId, {
-        choiceId,
-        agentId,
-        sessionAgentId,
-        questions,
-        resolve,
-        reject,
-        createdAt: this.now(),
-      });
-      this.emitAgentsSnapshot();
-    });
+    return this.choiceService.requestUserChoice(agentId, questions);
   }
 
   resolveChoiceRequest(choiceId: string, answers: ChoiceAnswer[]): void {
-    const pending = this.pendingChoiceRequests.get(choiceId);
-    if (!pending) return;
-
-    this.pendingChoiceRequests.delete(choiceId);
-
-    const answeredEvent: ChoiceRequestEvent = {
-      type: "choice_request",
-      agentId: pending.agentId,
-      choiceId,
-      questions: pending.questions,
-      status: "answered",
-      answers,
-      timestamp: this.now(),
-    };
-    this.emitChoiceRequest(answeredEvent);
-
-    pending.resolve(answers);
-    this.emitAgentsSnapshot();
+    this.choiceService.resolveChoiceRequest(choiceId, answers);
   }
 
   cancelChoiceRequest(choiceId: string, reason: Extract<ChoiceRequestStatus, "cancelled" | "expired">): void {
-    const pending = this.pendingChoiceRequests.get(choiceId);
-    if (!pending) return;
-
-    this.pendingChoiceRequests.delete(choiceId);
-
-    const cancelledEvent: ChoiceRequestEvent = {
-      type: "choice_request",
-      agentId: pending.agentId,
-      choiceId,
-      questions: pending.questions,
-      status: reason,
-      timestamp: this.now(),
-    };
-    this.emitChoiceRequest(cancelledEvent);
-
-    pending.reject(new ChoiceRequestCancelledError(reason));
-    this.emitAgentsSnapshot();
+    this.choiceService.cancelChoiceRequest(choiceId, reason);
   }
 
   cancelAllPendingChoicesForAgent(agentId: string): void {
-    for (const [choiceId, pending] of this.pendingChoiceRequests) {
-      if (pending.agentId === agentId || pending.sessionAgentId === agentId) {
-        this.cancelChoiceRequest(choiceId, "cancelled");
-      }
-    }
+    this.choiceService.cancelAllPendingChoicesForAgent(agentId);
   }
 
   hasPendingChoicesForSession(sessionAgentId: string): boolean {
-    for (const pending of this.pendingChoiceRequests.values()) {
-      if (pending.sessionAgentId === sessionAgentId) return true;
-    }
-    return false;
+    return this.choiceService.hasPendingChoicesForSession(sessionAgentId);
   }
 
   getPendingChoiceIdsForSession(sessionAgentId: string): string[] {
-    const ids: string[] = [];
-    for (const pending of this.pendingChoiceRequests.values()) {
-      if (pending.sessionAgentId === sessionAgentId) {
-        ids.push(pending.choiceId);
-      }
-    }
-    return ids;
+    return this.choiceService.getPendingChoiceIdsForSession(sessionAgentId);
   }
 
   getPendingChoiceOwner(choiceId: string): { agentId: string; sessionAgentId: string } | undefined {
-    const pending = this.pendingChoiceRequests.get(choiceId);
-    if (!pending) return undefined;
-    return { agentId: pending.agentId, sessionAgentId: pending.sessionAgentId };
+    return this.choiceService.getPendingChoiceOwner(choiceId);
   }
 
   getPendingChoice(choiceId: string): {
@@ -2071,16 +2008,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     sessionAgentId: string;
     questions: ChoiceQuestion[];
   } | undefined {
-    const pending = this.pendingChoiceRequests.get(choiceId);
-    if (!pending) {
-      return undefined;
-    }
-
-    return {
-      agentId: pending.agentId,
-      sessionAgentId: pending.sessionAgentId,
-      questions: pending.questions,
-    };
+    return this.choiceService.getPendingChoice(choiceId);
   }
 
   async createSession(
@@ -3639,114 +3567,23 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     modelPreset: SwarmModelPreset,
     reasoningLevel?: SwarmReasoningLevel
   ): Promise<void> {
-    const profile = this.profiles.get(managerId);
-    if (!profile) {
-      throw new Error(`Unknown manager profile: ${managerId}`);
-    }
-
-    const modelDescriptor = resolveModelDescriptorFromPreset(modelPreset);
-    if (reasoningLevel) {
-      modelDescriptor.thinkingLevel = reasoningLevel;
-    }
-    const sessions = this.getSessionsForProfile(profile.profileId);
-    const recycledSessions: string[] = [];
-    const deferredSessions: string[] = [];
-
-    for (const session of sessions) {
-      session.model = { ...modelDescriptor };
-      // Intentionally do NOT bump updatedAt — model changes are config updates,
-      // not user-visible activity, and bumping would scramble session sort order.
-      this.descriptors.set(session.agentId, session);
-
-      const recycleDisposition = await this.applyManagerRuntimeRecyclePolicy(session.agentId, "model_change");
-      if (recycleDisposition === "recycled") {
-        recycledSessions.push(session.agentId);
-      } else if (recycleDisposition === "deferred") {
-        deferredSessions.push(session.agentId);
-      }
-    }
-
-    await this.saveStore();
-    this.emitAgentsSnapshot();
-
-    this.logDebug("manager:update_model", {
-      managerId,
-      modelPreset,
-      reasoningLevel,
-      updatedSessions: sessions.map((s) => s.agentId),
-      recycledSessions,
-      deferredSessions
-    });
+    await this.settingsService.updateManagerModel(managerId, modelPreset, reasoningLevel);
   }
 
   async updateManagerCwd(managerId: string, newCwd: string): Promise<string> {
-    const profile = this.profiles.get(managerId);
-    if (!profile) {
-      throw new Error(`Unknown manager profile: ${managerId}`);
-    }
+    return this.settingsService.updateManagerCwd(managerId, newCwd);
+  }
 
-    const sessions = this.getSessionsForProfile(profile.profileId);
+  private assertCanChangeManagerCwd(
+    profileId: string,
+    sessions: Array<AgentDescriptor & { role: "manager"; profileId: string }>
+  ): void {
     if (
-      profile.profileId === CORTEX_PROFILE_ID ||
+      profileId === CORTEX_PROFILE_ID ||
       sessions.some((descriptor) => normalizeArchetypeId(descriptor.archetypeId ?? "") === CORTEX_ARCHETYPE_ID)
     ) {
       throw new Error("Cannot change working directory for Cortex profile");
     }
-
-    const resolvedCwd = await this.resolveAndValidateCwd(newCwd);
-    if (sessions.every((session) => session.cwd === resolvedCwd)) {
-      this.logDebug("manager:update_cwd:noop", {
-        managerId,
-        newCwd: resolvedCwd,
-        updatedSessions: []
-      });
-      return resolvedCwd;
-    }
-
-    const recycledSessions: string[] = [];
-    const deferredSessions: string[] = [];
-    const recycleFailures: Array<{ agentId: string; error: string }> = [];
-
-    for (const session of sessions) {
-      session.cwd = resolvedCwd;
-      // Intentionally do NOT bump updatedAt — CWD changes are config updates,
-      // not user-visible activity, and bumping would scramble session sort order.
-      this.descriptors.set(session.agentId, session);
-    }
-
-    for (const session of sessions) {
-      try {
-        const recycleDisposition = await this.applyManagerRuntimeRecyclePolicy(session.agentId, "cwd_change");
-        if (recycleDisposition === "recycled") {
-          recycledSessions.push(session.agentId);
-        } else if (recycleDisposition === "deferred") {
-          deferredSessions.push(session.agentId);
-        }
-      } catch (error) {
-        recycleFailures.push({
-          agentId: session.agentId,
-          error: errorToMessage(error)
-        });
-      }
-    }
-
-    await this.saveStore();
-    this.emitAgentsSnapshot();
-
-    if (recycleFailures.length > 0) {
-      console.warn(`[swarm] manager:update_cwd:recycle_failed managerId=${managerId} failures=${JSON.stringify(recycleFailures)}`);
-    }
-
-    this.logDebug("manager:update_cwd", {
-      managerId,
-      newCwd: resolvedCwd,
-      updatedSessions: sessions.map((s) => s.agentId),
-      recycledSessions,
-      deferredSessions,
-      recycleFailures
-    });
-
-    return resolvedCwd;
   }
 
   async notifySpecialistRosterChanged(profileId: string): Promise<void> {
@@ -4100,24 +3937,15 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   async listDirectories(path?: string): Promise<DirectoryListingResult> {
-    return listDirectories(path, this.getCwdPolicy());
+    return this.settingsService.listDirectories(path);
   }
 
   async validateDirectory(path: string): Promise<DirectoryValidationResult> {
-    return validateDirectoryInput(path, this.getCwdPolicy());
+    return this.settingsService.validateDirectory(path);
   }
 
   async pickDirectory(defaultPath?: string): Promise<string | null> {
-    const pickedPath = await pickNativeDirectory({
-      defaultPath,
-      prompt: "Select a manager working directory"
-    });
-
-    if (!pickedPath) {
-      return null;
-    }
-
-    return validateDirectoryPath(pickedPath, this.getCwdPolicy());
+    return this.settingsService.pickDirectory(defaultPath);
   }
 
   private isSessionAgent(
@@ -5670,110 +5498,69 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   async listSettingsEnv(): Promise<SkillEnvRequirement[]> {
-    return this.secretsEnvService.listSettingsEnv();
+    return this.settingsService.listSettingsEnv();
   }
 
   async listSkillMetadata(profileId?: string): Promise<SkillInventoryEntry[]> {
-    await this.skillMetadataService.reloadSkillMetadata();
-
-    let metadata;
-    if (typeof profileId === "string") {
-      metadata = await this.skillMetadataService.getProfileSkillMetadata(profileId);
-    } else {
-      metadata = this.skillMetadataService.getSkillMetadata();
-    }
-
-    return metadata
-      .map((metadata) => ({
-        skillId: metadata.skillId,
-        name: metadata.skillName,
-        directoryName: metadata.directoryName,
-        description: metadata.description,
-        envCount: metadata.env.length,
-        hasRichConfig: metadata.directoryName.trim().toLowerCase() === "chrome-cdp",
-        sourceKind: metadata.sourceKind,
-        ...(metadata.profileId ? { profileId: metadata.profileId } : {}),
-        rootPath: metadata.rootPath,
-        skillFilePath: metadata.path,
-        isInherited: metadata.isInherited,
-        isEffective: metadata.isEffective
-      }))
-      .sort((left, right) => {
-        const byName = left.name.localeCompare(right.name);
-        if (byName !== 0) {
-          return byName;
-        }
-
-        return left.directoryName.localeCompare(right.directoryName);
-      });
+    return this.settingsService.listSkillMetadata(profileId);
   }
 
   async listSkillFiles(skillId: string, relativePath = ""): Promise<SkillFilesResponse> {
-    const skill = await this.skillMetadataService.resolveSkillById(skillId);
-    if (!skill) {
-      throw new Error("Unknown skill.");
-    }
-
-    return this.skillFileService.listDirectory(skill, relativePath);
+    return this.settingsService.listSkillFiles(skillId, relativePath);
   }
 
   async getSkillFileContent(skillId: string, relativePath: string): Promise<SkillFileContentResponse> {
-    const skill = await this.skillMetadataService.resolveSkillById(skillId);
-    if (!skill) {
-      throw new Error("Unknown skill.");
-    }
-
-    return this.skillFileService.getFileContent(skill, relativePath);
+    return this.settingsService.getSkillFileContent(skillId, relativePath);
   }
 
   async updateSettingsEnv(values: Record<string, string>): Promise<void> {
-    await this.secretsEnvService.updateSettingsEnv(values);
+    await this.settingsService.updateSettingsEnv(values);
   }
 
   async deleteSettingsEnv(name: string): Promise<void> {
-    await this.secretsEnvService.deleteSettingsEnv(name);
+    await this.settingsService.deleteSettingsEnv(name);
   }
 
   async listSettingsAuth(): Promise<SettingsAuthProvider[]> {
-    return this.secretsEnvService.listSettingsAuth();
+    return this.settingsService.listSettingsAuth();
   }
 
   async updateSettingsAuth(values: Record<string, string>): Promise<void> {
-    await this.secretsEnvService.updateSettingsAuth(values);
+    await this.settingsService.updateSettingsAuth(values);
   }
 
   async deleteSettingsAuth(provider: string): Promise<void> {
-    await this.secretsEnvService.deleteSettingsAuth(provider);
+    await this.settingsService.deleteSettingsAuth(provider);
   }
 
   // ── Credential Pool pass-through ──
 
   getCredentialPoolService(): CredentialPoolService {
-    return this.secretsEnvService.getCredentialPoolService();
+    return this.settingsService.getCredentialPoolService();
   }
 
   async listCredentialPool(provider: string): Promise<CredentialPoolState> {
-    return this.secretsEnvService.getCredentialPoolService().listPool(provider);
+    return this.settingsService.listCredentialPool(provider);
   }
 
   async renamePooledCredential(provider: string, credentialId: string, label: string): Promise<void> {
-    await this.secretsEnvService.getCredentialPoolService().renameCredential(provider, credentialId, label);
+    await this.settingsService.renamePooledCredential(provider, credentialId, label);
   }
 
   async removePooledCredential(provider: string, credentialId: string): Promise<void> {
-    await this.secretsEnvService.getCredentialPoolService().removeCredential(provider, credentialId);
+    await this.settingsService.removePooledCredential(provider, credentialId);
   }
 
   async setPrimaryPooledCredential(provider: string, credentialId: string): Promise<void> {
-    await this.secretsEnvService.getCredentialPoolService().setPrimary(provider, credentialId);
+    await this.settingsService.setPrimaryPooledCredential(provider, credentialId);
   }
 
   async setCredentialPoolStrategy(provider: string, strategy: CredentialPoolStrategy): Promise<void> {
-    await this.secretsEnvService.getCredentialPoolService().setStrategy(provider, strategy);
+    await this.settingsService.setCredentialPoolStrategy(provider, strategy);
   }
 
   async resetPooledCredentialCooldown(provider: string, credentialId: string): Promise<void> {
-    await this.secretsEnvService.getCredentialPoolService().resetCooldown(provider, credentialId);
+    await this.settingsService.resetPooledCredentialCooldown(provider, credentialId);
   }
 
   async addPooledCredential(
@@ -5781,7 +5568,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     oauthCredential: AuthCredential,
     identity?: { label?: string; autoLabel?: string; accountId?: string }
   ): Promise<PooledCredentialInfo> {
-    return this.secretsEnvService.getCredentialPoolService().addCredential(provider, oauthCredential, identity);
+    return this.settingsService.addPooledCredential(provider, oauthCredential, identity);
   }
 
   private emitConversationMessage(event: ConversationMessageEvent): void {
