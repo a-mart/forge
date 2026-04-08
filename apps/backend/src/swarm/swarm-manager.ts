@@ -14,10 +14,8 @@ import type {
   CortexReviewRunRecord,
   CortexReviewRunScope,
   CortexReviewRunTrigger,
-  OnboardingState,
   PersistedProjectAgentConfig,
   PromptPreviewResponse,
-  PromptPreviewSection,
   ServerEvent,
   SessionMemoryMergeAttemptStatus,
   SessionMemoryMergeFailureStage,
@@ -46,7 +44,6 @@ import {
   getCortexWorkerPromptsPath,
   getProfileMemoryPath,
   getProfileMergeAuditLogPath,
-  getProjectAgentPromptPath,
   getSessionDir,
   getSessionFilePath,
   getSessionMetaPath,
@@ -99,10 +96,8 @@ import {
   deliverProjectAgentMessage,
   findProjectAgentByHandle,
   formatProjectAgentRuntimeMessage,
-  generateProjectAgentDirectoryBlock,
   getProjectAgentHandleCollisionError,
   getProjectAgentPublicName,
-  listProjectAgents,
   normalizeProjectAgentHandle,
   normalizeProjectAgentInlineText
 } from "./project-agents.js";
@@ -126,6 +121,7 @@ import { SwarmSessionMetaService, type SessionMemoryMergeAttemptMetaUpdate } fro
 import { SkillFileService } from "./skill-file-service.js";
 import { SkillMetadataService } from "./skill-metadata-service.js";
 import { SwarmChoiceService } from "./swarm-choice-service.js";
+import { SwarmPromptService } from "./swarm-prompt-service.js";
 import { SwarmSettingsService } from "./swarm-settings-service.js";
 import {
   normalizeAllowlistRoots,
@@ -157,7 +153,7 @@ import {
   parseSwarmReasoningLevel,
   resolveModelDescriptorFromPreset
 } from "./model-presets.js";
-import { getOnboardingSnapshot, loadOnboardingState } from "./onboarding-state.js";
+import { loadOnboardingState } from "./onboarding-state.js";
 import {
   generateRosterBlock as specialistGenerateRosterBlock,
   getSpecialistsEnabled as specialistGetSpecialistsEnabled,
@@ -215,7 +211,6 @@ import {
   analyzeLatestCortexCloseoutNeed,
   areContextUsagesEqual,
   buildModelCapacityBlockKey,
-  buildSessionMemoryRuntimeView,
   buildWorkerCompletionReport,
   clampModelCapacityBlockDurationMs,
   cloneDescriptor,
@@ -223,7 +218,6 @@ import {
   compareRuntimeExtensionSnapshots,
   createDeferred,
   errorToMessage,
-  escapeXmlForPreview,
   extractDescriptorAgentId,
   extractRuntimeMessageText,
   extractVersionedToolPath,
@@ -304,18 +298,6 @@ interface SpecialistRegistryModule {
 // AgentDescriptor now includes specialistId/specialistDisplayName/specialistColor directly.
 
 
-const DEFAULT_WORKER_SYSTEM_PROMPT = `You are a worker agent in a swarm.
-- You can list agents and send messages to other agents.
-- Use coding tools (read/bash/edit/write) to execute implementation tasks.
-- Report progress and outcomes back to the manager using send_message_to_agent.
-- You are not user-facing.
-- End users only see messages they send and manager speak_to_user outputs.
-- Your plain assistant text is not directly visible to end users.
-- Incoming messages prefixed with "SYSTEM:" are internal control/context updates, not direct end-user chat.
-- Persistent memory for this runtime is at \${SWARM_MEMORY_FILE} and is auto-loaded into context.
-- Workers read their owning manager's memory file.
-- Only write memory when explicitly asked to remember/update/forget durable information.
-- Follow the memory skill workflow before editing the memory file, and never store secrets in memory.`;
 const MANAGER_ARCHETYPE_ID = "manager";
 const MERGER_ARCHETYPE_ID = "merger";
 const CORTEX_ARCHETYPE_ID = "cortex";
@@ -374,10 +356,6 @@ Useful first-message shapes:
 
 Do not include the old generic "how do you like to work" interview.
 This manager's onboarding is about the project, not the person.`;
-const COMMON_KNOWLEDGE_MEMORY_HEADER =
-  "# Common Knowledge (maintained by Cortex — read-only reference)";
-const ONBOARDING_SNAPSHOT_MEMORY_HEADER =
-  "# Onboarding Snapshot (authoritative backend state — read-only reference)";
 const COMMON_KNOWLEDGE_INITIAL_TEMPLATE = `# Common Knowledge
 <!-- Maintained by Cortex. Last updated: {ISO timestamp} -->
 
@@ -913,8 +891,6 @@ Use list_agents({"verbose":true,"limit":50,"offset":0}) for a paged full list.`;
 const CORTEX_USER_CLOSEOUT_REMINDER_MESSAGE = `SYSTEM: Before ending this direct review, publish a concise speak_to_user closeout. State the reviewed scope, whether anything was promoted, which files changed (or NONE), and whether follow-up remains. Report changed files as paths relative to the active data dir only — never absolute host paths. If exact files are uncertain, prefer NONE over guessing. Do this even for a no-op review.`;
 
 // Retain recent non-web activity while preserving the full user-facing web transcript.
-const SWARM_CONTEXT_FILE_NAME = "SWARM.md";
-const AGENTS_CONTEXT_FILE_NAME = "AGENTS.md";
 // Integration services add ~2 event listeners per profile (Telegram conversation_message,
 // Telegram session_lifecycle). Keep this limit above base listeners +
 // (2 × expected maximum profiles).
@@ -1006,54 +982,6 @@ interface ModelCapacityBlock {
   reason: string;
 }
 
-function hasOnboardingPreferenceValue(value: string | null | undefined): boolean {
-  return typeof value === "string" && value.trim().length > 0;
-}
-
-function shouldInjectOnboardingSnapshot(snapshot: OnboardingState): boolean {
-  return (
-    snapshot.status === "completed" &&
-    (
-      hasOnboardingPreferenceValue(snapshot.preferences?.preferredName) ||
-      snapshot.preferences?.technicalLevel !== null ||
-      hasOnboardingPreferenceValue(snapshot.preferences?.additionalPreferences)
-    )
-  );
-}
-
-function humanizeOnboardingTechnicalLevel(value: NonNullable<NonNullable<OnboardingState["preferences"]>["technicalLevel"]>): string {
-  switch (value) {
-    case "developer":
-      return "developer";
-    case "technical_non_developer":
-      return "technical (non-developer)";
-    case "semi_technical":
-      return "semi-technical";
-    case "non_technical":
-      return "non-technical";
-    default:
-      return value;
-  }
-}
-
-function buildOnboardingSnapshotMemoryBlock(snapshot: OnboardingState): string {
-  const lines = [ONBOARDING_SNAPSHOT_MEMORY_HEADER, "", `- status: ${snapshot.status}`];
-
-  if (snapshot.preferences?.preferredName) {
-    lines.push(`- preferred name: ${snapshot.preferences.preferredName}`);
-  }
-
-  if (snapshot.preferences?.technicalLevel) {
-    lines.push(`- technical level: ${humanizeOnboardingTechnicalLevel(snapshot.preferences.technicalLevel)}`);
-  }
-
-  if (snapshot.preferences?.additionalPreferences) {
-    lines.push(`- additional preferences: ${snapshot.preferences.additionalPreferences.replace(/\s+/g, " ").trim()}`);
-  }
-
-  return `${lines.join("\n")}\n`;
-}
-
 function getCortexWorkerPromptsBackupSuffix(content: string): ".v1.bak" | ".v2.bak" | ".v3.bak" | undefined {
   if (content.includes(CORTEX_WORKER_PROMPTS_VERSION_MARKER)) {
     return undefined;
@@ -1143,6 +1071,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly memoryMergeService: SwarmMemoryMergeService;
   private readonly settingsService: SwarmSettingsService;
   private readonly choiceService: SwarmChoiceService;
+  private readonly promptService: SwarmPromptService;
   readonly promptRegistry: PromptRegistry;
 
   private integrationContextProvider: ((profileId: string) => string) | undefined;
@@ -1281,6 +1210,25 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         this.emitAgentsSnapshot();
       }
     });
+    this.promptService = new SwarmPromptService({
+      config: this.config,
+      descriptors: this.descriptors,
+      profiles: this.profiles,
+      promptRegistry: this.promptRegistry,
+      skillMetadataService: this.skillMetadataService,
+      getAgentMemoryPath: (agentId) => this.getAgentMemoryPath(agentId),
+      ensureAgentMemoryFile: (memoryFilePath, profileId) =>
+        this.ensureAgentMemoryFile(memoryFilePath, profileId),
+      resolveMemoryOwnerAgentId: (descriptor) => this.resolveMemoryOwnerAgentId(descriptor),
+      resolveSessionProfileId: (memoryOwnerAgentId) => this.resolveSessionProfileId(memoryOwnerAgentId),
+      refreshSessionMetaStats: (descriptor) => this.refreshSessionMetaStats(descriptor),
+      refreshSessionMetaStatsBySessionId: (sessionAgentId) =>
+        this.refreshSessionMetaStatsBySessionId(sessionAgentId),
+      getSessionsForProfile: (profileId) => this.getSessionsForProfile(profileId),
+      loadSpecialistRegistryModule: () => this.loadSpecialistRegistryModule(),
+      getIntegrationContext: (profileId) => this.integrationContextProvider?.(profileId),
+      logDebug: (message, details) => this.logDebug(message, details)
+    });
     this.runtimeFactory = new RuntimeFactory({
       host: this,
       config: this.config,
@@ -1298,6 +1246,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       },
       getMemoryRuntimeResources: async (descriptor) => this.getMemoryRuntimeResources(descriptor),
       getSwarmContextFiles: async (cwd) => this.getSwarmContextFiles(cwd),
+      buildClaudeRuntimeSystemPrompt: async (descriptor, systemPrompt) =>
+        this.promptService.buildClaudeRuntimeSystemPrompt(descriptor, systemPrompt),
+      buildCodexRuntimeSystemPrompt: async (descriptor, systemPrompt) =>
+        this.promptService.buildCodexRuntimeSystemPrompt(descriptor, systemPrompt),
       mergeRuntimeContextFiles: (baseAgentsFiles, options) =>
         this.mergeRuntimeContextFiles(baseAgentsFiles, options),
       callbacks: {
@@ -3415,106 +3367,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   async previewManagerSystemPrompt(profileId: string): Promise<PromptPreviewResponse> {
-    const profile = this.profiles.get(profileId);
-    if (!profile) {
-      throw new Error(`Unknown profile: ${profileId}`);
-    }
-
-    const defaultDescriptor = this.descriptors.get(profile.defaultSessionAgentId);
-    const descriptor =
-      (this.isSessionAgent(defaultDescriptor) ? defaultDescriptor : undefined) ??
-      this.getSessionsForProfile(profileId)[0];
-
-    if (!descriptor || descriptor.role !== "manager") {
-      throw new Error(`Profile default session is missing: ${profile.defaultSessionAgentId}`);
-    }
-
-    const resolvedProfileId = normalizeOptionalAgentId(descriptor.profileId) ?? profileId;
-    const { prompt: projectAgentPrompt, sourcePath: projectAgentPromptSourcePath } =
-      await this.resolveProjectAgentSystemPromptOverride(descriptor);
-    const archetypeId = descriptor.archetypeId
-      ? normalizeArchetypeId(descriptor.archetypeId) || MANAGER_ARCHETYPE_ID
-      : MANAGER_ARCHETYPE_ID;
-    const archetypeEntry = projectAgentPrompt
-      ? undefined
-      : await this.promptRegistry.resolveEntry("archetype", archetypeId, resolvedProfileId);
-    if (!projectAgentPrompt && !archetypeEntry) {
-      throw new Error(`Prompt not found: archetype/${archetypeId}`);
-    }
-
-    let systemPrompt = await this.resolveSystemPromptForDescriptor(descriptor);
-
-    const memoryResources = await this.getMemoryRuntimeResources(descriptor);
-
-    // Append the <available_skills> index block to the system prompt, matching
-    // what the Pi agent runtime does at session startup. Skills are NOT loaded
-    // in full — the agent only sees this lightweight index and reads SKILL.md
-    // files on demand.
-    const allSkillMetadata = this.skillMetadataService.getSkillMetadata();
-    if (allSkillMetadata.length > 0) {
-      const skillLines = [
-        "",
-        "",
-        "The following skills provide specialized instructions for specific tasks.",
-        "Use the read tool to load a skill's file when the task matches its description.",
-        "When a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.",
-        "",
-        "<available_skills>"
-      ];
-      for (const skill of allSkillMetadata) {
-        skillLines.push("  <skill>");
-        skillLines.push(`    <name>${escapeXmlForPreview(skill.skillName)}</name>`);
-        if (skill.description) {
-          skillLines.push(`    <description>${escapeXmlForPreview(skill.description)}</description>`);
-        }
-        skillLines.push(`    <location>${escapeXmlForPreview(skill.path)}</location>`);
-        skillLines.push("  </skill>");
-      }
-      skillLines.push("</available_skills>");
-      systemPrompt = systemPrompt.trimEnd() + skillLines.join("\n");
-    }
-
-    const sections: PromptPreviewSection[] = [
-      {
-        label: "System Prompt",
-        source: projectAgentPrompt ? projectAgentPromptSourcePath! : archetypeEntry!.sourcePath,
-        content: systemPrompt
-      }
-    ];
-
-    sections.push({
-      label: "Memory Composite",
-      source: memoryResources.memoryContextFile.path,
-      content: memoryResources.memoryContextFile.content
-    });
-
-    const agentsPath = join(descriptor.cwd, AGENTS_CONTEXT_FILE_NAME);
-    if (existsSync(agentsPath)) {
-      try {
-        sections.push({
-          label: AGENTS_CONTEXT_FILE_NAME,
-          source: agentsPath,
-          content: await readFile(agentsPath, "utf8")
-        });
-      } catch (error) {
-        this.logDebug("prompt:preview:agents_read:error", {
-          profileId: resolvedProfileId,
-          path: agentsPath,
-          message: error instanceof Error ? error.message : String(error)
-        });
-      }
-    }
-
-    const swarmContextFiles = await this.getSwarmContextFiles(descriptor.cwd);
-    for (const contextFile of swarmContextFiles) {
-      sections.push({
-        label: SWARM_CONTEXT_FILE_NAME,
-        source: contextFile.path,
-        content: contextFile.content
-      });
-    }
-
-    return { sections };
+    return this.promptService.previewManagerSystemPrompt(profileId);
   }
 
   getAgent(agentId: string): AgentDescriptor | undefined {
@@ -6367,44 +6220,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return specialistRegistry.resolveRoster(profileId);
   }
 
-  private buildStandardPromptVariables(descriptor: AgentDescriptor): Record<string, string> {
-    return {
-      SWARM_DATA_DIR: this.config.paths.dataDir,
-      SWARM_MEMORY_FILE: this.getAgentMemoryPath(descriptor.agentId),
-      SWARM_SCRIPTS_DIR: join(this.config.paths.rootDir, "apps", "backend", "src", "swarm", "scripts")
-    };
-  }
-
-  private async resolveProjectAgentSystemPromptOverride(
-    descriptor: AgentDescriptor,
-    options?: { ignoreProjectAgentSystemPrompt?: boolean }
-  ): Promise<{ prompt: string | undefined; sourcePath: string | undefined }> {
-    if (options?.ignoreProjectAgentSystemPrompt || !descriptor.projectAgent?.handle) {
-      return {
-        prompt: undefined,
-        sourcePath: undefined
-      };
-    }
-
-    const profileId = descriptor.profileId ?? descriptor.agentId;
-    const sourcePath = getProjectAgentPromptPath(this.config.paths.dataDir, profileId, descriptor.projectAgent.handle);
-    const onDiskRecord = await readProjectAgentRecord(
-      this.config.paths.dataDir,
-      profileId,
-      descriptor.projectAgent.handle
-    );
-    let prompt: string | undefined;
-    if (onDiskRecord?.systemPrompt !== null && onDiskRecord?.systemPrompt !== undefined) {
-      prompt = onDiskRecord.systemPrompt.trim() || undefined;
-    } else {
-      prompt = descriptor.projectAgent.systemPrompt?.trim() || undefined;
-    }
-
-    return {
-      prompt,
-      sourcePath: prompt ? sourcePath : undefined
-    };
-  }
 
   private assertProjectAgentReferenceScope(agentId: string): {
     descriptor: AgentDescriptor & { projectAgent: NonNullable<AgentDescriptor["projectAgent"]> };
@@ -6424,172 +6239,26 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     };
   }
 
+  private async resolveProjectAgentSystemPromptOverride(
+    descriptor: AgentDescriptor,
+    options?: { ignoreProjectAgentSystemPrompt?: boolean }
+  ): Promise<{ prompt: string | undefined; sourcePath: string | undefined }> {
+    return this.promptService.resolveProjectAgentSystemPromptOverride(descriptor, options);
+  }
+
   private async buildResolvedManagerPrompt(
     descriptor: AgentDescriptor,
     options?: { ignoreProjectAgentSystemPrompt?: boolean }
   ): Promise<string> {
-    const profileId = descriptor.profileId ?? descriptor.agentId;
-    const managerArchetypeId = descriptor.archetypeId
-      ? normalizeArchetypeId(descriptor.archetypeId) || MANAGER_ARCHETYPE_ID
-      : MANAGER_ARCHETYPE_ID;
-
-    const specialistRegistry = await this.loadSpecialistRegistryModule();
-    const { prompt: projectAgentPrompt } = await this.resolveProjectAgentSystemPromptOverride(descriptor, options);
-    const [promptTemplate, roster, specialistsEnabled] = await Promise.all([
-      projectAgentPrompt
-        ? Promise.resolve(projectAgentPrompt)
-        : this.promptRegistry.resolve("archetype", managerArchetypeId, profileId),
-      specialistRegistry.resolveRoster(profileId),
-      specialistRegistry.getSpecialistsEnabled(),
-    ]);
-
-    const delegationBlock = specialistsEnabled
-      ? specialistRegistry.generateRosterBlock(roster)
-      : specialistRegistry.legacyModelRoutingGuidance;
-    const projectAgentDirectoryBlock = generateProjectAgentDirectoryBlock(
-      listProjectAgents(this.descriptors.values(), profileId, { excludeAgentId: descriptor.agentId }).map((entry) => ({
-        agentId: entry.agentId,
-        displayName: getProjectAgentPublicName(entry),
-        handle: entry.projectAgent.handle,
-        whenToUse: entry.projectAgent.whenToUse
-      }))
-    );
-    const delegationContextBlock = `${delegationBlock}\n\n${projectAgentDirectoryBlock}`;
-    let prompt = resolvePromptVariables(promptTemplate, this.buildStandardPromptVariables(descriptor));
-
-    if (descriptor.projectAgent?.handle) {
-      const refDocFiles = await listProjectAgentReferenceDocs(
-        this.config.paths.dataDir,
-        profileId,
-        descriptor.projectAgent.handle
-      );
-      if (refDocFiles.length > 0) {
-        const refContents: string[] = [];
-        for (const fileName of refDocFiles) {
-          const content = await readProjectAgentReferenceDoc(
-            this.config.paths.dataDir,
-            profileId,
-            descriptor.projectAgent.handle,
-            fileName
-          );
-          if (content) {
-            refContents.push(`## ${fileName}\n${content}`);
-          }
-        }
-        if (refContents.length > 0) {
-          prompt = `${prompt.trimEnd()}\n\n<agent_reference_docs>\n${refContents.join("\n\n")}\n</agent_reference_docs>`;
-        }
-      }
-    }
-
-    if (prompt.includes("${SPECIALIST_ROSTER}")) {
-      prompt = prompt.replaceAll("${SPECIALIST_ROSTER}", delegationContextBlock);
-    } else {
-      prompt = `${prompt.trimEnd()}\n\n${delegationContextBlock}`;
-    }
-
-    const modelSpecificInstructionsPlaceholders = [
-      "${MODEL_SPECIFIC_INSTRUCTIONS}",
-      "${Model_Specific_Instructions}",
-      "${model_specific_instructions}",
-    ];
-    if (modelSpecificInstructionsPlaceholders.some((placeholder) => prompt.includes(placeholder))) {
-      const effectiveModelSpecificInstructions = modelCatalogService.getEffectiveModelSpecificInstructions(
-        descriptor.model.modelId,
-        descriptor.model.provider
-      );
-      const modelSpecificInstructionsBlock = effectiveModelSpecificInstructions
-        ? `# Model-Specific Instructions\n${effectiveModelSpecificInstructions}`
-        : "";
-      for (const placeholder of modelSpecificInstructionsPlaceholders) {
-        prompt = prompt.replaceAll(placeholder, modelSpecificInstructionsBlock);
-      }
-    }
-
-    if (this.integrationContextProvider) {
-      try {
-        const integrationContext = this.integrationContextProvider(profileId).trim();
-        if (integrationContext) {
-          prompt = `${prompt}\n\n${integrationContext}`;
-        }
-      } catch (error) {
-        this.logDebug("manager:integration_context:error", {
-          agentId: descriptor.agentId,
-          profileId,
-          message: error instanceof Error ? error.message : String(error)
-        });
-      }
-    }
-
-    return prompt;
+    return this.promptService.buildResolvedManagerPrompt(descriptor, options);
   }
 
   private async resolveSystemPromptForDescriptor(descriptor: AgentDescriptor): Promise<string> {
-    const profileId = descriptor.profileId ?? descriptor.agentId;
-
-    if (descriptor.role === "manager") {
-      return this.buildResolvedManagerPrompt(descriptor);
-    }
-
-    const specialistId = normalizeOptionalAgentId(
-      descriptor.specialistId
-    )?.toLowerCase();
-    if (specialistId) {
-      try {
-        const roster = await this.resolveSpecialistRosterForProfile(profileId);
-        const specialist = roster.find((entry) => entry.specialistId === specialistId);
-        const specialistPrompt = specialist?.promptBody?.trim();
-        if (specialistPrompt) {
-          return specialistPrompt;
-        }
-      } catch (error) {
-        this.logDebug("specialist:resolve:error", {
-          agentId: descriptor.agentId,
-          profileId,
-          specialistId,
-          message: error instanceof Error ? error.message : String(error)
-        });
-      }
-    }
-
-    if (descriptor.archetypeId) {
-      const normalizedArchetypeId = normalizeArchetypeId(descriptor.archetypeId);
-      if (normalizedArchetypeId) {
-        const archetypePrompt = await this.promptRegistry.resolveEntry("archetype", normalizedArchetypeId, profileId);
-        if (archetypePrompt) {
-          return archetypePrompt.content;
-        }
-      }
-    }
-
-    try {
-      return await this.promptRegistry.resolve("archetype", "worker", profileId);
-    } catch (error) {
-      this.logDebug("prompt:resolve:fallback", {
-        category: "archetype",
-        promptId: "worker",
-        profileId,
-        message: error instanceof Error ? error.message : String(error)
-      });
-      return DEFAULT_WORKER_SYSTEM_PROMPT;
-    }
+    return this.promptService.resolveSystemPromptForDescriptor(descriptor);
   }
 
   private injectWorkerIdentityContext(descriptor: AgentDescriptor, systemPrompt: string): string {
-    if (descriptor.role !== "worker") {
-      return systemPrompt;
-    }
-
-    const identityBlock = [
-      "",
-      "# Agent Identity",
-      `- Your agent ID: \`${descriptor.agentId}\``,
-      `- Your manager ID: \`${descriptor.managerId}\``,
-      "- Always use your manager ID above when sending messages back via send_message_to_agent.",
-      "- Do NOT guess the manager ID from list_agents — use the ID provided here."
-    ].join("\n");
-
-    return systemPrompt + identityBlock;
+    return this.promptService.injectWorkerIdentityContext(descriptor, systemPrompt);
   }
 
   private async resolveAndValidateCwd(cwd: string): Promise<string> {
@@ -6767,80 +6436,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     memoryContextFile: { path: string; content: string };
     additionalSkillPaths: string[];
   }> {
-    const memoryOwnerAgentId = this.resolveMemoryOwnerAgentId(descriptor);
-    const memoryFilePath = this.getAgentMemoryPath(memoryOwnerAgentId);
-
-    const memoryOwnerDescriptor = this.descriptors.get(memoryOwnerAgentId);
-    if (memoryOwnerDescriptor?.role === "manager") {
-      await this.ensureAgentMemoryFile(
-        memoryFilePath,
-        normalizeOptionalAgentId(memoryOwnerDescriptor.profileId) ?? memoryOwnerDescriptor.agentId
-      );
-    }
-
-    const sessionMemoryContent = await readFile(memoryFilePath, "utf8");
-    let memoryContent = sessionMemoryContent;
-
-    const profileMemoryOwnerId = this.resolveSessionProfileId(memoryOwnerAgentId);
-    if (profileMemoryOwnerId) {
-      const profileMemoryPath = getProfileMemoryPath(this.config.paths.dataDir, profileMemoryOwnerId);
-      await this.ensureAgentMemoryFile(profileMemoryPath, profileMemoryOwnerId);
-      const profileMemoryContent = await readFile(profileMemoryPath, "utf8");
-      memoryContent = buildSessionMemoryRuntimeView(profileMemoryContent, sessionMemoryContent);
-    }
-
-    const commonKnowledgePath = getCommonKnowledgePath(this.config.paths.dataDir);
-    try {
-      const commonKnowledgeContent = (await readFile(commonKnowledgePath, "utf8")).trim();
-      if (commonKnowledgeContent.length > 0) {
-        const baseMemoryContent = memoryContent.trimEnd();
-        memoryContent = [
-          baseMemoryContent,
-          "",
-          "---",
-          "",
-          COMMON_KNOWLEDGE_MEMORY_HEADER,
-          "",
-          commonKnowledgeContent
-        ].join("\n");
-      }
-    } catch (error) {
-      if (!isEnoentError(error)) {
-        throw error;
-      }
-    }
-
-    if (
-      descriptor.role === "manager" &&
-      normalizeArchetypeId(descriptor.archetypeId ?? "") !== CORTEX_ARCHETYPE_ID
-    ) {
-      const onboardingSnapshot = await getOnboardingSnapshot(this.config.paths.dataDir);
-      if (shouldInjectOnboardingSnapshot(onboardingSnapshot)) {
-        memoryContent = [
-          memoryContent.trimEnd(),
-          "",
-          "---",
-          "",
-          buildOnboardingSnapshotMemoryBlock(onboardingSnapshot).trimEnd()
-        ].join("\n");
-      }
-    }
-
-    await this.skillMetadataService.ensureSkillMetadataLoaded();
-
-    if (descriptor.role === "manager") {
-      await this.refreshSessionMetaStats(descriptor);
-    } else {
-      await this.refreshSessionMetaStatsBySessionId(descriptor.managerId);
-    }
-
-    return {
-      memoryContextFile: {
-        path: memoryFilePath,
-        content: memoryContent
-      },
-      additionalSkillPaths: this.skillMetadataService.getAdditionalSkillPaths()
-    };
+    return this.promptService.getMemoryRuntimeResources(descriptor);
   }
 
   private async reloadSkillMetadata(): Promise<void> {
@@ -6852,41 +6448,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   protected async getSwarmContextFiles(cwd: string): Promise<Array<{ path: string; content: string }>> {
-    const contextFiles: Array<{ path: string; content: string }> = [];
-    const seenPaths = new Set<string>();
-    const rootDir = resolve("/");
-    let currentDir = resolve(cwd);
-
-    while (true) {
-      const candidatePath = join(currentDir, SWARM_CONTEXT_FILE_NAME);
-      if (!seenPaths.has(candidatePath) && existsSync(candidatePath)) {
-        try {
-          contextFiles.unshift({
-            path: candidatePath,
-            content: await readFile(candidatePath, "utf8")
-          });
-          seenPaths.add(candidatePath);
-        } catch (error) {
-          this.logDebug("runtime:swarm_context:read:error", {
-            cwd,
-            path: candidatePath,
-            message: error instanceof Error ? error.message : String(error)
-          });
-        }
-      }
-
-      if (currentDir === rootDir) {
-        break;
-      }
-
-      const parentDir = resolve(currentDir, "..");
-      if (parentDir === currentDir) {
-        break;
-      }
-      currentDir = parentDir;
-    }
-
-    return contextFiles;
+    return this.promptService.getSwarmContextFiles(cwd);
   }
 
   private mergeRuntimeContextFiles(

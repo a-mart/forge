@@ -16,6 +16,7 @@ export interface ClaudePromptAssemblerOptions {
   profileMemoryPath?: string;
   sessionMemoryPath?: string;
   commonKnowledgePath?: string;
+  memoryContextFile?: { path: string; content: string };
 
   // Context
   agentsMdPaths?: string[];
@@ -62,11 +63,13 @@ export async function assembleClaudePrompt(options: ClaudePromptAssemblerOptions
   const [agentsFiles, swarmFile, memoryComposite] = await Promise.all([
     loadContextFiles(options.agentsMdPaths ?? []),
     loadOptionalContextFile(options.swarmMdPath),
-    buildMemoryComposite({
-      profileMemoryPath: options.profileMemoryPath,
-      sessionMemoryPath: options.sessionMemoryPath,
-      commonKnowledgePath: options.commonKnowledgePath
-    })
+    options.memoryContextFile
+      ? Promise.resolve(trimTrailingNewlines(options.memoryContextFile.content))
+      : buildMemoryComposite({
+          profileMemoryPath: options.profileMemoryPath,
+          sessionMemoryPath: options.sessionMemoryPath,
+          commonKnowledgePath: options.commonKnowledgePath
+        })
   ]);
 
   const projectContextEntries: string[] = [];
@@ -80,7 +83,10 @@ export async function assembleClaudePrompt(options: ClaudePromptAssemblerOptions
 
   const trimmedMemoryComposite = memoryComposite.trim();
   if (trimmedMemoryComposite.length > 0) {
-    const memoryPathLabel = normalizeOptionalPath(options.sessionMemoryPath) ?? "memory.md";
+    const memoryPathLabel =
+      normalizeOptionalPath(options.memoryContextFile?.path) ??
+      normalizeOptionalPath(options.sessionMemoryPath) ??
+      "memory.md";
     projectContextEntries.push(renderProjectContextFile({ path: memoryPathLabel, content: trimmedMemoryComposite }));
   }
 
