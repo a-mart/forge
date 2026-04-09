@@ -142,18 +142,20 @@ export const WorkerQuickLook = memo(function WorkerQuickLook({
     }
   }, [displayEntries])
 
-  const [, setTick] = useState(0)
   const isStreaming = status === 'streaming'
+  const [nowMs, setNowMs] = useState(() => Date.now())
 
   useEffect(() => {
     if (!isStreaming || !streamingStartedAt) return
-    const interval = setInterval(() => setTick((t) => t + 1), 1_000)
+    // Keep nowMs ticking at 1s while streaming
+    setNowMs(Date.now())
+    const interval = setInterval(() => setNowMs(Date.now()), 1_000)
     return () => clearInterval(interval)
   }, [isStreaming, streamingStartedAt])
 
   const elapsedLabel =
     isStreaming && streamingStartedAt
-      ? formatElapsed(Date.now() - streamingStartedAt)
+      ? formatElapsed(nowMs - streamingStartedAt)
       : null
 
   const modelLabel = worker.model?.modelId ?? null
@@ -212,6 +214,7 @@ export const WorkerQuickLook = memo(function WorkerQuickLook({
                   type="tool_execution"
                   entry={entry.entry}
                   isActive={status === 'streaming'}
+                  nowMs={isStreaming ? nowMs : undefined}
                 />
               )
             })}

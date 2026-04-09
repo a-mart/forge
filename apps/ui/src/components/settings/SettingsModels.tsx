@@ -141,9 +141,11 @@ function ModelCard({
     setContextCapDraft(override?.contextWindowCap?.toString() ?? '')
   }, [modelKey, override?.contextWindowCap])
 
+  const overrideModelSpecificInstructions = override?.modelSpecificInstructions
   useEffect(() => {
     setInstructionsDraft(getActiveModelSpecificInstructions(model, override))
-  }, [model, modelKey, override?.modelSpecificInstructions])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally depend on the specific field, not the full override object
+  }, [model, modelKey, overrideModelSpecificInstructions])
 
   const saveEnabled = useCallback(
     async (checked: boolean) => {

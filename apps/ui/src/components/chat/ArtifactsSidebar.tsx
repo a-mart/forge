@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { createElement, useState } from 'react'
 import { Code2, Database, FileCode2, FileText, Image, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -176,7 +176,7 @@ function ArtifactRow({
   artifact: ArtifactReference
   onClick: (artifact: ArtifactReference) => void
 }) {
-  const FileIcon = getFileIcon(artifact.fileName)
+  const fileIcon = getFileIcon(artifact.fileName)
   const truncatedPath = truncatePath(artifact.path)
 
   return (
@@ -192,7 +192,7 @@ function ArtifactRow({
       title={artifact.path}
     >
       <span className="inline-flex size-7 shrink-0 items-center justify-center rounded-md bg-muted/60 text-muted-foreground transition-colors group-hover:bg-primary/10 group-hover:text-primary">
-        <FileIcon className="size-3.5" aria-hidden="true" />
+        {createElement(fileIcon, { className: 'size-3.5', 'aria-hidden': 'true' })}
       </span>
       <span className="min-w-0 flex-1">
         <span className="block truncate text-xs font-medium text-foreground">

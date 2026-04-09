@@ -114,7 +114,6 @@ export function SettingsNotifications({ managers }: SettingsNotificationsProps) 
     if (!file) return
 
     if (file.size > MAX_UPLOAD_SIZE) {
-      // eslint-disable-next-line no-alert
       alert('Sound file must be under 2 MB.')
       return
     }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
   File,
   FileCode2,
@@ -84,10 +84,6 @@ export function FileIcon({
   )
 
   const iconSrc = useMemo(() => resolveMaterialIconSrc(iconName), [iconName])
-
-  useEffect(() => {
-    setLoadFailed(false)
-  }, [iconName])
 
   if (!iconSrc || loadFailed) {
     return getLucideFallback(fileName, isDirectory, isExpanded)

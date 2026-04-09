@@ -129,21 +129,27 @@ export function CortexDocumentViewerShell({
   const isDirty = viewerState === 'editing' && editContent !== content
   const historyToggleDisabled = viewerState === 'saving' || isDirty
 
+  const latestRunSessionAgentId = latestRun?.sessionAgentId ?? null
+  const documentAbsolutePath = document?.absolutePath ?? null
+  const latestRunReviewId = latestRun?.reviewId ?? null
+  const latestCommitSha = latestCommit?.sha ?? null
+  const sections = sectionProvenanceQuery.data?.sections
+
   const canOpenLatestRunSession = useMemo(() => {
-    if (!latestRun?.sessionAgentId) {
+    if (!latestRunSessionAgentId) {
       return false
     }
 
     if (canOpenSession) {
-      return canOpenSession(latestRun.sessionAgentId)
+      return canOpenSession(latestRunSessionAgentId)
     }
 
     return latestRunSessionAvailable === true
-  }, [canOpenSession, latestRun?.sessionAgentId, latestRunSessionAvailable])
+  }, [canOpenSession, latestRunSessionAgentId, latestRunSessionAvailable])
 
   const fetchFile = useCallback(
     (signal: AbortSignal) => {
-      if (!document?.absolutePath) {
+      if (!documentAbsolutePath) {
         setViewerState('rendered')
         setContent('')
         setIsEmpty(true)
@@ -154,7 +160,7 @@ export function CortexDocumentViewerShell({
       setError(null)
       setIsEmpty(false)
 
-      void readFileContent(wsUrl, document.absolutePath, agentId, signal)
+      void readFileContent(wsUrl, documentAbsolutePath, agentId, signal)
         .then((result) => {
           if (signal.aborted) return
           setContent(result.content)
@@ -174,7 +180,7 @@ export function CortexDocumentViewerShell({
           setViewerState('error')
         })
     },
-    [agentId, document?.absolutePath, wsUrl],
+    [agentId, documentAbsolutePath, wsUrl],
   )
 
   useEffect(() => {
@@ -245,13 +251,13 @@ export function CortexDocumentViewerShell({
   }, [])
 
   const handleSave = useCallback(() => {
-    if (!document?.absolutePath) return
+    if (!documentAbsolutePath) return
 
     const abortController = new AbortController()
     setViewerState('saving')
     setError(null)
 
-    void writeFileContent(wsUrl, document.absolutePath, editContent, abortController.signal)
+    void writeFileContent(wsUrl, documentAbsolutePath, editContent, abortController.signal)
       .then(() => {
         if (abortController.signal.aborted) return
         setContent(editContent)
@@ -268,7 +274,7 @@ export function CortexDocumentViewerShell({
         setError(message)
         setViewerState('editing')
       })
-  }, [document?.absolutePath, editContent, fileLogQuery, reviewHistoryQuery, sectionProvenanceQuery, wsUrl])
+  }, [documentAbsolutePath, editContent, fileLogQuery, reviewHistoryQuery, sectionProvenanceQuery, wsUrl])
 
   const enterHistoryMode = useCallback(
     (run?: CortexFileReviewHistoryEntry | null) => {
@@ -277,12 +283,12 @@ export function CortexDocumentViewerShell({
       }
 
       setHistorySelection({
-        reviewId: run?.reviewId ?? latestRun?.reviewId ?? null,
-        sha: latestCommit?.sha ?? null,
+        reviewId: run?.reviewId ?? latestRunReviewId,
+        sha: latestCommitSha,
       })
       setViewerMode('history')
     },
-    [handleCancelEditing, latestCommit?.sha, latestRun?.reviewId, viewerState],
+    [handleCancelEditing, latestCommitSha, latestRunReviewId, viewerState],
   )
 
   const handleToggleHistoryMode = useCallback(() => {
@@ -299,23 +305,23 @@ export function CortexDocumentViewerShell({
   }, [enterHistoryMode, historyToggleDisabled, viewerMode])
 
   const handleOpenRun = useCallback(() => {
-    if (!latestRun?.sessionAgentId || !canOpenLatestRunSession) {
+    if (!latestRunSessionAgentId || !canOpenLatestRunSession) {
       return
     }
 
-    onOpenSession?.(latestRun.sessionAgentId)
-  }, [canOpenLatestRunSession, latestRun?.sessionAgentId, onOpenSession])
+    onOpenSession?.(latestRunSessionAgentId)
+  }, [canOpenLatestRunSession, latestRunSessionAgentId, onOpenSession])
 
   const sectionProvenanceByHeading = useMemo(() => {
-    const grouped = new Map<string, Array<NonNullable<typeof sectionProvenanceQuery.data>['sections'][number]>>()
-    for (const section of sectionProvenanceQuery.data?.sections ?? []) {
+    const grouped = new Map<string, Array<NonNullable<typeof sections>[number]>>()
+    for (const section of sections ?? []) {
       const key = `${section.level}:${normalizeHeadingKey(section.heading)}`
       const existing = grouped.get(key) ?? []
       existing.push(section)
       grouped.set(key, existing)
     }
     return grouped
-  }, [sectionProvenanceQuery.data?.sections])
+  }, [sections])
 
   const renderSectionProvenance = useCallback(
     ({ level, text, index }: { level: 1 | 2 | 3 | 4 | 5 | 6; text: string; index: number }) => {

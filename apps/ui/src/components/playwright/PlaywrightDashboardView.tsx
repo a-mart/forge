@@ -105,14 +105,17 @@ export function PlaywrightDashboardView({
   // The rendering code below consumes these without coupling to internals.
   // ────────────────────────────────────────────────────────────────────────
 
+  // Stable local for optional-chained sessions so memo deps match the compiler's inferred deps.
+  const snapshotSessions = snapshot?.sessions ?? null
+
   // Derive worktree options from snapshot.
   // Uses path-based keys for stability (avoids same-name collisions across
   // repos) and includes a REPO_ROOT sentinel for sessions without a worktree.
   const worktreeOptions = useMemo((): WorktreeOption[] => {
-    if (!snapshot?.sessions) return []
+    if (!snapshotSessions) return []
     const seen = new Map<string, WorktreeOption>()
     let hasRepoRoot = false
-    for (const session of snapshot.sessions) {
+    for (const session of snapshotSessions) {
       if (session.worktreeName) {
         // Key on the worktree path for stability; fall back to name if path is null
         const key = session.worktreePath ?? session.worktreeName
@@ -128,16 +131,16 @@ export function PlaywrightDashboardView({
       opts.unshift({ key: REPO_ROOT_WORKTREE_KEY, label: REPO_ROOT_WORKTREE_LABEL })
     }
     return opts
-  }, [snapshot?.sessions])
+  }, [snapshotSessions])
 
   // Apply filters to sessions.
   // In tiles mode we also hide non-preferred duplicates by default (unless
   // the user has explicitly toggled onlyPreferred off after turning it on,
   // or has an active search that might want to match a dup).
   const filteredSessions = useMemo(() => {
-    if (!snapshot?.sessions) return []
+    if (!snapshotSessions) return []
 
-    let sessions = snapshot.sessions
+    let sessions = snapshotSessions
 
     if (filters.status !== 'all') {
       sessions = sessions.filter((s) => s.liveness === filters.status)
@@ -181,7 +184,7 @@ export function PlaywrightDashboardView({
     }
 
     return sessions
-  }, [snapshot?.sessions, filters])
+  }, [snapshotSessions, filters])
 
   // In tiles mode, hide non-preferred duplicates automatically (in addition
   // to whatever the explicit filters produce).  This keeps the mosaic clean
@@ -196,21 +199,21 @@ export function PlaywrightDashboardView({
 
   // Compute hidden counts
   const hiddenCounts = useMemo(() => {
-    if (!snapshot?.sessions || filters.status !== 'all') return { inactive: 0, stale: 0, total: 0 }
+    if (!snapshotSessions || filters.status !== 'all') return { inactive: 0, stale: 0, total: 0 }
     let inactive = 0
     let stale = 0
-    for (const s of snapshot.sessions) {
+    for (const s of snapshotSessions) {
       if (s.liveness === 'inactive' && !filters.showInactive) inactive++
       if (s.liveness === 'stale' && !filters.showStale) stale++
     }
     return { inactive, stale, total: inactive + stale }
-  }, [snapshot?.sessions, filters.status, filters.showInactive, filters.showStale])
+  }, [snapshotSessions, filters.status, filters.showInactive, filters.showStale])
 
   // Resolve the selected session object
   const selectedSession: PlaywrightDiscoveredSession | null = useMemo(() => {
-    if (!selectedSessionId || !snapshot?.sessions) return null
-    return snapshot.sessions.find((s) => s.id === selectedSessionId) ?? null
-  }, [selectedSessionId, snapshot?.sessions])
+    if (!selectedSessionId || !snapshotSessions) return null
+    return snapshotSessions.find((s) => s.id === selectedSessionId) ?? null
+  }, [selectedSessionId, snapshotSessions])
 
   // Auto-select: if exactly one active session exists and none is selected, auto-select it.
   // Only fires once per dashboard mount (not after deliberate deselection).
@@ -223,14 +226,14 @@ export function PlaywrightDashboardView({
   }, [selectedSessionId])
 
   useEffect(() => {
-    if (autoSelectAttemptedRef.current || selectedSessionId || hadSelectionRef.current || !snapshot?.sessions) return
+    if (autoSelectAttemptedRef.current || selectedSessionId || hadSelectionRef.current || !snapshotSessions) return
     autoSelectAttemptedRef.current = true
 
-    const activeSessions = snapshot.sessions.filter((s) => s.liveness === 'active')
+    const activeSessions = snapshotSessions.filter((s) => s.liveness === 'active')
     if (activeSessions.length === 1) {
       onViewStateChange?.(activeSessions[0].id, viewMode)
     }
-  }, [snapshot?.sessions, selectedSessionId, viewMode, onViewStateChange])
+  }, [snapshotSessions, selectedSessionId, viewMode, onViewStateChange])
 
   // --- Callbacks ---
 

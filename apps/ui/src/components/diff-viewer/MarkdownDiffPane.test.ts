@@ -9,29 +9,31 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('react-diff-viewer-continued', async () => {
   const React = await import('react')
 
-  return {
-    default: ({
-      oldValue,
-      newValue,
-      showDiffOnly,
-    }: {
-      oldValue: string
-      newValue: string
-      showDiffOnly?: boolean
-    }) => {
-      const [initialShowDiffOnly] = React.useState(showDiffOnly ?? true)
+  function MockDiffViewer({
+    oldValue,
+    newValue,
+    showDiffOnly,
+  }: {
+    oldValue: string
+    newValue: string
+    showDiffOnly?: boolean
+  }) {
+    const [initialShowDiffOnly] = React.useState(showDiffOnly ?? true)
 
-      return createElement(
-        'div',
-        {
-          'data-testid': 'raw-diff-viewer',
-          'data-old': oldValue,
-          'data-new': newValue,
-          'data-mode': initialShowDiffOnly ? 'collapsed' : 'expanded',
-        },
-        `${oldValue}=>${newValue}`,
-      )
-    },
+    return createElement(
+      'div',
+      {
+        'data-testid': 'raw-diff-viewer',
+        'data-old': oldValue,
+        'data-new': newValue,
+        'data-mode': initialShowDiffOnly ? 'collapsed' : 'expanded',
+      },
+      `${oldValue}=>${newValue}`,
+    )
+  }
+
+  return {
+    default: MockDiffViewer,
     DiffMethod: { WORDS: 'WORDS' },
   }
 })

@@ -114,7 +114,7 @@ export function HistoryView({
   }, [filteredCommits, selectedSha])
 
   const commitDetailQuery = useGitCommitDetail(wsUrl, agentId, repoTarget, selectedSha)
-  const commitFiles = commitDetailQuery.data?.files ?? []
+  const commitFiles = useMemo(() => commitDetailQuery.data?.files ?? [], [commitDetailQuery.data?.files])
 
   const filteredCommitFiles = useMemo(() => {
     if (!isKnowledgeMode) {

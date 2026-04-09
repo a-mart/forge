@@ -143,10 +143,6 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
       ?.finally(() => setSleepBlockerUpdating(false))
   }, [bridge])
 
-  useEffect(() => {
-    setThemePreference(readStoredThemePreference())
-  }, [])
-
   const [playwrightLoadFailed, setPlaywrightLoadFailed] = useState(false)
 
   // Fetch Playwright settings on mount

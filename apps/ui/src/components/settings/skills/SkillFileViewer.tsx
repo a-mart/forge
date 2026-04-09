@@ -148,14 +148,15 @@ export function SkillFileViewer({
     })
   }, [])
 
+  const contentText = content?.content
   const handleCopyContent = useCallback(async () => {
-    if (!content?.content) return
+    if (!contentText) return
     try {
-      await navigator.clipboard.writeText(content.content)
+      await navigator.clipboard.writeText(contentText)
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     } catch { /* Clipboard not available */ }
-  }, [content?.content])
+  }, [contentText])
 
   // Empty state
   if (!filePath) {

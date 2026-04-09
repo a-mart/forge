@@ -32,7 +32,7 @@ export function ChangesView({
 }: ChangesViewProps) {
   const [selectedFile, setSelectedFile] = useState<string | null>(initialFile)
   const [quickFilter, setQuickFilter] = useState<KnowledgeQuickFilterId>(initialQuickFilter)
-  const files = status?.files ?? []
+  const files = useMemo(() => status?.files ?? [], [status?.files])
   const diffQuery = useGitDiff(wsUrl, agentId, repoTarget, selectedFile)
   const prevRefreshTokenRef = useRef(refreshToken)
 

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { PendingAttachment } from '@/lib/file-attachments'
+import { useLatestRef } from '@/hooks/useLatestRef'
 import {
   loadDrafts,
   persistDrafts,
@@ -29,11 +30,9 @@ export function useDraft({ agentId }: UseDraftOptions): UseDraftReturn {
 
   const draftsRef = useRef<Record<string, string>>(loadDrafts())
   const prevAgentIdRef = useRef<string | undefined>(undefined)
-  const inputRef = useRef(input)
-  inputRef.current = input
+  const inputRef = useLatestRef(input)
 
-  const attachedFilesRef = useRef(attachedFiles)
-  attachedFilesRef.current = attachedFiles
+  const attachedFilesRef = useLatestRef(attachedFiles)
   const attachmentDraftsRef = useRef<Record<string, PendingAttachment[]>>(loadAttachmentDrafts())
 
   // Save current draft and restore new agent's draft on agent/session switch
@@ -58,7 +57,6 @@ export function useDraft({ agentId }: UseDraftOptions): UseDraftReturn {
     // Restore draft for new agent
     const restoredDraft = agentId ? (draftsRef.current[agentId] ?? '') : ''
     setInput(restoredDraft)
-    inputRef.current = restoredDraft
 
     // Restore attachments for new agent
     const restoredAttachments = agentId ? (attachmentDraftsRef.current[agentId] ?? []) : []
@@ -67,7 +65,7 @@ export function useDraft({ agentId }: UseDraftOptions): UseDraftReturn {
     persistDrafts(draftsRef.current)
     persistAttachmentDrafts(attachmentDraftsRef.current)
     prevAgentIdRef.current = agentId
-  }, [agentId])
+  }, [agentId, inputRef, attachedFilesRef])
 
   // Flush current draft on page unload so it survives refresh
   useEffect(() => {
@@ -90,7 +88,7 @@ export function useDraft({ agentId }: UseDraftOptions): UseDraftReturn {
     }
     window.addEventListener('beforeunload', handleBeforeUnload)
     return () => window.removeEventListener('beforeunload', handleBeforeUnload)
-  }, [agentId])
+  }, [agentId, inputRef, attachedFilesRef])
 
   // Helper: update input state and sync draft to localStorage
   const setInputWithDraft = useCallback(
@@ -112,7 +110,6 @@ export function useDraft({ agentId }: UseDraftOptions): UseDraftReturn {
   const setAttachedFilesWithDraft = useCallback(
     (files: PendingAttachment[]) => {
       setAttachedFiles(files)
-      attachedFilesRef.current = files
       if (agentId) {
         if (files.length > 0) {
           attachmentDraftsRef.current[agentId] = files

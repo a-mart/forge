@@ -106,6 +106,10 @@ export default tseslint.config(
     rules: {
       ...warnifyRules(reactHooksRecommended.rules),
       ...warnifyRules(reactRefreshVite.rules),
+      'react-hooks/set-state-in-effect': 'off',
+      'react-hooks/exhaustive-deps': 'error',
+      'react-hooks/rules-of-hooks': 'error',
+      'react-hooks/static-components': 'error',
     },
   },
 );

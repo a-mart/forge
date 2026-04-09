@@ -1,5 +1,5 @@
 /* eslint-disable react-refresh/only-export-components -- utility functions co-located with their component for testability */
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ProviderAccountUsage, ProviderUsagePace, ProviderUsageStats, ProviderUsageWindow } from '@forge/protocol'
 import { RefreshCw } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -306,11 +306,11 @@ export function SidebarUsageRings({ providers, onToggle }: { providers: Provider
 
 /* ─── Detail row for popover ─── */
 
-function DetailRow({ label, usageWindow, showPace = true }: { label: string; usageWindow?: ProviderUsageWindow; showPace?: boolean }) {
+function DetailRow({ label, usageWindow, showPace = true, nowMs }: { label: string; usageWindow?: ProviderUsageWindow; showPace?: boolean; nowMs: number }) {
   const p = typeof usageWindow?.percent === 'number' ? usageWindow.percent : null
   const clampedWidth = p !== null ? Math.max(0, Math.min(p, 100)) : 0
   const resetTime = usageWindow?.resetInfo ? stripResetPrefix(usageWindow.resetInfo) : null
-  const metrics = getUsageMetrics(usageWindow, Date.now())
+  const metrics = getUsageMetrics(usageWindow, nowMs)
 
   return (
     <div className="rounded-md border border-border/50 bg-muted/20 p-2 space-y-1.5">
@@ -349,7 +349,7 @@ function DetailRow({ label, usageWindow, showPace = true }: { label: string; usa
 
 /* ─── Provider detail section ─── */
 
-function ProviderDetail({ usage, label, iconSrc, iconClassName }: { usage: ProviderAccountUsage; label: string; iconSrc: string; iconClassName?: string }) {
+function ProviderDetail({ usage, label, iconSrc, iconClassName, nowMs }: { usage: ProviderAccountUsage; label: string; iconSrc: string; iconClassName?: string; nowMs: number }) {
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-1.5">
@@ -357,8 +357,8 @@ function ProviderDetail({ usage, label, iconSrc, iconClassName }: { usage: Provi
         <span className="text-[11px] font-medium text-foreground">{label}</span>
       </div>
       <div className="space-y-1.5">
-        <DetailRow label="Session" usageWindow={usage.sessionUsage} showPace={false} />
-        <DetailRow label="Weekly" usageWindow={usage.weeklyUsage} />
+        <DetailRow label="Session" usageWindow={usage.sessionUsage} showPace={false} nowMs={nowMs} />
+        <DetailRow label="Weekly" usageWindow={usage.weeklyUsage} nowMs={nowMs} />
       </div>
     </div>
   )
@@ -368,6 +368,15 @@ function ProviderDetail({ usage, label, iconSrc, iconClassName }: { usage: Provi
 
 export function SidebarUsagePanel({ providers, open, onClose, loading, onRefresh }: { providers: ProviderUsageStats | null; open: boolean; onClose: () => void; loading?: boolean; onRefresh?: () => void }) {
   const panelRef = useRef<HTMLDivElement>(null)
+  const [nowMs, setNowMs] = useState(() => Date.now())
+
+  // Tick nowMs every 60s for pace/countdown display
+  useEffect(() => {
+    if (!open) return
+    setNowMs(Date.now())
+    const id = setInterval(() => setNowMs(Date.now()), 60_000)
+    return () => clearInterval(id)
+  }, [open])
 
   useEffect(() => {
     if (!open) return
@@ -405,7 +414,7 @@ export function SidebarUsagePanel({ providers, open, onClose, loading, onRefresh
         )}
         {availableRows.map((row) =>
           row.usage ? (
-            <ProviderDetail key={row.key} usage={row.usage} label={row.label} iconSrc={row.iconSrc} iconClassName={row.iconClassName} />
+            <ProviderDetail key={row.key} usage={row.usage} label={row.label} iconSrc={row.iconSrc} iconClassName={row.iconClassName} nowMs={nowMs} />
           ) : null,
         )}
       </div>

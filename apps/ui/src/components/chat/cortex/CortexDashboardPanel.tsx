@@ -89,9 +89,16 @@ export function CortexDashboardPanel({
     () => documents.find((document) => document.group === 'notes') ?? null,
     [documents],
   )
+  const fallbackKnowledgeDocumentId =
+    (knowledgeDocuments.find((d) => d.group === 'commonKnowledge') ?? knowledgeDocuments[0])?.id ?? ''
+  const effectiveSelectedKnowledgeDocumentId = knowledgeDocuments.some(
+    (d) => d.id === selectedKnowledgeDocumentId,
+  )
+    ? selectedKnowledgeDocumentId
+    : fallbackKnowledgeDocumentId
   const selectedKnowledgeDocument = useMemo(
-    () => knowledgeDocuments.find((document) => document.id === selectedKnowledgeDocumentId) ?? null,
-    [knowledgeDocuments, selectedKnowledgeDocumentId],
+    () => knowledgeDocuments.find((document) => document.id === effectiveSelectedKnowledgeDocumentId) ?? null,
+    [knowledgeDocuments, effectiveSelectedKnowledgeDocumentId],
   )
 
   useEffect(() => {
@@ -99,25 +106,6 @@ export function CortexDashboardPanel({
       setActiveTab(requestedTab.tab)
     }
   }, [requestedTab])
-
-  useEffect(() => {
-    if (!knowledgeDocuments.length) {
-      if (selectedKnowledgeDocumentId) {
-        setSelectedKnowledgeDocumentId('')
-      }
-      return
-    }
-
-    if (knowledgeDocuments.some((document) => document.id === selectedKnowledgeDocumentId)) {
-      return
-    }
-
-    const fallbackDocument =
-      knowledgeDocuments.find((document) => document.group === 'commonKnowledge') ?? knowledgeDocuments[0]
-    if (fallbackDocument) {
-      setSelectedKnowledgeDocumentId(fallbackDocument.id)
-    }
-  }, [knowledgeDocuments, selectedKnowledgeDocumentId])
 
   useEffect(() => {
     if (!isOpen) return

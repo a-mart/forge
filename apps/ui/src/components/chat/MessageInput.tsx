@@ -80,7 +80,18 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
   const isTranscribingVoice = voice.isTranscribingVoice
 
   // --- Composer (textarea, format mode, submit) ---
-  const composer = useComposer({
+  const {
+    textareaRef,
+    overlayRef,
+    fileInputRef,
+    formatMode,
+    toggleFormatMode,
+    applyListFormatting,
+    submitMessage,
+    handleSubmit,
+    syncOverlayScroll,
+    canSubmit,
+  } = useComposer({
     input,
     attachedFiles,
     disabled,
@@ -97,7 +108,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
   const slash = useSlashCommands({
     slashCommands,
     setInputWithDraft,
-    textareaRef: composer.textareaRef,
+    textareaRef,
   })
 
   // --- Mentions ---
@@ -105,7 +116,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
     projectAgents,
     input,
     setInputWithDraft,
-    textareaRef: composer.textareaRef,
+    textareaRef,
   })
 
   // --- Attachments ---
@@ -114,7 +125,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
     isRecording,
     attachedFilesRef,
     setAttachedFilesWithDraft,
-    textareaRef: composer.textareaRef,
+    textareaRef,
   })
 
   // --- Imperative ref ---
@@ -123,20 +134,20 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
     () => ({
       setInput: (value: string) => {
         setInputWithDraft(value)
-        requestAnimationFrame(() => composer.textareaRef.current?.focus())
+        requestAnimationFrame(() => textareaRef.current?.focus())
       },
       focus: () => {
-        composer.textareaRef.current?.focus()
+        textareaRef.current?.focus()
       },
       addFiles: attachments.addFiles,
       addTerminalContext: attachments.addTerminalContext,
     }),
-    [attachments.addFiles, attachments.addTerminalContext, setInputWithDraft, composer.textareaRef],
+    [attachments.addFiles, attachments.addTerminalContext, setInputWithDraft, textareaRef],
   )
 
   // --- Mention cursor snap ---
   const snapCursorOutOfMention = useCallback(() => {
-    const textarea = composer.textareaRef.current
+    const textarea = textareaRef.current
     if (!textarea) return
     const { selectionStart, selectionEnd } = textarea
     if (selectionStart !== selectionEnd) return
@@ -148,7 +159,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
           : mention.end
       textarea.setSelectionRange(snapTo, snapTo)
     }
-  }, [input, composer.textareaRef])
+  }, [input, textareaRef])
 
   // --- Input change handler ---
   const handleInputChange = useCallback(
@@ -201,7 +212,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
 
     // Atomic backspace/delete for mention tokens
     if (mentions.hasMentionTokens && (event.key === 'Backspace' || event.key === 'Delete')) {
-      const textarea = composer.textareaRef.current
+      const textarea = textareaRef.current
       if (textarea && textarea.selectionStart === textarea.selectionEnd) {
         const pos = textarea.selectionStart
         const mention = findMentionContaining(input, pos)
@@ -254,21 +265,21 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
     // Toggle format mode: Shift+Cmd+X (Mac) / Shift+Ctrl+X (Windows/Linux)
     if (event.key.toLowerCase() === 'x' && event.shiftKey && (event.ctrlKey || event.metaKey)) {
       event.preventDefault()
-      composer.toggleFormatMode()
+      toggleFormatMode()
       return
     }
 
-    if (composer.formatMode) {
+    if (formatMode) {
       // Format mode: Enter inserts newline (default), Ctrl/Cmd+Enter sends
       if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
         event.preventDefault()
-        composer.submitMessage()
+        submitMessage()
       }
     } else {
       // Quick-send mode: Enter sends, Shift+Enter inserts newline
       if (event.key === 'Enter' && !event.shiftKey) {
         event.preventDefault()
-        composer.submitMessage()
+        submitMessage()
       }
     }
   }
@@ -282,7 +293,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
   )
 
   return (
-    <form onSubmit={composer.handleSubmit} className="sticky bottom-0 shrink-0 bg-background p-2 md:p-3" data-tour="chat-input">
+    <form onSubmit={handleSubmit} className="sticky bottom-0 shrink-0 bg-background p-2 md:p-3" data-tour="chat-input">
       {/* Slash command autocomplete dropdown */}
       {slash.isSlashMenuOpen ? (
         <SlashCommandMenu
@@ -311,14 +322,14 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
         <AttachedFiles attachments={attachedFiles} onRemove={attachments.removeAttachment} />
 
         <div className="group flex flex-col">
-          {composer.formatMode && !isRecording ? (
+          {formatMode && !isRecording ? (
             <div className="flex items-center gap-0.5 border-b border-border/40 px-2 py-1">
               <Button
                 type="button"
                 variant="ghost"
                 size="icon"
                 className="size-7 rounded-md text-muted-foreground hover:text-foreground"
-                onClick={() => composer.applyListFormatting(toggleBulletList)}
+                onClick={() => applyListFormatting(toggleBulletList)}
                 disabled={disabled}
                 aria-label="Bullet list"
               >
@@ -329,7 +340,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
                 variant="ghost"
                 size="icon"
                 className="size-7 rounded-md text-muted-foreground hover:text-foreground"
-                onClick={() => composer.applyListFormatting(toggleNumberedList)}
+                onClick={() => applyListFormatting(toggleNumberedList)}
                 disabled={disabled}
                 aria-label="Numbered list"
               >
@@ -347,23 +358,23 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
             />
           ) : (
             <ComposerTextarea
-              textareaRef={composer.textareaRef}
-              overlayRef={composer.overlayRef}
+              textareaRef={textareaRef}
+              overlayRef={overlayRef}
               value={input}
               placeholder={placeholder}
               disabled={disabled}
-              formatMode={composer.formatMode}
+              formatMode={formatMode}
               hasMentionTokens={mentions.hasMentionTokens}
               onChange={handleInputChange}
               onKeyDown={handleKeyDown}
               onPaste={attachments.handlePaste}
-              onScroll={composer.syncOverlayScroll}
+              onScroll={syncOverlayScroll}
               onSelect={mentions.hasMentionTokens ? snapCursorOutOfMention : undefined}
             />
           )}
 
           <input
-            ref={composer.fileInputRef}
+            ref={fileInputRef}
             type="file"
             multiple
             className="hidden"
@@ -379,14 +390,14 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
                 size="icon"
                 className={cn(
                   'size-7 rounded-full transition-colors',
-                  composer.formatMode
+                  formatMode
                     ? 'bg-primary/10 text-primary hover:bg-primary/20 hover:text-primary'
                     : 'text-muted-foreground/60 hover:text-foreground',
                 )}
-                onClick={composer.toggleFormatMode}
+                onClick={toggleFormatMode}
                 disabled={disabled || isRecording}
-                aria-label={composer.formatMode ? 'Switch to quick-send mode' : 'Switch to format mode'}
-                title={composer.formatMode ? 'Quick-send mode (Enter to send)' : 'Format mode (Enter for new line)'}
+                aria-label={formatMode ? 'Switch to quick-send mode' : 'Switch to format mode'}
+                title={formatMode ? 'Quick-send mode (Enter to send)' : 'Format mode (Enter for new line)'}
               >
                 <ALargeSmall className="size-3.5" />
               </Button>
@@ -396,7 +407,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
                 variant="ghost"
                 size="icon"
                 className="size-7 rounded-full text-muted-foreground/60 hover:text-foreground"
-                onClick={() => composer.fileInputRef.current?.click()}
+                onClick={() => fileInputRef.current?.click()}
                 disabled={disabled || isRecording}
                 aria-label="Attach files"
               >
@@ -426,7 +437,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
                 )}
               </Button>
 
-              {composer.formatMode ? (
+              {formatMode ? (
                 <span className="ml-1 select-none text-[11px] text-muted-foreground/50">
                   {navigator.platform?.toLowerCase().includes('mac') ? '⌘' : 'Ctrl'}+Enter to send
                 </span>
@@ -435,11 +446,11 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
 
             <Button
               type="submit"
-              disabled={!composer.canSubmit}
+              disabled={!canSubmit}
               size="icon"
               className={cn(
                 'size-7 rounded-full transition-all',
-                composer.canSubmit
+                canSubmit
                   ? 'bg-primary text-primary-foreground hover:bg-primary/90 active:scale-95'
                   : 'cursor-default bg-muted text-muted-foreground/40',
               )}

@@ -135,13 +135,6 @@ function nextMermaidRequestId(prefix: string): string {
   return `${prefix}-${mermaidRequestCounter.toString(36)}`
 }
 
-function useStableMermaidInstanceId(prefix: string): string {
-  const instanceIdRef = useRef<string | null>(null)
-  if (!instanceIdRef.current) {
-    instanceIdRef.current = nextMermaidInstanceId(prefix)
-  }
-  return instanceIdRef.current
-}
 
 interface MermaidPreviewFrameState {
   rendered: boolean
@@ -169,10 +162,10 @@ const MermaidPreviewEmbed = forwardRef<
   ref,
 ) {
   const iframeRef = useRef<HTMLIFrameElement>(null)
-  const initialThemeModeRef = useRef(themeMode)
+  const [initialThemeMode] = useState(themeMode)
   const iframeSrc = useMemo(
-    () => resolveMermaidPreviewIframeUrl(instanceId, initialThemeModeRef.current),
-    [instanceId],
+    () => resolveMermaidPreviewIframeUrl(instanceId, initialThemeMode),
+    [instanceId, initialThemeMode],
   )
   const [iframeLoaded, setIframeLoaded] = useState(false)
   const [ready, setReady] = useState(false)
@@ -385,11 +378,12 @@ const MermaidPreviewEmbed = forwardRef<
   }, [handleFrameMessage, instanceId, resolveFrameWindow, sendPingToChild])
 
   useEffect(() => {
+    const pendingMap = pendingSvgRequestsRef.current
     return () => {
-      for (const resolvePending of pendingSvgRequestsRef.current.values()) {
+      for (const resolvePending of pendingMap.values()) {
         resolvePending(null)
       }
-      pendingSvgRequestsRef.current.clear()
+      pendingMap.clear()
     }
   }, [])
 
@@ -479,8 +473,8 @@ export const MermaidBlock = memo(function MermaidBlock({
 }: MermaidBlockProps) {
   const isDark = useIsDarkMode()
   const themeMode: MermaidThemeMode = isDark ? 'dark' : 'light'
-  const inlineInstanceId = useStableMermaidInstanceId('mermaid-inline')
-  const zoomInstanceId = useStableMermaidInstanceId('mermaid-zoom')
+  const [inlineInstanceId] = useState(() => nextMermaidInstanceId('mermaid-inline'))
+  const [zoomInstanceId] = useState(() => nextMermaidInstanceId('mermaid-zoom'))
   const inlinePreviewRef = useRef<MermaidPreviewEmbedHandle>(null)
   const [rendered, setRendered] = useState(false)
   const [error, setError] = useState<string | null>(null)

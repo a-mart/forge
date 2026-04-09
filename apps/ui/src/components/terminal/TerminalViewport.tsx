@@ -390,7 +390,6 @@ export function TerminalViewport({
       xtermRef.current = null
       terminalInstance?.dispose()
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialTicket, issueTicket, onFocusChatInput, sessionAgentId, terminal.terminalId, wsUrl, updateSelectionButton, computeSelectionButtonPosition])
 
   return (

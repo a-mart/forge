@@ -694,7 +694,7 @@ describe("claude-mcp-tool-bridge", () => {
       "failing_tool",
       { type: "object", properties: {} },
       async () => {
-        throw "plain failure";
+        throw new Error("plain failure");
       }
     );
     const { registeredTools } = await buildBridge([tool]);

@@ -185,9 +185,10 @@ export function CortexHistoryPanel({
     [commits, onExitHistoryMode, selectedSha],
   )
 
-  const fullViewerDisabled = !document?.gitPath || notInitialized
+  const documentGitPath = document?.gitPath ?? null
+  const fullViewerDisabled = !documentGitPath || notInitialized
   const fullViewerState = useMemo<DiffViewerInitialState | null>(() => {
-    if (!document?.gitPath) {
+    if (!documentGitPath) {
       return null
     }
 
@@ -195,10 +196,10 @@ export function CortexHistoryPanel({
       initialRepoTarget: 'versioning',
       initialTab: 'history',
       initialSha: selectedSha,
-      initialFile: document.gitPath,
-      initialQuickFilter: resolveKnowledgeQuickFilterForPath(document.gitPath),
+      initialFile: documentGitPath,
+      initialQuickFilter: resolveKnowledgeQuickFilterForPath(documentGitPath),
     }
-  }, [document?.gitPath, selectedSha])
+  }, [documentGitPath, selectedSha])
 
   return (
     <div

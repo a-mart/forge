@@ -176,7 +176,6 @@ export function GuidedTour() {
       const el = document.querySelector(step.target)
       return el !== null
     })
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isTourActive])
 
   const currentStep = visibleSteps[stepIndex] as TourStep | undefined

@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { useResizablePanel } from '@/components/diff-viewer/useResizablePanel'
+import { useLatestRef } from '@/hooks/useLatestRef'
 import { FileTree } from './FileTree'
 import type { FileTreeHandle } from './FileTree'
 import {
@@ -39,17 +40,15 @@ export function FileBrowserSidebar({
   const rootList = useDirectoryListing(wsUrl, gatedAgentId, '')
   const fileCount = useFileCount(wsUrl, gatedAgentId)
 
-  const rootListRefetchRef = useRef(rootList.refetch)
-  rootListRefetchRef.current = rootList.refetch
-  const fileCountRefetchRef = useRef(fileCount.refetch)
-  fileCountRefetchRef.current = fileCount.refetch
+  const rootListRefetchRef = useLatestRef(rootList.refetch)
+  const fileCountRefetchRef = useLatestRef(fileCount.refetch)
 
   const handleRefresh = useCallback(() => {
     invalidateFileBrowserCaches()
     rootListRefetchRef.current()
     fileCountRefetchRef.current()
     fileTreeRef.current?.refresh()
-  }, [])
+  }, [rootListRefetchRef, fileCountRefetchRef])
 
   const { width: sidebarWidth, isDragging: isSidebarDragging, handleRef: sidebarHandleRef } = useResizablePanel({
     storageKey: 'forge-file-sidebar-width',

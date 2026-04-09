@@ -21,7 +21,7 @@
     "dev:electron": "concurrently --kill-others-on-fail -n ui,electron -c green,magenta \"pnpm dev:ui\" \"wait-on tcp:127.0.0.1:47188 && cd apps/electron && pnpm dev\"",
     "build": "pnpm --filter @forge/protocol build && pnpm --filter @forge/backend build && pnpm --filter @forge/ui build",
     "build:electron": "pnpm --filter @forge/electron run build:all",
-    "lint": "eslint . --max-warnings 120",
+    "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
     "typecheck": "cd apps/backend && pnpm exec tsc -p tsconfig.build.json --noEmit && cd ../ui && pnpm exec tsc --noEmit && cd ../../packages/protocol && pnpm exec tsc -p tsconfig.build.json --noEmit && cd ../../apps/electron && pnpm exec tsc --noEmit",
     "model-catalog:audit": "node scripts/model-catalog-audit.mjs",

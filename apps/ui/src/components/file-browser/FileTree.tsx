@@ -38,18 +38,23 @@ import { resolveApiEndpoint } from '@/lib/api-endpoint'
  * React always sees a new reference and re-renders.
  */
 function useStableTree<T>(config: TreeConfig<T>): TreeInstance<T> {
-  const [treeRef] = useState(() => ({ current: createTree<T>(config) }))
-  const [state, setState] = useState(() => treeRef.current.getState())
+  // Hold tree as a stable object in state (not a pseudo-ref) so render-time
+  // access doesn't trigger react-hooks/refs warnings.
+  const [tree] = useState(() => createTree<T>(config))
+  const [state, setState] = useState(() => tree.getState())
 
   useEffect(() => {
-    treeRef.current.setMounted(true)
-    treeRef.current.rebuildTree()
+    tree.setMounted(true)
+    tree.rebuildTree()
     return () => {
-      treeRef.current.setMounted(false)
+      tree.setMounted(false)
     }
-  }, [treeRef])
+  }, [tree])
 
-  treeRef.current.setConfig((prev) => ({
+  // Sync config into tree — must run during render so that tree.getItems()
+  // and other methods called below see the current config/state immediately.
+  // `tree` is a stable state value, not a React ref.
+  tree.setConfig((prev) => ({
     ...prev,
     ...config,
     state: { ...state, ...config.state },
@@ -59,7 +64,7 @@ function useStableTree<T>(config: TreeConfig<T>): TreeInstance<T> {
     }) as TreeConfig<T>['setState'],
   }))
 
-  return treeRef.current
+  return tree
 }
 
 /* ------------------------------------------------------------------ */
@@ -322,6 +327,7 @@ export const FileTree = forwardRef<FileTreeHandle, FileTreeProps>(
     const allItems = tree.getItems()
 
     // Virtualizer
+    // eslint-disable-next-line react-hooks/incompatible-library -- useVirtualizer returns unstable functions by design; this component doesn't pass them to memoized children
     const virtualizer = useVirtualizer({
       count: allItems.length,
       getScrollElement: () => scrollEl,
@@ -575,7 +581,7 @@ function SearchResultItem({
       onClick={onClick}
       title={filePath}
     >
-      <FileIcon fileName={fileName} isDirectory={false} />
+      <FileIcon key={fileName} fileName={fileName} isDirectory={false} />
       <div className="min-w-0 flex-1">
         <div className="truncate" dangerouslySetInnerHTML={{ __html: highlighted }} />
         {dirPath && (

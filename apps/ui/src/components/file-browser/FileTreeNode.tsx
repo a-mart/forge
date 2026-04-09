@@ -65,6 +65,7 @@ export function FileTreeNode({
       )}
 
       <FileIcon
+        key={`${name}-${type}-${isExpanded}`}
         fileName={name}
         isDirectory={type === 'directory'}
         isExpanded={isExpanded}

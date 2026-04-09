@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { ImageOff } from 'lucide-react'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
 import '@/styles/file-browser.css'
@@ -16,11 +16,6 @@ export function ImagePreview({ wsUrl, filePath, agentId }: ImagePreviewProps) {
     const params = new URLSearchParams({ path: filePath, agentId })
     return resolveApiEndpoint(wsUrl, `/api/read-file?${params.toString()}`)
   }, [wsUrl, filePath, agentId])
-
-  // Reset error state when the image source changes
-  useEffect(() => {
-    setLoadError(false)
-  }, [imageUrl])
 
   const fileName = filePath.split('/').pop() ?? 'Image'
 

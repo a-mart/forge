@@ -247,16 +247,17 @@ function buildDisplayEntries(messages: ConversationEntry[]): DisplayEntry[] {
 }
 
 function LoadingIndicator({ streamingStartedAt }: { streamingStartedAt?: number }) {
-  const [, setTick] = useState(0)
+  const [nowMs, setNowMs] = useState(() => Date.now())
 
   useEffect(() => {
     if (!streamingStartedAt) return
-    const interval = setInterval(() => setTick((t) => t + 1), 1_000)
+    setNowMs(Date.now())
+    const interval = setInterval(() => setNowMs(Date.now()), 1_000)
     return () => clearInterval(interval)
   }, [streamingStartedAt])
 
   const elapsedLabel = streamingStartedAt
-    ? formatElapsed(Date.now() - streamingStartedAt)
+    ? formatElapsed(nowMs - streamingStartedAt)
     : null
 
   return (

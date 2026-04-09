@@ -202,17 +202,22 @@ function getFriendlyToolMessage(
 function useElapsedTimer(
   startTimestamp: string | undefined,
   isActive: boolean,
+  externalNowMs?: number,
 ): string | null {
-  const [, setTick] = useState(0)
+  // When no external clock is provided, maintain a local 1s tick
+  const [localNowMs, setLocalNowMs] = useState(() => Date.now())
+  const needsLocalTick = isActive && !!startTimestamp && externalNowMs === undefined
 
   useEffect(() => {
-    if (!isActive || !startTimestamp) return
-    const interval = setInterval(() => setTick((t) => t + 1), 1_000)
+    if (!needsLocalTick) return
+    setLocalNowMs(Date.now())
+    const interval = setInterval(() => setLocalNowMs(Date.now()), 1_000)
     return () => clearInterval(interval)
-  }, [isActive, startTimestamp])
+  }, [needsLocalTick])
 
   if (!startTimestamp || !isActive) return null
-  const elapsed = Date.now() - new Date(startTimestamp).getTime()
+  const now = externalNowMs ?? localNowMs
+  const elapsed = now - new Date(startTimestamp).getTime()
   return formatElapsed(elapsed)
 }
 
@@ -260,9 +265,12 @@ function ToolPayloadBlock({
 function ToolExecutionLogRow({
   entry,
   isActive,
+  nowMs,
 }: {
   entry: ToolExecutionDisplayEntry
   isActive: boolean
+  /** Optional shared clock (epoch ms) from parent; avoids per-row timers. */
+  nowMs?: number
 }) {
   const [isExpanded, setIsExpanded] = useState(false)
   const contentId = useId()
@@ -277,7 +285,7 @@ function ToolExecutionLogRow({
   const actorLabel = entry.actorAgentId?.trim()
 
   const isTimerActive = isActive && displayStatus === 'pending'
-  const elapsedLabel = useElapsedTimer(entry.startTimestamp, isTimerActive)
+  const elapsedLabel = useElapsedTimer(entry.startTimestamp, isTimerActive, nowMs)
   const staticDuration =
     displayStatus !== 'pending'
       ? computeStaticDuration(entry.startTimestamp, entry.timestamp)
@@ -414,10 +422,13 @@ export function ToolLogRow({
   type,
   entry,
   isActive = false,
+  nowMs,
 }: {
   type: 'tool_execution' | 'runtime_error_log'
   entry: ToolExecutionDisplayEntry | ConversationLogEntry
   isActive?: boolean
+  /** Optional shared clock (epoch ms) from parent; avoids per-row timers. */
+  nowMs?: number
 }) {
   if (type === 'runtime_error_log') {
     return <RuntimeErrorLog entry={entry as ConversationLogEntry} />
@@ -427,6 +438,7 @@ export function ToolLogRow({
     <ToolExecutionLogRow
       entry={entry as ToolExecutionDisplayEntry}
       isActive={isActive}
+      nowMs={nowMs}
     />
   )
 }

@@ -79,7 +79,10 @@ export function DailyUsageChart({ data, range }: DailyUsageChartProps) {
     setPage(Math.max(0, totalPages - 1))
   }, [totalPages, range])
 
-  const pageData = pages[Math.min(page, totalPages - 1)] ?? []
+  const pageData = useMemo(
+    () => pages[Math.min(page, totalPages - 1)] ?? [],
+    [pages, page, totalPages],
+  )
 
   const headerLabel = useMemo(() => {
     if (range === 'all') {

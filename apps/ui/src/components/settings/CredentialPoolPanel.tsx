@@ -52,7 +52,7 @@ import type { SettingsAuthOAuthFlowState, SettingsAuthProviderId } from './setti
 /*  Health badge                                                      */
 /* ------------------------------------------------------------------ */
 
-function HealthBadge({ credential }: { credential: PooledCredentialInfo }) {
+function HealthBadge({ credential, nowMs }: { credential: PooledCredentialInfo; nowMs: number }) {
   if (credential.health === 'healthy') {
     return (
       <Badge
@@ -67,7 +67,7 @@ function HealthBadge({ credential }: { credential: PooledCredentialInfo }) {
 
   if (credential.health === 'cooldown') {
     const remaining = credential.cooldownUntil
-      ? Math.max(0, Math.ceil((credential.cooldownUntil - Date.now()) / 60_000))
+      ? Math.max(0, Math.ceil((credential.cooldownUntil - nowMs) / 60_000))
       : 0
     return (
       <Badge
@@ -98,6 +98,7 @@ function HealthBadge({ credential }: { credential: PooledCredentialInfo }) {
 function CredentialRow({
   credential,
   isBusy,
+  nowMs,
   onSetPrimary,
   onRename,
   onResetCooldown,
@@ -105,6 +106,7 @@ function CredentialRow({
 }: {
   credential: PooledCredentialInfo
   isBusy: boolean
+  nowMs: number
   onSetPrimary: () => void
   onRename: (newLabel: string) => void
   onResetCooldown: () => void
@@ -204,7 +206,7 @@ function CredentialRow({
         </div>
 
         {/* Health */}
-        <HealthBadge credential={credential} />
+        <HealthBadge credential={credential} nowMs={nowMs} />
 
         {/* Request count */}
         <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
@@ -360,6 +362,13 @@ export function CredentialPoolPanel({
   const [pool, setPool] = useState<CredentialPoolState | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [isBusy, setIsBusy] = useState(false)
+  const [nowMs, setNowMs] = useState(() => Date.now())
+
+  // Tick nowMs every 60s for cooldown countdown display
+  useEffect(() => {
+    const id = setInterval(() => setNowMs(Date.now()), 60_000)
+    return () => clearInterval(id)
+  }, [])
   const [oauthFlow, setOauthFlow] = useState<SettingsAuthOAuthFlowState>(createIdleSettingsAuthOAuthFlowState())
   const [oauthAbort, setOauthAbort] = useState<AbortController | null>(null)
 
@@ -653,6 +662,7 @@ export function CredentialPoolPanel({
               key={cred.id}
               credential={cred}
               isBusy={isBusy}
+              nowMs={nowMs}
               onSetPrimary={() => void handleSetPrimary(cred.id)}
               onRename={(label) => void handleRename(cred.id, label)}
               onResetCooldown={() => void handleResetCooldown(cred.id)}

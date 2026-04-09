@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react'
+import { useLatestRef } from '@/hooks/useLatestRef'
 import {
   Popover,
   PopoverContent,
@@ -224,9 +225,20 @@ export const WorkerPillBar = memo(function WorkerPillBar({
   const [tick, setTick] = useState(0)
   const pillEntriesRef = useRef<Map<string, PillEntry>>(new Map())
   const exitTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
-  const [, forceRender] = useState(0)
-  // Track whether we've ever had pills (for exit animation)
-  const hasEverHadPillsRef = useRef(false)
+  // Snapshot of pillEntriesRef for render; updated via syncPillEntries after mutations.
+  const [pillEntries, setPillEntries] = useState<PillEntry[]>([])
+  // Track whether we've ever had pills (for exit animation).
+  // This is state (not a ref) because it affects rendering decisions.
+  const [hasEverHadPills, setHasEverHadPills] = useState(false)
+
+  /** Snapshot the mutable ref into state so React re-renders with current pill data. */
+  const syncPillEntries = useCallback(() => {
+    const entries = Array.from(pillEntriesRef.current.values())
+    setPillEntries(entries)
+    if (entries.length > 0) {
+      setHasEverHadPills(true)
+    }
+  }, [])
 
   // Derive which workers are currently streaming
   const streamingWorkerIds = useMemo(() => {
@@ -248,14 +260,14 @@ export const WorkerPillBar = memo(function WorkerPillBar({
 
   // Fix #7: Pre-filter activity messages by worker ID (O(M) once, not O(N×M) per tick)
   // Store in a ref so pill components can read it without a prop change triggering re-render
-  const activityByWorkerRef = useRef<Map<string, AgentActivityEntry[]>>(new Map())
-  activityByWorkerRef.current = useMemo(
+  const activityByWorker = useMemo(
     () => buildActivityByWorker(activityMessages),
     [activityMessages],
   )
+  const activityByWorkerRef = useLatestRef(activityByWorker)
 
   // Reconcile pill entries: add new streaming workers, mark exiting ones.
-  // Note: This mutates pillEntriesRef.current (a Map in a ref) then triggers forceRender.
+  // Note: This mutates pillEntriesRef.current (a Map in a ref) then snapshots into state.
   // Under StrictMode's double-execution, the idempotent Map.set() calls are safe,
   // and exit timers are cleared before re-scheduling so no duplicates occur.
   useEffect(() => {
@@ -308,10 +320,13 @@ export const WorkerPillBar = memo(function WorkerPillBar({
     // Mark workers that stopped streaming as exiting
     for (const [id, entry] of current) {
       if (!streamingWorkerIds.has(id) && !entry.exiting) {
-        entry.exiting = true
-        entry.status = getWorkerStatus(entry.worker, statuses)
-        // Freeze the timer at current run duration
-        entry.frozenElapsedMs = Date.now() - entry.streamingStartedAt
+        // Replace with a new object instead of mutating in-place
+        current.set(id, {
+          ...entry,
+          exiting: true,
+          status: getWorkerStatus(entry.worker, statuses),
+          frozenElapsedMs: Date.now() - entry.streamingStartedAt,
+        })
 
         // Clear any existing timer for this ID before scheduling a new one
         const existingTimer = exitTimersRef.current.get(id)
@@ -323,7 +338,7 @@ export const WorkerPillBar = memo(function WorkerPillBar({
         const timer = setTimeout(() => {
           current.delete(id)
           exitTimersRef.current.delete(id)
-          forceRender((n) => n + 1)
+          syncPillEntries()
         }, REMOVE_DELAY_MS)
         exitTimersRef.current.set(id, timer)
         changed = true
@@ -331,26 +346,22 @@ export const WorkerPillBar = memo(function WorkerPillBar({
     }
 
     if (changed) {
-      forceRender((n) => n + 1)
+      syncPillEntries()
     }
-  }, [streamingWorkerIds, workersById, statuses])
+  }, [streamingWorkerIds, workersById, statuses, syncPillEntries])
 
   // Cleanup exit timers on unmount
   useEffect(() => {
+    const timers = exitTimersRef.current
     return () => {
-      for (const timer of exitTimersRef.current.values()) {
+      for (const timer of timers.values()) {
         clearTimeout(timer)
       }
     }
   }, [])
 
   // Shared 1-second interval for timer ticks
-  const pillEntries = Array.from(pillEntriesRef.current.values())
   const hasActivePills = pillEntries.some((e) => !e.exiting)
-
-  if (pillEntries.length > 0) {
-    hasEverHadPillsRef.current = true
-  }
 
   useEffect(() => {
     if (!hasActivePills) return
@@ -363,7 +374,7 @@ export const WorkerPillBar = memo(function WorkerPillBar({
   // Fix #6: Don't unmount before exit animation completes.
   // Render with grid-rows-[0fr] (collapsed) when empty, grid-rows-[1fr] when pills exist.
   // Only fully bail if we've never had any pills at all.
-  if (!hasEverHadPillsRef.current && pillEntries.length === 0) return null
+  if (!hasEverHadPills && pillEntries.length === 0) return null
 
   const isExpanded = pillEntries.length > 0
 
@@ -377,8 +388,7 @@ export const WorkerPillBar = memo(function WorkerPillBar({
       onTransitionEnd={() => {
         // After collapse animation finishes, reset so the component can unmount cleanly
         if (pillEntries.length === 0) {
-          hasEverHadPillsRef.current = false
-          forceRender((n) => n + 1)
+          setHasEverHadPills(false)
         }
       }}
     >

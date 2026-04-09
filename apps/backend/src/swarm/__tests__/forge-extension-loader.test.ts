@@ -6,6 +6,7 @@ import { loadForgeExtensionModule, loadForgeExtensionModules } from "../forge-ex
 import type { DiscoveredForgeExtension } from "../forge-extension-types.js";
 
 const tempDirs: string[] = [];
+const loadCountInterpolation = "$" + "{loadCount}";
 
 afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
@@ -142,7 +143,7 @@ describe("loadForgeExtensionModule", () => {
         "let loadCount = 0;",
         "export default (forge) => {",
         "  loadCount += 1;",
-        "  forge.loaded = `first:${loadCount}`;",
+        "  forge.loaded = `first:" + loadCountInterpolation + "`;",
         "};",
         ""
       ].join("\n"),
@@ -165,7 +166,7 @@ describe("loadForgeExtensionModule", () => {
         "let loadCount = 100;",
         "export default (forge) => {",
         "  loadCount += 1;",
-        "  forge.loaded = `second:${loadCount}`;",
+        "  forge.loaded = `second:" + loadCountInterpolation + "`;",
         "};",
         "// ensure file size changes so the signature changes even on coarse mtime filesystems",
         ""

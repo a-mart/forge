@@ -227,6 +227,7 @@ function TreeRow({
         )}
 
         <FileIcon
+          key={`${entry.name}-${isDir}-${isExpanded}`}
           fileName={entry.name}
           isDirectory={isDir}
           isExpanded={isExpanded}

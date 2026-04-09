@@ -425,7 +425,7 @@ function ForgeExtensionsSection({
   onRefresh: () => void
 }) {
   const hasPayload = Boolean(forge)
-  const discovered = forge?.discovered ?? []
+  const discovered = useMemo(() => forge?.discovered ?? [], [forge?.discovered])
   const snapshots = forge?.snapshots ?? []
   const recentErrors = forge?.recentErrors ?? []
   const groupedDiscovered = useMemo(() => {
@@ -577,7 +577,7 @@ function PiExtensionsSection({ data }: { data: SettingsExtensionsResponse | null
     return buildRuntimeOverlayMap(data?.snapshots ?? [])
   }, [data?.snapshots])
 
-  const discoveredExtensions = data?.discovered ?? []
+  const discoveredExtensions = useMemo(() => data?.discovered ?? [], [data?.discovered])
   const groupedDiscoveredExtensions = useMemo(() => {
     const grouped = new Map<DiscoveredExtensionSource, DiscoveredExtensionMetadata[]>()
     for (const source of PI_DISCOVERY_SOURCE_ORDER) {

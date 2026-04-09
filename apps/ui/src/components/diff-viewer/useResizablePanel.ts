@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useLatestRef } from '../../hooks/useLatestRef'
 
 interface UseResizablePanelOptions {
   /** localStorage key to persist the width */
@@ -65,13 +66,8 @@ export function useResizablePanel({
   const nodeRef = useRef<HTMLDivElement | null>(null)
   const startXRef = useRef(0)
   const startWidthRef = useRef(0)
-  const widthRef = useRef(width)
-
-  // Keep widthRef in sync so the mousedown handler always reads current width
-  widthRef.current = width
-
-  const invertRef = useRef(invertDelta)
-  invertRef.current = invertDelta
+  const widthRef = useLatestRef(width)
+  const invertRef = useLatestRef(invertDelta)
 
   const persistWidth = useCallback(
     (w: number) => {
@@ -85,29 +81,26 @@ export function useResizablePanel({
     [storageKey],
   )
 
-  // Stable mousedown handler — reads width from ref, not closure
-  const onMouseDownRef = useRef<(e: MouseEvent) => void>(null!)
-  if (!onMouseDownRef.current) {
-    onMouseDownRef.current = (e: MouseEvent) => {
-      e.preventDefault()
-      startXRef.current = e.clientX
-      startWidthRef.current = widthRef.current
-      setIsDragging(true)
-    }
-  }
+  // Stable mousedown handler — created once via useState lazy initializer so
+  // the identity never changes.  Reads width from ref, not closure.
+  const [onMouseDown] = useState(() => (e: MouseEvent) => {
+    e.preventDefault()
+    startXRef.current = e.clientX
+    startWidthRef.current = widthRef.current
+    setIsDragging(true)
+  })
 
   // Callback ref: reliably attaches/detaches mousedown whenever the DOM node
   // mounts or unmounts (handles conditional rendering correctly).
   const handleRef = useCallback((node: HTMLDivElement | null) => {
-    const handler = onMouseDownRef.current!
     if (nodeRef.current) {
-      nodeRef.current.removeEventListener('mousedown', handler)
+      nodeRef.current.removeEventListener('mousedown', onMouseDown)
     }
     nodeRef.current = node
     if (node) {
-      node.addEventListener('mousedown', handler)
+      node.addEventListener('mousedown', onMouseDown)
     }
-  }, [])
+  }, [onMouseDown])
 
   // Drag movement & release — only active while dragging
   useEffect(() => {
@@ -142,7 +135,7 @@ export function useResizablePanel({
       document.body.style.userSelect = ''
       document.body.style.cursor = ''
     }
-  }, [isDragging, minWidth, maxWidth, persistWidth])
+  }, [isDragging, minWidth, maxWidth, persistWidth, invertRef])
 
   return { width, isDragging, handleRef }
 }

@@ -272,7 +272,6 @@ export function IndexPage() {
   useEffect(() => {
     if (!isActiveManager || !activeManagerId || !clientRef.current) return
     void clientRef.current.getSessionWorkers(activeManagerId).catch(() => {})
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isActiveManager, activeManagerId, clientRef, activeManagerWorkerCount])
 
   // Resolve parent manager label for the worker back-bar
@@ -973,7 +972,7 @@ export function IndexPage() {
     navigateToRoute({ view: 'chat', agentId })
     clientRef.current?.subscribeToAgent(agentId)
     requestCortexDashboardTab('review')
-  }, [navigateToRoute, requestCortexDashboardTab])
+  }, [navigateToRoute, requestCortexDashboardTab, clientRef])
 
   const handleDeleteAgent = (agentId: string) => {
     const agent = state.agents.find((entry) => entry.agentId === agentId)

@@ -74,11 +74,10 @@ function useSimpleQuery<T>(
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const fetchKeyRef = useRef(0)
-  const prevQueryKeyRef = useRef(queryKey)
 
-  // Reset state when queryKey changes to prevent stale data flash
-  if (prevQueryKeyRef.current !== queryKey) {
-    prevQueryKeyRef.current = queryKey
+  // Reset state when queryKey changes to prevent stale data flash.
+  // Uses an effect rather than render-time state reset to keep render pure.
+  useEffect(() => {
     const cached = queryCache.get(queryKey)
     if (cached && Date.now() - cached.fetchedAt < options.staleTime) {
       setData(cached.data as T)
@@ -86,7 +85,7 @@ function useSimpleQuery<T>(
       setData(null)
     }
     setError(null)
-  }
+  }, [queryKey, options.staleTime])
 
   const doFetch = useCallback(() => {
     if (!options.enabled) {
