@@ -5,6 +5,9 @@
       "packages/protocol/src/index.ts"
     ]
   },
+  "ignoreBinaries": [
+    "tsc"
+  ],
   "typescript": true,
   "vitest": true,
   "vite": true,
