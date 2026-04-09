@@ -48,10 +48,7 @@
         "src/**/*.{ts,tsx,js,mjs}"
       ],
       "ignoreFiles": [
-        "src/ws/routes/{agent-routes,conversation-routes,cortex-auto-review-routes,extension-routes,file-browser-service,health-routes,http-route,integration-routes,manager-routes,mobile-routes,model-config-routes,playwright-live-routes,playwright-routes,route-utils,scheduler-routes,slash-command-routes,transcription-routes}.ts",
-        "src/swarm/scripts/{feedback-global-summary,feedback-review-queue,feedback-session-digest,feedback-target-context}.ts",
-        "src/stats/import-codexbar-provider-usage-history.ts",
-        "src/swarm/memory-paths.ts"
+        "src/swarm/scripts/{feedback-global-summary,feedback-review-queue,feedback-session-digest,feedback-target-context}.ts"
       ],
       "ignoreDependencies": [
         "@anthropic-ai/claude-agent-sdk"
