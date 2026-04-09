@@ -12,27 +12,27 @@ import { readSessionMeta, writeSessionMeta } from "../session-manifest.js";
 
 const DEFAULT_LOCK_TTL_MS = 15 * 60 * 1000;
 
-export interface CortexReviewLockRecord {
+interface CortexReviewLockRecord {
   ownerId: string;
   reviewId?: string;
   acquiredAt: string;
   expiresAt: string;
 }
 
-export interface AcquireCortexReviewLockResult {
+interface AcquireCortexReviewLockResult {
   lockPath: string;
   acquired: boolean;
   staleReplaced: boolean;
   lease: CortexReviewLockRecord;
 }
 
-export interface RenewCortexReviewLockResult {
+interface RenewCortexReviewLockResult {
   lockPath: string;
   renewed: boolean;
   lease: CortexReviewLockRecord | null;
 }
 
-export interface AppendCortexReviewLogEntryInput {
+interface AppendCortexReviewLogEntryInput {
   reviewId: string;
   ownerId: string;
   status: "success" | "no-op" | "blocked" | "failed";
@@ -44,16 +44,16 @@ export interface AppendCortexReviewLogEntryInput {
   recordedAt?: string;
 }
 
-export interface CortexReviewLogEntry extends AppendCortexReviewLogEntryInput {
+interface CortexReviewLogEntry extends AppendCortexReviewLogEntryInput {
   recordedAt: string;
 }
 
-export interface StoredCortexReviewLogEntry extends Omit<AppendCortexReviewLogEntryInput, "reviewId"> {
+interface StoredCortexReviewLogEntry extends Omit<AppendCortexReviewLogEntryInput, "reviewId"> {
   reviewId?: string;
   recordedAt: string;
 }
 
-export interface CortexReviewWatermarkUpdate {
+interface CortexReviewWatermarkUpdate {
   profileId: string;
   sessionId: string;
   cortexReviewedBytes?: number;
@@ -64,14 +64,14 @@ export interface CortexReviewWatermarkUpdate {
   cortexReviewedFeedbackAt?: string | null;
 }
 
-export interface FinalizeCortexReviewCycleInput extends AppendCortexReviewLogEntryInput {
+interface FinalizeCortexReviewCycleInput extends AppendCortexReviewLogEntryInput {
   manifestContent?: string;
   watermarkUpdates?: CortexReviewWatermarkUpdate[];
   requireLock?: boolean;
   releaseLock?: boolean;
 }
 
-export interface FinalizeCortexReviewCycleResult {
+interface FinalizeCortexReviewCycleResult {
   manifestPath?: string;
   logEntry: CortexReviewLogEntry;
   updatedSessions: string[];

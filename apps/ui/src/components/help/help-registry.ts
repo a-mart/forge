@@ -20,15 +20,15 @@ const shortcutRegistry = new Map<string, ShortcutDef>()
 
 let isInitialized = false
 
-export function registerArticle(article: HelpArticle): void {
+function registerArticle(article: HelpArticle): void {
   articleRegistry.set(article.id, article)
 }
 
-export function registerTooltip(tooltip: HelpTooltipContent): void {
+function registerTooltip(tooltip: HelpTooltipContent): void {
   tooltipRegistry.set(tooltip.id, tooltip)
 }
 
-export function registerShortcut(shortcut: ShortcutDef): void {
+function registerShortcut(shortcut: ShortcutDef): void {
   shortcutRegistry.set(shortcut.id, shortcut)
 }
 
@@ -66,10 +66,6 @@ export function getTooltip(id: string): HelpTooltipContent | undefined {
   return tooltipRegistry.get(id)
 }
 
-export function getTooltipsForContext(contextKey: string): HelpTooltipContent[] {
-  return [...tooltipRegistry.values()].filter((tooltip) => tooltip.contextKey === contextKey)
-}
-
 export function getShortcuts(scope?: string): ShortcutDef[] {
   const shortcuts = [...shortcutRegistry.values()]
 
@@ -78,10 +74,6 @@ export function getShortcuts(scope?: string): ShortcutDef[] {
   }
 
   return shortcuts.filter((shortcut) => shortcut.scope === scope)
-}
-
-export function getShortcutsByGroup(group: string): ShortcutDef[] {
-  return [...shortcutRegistry.values()].filter((shortcut) => shortcut.group === group)
 }
 
 export function getAllArticles(): HelpArticle[] {

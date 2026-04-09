@@ -8,8 +8,8 @@ import { MAX_WS_EVENT_BYTES } from "./ws-send.js";
 import { WebSocket } from "ws";
 
 export const DEFAULT_SUBSCRIBE_MESSAGE_COUNT = 200;
-export const MAX_SUBSCRIBE_MESSAGE_COUNT = 2000;
-export const BOOTSTRAP_HISTORY_BYTE_BUDGET = MAX_WS_EVENT_BYTES - 16 * 1024;
+const MAX_SUBSCRIBE_MESSAGE_COUNT = 2000;
+const BOOTSTRAP_HISTORY_BYTE_BUDGET = MAX_WS_EVENT_BYTES - 16 * 1024;
 
 export type BootstrapConversationHistory = ReturnType<SwarmManager["getConversationHistory"]>;
 type BootstrapConversationEntry = BootstrapConversationHistory[number];
@@ -130,7 +130,7 @@ export function sendSubscriptionBootstrap(options: {
   }
 }
 
-export function selectBootstrapConversationHistory(
+function selectBootstrapConversationHistory(
   swarmManager: SwarmManager,
   targetAgentId: string,
   requestedMessageCount?: number,

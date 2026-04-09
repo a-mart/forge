@@ -88,7 +88,7 @@ export async function checkDataDirMigration(config: StartupMigrationConfig = {})
       renameSync(legacyPath, newPath);
       logger.info(`[startup] Data directory migrated to: ${newPath}`);
       process.env.FORGE_DATA_DIR = newPath;
-      return;
+      
     } catch (error) {
       const code = getErrorCode(error);
 

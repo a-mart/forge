@@ -38,7 +38,7 @@ const MUTE_CHANGE_EVENT = 'forge-mute-change'
 
 const DEBOUNCE_MS = 2_000
 
-export const BUILT_IN_SOUNDS: SoundOption[] = [
+const BUILT_IN_SOUNDS: SoundOption[] = [
   { id: 'notification', name: 'Default Notification', url: '/sounds/notification.mp3', builtIn: true },
   { id: 'complete', name: 'Default Complete', url: '/sounds/complete.mp3', builtIn: true },
   { id: 'question', name: 'Agent Has a Question', url: '/sounds/question.mp3', builtIn: true },
@@ -87,7 +87,7 @@ function persistMutedAgents(muted: Set<string>): void {
   }
 }
 
-export function isMuted(agentId: string): boolean {
+function isMuted(agentId: string): boolean {
   return loadMutedAgents().has(agentId)
 }
 
@@ -378,7 +378,7 @@ function isManagerStreaming(agentId: string, state: ManagerWsState): boolean {
   return agent?.status === 'streaming'
 }
 
-export function shouldPlayQuestion(
+function shouldPlayQuestion(
   prefsKey: string,
   agentId: string,
   state: ManagerWsState,
@@ -391,7 +391,7 @@ export function shouldPlayQuestion(
   return prefs.questionSound.enabled
 }
 
-export function shouldPlayUnread(
+function shouldPlayUnread(
   prefsKey: string,
   agentId: string,
   state: ManagerWsState,
@@ -405,7 +405,7 @@ export function shouldPlayUnread(
   return prefs.unreadSound.enabled
 }
 
-export function shouldPlayAllDone(
+function shouldPlayAllDone(
   prefsKey: string,
   agentId: string,
   state: ManagerWsState,
@@ -425,7 +425,7 @@ export function shouldPlayAllDone(
 
 // ── Public API: play notification sounds ──
 
-export function playUnread(prefsKey: string, store: NotificationStore): void {
+function playUnread(prefsKey: string, store: NotificationStore): void {
   if (!canPlay(`unread:${prefsKey}`)) return
   const isCortex = prefsKey === 'cortex'
   const prefs = getEffectivePrefs(store, prefsKey, isCortex)
@@ -434,7 +434,7 @@ export function playUnread(prefsKey: string, store: NotificationStore): void {
   playSound(url, prefs.volume)
 }
 
-export function playAllDone(prefsKey: string, store: NotificationStore): void {
+function playAllDone(prefsKey: string, store: NotificationStore): void {
   if (!canPlay(`allDone:${prefsKey}`)) return
   const isCortex = prefsKey === 'cortex'
   const prefs = getEffectivePrefs(store, prefsKey, isCortex)
@@ -443,7 +443,7 @@ export function playAllDone(prefsKey: string, store: NotificationStore): void {
   playSound(url, prefs.volume)
 }
 
-export function playQuestion(prefsKey: string, store: NotificationStore): void {
+function playQuestion(prefsKey: string, store: NotificationStore): void {
   if (!canPlay(`question:${prefsKey}`)) return
   const isCortex = prefsKey === 'cortex'
   const prefs = getEffectivePrefs(store, prefsKey, isCortex)

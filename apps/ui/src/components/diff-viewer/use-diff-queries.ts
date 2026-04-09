@@ -309,9 +309,6 @@ export function useGitCommitDiff(
   })
 }
 
-export const useGitFileDiff = useGitDiff
-export const useGitCommitFileDiff = useGitCommitDiff
-
 /** Invalidate mutable git caches. Commit caches remain immutable. */
 export function invalidateGitCaches(options?: { agentId?: string | null; repoTarget?: GitRepoTarget }) {
   for (const key of queryCache.keys()) {

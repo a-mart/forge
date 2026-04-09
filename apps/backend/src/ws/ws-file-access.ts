@@ -18,7 +18,7 @@ export interface ApiProxyReadFileResult {
   headers?: Record<string, string>;
 }
 
-export function normalizeFileAccessPath(pathValue: string): string {
+function normalizeFileAccessPath(pathValue: string): string {
   const trimmed = pathValue.trim();
   if (!trimmed) {
     return "";
@@ -31,7 +31,7 @@ export function normalizeFileAccessPath(pathValue: string): string {
   return trimmed;
 }
 
-export function resolveReadFileAccessContext(
+function resolveReadFileAccessContext(
   swarmManager: SwarmManager,
   agentId?: string,
   options?: { includeCwdAllowlistRootsForAgent?: boolean },
@@ -76,7 +76,7 @@ export function resolveReadFileAccessContext(
   };
 }
 
-export function resolveLegacyWriteFileAccessContext(swarmManager: SwarmManager): FileAccessContext {
+function resolveLegacyWriteFileAccessContext(swarmManager: SwarmManager): FileAccessContext {
   const config = swarmManager.getConfig();
   return {
     rootDir: config.paths.rootDir,
@@ -91,7 +91,7 @@ export function resolveLegacyWriteFileAccessContext(swarmManager: SwarmManager):
   };
 }
 
-export async function resolvePathWithinRoots(
+async function resolvePathWithinRoots(
   requestedPath: string,
   rootDir: string,
   allowedRoots: string[],
@@ -213,7 +213,7 @@ export async function readApiProxyFile(options: {
   };
 }
 
-export function isLikelyBinary(content: Buffer): boolean {
+function isLikelyBinary(content: Buffer): boolean {
   if (content.length === 0) {
     return false;
   }

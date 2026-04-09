@@ -25,7 +25,7 @@ export function isConversationEntryEvent(value: unknown): value is ConversationE
   );
 }
 
-export function isConversationMessageEvent(value: unknown): value is ConversationMessageEvent {
+function isConversationMessageEvent(value: unknown): value is ConversationMessageEvent {
   if (!value || typeof value !== "object") return false;
 
   const maybe = value as Partial<ConversationMessageEvent>;
@@ -71,7 +71,7 @@ export function isConversationMessageEvent(value: unknown): value is Conversatio
   return true;
 }
 
-export function isMessageSourceContext(value: unknown): value is MessageSourceContext {
+function isMessageSourceContext(value: unknown): value is MessageSourceContext {
   if (!value || typeof value !== "object") {
     return false;
   }
@@ -128,7 +128,7 @@ function isProjectAgentMessageContext(value: unknown): value is ProjectAgentMess
   return typeof maybe.fromAgentId === "string" && typeof maybe.fromDisplayName === "string";
 }
 
-export function isConversationAttachment(value: unknown): value is ConversationAttachment {
+function isConversationAttachment(value: unknown): value is ConversationAttachment {
   return (
     isConversationImageAttachment(value) ||
     isConversationTextAttachment(value) ||
@@ -136,11 +136,11 @@ export function isConversationAttachment(value: unknown): value is ConversationA
   );
 }
 
-export function isConversationMessageAttachment(value: unknown): value is ConversationMessageAttachment {
+function isConversationMessageAttachment(value: unknown): value is ConversationMessageAttachment {
   return isConversationAttachment(value) || isConversationAttachmentMetadata(value);
 }
 
-export function isConversationAttachmentMetadata(value: unknown): value is ConversationAttachmentMetadata {
+function isConversationAttachmentMetadata(value: unknown): value is ConversationAttachmentMetadata {
   if (!value || typeof value !== "object") {
     return false;
   }
@@ -269,7 +269,7 @@ export function isConversationBinaryAttachment(value: unknown): value is Convers
   return true;
 }
 
-export function isConversationLogEvent(value: unknown): value is ConversationLogEvent {
+function isConversationLogEvent(value: unknown): value is ConversationLogEvent {
   if (!value || typeof value !== "object") return false;
 
   const maybe = value as Partial<ConversationLogEvent>;
@@ -300,7 +300,7 @@ export function isConversationLogEvent(value: unknown): value is ConversationLog
   return true;
 }
 
-export function isAgentMessageEvent(value: unknown): value is AgentMessageEvent {
+function isAgentMessageEvent(value: unknown): value is AgentMessageEvent {
   if (!value || typeof value !== "object") return false;
 
   const maybe = value as Partial<AgentMessageEvent>;
@@ -340,7 +340,7 @@ export function isAgentMessageEvent(value: unknown): value is AgentMessageEvent 
   return true;
 }
 
-export function isChoiceRequestEvent(value: unknown): value is ChoiceRequestEvent {
+function isChoiceRequestEvent(value: unknown): value is ChoiceRequestEvent {
   if (!value || typeof value !== "object") return false;
   const maybe = value as Partial<ChoiceRequestEvent>;
   if (maybe.type !== "choice_request") return false;
@@ -353,7 +353,7 @@ export function isChoiceRequestEvent(value: unknown): value is ChoiceRequestEven
   return true;
 }
 
-export function isAgentToolCallEvent(value: unknown): value is AgentToolCallEvent {
+function isAgentToolCallEvent(value: unknown): value is AgentToolCallEvent {
   if (!value || typeof value !== "object") return false;
 
   const maybe = value as Partial<AgentToolCallEvent>;

@@ -14,10 +14,6 @@ export function abbreviateNumber(value: number): string {
   return value.toLocaleString()
 }
 
-export function formatTokenCount(value: number): string {
-  return value.toLocaleString()
-}
-
 export function timeAgo(isoTimestamp: string): string {
   const diff = Date.now() - new Date(isoTimestamp).getTime()
   if (diff < 0) return 'just now'

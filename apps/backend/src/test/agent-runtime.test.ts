@@ -207,7 +207,7 @@ describe('AgentRuntime', () => {
         percent: 12.8,
       }
 
-      const runtime = new AgentRuntime({
+      new AgentRuntime({
         descriptor: makeDescriptor(),
         session: session as any,
         callbacks: {

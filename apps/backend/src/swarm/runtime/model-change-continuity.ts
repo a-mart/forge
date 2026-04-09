@@ -5,8 +5,8 @@ import {
   type ImmediateCustomEntryWriteResult
 } from "../session/immediate-custom-entry-writer.js";
 
-export const MODEL_CHANGE_CONTINUITY_REQUEST_ENTRY_TYPE = "swarm_model_change_continuity_request";
-export const MODEL_CHANGE_CONTINUITY_APPLIED_ENTRY_TYPE = "swarm_model_change_continuity_applied";
+const MODEL_CHANGE_CONTINUITY_REQUEST_ENTRY_TYPE = "swarm_model_change_continuity_request";
+const MODEL_CHANGE_CONTINUITY_APPLIED_ENTRY_TYPE = "swarm_model_change_continuity_applied";
 
 export type ModelChangeContinuityRuntimeKind = "pi" | "claude" | "codex";
 
@@ -58,7 +58,7 @@ export function inferModelChangeContinuityRuntimeKind(
   return "pi";
 }
 
-export function buildModelChangeContinuityModel(
+function buildModelChangeContinuityModel(
   model: Pick<AgentModelDescriptor, "provider" | "modelId"> & { thinkingLevel?: string }
 ): ModelChangeContinuityModel {
   return {

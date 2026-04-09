@@ -14,7 +14,7 @@ function byCreatedAtDescThenId(a: AgentDescriptor, b: AgentDescriptor): number {
   return a.agentId.localeCompare(b.agentId)
 }
 
-export function isActiveAgent(agent: AgentDescriptor): boolean {
+function isActiveAgent(agent: AgentDescriptor): boolean {
   return ACTIVE_STATUSES.has(agent.status)
 }
 

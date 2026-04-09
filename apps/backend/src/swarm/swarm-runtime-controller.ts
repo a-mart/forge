@@ -9,12 +9,10 @@ import type {
   RuntimeErrorEvent,
   RuntimeSessionEvent,
   RuntimeShutdownOptions,
-  SpecialistFallbackReplaySnapshot,
   SwarmAgentRuntime
 } from "./runtime-contracts.js";
 import { RuntimeFactory } from "./runtime/runtime-factory.js";
 import type { SwarmToolHost } from "./swarm-tool-host.js";
-import { inferProviderFromModelId } from "./model-presets.js";
 import type {
   AgentContextUsage,
   AgentDescriptor,
@@ -27,20 +25,14 @@ import type {
 import {
   areContextUsagesEqual,
   compareRuntimeExtensionSnapshots,
-  createDeferred,
-  extractRuntimeMessageText,
   extractVersionedToolPath,
   formatToolExecutionPayload,
   isVersionedWriteToolName,
   normalizeContextUsage,
-  normalizeOptionalAgentId,
-  normalizeThinkingLevelForProvider,
   previewForLog,
   readPositiveIntegerDetail,
   readStringDetail,
   safeJson,
-  shouldRetrySpecialistSpawnWithFallback,
-  toDisplayToolName,
   trimToMaxChars,
   trimToMaxCharsFromEnd,
   withManagerTimeout
@@ -62,19 +54,6 @@ interface ResolvedSpecialistDefinitionLike {
   specialistId: string;
   fallbackModelId?: string;
   fallbackReasoningLevel?: SwarmReasoningLevel;
-}
-
-interface BufferedSpecialistFallbackStatus {
-  status: AgentStatus;
-  pendingCount: number;
-  contextUsage?: AgentContextUsage;
-}
-
-interface SpecialistFallbackHandoffState {
-  suppressedRuntimeToken: number;
-  startedAt: string;
-  bufferedStatus?: BufferedSpecialistFallbackStatus;
-  receivedAgentEnd?: boolean;
 }
 
 export interface WorkerWatchdogStateLike {
@@ -616,7 +595,7 @@ export class SwarmRuntimeController {
           role: extractRole(effectiveEvent.message),
           textPreview: previewForLog(extractMessageText(effectiveEvent.message) ?? "")
         });
-        return;
+        break;
 
       case "message_update":
       case "tool_execution_update":
@@ -624,7 +603,7 @@ export class SwarmRuntimeController {
       case "auto_compaction_end":
       case "auto_retry_start":
       case "auto_retry_end":
-        return;
+        break;
     }
   }
 
@@ -967,10 +946,10 @@ export class SwarmRuntimeController {
       case "auto_retry_start":
       case "auto_retry_end":
         this.recordWorkerStallProgress(agentId);
-        return;
+        break;
 
       default:
-        return;
+        break;
     }
   }
 

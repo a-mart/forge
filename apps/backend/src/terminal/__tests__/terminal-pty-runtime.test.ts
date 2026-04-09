@@ -32,9 +32,9 @@ function createFakeNodePtyModule() {
   const kills: Array<string | undefined> = []
   const spawn = vi.fn(
     (
-      shell: string,
-      args: string[],
-      options: {
+      _shell: string,
+      _args: string[],
+      _options: {
         cols: number
         rows: number
         cwd: string

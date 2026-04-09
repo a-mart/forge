@@ -8,20 +8,20 @@ import type {
 
 const TELEGRAM_API_BASE_URL = "https://api.telegram.org";
 
-export interface TelegramAuthResult {
+interface TelegramAuthResult {
   botId: string;
   botUsername?: string;
   botDisplayName?: string;
 }
 
-export interface TelegramGetUpdatesInput {
+interface TelegramGetUpdatesInput {
   offset?: number;
   timeoutSeconds?: number;
   limit?: number;
   signal?: AbortSignal;
 }
 
-export interface TelegramSendMessageInput {
+interface TelegramSendMessageInput {
   chatId: string;
   text: string;
   parseMode?: "HTML";
@@ -30,14 +30,14 @@ export interface TelegramSendMessageInput {
   messageThreadId?: number;
 }
 
-export interface TelegramForumTopic {
+interface TelegramForumTopic {
   message_thread_id: number;
   name: string;
   icon_color: number;
   icon_custom_emoji_id?: string;
 }
 
-export interface TelegramDownloadedFile {
+interface TelegramDownloadedFile {
   buffer: Buffer;
   mimeType: string;
   fileName: string;

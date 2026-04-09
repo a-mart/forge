@@ -387,10 +387,6 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
   }
 }
 
-export async function stopServer(): Promise<void> {
-  await activeServer?.stop();
-}
-
 class BackendServer implements StartedServer {
   readonly host: string;
   port: number;

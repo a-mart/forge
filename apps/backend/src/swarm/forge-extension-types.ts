@@ -167,11 +167,6 @@ export function createForgeBindingToken(runtimeToken: number): string {
   return `forge-runtime-${runtimeToken}`;
 }
 
-export interface ForgeRuntimeBindingSnapshot {
-  readonly agentId: string;
-  readonly snapshot: ForgeRuntimeExtensionSnapshot;
-}
-
 export interface ForgeDiagnosticErrorRecord extends ForgeExtensionDiagnosticError {
   readonly scope?: ForgeScope;
 }

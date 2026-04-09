@@ -1,0 +1,100 @@
+{
+  "$schema": "./node_modules/.pnpm/knip@6.3.1/node_modules/knip/schema.json",
+  "paths": {
+    "@forge/protocol": [
+      "packages/protocol/src/index.ts"
+    ]
+  },
+  "typescript": true,
+  "vitest": true,
+  "vite": true,
+  "tsx": true,
+  "ignoreExportsUsedInFile": true,
+  "ignoreIssues": {
+    "apps/ui/src/routeTree.gen.ts": [
+      "exports",
+      "types"
+    ],
+    "apps/ui/src/routes/**": [
+      "files"
+    ],
+    "apps/ui/src/routes/-*.test.ts": [
+      "files"
+    ],
+    "packages/protocol/src/**/*.ts": [
+      "files"
+    ],
+    "apps/ui/src/components/ui/**/*.tsx": [
+      "exports",
+      "types"
+    ]
+  },
+  "workspaces": {
+    ".": {
+      "entry": [
+        "scripts/**/*.mjs"
+      ],
+      "project": [
+        "scripts/**/*.mjs"
+      ]
+    },
+    "apps/backend": {
+      "entry": [
+        "src/swarm/skills/builtins/**/*.{js,mjs}",
+        "src/**/*.test.ts",
+        "src/**/__tests__/**/*.ts"
+      ],
+      "project": [
+        "src/**/*.{ts,tsx,js,mjs}"
+      ],
+      "ignoreFiles": [
+        "src/ws/routes/{agent-routes,conversation-routes,cortex-auto-review-routes,extension-routes,file-browser-service,health-routes,http-route,integration-routes,manager-routes,mobile-routes,model-config-routes,playwright-live-routes,playwright-routes,route-utils,scheduler-routes,slash-command-routes,transcription-routes}.ts",
+        "src/swarm/scripts/{feedback-global-summary,feedback-review-queue,feedback-session-digest,feedback-target-context}.ts",
+        "src/stats/import-codexbar-provider-usage-history.ts",
+        "src/swarm/memory-paths.ts"
+      ],
+      "ignoreDependencies": [
+        "@anthropic-ai/claude-agent-sdk"
+      ]
+    },
+    "apps/ui": {
+      "entry": [
+        "src/router.tsx",
+        "src/routeTree.gen.ts",
+        "src/**/*.test.ts",
+        "src/**/*.test.tsx",
+        "src/**/__tests__/**/*.ts"
+      ],
+      "project": [
+        "src/**/*.{ts,tsx}"
+      ],
+      "ignoreDependencies": [
+        "mermaid",
+        "tailwindcss"
+      ]
+    },
+    "apps/electron": {
+      "entry": [
+        "src/main.ts",
+        "src/preload.ts",
+        "src/auto-updater.ts",
+        "scripts/**/*.mjs",
+        "src/**/*.test.ts",
+        "src/**/__tests__/**/*.ts"
+      ],
+      "project": [
+        "src/**/*.{ts,tsx}",
+        "scripts/**/*.mjs"
+      ]
+    },
+    "packages/protocol": {
+      "entry": [
+        "src/**/*.test.ts",
+        "src/**/__tests__/**/*.ts"
+      ],
+      "project": [
+        "src/**/*.ts"
+      ]
+    }
+  }
+}

@@ -12,11 +12,9 @@ const BACKEND_PACKAGE_DIR = join(SWARM_DIR, "..", "..");
 
 export type PromptCategory = "archetype" | "operational";
 
-export type PromptSourceLayer = "profile" | "repo" | "builtin";
+type PromptSourceLayer = "profile" | "repo" | "builtin";
 
-export type { PromptEntry } from "../prompt-contracts.js";
-
-export interface PromptRegistryOptions {
+interface PromptRegistryOptions {
   dataDir: string;
   repoDir: string;
   builtinArchetypesDir: string;
@@ -28,7 +26,7 @@ export interface PromptRegistry extends PromptRegistryContract {
   invalidate(category?: PromptCategory, promptId?: string): void;
 }
 
-export interface PromptResolver {
+interface PromptResolver {
   readonly layer: PromptSourceLayer;
 
   resolve(

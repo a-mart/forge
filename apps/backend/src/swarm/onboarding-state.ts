@@ -7,8 +7,8 @@ import { isEnoentError } from "../utils/fs-errors.js";
 import { getCommonKnowledgePath, getSharedKnowledgeDir } from "./data-paths.js";
 
 export const ONBOARDING_STATE_FILE_NAME = "onboarding-state.json";
-export const ONBOARDING_COMMON_BLOCK_START = "<!-- BEGIN MANAGED:ONBOARDING -->";
-export const ONBOARDING_COMMON_BLOCK_END = "<!-- END MANAGED:ONBOARDING -->";
+const ONBOARDING_COMMON_BLOCK_START = "<!-- BEGIN MANAGED:ONBOARDING -->";
+const ONBOARDING_COMMON_BLOCK_END = "<!-- END MANAGED:ONBOARDING -->";
 
 export interface SaveOnboardingPreferencesInput {
   preferredName: string;

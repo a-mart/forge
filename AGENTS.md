@@ -253,6 +253,8 @@ Production ports:
 
 ```bash
 pnpm build                                                # Build all packages
+pnpm lint                                                 # Run repo-wide ESLint
+pnpm exec knip                                            # Detect unused code, exports, and dependency issues
 pnpm test                                                 # Run all tests (backend + UI, including backend test files)
 cd apps/backend && pnpm exec tsc -p tsconfig.build.json --noEmit   # Backend production typecheck only (tests excluded by tsconfig.build.json)
 cd apps/ui && pnpm exec tsc --noEmit                               # UI typecheck
@@ -265,7 +267,7 @@ cd apps/backend && pnpm exec vitest run src/swarm/__tests__/some-test.ts
 cd apps/ui && pnpm exec vitest run src/components/chat/SomeComponent.test.ts
 ```
 
-**Before finishing any task, run `pnpm test` plus both typecheck commands above and fix all reported errors.**
+**Before finishing any task, run `pnpm lint`, `pnpm exec knip`, `pnpm test`, plus both typecheck commands above and fix all reported errors.**
 
 ## Environment Variables
 
@@ -325,6 +327,8 @@ Generated components go to `apps/ui/src/components/ui/`. Check that directory fo
 3. **Validate changes** with smoke checks: manager creation, chat send/stop, settings updates.
 4. **Run validation** before finishing any task:
    ```bash
+   pnpm lint
+   pnpm exec knip
    pnpm test
    cd apps/backend && pnpm exec tsc -p tsconfig.build.json --noEmit   # production-only backend typecheck; tests are covered by pnpm test
    cd apps/ui && pnpm exec tsc --noEmit

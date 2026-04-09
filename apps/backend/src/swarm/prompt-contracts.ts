@@ -1,7 +1,6 @@
 import type {
   PromptCategory,
   PromptPreviewResponse,
-  PromptPreviewSection,
   PromptSourceLayer,
 } from "@forge/protocol";
 

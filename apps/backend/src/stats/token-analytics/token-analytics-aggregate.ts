@@ -456,7 +456,7 @@ export function toWorkerRunSummary(
   };
 }
 
-export function buildSpecialistMetadataIndex(
+function buildSpecialistMetadataIndex(
   scanResult: TokenAnalyticsScanResult,
   scopedProfileId: string | null
 ): Map<string, SpecialistDisplayMeta & { hasProfileVariants?: boolean }> {
@@ -496,7 +496,7 @@ export function buildSpecialistMetadataIndex(
   return result;
 }
 
-export function resolveSpecialistDisplayMeta(
+function resolveSpecialistDisplayMeta(
   scanResult: TokenAnalyticsScanResult,
   profileId: string,
   specialistId: string,

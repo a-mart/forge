@@ -1,6 +1,6 @@
 export type ThemePreference = 'light' | 'dark' | 'auto'
 
-export const THEME_STORAGE_KEY = 'swarm-theme'
+const THEME_STORAGE_KEY = 'swarm-theme'
 
 const DARK_CLASS_NAME = 'dark'
 const SYSTEM_THEME_MEDIA_QUERY = '(prefers-color-scheme: dark)'
@@ -34,7 +34,7 @@ export const THEME_INIT_SCRIPT = `(() => {
   }
 })();`
 
-export function isThemePreference(value: unknown): value is ThemePreference {
+function isThemePreference(value: unknown): value is ThemePreference {
   return value === 'light' || value === 'dark' || value === 'auto'
 }
 

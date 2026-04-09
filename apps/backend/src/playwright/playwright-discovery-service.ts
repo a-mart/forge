@@ -446,7 +446,7 @@ export class PlaywrightDiscoveryService extends EventEmitter {
   }
 
   private async runScan(
-    reason: string,
+    _reason: string,
     eventType: 'playwright_discovery_snapshot' | 'playwright_discovery_updated',
   ): Promise<void> {
     const previousSnapshot = this.currentSnapshot

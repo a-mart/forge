@@ -25,7 +25,7 @@ export type {
   SettingsEnvVariable,
 }
 
-export type SettingsAuthOAuthFlowStatus =
+type SettingsAuthOAuthFlowStatus =
   | 'idle'
   | 'starting'
   | 'waiting_for_auth'

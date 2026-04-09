@@ -1,8 +1,8 @@
 import type { PendingAttachment } from '@/lib/file-attachments'
 
-export const DRAFTS_STORAGE_KEY = 'forge-chat-drafts'
-export const FORMAT_MODE_STORAGE_KEY = 'forge-chat-format-mode'
-export const ATTACHMENT_DRAFTS_STORAGE_KEY = 'forge-chat-attachment-drafts'
+const DRAFTS_STORAGE_KEY = 'forge-chat-drafts'
+const FORMAT_MODE_STORAGE_KEY = 'forge-chat-format-mode'
+const ATTACHMENT_DRAFTS_STORAGE_KEY = 'forge-chat-attachment-drafts'
 
 /** Max serialized size (bytes) we'll commit to localStorage for attachment drafts. */
 const ATTACHMENT_DRAFTS_MAX_BYTES = 4 * 1024 * 1024

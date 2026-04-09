@@ -80,11 +80,11 @@ export class TerminalSettingsService {
   }
 }
 
-export function createDefaultPersistedTerminalSettings(): PersistedTerminalSettings {
+function createDefaultPersistedTerminalSettings(): PersistedTerminalSettings {
   return {};
 }
 
-export function buildEffectiveTerminalSettings(
+function buildEffectiveTerminalSettings(
   persisted: PersistedTerminalSettings,
   env: NodeJS.ProcessEnv = process.env,
 ): TerminalSettings {

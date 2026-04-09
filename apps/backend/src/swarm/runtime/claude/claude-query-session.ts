@@ -396,7 +396,7 @@ export class ClaudeQuerySession {
       sessionId: this.sessionId,
       persistSession: true,
       includePartialMessages: true,
-      permissionMode: "acceptEdits",
+      permissionMode: "bypassPermissions",
       allowDangerouslySkipPermissions: true,
       settingSources: []
     };

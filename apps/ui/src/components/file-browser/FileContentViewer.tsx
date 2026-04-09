@@ -81,7 +81,7 @@ function storeWordWrapPreference(value: boolean): void {
 /*  Public interface                                                    */
 /* ------------------------------------------------------------------ */
 
-export interface FileContentViewerProps {
+interface FileContentViewerProps {
   wsUrl: string
   agentId: string
   cwd: string
@@ -92,7 +92,7 @@ export interface FileContentViewerProps {
   onNavigateToDirectory: (dirPath: string) => void
 }
 
-export interface FileViewerInfo {
+interface FileViewerInfo {
   language: string | undefined
   languageDisplayName: string | undefined
   lineCount: number | null

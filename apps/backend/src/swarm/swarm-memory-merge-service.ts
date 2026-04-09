@@ -1,4 +1,4 @@
-import { appendFile, readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { AuthStorage } from "@mariozechner/pi-coding-agent";
 import type {
   SessionMemoryMergeAttemptStatus,

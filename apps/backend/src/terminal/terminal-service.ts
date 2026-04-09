@@ -12,7 +12,6 @@ import type {
   TerminalRenameRequest,
   TerminalResizeRequest,
   TerminalUpdatedEvent,
-  TerminalClosedEvent,
   TerminalWsClientControlMessage,
   TerminalWsServerControlMessage,
 } from "@forge/protocol";
@@ -24,27 +23,15 @@ import { TerminalServiceRuntimeController } from "./terminal-service-runtime.js"
 import {
   TerminalServiceError,
   type ActiveTerminalRuntime,
-  type TerminalExitEvent,
-  type TerminalOutputEvent,
   type TerminalRestoreData,
   type TerminalServiceContext,
-  type TerminalServiceEventMap,
   type TerminalServiceInitializeResult,
   type TerminalServiceOptions,
   type TerminalStateChangedEvent,
 } from "./terminal-service-types.js";
 import type { ResolvedTerminalSession } from "./terminal-session-resolver.js";
 
-export {
-  TerminalServiceError,
-  type TerminalExitEvent,
-  type TerminalOutputEvent,
-  type TerminalRestoreData,
-  type TerminalServiceEventMap,
-  type TerminalServiceInitializeResult,
-  type TerminalServiceOptions,
-  type TerminalStateChangedEvent,
-} from "./terminal-service-types.js";
+export { TerminalServiceError } from "./terminal-service-types.js";
 
 export class TerminalService extends EventEmitter {
   private readonly runtimeConfig;

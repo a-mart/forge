@@ -37,28 +37,28 @@ const DEFAULT_FILE_OPS: DataMigrationFileOps = {
   copyFile: (sourcePath, destinationPath, mode) => fs.copyFile(sourcePath, destinationPath, mode)
 };
 
-export interface DataMigrationConfig {
+interface DataMigrationConfig {
   dataDir: string;
   agentsStoreFile: string;
 }
 
-export interface DataMigrationLogger {
+interface DataMigrationLogger {
   debug?: (message: string, details?: unknown) => void;
   info?: (message: string, details?: unknown) => void;
   warn?: (message: string, details?: unknown) => void;
 }
 
-export interface DataMigrationResult {
+interface DataMigrationResult {
   migrated: boolean;
   updatedAgents: AgentDescriptor[];
 }
 
-export interface DataMigrationFileOps {
+interface DataMigrationFileOps {
   link: (existingPath: string, newPath: string) => Promise<void>;
   copyFile: (sourcePath: string, destinationPath: string, mode?: number) => Promise<void>;
 }
 
-export interface DataMigrationOptions {
+interface DataMigrationOptions {
   fileOps?: DataMigrationFileOps;
 }
 

@@ -1,4 +1,3 @@
-import { EventEmitter } from "node:events";
 import type {
   TerminalCloseReason,
   TerminalDescriptor,
@@ -64,28 +63,4 @@ export interface TerminalTransport {
   ): () => void;
   publish(event: TerminalTransportOutboundEvent): void;
   shutdown(): Promise<void>;
-}
-
-export class EventEmitterTerminalTransport
-  extends EventEmitter
-  implements TerminalTransport {
-  subscribe(
-    handler: (event: TerminalTransportInboundEvent) => Promise<void> | void,
-  ): () => void {
-    this.on("inbound", handler);
-    return () => this.off("inbound", handler);
-  }
-
-  publish(event: TerminalTransportOutboundEvent): void {
-    this.emit("outbound", event);
-    this.emit(event.type, event);
-  }
-
-  dispatch(event: TerminalTransportInboundEvent): void {
-    this.emit("inbound", event);
-  }
-
-  async shutdown(): Promise<void> {
-    this.removeAllListeners();
-  }
 }

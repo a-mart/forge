@@ -32,7 +32,7 @@ interface PlaywrightPreviewLeaseRecord {
   sessionSnapshot: PlaywrightDiscoveredSession
 }
 
-export class PlaywrightLivePreviewUnavailableError extends Error {
+class PlaywrightLivePreviewUnavailableError extends Error {
   readonly statusCode: number
 
   constructor(message = 'Playwright live preview service is unavailable') {

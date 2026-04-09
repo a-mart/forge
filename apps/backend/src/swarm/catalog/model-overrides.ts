@@ -1,7 +1,6 @@
 import type { ModelOverrideEntry, ModelOverridesFile } from "@forge/protocol";
 import { readJsonFileIfExists, writeJsonFileAtomic } from "../../utils/atomic-files.js";
 import { getSharedModelOverridesPath } from "../data-paths.js";
-import { isEnoentError } from "../../utils/fs-errors.js";
 
 const MODEL_OVERRIDES_VERSION = 1 as const;
 

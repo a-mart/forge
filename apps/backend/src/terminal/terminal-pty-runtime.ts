@@ -1,6 +1,6 @@
 import { accessSync, constants as fsConstants } from "node:fs";
 import { spawn as spawnProcess, spawnSync } from "node:child_process";
-import { basename, delimiter, isAbsolute, win32 } from "node:path";
+import { basename, isAbsolute, win32 } from "node:path";
 import { OutputBatcher } from "./output-batcher.js";
 
 export interface TerminalPtyExitEvent {

@@ -3,10 +3,8 @@ import { normalizeOptionalString } from "../claude-utils.js";
 import type { ModelChangeContinuityModel } from "./model-change-continuity.js";
 import type {
   AgentDescriptor,
-  AgentMessageEvent,
   ConversationEntryEvent,
   ConversationMessageAttachment,
-  ConversationMessageEvent
 } from "../types.js";
 
 const DEFAULT_RECOVERY_BUDGET_TOKENS = 768;

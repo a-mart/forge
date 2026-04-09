@@ -5,7 +5,6 @@ import type {
   TerminalCloseReason,
   TerminalCreateRequest,
   TerminalLifecycleState,
-  TerminalMeta,
   TerminalWsServerControlMessage,
 } from '@forge/protocol'
 import { afterEach, describe, expect, it, vi } from 'vitest'

@@ -4,7 +4,6 @@ import type {
   TerminalDeleteRequest,
   TerminalIssueTicketRequest,
   TerminalIssueTicketResponse,
-  TerminalListResponse,
   TerminalRenameRequest,
   TerminalRenameResponse,
   TerminalResizeRequest,
@@ -30,23 +29,6 @@ async function readApiError(response: Response): Promise<string> {
   }
 
   return `Request failed (${response.status})`
-}
-
-export async function listTerminals(
-  wsUrl: string,
-  sessionAgentId: string,
-): Promise<TerminalListResponse> {
-  const params = new URLSearchParams({ sessionAgentId })
-  const endpoint = resolveApiEndpoint(wsUrl, `/api/terminals?${params.toString()}`)
-  const response = await fetch(endpoint)
-  if (!response.ok) throw new Error(await readApiError(response))
-
-  const payload = (await response.json()) as Partial<TerminalListResponse>
-  if (!Array.isArray(payload.terminals)) {
-    throw new Error('Invalid terminal list response from backend.')
-  }
-
-  return { terminals: payload.terminals }
 }
 
 export async function createTerminal(

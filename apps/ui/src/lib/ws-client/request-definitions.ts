@@ -11,13 +11,13 @@ import {
 } from '@forge/protocol'
 
 export const RECONNECTING_SOCKET_ERROR = 'WebSocket is disconnected. Reconnecting...'
-export const DISCONNECTED_SOCKET_ERROR = 'WebSocket is disconnected.'
+const DISCONNECTED_SOCKET_ERROR = 'WebSocket is disconnected.'
 
 export function isSocketOpen(socket: WebSocket | null): socket is WebSocket {
   return Boolean(socket && socket.readyState === WebSocket.OPEN)
 }
 
-export function requireTrimmedValue(value: string, errorMessage: string): string {
+function requireTrimmedValue(value: string, errorMessage: string): string {
   const trimmed = value.trim()
   if (!trimmed) {
     throw new Error(errorMessage)

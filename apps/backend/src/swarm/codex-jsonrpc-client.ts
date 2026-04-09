@@ -14,18 +14,18 @@ export interface JsonRpcNotificationMessage {
   params?: unknown;
 }
 
-export interface JsonRpcResponseMessage {
+interface JsonRpcResponseMessage {
   id: JsonRpcRequestId;
   result: unknown;
 }
 
-export interface JsonRpcErrorPayload {
+interface JsonRpcErrorPayload {
   code: number;
   message: string;
   data?: unknown;
 }
 
-export interface JsonRpcErrorMessage {
+interface JsonRpcErrorMessage {
   id: JsonRpcRequestId;
   error: JsonRpcErrorPayload;
 }
@@ -36,7 +36,7 @@ interface PendingRequest {
   timeout: ReturnType<typeof setTimeout> | undefined;
 }
 
-export interface CodexJsonRpcClientOptions {
+interface CodexJsonRpcClientOptions {
   command: string;
   args: string[];
   spawnOptions?: Omit<SpawnOptionsWithoutStdio, "stdio">;

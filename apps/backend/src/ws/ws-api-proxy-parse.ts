@@ -114,7 +114,7 @@ export function parseApiProxyTerminalIssueTicketBody(value: unknown): TerminalIs
   };
 }
 
-export function requireApiProxyRecord(input: unknown, message: string): Record<string, unknown> {
+function requireApiProxyRecord(input: unknown, message: string): Record<string, unknown> {
   if (!isRecord(input)) {
     throw new Error(message);
   }
@@ -122,7 +122,7 @@ export function requireApiProxyRecord(input: unknown, message: string): Record<s
   return input;
 }
 
-export function requireApiProxyBodyString(record: Record<string, unknown>, field: string): string {
+function requireApiProxyBodyString(record: Record<string, unknown>, field: string): string {
   const value = optionalApiProxyBodyString(record, field);
   if (!value) {
     throw new Error(`${field} must be a non-empty string.`);
@@ -131,7 +131,7 @@ export function requireApiProxyBodyString(record: Record<string, unknown>, field
   return value;
 }
 
-export function optionalApiProxyBodyString(record: Record<string, unknown>, field: string): string | undefined {
+function optionalApiProxyBodyString(record: Record<string, unknown>, field: string): string | undefined {
   const value = record[field];
   if (value === undefined || value === null) {
     return undefined;
@@ -145,7 +145,7 @@ export function optionalApiProxyBodyString(record: Record<string, unknown>, fiel
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-export function optionalApiProxyBodyInteger(record: Record<string, unknown>, field: string): number | undefined {
+function optionalApiProxyBodyInteger(record: Record<string, unknown>, field: string): number | undefined {
   const value = record[field];
   if (value === undefined || value === null) {
     return undefined;
@@ -158,7 +158,7 @@ export function optionalApiProxyBodyInteger(record: Record<string, unknown>, fie
   return value as number;
 }
 
-export function optionalApiProxyTerminalName(record: Record<string, unknown>): string | undefined {
+function optionalApiProxyTerminalName(record: Record<string, unknown>): string | undefined {
   return optionalApiProxyBodyString(record, "title") ?? optionalApiProxyBodyString(record, "name");
 }
 

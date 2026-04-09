@@ -1,5 +1,4 @@
 import type {
-  ConversationAttachment,
   ConversationBinaryAttachment,
   ConversationImageAttachment,
   ConversationTextAttachment,
@@ -92,7 +91,7 @@ const TEXT_EXTENSIONS = new Set([
   '.log',
 ])
 
-export function isImageFile(file: File): boolean {
+function isImageFile(file: File): boolean {
   return file.type.startsWith('image/')
 }
 
@@ -105,17 +104,8 @@ export function isPendingTextAttachment(attachment: PendingAttachment): attachme
   return (attachment as { type?: string }).type === 'text'
 }
 
-export function isPendingBinaryAttachment(attachment: PendingAttachment): attachment is PendingBinaryAttachment {
-  return (attachment as { type?: string }).type === 'binary'
-}
-
 export function isPendingTerminalAttachment(attachment: PendingAttachment): attachment is PendingTerminalAttachment {
   return (attachment as { type?: string }).type === 'terminal'
-}
-
-export function isImageAttachment(attachment: ConversationAttachment): attachment is ConversationImageAttachment {
-  const maybeType = (attachment as { type?: string }).type
-  return maybeType !== 'text' && maybeType !== 'binary'
 }
 
 export async function fileToPendingAttachment(file: File): Promise<PendingAttachment | null> {

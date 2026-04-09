@@ -14,14 +14,14 @@ import {
 import type { AgentDescriptor } from "../types.js";
 import { isEnoentError } from "../../utils/fs-errors.js";
 
-export interface RebuildSessionMetaOptions {
+interface RebuildSessionMetaOptions {
   dataDir: string;
   agentsStoreFile: string;
   descriptors?: AgentDescriptor[];
   now?: () => string;
 }
 
-export interface SessionMetaWorkerUpdate {
+interface SessionMetaWorkerUpdate {
   id: string;
   model?: string | null;
   specialistId?: string | null;
@@ -36,7 +36,7 @@ export interface SessionMetaWorkerUpdate {
   systemPrompt?: string | null;
 }
 
-export interface SessionMetaStatsUpdateOptions {
+interface SessionMetaStatsUpdateOptions {
   sessionFilePath?: string;
   memoryFilePath?: string;
   now?: () => string;
@@ -98,7 +98,7 @@ export async function incrementSessionCompactionCount(
 
 const BACKFILL_SENTINEL = ".compaction-count-backfill-v2-done";
 
-export interface BackfillResult {
+interface BackfillResult {
   /** Map of sessionAgentId → corrected compactionCount */
   counts: Map<string, number>;
 }

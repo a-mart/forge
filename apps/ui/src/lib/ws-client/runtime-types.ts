@@ -1,5 +1,5 @@
 import type { AgentDescriptor, ConversationEntry } from '@forge/protocol'
-import type { AgentActivityEntry, ConversationHistoryEntry } from '../ws-state'
+import type { AgentActivityEntry } from '../ws-state'
 import type { WsRequestErrorHint, WsRequestType } from './types'
 
 export const INITIAL_CONNECT_DELAY_MS = 50
@@ -77,12 +77,4 @@ export function isWorkerAgent(agent: AgentDescriptor): boolean {
 
 export function isAgentActivityEntry(entry: ConversationEntry): entry is AgentActivityEntry {
   return entry.type === 'agent_message' || entry.type === 'agent_tool_call'
-}
-
-export function isConversationHistoryEntry(entry: ConversationEntry): entry is ConversationHistoryEntry {
-  return (
-    entry.type === 'conversation_message' ||
-    entry.type === 'conversation_log' ||
-    entry.type === 'choice_request'
-  )
 }

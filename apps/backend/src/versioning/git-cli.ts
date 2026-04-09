@@ -4,17 +4,17 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 const DEFAULT_MAX_BUFFER_BYTES = 10 * 1024 * 1024;
 
-export interface GitCliResult {
+interface GitCliResult {
   stdout: string;
   stderr: string;
   exitCode: number;
 }
 
-export interface GitCliRunOptions {
+interface GitCliRunOptions {
   allowFailure?: boolean;
 }
 
-export interface GitCliOptions {
+interface GitCliOptions {
   cwd: string;
   gitBinary?: string;
   maxBufferBytes?: number;

@@ -8861,7 +8861,7 @@ describe('SwarmManager', () => {
     {
       label: 'profile model changes',
       expectedReason: 'model_change' as const,
-      invoke: async (manager: TestSwarmManager, _rootSession: AgentDescriptor, _sessionAgent: AgentDescriptor, config: SwarmConfig) => {
+      invoke: async (manager: TestSwarmManager, _rootSession: AgentDescriptor, _sessionAgent: AgentDescriptor, _config: SwarmConfig) => {
         await manager.updateManagerModel('manager', 'pi-5.4')
       },
     },

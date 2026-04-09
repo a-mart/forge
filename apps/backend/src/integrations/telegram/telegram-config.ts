@@ -56,7 +56,7 @@ function getLegacySharedTelegramConfigPath(dataDir: string): string {
   return getLegacySharedIntegrationConfigPath(dataDir, TELEGRAM_CONFIG_FILE_NAME);
 }
 
-export function buildTelegramProfileId(managerId: string): string {
+function buildTelegramProfileId(managerId: string): string {
   return buildIntegrationProfileId("telegram", managerId);
 }
 

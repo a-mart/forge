@@ -333,7 +333,7 @@ export class ConversationProjector {
           text: safeJson(event.result),
           isError: event.isError
         });
-        return;
+        
 
       case "agent_start":
       case "agent_end":
@@ -344,7 +344,7 @@ export class ConversationProjector {
       case "auto_compaction_end":
       case "auto_retry_start":
       case "auto_retry_end":
-        return;
+        
     }
   }
 
@@ -1073,7 +1073,7 @@ export class ConversationProjector {
           text: safeJson(event.result),
           isError: event.isError
         });
-        return;
+        
 
       case "agent_start":
       case "agent_end":
@@ -1086,7 +1086,7 @@ export class ConversationProjector {
       case "auto_compaction_end":
       case "auto_retry_start":
       case "auto_retry_end":
-        return;
+        
     }
   }
 }

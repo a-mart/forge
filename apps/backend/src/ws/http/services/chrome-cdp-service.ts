@@ -37,7 +37,7 @@ export async function resolveChromeCdpEndpoint(): Promise<ChromeCdpEndpoint> {
   };
 }
 
-export async function findChromeDevToolsActivePortFile(): Promise<string> {
+async function findChromeDevToolsActivePortFile(): Promise<string> {
   const candidates = buildPortFileCandidates();
 
   for (const candidate of candidates) {
@@ -51,7 +51,7 @@ export async function findChromeDevToolsActivePortFile(): Promise<string> {
   );
 }
 
-export async function parseChromeDevToolsActivePort(
+async function parseChromeDevToolsActivePort(
   filePath: string
 ): Promise<{ port: number; wsPath: string }> {
   const raw = await readFile(filePath, "utf8");
@@ -135,7 +135,7 @@ export async function queryChromeBrowserContexts(options?: {
   };
 }
 
-export async function sendChromeCdpCommand<TResult>(
+async function sendChromeCdpCommand<TResult>(
   method: string,
   params?: Record<string, unknown>,
   options?: {

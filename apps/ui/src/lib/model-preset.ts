@@ -43,68 +43,6 @@ export function inferModelPreset(agent: AgentDescriptor): ManagerModelPreset | u
   return inferCatalogFamily(provider, modelId) as ManagerModelPreset | undefined
 }
 
-export function getModelPresetInfoMap(models: readonly ModelPresetInfo[]): Map<string, ModelPresetInfo> {
-  const presetInfoMap = new Map<string, ModelPresetInfo>()
-
-  for (const info of models) {
-    presetInfoMap.set(info.presetId, info)
-  }
-
-  return presetInfoMap
-}
-
-export function getModelPresetInfo(
-  presetId: string,
-  modelPresetInfoMap: ReadonlyMap<string, ModelPresetInfo>,
-): ModelPresetInfo | undefined {
-  if (!MANAGER_MODEL_PRESETS.includes(presetId as ManagerModelPreset)) {
-    return undefined
-  }
-
-  return modelPresetInfoMap.get(presetId)
-}
-
-export function getDefaultReasoningLevelForModelPreset(
-  presetId: string,
-  modelPresetInfoMap: ReadonlyMap<string, ModelPresetInfo>,
-): ManagerReasoningLevel {
-  return getModelPresetInfo(presetId, modelPresetInfoMap)?.defaultReasoningLevel ?? 'high'
-}
-
-export function getSupportedReasoningLevelsForModelPreset(
-  presetId: string,
-  modelPresetInfoMap: ReadonlyMap<string, ModelPresetInfo>,
-): readonly ManagerReasoningLevel[] {
-  return getModelPresetInfo(presetId, modelPresetInfoMap)?.supportedReasoningLevels ?? MANAGER_REASONING_LEVELS
-}
-
-export function normalizeReasoningLevelForModelPreset(
-  presetId: string,
-  reasoningLevel: string | undefined,
-  modelPresetInfoMap: ReadonlyMap<string, ModelPresetInfo>,
-): ManagerReasoningLevel {
-  const normalizedReasoningLevel = reasoningLevel?.trim()
-  const supportedReasoningLevels = getSupportedReasoningLevelsForModelPreset(presetId, modelPresetInfoMap)
-
-  if (normalizedReasoningLevel && supportedReasoningLevels.includes(normalizedReasoningLevel as ManagerReasoningLevel)) {
-    return normalizedReasoningLevel as ManagerReasoningLevel
-  }
-
-  return getDefaultReasoningLevelForModelPreset(presetId, modelPresetInfoMap)
-}
-
-export function formatModelPresetDisplay(
-  presetId: string,
-  modelPresetInfoMap: ReadonlyMap<string, ModelPresetInfo>,
-): string {
-  const info = modelPresetInfoMap.get(presetId)
-  if (!info) {
-    return presetId
-  }
-
-  return `${info.displayName} (${info.modelId})`
-}
-
 export async function fetchModelPresets(
   wsUrl: string | undefined,
   options?: { allowDynamicPresetIds?: boolean },

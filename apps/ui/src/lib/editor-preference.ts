@@ -4,7 +4,7 @@
 
 export type EditorPreference = 'vscode-insiders' | 'vscode' | 'cursor'
 
-export const EDITOR_STORAGE_KEY = 'forge-preferred-editor'
+const EDITOR_STORAGE_KEY = 'forge-preferred-editor'
 
 const VALID_EDITORS: EditorPreference[] = ['vscode-insiders', 'vscode', 'cursor']
 
@@ -20,7 +20,7 @@ export const EDITOR_URL_SCHEMES: Record<EditorPreference, string> = {
   cursor: 'cursor',
 }
 
-export function isEditorPreference(value: unknown): value is EditorPreference {
+function isEditorPreference(value: unknown): value is EditorPreference {
   return typeof value === 'string' && VALID_EDITORS.includes(value as EditorPreference)
 }
 

@@ -1,7 +1,7 @@
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
+import { describe, it, expect, afterEach, beforeEach } from "vitest";
 import { AuthStorage, type AuthCredential } from "@mariozechner/pi-coding-agent";
 import { CredentialPoolService, type CredentialPoolServiceDeps } from "../credential-pool.js";
 import { classifyRuntimeCapacityError } from "../runtime-utils.js";

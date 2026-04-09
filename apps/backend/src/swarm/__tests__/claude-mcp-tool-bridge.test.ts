@@ -1,4 +1,3 @@
-import { Type } from "@sinclair/typebox";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { getSpawnPresetFamilies } from "@forge/protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";

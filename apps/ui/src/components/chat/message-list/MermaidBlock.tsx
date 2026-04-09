@@ -308,7 +308,7 @@ const MermaidPreviewEmbed = forwardRef<
 
           pendingSvgRequestsRef.current.delete(message.requestId)
           resolvePending(typeof message.svg === 'string' ? message.svg : null)
-          return
+          
         }
       }
     },

@@ -60,7 +60,7 @@ export function cloneUsageTotals(usage: TokenUsageTotals): TokenUsageTotals {
   };
 }
 
-export function createEmptyCostTotals(): TokenCostTotals {
+function createEmptyCostTotals(): TokenCostTotals {
   return {
     input: 0,
     output: 0,
@@ -116,7 +116,7 @@ export function buildCostSummary(
   };
 }
 
-export function computeCostCoverage(
+function computeCostCoverage(
   costCoveredEventCount: number,
   totalEventCount: number
 ): TokenAnalyticsCostCoverage {

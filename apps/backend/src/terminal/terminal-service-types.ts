@@ -1,13 +1,9 @@
 import type {
   TerminalCloseReason,
-  TerminalCreateRequest,
-  TerminalCreatedEvent,
   TerminalDescriptor,
   TerminalIssueTicketResponse,
   TerminalLifecycleState,
   TerminalMeta,
-  TerminalUpdatedEvent,
-  TerminalClosedEvent,
 } from "@forge/protocol";
 import type { TerminalRuntimeConfig } from "./terminal-config.js";
 import type { TerminalPersistence } from "./terminal-persistence.js";
@@ -82,15 +78,6 @@ export interface ActiveTerminalRuntime {
   attachedClients: Set<AttachedClient>;
   journalBytes: number;
 }
-
-export type TerminalServiceEventMap = {
-  terminal_created: (event: TerminalCreatedEvent) => void;
-  terminal_updated: (event: TerminalUpdatedEvent) => void;
-  terminal_closed: (event: TerminalClosedEvent) => void;
-  terminal_state_changed: (event: TerminalStateChangedEvent) => void;
-  terminal_output: (event: TerminalOutputEvent) => void;
-  terminal_exit: (event: TerminalExitEvent) => void;
-};
 
 export type TerminalServiceErrorCode =
   | "SESSION_NOT_FOUND"

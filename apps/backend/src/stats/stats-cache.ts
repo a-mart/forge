@@ -55,7 +55,7 @@ export async function loadPersistedStatsCache(
     }
   } catch (error) {
     if (isEnoentError(error)) {
-      return;
+      
     }
   }
 }

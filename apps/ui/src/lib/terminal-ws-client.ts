@@ -293,7 +293,7 @@ export class TerminalWsClient {
         if (!this.hasReachedReady) {
           this.rejectPendingConnect(new Error(message.message))
         }
-        return
+        
     }
   }
 

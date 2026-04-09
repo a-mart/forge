@@ -171,10 +171,10 @@ function assignSkillEnvField(target: Partial<ParsedSkillEnvDeclaration>, key: st
 
     case "helpUrl":
       target.helpUrl = parseYamlStringValue(value);
-      return;
+      
 
     default:
-      return;
+      
   }
 }
 

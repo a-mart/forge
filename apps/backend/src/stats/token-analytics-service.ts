@@ -37,11 +37,7 @@ import {
   TokenAnalyticsError,
 } from "./token-analytics/token-analytics-query.js";
 import { deriveFallbackWorkerRecord, scanTokenAnalyticsProfiles } from "./token-analytics/token-analytics-scan.js";
-import type {
-  ResolvedQueryWindow,
-  ScanCacheEntry,
-  TokenAnalyticsScanResult,
-} from "./token-analytics/token-analytics-types.js";
+import type { ScanCacheEntry, TokenAnalyticsScanResult } from "./token-analytics/token-analytics-types.js";
 
 export { TokenAnalyticsError } from "./token-analytics/token-analytics-query.js";
 

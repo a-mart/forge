@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { open } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
-import { getModel, type Api, type AssistantMessage, type Model } from "@mariozechner/pi-ai";
+import { getModel, type Api, type Model } from "@mariozechner/pi-ai";
 import { ModelRegistry } from "@mariozechner/pi-coding-agent";
 import type {
   AgentRuntimeExtensionSnapshot,
@@ -346,7 +346,7 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export function isNonEmptyString(value: unknown): value is string {
+function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
 
@@ -1121,7 +1121,7 @@ export function normalizeOptionalAttachmentPath(path: string | undefined): strin
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-export function resolveAttachmentFileRef(path: string | undefined, uploadsDir: string): string | undefined {
+function resolveAttachmentFileRef(path: string | undefined, uploadsDir: string): string | undefined {
   const normalizedPath = normalizeOptionalAttachmentPath(path);
   if (!normalizedPath) {
     return undefined;
@@ -1142,20 +1142,6 @@ export function extractRuntimeMessageText(message: string | RuntimeUserMessage):
   }
 
   return message.text;
-}
-
-export function extractAssistantMessageText(message: AssistantMessage): string {
-  return message.content
-    .filter((part): part is Extract<AssistantMessage["content"][number], { type: "text" }> => part.type === "text")
-    .map((part) => part.text)
-    .join("")
-    .trim();
-}
-
-export function stripOuterCodeFence(content: string): string {
-  const trimmed = content.trim();
-  const fencedMatch = trimmed.match(/^```(?:[a-zA-Z0-9_-]+)?\s*\n([\s\S]*?)\n?```$/);
-  return fencedMatch ? fencedMatch[1].trim() : trimmed;
 }
 
 export function formatInboundUserMessageForManager(text: string, sourceContext: MessageSourceContext): string {

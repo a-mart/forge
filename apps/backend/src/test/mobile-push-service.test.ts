@@ -254,15 +254,24 @@ describe('MobilePushService', () => {
     await service.stop()
 
     const calls = sendMock.mock.calls as unknown as Array<Array<unknown>>
-    const workerPayload = (calls[0]?.[0] as Record<string, unknown> | undefined) ?? {}
-    const managerPayload = (calls[1]?.[0] as Record<string, unknown> | undefined) ?? {}
+    const payloads = calls.map((call) => ((call[0] as Record<string, unknown> | undefined) ?? {}))
+    const workerPayload = payloads.find((payload) => {
+      const data = payload.data as Record<string, unknown> | undefined
+      return data?.type === 'agent_status' && data?.agentId === 'worker-1'
+    })
+    const managerPayload = payloads.find((payload) => {
+      const data = payload.data as Record<string, unknown> | undefined
+      return data?.type === 'error' && data?.agentId === 'errored-manager'
+    })
 
-    expect(workerPayload.data).toMatchObject({
+    expect(workerPayload).toBeDefined()
+    expect(workerPayload?.data).toMatchObject({
       type: 'agent_status',
       agentId: 'worker-1',
       sessionAgentId: 'manager',
     })
-    expect(managerPayload.data).toMatchObject({
+    expect(managerPayload).toBeDefined()
+    expect(managerPayload?.data).toMatchObject({
       type: 'error',
       agentId: 'errored-manager',
       sessionAgentId: 'errored-manager',

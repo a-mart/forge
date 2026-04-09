@@ -7,15 +7,11 @@
  *
  * Canonical type definitions for PromptCategory, PromptSourceLayer, and
  * PromptVariableDeclaration live in `@forge/protocol` (shared-types).
- * We re-export them here for convenience.
  */
 
 import type { PromptCategory, PromptSourceLayer, PromptVariableDeclaration } from "@forge/protocol";
 
-// Re-export protocol types so consumers can import from either location.
-export type { PromptCategory, PromptSourceLayer, PromptVariableDeclaration };
-
-export interface PromptMetadataEntry {
+interface PromptMetadataEntry {
   category: PromptCategory;
   promptId: string;
   displayName: string;

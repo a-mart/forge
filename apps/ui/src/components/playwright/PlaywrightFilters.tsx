@@ -12,7 +12,6 @@ import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
 
 export type PlaywrightStatusFilter = 'all' | 'active' | 'inactive' | 'stale' | 'error'
-export type PlaywrightSortKey = 'updatedAt' | 'worktree' | 'sessionName' | 'confidence'
 
 /** Stable worktree option with path-based key and user-facing label. */
 export interface WorktreeOption {

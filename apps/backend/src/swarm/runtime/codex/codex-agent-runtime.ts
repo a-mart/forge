@@ -825,11 +825,11 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
           partialResult: typeof params?.delta === "string" ? params.delta : ""
         });
 
-        return;
+        
       }
 
       default:
-        return;
+        
     }
   }
 

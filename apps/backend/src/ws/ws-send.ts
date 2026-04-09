@@ -2,7 +2,7 @@ import type { ServerEvent } from "@forge/protocol";
 import { WebSocket } from "ws";
 
 export const MAX_WS_EVENT_BYTES = 1 * 1024 * 1024;
-export const MAX_WS_BUFFERED_AMOUNT_BYTES = 1 * 1024 * 1024;
+const MAX_WS_BUFFERED_AMOUNT_BYTES = 1 * 1024 * 1024;
 
 export type SocketSendPathValidationResult =
   | { ok: true }
@@ -87,7 +87,7 @@ export function sendWsEvent(options: {
   }
 }
 
-export function validateSocketSendPath(socket: WebSocket): SocketSendPathValidationResult {
+function validateSocketSendPath(socket: WebSocket): SocketSendPathValidationResult {
   const rawSocket = (socket as WebSocket & { _socket?: unknown })._socket;
   if (!rawSocket || typeof rawSocket !== "object") {
     return { ok: false, reason: "missing_underlying_socket" };

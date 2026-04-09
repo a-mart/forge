@@ -1,8 +1,7 @@
-import { createHash, randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
-import { appendFile, copyFile, mkdir, open, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { appendFile, copyFile, mkdir, open, readdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { getModel, type Api, type Model } from "@mariozechner/pi-ai";
 import { AuthStorage, type AuthCredential } from "@mariozechner/pi-coding-agent";
 import type {
@@ -45,7 +44,6 @@ import {
   getProfileMergeAuditLogPath,
   getSessionDir,
   getSessionFilePath,
-  getSessionMetaPath,
   getWorkerSessionFilePath,
   getWorkersDir,
   resolveMemoryFilePath
@@ -149,9 +147,6 @@ import { classifyRuntimeCapacityError } from "./runtime-utils.js";
 import {
   DEFAULT_SWARM_MODEL_PRESET,
   inferSwarmModelPresetFromDescriptor,
-  normalizeSwarmModelDescriptor,
-  parseSwarmModelPreset,
-  parseSwarmReasoningLevel,
   resolveModelDescriptorFromPreset
 } from "./model-presets.js";
 import { loadOnboardingState } from "./onboarding-state.js";
@@ -190,11 +185,9 @@ import type {
   AgentsSnapshotEvent,
   AgentsStoreFile,
   ConversationAttachment,
-  ConversationAttachmentMetadata,
   ConversationBinaryAttachment,
   ConversationEntryEvent,
   ConversationMessageEvent,
-  ConversationTextAttachment,
   ManagerProfile,
   MessageSourceContext,
   MessageTargetContext,
@@ -209,13 +202,10 @@ import type {
   SwarmReasoningLevel
 } from "./types.js";
 import {
-  areContextUsagesEqual,
   buildModelCapacityBlockKey,
-  buildWorkerCompletionReport,
   clampModelCapacityBlockDurationMs,
   cloneDescriptor,
   cloneProjectAgentInfoValue,
-  errorToMessage,
   extractDescriptorAgentId,
   extractRuntimeMessageText,
   formatBinaryAttachmentForPrompt,
@@ -235,20 +225,14 @@ import {
   nowIso,
   parseCompactSlashCommand,
   parseSessionNumberFromAgentId,
-  parseTimestampToMillis,
   previewForLog,
   readFileHead,
-  resolveNextCapacityFallbackModelId,
   sanitizeAttachmentFileName,
   sanitizePathSegment,
-  shouldRetrySpecialistSpawnWithFallback,
   slugifySessionName,
   toConversationAttachmentMetadata,
-  toDisplayToolName,
   toRuntimeDispatchAttachments,
   toRuntimeImageAttachments,
-  trimToMaxChars,
-  trimToMaxCharsFromEnd,
   validateAgentDescriptor
 } from "./swarm-manager-utils.js";
 
@@ -357,7 +341,6 @@ const COMMON_KNOWLEDGE_INITIAL_TEMPLATE = `# Common Knowledge
 ## Cross-Project Gotchas
 `;
 
-/* eslint-disable no-useless-escape */
 const CORTEX_WORKER_PROMPTS_INITIAL_TEMPLATE = `# Cortex Worker Prompt Templates — v4
 <!-- Cortex Worker Prompts Version: 4 -->
 
@@ -853,7 +836,6 @@ After writing the artifact, send the callback format above to manager {{MANAGER_
 - Workers propose \`note | inject | reference | discard\`; Cortex validates before promotion.
 - No-op is a first-class outcome. Clean closure beats noisy promotion.
 `;
-/* eslint-enable no-useless-escape */
 
 const CORTEX_WORKER_PROMPTS_VERSION_MARKER = "<!-- Cortex Worker Prompts Version: 4 -->";
 const PREVIOUS_CORTEX_WORKER_PROMPTS_VERSION_MARKERS = ["<!-- Cortex Worker Prompts Version: 3 -->", "<!-- Cortex Worker Prompts Version: 2 -->"] as const;
@@ -866,8 +848,8 @@ const LEGACY_CORTEX_WORKER_PROMPTS_SIGNATURES = [
 
 const FORKED_SESSION_MEMORY_HEADER_TEMPLATE = [
   "# Session Memory",
-  '> Forked from session "${SOURCE_LABEL}" (${SOURCE_AGENT_ID}) on ${FORK_TIMESTAMP}',
-  "> ${FORK_HISTORY_NOTE}",
+  '> Forked from session "' + "$" + "{SOURCE_LABEL}" + '" (' + "$" + "{SOURCE_AGENT_ID}" + ") on " + "$" + "{FORK_TIMESTAMP}",
+  "> " + "$" + "{FORK_HISTORY_NOTE}",
   ""
 ].join("\n");
 
@@ -882,26 +864,8 @@ Use list_agents({"verbose":true,"limit":50,"offset":0}) for a paged full list.`;
 // Telegram session_lifecycle). Keep this limit above base listeners +
 // (2 × expected maximum profiles).
 const SWARM_MANAGER_MAX_EVENT_LISTENERS = 64;
-const IDLE_WORKER_WATCHDOG_GRACE_MS = 3_000;
-const WATCHDOG_BATCH_WINDOW_MS = 750;
-const WATCHDOG_BATCH_PREVIEW_LIMIT = 10;
-const WATCHDOG_BACKOFF_BASE_MS = 15_000;
-const WATCHDOG_BACKOFF_MAX_MS = 5 * 60_000;
-const WATCHDOG_MAX_CONSECUTIVE_NOTIFICATIONS = 3;
-const STALL_CHECK_INTERVAL_MS = 60_000;
-const STALL_NUDGE_THRESHOLD_MS = 5 * 60_000;
-const STALL_DETAILED_REPORT_INTERVAL_MS = 10 * 60_000;
-const STALL_KILL_AFTER_NUDGE_MS = 25 * 60_000;
-const RUNTIME_SHUTDOWN_TIMEOUT_MS = 1_500;
-const RUNTIME_SHUTDOWN_DRAIN_TIMEOUT_MS = 500;
 const PENDING_MANUAL_MANAGER_STOP_NOTICE_TTL_MS = 15_000;
-const MANUAL_MANAGER_STOP_NOTICE = "Session stopped.";
 const MODEL_CAPACITY_BLOCK_DEFAULT_MS = 10 * 60_000;
-const MODEL_CAPACITY_BLOCK_MIN_MS = 5_000;
-const MODEL_CAPACITY_BLOCK_MAX_MS = 7 * 24 * 60 * 60 * 1_000;
-const OPENAI_CODEX_CAPACITY_FALLBACK_CHAIN = ["gpt-5.3-codex-spark", "gpt-5.3-codex", "gpt-5.4"];
-const MAX_WORKER_COMPLETION_REPORT_CHARS = 4_000;
-const WORKER_COMPLETION_TRUNCATION_SUFFIX = "\n\n[truncated]";
 const SESSION_ID_SUFFIX_SEPARATOR = "--s";
 const ROOT_SESSION_NUMBER = 1;
 
@@ -977,7 +941,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly runtimes: Map<string, SwarmAgentRuntime>;
   private readonly runtimeCreationPromisesByAgentId: Map<string, Promise<SwarmAgentRuntime>>;
   private readonly runtimeTokensByAgentId: Map<string, number>;
-  private readonly runtimeExtensionSnapshotsByAgentId: Map<string, AgentRuntimeExtensionSnapshot>;
   private readonly pendingManagerRuntimeRecycleAgentIds = new Set<string>();
   private readonly pendingManagerRuntimeRecycleReasonsByAgentId = new Map<string, ManagerRuntimeRecycleReason>();
   private readonly projectAgentMessageTimestampsBySender = new Map<string, number[]>();
@@ -1037,7 +1000,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.runtimes = this.runtimeController.runtimes;
     this.runtimeCreationPromisesByAgentId = this.runtimeController.runtimeCreationPromisesByAgentId;
     this.runtimeTokensByAgentId = this.runtimeController.runtimeTokensByAgentId;
-    this.runtimeExtensionSnapshotsByAgentId = this.runtimeController.runtimeExtensionSnapshotsByAgentId;
     this.workerHealthService = new SwarmWorkerHealthService({
       descriptors: this.descriptors,
       runtimes: this.runtimes,
@@ -1572,17 +1534,17 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return this.sortedDescriptors().map((descriptor) => cloneDescriptor(descriptor));
   }
 
-  private updateWorkerActivity(agentId: string, event: RuntimeSessionEvent): void {
+  updateWorkerActivity(agentId: string, event: RuntimeSessionEvent): void {
     this.runtimeController.updateWorkerActivity(agentId, event);
   }
 
-  private async resolveSpecialistFallbackModelForDescriptor(
+  async resolveSpecialistFallbackModelForDescriptor(
     descriptor: AgentDescriptor,
   ): Promise<AgentModelDescriptor | undefined> {
     return this.specialistFallbackManager.resolveSpecialistFallbackModelForDescriptor(descriptor);
   }
 
-  private async maybeRecoverWorkerWithSpecialistFallback(
+  async maybeRecoverWorkerWithSpecialistFallback(
     agentId: string,
     errorMessage: string,
     sourcePhase: "prompt_dispatch" | "prompt_start",
@@ -3440,10 +3402,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return this.cortexService.maybeStartReviewRunFromIncomingMessage(text, target, sourceContext);
   }
 
-  private isCortexRootInteractiveSession(descriptor: AgentDescriptor): boolean {
-    return this.cortexService.isCortexRootInteractiveSession(descriptor);
-  }
-
   async resetManagerSession(
     managerIdOrReason: string | "user_new_command" | "api_reset" = "api_reset",
     maybeReason?: "user_new_command" | "api_reset"
@@ -4436,21 +4394,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return resolveModelDescriptorFromPreset(this.defaultModelPreset);
   }
 
-  private normalizePersistedModelDescriptor(
-    descriptor: Pick<AgentModelDescriptor, "provider" | "modelId"> | undefined
-  ): AgentModelDescriptor {
-    return normalizeSwarmModelDescriptor(descriptor, this.defaultModelPreset);
-  }
-
-  private resolveSpawnModel(input: SpawnAgentInput, fallback: AgentModelDescriptor): AgentModelDescriptor {
-    return this.lifecycleService.resolveSpawnModel(input, this.normalizePersistedModelDescriptor(fallback));
-  }
-
   private resolveSpawnModelWithCapacityFallback(model: AgentModelDescriptor): AgentModelDescriptor {
     return this.lifecycleService.resolveSpawnModelWithCapacityFallback(model);
   }
 
-  private maybeRecordModelCapacityBlock(agentId: string, descriptor: AgentDescriptor, error: RuntimeErrorEvent): void {
+  maybeRecordModelCapacityBlock(agentId: string, descriptor: AgentDescriptor, error: RuntimeErrorEvent): void {
     if (descriptor.role !== "worker") {
       return;
     }
@@ -4561,7 +4509,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return specialistRegistry.resolveRoster(profileId);
   }
 
-  private async resolveProjectAgentSystemPromptOverride(
+  async resolveProjectAgentSystemPromptOverride(
     descriptor: AgentDescriptor,
     options?: { ignoreProjectAgentSystemPrompt?: boolean }
   ): Promise<{ prompt: string | undefined; sourcePath: string | undefined }> {
@@ -4644,15 +4592,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     if (isNonRunningAgentStatus(descriptor.status)) {
       throw new Error(`Manager is not running: ${agentId}`);
-    }
-
-    return descriptor;
-  }
-
-  private assertCortexRootInteractiveManager(agentId: string, action: string): AgentDescriptor {
-    const descriptor = this.assertManager(agentId, action);
-    if (!this.isCortexRootInteractiveSession(descriptor)) {
-      throw new Error(`Only the root interactive Cortex session can ${action}`);
     }
 
     return descriptor;
@@ -4847,7 +4786,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     await this.runtimeController.handleRuntimeStatus(runtimeToken, agentId, status, pendingCount, contextUsage);
   }
 
-  private async handleRuntimeSessionEvent(
+  async handleRuntimeSessionEvent(
     runtimeTokenOrAgentId: number | string,
     agentIdOrEvent: string | RuntimeSessionEvent,
     maybeEvent?: RuntimeSessionEvent
@@ -4855,7 +4794,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     await this.runtimeController.handleRuntimeSessionEvent(runtimeTokenOrAgentId, agentIdOrEvent, maybeEvent);
   }
 
-  private async handleRuntimeError(
+  async handleRuntimeError(
     runtimeTokenOrAgentId: number | string,
     agentIdOrError: string | RuntimeErrorEvent,
     maybeError?: RuntimeErrorEvent
@@ -4867,7 +4806,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     await this.runtimeController.handleRuntimeAgentEnd(runtimeTokenOrAgentId, maybeAgentId);
   }
 
-  private async queueVersionedToolMutation(
+  async queueVersionedToolMutation(
     descriptor: AgentDescriptor,
     mutation: VersioningMutation
   ): Promise<void> {
@@ -4889,10 +4828,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         message: error instanceof Error ? error.message : String(error)
       });
     });
-  }
-
-  private captureConversationEventFromRuntime(agentId: string, event: RuntimeSessionEvent): void {
-    this.conversationProjector.captureConversationEventFromRuntime(agentId, event);
   }
 
   private emitStatus(
@@ -5042,7 +4977,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.pendingManualManagerStopNoticeTimersByAgentId.delete(agentId);
   }
 
-  private consumePendingManualManagerStopNoticeIfApplicable(agentId: string, event: RuntimeSessionEvent): boolean {
+  consumePendingManualManagerStopNoticeIfApplicable(agentId: string, event: RuntimeSessionEvent): boolean {
     if (!this.pendingManualManagerStopNoticeTimersByAgentId.has(agentId) || event.type !== "message_end") {
       return false;
     }
@@ -5065,7 +5000,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return isAbortLikeErrorMessage(normalizedErrorMessage);
   }
 
-  private stripManagerAbortErrorFromEvent(event: RuntimeSessionEvent): RuntimeSessionEvent {
+  stripManagerAbortErrorFromEvent(event: RuntimeSessionEvent): RuntimeSessionEvent {
     if (event.type !== "message_end") {
       return event;
     }
@@ -5082,23 +5017,23 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     };
   }
 
-  private async checkForStalledWorkers(): Promise<void> {
+  async checkForStalledWorkers(): Promise<void> {
     return this.workerHealthService.checkForStalledWorkers();
   }
 
-  private async handleStallNudge(agentId: string, elapsedMs: number): Promise<void> {
+  async handleStallNudge(agentId: string, elapsedMs: number): Promise<void> {
     await this.workerHealthService.handleStallNudge(agentId, elapsedMs);
   }
 
-  private async handleStallDetailedReport(agentId: string, elapsedMs: number): Promise<void> {
+  async handleStallDetailedReport(agentId: string, elapsedMs: number): Promise<void> {
     await this.workerHealthService.handleStallDetailedReport(agentId, elapsedMs);
   }
 
-  private async handleStallAutoKill(agentId: string, elapsedMs: number): Promise<void> {
+  async handleStallAutoKill(agentId: string, elapsedMs: number): Promise<void> {
     await this.workerHealthService.handleStallAutoKill(agentId, elapsedMs);
   }
 
-  private async finalizeWorkerIdleTurn(
+  async finalizeWorkerIdleTurn(
     agentId: string,
     descriptor: AgentDescriptor,
     source: "agent_end" | "status_idle" | "deferred"
@@ -5110,11 +5045,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.workerHealthService.seedWorkerCompletionReportTimestamp(agentId);
   }
 
-  private getOrCreateWorkerWatchdogState(agentId: string): WorkerWatchdogState {
+  getOrCreateWorkerWatchdogState(agentId: string): WorkerWatchdogState {
     return this.workerHealthService.getOrCreateWorkerWatchdogState(agentId);
   }
 
-  private clearWatchdogTimer(agentId: string): void {
+  clearWatchdogTimer(agentId: string): void {
     this.workerHealthService.clearWatchdogTimer(agentId);
   }
 
@@ -5122,35 +5057,35 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.workerHealthService.clearWatchdogState(agentId);
   }
 
-  private removeWorkerFromWatchdogBatchQueues(agentId: string): void {
+  removeWorkerFromWatchdogBatchQueues(agentId: string): void {
     this.workerHealthService.removeWorkerFromWatchdogBatchQueues(agentId);
   }
 
-  private get workerWatchdogState(): Map<string, WorkerWatchdogState> {
+  get workerWatchdogState(): Map<string, WorkerWatchdogState> {
     return this.workerHealthService.workerWatchdogState;
   }
 
-  private get workerStallState(): Map<string, WorkerStallState> {
+  get workerStallState(): Map<string, WorkerStallState> {
     return this.workerHealthService.workerStallState;
   }
 
-  private get workerActivityState(): Map<string, WorkerActivityState> {
+  get workerActivityState(): Map<string, WorkerActivityState> {
     return this.workerHealthService.workerActivityState;
   }
 
-  private get watchdogTimers(): Map<string, NodeJS.Timeout> {
+  get watchdogTimers(): Map<string, NodeJS.Timeout> {
     return this.workerHealthService.watchdogTimers;
   }
 
-  private get watchdogTimerTokens(): Map<string, number> {
+  get watchdogTimerTokens(): Map<string, number> {
     return this.workerHealthService.watchdogTimerTokens;
   }
 
-  private get watchdogBatchQueueByManager(): Map<string, Map<string, WatchdogBatchEntry>> {
+  get watchdogBatchQueueByManager(): Map<string, Map<string, WatchdogBatchEntry>> {
     return this.workerHealthService.watchdogBatchQueueByManager;
   }
 
-  private get watchdogBatchTimersByManager(): Map<string, NodeJS.Timeout> {
+  get watchdogBatchTimersByManager(): Map<string, NodeJS.Timeout> {
     return this.workerHealthService.watchdogBatchTimersByManager;
   }
 
@@ -5338,10 +5273,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   private async refreshDefaultMemoryTemplateNormalizedLines(): Promise<void> {
     await this.memoryMergeService.refreshDefaultMemoryTemplateNormalizedLines();
-  }
-
-  private async resolveMemoryTemplateContent(profileId: string): Promise<string> {
-    return this.memoryMergeService.resolveMemoryTemplateContent(profileId);
   }
 
   private async ensureMemoryFilesForBoot(): Promise<void> {

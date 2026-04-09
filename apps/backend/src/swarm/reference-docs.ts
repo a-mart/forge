@@ -116,7 +116,7 @@ export async function writeProfileReferenceDoc(
   };
 }
 
-export async function ensureProfileReferenceIndexLink(
+async function ensureProfileReferenceIndexLink(
   dataDir: string,
   profileId: string,
   link: ProfileReferenceIndexLink,
@@ -206,7 +206,7 @@ export async function migrateLegacyProfileKnowledgeToReferenceDoc(
   };
 }
 
-export async function ensureProjectAgentReferenceDoc(
+async function ensureProjectAgentReferenceDoc(
   dataDir: string,
   profileId: string,
   handle: string,
@@ -368,7 +368,7 @@ export function buildProfileReferenceIndexTemplate(profileId: string): string {
   ].join("\n");
 }
 
-export function buildLegacyProfileKnowledgeReferenceDoc(profileId: string, legacyContent: string): string {
+function buildLegacyProfileKnowledgeReferenceDoc(profileId: string, legacyContent: string): string {
   const normalizedLegacyContent = legacyContent.trimEnd();
 
   return [

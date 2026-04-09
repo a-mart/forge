@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { extname } from "node:path";
 
-export const DEFAULT_MAX_HTTP_BODY_SIZE_BYTES = 64 * 1024;
+const DEFAULT_MAX_HTTP_BODY_SIZE_BYTES = 64 * 1024;
 
 export function resolveRequestUrl(request: IncomingMessage, fallbackHost: string): URL {
   return new URL(request.url ?? "/", `http://${request.headers.host ?? fallbackHost}`);

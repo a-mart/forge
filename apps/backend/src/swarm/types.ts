@@ -309,13 +309,6 @@ export interface AgentsSnapshotEvent {
   agents: AgentDescriptor[];
 }
 
-export interface SessionWorkersSnapshotEvent {
-  type: "session_workers_snapshot";
-  sessionAgentId: string;
-  workers: AgentDescriptor[];
-  requestId?: string;
-}
-
 export interface SessionLifecycleEvent {
   action: "created" | "deleted" | "renamed" | "forked";
   sessionAgentId: string;

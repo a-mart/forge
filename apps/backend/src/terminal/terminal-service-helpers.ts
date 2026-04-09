@@ -7,7 +7,7 @@ export function cloneDescriptor(descriptor: TerminalDescriptor): TerminalDescrip
   return { ...descriptor };
 }
 
-export function descriptorFromMeta(meta: TerminalMeta): TerminalDescriptor {
+function descriptorFromMeta(meta: TerminalMeta): TerminalDescriptor {
   return {
     terminalId: meta.terminalId,
     sessionAgentId: meta.sessionAgentId,

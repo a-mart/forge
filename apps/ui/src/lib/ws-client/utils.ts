@@ -1,4 +1,3 @@
-import { chooseFallbackAgentId } from '../agent-hierarchy'
 import type { AgentActivityEntry, ConversationHistoryEntry, ManagerWsState } from '../ws-state'
 import { MAX_CLIENT_CONVERSATION_HISTORY, isAgentActivityEntry } from './runtime-types'
 import type {
@@ -212,9 +211,3 @@ export function createSystemConversationMessage(
   }
 }
 
-export function chooseFallbackSelection(
-  agents: AgentDescriptor[],
-  currentTarget?: string,
-): string | null {
-  return chooseFallbackAgentId(agents, currentTarget)
-}

@@ -18,9 +18,9 @@ const CORTEX_AUTO_REVIEW_SCHEDULE_MESSAGE = 'Review all sessions that need atten
 const CORTEX_AUTO_REVIEW_SCHEDULE_TIMEZONE = 'UTC'
 
 export const CORTEX_AUTO_REVIEW_SCHEDULE_ID = 'cortex-auto-review'
-export const DEFAULT_CORTEX_AUTO_REVIEW_ENABLED = true
-export const DEFAULT_CORTEX_AUTO_REVIEW_INTERVAL_MINUTES = 120
-export const SUPPORTED_INTERVAL_MINUTES = [15, 30, 60, 120, 240, 480, 720, 1440] as const
+const DEFAULT_CORTEX_AUTO_REVIEW_ENABLED = true
+const DEFAULT_CORTEX_AUTO_REVIEW_INTERVAL_MINUTES = 120
+const SUPPORTED_INTERVAL_MINUTES = [15, 30, 60, 120, 240, 480, 720, 1440] as const
 
 interface CortexAutoReviewSettingsFile {
   version: 1
@@ -218,7 +218,7 @@ export async function syncCortexAutoReviewSchedule(options: {
   await writeScheduleFile(schedulesPath, envelope.rawRoot, nextSchedules)
 }
 
-export function createDefaultCortexAutoReviewSettings(): CortexAutoReviewSettings {
+function createDefaultCortexAutoReviewSettings(): CortexAutoReviewSettings {
   return {
     enabled: DEFAULT_CORTEX_AUTO_REVIEW_ENABLED,
     intervalMinutes: DEFAULT_CORTEX_AUTO_REVIEW_INTERVAL_MINUTES,
@@ -226,7 +226,7 @@ export function createDefaultCortexAutoReviewSettings(): CortexAutoReviewSetting
   }
 }
 
-export function createDisabledCortexAutoReviewSettings(): CortexAutoReviewSettings {
+function createDisabledCortexAutoReviewSettings(): CortexAutoReviewSettings {
   return {
     ...createDefaultCortexAutoReviewSettings(),
     enabled: false,

@@ -713,7 +713,7 @@ export class ForgeExtensionHost {
         return;
       case "error":
         console.error(text);
-        return;
+        
     }
   }
 }

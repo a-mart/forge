@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
   FileContentResult,
   FileCountResult,
-  FileEntry,
   FileListResult,
   FileSearchResult,
 } from '@forge/protocol'
@@ -10,10 +9,7 @@ import { resolveApiEndpoint } from '@/lib/api-endpoint'
 
 export type {
   FileContentResult,
-  FileCountResult,
-  FileEntry,
   FileListResult,
-  FileSearchResult,
 }
 
 /* ------------------------------------------------------------------ */

@@ -19,17 +19,17 @@ const { SerializeAddon } = serializePkg as typeof SerializeModule;
 type HeadlessTerminal = InstanceType<typeof Terminal>;
 type HeadlessSerializeAddon = InstanceType<typeof SerializeAddon>;
 
-export interface TerminalJournalEntry {
+interface TerminalJournalEntry {
   seq: number;
   dataBase64: string;
 }
 
-export interface TerminalRestoreState {
+interface TerminalRestoreState {
   replay: Buffer;
   lastSeq: number;
 }
 
-export interface TerminalPersistenceOptions {
+interface TerminalPersistenceOptions {
   dataDir: string;
   scrollbackLines: number;
   journalMaxBytes: number;

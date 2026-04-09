@@ -150,20 +150,6 @@ export async function scanProjectAgentRecords(
   return records;
 }
 
-export async function findProjectAgentRecordByAgentId(
-  dataDir: string,
-  profileId: string,
-  agentId: string
-): Promise<ProjectAgentOnDiskRecord | null> {
-  const records = await scanProjectAgentRecords(dataDir, profileId);
-  const matches = records.filter((record) => record.config.agentId === agentId);
-  if (matches.length === 0) {
-    return null;
-  }
-
-  return matches.sort(compareRecordsByUpdatedAtDesc)[0] ?? null;
-}
-
 export async function reconcileProjectAgentStorage(
   dataDir: string,
   profileId: string,

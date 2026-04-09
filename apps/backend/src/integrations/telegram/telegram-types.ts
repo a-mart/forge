@@ -1,5 +1,3 @@
-import type { ConversationAttachment, MessageSourceContext } from "../../swarm/types.js";
-
 export type TelegramConnectionMode = "polling";
 
 export type TelegramParseMode = "HTML";
@@ -42,14 +40,6 @@ export interface TelegramApiResponse<T> {
     retry_after?: number;
     migrate_to_chat_id?: number;
   };
-}
-
-export interface TelegramApiErrorShape {
-  method: string;
-  statusCode?: number;
-  description: string;
-  errorCode?: number;
-  retryAfterSeconds?: number;
 }
 
 export interface TelegramUser {
@@ -147,8 +137,3 @@ export interface TelegramConnectionTestResult {
   botDisplayName?: string;
 }
 
-export interface TelegramNormalizedInboundMessage {
-  text: string;
-  attachments: ConversationAttachment[];
-  sourceContext: MessageSourceContext;
-}

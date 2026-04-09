@@ -12,21 +12,11 @@ import {
   persistStatsCache,
 } from "./stats-cache.js";
 import { computeCodeStats, readServerVersion } from "./stats-git.js";
-import {
-  isEnoentError,
-  isRecord,
-  extractReasoningLevel,
-  extractThinkingLevelChange,
-  extractUsage,
-  listDirectoryNames,
-  STATS_CACHE_TTL_MS,
-  toTimestampMs,
-} from "./stats-shared.js";
+import { listDirectoryNames } from "./stats-shared.js";
 import { buildDailyEntriesForRange, scanProfilesData, sumDailyWindow } from "./stats-scan.js";
 import {
   computeLongestStreak,
   computeRangeDayCount,
-  dayKeyToStartMs,
   formatDayLabel,
   formatUptime,
   getRangeStartMs,
@@ -38,8 +28,7 @@ import {
 import type { CacheEntry, StatsServiceOptions } from "./stats-types.js";
 import { computeModelDistribution, computeProvidersUsed, emptyDailyTotals, round2, sumDailyEntries, trimmedMean } from "./stats-usage.js";
 
-export { STATS_CACHE_TTL_MS, extractReasoningLevel, extractThinkingLevelChange, extractUsage, isEnoentError, isRecord, toTimestampMs } from "./stats-shared.js";
-export { dayKeyToStartMs, normalizeTimezone, shiftDayKey, toDayKey } from "./stats-time.js";
+export { STATS_CACHE_TTL_MS } from "./stats-shared.js";
 export type { StatsServiceOptions } from "./stats-types.js";
 
 export class StatsService {

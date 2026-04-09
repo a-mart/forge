@@ -4,8 +4,8 @@ import type {
   AgentStatus,
 } from '@forge/protocol'
 
-export const DEFAULT_FAVICON_EMOJI = '🔨'
-export const ACTIVE_FAVICON_EMOJI = '🔥'
+const DEFAULT_FAVICON_EMOJI = '🔨'
+const ACTIVE_FAVICON_EMOJI = '🔥'
 
 type AgentLiveStatuses = Record<
   string,
@@ -17,7 +17,7 @@ const FAVICON_FONT_SIZE = Math.round(FAVICON_SIZE * 0.85)
 const FAVICON_LINK_SELECTOR = 'link[rel="icon"][data-forge-favicon], link[rel="icon"]'
 const emojiFaviconCache = new Map<string, string>()
 
-export function createEmojiSvgFaviconDataUrl(emoji: string): string {
+function createEmojiSvgFaviconDataUrl(emoji: string): string {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text x="50%" y="50%" dy=".08em" text-anchor="middle" dominant-baseline="middle" font-size="90">${emoji}</text></svg>`
   return `data:image/svg+xml,${encodeURIComponent(svg)}`
 }
