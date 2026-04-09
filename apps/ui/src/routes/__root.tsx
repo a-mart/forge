@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components -- TanStack route file must export Route alongside components */
 import { useEffect } from 'react'
 import { HeadContent, Scripts, createRootRoute } from '@tanstack/react-router'
 import { TanStackRouterDevtoolsPanel } from '@tanstack/react-router-devtools'

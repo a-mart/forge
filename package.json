@@ -21,7 +21,7 @@
     "dev:electron": "concurrently --kill-others-on-fail -n ui,electron -c green,magenta \"pnpm dev:ui\" \"wait-on tcp:127.0.0.1:47188 && cd apps/electron && pnpm dev\"",
     "build": "pnpm --filter @forge/protocol build && pnpm --filter @forge/backend build && pnpm --filter @forge/ui build",
     "build:electron": "pnpm --filter @forge/electron run build:all",
-    "lint": "eslint . --max-warnings 150",
+    "lint": "eslint . --max-warnings 120",
     "lint:fix": "eslint . --fix",
     "model-catalog:audit": "node scripts/model-catalog-audit.mjs",
     "package:electron": "pnpm --filter @forge/electron run package",

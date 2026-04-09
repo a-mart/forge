@@ -54,8 +54,8 @@ export async function loadPersistedStatsCache(
       });
     }
   } catch (error) {
-    if (isEnoentError(error)) {
-      
+    if (!isEnoentError(error)) {
+      throw error;
     }
   }
 }

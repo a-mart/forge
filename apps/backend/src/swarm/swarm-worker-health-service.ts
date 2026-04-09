@@ -595,10 +595,10 @@ export class SwarmWorkerHealthService {
       case "auto_retry_start":
       case "auto_retry_end":
         this.recordWorkerStallProgress(agentId);
-        
+        break;
 
       default:
-        
+        break;
     }
   }
 

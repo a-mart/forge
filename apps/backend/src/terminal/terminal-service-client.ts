@@ -151,10 +151,10 @@ export class TerminalServiceClientController {
           reason?: TerminalCloseReason;
         };
         await this.context.close(payload.terminalId, payload.sessionAgentId, payload.reason ?? "user_closed");
-        
+        break;
       }
       default:
-        
+        break;
     }
   }
 }

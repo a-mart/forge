@@ -446,15 +446,14 @@ export class SwarmSpecialistFallbackManager {
       return undefined;
     }
 
-    let fallbackModel: AgentModelDescriptor = {
+    const fallbackModel: AgentModelDescriptor = {
       provider: inferredFallbackProvider,
       modelId: specialist.fallbackModelId,
-      thinkingLevel: specialist.fallbackReasoningLevel ?? descriptor.model.thinkingLevel
+      thinkingLevel: normalizeThinkingLevelForProvider(
+        inferredFallbackProvider,
+        specialist.fallbackReasoningLevel ?? descriptor.model.thinkingLevel
+      )
     };
-    fallbackModel.thinkingLevel = normalizeThinkingLevelForProvider(
-      fallbackModel.provider,
-      fallbackModel.thinkingLevel
-    );
     return this.options.resolveSpawnModelWithCapacityFallback(fallbackModel);
   }
 

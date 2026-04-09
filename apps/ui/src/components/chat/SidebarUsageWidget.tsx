@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components -- utility functions co-located with their component for testability */
 import { useEffect, useRef } from 'react'
 import type { ProviderAccountUsage, ProviderUsagePace, ProviderUsageStats, ProviderUsageWindow } from '@forge/protocol'
 import { RefreshCw } from 'lucide-react'

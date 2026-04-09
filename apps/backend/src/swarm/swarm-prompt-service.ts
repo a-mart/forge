@@ -232,16 +232,18 @@ export class SwarmPromptService {
       }
     }
 
+    // eslint-disable-next-line no-template-curly-in-string
     if (prompt.includes("${SPECIALIST_ROSTER}")) {
+      // eslint-disable-next-line no-template-curly-in-string
       prompt = prompt.replaceAll("${SPECIALIST_ROSTER}", delegationContextBlock);
     } else {
       prompt = `${prompt.trimEnd()}\n\n${delegationContextBlock}`;
     }
 
     const modelSpecificInstructionsPlaceholders = [
-      "${MODEL_SPECIFIC_INSTRUCTIONS}",
-      "${Model_Specific_Instructions}",
-      "${model_specific_instructions}",
+      "${MODEL_SPECIFIC_INSTRUCTIONS}", // eslint-disable-line no-template-curly-in-string
+      "${Model_Specific_Instructions}", // eslint-disable-line no-template-curly-in-string
+      "${model_specific_instructions}", // eslint-disable-line no-template-curly-in-string
     ];
     if (modelSpecificInstructionsPlaceholders.some((placeholder) => prompt.includes(placeholder))) {
       const effectiveModelSpecificInstructions = modelCatalogService.getEffectiveModelSpecificInstructions(

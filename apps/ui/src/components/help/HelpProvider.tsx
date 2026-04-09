@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components -- React context must be co-located with its Provider */
 import { createContext, useCallback, useEffect, useMemo, useReducer } from 'react'
 import type { HelpCategory, HelpState } from './help-types'
 import { initializeHelpContent } from './help-registry'

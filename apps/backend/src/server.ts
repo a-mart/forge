@@ -72,6 +72,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
   process.once("SIGINT", emergencyRelease);
   process.once("SIGTERM", emergencyRelease);
 
+  // eslint-disable-next-line prefer-const -- forward reference: used in onCommit callback before assignment
   let swarmManager: SwarmManager | undefined;
   const versioningService = new EmbeddedGitVersioningService({
     dataDir: config.paths.dataDir,

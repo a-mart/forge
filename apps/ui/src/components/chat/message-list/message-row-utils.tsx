@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components -- shared utility + tiny presentational badge co-located */
 import { cn } from '@/lib/utils'
 import type { MessageSourceContext } from '@forge/protocol'
 

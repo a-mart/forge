@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components -- TanStack route file exports Route + page utilities */
 import {
   useCallback,
   useEffect,

@@ -949,8 +949,7 @@ describe("ClaudeAgentRuntime", () => {
     const observedRecoveryStates: Array<{ eventType: string; recovery: boolean }> = [];
     setClaudeSdkImporterForTests(vi.fn().mockResolvedValue(createAutoCompactingMockClaudeSdk(queryCalls)));
 
-    let runtime!: ClaudeAgentRuntime;
-    runtime = new ClaudeAgentRuntime({
+    const runtime = new ClaudeAgentRuntime({
       descriptor,
       systemPrompt: "You are a Claude test runtime.",
       callbacks: {

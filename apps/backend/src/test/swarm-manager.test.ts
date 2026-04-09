@@ -3011,6 +3011,7 @@ describe('SwarmManager', () => {
     expect(workerPrompt).toBeDefined()
     expect(workerPrompt).toContain('End users only see messages they send and manager speak_to_user outputs.')
     expect(workerPrompt).toContain('Incoming messages prefixed with "SYSTEM:"')
+    // eslint-disable-next-line no-template-curly-in-string
     expect(workerPrompt).toContain('Persistent memory for this runtime is at ${SWARM_MEMORY_FILE}')
     expect(workerPrompt).toContain('Workers read their owning manager\'s memory file.')
     expect(workerPrompt).toContain('Follow the memory skill workflow before editing the memory file')
@@ -3059,6 +3060,7 @@ describe('SwarmManager', () => {
     expect(memorySkillPath).toBeDefined()
     const memorySkill = await readFile(memorySkillPath!, 'utf8')
     expect(memorySkill).toContain('name: memory')
+    // eslint-disable-next-line no-template-curly-in-string
     expect(memorySkill).toContain('${SWARM_MEMORY_FILE}')
 
     const braveSkillPath = resources.additionalSkillPaths.find((path) => path.endsWith(join('brave-search', 'SKILL.md')))
@@ -3546,7 +3548,7 @@ describe('SwarmManager', () => {
     const config = await makeTempConfig()
     await writeFile(
       join(config.paths.repoArchetypesDir, 'manager.md'),
-      'You are the repo manager override.\n\n${SPECIALIST_ROSTER}\n',
+      'You are the repo manager override.\n\n${SPECIALIST_ROSTER}\n', // eslint-disable-line no-template-curly-in-string
       'utf8',
     )
 
@@ -3573,6 +3575,7 @@ describe('SwarmManager', () => {
     const mergerPrompt = manager.systemPromptByAgentId.get(merger.agentId)
     expect(mergerPrompt).toContain('You are the merger agent in a multi-agent swarm.')
     expect(mergerPrompt).toContain('Own branch integration and merge execution tasks.')
+    // eslint-disable-next-line no-template-curly-in-string
     expect(mergerPrompt).toContain('This runtime memory file is `${SWARM_MEMORY_FILE}`')
   })
 

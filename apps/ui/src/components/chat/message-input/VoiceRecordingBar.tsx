@@ -16,7 +16,7 @@ function formatDuration(durationMs: number): string {
   return `${minutes}:${seconds.toString().padStart(2, '0')}`
 }
 
-export function stretchWaveformBars(source: number[], targetCount: number): number[] {
+function stretchWaveformBars(source: number[], targetCount: number): number[] {
   if (targetCount <= 0) return []
   if (source.length === 0) return Array.from({ length: targetCount }, () => 0)
   if (source.length === 1) return Array.from({ length: targetCount }, () => source[0] ?? 0)

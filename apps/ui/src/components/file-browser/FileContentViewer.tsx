@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components -- component and its companion hook are tightly coupled */
 import { useCallback, useMemo, useState } from 'react'
 import {
   FileText,
