@@ -203,8 +203,10 @@ const PROVIDER_COLORS: Record<string, string> = {
 
 const VBAR_WIDTH = 3
 const VBAR_HEIGHT = 22
-const VBAR_GAP = 3
-const INDICATOR_HEIGHT = 3
+const VBAR_INTRA_GAP = 5   // between bars within the same provider
+const VBAR_GROUP_GAP = 10  // between provider groups
+const INDICATOR_WIDTH = 7
+const INDICATOR_HEIGHT = 4
 const WARNING_THRESHOLD = 80
 
 interface MiniVerticalGaugeProps {
@@ -242,7 +244,7 @@ function MiniVerticalGauge({ sessionPercent, weeklyPercent, weeklyDeltaPercent, 
           {/* Provider color indicator dot */}
           <div
             className="rounded-full shrink-0"
-            style={{ width: VBAR_WIDTH + 2, height: INDICATOR_HEIGHT, backgroundColor: providerColor }}
+            style={{ width: INDICATOR_WIDTH, height: INDICATOR_HEIGHT, backgroundColor: providerColor }}
           />
         </div>
       </TooltipTrigger>
@@ -261,27 +263,42 @@ export function SidebarUsageRings({ providers, onToggle }: { providers: Provider
   const availableRows = rows.filter((row) => row.usage?.available)
   if (availableRows.length === 0) return null
 
+  // Group by provider so we can add extra spacing between groups
+  const groups: ProviderRowConfig[][] = []
+  let currentProvider: string | null = null
+  for (const row of availableRows) {
+    if (row.provider !== currentProvider) {
+      groups.push([])
+      currentProvider = row.provider
+    }
+    groups[groups.length - 1].push(row)
+  }
+
   return (
     <button
       type="button"
       onClick={(e) => { e.stopPropagation(); onToggle() }}
       className="inline-flex items-center rounded-md px-1.5 py-1 transition-colors hover:bg-sidebar-accent/50"
-      style={{ gap: VBAR_GAP }}
+      style={{ gap: VBAR_GROUP_GAP }}
       aria-label="Provider usage"
     >
-      {availableRows.map((row) => {
-        const weeklyMetrics = getUsageMetrics(row.usage?.weeklyUsage, Date.now())
-        return (
-          <MiniVerticalGauge
-            key={row.key}
-            sessionPercent={row.usage?.sessionUsage?.percent ?? null}
-            weeklyPercent={row.usage?.weeklyUsage?.percent ?? null}
-            weeklyDeltaPercent={weeklyMetrics?.deltaPercent ?? null}
-            providerColor={PROVIDER_COLORS[row.provider] ?? '#6b7280'}
-            label={row.label}
-          />
-        )
-      })}
+      {groups.map((group) => (
+        <span key={group[0].provider} className="inline-flex items-center" style={{ gap: VBAR_INTRA_GAP }}>
+          {group.map((row) => {
+            const weeklyMetrics = getUsageMetrics(row.usage?.weeklyUsage, Date.now())
+            return (
+              <MiniVerticalGauge
+                key={row.key}
+                sessionPercent={row.usage?.sessionUsage?.percent ?? null}
+                weeklyPercent={row.usage?.weeklyUsage?.percent ?? null}
+                weeklyDeltaPercent={weeklyMetrics?.deltaPercent ?? null}
+                providerColor={PROVIDER_COLORS[row.provider] ?? '#6b7280'}
+                label={row.label}
+              />
+            )
+          })}
+        </span>
+      ))}
     </button>
   )
 }
