@@ -229,25 +229,17 @@ export class MobilePushService {
   private async handleConversationMessage(
     event: Extract<ServerEvent, { type: "conversation_message" }>
   ): Promise<void> {
-    if (event.role === "assistant" && event.source === "speak_to_user") {
-      await this.dispatchNotification({
-        type: "unread",
-        reason: "message",
-        agentId: event.agentId,
-        title: "New message",
-        body: truncateText(event.text, 180)
-      });
+    if (event.role !== "assistant" || event.source !== "speak_to_user") {
       return;
     }
 
-    if (event.role === "system" && isSystemErrorMessage(event.text)) {
-      await this.dispatchNotification({
-        type: "error",
-        agentId: event.agentId,
-        title: "Agent error",
-        body: truncateText(event.text, 220)
-      });
-    }
+    await this.dispatchNotification({
+      type: "unread",
+      reason: "message",
+      agentId: event.agentId,
+      title: "New message",
+      body: truncateText(event.text, 180)
+    });
   }
 
   private async handleAgentStatus(event: Extract<ServerEvent, { type: "agent_status" }>): Promise<void> {
@@ -264,9 +256,12 @@ export class MobilePushService {
 
     const context = this.resolveAgentRoutingContext(event.agentId);
     const statusLabel = event.status.toUpperCase();
+    const notificationType = this.isTerminalSessionFailureStatus(event.agentId, event.status)
+      ? "error"
+      : "agent_status";
 
     await this.dispatchNotification({
-      type: event.status === "error" ? "error" : "agent_status",
+      type: notificationType,
       agentId: event.agentId,
       title: `${context.agentDisplayName} status update`,
       body: `${context.agentDisplayName} is now ${statusLabel}.`
@@ -494,6 +489,15 @@ export class MobilePushService {
     return descriptor?.role === "manager" && descriptor.sessionPurpose === "cortex_review";
   }
 
+  private isTerminalSessionFailureStatus(agentId: string, status: string): boolean {
+    if (status !== "error") {
+      return false;
+    }
+
+    const descriptor = this.swarmManager.getAgent(agentId);
+    return descriptor?.role === "manager" && isNonRunningAgentStatus(descriptor.status);
+  }
+
   private logError(scope: string, error: unknown): void {
     const message = error instanceof Error ? error.message : String(error);
     console.warn(`[mobile-push] ${scope}: ${message}`);
@@ -547,20 +551,6 @@ function buildChoiceRequestNotificationContent(options: {
     title,
     body: truncateText(`${primaryQuestion}${suffix}`, 180)
   };
-}
-
-function isSystemErrorMessage(text: string): boolean {
-  const normalized = text.trim().toLowerCase();
-  if (!normalized) {
-    return false;
-  }
-
-  return (
-    normalized.startsWith("⚠️") ||
-    normalized.startsWith("🚨") ||
-    normalized.includes("error") ||
-    normalized.includes("failed")
-  );
 }
 
 function buildSessionRoute(options: { profileId: string; sessionAgentId: string }): string {

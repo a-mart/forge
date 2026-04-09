@@ -166,6 +166,109 @@ describe('MobilePushService', () => {
     })
   })
 
+  it('does not send error pushes for recoverable system error messages while the session keeps running', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'mobile-push-service-'))
+    const manager = new FakeSwarmManager([createManagerDescriptor()])
+
+    const sendMock = vi.fn(async () => ({ ok: true, retryable: false, ticketId: 'ticket-error-1' }))
+
+    const service = new MobilePushService({
+      swarmManager: manager as unknown as SwarmManager,
+      dataDir,
+      expoPushClient: {
+        send: sendMock,
+        getReceipts: vi.fn(async () => ({})),
+      } as unknown as ExpoPushClient,
+      isSessionActive: () => false,
+      receiptPollIntervalMs: 60_000,
+    })
+
+    await service.registerDevice({
+      token: 'ExpoPushToken[test-device]',
+      platform: 'ios',
+      deviceName: 'iPhone',
+    })
+
+    await service.start()
+    manager.emit('conversation_message', {
+      type: 'conversation_message',
+      agentId: 'manager',
+      role: 'system',
+      text: '⚠️ Worker reply failed: This operation was aborted. The manager may need to retry after checking provider auth, quotas, or rate limits.',
+      timestamp: new Date().toISOString(),
+      source: 'system',
+    })
+
+    await flushAsync()
+    await service.stop()
+
+    expect(sendMock).not.toHaveBeenCalled()
+  })
+
+  it('sends error pushes only for terminal manager failures, not worker error statuses', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'mobile-push-service-'))
+    const manager = new FakeSwarmManager([
+      createManagerDescriptor('profile-a', 'manager'),
+      createWorkerDescriptor('manager', 'worker-1'),
+      {
+        ...createManagerDescriptor('profile-a', 'errored-manager'),
+        displayName: 'Errored Manager',
+        status: 'error',
+      },
+    ])
+
+    const sendMock = vi.fn(async () => ({ ok: true, retryable: false, ticketId: 'ticket-status-1' }))
+
+    const service = new MobilePushService({
+      swarmManager: manager as unknown as SwarmManager,
+      dataDir,
+      expoPushClient: {
+        send: sendMock,
+        getReceipts: vi.fn(async () => ({})),
+      } as unknown as ExpoPushClient,
+      isSessionActive: () => false,
+      receiptPollIntervalMs: 60_000,
+    })
+
+    await service.registerDevice({
+      token: 'ExpoPushToken[test-device]',
+      platform: 'ios',
+      deviceName: 'iPhone',
+    })
+
+    await service.start()
+    manager.emit('agent_status', {
+      type: 'agent_status',
+      agentId: 'worker-1',
+      status: 'error',
+      pendingCount: 0,
+    })
+    manager.emit('agent_status', {
+      type: 'agent_status',
+      agentId: 'errored-manager',
+      status: 'error',
+      pendingCount: 0,
+    })
+
+    await waitForCondition(() => sendMock.mock.calls.length === 2)
+    await service.stop()
+
+    const calls = sendMock.mock.calls as unknown as Array<Array<unknown>>
+    const workerPayload = (calls[0]?.[0] as Record<string, unknown> | undefined) ?? {}
+    const managerPayload = (calls[1]?.[0] as Record<string, unknown> | undefined) ?? {}
+
+    expect(workerPayload.data).toMatchObject({
+      type: 'agent_status',
+      agentId: 'worker-1',
+      sessionAgentId: 'manager',
+    })
+    expect(managerPayload.data).toMatchObject({
+      type: 'error',
+      agentId: 'errored-manager',
+      sessionAgentId: 'errored-manager',
+    })
+  })
+
   it('dispatches pending choice requests as question notifications routed to the owning session', async () => {
     const dataDir = await mkdtemp(join(tmpdir(), 'mobile-push-service-'))
     const manager = new FakeSwarmManager([
