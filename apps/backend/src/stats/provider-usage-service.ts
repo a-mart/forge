@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { ProviderAccountUsage, ProviderUsageStats } from "@forge/protocol";
+import { AuthStorage, type AuthCredential } from "@mariozechner/pi-coding-agent";
 import type { CredentialPoolService } from "../swarm/credential-pool.js";
 import {
   evaluateHistoricalProviderUsagePace,
@@ -55,13 +56,6 @@ interface CodexAuthFile {
   tokens?: {
     access_token?: string;
     account_id?: string;
-  };
-}
-
-interface ForgeAuthFile {
-  anthropic?: {
-    access?: string;
-    expires?: number;
   };
 }
 
@@ -270,13 +264,18 @@ export class ProviderUsageService {
           for (const cred of poolState.credentials) {
             try {
               const authData = await pool.buildRuntimeAuthData("anthropic", cred.id);
-              const piAuth = authData.anthropic as PiAuthCredential | undefined;
-              const accessToken = piAuth?.access?.trim();
-              const expiresMs = piAuth?.expires;
-              if (!accessToken || (typeof expiresMs === "number" && Number.isFinite(expiresMs) && nowMs > expiresMs)) {
-                if (typeof expiresMs === "number" && Number.isFinite(expiresMs) && nowMs > expiresMs) {
-                  console.debug(`[provider-usage] Anthropic OAuth token expired for pooled account ${cred.id}`);
-                }
+              const oauthCredential = resolveAnthropicUsageCredential(authData.anthropic as AuthCredential | undefined);
+              if (!oauthCredential) {
+                entries.push(makeCachedEntry({
+                  ...unavailableProviderUsage("anthropic"),
+                  accountId: cred.id,
+                  accountLabel: cred.label
+                }, nowMs));
+                continue;
+              }
+
+              if (oauthCredential.expiresMs !== undefined && nowMs > oauthCredential.expiresMs) {
+                console.debug(`[provider-usage] Anthropic OAuth token expired for pooled account ${cred.id}`);
                 entries.push(makeCachedEntry({
                   ...unavailableProviderUsage("anthropic"),
                   accountId: cred.id,
@@ -287,7 +286,7 @@ export class ProviderUsageService {
 
               const response = await fetch(ANTHROPIC_USAGE_URL, {
                 headers: {
-                  Authorization: `Bearer ${accessToken}`,
+                  Authorization: `Bearer ${oauthCredential.accessToken}`,
                   Accept: "application/json",
                   "Content-Type": "application/json",
                   "anthropic-beta": "oauth-2025-04-20"
@@ -330,9 +329,10 @@ export class ProviderUsageService {
     }
 
     const auth = await this.readAnthropicAuth();
-    const accessToken = auth?.anthropic?.access?.trim();
-    if (!accessToken) {
+    const oauthCredential = resolveAnthropicUsageCredential(auth);
+    if (!oauthCredential) {
       if (auth) {
+        console.debug("[provider-usage] Skipping Anthropic usage fetch because the stored credential is not a valid OAuth token");
         this.markProviderUnavailable("anthropic", nowMs);
       } else {
         this.recordFailedAttempt("anthropic", nowMs);
@@ -340,8 +340,7 @@ export class ProviderUsageService {
       return;
     }
 
-    const expiresMs = auth?.anthropic?.expires;
-    if (typeof expiresMs === "number" && Number.isFinite(expiresMs) && nowMs > expiresMs) {
+    if (oauthCredential.expiresMs !== undefined && nowMs > oauthCredential.expiresMs) {
       console.debug("[provider-usage] Anthropic OAuth token expired");
       this.markProviderUnavailable("anthropic", nowMs);
       return;
@@ -350,7 +349,7 @@ export class ProviderUsageService {
     try {
       const response = await fetch(ANTHROPIC_USAGE_URL, {
         headers: {
-          Authorization: `Bearer ${accessToken}`,
+          Authorization: `Bearer ${oauthCredential.accessToken}`,
           Accept: "application/json",
           "Content-Type": "application/json",
           "anthropic-beta": "oauth-2025-04-20"
@@ -359,10 +358,11 @@ export class ProviderUsageService {
       });
 
       if (!response.ok) {
-        console.warn(`[provider-usage] Anthropic usage API returned ${response.status}`);
         if (response.status === 401 || response.status === 403) {
+          console.debug(`[provider-usage] Anthropic usage unavailable for stored OAuth credential (${response.status})`);
           this.markProviderUnavailable("anthropic", nowMs);
         } else {
+          console.warn(`[provider-usage] Anthropic usage API returned ${response.status}`);
           this.recordFailedAttempt("anthropic", nowMs);
         }
         return;
@@ -392,10 +392,10 @@ export class ProviderUsageService {
     }
   }
 
-  private async readAnthropicAuth(): Promise<ForgeAuthFile | null> {
+  private async readAnthropicAuth(): Promise<AuthCredential | null> {
     try {
-      const raw = await readFile(this.sharedAuthFilePath, "utf8");
-      return JSON.parse(raw) as ForgeAuthFile;
+      const authStorage = AuthStorage.create(this.sharedAuthFilePath);
+      return (authStorage.get("anthropic") as AuthCredential | undefined) ?? null;
     } catch (error) {
       if (isEnoentError(error)) {
         console.debug(`[provider-usage] Anthropic auth file not found at ${this.sharedAuthFilePath}`);
@@ -688,6 +688,48 @@ function normalizeString(value: unknown): string | undefined {
 
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function resolveAnthropicUsageCredential(
+  credential: AuthCredential | undefined | null
+): { accessToken: string; expiresMs?: number } | null {
+  if (!credential || typeof credential !== "object" || credential.type !== "oauth") {
+    return null;
+  }
+
+  const accessToken = normalizeString((credential as { accessToken?: unknown }).accessToken)
+    ?? normalizeString((credential as { access?: unknown }).access);
+  if (!accessToken) {
+    return null;
+  }
+
+  const expiresMs = normalizeExpiryTimestamp((credential as { expires?: unknown }).expires);
+  return expiresMs === undefined ? { accessToken } : { accessToken, expiresMs };
+}
+
+function normalizeExpiryTimestamp(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return undefined;
+    }
+
+    const numeric = Number(trimmed);
+    if (Number.isFinite(numeric)) {
+      return numeric;
+    }
+
+    const parsed = Date.parse(trimmed);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+
+  return undefined;
 }
 
 function toHistoryAccountKey(accountEmail: string | undefined, accountId?: string | undefined): string | undefined {

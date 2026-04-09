@@ -493,8 +493,8 @@ export class SwarmWebSocketServer {
 
     // Backstop behavior: keep an automatic refresh cadence (every cache TTL) so telemetry still
     // gets refresh-completion triggers even when nobody calls /api/stats/refresh manually.
-    void this.statsService.prewarmProviderUsageInBackground().catch(() => false);
-    refreshStatsInBackground();
+    // Avoid an unconditional startup stats refresh here so provider-usage auth probing only runs
+    // on demand or on the scheduled background cadence.
     void this.tokenAnalyticsService.prewarmInBackground().catch(() => false);
     this.statsRefreshInterval = setInterval(() => {
       refreshStatsInBackground();

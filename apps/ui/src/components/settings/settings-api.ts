@@ -41,14 +41,14 @@ export const SETTINGS_AUTH_PROVIDER_META: Record<
   { label: string; description: string; placeholder: string; helpUrl: string; oauthSupported?: boolean }
 > = {
   anthropic: {
-    label: 'Anthropic API key',
+    label: 'Anthropic',
     description: 'Used by pi-opus and Anthropic-backed managers/workers.',
     placeholder: 'sk-ant-...',
     helpUrl: 'https://console.anthropic.com/settings/keys',
     oauthSupported: true,
   },
   'openai-codex': {
-    label: 'OpenAI API key',
+    label: 'OpenAI',
     description: 'Used for Codex runtime sessions and voice transcription.',
     placeholder: 'sk-...',
     helpUrl: 'https://platform.openai.com/api-keys',

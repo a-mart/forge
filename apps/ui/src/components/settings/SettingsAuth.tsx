@@ -630,6 +630,7 @@ export function SettingsAuth({ wsUrl }: SettingsAuthProps) {
                   <OpenAICredentialPool
                     key={provider}
                     wsUrl={wsUrl}
+                    authType={authProviderById.get(provider)?.authType}
                     onError={handlePoolError}
                     onSuccess={handlePoolSuccess}
                     onAuthReload={handlePoolAuthReload}
@@ -643,6 +644,7 @@ export function SettingsAuth({ wsUrl }: SettingsAuthProps) {
                     key={provider}
                     provider="anthropic"
                     providerLabel="Anthropic"
+                    authType={authProviderById.get(provider)?.authType}
                     wsUrl={wsUrl}
                     onError={handlePoolError}
                     onSuccess={handlePoolSuccess}

@@ -7,7 +7,7 @@ import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CredentialPoolPanel } from './CredentialPoolPanel'
 import { OpenAICredentialPool } from './OpenAICredentialPool'
-import type { CredentialPoolState, PooledCredentialInfo } from '@forge/protocol'
+import type { CredentialPoolState, PooledCredentialInfo, SettingsAuthProviderAuthType } from '@forge/protocol'
 
 /* ------------------------------------------------------------------ */
 /*  Mocks                                                             */
@@ -23,14 +23,14 @@ const settingsApiMock = vi.hoisted(() => ({
   toErrorMessage: vi.fn((err: unknown) => (err instanceof Error ? err.message : String(err))),
   SETTINGS_AUTH_PROVIDER_META: {
     'openai-codex': {
-      label: 'OpenAI API key',
+      label: 'OpenAI',
       description: 'Used for Codex runtime sessions and voice transcription.',
       placeholder: 'sk-...',
       helpUrl: 'https://platform.openai.com/api-keys',
       oauthSupported: true,
     },
     anthropic: {
-      label: 'Anthropic API key',
+      label: 'Anthropic',
       description: 'Used by pi-opus and Anthropic-backed managers/workers.',
       placeholder: 'sk-ant-...',
       helpUrl: 'https://console.anthropic.com/settings/keys',
@@ -134,6 +134,7 @@ function renderPanel(
   provider: string,
   providerLabel: string,
   pool?: CredentialPoolState,
+  authType?: SettingsAuthProviderAuthType,
 ): void {
   settingsApiMock.fetchCredentialPool.mockResolvedValue(pool ?? makePool())
 
@@ -143,6 +144,7 @@ function renderPanel(
       createElement(CredentialPoolPanel, {
         provider,
         providerLabel,
+        authType,
         wsUrl: 'ws://127.0.0.1:47187',
         onError,
         onSuccess,
@@ -226,6 +228,52 @@ describe('CredentialPoolPanel', () => {
       await flush()
 
       expect(container.textContent).toContain('Used by pi-opus')
+    })
+  })
+
+  /* ---- Auth type badge ---- */
+
+  describe('auth type badge', () => {
+    it('shows OAuth badge when authType is oauth', async () => {
+      renderPanel('anthropic', 'Anthropic', undefined, 'oauth')
+      await flush()
+      await flush()
+
+      expect(container.textContent).toContain('OAuth')
+    })
+
+    it('shows API key badge when authType is api_key', async () => {
+      renderPanel('anthropic', 'Anthropic', undefined, 'api_key')
+      await flush()
+      await flush()
+
+      expect(container.textContent).toContain('API key')
+    })
+
+    it('shows no auth type badge when authType is undefined', async () => {
+      renderPanel('anthropic', 'Anthropic')
+      await flush()
+      await flush()
+
+      // Should not contain either badge text (aside from account/status badges)
+      const badges = Array.from(container.querySelectorAll('[class*="py-0"]'))
+      const authTypeBadges = badges.filter(
+        (b) => b.textContent === 'OAuth' || b.textContent === 'API key',
+      )
+      expect(authTypeBadges.length).toBe(0)
+    })
+
+    it('shows no auth type badge when authType is unknown', async () => {
+      renderPanel('anthropic', 'Anthropic', undefined, 'unknown')
+      await flush()
+      await flush()
+
+      const badges = Array.from(container.querySelectorAll('[class*="py-0"]'))
+      const authTypeBadges = badges.filter(
+        (b) => b.textContent === 'OAuth' || b.textContent === 'API key',
+      )
+      // 'unknown' should not show either OAuth or API key badge
+      expect(authTypeBadges.filter((b) => b.textContent === 'OAuth').length).toBe(0)
     })
   })
 

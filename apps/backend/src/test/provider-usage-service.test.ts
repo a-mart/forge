@@ -205,10 +205,9 @@ describe("ProviderUsageService", () => {
     const secondService = new ProviderUsageService("/tmp/shared-auth.json", makeHistoryFilePath(), cacheFilePath) as any;
     vi.spyOn(secondService, "readOpenAIAuth").mockResolvedValue(null);
     vi.spyOn(secondService, "readAnthropicAuth").mockResolvedValue({
-      anthropic: {
-        access: "anthropic-token",
-        expires: nowMs - 1
-      }
+      type: "oauth",
+      access: "anthropic-token",
+      expires: nowMs - 1
     });
 
     const snapshot = await secondService.getSnapshot();
@@ -294,10 +293,9 @@ describe("ProviderUsageService", () => {
       }
     });
     vi.spyOn(service, "readAnthropicAuth").mockResolvedValue({
-      anthropic: {
-        access: "anthropic-token",
-        expires: nowMs + 60_000
-      }
+      type: "oauth",
+      access: "anthropic-token",
+      expires: nowMs + 60_000
     });
 
     const snapshot = await service.getSnapshot();
@@ -499,10 +497,9 @@ describe("ProviderUsageService", () => {
     service.setCredentialPoolGetter(() => pool as any);
     vi.spyOn(service, "readOpenAIAuth").mockResolvedValue(null);
     const readAnthropicAuthSpy = vi.spyOn(service, "readAnthropicAuth").mockResolvedValue({
-      anthropic: {
-        access: "shared-auth-token",
-        expires: nowMs + 60_000
-      }
+      type: "oauth",
+      access: "shared-auth-token",
+      expires: nowMs + 60_000
     });
 
     const snapshot = await service.getSnapshot();
@@ -519,6 +516,61 @@ describe("ProviderUsageService", () => {
     expect(pool.buildRuntimeAuthData).not.toHaveBeenCalled();
     expect(readAnthropicAuthSpy).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns Anthropic usage as unavailable without fetching for API-key auth", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("VITEST", "");
+
+    const fetchMock = vi.fn();
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { ProviderUsageService } = await import("../stats/provider-usage-service.js");
+    const service = new ProviderUsageService("/tmp/shared-auth.json", makeHistoryFilePath()) as any;
+
+    vi.spyOn(service, "readOpenAIAuth").mockResolvedValue(null);
+    vi.spyOn(service, "readAnthropicAuth").mockResolvedValue({
+      type: "api_key",
+      key: "sk-ant-api-key",
+      access: "sk-ant-api-key"
+    });
+
+    const snapshot = await service.getSnapshot();
+
+    expect(snapshot.anthropic).toEqual([{
+      provider: "anthropic",
+      available: false
+    }]);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(warnSpy).not.toHaveBeenCalledWith(expect.stringContaining("Anthropic usage"));
+  });
+
+  it("returns Anthropic usage as unavailable without fetching for malformed OAuth auth", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("VITEST", "");
+
+    const fetchMock = vi.fn();
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { ProviderUsageService } = await import("../stats/provider-usage-service.js");
+    const service = new ProviderUsageService("/tmp/shared-auth.json", makeHistoryFilePath()) as any;
+
+    vi.spyOn(service, "readOpenAIAuth").mockResolvedValue(null);
+    vi.spyOn(service, "readAnthropicAuth").mockResolvedValue({
+      type: "oauth",
+      refreshToken: "refresh-only-token"
+    });
+
+    const snapshot = await service.getSnapshot();
+
+    expect(snapshot.anthropic).toEqual([{
+      provider: "anthropic",
+      available: false
+    }]);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(warnSpy).not.toHaveBeenCalledWith(expect.stringContaining("Anthropic usage"));
   });
 
   it("loads legacy v2 anthropic cache entries and rewrites them as v3 arrays", async () => {

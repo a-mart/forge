@@ -47,6 +47,7 @@ import {
   createIdleSettingsAuthOAuthFlowState,
 } from './settings-api'
 import type { SettingsAuthOAuthFlowState, SettingsAuthProviderId } from './settings-types'
+import type { SettingsAuthProviderAuthType } from '@forge/protocol'
 
 /* ------------------------------------------------------------------ */
 /*  Health badge                                                      */
@@ -344,6 +345,8 @@ export interface CredentialPoolPanelProps {
   providerLabel: string
   /** Optional description override. Falls back to SETTINGS_AUTH_PROVIDER_META description. */
   description?: string
+  /** Auth type reported by the backend for the primary credential (e.g. 'oauth', 'api_key'). */
+  authType?: SettingsAuthProviderAuthType
   wsUrl: string
   onError: (message: string) => void
   onSuccess: (message: string) => void
@@ -354,6 +357,7 @@ export function CredentialPoolPanel({
   provider,
   providerLabel,
   description,
+  authType,
   wsUrl,
   onError,
   onSuccess,
@@ -622,6 +626,16 @@ export function CredentialPoolPanel({
               >
                 <AlertTriangle className="size-3" />
                 Not configured
+              </Badge>
+            )}
+            {authType === 'oauth' && (
+              <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
+                OAuth
+              </Badge>
+            )}
+            {authType === 'api_key' && (
+              <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
+                API key
               </Badge>
             )}
           </div>
