@@ -123,26 +123,26 @@ If clicking a file link does nothing, check that the editor is installed and tha
     id: 'settings-auth',
     title: 'Authentication',
     category: 'settings',
-    summary: 'Add API keys and set up OAuth for AI providers.',
-    content: `The Authentication pane stores credentials for the AI providers Forge uses. Without at least one provider configured, agents cannot make model calls.
+    summary: 'Configure provider credentials and auth modes.',
+    content: `The Authentication pane lists each provider on its own row. Every row shows the provider label and an auth-mode badge so you can see at a glance whether Forge is using OAuth or an API key.
 
 ## Supported providers
 
-- **Anthropic** — powers Claude-based workers and managers through the Pi-proxied path
-- **Claude SDK** — native Claude Code CLI OAuth path for Claude models
-- **OpenAI** — powers Codex runtime sessions and voice transcription
-- **xAI** — powers Grok-based workers
+- **Anthropic** — Claude-based workers and managers. Supports either OAuth or API key auth.
+- **OpenAI** — Codex runtime sessions and voice transcription. Supports either OAuth or API key auth.
+- **Claude SDK** — Native Claude Code CLI OAuth path for Claude models. OAuth only.
+- **xAI** — Grok-based workers.
 
-## Adding an API key
+## Configuring a provider
 
 1. Open **Settings > Authentication**.
-2. Find the provider you want.
-3. Paste your API key into the input field.
-4. Click **Save**.
+2. Find the provider row you want.
+3. Use the auth control shown on that row to connect with OAuth or enter an API key, depending on the provider and your setup.
+4. Click **Save** if prompted.
 
-Each provider row shows a "Configured" or "Not configured" badge. Once saved, the key is masked but stored on disk at \`~/.forge/shared/config/auth/auth.json\`. Use the eye icon to toggle visibility of the input. Click **Remove** to delete a saved key.
+Each row also shows whether that provider is configured. Saved credentials are masked and stored on disk at \`~/.forge/shared/config/auth/auth.json\`. Use the eye icon to toggle visibility of any entered secret. Click **Remove** to delete saved credentials.
 
-Each provider also has a "Get key" link that opens the provider's key management page in your browser.
+Each provider row includes a **Get key** link when API key auth is supported, which opens the provider's key management page in your browser.
 
 ## OAuth login
 
@@ -152,7 +152,7 @@ Claude SDK uses Claude Code CLI OAuth instead of an API key. Run \`claude login\
 
 If the OAuth flow gets stuck, click **Clear** to reset it and try again.
 
-## Which key do I need?
+## Which credential do I need?
 
 You need at least one provider credential to run agents. Most setups use Anthropic for Claude-based workers. Add OpenAI if you want Codex runtime sessions or voice transcription. Add xAI if you want to use Grok models. Use Claude SDK if you want the native Claude Code CLI OAuth path instead of an API key.`,
     keywords: [

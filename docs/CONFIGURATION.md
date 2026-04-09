@@ -59,11 +59,11 @@ FORGE_PORT=47187
 # GEMINI_API_KEY=your-gemini-key
 ```
 
-## API Keys (LLM Providers)
+## Provider Authentication
 
-API keys for LLM providers — **OpenAI**, **Anthropic**, and **xAI** — are configured through the dashboard UI under **Settings → Authentication**. They are stored locally in the data directory and never leave your machine.
+Provider auth for **OpenAI**, **Anthropic**, and **xAI** is configured through the dashboard UI under **Settings → Authentication**. The pane shows provider labels with auth-mode badges so you can see whether a row is using OAuth or an API key.
 
-Claude SDK authentication is separate from API-key-based providers: it uses Claude Code CLI OAuth, with credentials stored in macOS Keychain on macOS and `~/.claude/.credentials.json` on Linux and Windows.
+OpenAI and Anthropic support either OAuth or API key auth. Claude SDK is separate and OAuth-only: it uses Claude Code CLI OAuth, with credentials stored in macOS Keychain on macOS and `~/.claude/.credentials.json` on Linux and Windows.
 
 Model availability and behavior are managed through **Settings → Models**, which provides visibility controls and context window overrides for all supported models. See [docs/MODEL_CATALOG.md](MODEL_CATALOG.md) for details on the model catalog system.
 

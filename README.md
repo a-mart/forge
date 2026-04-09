@@ -56,7 +56,7 @@ Download the native installer for your platform from [GitHub Releases](https://g
 
 No Node.js or pnpm required. The desktop app bundles everything and updates automatically. Check for updates manually in Settings → About, or toggle beta releases to get early access to new features.
 
-On first launch, go to Settings and sign in with your OpenAI, Anthropic, or Claude SDK account. OpenAI and Anthropic support OAuth or API key sign-in; Claude SDK uses Claude Code CLI OAuth and does not require an API key. Forge will walk you through a short welcome conversation to learn your preferences.
+On first launch, go to Settings and sign in with your OpenAI, Anthropic, or Claude SDK account. The Authentication pane shows provider labels with auth-mode badges so you can see whether each row is using OAuth or an API key. OpenAI and Anthropic support OAuth or API key sign-in; Claude SDK uses Claude Code CLI OAuth and does not require an API key. Forge will walk you through a short welcome conversation to learn your preferences.
 
 Then create a manager, point it at a project directory, and start chatting. See the [Getting Started Guide](docs/GETTING_STARTED.md) for a full walkthrough.
 
@@ -268,7 +268,7 @@ The `.env.example` file documents all available options with comments. Key categ
 - **Agent Runtimes** — Codex API key and binary path
 - **Playwright** — dashboard toggle (macOS/Linux only)
 
-API keys for LLM providers (OpenAI, Anthropic, xAI) are configured in the dashboard UI under **Settings → Authentication**, not in `.env`. The **Settings → Models** tab provides a full catalog of supported models with visibility controls and context window overrides.
+Provider auth for LLM providers (OpenAI, Anthropic, xAI) is configured in the dashboard UI under **Settings → Authentication**, where each row shows the provider label plus an auth-mode badge. OpenAI and Anthropic can use OAuth or API key auth; Claude SDK stays OAuth-only via Claude Code CLI. The **Settings → Models** tab provides a full catalog of supported models with visibility controls and context window overrides.
 
 See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for the full configuration reference.
 

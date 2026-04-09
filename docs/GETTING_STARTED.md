@@ -32,17 +32,13 @@ You'll see a short welcome form from Cortex, Forge's learning system. It asks fo
 
 Before you can do anything, you need to connect at least one AI provider. Go to **Settings → Authentication**.
 
+The authentication pane shows one row per provider with a provider label and an auth-mode badge, so you can tell whether a row is using OAuth or an API key at a glance.
+
 Forge supports three providers:
 
-- **Anthropic** — Claude models (Opus, Sonnet). Good for manager agents, frontend work, and general tasks.
+- **Anthropic** — Claude models (Opus, Sonnet). Supports OAuth or API key auth.
 - **Claude SDK** — Native Claude Agent SDK access through Claude Code CLI OAuth. Use this when you want the SDK runtime instead of the Pi-proxied Anthropic path.
-- **OpenAI** — GPT and Codex models. Good for backend implementation, code review, and planning.
-
-For each provider, you can either:
-- **OAuth sign-in** — Click the login button and authenticate through the provider's OAuth flow. Simplest option.
-- **API key** — Paste your API key into the API key field.
-
-> **⚠️ Important:** The authentication UI has separate fields for OAuth tokens and API keys. Putting a key in the wrong field is a common first-time mistake and will give you "invalid API key" errors.
+- **OpenAI** — GPT and Codex models. Supports OAuth or API key auth.
 
 After adding credentials, you may need to restart the backend (`Ctrl+C` and re-run `pnpm prod:daemon`) for the changes to take effect. On macOS this usually isn't necessary, but on Windows the backend sometimes doesn't pick up auth changes without a restart.
 
@@ -134,12 +130,12 @@ If you've set up scheduled tasks (like automated Cortex reviews on a cron schedu
 
 ### Provider Usage
 
-If you've authenticated with OpenAI or Anthropic via OAuth, Forge can display subscription rate-limit monitoring in two places:
+If the backend detects real OAuth credentials for OpenAI or Anthropic, Forge can display subscription rate-limit monitoring in two places:
 
 - **Sidebar widget** — Compact stacked gauges showing 5-hour rolling and weekly usage windows with reset timers. Click to expand for detailed metrics (deficit/reserve pace, runout estimates), and use the manual refresh button in the detail panel if you want to re-poll immediately.
 - **Dashboard stats panel** — Full usage breakdown with the same metrics in a dedicated section.
 
-Usage data survives backend restarts via a shared cache, and weekly pace estimates reflect historical usage curves rather than simple linear interpolation. Toggle the sidebar widget visibility in **Settings → General → Sidebar**.
+Usage data survives backend restarts via a shared cache, and weekly pace estimates reflect historical usage curves rather than simple linear interpolation. If auth is API-key-based or malformed, the monitoring stays unavailable without extra noise. Toggle the sidebar widget visibility in **Settings → General → Sidebar**.
 
 ---
 
