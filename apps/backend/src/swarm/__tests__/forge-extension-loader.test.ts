@@ -131,6 +131,54 @@ describe("loadForgeExtensionModule", () => {
     ]);
   });
 
+  it("shares module-level state across repeated loads until the file changes", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "forge-extension-loader-"));
+    tempDirs.push(dir);
+
+    const extensionPath = join(dir, "shared-state.ts");
+    await writeFile(
+      extensionPath,
+      [
+        "let loadCount = 0;",
+        "export default (forge) => {",
+        "  loadCount += 1;",
+        "  forge.loaded = `first:${loadCount}`;",
+        "};",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const firstLoaded = await loadForgeExtensionModule(discovered(extensionPath));
+    const firstForge = { loaded: "" } as { loaded: string };
+    await firstLoaded.setup(firstForge as never);
+    expect(firstForge.loaded).toBe("first:1");
+
+    const secondLoaded = await loadForgeExtensionModule(discovered(extensionPath));
+    const secondForge = { loaded: "" } as { loaded: string };
+    await secondLoaded.setup(secondForge as never);
+    expect(secondForge.loaded).toBe("first:2");
+
+    await writeFile(
+      extensionPath,
+      [
+        "let loadCount = 100;",
+        "export default (forge) => {",
+        "  loadCount += 1;",
+        "  forge.loaded = `second:${loadCount}`;",
+        "};",
+        "// ensure file size changes so the signature changes even on coarse mtime filesystems",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const thirdLoaded = await loadForgeExtensionModule(discovered(extensionPath));
+    const thirdForge = { loaded: "" } as { loaded: string };
+    await thirdLoaded.setup(thirdForge as never);
+    expect(thirdForge.loaded).toBe("second:101");
+  });
+
   it("reloads edited extension code on the next load boundary", async () => {
     const dir = await mkdtemp(join(tmpdir(), "forge-extension-loader-"));
     tempDirs.push(dir);
@@ -143,7 +191,7 @@ describe("loadForgeExtensionModule", () => {
     await firstLoaded.setup(firstForge as never);
     expect(firstForge.loaded).toBe("first");
 
-    await writeFile(extensionPath, 'export default (forge) => { forge.loaded = "second"; };\n', "utf8");
+    await writeFile(extensionPath, 'export default (forge) => { forge.loaded = "second"; };\n// changed\n', "utf8");
 
     const secondLoaded = await loadForgeExtensionModule(discovered(extensionPath));
     const secondForge = { loaded: "" } as { loaded: string };

@@ -1,3 +1,5 @@
+import { stat } from "node:fs/promises";
+import { resolve } from "node:path";
 import { createJiti } from "jiti";
 import type {
   DiscoveredForgeExtension,
@@ -5,22 +7,23 @@ import type {
   LoadedForgeExtensionModule
 } from "./forge-extension-types.js";
 
+const extensionModuleCache = new Map<string, CachedForgeExtensionModule>();
+
 export async function loadForgeExtensionModule(
   discovered: DiscoveredForgeExtension
 ): Promise<LoadedForgeExtensionModule> {
-  const jiti = createJiti(import.meta.url, {
-    fsCache: false,
-    moduleCache: false,
-    interopDefault: false
-  });
-
-  let importedModule: unknown;
-  try {
-    importedModule = await jiti.import(discovered.path);
-  } catch (error) {
-    throw new Error(normalizeErrorMessage(error));
+  const cacheKey = createExtensionCacheKey(discovered.path);
+  const signature = await readExtensionFileSignature(discovered.path);
+  const cached = extensionModuleCache.get(cacheKey);
+  if (cached && cached.signature === signature) {
+    return {
+      discovered,
+      setup: cached.setup,
+      metadata: cached.metadata
+    };
   }
 
+  const importedModule = await importForgeExtensionModule(discovered.path);
   const namespace = toModuleNamespace(importedModule);
   const defaultExport = resolveDefaultExport(importedModule, namespace);
   if (typeof defaultExport !== "function") {
@@ -28,11 +31,17 @@ export async function loadForgeExtensionModule(
   }
 
   const metadata = validateExtensionMetadata(namespace.extension);
+  const loadedModule = {
+    signature,
+    setup: defaultExport as (forge: unknown) => void | Promise<void>,
+    metadata
+  } satisfies CachedForgeExtensionModule;
+  extensionModuleCache.set(cacheKey, loadedModule);
 
   return {
     discovered,
-    setup: defaultExport as (forge: unknown) => void | Promise<void>,
-    metadata
+    setup: loadedModule.setup,
+    metadata: loadedModule.metadata
   };
 }
 
@@ -55,6 +64,43 @@ export async function loadForgeExtensionModules(discovered: readonly DiscoveredF
   }
 
   return { loaded, errors };
+}
+
+async function importForgeExtensionModule(path: string): Promise<unknown> {
+  const jiti = createJiti(import.meta.url, {
+    fsCache: false,
+    moduleCache: false,
+    interopDefault: false
+  });
+
+  try {
+    return await jiti.import(path);
+  } catch (error) {
+    throw new Error(normalizeErrorMessage(error));
+  }
+}
+
+async function readExtensionFileSignature(path: string): Promise<string> {
+  try {
+    const file = await stat(path);
+    return `${file.mtimeMs}:${file.size}`;
+  } catch (error) {
+    throw new Error(normalizeErrorMessage(error));
+  }
+}
+
+function createExtensionCacheKey(path: string): string {
+  const resolvedPath = resolve(path);
+  return process.platform === "win32" ? resolvedPath.toLowerCase() : resolvedPath;
+}
+
+interface CachedForgeExtensionModule {
+  readonly signature: string;
+  readonly setup: (forge: unknown) => void | Promise<void>;
+  readonly metadata: {
+    readonly name?: string;
+    readonly description?: string;
+  };
 }
 
 function toModuleNamespace(value: unknown): Record<string, unknown> {
