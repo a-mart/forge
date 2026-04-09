@@ -17,6 +17,17 @@ afterEach(async () => {
 })
 
 describe('StatsService refresh completion hook', () => {
+  it('prewarms provider usage through the provider usage service', async () => {
+    const dataDir = await createDataDir('stats-provider-prewarm-')
+    const service = new StatsService(createSwarmManagerStub(dataDir))
+    const getSnapshotSpy = vi
+      .spyOn((service as any).providerUsageService, 'prewarmInBackground')
+      .mockResolvedValue({ openai: [], anthropic: [] })
+
+    await expect(service.prewarmProviderUsageInBackground()).resolves.toEqual({ openai: [], anthropic: [] })
+    expect(getSnapshotSpy).toHaveBeenCalledTimes(1)
+  })
+
   it('invokes the hook once per in-flight refresh-all run, even with concurrent callers', async () => {
     const dataDir = await createDataDir('stats-hook-concurrency-')
     const onRefreshAllCompleted = vi.fn<(snapshot: StatsSnapshot | null) => void>()

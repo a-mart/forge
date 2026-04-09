@@ -18,6 +18,7 @@ import type {
   SettingsEnvMutationResponse,
   SettingsEnvResponse,
 } from "@forge/protocol";
+import type { StatsService } from "../../../stats/stats-service.js";
 import { ensureCanonicalAuthFilePath } from "../../../swarm/auth-storage-paths.js";
 import type { SwarmManager } from "../../../swarm/swarm-manager.js";
 import {
@@ -34,6 +35,7 @@ const SETTINGS_AUTH_LOGIN_METHODS = "POST, OPTIONS";
 const SETTINGS_AUTH_METHODS = "GET, PUT, DELETE, POST, OPTIONS";
 
 type PooledSettingsAuthProviderId = SettingsAuthLoginProviderId;
+type InvalidateProviderUsage = (...providers: string[]) => Promise<void>;
 
 interface SettingsAuthLoginFlow {
   providerId: SettingsAuthLoginProviderId;
@@ -57,9 +59,27 @@ export interface SettingsRouteBundle {
   cancelActiveSettingsAuthLoginFlows: () => void;
 }
 
-export function createSettingsRoutes(options: { swarmManager: SwarmManager }): SettingsRouteBundle {
-  const { swarmManager } = options;
+export function createSettingsRoutes(options: {
+  swarmManager: SwarmManager;
+  statsService?: Pick<StatsService, "invalidateProviderUsage">;
+}): SettingsRouteBundle {
+  const { swarmManager, statsService } = options;
   const activeSettingsAuthLoginFlows = new Map<string, SettingsAuthLoginFlow>();
+  const invalidateProviderUsage: InvalidateProviderUsage = async (...providers) => {
+    if (!statsService) {
+      return;
+    }
+
+    const usageProviders = new Set<"openai" | "anthropic">();
+    for (const provider of providers) {
+      const usageProvider = mapSettingsAuthProviderToUsageProvider(provider);
+      if (usageProvider) {
+        usageProviders.add(usageProvider);
+      }
+    }
+
+    await Promise.all(Array.from(usageProviders, (provider) => statsService.invalidateProviderUsage(provider)));
+  };
 
   const routes: HttpRoute[] = [
     {
@@ -77,6 +97,7 @@ export function createSettingsRoutes(options: { swarmManager: SwarmManager }): S
         await handleSettingsAuthHttpRequest(
           swarmManager,
           activeSettingsAuthLoginFlows,
+          invalidateProviderUsage,
           request,
           response,
           requestUrl
@@ -158,6 +179,7 @@ async function handleSettingsEnvHttpRequest(
 async function handleSettingsAuthHttpRequest(
   swarmManager: SwarmManager,
   activeSettingsAuthLoginFlows: Map<string, SettingsAuthLoginFlow>,
+  invalidateProviderUsage: InvalidateProviderUsage,
   request: IncomingMessage,
   response: ServerResponse,
   requestUrl: URL
@@ -173,6 +195,7 @@ async function handleSettingsAuthHttpRequest(
     await handleCredentialPoolHttpRequest(
       swarmManager,
       activeSettingsAuthLoginFlows,
+      invalidateProviderUsage,
       request,
       response,
       requestUrl,
@@ -185,6 +208,7 @@ async function handleSettingsAuthHttpRequest(
   if (authPathSegments[1] === "strategy" && authPathSegments.length === 2) {
     await handleCredentialPoolStrategyHttpRequest(
       swarmManager,
+      invalidateProviderUsage,
       request,
       response,
       decodeURIComponent(rawProviderSegment)
@@ -197,7 +221,14 @@ async function handleSettingsAuthHttpRequest(
     requestUrl.pathname === SETTINGS_AUTH_LOGIN_ENDPOINT_PATH ||
     requestUrl.pathname.startsWith(`${SETTINGS_AUTH_LOGIN_ENDPOINT_PATH}/`)
   ) {
-    await handleSettingsAuthLoginHttpRequest(swarmManager, activeSettingsAuthLoginFlows, request, response, requestUrl);
+    await handleSettingsAuthLoginHttpRequest(
+      swarmManager,
+      activeSettingsAuthLoginFlows,
+      invalidateProviderUsage,
+      request,
+      response,
+      requestUrl
+    );
     return;
   }
 
@@ -222,6 +253,7 @@ async function handleSettingsAuthHttpRequest(
     applyCorsHeaders(request, response, methods);
     const payload = parseSettingsAuthUpdateBody(await readJsonBody(request));
     await swarmManager.updateSettingsAuth(payload);
+    await invalidateProviderUsage(...Object.keys(payload));
     const providers = await swarmManager.listSettingsAuth();
     const responsePayload: SettingsAuthMutationResponse = { ok: true, providers };
     sendJson(response, 200, responsePayload as unknown as Record<string, unknown>);
@@ -243,6 +275,7 @@ async function handleSettingsAuthHttpRequest(
     }
 
     await swarmManager.deleteSettingsAuth(provider);
+    await invalidateProviderUsage(provider);
     const providers = await swarmManager.listSettingsAuth();
     const payload: SettingsAuthMutationResponse = { ok: true, providers };
     sendJson(response, 200, payload as unknown as Record<string, unknown>);
@@ -259,6 +292,7 @@ async function handleSettingsAuthHttpRequest(
 async function handleCredentialPoolHttpRequest(
   swarmManager: SwarmManager,
   activeSettingsAuthLoginFlows: Map<string, SettingsAuthLoginFlow>,
+  invalidateProviderUsage: InvalidateProviderUsage,
   request: IncomingMessage,
   response: ServerResponse,
   requestUrl: URL,
@@ -294,6 +328,7 @@ async function handleCredentialPoolHttpRequest(
     await handlePoolAddAccountOAuthLogin(
       swarmManager,
       activeSettingsAuthLoginFlows,
+      invalidateProviderUsage,
       request,
       response,
       providerId
@@ -336,6 +371,7 @@ async function handleCredentialPoolHttpRequest(
         return;
       }
       await swarmManager.renamePooledCredential(providerId, credentialId, body.label);
+      await invalidateProviderUsage(providerId);
       const pool = await swarmManager.listCredentialPool(providerId);
       sendJson(response, 200, { ok: true, pool });
     } catch (error) {
@@ -347,6 +383,7 @@ async function handleCredentialPoolHttpRequest(
   if (request.method === "POST" && action === "primary") {
     try {
       await swarmManager.setPrimaryPooledCredential(providerId, credentialId);
+      await invalidateProviderUsage(providerId);
       const pool = await swarmManager.listCredentialPool(providerId);
       sendJson(response, 200, { ok: true, pool });
     } catch (error) {
@@ -358,6 +395,7 @@ async function handleCredentialPoolHttpRequest(
   if (request.method === "DELETE" && action === "cooldown") {
     try {
       await swarmManager.resetPooledCredentialCooldown(providerId, credentialId);
+      await invalidateProviderUsage(providerId);
       const pool = await swarmManager.listCredentialPool(providerId);
       sendJson(response, 200, { ok: true, pool });
     } catch (error) {
@@ -369,6 +407,7 @@ async function handleCredentialPoolHttpRequest(
   if (request.method === "DELETE" && action === undefined) {
     try {
       await swarmManager.removePooledCredential(providerId, credentialId);
+      await invalidateProviderUsage(providerId);
       const pool = await swarmManager.listCredentialPool(providerId);
       sendJson(response, 200, { ok: true, pool });
     } catch (error) {
@@ -383,6 +422,7 @@ async function handleCredentialPoolHttpRequest(
 
 async function handleCredentialPoolStrategyHttpRequest(
   swarmManager: SwarmManager,
+  invalidateProviderUsage: InvalidateProviderUsage,
   request: IncomingMessage,
   response: ServerResponse,
   rawProvider: string
@@ -420,6 +460,7 @@ async function handleCredentialPoolStrategyHttpRequest(
       return;
     }
     await swarmManager.setCredentialPoolStrategy(providerId, strategy as CredentialPoolStrategy);
+    await invalidateProviderUsage(providerId);
     const pool = await swarmManager.listCredentialPool(providerId);
     sendJson(response, 200, { ok: true, pool });
   } catch (error) {
@@ -434,6 +475,7 @@ async function handleCredentialPoolStrategyHttpRequest(
 async function handlePoolAddAccountOAuthLogin(
   swarmManager: SwarmManager,
   activeSettingsAuthLoginFlows: Map<string, SettingsAuthLoginFlow>,
+  invalidateProviderUsage: InvalidateProviderUsage,
   request: IncomingMessage,
   response: ServerResponse,
   providerId: PooledSettingsAuthProviderId
@@ -569,6 +611,7 @@ async function handlePoolAddAccountOAuthLogin(
       { type: "oauth", ...credentials },
       { label: undefined }
     );
+    await invalidateProviderUsage(providerId);
 
     sendSseEvent("complete", { provider: providerId, status: "connected" });
   } catch (error) {
@@ -589,6 +632,7 @@ async function handlePoolAddAccountOAuthLogin(
 async function handleSettingsAuthLoginHttpRequest(
   swarmManager: SwarmManager,
   activeSettingsAuthLoginFlows: Map<string, SettingsAuthLoginFlow>,
+  invalidateProviderUsage: InvalidateProviderUsage,
   request: IncomingMessage,
   response: ServerResponse,
   requestUrl: URL
@@ -799,6 +843,7 @@ async function handleSettingsAuthLoginHttpRequest(
       type: "oauth",
       ...credentials
     });
+    await invalidateProviderUsage(providerId);
 
     sendSseEvent("complete", {
       provider: flow.providerId,
@@ -904,6 +949,18 @@ function getSettingsAuthProviderLabel(provider: string): string {
       return "OpenAI Codex";
     default:
       return provider;
+  }
+}
+
+function mapSettingsAuthProviderToUsageProvider(provider: string): "openai" | "anthropic" | undefined {
+  const providerId = resolveSettingsAuthLoginProviderId(provider);
+  switch (providerId) {
+    case "anthropic":
+      return "anthropic";
+    case "openai-codex":
+      return "openai";
+    default:
+      return undefined;
   }
 }
 

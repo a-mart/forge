@@ -2,7 +2,7 @@ import { join } from "node:path";
 import type { ProviderUsageStats, StatsRange, StatsSnapshot, TokenStats } from "@forge/protocol";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import { getProfilesDir, getSharedStatsCachePath } from "../swarm/data-paths.js";
-import { ProviderUsageService } from "./provider-usage-service.js";
+import { ProviderUsageService, type ProviderUsageProvider } from "./provider-usage-service.js";
 import {
   createStatsCacheEntry,
   getLatestTokenStatsForTimezone,
@@ -115,6 +115,14 @@ export class StatsService {
 
   async getProviderUsage(): Promise<ProviderUsageStats> {
     return this.providerUsageService.getSnapshot();
+  }
+
+  async prewarmProviderUsageInBackground(): Promise<ProviderUsageStats | null> {
+    return this.providerUsageService.prewarmInBackground();
+  }
+
+  async invalidateProviderUsage(provider: ProviderUsageProvider): Promise<void> {
+    await this.providerUsageService.invalidateProvider(provider);
   }
 
   async refreshAllRangesInBackground(): Promise<StatsSnapshot | null> {

@@ -105,15 +105,18 @@ describe("settings routes", () => {
     });
   });
 
-  it("updates auth settings and returns ok + providers", async () => {
+  it("updates auth settings, invalidates usage cache, and returns ok + providers", async () => {
     const swarmManager = {
       updateSettingsAuth: vi.fn(async () => undefined),
       listSettingsAuth: vi.fn(async () => [
         { provider: "anthropic", type: "api_key", connected: true },
       ]),
     };
+    const statsService = {
+      invalidateProviderUsage: vi.fn(async () => undefined),
+    };
 
-    const server = await createSettingsRouteTestServer(swarmManager);
+    const server = await createSettingsRouteTestServer(swarmManager, statsService);
     const response = await fetch(`${server.baseUrl}/api/settings/auth`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
@@ -122,6 +125,7 @@ describe("settings routes", () => {
 
     expect(response.status).toBe(200);
     expect(swarmManager.updateSettingsAuth).toHaveBeenCalledWith({ anthropic: "sk-ant-1" });
+    expect(statsService.invalidateProviderUsage).toHaveBeenCalledWith("anthropic");
     await expect(response.json()).resolves.toEqual({
       ok: true,
       providers: [{ provider: "anthropic", type: "api_key", connected: true }],
@@ -165,7 +169,7 @@ describe("settings routes", () => {
     await expect(response.json()).resolves.toEqual({ pool });
   });
 
-  it("renames pooled OpenAI Codex credentials and returns the refreshed pool", async () => {
+  it("renames pooled OpenAI Codex credentials, invalidates usage cache, and returns the refreshed pool", async () => {
     const pool = createPoolState([
       makeCredential({ id: "acct-1", label: "Primary", isPrimary: true }),
     ]);
@@ -173,8 +177,11 @@ describe("settings routes", () => {
       renamePooledCredential: vi.fn(async () => undefined),
       listCredentialPool: vi.fn(async () => pool),
     };
+    const statsService = {
+      invalidateProviderUsage: vi.fn(async () => undefined),
+    };
 
-    const server = await createSettingsRouteTestServer(swarmManager);
+    const server = await createSettingsRouteTestServer(swarmManager, statsService);
     const response = await fetch(`${server.baseUrl}/api/settings/auth/openai-codex/accounts/acct-1/label`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
@@ -183,6 +190,7 @@ describe("settings routes", () => {
 
     expect(response.status).toBe(200);
     expect(swarmManager.renamePooledCredential).toHaveBeenCalledWith("openai-codex", "acct-1", "Primary");
+    expect(statsService.invalidateProviderUsage).toHaveBeenCalledWith("openai");
     await expect(response.json()).resolves.toEqual({ ok: true, pool });
   });
 
@@ -342,8 +350,14 @@ function makeCredential(overrides?: Partial<{
   };
 }
 
-async function createSettingsRouteTestServer(swarmManager: Record<string, unknown>): Promise<TestServer> {
-  const bundle = createSettingsRoutes({ swarmManager: swarmManager as never });
+async function createSettingsRouteTestServer(
+  swarmManager: Record<string, unknown>,
+  statsService?: { invalidateProviderUsage: (provider: "openai" | "anthropic") => Promise<void> }
+): Promise<TestServer> {
+  const bundle = createSettingsRoutes({
+    swarmManager: swarmManager as never,
+    statsService: statsService as never,
+  });
   const server = createServer((request, response) => {
     void handleRouteRequest(bundle.routes, request, response);
   });

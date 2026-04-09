@@ -336,12 +336,15 @@ export class SwarmWebSocketServer {
     });
     wsHandlerRef = this.wsHandler;
 
-    this.settingsRoutes = createSettingsRoutes({ swarmManager: this.swarmManager });
     this.telemetryService = options.telemetryService ?? null;
     this.statsService = options.statsService ?? new StatsService(this.swarmManager, {
       onRefreshAllCompleted: (allStats) => {
         void this.telemetryService?.sendOnStatsRefresh(allStats);
       },
+    });
+    this.settingsRoutes = createSettingsRoutes({
+      swarmManager: this.swarmManager,
+      statsService: this.statsService,
     });
     this.tokenAnalyticsService = new TokenAnalyticsService(this.swarmManager);
     this.httpRoutes = [
@@ -490,6 +493,7 @@ export class SwarmWebSocketServer {
 
     // Backstop behavior: keep an automatic refresh cadence (every cache TTL) so telemetry still
     // gets refresh-completion triggers even when nobody calls /api/stats/refresh manually.
+    void this.statsService.prewarmProviderUsageInBackground().catch(() => false);
     refreshStatsInBackground();
     void this.tokenAnalyticsService.prewarmInBackground().catch(() => false);
     this.statsRefreshInterval = setInterval(() => {

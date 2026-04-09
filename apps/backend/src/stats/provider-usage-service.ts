@@ -89,12 +89,15 @@ const TEST_PROVIDER_USAGE_SNAPSHOT: ProviderUsageStats = {
 const PERSISTED_CACHE_VERSION = 3;
 const LEGACY_PERSISTED_CACHE_VERSION = 2;
 
+export type ProviderUsageProvider = keyof CachedProviderUsage;
+
 export class ProviderUsageService {
   private readonly cache: CachedProviderUsage = {};
   private readonly historyStore: ProviderUsageHistoryStore;
   private persistentCacheLoaded = false;
   private persistQueue: Promise<void> = Promise.resolve();
   private credentialPoolGetter?: () => CredentialPoolService;
+  private inFlightSnapshot: Promise<ProviderUsageStats> | null = null;
 
   constructor(
     private readonly sharedAuthFilePath: string,
@@ -108,11 +111,41 @@ export class ProviderUsageService {
     this.credentialPoolGetter = getter;
   }
 
+  async prewarmInBackground(): Promise<ProviderUsageStats | null> {
+    try {
+      return await this.getSnapshot();
+    } catch {
+      return null;
+    }
+  }
+
+  async invalidateProvider(provider: ProviderUsageProvider): Promise<void> {
+    await this.ensurePersistentCacheLoaded();
+    delete this.cache[provider];
+    this.queuePersistCacheWrite();
+  }
+
   async getSnapshot(): Promise<ProviderUsageStats> {
     if (IS_TEST_ENV) {
       return TEST_PROVIDER_USAGE_SNAPSHOT;
     }
 
+    if (this.inFlightSnapshot) {
+      return this.inFlightSnapshot;
+    }
+
+    const snapshotPromise = this.loadSnapshot();
+    const trackedPromise = snapshotPromise.finally(() => {
+      if (this.inFlightSnapshot === trackedPromise) {
+        this.inFlightSnapshot = null;
+      }
+    });
+
+    this.inFlightSnapshot = trackedPromise;
+    return trackedPromise;
+  }
+
+  private async loadSnapshot(): Promise<ProviderUsageStats> {
     await this.ensurePersistentCacheLoaded();
 
     const nowMs = Date.now();
@@ -300,7 +333,7 @@ export class ProviderUsageService {
     const accessToken = auth?.anthropic?.access?.trim();
     if (!accessToken) {
       if (auth) {
-        this.invalidateProvider("anthropic", nowMs);
+        this.markProviderUnavailable("anthropic", nowMs);
       } else {
         this.recordFailedAttempt("anthropic", nowMs);
       }
@@ -310,7 +343,7 @@ export class ProviderUsageService {
     const expiresMs = auth?.anthropic?.expires;
     if (typeof expiresMs === "number" && Number.isFinite(expiresMs) && nowMs > expiresMs) {
       console.debug("[provider-usage] Anthropic OAuth token expired");
-      this.invalidateProvider("anthropic", nowMs);
+      this.markProviderUnavailable("anthropic", nowMs);
       return;
     }
 
@@ -328,7 +361,7 @@ export class ProviderUsageService {
       if (!response.ok) {
         console.warn(`[provider-usage] Anthropic usage API returned ${response.status}`);
         if (response.status === 401 || response.status === 403) {
-          this.invalidateProvider("anthropic", nowMs);
+          this.markProviderUnavailable("anthropic", nowMs);
         } else {
           this.recordFailedAttempt("anthropic", nowMs);
         }
@@ -441,7 +474,7 @@ export class ProviderUsageService {
     this.queuePersistCacheWrite();
   }
 
-  private invalidateProvider(provider: "anthropic", nowMs: number): void {
+  private markProviderUnavailable(provider: "anthropic", nowMs: number): void {
     this.cache[provider] = [makeCachedEntry(unavailableProviderUsage(provider), nowMs)];
     this.queuePersistCacheWrite();
   }

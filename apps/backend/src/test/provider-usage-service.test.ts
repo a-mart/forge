@@ -219,6 +219,27 @@ describe("ProviderUsageService", () => {
     }]);
   });
 
+  it("clears persisted provider cache entries when explicitly invalidated", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("VITEST", "");
+
+    const { ProviderUsageService } = await import("../stats/provider-usage-service.js");
+    const cacheFilePath = makeCacheFilePath();
+    const service = new ProviderUsageService("/tmp/shared-auth.json", makeHistoryFilePath(), cacheFilePath) as any;
+
+    service.cache.openai = [{
+      data: { provider: "openai", available: true, plan: "pro" },
+      fetchedAtMs: 1_000,
+      lastAttemptMs: 1_000,
+    }];
+    await service.invalidateProvider("openai");
+    await service.persistQueue;
+
+    expect(service.cache.openai).toBeUndefined();
+    const persisted = JSON.parse(await readFile(cacheFilePath, "utf8"));
+    expect(persisted.entries.openai).toBeUndefined();
+  });
+
   it("maps current OpenAI and Anthropic usage payloads into sidebar-ready usage windows", async () => {
     vi.stubEnv("NODE_ENV", "development");
     vi.stubEnv("VITEST", "");
