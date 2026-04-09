@@ -10,6 +10,7 @@ interface ProviderRowConfig {
   iconSrc: string
   iconClassName?: string
   usage?: ProviderAccountUsage
+  provider: 'anthropic' | 'openai'
 }
 
 type PaceStage =
@@ -191,32 +192,31 @@ export function getUsageMetrics(window: ProviderUsageWindow | null | undefined, 
   return getDeterministicUsageMetrics(window, nowMs)
 }
 
-/* ─── Mini bar gauge (two stacked horizontal bars) ─── */
+/* ─── Provider brand colors ─── */
 
-const BAR_WIDTH = 28
-const BAR_HEIGHT = 4
-const BAR_GAP = 3
+const PROVIDER_COLORS: Record<string, string> = {
+  anthropic: '#D97757',
+  openai: '#10A37F',
+}
+
+/* ─── Mini vertical gauge (one bar per account) ─── */
+
+const VBAR_WIDTH = 3
+const VBAR_HEIGHT = 22
+const VBAR_GAP = 3
+const INDICATOR_HEIGHT = 3
 const WARNING_THRESHOLD = 80
 
-function getBarFill(warning: boolean): string {
-  return warning ? 'bg-red-400/60' : 'bg-blue-400/50'
-}
-
-function getBarTrack(warning: boolean): string {
-  return warning ? 'bg-red-400/10' : 'bg-blue-400/10'
-}
-
-interface MiniBarGaugeProps {
+interface MiniVerticalGaugeProps {
   sessionPercent: number | null
   weeklyPercent: number | null
   weeklyDeltaPercent: number | null
+  providerColor: string
   label: string
 }
 
-function MiniBarGauge({ sessionPercent, weeklyPercent, weeklyDeltaPercent, label }: MiniBarGaugeProps) {
-  const sp = typeof sessionPercent === 'number' ? clamp(sessionPercent, 0, 100) : 0
+function MiniVerticalGauge({ sessionPercent, weeklyPercent, weeklyDeltaPercent, providerColor, label }: MiniVerticalGaugeProps) {
   const wp = typeof weeklyPercent === 'number' ? clamp(weeklyPercent, 0, 100) : 0
-  const sessionWarn = typeof sessionPercent === 'number' && sessionPercent >= WARNING_THRESHOLD
   // Weekly bar: use pace deficit status when available, fall back to raw % threshold
   const weeklyWarn = typeof weeklyDeltaPercent === 'number'
     ? weeklyDeltaPercent > 2 // in deficit (slightlyAhead or worse)
@@ -225,27 +225,25 @@ function MiniBarGauge({ sessionPercent, weeklyPercent, weeklyDeltaPercent, label
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <div className="flex flex-col" style={{ width: BAR_WIDTH, gap: BAR_GAP }}>
-          {/* Top bar: session */}
+        <div className="flex flex-col items-center" style={{ gap: 2 }}>
+          {/* Vertical bar track — fills from bottom */}
           <div
-            className={cn('w-full overflow-hidden rounded-full', getBarTrack(sessionWarn))}
-            style={{ height: BAR_HEIGHT }}
+            className={cn('relative overflow-hidden rounded-sm', weeklyWarn ? 'bg-red-400/15' : 'bg-blue-400/15')}
+            style={{ width: VBAR_WIDTH, height: VBAR_HEIGHT }}
           >
             <div
-              className={cn('h-full rounded-full transition-all duration-700', getBarFill(sessionWarn))}
-              style={{ width: `${sp}%` }}
+              className={cn(
+                'absolute bottom-0 left-0 right-0 rounded-sm transition-all duration-700',
+                weeklyWarn ? 'bg-red-400/70' : 'bg-blue-400/60',
+              )}
+              style={{ height: `${wp}%` }}
             />
           </div>
-          {/* Bottom bar: weekly */}
+          {/* Provider color indicator dot */}
           <div
-            className={cn('w-full overflow-hidden rounded-full', getBarTrack(weeklyWarn))}
-            style={{ height: BAR_HEIGHT }}
-          >
-            <div
-              className={cn('h-full rounded-full transition-all duration-700', getBarFill(weeklyWarn))}
-              style={{ width: `${wp}%` }}
-            />
-          </div>
+            className="rounded-full shrink-0"
+            style={{ width: VBAR_WIDTH + 2, height: INDICATOR_HEIGHT, backgroundColor: providerColor }}
+          />
         </div>
       </TooltipTrigger>
       <TooltipContent side="top" sideOffset={6} className="bg-popover text-popover-foreground border border-border shadow-md text-[10px]">
@@ -267,17 +265,19 @@ export function SidebarUsageRings({ providers, onToggle }: { providers: Provider
     <button
       type="button"
       onClick={(e) => { e.stopPropagation(); onToggle() }}
-      className="inline-flex items-center gap-3 rounded-md px-1.5 py-1 transition-colors hover:bg-sidebar-accent/50"
+      className="inline-flex items-center rounded-md px-1.5 py-1 transition-colors hover:bg-sidebar-accent/50"
+      style={{ gap: VBAR_GAP }}
       aria-label="Provider usage"
     >
       {availableRows.map((row) => {
         const weeklyMetrics = getUsageMetrics(row.usage?.weeklyUsage, Date.now())
         return (
-          <MiniBarGauge
+          <MiniVerticalGauge
             key={row.key}
             sessionPercent={row.usage?.sessionUsage?.percent ?? null}
             weeklyPercent={row.usage?.weeklyUsage?.percent ?? null}
             weeklyDeltaPercent={weeklyMetrics?.deltaPercent ?? null}
+            providerColor={PROVIDER_COLORS[row.provider] ?? '#6b7280'}
             label={row.label}
           />
         )
@@ -412,6 +412,7 @@ function buildRows(providers: ProviderUsageStats | null): ProviderRowConfig[] {
         label: getAccountLabel('Anthropic', anthropicAccounts[i], i, anthropicAccounts.length),
         iconSrc: '/agents/claude-logo.svg',
         usage: anthropicAccounts[i],
+        provider: 'anthropic',
       })
     }
   }
@@ -425,6 +426,7 @@ function buildRows(providers: ProviderUsageStats | null): ProviderRowConfig[] {
         iconSrc: '/agents/codex-logo.svg',
         iconClassName: 'dark:invert',
         usage: openaiAccounts[i],
+        provider: 'openai',
       })
     }
   }
