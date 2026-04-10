@@ -250,7 +250,7 @@ A project agent is a regular session with special properties:
 - Optional **per-agent reference documents** that are injected into the agent's prompt context
 - Appears **pinned at the top** of the profile section in the sidebar with a badge
 
-Project agents persist across restarts and appear in the agent directory that manager sessions can query. Handles are immutable after promotion, so renaming the underlying session does not change the project agent handle.
+Project agents persist across restarts and appear in the agent directory that manager sessions can query. Handles are immutable after promotion, so renaming the underlying session does not change the project agent handle. Some project agents can also be granted the ability to create new manager sessions in the same profile, and those created sessions keep creator attribution in the sidebar.
 
 ## How discovery works
 
@@ -260,7 +260,7 @@ Worker agents never see the project agent directory — this is a manager-to-man
 
 ## Fire-and-forget messaging
 
-Project agents communicate through the existing \`send_message_to_agent\` tool. Messages are asynchronous and one-way — there's no reply threading or delivery confirmation. This keeps the model simple: a manager sends work to a project agent, the project agent processes it in its own session, and results appear in that agent's conversation.
+Project agents communicate through the existing \`send_message_to_agent\` tool. Messages are asynchronous and one-way — there's no reply threading or delivery confirmation. This keeps the model simple: a manager sends work to a project agent, the project agent processes it in its own session, and results appear in that agent's conversation. If a project agent has session-creation capability, it can create new manager sessions in the same profile and continue messaging those sessions through the normal routing path.
 
 If the receiving session is idle when a message arrives, Forge wakes it up automatically to handle the incoming work.
 
@@ -278,7 +278,7 @@ You can create project agents in two ways:
 
 ## Sidebar placement
 
-Project agents are always pinned at the top of their profile section, above regular sessions. They remain visible even when the session list is paginated. This makes them easy to find and message.
+Project agents are always pinned at the top of their profile section, above regular sessions. They remain visible even when the session list is paginated. This makes them easy to find and message. Sessions created by a project agent show subtle creator attribution in the sidebar.
 
 ## Demoting
 

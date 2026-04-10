@@ -481,9 +481,9 @@ Click **Generate recommendations** to have AI suggest both the "when to use" tex
 
 ## Using project agents
 
-Project agents appear pinned at the top of their profile section in the sidebar with a badge. Click one to open its conversation.
+Project agents appear pinned at the top of their profile section in the sidebar with a badge. Click one to open its conversation. Sessions created by a project agent can show a subtle \`Created by @handle\` label in the sidebar.
 
-To message a project agent from another session, mention its handle in your message (the composer offers autocomplete when you type \`@\`). The manager interprets your intent and uses the \`send_message_to_agent\` tool to deliver the message asynchronously.
+To message a project agent from another session, mention its handle in your message (the composer offers autocomplete when you type \`@\`). The manager interprets your intent and uses the \`send_message_to_agent\` tool to deliver the message asynchronously. If a project agent created the session, it can keep messaging that session through the same routing path.
 
 Messages to project agents are fire-and-forget — there's no reply threading. If the receiving session is idle, Forge wakes it up to handle the incoming work.
 
