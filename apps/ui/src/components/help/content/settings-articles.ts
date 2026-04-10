@@ -16,7 +16,7 @@ Pick a theme (Light, Dark, or System) and choose which code editor opens when yo
 
 ## Sidebar
 
-Toggle "Show provider usage" to control whether the provider subscription usage widget appears in the sidebar toolbar. When enabled, you'll see compact usage gauges for OpenAI Codex and Anthropic Claude with 5-hour and weekly windows. Click the widget to expand it for detailed metrics including deficit/reserve pace and estimated runout times, and use the refresh button in the detail panel to re-poll immediately. Usage state is restored after backend restarts, and weekly estimates follow historical usage curves rather than simple linear interpolation. The setting is stored in your browser and applies immediately.
+Toggle "Show provider usage" to control whether the provider subscription usage widget appears in the sidebar toolbar. When enabled, you'll see compact usage gauges for OpenAI Codex and Anthropic Claude with 5-hour and weekly windows. Click the widget to expand it for detailed metrics including deficit/reserve pace and estimated runout times, and use the refresh button in the detail panel to re-poll immediately. Usage state is restored after backend restarts, and weekly estimates follow historical usage curves rather than simple linear interpolation. Pooled OAuth usage polling refreshes tokens first, and pooled auth errors can suppress usage display. The setting is stored in your browser and applies immediately.
 
 ## Telemetry
 
@@ -140,7 +140,7 @@ If clicking a file link does nothing, check that the editor is installed and tha
 3. Use the auth control shown on that row to connect with OAuth or enter an API key, depending on the provider and your setup.
 4. Click **Save** if prompted.
 
-Each row also shows whether that provider is configured. Saved credentials are masked and stored on disk at \`~/.forge/shared/config/auth/auth.json\`. Use the eye icon to toggle visibility of any entered secret. Click **Remove** to delete saved credentials.
+Each row also shows whether that provider is configured. Saved credentials are masked and stored on disk at \`~/.forge/shared/config/auth/auth.json\`. Pooled OAuth credentials refresh through the shared auth path before runtime selection and save refreshed tokens back under the pooled key; missing or clearly expired pooled creds surface as \`auth_error\`. Use the eye icon to toggle visibility of any entered secret. Click **Remove** to delete saved credentials.
 
 Each provider row includes a **Get key** link when API key auth is supported, which opens the provider's key management page in your browser.
 

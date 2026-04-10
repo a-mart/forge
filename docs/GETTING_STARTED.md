@@ -42,6 +42,8 @@ Forge supports three providers:
 
 After adding credentials, you may need to restart the backend (`Ctrl+C` and re-run `pnpm prod:daemon`) for the changes to take effect. On macOS this usually isn't necessary, but on Windows the backend sometimes doesn't pick up auth changes without a restart.
 
+If you use pooled OAuth credentials, Forge refreshes them through the shared auth path before runtime selection, then writes refreshed tokens back into `auth.json` under the pooled key. Missing or clearly expired pooled credentials show up as `auth_error` instead of looking healthy.
+
 > **Tip:** You don't need all providers to get started. One is enough. But having multiple options gives you access to multi-model routing (more on this in [Advanced Usage](#10-advanced-usage)).
 
 ### First Impressions
@@ -135,7 +137,7 @@ If the backend detects real OAuth credentials for OpenAI or Anthropic, Forge can
 - **Sidebar widget** — Compact stacked gauges showing 5-hour rolling and weekly usage windows with reset timers. Click to expand for detailed metrics (deficit/reserve pace, runout estimates), and use the manual refresh button in the detail panel if you want to re-poll immediately.
 - **Dashboard stats panel** — Full usage breakdown with the same metrics in a dedicated section.
 
-Usage data survives backend restarts via a shared cache, and weekly pace estimates reflect historical usage curves rather than simple linear interpolation. If auth is API-key-based or malformed, the monitoring stays unavailable without extra noise. Toggle the sidebar widget visibility in **Settings → General → Sidebar**.
+Usage data survives backend restarts via a shared cache, and weekly pace estimates reflect historical usage curves rather than simple linear interpolation. Pooled OAuth credentials are refreshed before usage polling, and pooled auth failures can suppress usage display. If auth is API-key-based or malformed, the monitoring stays unavailable without extra noise. Toggle the sidebar widget visibility in **Settings → General → Sidebar**.
 
 ---
 
