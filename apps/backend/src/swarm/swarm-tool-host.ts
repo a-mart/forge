@@ -27,6 +27,17 @@ export interface SwarmToolHost {
     message: string,
     delivery?: RequestedDeliveryMode
   ): Promise<SendMessageReceipt>;
+  createSessionFromAgent(
+    creatorAgentId: string,
+    params: {
+      sessionName: string;
+      cwd?: string;
+      model?: unknown;
+      reasoningLevel?: unknown;
+      systemPrompt?: string;
+      initialMessage?: string;
+    }
+  ): Promise<{ sessionAgentId: string; sessionLabel: string; profileId: string }>;
   createAndPromoteProjectAgent?(
     creatorAgentId: string,
     params: {

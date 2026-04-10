@@ -20,13 +20,13 @@ const deliveryModeSchema = Type.Union([
 ]);
 
 const SPAWN_PRESET_FAMILIES = getSpawnPresetFamilies();
-const SPAWN_PRESET_IDS = SPAWN_PRESET_FAMILIES.map((family) => family.familyId);
+export const SPAWN_PRESET_IDS = SPAWN_PRESET_FAMILIES.map((family) => family.familyId);
 
-const spawnModelPresetSchema = Type.Union(
+export const spawnModelPresetSchema = Type.Union(
   SPAWN_PRESET_IDS.map((familyId) => Type.Literal(familyId))
 );
 
-const spawnReasoningLevelSchema = Type.Union(
+export const spawnReasoningLevelSchema = Type.Union(
   [
     Type.Literal("none"),
     Type.Literal("low"),

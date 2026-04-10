@@ -147,6 +147,8 @@ import { classifyRuntimeCapacityError } from "./runtime-utils.js";
 import {
   DEFAULT_SWARM_MODEL_PRESET,
   inferSwarmModelPresetFromDescriptor,
+  parseSwarmModelPreset,
+  parseSwarmReasoningLevel,
   resolveModelDescriptorFromPreset
 } from "./model-presets.js";
 import { loadOnboardingState } from "./onboarding-state.js";
@@ -224,6 +226,7 @@ import {
   normalizeOptionalModelId,
   nowIso,
   parseCompactSlashCommand,
+  normalizeThinkingLevelForProvider,
   parseSessionNumberFromAgentId,
   previewForLog,
   readFileHead,
@@ -1373,8 +1376,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       prepareSessionCreation: (profileId, options) => this.prepareSessionCreation(profileId, options),
       getRequiredSessionDescriptor: (agentId) => this.getRequiredSessionDescriptor(agentId),
       assertSessionSupportsProjectAgent: (descriptor) => this.assertSessionSupportsProjectAgent(descriptor),
-      buildProjectAgentInfoForSession: (descriptor, whenToUse, systemPrompt, handle) =>
-        this.buildProjectAgentInfoForSession(descriptor, whenToUse, systemPrompt, handle),
+      buildProjectAgentInfoForSession: (descriptor, whenToUse, systemPrompt, handle, capabilities) =>
+        this.buildProjectAgentInfoForSession(descriptor, whenToUse, systemPrompt, handle, capabilities),
       getOrCreateRuntimeForDescriptor: (descriptor) => this.getOrCreateRuntimeForDescriptor(descriptor),
       captureSessionRuntimePromptMeta: (descriptor, resolvedSystemPrompt) =>
         this.captureSessionRuntimePromptMeta(descriptor, resolvedSystemPrompt),
@@ -1715,9 +1718,126 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return createdSession;
   }
 
+  async createSessionFromAgent(
+    creatorAgentId: string,
+    params: {
+      sessionName: string;
+      cwd?: string;
+      model?: unknown;
+      reasoningLevel?: unknown;
+      systemPrompt?: string;
+      initialMessage?: string;
+    }
+  ): Promise<{ sessionAgentId: string; sessionLabel: string; profileId: string }> {
+    const creatorDescriptor = this.getRequiredSessionDescriptor(creatorAgentId);
+
+    if (creatorDescriptor.role !== "manager") {
+      throw new Error(`Only manager sessions can create child sessions: ${creatorAgentId}`);
+    }
+
+    if (!creatorDescriptor.projectAgent?.capabilities?.includes("create_session")) {
+      throw new Error("Session creation is not allowed for this project agent");
+    }
+
+    const profileId = creatorDescriptor.profileId ?? creatorDescriptor.agentId;
+    const normalizedSessionName = params.sessionName.trim();
+    if (!normalizedSessionName) {
+      throw new Error("sessionName must be a non-empty string");
+    }
+
+    const preset = parseSwarmModelPreset(params.model, "create_session.model");
+    const resolvedModel = preset
+      ? resolveModelDescriptorFromPreset(preset)
+      : { ...creatorDescriptor.model };
+
+    const parsedReasoningLevel = parseSwarmReasoningLevel(params.reasoningLevel, "create_session.reasoningLevel");
+    if (parsedReasoningLevel) {
+      resolvedModel.thinkingLevel = parsedReasoningLevel;
+    }
+
+    const normalizedModel = {
+      ...resolvedModel,
+      provider: normalizeOptionalAgentId(resolvedModel.provider)?.toLowerCase() ?? resolvedModel.provider,
+      modelId: normalizeOptionalModelId(resolvedModel.modelId)?.toLowerCase() ?? resolvedModel.modelId,
+      thinkingLevel: normalizeThinkingLevelForProvider(
+        resolvedModel.provider,
+        resolvedModel.thinkingLevel
+      )
+    };
+
+    const normalizedSystemPrompt = params.systemPrompt?.trim();
+    const normalizedCwd = params.cwd?.trim();
+    const createdSession = await this.sessionService.createSessionWithOverrides(
+      profileId,
+      {
+        name: normalizedSessionName,
+        label: normalizedSessionName,
+        sessionPurpose: undefined,
+      },
+      {
+        model: {
+          ...normalizedModel,
+          provider: normalizeOptionalAgentId(normalizedModel.provider)?.toLowerCase() ?? normalizedModel.provider,
+          modelId: normalizeOptionalModelId(normalizedModel.modelId)?.toLowerCase() ?? normalizedModel.modelId,
+          thinkingLevel: normalizeThinkingLevelForProvider(
+            normalizedModel.provider,
+            normalizedModel.thinkingLevel
+          )
+        },
+        ...(normalizedCwd ? { cwd: await this.resolveAndValidateCwd(normalizedCwd) } : {}),
+        ...(normalizedSystemPrompt !== undefined ? { sessionSystemPrompt: normalizedSystemPrompt } : {})
+      }
+    );
+
+    const targetAgentId = createdSession.sessionAgent.agentId;
+    createdSession.sessionAgent.creatorAgentId = creatorDescriptor.agentId;
+
+    const targetDescriptor = this.getRequiredSessionDescriptor(targetAgentId);
+    targetDescriptor.creatorAgentId = creatorDescriptor.agentId;
+    await this.saveStore();
+    this.emitAgentsSnapshot();
+    this.emitProfilesSnapshot();
+
+    if (params.initialMessage?.trim()) {
+      try {
+        await this.sendMessage(creatorAgentId, targetAgentId, params.initialMessage.trim(), "auto");
+      } catch (error) {
+        // Roll back the half-created session so a failed initial-message delivery
+        // does not leak a session the caller cannot reach.
+        try {
+          await this.sessionService.deleteSession(targetAgentId);
+        } catch (rollbackError) {
+          this.logDebug("createSessionFromAgent rollback failed", {
+            creatorAgentId,
+            targetAgentId,
+            error: rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
+          });
+        }
+        throw error;
+      }
+    }
+
+    await this.forgeExtensionHost.dispatchSessionLifecycle({
+      action: "created",
+      sessionDescriptor: cloneDescriptor(targetDescriptor)
+    });
+
+    return {
+      sessionAgentId: targetAgentId,
+      sessionLabel: targetDescriptor.sessionLabel ?? targetDescriptor.displayName,
+      profileId
+    };
+  }
+
   async createAndPromoteProjectAgent(
     creatorAgentId: string,
-    params: { sessionName: string; handle?: string; whenToUse: string; systemPrompt: string }
+    params: {
+      sessionName: string;
+      handle?: string;
+      whenToUse: string;
+      systemPrompt: string;
+      capabilities?: NonNullable<AgentDescriptor["projectAgent"]>["capabilities"];
+    }
   ): Promise<{ agentId: string; handle: string; profileId: string }> {
     const createdProjectAgent = await this.projectAgentService.createAndPromoteProjectAgent(creatorAgentId, params);
     await this.forgeExtensionHost.dispatchSessionLifecycle({
@@ -1852,7 +1972,14 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   async setSessionProjectAgent(
     agentId: string,
-    projectAgent: { whenToUse: string; systemPrompt?: string; handle?: string } | null
+    projectAgent:
+      | {
+          whenToUse: string;
+          systemPrompt?: string;
+          handle?: string;
+          capabilities?: NonNullable<AgentDescriptor["projectAgent"]>["capabilities"];
+        }
+      | null
   ): Promise<{ profileId: string; projectAgent: NonNullable<AgentDescriptor["projectAgent"]> | null }> {
     return this.projectAgentService.setSessionProjectAgent(agentId, projectAgent);
   }
@@ -2162,7 +2289,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     descriptor: AgentDescriptor & { role: "manager"; profileId: string },
     whenToUse: string,
     systemPrompt?: string,
-    handle?: string
+    handle?: string,
+    capabilities?: NonNullable<AgentDescriptor["projectAgent"]>["capabilities"]
   ): NonNullable<AgentDescriptor["projectAgent"]> {
     const normalizedWhenToUse = normalizeProjectAgentInlineText(whenToUse);
     if (!normalizedWhenToUse) {
@@ -2194,7 +2322,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       ...(normalizedSystemPrompt ? { systemPrompt: normalizedSystemPrompt } : {}),
       ...(descriptor.projectAgent?.creatorSessionId !== undefined
         ? { creatorSessionId: descriptor.projectAgent.creatorSessionId }
-        : {})
+        : {}),
+      ...(capabilities !== undefined ? { capabilities: [...capabilities] } : {})
     };
   }
 
@@ -2668,7 +2797,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       target.role === "manager" &&
       fromAgentId !== targetAgentId &&
       (sender.profileId ?? sender.agentId) === (target.profileId ?? target.agentId) &&
-      target.projectAgent !== undefined;
+      (target.projectAgent !== undefined || target.creatorAgentId === fromAgentId);
 
     if (isProjectAgentDelivery) {
       const receipt = await deliverProjectAgentMessage(

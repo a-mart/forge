@@ -45,7 +45,8 @@ function makeConfig(overrides: Partial<PersistedProjectAgentConfig> & Pick<Persi
     whenToUse: overrides.whenToUse,
     promotedAt: overrides.promotedAt ?? "2026-04-01T00:00:00.000Z",
     updatedAt: overrides.updatedAt ?? "2026-04-02T00:00:00.000Z",
-    ...(overrides.creatorSessionId !== undefined ? { creatorSessionId: overrides.creatorSessionId } : {})
+    ...(overrides.creatorSessionId !== undefined ? { creatorSessionId: overrides.creatorSessionId } : {}),
+    ...(overrides.capabilities !== undefined ? { capabilities: overrides.capabilities } : {})
   };
 }
 
@@ -95,6 +96,39 @@ describe("project-agent-storage", () => {
     await expect(readFile(getProjectAgentPromptPath(dataDir, "profile-a", "release-notes"), "utf8")).resolves.toBe(
       "You are the release notes agent."
     );
+  });
+
+  it("round-trips capabilities in config", async () => {
+    const dataDir = await createTempDataDir();
+    const config = makeConfig({
+      agentId: "agent-1",
+      handle: "qa",
+      whenToUse: "Reproduce issues",
+      capabilities: ["create_session"]
+    });
+
+    await writeProjectAgentRecord(dataDir, "profile-a", config, null);
+
+    await expect(readProjectAgentRecord(dataDir, "profile-a", "qa")).resolves.toEqual({
+      config,
+      systemPrompt: null,
+      dirPath: getProjectAgentDir(dataDir, "profile-a", "qa")
+    });
+  });
+
+  it("round-trips config with no capabilities for backward compatibility", async () => {
+    const dataDir = await createTempDataDir();
+    const config = makeConfig({
+      agentId: "agent-1",
+      handle: "qa",
+      whenToUse: "Reproduce issues"
+    });
+
+    await writeProjectAgentRecord(dataDir, "profile-a", config, null);
+
+    const record = await readProjectAgentRecord(dataDir, "profile-a", "qa");
+    expect(record?.config).toEqual(config);
+    expect(record?.config.capabilities).toBeUndefined();
   });
 
   it("writes null systemPrompt without creating prompt.md", async () => {
@@ -256,6 +290,34 @@ describe("project-agent-storage", () => {
       systemPrompt: "Disk prompt",
       creatorSessionId: "creator-disk"
     });
+  });
+
+  it("hydrates persisted capabilities onto the descriptor", async () => {
+    const dataDir = await createTempDataDir();
+    await writeProjectAgentRecord(
+      dataDir,
+      "profile-a",
+      makeConfig({
+        agentId: "agent-1",
+        handle: "release-notes",
+        whenToUse: "Updated from disk",
+        capabilities: ["create_session"]
+      }),
+      "Disk prompt"
+    );
+
+    const descriptor = makeDescriptor({
+      agentId: "agent-1",
+      projectAgent: {
+        handle: "release-notes",
+        whenToUse: "Outdated descriptor"
+      }
+    });
+
+    const result = await reconcileProjectAgentStorage(dataDir, "profile-a", new Map([[descriptor.agentId, descriptor]]));
+
+    expect(result.hydrated).toEqual(["agent-1"]);
+    expect(descriptor.projectAgent?.capabilities).toEqual(["create_session"]);
   });
 
   it("reconciles rule 3 by removing orphan directories", async () => {

@@ -29,6 +29,7 @@ function makeManagerDescriptor(overrides: Partial<AgentDescriptor> & Pick<AgentD
     profileId: overrides.profileId ?? 'manager',
     sessionLabel: overrides.sessionLabel,
     projectAgent: overrides.projectAgent,
+    creatorAgentId: overrides.creatorAgentId,
   }
 }
 
@@ -49,7 +50,11 @@ describe('project-agents helpers', () => {
       makeManagerDescriptor({
         agentId: 'release-notes--s2',
         sessionLabel: 'Release Notes',
-        projectAgent: { handle: 'release-notes', whenToUse: 'Draft release notes' },
+        projectAgent: {
+          handle: 'release-notes',
+          whenToUse: 'Draft release notes',
+          capabilities: ['create_session'],
+        },
       }),
       makeManagerDescriptor({
         agentId: 'qa--s3',
@@ -77,6 +82,7 @@ describe('project-agents helpers', () => {
     ])
     expect(findProjectAgentByHandle(descriptors, 'manager', '@release notes!')?.agentId).toBe('release-notes--s2')
     expect(findProjectAgentByHandle(descriptors, 'manager', 'missing')).toBeUndefined()
+    expect(listProjectAgents(descriptors, 'manager')[1]?.projectAgent.capabilities).toEqual(['create_session'])
   })
 
   it('generates a prompt directory block with entries', () => {
@@ -153,6 +159,114 @@ describe('project-agents helpers', () => {
 
     expect(populated).toContain('- Release Notes (`@release-notes`, agentId: `release-notes--s2`): Draft release notes')
     expect(populated).not.toContain('Release\n\nNotes')
+  })
+
+  it('allows creator-to-child delivery when target has no projectAgent but creatorAgentId matches sender', async () => {
+    const sender = makeManagerDescriptor({
+      agentId: 'creator-manager',
+      sessionLabel: 'creator',
+    })
+    const target = makeManagerDescriptor({
+      agentId: 'child-session',
+      sessionLabel: 'child',
+      creatorAgentId: 'creator-manager',
+    })
+
+    const emittedEvents: unknown[] = []
+    const runtimeCalls: string[] = []
+
+    const receipt = await deliverProjectAgentMessage(
+      {
+        now: () => '2026-01-02T03:04:05.000Z',
+        getOrCreateRuntimeForDescriptor: async (descriptor) => {
+          runtimeCalls.push(descriptor.agentId)
+          return {
+            sendMessage: async () => ({
+              targetAgentId: descriptor.agentId,
+              deliveryId: 'delivery-1',
+              acceptedMode: 'auto' as const,
+            }),
+          } as unknown as Awaited<ReturnType<NonNullable<Parameters<typeof deliverProjectAgentMessage>[0]['getOrCreateRuntimeForDescriptor']>>>
+        },
+        emitConversationMessage: (event) => {
+          emittedEvents.push(event)
+        },
+        markSessionActivity: () => {},
+        rateLimitBuckets: new Map(),
+      },
+      {
+        sender,
+        target,
+        message: 'Start working on the task.',
+        delivery: 'auto',
+      },
+    )
+
+    expect(receipt.targetAgentId).toBe('child-session')
+    expect(runtimeCalls).toEqual(['child-session'])
+    expect(emittedEvents.length).toBeGreaterThan(0)
+  })
+
+  it('rejects manager-to-manager delivery when target has neither projectAgent nor matching creatorAgentId', async () => {
+    const sender = makeManagerDescriptor({
+      agentId: 'attacker-manager',
+      sessionLabel: 'attacker',
+    })
+    const target = makeManagerDescriptor({
+      agentId: 'unrelated-manager',
+      sessionLabel: 'unrelated',
+      creatorAgentId: 'different-creator',
+    })
+
+    await expect(
+      deliverProjectAgentMessage(
+        {
+          now: () => '2026-01-02T03:04:05.000Z',
+          getOrCreateRuntimeForDescriptor: async () => {
+            throw new Error('should not be called')
+          },
+          emitConversationMessage: () => {},
+          markSessionActivity: () => {},
+          rateLimitBuckets: new Map(),
+        },
+        {
+          sender,
+          target,
+          message: 'hello',
+          delivery: 'auto',
+        },
+      ),
+    ).rejects.toThrow(/not promoted to a project agent/)
+  })
+
+  it('rejects delivery when both sender and target have undefined creatorAgentId (no slip-through)', async () => {
+    const sender = makeManagerDescriptor({
+      agentId: 'sender-with-no-creator',
+    })
+    const target = makeManagerDescriptor({
+      agentId: 'target-with-no-creator',
+      // creatorAgentId intentionally undefined; no projectAgent either
+    })
+
+    await expect(
+      deliverProjectAgentMessage(
+        {
+          now: () => '2026-01-02T03:04:05.000Z',
+          getOrCreateRuntimeForDescriptor: async () => {
+            throw new Error('should not be called')
+          },
+          emitConversationMessage: () => {},
+          markSessionActivity: () => {},
+          rateLimitBuckets: new Map(),
+        },
+        {
+          sender,
+          target,
+          message: 'hello',
+          delivery: 'auto',
+        },
+      ),
+    ).rejects.toThrow(/not promoted to a project agent/)
   })
 
   it('does not emit a transcript entry or mark activity when runtime creation fails', async () => {

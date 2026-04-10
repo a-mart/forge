@@ -2,7 +2,7 @@ import { writeFile } from "node:fs/promises";
 import { savePins, type PinRegistry } from "./message-pins.js";
 import { SessionProvisioner, type ProvisionedSessionDescriptor } from "./session-provisioner.js";
 import type { SwarmAgentRuntime } from "./runtime-contracts.js";
-import type { AgentDescriptor, ManagerProfile, SessionLifecycleEvent } from "./types.js";
+import type { AgentDescriptor, AgentModelDescriptor, ManagerProfile, SessionLifecycleEvent } from "./types.js";
 
 interface StopSessionInternalOptions {
   saveStore: boolean;
@@ -79,9 +79,36 @@ export class SwarmSessionService {
     profileId: string,
     options?: { label?: string; name?: string; sessionPurpose?: AgentDescriptor["sessionPurpose"] }
   ): Promise<{ profile: ManagerProfile; sessionAgent: AgentDescriptor }> {
+    return this.createSessionWithOverrides(profileId, options);
+  }
+
+  createSessionWithOverrides(
+    profileId: string,
+    options: { label?: string; name?: string; sessionPurpose?: AgentDescriptor["sessionPurpose"] } = {},
+    overrides: { model?: AgentModelDescriptor; cwd?: string; sessionSystemPrompt?: string } = {}
+  ): Promise<{ profile: ManagerProfile; sessionAgent: AgentDescriptor }> {
     const prepared = this.options.prepareSessionCreation(profileId, options);
     const sessionDescriptor = prepared.sessionDescriptor as ProvisionedSessionDescriptor;
 
+    if (overrides.model) {
+      sessionDescriptor.model = overrides.model;
+    }
+
+    if (overrides.cwd) {
+      sessionDescriptor.cwd = overrides.cwd;
+    }
+
+    if (overrides.sessionSystemPrompt !== undefined) {
+      sessionDescriptor.sessionSystemPrompt = overrides.sessionSystemPrompt;
+    }
+
+    return this.createSessionWithPreparedDescriptor(prepared, sessionDescriptor);
+  }
+
+  private async createSessionWithPreparedDescriptor(
+    prepared: { profile: ManagerProfile; sessionDescriptor: AgentDescriptor; sessionNumber: number },
+    sessionDescriptor: ProvisionedSessionDescriptor
+  ): Promise<{ profile: ManagerProfile; sessionAgent: AgentDescriptor }> {
     await this.options.provisioner.provisionSession({
       descriptor: sessionDescriptor,
       initializeRuntime: async () => {

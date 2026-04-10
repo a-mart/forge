@@ -67,6 +67,11 @@ function createMockHost(overrides: Partial<SwarmToolHost> = {}): SwarmToolHost {
       deliveryId: "del-1",
       acceptedMode: "steer"
     })),
+    createSessionFromAgent: vi.fn(async (_creatorAgentId, input) => ({
+      sessionAgentId: `${_creatorAgentId}:${input.sessionName}`,
+      sessionLabel: input.sessionName,
+      profileId: "profile-1"
+    })),
     publishToUser: vi.fn(async () => ({
       targetContext: defaultPublishContext
     })),
@@ -579,6 +584,7 @@ describe("claude-mcp-tool-bridge", () => {
     });
     expect(result.content[0].text).toContain("Project agent @new-handle created successfully");
   });
+
 
   it("returns an error when create_project_agent is unavailable", async () => {
     const manager = createMockDescriptor({ sessionPurpose: "agent_creator" });

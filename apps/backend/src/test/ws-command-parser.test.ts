@@ -148,6 +148,31 @@ describe('ws command parser session commands', () => {
     })
   })
 
+  it('parses set_session_project_agent capabilities', () => {
+    const parsed = parseJsonCommand({
+      type: 'set_session_project_agent',
+      agentId: 'session-a',
+      projectAgent: {
+        whenToUse: 'Coordinate release work',
+        capabilities: ['create_session'],
+      },
+      requestId: 'req-project-agent',
+    })
+
+    expect(parsed).toEqual({
+      ok: true,
+      command: {
+        type: 'set_session_project_agent',
+        agentId: 'session-a',
+        projectAgent: {
+          whenToUse: 'Coordinate release work',
+          capabilities: ['create_session'],
+        },
+        requestId: 'req-project-agent',
+      },
+    })
+  })
+
   it('parses api_proxy commands', () => {
     const parsed = parseJsonCommand({
       type: 'api_proxy',

@@ -1,3 +1,4 @@
+import type { ProjectAgentCapability } from "@forge/protocol";
 import type { SwarmAgentRuntime } from "../runtime-contracts.js";
 import type {
   AgentDescriptor,
@@ -11,6 +12,7 @@ export interface ProjectAgentDirectoryEntry {
   displayName: string;
   handle: string;
   whenToUse: string;
+  capabilities?: ProjectAgentCapability[];
 }
 
 export interface ListProjectAgentsOptions {
@@ -163,7 +165,7 @@ export async function deliverProjectAgentMessage(
   const sender = assertManagerSession(options.sender, "sender");
   const target = assertManagerSession(options.target, "target");
 
-  if (!target.projectAgent) {
+  if (!target.projectAgent && target.creatorAgentId !== sender.agentId) {
     throw new Error(`Target session is not promoted to a project agent: ${target.agentId}`);
   }
 

@@ -49,6 +49,7 @@ export interface AgentDescriptor {
   displayName: string;
   role: AgentRole;
   managerId: string;
+  creatorAgentId?: string;
   archetypeId?: AgentArchetypeId;
   status: AgentStatus;
   createdAt: string;
@@ -60,6 +61,7 @@ export interface AgentDescriptor {
   profileId?: string;
   sessionLabel?: string;
   sessionPurpose?: AgentSessionPurpose;
+  sessionSystemPrompt?: string;
   pinnedAt?: string;
   mergedAt?: string;
   compactionCount?: number;

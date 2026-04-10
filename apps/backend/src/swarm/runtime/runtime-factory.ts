@@ -19,6 +19,7 @@ import {
 } from "@mariozechner/pi-coding-agent";
 import { AgentRuntime } from "../agent-runtime.js";
 import { buildCreateProjectAgentTool } from "../agent-creator-tool.js";
+import { buildCreateSessionTool } from "../agents/create-session-tool.js";
 import { ensureCanonicalAuthFilePath } from "../auth-storage-paths.js";
 import type { CredentialPoolService } from "../credential-pool.js";
 import { openSessionManagerWithSizeGuard } from "../session-file-guard.js";
@@ -605,6 +606,10 @@ export class RuntimeFactory {
 
     if (descriptor.role !== "manager") {
       return swarmTools;
+    }
+
+    if (descriptor.projectAgent?.capabilities?.includes("create_session")) {
+      swarmTools.push(buildCreateSessionTool(this.deps.host, descriptor));
     }
 
     if (descriptor.sessionPurpose === "agent_creator") {

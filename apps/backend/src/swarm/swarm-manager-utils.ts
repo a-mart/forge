@@ -3,9 +3,10 @@ import { open } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
 import { getModel, type Api, type Model } from "@mariozechner/pi-ai";
 import { ModelRegistry } from "@mariozechner/pi-coding-agent";
-import type {
-  AgentRuntimeExtensionSnapshot,
-  SessionMemoryMergeFailureStage
+import {
+  PROJECT_AGENT_CAPABILITIES,
+  type AgentRuntimeExtensionSnapshot,
+  type SessionMemoryMergeFailureStage
 } from "@forge/protocol";
 import { sanitizePathSegment as sanitizePersistedPathSegment } from "./data-paths.js";
 import {
@@ -37,6 +38,7 @@ import type {
 } from "./types.js";
 
 const VALID_PERSISTED_AGENT_ROLES = new Set(["manager", "worker"]);
+const VALID_PERSISTED_PROJECT_AGENT_CAPABILITIES = new Set<string>(PROJECT_AGENT_CAPABILITIES);
 const VALID_PERSISTED_AGENT_STATUSES = new Set([
   "idle",
   "streaming",
@@ -84,6 +86,9 @@ export function cloneProjectAgentInfoValue(
     // systemPrompt intentionally omitted — fetched via get_project_agent_config
     ...(projectAgent.creatorSessionId !== undefined
       ? { creatorSessionId: projectAgent.creatorSessionId }
+      : {}),
+    ...(projectAgent.capabilities !== undefined
+      ? { capabilities: [...projectAgent.capabilities] }
       : {})
   };
 }
@@ -207,6 +212,10 @@ export function validateAgentDescriptor(value: unknown): AgentDescriptor | strin
     return "managerId must be a non-empty string";
   }
 
+  if (value.creatorAgentId !== undefined && typeof value.creatorAgentId !== "string") {
+    return "creatorAgentId must be a string when provided";
+  }
+
   if (!isNonEmptyString(value.status) || !VALID_PERSISTED_AGENT_STATUSES.has(value.status)) {
     return "status must be one of idle|streaming|terminated|stopped|error|stopped_on_restart";
   }
@@ -257,6 +266,10 @@ export function validateAgentDescriptor(value: unknown): AgentDescriptor | strin
     return 'sessionPurpose must be "cortex_review" or "agent_creator" when provided';
   }
 
+  if (value.sessionSystemPrompt !== undefined && typeof value.sessionSystemPrompt !== "string") {
+    return "sessionSystemPrompt must be a string when provided";
+  }
+
   if (value.pinnedAt !== undefined && typeof value.pinnedAt !== "string") {
     return "pinnedAt must be a string when provided";
   }
@@ -293,6 +306,18 @@ export function validateAgentDescriptor(value: unknown): AgentDescriptor | strin
       typeof value.projectAgent.creatorSessionId !== "string"
     ) {
       return "projectAgent.creatorSessionId must be a string when provided";
+    }
+
+    if (value.projectAgent.capabilities !== undefined) {
+      if (!Array.isArray(value.projectAgent.capabilities)) {
+        return "projectAgent.capabilities must be an array when provided";
+      }
+
+      for (const capability of value.projectAgent.capabilities) {
+        if (typeof capability !== "string" || !VALID_PERSISTED_PROJECT_AGENT_CAPABILITIES.has(capability)) {
+          return "projectAgent.capabilities contains an unknown capability";
+        }
+      }
     }
   }
 

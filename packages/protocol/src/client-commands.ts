@@ -1,4 +1,5 @@
 import type { ConversationAttachment } from './attachments.js'
+import type { ProjectAgentCapability } from './agents.js'
 import type { AgentSessionPurpose, ChoiceAnswer, DeliveryMode, ManagerModelPreset, ManagerReasoningLevel } from './shared-types.js'
 
 export interface ApiProxyCommand {
@@ -34,7 +35,9 @@ export type ClientCommand =
   | {
       type: 'set_session_project_agent'
       agentId: string
-      projectAgent: { whenToUse: string; systemPrompt?: string; handle?: string } | null
+      projectAgent:
+        | { whenToUse: string; systemPrompt?: string; handle?: string; capabilities?: ProjectAgentCapability[] }
+        | null
       requestId?: string
     }
   | {

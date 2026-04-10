@@ -1,3 +1,4 @@
+import { PROJECT_AGENT_CAPABILITIES, type ProjectAgentCapability } from "@forge/protocol";
 import { normalizeProjectAgentHandle } from "../../swarm/project-agents.js";
 import {
   fail,
@@ -5,6 +6,8 @@ import {
   type ClientCommandCandidate,
   type ParsedClientCommand
 } from "./command-parse-helpers.js";
+
+const VALID_PROJECT_AGENT_CAPABILITIES = new Set<string>(PROJECT_AGENT_CAPABILITIES);
 
 export function parseProjectAgentCommand(maybe: ClientCommandCandidate): ParsedClientCommand | undefined {
   if (maybe.type === "set_session_project_agent") {
@@ -40,6 +43,20 @@ export function parseProjectAgentCommand(maybe: ClientCommandCandidate): ParsedC
     }
     if (
       projectAgent !== null &&
+      (projectAgent as { capabilities?: unknown }).capabilities !== undefined &&
+      !Array.isArray((projectAgent as { capabilities?: unknown }).capabilities)
+    ) {
+      return fail("set_session_project_agent.projectAgent.capabilities must be an array when provided");
+    }
+    if (projectAgent !== null && Array.isArray((projectAgent as { capabilities?: unknown }).capabilities)) {
+      for (const capability of (projectAgent as { capabilities: unknown[] }).capabilities) {
+        if (typeof capability !== "string" || !VALID_PROJECT_AGENT_CAPABILITIES.has(capability)) {
+          return fail("set_session_project_agent.projectAgent.capabilities contains an unknown capability");
+        }
+      }
+    }
+    if (
+      projectAgent !== null &&
       typeof (projectAgent as { handle?: unknown }).handle === "string"
     ) {
       const handle = (projectAgent as { handle: string }).handle;
@@ -66,6 +83,9 @@ export function parseProjectAgentCommand(maybe: ClientCommandCandidate): ParsedC
                 : {}),
               ...((projectAgent as { handle?: string }).handle !== undefined
                 ? { handle: (projectAgent as { handle?: string }).handle }
+                : {}),
+              ...((projectAgent as { capabilities?: ProjectAgentCapability[] }).capabilities !== undefined
+                ? { capabilities: (projectAgent as { capabilities?: ProjectAgentCapability[] }).capabilities }
                 : {})
             },
       requestId

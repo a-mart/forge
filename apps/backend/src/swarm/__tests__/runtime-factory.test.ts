@@ -376,6 +376,47 @@ describe("RuntimeFactory", () => {
     );
   });
 
+  it("adds create_session tool for capable project agents in manager runtime tools", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    await mkdir(rootDir, { recursive: true });
+    await seedProjectionFile(rootDir);
+
+    const descriptor = createManagerDescriptor(rootDir, {
+      projectAgent: {
+        handle: "notes",
+        whenToUse: "Draft notes",
+        capabilities: ["create_session"],
+      }
+    });
+    await writeFile(descriptor.sessionFile, "", "utf8");
+
+    piCodingAgentMockState.modelRegistryFind.mockReturnValue({ provider: "openai-codex", modelId: "gpt-5.4-mini" });
+    piCodingAgentMockState.createAgentSession.mockResolvedValue({
+      session: createMockPiSession(),
+      extensionsResult: { extensions: [], errors: [] },
+    });
+
+    const sendMessage = vi.fn(async () => ({
+      targetAgentId: "manager-1",
+      deliveryId: "delivery-1",
+      acceptedMode: "prompt",
+    }));
+
+    const factory = createFactory(rootDir, {
+      hostOverrides: { sendMessage }
+    });
+
+    await factory.createRuntimeForDescriptor(descriptor, "Base system prompt", 1);
+    const createdTools = piCodingAgentMockState.createAgentSession.mock.calls.at(-1)?.[0]?.customTools as
+      | Array<{ name: string }>
+      | undefined;
+
+    const toolNames = (createdTools ?? []).map((tool) => tool.name);
+
+    expect(toolNames).toContain("create_session");
+    expect(toolNames).not.toContain("create_project_agent");
+  });
+
   it("throws when the requested Pi model is unavailable instead of falling back", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
     await mkdir(rootDir, { recursive: true });
