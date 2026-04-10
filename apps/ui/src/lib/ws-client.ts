@@ -1,3 +1,4 @@
+import type { ProjectAgentCapability } from '@forge/protocol'
 import { handleManagerIdleTransition, removeMutedAgent, removeMutedAgents } from './notification-service'
 import {
   assertConnectedSocket,
@@ -500,7 +501,7 @@ export class ManagerWsClient {
 
   async setSessionProjectAgent(
     agentId: string,
-    projectAgent: { whenToUse: string; systemPrompt?: string; handle?: string } | null,
+    projectAgent: { whenToUse: string; systemPrompt?: string; handle?: string; capabilities?: ProjectAgentCapability[] } | null,
   ): Promise<SessionProjectAgentResult> {
     assertReconnectableSocket(this.socket)
     return this.enqueueRequest('set_session_project_agent', (requestId) =>

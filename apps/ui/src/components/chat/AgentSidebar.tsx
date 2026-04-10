@@ -173,6 +173,13 @@ export function AgentSidebar({
     currentProjectAgent: ProjectAgentInfo | null
   } | null>(null)
 
+  const getCreatorAttribution = useCallback((creatorAgentId: string): string | null => {
+    const creator = agents.find((a) => a.agentId === creatorAgentId)
+    if (!creator) return null
+    if (creator.projectAgent?.handle) return `@${creator.projectAgent.handle}`
+    return creator.sessionLabel || creator.displayName || null
+  }, [agents])
+
   const handleSelectAgent = useCallback((agentId: string) => {
     onSelectAgent(agentId)
     onMobileClose?.()
@@ -315,7 +322,7 @@ export function AgentSidebar({
     await onSetSessionProjectAgent?.(agentId, null)
   }, [onSetSessionProjectAgent])
 
-  const handleSaveProjectAgent = useCallback(async (agentId: string, projectAgent: { whenToUse: string; systemPrompt?: string; handle?: string }) => {
+  const handleSaveProjectAgent = useCallback(async (agentId: string, projectAgent: { whenToUse: string; systemPrompt?: string; handle?: string; capabilities?: import('@forge/protocol').ProjectAgentCapability[] }) => {
     await onSetSessionProjectAgent?.(agentId, projectAgent)
   }, [onSetSessionProjectAgent])
 
@@ -392,6 +399,7 @@ export function AgentSidebar({
       mutedAgents={mutedAgentsState}
       onToggleMute={handleToggleMute}
       onMuteAllSessions={handleMuteAllSessions}
+      getCreatorAttribution={getCreatorAttribution}
     />
   ), [
     statuses, unreadCounts, selectedAgentId, isSettingsActive, isSearchActive,
@@ -405,7 +413,7 @@ export function AgentSidebar({
     getVisibleSessionLimit,
     onSetSessionProjectAgent, handlePromoteToProjectAgent, handleOpenProjectAgentSettings,
     onPinSession, handleDemoteProjectAgent, onCreateAgentCreator, mutedAgentsState,
-    handleToggleMute, handleMuteAllSessions,
+    handleToggleMute, handleMuteAllSessions, getCreatorAttribution,
   ])
 
   const sidebarContent = (

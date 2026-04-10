@@ -8,6 +8,7 @@ import {
   type DeliveryMode,
   type ManagerModelPreset,
   type ManagerReasoningLevel,
+  type ProjectAgentCapability,
 } from '@forge/protocol'
 
 export const RECONNECTING_SOCKET_ERROR = 'WebSocket is disconnected. Reconnecting...'
@@ -311,7 +312,7 @@ export function buildForkSessionCommand(
 
 export function buildSetSessionProjectAgentCommand(
   agentId: string,
-  projectAgent: { whenToUse: string; systemPrompt?: string; handle?: string } | null,
+  projectAgent: { whenToUse: string; systemPrompt?: string; handle?: string; capabilities?: ProjectAgentCapability[] } | null,
   requestId: string,
 ): ClientCommand {
   return {

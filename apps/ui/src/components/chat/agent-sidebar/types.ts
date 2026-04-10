@@ -5,6 +5,7 @@ import type {
   ManagerModelPreset,
   ManagerReasoningLevel,
   ManagerProfile,
+  ProjectAgentCapability,
   ProjectAgentInfo,
   PersistedProjectAgentConfig,
 } from '@forge/protocol'
@@ -66,7 +67,7 @@ export interface AgentSidebarProps {
   onValidateDirectory?: (path: string) => Promise<DirectoryValidationResult>
   onRequestSessionWorkers?: (sessionId: string) => void
   onReorderProfiles?: (profileIds: string[]) => void
-  onSetSessionProjectAgent?: (agentId: string, projectAgent: { whenToUse: string; systemPrompt?: string; handle?: string } | null) => Promise<void>
+  onSetSessionProjectAgent?: (agentId: string, projectAgent: { whenToUse: string; systemPrompt?: string; handle?: string; capabilities?: ProjectAgentCapability[] } | null) => Promise<void>
   onGetProjectAgentConfig?: (agentId: string) => Promise<{ agentId: string; config: PersistedProjectAgentConfig; systemPrompt: string | null; references: string[] }>
   onListProjectAgentReferences?: (agentId: string) => Promise<{ agentId: string; references: string[] }>
   onGetProjectAgentReference?: (agentId: string, fileName: string) => Promise<{ agentId: string; fileName: string; content: string }>
@@ -115,6 +116,7 @@ export interface SessionRowItemProps {
   onViewCreationHistory?: () => void
   isMutedSession?: boolean
   onToggleMute?: () => void
+  getCreatorAttribution?: (creatorAgentId: string) => string | null
 }
 
 export interface ProfileGroupProps {
@@ -159,6 +161,7 @@ export interface ProfileGroupProps {
   mutedAgents?: Set<string>
   onToggleMute?: (agentId: string) => void
   onMuteAllSessions?: (sessionAgentIds: string[], mute: boolean) => void
+  getCreatorAttribution?: (creatorAgentId: string) => string | null
 }
 
 export interface CortexSectionProps {
@@ -201,7 +204,7 @@ export interface ProjectAgentSettingsSheetProps {
   agentId: string
   sessionLabel: string
   currentProjectAgent: ProjectAgentInfo | null
-  onSave: (agentId: string, projectAgent: { whenToUse: string; systemPrompt?: string; handle?: string }) => Promise<void>
+  onSave: (agentId: string, projectAgent: { whenToUse: string; systemPrompt?: string; handle?: string; capabilities?: ProjectAgentCapability[] }) => Promise<void>
   onDemote: (agentId: string) => Promise<void>
   onClose: () => void
   onGetProjectAgentConfig?: (agentId: string) => Promise<{ agentId: string; config: PersistedProjectAgentConfig; systemPrompt: string | null; references: string[] }>

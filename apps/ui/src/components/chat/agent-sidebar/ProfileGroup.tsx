@@ -62,6 +62,7 @@ export function ProfileGroup({
   mutedAgents,
   onToggleMute,
   onMuteAllSessions,
+  getCreatorAttribution,
 }: ProfileGroupProps) {
   const { profile, sessions } = treeRow
   const hasAnySessions = sessions.length > 0
@@ -349,6 +350,7 @@ export function ProfileGroup({
                   }
                   isMutedSession={mutedAgents?.has(session.sessionAgent.agentId)}
                   onToggleMute={onToggleMute ? () => onToggleMute(session.sessionAgent.agentId) : undefined}
+                  getCreatorAttribution={getCreatorAttribution}
                 />
               )
             }

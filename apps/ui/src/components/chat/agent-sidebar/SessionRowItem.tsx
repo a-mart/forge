@@ -56,6 +56,7 @@ export function SessionRowItem({
   onViewCreationHistory,
   isMutedSession,
   onToggleMute,
+  getCreatorAttribution,
 }: SessionRowItemProps) {
   const { sessionAgent, workers, isDefault } = session
   const running = isSessionRunning(sessionAgent)
@@ -72,6 +73,9 @@ export function SessionRowItem({
   const isProjectAgent = Boolean(sessionAgent.projectAgent)
   const isAgentCreator = sessionAgent.sessionPurpose === 'agent_creator'
   const isPinned = Boolean(sessionAgent.pinnedAt)
+  const creatorLabel = sessionAgent.creatorAgentId && getCreatorAttribution
+    ? getCreatorAttribution(sessionAgent.creatorAgentId)
+    : null
 
   return (
     <li>
@@ -275,6 +279,12 @@ export function SessionRowItem({
           ) : null}
         </ContextMenuContent>
       </ContextMenu>
+
+      {creatorLabel ? (
+        <p className="truncate pl-5 text-[10px] leading-tight text-muted-foreground/60">
+          Created by {creatorLabel}
+        </p>
+      ) : null}
 
       {/* Workers nested under session */}
       {hasWorkers && !isCollapsed ? (

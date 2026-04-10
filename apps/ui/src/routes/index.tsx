@@ -923,7 +923,7 @@ export function IndexPage() {
     clientRef.current?.reorderProfiles(profileIds)
   }, [clientRef])
 
-  const handleSetSessionProjectAgent = useCallback(async (agentId: string, projectAgent: { whenToUse: string; systemPrompt?: string; handle?: string } | null) => {
+  const handleSetSessionProjectAgent = useCallback(async (agentId: string, projectAgent: { whenToUse: string; systemPrompt?: string; handle?: string; capabilities?: import('@forge/protocol').ProjectAgentCapability[] } | null) => {
     await clientRef.current?.setSessionProjectAgent(agentId, projectAgent)
   }, [clientRef])
 

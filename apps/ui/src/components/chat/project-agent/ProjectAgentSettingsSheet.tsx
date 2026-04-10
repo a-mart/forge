@@ -4,6 +4,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '
 import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
 import { slugifySessionName } from '../agent-sidebar/utils'
 import { PROJECT_AGENT_WHEN_TO_USE_MAX } from '../agent-sidebar/constants'
@@ -42,6 +43,9 @@ export function ProjectAgentSettingsSheet({
   const [loadingReferenceFiles, setLoadingReferenceFiles] = useState<Set<string>>(() => new Set())
   const [savingReferenceFiles, setSavingReferenceFiles] = useState<Set<string>>(() => new Set())
   const [dirtyReferenceFiles, setDirtyReferenceFiles] = useState<Set<string>>(() => new Set())
+  const [canCreateSessions, setCanCreateSessions] = useState(
+    currentProjectAgent?.capabilities?.includes('create_session') ?? false,
+  )
   const [saving, setSaving] = useState(false)
   const [analyzing, setAnalyzing] = useState(false)
   const [analysisError, setAnalysisError] = useState<string | null>(null)
@@ -72,6 +76,7 @@ export function ProjectAgentSettingsSheet({
       if (!systemPromptDirtyRef.current) {
         setSystemPrompt(prompt)
       }
+      setCanCreateSessions(result.config.capabilities?.includes('create_session') ?? false)
       setReferenceDocs(result.references)
       setConfigLoading(false)
     }).catch((err) => {
@@ -88,9 +93,11 @@ export function ProjectAgentSettingsSheet({
   const canSave = isPromoting
     ? trimmedWhenToUse.length > 0 && trimmedWhenToUse.length <= PROJECT_AGENT_WHEN_TO_USE_MAX && normalizedHandle.length > 0
     : trimmedWhenToUse.length > 0 && trimmedWhenToUse.length <= PROJECT_AGENT_WHEN_TO_USE_MAX
+  const storedCanCreateSessions = currentProjectAgent?.capabilities?.includes('create_session') ?? false
   const hasChanges = isPromoting
     || trimmedWhenToUse !== (currentProjectAgent?.whenToUse ?? '')
     || trimmedSystemPrompt !== fetchedSystemPromptRef.current.trim()
+    || canCreateSessions !== storedCanCreateSessions
 
   const requestRecommendations = useCallback(async (replaceExisting: boolean) => {
     if (!onRequestRecommendations) return
@@ -262,6 +269,7 @@ export function ProjectAgentSettingsSheet({
         whenToUse: trimmedWhenToUse,
         ...(trimmedSystemPrompt ? { systemPrompt: trimmedSystemPrompt } : {}),
         ...(isPromoting && normalizedHandle ? { handle: normalizedHandle } : {}),
+        capabilities: canCreateSessions ? ['create_session'] : [],
       })
       onClose()
     } catch (err) {
@@ -406,6 +414,27 @@ export function ProjectAgentSettingsSheet({
             <p className="text-[11px] text-muted-foreground">
               When set, this replaces the standard manager prompt for this session.
             </p>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-foreground">Capabilities</label>
+            <div className="flex items-start gap-3">
+              <Switch
+                id="canCreateSessions"
+                checked={canCreateSessions}
+                onCheckedChange={setCanCreateSessions}
+                className="mt-0.5"
+                size="sm"
+              />
+              <div className="space-y-0.5">
+                <label htmlFor="canCreateSessions" className="text-sm text-foreground">
+                  Can create sessions
+                </label>
+                <p className="text-[11px] text-muted-foreground">
+                  Allow this agent to create new manager sessions in the same profile.
+                </p>
+              </div>
+            </div>
           </div>
 
           <ProjectAgentReferenceDocsEditor
