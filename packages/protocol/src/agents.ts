@@ -30,12 +30,16 @@ export interface AgentContextUsage {
   percent: number
 }
 
+export const PROJECT_AGENT_CAPABILITIES = ['create_session'] as const
+export type ProjectAgentCapability = (typeof PROJECT_AGENT_CAPABILITIES)[number]
+
 export interface ProjectAgentInfo {
   handle: string
   whenToUse: string
   /** @deprecated Use PersistedProjectAgentConfig + prompt.md-backed storage instead. */
   systemPrompt?: string
   creatorSessionId?: string
+  capabilities?: ProjectAgentCapability[]
 }
 
 export interface PersistedProjectAgentConfig {
@@ -44,6 +48,7 @@ export interface PersistedProjectAgentConfig {
   handle: string
   whenToUse: string
   creatorSessionId?: string
+  capabilities?: ProjectAgentCapability[]
   promotedAt: string
   updatedAt: string
 }
@@ -74,6 +79,7 @@ export type AgentSessionPurpose = 'cortex_review' | 'agent_creator'
 export interface AgentDescriptor {
   agentId: string
   managerId: string
+  creatorAgentId?: string
   displayName: string
   role: 'manager' | 'worker'
   archetypeId?: string

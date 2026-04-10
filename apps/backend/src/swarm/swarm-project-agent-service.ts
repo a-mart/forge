@@ -1,4 +1,4 @@
-import type { PersistedProjectAgentConfig } from "@forge/protocol";
+import type { PersistedProjectAgentConfig, ProjectAgentCapability } from "@forge/protocol";
 import {
   deleteProjectAgentRecord,
   readProjectAgentRecord,
@@ -35,7 +35,8 @@ export interface SwarmProjectAgentServiceOptions {
     descriptor: ProvisionedSessionDescriptor,
     whenToUse: string,
     systemPrompt?: string,
-    handle?: string
+    handle?: string,
+    capabilities?: ProjectAgentCapability[]
   ) => NonNullable<AgentDescriptor["projectAgent"]>;
   getOrCreateRuntimeForDescriptor: (descriptor: AgentDescriptor) => Promise<{ getContextUsage(): AgentDescriptor["contextUsage"] }>;
   captureSessionRuntimePromptMeta: (
@@ -66,7 +67,13 @@ export class SwarmProjectAgentService {
 
   async createAndPromoteProjectAgent(
     creatorAgentId: string,
-    params: { sessionName: string; handle?: string; whenToUse: string; systemPrompt: string }
+    params: {
+      sessionName: string;
+      handle?: string;
+      whenToUse: string;
+      systemPrompt: string;
+      capabilities?: ProjectAgentCapability[];
+    }
   ): Promise<{ agentId: string; handle: string; profileId: string }> {
     const creatorDescriptor = this.options.getRequiredSessionDescriptor(creatorAgentId);
     if (creatorDescriptor.sessionPurpose !== "agent_creator") {
@@ -116,7 +123,8 @@ export class SwarmProjectAgentService {
       handle,
       whenToUse: trimmedWhenToUse,
       systemPrompt: trimmedSystemPrompt,
-      creatorSessionId: creatorAgentId
+      creatorSessionId: creatorAgentId,
+      ...(params.capabilities !== undefined ? { capabilities: params.capabilities } : {})
     };
 
     const previousCreatorResult = creatorDescriptor.agentCreatorResult
@@ -134,6 +142,7 @@ export class SwarmProjectAgentService {
             handle,
             whenToUse: trimmedWhenToUse,
             creatorSessionId: creatorAgentId,
+            ...(params.capabilities !== undefined ? { capabilities: params.capabilities } : {}),
             promotedAt: sessionDescriptor.createdAt,
             updatedAt: this.options.now()
           };
@@ -215,7 +224,9 @@ export class SwarmProjectAgentService {
 
   async setSessionProjectAgent(
     agentId: string,
-    projectAgent: { whenToUse: string; systemPrompt?: string; handle?: string } | null
+    projectAgent:
+      | { whenToUse: string; systemPrompt?: string; handle?: string; capabilities?: ProjectAgentCapability[] }
+      | null
   ): Promise<{ profileId: string; projectAgent: NonNullable<AgentDescriptor["projectAgent"]> | null }> {
     const descriptor = this.options.getRequiredSessionDescriptor(agentId);
     this.options.assertSessionSupportsProjectAgent(descriptor);
@@ -232,7 +243,8 @@ export class SwarmProjectAgentService {
           descriptor,
           projectAgent.whenToUse,
           projectAgent.systemPrompt,
-          projectAgent.handle ?? descriptor.projectAgent?.handle
+          projectAgent.handle ?? descriptor.projectAgent?.handle,
+          projectAgent.capabilities ?? descriptor.projectAgent?.capabilities
         )
       : null;
 
@@ -250,6 +262,7 @@ export class SwarmProjectAgentService {
         ...(nextProjectAgent.creatorSessionId !== undefined
           ? { creatorSessionId: nextProjectAgent.creatorSessionId }
           : {}),
+        ...(nextProjectAgent.capabilities !== undefined ? { capabilities: nextProjectAgent.capabilities } : {}),
         promotedAt: descriptor.createdAt,
         updatedAt: this.options.now()
       };
@@ -305,6 +318,9 @@ export class SwarmProjectAgentService {
         whenToUse: descriptor.projectAgent.whenToUse,
         ...(descriptor.projectAgent.creatorSessionId !== undefined
           ? { creatorSessionId: descriptor.projectAgent.creatorSessionId }
+          : {}),
+        ...(descriptor.projectAgent.capabilities !== undefined
+          ? { capabilities: descriptor.projectAgent.capabilities }
           : {}),
         promotedAt: descriptor.createdAt ?? new Date().toISOString(),
         updatedAt: new Date().toISOString()

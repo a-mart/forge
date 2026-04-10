@@ -1,6 +1,10 @@
 import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
-import type { PersistedProjectAgentConfig } from "@forge/protocol";
+import {
+  PROJECT_AGENT_CAPABILITIES,
+  type PersistedProjectAgentConfig,
+  type ProjectAgentCapability
+} from "@forge/protocol";
 import {
   getProjectAgentConfigPath,
   getProjectAgentDir,
@@ -41,7 +45,14 @@ export async function writeProjectAgentRecord(
     await writeFile(promptPath, systemPrompt, "utf8");
   }
 
-  await writeFile(tempConfigPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+  const normalizedCapabilities = normalizeProjectAgentCapabilities(config.capabilities);
+  const { capabilities: _unusedCapabilities, ...baseConfig } = config;
+  const persistedConfig: PersistedProjectAgentConfig = {
+    ...baseConfig,
+    ...(normalizedCapabilities.length > 0 ? { capabilities: normalizedCapabilities } : {})
+  };
+
+  await writeFile(tempConfigPath, `${JSON.stringify(persistedConfig, null, 2)}\n`, "utf8");
   await rename(tempConfigPath, configPath);
 }
 
@@ -222,6 +233,9 @@ export async function reconcileProjectAgentStorage(
       handle: descriptor.projectAgent.handle,
       whenToUse: descriptor.projectAgent.whenToUse,
       ...(descriptor.projectAgent.creatorSessionId ? { creatorSessionId: descriptor.projectAgent.creatorSessionId } : {}),
+      ...(normalizeProjectAgentCapabilities(descriptor.projectAgent.capabilities).length > 0
+        ? { capabilities: normalizeProjectAgentCapabilities(descriptor.projectAgent.capabilities) }
+        : {}),
       promotedAt: descriptor.createdAt,
       updatedAt: new Date().toISOString()
     };
@@ -269,12 +283,19 @@ function coercePersistedProjectAgentConfig(value: unknown): PersistedProjectAgen
     return null;
   }
 
+  if (value.capabilities !== undefined && !Array.isArray(value.capabilities)) {
+    return null;
+  }
+
+  const capabilities = normalizeProjectAgentCapabilities(value.capabilities);
+
   return {
     version: 1,
     agentId: value.agentId,
     handle: normalizedHandle,
     whenToUse: value.whenToUse,
     ...(typeof value.creatorSessionId === "string" ? { creatorSessionId: value.creatorSessionId } : {}),
+    ...(capabilities.length > 0 ? { capabilities } : {}),
     promotedAt: value.promotedAt,
     updatedAt: value.updatedAt
   };
@@ -332,17 +353,50 @@ function hydrateDescriptorFromRecord(descriptor: AgentDescriptor, record: Projec
     handle: nextHandle,
     whenToUse: record.config.whenToUse,
     ...(record.systemPrompt !== null ? { systemPrompt: record.systemPrompt } : {}),
-    ...(record.config.creatorSessionId !== undefined ? { creatorSessionId: record.config.creatorSessionId } : {})
+    ...(record.config.creatorSessionId !== undefined ? { creatorSessionId: record.config.creatorSessionId } : {}),
+    ...(record.config.capabilities !== undefined ? { capabilities: record.config.capabilities } : {})
   };
 
   const changed =
     previous?.handle !== nextProjectAgent.handle ||
     previous?.whenToUse !== nextProjectAgent.whenToUse ||
     previous?.systemPrompt !== nextProjectAgent.systemPrompt ||
-    previous?.creatorSessionId !== nextProjectAgent.creatorSessionId;
+    previous?.creatorSessionId !== nextProjectAgent.creatorSessionId ||
+    !areCapabilitiesEqual(previous?.capabilities, nextProjectAgent.capabilities);
 
   descriptor.projectAgent = nextProjectAgent;
   return changed;
+}
+
+function normalizeProjectAgentCapabilities(value: unknown): ProjectAgentCapability[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const validCapabilities = new Set(PROJECT_AGENT_CAPABILITIES);
+  return Array.from(
+    new Set(
+      value.filter(
+        (capability): capability is ProjectAgentCapability =>
+          typeof capability === "string" && validCapabilities.has(capability as ProjectAgentCapability)
+      )
+    )
+  ).sort((left, right) => PROJECT_AGENT_CAPABILITIES.indexOf(left) - PROJECT_AGENT_CAPABILITIES.indexOf(right));
+}
+
+function areCapabilitiesEqual(
+  left: ProjectAgentCapability[] | undefined,
+  right: ProjectAgentCapability[] | undefined
+): boolean {
+  if (!left && !right) {
+    return true;
+  }
+
+  if (!left || !right || left.length !== right.length) {
+    return false;
+  }
+
+  return left.every((capability, index) => capability === right[index]);
 }
 
 function buildTempSiblingPath(targetPath: string): string {

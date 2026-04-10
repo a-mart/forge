@@ -183,10 +183,13 @@ export class SwarmPromptService {
       descriptor,
       options,
     );
+    const normalizedSessionSystemPrompt = normalizeOptionalAgentId(descriptor.sessionSystemPrompt)?.trim();
     const [promptTemplate, roster, specialistsEnabled] = await Promise.all([
-      projectAgentPrompt
-        ? Promise.resolve(projectAgentPrompt)
-        : this.options.promptRegistry.resolve("archetype", managerArchetypeId, profileId),
+      normalizedSessionSystemPrompt
+        ? Promise.resolve(normalizedSessionSystemPrompt)
+        : projectAgentPrompt
+          ? Promise.resolve(projectAgentPrompt)
+          : this.options.promptRegistry.resolve("archetype", managerArchetypeId, profileId),
       specialistRegistry.resolveRoster(profileId),
       specialistRegistry.getSpecialistsEnabled(),
     ]);
@@ -202,9 +205,14 @@ export class SwarmPromptService {
         displayName: getProjectAgentPublicName(entry),
         handle: entry.projectAgent.handle,
         whenToUse: entry.projectAgent.whenToUse,
+        capabilities: entry.projectAgent.capabilities,
       })),
     );
-    const delegationContextBlock = `${delegationBlock}\n\n${projectAgentDirectoryBlock}`;
+    const createSessionCapabilityNote =
+      descriptor.projectAgent?.capabilities?.includes("create_session")
+        ? "\n- This project agent can create new manager sessions via create_session."
+        : "";
+    const delegationContextBlock = `${delegationBlock}\n\n${projectAgentDirectoryBlock}${createSessionCapabilityNote}`;
     let prompt = resolvePromptVariables(promptTemplate, this.buildStandardPromptVariables(descriptor));
 
     if (descriptor.projectAgent?.handle) {
