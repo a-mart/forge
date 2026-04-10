@@ -447,7 +447,62 @@ describe("ProviderUsageService", () => {
     expect(distinctAccountKeys.size).toBe(2);
   });
 
-  it("falls back to single-account anthropic auth when only one pooled credential exists", async () => {
+  it("marks single pooled OpenAI credentials auth_error when usage fetch returns 401", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("VITEST", "");
+
+    const nowMs = Date.parse("2026-04-01T00:00:00.000Z");
+    vi.spyOn(Date, "now").mockReturnValue(nowMs);
+
+    const fetchMock = vi.fn(async () => new Response("unauthorized", { status: 401 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { ProviderUsageService } = await import("../stats/provider-usage-service.js");
+    const service = new ProviderUsageService("/tmp/shared-auth.json", makeHistoryFilePath()) as any;
+    const pool = {
+      listPool: vi.fn(async (provider: string) => {
+        if (provider === "openai-codex") {
+          return {
+            strategy: "fill_first",
+            credentials: [
+              { id: "cred_openai", label: "OpenAI Only", isPrimary: true, health: "healthy", requestCount: 0, createdAt: "2026-04-01T00:00:00.000Z" }
+            ]
+          };
+        }
+
+        return { strategy: "fill_first", credentials: [] };
+      }),
+      buildRuntimeAuthData: vi.fn(async () => ({
+        "openai-codex": {
+          type: "oauth",
+          access: "openai-pooled-token",
+          refresh: "openai-refresh-token",
+          expires: nowMs + 60_000,
+          accountId: "acct-pooled"
+        }
+      })),
+      markAuthError: vi.fn(async () => undefined)
+    };
+
+    service.setCredentialPoolGetter(() => pool as any);
+    const readOpenAIAuthSpy = vi.spyOn(service, "readOpenAIAuth").mockResolvedValue({
+      tokens: {
+        access_token: "ignored-codex-token"
+      }
+    });
+    vi.spyOn(service, "readAnthropicAuth").mockResolvedValue(null);
+
+    const snapshot = await service.getSnapshot();
+
+    expect(snapshot.openai).toEqual([{ provider: "openai", available: false }]);
+    expect(pool.listPool).toHaveBeenCalledWith("openai-codex");
+    expect(pool.buildRuntimeAuthData).toHaveBeenCalledWith("openai-codex", "cred_openai");
+    expect(pool.markAuthError).toHaveBeenCalledWith("openai-codex", "cred_openai");
+    expect(readOpenAIAuthSpy).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the pooled auth path even when only one pooled Anthropic credential exists", async () => {
     vi.stubEnv("NODE_ENV", "development");
     vi.stubEnv("VITEST", "");
 
@@ -491,14 +546,26 @@ describe("ProviderUsageService", () => {
 
         return { strategy: "fill_first", credentials: [] };
       }),
-      buildRuntimeAuthData: vi.fn()
+      buildRuntimeAuthData: vi.fn(async (provider: string, credentialId: string) => {
+        expect(provider).toBe("anthropic");
+        expect(credentialId).toBe("cred_only");
+        return {
+          anthropic: {
+            type: "oauth",
+            access: "shared-auth-token",
+            refresh: "shared-refresh-token",
+            expires: nowMs + 60_000
+          }
+        };
+      }),
+      markAuthError: vi.fn()
     };
 
     service.setCredentialPoolGetter(() => pool as any);
     vi.spyOn(service, "readOpenAIAuth").mockResolvedValue(null);
     const readAnthropicAuthSpy = vi.spyOn(service, "readAnthropicAuth").mockResolvedValue({
       type: "oauth",
-      access: "shared-auth-token",
+      access: "ignored-single-account-token",
       expires: nowMs + 60_000
     });
 
@@ -513,8 +580,57 @@ describe("ProviderUsageService", () => {
       })
     ]);
     expect(pool.listPool).toHaveBeenCalledWith("anthropic");
-    expect(pool.buildRuntimeAuthData).not.toHaveBeenCalled();
-    expect(readAnthropicAuthSpy).toHaveBeenCalledTimes(1);
+    expect(pool.buildRuntimeAuthData).toHaveBeenCalledWith("anthropic", "cred_only");
+    expect(readAnthropicAuthSpy).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("marks pooled Anthropic credentials auth_error when usage fetch returns 403", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("VITEST", "");
+
+    const nowMs = Date.parse("2026-04-01T00:00:00.000Z");
+    vi.spyOn(Date, "now").mockReturnValue(nowMs);
+
+    const fetchMock = vi.fn(async () => new Response("forbidden", { status: 403 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { ProviderUsageService } = await import("../stats/provider-usage-service.js");
+    const service = new ProviderUsageService("/tmp/shared-auth.json", makeHistoryFilePath()) as any;
+    const pool = {
+      listPool: vi.fn(async (provider: string) => {
+        if (provider === "anthropic") {
+          return {
+            strategy: "fill_first",
+            credentials: [
+              { id: "cred_only", label: "Only Account", isPrimary: true, health: "healthy", requestCount: 0, createdAt: "2026-04-01T00:00:00.000Z" }
+            ]
+          };
+        }
+
+        return { strategy: "fill_first", credentials: [] };
+      }),
+      buildRuntimeAuthData: vi.fn(async () => ({
+        anthropic: {
+          type: "oauth",
+          access: "anthropic-pooled-token",
+          refresh: "anthropic-refresh-token",
+          expires: nowMs + 60_000
+        }
+      })),
+      markAuthError: vi.fn(async () => undefined)
+    };
+
+    service.setCredentialPoolGetter(() => pool as any);
+    vi.spyOn(service, "readOpenAIAuth").mockResolvedValue(null);
+    const readAnthropicAuthSpy = vi.spyOn(service, "readAnthropicAuth").mockResolvedValue(null);
+
+    const snapshot = await service.getSnapshot();
+
+    expect(snapshot.anthropic).toEqual([{ provider: "anthropic", available: false }]);
+    expect(pool.buildRuntimeAuthData).toHaveBeenCalledWith("anthropic", "cred_only");
+    expect(pool.markAuthError).toHaveBeenCalledWith("anthropic", "cred_only");
+    expect(readAnthropicAuthSpy).not.toHaveBeenCalled();
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 

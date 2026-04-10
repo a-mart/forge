@@ -1,7 +1,8 @@
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { describe, it, expect, afterEach, beforeEach } from "vitest";
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
+import { anthropicOAuthProvider, openaiCodexOAuthProvider } from "@mariozechner/pi-ai/oauth";
 import { AuthStorage, type AuthCredential } from "@mariozechner/pi-coding-agent";
 import { CredentialPoolService, type CredentialPoolServiceDeps } from "../credential-pool.js";
 import { classifyRuntimeCapacityError } from "../runtime-utils.js";
@@ -125,6 +126,38 @@ describe("CredentialPoolService runtime helpers", () => {
       const authData = await pool.buildRuntimeAuthData("openai-codex", primaryId);
       expect((authData["openai-codex"] as any).access).toBe("tok_primary");
     });
+
+    it("refreshes expired pooled OAuth credentials and persists the refreshed auth payload", async () => {
+      await writeAuthFile({
+        anthropic: {
+          type: "oauth",
+          access: "anthropic-stale-token",
+          refresh: "anthropic-refresh-token",
+          expires: new Date(Date.now() - 60_000).toISOString(),
+        },
+      });
+
+      const refreshSpy = vi.spyOn(anthropicOAuthProvider, "refreshToken").mockResolvedValue({
+        access: "anthropic-fresh-token",
+        refresh: "anthropic-refresh-token-2",
+        expires: Date.now() + 3_600_000,
+      });
+
+      const pool = new CredentialPoolService(deps);
+      const poolState = await pool.listPool("anthropic");
+      const primaryId = poolState.credentials[0].id;
+
+      const authData = await pool.buildRuntimeAuthData("anthropic", primaryId);
+
+      expect((authData["anthropic"] as any).access).toBe("anthropic-fresh-token");
+      expect(refreshSpy).toHaveBeenCalledWith(expect.objectContaining({
+        refresh: "anthropic-refresh-token",
+      }));
+
+      const stored = AuthStorage.create(authFile).get("anthropic") as any;
+      expect(stored.access).toBe("anthropic-fresh-token");
+      expect(stored.refresh).toBe("anthropic-refresh-token-2");
+    });
   });
 
   describe("getEarliestCooldownExpiry", () => {
@@ -157,6 +190,50 @@ describe("CredentialPoolService runtime helpers", () => {
       const expiry = await pool.getEarliestCooldownExpiry("openai-codex");
       expect(expiry).toBe(earlyTime);
     });
+  });
+});
+
+describe("CredentialPoolService OAuth refresh behavior", () => {
+  it("reports expired OAuth credentials as auth_error in pool state", async () => {
+    await writeAuthFile({
+      anthropic: {
+        type: "oauth",
+        access: "anthropic-stale-token",
+        refresh: "anthropic-refresh-token",
+        expires: new Date(Date.now() - 60_000).toISOString(),
+      },
+    });
+
+    const pool = new CredentialPoolService(deps);
+    const poolState = await pool.listPool("anthropic");
+
+    expect(poolState.credentials[0]?.health).toBe("auth_error");
+  });
+
+  it("marks refresh failures as auth_error and falls back to the next healthy credential", async () => {
+    await writeAuthFile({
+      "openai-codex": {
+        type: "oauth",
+        access: "openai-stale-token",
+        refresh: "openai-refresh-token",
+        expires: new Date(Date.now() - 60_000).toISOString(),
+      },
+    });
+
+    const pool = new CredentialPoolService(deps);
+    await pool.ensureLoaded();
+    const second = await pool.addCredential("openai-codex", makeOAuthCredential("tok_second"), {
+      label: "Second Account",
+    });
+
+    vi.spyOn(openaiCodexOAuthProvider, "refreshToken").mockRejectedValue(new Error("invalid_grant"));
+
+    const selection = await pool.select("openai-codex");
+    expect(selection?.credentialId).toBe(second.id);
+
+    const updatedPool = await pool.listPool("openai-codex");
+    const primary = updatedPool.credentials.find((credential) => credential.isPrimary);
+    expect(primary?.health).toBe("auth_error");
   });
 });
 

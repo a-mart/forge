@@ -618,6 +618,50 @@ describe('AgentRuntime', () => {
     })
   })
 
+  it('marks pooled credentials auth_error for broader auth failures like 403 forbidden', async () => {
+    const session = new FakeSession()
+
+    session.prompt = async (): Promise<void> => {
+      throw new Error('HTTP 403 forbidden: OAuth token expired')
+    }
+
+    ;(session as any).model = { provider: 'anthropic', id: 'claude-opus-4-6' }
+
+    const pool = {
+      markAuthError: vi.fn().mockResolvedValue(undefined),
+      markExhausted: vi.fn(),
+      select: vi.fn(),
+      getEarliestCooldownExpiry: vi.fn(),
+    }
+
+    const runtime = new AgentRuntime({
+      descriptor: {
+        ...makeDescriptor(),
+        model: {
+          provider: 'anthropic',
+          modelId: 'claude-opus-4-6',
+          thinkingLevel: 'medium',
+        },
+      },
+      session: session as any,
+      callbacks: {
+        onStatusChange: () => {},
+        onRuntimeError: () => {},
+      },
+    })
+
+    runtime.pooledCredentialId = 'cred_primary'
+    runtime.pooledCredentialProvider = 'anthropic'
+    runtime.credentialPoolService = pool as any
+
+    await runtime.sendMessage('auth failure')
+    await waitForCondition(() => pool.markAuthError.mock.calls.length === 1)
+
+    expect(pool.markAuthError).toHaveBeenCalledWith('anthropic', 'cred_primary')
+    expect(pool.markExhausted).not.toHaveBeenCalled()
+    expect(pool.select).not.toHaveBeenCalled()
+  })
+
   it('uses provider-neutral Anthropic exhaustion messages when every pooled account is cooling down', async () => {
     const session = new FakeSession()
     const runtimeErrors: Array<{ phase: string; message: string }> = []

@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import type { OAuthCredentials } from "@mariozechner/pi-ai/oauth";
+import { anthropicOAuthProvider, openaiCodexOAuthProvider } from "@mariozechner/pi-ai/oauth";
 import { AuthStorage, type AuthCredential } from "@mariozechner/pi-coding-agent";
 import type { CredentialPoolState, CredentialPoolStrategy, PooledCredentialInfo } from "@forge/protocol";
 import { renameWithRetry } from "./retry-rename.js";
@@ -30,6 +32,11 @@ type PersistedPoolFile = Record<string, PersistedProviderPool>;
 
 const SUPPORTED_PROVIDERS = new Set(["openai-codex", "anthropic"]);
 const POOL_FILENAME = "credential-pool.json";
+const POOLED_OAUTH_REFRESH_SKEW_MS = 5 * 60_000;
+const POOLED_OAUTH_PROVIDERS = {
+  anthropic: anthropicOAuthProvider,
+  "openai-codex": openaiCodexOAuthProvider,
+} as const;
 
 function generateCredentialId(): string {
   return `cred_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
@@ -41,6 +48,18 @@ function generateCredentialId(): string {
  */
 function authStorageKey(provider: string, credentialId: string, isPrimary: boolean): string {
   return isPrimary ? provider : `${provider}:${credentialId}`;
+}
+
+class PooledCredentialAuthError extends Error {
+  readonly provider: string;
+  readonly credentialId: string;
+
+  constructor(provider: string, credentialId: string, message: string) {
+    super(message);
+    this.name = "PooledCredentialAuthError";
+    this.provider = provider;
+    this.credentialId = credentialId;
+  }
 }
 
 // ── Service ──
@@ -138,10 +157,13 @@ export class CredentialPoolService {
 
     // Expire stale cooldowns before returning
     this.expireCooldowns(provider);
+    const rawAuth = await readAuthFileRaw(this.deps.authFile);
 
     return {
       strategy: providerPool.strategy,
-      credentials: providerPool.credentials.map(toPooledCredentialInfo),
+      credentials: providerPool.credentials.map((entry) =>
+        toPooledCredentialInfo(entry, resolveReportedCredentialHealth(provider, entry, rawAuth))
+      ),
     };
   }
 
@@ -158,31 +180,23 @@ export class CredentialPoolService {
 
     this.expireCooldowns(provider);
 
-    const healthy = providerPool.credentials.filter((c) => c.health === "healthy");
-    if (healthy.length === 0) return null;
-
-    let selected: PersistedCredentialEntry;
-
-    if (providerPool.strategy === "least_used") {
-      healthy.sort((a, b) => {
-        const countDiff = a.requestCount - b.requestCount;
-        if (countDiff !== 0) return countDiff;
-        // Tiebreaker: prefer primary
-        if (a.isPrimary && !b.isPrimary) return -1;
-        if (!a.isPrimary && b.isPrimary) return 1;
-        return 0;
-      });
-      selected = healthy[0];
-    } else {
-      // fill_first: primary first, else creation order
-      const primary = healthy.find((c) => c.isPrimary);
-      selected = primary ?? healthy[0];
+    const candidates = orderCredentialSelectionCandidates(providerPool);
+    for (const candidate of candidates) {
+      try {
+        await this.ensureCredentialAvailable(provider, candidate.id);
+        return {
+          credentialId: candidate.id,
+          authStorageKey: authStorageKey(provider, candidate.id, candidate.isPrimary),
+        };
+      } catch (error) {
+        if (error instanceof PooledCredentialAuthError) {
+          continue;
+        }
+        throw error;
+      }
     }
 
-    return {
-      credentialId: selected.id,
-      authStorageKey: authStorageKey(provider, selected.id, selected.isPrimary),
-    };
+    return null;
   }
 
   /**
@@ -217,10 +231,7 @@ export class CredentialPoolService {
     this.assertSupportedProvider(provider);
     await this.ensureLoaded();
 
-    const entry = this.findCredential(provider, credentialId);
-    const selectedKey = authStorageKey(provider, entry.id, entry.isPrimary);
-
-    const authStorage = AuthStorage.create(this.deps.authFile);
+    const selectedCredential = await this.ensureCredentialAvailable(provider, credentialId);
     const result: Record<string, AuthCredential> = {};
 
     // Read all keys from auth.json via the file-backed storage
@@ -237,10 +248,7 @@ export class CredentialPoolService {
     }
 
     // Place the selected credential at the bare provider key so Pi resolves it normally
-    const selectedCredential = authStorage.get(selectedKey);
-    if (selectedCredential) {
-      result[provider] = selectedCredential;
-    }
+    result[provider] = selectedCredential;
 
     return result;
   }
@@ -451,6 +459,54 @@ export class CredentialPoolService {
     return entry;
   }
 
+  private async ensureCredentialAvailable(provider: string, credentialId: string): Promise<AuthCredential> {
+    const entry = this.findCredential(provider, credentialId);
+    const key = authStorageKey(provider, entry.id, entry.isPrimary);
+    const authStorage = AuthStorage.create(this.deps.authFile);
+    const credential = authStorage.get(key);
+
+    if (!credential) {
+      await this.markAuthError(provider, credentialId);
+      throw new PooledCredentialAuthError(provider, credentialId, `Credential payload missing from auth store: ${key}`);
+    }
+
+    if (credential.type !== "oauth") {
+      return credential;
+    }
+
+    if (!oauthCredentialNeedsRefresh(credential, POOLED_OAUTH_REFRESH_SKEW_MS)) {
+      return credential;
+    }
+
+    const refreshableCredential = toRefreshableOAuthCredential(credential);
+    const oauthProvider = getPooledOAuthProvider(provider);
+    if (!refreshableCredential || !oauthProvider) {
+      await this.markAuthError(provider, credentialId);
+      throw new PooledCredentialAuthError(provider, credentialId, `Credential is missing refreshable OAuth fields: ${key}`);
+    }
+
+    try {
+      const refreshedCredential = {
+        type: "oauth",
+        ...await oauthProvider.refreshToken(refreshableCredential),
+      } as AuthCredential;
+      authStorage.set(key, refreshedCredential);
+      if (entry.health === "auth_error") {
+        entry.health = "healthy";
+        entry.cooldownUntil = null;
+        await this.persist();
+      }
+      return refreshedCredential;
+    } catch (error) {
+      await this.markAuthError(provider, credentialId);
+      throw new PooledCredentialAuthError(
+        provider,
+        credentialId,
+        `Failed to refresh pooled ${provider} credential ${credentialId}: ${toErrorMessage(error)}`
+      );
+    }
+  }
+
   /**
    * Swap primary designation: moves the new primary's credential to the bare provider key
    * and the old primary's credential to a suffixed key, all atomically in auth.json.
@@ -555,17 +611,150 @@ export class CredentialPoolService {
 
 // ── Helpers ──
 
-function toPooledCredentialInfo(entry: PersistedCredentialEntry): PooledCredentialInfo {
+function toPooledCredentialInfo(
+  entry: PersistedCredentialEntry,
+  healthOverride?: PooledCredentialInfo["health"]
+): PooledCredentialInfo {
   return {
     id: entry.id,
     label: entry.label,
     autoLabel: entry.autoLabel,
     isPrimary: entry.isPrimary,
-    health: entry.health,
+    health: healthOverride ?? entry.health,
     cooldownUntil: entry.cooldownUntil,
     requestCount: entry.requestCount,
     createdAt: entry.createdAt,
   };
+}
+
+function orderCredentialSelectionCandidates(providerPool: PersistedProviderPool): PersistedCredentialEntry[] {
+  const healthy = providerPool.credentials.filter((entry) => entry.health === "healthy");
+  if (providerPool.strategy === "least_used") {
+    return healthy.sort((a, b) => {
+      const countDiff = a.requestCount - b.requestCount;
+      if (countDiff !== 0) return countDiff;
+      if (a.isPrimary && !b.isPrimary) return -1;
+      if (!a.isPrimary && b.isPrimary) return 1;
+      return 0;
+    });
+  }
+
+  const primary = healthy.find((entry) => entry.isPrimary);
+  if (!primary) {
+    return healthy;
+  }
+
+  return [primary, ...healthy.filter((entry) => entry.id !== primary.id)];
+}
+
+function resolveReportedCredentialHealth(
+  provider: string,
+  entry: PersistedCredentialEntry,
+  rawAuth: Record<string, unknown>
+): PooledCredentialInfo["health"] {
+  if (entry.health !== "healthy") {
+    return entry.health;
+  }
+
+  const credential = getAuthCredentialFromRaw(rawAuth, authStorageKey(provider, entry.id, entry.isPrimary));
+  if (!credential) {
+    return "auth_error";
+  }
+
+  if (credential.type !== "oauth") {
+    return "healthy";
+  }
+
+  if (!hasUsableOAuthAccessToken(credential) || oauthCredentialNeedsRefresh(credential, 0)) {
+    return "auth_error";
+  }
+
+  return "healthy";
+}
+
+function getPooledOAuthProvider(provider: string) {
+  return POOLED_OAUTH_PROVIDERS[provider as keyof typeof POOLED_OAUTH_PROVIDERS];
+}
+
+function toRefreshableOAuthCredential(credential: AuthCredential): OAuthCredentials | null {
+  if (credential.type !== "oauth") {
+    return null;
+  }
+
+  const refresh = normalizeAuthToken((credential as { refresh?: unknown }).refresh);
+  if (!refresh) {
+    return null;
+  }
+
+  const { type: _type, ...rest } = credential as AuthCredential & Record<string, unknown>;
+  return {
+    ...rest,
+    access: normalizeAuthToken((credential as { access?: unknown }).access) ?? "",
+    refresh,
+    expires: normalizeCredentialExpiry((credential as { expires?: unknown }).expires) ?? 0,
+  } as OAuthCredentials;
+}
+
+function hasUsableOAuthAccessToken(credential: AuthCredential): boolean {
+  if (credential.type !== "oauth") {
+    return false;
+  }
+
+  return Boolean(normalizeAuthToken((credential as { access?: unknown }).access));
+}
+
+function oauthCredentialNeedsRefresh(credential: AuthCredential, minValidityMs: number): boolean {
+  if (credential.type !== "oauth") {
+    return false;
+  }
+
+  const expiresAt = normalizeCredentialExpiry((credential as { expires?: unknown }).expires);
+  const accessToken = normalizeAuthToken((credential as { access?: unknown }).access);
+  if (!accessToken) {
+    return true;
+  }
+
+  if (expiresAt === undefined) {
+    return false;
+  }
+
+  return expiresAt <= Date.now() + minValidityMs;
+}
+
+function normalizeCredentialExpiry(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  const numeric = Number(trimmed);
+  if (Number.isFinite(numeric)) {
+    return numeric;
+  }
+
+  const parsed = Date.parse(trimmed);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function normalizeAuthToken(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function toErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function shouldMigrateCredential(provider: string, credential: AuthCredential | undefined): boolean {

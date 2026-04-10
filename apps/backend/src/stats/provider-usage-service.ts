@@ -160,37 +160,58 @@ export class ProviderUsageService {
       return;
     }
 
-    // Multi-account path: fetch usage for each pooled credential
     const pool = this.credentialPoolGetter?.();
     if (pool) {
       try {
         const poolState = await pool.listPool("openai-codex");
-        if (poolState.credentials.length > 1) {
+        if (poolState.credentials.length > 0) {
+          const includeAccountIdentity = poolState.credentials.length > 1;
           const entries: CachedProviderUsageEntry[] = [];
           for (const cred of poolState.credentials) {
+            const unavailable = makeCachedEntry({
+              ...unavailableProviderUsage("openai"),
+              ...(includeAccountIdentity ? { accountId: cred.id, accountLabel: cred.label } : {}),
+            }, nowMs);
+
             try {
               const authData = await pool.buildRuntimeAuthData("openai-codex", cred.id);
               const piAuth = authData["openai-codex"] as PiAuthCredential | undefined;
               const accessToken = piAuth?.access?.trim();
               if (!accessToken) {
-                entries.push({ data: { ...unavailableProviderUsage("openai"), accountId: cred.id, accountLabel: cred.label }, fetchedAtMs: nowMs, lastAttemptMs: nowMs });
+                entries.push(unavailable);
                 continue;
               }
-              const headers: Record<string, string> = { Authorization: `Bearer ${accessToken}`, Accept: "application/json" };
+
+              const headers: Record<string, string> = {
+                Authorization: `Bearer ${accessToken}`,
+                Accept: "application/json"
+              };
               const acctId = piAuth?.accountId?.trim();
-              if (acctId) headers["ChatGPT-Account-Id"] = acctId;
-              const response = await fetch(OPENAI_USAGE_URL, { headers, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+              if (acctId) {
+                headers["ChatGPT-Account-Id"] = acctId;
+              }
+
+              const response = await fetch(OPENAI_USAGE_URL, {
+                headers,
+                signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
+              });
               if (!response.ok) {
-                entries.push({ data: { ...unavailableProviderUsage("openai"), accountId: cred.id, accountLabel: cred.label }, fetchedAtMs: nowMs, lastAttemptMs: nowMs });
+                if (response.status === 401 || response.status === 403) {
+                  await pool.markAuthError("openai-codex", cred.id);
+                }
+                entries.push(unavailable);
                 continue;
               }
+
               const body = (await response.json()) as OpenAIUsageResponse;
               const usage = await this.withHistoricalPace("openai", mapOpenAIResponse(body), nowMs);
-              usage.accountId = cred.id;
-              usage.accountLabel = cred.label;
-              entries.push({ data: usage, fetchedAtMs: nowMs, lastAttemptMs: nowMs });
+              if (includeAccountIdentity) {
+                usage.accountId = cred.id;
+                usage.accountLabel = cred.label;
+              }
+              entries.push(makeCachedEntry(usage, nowMs));
             } catch {
-              entries.push({ data: { ...unavailableProviderUsage("openai"), accountId: cred.id, accountLabel: cred.label }, fetchedAtMs: nowMs, lastAttemptMs: nowMs });
+              entries.push(unavailable);
             }
           }
           this.cache.openai = entries;
@@ -259,28 +280,20 @@ export class ProviderUsageService {
     if (pool) {
       try {
         const poolState = await pool.listPool("anthropic");
-        if (poolState.credentials.length > 1) {
+        if (poolState.credentials.length > 0) {
+          const includeAccountIdentity = poolState.credentials.length > 1;
           const entries: CachedProviderUsageEntry[] = [];
           for (const cred of poolState.credentials) {
+            const unavailable = makeCachedEntry({
+              ...unavailableProviderUsage("anthropic"),
+              ...(includeAccountIdentity ? { accountId: cred.id, accountLabel: cred.label } : {}),
+            }, nowMs);
+
             try {
               const authData = await pool.buildRuntimeAuthData("anthropic", cred.id);
               const oauthCredential = resolveAnthropicUsageCredential(authData.anthropic as AuthCredential | undefined);
               if (!oauthCredential) {
-                entries.push(makeCachedEntry({
-                  ...unavailableProviderUsage("anthropic"),
-                  accountId: cred.id,
-                  accountLabel: cred.label
-                }, nowMs));
-                continue;
-              }
-
-              if (oauthCredential.expiresMs !== undefined && nowMs > oauthCredential.expiresMs) {
-                console.debug(`[provider-usage] Anthropic OAuth token expired for pooled account ${cred.id}`);
-                entries.push(makeCachedEntry({
-                  ...unavailableProviderUsage("anthropic"),
-                  accountId: cred.id,
-                  accountLabel: cred.label
-                }, nowMs));
+                entries.push(unavailable);
                 continue;
               }
 
@@ -295,27 +308,21 @@ export class ProviderUsageService {
               });
 
               if (!response.ok) {
-                entries.push(makeCachedEntry({
-                  ...unavailableProviderUsage("anthropic"),
-                  accountId: cred.id,
-                  accountLabel: cred.label
-                }, nowMs));
+                if (response.status === 401 || response.status === 403) {
+                  await pool.markAuthError("anthropic", cred.id);
+                }
+                entries.push(unavailable);
                 continue;
               }
 
               const body = (await response.json()) as AnthropicUsageResponse;
               const usage = await this.withHistoricalPace("anthropic", {
                 ...mapAnthropicResponse(body),
-                accountId: cred.id,
-                accountLabel: cred.label
+                ...(includeAccountIdentity ? { accountId: cred.id, accountLabel: cred.label } : {})
               }, nowMs);
               entries.push(makeCachedEntry(usage, nowMs));
             } catch {
-              entries.push(makeCachedEntry({
-                ...unavailableProviderUsage("anthropic"),
-                accountId: cred.id,
-                accountLabel: cred.label
-              }, nowMs));
+              entries.push(unavailable);
             }
           }
 

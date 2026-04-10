@@ -1025,9 +1025,9 @@ export class AgentRuntime implements SwarmAgentRuntime {
       return false;
     }
 
-    // Check for 401 auth errors first — mark auth_error, no rotation
-    const is401 = /\b401\b/.test(errorMessage) || /\bunauthorized\b/i.test(errorMessage);
-    if (is401) {
+    // Check for auth errors first — mark auth_error, no rotation
+    const isAuthFailure = isLikelyCredentialPoolAuthError(errorMessage);
+    if (isAuthFailure) {
       try {
         await pool.markAuthError(pooledProvider, currentCredId);
         this.logRuntimeError("prompt_dispatch", error, {
@@ -1750,6 +1750,30 @@ function isLikelyCompactionError(message: string): boolean {
 function normalizeProviderId(provider: string | undefined): string | undefined {
   const normalized = provider?.trim().toLowerCase();
   return normalized ? normalized : undefined;
+}
+
+function isLikelyCredentialPoolAuthError(message: string): boolean {
+  const normalized = message.trim().toLowerCase();
+  const authIndicators = [
+    "401",
+    "403",
+    "unauthorized",
+    "forbidden",
+    "authentication",
+    "invalid api key",
+    "invalid token",
+    "missing auth",
+    "no auth",
+    "access denied",
+    "permission denied",
+    "oauth",
+    "token expired",
+    "expired token",
+    "expired credential",
+    "login required"
+  ];
+
+  return authIndicators.some((indicator) => normalized.includes(indicator));
 }
 
 function getPooledProviderLabel(provider: string | undefined): string {
