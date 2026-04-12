@@ -604,7 +604,9 @@ describe('AgentRuntime', () => {
         cooldownUntil: expect.any(Number),
       }),
     )
-    expect(pool.select).toHaveBeenCalledWith('anthropic')
+    expect(pool.select).toHaveBeenCalledWith('anthropic', {
+      excludeCredentialId: 'cred_primary',
+    })
     expect(pool.buildRuntimeAuthData).toHaveBeenCalledWith('anthropic', 'cred_second')
     expect(pool.markUsed).toHaveBeenCalledWith('anthropic', 'cred_second')
     expect(authStorageSet).toHaveBeenCalledWith('anthropic', {
@@ -618,7 +620,7 @@ describe('AgentRuntime', () => {
     })
   })
 
-  it('marks pooled credentials auth_error for broader auth failures like 403 forbidden', async () => {
+  it('marks pooled credentials auth_error and attempts fallback rotation for broader auth failures like 403 forbidden', async () => {
     const session = new FakeSession()
 
     session.prompt = async (): Promise<void> => {
@@ -659,7 +661,9 @@ describe('AgentRuntime', () => {
 
     expect(pool.markAuthError).toHaveBeenCalledWith('anthropic', 'cred_primary')
     expect(pool.markExhausted).not.toHaveBeenCalled()
-    expect(pool.select).not.toHaveBeenCalled()
+    expect(pool.select).toHaveBeenCalledWith('anthropic', {
+      excludeCredentialId: 'cred_primary',
+    })
   })
 
   it('uses provider-neutral Anthropic exhaustion messages when every pooled account is cooling down', async () => {

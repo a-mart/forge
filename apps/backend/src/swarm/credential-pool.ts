@@ -171,7 +171,10 @@ export class CredentialPoolService {
    * Select a credential for use. Returns the credential ID and auth.json key,
    * or null if all credentials are exhausted.
    */
-  async select(provider: string, _sessionPin?: string): Promise<{ credentialId: string; authStorageKey: string } | null> {
+  async select(
+    provider: string,
+    options?: { excludeCredentialId?: string }
+  ): Promise<{ credentialId: string; authStorageKey: string } | null> {
     this.assertSupportedProvider(provider);
     await this.ensureLoaded();
 
@@ -180,7 +183,9 @@ export class CredentialPoolService {
 
     this.expireCooldowns(provider);
 
-    const candidates = orderCredentialSelectionCandidates(providerPool);
+    const candidates = orderCredentialSelectionCandidates(providerPool).filter(
+      (candidate) => candidate.id !== options?.excludeCredentialId
+    );
     for (const candidate of candidates) {
       try {
         await this.ensureCredentialAvailable(provider, candidate.id);

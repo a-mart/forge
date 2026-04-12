@@ -40,6 +40,7 @@ class FakeSession {
   abortImpl: (() => Promise<void>) | undefined;
   compactImpl: (() => Promise<unknown>) | undefined;
   abortCompactionImpl: (() => void) | undefined;
+  private readonly authStorageData: Record<string, unknown> = {};
 
   readonly sessionManager = {
     getEntries: () => [],
@@ -57,6 +58,15 @@ class FakeSession {
   readonly agent = {
     state: this.state,
     continue: async () => {}
+  };
+  readonly modelRegistry = {
+    authStorage: {
+      get: (key: string) => this.authStorageData[key],
+      set: (key: string, value: unknown) => {
+        this.authStorageData[key] = value;
+      },
+      has: (key: string) => key in this.authStorageData
+    }
   };
 
   async prompt(message: string): Promise<void> {
@@ -169,6 +179,12 @@ function createDeferred<T = void>(): { promise: Promise<T>; resolve: (value: T) 
   });
 
   return { promise, resolve };
+}
+
+async function flushPromptDispatch(): Promise<void> {
+  await Promise.resolve();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await Promise.resolve();
 }
 
 const readFileMock = vi.mocked(readFile);
@@ -1155,6 +1171,147 @@ describe("mid-turn context guard", () => {
     expect((runtime as any).guardAbortController).toBeUndefined();
     expect((runtime as any).lastContextBudgetCheckAtMs).toBe(0);
     expect(runtime.getStatus()).toBe("terminated");
+  });
+
+  it("rotates pooled credentials on auth errors and retries the prompt", async () => {
+    const { runtime, session } = createRuntime();
+    session.isStreaming = false;
+    session.model.provider = "anthropic";
+    runtime.descriptor.model.provider = "anthropic";
+    runtime.descriptor.model.modelId = "claude-opus-4-6";
+
+    session.modelRegistry.authStorage.set("anthropic", {
+      type: "oauth",
+      access: "stale-token"
+    });
+
+    const pool = {
+      markAuthError: vi.fn().mockResolvedValue(undefined),
+      select: vi.fn().mockResolvedValue({
+        credentialId: "cred_next",
+        authStorageKey: "anthropic:cred_next"
+      }),
+      buildRuntimeAuthData: vi.fn().mockResolvedValue({
+        anthropic: {
+          type: "oauth",
+          access: "fresh-token"
+        }
+      }),
+      markUsed: vi.fn().mockResolvedValue(undefined)
+    };
+
+    runtime.pooledCredentialId = "cred_current";
+    runtime.pooledCredentialProvider = "anthropic";
+    runtime.credentialPoolService = pool as any;
+
+    let promptAttempt = 0;
+    session.promptImpl = async () => {
+      promptAttempt += 1;
+      const access = (session.modelRegistry.authStorage.get("anthropic") as { access?: string } | undefined)?.access;
+      if (promptAttempt <= 2) {
+        expect(access).toBe("stale-token");
+        throw new Error("No API key for provider: anthropic");
+      }
+      expect(access).toBe("fresh-token");
+    };
+
+    const receipt = await runtime.sendMessage("retry me");
+    await flushPromptDispatch();
+    await flushPromptDispatch();
+
+    expect(receipt.acceptedMode).toBe("prompt");
+    expect(session.promptCalls).toEqual(["retry me", "retry me", "retry me"]);
+    expect(pool.markAuthError).toHaveBeenCalledWith("anthropic", "cred_current");
+    expect(pool.select).toHaveBeenCalledWith("anthropic", {
+      excludeCredentialId: "cred_current"
+    });
+    expect(pool.buildRuntimeAuthData).toHaveBeenCalledWith("anthropic", "cred_next");
+    expect(pool.markUsed).toHaveBeenCalledWith("anthropic", "cred_next");
+    expect(runtime.pooledCredentialId).toBe("cred_next");
+  });
+
+  it("stops auth-error rotation when no healthy pooled credential remains", async () => {
+    const { runtime, session, runtimeErrors } = createRuntime();
+    session.isStreaming = false;
+    session.model.provider = "anthropic";
+    runtime.descriptor.model.provider = "anthropic";
+    runtime.descriptor.model.modelId = "claude-opus-4-6";
+
+    session.modelRegistry.authStorage.set("anthropic", {
+      type: "oauth",
+      access: "stale-token"
+    });
+
+    const pool = {
+      markAuthError: vi.fn().mockResolvedValue(undefined),
+      select: vi.fn().mockResolvedValue(null),
+      buildRuntimeAuthData: vi.fn(),
+      markUsed: vi.fn().mockResolvedValue(undefined)
+    };
+
+    runtime.pooledCredentialId = "cred_current";
+    runtime.pooledCredentialProvider = "anthropic";
+    runtime.credentialPoolService = pool as any;
+
+    session.promptImpl = async () => {
+      throw new Error("No API key for provider: anthropic");
+    };
+
+    await runtime.sendMessage("retry me");
+    await flushPromptDispatch();
+
+    expect(session.promptCalls).toEqual(["retry me", "retry me"]);
+    expect(pool.markAuthError).toHaveBeenCalledWith("anthropic", "cred_current");
+    expect(pool.select).toHaveBeenCalledWith("anthropic", {
+      excludeCredentialId: "cred_current"
+    });
+    expect(pool.buildRuntimeAuthData).not.toHaveBeenCalled();
+    expect(pool.markUsed).not.toHaveBeenCalled();
+    expect(runtime.pooledCredentialId).toBe("cred_current");
+    expect(runtimeErrors).toEqual([
+      expect.objectContaining({
+        phase: "prompt_dispatch",
+        message: "No API key for provider: anthropic"
+      })
+    ]);
+  });
+
+  it("reconciles pooled auth before dispatch after the runtime has been idle", async () => {
+    const { runtime, session } = createRuntime();
+    session.isStreaming = false;
+    session.model.provider = "anthropic";
+    runtime.descriptor.model.provider = "anthropic";
+    runtime.descriptor.model.modelId = "claude-opus-4-6";
+
+    session.modelRegistry.authStorage.set("anthropic", {
+      type: "oauth",
+      access: "stale-token"
+    });
+
+    const pool = {
+      buildRuntimeAuthData: vi.fn().mockResolvedValue({
+        anthropic: {
+          type: "oauth",
+          access: "refreshed-token"
+        }
+      })
+    };
+
+    runtime.pooledCredentialId = "cred_current";
+    runtime.pooledCredentialProvider = "anthropic";
+    runtime.credentialPoolService = pool as any;
+    (runtime as any).lastActivityAtMs = Date.now() - 61_000;
+
+    session.promptImpl = async () => {
+      const access = (session.modelRegistry.authStorage.get("anthropic") as { access?: string } | undefined)?.access;
+      expect(access).toBe("refreshed-token");
+    };
+
+    await runtime.sendMessage("wake up");
+    await flushPromptDispatch();
+
+    expect(pool.buildRuntimeAuthData).toHaveBeenCalledWith("anthropic", "cred_current");
+    expect(session.promptCalls).toEqual(["wake up"]);
   });
 
   it("buildHandoffPrompt and buildResumePrompt produce expected templates", () => {

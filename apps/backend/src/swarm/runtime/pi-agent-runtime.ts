@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
-import type { AgentSession, AgentSessionEvent } from "@mariozechner/pi-coding-agent";
+import type { AgentSession, AgentSessionEvent, AuthCredential } from "@mariozechner/pi-coding-agent";
 import type { ImageContent, TextContent } from "@mariozechner/pi-ai";
 import {
   buildRuntimeMessageKey,
@@ -60,6 +60,7 @@ const HANDOFF_TURN_TIMEOUT_MS = 45_000;
 const MAX_HANDOFF_CONTENT_CHARS = 3_000;
 const MAX_RECOVERY_BUFFERED_MESSAGES = 25;
 const DEFAULT_ABORT_TIMEOUT_MS = 5_000;
+const POOLED_AUTH_RECONCILE_IDLE_MS = 60_000;
 
 export type { RuntimeImageAttachment, RuntimeUserMessage, RuntimeUserMessageInput } from "../runtime-contracts.js";
 
@@ -94,6 +95,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
   private lastContextBudgetCheckAtMs = 0;
   private latestAutoCompactionReason: "threshold" | "overflow" | undefined;
   private suppressSessionEventsUntilIdle = false;
+  private lastActivityAtMs = Date.now();
 
   constructor(options: {
     descriptor: AgentDescriptor;
@@ -188,6 +190,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
         await this.enqueueMessage(deliveryId, message);
       }
 
+      this.noteActivity();
       await this.emitStatus();
       return {
         targetAgentId: this.descriptor.agentId,
@@ -198,6 +201,7 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
     if (this.session.isStreaming || this.promptDispatchPending) {
       await this.enqueueMessage(deliveryId, message);
+      this.noteActivity();
       await this.emitStatus();
       return {
         targetAgentId: this.descriptor.agentId,
@@ -532,6 +536,8 @@ export class AgentRuntime implements SwarmAgentRuntime {
   }
 
   private async dispatchPromptWithRetry(message: RuntimeUserMessage): Promise<void> {
+    await this.reconcilePooledAuthBeforeDispatch();
+    this.noteActivity();
     const images = toImageContent(message.images);
 
     for (let attempt = 1; attempt <= MAX_PROMPT_DISPATCH_ATTEMPTS; attempt += 1) {
@@ -637,6 +643,8 @@ export class AgentRuntime implements SwarmAgentRuntime {
   }
 
   private async handleEvent(event: AgentSessionEvent): Promise<void> {
+    this.noteActivity();
+
     if (this.suppressSessionEventsUntilIdle) {
       if (event.type === "agent_end") {
         this.suppressSessionEventsUntilIdle = false;
@@ -1008,8 +1016,158 @@ export class AgentRuntime implements SwarmAgentRuntime {
     }
   }
 
+  private noteActivity(): void {
+    this.lastActivityAtMs = Date.now();
+  }
+
+  private shouldReconcilePooledAuthBeforeDispatch(): boolean {
+    return Date.now() - this.lastActivityAtMs >= POOLED_AUTH_RECONCILE_IDLE_MS;
+  }
+
+  private getRuntimeAuthStorage(): { set: (key: string, value: AuthCredential) => void } | undefined {
+    const modelRegistry = this.session.modelRegistry as
+      | { authStorage?: { set: (key: string, value: AuthCredential) => void } }
+      | undefined;
+    return modelRegistry?.authStorage;
+  }
+
+  private async applyPooledRuntimeAuth(
+    provider: string,
+    credentialId: string,
+    authData: Record<string, AuthCredential>,
+    options?: { markUsed?: boolean }
+  ): Promise<void> {
+    const authStorage = this.getRuntimeAuthStorage();
+    const credential = authData[provider];
+    if (!authStorage || !credential) {
+      throw new Error(`Missing runtime auth storage for pooled provider: ${provider}`);
+    }
+
+    authStorage.set(provider, credential);
+    if (options?.markUsed) {
+      await this.credentialPoolService?.markUsed(provider, credentialId);
+    }
+
+    this.pooledCredentialId = credentialId;
+    this.pooledCredentialProvider = provider;
+  }
+
+  private async rotateToNextHealthyCredential(
+    provider: string,
+    currentCredentialId: string,
+    error: unknown,
+    options: {
+      errorPhase: RuntimeErrorEvent["phase"];
+      failingProvider: string;
+      noAlternativeStage: string;
+      rotatedStage: string;
+      reportMessage?: string;
+    }
+  ): Promise<boolean> {
+    const pool = this.credentialPoolService;
+    if (!pool) {
+      return false;
+    }
+
+    let nextSelection: { credentialId: string; authStorageKey: string } | null;
+    try {
+      nextSelection = await pool.select(provider, {
+        excludeCredentialId: currentCredentialId
+      });
+    } catch (selectionError) {
+      this.logRuntimeError(options.errorPhase, selectionError, {
+        stage: `${options.rotatedStage}:select_failed`,
+        credentialId: currentCredentialId,
+        provider,
+        failingProvider: options.failingProvider
+      });
+      return false;
+    }
+
+    if (!nextSelection) {
+      this.logRuntimeError(options.errorPhase, error, {
+        stage: options.noAlternativeStage,
+        credentialId: currentCredentialId,
+        provider,
+        failingProvider: options.failingProvider
+      });
+      return false;
+    }
+
+    try {
+      const authData = await pool.buildRuntimeAuthData(provider, nextSelection.credentialId);
+      await this.applyPooledRuntimeAuth(provider, nextSelection.credentialId, authData, {
+        markUsed: true
+      });
+
+      this.logRuntimeError(options.errorPhase, error, {
+        stage: options.rotatedStage,
+        fromCredentialId: currentCredentialId,
+        toCredentialId: nextSelection.credentialId,
+        provider,
+        failingProvider: options.failingProvider
+      });
+
+      if (options.reportMessage) {
+        await this.reportRuntimeError({
+          phase: options.errorPhase,
+          message: options.reportMessage,
+          details: {
+            stage: options.rotatedStage,
+            fromCredentialId: currentCredentialId,
+            toCredentialId: nextSelection.credentialId,
+            provider,
+            failingProvider: options.failingProvider
+          }
+        });
+      }
+
+      return true;
+    } catch (rotationError) {
+      this.logRuntimeError(options.errorPhase, rotationError, {
+        stage: `${options.rotatedStage}:build_auth_failed`,
+        fromCredentialId: currentCredentialId,
+        toCredentialId: nextSelection.credentialId,
+        provider,
+        failingProvider: options.failingProvider
+      });
+      return false;
+    }
+  }
+
+  private async reconcilePooledAuthBeforeDispatch(): Promise<void> {
+    const pool = this.credentialPoolService;
+    const currentCredentialId = this.pooledCredentialId;
+    const provider = normalizeProviderId(this.pooledCredentialProvider);
+    const authStorage = this.getRuntimeAuthStorage();
+    if (!pool || !currentCredentialId || !provider || !authStorage || !this.shouldReconcilePooledAuthBeforeDispatch()) {
+      return;
+    }
+
+    try {
+      const authData = await pool.buildRuntimeAuthData(provider, currentCredentialId);
+      await this.applyPooledRuntimeAuth(provider, currentCredentialId, authData);
+    } catch (error) {
+      const normalized = normalizeRuntimeError(error);
+      const rotated = await this.rotateToNextHealthyCredential(provider, currentCredentialId, error, {
+        errorPhase: "prompt_dispatch",
+        failingProvider: provider,
+        noAlternativeStage: "credential_pool:reconcile_no_alternative",
+        rotatedStage: "credential_pool:reconcile_rotated"
+      });
+      if (!rotated) {
+        this.logRuntimeError("prompt_dispatch", error, {
+          stage: "credential_pool:reconcile_failed",
+          credentialId: currentCredentialId,
+          provider,
+          message: normalized.message
+        });
+      }
+    }
+  }
+
   /**
-   * Attempt to rotate to a different pooled provider credential on rate-limit/quota errors.
+   * Attempt to rotate to a different pooled provider credential on auth, rate-limit, or quota errors.
    * Returns true if a retry was dispatched with a new credential, false otherwise.
    */
   private async attemptCredentialRotation(
@@ -1025,17 +1183,11 @@ export class AgentRuntime implements SwarmAgentRuntime {
       return false;
     }
 
-    // Check for auth errors first — mark auth_error, no rotation
+    // Check for auth errors first — mark auth_error, then rotate if another healthy credential exists.
     const isAuthFailure = isLikelyCredentialPoolAuthError(errorMessage);
     if (isAuthFailure) {
       try {
         await pool.markAuthError(pooledProvider, currentCredId);
-        this.logRuntimeError("prompt_dispatch", error, {
-          stage: "credential_pool:auth_error",
-          credentialId: currentCredId,
-          provider: pooledProvider,
-          failingProvider
-        });
       } catch (markError) {
         this.logRuntimeError("prompt_dispatch", markError, {
           stage: "credential_pool:mark_auth_error_failed",
@@ -1043,8 +1195,27 @@ export class AgentRuntime implements SwarmAgentRuntime {
           provider: pooledProvider,
           failingProvider
         });
+        return false;
       }
-      return false;
+
+      const providerLabel = getPooledProviderLabel(pooledProvider);
+      const rotated = await this.rotateToNextHealthyCredential(pooledProvider, currentCredId, error, {
+        errorPhase: "prompt_dispatch",
+        failingProvider,
+        noAlternativeStage: "credential_pool:auth_error_no_alternative",
+        rotatedStage: "credential_pool:auth_error_rotated",
+        reportMessage: `${providerLabel} auth error hit — rotating to another account and retrying.`
+      });
+      if (!rotated) {
+        return false;
+      }
+
+      setTimeout(() => {
+        if (this.status !== "terminated") {
+          this.dispatchPrompt(message);
+        }
+      }, 0);
+      return true;
     }
 
     // Check for rate-limit / quota errors
@@ -1068,15 +1239,19 @@ export class AgentRuntime implements SwarmAgentRuntime {
       return false;
     }
 
-    // Try to select next healthy credential
-    const nextSelection = await pool.select(pooledProvider);
-    if (!nextSelection) {
-      const earliestExpiry = await pool.getEarliestCooldownExpiry(pooledProvider);
-      const resetInfo = earliestExpiry
-        ? ` Estimated reset: ${new Date(earliestExpiry).toLocaleTimeString()}.`
-        : "";
-      const providerLabel = getPooledProviderLabel(pooledProvider);
-
+    const earliestExpiry = await pool.getEarliestCooldownExpiry(pooledProvider);
+    const resetInfo = earliestExpiry
+      ? ` Estimated reset: ${new Date(earliestExpiry).toLocaleTimeString()}.`
+      : "";
+    const providerLabel = getPooledProviderLabel(pooledProvider);
+    const rotated = await this.rotateToNextHealthyCredential(pooledProvider, currentCredId, error, {
+      errorPhase: "prompt_dispatch",
+      failingProvider,
+      noAlternativeStage: "credential_pool:all_exhausted",
+      rotatedStage: "credential_pool:rotating",
+      reportMessage: `${providerLabel} rate limit hit — rotating to another account and retrying.`
+    });
+    if (!rotated) {
       await this.reportRuntimeError({
         phase: "prompt_dispatch",
         message: `All ${providerLabel} accounts are rate-limited.${resetInfo}`,
@@ -1090,60 +1265,13 @@ export class AgentRuntime implements SwarmAgentRuntime {
       return false;
     }
 
-    // Build new auth data and inject into the session
-    try {
-      const authData = await pool.buildRuntimeAuthData(pooledProvider, nextSelection.credentialId);
-      await pool.markUsed(pooledProvider, nextSelection.credentialId);
-      const authStorage = this.session.modelRegistry?.authStorage;
-
-      if (authStorage) {
-        const newCredential = authData[pooledProvider];
-        if (newCredential) {
-          authStorage.set(pooledProvider, newCredential);
-        }
+    // Retry after the current dispatch promise unwinds so promptDispatchPending stays accurate.
+    setTimeout(() => {
+      if (this.status !== "terminated") {
+        this.dispatchPrompt(message);
       }
-
-      this.pooledCredentialId = nextSelection.credentialId;
-
-      this.logRuntimeError("prompt_dispatch", error, {
-        stage: "credential_pool:rotated",
-        fromCredentialId: currentCredId,
-        toCredentialId: nextSelection.credentialId,
-        provider: pooledProvider,
-        failingProvider
-      });
-
-      const providerLabel = getPooledProviderLabel(pooledProvider);
-
-      await this.reportRuntimeError({
-        phase: "prompt_dispatch",
-        message: `${providerLabel} rate limit hit — rotating to another account and retrying.`,
-        details: {
-          stage: "credential_pool:rotating",
-          fromCredentialId: currentCredId,
-          toCredentialId: nextSelection.credentialId,
-          provider: pooledProvider,
-          failingProvider
-        }
-      });
-
-      // Retry after the current dispatch promise unwinds so promptDispatchPending stays accurate.
-      setTimeout(() => {
-        if (this.status !== "terminated") {
-          this.dispatchPrompt(message);
-        }
-      }, 0);
-      return true;
-    } catch (rotationError) {
-      this.logRuntimeError("prompt_dispatch", rotationError, {
-        stage: "credential_pool:rotation_failed",
-        fromCredentialId: currentCredId,
-        toCredentialId: nextSelection.credentialId,
-        provider: pooledProvider,
-        failingProvider
-      });
-      return false;
-    }
+    }, 0);
+    return true;
   }
 
   private async handleAutoCompactionEndEvent(
@@ -1761,6 +1889,8 @@ function isLikelyCredentialPoolAuthError(message: string): boolean {
     "forbidden",
     "authentication",
     "invalid api key",
+    "no api key",
+    "missing api key",
     "invalid token",
     "missing auth",
     "no auth",
