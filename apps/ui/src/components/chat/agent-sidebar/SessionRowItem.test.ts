@@ -81,14 +81,11 @@ describe('SessionRowItem creator attribution', () => {
         workers: [],
         isDefault: false,
       },
-      getCreatorAttribution: (id) => id === 'creator-agent-1' ? '@orchestrator' : null,
+      getCreatorAttribution: (id) => id === 'creator-agent-1' ? 'orchestrator' : null,
     })
 
-    const attributionTexts = Array.from(container.querySelectorAll('p'))
-      .map((el) => el.textContent)
-      .filter((text) => text?.includes('Created by'))
-    expect(attributionTexts).toHaveLength(1)
-    expect(attributionTexts[0]).toBe('Created by @orchestrator')
+    const text = container.textContent ?? ''
+    expect(text).toContain('@orchestrator')
   })
 
   it('does not show creator attribution when creatorAgentId is not set', () => {
@@ -98,13 +95,11 @@ describe('SessionRowItem creator attribution', () => {
         workers: [],
         isDefault: false,
       },
-      getCreatorAttribution: () => '@orchestrator',
+      getCreatorAttribution: () => 'orchestrator',
     })
 
-    const attributionTexts = Array.from(container.querySelectorAll('p'))
-      .map((el) => el.textContent)
-      .filter((text) => text?.includes('Created by'))
-    expect(attributionTexts).toHaveLength(0)
+    const text = container.textContent ?? ''
+    expect(text).not.toContain('@orchestrator')
   })
 
   it('does not show creator attribution when getCreatorAttribution returns null (deleted creator)', () => {
@@ -117,9 +112,7 @@ describe('SessionRowItem creator attribution', () => {
       getCreatorAttribution: () => null,
     })
 
-    const attributionTexts = Array.from(container.querySelectorAll('p'))
-      .map((el) => el.textContent)
-      .filter((text) => text?.includes('Created by'))
-    expect(attributionTexts).toHaveLength(0)
+    const text = container.textContent ?? ''
+    expect(text).not.toContain('@')
   })
 })

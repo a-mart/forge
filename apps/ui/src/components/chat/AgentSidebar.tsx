@@ -176,7 +176,7 @@ export function AgentSidebar({
   const getCreatorAttribution = useCallback((creatorAgentId: string): string | null => {
     const creator = agents.find((a) => a.agentId === creatorAgentId)
     if (!creator) return null
-    if (creator.projectAgent?.handle) return `@${creator.projectAgent.handle}`
+    if (creator.projectAgent?.handle) return creator.projectAgent.handle
     return creator.sessionLabel || creator.displayName || null
   }, [agents])
 

@@ -151,8 +151,15 @@ export function SessionRowItem({
                     ) : (
                       <SessionStatusDot running={running} />
                     )}
-                    <span className="min-w-0 flex-1 truncate text-sm leading-5">
-                      {highlightQuery ? <HighlightedText text={label} query={highlightQuery} /> : label}
+                    <span className="min-w-0 flex-1 truncate">
+                      <span className="block truncate text-sm leading-5">
+                        {highlightQuery ? <HighlightedText text={label} query={highlightQuery} /> : label}
+                      </span>
+                      {creatorLabel ? (
+                        <span className="block truncate text-[10px] leading-tight text-muted-foreground/50">
+                          @{creatorLabel}
+                        </span>
+                      ) : null}
                     </span>
                     {isPinned && !isProjectAgent && sessionAgent.profileId ? (
                       <Pin className="size-3 shrink-0 text-muted-foreground/60" aria-label="Pinned" />
@@ -279,12 +286,6 @@ export function SessionRowItem({
           ) : null}
         </ContextMenuContent>
       </ContextMenu>
-
-      {creatorLabel ? (
-        <p className="truncate pl-5 text-[10px] leading-tight text-muted-foreground/60">
-          Created by {creatorLabel}
-        </p>
-      ) : null}
 
       {/* Workers nested under session */}
       {hasWorkers && !isCollapsed ? (
