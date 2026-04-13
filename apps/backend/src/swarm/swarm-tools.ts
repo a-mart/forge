@@ -503,6 +503,15 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
             placeholder: Type.Optional(
               Type.String({ description: "Placeholder text for the free-text input area." })
             ),
+            multiSelect: Type.Optional(
+              Type.Boolean({ description: "If true, allow selecting multiple options. Submit button required to confirm." })
+            ),
+            minSelections: Type.Optional(
+              Type.Integer({ description: "Minimum selections required (multi-select only). Default: 0.", minimum: 0 })
+            ),
+            maxSelections: Type.Optional(
+              Type.Integer({ description: "Maximum selections allowed (multi-select only).", minimum: 1 })
+            ),
           }),
           { description: "One or more questions to present to the user.", minItems: 1 }
         ),
@@ -521,6 +530,9 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
             }>;
             isOther?: boolean;
             placeholder?: string;
+            multiSelect?: boolean;
+            minSelections?: number;
+            maxSelections?: number;
           }>;
         };
 

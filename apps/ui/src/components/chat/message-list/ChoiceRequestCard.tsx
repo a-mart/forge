@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react'
-import { MessageSquare } from 'lucide-react'
+import { CheckSquare, MessageSquare, Square } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
@@ -14,7 +14,7 @@ interface ChoiceRequestCardProps {
 }
 
 interface QuestionSelectionState {
-  selectedOptionId: string | null
+  selectedOptionIds: string[]
   text: string
 }
 
@@ -28,27 +28,47 @@ export function ChoiceRequestCard({
   const [selections, setSelections] = useState<Record<string, QuestionSelectionState>>(() => {
     const initial: Record<string, QuestionSelectionState> = {}
     for (const question of questions) {
-      initial[question.id] = { selectedOptionId: null, text: '' }
+      initial[question.id] = { selectedOptionIds: [], text: '' }
     }
     return initial
   })
 
-  const toggleOption = useCallback((questionId: string, optionId: string) => {
-    setSelections((previous) => {
-      const current = previous[questionId]
-      if (!current) {
-        return previous
-      }
+  const toggleOption = useCallback(
+    (questionId: string, optionId: string, multiSelect: boolean) => {
+      setSelections((previous) => {
+        const current = previous[questionId]
+        if (!current) {
+          return previous
+        }
 
-      return {
-        ...previous,
-        [questionId]: {
-          ...current,
-          selectedOptionId: current.selectedOptionId === optionId ? null : optionId,
-        },
-      }
-    })
-  }, [])
+        let newIds: string[]
+        if (multiSelect) {
+          if (current.selectedOptionIds.includes(optionId)) {
+            newIds = current.selectedOptionIds.filter((id) => id !== optionId)
+          } else {
+            const question = questions.find((q) => q.id === questionId)
+            const max = question?.maxSelections
+            if (max && current.selectedOptionIds.length >= max) {
+              return previous
+            }
+            newIds = [...current.selectedOptionIds, optionId]
+          }
+        } else {
+          // Single-select radio behavior: click selects, click again deselects, click different replaces
+          newIds = current.selectedOptionIds.includes(optionId) ? [] : [optionId]
+        }
+
+        return {
+          ...previous,
+          [questionId]: {
+            ...current,
+            selectedOptionIds: newIds,
+          },
+        }
+      })
+    },
+    [questions],
+  )
 
   const setText = useCallback((questionId: string, text: string) => {
     setSelections((previous) => {
@@ -81,7 +101,17 @@ export function ChoiceRequestCard({
           return selection.text.trim().length > 0
         }
 
-        return selection.selectedOptionId !== null || selection.text.trim().length > 0
+        const count = selection.selectedOptionIds.length
+        if (question.multiSelect) {
+          const min = Math.min(
+            question.minSelections ?? 0,
+            question.options?.length ?? 0,
+          )
+          return count >= min || selection.text.trim().length > 0
+        }
+
+        // Single-select: at least one option or text
+        return count > 0 || selection.text.trim().length > 0
       }),
     [questions, selections],
   )
@@ -91,10 +121,10 @@ export function ChoiceRequestCard({
     setIsSubmitting(true)
 
     const answers: ChoiceAnswer[] = questions.map((question) => {
-      const selection = selections[question.id] ?? { selectedOptionId: null, text: '' }
+      const selection = selections[question.id] ?? { selectedOptionIds: [], text: '' }
       return {
         questionId: question.id,
-        selectedOptionIds: selection.selectedOptionId ? [selection.selectedOptionId] : [],
+        selectedOptionIds: selection.selectedOptionIds,
         text: selection.text.trim() || undefined,
       }
     })
@@ -116,17 +146,27 @@ export function ChoiceRequestCard({
           ) : null}
           <p className="text-sm text-foreground">{question.question}</p>
 
+          {question.multiSelect && (
+            <span className="text-xs text-muted-foreground">
+              Select {question.minSelections ? `at least ${question.minSelections}` : 'one or more'}
+              {question.maxSelections ? `, up to ${question.maxSelections}` : ''}
+            </span>
+          )}
+
           {question.options && !question.isOther ? (
             <div className="flex flex-col gap-1.5">
               {question.options.map((option) => {
-                const isSelected = selections[question.id]?.selectedOptionId === option.id
+                const isSelected =
+                  selections[question.id]?.selectedOptionIds.includes(option.id) ?? false
 
                 return (
                   <button
                     key={option.id}
                     type="button"
                     aria-pressed={isSelected}
-                    onClick={() => toggleOption(question.id, option.id)}
+                    onClick={() =>
+                      toggleOption(question.id, option.id, question.multiSelect ?? false)
+                    }
                     className={cn(
                       'w-full rounded-md border px-3 py-2 text-left text-sm transition-colors',
                       isSelected
@@ -135,13 +175,26 @@ export function ChoiceRequestCard({
                     )}
                   >
                     <span className="flex items-center gap-2">
+                      {question.multiSelect &&
+                        (isSelected ? (
+                          <CheckSquare className="h-4 w-4 shrink-0" />
+                        ) : (
+                          <Square className="h-4 w-4 shrink-0" />
+                        ))}
                       <span className="font-medium">{option.label}</span>
                       {option.recommended && (
-                        <span className="text-xs text-muted-foreground font-normal">(Recommended)</span>
+                        <span className="text-xs text-muted-foreground font-normal">
+                          (Recommended)
+                        </span>
                       )}
                     </span>
                     {option.description ? (
-                      <span className="mt-0.5 block text-xs text-muted-foreground">
+                      <span
+                        className={cn(
+                          'mt-0.5 block text-xs text-muted-foreground',
+                          question.multiSelect ? 'ml-6' : undefined,
+                        )}
+                      >
                         {option.description}
                       </span>
                     ) : null}
@@ -167,9 +220,14 @@ export function ChoiceRequestCard({
 
       <div className="flex gap-2">
         <Button size="sm" onClick={handleSubmit} disabled={!isValid || isSubmitting}>
-          {isSubmitting ? 'Submitting…' : 'Submit'}
+          {isSubmitting ? 'Submitting\u2026' : 'Submit'}
         </Button>
-        <Button size="sm" variant="ghost" onClick={() => onCancel(agentId, choiceId)} disabled={isSubmitting}>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => onCancel(agentId, choiceId)}
+          disabled={isSubmitting}
+        >
           Skip
         </Button>
       </div>

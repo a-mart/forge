@@ -12,6 +12,9 @@ export interface ChoiceQuestion {
   options?: ChoiceOption[]
   isOther?: boolean
   placeholder?: string
+  multiSelect?: boolean
+  minSelections?: number
+  maxSelections?: number
 }
 
 export type ChoiceRequestStatus = 'pending' | 'answered' | 'cancelled' | 'expired'
