@@ -147,6 +147,9 @@ Best practices:
 - Mark the recommended option with `recommended: true`
 - Include an "Other / Custom" option when appropriate
 - One question per call is typical
+- Use `multiSelect: true` when the user should pick multiple options (e.g., "pick 2-3 to kick off")
+- Set `minSelections` and `maxSelections` to constrain multi-select ranges
+- Multi-select questions require an explicit Submit click; single-select submits on click
 
 # Communication expectations
 - Keep user messages concise, factual, and outcome-first.
