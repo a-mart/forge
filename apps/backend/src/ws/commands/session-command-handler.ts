@@ -279,6 +279,9 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
                 : {}),
               ...(command.projectAgent.handle !== undefined
                 ? { handle: command.projectAgent.handle }
+                : {}),
+              ...(command.projectAgent.capabilities !== undefined
+                ? { capabilities: command.projectAgent.capabilities }
                 : {})
             }
           : null
