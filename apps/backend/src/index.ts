@@ -11,6 +11,7 @@ import {
   setRestartParentPidEnv,
 } from "./reboot/control-pid.js";
 import { startServer, type StartedServer } from "./server.js";
+import { readServerVersion } from "./stats/stats-git.js";
 import { checkDataDirMigration } from "./startup-migration.js";
 
 const backendRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -23,6 +24,9 @@ async function main(): Promise<void> {
   await checkDataDirMigration({ isDesktop });
 
   const config = createConfig();
+  if (!config.isDesktop && (!process.env.FORGE_APP_VERSION || process.env.FORGE_APP_VERSION.trim().length === 0)) {
+    process.env.FORGE_APP_VERSION = await readServerVersion(config.paths.rootDir);
+  }
   await waitForRestartParentToExit(config.isDesktop);
 
   const server = await startServer({

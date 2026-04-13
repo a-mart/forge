@@ -206,6 +206,15 @@ export async function deleteSettingsEnvVariable(wsUrl: string, variableName: str
   if (!response.ok) throw new Error(await readApiError(response))
 }
 
+export async function fetchServerVersion(wsUrl: string): Promise<string | null> {
+  const endpoint = resolveApiEndpoint(wsUrl, '/api/stats?range=7d')
+  const response = await fetch(endpoint)
+  if (!response.ok) throw new Error(await readApiError(response))
+  const payload = (await response.json()) as { system?: { serverVersion?: unknown } }
+  const version = payload.system?.serverVersion
+  return typeof version === 'string' && version.trim().length > 0 ? version.trim() : null
+}
+
 /* ------------------------------------------------------------------ */
 /*  Auth providers API                                                */
 /* ------------------------------------------------------------------ */

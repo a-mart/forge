@@ -4,12 +4,14 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Switch } from '@/components/ui/switch'
 import { SettingsSection } from './settings-row'
+import { fetchServerVersion } from './settings-api'
 import { isElectron, type UpdateStatus } from '@/lib/electron-bridge'
 
-export function SettingsAbout() {
+export function SettingsAbout({ wsUrl }: { wsUrl: string }) {
   const bridge = window.electronBridge
   const inElectron = isElectron()
-  const version = bridge?.getVersion?.() ?? null
+  const [webVersion, setWebVersion] = useState<string | null>(null)
+  const version = inElectron ? (bridge?.getVersion?.() ?? null) : webVersion
   const [status, setStatus] = useState<UpdateStatus | null>(null)
   const [betaChannel, setBetaChannel] = useState(false)
   const [betaLoaded, setBetaLoaded] = useState(false)
@@ -42,6 +44,27 @@ export function SettingsAbout() {
       setBetaLoaded(true)
     })
   }, [inElectron, bridge])
+
+  useEffect(() => {
+    if (inElectron) {
+      return
+    }
+
+    let cancelled = false
+    fetchServerVersion(wsUrl).then((resolvedVersion) => {
+      if (!cancelled) {
+        setWebVersion(resolvedVersion)
+      }
+    }).catch(() => {
+      if (!cancelled) {
+        setWebVersion(null)
+      }
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [inElectron, wsUrl])
 
   const handleCheckForUpdates = useCallback(() => {
     bridge?.checkForUpdates?.()

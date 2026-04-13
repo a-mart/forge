@@ -80,7 +80,7 @@ export function SettingsPanel({
         />
       )}
       {activeTab === 'extensions' && <SettingsExtensions wsUrl={wsUrl} />}
-      {activeTab === 'about' && <SettingsAbout />}
+      {activeTab === 'about' && <SettingsAbout wsUrl={wsUrl} />}
     </SettingsLayout>
   )
 }

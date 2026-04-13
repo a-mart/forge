@@ -4,6 +4,7 @@ import type { SwarmConfig } from '../swarm/types.js'
 import { inferProviderFromModelId } from './provider-inference.js'
 
 const SCHEMA_VERSION = 1
+const UNKNOWN_APP_VERSION = 'unknown'
 
 const FRIENDLY_PLATFORM_NAMES: Record<string, string> = {
   darwin: 'macOS',
@@ -75,7 +76,7 @@ export async function assembleSkeletonPayload(
     schema_version: SCHEMA_VERSION,
     snapshot_computed_at: snapshotComputedAt,
 
-    app_version: '0.0.0',
+    app_version: process.env.FORGE_APP_VERSION?.trim() || UNKNOWN_APP_VERSION,
     platform: toFriendlyPlatformName(rawPlatform),
     platform_raw: rawPlatform,
     arch: process.arch,

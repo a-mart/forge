@@ -1,11 +1,13 @@
 import { execFile as execFileCallback } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { resolve, join } from "node:path";
+import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import type { CodeStats } from "@forge/protocol";
 
 const GIT_COMMAND_TIMEOUT_MS = 10_000;
 const GIT_COMMAND_MAX_BUFFER_BYTES = 10 * 1024 * 1024;
+const UNKNOWN_APP_VERSION = "unknown";
+const VERSION_FILE_NAME = "version.json";
 const execFileAsync = promisify(execFileCallback);
 
 export async function computeCodeStats(repoPaths: string[], rangeStartMs: number): Promise<CodeStats> {
@@ -73,12 +75,14 @@ export async function readServerVersion(rootDir: string): Promise<string> {
   }
 
   try {
-    const packageJsonPath = join(rootDir, "package.json");
-    const raw = await readFile(packageJsonPath, "utf8");
+    const versionFilePath = join(rootDir, VERSION_FILE_NAME);
+    const raw = await readFile(versionFilePath, "utf8");
     const parsed = JSON.parse(raw) as { version?: unknown };
-    return typeof parsed.version === "string" ? parsed.version : "1.0.0";
+    return typeof parsed.version === "string" && parsed.version.trim().length > 0
+      ? parsed.version.trim()
+      : UNKNOWN_APP_VERSION;
   } catch {
-    return "1.0.0";
+    return UNKNOWN_APP_VERSION;
   }
 }
 

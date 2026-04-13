@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { fetchSkillsList } from './settings-api'
+import { fetchServerVersion, fetchSkillsList } from './settings-api'
 
 const fetchMock = vi.fn<typeof fetch>()
 
@@ -40,5 +40,21 @@ describe('settings-api skills list', () => {
         hasRichConfig: false,
       },
     ])
+  })
+})
+
+describe('settings-api server version', () => {
+  it('reads the resolved backend version from stats', async () => {
+    vi.stubGlobal('fetch', fetchMock)
+    fetchMock.mockResolvedValue(
+      mockJsonResponse({
+        system: {
+          serverVersion: '0.13.0',
+        },
+      }),
+    )
+
+    await expect(fetchServerVersion('ws://127.0.0.1:47187')).resolves.toBe('0.13.0')
+    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:47187/api/stats?range=7d')
   })
 })
