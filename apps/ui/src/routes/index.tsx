@@ -1196,6 +1196,8 @@ export function IndexPage() {
                   activeAgentArchetypeId: activeAgent?.archetypeId,
                   activeAgentSessionPurpose: activeAgent?.sessionPurpose,
                   activeAgentStatus,
+                  activeAgentCreatedAt: activeAgent?.createdAt ?? null,
+                  activeAgentUpdatedAt: activeAgent?.updatedAt ?? null,
                   channelView,
                   onChannelViewChange: setChannelView,
                   contextWindowUsage,

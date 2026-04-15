@@ -16,6 +16,7 @@ import { PinNavigator } from '@/components/chat/PinNavigator'
 import { SystemPromptDialog } from '@/components/chat/message-list/SystemPromptDialog'
 import { MessageFeedback } from '@/components/chat/message-list/MessageFeedback'
 import { cn } from '@/lib/utils'
+import { formatElapsed } from '@/lib/format-utils'
 import type { AgentStatus, AgentSessionPurpose } from '@forge/protocol'
 
 export type ChannelView = 'web' | 'all'
@@ -31,6 +32,8 @@ interface ChatHeaderProps {
   activeAgentArchetypeId?: string | null
   activeAgentSessionPurpose?: AgentSessionPurpose | null
   activeAgentStatus: AgentStatus | null
+  activeAgentCreatedAt?: string | null
+  activeAgentUpdatedAt?: string | null
   channelView: ChannelView
   onChannelViewChange: (view: ChannelView) => void
   contextWindowUsage: { usedTokens: number; contextWindow: number } | null
@@ -135,6 +138,8 @@ export function ChatHeader({
   activeAgentArchetypeId,
   activeAgentSessionPurpose,
   activeAgentStatus,
+  activeAgentCreatedAt,
+  activeAgentUpdatedAt,
   channelView,
   onChannelViewChange,
   contextWindowUsage,
@@ -176,6 +181,11 @@ export function ChatHeader({
 }: ChatHeaderProps) {
   const isStreaming = connected && activeAgentStatus === 'streaming'
   const statusLabel = connected ? formatAgentStatus(activeAgentStatus) : 'Reconnecting'
+  const durationLabel =
+    (activeAgentStatus === 'terminated' || activeAgentStatus === 'stopped') &&
+    activeAgentCreatedAt && activeAgentUpdatedAt
+      ? formatElapsed(new Date(activeAgentUpdatedAt).getTime() - new Date(activeAgentCreatedAt).getTime())
+      : null
   const isAgentCreator = activeAgentSessionPurpose === 'agent_creator'
   const archetypeLabel = isAgentCreator ? null : activeAgentArchetypeId?.trim()
   const isCortex = activeAgentArchetypeId === 'cortex'
@@ -281,6 +291,7 @@ export function ChatHeader({
           </span>
           <span className="hidden shrink-0 whitespace-nowrap text-xs font-mono text-muted-foreground md:inline">
             {statusLabel}
+            {durationLabel ? <span className="tabular-nums"> · {durationLabel}</span> : null}
           </span>
           {activeAgentId && onSessionFeedbackVote ? (
             <div

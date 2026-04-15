@@ -156,7 +156,12 @@ export const WorkerQuickLook = memo(function WorkerQuickLook({
   const elapsedLabel =
     isStreaming && streamingStartedAt
       ? formatElapsed(nowMs - streamingStartedAt)
-      : null
+      : status === 'terminated' || status === 'stopped'
+        ? formatElapsed(
+            new Date(worker.updatedAt).getTime() -
+              new Date(worker.createdAt).getTime(),
+          )
+        : null
 
   const modelLabel = worker.model?.modelId ?? null
   const thinkingLevel = worker.model?.thinkingLevel
