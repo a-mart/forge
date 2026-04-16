@@ -12,6 +12,7 @@ import { useHelpHotkeys } from '@/components/help/help-hooks'
 import { initializeHelpContent } from '@/components/help/help-registry'
 import { isElectron } from '@/lib/electron-bridge'
 import { preloadBuiltInSounds } from '@/lib/notification-service'
+import { installSidebarPerfDebugHooks } from '@/lib/perf/sidebar-perf-debug'
 import { THEME_INIT_SCRIPT, initializeThemePreference } from '@/lib/theme'
 import { useTitleBarOverlay } from '@/lib/use-title-bar-overlay'
 import { IndexPage } from './index'
@@ -63,6 +64,9 @@ function RootDocument({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     initializeThemePreference()
     preloadBuiltInSounds()
+    // Install window.__forgePerf console helpers so users can dump sidebar
+    // perf samples from devtools without enabling debug mode.
+    installSidebarPerfDebugHooks()
   }, [])
 
   useTitleBarOverlay()

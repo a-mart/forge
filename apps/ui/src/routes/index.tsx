@@ -28,6 +28,7 @@ import { chooseFallbackAgentId } from '@/lib/agent-hierarchy'
 import { collectArtifactsFromMessages } from '@/lib/collect-artifacts'
 import { hasProjectManagers } from '@/lib/onboarding-ui'
 import { useFeedback } from '@/lib/use-feedback'
+import { getSidebarPerfRegistry } from '@/lib/perf/sidebar-perf-debug'
 import {
   DEFAULT_MANAGER_AGENT_ID,
   useRouteState,
@@ -964,6 +965,10 @@ export function IndexPage() {
   }, [clientRef])
 
   const handleSelectAgent = (agentId: string) => {
+    // Start the session-switch interaction token before any navigation /
+    // subscribe so the conversation_history stop has a matching active token.
+    // Always-on; cost is two performance.now() calls when nothing is recording.
+    getSidebarPerfRegistry().startSessionSwitch(agentId)
     navigateToRoute({ view: 'chat', agentId })
     clientRef.current?.subscribeToAgent(agentId)
   }

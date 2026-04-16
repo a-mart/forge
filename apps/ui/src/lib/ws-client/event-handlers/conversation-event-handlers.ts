@@ -1,4 +1,5 @@
 import { handleUnreadNotification } from '../../notification-service'
+import { getSidebarPerfRegistry } from '../../perf/sidebar-perf-debug'
 import { clampConversationHistory, splitConversationHistory } from '../utils'
 import type { ManagerWsConversationEventContext } from '../types'
 import type { ServerEvent } from '@forge/protocol'
@@ -117,6 +118,14 @@ export function handleConversationEvent(
       }
 
       const { messages, activityMessages } = splitConversationHistory(event.messages)
+      // Sidebar perf: stop `session_switch.click_to_history_loaded_ms` and mark
+      // the active session-switch token eligible for first-paint completion.
+      // Plan section 4 — frontend `conversation_history` capture point.
+      getSidebarPerfRegistry().markHistoryLoaded(event.agentId, {
+        conversationMessageCount: messages.length,
+        activityMessageCount: activityMessages.length,
+        allMessageCount: event.messages.length,
+      })
       context.updateState({
         messages,
         activityMessages: clampConversationHistory(activityMessages),
