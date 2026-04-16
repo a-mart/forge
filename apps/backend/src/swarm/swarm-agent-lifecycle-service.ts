@@ -153,6 +153,7 @@ export interface SwarmAgentLifecycleServiceOptions {
   deleteWorkerStallState: (agentId: string) => void;
   deleteWorkerActivityState: (agentId: string) => void;
   deleteWorkerCompletionReportState: (agentId: string) => void;
+  clearTrackedToolPaths: (agentId: string) => void;
   suppressIntentionalStopRuntimeCallbacks: (agentId: string, runtimeToken?: number) => void;
   clearIntentionalStopRuntimeCallbackSuppression: (agentId: string, runtimeToken?: number) => void;
   markPendingManualManagerStopNotice: (agentId: string) => void;
@@ -194,6 +195,7 @@ export class SwarmAgentLifecycleService {
     this.options.deleteWorkerStallState(agentId);
     this.options.deleteWorkerActivityState(agentId);
     this.options.deleteWorkerCompletionReportState(agentId);
+    this.options.clearTrackedToolPaths(agentId);
   }
 
   private async shutdownWorkerRuntimeWithSuppressedCallbacks(

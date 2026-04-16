@@ -775,7 +775,7 @@ export class SwarmRuntimeController {
     if (this.shouldIgnoreRuntimeCallback(agentId, runtimeToken)) {
       return;
     }
-    this.trackedToolPathsByAgentId.delete(agentId);
+    this.clearTrackedToolPaths(agentId);
     const descriptor = this.descriptors.get(agentId);
     if (!descriptor || descriptor.role !== "worker") {
       return;

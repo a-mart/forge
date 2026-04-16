@@ -46,9 +46,10 @@ describe("file routes", () => {
     await expect(getResponse.text()).resolves.toBe("hello world\n");
   });
 
-  it("returns 404 for unknown agents and 403 for paths outside allowed roots", async () => {
+  it("returns 404 for unknown agents and allows absolute reads outside the agent cwd", async () => {
     const harness = await createFileRouteHarness();
-    const outsideFile = join(harness.root, "..", "outside.txt");
+    const outsideFile = join(harness.root, "outside.txt");
+    await writeFile(outsideFile, "outside workspace\n", "utf8");
 
     const unknownAgentResponse = await fetch(`${harness.server.baseUrl}/api/read-file`, {
       method: "POST",
@@ -63,8 +64,11 @@ describe("file routes", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ path: outsideFile, agentId: "manager-1" }),
     });
-    expect(outsideResponse.status).toBe(403);
-    await expect(outsideResponse.json()).resolves.toEqual({ error: "Path is outside allowed roots." });
+    expect(outsideResponse.status).toBe(200);
+    await expect(outsideResponse.json()).resolves.toEqual({
+      path: outsideFile,
+      content: "outside workspace\n",
+    });
   });
 
   it("serves attachment bytes and rejects invalid attachment references", async () => {
