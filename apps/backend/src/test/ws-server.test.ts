@@ -1495,7 +1495,7 @@ describe('SwarmWebSocketServer', () => {
     }
   })
 
-  it('rejects disallowed files through POST /api/read-file', async () => {
+  it('allows absolute files through POST /api/read-file', async () => {
     const port = await getAvailablePort()
     const config = await makeTempConfig(port)
 
@@ -1511,8 +1511,9 @@ describe('SwarmWebSocketServer', () => {
 
     await server.start()
 
-    const outsideFile =
-      process.platform === 'win32' ? 'C:\\Windows\\System32\\drivers\\etc\\hosts' : '/etc/hosts'
+    const outsideFile = join(tmpdir(), `forge-read-file-${process.pid}-${Date.now()}.txt`)
+    const outsideContent = 'outside root\n'
+    await writeFile(outsideFile, outsideContent, 'utf8')
 
     try {
       const response = await fetch(`http://${config.host}:${config.port}/api/read-file`, {
@@ -1525,11 +1526,13 @@ describe('SwarmWebSocketServer', () => {
         }),
       })
 
-      expect(response.status).toBe(403)
+      expect(response.status).toBe(200)
 
-      const payload = (await response.json()) as { error: string }
-      expect(payload.error).toContain('outside allowed roots')
+      const payload = (await response.json()) as { path: string; content: string }
+      expect(payload.path).toBe(outsideFile)
+      expect(payload.content).toBe(outsideContent)
     } finally {
+      await rm(outsideFile, { force: true })
       await server.stop()
     }
   })
@@ -1582,7 +1585,7 @@ describe('SwarmWebSocketServer', () => {
     }
   })
 
-  it('allows data-dir reads with agent context but rejects files outside the contextual workspace', async () => {
+  it('allows data-dir reads with agent context and absolute reads outside the contextual workspace', async () => {
     const port = await getAvailablePort()
     const config = await makeTempConfig(port)
 
@@ -1614,7 +1617,7 @@ describe('SwarmWebSocketServer', () => {
     await server.start()
 
     try {
-      const deniedResponse = await fetch(`http://${config.host}:${config.port}/api/read-file`, {
+      const outsideResponse = await fetch(`http://${config.host}:${config.port}/api/read-file`, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
@@ -1625,7 +1628,11 @@ describe('SwarmWebSocketServer', () => {
         }),
       })
 
-      expect(deniedResponse.status).toBe(403)
+      expect(outsideResponse.status).toBe(200)
+      await expect(outsideResponse.json()).resolves.toEqual({
+        path: outsideWorkspaceFile,
+        content: 'root only\n',
+      })
 
       const allowedResponse = await fetch(`http://${config.host}:${config.port}/api/read-file`, {
         method: 'POST',

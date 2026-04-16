@@ -35,6 +35,7 @@ export function createFileRoutes(options: {
   const resolveAllowedPath = async (requestedPath: string, agentId?: string): Promise<string> => {
     return resolveReadFilePath(requestedPath, swarmManager, agentId, {
       includeCwdAllowlistRootsForAgent: false,
+      enforceAllowedRoots: false,
     });
   };
 
@@ -169,9 +170,12 @@ export function createFileRoutes(options: {
           let fileStats;
           try {
             fileStats = await stat(resolvedPath);
-          } catch {
-            sendJson(response, 404, { error: "File not found." });
-            return;
+          } catch (error) {
+            if ((error as { code?: unknown }).code === "ENOENT") {
+              sendJson(response, 404, { error: "File not found." });
+              return;
+            }
+            throw error;
           }
 
           if (!fileStats.isFile()) {

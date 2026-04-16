@@ -95,8 +95,13 @@ async function resolvePathWithinRoots(
   requestedPath: string,
   rootDir: string,
   allowedRoots: string[],
+  options?: { enforceAllowedRoots?: boolean },
 ): Promise<string> {
   const normalizedRequestedPath = resolveDirectoryPath(requestedPath, rootDir);
+
+  if (options?.enforceAllowedRoots === false) {
+    return normalizedRequestedPath;
+  }
 
   if (await isPathWithinRoots(normalizedRequestedPath, allowedRoots)) {
     return normalizedRequestedPath;
@@ -128,7 +133,7 @@ export function resolveReadFilePath(
   requestedPath: string,
   swarmManager: SwarmManager,
   agentId?: string,
-  options?: { includeCwdAllowlistRootsForAgent?: boolean },
+  options?: { includeCwdAllowlistRootsForAgent?: boolean; enforceAllowedRoots?: boolean },
 ): Promise<string> {
   const requestedPathContext = resolveReadFileAccessContext(swarmManager, agentId, options);
   const normalizedRequestedPath = normalizeFileAccessPath(requestedPath);
@@ -136,6 +141,7 @@ export function resolveReadFilePath(
     normalizedRequestedPath,
     requestedPathContext.rootDir,
     requestedPathContext.allowedRoots,
+    { enforceAllowedRoots: options?.enforceAllowedRoots },
   );
 }
 
