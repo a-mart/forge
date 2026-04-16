@@ -183,6 +183,7 @@ export class SwarmRuntimeController {
 
   private specialistFallbackManager: SwarmSpecialistFallbackManager | null = null;
   private readonly trackedToolPathsByAgentId = new Map<string, Map<string, { toolName: string; path: string }>>();
+  private readonly intentionallyStoppedRuntimeTokensByAgentId = new Map<string, Set<number>>();
   private nextRuntimeToken = 1;
   private readonly runtimeFactory: RuntimeFactory;
 
@@ -258,6 +259,37 @@ export class SwarmRuntimeController {
     this.trackedToolPathsByAgentId.delete(agentId);
   }
 
+  suppressIntentionalStopRuntimeCallbacks(agentId: string, runtimeToken?: number): void {
+    if (runtimeToken === undefined) {
+      return;
+    }
+
+    let suppressedTokens = this.intentionallyStoppedRuntimeTokensByAgentId.get(agentId);
+    if (!suppressedTokens) {
+      suppressedTokens = new Set<number>();
+      this.intentionallyStoppedRuntimeTokensByAgentId.set(agentId, suppressedTokens);
+    }
+
+    suppressedTokens.add(runtimeToken);
+  }
+
+  clearIntentionalStopRuntimeCallbackSuppression(agentId: string, runtimeToken?: number): void {
+    if (runtimeToken === undefined) {
+      this.intentionallyStoppedRuntimeTokensByAgentId.delete(agentId);
+      return;
+    }
+
+    const suppressedTokens = this.intentionallyStoppedRuntimeTokensByAgentId.get(agentId);
+    if (!suppressedTokens) {
+      return;
+    }
+
+    suppressedTokens.delete(runtimeToken);
+    if (suppressedTokens.size === 0) {
+      this.intentionallyStoppedRuntimeTokensByAgentId.delete(agentId);
+    }
+  }
+
   async createRuntimeForDescriptor(
     descriptor: AgentDescriptor,
     systemPrompt: string,
@@ -289,6 +321,7 @@ export class SwarmRuntimeController {
     if (runtimeToken !== undefined) {
       this.host.forgeExtensionHost.deactivateRuntimeBindings(createForgeBindingToken(runtimeToken));
     }
+    this.clearIntentionalStopRuntimeCallbackSuppression(agentId, runtimeToken);
 
     if (!isCurrentRuntime) {
       return;
@@ -871,9 +904,21 @@ export class SwarmRuntimeController {
     return this.runtimeTokensByAgentId.get(agentId) === runtimeToken;
   }
 
+  private isIntentionalStopRuntimeCallbackSuppressed(agentId: string, runtimeToken?: number): boolean {
+    if (runtimeToken === undefined) {
+      return false;
+    }
+
+    return this.intentionallyStoppedRuntimeTokensByAgentId.get(agentId)?.has(runtimeToken) === true;
+  }
+
   private shouldIgnoreRuntimeCallback(agentId: string, runtimeToken?: number): boolean {
     if (runtimeToken === undefined) {
       return false;
+    }
+
+    if (this.isIntentionalStopRuntimeCallbackSuppressed(agentId, runtimeToken)) {
+      return true;
     }
 
     if (this.specialistFallbackManager?.isSuppressedRuntimeCallback(agentId, runtimeToken)) {

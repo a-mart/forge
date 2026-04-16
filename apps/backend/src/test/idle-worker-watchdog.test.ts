@@ -18,9 +18,12 @@ import type { RuntimeUserMessage, SwarmAgentRuntime } from '../swarm/runtime-con
 
 class FakeRuntime {
   readonly descriptor: AgentDescriptor
+  runtimeToken?: number
   sendCalls: Array<{ message: string | RuntimeUserMessage; delivery: RequestedDeliveryMode }> = []
   terminateCalls: Array<{ abort?: boolean } | undefined> = []
   stopInFlightCalls: Array<{ abort?: boolean } | undefined> = []
+  terminateImpl?: (options?: { abort?: boolean; shutdownTimeoutMs?: number; drainTimeoutMs?: number }) => Promise<void>
+  stopInFlightImpl?: (options?: { abort?: boolean; shutdownTimeoutMs?: number; drainTimeoutMs?: number }) => Promise<void>
   recycleCalls = 0
   contextRecoveryInProgress = false
   private nextDeliveryId = 0
@@ -62,11 +65,17 @@ class FakeRuntime {
 
   async stopInFlight(options?: { abort?: boolean; shutdownTimeoutMs?: number; drainTimeoutMs?: number }): Promise<void> {
     this.stopInFlightCalls.push(options)
+    if (this.stopInFlightImpl) {
+      return this.stopInFlightImpl(options)
+    }
     this.descriptor.status = 'idle'
   }
 
   async terminate(options?: { abort?: boolean; shutdownTimeoutMs?: number; drainTimeoutMs?: number }): Promise<void> {
     this.terminateCalls.push(options)
+    if (this.terminateImpl) {
+      return this.terminateImpl(options)
+    }
     this.descriptor.status = 'terminated'
   }
 
@@ -105,9 +114,12 @@ class TestSwarmManager extends SwarmManager {
   protected override async createRuntimeForDescriptor(
     descriptor: AgentDescriptor,
     _systemPrompt: string,
-    _runtimeToken?: number,
+    runtimeToken?: number,
   ): Promise<SwarmAgentRuntime> {
+    const resolvedRuntimeToken = runtimeToken ?? (this as any).allocateRuntimeToken(descriptor.agentId)
     const runtime = new FakeRuntime(descriptor)
+    runtime.runtimeToken = resolvedRuntimeToken
+    ;(this as any).runtimeTokensByAgentId.set(descriptor.agentId, resolvedRuntimeToken)
     this.runtimeByAgentId.set(descriptor.agentId, runtime)
     return runtime as unknown as SwarmAgentRuntime
   }
@@ -1142,5 +1154,58 @@ describe('idle worker watchdog', () => {
     expect((manager as any).workerWatchdogState.has(worker.agentId)).toBe(false)
     expect((manager as any).watchdogTimers.has(worker.agentId)).toBe(false)
     expect((manager as any).watchdogTimerTokens.has(worker.agentId)).toBe(false)
+  })
+
+  it('suppresses late worker callbacks during stopAllAgents teardown', async () => {
+    vi.useFakeTimers()
+
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', { agentId: 'Late Callback Worker' })
+    const workerRuntime = manager.runtimeByAgentId.get(worker.agentId)
+    const managerRuntime = manager.runtimeByAgentId.get('manager')
+    const runtimeToken = ((manager as any).runtimeTokensByAgentId as Map<string, number>).get(worker.agentId)
+    expect(workerRuntime).toBeDefined()
+    expect(managerRuntime).toBeDefined()
+    expect(runtimeToken).toBeDefined()
+    if (runtimeToken === undefined) {
+      throw new Error('Expected worker runtime token')
+    }
+
+    await startWorkerTurn(manager, worker)
+
+    const stopStarted = createDeferred<void>()
+    const stopDeferred = createDeferred<void>()
+    workerRuntime!.stopInFlightImpl = async () => {
+      stopStarted.resolve()
+      await stopDeferred.promise
+      workerRuntime!.descriptor.status = 'idle'
+    }
+
+    const stopAllPromise = manager.stopAllAgents('manager', 'manager')
+    await stopStarted.promise
+
+    await (manager as any).handleRuntimeStatus(runtimeToken, worker.agentId, 'idle', 0)
+    await (manager as any).handleRuntimeAgentEnd(runtimeToken, worker.agentId)
+    await vi.runAllTicks()
+
+    expect((manager as any).workerWatchdogState.has(worker.agentId)).toBe(false)
+    expect((manager as any).watchdogTimers.has(worker.agentId)).toBe(false)
+    expect((manager as any).watchdogBatchQueueByManager.has('manager')).toBe(false)
+
+    stopDeferred.resolve()
+    await stopAllPromise
+    await advanceToWatchdogBatchFlush()
+
+    expect(managerRuntime?.sendCalls).toHaveLength(0)
+    expect(getBatchedWatchdogMessages(managerRuntime)).toHaveLength(0)
+    expect(getSystemWatchdogPublishes(manager)).toHaveLength(0)
+    expect((manager as any).workerWatchdogState.has(worker.agentId)).toBe(false)
+    expect((manager as any).watchdogTimers.has(worker.agentId)).toBe(false)
+    expect((manager as any).watchdogTimerTokens.has(worker.agentId)).toBe(false)
+    expect((manager as any).watchdogBatchQueueByManager.has('manager')).toBe(false)
+    expect((manager as any).watchdogBatchTimersByManager.has('manager')).toBe(false)
   })
 })

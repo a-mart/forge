@@ -153,6 +153,8 @@ export interface SwarmAgentLifecycleServiceOptions {
   deleteWorkerStallState: (agentId: string) => void;
   deleteWorkerActivityState: (agentId: string) => void;
   deleteWorkerCompletionReportState: (agentId: string) => void;
+  suppressIntentionalStopRuntimeCallbacks: (agentId: string, runtimeToken?: number) => void;
+  clearIntentionalStopRuntimeCallbackSuppression: (agentId: string, runtimeToken?: number) => void;
   markPendingManualManagerStopNotice: (agentId: string) => void;
   cancelAllPendingChoicesForAgent: (agentId: string) => void;
   runRuntimeShutdown: (
@@ -186,6 +188,34 @@ export interface SwarmAgentLifecycleServiceOptions {
 
 export class SwarmAgentLifecycleService {
   constructor(private readonly options: SwarmAgentLifecycleServiceOptions) {}
+
+  private clearWorkerTeardownState(agentId: string): void {
+    this.options.clearWatchdogState(agentId);
+    this.options.deleteWorkerStallState(agentId);
+    this.options.deleteWorkerActivityState(agentId);
+    this.options.deleteWorkerCompletionReportState(agentId);
+  }
+
+  private async shutdownWorkerRuntimeWithSuppressedCallbacks(
+    descriptor: AgentDescriptor,
+    action: "terminate" | "stopInFlight",
+    options?: RuntimeShutdownOptions
+  ): Promise<void> {
+    if (descriptor.role !== "worker" || !this.options.runtimes.has(descriptor.agentId)) {
+      return;
+    }
+
+    const runtimeToken = this.options.getRuntimeToken(descriptor.agentId);
+    this.options.suppressIntentionalStopRuntimeCallbacks(descriptor.agentId, runtimeToken);
+
+    try {
+      const shutdown = await this.options.runRuntimeShutdown(descriptor, action, options);
+      this.options.detachRuntime(descriptor.agentId, shutdown.runtimeToken);
+    } finally {
+      this.clearWorkerTeardownState(descriptor.agentId);
+      this.options.clearIntentionalStopRuntimeCallbackSuppression(descriptor.agentId, runtimeToken);
+    }
+  }
 
   async stopSession(agentId: string): Promise<{ terminatedWorkerIds: string[] }> {
     const { terminatedWorkerIds } = await this.stopSessionInternal(agentId, {
@@ -515,18 +545,9 @@ export class SwarmAgentLifecycleService {
       throw new Error(`Unknown worker agent: ${agentId}`);
     }
 
-    const runtime = this.options.runtimes.get(agentId);
-    if (runtime) {
-      const shutdown = await this.options.runRuntimeShutdown(descriptor, "terminate", { abort: true });
-      this.options.detachRuntime(agentId, shutdown.runtimeToken);
-    }
-
-    if (descriptor.role === "worker") {
-      this.options.clearWatchdogState(agentId);
-      this.options.deleteWorkerStallState(agentId);
-      this.options.deleteWorkerActivityState(agentId);
-      this.options.deleteWorkerCompletionReportState(agentId);
-    }
+    this.clearWorkerTeardownState(agentId);
+    await this.shutdownWorkerRuntimeWithSuppressedCallbacks(descriptor, "terminate", { abort: true });
+    this.clearWorkerTeardownState(agentId);
 
     descriptor.status = transitionAgentStatus(descriptor.status, "idle");
     descriptor.contextUsage = undefined;
@@ -624,19 +645,14 @@ export class SwarmAgentLifecycleService {
         continue;
       }
 
-      this.options.clearWatchdogState(descriptor.agentId);
-      this.options.deleteWorkerStallState(descriptor.agentId);
-      this.options.deleteWorkerActivityState(descriptor.agentId);
+      this.clearWorkerTeardownState(descriptor.agentId);
 
       if (isNonRunningAgentStatus(descriptor.status)) {
         continue;
       }
 
-      const runtime = this.options.runtimes.get(descriptor.agentId);
-      if (runtime) {
-        const shutdown = await this.options.runRuntimeShutdown(descriptor, "stopInFlight", { abort: true });
-        this.options.detachRuntime(descriptor.agentId, shutdown.runtimeToken);
-      }
+      await this.shutdownWorkerRuntimeWithSuppressedCallbacks(descriptor, "stopInFlight", { abort: true });
+      this.clearWorkerTeardownState(descriptor.agentId);
 
       descriptor.status = transitionAgentStatus(descriptor.status, "idle");
       descriptor.contextUsage = undefined;
@@ -1088,16 +1104,15 @@ export class SwarmAgentLifecycleService {
     this.options.cancelAllPendingChoicesForAgent(descriptor.agentId);
 
     if (descriptor.role === "worker") {
-      this.options.clearWatchdogState(descriptor.agentId);
-      this.options.deleteWorkerStallState(descriptor.agentId);
-      this.options.deleteWorkerActivityState(descriptor.agentId);
-      this.options.deleteWorkerCompletionReportState(descriptor.agentId);
-    }
-
-    const runtime = this.options.runtimes.get(descriptor.agentId);
-    if (runtime) {
-      const shutdown = await this.options.runRuntimeShutdown(descriptor, "terminate", { abort: options.abort });
-      this.options.detachRuntime(descriptor.agentId, shutdown.runtimeToken);
+      this.clearWorkerTeardownState(descriptor.agentId);
+      await this.shutdownWorkerRuntimeWithSuppressedCallbacks(descriptor, "terminate", { abort: options.abort });
+      this.clearWorkerTeardownState(descriptor.agentId);
+    } else {
+      const runtime = this.options.runtimes.get(descriptor.agentId);
+      if (runtime) {
+        const shutdown = await this.options.runRuntimeShutdown(descriptor, "terminate", { abort: options.abort });
+        this.options.detachRuntime(descriptor.agentId, shutdown.runtimeToken);
+      }
     }
     this.clearPendingManagerRuntimeRecycle(descriptor.agentId);
 
