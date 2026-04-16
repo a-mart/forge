@@ -556,11 +556,17 @@ describe('ConversationProjector session tree continuity', () => {
     )
 
     const projector = makeProjector({ descriptor })
-    const history = projector.getConversationHistory(descriptor.agentId)
+    const result = projector.getConversationHistoryWithDiagnostics(descriptor.agentId)
+    const history = result.history
 
     expect(
       history.some((entry) => entry.type === 'conversation_message' && entry.text === 'persisted prefix message'),
     ).toBe(true)
+    expect(result.diagnostics).toMatchObject({
+      cacheState: 'cache_missing_persisted_prefix',
+      historySource: 'cache_rebuild',
+      coldLoad: true,
+    })
 
     const rewrittenCacheText = await waitForFileText(cacheFile, {
       matches: (text) => text.includes('persisted prefix message'),
@@ -569,6 +575,46 @@ describe('ConversationProjector session tree continuity', () => {
     expect(rewrittenCacheText).toContain('"cachedPersistedEntryCount":3')
     expect(rewrittenCacheText).toContain(`"firstPersistedEntryKey":"conversation_message:${firstEntryId}"`)
     expect(rewrittenCacheText).toContain(`"lastPersistedEntryKey":"conversation_message:${lastEntryId}"`)
+  })
+
+  it('reports absent/full_parse on the first cold read and memory/memory on a warm reread', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-projector-diagnostics-memory-'))
+    const sessionFile = join(root, 'manager.jsonl')
+    const descriptor = makeDescriptor(sessionFile, root)
+
+    const seededSession = SessionManager.open(sessionFile)
+    seededSession.appendMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'seed message' }],
+    } as any)
+    seededSession.appendCustomEntry('swarm_conversation_entry', {
+      type: 'conversation_message',
+      agentId: descriptor.agentId,
+      role: 'assistant',
+      text: 'persisted history',
+      timestamp: FIXED_NOW,
+      source: 'system',
+    })
+
+    const projector = makeProjector({ descriptor })
+    const cold = projector.getConversationHistoryWithDiagnostics(descriptor.agentId)
+    const warm = projector.getConversationHistoryWithDiagnostics(descriptor.agentId)
+
+    expect(cold.history.some((entry) => entry.type === 'conversation_message' && entry.text === 'persisted history')).toBe(
+      true,
+    )
+    expect(cold.diagnostics).toMatchObject({
+      cacheState: 'absent',
+      historySource: 'full_parse',
+      coldLoad: true,
+    })
+    expect(warm.diagnostics).toMatchObject({
+      cacheState: 'memory',
+      historySource: 'memory',
+      coldLoad: false,
+      fsReadOps: 0,
+      fsReadBytes: 0,
+    })
   })
 
   it('accepts a complete trimmed cache window for long persisted transcripts', async () => {
@@ -616,7 +662,8 @@ describe('ConversationProjector session tree continuity', () => {
         debugMessages.push(message)
       },
     })
-    const reloadedHistory = reloadedProjector.getConversationHistory(descriptor.agentId)
+    const reloaded = reloadedProjector.getConversationHistoryWithDiagnostics(descriptor.agentId)
+    const reloadedHistory = reloaded.history
 
     expect(reloadedHistory).toHaveLength(2000)
     expect(
@@ -627,6 +674,11 @@ describe('ConversationProjector session tree continuity', () => {
     ).toBe(true)
     expect(debugMessages).toContain('history:load:cache')
     expect(debugMessages).not.toContain('history:load:ready')
+    expect(reloaded.diagnostics).toMatchObject({
+      cacheState: 'hit',
+      historySource: 'cache_hit',
+      coldLoad: true,
+    })
   })
 
   it('falls back to JSONL replay when the cache is missing the latest persisted message', async () => {
@@ -674,14 +726,19 @@ describe('ConversationProjector session tree continuity', () => {
     )
 
     const projector = makeProjector({ descriptor })
-    const history = projector.getConversationHistory(descriptor.agentId)
+    const result = projector.getConversationHistoryWithDiagnostics(descriptor.agentId)
 
     expect(
-      history.some(
+      result.history.some(
         (entry) =>
           entry.type === 'conversation_message' && entry.text === 'latest persisted message after cache went stale',
       ),
     ).toBe(true)
+    expect(result.diagnostics).toMatchObject({
+      cacheState: 'legacy_rebuild',
+      historySource: 'cache_rebuild',
+      coldLoad: true,
+    })
   })
 
   it('ignores stale cache entries after the session JSONL has been cleared', async () => {

@@ -1,6 +1,7 @@
 import type { ServerEvent, TerminalDescriptor } from "@forge/protocol";
 import type { IntegrationRegistryService } from "../integrations/registry.js";
 import type { PlaywrightDiscoveryService } from "../playwright/playwright-discovery-service.js";
+import type { SidebarPerfRecorder } from "../stats/sidebar-perf-types.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import type { TerminalService } from "../terminal/terminal-service.js";
 import type { UnreadTracker } from "../swarm/unread-tracker.js";
@@ -24,7 +25,8 @@ export class WsSubscriptions {
   private readonly terminalService: TerminalService | null;
   private readonly listTerminalsForSession?: (sessionAgentId: string) => TerminalDescriptor[];
   private readonly unreadTracker: UnreadTracker | null;
-  private readonly send: (socket: WebSocket, event: ServerEvent) => void;
+  private readonly perf: SidebarPerfRecorder;
+  private readonly send: (socket: WebSocket, event: ServerEvent) => number | null;
   private readonly getServer: () => WebSocketServer | null;
 
   constructor(options: {
@@ -35,7 +37,8 @@ export class WsSubscriptions {
     terminalService: TerminalService | null;
     listTerminalsForSession?: (sessionAgentId: string) => TerminalDescriptor[];
     unreadTracker: UnreadTracker | null;
-    send: (socket: WebSocket, event: ServerEvent) => void;
+    perf: SidebarPerfRecorder;
+    send: (socket: WebSocket, event: ServerEvent) => number | null;
     getServer: () => WebSocketServer | null;
   }) {
     this.swarmManager = options.swarmManager;
@@ -45,6 +48,7 @@ export class WsSubscriptions {
     this.terminalService = options.terminalService;
     this.listTerminalsForSession = options.listTerminalsForSession;
     this.unreadTracker = options.unreadTracker;
+    this.perf = options.perf;
     this.send = options.send;
     this.getServer = options.getServer;
   }
@@ -337,6 +341,7 @@ export class WsSubscriptions {
       terminalService: this.terminalService,
       listTerminalsForSession: this.listTerminalsForSession,
       unreadTracker: this.unreadTracker,
+      perf: this.perf,
       send: this.send,
       resolveTerminalScopeAgentId: (agentId) => this.resolveTerminalScopeAgentId(agentId),
       resolveManagerContextAgentId: (agentId) => this.resolveManagerContextAgentId(agentId),

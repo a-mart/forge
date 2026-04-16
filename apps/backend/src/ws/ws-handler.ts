@@ -6,6 +6,9 @@ import type {
 import type { IntegrationRegistryService } from "../integrations/registry.js";
 import type { MobilePushService } from "../mobile/mobile-push-service.js";
 import type { PlaywrightDiscoveryService } from "../playwright/playwright-discovery-service.js";
+import { backendSidebarPerfMetricManifest } from "../stats/sidebar-perf-metrics.js";
+import { createSidebarPerfRegistry } from "../stats/sidebar-perf-registry.js";
+import type { SidebarPerfRecorder } from "../stats/sidebar-perf-types.js";
 import { FeedbackService } from "../swarm/feedback-service.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import type { UnreadTracker } from "../swarm/unread-tracker.js";
@@ -45,6 +48,7 @@ export class WsHandler {
 
     const feedbackService = new FeedbackService(this.swarmManager.getConfig().paths.dataDir);
     const terminalService = options.terminalService ?? null;
+    const perf = this.resolveSidebarPerfRecorder();
 
     this.subscriptionManager = new WsSubscriptions({
       swarmManager: this.swarmManager,
@@ -54,6 +58,7 @@ export class WsHandler {
       terminalService,
       listTerminalsForSession: options.listTerminalsForSession,
       unreadTracker: this.unreadTracker,
+      perf,
       send: (socket, event) => this.send(socket, event),
       getServer: () => this.wss,
     });
@@ -386,8 +391,22 @@ export class WsHandler {
     console.log(prefix, details);
   }
 
-  private send(socket: WebSocket, event: ServerEvent): void {
-    sendWsEvent({
+  private resolveSidebarPerfRecorder(): SidebarPerfRecorder {
+    const managerWithPerf = this.swarmManager as SwarmManager & {
+      getSidebarPerfRecorder?: () => SidebarPerfRecorder;
+    };
+
+    if (typeof managerWithPerf.getSidebarPerfRecorder === "function") {
+      return managerWithPerf.getSidebarPerfRecorder();
+    }
+
+    return createSidebarPerfRegistry({
+      manifest: backendSidebarPerfMetricManifest,
+    });
+  }
+
+  private send(socket: WebSocket, event: ServerEvent): number | null {
+    return sendWsEvent({
       socket,
       event,
       onDropSocket: (targetSocket) => this.dropSocket(targetSocket),

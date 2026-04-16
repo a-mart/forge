@@ -1,6 +1,13 @@
+import { performance } from "node:perf_hooks";
 import type { ServerEvent, TerminalDescriptor } from "@forge/protocol";
 import type { IntegrationRegistryService } from "../integrations/registry.js";
 import type { PlaywrightDiscoveryService } from "../playwright/playwright-discovery-service.js";
+import {
+  SIDEBAR_BOOTSTRAP_METRIC,
+  SIDEBAR_SNAPSHOT_BUILD_METRIC,
+  resolveBackendSidebarPerfBuildMode
+} from "../stats/sidebar-perf-metrics.js";
+import type { SidebarPerfRecorder } from "../stats/sidebar-perf-types.js";
 import type { TerminalService } from "../terminal/terminal-service.js";
 import type { UnreadTracker } from "../swarm/unread-tracker.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
@@ -45,7 +52,8 @@ export function sendSubscriptionBootstrap(options: {
   terminalService: TerminalService | null;
   listTerminalsForSession?: (sessionAgentId: string) => TerminalDescriptor[];
   unreadTracker: UnreadTracker | null;
-  send: (socket: WebSocket, event: ServerEvent) => void;
+  perf: SidebarPerfRecorder;
+  send: (socket: WebSocket, event: ServerEvent) => number | null;
   resolveTerminalScopeAgentId: (subscribedAgentId: string) => string | undefined;
   resolveManagerContextAgentId: (subscribedAgentId: string) => string | undefined;
 }): void {
@@ -59,83 +67,205 @@ export function sendSubscriptionBootstrap(options: {
     terminalService,
     listTerminalsForSession,
     unreadTracker,
+    perf,
     send,
     resolveTerminalScopeAgentId,
     resolveManagerContextAgentId,
   } = options;
 
-  send(socket, {
+  const buildMode = resolveBackendSidebarPerfBuildMode();
+  const startedAtMs = performance.now();
+  const metricFields: Record<string, unknown> = {
+    agentId: targetAgentId,
+    targetAgentId,
+  };
+  let payloadBytesTotal = 0;
+
+  const sendMeasured = (fieldPrefix: string, event: ServerEvent): number | null => {
+    const sendStartedAtMs = performance.now();
+    const payloadBytes = send(socket, event);
+    metricFields[`${fieldPrefix}SendMs`] = performance.now() - sendStartedAtMs;
+    metricFields[`${fieldPrefix}PayloadBytes`] = payloadBytes;
+    if (typeof payloadBytes === "number") {
+      payloadBytesTotal += payloadBytes;
+    }
+    return payloadBytes;
+  };
+
+  sendMeasured("ready", {
     type: "ready",
     serverTime: new Date().toISOString(),
     subscribedAgentId: targetAgentId
   });
-  send(socket, {
-    type: "agents_snapshot",
-    agents: swarmManager.listBootstrapAgents()
+
+  const agentsSnapshotBuildStartedAtMs = performance.now();
+  const agents = swarmManager.listBootstrapAgents();
+  const agentsSnapshotBuildMs = performance.now() - agentsSnapshotBuildStartedAtMs;
+  metricFields.agentsSnapshotBuildMs = agentsSnapshotBuildMs;
+  metricFields.agentsCount = agents.length;
+  metricFields.agentsReturned = agents.length;
+  perf.recordDuration(SIDEBAR_SNAPSHOT_BUILD_METRIC, agentsSnapshotBuildMs, {
+    labels: {
+      includeStreamingWorkers: false,
+      buildMode
+    },
+    fields: {
+      managerCountReturned: agents.filter((descriptor) => descriptor.role === "manager").length,
+      totalDescriptorCount: agents.length
+    }
   });
-  send(socket, {
+  sendMeasured("agentsSnapshot", {
+    type: "agents_snapshot",
+    agents
+  });
+
+  const profilesSnapshotBuildStartedAtMs = performance.now();
+  const profiles = swarmManager.listProfiles();
+  const profilesSnapshotBuildMs = performance.now() - profilesSnapshotBuildStartedAtMs;
+  metricFields.profilesSnapshotBuildMs = profilesSnapshotBuildMs;
+  metricFields.profilesReturned = profiles.length;
+  sendMeasured("profilesSnapshot", {
     type: "profiles_snapshot",
-    profiles: swarmManager.listProfiles()
+    profiles
   });
 
   if (playwrightDiscovery) {
-    send(socket, {
+    const playwrightDiscoverySnapshotStartedAtMs = performance.now();
+    const playwrightSnapshot = playwrightDiscovery.getSnapshot();
+    metricFields.playwrightDiscoverySnapshotMs = performance.now() - playwrightDiscoverySnapshotStartedAtMs;
+    sendMeasured("playwrightDiscoverySnapshot", {
       type: "playwright_discovery_snapshot",
-      snapshot: playwrightDiscovery.getSnapshot()
+      snapshot: playwrightSnapshot
     });
-    send(socket, {
+
+    const playwrightDiscoverySettingsStartedAtMs = performance.now();
+    const playwrightSettings = playwrightDiscovery.getSettings();
+    metricFields.playwrightDiscoverySettingsMs = performance.now() - playwrightDiscoverySettingsStartedAtMs;
+    sendMeasured("playwrightDiscoverySettings", {
       type: "playwright_discovery_settings_updated",
-      settings: playwrightDiscovery.getSettings()
+      settings: playwrightSettings
     });
+  } else {
+    metricFields.playwrightDiscoveryPhaseNote = "excluded:no_service";
   }
 
   const historyMessageCount = requestedMessageCount !== undefined
     ? normalizeSubscribeMessageCount(requestedMessageCount)
     : undefined;
-  const conversationHistory = selectBootstrapConversationHistory(swarmManager, targetAgentId, historyMessageCount);
+  metricFields.requestedMessageCount = historyMessageCount ?? null;
 
-  send(socket, {
+  const historyLoadStartedAtMs = performance.now();
+  const historyResult = getBootstrapConversationHistoryWithDiagnostics(swarmManager, targetAgentId);
+  const conversationHistory = selectBootstrapConversationHistory({
+    targetAgentId,
+    fullHistory: historyResult.history,
+    requestedMessageCount: historyMessageCount
+  });
+  const historyLoadMs = performance.now() - historyLoadStartedAtMs;
+  metricFields.historyLoadMs = historyLoadMs;
+  metricFields.historyEntriesReturned = conversationHistory.length;
+  metricFields.fsReadOps = historyResult.diagnostics.fsReadOps;
+  metricFields.fsReadBytes = historyResult.diagnostics.fsReadBytes;
+  metricFields.sessionFileBytes = historyResult.diagnostics.sessionFileBytes;
+  metricFields.cacheFileBytes = historyResult.diagnostics.cacheFileBytes;
+  metricFields.persistedEntryCount = historyResult.diagnostics.persistedEntryCount;
+  metricFields.cachedEntryCount = historyResult.diagnostics.cachedEntryCount;
+  metricFields.sessionSummaryBytesScanned = historyResult.diagnostics.sessionSummaryBytesScanned;
+  metricFields.cacheReadMs = historyResult.diagnostics.cacheReadMs;
+  metricFields.sessionSummaryReadMs = historyResult.diagnostics.sessionSummaryReadMs;
+  metricFields.historyDetail = historyResult.diagnostics.detail ?? undefined;
+  sendMeasured("conversationHistory", {
     type: "conversation_history",
     agentId: targetAgentId,
     messages: conversationHistory
   });
 
+  const pendingChoicesStartedAtMs = performance.now();
   const pendingChoiceIds = swarmManager.getPendingChoiceIdsForSession(targetAgentId);
-  send(socket, {
+  metricFields.pendingChoiceCount = pendingChoiceIds.length;
+  sendMeasured("pendingChoicesSnapshot", {
     type: "pending_choices_snapshot",
     agentId: targetAgentId,
     choiceIds: pendingChoiceIds,
   });
+  metricFields.pendingChoicesMs = performance.now() - pendingChoicesStartedAtMs;
 
+  const terminalsSnapshotStartedAtMs = performance.now();
   const effectiveTerminalSessionId = resolveTerminalScopeAgentId(targetAgentId) ?? targetAgentId;
-  send(socket, {
+  const terminals =
+    listTerminalsForSession?.(effectiveTerminalSessionId) ??
+    terminalService?.listTerminals(effectiveTerminalSessionId) ??
+    [];
+  metricFields.terminalCount = terminals.length;
+  sendMeasured("terminalsSnapshot", {
     type: "terminals_snapshot",
     sessionAgentId: effectiveTerminalSessionId,
-    terminals:
-      listTerminalsForSession?.(effectiveTerminalSessionId) ??
-      terminalService?.listTerminals(effectiveTerminalSessionId) ??
-      [],
+    terminals,
   });
+  metricFields.terminalsSnapshotMs = performance.now() - terminalsSnapshotStartedAtMs;
 
   if (unreadTracker) {
-    send(socket, {
+    const unreadSnapshotStartedAtMs = performance.now();
+    sendMeasured("unreadCountsSnapshot", {
       type: "unread_counts_snapshot",
       counts: unreadTracker.getSnapshot(),
     });
+    metricFields.unreadSnapshotMs = performance.now() - unreadSnapshotStartedAtMs;
   }
 
   const managerContextId = resolveManagerContextAgentId(targetAgentId);
   if (integrationRegistry && managerContextId) {
-    send(socket, integrationRegistry.getStatus(managerContextId, "telegram"));
+    const integrationStatusStartedAtMs = performance.now();
+    sendMeasured("integrationStatus", integrationRegistry.getStatus(managerContextId, "telegram"));
+    metricFields.integrationStatusMs = performance.now() - integrationStatusStartedAtMs;
   }
+
+  metricFields.payloadBytesTotal = payloadBytesTotal;
+  const totalMs = performance.now() - startedAtMs;
+  metricFields.totalMs = totalMs;
+
+  perf.recordDuration(SIDEBAR_BOOTSTRAP_METRIC, totalMs, {
+    labels: {
+      historySource: historyResult.diagnostics.historySource,
+      cacheState: historyResult.diagnostics.cacheState,
+      playwrightDiscoveryEnabled: Boolean(playwrightDiscovery),
+      buildMode
+    },
+    fields: metricFields
+  });
 }
 
-function selectBootstrapConversationHistory(
+function getBootstrapConversationHistoryWithDiagnostics(
   swarmManager: SwarmManager,
   targetAgentId: string,
-  requestedMessageCount?: number,
-): BootstrapConversationHistory {
-  const fullHistory = swarmManager.getConversationHistory(targetAgentId);
+): ReturnType<SwarmManager["getConversationHistoryWithDiagnostics"]> {
+  const managerWithDiagnostics = swarmManager as SwarmManager & {
+    getConversationHistoryWithDiagnostics?: (agentId?: string) => ReturnType<SwarmManager["getConversationHistoryWithDiagnostics"]>;
+  };
+
+  if (typeof managerWithDiagnostics.getConversationHistoryWithDiagnostics === "function") {
+    return managerWithDiagnostics.getConversationHistoryWithDiagnostics(targetAgentId);
+  }
+
+  return {
+    history: swarmManager.getConversationHistory(targetAgentId),
+    diagnostics: {
+      cacheState: "memory",
+      historySource: "memory",
+      coldLoad: false,
+      fsReadOps: 0,
+      fsReadBytes: 0,
+      detail: "diagnostics_unavailable"
+    }
+  };
+}
+
+function selectBootstrapConversationHistory(options: {
+  targetAgentId: string;
+  fullHistory: BootstrapConversationHistory;
+  requestedMessageCount?: number;
+}): BootstrapConversationHistory {
+  const { targetAgentId, fullHistory, requestedMessageCount } = options;
   const requestedHistory = requestedMessageCount !== undefined
     ? fullHistory.slice(-requestedMessageCount)
     : fullHistory;
