@@ -1201,6 +1201,7 @@ export function IndexPage() {
                   activeAgentArchetypeId: activeAgent?.archetypeId,
                   activeAgentSessionPurpose: activeAgent?.sessionPurpose,
                   activeAgentStatus,
+                  activeAgentRole: activeAgent?.role ?? null,
                   activeAgentCreatedAt: activeAgent?.createdAt ?? null,
                   activeAgentUpdatedAt: activeAgent?.updatedAt ?? null,
                   channelView,
