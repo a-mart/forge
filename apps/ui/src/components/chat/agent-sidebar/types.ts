@@ -34,8 +34,6 @@ export interface AgentSidebarProps {
   profiles: ManagerProfile[]
   statuses: StatusMap
   unreadCounts: Record<string, number>
-  terminalScopeId?: string | null
-  terminalCount?: number
   selectedAgentId: string | null
   isSettingsActive: boolean
   isPlaywrightActive?: boolean
@@ -81,10 +79,10 @@ export interface WorkerRowProps {
   agent: AgentDescriptor
   liveStatus: AgentLiveStatus
   isSelected: boolean
-  onSelect: () => void
-  onDelete: () => void
-  onStop?: () => void
-  onResume?: () => void
+  onSelect: (agentId: string) => void
+  onDelete: (agentId: string) => void
+  onStop?: (agentId: string) => void
+  onResume?: (agentId: string) => void
   highlightQuery?: string
 }
 
@@ -96,26 +94,26 @@ export interface SessionRowItemProps {
   isSettingsActive: boolean
   isCollapsed: boolean
   isWorkerListExpanded: boolean
-  onToggleCollapse: () => void
-  onToggleWorkerListExpanded: () => void
+  onToggleCollapse: (sessionId: string) => void
+  onToggleWorkerListExpanded: (sessionId: string) => void
   onSelect: (agentId: string) => void
   onDeleteAgent: (agentId: string) => void
-  onStop?: () => void
-  onResume?: () => void
-  onDelete?: () => void
-  onRename?: () => void
-  onFork?: () => void
-  onMarkUnread?: () => void
+  onStopSession?: (agentId: string) => void
+  onResumeSession?: (agentId: string) => void
+  onDeleteSession?: (agentId: string) => void
+  onRenameSession?: (agentId: string) => void
+  onForkSession?: (agentId: string) => void
+  onMarkUnread?: (agentId: string) => void
   onStopWorker?: (agentId: string) => void
   onResumeWorker?: (agentId: string) => void
   highlightQuery?: string
   onPinSession?: (agentId: string, pinned: boolean) => void
-  onPromoteToProjectAgent?: () => void
-  onOpenProjectAgentSettings?: () => void
-  onDemoteProjectAgent?: () => void
-  onViewCreationHistory?: () => void
+  onPromoteToProjectAgent?: (agentId: string) => void
+  onOpenProjectAgentSettings?: (agentId: string) => void
+  onDemoteProjectAgent?: (agentId: string) => void | Promise<void>
+  canViewCreationHistory?: boolean
   isMutedSession?: boolean
-  onToggleMute?: () => void
+  onToggleMute?: (agentId: string) => void
   getCreatorAttribution?: (creatorAgentId: string) => string | null
 }
 

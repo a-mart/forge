@@ -18,6 +18,7 @@ import {
   Trash2,
   Zap,
 } from 'lucide-react'
+import React from 'react'
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from '@/components/ui/context-menu'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { isSessionRunning } from '@/lib/agent-hierarchy'
@@ -28,7 +29,7 @@ import { getAgentLiveStatus } from './utils'
 import { MAX_VISIBLE_WORKERS } from './constants'
 import type { SessionRowItemProps } from './types'
 
-export function SessionRowItem({
+export const SessionRowItem = React.memo(function SessionRowItem({
   session,
   statuses,
   unreadCount,
@@ -40,11 +41,11 @@ export function SessionRowItem({
   onToggleWorkerListExpanded,
   onSelect,
   onDeleteAgent,
-  onStop,
-  onResume,
-  onDelete,
-  onRename,
-  onFork,
+  onStopSession,
+  onResumeSession,
+  onDeleteSession,
+  onRenameSession,
+  onForkSession,
   onMarkUnread,
   onStopWorker,
   onResumeWorker,
@@ -53,7 +54,7 @@ export function SessionRowItem({
   onPromoteToProjectAgent,
   onOpenProjectAgentSettings,
   onDemoteProjectAgent,
-  onViewCreationHistory,
+  canViewCreationHistory,
   isMutedSession,
   onToggleMute,
   getCreatorAttribution,
@@ -93,7 +94,7 @@ export function SessionRowItem({
             {hasWorkers ? (
               <button
                 type="button"
-                onClick={onToggleCollapse}
+                onClick={() => onToggleCollapse(sessionAgent.agentId)}
                 aria-label={`${isCollapsed ? 'Expand' : 'Collapse'} session workers`}
                 aria-expanded={!isCollapsed}
                 className={cn(
@@ -210,45 +211,45 @@ export function SessionRowItem({
             </ContextMenuItem>
           ) : null}
           {onToggleMute ? (
-            <ContextMenuItem onClick={onToggleMute}>
+            <ContextMenuItem onClick={() => onToggleMute(sessionAgent.agentId)}>
               <BellOff className="mr-2 size-3.5" />
               {isMutedSession ? 'Unmute' : 'Mute'}
             </ContextMenuItem>
           ) : null}
-          {onRename ? (
-            <ContextMenuItem onClick={onRename}>
+          {onRenameSession ? (
+            <ContextMenuItem onClick={() => onRenameSession(sessionAgent.agentId)}>
               <Edit3 className="mr-2 size-3.5" />
               Rename
             </ContextMenuItem>
           ) : null}
-          {onFork ? (
-            <ContextMenuItem onClick={onFork}>
+          {onForkSession && sessionAgent.sessionPurpose !== 'agent_creator' ? (
+            <ContextMenuItem onClick={() => onForkSession(sessionAgent.agentId)}>
               <GitFork className="mr-2 size-3.5" />
               Fork
             </ContextMenuItem>
           ) : null}
-          {running && onStop ? (
-            <ContextMenuItem onClick={onStop}>
+          {running && onStopSession ? (
+            <ContextMenuItem onClick={() => onStopSession(sessionAgent.agentId)}>
               <Pause className="mr-2 size-3.5" />
               Stop
             </ContextMenuItem>
           ) : null}
-          {!running && onResume ? (
-            <ContextMenuItem onClick={onResume}>
+          {!running && onResumeSession ? (
+            <ContextMenuItem onClick={() => onResumeSession(sessionAgent.agentId)}>
               <Play className="mr-2 size-3.5" />
               Resume
             </ContextMenuItem>
           ) : null}
           {onMarkUnread ? (
-            <ContextMenuItem onClick={onMarkUnread}>
+            <ContextMenuItem onClick={() => onMarkUnread(sessionAgent.agentId)}>
               <EyeOff className="mr-2 size-3.5" />
               Mark as unread
             </ContextMenuItem>
           ) : null}
-          {onPromoteToProjectAgent && !isProjectAgent ? (
+          {onPromoteToProjectAgent && !isProjectAgent && sessionAgent.sessionPurpose !== 'cortex_review' && sessionAgent.sessionPurpose !== 'agent_creator' ? (
             <>
               <ContextMenuSeparator />
-              <ContextMenuItem onClick={onPromoteToProjectAgent}>
+              <ContextMenuItem onClick={() => onPromoteToProjectAgent(sessionAgent.agentId)}>
                 <ArrowUpFromLine className="mr-2 size-3.5" />
                 Promote to Project Agent
               </ContextMenuItem>
@@ -257,28 +258,28 @@ export function SessionRowItem({
           {isProjectAgent && onOpenProjectAgentSettings ? (
             <>
               <ContextMenuSeparator />
-              <ContextMenuItem onClick={onOpenProjectAgentSettings}>
+              <ContextMenuItem onClick={() => onOpenProjectAgentSettings(sessionAgent.agentId)}>
                 <Settings className="mr-2 size-3.5" />
                 Project Agent Settings
               </ContextMenuItem>
             </>
           ) : null}
-          {isProjectAgent && onViewCreationHistory ? (
-            <ContextMenuItem onClick={onViewCreationHistory}>
+          {isProjectAgent && canViewCreationHistory ? (
+            <ContextMenuItem onClick={() => onSelect(sessionAgent.projectAgent!.creatorSessionId!)}>
               <History className="mr-2 size-3.5" />
               View Creation History
             </ContextMenuItem>
           ) : null}
           {isProjectAgent && onDemoteProjectAgent ? (
-            <ContextMenuItem onClick={onDemoteProjectAgent}>
+            <ContextMenuItem onClick={() => onDemoteProjectAgent(sessionAgent.agentId)}>
               <ArrowDownToLine className="mr-2 size-3.5" />
               Demote to Session
             </ContextMenuItem>
           ) : null}
-          {!isDefault && onDelete ? (
+          {!isDefault && onDeleteSession ? (
             <>
               <ContextMenuSeparator />
-              <ContextMenuItem variant="destructive" onClick={onDelete}>
+              <ContextMenuItem variant="destructive" onClick={() => onDeleteSession(sessionAgent.agentId)}>
                 <Trash2 className="mr-2 size-3.5" />
                 Delete
               </ContextMenuItem>
@@ -329,10 +330,10 @@ export function SessionRowItem({
                           agent={worker}
                           liveStatus={workerLiveStatus}
                           isSelected={workerIsSelected}
-                          onSelect={() => onSelect(worker.agentId)}
-                          onDelete={() => onDeleteAgent(worker.agentId)}
-                          onStop={onStopWorker ? () => onStopWorker(worker.agentId) : undefined}
-                          onResume={onResumeWorker ? () => onResumeWorker(worker.agentId) : undefined}
+                          onSelect={onSelect}
+                          onDelete={onDeleteAgent}
+                          onStop={onStopWorker}
+                          onResume={onResumeWorker}
                           highlightQuery={highlightQuery}
                         />
                       </li>
@@ -342,7 +343,7 @@ export function SessionRowItem({
                 {needsWorkerTruncation ? (
                   <button
                     type="button"
-                    onClick={onToggleWorkerListExpanded}
+                    onClick={() => onToggleWorkerListExpanded(sessionAgent.agentId)}
                     className={cn(
                       'relative z-10 mt-0.5 flex w-full items-center gap-1 rounded-md py-1 pl-12 pr-1.5 text-left text-[11px] text-muted-foreground/70 transition-colors',
                       'hover:text-muted-foreground hover:bg-sidebar-accent/30',
@@ -369,4 +370,4 @@ export function SessionRowItem({
       ) : null}
     </li>
   )
-}
+})

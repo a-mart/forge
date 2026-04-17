@@ -1067,6 +1067,10 @@ export function IndexPage() {
     messageInputRef.current?.setInput(prompt)
   }
 
+  const handleMobileSidebarClose = useCallback(() => {
+    setIsMobileSidebarOpen(false)
+  }, [setIsMobileSidebarOpen])
+
   const handleFocusChatInput = useCallback(() => {
     messageInputRef.current?.focus()
   }, [])
@@ -1085,15 +1089,13 @@ export function IndexPage() {
           profiles={state.profiles}
           statuses={state.statuses}
           unreadCounts={state.unreadCounts}
-          terminalScopeId={state.terminalSessionScopeId}
-          terminalCount={state.terminals.length}
           selectedAgentId={activeAgentId}
           isSettingsActive={activeView === 'settings'}
           isPlaywrightActive={activeView === 'playwright'}
           isStatsActive={activeView === 'stats'}
           showPlaywrightNav={showPlaywrightNav}
           isMobileOpen={isMobileSidebarOpen}
-          onMobileClose={() => setIsMobileSidebarOpen(false)}
+          onMobileClose={handleMobileSidebarClose}
           onAddManager={handleOpenCreateManagerDialog}
           onSelectAgent={handleSelectAgent}
           onDeleteAgent={handleDeleteAgent}

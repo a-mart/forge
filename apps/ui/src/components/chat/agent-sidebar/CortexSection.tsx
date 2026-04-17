@@ -304,21 +304,21 @@ export function CortexSection({
                         isSettingsActive={isSettingsActive}
                         isCollapsed={sessionCollapsed}
                         isWorkerListExpanded={expandedWorkerListSessionIds.has(session.sessionAgent.agentId)}
-                        onToggleCollapse={() => onToggleSessionCollapsed(session.sessionAgent.agentId)}
-                        onToggleWorkerListExpanded={() => onToggleWorkerListExpanded(session.sessionAgent.agentId)}
+                        onToggleCollapse={onToggleSessionCollapsed}
+                        onToggleWorkerListExpanded={onToggleWorkerListExpanded}
                         onSelect={onSelect}
                         onDeleteAgent={onDeleteAgent}
-                        onStop={onStopSession ? () => onStopSession(session.sessionAgent.agentId) : undefined}
-                        onResume={onResumeSession ? () => onResumeSession(session.sessionAgent.agentId) : undefined}
-                        onDelete={!session.isDefault && onDeleteSession ? () => onDeleteSession(session.sessionAgent.agentId) : undefined}
-                        onRename={onRequestRenameSession ? () => onRequestRenameSession(session.sessionAgent.agentId) : undefined}
-                        onFork={onForkSession ? () => onForkSession(session.sessionAgent.agentId) : undefined}
-                        onMarkUnread={onMarkUnread ? () => onMarkUnread(session.sessionAgent.agentId) : undefined}
+                        onStopSession={onStopSession}
+                        onResumeSession={onResumeSession}
+                        onDeleteSession={onDeleteSession}
+                        onRenameSession={onRequestRenameSession}
+                        onForkSession={onForkSession}
+                        onMarkUnread={onMarkUnread}
                         onStopWorker={onStopSession}
                         onResumeWorker={onResumeSession}
                         highlightQuery={highlightQuery}
                         isMutedSession={mutedAgents?.has(session.sessionAgent.agentId)}
-                        onToggleMute={onToggleMute ? () => onToggleMute(session.sessionAgent.agentId) : undefined}
+                        onToggleMute={onToggleMute}
                       />
                     )
                   })}

@@ -1,4 +1,5 @@
 import { Pause, Play, Trash2 } from 'lucide-react'
+import React from 'react'
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from '@/components/ui/context-menu'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { SpecialistBadge } from '../SpecialistBadge'
@@ -6,7 +7,7 @@ import { cn } from '@/lib/utils'
 import { HighlightedText } from './shared'
 import type { WorkerRowProps } from './types'
 
-export function WorkerRow({
+export const WorkerRow = React.memo(function WorkerRow({
   agent,
   liveStatus,
   isSelected,
@@ -42,7 +43,7 @@ export function WorkerRow({
               <TooltipTrigger asChild>
                 <button
                   type="button"
-                  onClick={onSelect}
+                  onClick={() => onSelect(agent.agentId)}
                   className="flex min-w-0 flex-1 items-center gap-1.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60"
                 >
                   <span
@@ -75,23 +76,23 @@ export function WorkerRow({
       </ContextMenuTrigger>
       <ContextMenuContent>
         {isRunning && onStop ? (
-          <ContextMenuItem onClick={onStop}>
+          <ContextMenuItem onClick={() => onStop(agent.agentId)}>
             <Pause className="mr-2 size-3.5" />
             Stop
           </ContextMenuItem>
         ) : null}
         {isStopped && onResume ? (
-          <ContextMenuItem onClick={onResume}>
+          <ContextMenuItem onClick={() => onResume(agent.agentId)}>
             <Play className="mr-2 size-3.5" />
             Resume
           </ContextMenuItem>
         ) : null}
         <ContextMenuSeparator />
-        <ContextMenuItem variant="destructive" onClick={onDelete}>
+        <ContextMenuItem variant="destructive" onClick={() => onDelete(agent.agentId)}>
           <Trash2 className="mr-2 size-3.5" />
           Delete
         </ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>
   )
-}
+})

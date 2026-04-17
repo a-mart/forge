@@ -11,6 +11,7 @@ import {
   Sparkles,
   Trash2,
 } from 'lucide-react'
+import React from 'react'
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from '@/components/ui/context-menu'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { isCortexProfile } from '@/lib/agent-hierarchy'
@@ -21,7 +22,7 @@ import { SessionRowItem } from './SessionRowItem'
 import { MAX_VISIBLE_SESSIONS } from './constants'
 import type { ProfileGroupProps } from './types'
 
-export function ProfileGroup({
+export const ProfileGroup = React.memo(function ProfileGroup({
   treeRow,
   statuses,
   unreadCounts,
@@ -296,18 +297,12 @@ export function ProfileGroup({
               hiddenCount = regularSessions.length - visibleRegularSessions.length
             }
 
-            // Determine if a session is eligible for project agent promotion
-            // Cortex sessions and cortex_review sessions are excluded
+            // Determine if sessions in this profile are eligible for project agent promotion
+            // Cortex sessions are excluded at the profile level
             const isCortex = sessions.some((s) => s.sessionAgent.archetypeId === 'cortex')
-            const canPromote = (s: SessionRow) =>
-              !isCortex &&
-              s.sessionAgent.sessionPurpose !== 'cortex_review' &&
-              s.sessionAgent.sessionPurpose !== 'agent_creator' &&
-              !s.sessionAgent.projectAgent
 
             const renderSession = (session: SessionRow) => {
               const sessionCollapsed = !collapsedSessionIds.has(session.sessionAgent.agentId)
-              const eligible = canPromote(session)
 
               return (
                 <SessionRowItem
@@ -319,37 +314,29 @@ export function ProfileGroup({
                   isSettingsActive={isSettingsActive}
                   isCollapsed={sessionCollapsed}
                   isWorkerListExpanded={expandedWorkerListSessionIds.has(session.sessionAgent.agentId)}
-                  onToggleCollapse={() => onToggleSessionCollapsed(session.sessionAgent.agentId)}
-                  onToggleWorkerListExpanded={() => onToggleWorkerListExpanded(session.sessionAgent.agentId)}
+                  onToggleCollapse={onToggleSessionCollapsed}
+                  onToggleWorkerListExpanded={onToggleWorkerListExpanded}
                   onSelect={onSelect}
                   onDeleteAgent={onDeleteAgent}
-                  onStop={onStopSession ? () => onStopSession(session.sessionAgent.agentId) : undefined}
-                  onResume={onResumeSession ? () => onResumeSession(session.sessionAgent.agentId) : undefined}
-                  onDelete={onDeleteSession ? () => onDeleteSession(session.sessionAgent.agentId) : undefined}
-                  onRename={onRequestRenameSession ? () => onRequestRenameSession(session.sessionAgent.agentId) : undefined}
-                  onFork={onForkSession && session.sessionAgent.sessionPurpose !== 'agent_creator' ? () => onForkSession(session.sessionAgent.agentId) : undefined}
-                  onMarkUnread={onMarkUnread ? () => onMarkUnread(session.sessionAgent.agentId) : undefined}
+                  onStopSession={onStopSession}
+                  onResumeSession={onResumeSession}
+                  onDeleteSession={onDeleteSession}
+                  onRenameSession={onRequestRenameSession}
+                  onForkSession={onForkSession}
+                  onMarkUnread={onMarkUnread}
                   onStopWorker={onStopSession}
                   onResumeWorker={onResumeSession}
                   highlightQuery={highlightQuery}
                   onPinSession={onPinSession}
-                  onPromoteToProjectAgent={eligible && onPromoteToProjectAgent ? () => onPromoteToProjectAgent(session.sessionAgent.agentId) : undefined}
-                  onOpenProjectAgentSettings={session.sessionAgent.projectAgent && onOpenProjectAgentSettings ? () => onOpenProjectAgentSettings(session.sessionAgent.agentId) : undefined}
-                  onDemoteProjectAgent={session.sessionAgent.projectAgent && onDemoteProjectAgent ? async () => {
-                    try {
-                      await onDemoteProjectAgent(session.sessionAgent.agentId)
-                    } catch (err) {
-                      console.error('Failed to demote project agent:', err)
-                    }
-                  } : undefined}
-                  onViewCreationHistory={
-                    session.sessionAgent.projectAgent?.creatorSessionId &&
-                    sessionAgentIds.has(session.sessionAgent.projectAgent.creatorSessionId)
-                      ? () => onSelect(session.sessionAgent.projectAgent!.creatorSessionId!)
-                      : undefined
+                  onPromoteToProjectAgent={!isCortex ? onPromoteToProjectAgent : undefined}
+                  onOpenProjectAgentSettings={onOpenProjectAgentSettings}
+                  onDemoteProjectAgent={onDemoteProjectAgent}
+                  canViewCreationHistory={
+                    Boolean(session.sessionAgent.projectAgent?.creatorSessionId) &&
+                    sessionAgentIds.has(session.sessionAgent.projectAgent!.creatorSessionId!)
                   }
                   isMutedSession={mutedAgents?.has(session.sessionAgent.agentId)}
-                  onToggleMute={onToggleMute ? () => onToggleMute(session.sessionAgent.agentId) : undefined}
+                  onToggleMute={onToggleMute}
                   getCreatorAttribution={getCreatorAttribution}
                 />
               )
@@ -404,4 +391,4 @@ export function ProfileGroup({
       ) : null}
     </>
   )
-}
+})
