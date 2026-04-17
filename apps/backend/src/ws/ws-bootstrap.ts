@@ -21,6 +21,12 @@ const BOOTSTRAP_HISTORY_BYTE_BUDGET = MAX_WS_EVENT_BYTES - 16 * 1024;
 export type BootstrapConversationHistory = ReturnType<SwarmManager["getConversationHistory"]>;
 type BootstrapConversationEntry = BootstrapConversationHistory[number];
 
+export interface SubscriptionBootstrapSendResult {
+  agentsSnapshotSent: boolean;
+  profilesSnapshotSent: boolean;
+  playwrightDiscoveryBootstrapSent: boolean;
+}
+
 export function normalizeSubscribeMessageCount(messageCount: number | undefined): number | undefined {
   if (messageCount === undefined || messageCount === null) {
     return undefined;
@@ -56,7 +62,10 @@ export function sendSubscriptionBootstrap(options: {
   send: (socket: WebSocket, event: ServerEvent) => number | null;
   resolveTerminalScopeAgentId: (subscribedAgentId: string) => string | undefined;
   resolveManagerContextAgentId: (subscribedAgentId: string) => string | undefined;
-}): void {
+  includeAgentsSnapshot?: boolean;
+  includeProfilesSnapshot?: boolean;
+  includePlaywrightDiscoveryBootstrap?: boolean;
+}): SubscriptionBootstrapSendResult {
   const {
     socket,
     targetAgentId,
@@ -71,6 +80,9 @@ export function sendSubscriptionBootstrap(options: {
     send,
     resolveTerminalScopeAgentId,
     resolveManagerContextAgentId,
+    includeAgentsSnapshot = true,
+    includeProfilesSnapshot = true,
+    includePlaywrightDiscoveryBootstrap = true,
   } = options;
 
   const buildMode = resolveBackendSidebarPerfBuildMode();
@@ -97,45 +109,68 @@ export function sendSubscriptionBootstrap(options: {
     subscribedAgentId: targetAgentId
   });
 
-  const agentsSnapshotBuildStartedAtMs = performance.now();
-  const agents = swarmManager.listBootstrapAgents();
-  const agentsSnapshotBuildMs = performance.now() - agentsSnapshotBuildStartedAtMs;
-  metricFields.agentsSnapshotBuildMs = agentsSnapshotBuildMs;
-  metricFields.agentsCount = agents.length;
-  metricFields.agentsReturned = agents.length;
-  perf.recordDuration(SIDEBAR_SNAPSHOT_BUILD_METRIC, agentsSnapshotBuildMs, {
-    labels: {
-      includeStreamingWorkers: false,
-      buildMode
-    },
-    fields: {
-      managerCountReturned: agents.filter((descriptor) => descriptor.role === "manager").length,
-      totalDescriptorCount: agents.length
-    }
-  });
-  sendMeasured("agentsSnapshot", {
-    type: "agents_snapshot",
-    agents
-  });
+  metricFields.snapshotSkipped = !includeAgentsSnapshot;
 
-  const profilesSnapshotBuildStartedAtMs = performance.now();
-  const profiles = swarmManager.listProfiles();
-  const profilesSnapshotBuildMs = performance.now() - profilesSnapshotBuildStartedAtMs;
-  metricFields.profilesSnapshotBuildMs = profilesSnapshotBuildMs;
-  metricFields.profilesReturned = profiles.length;
-  sendMeasured("profilesSnapshot", {
-    type: "profiles_snapshot",
-    profiles
-  });
+  let agentsSnapshotSent = false;
+  if (includeAgentsSnapshot) {
+    const agentsSnapshotBuildStartedAtMs = performance.now();
+    const agents = swarmManager.listBootstrapAgents();
+    const agentsSnapshotBuildMs = performance.now() - agentsSnapshotBuildStartedAtMs;
+    metricFields.agentsSnapshotBuildMs = agentsSnapshotBuildMs;
+    metricFields.agentsCount = agents.length;
+    metricFields.agentsReturned = agents.length;
+    perf.recordDuration(SIDEBAR_SNAPSHOT_BUILD_METRIC, agentsSnapshotBuildMs, {
+      labels: {
+        includeStreamingWorkers: false,
+        buildMode
+      },
+      fields: {
+        managerCountReturned: agents.filter((descriptor) => descriptor.role === "manager").length,
+        totalDescriptorCount: agents.length
+      }
+    });
+    agentsSnapshotSent =
+      sendMeasured("agentsSnapshot", {
+        type: "agents_snapshot",
+        agents
+      }) !== null;
+  } else {
+    metricFields.agentsSnapshotBuildMs = 0;
+    metricFields.agentsSnapshotSendMs = 0;
+    metricFields.agentsSnapshotPayloadBytes = 0;
+    metricFields.agentsCount = 0;
+    metricFields.agentsReturned = 0;
+  }
 
-  if (playwrightDiscovery) {
+  let profilesSnapshotSent = false;
+  if (includeProfilesSnapshot) {
+    const profilesSnapshotBuildStartedAtMs = performance.now();
+    const profiles = swarmManager.listProfiles();
+    const profilesSnapshotBuildMs = performance.now() - profilesSnapshotBuildStartedAtMs;
+    metricFields.profilesSnapshotBuildMs = profilesSnapshotBuildMs;
+    metricFields.profilesReturned = profiles.length;
+    profilesSnapshotSent =
+      sendMeasured("profilesSnapshot", {
+        type: "profiles_snapshot",
+        profiles
+      }) !== null;
+  } else {
+    metricFields.profilesSnapshotBuildMs = 0;
+    metricFields.profilesSnapshotSendMs = 0;
+    metricFields.profilesSnapshotPayloadBytes = 0;
+    metricFields.profilesReturned = 0;
+  }
+
+  let playwrightDiscoveryBootstrapSent = false;
+  if (playwrightDiscovery && includePlaywrightDiscoveryBootstrap) {
     const playwrightDiscoverySnapshotStartedAtMs = performance.now();
     const playwrightSnapshot = playwrightDiscovery.getSnapshot();
     metricFields.playwrightDiscoverySnapshotMs = performance.now() - playwrightDiscoverySnapshotStartedAtMs;
-    sendMeasured("playwrightDiscoverySnapshot", {
-      type: "playwright_discovery_snapshot",
-      snapshot: playwrightSnapshot
-    });
+    playwrightDiscoveryBootstrapSent =
+      sendMeasured("playwrightDiscoverySnapshot", {
+        type: "playwright_discovery_snapshot",
+        snapshot: playwrightSnapshot
+      }) !== null;
 
     const playwrightDiscoverySettingsStartedAtMs = performance.now();
     const playwrightSettings = playwrightDiscovery.getSettings();
@@ -144,6 +179,14 @@ export function sendSubscriptionBootstrap(options: {
       type: "playwright_discovery_settings_updated",
       settings: playwrightSettings
     });
+  } else if (playwrightDiscovery) {
+    metricFields.playwrightDiscoverySnapshotMs = 0;
+    metricFields.playwrightDiscoverySnapshotSendMs = 0;
+    metricFields.playwrightDiscoverySnapshotPayloadBytes = 0;
+    metricFields.playwrightDiscoverySettingsMs = 0;
+    metricFields.playwrightDiscoverySettingsSendMs = 0;
+    metricFields.playwrightDiscoverySettingsPayloadBytes = 0;
+    metricFields.playwrightDiscoveryPhaseNote = "skipped:already_delivered";
   } else {
     metricFields.playwrightDiscoveryPhaseNote = "excluded:no_service";
   }
@@ -232,6 +275,12 @@ export function sendSubscriptionBootstrap(options: {
     },
     fields: metricFields
   });
+
+  return {
+    agentsSnapshotSent,
+    profilesSnapshotSent,
+    playwrightDiscoveryBootstrapSent,
+  };
 }
 
 function selectBootstrapConversationHistory(options: {

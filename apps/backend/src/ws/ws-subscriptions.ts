@@ -15,8 +15,15 @@ import { WebSocket, WebSocketServer } from "ws";
 
 const BOOTSTRAP_SUBSCRIPTION_AGENT_ID = "__bootstrap_manager__";
 
+interface DeliveredSnapshotVersions {
+  agentsSnapshotVersion?: number;
+  profilesSnapshotVersion?: number;
+  playwrightDiscoveryVersion?: number;
+}
+
 export class WsSubscriptions {
   readonly subscriptions = new Map<WebSocket, string>();
+  private readonly deliveredSnapshotVersions = new Map<WebSocket, DeliveredSnapshotVersions>();
 
   private readonly swarmManager: SwarmManager;
   private readonly integrationRegistry: IntegrationRegistryService | null;
@@ -55,10 +62,12 @@ export class WsSubscriptions {
 
   clear(): void {
     this.subscriptions.clear();
+    this.deliveredSnapshotVersions.clear();
   }
 
   remove(socket: WebSocket): void {
     this.subscriptions.delete(socket);
+    this.deliveredSnapshotVersions.delete(socket);
   }
 
   getSubscribedAgentId(socket: WebSocket): string | undefined {
@@ -104,7 +113,10 @@ export class WsSubscriptions {
         }
       }
 
-      this.send(client, event);
+      const payloadBytes = this.send(client, event);
+      if (payloadBytes !== null) {
+        this.recordDeliveredSnapshotForEvent(client, event);
+      }
     }
   }
 
@@ -253,6 +265,7 @@ export class WsSubscriptions {
     }
 
     this.subscriptions.set(socket, fallbackAgentId);
+    this.resetDeliveredSnapshotVersions(socket);
     this.sendSubscriptionBootstrap(socket, fallbackAgentId, DEFAULT_SUBSCRIBE_MESSAGE_COUNT);
 
     return fallbackAgentId;
@@ -316,6 +329,7 @@ export class WsSubscriptions {
       }
 
       const fallbackAgentId = this.resolvePreferredManagerSubscriptionId();
+      this.resetDeliveredSnapshotVersions(socket);
       if (!fallbackAgentId) {
         this.subscriptions.set(socket, this.resolveDefaultSubscriptionAgentId());
         continue;
@@ -331,7 +345,12 @@ export class WsSubscriptions {
     targetAgentId: string,
     requestedMessageCount?: number,
   ): void {
-    sendSubscriptionBootstrap({
+    const currentAgentsSnapshotVersion = this.swarmManager.getAgentsSnapshotVersion();
+    const currentProfilesSnapshotVersion = this.swarmManager.getProfilesSnapshotVersion();
+    const currentPlaywrightDiscoveryVersion = this.playwrightDiscovery?.getSnapshot().sequence;
+    const deliveredVersions = this.deliveredSnapshotVersions.get(socket);
+
+    const result = sendSubscriptionBootstrap({
       socket,
       targetAgentId,
       requestedMessageCount,
@@ -345,7 +364,54 @@ export class WsSubscriptions {
       send: this.send,
       resolveTerminalScopeAgentId: (agentId) => this.resolveTerminalScopeAgentId(agentId),
       resolveManagerContextAgentId: (agentId) => this.resolveManagerContextAgentId(agentId),
+      includeAgentsSnapshot: deliveredVersions?.agentsSnapshotVersion !== currentAgentsSnapshotVersion,
+      includeProfilesSnapshot: deliveredVersions?.profilesSnapshotVersion !== currentProfilesSnapshotVersion,
+      includePlaywrightDiscoveryBootstrap:
+        currentPlaywrightDiscoveryVersion === undefined ||
+        deliveredVersions?.playwrightDiscoveryVersion !== currentPlaywrightDiscoveryVersion,
     });
+
+    if (result.agentsSnapshotSent) {
+      this.setDeliveredSnapshotVersion(socket, "agentsSnapshotVersion", currentAgentsSnapshotVersion);
+    }
+    if (result.profilesSnapshotSent) {
+      this.setDeliveredSnapshotVersion(socket, "profilesSnapshotVersion", currentProfilesSnapshotVersion);
+    }
+    if (result.playwrightDiscoveryBootstrapSent && currentPlaywrightDiscoveryVersion !== undefined) {
+      this.setDeliveredSnapshotVersion(socket, "playwrightDiscoveryVersion", currentPlaywrightDiscoveryVersion);
+    }
+  }
+
+  private resetDeliveredSnapshotVersions(socket: WebSocket): void {
+    this.deliveredSnapshotVersions.delete(socket);
+  }
+
+  private setDeliveredSnapshotVersion(
+    socket: WebSocket,
+    surface: keyof DeliveredSnapshotVersions,
+    version: number,
+  ): void {
+    const next = {
+      ...(this.deliveredSnapshotVersions.get(socket) ?? {}),
+      [surface]: version,
+    } satisfies DeliveredSnapshotVersions;
+    this.deliveredSnapshotVersions.set(socket, next);
+  }
+
+  private recordDeliveredSnapshotForEvent(socket: WebSocket, event: ServerEvent): void {
+    if (event.type === "agents_snapshot") {
+      this.setDeliveredSnapshotVersion(socket, "agentsSnapshotVersion", this.swarmManager.getAgentsSnapshotVersion());
+      return;
+    }
+
+    if (event.type === "profiles_snapshot") {
+      this.setDeliveredSnapshotVersion(socket, "profilesSnapshotVersion", this.swarmManager.getProfilesSnapshotVersion());
+      return;
+    }
+
+    if (event.type === "playwright_discovery_snapshot" || event.type === "playwright_discovery_updated") {
+      this.setDeliveredSnapshotVersion(socket, "playwrightDiscoveryVersion", event.snapshot.sequence);
+    }
   }
 
   private resolveProfileIdFromDescriptor(descriptor: { agentId: string; profileId?: string }): string {
