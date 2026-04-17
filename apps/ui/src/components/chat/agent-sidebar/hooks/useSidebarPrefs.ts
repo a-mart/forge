@@ -101,16 +101,23 @@ export function useSidebarPrefs(): UseSidebarPrefsReturn {
     }
   }, [collapsedProfileIds])
 
+  // Debounce localStorage persistence for search query (~300ms).
+  // Input state updates immediately; only the storage write is deferred.
+  // Each keystroke resets the timer via the cleanup return, so only the
+  // final value after the user stops typing gets persisted.
   useEffect(() => {
-    try {
-      if (searchQuery) {
-        localStorage.setItem(SEARCH_QUERY_KEY, searchQuery)
-      } else {
-        localStorage.removeItem(SEARCH_QUERY_KEY)
+    const timer = setTimeout(() => {
+      try {
+        if (searchQuery) {
+          localStorage.setItem(SEARCH_QUERY_KEY, searchQuery)
+        } else {
+          localStorage.removeItem(SEARCH_QUERY_KEY)
+        }
+      } catch {
+        // Ignore localStorage write failures (quota, etc.)
       }
-    } catch {
-      // Ignore localStorage write failures (quota, etc.)
-    }
+    }, 300)
+    return () => clearTimeout(timer)
   }, [searchQuery])
 
   useEffect(() => {

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useDeferredValue, useMemo, useState } from 'react'
 import { isCortexProfile, type ProfileTreeRow } from '@/lib/agent-hierarchy'
 import { MAX_VISIBLE_SESSIONS, SESSION_PAGE_SIZE } from '../constants'
 import { filterTreeRows, parseSearchQuery } from '../utils'
@@ -36,12 +36,16 @@ export function useSidebarTreeState({
   const [sessionListLimits, setSessionListLimits] = useState<Record<string, number>>({})
   const [expandedWorkerListSessionIds, setExpandedWorkerListSessionIds] = useState<Set<string>>(() => new Set())
 
-  const parsedSearch = useMemo(() => parseSearchQuery(searchQuery), [searchQuery])
+  // Defer the search query used for heavy filtering so the input stays responsive.
+  // React can batch the tree rebuild/filter into a lower-priority render.
+  const deferredSearchQuery = useDeferredValue(searchQuery)
+
+  const parsedSearch = useMemo(() => parseSearchQuery(deferredSearchQuery), [deferredSearchQuery])
   const isSearchActive = parsedSearch.term.length > 0
 
   const { filtered: filteredTreeRows, matchCount } = useMemo(
-    () => filterTreeRows(treeRows, searchQuery),
-    [treeRows, searchQuery],
+    () => filterTreeRows(treeRows, deferredSearchQuery),
+    [treeRows, deferredSearchQuery],
   )
 
   const sourceRows = useMemo(
