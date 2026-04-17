@@ -12,6 +12,7 @@ export const HISTORY_CACHE_STATES = [
   "hit",
   "absent",
   "cache_read_error",
+  "replay_error",
   "legacy_rebuild",
   "metadata_entries_mismatch",
   "cache_missing_persisted_prefix",
@@ -28,6 +29,7 @@ export const HISTORY_SOURCES = [
   "cache_rebuild",
   "full_parse",
   "size_guard_skip",
+  "replay_error",
 ] as const;
 
 export type HistorySource = (typeof HISTORY_SOURCES)[number];

@@ -11,6 +11,7 @@ import type {
   PlaywrightDiscoverySettings,
   PlaywrightDiscoverySnapshot,
 } from '@forge/protocol'
+import type { SidebarPerfRecorder } from '../stats/sidebar-perf-types.js'
 import type { SwarmConfig } from '../swarm/types.js'
 import { getScheduleFilePath } from '../scheduler/schedule-storage.js'
 import { PlaywrightLivePreviewService } from '../playwright/playwright-live-preview-service.js'
@@ -19,7 +20,18 @@ import { getSharedPlaywrightDashboardSettingsPath } from '../swarm/data-paths.js
 import { SwarmWebSocketServer } from '../ws/server.js'
 import { withPlatform } from './test-helpers.js'
 
+function createPerfStub(): SidebarPerfRecorder {
+  return {
+    recordDuration: () => {},
+    increment: () => {},
+    readSummary: () => ({ histograms: {}, counters: {} }),
+    readRecentSlowEvents: () => [],
+  }
+}
+
 class FakeSwarmManager extends EventEmitter {
+  private readonly perf = createPerfStub()
+
   constructor(
     private readonly config: SwarmConfig,
     private readonly agents: AgentDescriptor[],
@@ -52,8 +64,26 @@ class FakeSwarmManager extends EventEmitter {
     return []
   }
 
+  getConversationHistoryWithDiagnostics() {
+    return {
+      history: [],
+      diagnostics: {
+        cacheState: 'memory' as const,
+        historySource: 'memory' as const,
+        coldLoad: false,
+        fsReadOps: 0,
+        fsReadBytes: 0,
+        detail: null,
+      },
+    }
+  }
+
   getPendingChoiceIdsForSession(): string[] {
     return []
+  }
+
+  getSidebarPerfRecorder(): SidebarPerfRecorder {
+    return this.perf
   }
 }
 

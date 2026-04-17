@@ -76,7 +76,6 @@ export function sendSubscriptionBootstrap(options: {
   const buildMode = resolveBackendSidebarPerfBuildMode();
   const startedAtMs = performance.now();
   const metricFields: Record<string, unknown> = {
-    agentId: targetAgentId,
     targetAgentId,
   };
   let payloadBytesTotal = 0;
@@ -155,7 +154,7 @@ export function sendSubscriptionBootstrap(options: {
   metricFields.requestedMessageCount = historyMessageCount ?? null;
 
   const historyLoadStartedAtMs = performance.now();
-  const historyResult = getBootstrapConversationHistoryWithDiagnostics(swarmManager, targetAgentId);
+  const historyResult = swarmManager.getConversationHistoryWithDiagnostics(targetAgentId);
   const conversationHistory = selectBootstrapConversationHistory({
     targetAgentId,
     fullHistory: historyResult.history,
@@ -233,31 +232,6 @@ export function sendSubscriptionBootstrap(options: {
     },
     fields: metricFields
   });
-}
-
-function getBootstrapConversationHistoryWithDiagnostics(
-  swarmManager: SwarmManager,
-  targetAgentId: string,
-): ReturnType<SwarmManager["getConversationHistoryWithDiagnostics"]> {
-  const managerWithDiagnostics = swarmManager as SwarmManager & {
-    getConversationHistoryWithDiagnostics?: (agentId?: string) => ReturnType<SwarmManager["getConversationHistoryWithDiagnostics"]>;
-  };
-
-  if (typeof managerWithDiagnostics.getConversationHistoryWithDiagnostics === "function") {
-    return managerWithDiagnostics.getConversationHistoryWithDiagnostics(targetAgentId);
-  }
-
-  return {
-    history: swarmManager.getConversationHistory(targetAgentId),
-    diagnostics: {
-      cacheState: "memory",
-      historySource: "memory",
-      coldLoad: false,
-      fsReadOps: 0,
-      fsReadBytes: 0,
-      detail: "diagnostics_unavailable"
-    }
-  };
 }
 
 function selectBootstrapConversationHistory(options: {

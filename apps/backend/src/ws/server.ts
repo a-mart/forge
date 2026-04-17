@@ -333,6 +333,7 @@ export class SwarmWebSocketServer {
         ? (sessionAgentId) => this.terminalService?.listTerminals(sessionAgentId) ?? []
         : undefined,
       unreadTracker: this.unreadTracker,
+      perf: this.swarmManager.getSidebarPerfRecorder(),
     });
     wsHandlerRef = this.wsHandler;
 

@@ -6,8 +6,6 @@ import type {
 import type { IntegrationRegistryService } from "../integrations/registry.js";
 import type { MobilePushService } from "../mobile/mobile-push-service.js";
 import type { PlaywrightDiscoveryService } from "../playwright/playwright-discovery-service.js";
-import { backendSidebarPerfMetricManifest } from "../stats/sidebar-perf-metrics.js";
-import { createSidebarPerfRegistry } from "../stats/sidebar-perf-registry.js";
 import type { SidebarPerfRecorder } from "../stats/sidebar-perf-types.js";
 import { FeedbackService } from "../swarm/feedback-service.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
@@ -41,6 +39,7 @@ export class WsHandler {
     terminalService?: TerminalService | null;
     listTerminalsForSession?: (sessionAgentId: string) => TerminalDescriptor[];
     unreadTracker?: UnreadTracker;
+    perf: SidebarPerfRecorder;
   }) {
     this.swarmManager = options.swarmManager;
     this.allowNonManagerSubscriptions = options.allowNonManagerSubscriptions;
@@ -48,7 +47,7 @@ export class WsHandler {
 
     const feedbackService = new FeedbackService(this.swarmManager.getConfig().paths.dataDir);
     const terminalService = options.terminalService ?? null;
-    const perf = this.resolveSidebarPerfRecorder();
+    const perf = options.perf;
 
     this.subscriptionManager = new WsSubscriptions({
       swarmManager: this.swarmManager,
@@ -389,20 +388,6 @@ export class WsHandler {
     }
 
     console.log(prefix, details);
-  }
-
-  private resolveSidebarPerfRecorder(): SidebarPerfRecorder {
-    const managerWithPerf = this.swarmManager as SwarmManager & {
-      getSidebarPerfRecorder?: () => SidebarPerfRecorder;
-    };
-
-    if (typeof managerWithPerf.getSidebarPerfRecorder === "function") {
-      return managerWithPerf.getSidebarPerfRecorder();
-    }
-
-    return createSidebarPerfRegistry({
-      manifest: backendSidebarPerfMetricManifest,
-    });
   }
 
   private send(socket: WebSocket, event: ServerEvent): number | null {

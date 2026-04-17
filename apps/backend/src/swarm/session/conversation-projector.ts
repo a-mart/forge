@@ -722,6 +722,8 @@ export class ConversationProjector {
         });
       }
     } catch (error) {
+      diagnostics.cacheState = "replay_error";
+      diagnostics.historySource = "replay_error";
       diagnostics.detail = mergeDiagnosticDetails(
         diagnostics.detail,
         error instanceof Error ? error.message : String(error)
