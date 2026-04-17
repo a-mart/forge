@@ -828,6 +828,76 @@ describe('ConversationProjector session tree continuity', () => {
     expect(result.diagnostics.sessionSummaryBytesScanned).toBeGreaterThan(0)
   })
 
+  it('falls back when the canonical stat changes after the summary validation path runs', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-projector-summary-toctou-'))
+    const sessionFile = join(root, 'manager.jsonl')
+    const descriptor = makeDescriptor(sessionFile, root)
+
+    const seededSession = SessionManager.open(sessionFile)
+    seededSession.appendMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'seed message' }],
+    } as any)
+    seededSession.appendCustomEntry('swarm_conversation_entry', {
+      type: 'conversation_message',
+      agentId: descriptor.agentId,
+      role: 'assistant',
+      text: 'persisted before summary validation',
+      timestamp: '2025-12-31T23:58:00.000Z',
+      source: 'system',
+    })
+
+    const warmProjector = makeProjector({ descriptor })
+    warmProjector.getConversationHistory(descriptor.agentId)
+
+    const cacheFile = getConversationHistoryCacheFilePath(sessionFile)
+    const cacheText = await waitForFileText(cacheFile, {
+      matches: (text) => text.includes('"canonicalStat"') && text.includes('persisted before summary validation'),
+    })
+    const [metadataLine, ...entryLines] = cacheText.trim().split('\n')
+    const parsedMetadata = JSON.parse(metadataLine) as Record<string, unknown>
+    parsedMetadata.canonicalStat = { size: 0, mtimeMs: 0 }
+    await writeFile(cacheFile, `${[JSON.stringify(parsedMetadata), ...entryLines].join('\n')}\n`, 'utf8')
+
+    const projector = makeProjector({ descriptor }) as ConversationProjector & {
+      readPersistedConversationEntrySummary: (sessionPath: string) => unknown
+    }
+    const originalReadPersistedConversationEntrySummary = projector.readPersistedConversationEntrySummary.bind(projector)
+    let summaryReadCount = 0
+    projector.readPersistedConversationEntrySummary = (sessionPath) => {
+      const result = originalReadPersistedConversationEntrySummary(sessionPath)
+      summaryReadCount += 1
+      if (summaryReadCount === 1) {
+        SessionManager.open(sessionPath).appendCustomEntry('swarm_conversation_entry', {
+          type: 'conversation_message',
+          agentId: descriptor.agentId,
+          role: 'assistant',
+          text: 'persisted during summary validation',
+          timestamp: FIXED_NOW,
+          source: 'system',
+        })
+      }
+      return result
+    }
+
+    const result = projector.getConversationHistoryWithDiagnostics(descriptor.agentId)
+
+    expect(summaryReadCount).toBeGreaterThanOrEqual(2)
+    expect(
+      result.history.some(
+        (entry) => entry.type === 'conversation_message' && entry.text === 'persisted during summary validation',
+      ),
+    ).toBe(true)
+    expect(result.diagnostics.cacheState).not.toBe('hit')
+    expect(result.diagnostics).toMatchObject({
+      cacheState: 'cache_missing_persisted_prefix',
+      historySource: 'cache_rebuild',
+      coldLoad: true,
+      fastPathUsed: false,
+    })
+    expect(result.diagnostics.sessionSummaryBytesScanned).toBeGreaterThan(0)
+  })
+
   it('reports absent/full_parse on the first cold read and memory/memory on a warm reread', async () => {
     const root = await mkdtemp(join(tmpdir(), 'conversation-projector-diagnostics-memory-'))
     const sessionFile = join(root, 'manager.jsonl')
