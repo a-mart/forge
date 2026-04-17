@@ -120,7 +120,6 @@ const BOOTSTRAP_FLUSH_TIMEOUT_MS = 100
 interface BootstrapBuffer {
   targetAgentId: string
   pendingPatch: Partial<ManagerWsState>
-  receivedEvents: Set<string>
   timeoutId: ReturnType<typeof setTimeout> | undefined
 }
 
@@ -967,7 +966,11 @@ export class ManagerWsClient {
    * Start buffering bootstrap events for the given target agent.
    * The buffer accumulates state patches from coalescible events and flushes
    * them as a single updateState call when the terminal signal arrives
-   * (`unread_counts_snapshot`) or a safety timeout expires.
+   * (`unread_counts_snapshot`) or an inactivity timeout expires.
+   *
+   * The timeout is not started here — it begins on the first buffered event
+   * and resets on each subsequent one, so large-session history loads don't
+   * race against a fixed wall-clock deadline.
    */
   private startBootstrapBuffer(targetAgentId: string): void {
     this.clearBootstrapBuffer()
@@ -975,12 +978,7 @@ export class ManagerWsClient {
     this.bootstrapBuffer = {
       targetAgentId,
       pendingPatch: {},
-      receivedEvents: new Set(),
-      timeoutId: setTimeout(() => {
-        if (this.bootstrapBuffer?.targetAgentId === targetAgentId) {
-          this.flushBootstrapBuffer()
-        }
-      }, BOOTSTRAP_FLUSH_TIMEOUT_MS),
+      timeoutId: undefined,
     }
   }
 
@@ -1012,6 +1010,19 @@ export class ManagerWsClient {
     this.bootstrapBuffer = null
   }
 
+  /** Reset (or start) the inactivity timeout on the bootstrap buffer. */
+  private resetBootstrapTimeout(buffer: BootstrapBuffer): void {
+    if (buffer.timeoutId !== undefined) {
+      clearTimeout(buffer.timeoutId)
+    }
+    const targetAgentId = buffer.targetAgentId
+    buffer.timeoutId = setTimeout(() => {
+      if (this.bootstrapBuffer?.targetAgentId === targetAgentId) {
+        this.flushBootstrapBuffer()
+      }
+    }, BOOTSTRAP_FLUSH_TIMEOUT_MS)
+  }
+
   /**
    * Process a coalescible bootstrap event by running it through the normal
    * conversation event handler with a buffering updateState, then checking
@@ -1021,16 +1032,16 @@ export class ManagerWsClient {
     const buffer = this.bootstrapBuffer
     if (!buffer) return
 
-    // Guard: if the event targets a different agent than the bootstrap (e.g., a
-    // resubscribe happened), flush the stale buffer and process normally.
+    // Guard: stale events from a prior subscribe for a different agent
+    // (e.g., rapid A→B switch where A's bootstrap events arrive after B's
+    // subscribe). Drop them — forwarding would rewrite targetAgentId/history.
     if (!this.isBootstrapEventForTarget(event, buffer.targetAgentId)) {
-      this.flushBootstrapBuffer()
-      handleConversationEvent(event, {
-        state: this.state,
-        updateState: (patch) => this.updateState(patch),
-      })
       return
     }
+
+    // Reset the inactivity timeout on every buffered event so that slow
+    // history loads (large sessions) don't race against a fixed deadline.
+    this.resetBootstrapTimeout(buffer)
 
     // Build effective state that includes already-buffered patches so handlers
     // see consistent state (e.g., conversation_history sees targetAgentId from ready)
@@ -1042,8 +1053,6 @@ export class ManagerWsClient {
         buffer.pendingPatch = { ...buffer.pendingPatch, ...patch }
       },
     })
-
-    buffer.receivedEvents.add(event.type)
 
     // unread_counts_snapshot is the terminal bootstrap event — flush
     if (event.type === 'unread_counts_snapshot') {

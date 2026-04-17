@@ -2221,5 +2221,105 @@ describe('ManagerWsClient', () => {
       unsub()
       client.destroy()
     })
+
+    it('drops stale bootstrap events from a prior session after rapid A→B switch', () => {
+      const { client, socket } = setupConnectedClient()
+
+      // Switch to session-b
+      client.subscribeToAgent('session-b')
+
+      let notificationCount = 0
+      const unsub = client.subscribe(() => { notificationCount++ })
+      notificationCount = 0
+
+      // Late stale events from session-a's bootstrap arrive after subscribe('session-b')
+      emitServerEvent(socket, { type: 'ready', serverTime: new Date().toISOString(), subscribedAgentId: 'session-a' })
+      emitServerEvent(socket, {
+        type: 'conversation_history',
+        agentId: 'session-a',
+        messages: [
+          { type: 'conversation_message', agentId: 'session-a', role: 'user', text: 'stale message from A', timestamp: new Date().toISOString(), source: 'user_input' },
+        ],
+      })
+      emitServerEvent(socket, { type: 'pending_choices_snapshot', agentId: 'session-a', choiceIds: ['stale-choice'] })
+
+      // Stale events must be silently dropped — no state updates
+      expect(notificationCount).toBe(0)
+
+      // State must still reflect session-b, not reverted to session-a.
+      // subscribedAgentId retains the prior value (session-a from initial bootstrap)
+      // because the ready event for session-b hasn't arrived yet — the key assertion
+      // is that stale events did NOT overwrite targetAgentId or load A's messages.
+      expect(client.getState().targetAgentId).toBe('session-b')
+      expect(client.getState().messages).toHaveLength(0) // no stale A messages
+      expect(client.getState().pendingChoiceIds.size).toBe(0)
+
+      // Now the real session-b bootstrap arrives and works normally
+      emitServerEvent(socket, { type: 'ready', serverTime: new Date().toISOString(), subscribedAgentId: 'session-b' })
+      emitServerEvent(socket, {
+        type: 'conversation_history',
+        agentId: 'session-b',
+        messages: [
+          { type: 'conversation_message', agentId: 'session-b', role: 'user', text: 'correct B message', timestamp: new Date().toISOString(), source: 'user_input' },
+        ],
+      })
+      emitServerEvent(socket, { type: 'pending_choices_snapshot', agentId: 'session-b', choiceIds: [] })
+      emitServerEvent(socket, { type: 'unread_counts_snapshot', counts: {} })
+
+      // Single coalesced update for session-b
+      expect(notificationCount).toBe(1)
+      expect(client.getState().subscribedAgentId).toBe('session-b')
+      expect(client.getState().messages).toHaveLength(1)
+      const firstMsg = client.getState().messages[0]
+      expect(firstMsg.type === 'conversation_message' ? firstMsg.text : undefined).toBe('correct B message')
+
+      unsub()
+      client.destroy()
+    })
+
+    it('resets inactivity timeout on each buffered event so slow history does not cause early flush', () => {
+      const { client, socket } = setupConnectedClient()
+
+      client.subscribeToAgent('session-b')
+
+      let notificationCount = 0
+      const unsub = client.subscribe(() => { notificationCount++ })
+      notificationCount = 0
+
+      // First event arrives — starts the inactivity timeout
+      emitServerEvent(socket, { type: 'ready', serverTime: new Date().toISOString(), subscribedAgentId: 'session-b' })
+      expect(notificationCount).toBe(0)
+
+      // Advance 80ms — close to the 100ms timeout but not past it
+      vi.advanceTimersByTime(80)
+      expect(notificationCount).toBe(0)
+
+      // Second event arrives — resets the inactivity timeout
+      emitServerEvent(socket, {
+        type: 'conversation_history',
+        agentId: 'session-b',
+        messages: [
+          { type: 'conversation_message', agentId: 'session-b', role: 'user', text: 'slow history', timestamp: new Date().toISOString(), source: 'user_input' },
+        ],
+      })
+      expect(notificationCount).toBe(0)
+
+      // Advance another 80ms — would be 160ms total from first event,
+      // past the original timeout, but the reset means we're only 80ms
+      // from the last event
+      vi.advanceTimersByTime(80)
+      expect(notificationCount).toBe(0) // still buffered
+
+      // Terminal signal arrives — flushes
+      emitServerEvent(socket, { type: 'pending_choices_snapshot', agentId: 'session-b', choiceIds: [] })
+      emitServerEvent(socket, { type: 'unread_counts_snapshot', counts: {} })
+
+      expect(notificationCount).toBe(1)
+      expect(client.getState().subscribedAgentId).toBe('session-b')
+      expect(client.getState().messages).toHaveLength(1)
+
+      unsub()
+      client.destroy()
+    })
   })
 })
