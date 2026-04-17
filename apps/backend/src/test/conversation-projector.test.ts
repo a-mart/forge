@@ -1,10 +1,11 @@
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { mkdtemp, open, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { SessionManager } from '@mariozechner/pi-coding-agent'
 import { ConversationProjector } from '../swarm/conversation-projector.js'
 import { getConversationHistoryCacheFilePath } from '../swarm/conversation-history-cache.js'
+import { MAX_SESSION_FILE_BYTES_FOR_OPEN } from '../swarm/session-file-guard.js'
 import type { SwarmAgentRuntime } from '../swarm/runtime-contracts.js'
 import type { AgentDescriptor, ConversationEntryEvent } from '../swarm/types.js'
 
@@ -119,6 +120,11 @@ async function waitForFileText(
   }
 
   throw new Error(`Timed out waiting for file ${path}`)
+}
+
+async function writeCacheLines(path: string, lines: unknown[]): Promise<void> {
+  const text = lines.map((line) => JSON.stringify(line)).join('\n')
+  await writeFile(path, text.length > 0 ? `${text}\n` : '', 'utf8')
 }
 
 describe('ConversationProjector session tree continuity', () => {
@@ -556,11 +562,17 @@ describe('ConversationProjector session tree continuity', () => {
     )
 
     const projector = makeProjector({ descriptor })
-    const history = projector.getConversationHistory(descriptor.agentId)
+    const result = projector.getConversationHistoryWithDiagnostics(descriptor.agentId)
+    const history = result.history
 
     expect(
       history.some((entry) => entry.type === 'conversation_message' && entry.text === 'persisted prefix message'),
     ).toBe(true)
+    expect(result.diagnostics).toMatchObject({
+      cacheState: 'cache_missing_persisted_prefix',
+      historySource: 'cache_rebuild',
+      coldLoad: true,
+    })
 
     const rewrittenCacheText = await waitForFileText(cacheFile, {
       matches: (text) => text.includes('persisted prefix message'),
@@ -569,6 +581,294 @@ describe('ConversationProjector session tree continuity', () => {
     expect(rewrittenCacheText).toContain('"cachedPersistedEntryCount":3')
     expect(rewrittenCacheText).toContain(`"firstPersistedEntryKey":"conversation_message:${firstEntryId}"`)
     expect(rewrittenCacheText).toContain(`"lastPersistedEntryKey":"conversation_message:${lastEntryId}"`)
+  })
+
+  it('reports absent/full_parse on the first cold read and memory/memory on a warm reread', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-projector-diagnostics-memory-'))
+    const sessionFile = join(root, 'manager.jsonl')
+    const descriptor = makeDescriptor(sessionFile, root)
+
+    const seededSession = SessionManager.open(sessionFile)
+    seededSession.appendMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'seed message' }],
+    } as any)
+    seededSession.appendCustomEntry('swarm_conversation_entry', {
+      type: 'conversation_message',
+      agentId: descriptor.agentId,
+      role: 'assistant',
+      text: 'persisted history',
+      timestamp: FIXED_NOW,
+      source: 'system',
+    })
+
+    const projector = makeProjector({ descriptor })
+    const cold = projector.getConversationHistoryWithDiagnostics(descriptor.agentId)
+    const warm = projector.getConversationHistoryWithDiagnostics(descriptor.agentId)
+
+    expect(cold.history.some((entry) => entry.type === 'conversation_message' && entry.text === 'persisted history')).toBe(
+      true,
+    )
+    expect(cold.diagnostics).toMatchObject({
+      cacheState: 'absent',
+      historySource: 'full_parse',
+      coldLoad: true,
+    })
+    expect(warm.diagnostics).toMatchObject({
+      cacheState: 'memory',
+      historySource: 'memory',
+      coldLoad: false,
+      fsReadOps: 0,
+      fsReadBytes: 0,
+    })
+  })
+
+  it('rebuilds from JSONL when the cache payload is unreadable', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-projector-cache-read-error-'))
+    const sessionFile = join(root, 'manager.jsonl')
+    const descriptor = makeDescriptor(sessionFile, root)
+
+    const seededSession = SessionManager.open(sessionFile)
+    seededSession.appendMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'seed message' }],
+    } as any)
+    seededSession.appendCustomEntry('swarm_conversation_entry', {
+      type: 'conversation_message',
+      agentId: descriptor.agentId,
+      role: 'assistant',
+      text: 'persisted history',
+      timestamp: FIXED_NOW,
+      source: 'system',
+    })
+
+    const cacheFile = getConversationHistoryCacheFilePath(sessionFile)
+    await writeFile(cacheFile, 'this is not valid cache json\n', 'utf8')
+
+    const projector = makeProjector({ descriptor })
+    const result = projector.getConversationHistoryWithDiagnostics(descriptor.agentId)
+
+    expect(result.history.some((entry) => entry.type === 'conversation_message' && entry.text === 'persisted history')).toBe(
+      true,
+    )
+    expect(result.diagnostics).toMatchObject({
+      cacheState: 'cache_read_error',
+      historySource: 'cache_rebuild',
+      coldLoad: true,
+      detail: 'invalid_cache_payload',
+    })
+  })
+
+  it('rejects caches whose metadata does not match the cached entries', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-projector-metadata-mismatch-'))
+    const sessionFile = join(root, 'manager.jsonl')
+    const descriptor = makeDescriptor(sessionFile, root)
+
+    const seededSession = SessionManager.open(sessionFile)
+    seededSession.appendMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'seed message' }],
+    } as any)
+    const entryId = seededSession.appendCustomEntry('swarm_conversation_entry', {
+      type: 'conversation_message',
+      agentId: descriptor.agentId,
+      role: 'assistant',
+      text: 'persisted history',
+      timestamp: FIXED_NOW,
+      source: 'system',
+    })
+
+    const cacheFile = getConversationHistoryCacheFilePath(sessionFile)
+    await writeCacheLines(cacheFile, [
+      {
+        type: 'swarm_conversation_cache_meta',
+        version: 1,
+        persistedEntryCount: 1,
+        cachedPersistedEntryCount: 2,
+        firstPersistedEntryKey: `conversation_message:${entryId}`,
+        lastPersistedEntryKey: `conversation_message:${entryId}`,
+      },
+      {
+        type: 'conversation_message',
+        agentId: descriptor.agentId,
+        role: 'assistant',
+        text: 'persisted history',
+        timestamp: FIXED_NOW,
+        source: 'system',
+        id: entryId,
+      },
+    ])
+
+    const projector = makeProjector({ descriptor })
+    const result = projector.getConversationHistoryWithDiagnostics(descriptor.agentId)
+
+    expect(result.diagnostics).toMatchObject({
+      cacheState: 'metadata_entries_mismatch',
+      historySource: 'cache_rebuild',
+      coldLoad: true,
+    })
+  })
+
+  it('rejects caches when the persisted entry count no longer matches the session JSONL', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-projector-persisted-count-mismatch-'))
+    const sessionFile = join(root, 'manager.jsonl')
+    const descriptor = makeDescriptor(sessionFile, root)
+
+    const seededSession = SessionManager.open(sessionFile)
+    seededSession.appendMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'seed message' }],
+    } as any)
+    const firstEntryId = seededSession.appendCustomEntry('swarm_conversation_entry', {
+      type: 'conversation_message',
+      agentId: descriptor.agentId,
+      role: 'assistant',
+      text: 'persisted first message',
+      timestamp: '2025-12-31T23:58:00.000Z',
+      source: 'system',
+    })
+    const lastEntryId = seededSession.appendCustomEntry('swarm_conversation_entry', {
+      type: 'conversation_message',
+      agentId: descriptor.agentId,
+      role: 'assistant',
+      text: 'persisted latest message',
+      timestamp: FIXED_NOW,
+      source: 'system',
+    })
+
+    const cacheFile = getConversationHistoryCacheFilePath(sessionFile)
+    await writeCacheLines(cacheFile, [
+      {
+        type: 'swarm_conversation_cache_meta',
+        version: 1,
+        persistedEntryCount: 1,
+        cachedPersistedEntryCount: 2,
+        firstPersistedEntryKey: `conversation_message:${firstEntryId}`,
+        lastPersistedEntryKey: `conversation_message:${lastEntryId}`,
+      },
+      {
+        type: 'conversation_message',
+        agentId: descriptor.agentId,
+        role: 'assistant',
+        text: 'persisted first message',
+        timestamp: '2025-12-31T23:58:00.000Z',
+        source: 'system',
+        id: firstEntryId,
+      },
+      {
+        type: 'conversation_message',
+        agentId: descriptor.agentId,
+        role: 'assistant',
+        text: 'persisted latest message',
+        timestamp: FIXED_NOW,
+        source: 'system',
+        id: lastEntryId,
+      },
+    ])
+
+    const projector = makeProjector({ descriptor })
+    const result = projector.getConversationHistoryWithDiagnostics(descriptor.agentId)
+
+    expect(result.diagnostics).toMatchObject({
+      cacheState: 'persisted_entry_count_mismatch',
+      historySource: 'cache_rebuild',
+      coldLoad: true,
+    })
+    expect(result.diagnostics.detail).toContain('expected=1,actual=2')
+  })
+
+  it('rejects caches when the cached tail entry no longer matches the session JSONL', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-projector-last-entry-mismatch-'))
+    const sessionFile = join(root, 'manager.jsonl')
+    const descriptor = makeDescriptor(sessionFile, root)
+
+    const seededSession = SessionManager.open(sessionFile)
+    seededSession.appendMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'seed message' }],
+    } as any)
+    const firstEntryId = seededSession.appendCustomEntry('swarm_conversation_entry', {
+      type: 'conversation_message',
+      agentId: descriptor.agentId,
+      role: 'assistant',
+      text: 'persisted first message',
+      timestamp: '2025-12-31T23:58:00.000Z',
+      source: 'system',
+    })
+    seededSession.appendCustomEntry('swarm_conversation_entry', {
+      type: 'conversation_message',
+      agentId: descriptor.agentId,
+      role: 'assistant',
+      text: 'persisted actual latest message',
+      timestamp: FIXED_NOW,
+      source: 'system',
+    })
+
+    const staleTailEntryId = 'stale-tail-id'
+    const cacheFile = getConversationHistoryCacheFilePath(sessionFile)
+    await writeCacheLines(cacheFile, [
+      {
+        type: 'swarm_conversation_cache_meta',
+        version: 1,
+        persistedEntryCount: 2,
+        cachedPersistedEntryCount: 2,
+        firstPersistedEntryKey: `conversation_message:${firstEntryId}`,
+        lastPersistedEntryKey: `conversation_message:${staleTailEntryId}`,
+      },
+      {
+        type: 'conversation_message',
+        agentId: descriptor.agentId,
+        role: 'assistant',
+        text: 'persisted first message',
+        timestamp: '2025-12-31T23:58:00.000Z',
+        source: 'system',
+        id: firstEntryId,
+      },
+      {
+        type: 'conversation_message',
+        agentId: descriptor.agentId,
+        role: 'assistant',
+        text: 'stale cached latest message',
+        timestamp: FIXED_NOW,
+        source: 'system',
+        id: staleTailEntryId,
+      },
+    ])
+
+    const projector = makeProjector({ descriptor })
+    const result = projector.getConversationHistoryWithDiagnostics(descriptor.agentId)
+
+    expect(result.history.some((entry) => entry.type === 'conversation_message' && entry.text === 'persisted actual latest message')).toBe(true)
+    expect(result.history.some((entry) => entry.type === 'conversation_message' && entry.text === 'stale cached latest message')).toBe(false)
+    expect(result.diagnostics).toMatchObject({
+      cacheState: 'last_persisted_entry_mismatch',
+      historySource: 'cache_rebuild',
+      coldLoad: true,
+    })
+  })
+
+  it('reports size_guard_skip when the session JSONL exceeds the size guard', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-projector-size-guard-skip-'))
+    const sessionFile = join(root, 'manager.jsonl')
+    const descriptor = makeDescriptor(sessionFile, root)
+
+    const fileHandle = await open(sessionFile, 'w')
+    try {
+      await fileHandle.truncate(MAX_SESSION_FILE_BYTES_FOR_OPEN + 1)
+    } finally {
+      await fileHandle.close()
+    }
+
+    const projector = makeProjector({ descriptor })
+    const result = projector.getConversationHistoryWithDiagnostics(descriptor.agentId)
+
+    expect(result.history).toEqual([])
+    expect(result.diagnostics).toMatchObject({
+      cacheState: 'size_guard_skip',
+      historySource: 'size_guard_skip',
+      coldLoad: true,
+    })
+    expect(result.diagnostics.detail).toContain('session_size_guard_skip')
   })
 
   it('accepts a complete trimmed cache window for long persisted transcripts', async () => {
@@ -616,7 +916,8 @@ describe('ConversationProjector session tree continuity', () => {
         debugMessages.push(message)
       },
     })
-    const reloadedHistory = reloadedProjector.getConversationHistory(descriptor.agentId)
+    const reloaded = reloadedProjector.getConversationHistoryWithDiagnostics(descriptor.agentId)
+    const reloadedHistory = reloaded.history
 
     expect(reloadedHistory).toHaveLength(2000)
     expect(
@@ -627,6 +928,11 @@ describe('ConversationProjector session tree continuity', () => {
     ).toBe(true)
     expect(debugMessages).toContain('history:load:cache')
     expect(debugMessages).not.toContain('history:load:ready')
+    expect(reloaded.diagnostics).toMatchObject({
+      cacheState: 'hit',
+      historySource: 'cache_hit',
+      coldLoad: true,
+    })
   })
 
   it('falls back to JSONL replay when the cache is missing the latest persisted message', async () => {
@@ -674,14 +980,19 @@ describe('ConversationProjector session tree continuity', () => {
     )
 
     const projector = makeProjector({ descriptor })
-    const history = projector.getConversationHistory(descriptor.agentId)
+    const result = projector.getConversationHistoryWithDiagnostics(descriptor.agentId)
 
     expect(
-      history.some(
+      result.history.some(
         (entry) =>
           entry.type === 'conversation_message' && entry.text === 'latest persisted message after cache went stale',
       ),
     ).toBe(true)
+    expect(result.diagnostics).toMatchObject({
+      cacheState: 'legacy_rebuild',
+      historySource: 'cache_rebuild',
+      coldLoad: true,
+    })
   })
 
   it('ignores stale cache entries after the session JSONL has been cleared', async () => {

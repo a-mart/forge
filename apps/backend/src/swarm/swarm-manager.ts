@@ -58,6 +58,14 @@ import {
   type PinRegistry
 } from "./message-pins.js";
 import { ensureCanonicalAuthFilePath } from "./auth-storage-paths.js";
+import { backendSidebarPerfMetricManifest } from "../stats/sidebar-perf-metrics.js";
+import { createSidebarPerfRegistry } from "../stats/sidebar-perf-registry.js";
+import type {
+  SidebarConversationHistoryDiagnostics,
+  SidebarPerfRecorder,
+  SidebarPerfSlowEvent,
+  SidebarPerfSummary
+} from "../stats/sidebar-perf-types.js";
 import type { CredentialPoolService } from "./credential-pool.js";
 import { migrateDataDirectory } from "./data-migration.js";
 import { cleanupOldSharedConfigPaths, migrateSharedConfigLayout } from "./shared-config-migration.js";
@@ -953,6 +961,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly workerHealthService: SwarmWorkerHealthService;
   private readonly specialistFallbackManager: SwarmSpecialistFallbackManager;
   private readonly modelCapacityBlocks = new Map<string, ModelCapacityBlock>();
+  private readonly sidebarPerfRecorder: SidebarPerfRecorder;
   private readonly conversationProjector: ConversationProjector;
   private readonly persistenceService: PersistenceService;
   private readonly forgeExtensionHost: ForgeExtensionHost;
@@ -998,6 +1007,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     this.forgeExtensionHost = new ForgeExtensionHost({
       dataDir: this.config.paths.dataDir,
       now: this.now
+    });
+    this.sidebarPerfRecorder = createSidebarPerfRegistry({
+      manifest: backendSidebarPerfMetricManifest
     });
     this.runtimeController = new SwarmRuntimeController(this as unknown as SwarmRuntimeControllerHost);
     this.runtimes = this.runtimeController.runtimes;
@@ -1074,6 +1086,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         this.emit(eventName, payload);
       },
       logDebug: (message, details) => this.logDebug(message, details),
+      perf: this.sidebarPerfRecorder,
       getPinnedMessageIds: (agentId) => this.pinnedMessageIdsBySessionAgentId.get(agentId)
     });
     this.skillMetadataService = new SkillMetadataService({
@@ -1623,6 +1636,40 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     return this.conversationProjector.getConversationHistory(resolvedAgentId);
+  }
+
+  getConversationHistoryWithDiagnostics(agentId?: string): {
+    history: ConversationEntryEvent[];
+    diagnostics: SidebarConversationHistoryDiagnostics;
+  } {
+    const resolvedAgentId = normalizeOptionalAgentId(agentId) ?? this.resolvePreferredManagerId();
+    if (!resolvedAgentId) {
+      return {
+        history: [],
+        diagnostics: {
+          cacheState: "memory",
+          historySource: "memory",
+          coldLoad: false,
+          fsReadOps: 0,
+          fsReadBytes: 0,
+          detail: "missing_agent"
+        }
+      };
+    }
+
+    return this.conversationProjector.getConversationHistoryWithDiagnostics(resolvedAgentId);
+  }
+
+  getSidebarPerfRecorder(): SidebarPerfRecorder {
+    return this.sidebarPerfRecorder;
+  }
+
+  readSidebarPerfSummary(): SidebarPerfSummary {
+    return this.sidebarPerfRecorder.readSummary();
+  }
+
+  readSidebarPerfSlowEvents(): SidebarPerfSlowEvent[] {
+    return this.sidebarPerfRecorder.readRecentSlowEvents();
   }
 
   private async preloadPinnedMessageIndexes(): Promise<void> {

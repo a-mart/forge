@@ -6,6 +6,7 @@ import type {
 import type { IntegrationRegistryService } from "../integrations/registry.js";
 import type { MobilePushService } from "../mobile/mobile-push-service.js";
 import type { PlaywrightDiscoveryService } from "../playwright/playwright-discovery-service.js";
+import type { SidebarPerfRecorder } from "../stats/sidebar-perf-types.js";
 import { FeedbackService } from "../swarm/feedback-service.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import type { UnreadTracker } from "../swarm/unread-tracker.js";
@@ -38,6 +39,7 @@ export class WsHandler {
     terminalService?: TerminalService | null;
     listTerminalsForSession?: (sessionAgentId: string) => TerminalDescriptor[];
     unreadTracker?: UnreadTracker;
+    perf: SidebarPerfRecorder;
   }) {
     this.swarmManager = options.swarmManager;
     this.allowNonManagerSubscriptions = options.allowNonManagerSubscriptions;
@@ -45,6 +47,7 @@ export class WsHandler {
 
     const feedbackService = new FeedbackService(this.swarmManager.getConfig().paths.dataDir);
     const terminalService = options.terminalService ?? null;
+    const perf = options.perf;
 
     this.subscriptionManager = new WsSubscriptions({
       swarmManager: this.swarmManager,
@@ -54,6 +57,7 @@ export class WsHandler {
       terminalService,
       listTerminalsForSession: options.listTerminalsForSession,
       unreadTracker: this.unreadTracker,
+      perf,
       send: (socket, event) => this.send(socket, event),
       getServer: () => this.wss,
     });
@@ -386,8 +390,8 @@ export class WsHandler {
     console.log(prefix, details);
   }
 
-  private send(socket: WebSocket, event: ServerEvent): void {
-    sendWsEvent({
+  private send(socket: WebSocket, event: ServerEvent): number | null {
+    return sendWsEvent({
       socket,
       event,
       onDropSocket: (targetSocket) => this.dropSocket(targetSocket),

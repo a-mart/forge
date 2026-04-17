@@ -11,6 +11,7 @@ import { ChevronDown } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { ArtifactReference } from '@/lib/artifacts'
 import { formatElapsed } from '@/lib/format-utils'
+import { getSidebarPerfRegistry } from '@/lib/perf/sidebar-perf-debug'
 import { cn } from '@/lib/utils'
 import type { ChoiceAnswer, ConversationEntry, ProjectAgentInfo } from '@forge/protocol'
 import { AgentMessageRow } from './message-list/AgentMessageRow'
@@ -312,6 +313,59 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
   const [showScrollButton, setShowScrollButton] = useState(false)
 
   const displayEntries = useMemo(() => buildDisplayEntries(messages), [messages])
+
+  // Sidebar perf: attempt to complete `session_switch.click_to_first_transcript_paint_ms`
+  // after every commit. The registry refuses completion unless:
+  //   - the active session-switch token targets `activeAgentId`, AND
+  //   - the matching `conversation_history` has already been processed.
+  // This is the explicit fix for the v1 review's reset-empty-state false
+  // completion. We schedule the sample inside one rAF so it lands after paint.
+  // Plan section 4 — `MessageList.tsx` post-commit effect.
+  useEffect(() => {
+    if (!activeAgentId) {
+      return
+    }
+
+    // Plan: only attempt completion when the rendered output is the real
+    // post-bootstrap paint, not an in-flight loading state.
+    const hasContent = displayEntries.length > 0
+    const isResolvedEmpty = displayEntries.length === 0 && !isLoading
+    if (!hasContent && !isResolvedEmpty) {
+      return
+    }
+
+    let rafId = 0
+    const win = typeof window !== 'undefined' ? window : null
+    const schedule =
+      win && typeof win.requestAnimationFrame === 'function'
+        ? win.requestAnimationFrame.bind(win)
+        : null
+    const cancel =
+      win && typeof win.cancelAnimationFrame === 'function'
+        ? win.cancelAnimationFrame.bind(win)
+        : null
+
+    const finalize = () => {
+      const perfRegistry = getSidebarPerfRegistry()
+      const interactionNonce = perfRegistry.getActiveSessionSwitch()?.token ?? 0
+      perfRegistry.maybeCompleteFirstPaint(activeAgentId, interactionNonce, {
+        displayEntryCount: displayEntries.length,
+        emptySession: isResolvedEmpty,
+      })
+    }
+
+    if (schedule) {
+      rafId = schedule(finalize)
+      return () => {
+        if (rafId && cancel) {
+          cancel(rafId)
+        }
+      }
+    }
+
+    finalize()
+    return undefined
+  }, [activeAgentId, displayEntries, isLoading])
 
   const handleChoiceSubmit = useCallback(
     (agentId: string, choiceId: string, answers: ChoiceAnswer[]) => {

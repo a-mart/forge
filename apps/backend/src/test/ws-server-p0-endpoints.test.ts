@@ -4,6 +4,7 @@ import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { SidebarPerfRecorder } from '../stats/sidebar-perf-types.js'
 import { SHARED_INTEGRATION_MANAGER_ID } from '../integrations/shared-config.js'
 import { getScheduleFilePath } from '../scheduler/schedule-storage.js'
 import {
@@ -35,6 +36,15 @@ vi.mock('@mariozechner/pi-ai/oauth', () => ({
 
 import { SwarmWebSocketServer } from '../ws/server.js'
 
+function createPerfStub(): SidebarPerfRecorder {
+  return {
+    recordDuration: () => {},
+    increment: () => {},
+    readSummary: () => ({ histograms: {}, counters: {} }),
+    readRecentSlowEvents: () => [],
+  }
+}
+
 interface SseEvent {
   event: string
   data: unknown
@@ -45,6 +55,7 @@ class FakeSwarmManager extends EventEmitter {
   private readonly agents: AgentDescriptor[]
   private readonly runtimeExtensionSnapshots: unknown[]
   private readonly forgeSettingsSnapshot: Record<string, unknown>
+  private readonly perf = createPerfStub()
   readonly pooledCredentialAdds: Array<{ provider: string; credential: unknown; identity?: unknown }> = []
 
   constructor(
@@ -92,8 +103,26 @@ class FakeSwarmManager extends EventEmitter {
     return JSON.parse(JSON.stringify(this.forgeSettingsSnapshot)) as Record<string, unknown>
   }
 
+  getConversationHistoryWithDiagnostics() {
+    return {
+      history: [],
+      diagnostics: {
+        cacheState: 'memory' as const,
+        historySource: 'memory' as const,
+        coldLoad: false,
+        fsReadOps: 0,
+        fsReadBytes: 0,
+        detail: null,
+      },
+    }
+  }
+
   getPendingChoiceIdsForSession(): string[] {
     return []
+  }
+
+  getSidebarPerfRecorder(): SidebarPerfRecorder {
+    return this.perf
   }
 
   async listSettingsAuth(): Promise<unknown[]> {

@@ -1,7 +1,17 @@
 import { describe, expect, it, vi } from 'vitest'
 import { WebSocket } from 'ws'
 import type { ServerEvent } from '@forge/protocol'
+import type { SidebarPerfRecorder } from '../stats/sidebar-perf-types.js'
 import { WsHandler } from '../ws/ws-handler.js'
+
+function createPerfStub(): SidebarPerfRecorder {
+  return {
+    recordDuration: vi.fn(),
+    increment: vi.fn(),
+    readSummary: vi.fn(() => ({ histograms: {}, counters: {} })),
+    readRecentSlowEvents: vi.fn(() => []),
+  }
+}
 
 describe('WsHandler send guards', () => {
   it('drops malformed websocket clients before ws send can recurse into itself', () => {
@@ -16,6 +26,7 @@ describe('WsHandler send guards', () => {
       mobilePushService: {} as any,
       playwrightDiscovery: null,
       allowNonManagerSubscriptions: true,
+      perf: createPerfStub(),
     })
 
     const terminate = vi.fn()
@@ -65,6 +76,7 @@ describe('WsHandler send guards', () => {
       mobilePushService: {} as any,
       playwrightDiscovery: null,
       allowNonManagerSubscriptions: true,
+      perf: createPerfStub(),
     })
 
     const terminate = vi.fn()

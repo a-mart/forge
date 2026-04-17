@@ -19,11 +19,11 @@ export function sendWsEvent(options: {
   socket: WebSocket;
   event: ServerEvent;
   onDropSocket: (socket: WebSocket) => void;
-}): void {
+}): number | null {
   const { socket, event, onDropSocket } = options;
 
   if (socket.readyState !== WebSocket.OPEN) {
-    return;
+    return null;
   }
 
   const socketIntegrity = validateSocketSendPath(socket);
@@ -33,7 +33,7 @@ export function sendWsEvent(options: {
       reason: socketIntegrity.reason
     });
     onDropSocket(socket);
-    return;
+    return null;
   }
 
   if (socket.bufferedAmount > MAX_WS_BUFFERED_AMOUNT_BYTES) {
@@ -42,7 +42,7 @@ export function sendWsEvent(options: {
       bufferedAmount: socket.bufferedAmount,
       maxBufferedAmountBytes: MAX_WS_BUFFERED_AMOUNT_BYTES
     });
-    return;
+    return null;
   }
 
   let serialized: string;
@@ -53,7 +53,7 @@ export function sendWsEvent(options: {
       eventType: event.type,
       message: error instanceof Error ? error.message : String(error)
     });
-    return;
+    return null;
   }
 
   const eventBytes = Buffer.byteLength(serialized, "utf8");
@@ -63,7 +63,7 @@ export function sendWsEvent(options: {
       eventBytes,
       maxEventBytes: MAX_WS_EVENT_BYTES
     });
-    return;
+    return null;
   }
 
   try {
@@ -78,12 +78,14 @@ export function sendWsEvent(options: {
       });
       onDropSocket(socket);
     });
+    return eventBytes;
   } catch (error) {
     console.warn("[swarm] ws:drop_event:send_failed", {
       eventType: event.type,
       message: error instanceof Error ? error.message : String(error)
     });
     onDropSocket(socket);
+    return null;
   }
 }
 
