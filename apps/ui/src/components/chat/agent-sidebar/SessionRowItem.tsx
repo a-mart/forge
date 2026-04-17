@@ -26,7 +26,82 @@ import { cn } from '@/lib/utils'
 import { SessionStatusDot, HighlightedText } from './shared'
 import { WorkerRow } from './WorkerRow'
 import { MAX_VISIBLE_WORKERS } from './constants'
+import type { AgentStatus } from '@forge/protocol'
 import type { SessionRowItemProps } from './types'
+
+/**
+ * Shallow-compare two worker-status records by value.
+ * Returns true when both are structurally identical so the memo can bail out
+ * even though the parent derives a fresh object on each render.
+ */
+function workerStatusRecordEqual(
+  a: Record<string, AgentStatus> | undefined,
+  b: Record<string, AgentStatus> | undefined,
+): boolean {
+  if (a === b) return true
+  if (a == null || b == null) return false
+  const aKeys = Object.keys(a)
+  if (aKeys.length !== Object.keys(b).length) return false
+  for (const key of aKeys) {
+    if (a[key] !== b[key]) return false
+  }
+  return true
+}
+
+/**
+ * Exhaustive prop list for the memo comparator. Typed against
+ * SessionRowItemProps so adding a new prop to the interface without
+ * updating this list produces a visible review signal (or a type error
+ * if the key is required and missing from the array literal).
+ */
+const SESSION_ROW_REF_EQUAL_KEYS: (keyof SessionRowItemProps)[] = [
+  'session',
+  'managerStreaming',
+  'streamingWorkerCount',
+  // workerStatuses handled separately via shallow-value comparison
+  'unreadCount',
+  'selectedAgentId',
+  'isSettingsActive',
+  'isCollapsed',
+  'isWorkerListExpanded',
+  'onToggleCollapse',
+  'onToggleWorkerListExpanded',
+  'onSelect',
+  'onDeleteAgent',
+  'onStopSession',
+  'onResumeSession',
+  'onDeleteSession',
+  'onRenameSession',
+  'onForkSession',
+  'onMarkUnread',
+  'onStopWorker',
+  'onResumeWorker',
+  'highlightQuery',
+  'onPinSession',
+  'onPromoteToProjectAgent',
+  'onOpenProjectAgentSettings',
+  'onDemoteProjectAgent',
+  'canViewCreationHistory',
+  'isMutedSession',
+  'onToggleMute',
+  'getCreatorAttribution',
+]
+
+/**
+ * Custom React.memo comparison for SessionRowItem.
+ * Uses reference equality for all props in the explicit list above,
+ * plus a shallow-value comparison for `workerStatuses` (parents derive
+ * a fresh Record object on every render even when values are unchanged).
+ */
+function areSessionRowItemPropsEqual(
+  prev: SessionRowItemProps,
+  next: SessionRowItemProps,
+): boolean {
+  for (const key of SESSION_ROW_REF_EQUAL_KEYS) {
+    if (prev[key] !== next[key]) return false
+  }
+  return workerStatusRecordEqual(prev.workerStatuses, next.workerStatuses)
+}
 
 export const SessionRowItem = React.memo(function SessionRowItem({
   session,
@@ -374,4 +449,4 @@ export const SessionRowItem = React.memo(function SessionRowItem({
       ) : null}
     </li>
   )
-})
+}, areSessionRowItemPropsEqual)

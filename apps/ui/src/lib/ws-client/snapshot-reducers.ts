@@ -6,7 +6,7 @@ import {
   resolveStreamingStartedAt,
   resolveTerminalScopeAgentId,
 } from './utils'
-import type { AgentDescriptor } from '@forge/protocol'
+import type { AgentContextUsage, AgentDescriptor } from '@forge/protocol'
 
 export interface AgentsSnapshotReduction {
   patch: Partial<ManagerWsState>
@@ -223,16 +223,30 @@ export function reduceAgentStatus(input: {
   const prevStatus = prevEntry?.status
   const isKnownAgent = state.agents.some((agent) => agent.agentId === event.agentId)
 
-  const statuses = {
-    ...state.statuses,
-    [event.agentId]: {
-      status: event.status,
-      pendingCount: event.pendingCount,
-      contextUsage: event.contextUsage,
-      contextRecoveryInProgress: event.contextRecoveryInProgress,
-      streamingStartedAt: resolveStreamingStartedAt(prevEntry, event.status, event.streamingStartedAt),
-    },
-  }
+  // Resolve streamingStartedAt once so we can compare before allocating
+  const resolvedStreamingStartedAt = resolveStreamingStartedAt(prevEntry, event.status, event.streamingStartedAt)
+
+  // Only create a new statuses reference when the entry actually changed
+  const statusUnchanged =
+    prevEntry != null &&
+    prevEntry.status === event.status &&
+    prevEntry.pendingCount === event.pendingCount &&
+    prevEntry.contextRecoveryInProgress === event.contextRecoveryInProgress &&
+    prevEntry.streamingStartedAt === resolvedStreamingStartedAt &&
+    contextUsageEqual(prevEntry.contextUsage, event.contextUsage)
+
+  const statuses = statusUnchanged
+    ? state.statuses
+    : {
+        ...state.statuses,
+        [event.agentId]: {
+          status: event.status,
+          pendingCount: event.pendingCount,
+          contextUsage: event.contextUsage,
+          contextRecoveryInProgress: event.contextRecoveryInProgress,
+          streamingStartedAt: resolvedStreamingStartedAt,
+        },
+      }
 
   let nextAgents = state.agents
   let nextLoadedSessionIds = state.loadedSessionIds
@@ -246,35 +260,36 @@ export function reduceAgentStatus(input: {
       queueSessionWorkersRefetchId = event.managerId
     }
 
-    nextAgents = state.agents.map((agent) => {
-      if (agent.agentId === event.agentId && agent.status !== event.status) {
-        return { ...agent, status: event.status, contextUsage: event.contextUsage }
-      }
+    // Pre-check whether any agent descriptor actually needs updating
+    const workerNeedsStatusUpdate = state.agents.some(
+      (agent) => agent.agentId === event.agentId && agent.status !== event.status,
+    )
+    const streamingDelta =
+      event.status === 'streaming' && prevStatus !== 'streaming'
+        ? 1
+        : event.status !== 'streaming' && prevStatus === 'streaming'
+          ? -1
+          : 0
 
-      if (!isManagerAgent(agent) || agent.agentId !== event.managerId) {
+    // Only create a new agents array when a descriptor actually changes
+    if (workerNeedsStatusUpdate || streamingDelta !== 0) {
+      nextAgents = state.agents.map((agent) => {
+        if (workerNeedsStatusUpdate && agent.agentId === event.agentId && agent.status !== event.status) {
+          return { ...agent, status: event.status, contextUsage: event.contextUsage }
+        }
+        if (streamingDelta !== 0 && isManagerAgent(agent) && agent.agentId === event.managerId) {
+          return {
+            ...agent,
+            activeWorkerCount: Math.max(0, (agent.activeWorkerCount ?? 0) + streamingDelta),
+          }
+        }
         return agent
-      }
-
-      const delta =
-        event.status === 'streaming' && prevStatus !== 'streaming'
-          ? 1
-          : event.status !== 'streaming' && prevStatus === 'streaming'
-            ? -1
-            : 0
-
-      if (delta === 0) {
-        return agent
-      }
-
-      return {
-        ...agent,
-        activeWorkerCount: Math.max(0, (agent.activeWorkerCount ?? 0) + delta),
-      }
-    })
+      })
+    }
   }
 
   const patch: Partial<ManagerWsState> = {
-    statuses,
+    ...(statuses !== state.statuses ? { statuses } : {}),
     ...(nextAgents !== state.agents ? { agents: nextAgents } : {}),
     ...(nextLoadedSessionIds !== state.loadedSessionIds ? { loadedSessionIds: nextLoadedSessionIds } : {}),
   }
@@ -290,6 +305,16 @@ export function reduceAgentStatus(input: {
         ? event.agentId
         : null,
   }
+}
+
+/** Shallow-compare two AgentContextUsage values */
+function contextUsageEqual(
+  a: AgentContextUsage | undefined,
+  b: AgentContextUsage | undefined,
+): boolean {
+  if (a === b) return true
+  if (a == null || b == null) return false
+  return a.tokens === b.tokens && a.contextWindow === b.contextWindow && a.percent === b.percent
 }
 
 export function reduceManagerDeleted(input: {
