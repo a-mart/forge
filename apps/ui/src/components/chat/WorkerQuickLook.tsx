@@ -156,7 +156,7 @@ export const WorkerQuickLook = memo(function WorkerQuickLook({
   const elapsedLabel =
     isStreaming && streamingStartedAt
       ? formatElapsed(nowMs - streamingStartedAt)
-      : status === 'terminated' || status === 'stopped'
+      : status === 'terminated' || status === 'stopped' || status === 'idle'
         ? formatElapsed(
             new Date(worker.updatedAt).getTime() -
               new Date(worker.createdAt).getTime(),
