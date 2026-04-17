@@ -32,7 +32,6 @@ interface ChatHeaderProps {
   activeAgentArchetypeId?: string | null
   activeAgentSessionPurpose?: AgentSessionPurpose | null
   activeAgentStatus: AgentStatus | null
-  activeAgentRole?: 'manager' | 'worker' | null
   activeAgentCreatedAt?: string | null
   activeAgentUpdatedAt?: string | null
   channelView: ChannelView
@@ -139,7 +138,6 @@ export function ChatHeader({
   activeAgentArchetypeId,
   activeAgentSessionPurpose,
   activeAgentStatus,
-  activeAgentRole,
   activeAgentCreatedAt,
   activeAgentUpdatedAt,
   channelView,
@@ -184,7 +182,6 @@ export function ChatHeader({
   const isStreaming = connected && activeAgentStatus === 'streaming'
   const statusLabel = connected ? formatAgentStatus(activeAgentStatus) : 'Reconnecting'
   const durationLabel =
-    activeAgentRole === 'worker' &&
     (activeAgentStatus === 'terminated' || activeAgentStatus === 'stopped' || activeAgentStatus === 'idle') &&
     activeAgentCreatedAt && activeAgentUpdatedAt
       ? formatElapsed(new Date(activeAgentUpdatedAt).getTime() - new Date(activeAgentCreatedAt).getTime())
