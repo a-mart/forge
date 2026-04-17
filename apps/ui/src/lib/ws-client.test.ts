@@ -1935,4 +1935,391 @@ describe('ManagerWsClient', () => {
 
     client.destroy()
   })
+
+  describe('bootstrap batching', () => {
+    /**
+     * Helper: create a client with a completed initial bootstrap.
+     * The initial connect does NOT use subscribeToAgent, so no bootstrap buffer.
+     */
+    function setupConnectedClient(initialAgentId = 'session-a') {
+      const client = new ManagerWsClient('ws://127.0.0.1:8787', initialAgentId)
+      client.start()
+      vi.advanceTimersByTime(60)
+      const socket = FakeWebSocket.instances.at(-1)!
+      socket.emit('open')
+
+      // Complete initial bootstrap (no subscribeToAgent ⇒ no bootstrap buffer)
+      emitServerEvent(socket, { type: 'ready', serverTime: new Date().toISOString(), subscribedAgentId: initialAgentId })
+      emitServerEvent(socket, { type: 'conversation_history', agentId: initialAgentId, messages: [] })
+      emitServerEvent(socket, { type: 'pending_choices_snapshot', agentId: initialAgentId, choiceIds: [] })
+      emitServerEvent(socket, { type: 'unread_counts_snapshot', counts: {} })
+
+      return { client, socket }
+    }
+
+    it('coalesces bootstrap events into a single state update on session switch', () => {
+      const { client, socket } = setupConnectedClient()
+
+      // Switch to session-b — starts bootstrap buffer
+      client.subscribeToAgent('session-b')
+
+      let notificationCount = 0
+      const unsub = client.subscribe(() => { notificationCount++ })
+      notificationCount = 0 // reset after initial subscribe callback
+
+      // Emit all 4 coalescible bootstrap events
+      emitServerEvent(socket, { type: 'ready', serverTime: new Date().toISOString(), subscribedAgentId: 'session-b' })
+      emitServerEvent(socket, {
+        type: 'conversation_history',
+        agentId: 'session-b',
+        messages: [
+          { type: 'conversation_message', agentId: 'session-b', role: 'user', text: 'hello', timestamp: new Date().toISOString(), source: 'user_input' },
+        ],
+      })
+      emitServerEvent(socket, { type: 'pending_choices_snapshot', agentId: 'session-b', choiceIds: ['choice-1'] })
+      emitServerEvent(socket, { type: 'unread_counts_snapshot', counts: { 'session-c': 3 } })
+
+      // All 4 events coalesced into exactly 1 state update
+      expect(notificationCount).toBe(1)
+
+      // All bootstrap data present in final state
+      const state = client.getState()
+      expect(state.subscribedAgentId).toBe('session-b')
+      expect(state.targetAgentId).toBe('session-b')
+      expect(state.connected).toBe(true)
+      expect(state.messages).toHaveLength(1)
+      expect(state.pendingChoiceIds.has('choice-1')).toBe(true)
+      expect(state.unreadCounts).toEqual({ 'session-c': 3 })
+
+      unsub()
+      client.destroy()
+    })
+
+    it('includes unread badge state in the single hydrated bootstrap commit', () => {
+      const { client, socket } = setupConnectedClient()
+
+      client.subscribeToAgent('session-b')
+
+      const snapshots: ReturnType<typeof client.getState>[] = []
+      const unsub = client.subscribe((state) => { snapshots.push(state) })
+      snapshots.length = 0
+
+      emitServerEvent(socket, { type: 'ready', serverTime: new Date().toISOString(), subscribedAgentId: 'session-b' })
+      emitServerEvent(socket, { type: 'conversation_history', agentId: 'session-b', messages: [] })
+      emitServerEvent(socket, { type: 'pending_choices_snapshot', agentId: 'session-b', choiceIds: [] })
+      emitServerEvent(socket, {
+        type: 'unread_counts_snapshot',
+        counts: { 'session-b': 1, 'session-c': 5, 'session-d': 2 },
+      })
+
+      // Exactly one snapshot from bootstrap flush
+      expect(snapshots).toHaveLength(1)
+
+      // Unread counts present, with target session-b filtered out
+      expect(snapshots[0].unreadCounts).toEqual({ 'session-c': 5, 'session-d': 2 })
+
+      unsub()
+      client.destroy()
+    })
+
+    it('force-flushes bootstrap buffer when a live conversation event arrives', () => {
+      const { client, socket } = setupConnectedClient()
+
+      client.subscribeToAgent('session-b')
+
+      const snapshots: ReturnType<typeof client.getState>[] = []
+      const unsub = client.subscribe((state) => { snapshots.push(state) })
+      snapshots.length = 0
+
+      // Emit first 2 of 4 bootstrap events
+      emitServerEvent(socket, { type: 'ready', serverTime: new Date().toISOString(), subscribedAgentId: 'session-b' })
+      emitServerEvent(socket, {
+        type: 'conversation_history',
+        agentId: 'session-b',
+        messages: [
+          { type: 'conversation_message', agentId: 'session-b', role: 'user', text: 'hello', timestamp: new Date().toISOString(), source: 'user_input' },
+        ],
+      })
+
+      // No notifications yet — events are buffered
+      expect(snapshots).toHaveLength(0)
+
+      // Live event arrives before bootstrap completes → force-flush
+      emitServerEvent(socket, {
+        type: 'conversation_message',
+        agentId: 'session-b',
+        role: 'assistant',
+        text: 'live response',
+        timestamp: new Date().toISOString(),
+        source: 'speak_to_user',
+      })
+
+      // 2 notifications: force-flush + live event
+      expect(snapshots).toHaveLength(2)
+
+      // First: flushed bootstrap state (history message)
+      expect(snapshots[0].subscribedAgentId).toBe('session-b')
+      expect(snapshots[0].messages).toHaveLength(1)
+
+      // Second: live event appended on top
+      expect(snapshots[1].messages).toHaveLength(2)
+      const lastMsg = snapshots[1].messages.at(-1)
+      expect(lastMsg?.type === 'conversation_message' ? lastMsg.text : undefined).toBe('live response')
+
+      unsub()
+      client.destroy()
+    })
+
+    it('force-flushes on agent_status for a worker of the bootstrap target', () => {
+      const { client, socket } = setupConnectedClient()
+
+      client.subscribeToAgent('session-b')
+
+      let notificationCount = 0
+      const unsub = client.subscribe(() => { notificationCount++ })
+      notificationCount = 0
+
+      // Partial bootstrap — only ready so far
+      emitServerEvent(socket, { type: 'ready', serverTime: new Date().toISOString(), subscribedAgentId: 'session-b' })
+      expect(notificationCount).toBe(0)
+
+      // agent_status for a worker of the bootstrap target → force-flush
+      emitServerEvent(socket, {
+        type: 'agent_status',
+        agentId: 'worker-1',
+        managerId: 'session-b',
+        status: 'streaming',
+        pendingCount: 1,
+      })
+
+      // Force-flush produced a notification, and the agent_status was processed
+      expect(notificationCount).toBeGreaterThanOrEqual(1)
+      expect(client.getState().subscribedAgentId).toBe('session-b')
+      expect(client.getState().statuses['worker-1']?.status).toBe('streaming')
+
+      unsub()
+      client.destroy()
+    })
+
+    it('handles bootstrap for empty sessions with no history or choices', () => {
+      const { client, socket } = setupConnectedClient()
+
+      client.subscribeToAgent('session-b')
+
+      let notificationCount = 0
+      const unsub = client.subscribe(() => { notificationCount++ })
+      notificationCount = 0
+
+      emitServerEvent(socket, { type: 'ready', serverTime: new Date().toISOString(), subscribedAgentId: 'session-b' })
+      emitServerEvent(socket, { type: 'conversation_history', agentId: 'session-b', messages: [] })
+      emitServerEvent(socket, { type: 'pending_choices_snapshot', agentId: 'session-b', choiceIds: [] })
+      emitServerEvent(socket, { type: 'unread_counts_snapshot', counts: {} })
+
+      expect(notificationCount).toBe(1)
+      expect(client.getState().messages).toHaveLength(0)
+      expect(client.getState().pendingChoiceIds.size).toBe(0)
+      expect(client.getState().subscribedAgentId).toBe('session-b')
+
+      unsub()
+      client.destroy()
+    })
+
+    it('flushes bootstrap buffer via timeout when terminal signal is missing', () => {
+      const { client, socket } = setupConnectedClient()
+
+      client.subscribeToAgent('session-b')
+
+      let notificationCount = 0
+      const unsub = client.subscribe(() => { notificationCount++ })
+      notificationCount = 0
+
+      // Emit only 3 of 4 expected events (missing unread_counts_snapshot)
+      emitServerEvent(socket, { type: 'ready', serverTime: new Date().toISOString(), subscribedAgentId: 'session-b' })
+      emitServerEvent(socket, { type: 'conversation_history', agentId: 'session-b', messages: [] })
+      emitServerEvent(socket, { type: 'pending_choices_snapshot', agentId: 'session-b', choiceIds: [] })
+
+      // No flush yet — waiting for terminal signal
+      expect(notificationCount).toBe(0)
+
+      // Advance past the safety timeout (100ms)
+      vi.advanceTimersByTime(200)
+
+      // Buffer flushed via timeout
+      expect(notificationCount).toBe(1)
+      expect(client.getState().subscribedAgentId).toBe('session-b')
+
+      unsub()
+      client.destroy()
+    })
+
+    it('does not buffer events during initial connect (only during subscribeToAgent)', () => {
+      const client = new ManagerWsClient('ws://127.0.0.1:8787', 'session-a')
+
+      let notificationCount = 0
+      client.subscribe(() => { notificationCount++ })
+      notificationCount = 0
+
+      client.start()
+      vi.advanceTimersByTime(60)
+
+      const socket = FakeWebSocket.instances[0]
+      socket.emit('open')
+      notificationCount = 0 // reset after connect state update
+
+      // Each event produces its own state update (no batching)
+      emitServerEvent(socket, { type: 'ready', serverTime: new Date().toISOString(), subscribedAgentId: 'session-a' })
+      expect(notificationCount).toBe(1)
+
+      emitServerEvent(socket, { type: 'conversation_history', agentId: 'session-a', messages: [] })
+      expect(notificationCount).toBe(2)
+
+      client.destroy()
+    })
+
+    it('passes non-coalescible events through normally during bootstrap', () => {
+      const { client, socket } = setupConnectedClient()
+
+      client.subscribeToAgent('session-b')
+
+      const snapshots: ReturnType<typeof client.getState>[] = []
+      const unsub = client.subscribe((state) => { snapshots.push(state) })
+      snapshots.length = 0
+
+      // First bootstrap event (buffered)
+      emitServerEvent(socket, { type: 'ready', serverTime: new Date().toISOString(), subscribedAgentId: 'session-b' })
+      expect(snapshots).toHaveLength(0)
+
+      // Non-coalescible event should pass through immediately
+      emitServerEvent(socket, {
+        type: 'agents_snapshot',
+        agents: [{
+          agentId: 'session-b',
+          managerId: 'session-b',
+          displayName: 'Session B',
+          role: 'manager',
+          status: 'idle',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          cwd: '/tmp',
+          model: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+          sessionFile: '/tmp/session-b.jsonl',
+        }],
+      })
+
+      // agents_snapshot triggered an immediate state update even during bootstrap
+      expect(snapshots.length).toBeGreaterThanOrEqual(1)
+      expect(client.getState().agents.some((a) => a.agentId === 'session-b')).toBe(true)
+
+      // Complete bootstrap
+      emitServerEvent(socket, { type: 'conversation_history', agentId: 'session-b', messages: [] })
+      emitServerEvent(socket, { type: 'pending_choices_snapshot', agentId: 'session-b', choiceIds: [] })
+      emitServerEvent(socket, { type: 'unread_counts_snapshot', counts: {} })
+
+      // Bootstrap data flushed
+      expect(client.getState().subscribedAgentId).toBe('session-b')
+
+      unsub()
+      client.destroy()
+    })
+
+    it('drops stale bootstrap events from a prior session after rapid A→B switch', () => {
+      const { client, socket } = setupConnectedClient()
+
+      // Switch to session-b
+      client.subscribeToAgent('session-b')
+
+      let notificationCount = 0
+      const unsub = client.subscribe(() => { notificationCount++ })
+      notificationCount = 0
+
+      // Late stale events from session-a's bootstrap arrive after subscribe('session-b')
+      emitServerEvent(socket, { type: 'ready', serverTime: new Date().toISOString(), subscribedAgentId: 'session-a' })
+      emitServerEvent(socket, {
+        type: 'conversation_history',
+        agentId: 'session-a',
+        messages: [
+          { type: 'conversation_message', agentId: 'session-a', role: 'user', text: 'stale message from A', timestamp: new Date().toISOString(), source: 'user_input' },
+        ],
+      })
+      emitServerEvent(socket, { type: 'pending_choices_snapshot', agentId: 'session-a', choiceIds: ['stale-choice'] })
+
+      // Stale events must be silently dropped — no state updates
+      expect(notificationCount).toBe(0)
+
+      // State must still reflect session-b, not reverted to session-a.
+      // subscribedAgentId retains the prior value (session-a from initial bootstrap)
+      // because the ready event for session-b hasn't arrived yet — the key assertion
+      // is that stale events did NOT overwrite targetAgentId or load A's messages.
+      expect(client.getState().targetAgentId).toBe('session-b')
+      expect(client.getState().messages).toHaveLength(0) // no stale A messages
+      expect(client.getState().pendingChoiceIds.size).toBe(0)
+
+      // Now the real session-b bootstrap arrives and works normally
+      emitServerEvent(socket, { type: 'ready', serverTime: new Date().toISOString(), subscribedAgentId: 'session-b' })
+      emitServerEvent(socket, {
+        type: 'conversation_history',
+        agentId: 'session-b',
+        messages: [
+          { type: 'conversation_message', agentId: 'session-b', role: 'user', text: 'correct B message', timestamp: new Date().toISOString(), source: 'user_input' },
+        ],
+      })
+      emitServerEvent(socket, { type: 'pending_choices_snapshot', agentId: 'session-b', choiceIds: [] })
+      emitServerEvent(socket, { type: 'unread_counts_snapshot', counts: {} })
+
+      // Single coalesced update for session-b
+      expect(notificationCount).toBe(1)
+      expect(client.getState().subscribedAgentId).toBe('session-b')
+      expect(client.getState().messages).toHaveLength(1)
+      const firstMsg = client.getState().messages[0]
+      expect(firstMsg.type === 'conversation_message' ? firstMsg.text : undefined).toBe('correct B message')
+
+      unsub()
+      client.destroy()
+    })
+
+    it('resets inactivity timeout on each buffered event so slow history does not cause early flush', () => {
+      const { client, socket } = setupConnectedClient()
+
+      client.subscribeToAgent('session-b')
+
+      let notificationCount = 0
+      const unsub = client.subscribe(() => { notificationCount++ })
+      notificationCount = 0
+
+      // First event arrives — starts the inactivity timeout
+      emitServerEvent(socket, { type: 'ready', serverTime: new Date().toISOString(), subscribedAgentId: 'session-b' })
+      expect(notificationCount).toBe(0)
+
+      // Advance 80ms — close to the 100ms timeout but not past it
+      vi.advanceTimersByTime(80)
+      expect(notificationCount).toBe(0)
+
+      // Second event arrives — resets the inactivity timeout
+      emitServerEvent(socket, {
+        type: 'conversation_history',
+        agentId: 'session-b',
+        messages: [
+          { type: 'conversation_message', agentId: 'session-b', role: 'user', text: 'slow history', timestamp: new Date().toISOString(), source: 'user_input' },
+        ],
+      })
+      expect(notificationCount).toBe(0)
+
+      // Advance another 80ms — would be 160ms total from first event,
+      // past the original timeout, but the reset means we're only 80ms
+      // from the last event
+      vi.advanceTimersByTime(80)
+      expect(notificationCount).toBe(0) // still buffered
+
+      // Terminal signal arrives — flushes
+      emitServerEvent(socket, { type: 'pending_choices_snapshot', agentId: 'session-b', choiceIds: [] })
+      emitServerEvent(socket, { type: 'unread_counts_snapshot', counts: {} })
+
+      expect(notificationCount).toBe(1)
+      expect(client.getState().subscribedAgentId).toBe('session-b')
+      expect(client.getState().messages).toHaveLength(1)
+
+      unsub()
+      client.destroy()
+    })
+  })
 })
