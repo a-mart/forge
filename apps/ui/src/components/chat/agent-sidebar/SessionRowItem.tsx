@@ -26,7 +26,45 @@ import { cn } from '@/lib/utils'
 import { SessionStatusDot, HighlightedText } from './shared'
 import { WorkerRow } from './WorkerRow'
 import { MAX_VISIBLE_WORKERS } from './constants'
+import type { AgentStatus } from '@forge/protocol'
 import type { SessionRowItemProps } from './types'
+
+/**
+ * Shallow-compare two worker-status records by value.
+ * Returns true when both are structurally identical so the memo can bail out
+ * even though the parent derives a fresh object on each render.
+ */
+function workerStatusRecordEqual(
+  a: Record<string, AgentStatus> | undefined,
+  b: Record<string, AgentStatus> | undefined,
+): boolean {
+  if (a === b) return true
+  if (a == null || b == null) return false
+  const aKeys = Object.keys(a)
+  if (aKeys.length !== Object.keys(b).length) return false
+  for (const key of aKeys) {
+    if (a[key] !== b[key]) return false
+  }
+  return true
+}
+
+/**
+ * Custom React.memo comparison for SessionRowItem.
+ * Uses default reference equality for all props except `workerStatuses`,
+ * which gets a shallow-value comparison because parents derive a fresh
+ * Record object on every render even when the status values are unchanged.
+ */
+function areSessionRowItemPropsEqual(
+  prev: SessionRowItemProps,
+  next: SessionRowItemProps,
+): boolean {
+  const keys = Object.keys(prev) as (keyof SessionRowItemProps)[]
+  for (const key of keys) {
+    if (key === 'workerStatuses') continue
+    if (prev[key] !== next[key]) return false
+  }
+  return workerStatusRecordEqual(prev.workerStatuses, next.workerStatuses)
+}
 
 export const SessionRowItem = React.memo(function SessionRowItem({
   session,
@@ -374,4 +412,4 @@ export const SessionRowItem = React.memo(function SessionRowItem({
       ) : null}
     </li>
   )
-})
+}, areSessionRowItemPropsEqual)

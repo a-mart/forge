@@ -765,7 +765,12 @@ export class ManagerWsClient {
     event: Extract<ServerEvent, { type: 'agent_status' }>,
   ): void {
     const result = reduceAgentStatus({ state: this.state, event })
-    this.updateState(result.patch)
+
+    // Skip state update (and the React re-render it triggers) when nothing changed
+    const hasChanges = Object.keys(result.patch).length > 0
+    if (hasChanges) {
+      this.updateState(result.patch)
+    }
 
     if (result.queueSessionWorkersRefetchId) {
       this.queueSessionWorkersRefetch(result.queueSessionWorkersRefetchId)
