@@ -1,7 +1,7 @@
 import { SquarePen, X } from 'lucide-react'
 import { ChangeCwdDialog } from './ChangeCwdDialog'
 import { ForkSessionDialog } from './ForkSessionDialog'
-import { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   DndContext,
   closestCenter,
@@ -51,7 +51,7 @@ import type { AgentSidebarProps } from './agent-sidebar/types'
 // Inject subtle glow pulse keyframes once
 injectGlowPulseStyle()
 
-export function AgentSidebar({
+export const AgentSidebar = React.memo(function AgentSidebar({
   connected,
   wsUrl,
   agents,
@@ -98,8 +98,8 @@ export function AgentSidebar({
   onRequestProjectAgentRecommendations,
   onCreateAgentCreator,
 }: AgentSidebarProps) {
-  const treeRows = buildProfileTreeRows(agents, profiles)
-  const hasCortexProfile = profiles.some((profile) => profile.profileId === 'cortex')
+  const treeRows = useMemo(() => buildProfileTreeRows(agents, profiles), [agents, profiles])
+  const hasCortexProfile = useMemo(() => profiles.some((profile) => profile.profileId === 'cortex'), [profiles])
 
   // DnD sensors
   const sensors = useSensors(
@@ -137,6 +137,8 @@ export function AgentSidebar({
   })
   const cortexOutstandingReviewCount = useCortexReviewBadge({ connected, hasCortexProfile, wsUrl })
   const [usagePanelOpen, setUsagePanelOpen] = useState(false)
+  const handleToggleUsagePanel = useCallback(() => setUsagePanelOpen(prev => !prev), [])
+  const handleCloseUsagePanel = useCallback(() => setUsagePanelOpen(false), [])
   const { data: providerUsage, loading: providerUsageLoading, refetch: refetchProviderUsage } = useProviderUsage(showProviderUsage)
   const [mutedAgentsState, setMutedAgentsState] = useState<Set<string>>(() => getMutedAgents())
 
@@ -172,6 +174,8 @@ export function AgentSidebar({
     sessionLabel: string
     currentProjectAgent: ProjectAgentInfo | null
   } | null>(null)
+
+  const handleForkSetTarget = useCallback((sourceAgentId: string) => setForkTarget({ sourceAgentId }), [])
 
   const getCreatorAttribution = useCallback((creatorAgentId: string): string | null => {
     const creator = agents.find((a) => a.agentId === creatorAgentId)
@@ -367,10 +371,10 @@ export function AgentSidebar({
       collapsedSessionIds={expandedSessionIds}
       visibleSessionLimit={getVisibleSessionLimit(treeRow.profile.profileId)}
       expandedWorkerListSessionIds={expandedWorkerListSessionIds}
-      onToggleProfileCollapsed={() => toggleProfileCollapsed(treeRow.profile.profileId)}
+      onToggleProfileCollapsed={toggleProfileCollapsed}
       onToggleSessionCollapsed={toggleSessionCollapsed}
-      onShowMoreSessions={() => showMoreSessions(treeRow.profile.profileId)}
-      onShowLessSessions={() => showLessSessions(treeRow.profile.profileId)}
+      onShowMoreSessions={showMoreSessions}
+      onShowLessSessions={showLessSessions}
       onToggleWorkerListExpanded={toggleWorkerListExpanded}
       onSelect={handleSelectAgent}
       onDeleteAgent={onDeleteAgent}
@@ -382,7 +386,7 @@ export function AgentSidebar({
       onDeleteSession={handleRequestDelete}
       onRequestRenameSession={handleRequestRename}
       onRequestRenameProfile={onRenameProfile ? handleRequestRenameProfile : undefined}
-      onForkSession={onForkSession ? (sourceAgentId: string) => setForkTarget({ sourceAgentId }) : undefined}
+      onForkSession={onForkSession ? handleForkSetTarget : undefined}
       onMarkUnread={onMarkUnread}
       onMarkAllRead={onMarkAllRead}
       onChangeModel={onUpdateManagerModel ? handleRequestChangeModel : undefined}
@@ -407,7 +411,7 @@ export function AgentSidebar({
     toggleProfileCollapsed, toggleSessionCollapsed, showMoreSessions, showLessSessions,
     toggleWorkerListExpanded, handleSelectAgent, onDeleteAgent, onDeleteManager, handleOpenSettings,
     onCreateSession, handleRequestCreateSession, onStopSession, onResumeSession, handleRequestDelete,
-    handleRequestRename, onRenameProfile, handleRequestRenameProfile, onForkSession,
+    handleRequestRename, onRenameProfile, handleRequestRenameProfile, onForkSession, handleForkSetTarget,
     onMarkUnread, onMarkAllRead, onUpdateManagerModel, handleRequestChangeModel,
     onUpdateManagerCwd, handleRequestChangeCwd, showModelIcons, parsedSearch.term,
     getVisibleSessionLimit,
@@ -476,10 +480,10 @@ export function AgentSidebar({
               collapsedSessionIds={expandedSessionIds}
               visibleSessionLimit={getVisibleSessionLimit('cortex')}
               expandedWorkerListSessionIds={expandedWorkerListSessionIds}
-              onToggleCollapsed={() => toggleProfileCollapsed('cortex')}
+              onToggleCollapsed={toggleProfileCollapsed}
               onToggleSessionCollapsed={toggleSessionCollapsed}
-              onShowMoreSessions={() => showMoreSessions('cortex')}
-              onShowLessSessions={() => showLessSessions('cortex')}
+              onShowMoreSessions={showMoreSessions}
+              onShowLessSessions={showLessSessions}
               onToggleWorkerListExpanded={toggleWorkerListExpanded}
               onSelect={handleSelectAgent}
               onDeleteAgent={onDeleteAgent}
@@ -492,7 +496,7 @@ export function AgentSidebar({
               onDeleteSession={handleRequestDelete}
               onRequestRenameSession={handleRequestRename}
               onRequestRenameProfile={onRenameProfile ? handleRequestRenameProfile : undefined}
-              onForkSession={onForkSession ? (sourceAgentId: string) => setForkTarget({ sourceAgentId }) : undefined}
+              onForkSession={onForkSession ? handleForkSetTarget : undefined}
               onMarkUnread={onMarkUnread}
               onMarkAllRead={onMarkAllRead}
               onChangeModel={onUpdateManagerModel ? handleRequestChangeModel : undefined}
@@ -583,8 +587,8 @@ export function AgentSidebar({
         providerUsage={providerUsage}
         providerUsageLoading={providerUsageLoading}
         usagePanelOpen={usagePanelOpen}
-        onToggleUsagePanel={() => setUsagePanelOpen(prev => !prev)}
-        onCloseUsagePanel={() => setUsagePanelOpen(false)}
+        onToggleUsagePanel={handleToggleUsagePanel}
+        onCloseUsagePanel={handleCloseUsagePanel}
         onRefetchProviderUsage={refetchProviderUsage}
         onOpenSettings={handleOpenSettings}
         onOpenPlaywright={handleOpenPlaywright}
@@ -721,4 +725,4 @@ export function AgentSidebar({
       ) : null}
     </>
   )
-}
+})

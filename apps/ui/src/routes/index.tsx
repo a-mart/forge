@@ -964,14 +964,14 @@ export function IndexPage() {
     return client.requestProjectAgentRecommendations(agentId)
   }, [clientRef])
 
-  const handleSelectAgent = (agentId: string) => {
+  const handleSelectAgent = useCallback((agentId: string) => {
     // Start the session-switch interaction token before any navigation /
     // subscribe so the conversation_history stop has a matching active token.
     // Always-on; cost is two performance.now() calls when nothing is recording.
     getSidebarPerfRegistry().startSessionSwitch(agentId)
     navigateToRoute({ view: 'chat', agentId })
     clientRef.current?.subscribeToAgent(agentId)
-  }
+  }, [navigateToRoute, clientRef])
 
   const handleOpenCortexReview = useCallback((agentId: string) => {
     navigateToRoute({ view: 'chat', agentId })
@@ -979,7 +979,7 @@ export function IndexPage() {
     requestCortexDashboardTab('review')
   }, [navigateToRoute, requestCortexDashboardTab, clientRef])
 
-  const handleDeleteAgent = (agentId: string) => {
+  const handleDeleteAgent = useCallback((agentId: string) => {
     const agent = state.agents.find((entry) => entry.agentId === agentId)
     if (!agent || agent.role !== 'worker') {
       return
@@ -995,19 +995,19 @@ export function IndexPage() {
     }
 
     clientRef.current?.deleteAgent(agentId)
-  }
+  }, [state.agents, activeAgentId, navigateToRoute, clientRef])
 
-  const handleOpenSettingsPanel = () => {
+  const handleOpenSettingsPanel = useCallback(() => {
     navigateToRoute({ view: 'settings' })
-  }
+  }, [navigateToRoute])
 
-  const handleOpenPlaywright = () => {
+  const handleOpenPlaywright = useCallback(() => {
     navigateToRoute({ view: 'playwright' })
-  }
+  }, [navigateToRoute])
 
-  const handleOpenStats = () => {
+  const handleOpenStats = useCallback(() => {
     navigateToRoute({ view: 'stats' })
-  }
+  }, [navigateToRoute])
 
   const handleSaveOnboarding = useCallback((input: import('@/lib/onboarding-api').SaveOnboardingPreferencesInput) => {
     void (async () => {
@@ -1067,6 +1067,10 @@ export function IndexPage() {
     messageInputRef.current?.setInput(prompt)
   }
 
+  const handleMobileSidebarClose = useCallback(() => {
+    setIsMobileSidebarOpen(false)
+  }, [setIsMobileSidebarOpen])
+
   const handleFocusChatInput = useCallback(() => {
     messageInputRef.current?.focus()
   }, [])
@@ -1085,15 +1089,13 @@ export function IndexPage() {
           profiles={state.profiles}
           statuses={state.statuses}
           unreadCounts={state.unreadCounts}
-          terminalScopeId={state.terminalSessionScopeId}
-          terminalCount={state.terminals.length}
           selectedAgentId={activeAgentId}
           isSettingsActive={activeView === 'settings'}
           isPlaywrightActive={activeView === 'playwright'}
           isStatsActive={activeView === 'stats'}
           showPlaywrightNav={showPlaywrightNav}
           isMobileOpen={isMobileSidebarOpen}
-          onMobileClose={() => setIsMobileSidebarOpen(false)}
+          onMobileClose={handleMobileSidebarClose}
           onAddManager={handleOpenCreateManagerDialog}
           onSelectAgent={handleSelectAgent}
           onDeleteAgent={handleDeleteAgent}
