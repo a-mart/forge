@@ -77,7 +77,11 @@ import {
   createInitialManagerWsState,
   type ManagerWsState,
 } from './ws-state'
-import { handleConversationEvent } from './ws-client/event-handlers/conversation-event-handlers'
+import {
+  BOOTSTRAP_COALESCIBLE_EVENT_TYPES,
+  BOOTSTRAP_FORCE_FLUSH_CONVERSATION_EVENT_TYPES,
+  handleConversationEvent,
+} from './ws-client/event-handlers/conversation-event-handlers'
 import { handleTerminalEvent } from './ws-client/event-handlers/terminal-event-handlers'
 import { handleAgentEvent } from './ws-client/event-handlers/agent-event-handlers'
 import { handleSessionEvent } from './ws-client/event-handlers/session-event-handlers'
@@ -109,6 +113,17 @@ export type {
   ProjectAgentReferenceSavedResult,
 } from './ws-client/types'
 
+/** Safety timeout (ms) for flushing bootstrap buffer if the terminal signal never arrives */
+const BOOTSTRAP_FLUSH_TIMEOUT_MS = 100
+
+/** Buffer for coalescing subscribe bootstrap events into a single state update */
+interface BootstrapBuffer {
+  targetAgentId: string
+  pendingPatch: Partial<ManagerWsState>
+  receivedEvents: Set<string>
+  timeoutId: ReturnType<typeof setTimeout> | undefined
+}
+
 export class ManagerWsClient {
   private readonly url: string
   private desiredAgentId: string | null
@@ -132,6 +147,7 @@ export class ManagerWsClient {
   )
   private readonly pendingWorkerFetches = new Map<string, Promise<SessionWorkersResult>>()
   private readonly pendingSessionWorkerRefetchTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  private bootstrapBuffer: BootstrapBuffer | null = null
 
   constructor(url: string, initialAgentId?: string | null) {
     const normalizedInitialAgentId = normalizeAgentId(initialAgentId)
@@ -214,6 +230,7 @@ export class ManagerWsClient {
     this.rejectAllPendingRequests('Client destroyed before request completed.')
     this.pendingWorkerFetches.clear()
     this.clearQueuedSessionWorkerRefetches()
+    this.clearBootstrapBuffer()
 
     if (this.socket) {
       this.socket.close()
@@ -250,6 +267,7 @@ export class ManagerWsClient {
       return
     }
 
+    this.startBootstrapBuffer(trimmed)
     this.send(buildSubscribeCommand(trimmed))
   }
 
@@ -651,6 +669,7 @@ export class ManagerWsClient {
 
       this.hasExplicitAgentSelection = false
       this.explicitAgentSelectionAgentId = null
+      this.clearBootstrapBuffer()
 
       this.updateState({
         connected: false,
@@ -692,6 +711,18 @@ export class ManagerWsClient {
     } catch {
       this.pushSystemMessage('Received invalid JSON event from backend.')
       return
+    }
+
+    // Bootstrap batching: coalesce bootstrap events into a single state update,
+    // force-flush if a same-target live event arrives during bootstrap.
+    if (this.bootstrapBuffer) {
+      if (BOOTSTRAP_COALESCIBLE_EVENT_TYPES.has(event.type)) {
+        this.handleBootstrapCoalescibleEvent(event)
+        return
+      }
+      if (this.shouldForceFlushBootstrap(event)) {
+        this.flushBootstrapBuffer()
+      }
     }
 
     if (
@@ -928,6 +959,130 @@ export class ManagerWsClient {
     }
 
     this.pendingSessionWorkerRefetchTimers.clear()
+  }
+
+  // ── Bootstrap batching ────────────────────────────────────────────
+
+  /**
+   * Start buffering bootstrap events for the given target agent.
+   * The buffer accumulates state patches from coalescible events and flushes
+   * them as a single updateState call when the terminal signal arrives
+   * (`unread_counts_snapshot`) or a safety timeout expires.
+   */
+  private startBootstrapBuffer(targetAgentId: string): void {
+    this.clearBootstrapBuffer()
+
+    this.bootstrapBuffer = {
+      targetAgentId,
+      pendingPatch: {},
+      receivedEvents: new Set(),
+      timeoutId: setTimeout(() => {
+        if (this.bootstrapBuffer?.targetAgentId === targetAgentId) {
+          this.flushBootstrapBuffer()
+        }
+      }, BOOTSTRAP_FLUSH_TIMEOUT_MS),
+    }
+  }
+
+  /**
+   * Flush the bootstrap buffer, applying all accumulated patches as a single
+   * state update. Called when the terminal bootstrap event arrives, on force-flush
+   * from a live event, or from the safety timeout.
+   */
+  private flushBootstrapBuffer(): void {
+    const buffer = this.bootstrapBuffer
+    if (!buffer) return
+
+    if (buffer.timeoutId !== undefined) {
+      clearTimeout(buffer.timeoutId)
+    }
+
+    this.bootstrapBuffer = null
+
+    if (Object.keys(buffer.pendingPatch).length > 0) {
+      this.updateState(buffer.pendingPatch)
+    }
+  }
+
+  /** Discard the bootstrap buffer without applying patches. */
+  private clearBootstrapBuffer(): void {
+    if (this.bootstrapBuffer?.timeoutId !== undefined) {
+      clearTimeout(this.bootstrapBuffer.timeoutId)
+    }
+    this.bootstrapBuffer = null
+  }
+
+  /**
+   * Process a coalescible bootstrap event by running it through the normal
+   * conversation event handler with a buffering updateState, then checking
+   * whether the bootstrap is complete.
+   */
+  private handleBootstrapCoalescibleEvent(event: ServerEvent): void {
+    const buffer = this.bootstrapBuffer
+    if (!buffer) return
+
+    // Guard: if the event targets a different agent than the bootstrap (e.g., a
+    // resubscribe happened), flush the stale buffer and process normally.
+    if (!this.isBootstrapEventForTarget(event, buffer.targetAgentId)) {
+      this.flushBootstrapBuffer()
+      handleConversationEvent(event, {
+        state: this.state,
+        updateState: (patch) => this.updateState(patch),
+      })
+      return
+    }
+
+    // Build effective state that includes already-buffered patches so handlers
+    // see consistent state (e.g., conversation_history sees targetAgentId from ready)
+    const effectiveState: ManagerWsState = { ...this.state, ...buffer.pendingPatch }
+
+    handleConversationEvent(event, {
+      state: effectiveState,
+      updateState: (patch) => {
+        buffer.pendingPatch = { ...buffer.pendingPatch, ...patch }
+      },
+    })
+
+    buffer.receivedEvents.add(event.type)
+
+    // unread_counts_snapshot is the terminal bootstrap event — flush
+    if (event.type === 'unread_counts_snapshot') {
+      this.flushBootstrapBuffer()
+    }
+  }
+
+  /** Check whether a coalescible event targets the bootstrap agent. */
+  private isBootstrapEventForTarget(event: ServerEvent, targetAgentId: string): boolean {
+    if (event.type === 'ready') {
+      return event.subscribedAgentId === targetAgentId
+    }
+    if (event.type === 'conversation_history' || event.type === 'pending_choices_snapshot') {
+      return event.agentId === targetAgentId
+    }
+    // unread_counts_snapshot is global (no agent-specific field) — always treat as on-target
+    return true
+  }
+
+  /**
+   * Check whether a non-coalescible event should trigger a force-flush of the
+   * bootstrap buffer. Returns true for live conversation/activity events targeting
+   * the bootstrapping session, and for agent_status events for the target session
+   * or its workers.
+   */
+  private shouldForceFlushBootstrap(event: ServerEvent): boolean {
+    const targetAgentId = this.bootstrapBuffer?.targetAgentId
+    if (!targetAgentId) return false
+
+    if (BOOTSTRAP_FORCE_FLUSH_CONVERSATION_EVENT_TYPES.has(event.type)) {
+      return 'agentId' in event && (event as { agentId: string }).agentId === targetAgentId
+    }
+
+    if (event.type === 'agent_status') {
+      return event.agentId === targetAgentId ||
+        (event.managerId !== undefined && event.managerId === targetAgentId)
+    }
+
+    return false
   }
 
   private pushSystemMessage(text: string): void {

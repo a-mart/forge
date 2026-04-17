@@ -4,6 +4,34 @@ import { clampConversationHistory, splitConversationHistory } from '../utils'
 import type { ManagerWsConversationEventContext } from '../types'
 import type { ServerEvent } from '@forge/protocol'
 
+/**
+ * Bootstrap event types coalesced into a single state update during subscribe bootstrap.
+ * These correspond to events sent by the backend's `sendSubscriptionBootstrap` that
+ * directly update conversation/session state. `unread_counts_snapshot` is the terminal
+ * signal that triggers the flush.
+ * @see ManagerWsClient bootstrap batching
+ */
+export const BOOTSTRAP_COALESCIBLE_EVENT_TYPES: ReadonlySet<string> = new Set([
+  'ready',
+  'conversation_history',
+  'pending_choices_snapshot',
+  'unread_counts_snapshot',
+])
+
+/**
+ * Live conversation event types that trigger force-flush of any pending bootstrap
+ * buffer when targeting the bootstrapping session. These indicate the session is
+ * actively streaming and buffered state must be applied before the live event.
+ * @see ManagerWsClient bootstrap batching
+ */
+export const BOOTSTRAP_FORCE_FLUSH_CONVERSATION_EVENT_TYPES: ReadonlySet<string> = new Set([
+  'conversation_message',
+  'conversation_log',
+  'agent_message',
+  'agent_tool_call',
+  'choice_request',
+])
+
 export function handleConversationEvent(
   event: ServerEvent,
   context: ManagerWsConversationEventContext,
