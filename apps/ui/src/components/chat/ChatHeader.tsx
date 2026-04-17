@@ -182,7 +182,7 @@ export function ChatHeader({
   const isStreaming = connected && activeAgentStatus === 'streaming'
   const statusLabel = connected ? formatAgentStatus(activeAgentStatus) : 'Reconnecting'
   const durationLabel =
-    (activeAgentStatus === 'terminated' || activeAgentStatus === 'stopped') &&
+    (activeAgentStatus === 'terminated' || activeAgentStatus === 'stopped' || activeAgentStatus === 'idle') &&
     activeAgentCreatedAt && activeAgentUpdatedAt
       ? formatElapsed(new Date(activeAgentUpdatedAt).getTime() - new Date(activeAgentCreatedAt).getTime())
       : null

@@ -1302,6 +1302,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       deleteWorkerCompletionReportState: (agentId) => {
         this.workerHealthService.deleteWorkerCompletionReportState(agentId);
       },
+      clearTrackedToolPaths: (agentId) => {
+        this.runtimeController.clearTrackedToolPaths(agentId);
+      },
       suppressIntentionalStopRuntimeCallbacks: (agentId, runtimeToken) => {
         this.runtimeController.suppressIntentionalStopRuntimeCallbacks(agentId, runtimeToken);
       },

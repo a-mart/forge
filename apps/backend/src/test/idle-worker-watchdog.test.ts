@@ -1156,6 +1156,48 @@ describe('idle worker watchdog', () => {
     expect((manager as any).watchdogTimerTokens.has(worker.agentId)).toBe(false)
   })
 
+  it('clears tracked versioned tool paths during stopAllAgents teardown', async () => {
+    vi.useFakeTimers()
+
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', { agentId: 'Tracked Tool Worker' })
+    const runtimeToken = ((manager as any).runtimeTokensByAgentId as Map<string, number>).get(worker.agentId)
+    expect(runtimeToken).toBeDefined()
+    if (runtimeToken === undefined) {
+      throw new Error('Expected worker runtime token')
+    }
+
+    await startWorkerTurn(manager, worker)
+
+    const trackedToolPathsByAgentId = ((manager as any).runtimeController.trackedToolPathsByAgentId as Map<
+      string,
+      Map<string, { toolName: string; path: string }>
+    >)
+    const trackedPath = join(config.paths.rootDir, 'tracked-write.md')
+
+    await (manager as any).handleRuntimeSessionEvent(runtimeToken, worker.agentId, {
+      type: 'tool_execution_start',
+      toolName: 'write',
+      toolCallId: 'tool-write-1',
+      args: {
+        path: trackedPath,
+        content: 'tracked\n',
+      },
+    })
+
+    expect(trackedToolPathsByAgentId.get(worker.agentId)?.get('tool-write-1')).toEqual({
+      toolName: 'write',
+      path: trackedPath,
+    })
+
+    await manager.stopAllAgents('manager', 'manager')
+
+    expect(trackedToolPathsByAgentId.has(worker.agentId)).toBe(false)
+  })
+
   it('suppresses late worker callbacks during stopAllAgents teardown', async () => {
     vi.useFakeTimers()
 
