@@ -25,13 +25,14 @@ import { isSessionRunning } from '@/lib/agent-hierarchy'
 import { cn } from '@/lib/utils'
 import { SessionStatusDot, HighlightedText } from './shared'
 import { WorkerRow } from './WorkerRow'
-import { getAgentLiveStatus } from './utils'
 import { MAX_VISIBLE_WORKERS } from './constants'
 import type { SessionRowItemProps } from './types'
 
 export const SessionRowItem = React.memo(function SessionRowItem({
   session,
-  statuses,
+  managerStreaming,
+  streamingWorkerCount,
+  workerStatuses,
   unreadCount,
   selectedAgentId,
   isSettingsActive,
@@ -66,10 +67,6 @@ export const SessionRowItem = React.memo(function SessionRowItem({
   const workerCount = session.sessionAgent.workerCount ?? workers.length
   const hasWorkers = workerCount > 0
   const showUnread = unreadCount > 0
-  const streamingWorkerCount = workers.filter((w) => getAgentLiveStatus(w, statuses).status === 'streaming').length
-    || sessionAgent.activeWorkerCount
-    || 0
-  const managerStreaming = getAgentLiveStatus(sessionAgent, statuses).status === 'streaming'
   const hasPendingChoice = (sessionAgent.pendingChoiceCount ?? 0) > 0
   const isProjectAgent = Boolean(sessionAgent.projectAgent)
   const isAgentCreator = sessionAgent.sessionPurpose === 'agent_creator'
@@ -271,7 +268,15 @@ export const SessionRowItem = React.memo(function SessionRowItem({
             </ContextMenuItem>
           ) : null}
           {isProjectAgent && onDemoteProjectAgent ? (
-            <ContextMenuItem onClick={() => onDemoteProjectAgent(sessionAgent.agentId)}>
+            <ContextMenuItem onClick={() => {
+              try {
+                void Promise.resolve(onDemoteProjectAgent(sessionAgent.agentId)).catch((err) => {
+                  console.error('Failed to demote project agent:', err)
+                })
+              } catch (err) {
+                console.error('Failed to demote project agent:', err)
+              }
+            }}>
               <ArrowDownToLine className="mr-2 size-3.5" />
               Demote to Session
             </ContextMenuItem>
@@ -321,14 +326,13 @@ export const SessionRowItem = React.memo(function SessionRowItem({
               <>
                 <ul className="space-y-0.5">
                   {visibleWorkers.map((worker) => {
-                    const workerLiveStatus = getAgentLiveStatus(worker, statuses)
                     const workerIsSelected = !isSettingsActive && selectedAgentId === worker.agentId
 
                     return (
                       <li key={worker.agentId}>
                         <WorkerRow
                           agent={worker}
-                          liveStatus={workerLiveStatus}
+                          statusValue={workerStatuses?.[worker.agentId] ?? worker.status}
                           isSelected={workerIsSelected}
                           onSelect={onSelect}
                           onDelete={onDeleteAgent}

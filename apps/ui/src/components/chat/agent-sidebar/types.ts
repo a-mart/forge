@@ -77,7 +77,7 @@ export interface AgentSidebarProps {
 
 export interface WorkerRowProps {
   agent: AgentDescriptor
-  liveStatus: AgentLiveStatus
+  statusValue: AgentStatus
   isSelected: boolean
   onSelect: (agentId: string) => void
   onDelete: (agentId: string) => void
@@ -88,7 +88,9 @@ export interface WorkerRowProps {
 
 export interface SessionRowItemProps {
   session: SessionRow
-  statuses: StatusMap
+  managerStreaming: boolean
+  streamingWorkerCount: number
+  workerStatuses?: Record<string, AgentStatus>
   unreadCount: number
   selectedAgentId: string | null
   isSettingsActive: boolean
@@ -127,10 +129,10 @@ export interface ProfileGroupProps {
   collapsedSessionIds: Set<string>
   visibleSessionLimit: number
   expandedWorkerListSessionIds: Set<string>
-  onToggleProfileCollapsed: () => void
+  onToggleProfileCollapsed: (profileId: string) => void
   onToggleSessionCollapsed: (sessionId: string) => void
-  onShowMoreSessions: () => void
-  onShowLessSessions: () => void
+  onShowMoreSessions: (profileId: string) => void
+  onShowLessSessions: (profileId: string) => void
   onToggleWorkerListExpanded: (sessionId: string) => void
   onSelect: (agentId: string) => void
   onDeleteAgent: (agentId: string) => void
@@ -172,10 +174,10 @@ export interface CortexSectionProps {
   collapsedSessionIds: Set<string>
   visibleSessionLimit: number
   expandedWorkerListSessionIds: Set<string>
-  onToggleCollapsed: () => void
+  onToggleCollapsed: (profileId: string) => void
   onToggleSessionCollapsed: (sessionId: string) => void
-  onShowMoreSessions: () => void
-  onShowLessSessions: () => void
+  onShowMoreSessions: (profileId: string) => void
+  onShowLessSessions: (profileId: string) => void
   onToggleWorkerListExpanded: (sessionId: string) => void
   onSelect: (agentId: string) => void
   onDeleteAgent: (agentId: string) => void

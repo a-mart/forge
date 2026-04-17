@@ -19,6 +19,7 @@ import type { SessionRow } from '@/lib/agent-hierarchy'
 import { cn } from '@/lib/utils'
 import { SidebarModelIcon } from './shared'
 import { SessionRowItem } from './SessionRowItem'
+import { getAgentLiveStatus } from './utils'
 import { MAX_VISIBLE_SESSIONS } from './constants'
 import type { ProfileGroupProps } from './types'
 
@@ -91,7 +92,7 @@ export const ProfileGroup = React.memo(function ProfileGroup({
           <div className="relative flex items-center rounded-lg border border-white/[0.04] bg-white/[0.03]">
             <button
               type="button"
-              onClick={onToggleProfileCollapsed}
+              onClick={() => onToggleProfileCollapsed(profile.profileId)}
               aria-label={`${isCollapsed ? 'Expand' : 'Collapse'} ${profile.displayName}`}
               aria-expanded={!isCollapsed}
               className={cn(
@@ -303,12 +304,24 @@ export const ProfileGroup = React.memo(function ProfileGroup({
 
             const renderSession = (session: SessionRow) => {
               const sessionCollapsed = !collapsedSessionIds.has(session.sessionAgent.agentId)
+              const sessionManagerStreaming = getAgentLiveStatus(session.sessionAgent, statuses).status === 'streaming'
+              const sessionStreamingWorkerCount = session.workers.filter(
+                (w) => getAgentLiveStatus(w, statuses).status === 'streaming',
+              ).length || session.sessionAgent.activeWorkerCount || 0
+              // Build per-worker status lookup only if workers are loaded
+              const sessionWorkerStatuses = session.workers.length > 0
+                ? Object.fromEntries(
+                    session.workers.map((w) => [w.agentId, getAgentLiveStatus(w, statuses).status]),
+                  )
+                : undefined
 
               return (
                 <SessionRowItem
                   key={session.sessionAgent.agentId}
                   session={session}
-                  statuses={statuses}
+                  managerStreaming={sessionManagerStreaming}
+                  streamingWorkerCount={sessionStreamingWorkerCount}
+                  workerStatuses={sessionWorkerStatuses}
                   unreadCount={unreadCounts[session.sessionAgent.agentId] ?? 0}
                   selectedAgentId={selectedAgentId}
                   isSettingsActive={isSettingsActive}
@@ -357,7 +370,7 @@ export const ProfileGroup = React.memo(function ProfileGroup({
                     {hasMore ? (
                       <button
                         type="button"
-                        onClick={onShowMoreSessions}
+                        onClick={() => onShowMoreSessions(profile.profileId)}
                         className={cn(
                           'flex items-center gap-1 rounded-md py-1 text-left text-[11px] text-muted-foreground/70 transition-colors',
                           'hover:text-muted-foreground',
@@ -371,7 +384,7 @@ export const ProfileGroup = React.memo(function ProfileGroup({
                     {isExpanded ? (
                       <button
                         type="button"
-                        onClick={onShowLessSessions}
+                        onClick={() => onShowLessSessions(profile.profileId)}
                         className={cn(
                           'flex items-center gap-1 rounded-md py-1 text-left text-[11px] text-muted-foreground/70 transition-colors',
                           'hover:text-muted-foreground',

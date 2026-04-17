@@ -371,10 +371,10 @@ export const AgentSidebar = React.memo(function AgentSidebar({
       collapsedSessionIds={expandedSessionIds}
       visibleSessionLimit={getVisibleSessionLimit(treeRow.profile.profileId)}
       expandedWorkerListSessionIds={expandedWorkerListSessionIds}
-      onToggleProfileCollapsed={() => toggleProfileCollapsed(treeRow.profile.profileId)}
+      onToggleProfileCollapsed={toggleProfileCollapsed}
       onToggleSessionCollapsed={toggleSessionCollapsed}
-      onShowMoreSessions={() => showMoreSessions(treeRow.profile.profileId)}
-      onShowLessSessions={() => showLessSessions(treeRow.profile.profileId)}
+      onShowMoreSessions={showMoreSessions}
+      onShowLessSessions={showLessSessions}
       onToggleWorkerListExpanded={toggleWorkerListExpanded}
       onSelect={handleSelectAgent}
       onDeleteAgent={onDeleteAgent}
@@ -480,10 +480,10 @@ export const AgentSidebar = React.memo(function AgentSidebar({
               collapsedSessionIds={expandedSessionIds}
               visibleSessionLimit={getVisibleSessionLimit('cortex')}
               expandedWorkerListSessionIds={expandedWorkerListSessionIds}
-              onToggleCollapsed={() => toggleProfileCollapsed('cortex')}
+              onToggleCollapsed={toggleProfileCollapsed}
               onToggleSessionCollapsed={toggleSessionCollapsed}
-              onShowMoreSessions={() => showMoreSessions('cortex')}
-              onShowLessSessions={() => showLessSessions('cortex')}
+              onShowMoreSessions={showMoreSessions}
+              onShowLessSessions={showLessSessions}
               onToggleWorkerListExpanded={toggleWorkerListExpanded}
               onSelect={handleSelectAgent}
               onDeleteAgent={onDeleteAgent}

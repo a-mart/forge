@@ -9,7 +9,7 @@ import type { WorkerRowProps } from './types'
 
 export const WorkerRow = React.memo(function WorkerRow({
   agent,
-  liveStatus,
+  statusValue,
   isSelected,
   onSelect,
   onDelete,
@@ -23,9 +23,9 @@ export const WorkerRow = React.memo(function WorkerRow({
     `${agent.model.provider}/${agent.model.modelId}`,
     ...(agent.model.thinkingLevel ? [`reasoning: ${agent.model.thinkingLevel}`] : []),
   ]
-  const isActive = liveStatus.status === 'streaming'
-  const isRunning = liveStatus.status === 'streaming' || liveStatus.status === 'idle'
-  const isStopped = liveStatus.status === 'terminated' || liveStatus.status === 'stopped'
+  const isActive = statusValue === 'streaming'
+  const isRunning = statusValue === 'streaming' || statusValue === 'idle'
+  const isStopped = statusValue === 'terminated' || statusValue === 'stopped'
 
   return (
     <ContextMenu>
