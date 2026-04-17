@@ -30,6 +30,12 @@ export type SidebarPerfMetricKind = 'duration' | 'counter'
 
 export type SidebarPerfBuildMode = 'dev' | 'prod'
 
+/**
+ * Constrained label-key union — mirrors the backend pattern so typos are
+ * caught at compile time rather than silently filtered at runtime.
+ */
+export type SidebarPerfLabelKey = 'buildMode' | 'phase' | 'eventType'
+
 export interface SidebarPerfMetricDefinition {
   name: SidebarPerfMetricName
   kind: SidebarPerfMetricKind
@@ -37,7 +43,7 @@ export interface SidebarPerfMetricDefinition {
   /** Slow-threshold in ms. When `undefined`, no slow log is emitted. */
   thresholdMs?: number
   /** Allowed low-cardinality label keys for this metric. */
-  labelKeys: readonly string[]
+  labelKeys: readonly SidebarPerfLabelKey[]
 }
 
 /**

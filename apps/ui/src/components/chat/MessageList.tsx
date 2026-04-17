@@ -346,7 +346,9 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
         : null
 
     const finalize = () => {
-      getSidebarPerfRegistry().maybeCompleteFirstPaint(activeAgentId, {
+      const perfRegistry = getSidebarPerfRegistry()
+      const interactionNonce = perfRegistry.getActiveSessionSwitch()?.token ?? 0
+      perfRegistry.maybeCompleteFirstPaint(activeAgentId, interactionNonce, {
         displayEntryCount: displayEntries.length,
         emptySession: isResolvedEmpty,
       })

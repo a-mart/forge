@@ -20,6 +20,7 @@ import {
   SIDEBAR_PERF_METRIC_NAMES,
   SIDEBAR_PERF_METRICS,
   type SidebarPerfBuildMode,
+  type SidebarPerfLabelKey,
   type SidebarPerfMetricDefinition,
   type SidebarPerfMetricName,
 } from './sidebar-perf-metrics'
@@ -27,7 +28,7 @@ import {
 const HISTOGRAM_WINDOW_SIZE = 128
 const SLOW_EVENT_RING_SIZE = 50
 
-type LabelMap = Record<string, string | number | boolean | undefined>
+type LabelMap = Partial<Record<SidebarPerfLabelKey, string | number | boolean | undefined>>
 type FieldMap = Record<string, unknown>
 
 export interface PerfDurationOptions {
@@ -97,6 +98,13 @@ export interface SessionSwitchInteraction {
   activityMessageCount?: number
   allMessageCount?: number
   paintCompleted: boolean
+  /**
+   * True when a rapid same-agent revisit (A→B→A) is detected and the prior A
+   * subscribe is still in-flight. The registry drops metric recording for
+   * stale-risk interactions because the arriving `conversation_history` cannot
+   * be attributed to the correct subscribe request.
+   */
+  staleRisk: boolean
 }
 
 interface HistogramEntry {
@@ -110,7 +118,17 @@ export interface SidebarPerfRegistry {
   recordDuration(metricName: SidebarPerfMetricName, durationMs: number, options?: PerfDurationOptions): void
   increment(metricName: SidebarPerfMetricName, options?: PerfCounterOptions): void
   startSessionSwitch(targetAgentId: string): SessionSwitchInteraction | null
-  markHistoryLoaded(targetAgentId: string, counts: {
+  /**
+   * Marks the active session-switch as history-loaded and records the
+   * `click_to_history_loaded_ms` duration.
+   *
+   * @param interactionNonce — must match the active interaction token.
+   *   Callers obtain this from `getActiveSessionSwitch()?.token` at the time
+   *   of the subscribe response. Together with the internal `staleRisk` flag,
+   *   this ensures stale bootstraps from a prior same-agent click (A→B→A)
+   *   cannot complete a newer interaction's metric.
+   */
+  markHistoryLoaded(targetAgentId: string, interactionNonce: number, counts: {
     conversationMessageCount: number
     activityMessageCount: number
     allMessageCount: number
@@ -122,8 +140,10 @@ export interface SidebarPerfRegistry {
    * The registry refuses completion unless the active token for the supplied
    * agent already has `historyLoadedAtMs` — this is the explicit fix for the
    * v1 review's reset-empty-state false-completion regression.
+   *
+   * @param interactionNonce — must match the active interaction token.
    */
-  maybeCompleteFirstPaint(activeAgentId: string, sampleFields: {
+  maybeCompleteFirstPaint(activeAgentId: string, interactionNonce: number, sampleFields: {
     displayEntryCount: number
     emptySession: boolean
   }): boolean
@@ -153,6 +173,10 @@ export function createSidebarPerfRegistry(
 
   let activeInteraction: SessionSwitchInteraction | null = null
   let nextToken = 1
+  // Tracks agents with in-flight (unresolved) subscribes. Used to detect the
+  // A→B→A rapid-switch pattern where a stale `conversation_history` for the
+  // first A subscribe could incorrectly complete the second A's metric.
+  const inFlightAgentIds = new Set<string>()
 
   function ensureHistogram(name: string): HistogramEntry {
     let entry = histograms.get(name)
@@ -298,11 +322,24 @@ export function createSidebarPerfRegistry(
       return null
     }
 
+    // Detect A→B→A: if this agent already has an unresolved in-flight
+    // subscribe, the next `conversation_history` for this agent is ambiguous
+    // (could be from the old or new subscribe). Drop the measurement.
+    const staleRisk = inFlightAgentIds.has(targetAgentId)
+
+    // Clean up the previous interaction's in-flight tracking when resolved.
+    if (activeInteraction && activeInteraction.historyLoadedAtMs !== undefined) {
+      inFlightAgentIds.delete(activeInteraction.targetAgentId)
+    }
+
+    inFlightAgentIds.add(targetAgentId)
+
     const interaction: SessionSwitchInteraction = {
       token: nextToken++,
       targetAgentId,
       startedAtMs: now(),
       paintCompleted: false,
+      staleRisk,
     }
     activeInteraction = interaction
     return interaction
@@ -310,6 +347,7 @@ export function createSidebarPerfRegistry(
 
   function markHistoryLoaded(
     targetAgentId: string,
+    interactionNonce: number,
     counts: {
       conversationMessageCount: number
       activityMessageCount: number
@@ -320,10 +358,16 @@ export function createSidebarPerfRegistry(
     if (!interaction || interaction.targetAgentId !== targetAgentId) {
       return
     }
+    if (interaction.token !== interactionNonce) {
+      return
+    }
     if (interaction.historyLoadedAtMs !== undefined) {
       // already recorded for this token — ignore duplicates from re-renders.
       return
     }
+
+    // Resolve in-flight tracking for this agent.
+    inFlightAgentIds.delete(targetAgentId)
 
     const recordedAt = now()
     const durationMs = recordedAt - interaction.startedAtMs
@@ -331,6 +375,11 @@ export function createSidebarPerfRegistry(
     interaction.conversationMessageCount = counts.conversationMessageCount
     interaction.activityMessageCount = counts.activityMessageCount
     interaction.allMessageCount = counts.allMessageCount
+
+    // Skip recording if this interaction is ambiguous due to A→B→A pattern.
+    if (interaction.staleRisk) {
+      return
+    }
 
     recordDuration(
       SIDEBAR_PERF_METRIC_NAMES.sessionSwitchClickToHistoryLoadedMs,
@@ -349,6 +398,7 @@ export function createSidebarPerfRegistry(
 
   function maybeCompleteFirstPaint(
     activeAgentId: string,
+    interactionNonce: number,
     sampleFields: {
       displayEntryCount: number
       emptySession: boolean
@@ -364,10 +414,19 @@ export function createSidebarPerfRegistry(
     if (interaction.targetAgentId !== activeAgentId) {
       return false
     }
+    if (interaction.token !== interactionNonce) {
+      return false
+    }
     if (interaction.historyLoadedAtMs === undefined) {
       // The reset empty-state can render before `conversation_history` arrives.
       // Refuse completion until the history milestone has been recorded —
       // this is the explicit fix for the v1 review's false-completion bug.
+      return false
+    }
+    if (interaction.staleRisk) {
+      // A→B→A rapid-switch: the arriving conversation_history cannot be
+      // reliably attributed to this subscribe, so drop the measurement.
+      interaction.paintCompleted = true
       return false
     }
 
@@ -434,6 +493,7 @@ export function createSidebarPerfRegistry(
     slowEvents.length = 0
     activeInteraction = null
     nextToken = 1
+    inFlightAgentIds.clear()
   }
 
   return {
@@ -450,7 +510,7 @@ export function createSidebarPerfRegistry(
 }
 
 function serializeLabelKey(labels: LabelMap): string | null {
-  const keys = Object.keys(labels).sort()
+  const keys = (Object.keys(labels) as SidebarPerfLabelKey[]).sort()
   if (keys.length === 0) {
     return null
   }

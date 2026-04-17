@@ -60,19 +60,16 @@ export function isSidebarPerfDebugEnabled(): boolean {
   }
 }
 
-interface ForgePerfWindowSurface {
-  sidebar: {
-    enableDebug: () => void
-    disableDebug: () => void
-    isDebugEnabled: () => boolean
-    summary: () => unknown
-    dump: () => unknown
-  }
+interface ForgePerfSidebarSurface {
+  enableDebug: () => void
+  disableDebug: () => void
+  isDebugEnabled: () => boolean
+  summary: () => unknown
+  dump: () => unknown
 }
 
 interface ForgePerfWindow {
-  __forgePerf?: ForgePerfWindowSurface
-  __forgePerfDump?: () => unknown
+  __forgePerf?: Record<string, unknown> & { sidebar?: ForgePerfSidebarSurface }
 }
 
 let installed = false
@@ -96,58 +93,56 @@ export function installSidebarPerfDebugHooks(): void {
     return
   }
 
-  const surface: ForgePerfWindowSurface = {
-    sidebar: {
-      enableDebug: () => {
-        try {
-          win.localStorage?.setItem(DEBUG_FLAG_KEY, DEBUG_FLAG_VALUE)
-          console.info(
-            '[forge-perf] sidebar perf debug enabled — reload to activate Profiler-based counters.',
-          )
-        } catch {
-          /* ignore */
-        }
-      },
-      disableDebug: () => {
-        try {
-          win.localStorage?.removeItem(DEBUG_FLAG_KEY)
-          console.info('[forge-perf] sidebar perf debug disabled — reload to take effect.')
-        } catch {
-          /* ignore */
-        }
-      },
-      isDebugEnabled: isSidebarPerfDebugEnabled,
-      summary: () => getSidebarPerfRegistry().readSummary(),
-      dump: () => {
-        const summary = getSidebarPerfRegistry().readSummary()
-        try {
-          console.groupCollapsed('[forge-perf] sidebar perf dump')
-          console.log('summary', summary)
-          if (typeof console.table === 'function') {
-            const histogramRows = Object.entries(summary.histograms).map(([name, h]) => ({
-              metric: name,
-              count: h.count,
-              mean_ms: round(h.mean),
-              p50_ms: round(h.p50),
-              p95_ms: round(h.p95),
-              max_ms: round(h.max),
-            }))
-            if (histogramRows.length > 0) {
-              console.table(histogramRows)
-            }
+  const sidebarSurface: ForgePerfSidebarSurface = {
+    enableDebug: () => {
+      try {
+        win.localStorage?.setItem(DEBUG_FLAG_KEY, DEBUG_FLAG_VALUE)
+        console.info(
+          '[forge-perf] sidebar perf debug enabled — reload to activate Profiler-based counters.',
+        )
+      } catch {
+        /* ignore */
+      }
+    },
+    disableDebug: () => {
+      try {
+        win.localStorage?.removeItem(DEBUG_FLAG_KEY)
+        console.info('[forge-perf] sidebar perf debug disabled — reload to take effect.')
+      } catch {
+        /* ignore */
+      }
+    },
+    isDebugEnabled: isSidebarPerfDebugEnabled,
+    summary: () => getSidebarPerfRegistry().readSummary(),
+    dump: () => {
+      const summary = getSidebarPerfRegistry().readSummary()
+      try {
+        console.groupCollapsed('[forge-perf] sidebar perf dump')
+        console.log('summary', summary)
+        if (typeof console.table === 'function') {
+          const histogramRows = Object.entries(summary.histograms).map(([name, h]) => ({
+            metric: name,
+            count: h.count,
+            mean_ms: round(h.mean),
+            p50_ms: round(h.p50),
+            p95_ms: round(h.p95),
+            max_ms: round(h.max),
+          }))
+          if (histogramRows.length > 0) {
+            console.table(histogramRows)
           }
-          console.log('recentSlowEvents', summary.recentSlowEvents)
-          console.groupEnd()
-        } catch {
-          /* ignore */
         }
-        return summary
-      },
+        console.log('recentSlowEvents', summary.recentSlowEvents)
+        console.groupEnd()
+      } catch {
+        /* ignore */
+      }
+      return summary
     },
   }
 
-  win.__forgePerf = surface
-  win.__forgePerfDump = surface.sidebar.dump
+  // Merge into existing namespace to avoid clobbering other perf surfaces.
+  win.__forgePerf = { ...win.__forgePerf, sidebar: sidebarSurface }
   installed = true
 }
 
