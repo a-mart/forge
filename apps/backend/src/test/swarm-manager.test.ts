@@ -7844,7 +7844,7 @@ describe('SwarmManager', () => {
     ).toBe(true)
   })
 
-  it('reloads manager history from conversation cache when session entries are unavailable', async () => {
+  it('does not trust a stale conversation cache after the canonical session file is truncated', async () => {
     const config = await makeTempConfig()
     const firstBoot = new TestSwarmManager(config)
     await bootWithDefaultManager(firstBoot, config)
@@ -7869,22 +7869,7 @@ describe('SwarmManager', () => {
     await bootWithDefaultManager(secondBoot, config)
 
     const history = secondBoot.getConversationHistory('manager')
-    expect(
-      history.some(
-        (message) =>
-          message.type === 'conversation_message' &&
-          message.text === 'persist this' &&
-          message.source === 'user_input',
-      ),
-    ).toBe(true)
-    expect(
-      history.some(
-        (message) =>
-          message.type === 'conversation_message' &&
-          message.text === 'saved reply' &&
-          message.source === 'speak_to_user',
-      ),
-    ).toBe(true)
+    expect(history).toEqual([])
   })
 
   it('preserves web user and speak_to_user history when internal activity overflows history limits', async () => {
