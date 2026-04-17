@@ -72,7 +72,7 @@ describe('sendSubscriptionBootstrap', () => {
       getPendingChoiceIdsForSession: vi.fn(() => ['choice-1']),
     } as any
 
-    sendSubscriptionBootstrap({
+    const result = sendSubscriptionBootstrap({
       socket: {} as any,
       targetAgentId: 'manager-1',
       swarmManager,
@@ -102,8 +102,120 @@ describe('sendSubscriptionBootstrap', () => {
       historyDetail: 'fixture',
       historyEntriesReturned: 1,
       pendingChoiceCount: 1,
+      snapshotSkipped: false,
     })
     expect(bootstrapOptions?.fields).not.toHaveProperty('agentId')
     expect(send).toHaveBeenCalledTimes(6)
+    expect(result).toEqual({
+      agentsSnapshotSent: true,
+      profilesSnapshotSent: true,
+      playwrightDiscoveryBootstrapSent: false,
+    })
+  })
+
+  it('records skipped snapshot metrics when connection-scoped snapshots are omitted', () => {
+    const perf = createPerfStub()
+    const send = vi.fn((_: unknown, event: ServerEvent) => Buffer.byteLength(JSON.stringify(event), 'utf8'))
+    const swarmManager = {
+      listBootstrapAgents: vi.fn(() => []),
+      listProfiles: vi.fn(() => []),
+      getConversationHistoryWithDiagnostics: vi.fn(() => ({
+        history: [],
+        diagnostics: {
+          cacheState: 'hit' as const,
+          historySource: 'cache_hit' as const,
+          coldLoad: false,
+          fsReadOps: 0,
+          fsReadBytes: 0,
+          sessionFileBytes: 0,
+          cacheFileBytes: 0,
+          persistedEntryCount: 0,
+          cachedEntryCount: 0,
+          sessionSummaryBytesScanned: 0,
+          cacheReadMs: 0,
+          sessionSummaryReadMs: 0,
+          detail: undefined,
+        },
+      })),
+      getPendingChoiceIdsForSession: vi.fn(() => []),
+    } as any
+    const playwrightDiscovery = {
+      getSnapshot: vi.fn(() => ({
+        updatedAt: '2026-01-01T00:00:00.000Z',
+        lastScanStartedAt: null,
+        lastScanCompletedAt: null,
+        scanDurationMs: null,
+        sequence: 4,
+        serviceStatus: 'disabled',
+        settings: {
+          enabled: false,
+          effectiveEnabled: false,
+          source: 'default',
+          scanRoots: [],
+          pollIntervalMs: 1000,
+          socketProbeTimeoutMs: 1000,
+          staleSessionThresholdMs: 1000,
+        },
+        rootsScanned: [],
+        summary: {
+          totalSessions: 0,
+          activeSessions: 0,
+          inactiveSessions: 0,
+          staleSessions: 0,
+          errorSessions: 0,
+        },
+        sessions: [],
+        warnings: [],
+        lastError: null,
+      })),
+      getSettings: vi.fn(() => ({
+        enabled: false,
+        effectiveEnabled: false,
+        source: 'default',
+        scanRoots: [],
+        pollIntervalMs: 1000,
+        socketProbeTimeoutMs: 1000,
+        staleSessionThresholdMs: 1000,
+      })),
+    } as any
+
+    const result = sendSubscriptionBootstrap({
+      socket: {} as any,
+      targetAgentId: 'manager-1',
+      swarmManager,
+      integrationRegistry: null,
+      playwrightDiscovery,
+      terminalService: null,
+      unreadTracker: null,
+      perf,
+      send,
+      resolveTerminalScopeAgentId: () => undefined,
+      resolveManagerContextAgentId: () => undefined,
+      includeAgentsSnapshot: false,
+      includeProfilesSnapshot: false,
+      includePlaywrightDiscoveryBootstrap: false,
+    })
+
+    const recordDuration = vi.mocked(perf.recordDuration)
+    const bootstrapCalls = recordDuration.mock.calls.filter(([metricName]) => metricName === SIDEBAR_BOOTSTRAP_METRIC)
+    expect(bootstrapCalls).toHaveLength(1)
+    expect(recordDuration.mock.calls.some(([metricName]) => metricName === SIDEBAR_SNAPSHOT_BUILD_METRIC)).toBe(false)
+
+    const [, , bootstrapOptions] = bootstrapCalls[0]
+    expect(bootstrapOptions?.fields).toMatchObject({
+      snapshotSkipped: true,
+      agentsSnapshotBuildMs: 0,
+      agentsSnapshotPayloadBytes: 0,
+      profilesSnapshotBuildMs: 0,
+      profilesSnapshotPayloadBytes: 0,
+      playwrightDiscoverySnapshotPayloadBytes: 0,
+      playwrightDiscoverySettingsPayloadBytes: 0,
+    })
+    expect(send).toHaveBeenCalledTimes(4)
+    expect(result).toEqual({
+      agentsSnapshotSent: false,
+      profilesSnapshotSent: false,
+      playwrightDiscoveryBootstrapSent: false,
+    })
   })
 })

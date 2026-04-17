@@ -958,6 +958,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly pendingManualManagerStopNoticeTimersByAgentId = new Map<string, NodeJS.Timeout>();
   private readonly conversationEntriesByAgentId = new Map<string, ConversationEntryEvent[]>();
   private readonly pinnedMessageIdsBySessionAgentId = new Map<string, Set<string>>();
+  private agentsSnapshotVersion = 0;
+  private profilesSnapshotVersion = 0;
   private readonly workerHealthService: SwarmWorkerHealthService;
   private readonly specialistFallbackManager: SwarmSpecialistFallbackManager;
   private readonly modelCapacityBlocks = new Map<string, ModelCapacityBlock>();
@@ -1613,6 +1615,14 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   listProfiles(): ManagerProfile[] {
     return this.sortedProfiles().map((profile) => ({ ...profile }));
+  }
+
+  getAgentsSnapshotVersion(): number {
+    return this.agentsSnapshotVersion;
+  }
+
+  getProfilesSnapshotVersion(): number {
+    return this.profilesSnapshotVersion;
   }
 
   async listCortexReviewRuns(): Promise<CortexReviewRunRecord[]> {
@@ -5047,17 +5057,18 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       agents: this.listManagerAgents()
     };
 
+    this.agentsSnapshotVersion += 1;
     this.emit("agents_snapshot", payload satisfies ServerEvent);
   }
 
   private emitProfilesSnapshot(): void {
-    this.emit(
-      "profiles_snapshot",
-      {
-        type: "profiles_snapshot",
-        profiles: this.listProfiles()
-      } satisfies ServerEvent
-    );
+    const payload = {
+      type: "profiles_snapshot",
+      profiles: this.listProfiles()
+    } satisfies ServerEvent;
+
+    this.profilesSnapshotVersion += 1;
+    this.emit("profiles_snapshot", payload);
   }
 
   private emitSessionProjectAgentUpdated(

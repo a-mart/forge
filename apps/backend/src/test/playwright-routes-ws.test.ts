@@ -85,6 +85,14 @@ class FakeSwarmManager extends EventEmitter {
   getSidebarPerfRecorder(): SidebarPerfRecorder {
     return this.perf
   }
+
+  getAgentsSnapshotVersion(): number {
+    return 1
+  }
+
+  getProfilesSnapshotVersion(): number {
+    return 1
+  }
 }
 
 class FakePlaywrightDiscovery extends EventEmitter {
