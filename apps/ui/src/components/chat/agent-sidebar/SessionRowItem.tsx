@@ -49,18 +49,55 @@ function workerStatusRecordEqual(
 }
 
 /**
+ * Exhaustive prop list for the memo comparator. Typed against
+ * SessionRowItemProps so adding a new prop to the interface without
+ * updating this list produces a visible review signal (or a type error
+ * if the key is required and missing from the array literal).
+ */
+const SESSION_ROW_REF_EQUAL_KEYS: (keyof SessionRowItemProps)[] = [
+  'session',
+  'managerStreaming',
+  'streamingWorkerCount',
+  // workerStatuses handled separately via shallow-value comparison
+  'unreadCount',
+  'selectedAgentId',
+  'isSettingsActive',
+  'isCollapsed',
+  'isWorkerListExpanded',
+  'onToggleCollapse',
+  'onToggleWorkerListExpanded',
+  'onSelect',
+  'onDeleteAgent',
+  'onStopSession',
+  'onResumeSession',
+  'onDeleteSession',
+  'onRenameSession',
+  'onForkSession',
+  'onMarkUnread',
+  'onStopWorker',
+  'onResumeWorker',
+  'highlightQuery',
+  'onPinSession',
+  'onPromoteToProjectAgent',
+  'onOpenProjectAgentSettings',
+  'onDemoteProjectAgent',
+  'canViewCreationHistory',
+  'isMutedSession',
+  'onToggleMute',
+  'getCreatorAttribution',
+]
+
+/**
  * Custom React.memo comparison for SessionRowItem.
- * Uses default reference equality for all props except `workerStatuses`,
- * which gets a shallow-value comparison because parents derive a fresh
- * Record object on every render even when the status values are unchanged.
+ * Uses reference equality for all props in the explicit list above,
+ * plus a shallow-value comparison for `workerStatuses` (parents derive
+ * a fresh Record object on every render even when values are unchanged).
  */
 function areSessionRowItemPropsEqual(
   prev: SessionRowItemProps,
   next: SessionRowItemProps,
 ): boolean {
-  const keys = Object.keys(prev) as (keyof SessionRowItemProps)[]
-  for (const key of keys) {
-    if (key === 'workerStatuses') continue
+  for (const key of SESSION_ROW_REF_EQUAL_KEYS) {
     if (prev[key] !== next[key]) return false
   }
   return workerStatusRecordEqual(prev.workerStatuses, next.workerStatuses)
