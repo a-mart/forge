@@ -260,20 +260,32 @@ export function IndexPage() {
     )
   }, [activeManagerId, state.agents])
 
-  // Track the active manager's workerCount so the effect re-fires when workers spawn/despawn
-  const activeManagerWorkerCount = useMemo(() => {
-    if (!activeManagerId) return 0
-    const manager = state.agents.find(
-      (a) => a.role === 'manager' && a.agentId === activeManagerId,
-    )
-    return manager?.workerCount ?? 0
-  }, [activeManagerId, state.agents])
+  // Deferred one-time worker fetch for the chat area (pill bar).
+  // Fires on session switch only when the active session has workers
+  // that haven't been loaded yet. Uses setTimeout(0) to defer past the
+  // initial session-switch render. Does NOT re-fire on workerCount
+  // changes — the ws-client's internal queueSessionWorkersRefetch
+  // handles worker count drift for previously-loaded sessions.
+  const stateRef = useRef(state)
+  stateRef.current = state
 
-  // Proactively load workers when viewing a manager session or when workerCount changes
   useEffect(() => {
     if (!isActiveManager || !activeManagerId || !clientRef.current) return
-    void clientRef.current.getSessionWorkers(activeManagerId).catch(() => {})
-  }, [isActiveManager, activeManagerId, clientRef, activeManagerWorkerCount])
+
+    const { loadedSessionIds, agents } = stateRef.current
+    if (loadedSessionIds.has(activeManagerId)) return
+
+    const manager = agents.find(
+      (a) => a.role === 'manager' && a.agentId === activeManagerId,
+    )
+    if (!manager?.workerCount) return
+
+    const id = activeManagerId
+    const timer = setTimeout(() => {
+      clientRef.current?.getSessionWorkers(id).catch(() => {})
+    }, 0)
+    return () => clearTimeout(timer)
+  }, [isActiveManager, activeManagerId, clientRef])
 
   // Resolve parent manager label for the worker back-bar
   const parentManagerLabel = useMemo(() => {
