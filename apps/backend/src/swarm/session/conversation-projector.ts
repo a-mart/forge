@@ -39,7 +39,7 @@ const MAX_SAFE_JSON_BYTES = 32 * 1024;
 const SAFE_JSON_TRUNCATED_SUFFIX = " [truncated]";
 const CONVERSATION_ENTRY_TYPE = "swarm_conversation_entry";
 const CONVERSATION_CACHE_META_TYPE = "swarm_conversation_cache_meta";
-const CONVERSATION_CACHE_VERSION = 1;
+const CONVERSATION_CACHE_VERSION = 2;
 const SESSION_HEADER_VERSION = 3;
 const MANAGER_ERROR_CONTEXT_HINT = "Try compacting the conversation to free up context space.";
 const MANAGER_ERROR_GENERIC_HINT = "Please retry. If this persists, check provider auth and rate limits.";
@@ -54,6 +54,11 @@ type ConversationEventName =
   | "conversation_reset"
   | "choice_request";
 
+interface ConversationHistoryCacheCanonicalStat {
+  size: number;
+  mtimeMs: number;
+}
+
 interface ConversationHistoryCacheMetadata {
   type: typeof CONVERSATION_CACHE_META_TYPE;
   version: typeof CONVERSATION_CACHE_VERSION;
@@ -61,6 +66,7 @@ interface ConversationHistoryCacheMetadata {
   cachedPersistedEntryCount: number;
   firstPersistedEntryKey: string | null;
   lastPersistedEntryKey: string | null;
+  canonicalStat: ConversationHistoryCacheCanonicalStat;
 }
 
 interface LoadedConversationHistoryCache {
@@ -78,18 +84,31 @@ interface LoadedConversationHistoryCacheResult {
   detail?: string | null;
 }
 
+interface LoadedConversationHistoryCacheHeaderResult {
+  cacheState: "loaded" | "absent" | "cache_read_error" | "legacy_rebuild";
+  metadata: ConversationHistoryCacheMetadata | null;
+  cacheFileBytes?: number;
+  cacheReadMs?: number;
+  fsReadOps: number;
+  fsReadBytes: number;
+  detail?: string | null;
+}
+
 interface ValidatedConversationHistoryCacheResult {
   ok: boolean;
   entries?: ConversationEntryEvent[];
-  cacheState?: Exclude<HistoryCacheState, "memory" | "hit" | "absent" | "cache_read_error" | "size_guard_skip">;
+  cacheState?: Exclude<HistoryCacheState, "memory" | "hit" | "absent" | "size_guard_skip">;
   persistedEntryCount: number;
   cachedEntryCount: number;
   sessionFileBytes?: number;
   sessionSummaryBytesScanned?: number;
   sessionSummaryReadMs?: number;
+  cacheReadMs?: number;
   fsReadOps: number;
   fsReadBytes: number;
   detail?: string | null;
+  fastPathUsed: boolean;
+  rewriteCache: boolean;
 }
 
 interface QueuedConversationHistoryCacheSnapshot {
@@ -595,22 +614,27 @@ export class ConversationProjector {
     descriptor: AgentDescriptor
   ): ConversationHistoryWithDiagnostics {
     const existingInMemoryEntries = this.deps.conversationEntriesByAgentId.get(descriptor.agentId) ?? [];
-    const cacheLoad = this.loadConversationHistoryFromCache(descriptor.sessionFile);
+    const cacheHeaderLoad = this.loadConversationHistoryCacheHeader(descriptor.sessionFile);
 
-    if (cacheLoad.cachedHistory) {
-      const validation = this.validateCachedConversationHistory(descriptor.sessionFile, cacheLoad.cachedHistory);
+    if (cacheHeaderLoad.metadata) {
+      const validation = this.validateCachedConversationHistory(descriptor.sessionFile, cacheHeaderLoad.metadata);
+      const totalCacheReadMs = sumOptionalNumbers(cacheHeaderLoad.cacheReadMs, validation.cacheReadMs);
+
       if (validation.ok) {
         const validatedCachedEntries = validation.entries ?? [];
         trimConversationHistory(validatedCachedEntries);
         const mergedEntries = this.mergeDiskAndInMemoryEntries(validatedCachedEntries, existingInMemoryEntries);
         this.applyPinnedState(descriptor.agentId, mergedEntries);
-        this.trackPersistedEntryCount(descriptor.sessionFile, cacheLoad.cachedHistory.metadata?.persistedEntryCount ?? 0);
+        this.trackPersistedEntryCount(descriptor.sessionFile, validation.persistedEntryCount);
         this.loadedFromDisk.add(descriptor.agentId);
         this.deps.conversationEntriesByAgentId.set(descriptor.agentId, mergedEntries);
-        this.queueConversationHistoryCacheWrite(descriptor.agentId, mergedEntries);
+        if (validation.rewriteCache) {
+          this.queueConversationHistoryCacheWrite(descriptor.agentId, mergedEntries);
+        }
         this.deps.logDebug("history:load:cache", {
           agentId: descriptor.agentId,
-          messageCount: mergedEntries.length
+          messageCount: mergedEntries.length,
+          fastPathUsed: validation.fastPathUsed
         });
         return {
           history: mergedEntries,
@@ -618,16 +642,17 @@ export class ConversationProjector {
             cacheState: "hit",
             historySource: "cache_hit",
             coldLoad: true,
-            cacheFileBytes: cacheLoad.cacheFileBytes,
+            cacheFileBytes: cacheHeaderLoad.cacheFileBytes,
             persistedEntryCount: validation.persistedEntryCount,
             cachedEntryCount: validation.cachedEntryCount,
             sessionFileBytes: validation.sessionFileBytes,
             sessionSummaryBytesScanned: validation.sessionSummaryBytesScanned,
-            cacheReadMs: cacheLoad.cacheReadMs,
+            cacheReadMs: totalCacheReadMs,
             sessionSummaryReadMs: validation.sessionSummaryReadMs,
-            fsReadOps: cacheLoad.fsReadOps + validation.fsReadOps,
-            fsReadBytes: cacheLoad.fsReadBytes + validation.fsReadBytes,
-            detail: mergeDiagnosticDetails(cacheLoad.detail, validation.detail)
+            fsReadOps: cacheHeaderLoad.fsReadOps + validation.fsReadOps,
+            fsReadBytes: cacheHeaderLoad.fsReadBytes + validation.fsReadBytes,
+            detail: mergeDiagnosticDetails(cacheHeaderLoad.detail, validation.detail),
+            fastPathUsed: validation.fastPathUsed
           })
         };
       }
@@ -641,27 +666,34 @@ export class ConversationProjector {
       return this.loadConversationHistoryFromSessionFile(descriptor, existingInMemoryEntries, {
         cacheState: validation.cacheState ?? "cache_read_error",
         historySource: "cache_rebuild",
-        cacheFileBytes: cacheLoad.cacheFileBytes,
+        cacheFileBytes: cacheHeaderLoad.cacheFileBytes,
         persistedEntryCount: validation.persistedEntryCount,
         cachedEntryCount: validation.cachedEntryCount,
         sessionFileBytes: validation.sessionFileBytes,
         sessionSummaryBytesScanned: validation.sessionSummaryBytesScanned,
-        cacheReadMs: cacheLoad.cacheReadMs,
+        cacheReadMs: totalCacheReadMs,
         sessionSummaryReadMs: validation.sessionSummaryReadMs,
-        fsReadOps: cacheLoad.fsReadOps + validation.fsReadOps,
-        fsReadBytes: cacheLoad.fsReadBytes + validation.fsReadBytes,
-        detail: mergeDiagnosticDetails(cacheLoad.detail, validation.detail)
+        fsReadOps: cacheHeaderLoad.fsReadOps + validation.fsReadOps,
+        fsReadBytes: cacheHeaderLoad.fsReadBytes + validation.fsReadBytes,
+        detail: mergeDiagnosticDetails(cacheHeaderLoad.detail, validation.detail),
+        fastPathUsed: validation.fastPathUsed
       });
     }
 
     return this.loadConversationHistoryFromSessionFile(descriptor, existingInMemoryEntries, {
-      cacheState: cacheLoad.cacheState === "absent" ? "absent" : "cache_read_error",
-      historySource: cacheLoad.cacheState === "absent" ? "full_parse" : "cache_rebuild",
-      cacheFileBytes: cacheLoad.cacheFileBytes,
-      cacheReadMs: cacheLoad.cacheReadMs,
-      fsReadOps: cacheLoad.fsReadOps,
-      fsReadBytes: cacheLoad.fsReadBytes,
-      detail: cacheLoad.detail
+      cacheState:
+        cacheHeaderLoad.cacheState === "absent"
+          ? "absent"
+          : cacheHeaderLoad.cacheState === "legacy_rebuild"
+            ? "legacy_rebuild"
+            : "cache_read_error",
+      historySource: cacheHeaderLoad.cacheState === "absent" ? "full_parse" : "cache_rebuild",
+      cacheFileBytes: cacheHeaderLoad.cacheFileBytes,
+      cacheReadMs: cacheHeaderLoad.cacheReadMs,
+      fsReadOps: cacheHeaderLoad.fsReadOps,
+      fsReadBytes: cacheHeaderLoad.fsReadBytes,
+      detail: cacheHeaderLoad.detail,
+      fastPathUsed: false
     });
   }
 
@@ -763,7 +795,8 @@ export class ConversationProjector {
         sessionSummaryBytesScanned: diagnostics.sessionSummaryBytesScanned,
         cacheReadMs: diagnostics.cacheReadMs,
         sessionSummaryReadMs: diagnostics.sessionSummaryReadMs,
-        detail: diagnostics.detail ?? undefined
+        detail: diagnostics.detail ?? undefined,
+        fastPathUsed: diagnostics.fastPathUsed ?? undefined
       }
     });
   }
@@ -788,6 +821,142 @@ export class ConversationProjector {
         entry.pinned = true;
       } else {
         delete entry.pinned;
+      }
+    }
+  }
+
+  private loadConversationHistoryCacheHeader(sessionFile: string): LoadedConversationHistoryCacheHeaderResult {
+    const cacheFile = getConversationHistoryCacheFilePath(sessionFile);
+    if (!existsSync(cacheFile)) {
+      return {
+        cacheState: "absent",
+        metadata: null,
+        fsReadOps: 0,
+        fsReadBytes: 0
+      };
+    }
+
+    const startedAtMs = performance.now();
+    let fileDescriptor: number | undefined;
+
+    try {
+      const cacheFileBytes = statSync(cacheFile).size;
+      if (cacheFileBytes <= 0) {
+        return {
+          cacheState: "legacy_rebuild",
+          metadata: null,
+          cacheFileBytes,
+          cacheReadMs: performance.now() - startedAtMs,
+          fsReadOps: 0,
+          fsReadBytes: 0,
+          detail: "missing_cache_metadata"
+        };
+      }
+
+      fileDescriptor = openSync(cacheFile, "r");
+      const chunkSize = 4096;
+      let headerLine = "";
+      let position = 0;
+      let fsReadOps = 0;
+      let fsReadBytes = 0;
+
+      while (position < cacheFileBytes) {
+        const readLength = Math.min(chunkSize, cacheFileBytes - position);
+        const buffer = Buffer.alloc(readLength);
+        const bytesRead = readSync(fileDescriptor, buffer, 0, readLength, position);
+        if (bytesRead <= 0) {
+          break;
+        }
+
+        fsReadOps += 1;
+        fsReadBytes += bytesRead;
+        position += bytesRead;
+        headerLine += buffer.toString("utf8", 0, bytesRead);
+
+        const newlineIndex = headerLine.indexOf("\n");
+        if (newlineIndex >= 0) {
+          headerLine = headerLine.slice(0, newlineIndex);
+          break;
+        }
+      }
+
+      const trimmedHeaderLine = headerLine.trim();
+      if (trimmedHeaderLine.length === 0) {
+        return {
+          cacheState: "legacy_rebuild",
+          metadata: null,
+          cacheFileBytes,
+          cacheReadMs: performance.now() - startedAtMs,
+          fsReadOps,
+          fsReadBytes,
+          detail: "missing_cache_metadata"
+        };
+      }
+
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(trimmedHeaderLine);
+      } catch {
+        return {
+          cacheState: "cache_read_error",
+          metadata: null,
+          cacheFileBytes,
+          cacheReadMs: performance.now() - startedAtMs,
+          fsReadOps,
+          fsReadBytes,
+          detail: "invalid_cache_payload"
+        };
+      }
+
+      const metadata = parseConversationHistoryCacheMetadata(parsed);
+      if (metadata) {
+        return {
+          cacheState: "loaded",
+          metadata,
+          cacheFileBytes,
+          cacheReadMs: performance.now() - startedAtMs,
+          fsReadOps,
+          fsReadBytes
+        };
+      }
+
+      if (isConversationHistoryCacheMetadataRecord(parsed) || isConversationEntryEvent(parsed)) {
+        return {
+          cacheState: "legacy_rebuild",
+          metadata: null,
+          cacheFileBytes,
+          cacheReadMs: performance.now() - startedAtMs,
+          fsReadOps,
+          fsReadBytes,
+          detail: "missing_cache_metadata"
+        };
+      }
+
+      return {
+        cacheState: "cache_read_error",
+        metadata: null,
+        cacheFileBytes,
+        cacheReadMs: performance.now() - startedAtMs,
+        fsReadOps,
+        fsReadBytes,
+        detail: "invalid_cache_payload"
+      };
+    } catch (error) {
+      this.deps.logDebug("history:load:cache:error", {
+        cacheFile,
+        message: error instanceof Error ? error.message : String(error)
+      });
+      return {
+        cacheState: "cache_read_error",
+        metadata: null,
+        cacheReadMs: performance.now() - startedAtMs,
+        fsReadOps: 0,
+        fsReadBytes: 0,
+        detail: error instanceof Error ? error.message : String(error)
+      };
+    } finally {
+      if (fileDescriptor !== undefined) {
+        closeSync(fileDescriptor);
       }
     }
   }
@@ -888,48 +1057,72 @@ export class ConversationProjector {
 
   private validateCachedConversationHistory(
     sessionFile: string,
-    cachedHistory: LoadedConversationHistoryCache
+    metadata: ConversationHistoryCacheMetadata
   ): ValidatedConversationHistoryCacheResult {
-    const cacheSummary = summarizePersistedConversationEntries(cachedHistory.entries);
-    const sessionSummaryResult = this.readPersistedConversationEntrySummary(sessionFile);
-    const sessionSummary = sessionSummaryResult.summary;
+    let canonicalStat = this.readSessionFileCanonicalStat(sessionFile);
+    let persistedEntryCount = metadata.persistedEntryCount;
+    let lastPersistedEntryKey = metadata.lastPersistedEntryKey;
+    let sessionFileBytes = canonicalStat?.size;
+    let sessionSummaryBytesScanned: number | undefined;
+    let sessionSummaryReadMs: number | undefined;
+    let summaryFsReadOps = 0;
+    let summaryFsReadBytes = 0;
+    let detail: string | null = null;
+    let fastPathUsed = false;
+    let rewriteCache = false;
 
-    if (!cachedHistory.metadata) {
-      if (cacheSummary.count === 0 && sessionSummary.count === 0) {
-        return {
-          ok: true,
-          entries: cachedHistory.entries,
-          persistedEntryCount: sessionSummary.count,
-          cachedEntryCount: cacheSummary.count,
-          sessionFileBytes: sessionSummaryResult.sessionFileBytes,
-          sessionSummaryBytesScanned: sessionSummaryResult.sessionSummaryBytesScanned,
-          sessionSummaryReadMs: sessionSummaryResult.sessionSummaryReadMs,
-          fsReadOps: sessionSummaryResult.fsReadOps,
-          fsReadBytes: sessionSummaryResult.fsReadBytes,
-          detail: sessionSummaryResult.detail
-        };
-      }
+    const refreshCanonicalProofFromSummary = (): void => {
+      const sessionSummaryResult = this.readPersistedConversationEntrySummary(sessionFile);
+      persistedEntryCount = sessionSummaryResult.summary.count;
+      lastPersistedEntryKey = sessionSummaryResult.summary.last?.key ?? null;
+      sessionFileBytes = sessionSummaryResult.sessionFileBytes;
+      sessionSummaryBytesScanned = sessionSummaryResult.sessionSummaryBytesScanned;
+      sessionSummaryReadMs = sessionSummaryResult.sessionSummaryReadMs;
+      summaryFsReadOps += sessionSummaryResult.fsReadOps;
+      summaryFsReadBytes += sessionSummaryResult.fsReadBytes;
+      detail = mergeDiagnosticDetails(detail, sessionSummaryResult.detail);
+      rewriteCache = true;
+      fastPathUsed = false;
+      canonicalStat = this.readSessionFileCanonicalStat(sessionFile);
+    };
 
-      this.deps.logDebug("history:load:cache:validate:legacy_rebuild", {
-        sessionFile,
-        cachePersistedEntryCount: cacheSummary.count,
-        sessionPersistedEntryCount: sessionSummary.count
-      });
+    if (!canonicalStat || !doesConversationHistoryCacheCanonicalStatMatch(metadata.canonicalStat, canonicalStat)) {
+      refreshCanonicalProofFromSummary();
+    } else {
+      fastPathUsed = true;
+    }
+
+    const cacheLoad = this.loadConversationHistoryFromCache(sessionFile);
+    const cacheReadMs = cacheLoad.cacheReadMs;
+    const getTotalFsReadOps = (): number => summaryFsReadOps + cacheLoad.fsReadOps;
+    const getTotalFsReadBytes = (): number => summaryFsReadBytes + cacheLoad.fsReadBytes;
+
+    if (!cacheLoad.cachedHistory) {
       return {
         ok: false,
-        cacheState: "legacy_rebuild",
-        persistedEntryCount: sessionSummary.count,
-        cachedEntryCount: cacheSummary.count,
-        sessionFileBytes: sessionSummaryResult.sessionFileBytes,
-        sessionSummaryBytesScanned: sessionSummaryResult.sessionSummaryBytesScanned,
-        sessionSummaryReadMs: sessionSummaryResult.sessionSummaryReadMs,
-        fsReadOps: sessionSummaryResult.fsReadOps,
-        fsReadBytes: sessionSummaryResult.fsReadBytes,
-        detail: sessionSummaryResult.detail
+        cacheState: "cache_read_error",
+        persistedEntryCount,
+        cachedEntryCount: 0,
+        sessionFileBytes,
+        sessionSummaryBytesScanned,
+        sessionSummaryReadMs,
+        cacheReadMs,
+        fsReadOps: getTotalFsReadOps(),
+        fsReadBytes: getTotalFsReadBytes(),
+        detail: mergeDiagnosticDetails(detail, cacheLoad.detail),
+        fastPathUsed: false,
+        rewriteCache: false
       };
     }
 
-    if (!doesConversationHistoryCacheMetadataMatchEntries(cachedHistory.metadata, cacheSummary)) {
+    const cachedHistory = cacheLoad.cachedHistory;
+    const cacheSummary = summarizePersistedConversationEntries(cachedHistory.entries);
+
+    if (
+      !cachedHistory.metadata ||
+      !doesConversationHistoryCacheMetadataMatchEntries(cachedHistory.metadata, cacheSummary) ||
+      !doesConversationHistoryCacheMetadataMatchFingerprint(cachedHistory.metadata, metadata)
+    ) {
       this.deps.logDebug("history:load:cache:validate:reject", {
         sessionFile,
         reason: "metadata_entries_mismatch"
@@ -937,35 +1130,48 @@ export class ConversationProjector {
       return {
         ok: false,
         cacheState: "metadata_entries_mismatch",
-        persistedEntryCount: sessionSummary.count,
+        persistedEntryCount,
         cachedEntryCount: cacheSummary.count,
-        sessionFileBytes: sessionSummaryResult.sessionFileBytes,
-        sessionSummaryBytesScanned: sessionSummaryResult.sessionSummaryBytesScanned,
-        sessionSummaryReadMs: sessionSummaryResult.sessionSummaryReadMs,
-        fsReadOps: sessionSummaryResult.fsReadOps,
-        fsReadBytes: sessionSummaryResult.fsReadBytes,
-        detail: sessionSummaryResult.detail
+        sessionFileBytes,
+        sessionSummaryBytesScanned,
+        sessionSummaryReadMs,
+        cacheReadMs,
+        fsReadOps: getTotalFsReadOps(),
+        fsReadBytes: getTotalFsReadBytes(),
+        detail: mergeDiagnosticDetails(detail, cacheLoad.detail),
+        fastPathUsed: false,
+        rewriteCache: false
       };
     }
 
-    if (sessionSummary.count === 0 && hasValidSessionHeader(sessionFile)) {
+    if (fastPathUsed && canonicalStat) {
+      const postValidationStat = this.readSessionFileCanonicalStat(sessionFile);
+      if (!postValidationStat || !doesConversationHistoryCacheCanonicalStatMatch(canonicalStat, postValidationStat)) {
+        refreshCanonicalProofFromSummary();
+      }
+    }
+
+    if (cacheSummary.count === 0 && persistedEntryCount === 0 && hasValidSessionHeader(sessionFile)) {
       return {
         ok: true,
         entries: cachedHistory.entries,
-        persistedEntryCount: sessionSummary.count,
+        persistedEntryCount,
         cachedEntryCount: cacheSummary.count,
-        sessionFileBytes: sessionSummaryResult.sessionFileBytes,
-        sessionSummaryBytesScanned: sessionSummaryResult.sessionSummaryBytesScanned,
-        sessionSummaryReadMs: sessionSummaryResult.sessionSummaryReadMs,
-        fsReadOps: sessionSummaryResult.fsReadOps,
-        fsReadBytes: sessionSummaryResult.fsReadBytes,
-        detail: sessionSummaryResult.detail
+        sessionFileBytes,
+        sessionSummaryBytesScanned,
+        sessionSummaryReadMs,
+        cacheReadMs,
+        fsReadOps: getTotalFsReadOps(),
+        fsReadBytes: getTotalFsReadBytes(),
+        detail: mergeDiagnosticDetails(detail, cacheLoad.detail),
+        fastPathUsed,
+        rewriteCache
       };
     }
 
     if (
       cachedHistory.entries.length < MAX_CONVERSATION_HISTORY &&
-      cachedHistory.metadata.cachedPersistedEntryCount < cachedHistory.metadata.persistedEntryCount
+      cachedHistory.metadata.cachedPersistedEntryCount < persistedEntryCount
     ) {
       this.deps.logDebug("history:load:cache:validate:reject", {
         sessionFile,
@@ -974,43 +1180,49 @@ export class ConversationProjector {
       return {
         ok: false,
         cacheState: "cache_missing_persisted_prefix",
-        persistedEntryCount: sessionSummary.count,
+        persistedEntryCount,
         cachedEntryCount: cacheSummary.count,
-        sessionFileBytes: sessionSummaryResult.sessionFileBytes,
-        sessionSummaryBytesScanned: sessionSummaryResult.sessionSummaryBytesScanned,
-        sessionSummaryReadMs: sessionSummaryResult.sessionSummaryReadMs,
-        fsReadOps: sessionSummaryResult.fsReadOps,
-        fsReadBytes: sessionSummaryResult.fsReadBytes,
-        detail: sessionSummaryResult.detail
+        sessionFileBytes,
+        sessionSummaryBytesScanned,
+        sessionSummaryReadMs,
+        cacheReadMs,
+        fsReadOps: getTotalFsReadOps(),
+        fsReadBytes: getTotalFsReadBytes(),
+        detail: mergeDiagnosticDetails(detail, cacheLoad.detail),
+        fastPathUsed,
+        rewriteCache: false
       };
     }
 
-    if (cachedHistory.metadata.persistedEntryCount !== sessionSummary.count) {
+    if (cachedHistory.metadata.persistedEntryCount !== persistedEntryCount) {
       this.deps.logDebug("history:load:cache:validate:reject", {
         sessionFile,
         reason: "persisted_entry_count_mismatch",
         expected: cachedHistory.metadata.persistedEntryCount,
-        actual: sessionSummary.count
+        actual: persistedEntryCount
       });
       return {
         ok: false,
         cacheState: "persisted_entry_count_mismatch",
-        persistedEntryCount: sessionSummary.count,
+        persistedEntryCount,
         cachedEntryCount: cacheSummary.count,
-        sessionFileBytes: sessionSummaryResult.sessionFileBytes,
-        sessionSummaryBytesScanned: sessionSummaryResult.sessionSummaryBytesScanned,
-        sessionSummaryReadMs: sessionSummaryResult.sessionSummaryReadMs,
-        fsReadOps: sessionSummaryResult.fsReadOps,
-        fsReadBytes: sessionSummaryResult.fsReadBytes,
+        sessionFileBytes,
+        sessionSummaryBytesScanned,
+        sessionSummaryReadMs,
+        cacheReadMs,
+        fsReadOps: getTotalFsReadOps(),
+        fsReadBytes: getTotalFsReadBytes(),
         detail: mergeDiagnosticDetails(
-          sessionSummaryResult.detail,
-          `expected=${cachedHistory.metadata.persistedEntryCount},actual=${sessionSummary.count}`
-        )
+          detail,
+          cacheLoad.detail,
+          `expected=${cachedHistory.metadata.persistedEntryCount},actual=${persistedEntryCount}`
+        ),
+        fastPathUsed,
+        rewriteCache: false
       };
     }
 
-    const sessionLastPersistedEntryKey = sessionSummary.last?.key ?? null;
-    if (cachedHistory.metadata.lastPersistedEntryKey !== sessionLastPersistedEntryKey) {
+    if (cachedHistory.metadata.lastPersistedEntryKey !== lastPersistedEntryKey) {
       this.deps.logDebug("history:load:cache:validate:reject", {
         sessionFile,
         reason: "last_persisted_entry_mismatch"
@@ -1018,29 +1230,51 @@ export class ConversationProjector {
       return {
         ok: false,
         cacheState: "last_persisted_entry_mismatch",
-        persistedEntryCount: sessionSummary.count,
+        persistedEntryCount,
         cachedEntryCount: cacheSummary.count,
-        sessionFileBytes: sessionSummaryResult.sessionFileBytes,
-        sessionSummaryBytesScanned: sessionSummaryResult.sessionSummaryBytesScanned,
-        sessionSummaryReadMs: sessionSummaryResult.sessionSummaryReadMs,
-        fsReadOps: sessionSummaryResult.fsReadOps,
-        fsReadBytes: sessionSummaryResult.fsReadBytes,
-        detail: sessionSummaryResult.detail
+        sessionFileBytes,
+        sessionSummaryBytesScanned,
+        sessionSummaryReadMs,
+        cacheReadMs,
+        fsReadOps: getTotalFsReadOps(),
+        fsReadBytes: getTotalFsReadBytes(),
+        detail: mergeDiagnosticDetails(detail, cacheLoad.detail),
+        fastPathUsed,
+        rewriteCache: false
       };
     }
 
     return {
       ok: true,
       entries: cachedHistory.entries,
-      persistedEntryCount: sessionSummary.count,
+      persistedEntryCount,
       cachedEntryCount: cacheSummary.count,
-      sessionFileBytes: sessionSummaryResult.sessionFileBytes,
-      sessionSummaryBytesScanned: sessionSummaryResult.sessionSummaryBytesScanned,
-      sessionSummaryReadMs: sessionSummaryResult.sessionSummaryReadMs,
-      fsReadOps: sessionSummaryResult.fsReadOps,
-      fsReadBytes: sessionSummaryResult.fsReadBytes,
-      detail: sessionSummaryResult.detail
+      sessionFileBytes,
+      sessionSummaryBytesScanned,
+      sessionSummaryReadMs,
+      cacheReadMs,
+      fsReadOps: getTotalFsReadOps(),
+      fsReadBytes: getTotalFsReadBytes(),
+      detail: mergeDiagnosticDetails(detail, cacheLoad.detail),
+      fastPathUsed,
+      rewriteCache
     };
+  }
+
+  private readSessionFileCanonicalStat(sessionFile: string): ConversationHistoryCacheCanonicalStat | null {
+    try {
+      const fileStat = statSync(sessionFile);
+      return {
+        size: fileStat.size,
+        mtimeMs: fileStat.mtimeMs
+      };
+    } catch (error) {
+      if (isEnoentError(error)) {
+        return null;
+      }
+
+      throw error;
+    }
   }
 
   private readPersistedConversationEntrySummary(sessionFile: string): PersistedConversationEntrySummaryResult {
@@ -1157,7 +1391,11 @@ export class ConversationProjector {
     }
 
     const persistedEntryCount = this.persistedEntryCountBySessionFile.get(descriptor.sessionFile) ?? 0;
-    const metadata = buildConversationHistoryCacheMetadata(history, persistedEntryCount);
+    const metadata = buildConversationHistoryCacheMetadata(
+      history,
+      persistedEntryCount,
+      this.readSessionFileCanonicalStat(descriptor.sessionFile)
+    );
     this.queueCacheSnapshotWrite(descriptor.sessionFile, history.slice(), metadata);
   }
 
@@ -1211,8 +1449,10 @@ export class ConversationProjector {
       }
 
       await mkdir(dirname(cacheFile), { recursive: true });
+      const resolvedMetadata =
+        metadata ?? buildConversationHistoryCacheMetadata(history, 0, this.readSessionFileCanonicalStat(queuedSnapshot.sessionFile));
       const serializedHistory = `${[
-        JSON.stringify(metadata ?? buildConversationHistoryCacheMetadata(history, 0)),
+        JSON.stringify(resolvedMetadata),
         ...history.map((entry) => JSON.stringify(entry))
       ].join("\n")}\n`;
       await writeFile(cacheFile, serializedHistory, "utf8");
@@ -1435,6 +1675,7 @@ function createConversationHistoryDiagnostics(
     sessionSummaryBytesScanned: options.sessionSummaryBytesScanned,
     cacheReadMs: options.cacheReadMs,
     sessionSummaryReadMs: options.sessionSummaryReadMs,
+    fastPathUsed: options.fastPathUsed ?? false,
     detail: options.detail ?? null
   };
 }
@@ -1450,6 +1691,22 @@ function mergeDiagnosticDetails(...details: Array<string | null | undefined>): s
   }
 
   return Array.from(new Set(normalized)).join("; ");
+}
+
+function sumOptionalNumbers(...values: Array<number | undefined>): number | undefined {
+  let total = 0;
+  let foundValue = false;
+
+  for (const value of values) {
+    if (typeof value !== "number") {
+      continue;
+    }
+
+    total += value;
+    foundValue = true;
+  }
+
+  return foundValue ? total : undefined;
 }
 
 function safeJson(value: unknown): string {
@@ -1545,7 +1802,8 @@ function summarizePersistedConversationEntries(
 
 function buildConversationHistoryCacheMetadata(
   history: ConversationEntryEvent[],
-  persistedEntryCount: number
+  persistedEntryCount: number,
+  canonicalStat: ConversationHistoryCacheCanonicalStat | null
 ): ConversationHistoryCacheMetadata {
   const summary = summarizePersistedConversationEntries(history);
 
@@ -1555,7 +1813,8 @@ function buildConversationHistoryCacheMetadata(
     persistedEntryCount: Math.max(0, Math.trunc(persistedEntryCount)),
     cachedPersistedEntryCount: summary.count,
     firstPersistedEntryKey: summary.first?.key ?? null,
-    lastPersistedEntryKey: summary.last?.key ?? null
+    lastPersistedEntryKey: summary.last?.key ?? null,
+    canonicalStat: normalizeConversationHistoryCacheCanonicalStat(canonicalStat)
   };
 }
 
@@ -1567,6 +1826,37 @@ function doesConversationHistoryCacheMetadataMatchEntries(
     metadata.cachedPersistedEntryCount === summary.count &&
     metadata.firstPersistedEntryKey === (summary.first?.key ?? null) &&
     metadata.lastPersistedEntryKey === (summary.last?.key ?? null)
+  );
+}
+
+function doesConversationHistoryCacheMetadataMatchFingerprint(
+  metadata: ConversationHistoryCacheMetadata,
+  expected: ConversationHistoryCacheMetadata
+): boolean {
+  return doesConversationHistoryCacheCanonicalStatMatch(metadata.canonicalStat, expected.canonicalStat);
+}
+
+function doesConversationHistoryCacheCanonicalStatMatch(
+  left: ConversationHistoryCacheCanonicalStat,
+  right: ConversationHistoryCacheCanonicalStat
+): boolean {
+  return left.size === right.size && left.mtimeMs === right.mtimeMs;
+}
+
+function normalizeConversationHistoryCacheCanonicalStat(
+  value: ConversationHistoryCacheCanonicalStat | null | undefined
+): ConversationHistoryCacheCanonicalStat {
+  return {
+    size: Math.max(0, Math.trunc(value?.size ?? 0)),
+    mtimeMs: typeof value?.mtimeMs === "number" && Number.isFinite(value.mtimeMs) ? value.mtimeMs : 0
+  };
+}
+
+function isConversationHistoryCacheMetadataRecord(value: unknown): boolean {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as { type?: unknown }).type === CONVERSATION_CACHE_META_TYPE
   );
 }
 
@@ -1584,6 +1874,7 @@ function parseConversationHistoryCacheMetadata(value: unknown): ConversationHist
   const cachedPersistedEntryCount = (value as { cachedPersistedEntryCount?: unknown }).cachedPersistedEntryCount;
   const firstPersistedEntryKey = (value as { firstPersistedEntryKey?: unknown }).firstPersistedEntryKey;
   const lastPersistedEntryKey = (value as { lastPersistedEntryKey?: unknown }).lastPersistedEntryKey;
+  const canonicalStat = (value as { canonicalStat?: unknown }).canonicalStat;
 
   if (typeof persistedEntryCount !== "number" || !Number.isFinite(persistedEntryCount) || persistedEntryCount < 0) {
     return null;
@@ -1605,13 +1896,31 @@ function parseConversationHistoryCacheMetadata(value: unknown): ConversationHist
     return null;
   }
 
+  if (typeof canonicalStat !== "object" || canonicalStat === null) {
+    return null;
+  }
+
+  const canonicalSize = (canonicalStat as { size?: unknown }).size;
+  const canonicalMtimeMs = (canonicalStat as { mtimeMs?: unknown }).mtimeMs;
+  if (typeof canonicalSize !== "number" || !Number.isFinite(canonicalSize) || canonicalSize < 0) {
+    return null;
+  }
+
+  if (typeof canonicalMtimeMs !== "number" || !Number.isFinite(canonicalMtimeMs) || canonicalMtimeMs < 0) {
+    return null;
+  }
+
   return {
     type: CONVERSATION_CACHE_META_TYPE,
     version: CONVERSATION_CACHE_VERSION,
     persistedEntryCount: Math.max(0, Math.trunc(persistedEntryCount)),
     cachedPersistedEntryCount: Math.max(0, Math.trunc(cachedPersistedEntryCount)),
     firstPersistedEntryKey,
-    lastPersistedEntryKey
+    lastPersistedEntryKey,
+    canonicalStat: normalizeConversationHistoryCacheCanonicalStat({
+      size: canonicalSize,
+      mtimeMs: canonicalMtimeMs
+    })
   };
 }
 

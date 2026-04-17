@@ -87,6 +87,7 @@ export interface SidebarConversationHistoryDiagnostics {
   sessionSummaryBytesScanned?: number;
   cacheReadMs?: number;
   sessionSummaryReadMs?: number;
+  fastPathUsed?: boolean;
   detail?: string | null;
 }
 

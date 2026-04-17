@@ -1,4 +1,4 @@
-import { mkdtemp, open, readFile, writeFile } from 'node:fs/promises'
+import { mkdtemp, open, readFile, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -125,6 +125,35 @@ async function waitForFileText(
 async function writeCacheLines(path: string, lines: unknown[]): Promise<void> {
   const text = lines.map((line) => JSON.stringify(line)).join('\n')
   await writeFile(path, text.length > 0 ? `${text}\n` : '', 'utf8')
+}
+
+async function readCanonicalStat(sessionFile: string): Promise<{ size: number; mtimeMs: number }> {
+  const fileStat = await stat(sessionFile)
+  return {
+    size: fileStat.size,
+    mtimeMs: fileStat.mtimeMs,
+  }
+}
+
+async function buildCacheMetadata(
+  sessionFile: string,
+  overrides: Partial<{
+    persistedEntryCount: number
+    cachedPersistedEntryCount: number
+    firstPersistedEntryKey: string | null
+    lastPersistedEntryKey: string | null
+    canonicalStat: { size: number; mtimeMs: number }
+  }> = {},
+): Promise<Record<string, unknown>> {
+  return {
+    type: 'swarm_conversation_cache_meta',
+    version: 2,
+    persistedEntryCount: overrides.persistedEntryCount ?? 0,
+    cachedPersistedEntryCount: overrides.cachedPersistedEntryCount ?? 0,
+    firstPersistedEntryKey: overrides.firstPersistedEntryKey ?? null,
+    lastPersistedEntryKey: overrides.lastPersistedEntryKey ?? null,
+    canonicalStat: overrides.canonicalStat ?? (await readCanonicalStat(sessionFile)),
+  }
 }
 
 describe('ConversationProjector session tree continuity', () => {
@@ -532,16 +561,14 @@ describe('ConversationProjector session tree continuity', () => {
     })
 
     const cacheFile = getConversationHistoryCacheFilePath(sessionFile)
-    await writeFile(
-      cacheFile,
-      `${JSON.stringify({
-        type: 'swarm_conversation_cache_meta',
-        version: 1,
+    await writeCacheLines(cacheFile, [
+      await buildCacheMetadata(sessionFile, {
         persistedEntryCount: 3,
         cachedPersistedEntryCount: 2,
         firstPersistedEntryKey: `conversation_message:${middleEntryId}`,
         lastPersistedEntryKey: `conversation_message:${lastEntryId}`,
-      })}\n${JSON.stringify({
+      }),
+      {
         type: 'conversation_message',
         agentId: descriptor.agentId,
         role: 'assistant',
@@ -549,7 +576,8 @@ describe('ConversationProjector session tree continuity', () => {
         timestamp: '2025-12-31T23:58:00.000Z',
         source: 'system',
         id: middleEntryId,
-      })}\n${JSON.stringify({
+      },
+      {
         type: 'conversation_message',
         agentId: descriptor.agentId,
         role: 'assistant',
@@ -557,9 +585,8 @@ describe('ConversationProjector session tree continuity', () => {
         timestamp: FIXED_NOW,
         source: 'system',
         id: lastEntryId,
-      })}\n`,
-      'utf8',
-    )
+      },
+    ])
 
     const projector = makeProjector({ descriptor })
     const result = projector.getConversationHistoryWithDiagnostics(descriptor.agentId)
@@ -581,6 +608,224 @@ describe('ConversationProjector session tree continuity', () => {
     expect(rewrittenCacheText).toContain('"cachedPersistedEntryCount":3')
     expect(rewrittenCacheText).toContain(`"firstPersistedEntryKey":"conversation_message:${firstEntryId}"`)
     expect(rewrittenCacheText).toContain(`"lastPersistedEntryKey":"conversation_message:${lastEntryId}"`)
+  })
+
+  it('fast-paths a clean cache hit without rescanning the canonical session file or rewriting the sidecar', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-projector-fast-hit-'))
+    const sessionFile = join(root, 'manager.jsonl')
+    const descriptor = makeDescriptor(sessionFile, root)
+
+    const seededSession = SessionManager.open(sessionFile)
+    seededSession.appendMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'seed message' }],
+    } as any)
+    seededSession.appendCustomEntry('swarm_conversation_entry', {
+      type: 'conversation_message',
+      agentId: descriptor.agentId,
+      role: 'assistant',
+      text: 'persisted history',
+      timestamp: FIXED_NOW,
+      source: 'system',
+    })
+
+    const warmProjector = makeProjector({ descriptor })
+    warmProjector.getConversationHistory(descriptor.agentId)
+
+    const cacheFile = getConversationHistoryCacheFilePath(sessionFile)
+    await waitForFileText(cacheFile, {
+      matches: (text) => text.includes('"canonicalStat"') && text.includes('persisted history'),
+    })
+    const cacheStatBeforeHit = await stat(cacheFile)
+
+    const coldProjector = makeProjector({ descriptor })
+    const result = coldProjector.getConversationHistoryWithDiagnostics(descriptor.agentId)
+    const cacheStatAfterHit = await stat(cacheFile)
+
+    expect(result.history.some((entry) => entry.type === 'conversation_message' && entry.text === 'persisted history')).toBe(
+      true,
+    )
+    expect(result.diagnostics).toMatchObject({
+      cacheState: 'hit',
+      historySource: 'cache_hit',
+      coldLoad: true,
+      fastPathUsed: true,
+    })
+    expect(result.diagnostics.sessionSummaryBytesScanned).toBeUndefined()
+    expect(result.diagnostics.sessionSummaryReadMs).toBeUndefined()
+    expect(cacheStatAfterHit.mtimeMs).toBe(cacheStatBeforeHit.mtimeMs)
+  })
+
+  it('falls back to a canonical summary scan when the session stat fingerprint changes', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-projector-fast-miss-'))
+    const sessionFile = join(root, 'manager.jsonl')
+    const descriptor = makeDescriptor(sessionFile, root)
+
+    const seededSession = SessionManager.open(sessionFile)
+    seededSession.appendMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'seed message' }],
+    } as any)
+    seededSession.appendCustomEntry('swarm_conversation_entry', {
+      type: 'conversation_message',
+      agentId: descriptor.agentId,
+      role: 'assistant',
+      text: 'persisted before cache write',
+      timestamp: '2025-12-31T23:58:00.000Z',
+      source: 'system',
+    })
+
+    const warmProjector = makeProjector({ descriptor })
+    warmProjector.getConversationHistory(descriptor.agentId)
+
+    const cacheFile = getConversationHistoryCacheFilePath(sessionFile)
+    await waitForFileText(cacheFile, {
+      matches: (text) => text.includes('"canonicalStat"') && text.includes('persisted before cache write'),
+    })
+
+    seededSession.appendCustomEntry('swarm_conversation_entry', {
+      type: 'conversation_message',
+      agentId: descriptor.agentId,
+      role: 'assistant',
+      text: 'persisted after stat change',
+      timestamp: FIXED_NOW,
+      source: 'system',
+    })
+
+    const coldProjector = makeProjector({ descriptor })
+    const result = coldProjector.getConversationHistoryWithDiagnostics(descriptor.agentId)
+
+    expect(
+      result.history.some((entry) => entry.type === 'conversation_message' && entry.text === 'persisted after stat change'),
+    ).toBe(true)
+    expect(result.diagnostics).toMatchObject({
+      cacheState: 'cache_missing_persisted_prefix',
+      historySource: 'cache_rebuild',
+      coldLoad: true,
+      fastPathUsed: false,
+    })
+    expect(result.diagnostics.sessionSummaryBytesScanned).toBeGreaterThan(0)
+  })
+
+  it('rebuilds a legacy sidecar without a fingerprint and rewrites it in the v2 format', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-projector-legacy-sidecar-'))
+    const sessionFile = join(root, 'manager.jsonl')
+    const descriptor = makeDescriptor(sessionFile, root)
+
+    const seededSession = SessionManager.open(sessionFile)
+    seededSession.appendMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'seed message' }],
+    } as any)
+    const persistedEntryId = seededSession.appendCustomEntry('swarm_conversation_entry', {
+      type: 'conversation_message',
+      agentId: descriptor.agentId,
+      role: 'assistant',
+      text: 'persisted history',
+      timestamp: FIXED_NOW,
+      source: 'system',
+    })
+
+    const cacheFile = getConversationHistoryCacheFilePath(sessionFile)
+    await writeCacheLines(cacheFile, [
+      {
+        type: 'swarm_conversation_cache_meta',
+        version: 1,
+        persistedEntryCount: 1,
+        cachedPersistedEntryCount: 1,
+        firstPersistedEntryKey: `conversation_message:${persistedEntryId}`,
+        lastPersistedEntryKey: `conversation_message:${persistedEntryId}`,
+      },
+      {
+        type: 'conversation_message',
+        agentId: descriptor.agentId,
+        role: 'assistant',
+        text: 'persisted history',
+        timestamp: FIXED_NOW,
+        source: 'system',
+        id: persistedEntryId,
+      },
+    ])
+
+    const projector = makeProjector({ descriptor })
+    const result = projector.getConversationHistoryWithDiagnostics(descriptor.agentId)
+
+    expect(result.history.some((entry) => entry.type === 'conversation_message' && entry.text === 'persisted history')).toBe(
+      true,
+    )
+    expect(result.diagnostics).toMatchObject({
+      cacheState: 'legacy_rebuild',
+      historySource: 'cache_rebuild',
+      coldLoad: true,
+      fastPathUsed: false,
+    })
+
+    const rewrittenCacheText = await waitForFileText(cacheFile, {
+      matches: (text) => text.includes('"version":2') && text.includes('"canonicalStat"'),
+    })
+    expect(rewrittenCacheText).toContain('"version":2')
+    expect(rewrittenCacheText).toContain('"canonicalStat"')
+  })
+
+  it('falls back when the canonical stat changes between the fast-path checks', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'conversation-projector-toctou-'))
+    const sessionFile = join(root, 'manager.jsonl')
+    const descriptor = makeDescriptor(sessionFile, root)
+
+    const seededSession = SessionManager.open(sessionFile)
+    seededSession.appendMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'seed message' }],
+    } as any)
+    seededSession.appendCustomEntry('swarm_conversation_entry', {
+      type: 'conversation_message',
+      agentId: descriptor.agentId,
+      role: 'assistant',
+      text: 'persisted before validation',
+      timestamp: '2025-12-31T23:58:00.000Z',
+      source: 'system',
+    })
+
+    const warmProjector = makeProjector({ descriptor })
+    warmProjector.getConversationHistory(descriptor.agentId)
+
+    const cacheFile = getConversationHistoryCacheFilePath(sessionFile)
+    await waitForFileText(cacheFile, {
+      matches: (text) => text.includes('"canonicalStat"') && text.includes('persisted before validation'),
+    })
+
+    const projector = makeProjector({ descriptor }) as ConversationProjector & {
+      readSessionFileCanonicalStat: (sessionPath: string) => { size: number; mtimeMs: number } | null
+    }
+    const originalReadSessionFileCanonicalStat = projector.readSessionFileCanonicalStat.bind(projector)
+    let statReadCount = 0
+    projector.readSessionFileCanonicalStat = (sessionPath) => {
+      statReadCount += 1
+      if (statReadCount === 2) {
+        SessionManager.open(sessionPath).appendCustomEntry('swarm_conversation_entry', {
+          type: 'conversation_message',
+          agentId: descriptor.agentId,
+          role: 'assistant',
+          text: 'persisted during validation',
+          timestamp: FIXED_NOW,
+          source: 'system',
+        })
+      }
+      return originalReadSessionFileCanonicalStat(sessionPath)
+    }
+
+    const result = projector.getConversationHistoryWithDiagnostics(descriptor.agentId)
+
+    expect(
+      result.history.some((entry) => entry.type === 'conversation_message' && entry.text === 'persisted during validation'),
+    ).toBe(true)
+    expect(result.diagnostics).toMatchObject({
+      cacheState: 'cache_missing_persisted_prefix',
+      historySource: 'cache_rebuild',
+      coldLoad: true,
+      fastPathUsed: false,
+    })
+    expect(result.diagnostics.sessionSummaryBytesScanned).toBeGreaterThan(0)
   })
 
   it('reports absent/full_parse on the first cold read and memory/memory on a warm reread', async () => {
@@ -680,14 +925,12 @@ describe('ConversationProjector session tree continuity', () => {
 
     const cacheFile = getConversationHistoryCacheFilePath(sessionFile)
     await writeCacheLines(cacheFile, [
-      {
-        type: 'swarm_conversation_cache_meta',
-        version: 1,
+      await buildCacheMetadata(sessionFile, {
         persistedEntryCount: 1,
         cachedPersistedEntryCount: 2,
         firstPersistedEntryKey: `conversation_message:${entryId}`,
         lastPersistedEntryKey: `conversation_message:${entryId}`,
-      },
+      }),
       {
         type: 'conversation_message',
         agentId: descriptor.agentId,
@@ -738,14 +981,13 @@ describe('ConversationProjector session tree continuity', () => {
 
     const cacheFile = getConversationHistoryCacheFilePath(sessionFile)
     await writeCacheLines(cacheFile, [
-      {
-        type: 'swarm_conversation_cache_meta',
-        version: 1,
+      await buildCacheMetadata(sessionFile, {
         persistedEntryCount: 1,
         cachedPersistedEntryCount: 2,
         firstPersistedEntryKey: `conversation_message:${firstEntryId}`,
         lastPersistedEntryKey: `conversation_message:${lastEntryId}`,
-      },
+        canonicalStat: { size: 0, mtimeMs: 0 },
+      }),
       {
         type: 'conversation_message',
         agentId: descriptor.agentId,
@@ -807,14 +1049,13 @@ describe('ConversationProjector session tree continuity', () => {
     const staleTailEntryId = 'stale-tail-id'
     const cacheFile = getConversationHistoryCacheFilePath(sessionFile)
     await writeCacheLines(cacheFile, [
-      {
-        type: 'swarm_conversation_cache_meta',
-        version: 1,
+      await buildCacheMetadata(sessionFile, {
         persistedEntryCount: 2,
         cachedPersistedEntryCount: 2,
         firstPersistedEntryKey: `conversation_message:${firstEntryId}`,
         lastPersistedEntryKey: `conversation_message:${staleTailEntryId}`,
-      },
+        canonicalStat: { size: 0, mtimeMs: 0 },
+      }),
       {
         type: 'conversation_message',
         agentId: descriptor.agentId,
@@ -932,7 +1173,9 @@ describe('ConversationProjector session tree continuity', () => {
       cacheState: 'hit',
       historySource: 'cache_hit',
       coldLoad: true,
+      fastPathUsed: true,
     })
+    expect(reloaded.diagnostics.sessionSummaryBytesScanned).toBeUndefined()
   })
 
   it('falls back to JSONL replay when the cache is missing the latest persisted message', async () => {
