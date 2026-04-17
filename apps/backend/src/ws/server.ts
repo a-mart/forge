@@ -30,6 +30,7 @@ import { createAgentHttpRoutes } from "./http/routes/agent-http-routes.js";
 import { createChromeCdpRoutes } from "./http/routes/chrome-cdp-routes.js";
 import { createCortexAutoReviewRoutes } from "./http/routes/cortex-auto-review-routes.js";
 import { createCortexRoutes } from "./http/routes/cortex-routes.js";
+import { createDebugRoutes } from "./http/routes/debug-routes.js";
 import { createExtensionRoutes } from "./http/routes/extension-routes.js";
 import { createFeedbackRoutes } from "./http/routes/feedback-routes.js";
 import { createFileBrowserRoutes } from "./http/routes/file-browser-routes.js";
@@ -366,6 +367,7 @@ export class SwarmWebSocketServer {
         settingsService: this.cortexAutoReviewSettingsService,
         cortexEnabled,
       }),
+      ...createDebugRoutes({ swarmManager: this.swarmManager }),
       ...createTranscriptionRoutes({ swarmManager: this.swarmManager }),
       ...createStatsRoutes({
         statsService: this.statsService,

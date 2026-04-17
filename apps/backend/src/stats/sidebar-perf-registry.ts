@@ -5,6 +5,7 @@ import type {
   SidebarPerfLabels,
   SidebarPerfLastSample,
   SidebarPerfMetricDefinition,
+  SidebarPerfRecentSamples,
   SidebarPerfRecorder,
   SidebarPerfSlowEvent,
   SidebarPerfSummary
@@ -187,6 +188,15 @@ class SidebarPerfRegistry implements SidebarPerfRecorder {
     return this.slowEvents.toArray();
   }
 
+  readRecentSamples(): SidebarPerfRecentSamples {
+    const histograms: Record<string, SidebarPerfLastSample[]> = {};
+    for (const [metricName, ringBuffer] of this.histograms.entries()) {
+      histograms[metricName] = ringBuffer.toArray().map((entry) => entry.sample);
+    }
+
+    return { histograms };
+  }
+
   private getOrCreateHistogram(metricName: string): FixedRingBuffer<DurationSample> {
     const existing = this.histograms.get(metricName);
     if (existing) {
@@ -255,6 +265,7 @@ function summarizeHistogram(
     p50: percentile(sorted, 0.5),
     p95: percentile(sorted, 0.95),
     max: sorted[sorted.length - 1] ?? 0,
+    min: sorted[0] ?? 0,
     lastSample
   };
 }

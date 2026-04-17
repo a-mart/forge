@@ -55,6 +55,7 @@ export interface SidebarPerfHistogramSummary {
   p50: number;
   p95: number;
   max: number;
+  min: number;
   lastSample?: SidebarPerfLastSample;
 }
 
@@ -67,6 +68,10 @@ export interface SidebarPerfCounterSummary {
 export interface SidebarPerfSummary {
   histograms: Record<string, SidebarPerfHistogramSummary>;
   counters: Record<string, SidebarPerfCounterSummary>;
+}
+
+export interface SidebarPerfRecentSamples {
+  histograms: Record<string, SidebarPerfLastSample[]>;
 }
 
 export interface SidebarConversationHistoryDiagnostics {
@@ -97,4 +102,5 @@ export interface SidebarPerfRecorder {
   ): void;
   readSummary(): SidebarPerfSummary;
   readRecentSlowEvents(): SidebarPerfSlowEvent[];
+  readRecentSamples?(): SidebarPerfRecentSamples;
 }

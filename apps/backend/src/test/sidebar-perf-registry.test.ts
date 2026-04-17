@@ -26,11 +26,17 @@ describe("sidebar perf registry", () => {
       p50: 30,
       p95: 40,
       max: 40,
+      min: 20,
     });
     expect(summary.histograms[SIDEBAR_BOOTSTRAP_METRIC]?.lastSample).toMatchObject({
       durationMs: 40,
       labels: { buildMode: "dev" },
     });
+    expect(recorder.readRecentSamples?.().histograms[SIDEBAR_BOOTSTRAP_METRIC]).toMatchObject([
+      { durationMs: 20, labels: { buildMode: "dev" } },
+      { durationMs: 30, labels: { buildMode: "dev" } },
+      { durationMs: 40, labels: { buildMode: "dev" } },
+    ]);
   });
 
   it("fires the slow-event hook only for threshold breaches and strips disallowed labels", () => {
