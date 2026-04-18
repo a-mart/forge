@@ -1,0 +1,18 @@
+diff --git a/dist/providers/openai-completions.js b/dist/providers/openai-completions.js
+index dd760dcd7b9cccf454dbdb96e8ceb3428b11c4bd..71a6f2da0b67e7dbc4109a08378c3835a9150c6f 100644
+--- a/dist/providers/openai-completions.js
++++ b/dist/providers/openai-completions.js
+@@ -535,6 +535,13 @@ export function convertMessages(model, context, compat) {
+                     assistantMsg.reasoning_details = reasoningDetails;
+                 }
+             }
++            // Ensure assistant messages with tool calls always have non-null content.
++            // Some providers (notably xAI) reject content: null even when tool_calls are present,
++            // unlike OpenAI which accepts it.
++            if (assistantMsg.tool_calls && assistantMsg.tool_calls.length > 0 &&
++                (assistantMsg.content === null || assistantMsg.content === undefined || assistantMsg.content === "")) {
++                assistantMsg.content = "";
++            }
+             // Skip assistant messages that have no content and no tool calls.
+             // Some providers require "either content or tool_calls, but not none".
+             // Other providers also don't accept empty assistant messages.

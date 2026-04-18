@@ -48,7 +48,8 @@
       "node-pty"
     ],
     "patchedDependencies": {
-      "@mariozechner/pi-coding-agent@0.65.2": "patches/@mariozechner__pi-coding-agent@0.65.2.patch"
+      "@mariozechner/pi-coding-agent@0.65.2": "patches/@mariozechner__pi-coding-agent@0.65.2.patch",
+      "@mariozechner/pi-ai@0.65.2": "patches/@mariozechner__pi-ai@0.65.2.patch"
     }
   },
   "devDependencies": {
