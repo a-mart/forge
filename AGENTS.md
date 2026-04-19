@@ -84,6 +84,7 @@ These are briefly described for orientation. Most have both backend and UI compo
 | **Playwright dashboard** | `playwright/*` | `components/playwright/*` | Live browser preview and automation dashboard |
 | **Codex runtime** | `swarm/codex-agent-runtime.ts`, `swarm/codex-*.ts` | — | OpenAI Codex agent runtime integration |
 | **Claude SDK runtime** | `swarm/claude-*.ts` | Settings UI (model selectors) | Native Claude Agent SDK runtime with MCP tool bridge, OAuth auth via Claude Code CLI, and SDK-native auto-compaction via `autoCompactWindow`. Graceful fallback to Pi when SDK is unavailable. Session context recovery from Forge history when SDK resume fails, with pre-resume persistence probing. |
+| **Cursor ACP runtime** | `swarm/runtime/acp/` | — | Cursor ACP agent runtime with HTTP MCP tool bridge for worker specialists. Requires Cursor CLI installed and `agent login`. Experimental; disable with `FORGE_ACP_ENABLED=false`. Cross-vendor fallback to OpenAI Codex. |
 | **Mobile push** | `mobile/*` | — | Expo push notification service for mobile companion app |
 | **Voice/transcription** | `ws/routes/transcription-routes.ts` | `lib/voice-transcription-client.ts` | Voice input and transcription |
 | **Feedback** | `swarm/feedback-service.ts` | `lib/feedback-client.ts` | User feedback collection |
@@ -287,6 +288,7 @@ Copy `.env.example` to `.env` and uncomment/set values as needed. Key variables:
 | `CODEX_API_KEY` | — | OpenAI Codex runtime (deprecated; use managed auth) |
 | `XAI_API_KEY` | — | xAI/Grok models (when using external API key mode) |
 | `CODEX_BIN` | `codex` | Path to Codex binary |
+| `FORGE_ACP_ENABLED` | `true` | Enable Cursor ACP runtime (requires Cursor CLI) |
 | `FORGE_TERMINAL_ENABLED` | `true` | Enable integrated terminal subsystem |
 | `FORGE_TERMINAL_MAX_PER_SESSION` | `10` | Max terminals per session |
 | `FORGE_TERMINAL_SNAPSHOT_INTERVAL_MS` | `30000` | Terminal state snapshot interval |

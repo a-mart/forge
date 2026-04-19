@@ -1,18 +1,63 @@
 diff --git a/dist/providers/openai-completions.js b/dist/providers/openai-completions.js
-index dd760dcd7b9cccf454dbdb96e8ceb3428b11c4bd..71a6f2da0b67e7dbc4109a08378c3835a9150c6f 100644
+index dd760dcd7b9cccf454dbdb96e8ceb3428b11c4bd..b85debc32443b54f1af6f30b002cfc72ceff3498 100644
 --- a/dist/providers/openai-completions.js
 +++ b/dist/providers/openai-completions.js
 @@ -535,6 +535,13 @@ export function convertMessages(model, context, compat) {
                      assistantMsg.reasoning_details = reasoningDetails;
                  }
              }
-+            // Ensure assistant messages with tool calls always have non-null content.
-+            // Some providers (notably xAI) reject content: null even when tool_calls are present,
-+            // unlike OpenAI which accepts it.
++            // Ensure assistant messages with tool calls always have non-null, non-empty content.
++            // Some providers (notably xAI) reject content: null or "" even when tool_calls are
++            // present, unlike OpenAI which accepts it.
 +            if (assistantMsg.tool_calls && assistantMsg.tool_calls.length > 0 &&
 +                (assistantMsg.content === null || assistantMsg.content === undefined || assistantMsg.content === "")) {
-+                assistantMsg.content = "";
++                assistantMsg.content = " ";
 +            }
              // Skip assistant messages that have no content and no tool calls.
              // Some providers require "either content or tool_calls, but not none".
              // Other providers also don't accept empty assistant messages.
+diff --git a/dist/providers/openai-responses-shared.js b/dist/providers/openai-responses-shared.js
+index ab14b5f60bc9ee9ad57548ce9fc6ec15f3038f99..cee1e5ddc71ee5ff2354008d1f85d00ea14d3efd 100644
+--- a/dist/providers/openai-responses-shared.js
++++ b/dist/providers/openai-responses-shared.js
+@@ -109,6 +109,8 @@ export function convertResponsesMessages(model, context, allowedToolCallProvider
+             const isDifferentModel = assistantMsg.model !== model.id &&
+                 assistantMsg.provider === model.provider &&
+                 assistantMsg.api === model.api;
++            let hasAssistantMessage = false;
++            let hasToolCalls = false;
+             for (const block of msg.content) {
+                 if (block.type === "thinking") {
+                     if (block.thinkingSignature) {
+@@ -135,6 +137,7 @@ export function convertResponsesMessages(model, context, allowedToolCallProvider
+                         id: msgId,
+                         phase: parsedSignature?.phase,
+                     });
++                    hasAssistantMessage = true;
+                 }
+                 else if (block.type === "toolCall") {
+                     const toolCall = block;
+@@ -153,8 +156,23 @@ export function convertResponsesMessages(model, context, allowedToolCallProvider
+                         name: toolCall.name,
+                         arguments: JSON.stringify(toolCall.arguments),
+                     });
++                    hasToolCalls = true;
+                 }
+             }
++            // xAI's Responses-compatible endpoint rejects assistant/tool-call turns that omit
++            // the assistant message item entirely. Mirror the chat-completions fix by inserting
++            // a non-empty placeholder assistant message before the function_call items when the
++            // turn has tools but no text content.
++            if (hasToolCalls && !hasAssistantMessage) {
++                const firstFunctionCallIndex = output.findIndex((item) => item.type === "function_call");
++                output.splice(firstFunctionCallIndex >= 0 ? firstFunctionCallIndex : output.length, 0, {
++                    type: "message",
++                    role: "assistant",
++                    content: [{ type: "output_text", text: " ", annotations: [] }],
++                    status: "completed",
++                    id: `msg_${msgIndex}`,
++                });
++            }
+             if (output.length === 0)
+                 continue;
+             messages.push(...output);
