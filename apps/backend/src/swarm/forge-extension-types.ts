@@ -5,7 +5,7 @@ import type {
 } from "@forge/protocol";
 
 export type ForgeScope = "global" | "profile" | "project-local";
-export type ForgeRuntimeType = "pi" | "claude" | "codex";
+export type ForgeRuntimeType = "pi" | "claude" | "codex" | "acp";
 
 export interface ForgeApi {
   readonly dataDir: string;

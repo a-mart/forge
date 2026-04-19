@@ -39,6 +39,7 @@ interface PendingRequest {
 interface CodexJsonRpcClientOptions {
   command: string;
   args: string[];
+  processLabel?: string;
   spawnOptions?: Omit<SpawnOptionsWithoutStdio, "stdio">;
   onNotification?: (notification: JsonRpcNotificationMessage) => void | Promise<void>;
   onRequest?: (request: JsonRpcRequestMessage) => Promise<unknown>;
@@ -91,7 +92,8 @@ export class CodexJsonRpcClient {
         return;
       }
 
-      const error = new Error(`Codex app-server exited (code=${code ?? "null"}, signal=${signal ?? "null"})`);
+      const processLabel = this.options.processLabel ?? "Codex app-server";
+      const error = new Error(`${processLabel} exited (code=${code ?? "null"}, signal=${signal ?? "null"})`);
       this.handleProcessExit(error);
     });
   }

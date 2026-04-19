@@ -46,6 +46,15 @@ const DEFAULT_WORKER_SYSTEM_PROMPT = `You are a worker agent in a swarm.
 - Workers read their owning manager's memory file.
 - Only write memory when explicitly asked to remember/update/forget durable information.
 - Follow the memory skill workflow before editing the memory file, and never store secrets in memory.`;
+const ACP_RUNTIME_GUIDANCE_BLOCK = `## ACP Runtime
+
+You are running as a Cursor ACP worker. Your coding tools (file read/write/edit, search, terminal) are provided natively by Cursor.
+
+For Forge swarm coordination, use the MCP tools available to you:
+- \`send_message_to_agent\` — report back to your manager when done or blocked
+- \`list_agents\` — check other agents if needed
+
+Always report back to your manager with send_message_to_agent when your task is complete or if you hit a blocker.`;
 const MANAGER_ARCHETYPE_ID = "manager";
 const CORTEX_ARCHETYPE_ID = "cortex";
 const COMMON_KNOWLEDGE_MEMORY_HEADER =
@@ -542,6 +551,38 @@ export class SwarmPromptService {
       agentId: descriptor.agentId,
       cwd: descriptor.cwd,
     });
+  }
+
+  async buildAcpRuntimeSystemPrompt(
+    descriptor: AgentDescriptor,
+    systemPrompt: string,
+  ): Promise<string> {
+    const runtimeMemoryFilePath = this.options.getAgentMemoryPath(descriptor.agentId);
+    const resolvedBasePrompt = resolvePromptVariables(
+      systemPrompt,
+      this.buildRuntimePromptVariables(runtimeMemoryFilePath),
+    );
+    const [memoryResources, agentsMdPaths, swarmContextFiles] = await Promise.all([
+      this.getMemoryRuntimeResources(descriptor),
+      discoverAgentsMd(descriptor.cwd),
+      this.getSwarmContextFiles(descriptor.cwd),
+    ]);
+
+    const assembledPrompt = await assembleClaudePrompt({
+      basePrompt: resolvedBasePrompt,
+      memoryContextFile: memoryResources.memoryContextFile,
+      agentsMdPaths: [...agentsMdPaths, ...swarmContextFiles.map((entry) => entry.path)],
+      availableSkills: this.options.skillMetadataService.getSkillMetadata().map((skill) => ({
+        name: skill.skillName,
+        description: skill.description ?? "",
+        location: skill.path,
+      })),
+      role: descriptor.role,
+      agentId: descriptor.agentId,
+      cwd: descriptor.cwd,
+    });
+
+    return [assembledPrompt, ACP_RUNTIME_GUIDANCE_BLOCK].filter((section) => section.trim().length > 0).join("\n\n");
   }
 
   private buildStandardPromptVariables(descriptor: AgentDescriptor): Record<string, string> {

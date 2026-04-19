@@ -75,6 +75,14 @@ const EXPECTED_FAMILIES = {
     visibleInSpawnPreset: true,
     visibleInSpecialists: false,
   },
+  'cursor-acp': {
+    provider: 'cursor-acp',
+    defaultModelId: 'default',
+    visibleInCreateManager: false,
+    visibleInChangeManager: false,
+    visibleInSpawnPreset: false,
+    visibleInSpecialists: false,
+  },
 } as const
 
 const EXPECTED_MODELS = {
@@ -198,6 +206,14 @@ const EXPECTED_MODELS = {
     supportsReasoning: true,
     inputModes: ['text'],
   },
+  'cursor-acp/default': {
+    provider: 'cursor-acp',
+    familyId: 'cursor-acp',
+    contextWindow: 200_000,
+    maxOutputTokens: 16_384,
+    supportsReasoning: true,
+    inputModes: ['text', 'image'],
+  },
 } as const
 
 describe('model-catalog', () => {
@@ -209,10 +225,11 @@ describe('model-catalog', () => {
       'xai',
       'openrouter',
       'openai-codex-app-server',
+      'cursor-acp',
     ])
     expect(Object.keys(FORGE_MODEL_CATALOG.families)).toEqual(Object.keys(EXPECTED_FAMILIES))
     expect(Object.keys(FORGE_MODEL_CATALOG.models)).toEqual(Object.keys(EXPECTED_MODELS))
-    expect(Object.keys(FORGE_MODEL_CATALOG.models)).toHaveLength(15)
+    expect(Object.keys(FORGE_MODEL_CATALOG.models)).toHaveLength(16)
     expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('gpt-5.4-nano')
   })
 
@@ -258,6 +275,41 @@ describe('model-catalog', () => {
     for (const [modelId, model] of entries) {
       expect(model.catalogId ?? model.modelId).toBe(modelId)
     }
+  })
+
+  it('adds cursor-acp as a distinct synthetic provider/model without colliding with codex default', () => {
+    expect(getCatalogProvider('cursor-acp')).toMatchObject({
+      providerId: 'cursor-acp',
+      availabilityMode: 'external',
+      piProjectionMode: 'none',
+      projectionScope: 'catalog-only',
+    })
+
+    expect(getCatalogModel('default')).toMatchObject({
+      provider: 'openai-codex-app-server',
+      familyId: 'codex-app',
+    })
+
+    expect(getCatalogModel('cursor-acp/default')).toMatchObject({
+      catalogId: 'cursor-acp/default',
+      modelId: 'default',
+      provider: 'cursor-acp',
+      familyId: 'cursor-acp',
+    })
+
+    expect(getCatalogModel('default', 'cursor-acp')).toMatchObject({
+      catalogId: 'cursor-acp/default',
+      provider: 'cursor-acp',
+    })
+  })
+
+  it('keeps cursor-acp hidden from all manager and specialist visibility surfaces', () => {
+    expect(getCatalogFamily('cursor-acp')).toMatchObject({
+      visibleInCreateManager: false,
+      visibleInChangeManager: false,
+      visibleInSpawnPreset: false,
+      visibleInSpecialists: false,
+    })
   })
 
   it('ensures all models reference valid families', () => {

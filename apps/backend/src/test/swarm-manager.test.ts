@@ -8297,7 +8297,7 @@ describe('SwarmManager', () => {
         cwd: config.defaultCwd,
         model: 'invalid-model' as any,
       }),
-     ).rejects.toThrow('create_manager.model must be one of pi-codex|pi-5.4|pi-opus|sdk-opus|sdk-sonnet|pi-grok|codex-app')
+     ).rejects.toThrow('create_manager.model must be one of pi-codex|pi-5.4|pi-opus|sdk-opus|sdk-sonnet|pi-grok|codex-app|cursor-acp')
   })
 
   it('replacement-shuts down idle manager session runtimes after a profile model change and recreates them on the next prompt', async () => {
@@ -9216,7 +9216,7 @@ describe('SwarmManager', () => {
         agentId: 'Invalid Worker',
         model: 'invalid-model' as any,
       }),
-     ).rejects.toThrow('spawn_agent.model must be one of pi-codex|pi-5.4|pi-opus|sdk-opus|sdk-sonnet|pi-grok|codex-app')
+     ).rejects.toThrow('spawn_agent.model must be one of pi-codex|pi-5.4|pi-opus|sdk-opus|sdk-sonnet|pi-grok|codex-app|cursor-acp')
   })
 
   it('rejects invalid spawn_agent reasoning levels with a clear error', async () => {

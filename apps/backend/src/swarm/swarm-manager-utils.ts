@@ -1307,7 +1307,7 @@ export function extractVersionedToolPath(value: unknown, depth = 0): string | un
     }
   }
 
-  for (const nestedKey of ["args", "arguments", "result", "payload", "input", "data", "preview"]) {
+  for (const nestedKey of ["args", "arguments", "result", "payload", "input", "data", "preview", "content"]) {
     if (!(nestedKey in record)) {
       continue;
     }

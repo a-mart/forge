@@ -47,6 +47,11 @@ const codexRuntimeMockState = vi.hoisted(() => ({
   create: vi.fn(),
 }));
 
+const acpRuntimeMockState = vi.hoisted(() => ({
+  create: vi.fn(),
+  createMcpBridge: vi.fn(),
+}));
+
 const sessionFileGuardMockState = vi.hoisted(() => ({
   openSessionManagerWithSizeGuard: vi.fn(() => ({})),
 }));
@@ -118,6 +123,16 @@ vi.mock("../codex-agent-runtime.js", () => ({
   CodexAgentRuntime: {
     create: (...args: unknown[]) => codexRuntimeMockState.create(...args),
   },
+}));
+
+vi.mock("../acp-agent-runtime.js", () => ({
+  AcpAgentRuntime: {
+    create: (...args: unknown[]) => acpRuntimeMockState.create(...args),
+  },
+}));
+
+vi.mock("../runtime/acp/acp-mcp-tool-bridge.js", () => ({
+  createAcpMcpToolBridge: (...args: unknown[]) => acpRuntimeMockState.createMcpBridge(...args),
 }));
 
 vi.mock("../claude-prompt-assembler.js", () => ({
@@ -242,6 +257,7 @@ function createFactory(
     forgeExtensionHost?: ForgeExtensionHost;
     getAgentDescriptor?: (agentId: string) => AgentDescriptor | undefined;
     getCredentialPoolService?: () => any;
+    buildAcpRuntimeSystemPrompt?: (descriptor: AgentDescriptor, systemPrompt: string) => Promise<string>;
   } = {},
 ): RuntimeFactory {
   const host = {
@@ -285,6 +301,8 @@ function createFactory(
     getSwarmContextFiles: async () => [],
     buildClaudeRuntimeSystemPrompt: async (_descriptor, systemPrompt) => systemPrompt,
     buildCodexRuntimeSystemPrompt: async (_descriptor, systemPrompt) => systemPrompt,
+    buildAcpRuntimeSystemPrompt:
+      overrides.buildAcpRuntimeSystemPrompt ?? (async (_descriptor, systemPrompt) => systemPrompt),
     mergeRuntimeContextFiles: (base) => base,
     callbacks: {
       onStatusChange: async () => {},
@@ -308,6 +326,34 @@ function createMockPiSession() {
     abort: vi.fn(async () => undefined),
     sessionManager: {},
     systemPrompt: "system prompt",
+  };
+}
+
+function createMockRuntime(options: {
+  descriptor?: AgentDescriptor;
+  runtimeType?: "pi" | "claude" | "codex" | "acp";
+  systemPrompt?: string;
+}) {
+  return {
+    descriptor: options.descriptor ?? ({} as AgentDescriptor),
+    runtimeType: options.runtimeType,
+    getStatus: () => options.descriptor?.status ?? "idle",
+    getPendingCount: () => 0,
+    getContextUsage: () => undefined,
+    getSystemPrompt: () => options.systemPrompt,
+    sendMessage: vi.fn(async () => ({
+      targetAgentId: options.descriptor?.agentId ?? "worker-1",
+      deliveryId: "delivery-1",
+      acceptedMode: "prompt",
+    })),
+    compact: vi.fn(async () => undefined),
+    smartCompact: vi.fn(async () => ({ completed: false })),
+    stopInFlight: vi.fn(async () => undefined),
+    terminate: vi.fn(async () => undefined),
+    shutdownForReplacement: vi.fn(async () => undefined),
+    recycle: vi.fn(async () => undefined),
+    getCustomEntries: () => [],
+    appendCustomEntry: () => "entry-1",
   };
 }
 
@@ -341,6 +387,17 @@ describe("RuntimeFactory", () => {
       allowedTools: [],
     });
     codexRuntimeMockState.create.mockReset();
+    acpRuntimeMockState.create.mockReset();
+    acpRuntimeMockState.createMcpBridge.mockReset();
+    acpRuntimeMockState.createMcpBridge.mockResolvedValue({
+      mcpDescriptor: {
+        type: "http",
+        name: "forge-tools",
+        url: "http://127.0.0.1:4321/mcp",
+        headers: [],
+      },
+      shutdown: vi.fn(async () => undefined),
+    });
     sessionFileGuardMockState.openSessionManagerWithSizeGuard.mockReset();
     sessionFileGuardMockState.openSessionManagerWithSizeGuard.mockReturnValue({});
   });
@@ -978,6 +1035,145 @@ describe("RuntimeFactory", () => {
     expect(codexOptions.skipInitialThreadResume).toBe(true);
   });
 
+  it("selects the ACP runtime and invokes the ACP prompt builder for cursor-acp providers", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    await mkdir(rootDir, { recursive: true });
+
+    const buildAcpRuntimeSystemPrompt = vi.fn(async (_descriptor: AgentDescriptor, systemPrompt: string) => `${systemPrompt}\n\nACP prompt`);
+    acpRuntimeMockState.create.mockImplementation(async (options: { descriptor: AgentDescriptor; systemPrompt: string }) =>
+      createMockRuntime({
+        descriptor: options.descriptor,
+        runtimeType: "acp",
+        systemPrompt: options.systemPrompt,
+      })
+    );
+
+    const factory = createFactory(rootDir, {
+      buildAcpRuntimeSystemPrompt,
+    });
+
+    const runtime = await factory.createRuntimeForDescriptor(
+      createDescriptor(rootDir, {
+        model: {
+          provider: "cursor-acp",
+          modelId: "default",
+          thinkingLevel: "high",
+        },
+      }),
+      "Base ACP prompt",
+      3
+    );
+
+    expect(acpRuntimeMockState.create).toHaveBeenCalledTimes(1);
+    expect(buildAcpRuntimeSystemPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({ agentId: "worker-1" }),
+      "Base ACP prompt"
+    );
+    expect(runtime.runtimeType).toBe("acp");
+    expect(claudeRuntimeMockState.constructorArgs).toHaveLength(0);
+    expect(codexRuntimeMockState.create).not.toHaveBeenCalled();
+
+    const acpOptions = acpRuntimeMockState.create.mock.calls.at(-1)?.[0] as {
+      systemPrompt: string;
+      mcpServers: Array<{ type: string; name: string; url: string }>;
+    };
+    expect(acpOptions.systemPrompt).toBe("Base ACP prompt\n\nACP prompt");
+    expect(acpOptions.mcpServers).toEqual([
+      {
+        type: "http",
+        name: "forge-tools",
+        url: "http://127.0.0.1:4321/mcp",
+        headers: [],
+      },
+    ]);
+  });
+
+  it("shuts down the ACP MCP bridge when prompt assembly fails before runtime creation", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    await mkdir(rootDir, { recursive: true });
+
+    const shutdown = vi.fn(async () => undefined);
+    acpRuntimeMockState.createMcpBridge.mockResolvedValue({
+      mcpDescriptor: {
+        type: "http",
+        name: "forge-tools",
+        url: "http://127.0.0.1:4321/mcp",
+        headers: [],
+      },
+      shutdown,
+    });
+
+    const buildAcpRuntimeSystemPrompt = vi.fn(async () => {
+      throw new Error("acp prompt failed");
+    });
+
+    const factory = createFactory(rootDir, {
+      buildAcpRuntimeSystemPrompt,
+    });
+
+    await expect(
+      factory.createRuntimeForDescriptor(
+        createDescriptor(rootDir, {
+          model: {
+            provider: "cursor-acp",
+            modelId: "default",
+            thinkingLevel: "high",
+          },
+        }),
+        "Base ACP prompt",
+        8
+      )
+    ).rejects.toThrow("acp prompt failed");
+
+    expect(acpRuntimeMockState.createMcpBridge).not.toHaveBeenCalled();
+    expect(shutdown).not.toHaveBeenCalled();
+    expect(acpRuntimeMockState.create).not.toHaveBeenCalled();
+  });
+
+  it("prepares ACP Forge extension bindings with runtimeType acp", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    await mkdir(rootDir, { recursive: true });
+    await mkdir(join(rootDir, "data", "extensions"), { recursive: true });
+    await writeFile(join(rootDir, "data", "extensions", "noop.ts"), "export default () => {}\n", "utf8");
+
+    const forgeExtensionHost = new ForgeExtensionHost({
+      dataDir: join(rootDir, "data"),
+      now: () => "2026-01-01T00:00:00.000Z",
+    });
+    const prepareSpy = vi.spyOn(forgeExtensionHost, "prepareRuntimeBindings");
+    const activateSpy = vi.spyOn(forgeExtensionHost, "activateRuntimeBindings");
+
+    acpRuntimeMockState.create.mockImplementation(async (options: { descriptor: AgentDescriptor; systemPrompt: string }) =>
+      createMockRuntime({
+        descriptor: options.descriptor,
+        runtimeType: "acp",
+        systemPrompt: options.systemPrompt,
+      })
+    );
+
+    const factory = createFactory(rootDir, { forgeExtensionHost });
+    await factory.createRuntimeForDescriptor(
+      createDescriptor(rootDir, {
+        model: {
+          provider: "cursor-acp",
+          modelId: "default",
+          thinkingLevel: "high",
+        },
+      }),
+      "system prompt",
+      7
+    );
+
+    expect(prepareSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runtimeType: "acp",
+        runtimeToken: 7,
+      })
+    );
+    expect(activateSpy).toHaveBeenCalled();
+    expect((activateSpy.mock.calls.at(-1)?.[0] as { runtimeType: string }).runtimeType).toBe("acp");
+  });
+
   it("does not inject a Pi recovery file when the startup recovery block is empty", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
     await mkdir(rootDir, { recursive: true });
@@ -1012,7 +1208,7 @@ describe("RuntimeFactory", () => {
     );
   });
 
-  it("wraps Forge-owned tools for Claude and Codex runtimes", async () => {
+  it("wraps Forge-owned tools for Claude, Codex, and ACP runtimes", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
     await mkdir(rootDir, { recursive: true });
 
@@ -1041,6 +1237,23 @@ describe("RuntimeFactory", () => {
       tools,
     }));
     codexRuntimeMockState.create.mockImplementation(async (options: { tools: Array<{ name: string; execute: (...args: any[]) => Promise<unknown> }> }) => options as unknown);
+    acpRuntimeMockState.createMcpBridge.mockImplementation(async (tools: Array<{ name: string; execute: (...args: any[]) => Promise<unknown> }>) => ({
+      mcpDescriptor: {
+        type: "http",
+        name: "forge-tools",
+        url: "http://127.0.0.1:4321/mcp",
+        headers: [],
+      },
+      shutdown: vi.fn(async () => undefined),
+      tools,
+    }));
+    acpRuntimeMockState.create.mockImplementation(async (options: { descriptor: AgentDescriptor; systemPrompt: string }) =>
+      createMockRuntime({
+        descriptor: options.descriptor,
+        runtimeType: "acp",
+        systemPrompt: options.systemPrompt,
+      })
+    );
 
     await factory.createRuntimeForDescriptor(
       createDescriptor(rootDir, {
@@ -1076,6 +1289,27 @@ describe("RuntimeFactory", () => {
       message: "hello",
     });
 
-    expect(sendMessage.mock.calls.map((call) => call[1])).toEqual(["worker-rewritten", "worker-rewritten"]);
+    await factory.createRuntimeForDescriptor(
+      createDescriptor(rootDir, {
+        model: {
+          provider: "cursor-acp",
+          modelId: "default",
+          thinkingLevel: "high",
+        },
+      }),
+      "system prompt",
+      3
+    );
+    const acpTools = acpRuntimeMockState.createMcpBridge.mock.calls.at(-1)?.[0] as Array<{ name: string; execute: (...args: any[]) => Promise<unknown> }>;
+    await acpTools.find((tool) => tool.name === "send_message_to_agent")?.execute("tool-acp", {
+      targetAgentId: "worker-original",
+      message: "hello",
+    });
+
+    expect(sendMessage.mock.calls.map((call) => call[1])).toEqual([
+      "worker-rewritten",
+      "worker-rewritten",
+      "worker-rewritten",
+    ]);
   });
 });

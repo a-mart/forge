@@ -577,11 +577,25 @@ describe("specialist-registry", () => {
       modelId: "default",
       fallbackModelId: undefined,
     });
+    expect(byId.get("cursor-builder")).toMatchObject({
+      provider: "cursor-acp",
+      modelId: "default",
+      reasoningLevel: "medium",
+      fallbackProvider: "openai-codex",
+      fallbackModelId: "gpt-5.4",
+      fallbackReasoningLevel: "high",
+      enabled: false,
+      builtin: true,
+      sourceKind: "builtin",
+    });
     expect(byId.get("web-researcher")).toMatchObject({
       provider: "xai",
       fallbackProvider: "xai",
       fallbackModelId: "grok-4",
     });
+
+    const rosterBlock = generateRosterBlock(roster);
+    expect(rosterBlock).not.toContain("`cursor-builder`");
   });
 
   it("skips overwriting pinned builtin files during seeding", async () => {

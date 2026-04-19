@@ -23,6 +23,7 @@ import { buildCreateSessionTool } from "../agents/create-session-tool.js";
 import { ensureCanonicalAuthFilePath } from "../auth-storage-paths.js";
 import type { CredentialPoolService } from "../credential-pool.js";
 import { openSessionManagerWithSizeGuard } from "../session-file-guard.js";
+import { AcpAgentRuntime } from "../acp-agent-runtime.js";
 import { ClaudeAgentRuntime } from "../claude-agent-runtime.js";
 import { ClaudeAuthResolver } from "../claude-auth-resolver.js";
 import { createClaudeMcpToolBridge } from "../claude-mcp-tool-bridge.js";
@@ -31,6 +32,7 @@ import { wrapForgeToolsWithExtensionHooks } from "../forge-instrumented-tools.js
 import { buildForgePiToolBridgeExtensionFactory } from "../forge-pi-tool-bridge.js";
 import { isClaudeSdkUnavailableError } from "../claude-sdk-loader.js";
 import { CodexAgentRuntime } from "../codex-agent-runtime.js";
+import { createAcpMcpToolBridge } from "./acp/acp-mcp-tool-bridge.js";
 import type {
   RuntimeCreationOptions,
   RuntimeErrorEvent,
@@ -77,6 +79,7 @@ interface RuntimeFactoryDependencies {
   getSwarmContextFiles: (cwd: string) => Promise<Array<{ path: string; content: string }>>;
   buildClaudeRuntimeSystemPrompt: (descriptor: AgentDescriptor, systemPrompt: string) => Promise<string>;
   buildCodexRuntimeSystemPrompt: (descriptor: AgentDescriptor, systemPrompt: string) => Promise<string>;
+  buildAcpRuntimeSystemPrompt: (descriptor: AgentDescriptor, systemPrompt: string) => Promise<string>;
   mergeRuntimeContextFiles: (
     baseAgentsFiles: Array<{ path: string; content: string }>,
     options: {
@@ -131,6 +134,10 @@ export class RuntimeFactory {
           `${error.message} Install the Claude Agent SDK or switch this agent to the Pi-proxied anthropic/${descriptor.model.modelId} variant.`
         );
       }
+    }
+
+    if (isAcpModelDescriptor(descriptor.model)) {
+      return this.createAcpRuntimeForDescriptor(descriptor, systemPrompt, runtimeToken, options);
     }
 
     if (isCodexAppServerModelDescriptor(descriptor.model)) {
@@ -510,6 +517,97 @@ export class RuntimeFactory {
       activeTools: swarmTools.map((tool) => tool.name),
       allowedTools: mcpBridge.allowedTools,
       systemPromptPreview: previewForLog(claudeSystemPrompt, 240)
+    });
+
+    if (preparedForgeBindings) {
+      this.deps.forgeExtensionHost.activateRuntimeBindings(preparedForgeBindings);
+    }
+
+    return runtime;
+  }
+
+  private async createAcpRuntimeForDescriptor(
+    descriptor: AgentDescriptor,
+    systemPrompt: string,
+    runtimeToken: number,
+    _options?: RuntimeCreationOptions
+  ): Promise<SwarmAgentRuntime> {
+    const preparedForgeBindings = await this.deps.forgeExtensionHost.prepareRuntimeBindings({
+      descriptor,
+      sessionDescriptor: this.getForgeSessionDescriptor(descriptor),
+      runtimeType: "acp",
+      runtimeToken
+    });
+    const baseSwarmTools = this.buildRuntimeTools(descriptor);
+    const swarmTools = preparedForgeBindings
+      ? wrapForgeToolsWithExtensionHooks({
+          tools: baseSwarmTools,
+          forgeExtensionHost: this.deps.forgeExtensionHost,
+          bindingToken: preparedForgeBindings.bindingToken
+        })
+      : baseSwarmTools;
+    const [acpSystemPrompt, memoryResources] = await Promise.all([
+      this.deps.buildAcpRuntimeSystemPrompt(descriptor, systemPrompt),
+      this.deps.getMemoryRuntimeResources(descriptor)
+    ]);
+    const mcpBridge = await createAcpMcpToolBridge(swarmTools);
+
+    this.deps.logDebug("runtime:create:start", {
+      runtime: "cursor-acp",
+      agentId: descriptor.agentId,
+      role: descriptor.role,
+      model: descriptor.model,
+      archetypeId: descriptor.archetypeId,
+      cwd: descriptor.cwd,
+      mcpServer: mcpBridge.mcpDescriptor.name,
+      mcpUrl: mcpBridge.mcpDescriptor.url
+    });
+
+    let runtime: SwarmAgentRuntime;
+    try {
+      runtime = await AcpAgentRuntime.create({
+        descriptor: cloneRuntimeDescriptor(descriptor),
+        callbacks: {
+          onStatusChange: async (agentId, status, pendingCount, contextUsage) => {
+            await this.deps.callbacks.onStatusChange(runtimeToken, agentId, status, pendingCount, contextUsage);
+          },
+          onSessionEvent: async (agentId, event) => {
+            await this.deps.callbacks.onSessionEvent(runtimeToken, agentId, event);
+          },
+          onAgentEnd: async (agentId) => {
+            await this.deps.callbacks.onAgentEnd(runtimeToken, agentId);
+          },
+          onRuntimeError: async (agentId, error) => {
+            await this.deps.callbacks.onRuntimeError(runtimeToken, agentId, error);
+          }
+        },
+        now: this.deps.now,
+        systemPrompt: acpSystemPrompt,
+        mcpServers: [mcpBridge.mcpDescriptor],
+        runtimeEnv: {
+          SWARM_DATA_DIR: this.deps.config.paths.dataDir,
+          SWARM_MEMORY_FILE: memoryResources.memoryContextFile.path
+        },
+        onSessionFileRotated: async (sessionFile) => {
+          await this.deps.onSessionFileRotated?.(descriptor, sessionFile);
+        },
+        onUnexpectedExit: async () => {
+          await mcpBridge.shutdown();
+        }
+      });
+    } catch (error) {
+      await mcpBridge.shutdown().catch(() => undefined);
+      throw error;
+    }
+
+    bindRuntimeCleanup(runtime, () => mcpBridge.shutdown());
+
+    this.deps.logDebug("runtime:create:ready", {
+      runtime: "cursor-acp",
+      agentId: descriptor.agentId,
+      activeTools: swarmTools.map((tool) => tool.name),
+      mcpServer: mcpBridge.mcpDescriptor.name,
+      systemPromptPreview: previewForLog(acpSystemPrompt, 240)
     });
 
     if (preparedForgeBindings) {
@@ -992,6 +1090,10 @@ function isClaudeSdkModelDescriptor(
   return descriptor.provider.trim().toLowerCase() === "claude-sdk";
 }
 
+function isAcpModelDescriptor(descriptor: Pick<AgentModelDescriptor, "provider">): boolean {
+  return descriptor.provider.trim().toLowerCase() === "cursor-acp";
+}
+
 function isCodexAppServerModelDescriptor(descriptor: Pick<AgentModelDescriptor, "provider">): boolean {
   return descriptor.provider.trim().toLowerCase() === "openai-codex-app-server";
 }
@@ -1016,6 +1118,29 @@ function previewForLog(text: string, maxLength = 160): string {
 
 function cloneRuntimeDescriptor(descriptor: AgentDescriptor): AgentDescriptor {
   return structuredClone(descriptor);
+}
+
+function bindRuntimeCleanup(runtime: SwarmAgentRuntime, cleanup: () => Promise<void>): void {
+  let cleanupPromise: Promise<void> | undefined;
+  const runCleanup = async () => {
+    cleanupPromise ??= cleanup();
+    await cleanupPromise;
+  };
+
+  const wrap = (methodName: "terminate" | "shutdownForReplacement" | "recycle") => {
+    const original = runtime[methodName].bind(runtime) as (...args: any[]) => Promise<void>;
+    runtime[methodName] = (async (...args: any[]) => {
+      try {
+        await original(...args);
+      } finally {
+        await runCleanup();
+      }
+    }) as typeof runtime[typeof methodName];
+  };
+
+  wrap("terminate");
+  wrap("shutdownForReplacement");
+  wrap("recycle");
 }
 
 function previewJsonForLog(value: unknown, maxLength = 160): string {
