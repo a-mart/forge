@@ -978,4 +978,1007 @@ describe('SwarmManager', () => {
       warnSpy.mockRestore()
     }
   })
+  it('starts fresh Cortex review runs in dedicated review sessions and records them for the Review tab', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await manager.boot()
+
+    const run = expectStartedReviewRun(await manager.startCortexReviewRun({
+      scope: { mode: 'session', profileId: 'alpha', sessionId: 'alpha--s1', axes: ['memory', 'feedback'] },
+      trigger: 'manual',
+      sourceContext: { channel: 'web' },
+    }))
+
+    expect(run.status).toBe('completed')
+    expect(run.scopeLabel).toBe('alpha/alpha--s1 (memory, feedback)')
+    expect(run.sessionAgentId).toMatch(/^cortex--s\d+$/)
+
+    const reviewSession = manager.listAgents().find((descriptor) => descriptor.agentId === run.sessionAgentId)
+    expect(reviewSession).toMatchObject({
+      profileId: 'cortex',
+      sessionPurpose: 'cortex_review',
+    })
+
+    const reviewRuntime = manager.runtimeByAgentId.get(run.sessionAgentId!)
+    expect(reviewRuntime?.sendCalls.at(-1)?.delivery).toBe('steer')
+    expect(reviewRuntime?.sendCalls.at(-1)?.message).toBe(
+      '[sourceContext] {"channel":"web"}\n\nReview session alpha/alpha--s1 (memory, feedback freshness)',
+    )
+
+    const storedRuns = JSON.parse(await readFile(getCortexReviewRunsPath(config.paths.dataDir), 'utf8')) as {
+      runs: Array<{ sessionAgentId: string | null; trigger: string }>
+    }
+    expect(storedRuns.runs[0]).toMatchObject({
+      sessionAgentId: run.sessionAgentId,
+      trigger: 'manual',
+    })
+  })
+
+  it('routes root Cortex review messages into fresh review-run sessions instead of the interactive root session', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await manager.boot()
+
+    expect(manager.runtimeByAgentId.get('cortex')).toBeUndefined()
+
+    await manager.handleUserMessage('Review all sessions that need attention', {
+      targetAgentId: 'cortex',
+      sourceContext: { channel: 'web' },
+    })
+
+    expect(manager.runtimeByAgentId.get('cortex')).toBeUndefined()
+
+    const runs = await manager.listCortexReviewRuns()
+    expect(runs[0]).toMatchObject({
+      trigger: 'manual',
+      scope: { mode: 'all' },
+    })
+    expect(runs[0]?.sessionAgentId).toMatch(/^cortex--s\d+$/)
+  })
+
+
+  it('skips scheduled all-scope review envelopes when deterministic scan finds nothing to review', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await manager.boot()
+
+    await manager.handleUserMessage(
+      '[Scheduled Task: Nightly Review]\n[scheduleContext] {"scheduleId":"sched-1"}\n\nReview all sessions that need attention',
+      {
+        targetAgentId: 'cortex',
+        sourceContext: { channel: 'web' },
+      },
+    )
+
+    const runs = await manager.listCortexReviewRuns()
+    expect(runs).toEqual([])
+    expect(manager.listAgents().some((descriptor) => descriptor.sessionPurpose === 'cortex_review')).toBe(false)
+  })
+
+  it('routes scheduled review envelopes into the same review-run path with schedule metadata when review is needed', async () => {
+    const config = await makeTempConfig()
+    await seedNeedsReviewSession(config)
+
+    const manager = new TestSwarmManager(config)
+    await manager.boot()
+
+    await manager.handleUserMessage(
+      '[Scheduled Task: Nightly Review]\n[scheduleContext] {"scheduleId":"sched-1"}\n\nReview all sessions that need attention',
+      {
+        targetAgentId: 'cortex',
+        sourceContext: { channel: 'web' },
+      },
+    )
+
+    const runs = await manager.listCortexReviewRuns()
+    expect(runs).toHaveLength(1)
+    expect(runs[0]).toMatchObject({
+      trigger: 'scheduled',
+      scope: { mode: 'all' },
+      scheduleName: 'Nightly Review',
+      requestText:
+        '[Scheduled Task: Nightly Review]\n[scheduleContext] {"scheduleId":"sched-1"}\n\nReview all sessions that need attention',
+    })
+  })
+
+  it('bypasses precheck and coalescing for scheduled session-scoped review envelopes', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await manager.boot()
+
+    const scheduledMessage =
+      '[Scheduled Task: Session Review]\n[scheduleContext] {"scheduleId":"sched-session"}\n\nReview session alpha/alpha--s1 (memory freshness)'
+
+    await manager.handleUserMessage(scheduledMessage, {
+      targetAgentId: 'cortex',
+      sourceContext: { channel: 'web' },
+    })
+
+    await manager.handleUserMessage(scheduledMessage, {
+      targetAgentId: 'cortex',
+      sourceContext: { channel: 'web' },
+    })
+
+    const runs = await manager.listCortexReviewRuns()
+    expect(runs.filter((entry) => entry.trigger === 'scheduled' && entry.scope.mode === 'session')).toHaveLength(2)
+    expect(runs[0]).toMatchObject({
+      trigger: 'scheduled',
+      scope: { mode: 'session', profileId: 'alpha', sessionId: 'alpha--s1', axes: ['memory'] },
+      scheduleName: 'Session Review',
+    })
+  })
+
+  it('coalesces scheduled all-scope review envelopes when an all-scope review is already active', async () => {
+    const config = await makeTempConfig()
+    await seedNeedsReviewSession(config)
+
+    class BlockingReviewRuntime extends FakeRuntime {
+      constructor(
+        descriptor: AgentDescriptor,
+        private readonly release: Promise<void>,
+      ) {
+        super(descriptor)
+      }
+
+      override async sendMessage(message: string | RuntimeUserMessage, delivery: RequestedDeliveryMode = 'auto'): Promise<SendMessageReceipt> {
+        if (this.descriptor.sessionPurpose === 'cortex_review') {
+          this.descriptor.status = 'streaming'
+          void this.release.then(() => {
+            this.descriptor.status = 'idle'
+          })
+        }
+        return super.sendMessage(message, delivery)
+      }
+    }
+
+    let releaseReview!: () => void
+    const releaseReviewPromise = new Promise<void>((resolve) => {
+      releaseReview = resolve
+    })
+
+    class BlockingReviewManager extends TestSwarmManager {
+      protected override async createRuntimeForDescriptor(
+        descriptor: AgentDescriptor,
+        systemPrompt: string,
+        _runtimeToken?: number,
+      ): Promise<SwarmAgentRuntime> {
+        const runtime = new BlockingReviewRuntime(descriptor, releaseReviewPromise)
+        this.createdRuntimeIds.push(descriptor.agentId)
+        this.runtimeByAgentId.set(descriptor.agentId, runtime)
+        this.systemPromptByAgentId.set(descriptor.agentId, systemPrompt)
+        return runtime as unknown as SwarmAgentRuntime
+      }
+    }
+
+    const manager = new BlockingReviewManager(config)
+    await manager.boot()
+
+    const scheduledMessage =
+      '[Scheduled Task: Nightly Review]\n[scheduleContext] {"scheduleId":"sched-1"}\n\nReview all sessions that need attention'
+
+    await manager.handleUserMessage(scheduledMessage, {
+      targetAgentId: 'cortex',
+      sourceContext: { channel: 'web' },
+    })
+
+    await waitForCondition(() => {
+      const activeReviewSession = manager
+        .listAgents()
+        .find((descriptor) => descriptor.sessionPurpose === 'cortex_review' && descriptor.status === 'streaming')
+      return Boolean(activeReviewSession)
+    })
+
+    await manager.handleUserMessage(scheduledMessage, {
+      targetAgentId: 'cortex',
+      sourceContext: { channel: 'web' },
+    })
+
+    const runs = await manager.listCortexReviewRuns()
+    expect(runs).toHaveLength(1)
+    expect(runs[0]).toMatchObject({
+      trigger: 'scheduled',
+      scope: { mode: 'all' },
+    })
+
+    releaseReview()
+  })
+
+  it('coalesces scheduled all-scope review envelopes when an all-scope run is already queued', async () => {
+    const config = await makeTempConfig()
+    await seedNeedsReviewSession(config)
+
+    class BlockingReviewRuntime extends FakeRuntime {
+      constructor(
+        descriptor: AgentDescriptor,
+        private readonly release: Promise<void>,
+      ) {
+        super(descriptor)
+      }
+
+      override async sendMessage(message: string | RuntimeUserMessage, delivery: RequestedDeliveryMode = 'auto'): Promise<SendMessageReceipt> {
+        if (this.descriptor.sessionPurpose === 'cortex_review') {
+          this.descriptor.status = 'streaming'
+          void this.release.then(() => {
+            this.descriptor.status = 'idle'
+          })
+        }
+        return super.sendMessage(message, delivery)
+      }
+    }
+
+    let releaseReview!: () => void
+    const releaseReviewPromise = new Promise<void>((resolve) => {
+      releaseReview = resolve
+    })
+
+    class BlockingReviewManager extends TestSwarmManager {
+      protected override async createRuntimeForDescriptor(
+        descriptor: AgentDescriptor,
+        systemPrompt: string,
+        _runtimeToken?: number,
+      ): Promise<SwarmAgentRuntime> {
+        const runtime = new BlockingReviewRuntime(descriptor, releaseReviewPromise)
+        this.createdRuntimeIds.push(descriptor.agentId)
+        this.runtimeByAgentId.set(descriptor.agentId, runtime)
+        this.systemPromptByAgentId.set(descriptor.agentId, systemPrompt)
+        return runtime as unknown as SwarmAgentRuntime
+      }
+    }
+
+    const manager = new BlockingReviewManager(config)
+    await manager.boot()
+
+    const activeRun = expectStartedReviewRun(await manager.startCortexReviewRun({
+      scope: { mode: 'session', profileId: 'alpha', sessionId: 'alpha--s1', axes: ['memory'] },
+      trigger: 'manual',
+      sourceContext: { channel: 'web' },
+    }))
+
+    await waitForCondition(() => {
+      const activeReviewSession = manager.getAgent(activeRun.sessionAgentId ?? '')
+      return activeReviewSession?.status === 'streaming'
+    })
+
+    const scheduledMessage =
+      '[Scheduled Task: Nightly Review]\n[scheduleContext] {"scheduleId":"sched-1"}\n\nReview all sessions that need attention'
+
+    await manager.handleUserMessage(scheduledMessage, {
+      targetAgentId: 'cortex',
+      sourceContext: { channel: 'web' },
+    })
+
+    let runs = await manager.listCortexReviewRuns()
+    const queuedAllScopeRun = runs.find((entry) => entry.trigger === 'scheduled' && entry.scope.mode === 'all')
+    expect(queuedAllScopeRun).toMatchObject({
+      status: 'queued',
+      sessionAgentId: null,
+    })
+
+    await manager.handleUserMessage(scheduledMessage, {
+      targetAgentId: 'cortex',
+      sourceContext: { channel: 'web' },
+    })
+
+    runs = await manager.listCortexReviewRuns()
+    expect(runs.filter((entry) => entry.trigger === 'scheduled' && entry.scope.mode === 'all')).toHaveLength(1)
+
+    releaseReview()
+  })
+
+  it('queues concurrent review starts FIFO and automatically launches the next run after the active one finishes', async () => {
+    const config = await makeTempConfig()
+
+    class BlockingReviewRuntime extends FakeRuntime {
+      constructor(
+        descriptor: AgentDescriptor,
+        private readonly release: Promise<void>,
+      ) {
+        super(descriptor)
+      }
+
+      override async sendMessage(message: string | RuntimeUserMessage, delivery: RequestedDeliveryMode = 'auto'): Promise<SendMessageReceipt> {
+        if (this.descriptor.sessionPurpose === 'cortex_review') {
+          this.descriptor.status = 'streaming'
+          void this.release.then(() => {
+            this.descriptor.status = 'idle'
+          })
+        }
+        return super.sendMessage(message, delivery)
+      }
+    }
+
+    let releaseFirstRun!: () => void
+    const releaseFirstRunPromise = new Promise<void>((resolve) => {
+      releaseFirstRun = resolve
+    })
+
+    class ConcurrentReviewTestSwarmManager extends TestSwarmManager {
+      protected override async createRuntimeForDescriptor(
+        descriptor: AgentDescriptor,
+        systemPrompt: string,
+        _runtimeToken?: number,
+      ): Promise<SwarmAgentRuntime> {
+        const runtime = new BlockingReviewRuntime(descriptor, releaseFirstRunPromise)
+        this.createdRuntimeIds.push(descriptor.agentId)
+        this.runtimeByAgentId.set(descriptor.agentId, runtime)
+        this.systemPromptByAgentId.set(descriptor.agentId, systemPrompt)
+        return runtime as unknown as SwarmAgentRuntime
+      }
+    }
+
+    const manager = new ConcurrentReviewTestSwarmManager(config)
+    await manager.boot()
+
+    const firstRunPromise = manager.startCortexReviewRun({
+      scope: { mode: 'all' },
+      trigger: 'manual',
+      sourceContext: { channel: 'web' },
+    })
+
+    await waitForCondition(() => {
+      const streamingReviewSession = manager
+        .listAgents()
+        .find((descriptor) => descriptor.sessionPurpose === 'cortex_review' && descriptor.status === 'streaming')
+      return Boolean(streamingReviewSession)
+    })
+
+    const secondRun = expectStartedReviewRun(await manager.startCortexReviewRun({
+      scope: { mode: 'session', profileId: 'alpha', sessionId: 'alpha--s1', axes: ['memory'] },
+      trigger: 'manual',
+      sourceContext: { channel: 'web' },
+    }))
+
+    expect(secondRun.status).toBe('queued')
+    expect(secondRun.sessionAgentId).toBeNull()
+    expect(secondRun.queuePosition).toBe(1)
+
+    releaseFirstRun()
+    const firstRun = expectStartedReviewRun(await firstRunPromise)
+
+    let refreshedRuns = await manager.listCortexReviewRuns()
+    let refreshedSecondRun = refreshedRuns.find((entry) => entry.runId === secondRun.runId)
+    for (let attempt = 0; attempt < 50 && !refreshedSecondRun?.sessionAgentId; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      refreshedRuns = await manager.listCortexReviewRuns()
+      refreshedSecondRun = refreshedRuns.find((entry) => entry.runId === secondRun.runId)
+    }
+
+    const refreshedFirstRun = refreshedRuns.find((entry) => entry.runId === firstRun.runId)
+
+    expect(refreshedFirstRun?.status).toBe('completed')
+    expect(refreshedSecondRun?.queuePosition ?? null).toBeNull()
+    expect(refreshedSecondRun?.sessionAgentId).toMatch(/^cortex--s\d+$/)
+    expect(refreshedSecondRun?.sessionAgentId).not.toBe(firstRun.sessionAgentId)
+
+    const storedRuns = JSON.parse(await readFile(getCortexReviewRunsPath(config.paths.dataDir), 'utf8')) as {
+      runs: Array<{ runId: string; blockedReason?: string | null; sessionAgentId: string | null }>
+    }
+    const storedSecondRun = storedRuns.runs.find((entry) => entry.runId === secondRun.runId)
+    expect(storedSecondRun?.blockedReason ?? null).toBeNull()
+    expect(storedSecondRun?.sessionAgentId).toBe(refreshedSecondRun?.sessionAgentId ?? null)
+  })
+  it('normalizes persisted streaming workers to idle on restart without recreating runtimes', async () => {
+    const config = await makeTempConfig()
+
+    const seedAgents = {
+      agents: [
+        {
+          agentId: 'manager',
+          displayName: 'Manager',
+          role: 'manager',
+          managerId: 'manager',
+          status: 'idle',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+          cwd: config.defaultCwd,
+          model: config.defaultModel,
+          sessionFile: join(config.paths.sessionsDir, 'manager.jsonl'),
+        },
+        {
+          agentId: 'worker-a',
+          displayName: 'Worker A',
+          role: 'worker',
+          managerId: 'manager',
+          status: 'streaming',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+          cwd: config.defaultCwd,
+          model: config.defaultModel,
+          sessionFile: join(config.paths.sessionsDir, 'worker-a.jsonl'),
+        },
+      ],
+    }
+
+    await writeFile(config.paths.agentsStoreFile, JSON.stringify(seedAgents, null, 2), 'utf8')
+
+    const manager = new TestSwarmManager(config)
+    await manager.boot()
+
+    const agents = manager.listAgents()
+    const worker = agents.find((agent) => agent.agentId === 'worker-a')
+    const persistedStore = JSON.parse(await readFile(config.paths.agentsStoreFile, 'utf8')) as {
+      agents: Array<{ agentId: string; status: AgentDescriptor['status'] }>
+    }
+    const persistedWorker = persistedStore.agents.find((agent) => agent.agentId === 'worker-a')
+
+    expect(worker?.status).toBe('idle')
+    expect(persistedWorker?.status).toBe('idle')
+    expect(manager.createdRuntimeIds).toEqual([])
+    expect(manager.runtimeByAgentId.get('manager')).toBeUndefined()
+    expect(manager.runtimeByAgentId.get('worker-a')).toBeUndefined()
+  })
+
+  it('migrates persisted stopped_on_restart statuses to stopped at boot', async () => {
+    const config = await makeTempConfig()
+
+    const seedAgents = {
+      agents: [
+        {
+          agentId: 'manager',
+          displayName: 'Manager',
+          role: 'manager',
+          managerId: 'manager',
+          status: 'idle',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+          cwd: config.defaultCwd,
+          model: config.defaultModel,
+          sessionFile: join(config.paths.sessionsDir, 'manager.jsonl'),
+        },
+        {
+          agentId: 'worker-stopped',
+          displayName: 'Worker Stopped',
+          role: 'worker',
+          managerId: 'manager',
+          status: 'stopped_on_restart',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+          cwd: config.defaultCwd,
+          model: config.defaultModel,
+          sessionFile: join(config.paths.sessionsDir, 'worker-stopped.jsonl'),
+        },
+      ],
+    }
+
+    await writeFile(config.paths.agentsStoreFile, JSON.stringify(seedAgents, null, 2), 'utf8')
+
+    const manager = new TestSwarmManager(config)
+    await manager.boot()
+
+    const migrated = manager.listAgents().find((agent) => agent.agentId === 'worker-stopped')
+    const persistedStore = JSON.parse(await readFile(config.paths.agentsStoreFile, 'utf8')) as {
+      agents: Array<{ agentId: string; status: AgentDescriptor['status'] }>
+    }
+    const persistedWorker = persistedStore.agents.find((agent) => agent.agentId === 'worker-stopped')
+
+    expect(migrated?.status).toBe('stopped')
+    expect(persistedWorker?.status).toBe('stopped')
+  })
+
+  it('lazily creates idle runtimes when a restored agent receives work', async () => {
+    const config = await makeTempConfig()
+
+    const seedAgents = {
+      agents: [
+        {
+          agentId: 'manager',
+          displayName: 'Manager',
+          role: 'manager',
+          managerId: 'manager',
+          status: 'idle',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+          cwd: config.defaultCwd,
+          model: config.defaultModel,
+          sessionFile: join(config.paths.sessionsDir, 'manager.jsonl'),
+        },
+        {
+          agentId: 'worker-idle',
+          displayName: 'Worker Idle',
+          role: 'worker',
+          managerId: 'manager',
+          status: 'idle',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+          cwd: config.defaultCwd,
+          model: config.defaultModel,
+          sessionFile: join(config.paths.sessionsDir, 'worker-idle.jsonl'),
+        },
+      ],
+    }
+
+    await writeFile(config.paths.agentsStoreFile, JSON.stringify(seedAgents, null, 2), 'utf8')
+
+    const manager = new TestSwarmManager(config)
+    await manager.boot()
+
+    expect(manager.createdRuntimeIds).toEqual([])
+    expect(manager.runtimeByAgentId.get('worker-idle')).toBeUndefined()
+
+    await manager.sendMessage('manager', 'worker-idle', 'start now')
+
+    const runtime = manager.runtimeByAgentId.get('worker-idle')
+    expect(runtime).toBeDefined()
+    expect(runtime?.sendCalls.at(-1)?.message).toBe('SYSTEM: start now')
+    expect(manager.createdRuntimeIds).toEqual(['worker-idle'])
+  })
+
+  it('skips terminated histories at boot and lazy-loads them on demand', async () => {
+    const config = await makeTempConfig()
+
+    appendSessionConversationMessage(join(config.paths.sessionsDir, 'manager.jsonl'), 'manager', 'manager-history')
+    appendSessionConversationMessage(
+      join(config.paths.sessionsDir, 'worker-active.jsonl'),
+      'worker-active',
+      'active-worker-history',
+    )
+    appendSessionConversationMessage(
+      join(config.paths.sessionsDir, 'worker-terminated.jsonl'),
+      'worker-terminated',
+      'terminated-worker-history',
+    )
+
+    const seedAgents = {
+      agents: [
+        {
+          agentId: 'manager',
+          displayName: 'Manager',
+          role: 'manager',
+          managerId: 'manager',
+          status: 'idle',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+          cwd: config.defaultCwd,
+          model: config.defaultModel,
+          sessionFile: join(config.paths.sessionsDir, 'manager.jsonl'),
+        },
+        {
+          agentId: 'worker-active',
+          displayName: 'Worker Active',
+          role: 'worker',
+          managerId: 'manager',
+          status: 'idle',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+          cwd: config.defaultCwd,
+          model: config.defaultModel,
+          sessionFile: join(config.paths.sessionsDir, 'worker-active.jsonl'),
+        },
+        {
+          agentId: 'worker-terminated',
+          displayName: 'Worker Terminated',
+          role: 'worker',
+          managerId: 'manager',
+          status: 'terminated',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+          cwd: config.defaultCwd,
+          model: config.defaultModel,
+          sessionFile: join(config.paths.sessionsDir, 'worker-terminated.jsonl'),
+        },
+      ],
+    }
+
+    await writeFile(config.paths.agentsStoreFile, JSON.stringify(seedAgents, null, 2), 'utf8')
+
+    const manager = new TestSwarmManager(config)
+    await manager.boot()
+
+    expect(manager.createdRuntimeIds).toEqual([])
+    expect(manager.getLoadedConversationAgentIdsForTest()).toEqual([])
+
+    const terminatedHistory = manager.getConversationHistory('worker-terminated')
+    expect(terminatedHistory.some((entry) => 'text' in entry && entry.text === 'terminated-worker-history')).toBe(true)
+    expect(manager.getLoadedConversationAgentIdsForTest()).toEqual(['worker-terminated'])
+  })
+
+  it('does not implicitly recreate the configured manager when other agents already exist', async () => {
+    const config = await makeTempConfig()
+
+    const seedAgents = {
+      agents: [
+        {
+          agentId: 'ops-manager',
+          displayName: 'Ops Manager',
+          role: 'manager',
+          managerId: 'ops-manager',
+          status: 'idle',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+          cwd: config.defaultCwd,
+          model: config.defaultModel,
+          sessionFile: join(config.paths.sessionsDir, 'ops-manager.jsonl'),
+        },
+        {
+          agentId: 'ops-worker',
+          displayName: 'Ops Worker',
+          role: 'worker',
+          managerId: 'ops-manager',
+          status: 'idle',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+          cwd: config.defaultCwd,
+          model: config.defaultModel,
+          sessionFile: join(config.paths.sessionsDir, 'ops-worker.jsonl'),
+        },
+      ],
+    }
+
+    await writeFile(config.paths.agentsStoreFile, JSON.stringify(seedAgents, null, 2), 'utf8')
+
+    const manager = new TestSwarmManager(config)
+    await manager.boot()
+
+    const agents = manager.listAgents()
+    const restoredWorker = agents.find((agent) => agent.agentId === 'ops-worker')
+
+    expect(agents.some((agent) => agent.agentId === 'manager')).toBe(false)
+    expect(restoredWorker?.managerId).toBe('ops-manager')
+    expect(manager.createdRuntimeIds).toEqual([])
+  })
+
+  it('keeps killed workers terminated across restart', async () => {
+    const config = await makeTempConfig()
+    const firstBoot = new TestSwarmManager(config)
+    await bootWithDefaultManager(firstBoot, config)
+
+    const worker = await firstBoot.spawnAgent('manager', { agentId: 'Killed Worker' })
+    await firstBoot.killAgent('manager', worker.agentId)
+
+    const secondBoot = new TestSwarmManager(config)
+    await bootWithDefaultManager(secondBoot, config)
+
+    const restored = secondBoot.listAgents().find((agent) => agent.agentId === worker.agentId)
+    expect(restored?.status).toBe('terminated')
+    expect(secondBoot.createdRuntimeIds).toEqual([])
+
+    await expect(secondBoot.sendMessage('manager', worker.agentId, 'still there?')).rejects.toThrow(
+      `Target agent is not running: ${worker.agentId}`,
+    )
+  })
+
+  it('does not duplicate workers across repeated restarts', async () => {
+    const config = await makeTempConfig()
+    const firstBoot = new TestSwarmManager(config)
+    await bootWithDefaultManager(firstBoot, config)
+
+    const worker = await firstBoot.spawnAgent('manager', { agentId: 'Repeat Worker' })
+
+    const secondBoot = new TestSwarmManager(config)
+    await bootWithDefaultManager(secondBoot, config)
+    expect(secondBoot.listAgents().filter((agent) => agent.agentId === worker.agentId)).toHaveLength(1)
+    expect(secondBoot.createdRuntimeIds).toEqual([])
+
+    const thirdBoot = new TestSwarmManager(config)
+    await bootWithDefaultManager(thirdBoot, config)
+    expect(thirdBoot.listAgents().filter((agent) => agent.agentId === worker.agentId)).toHaveLength(1)
+    expect(thirdBoot.createdRuntimeIds).toEqual([])
+  })
+
+  it('preserves the active runtime token when clearing a stale token', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const state = manager as any as {
+      runtimeTokensByAgentId: Map<string, number>
+      clearRuntimeToken: (agentId: string, runtimeToken?: number) => void
+    }
+
+    state.runtimeTokensByAgentId.set('manager', 22)
+    state.clearRuntimeToken('manager', 11)
+
+    expect(state.runtimeTokensByAgentId.get('manager')).toBe(22)
+  })
+
+  it('does not detach a newer runtime when a stale runtime token is provided', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const descriptor = manager.getAgent('manager')
+    expect(descriptor).toBeDefined()
+    if (!descriptor) {
+      throw new Error('Expected manager descriptor')
+    }
+
+    const freshRuntime = new FakeRuntime({ ...descriptor })
+    const state = manager as any as {
+      runtimes: Map<string, SwarmAgentRuntime>
+      runtimeTokensByAgentId: Map<string, number>
+      detachRuntime: (agentId: string, runtimeToken?: number) => boolean
+    }
+
+    state.runtimes.set('manager', freshRuntime as unknown as SwarmAgentRuntime)
+    state.runtimeTokensByAgentId.set('manager', 44)
+
+    expect(state.detachRuntime('manager', 33)).toBe(false)
+    expect(state.runtimes.get('manager')).toBe(freshRuntime)
+    expect(state.runtimeTokensByAgentId.get('manager')).toBe(44)
+
+    expect(state.detachRuntime('manager', 44)).toBe(true)
+    expect(state.runtimes.has('manager')).toBe(false)
+    expect(state.runtimeTokensByAgentId.has('manager')).toBe(false)
+  })
+
+  it('keeps the winning runtime token current when concurrent runtime creation overlaps', async () => {
+    const config = await makeTempConfig()
+
+    let releaseCreation!: () => void
+    const creationGate = new Promise<void>((resolve) => {
+      releaseCreation = resolve
+    })
+
+    class ConcurrentRuntimeCreationSwarmManager extends TestSwarmManager {
+      blockAgentId: string | null = null
+      observedRuntimeTokens: number[] = []
+
+      protected override async createRuntimeForDescriptor(
+        descriptor: AgentDescriptor,
+        systemPrompt: string,
+        runtimeToken?: number,
+      ): Promise<SwarmAgentRuntime> {
+        if (descriptor.agentId === this.blockAgentId) {
+          this.observedRuntimeTokens.push(runtimeToken ?? -1)
+          await creationGate
+        }
+
+        return super.createRuntimeForDescriptor(descriptor, systemPrompt, runtimeToken)
+      }
+    }
+
+    const manager = new ConcurrentRuntimeCreationSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', { agentId: 'Runtime Race Worker' })
+    const descriptor = manager.getAgent(worker.agentId)
+    expect(descriptor).toBeDefined()
+    if (!descriptor) {
+      throw new Error('Expected worker descriptor')
+    }
+
+    const state = manager as any as {
+      runtimes: Map<string, SwarmAgentRuntime>
+      runtimeTokensByAgentId: Map<string, number>
+      getOrCreateRuntimeForDescriptor: (descriptor: AgentDescriptor) => Promise<SwarmAgentRuntime>
+      handleRuntimeStatus: (
+        runtimeToken: number,
+        agentId: string,
+        status: AgentStatus,
+        pendingCount: number,
+      ) => Promise<void>
+    }
+
+    state.runtimes.delete(worker.agentId)
+    state.runtimeTokensByAgentId.delete(worker.agentId)
+    manager.blockAgentId = worker.agentId
+
+    const firstCreation = state.getOrCreateRuntimeForDescriptor(descriptor)
+    await waitForCondition(() => manager.observedRuntimeTokens.length === 1)
+
+    const secondCreation = state.getOrCreateRuntimeForDescriptor(descriptor)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(manager.observedRuntimeTokens).toHaveLength(1)
+
+    releaseCreation()
+
+    const [firstRuntime, secondRuntime] = await Promise.all([firstCreation, secondCreation])
+    expect(firstRuntime).toBe(secondRuntime)
+    expect(manager.observedRuntimeTokens).toHaveLength(1)
+
+    const winningRuntimeToken = manager.observedRuntimeTokens[0]
+    expect(state.runtimeTokensByAgentId.get(worker.agentId)).toBe(winningRuntimeToken)
+
+    await state.handleRuntimeStatus(winningRuntimeToken, worker.agentId, 'streaming', 0)
+    expect(manager.getAgent(worker.agentId)?.status).toBe('streaming')
+  })
+
+  it('persists manager conversation history to disk and reloads it on restart', async () => {
+    const config = await makeTempConfig()
+    const firstBoot = new TestSwarmManager(config)
+    await bootWithDefaultManager(firstBoot, config)
+
+    await firstBoot.handleUserMessage('persist this')
+    await firstBoot.publishToUser('manager', 'saved reply', 'speak_to_user')
+
+    const secondBoot = new TestSwarmManager(config)
+    await bootWithDefaultManager(secondBoot, config)
+
+    const history = secondBoot.getConversationHistory('manager')
+    expect(
+      history.some(
+        (message) =>
+          message.type === 'conversation_message' &&
+          message.text === 'persist this' &&
+          message.source === 'user_input',
+      ),
+    ).toBe(true)
+    expect(
+      history.some(
+        (message) =>
+          message.type === 'conversation_message' &&
+          message.text === 'saved reply' &&
+          message.source === 'speak_to_user',
+      ),
+    ).toBe(true)
+  })
+
+  it('preserves Unicode speak_to_user text through JSONL persistence and reload', async () => {
+    const config = await makeTempConfig()
+    const firstBoot = new TestSwarmManager(config)
+    await bootWithDefaultManager(firstBoot, config)
+
+    const unicodeReply = 'Unicode — “quotes” café'
+    await firstBoot.publishToUser('manager', unicodeReply, 'speak_to_user')
+
+    const managerDescriptor = firstBoot.getAgent('manager')
+    expect(managerDescriptor).toBeDefined()
+    const sessionFile = managerDescriptor?.sessionFile ?? join(config.paths.sessionsDir, 'manager.jsonl')
+    const sessionText = await readFile(sessionFile, 'utf8')
+    expect(sessionText).toContain(unicodeReply)
+
+    const secondBoot = new TestSwarmManager(config)
+    await bootWithDefaultManager(secondBoot, config)
+
+    const history = secondBoot.getConversationHistory('manager')
+    expect(
+      history.some(
+        (message) =>
+          message.type === 'conversation_message' &&
+          message.text === unicodeReply &&
+          message.source === 'speak_to_user',
+      ),
+    ).toBe(true)
+  })
+
+  it('does not trust a stale conversation cache after the canonical session file is truncated', async () => {
+    const config = await makeTempConfig()
+    const firstBoot = new TestSwarmManager(config)
+    await bootWithDefaultManager(firstBoot, config)
+
+    await firstBoot.handleUserMessage('persist this')
+    await firstBoot.publishToUser('manager', 'saved reply', 'speak_to_user')
+
+    const managerDescriptor = firstBoot.getAgent('manager')
+    expect(managerDescriptor).toBeDefined()
+
+    const sessionFile = managerDescriptor?.sessionFile ?? join(config.paths.sessionsDir, 'manager.jsonl')
+    const cacheFile = getConversationHistoryCacheFilePath(sessionFile)
+    const cacheText = await waitForFileText(cacheFile)
+    expect(cacheText).toContain('persist this')
+    expect(cacheText).toContain('saved reply')
+
+    const sessionManager = SessionManager.open(sessionFile)
+    const header = sessionManager.getHeader()
+    await writeFile(sessionFile, header ? `${JSON.stringify(header)}\n` : '', 'utf8')
+
+    const secondBoot = new TestSwarmManager(config)
+    await bootWithDefaultManager(secondBoot, config)
+
+    const history = secondBoot.getConversationHistory('manager')
+    expect(history).toEqual([])
+  })
+
+  it('preserves web user and speak_to_user history when internal activity overflows history limits', async () => {
+    const config = await makeTempConfig()
+    const createdAt = '2026-01-01T00:00:00.000Z'
+    await writeFile(
+      config.paths.agentsStoreFile,
+      JSON.stringify(
+        {
+          agents: [
+            {
+              agentId: 'manager',
+              displayName: 'Manager',
+              role: 'manager',
+              managerId: 'manager',
+              status: 'idle',
+              createdAt,
+              updatedAt: createdAt,
+              cwd: config.defaultCwd,
+              model: config.defaultModel,
+              sessionFile: join(config.paths.sessionsDir, 'manager.jsonl'),
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    )
+
+    const sessionManager = SessionManager.open(join(config.paths.sessionsDir, 'manager.jsonl'))
+    sessionManager.appendMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'seed' }],
+    } as any)
+    sessionManager.appendCustomEntry('swarm_conversation_entry', {
+      type: 'conversation_message',
+      agentId: 'manager',
+      role: 'user',
+      text: 'web message that must persist',
+      timestamp: new Date(1).toISOString(),
+      source: 'user_input',
+      sourceContext: {
+        channel: 'web',
+      },
+    })
+    sessionManager.appendCustomEntry('swarm_conversation_entry', {
+      type: 'conversation_message',
+      agentId: 'manager',
+      role: 'assistant',
+      text: 'web reply that must persist',
+      timestamp: new Date(2).toISOString(),
+      source: 'speak_to_user',
+      sourceContext: {
+        channel: 'web',
+      },
+    })
+    for (let index = 0; index < 2_200; index += 1) {
+      sessionManager.appendCustomEntry('swarm_conversation_entry', {
+        type: 'agent_message',
+        agentId: 'manager',
+        timestamp: new Date(3 + index).toISOString(),
+        source: 'agent_to_agent',
+        fromAgentId: 'manager',
+        toAgentId: 'worker',
+        text: `internal-message-${index}`,
+      })
+    }
+
+    const firstBoot = new TestSwarmManager(config)
+    await firstBoot.boot()
+
+    const inMemoryHistory = firstBoot.getConversationHistory('manager')
+    expect(
+      inMemoryHistory.some(
+        (entry) =>
+          entry.type === 'conversation_message' &&
+          entry.source === 'user_input' &&
+          entry.text === 'web message that must persist',
+      ),
+    ).toBe(true)
+    expect(
+      inMemoryHistory.some(
+        (entry) =>
+          entry.type === 'conversation_message' &&
+          entry.source === 'speak_to_user' &&
+          entry.text === 'web reply that must persist',
+      ),
+    ).toBe(true)
+    expect(
+      inMemoryHistory.some((entry) => entry.type === 'agent_message' && entry.text === 'internal-message-0'),
+    ).toBe(false)
+    expect(
+      inMemoryHistory.some((entry) => entry.type === 'agent_message' && entry.text === 'internal-message-2199'),
+    ).toBe(true)
+
+    const secondBoot = new TestSwarmManager(config)
+    await secondBoot.boot()
+
+    const restoredHistory = secondBoot.getConversationHistory('manager')
+    expect(
+      restoredHistory.some(
+        (entry) =>
+          entry.type === 'conversation_message' &&
+          entry.source === 'user_input' &&
+          entry.text === 'web message that must persist',
+      ),
+    ).toBe(true)
+    expect(
+      restoredHistory.some(
+        (entry) =>
+          entry.type === 'conversation_message' &&
+          entry.source === 'speak_to_user' &&
+          entry.text === 'web reply that must persist',
+      ),
+    ).toBe(true)
+    expect(
+      restoredHistory.some((entry) => entry.type === 'agent_message' && entry.text === 'internal-message-0'),
+    ).toBe(false)
+    expect(
+      restoredHistory.some((entry) => entry.type === 'agent_message' && entry.text === 'internal-message-2199'),
+    ).toBe(true)
+  })
+
 })

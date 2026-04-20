@@ -1,4 +1,5 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { SessionManager } from '@mariozechner/pi-coding-agent'
@@ -1129,5 +1130,102 @@ describe('SwarmManager', () => {
     expect(applyRecyclePolicySpy.mock.calls).toEqual(
       expectedTargets.map((agentId) => [agentId, expectedReason]),
     )
+  })
+
+  it('allows deleting the default manager when requested', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const deleted = await manager.deleteManager('manager', 'manager')
+
+    expect(deleted.managerId).toBe('manager')
+    expect(deleted.terminatedWorkerIds).toEqual([])
+    expect(manager.listAgents()).toHaveLength(1)
+    expect(manager.listAgents()[0]?.agentId).toBe('cortex')
+  })
+
+  it('allows creating a new manager after deleting the default manager', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await manager.deleteManager('manager', 'manager')
+
+    const recreated = await manager.createManager('cortex', {
+      name: 'Recreated Manager',
+      cwd: config.defaultCwd,
+    })
+
+    expect(recreated.role).toBe('manager')
+    expect(manager.listAgents().some((agent) => agent.agentId === recreated.agentId)).toBe(true)
+  })
+
+  it('enforces strict manager ownership for worker control operations', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const secondary = await manager.createManager('manager', {
+      name: 'Delivery Manager',
+      cwd: config.defaultCwd,
+    })
+    const worker = await manager.spawnAgent(secondary.agentId, { agentId: 'Delivery Worker' })
+
+    await expect(manager.killAgent('manager', worker.agentId)).rejects.toThrow(
+      `Only owning manager can kill agent ${worker.agentId}`,
+    )
+    await expect(manager.sendMessage('manager', worker.agentId, 'cross-manager control')).rejects.toThrow(
+      `Manager manager does not own worker ${worker.agentId}`,
+    )
+
+    await manager.killAgent(secondary.agentId, worker.agentId)
+    const descriptor = manager.listAgents().find((agent) => agent.agentId === worker.agentId)
+    expect(descriptor?.status).toBe('terminated')
+  })
+
+  it('routes user-to-worker delivery through the owning manager context', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const secondary = await manager.createManager('manager', {
+      name: 'Routing Manager',
+      cwd: config.defaultCwd,
+    })
+    const worker = await manager.spawnAgent(secondary.agentId, { agentId: 'Routing Worker' })
+
+    await manager.handleUserMessage('hello owned worker', { targetAgentId: worker.agentId })
+
+    const workerRuntime = manager.runtimeByAgentId.get(worker.agentId)
+    expect(workerRuntime?.sendCalls.at(-1)?.message).toBe('hello owned worker')
+  })
+
+  it('accepts any existing directory for manager and worker creation', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const outsideDir = await mkdtemp(join(tmpdir(), 'outside-allowlist-'))
+
+    const externalManager = await manager.createManager('manager', {
+      name: 'External Manager',
+      cwd: outsideDir,
+    })
+
+    const externalWorker = await manager.spawnAgent(externalManager.agentId, {
+      agentId: 'External Worker',
+      cwd: outsideDir,
+    })
+
+    const validation = await manager.validateDirectory(outsideDir)
+    const listed = await manager.listDirectories(outsideDir)
+
+    expect(externalManager.cwd).toBe(validation.resolvedPath)
+    expect(externalWorker.cwd).toBe(validation.resolvedPath)
+    expect(validation.valid).toBe(true)
+    expect(validation.message).toBeUndefined()
+    expect(listed.resolvedPath).toBe(validation.resolvedPath)
+    expect(listed.roots).toEqual([])
   })
 })
