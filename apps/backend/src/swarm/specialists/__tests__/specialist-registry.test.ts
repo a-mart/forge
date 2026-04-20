@@ -199,6 +199,9 @@ describe("specialist-registry", () => {
         "claude-opus-4-6": {
           enabled: false,
         },
+        "claude-opus-4-7": {
+          enabled: false,
+        },
       },
     });
     await modelCatalogService.loadOverrides(dataDir);

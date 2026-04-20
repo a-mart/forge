@@ -237,6 +237,23 @@ export const FORGE_MODEL_CATALOG = {
     },
 
     // ── Anthropic models ────────────────────────────────
+    'claude-opus-4-7': {
+      modelId: 'claude-opus-4-7',
+      provider: 'anthropic',
+      familyId: 'pi-opus',
+      displayName: 'Claude Opus 4.7',
+      isFamilyDefault: false,
+      supportsReasoning: true,
+      supportedReasoningLevels: ['low', 'medium', 'high'],
+      defaultReasoningLevel: 'high',
+      contextWindow: 1_000_000,
+      maxOutputTokens: 128_000,
+      inputModes: ['text', 'image'],
+      webSearchCapability: 'none',
+      enabledByDefault: true,
+      piUpstreamId: 'claude-opus-4-7',
+      intentionalDivergenceNotes: null,
+    },
     'claude-opus-4-6': {
       modelId: 'claude-opus-4-6',
       provider: 'anthropic',
@@ -290,6 +307,24 @@ export const FORGE_MODEL_CATALOG = {
     },
 
     // ── Claude SDK models ────────────────────────────────
+    'claude-sdk/claude-opus-4-7': {
+      catalogId: 'claude-sdk/claude-opus-4-7',
+      modelId: 'claude-opus-4-7',
+      provider: 'claude-sdk',
+      familyId: 'sdk-opus',
+      displayName: 'Claude Opus 4.7 (SDK)',
+      isFamilyDefault: false,
+      supportsReasoning: true,
+      supportedReasoningLevels: ['low', 'medium', 'high'],
+      defaultReasoningLevel: 'high',
+      contextWindow: 1_000_000,
+      maxOutputTokens: 128_000,
+      inputModes: ['text', 'image'],
+      webSearchCapability: 'none',
+      enabledByDefault: true,
+      piUpstreamId: null,
+      intentionalDivergenceNotes: 'Synthetic native Claude Agent SDK runtime variant.',
+    },
     'claude-sdk/claude-opus-4-6': {
       catalogId: 'claude-sdk/claude-opus-4-6',
       modelId: 'claude-opus-4-6',

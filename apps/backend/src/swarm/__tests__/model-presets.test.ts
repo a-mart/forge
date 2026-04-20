@@ -133,6 +133,7 @@ describe("model-presets", () => {
     })).toBe("sdk-sonnet");
 
     expect(presets.find((preset) => preset.presetId === "sdk-opus")?.variants?.map((variant) => variant.modelId)).toEqual([
+      "claude-opus-4-7",
       "claude-haiku-4-5-20251001",
     ]);
 

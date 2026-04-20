@@ -48,6 +48,9 @@ describe("model-overrides", () => {
           enabled: false,
           contextWindowCap: 300_000,
         },
+        "claude-opus-4-7": {
+          enabled: false,
+        },
         "claude-sdk/claude-opus-4-6": {
           enabled: true,
           contextWindowCap: 250_000,

@@ -118,6 +118,14 @@ const EXPECTED_MODELS = {
     supportsReasoning: true,
     inputModes: ['text', 'image'],
   },
+  'claude-opus-4-7': {
+    provider: 'anthropic',
+    familyId: 'pi-opus',
+    contextWindow: 1_000_000,
+    maxOutputTokens: 128_000,
+    supportsReasoning: true,
+    inputModes: ['text', 'image'],
+  },
   'claude-opus-4-6': {
     provider: 'anthropic',
     familyId: 'pi-opus',
@@ -139,6 +147,14 @@ const EXPECTED_MODELS = {
     familyId: 'pi-opus',
     contextWindow: 200_000,
     maxOutputTokens: 64_000,
+    supportsReasoning: true,
+    inputModes: ['text', 'image'],
+  },
+  'claude-sdk/claude-opus-4-7': {
+    provider: 'claude-sdk',
+    familyId: 'sdk-opus',
+    contextWindow: 1_000_000,
+    maxOutputTokens: 128_000,
     supportsReasoning: true,
     inputModes: ['text', 'image'],
   },
@@ -229,7 +245,7 @@ describe('model-catalog', () => {
     ])
     expect(Object.keys(FORGE_MODEL_CATALOG.families)).toEqual(Object.keys(EXPECTED_FAMILIES))
     expect(Object.keys(FORGE_MODEL_CATALOG.models)).toEqual(Object.keys(EXPECTED_MODELS))
-    expect(Object.keys(FORGE_MODEL_CATALOG.models)).toHaveLength(16)
+    expect(Object.keys(FORGE_MODEL_CATALOG.models)).toHaveLength(18)
     expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('gpt-5.4-nano')
   })
 
