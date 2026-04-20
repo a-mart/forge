@@ -5,6 +5,7 @@ export default defineConfig({
     environment: "node",
     include: [
       "src/test/**/*.test.ts",
+      "src/ws/http/routes/__tests__/**/*.test.ts",
       "src/scheduler/**/*.test.ts",
       "src/swarm/__tests__/**/*.test.ts",
       "src/swarm/specialists/__tests__/**/*.test.ts",

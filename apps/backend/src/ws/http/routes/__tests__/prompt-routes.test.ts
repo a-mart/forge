@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { ServerEvent } from "@forge/protocol";
-import { applyCorsHeaders, sendJson } from "../ws/http-utils.js";
+import { applyCorsHeaders, sendJson } from "../../../http-utils.js";
 
 const cortexPromptSurfaceState = vi.hoisted(() => ({
   listCortexPromptSurfaces: vi.fn(async () => ({ enabled: true, surfaces: [] })),
@@ -10,15 +10,15 @@ const cortexPromptSurfaceState = vi.hoisted(() => ({
   saveCortexPromptSurface: vi.fn(async () => undefined),
 }));
 
-vi.mock("../swarm/cortex-prompt-surfaces.js", () => ({
+vi.mock("../../../../swarm/cortex-prompt-surfaces.js", () => ({
   listCortexPromptSurfaces: (...args: unknown[]) => cortexPromptSurfaceState.listCortexPromptSurfaces(...args),
   readCortexPromptSurface: (...args: unknown[]) => cortexPromptSurfaceState.readCortexPromptSurface(...args),
   resetCortexPromptSurface: (...args: unknown[]) => cortexPromptSurfaceState.resetCortexPromptSurface(...args),
   saveCortexPromptSurface: (...args: unknown[]) => cortexPromptSurfaceState.saveCortexPromptSurface(...args),
 }));
 
-import type { PromptRegistryForRoutes } from "../swarm/prompt-contracts.js";
-import { createPromptRoutes } from "../ws/routes/prompt-routes.js";
+import type { PromptRegistryForRoutes } from "../../../../swarm/prompt-contracts.js";
+import { createPromptRoutes } from "../../../routes/prompt-routes.js";
 
 interface TestServer {
   readonly baseUrl: string;
