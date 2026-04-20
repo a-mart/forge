@@ -1,13 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getScheduleFilePath } from "../scheduler/schedule-storage.js";
 import { SkillFileService } from "../swarm/skill-file-service.js";
 import { SkillMetadataService } from "../swarm/skill-metadata-service.js";
 import type { SwarmConfig } from "../swarm/types.js";
 import { createSkillRoutes } from "../ws/routes/skill-routes.js";
+import { createTempConfig } from "../test-support/index.js";
 
 interface TestServer {
   readonly baseUrl: string;
@@ -316,90 +315,9 @@ async function createServiceBackedSkillManager(config: SwarmConfig): Promise<{
 }
 
 async function makeTempConfig(): Promise<SwarmConfig> {
-  const root = await mkdtemp(join(tmpdir(), "skill-routes-test-"));
-  tempRoots.push(root);
-
-  const dataDir = join(root, "data");
-  const swarmDir = join(dataDir, "swarm");
-  const sessionsDir = join(dataDir, "sessions");
-  const uploadsDir = join(dataDir, "uploads");
-  const profilesDir = join(dataDir, "profiles");
-  const sharedDir = join(dataDir, "shared");
-  const sharedConfigDir = join(sharedDir, "config");
-  const sharedCacheDir = join(sharedDir, "cache");
-  const sharedStateDir = join(sharedDir, "state");
-  const sharedAuthDir = join(sharedConfigDir, "auth");
-  const sharedAuthFile = join(sharedAuthDir, "auth.json");
-  const sharedSecretsFile = join(sharedConfigDir, "secrets.json");
-  const sharedIntegrationsDir = join(sharedConfigDir, "integrations");
-  const authDir = join(dataDir, "auth");
-  const agentDir = join(dataDir, "agent");
-  const managerAgentDir = join(agentDir, "manager");
-  const repoArchetypesDir = join(root, ".swarm", "archetypes");
-  const memoryDir = join(dataDir, "memory");
-  const memoryFile = join(memoryDir, "manager.md");
-  const repoMemorySkillFile = join(root, ".swarm", "skills", "memory", "SKILL.md");
-
-  await Promise.all([
-    mkdir(swarmDir, { recursive: true }),
-    mkdir(sessionsDir, { recursive: true }),
-    mkdir(uploadsDir, { recursive: true }),
-    mkdir(profilesDir, { recursive: true }),
-    mkdir(sharedAuthDir, { recursive: true }),
-    mkdir(sharedIntegrationsDir, { recursive: true }),
-    mkdir(sharedCacheDir, { recursive: true }),
-    mkdir(sharedStateDir, { recursive: true }),
-    mkdir(authDir, { recursive: true }),
-    mkdir(memoryDir, { recursive: true }),
-    mkdir(agentDir, { recursive: true }),
-    mkdir(managerAgentDir, { recursive: true }),
-    mkdir(repoArchetypesDir, { recursive: true }),
-  ]);
-
-  return {
-    host: "127.0.0.1",
-    port: 0,
-    debug: false,
-    isDesktop: false,
-    cortexEnabled: true,
-    allowNonManagerSubscriptions: false,
-    managerId: "manager",
-    managerDisplayName: "Manager",
-    defaultModel: {
-      provider: "openai-codex",
-      modelId: "gpt-5.3-codex",
-      thinkingLevel: "medium",
-    },
-    defaultCwd: root,
-    cwdAllowlistRoots: [root, join(root, "worktrees")],
-    paths: {
-      rootDir: root,
-      dataDir,
-      swarmDir,
-      uploadsDir,
-      agentsStoreFile: join(swarmDir, "agents.json"),
-      profilesDir,
-      sharedDir,
-      sharedConfigDir,
-      sharedCacheDir,
-      sharedStateDir,
-      sharedAuthDir,
-      sharedAuthFile,
-      sharedSecretsFile,
-      sharedIntegrationsDir,
-      sessionsDir,
-      memoryDir,
-      authDir,
-      authFile: join(authDir, "auth.json"),
-      secretsFile: join(dataDir, "secrets.json"),
-      agentDir,
-      managerAgentDir,
-      repoArchetypesDir,
-      memoryFile,
-      repoMemorySkillFile,
-      schedulesFile: getScheduleFilePath(dataDir, "manager"),
-    },
-  };
+  const handle = await createTempConfig({ prefix: "skill-routes-test-", port: 0 });
+  tempRoots.push(handle.tempRootDir);
+  return handle.config;
 }
 
 async function createSkillRouteTestServer(swarmManager: Parameters<typeof createSkillRoutes>[0]["swarmManager"]): Promise<TestServer> {
