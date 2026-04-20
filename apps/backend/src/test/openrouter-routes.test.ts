@@ -2,7 +2,6 @@ import { readFile, rm } from "node:fs/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getModels } from "@mariozechner/pi-ai";
 import type { SwarmConfig } from "../swarm/types.js";
-import { getScheduleFilePath } from "../scheduler/schedule-storage.js";
 import { getOpenRouterModelsPath } from "../swarm/data-paths.js";
 import { getPiModelsProjectionPath } from "../swarm/model-catalog-projection.js";
 import { resetLiveOpenRouterModelsCacheForTests } from "../ws/routes/openrouter-routes.js";
