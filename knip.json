@@ -30,6 +30,12 @@
     "apps/ui/src/components/ui/**/*.tsx": [
       "exports",
       "types"
+    ],
+    "apps/backend/src/test-support/fixtures.ts": [
+      "exports"
+    ],
+    "apps/backend/src/test-support/temp-config.ts": [
+      "exports"
     ]
   },
   "workspaces": {

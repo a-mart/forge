@@ -1,9 +1,7 @@
-import { mkdir, mkdtemp } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "@mariozechner/pi-coding-agent";
-import { getScheduleFilePath } from "../../scheduler/schedule-storage.js";
+import { createAgentDescriptor, createTempConfig, type TempConfigHandle } from "../../test-support/index.js";
 import { SwarmManager } from "../swarm-manager.js";
 import { generatePiProjection } from "../model-catalog-projection.js";
 import type { AgentDescriptor, SwarmConfig } from "../types.js";
@@ -21,111 +19,53 @@ vi.mock("../memory-merge.js", async () => {
   };
 });
 
+const tempConfigHandles: TempConfigHandle[] = [];
+
 async function makeTempConfig(port = 8791): Promise<SwarmConfig> {
-  const dataRoot = await mkdtemp(join(tmpdir(), "forge-swarm-manager-model-registry-"));
   const repoRoot = resolve(process.cwd(), "../..");
-  const dataDir = join(dataRoot, "data");
-  const swarmDir = join(dataDir, "swarm");
-  const sessionsDir = join(dataDir, "sessions");
-  const uploadsDir = join(dataDir, "uploads");
-  const profilesDir = join(dataDir, "profiles");
-  const sharedDir = join(dataDir, "shared");
-  const sharedConfigDir = join(sharedDir, "config");
-  const sharedCacheDir = join(sharedDir, "cache");
-  const sharedStateDir = join(sharedDir, "state");
-  const sharedAuthDir = join(sharedConfigDir, "auth");
-  const sharedAuthFile = join(sharedAuthDir, "auth.json");
-  const sharedSecretsFile = join(sharedConfigDir, "secrets.json");
-  const sharedIntegrationsDir = join(sharedConfigDir, "integrations");
-  const authDir = join(dataDir, "auth");
-  const agentDir = join(dataDir, "agent");
-  const managerAgentDir = join(agentDir, "manager");
-  const memoryDir = join(dataDir, "memory");
-  const repoMemorySkillFile = join(repoRoot, "apps", "backend", "src", "swarm", "skills", "builtins", "memory", "SKILL.md");
-
-  await mkdir(swarmDir, { recursive: true });
-  await mkdir(sessionsDir, { recursive: true });
-  await mkdir(uploadsDir, { recursive: true });
-  await mkdir(profilesDir, { recursive: true });
-  await mkdir(sharedAuthDir, { recursive: true });
-  await mkdir(sharedIntegrationsDir, { recursive: true });
-  await mkdir(sharedCacheDir, { recursive: true });
-  await mkdir(sharedStateDir, { recursive: true });
-  await mkdir(authDir, { recursive: true });
-  await mkdir(memoryDir, { recursive: true });
-  await mkdir(agentDir, { recursive: true });
-  await mkdir(managerAgentDir, { recursive: true });
-
-  return {
-    host: "127.0.0.1",
+  const handle = await createTempConfig({
+    prefix: "forge-swarm-manager-model-registry-",
     port,
-    debug: false,
-    isDesktop: false,
-    cortexEnabled: true,
-    allowNonManagerSubscriptions: false,
-    managerId: "manager",
-    managerDisplayName: "Manager",
+    rootDir: repoRoot,
+    resourcesDir: repoRoot,
+    defaultCwd: repoRoot,
+    cwdAllowlistRoots: [repoRoot],
+    repoArchetypesDir: join(repoRoot, "apps", "backend", "src", "swarm", "archetypes"),
+    repoMemorySkillFile: join(repoRoot, "apps", "backend", "src", "swarm", "skills", "builtins", "memory", "SKILL.md"),
     defaultModel: {
       provider: "openai-codex",
       modelId: "gpt-5.4",
       thinkingLevel: "medium",
     },
-    defaultCwd: repoRoot,
-    cwdAllowlistRoots: [repoRoot],
-    paths: {
-      rootDir: repoRoot,
-      resourcesDir: repoRoot,
-      dataDir,
-      swarmDir,
-      uploadsDir,
-      agentsStoreFile: join(swarmDir, "agents.json"),
-      profilesDir,
-      sharedDir,
-      sharedConfigDir,
-      sharedCacheDir,
-      sharedStateDir,
-      sharedAuthDir,
-      sharedAuthFile,
-      sharedSecretsFile,
-      sharedIntegrationsDir,
-      sessionsDir,
-      memoryDir,
-      authDir,
-      authFile: join(authDir, "auth.json"),
-      secretsFile: join(dataDir, "secrets.json"),
-      agentDir,
-      managerAgentDir,
-      repoArchetypesDir: join(repoRoot, "apps", "backend", "src", "swarm", "archetypes"),
-      memoryFile: join(memoryDir, "manager.md"),
-      repoMemorySkillFile,
-      schedulesFile: getScheduleFilePath(dataDir, "manager"),
-    },
-  };
+  });
+  tempConfigHandles.push(handle);
+  return handle.config;
 }
 
 function buildDescriptor(config: SwarmConfig): AgentDescriptor {
-  return {
+  return createAgentDescriptor({
     agentId: "session-1",
     displayName: "Session 1",
     role: "manager",
     managerId: "manager",
     profileId: "manager",
-    status: "idle",
-    createdAt: "2026-01-01T00:00:00.000Z",
-    updatedAt: "2026-01-01T00:00:00.000Z",
-    cwd: config.defaultCwd,
+    rootDir: config.defaultCwd,
     model: {
       provider: "openai-codex",
       modelId: "gpt-5.4",
       thinkingLevel: "medium",
     },
     sessionFile: join(config.paths.sessionsDir, "session-1.jsonl"),
-  };
+  });
 }
 
 describe("SwarmManager Pi model registry usage", () => {
   beforeEach(() => {
     memoryMergeMockState.executeLLMMerge.mockReset();
+  });
+
+  afterEach(async () => {
+    await Promise.all(tempConfigHandles.splice(0).map((handle) => handle.cleanup()));
   });
 
   it("resolves the project agent analysis model through the generated Pi projection", async () => {

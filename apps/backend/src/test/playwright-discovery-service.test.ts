@@ -2,9 +2,9 @@ import { EventEmitter } from 'node:events'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { createManagerDescriptor, createTempConfig, getAvailablePort, type TempConfigHandle } from '../test-support/index.js'
 import type { AgentDescriptor, SwarmConfig } from '../swarm/types.js'
-import { getScheduleFilePath } from '../scheduler/schedule-storage.js'
 import { PlaywrightDiscoveryService } from '../playwright/playwright-discovery-service.js'
 import { PlaywrightSettingsService } from '../playwright/playwright-settings-service.js'
 import { withPlatform } from './test-helpers.js'
@@ -30,118 +30,18 @@ class FakeSwarmManager extends EventEmitter {
   }
 }
 
-async function getAvailablePort(): Promise<number> {
-  const { createServer } = await import('node:net')
-  const server = createServer()
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()))
-  const address = server.address()
-  if (!address || typeof address === 'string') {
-    throw new Error('Unable to allocate port')
-  }
-  const port = address.port
-  await new Promise<void>((resolve) => server.close(() => resolve()))
-  return port
-}
+const tempConfigHandles: TempConfigHandle[] = []
+const tempRoots: string[] = []
 
 async function makeTempConfig(rootDir: string): Promise<SwarmConfig> {
-  const dataDir = join(rootDir, 'data')
-  const swarmDir = join(dataDir, 'swarm')
-  const sessionsDir = join(dataDir, 'sessions')
-  const uploadsDir = join(dataDir, 'uploads')
-  const profilesDir = join(dataDir, 'profiles')
-  const sharedDir = join(dataDir, 'shared')
-  const sharedConfigDir = join(sharedDir, 'config')
-  const sharedCacheDir = join(sharedDir, 'cache')
-  const sharedStateDir = join(sharedDir, 'state')
-  const sharedAuthDir = join(sharedConfigDir, 'auth')
-  const sharedAuthFile = join(sharedAuthDir, 'auth.json')
-  const sharedSecretsFile = join(sharedConfigDir, 'secrets.json')
-  const sharedIntegrationsDir = join(sharedConfigDir, 'integrations')
-  const authDir = join(dataDir, 'auth')
-  const agentDir = join(dataDir, 'agent')
-  const managerAgentDir = join(agentDir, 'manager')
-  const repoArchetypesDir = join(rootDir, '.swarm', 'archetypes')
-  const memoryDir = join(dataDir, 'memory')
-  const memoryFile = join(memoryDir, 'manager.md')
-  const repoMemorySkillFile = join(rootDir, '.swarm', 'skills', 'memory', 'SKILL.md')
-
-  await mkdir(swarmDir, { recursive: true })
-  await mkdir(sessionsDir, { recursive: true })
-  await mkdir(uploadsDir, { recursive: true })
-  await mkdir(profilesDir, { recursive: true })
-  await mkdir(sharedAuthDir, { recursive: true })
-  await mkdir(sharedIntegrationsDir, { recursive: true })
-  await mkdir(sharedCacheDir, { recursive: true })
-  await mkdir(sharedStateDir, { recursive: true })
-  await mkdir(authDir, { recursive: true })
-  await mkdir(memoryDir, { recursive: true })
-  await mkdir(agentDir, { recursive: true })
-  await mkdir(managerAgentDir, { recursive: true })
-  await mkdir(repoArchetypesDir, { recursive: true })
-
-  return {
-    host: '127.0.0.1',
+  const handle = await createTempConfig({
+    rootDir,
+    tempRootDir: rootDir,
     port: await getAvailablePort(),
-    debug: false,
-    isDesktop: false,
-  cortexEnabled: true,
-    allowNonManagerSubscriptions: false,
-    managerId: 'manager',
-    managerDisplayName: 'Manager',
-    defaultModel: {
-      provider: 'openai-codex',
-      modelId: 'gpt-5.3-codex',
-      thinkingLevel: 'medium',
-    },
-    defaultCwd: rootDir,
-    cwdAllowlistRoots: [rootDir, join(rootDir, 'worktrees')],
-    paths: {
-      rootDir,
-      dataDir,
-      swarmDir,
-      uploadsDir,
-      agentsStoreFile: join(swarmDir, 'agents.json'),
-      profilesDir,
-      sharedDir,
-      sharedConfigDir,
-      sharedCacheDir,
-      sharedStateDir,
-      sharedAuthDir,
-      sharedAuthFile,
-      sharedSecretsFile,
-      sharedIntegrationsDir,
-      sessionsDir,
-      memoryDir,
-      authDir,
-      authFile: join(authDir, 'auth.json'),
-      secretsFile: join(dataDir, 'secrets.json'),
-      agentDir,
-      managerAgentDir,
-      repoArchetypesDir,
-      memoryFile,
-      repoMemorySkillFile,
-      schedulesFile: getScheduleFilePath(dataDir, 'manager'),
-    },
-  }
-}
-
-function createManagerDescriptor(rootDir: string): AgentDescriptor {
-  return {
-    agentId: 'manager',
-    displayName: 'Manager',
-    role: 'manager',
-    managerId: 'manager',
-    status: 'idle',
-    createdAt: '2026-03-09T18:00:00.000Z',
-    updatedAt: '2026-03-09T18:00:00.000Z',
-    cwd: rootDir,
-    model: {
-      provider: 'openai-codex',
-      modelId: 'gpt-5.3-codex',
-      thinkingLevel: 'medium',
-    },
-    sessionFile: join(rootDir, 'sessions', 'manager.jsonl'),
-  }
+  })
+  tempConfigHandles.push(handle)
+  tempRoots.push(rootDir)
+  return handle.config
 }
 
 async function createSocketServer(socketPath: string): Promise<() => Promise<void>> {
@@ -190,6 +90,11 @@ async function writeSessionFile(
     'utf8',
   )
 }
+
+afterEach(async () => {
+  await Promise.all(tempConfigHandles.splice(0).map((handle) => handle.cleanup()))
+  await Promise.all(tempRoots.splice(0).map((rootDir) => rm(rootDir, { recursive: true, force: true })))
+})
 
 describe('PlaywrightDiscoveryService (Windows)', () => {
   it('disables discovery snapshots on win32 even when persisted settings enable it', async () => {
