@@ -56,10 +56,6 @@ async function cleanupHarness(harness: TrackerHarness): Promise<void> {
   await rm(harness.rootDir, { recursive: true, force: true });
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 describe("UnreadTracker", () => {
   it("loads empty state when unread files are missing", async () => {
     const harness = await createHarness({
@@ -215,29 +211,35 @@ describe("UnreadTracker", () => {
   });
 
   it("debounces writes and flushes latest count", async () => {
+    vi.useFakeTimers();
     const harness = await createHarness({
       profiles: ["profile-a"],
       sessionsByProfile: { "profile-a": ["session-a"] },
       debounceMs: 40,
     });
 
-    const statePath = harness.statePath("profile-a");
-
     try {
       await harness.tracker.load();
 
+      const persistCounts: number[] = [];
+      (harness.tracker as any).persistProfile = async (profileId: string): Promise<void> => {
+        persistCounts.push(harness.tracker.getCount(profileId, "session-a"));
+      };
+
       harness.tracker.increment("profile-a", "session-a");
       harness.tracker.increment("profile-a", "session-a");
       harness.tracker.increment("profile-a", "session-a");
 
-      await expect(readFile(statePath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+      await vi.advanceTimersByTimeAsync(39);
+      expect(persistCounts).toEqual([]);
 
-      await sleep(90);
-
-      const persisted = JSON.parse(await readFile(statePath, "utf8")) as { counts: Record<string, number> };
-      expect(persisted).toEqual({ counts: { "session-a": 3 } });
+      await vi.advanceTimersByTimeAsync(1);
+      await vi.waitFor(() => {
+        expect(persistCounts).toEqual([3]);
+      });
     } finally {
       await cleanupHarness(harness);
+      vi.useRealTimers();
     }
   });
 
@@ -267,43 +269,36 @@ describe("UnreadTracker", () => {
   });
 
   it("re-flushes profiles that are dirtied during an in-flight persist", async () => {
+    vi.useFakeTimers();
     const harness = await createHarness({
       profiles: ["profile-a"],
       sessionsByProfile: { "profile-a": ["session-a"] },
       debounceMs: 20,
     });
 
-    const statePath = harness.statePath("profile-a");
-
     try {
       await harness.tracker.load();
       harness.tracker.increment("profile-a", "session-a");
 
-      let persistCalls = 0;
+      const persistCounts: number[] = [];
       (harness.tracker as any).persistProfile = async (profileId: string): Promise<void> => {
-        persistCalls += 1;
-        const countAtStart = harness.tracker.getCount(profileId, "session-a");
+        persistCounts.push(harness.tracker.getCount(profileId, "session-a"));
 
-        if (persistCalls === 1) {
+        if (persistCounts.length === 1) {
           harness.tracker.increment(profileId, "session-a");
         }
-
-        await mkdir(dirname(statePath), { recursive: true });
-        await writeFile(
-          statePath,
-          `${JSON.stringify({ counts: { "session-a": countAtStart } }, null, 2)}\n`,
-          "utf8"
-        );
       };
 
       await harness.tracker.flush();
-      await sleep(80);
+      expect(persistCounts).toEqual([1]);
 
-      expect(persistCalls).toBe(2);
-      const persisted = JSON.parse(await readFile(statePath, "utf8")) as { counts: Record<string, number> };
-      expect(persisted).toEqual({ counts: { "session-a": 2 } });
+      await vi.advanceTimersByTimeAsync(20);
+      await vi.waitFor(() => {
+        expect(persistCounts).toEqual([1, 2]);
+      });
     } finally {
       await cleanupHarness(harness);
+      vi.useRealTimers();
     }
   });
 

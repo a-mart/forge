@@ -1229,7 +1229,9 @@ describe('SwarmWebSocketServer', () => {
       })
 
       expect(response.status).toBe(200)
-      await new Promise((resolve) => setTimeout(resolve, 60))
+      await vi.waitFor(() => {
+        expect(killSpy).toHaveBeenCalledWith(daemonPid, 0)
+      })
 
       expect(killSpy).toHaveBeenCalledWith(daemonPid, 0)
       if (process.platform === 'win32') {

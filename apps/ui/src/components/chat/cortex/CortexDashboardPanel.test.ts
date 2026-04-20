@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { fireEvent, getByRole, getByTestId, getByText, waitFor } from '@testing-library/dom'
+import { fireEvent, findByRole, findByText, getByRole, getByTestId, waitFor } from '@testing-library/dom'
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
@@ -89,6 +89,9 @@ beforeEach(() => {
   document.body.appendChild(container)
   window.localStorage?.removeItem?.('cortex-panel-width')
   Element.prototype.scrollIntoView ??= vi.fn()
+  Element.prototype.hasPointerCapture ??= vi.fn(() => false)
+  Element.prototype.setPointerCapture ??= vi.fn()
+  Element.prototype.releasePointerCapture ??= vi.fn()
 })
 
 afterEach(() => {
@@ -103,13 +106,6 @@ afterEach(() => {
   vi.restoreAllMocks()
   globalThis.fetch = originalFetch
 })
-
-async function flushPromises(): Promise<void> {
-  await Promise.resolve()
-  await Promise.resolve()
-  await new Promise((resolve) => setTimeout(resolve, 0))
-  flushSync(() => {})
-}
 
 function getViewerTitle(): string | null {
   return (
@@ -166,31 +162,33 @@ describe('CortexDashboardPanel', () => {
       )
     })
 
-    await flushPromises()
-
-    expect(getViewerTitle()).toBe('Common Knowledge')
+    await waitFor(() => {
+      expect(getViewerTitle()).toBe('Common Knowledge')
+    })
 
     const selector = getByRole(container, 'combobox', { name: 'Cortex document selector' })
     fireEvent.keyDown(selector, { key: 'ArrowDown' })
 
-    await waitFor(() => {
-      expect(getByText(document.body, 'Profile Memory')).toBeTruthy()
-      expect(getByText(document.body, 'Reference Docs')).toBeTruthy()
-      expect(getByText(document.body, 'Prompt Overrides')).toBeTruthy()
-    })
+    await findByText(document.body, 'Profile Memory')
+    await findByText(document.body, 'Reference Docs')
+    await findByText(document.body, 'Prompt Overrides')
 
-    fireEvent.click(getByText(document.body, 'alpha / overview.md'))
-    await flushPromises()
-    expect(getViewerTitle()).toBe('alpha / overview.md')
+    const overviewOption = await findByRole(document.body, 'option', { name: /alpha \/ overview\.md/i })
+    fireEvent.click(overviewOption)
+
+    await waitFor(() => {
+      expect(getViewerTitle()).toBe('alpha / overview.md')
+    })
 
     fireEvent.keyDown(selector, { key: 'ArrowDown' })
-    await waitFor(() => {
-      expect(getByText(document.body, 'alpha / archetype / review')).toBeTruthy()
+    const promptOverrideOption = await findByRole(document.body, 'option', {
+      name: /alpha \/ archetype \/ review/i,
     })
+    fireEvent.click(promptOverrideOption)
 
-    fireEvent.click(getByText(document.body, 'alpha / archetype / review'))
-    await flushPromises()
-    expect(getViewerTitle()).toBe('alpha / archetype / review')
+    await waitFor(() => {
+      expect(getViewerTitle()).toBe('alpha / archetype / review')
+    })
   })
 
   it('uses the shared viewer shell for the Notes tab', async () => {
@@ -211,7 +209,7 @@ describe('CortexDashboardPanel', () => {
       )
     })
 
-    await flushPromises()
+    await findByText(container, 'Cortex Notes')
 
     const shell = getByTestId(container, 'cortex-document-viewer-shell')
     expect(shell).toBeTruthy()
