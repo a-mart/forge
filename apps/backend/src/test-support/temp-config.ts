@@ -35,6 +35,21 @@ export interface TempConfigOptions {
   sharedSecretsContent?: Record<string, unknown>
   secretsContent?: Record<string, unknown>
   agentsStoreContent?: { agents: unknown[]; profiles?: unknown[] }
+  /**
+   * When set, skips creating `shared/config/auth/auth.json` so callers can exercise
+   * legacy auth forward / `ensureCanonicalAuthFilePath` copy behavior (file absent until copy).
+   */
+  omitSharedAuthFile?: boolean
+  /**
+   * When set, skips creating `shared/config/secrets.json` so legacy `data/secrets.json` is the
+   * first secrets store hit for `readSecretsStoreFromConfig`-style reads.
+   */
+  omitSharedSecretsFile?: boolean
+  /**
+   * When set, does not seed `repoMemorySkillFile` with a placeholder — missing file matches
+   * older tests that relied on builtin skill discovery instead of a stub repo override.
+   */
+  skipRepoMemorySkillPlaceholder?: boolean
 }
 
 export interface TempConfigHandle {
@@ -98,17 +113,23 @@ export async function createTempConfig(options: TempConfigOptions = {}): Promise
   ])
 
   await Promise.all([
-    ensureJsonFile(sharedAuthFile, options.sharedAuthContent ?? {}),
+    ...(options.omitSharedAuthFile
+      ? []
+      : [ensureJsonFile(sharedAuthFile, options.sharedAuthContent ?? {})]),
     ensureJsonFile(authFile, options.authContent ?? {}),
-    ensureJsonFile(sharedSecretsFile, options.sharedSecretsContent ?? {}),
+    ...(options.omitSharedSecretsFile
+      ? []
+      : [ensureJsonFile(sharedSecretsFile, options.sharedSecretsContent ?? {})]),
     ensureJsonFile(secretsFile, options.secretsContent ?? {}),
     ensureJsonFile(join(swarmDir, 'agents.json'), options.agentsStoreContent ?? { agents: [] }),
   ])
 
-  try {
-    await access(repoMemorySkillFile)
-  } catch {
-    await writeFile(repoMemorySkillFile, '# Memory\n', 'utf8')
+  if (!options.skipRepoMemorySkillPlaceholder) {
+    try {
+      await access(repoMemorySkillFile)
+    } catch {
+      await writeFile(repoMemorySkillFile, '# Memory\n', 'utf8')
+    }
   }
 
   const config: SwarmConfig = {

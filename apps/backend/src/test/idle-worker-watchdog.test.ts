@@ -1,9 +1,5 @@
-import { mkdir, mkdtemp } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { getScheduleFilePath } from '../scheduler/schedule-storage.js'
-import { getProfileMemoryPath } from '../swarm/data-paths.js'
 import { SwarmManager } from '../swarm/swarm-manager.js'
 import type {
   AgentContextUsage,
@@ -15,6 +11,7 @@ import type {
   SwarmConfig,
 } from '../swarm/types.js'
 import type { RuntimeUserMessage, SwarmAgentRuntime } from '../swarm/runtime-contracts.js'
+import { makeTempConfig as buildTempConfig } from '../test-support/index.js'
 
 class FakeRuntime {
   readonly descriptor: AgentDescriptor
@@ -130,86 +127,7 @@ class TestSwarmManager extends SwarmManager {
 }
 
 async function makeTempConfig(port = 8796): Promise<SwarmConfig> {
-  const root = await mkdtemp(join(tmpdir(), 'idle-worker-watchdog-test-'))
-  const dataDir = join(root, 'data')
-  const swarmDir = join(dataDir, 'swarm')
-  const sessionsDir = join(dataDir, 'sessions')
-  const uploadsDir = join(dataDir, 'uploads')
-  const profilesDir = join(dataDir, 'profiles')
-  const sharedDir = join(dataDir, 'shared')
-  const sharedConfigDir = join(sharedDir, 'config')
-  const sharedCacheDir = join(sharedDir, 'cache')
-  const sharedStateDir = join(sharedDir, 'state')
-  const sharedAuthDir = join(sharedConfigDir, 'auth')
-  const sharedAuthFile = join(sharedAuthDir, 'auth.json')
-  const sharedSecretsFile = join(sharedConfigDir, 'secrets.json')
-  const sharedIntegrationsDir = join(sharedConfigDir, 'integrations')
-  const authDir = join(dataDir, 'auth')
-  const agentDir = join(dataDir, 'agent')
-  const managerAgentDir = join(agentDir, 'manager')
-  const repoArchetypesDir = join(root, '.swarm', 'archetypes')
-  const memoryDir = join(dataDir, 'memory')
-  const memoryFile = getProfileMemoryPath(dataDir, 'manager')
-  const repoMemorySkillFile = join(root, '.swarm', 'skills', 'memory', 'SKILL.md')
-
-  await mkdir(swarmDir, { recursive: true })
-  await mkdir(sessionsDir, { recursive: true })
-  await mkdir(uploadsDir, { recursive: true })
-  await mkdir(profilesDir, { recursive: true })
-  await mkdir(sharedAuthDir, { recursive: true })
-  await mkdir(sharedIntegrationsDir, { recursive: true })
-  await mkdir(sharedCacheDir, { recursive: true })
-  await mkdir(sharedStateDir, { recursive: true })
-  await mkdir(authDir, { recursive: true })
-  await mkdir(memoryDir, { recursive: true })
-  await mkdir(agentDir, { recursive: true })
-  await mkdir(managerAgentDir, { recursive: true })
-  await mkdir(repoArchetypesDir, { recursive: true })
-
-  return {
-    host: '127.0.0.1',
-    port,
-    debug: false,
-    isDesktop: false,
-  cortexEnabled: true,
-    allowNonManagerSubscriptions: false,
-    managerId: 'manager',
-    managerDisplayName: 'Manager',
-    defaultModel: {
-      provider: 'openai-codex',
-      modelId: 'gpt-5.3-codex',
-      thinkingLevel: 'medium',
-    },
-    defaultCwd: root,
-    cwdAllowlistRoots: [root, join(root, 'worktrees')],
-    paths: {
-      rootDir: root,
-      dataDir,
-      swarmDir,
-      uploadsDir,
-      agentsStoreFile: join(swarmDir, 'agents.json'),
-      profilesDir,
-      sharedDir,
-      sharedConfigDir,
-      sharedCacheDir,
-      sharedStateDir,
-      sharedAuthDir,
-      sharedAuthFile,
-      sharedSecretsFile,
-      sharedIntegrationsDir,
-      sessionsDir,
-      memoryDir,
-      authDir,
-      authFile: join(authDir, 'auth.json'),
-      secretsFile: join(dataDir, 'secrets.json'),
-      agentDir,
-      managerAgentDir,
-      repoArchetypesDir,
-      memoryFile,
-      repoMemorySkillFile,
-      schedulesFile: getScheduleFilePath(dataDir, 'manager'),
-    },
-  }
+  return buildTempConfig({ prefix: 'idle-worker-watchdog-test-', port })
 }
 
 async function bootWithDefaultManager(manager: TestSwarmManager, config: SwarmConfig): Promise<AgentDescriptor> {

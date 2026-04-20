@@ -1,6 +1,5 @@
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { once } from 'node:events'
-import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, join, normalize } from 'node:path'
 import WebSocket from 'ws'
@@ -36,6 +35,7 @@ import { loadOnboardingState, saveOnboardingPreferences } from '../swarm/onboard
 import { readSessionMeta } from '../swarm/session-manifest.js'
 import { SwarmWebSocketServer } from '../ws/server.js'
 import type { ServerEvent } from '@forge/protocol'
+import { getAvailablePort, makeTempConfig as buildTempConfig } from '../test-support/index.js'
 
 class FakeRuntime {
   readonly descriptor: AgentDescriptor
@@ -142,107 +142,12 @@ class TestSwarmManager extends SwarmManager {
   }
 }
 
-async function getAvailablePort(): Promise<number> {
-  const server = createServer()
-  await new Promise<void>((resolve) => {
-    server.listen(0, '127.0.0.1', () => resolve())
-  })
-
-  const address = server.address()
-  if (!address || typeof address === 'string') {
-    server.close()
-    throw new Error('Unable to allocate port')
-  }
-
-  const port = address.port
-  await new Promise<void>((resolve) => {
-    server.close(() => resolve())
-  })
-
-  return port
-}
-
 async function makeTempConfig(port: number, allowNonManagerSubscriptions = false): Promise<SwarmConfig> {
-  const root = await mkdtemp(join(tmpdir(), 'swarm-ws-test-'))
-  const dataDir = join(root, 'data')
-  const swarmDir = join(dataDir, 'swarm')
-  const sessionsDir = join(dataDir, 'sessions')
-  const uploadsDir = join(dataDir, 'uploads')
-  const profilesDir = join(dataDir, 'profiles')
-  const sharedDir = join(dataDir, 'shared')
-  const sharedConfigDir = join(sharedDir, 'config')
-  const sharedCacheDir = join(sharedDir, 'cache')
-  const sharedStateDir = join(sharedDir, 'state')
-  const sharedAuthDir = join(sharedConfigDir, 'auth')
-  const sharedAuthFile = join(sharedAuthDir, 'auth.json')
-  const sharedSecretsFile = join(sharedConfigDir, 'secrets.json')
-  const sharedIntegrationsDir = join(sharedConfigDir, 'integrations')
-  const authDir = join(dataDir, 'auth')
-  const agentDir = join(dataDir, 'agent')
-  const managerAgentDir = join(agentDir, 'manager')
-  const repoArchetypesDir = join(root, '.swarm', 'archetypes')
-  const memoryDir = join(dataDir, 'memory')
-  const memoryFile = join(memoryDir, 'manager.md')
-  const repoMemorySkillFile = join(root, '.swarm', 'skills', 'memory', 'SKILL.md')
-
-  await mkdir(swarmDir, { recursive: true })
-  await mkdir(sessionsDir, { recursive: true })
-  await mkdir(uploadsDir, { recursive: true })
-  await mkdir(profilesDir, { recursive: true })
-  await mkdir(sharedAuthDir, { recursive: true })
-  await mkdir(sharedIntegrationsDir, { recursive: true })
-  await mkdir(sharedCacheDir, { recursive: true })
-  await mkdir(sharedStateDir, { recursive: true })
-  await mkdir(authDir, { recursive: true })
-  await mkdir(memoryDir, { recursive: true })
-  await mkdir(agentDir, { recursive: true })
-  await mkdir(managerAgentDir, { recursive: true })
-  await mkdir(repoArchetypesDir, { recursive: true })
-
-  return {
-    host: '127.0.0.1',
+  return buildTempConfig({
+    prefix: 'swarm-ws-test-',
     port,
-    debug: false,
-    isDesktop: false,
-  cortexEnabled: true,
     allowNonManagerSubscriptions,
-    managerId: 'manager',
-    managerDisplayName: 'Manager',
-    defaultModel: {
-      provider: 'openai-codex',
-      modelId: 'gpt-5.3-codex',
-      thinkingLevel: 'medium',
-    },
-    defaultCwd: root,
-    cwdAllowlistRoots: [root, join(root, 'worktrees')],
-    paths: {
-      rootDir: root,
-      dataDir,
-      swarmDir,
-      uploadsDir,
-      agentsStoreFile: join(swarmDir, 'agents.json'),
-      profilesDir,
-      sharedDir,
-      sharedConfigDir,
-      sharedCacheDir,
-      sharedStateDir,
-      sharedAuthDir,
-      sharedAuthFile,
-      sharedSecretsFile,
-      sharedIntegrationsDir,
-      sessionsDir,
-      memoryDir,
-      authDir,
-      authFile: join(authDir, 'auth.json'),
-      secretsFile: join(dataDir, 'secrets.json'),
-      agentDir,
-      managerAgentDir,
-      repoArchetypesDir,
-      memoryFile,
-      repoMemorySkillFile,
-      schedulesFile: getScheduleFilePath(dataDir, 'manager'),
-    },
-  }
+  })
 }
 
 async function bootWithDefaultManager(manager: TestSwarmManager, config: SwarmConfig): Promise<AgentDescriptor> {
