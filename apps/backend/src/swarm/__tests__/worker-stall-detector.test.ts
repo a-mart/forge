@@ -4,122 +4,9 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getScheduleFilePath } from "../../scheduler/schedule-storage.js";
 import { getProfileMemoryPath } from "../data-paths.js";
-import { SwarmManager } from "../swarm-manager.js";
-import type {
-  AgentContextUsage,
-  AgentDescriptor,
-  MessageSourceContext,
-  MessageTargetContext,
-  RequestedDeliveryMode,
-  SendMessageReceipt,
-  SwarmConfig
-} from "../types.js";
-import type { RuntimeSessionEvent, RuntimeUserMessage, SwarmAgentRuntime } from "../runtime-contracts.js";
-
-class FakeRuntime {
-  readonly descriptor: AgentDescriptor;
-  sendCalls: Array<{ message: string | RuntimeUserMessage; delivery: RequestedDeliveryMode }> = [];
-  terminateCalls: Array<{ abort?: boolean } | undefined> = [];
-  stopInFlightCalls: Array<{ abort?: boolean } | undefined> = [];
-  recycleCalls = 0;
-  contextRecoveryInProgress = false;
-  private nextDeliveryId = 0;
-
-  constructor(descriptor: AgentDescriptor) {
-    this.descriptor = descriptor;
-  }
-
-  getStatus(): AgentDescriptor["status"] {
-    return this.descriptor.status;
-  }
-
-  getPendingCount(): number {
-    return 0;
-  }
-
-  getContextUsage(): AgentContextUsage | undefined {
-    return undefined;
-  }
-
-  isContextRecoveryInProgress(): boolean {
-    return this.contextRecoveryInProgress;
-  }
-
-  async sendMessage(message: string | RuntimeUserMessage, delivery: RequestedDeliveryMode = "auto"): Promise<SendMessageReceipt> {
-    this.sendCalls.push({ message, delivery });
-    this.nextDeliveryId += 1;
-
-    return {
-      targetAgentId: this.descriptor.agentId,
-      deliveryId: `delivery-${this.nextDeliveryId}`,
-      acceptedMode: "prompt"
-    };
-  }
-
-  async compact(): Promise<unknown> {
-    return { status: "ok" };
-  }
-
-  async smartCompact(): Promise<unknown> {
-    return { status: "ok" };
-  }
-
-  async stopInFlight(options?: { abort?: boolean; shutdownTimeoutMs?: number; drainTimeoutMs?: number }): Promise<void> {
-    this.stopInFlightCalls.push(options);
-    this.descriptor.status = "idle";
-  }
-
-  async terminate(options?: { abort?: boolean; shutdownTimeoutMs?: number; drainTimeoutMs?: number }): Promise<void> {
-    this.terminateCalls.push(options);
-    this.descriptor.status = "terminated";
-  }
-
-  async recycle(): Promise<void> {
-    this.recycleCalls += 1;
-  }
-
-  getCustomEntries(_customType: string): unknown[] {
-    return [];
-  }
-
-  appendCustomEntry(_customType: string, _data?: unknown): string {
-    return "custom-entry-id";
-  }
-}
-
-class TestSwarmManager extends SwarmManager {
-  readonly runtimeByAgentId = new Map<string, FakeRuntime>();
-  readonly publishedToUserCalls: Array<{
-    agentId: string;
-    text: string;
-    source: "speak_to_user" | "system";
-    targetContext?: MessageTargetContext;
-  }> = [];
-
-  override async publishToUser(
-    agentId: string,
-    text: string,
-    source: "speak_to_user" | "system" = "speak_to_user",
-    targetContext?: MessageTargetContext
-  ): Promise<{ targetContext: MessageSourceContext }> {
-    this.publishedToUserCalls.push({ agentId, text, source, targetContext });
-    return super.publishToUser(agentId, text, source, targetContext);
-  }
-
-  protected override async createRuntimeForDescriptor(
-    descriptor: AgentDescriptor,
-    _systemPrompt: string,
-    _runtimeToken?: number
-  ): Promise<SwarmAgentRuntime> {
-    const runtime = new FakeRuntime(descriptor);
-    this.runtimeByAgentId.set(descriptor.agentId, runtime);
-    return runtime as unknown as SwarmAgentRuntime;
-  }
-
-  protected override async executeSessionMemoryLLMMerge(): Promise<{ mergedContent: string; model: string }> {
-    throw new Error("LLM merge disabled in tests");
-  }
-}
+import type { AgentDescriptor, SwarmConfig } from "../types.js";
+import type { RuntimeSessionEvent } from "../runtime-contracts.js";
+import { TestSwarmManager, bootWithDefaultManager } from "../../test-support/index.js";
 
 async function makeTempConfig(port = 8896): Promise<SwarmConfig> {
   const root = await mkdtemp(join(tmpdir(), "worker-stall-detector-test-"));
@@ -204,30 +91,6 @@ async function makeTempConfig(port = 8896): Promise<SwarmConfig> {
   };
 }
 
-async function bootWithDefaultManager(manager: TestSwarmManager, config: SwarmConfig): Promise<AgentDescriptor> {
-  await manager.boot();
-  const managerId = config.managerId ?? "manager";
-  const managerName = config.managerDisplayName ?? managerId;
-
-  const existingManager = manager.listAgents().find(
-    (descriptor) => descriptor.agentId === managerId && descriptor.role === "manager"
-  );
-  if (existingManager) {
-    return existingManager;
-  }
-
-  const callerAgentId =
-    manager
-      .listAgents()
-      .find((descriptor) => descriptor.role === "manager")
-      ?.agentId ?? managerId;
-
-  return manager.createManager(callerAgentId, {
-    name: managerName,
-    cwd: config.defaultCwd
-  });
-}
-
 type StallStateSnapshot = {
   lastProgressAt: number;
   nudgeSent: boolean;
@@ -241,7 +104,7 @@ type StallStateSnapshot = {
 async function setupManagerWithStreamingWorker() {
   const config = await makeTempConfig();
   const manager = new TestSwarmManager(config);
-  const managerDescriptor = await bootWithDefaultManager(manager, config);
+  const managerDescriptor = await bootWithDefaultManager(manager, config, { clearBootstrapSendCalls: false });
   const worker = await manager.spawnAgent(managerDescriptor.agentId, { agentId: "stall-worker" });
 
   const state = manager as any;
@@ -584,7 +447,7 @@ describe("worker stall detector", () => {
 
     const config = await makeTempConfig();
     const manager = new TestSwarmManager(config);
-    const managerDescriptor = await bootWithDefaultManager(manager, config);
+    const managerDescriptor = await bootWithDefaultManager(manager, config, { clearBootstrapSendCalls: false });
 
     const workerForStop = await manager.spawnAgent(managerDescriptor.agentId, { agentId: "stop-worker" });
     const workerForTerminate = await manager.spawnAgent(managerDescriptor.agentId, { agentId: "terminate-worker" });
@@ -649,7 +512,7 @@ describe("worker stall detector", () => {
 
     const config = await makeTempConfig();
     const manager = new TestSwarmManager(config);
-    const managerDescriptor = await bootWithDefaultManager(manager, config);
+    const managerDescriptor = await bootWithDefaultManager(manager, config, { clearBootstrapSendCalls: false });
     const stalledWorker = await manager.spawnAgent(managerDescriptor.agentId, { agentId: "stalled-worker" });
     const silentWorker = await manager.spawnAgent(managerDescriptor.agentId, { agentId: "silent-worker" });
     const state = manager as any;

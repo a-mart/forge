@@ -36,6 +36,7 @@ import { loadOnboardingState, saveOnboardingPreferences } from '../swarm/onboard
 import { readSessionMeta } from '../swarm/session-manifest.js'
 import { SwarmWebSocketServer } from '../ws/server.js'
 import type { ServerEvent } from '@forge/protocol'
+import { bootWithDefaultManager as bootWithDefaultManagerFromSupport } from '../test-support/index.js'
 
 class FakeRuntime {
   readonly descriptor: AgentDescriptor
@@ -246,27 +247,7 @@ async function makeTempConfig(port: number, allowNonManagerSubscriptions = false
 }
 
 async function bootWithDefaultManager(manager: TestSwarmManager, config: SwarmConfig): Promise<AgentDescriptor> {
-  await manager.boot()
-  const managerId = config.managerId ?? 'manager'
-  const managerName = config.managerDisplayName ?? managerId
-
-  const existingManager = manager.listAgents().find(
-    (descriptor) => descriptor.agentId === managerId && descriptor.role === 'manager',
-  )
-  if (existingManager) {
-    return existingManager
-  }
-
-  const callerAgentId =
-    manager
-      .listAgents()
-      .find((descriptor) => descriptor.role === 'manager')
-      ?.agentId ?? managerId
-
-  return manager.createManager(callerAgentId, {
-    name: managerName,
-    cwd: config.defaultCwd,
-  })
+  return bootWithDefaultManagerFromSupport(manager, config, { clearBootstrapSendCalls: false })
 }
 
 async function waitForEvent(

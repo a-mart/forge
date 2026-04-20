@@ -4,86 +4,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getModels } from "@mariozechner/pi-ai";
-import { SessionManager } from "@mariozechner/pi-coding-agent";
-import type {
-  AgentDescriptor,
-  AgentContextUsage,
-  RequestedDeliveryMode,
-  SendMessageReceipt,
-  SwarmConfig,
-} from "../swarm/types.js";
-import type { SwarmAgentRuntime } from "../swarm/runtime-contracts.js";
+import type { SwarmConfig } from "../swarm/types.js";
 import { getScheduleFilePath } from "../scheduler/schedule-storage.js";
 import { getOpenRouterModelsPath } from "../swarm/data-paths.js";
 import { getPiModelsProjectionPath } from "../swarm/model-catalog-projection.js";
-import { SwarmManager } from "../swarm/swarm-manager.js";
 import { resetLiveOpenRouterModelsCacheForTests } from "../ws/routes/openrouter-routes.js";
 import { SwarmWebSocketServer } from "../ws/server.js";
+import { TestSwarmManager, bootWithDefaultManager } from "../test-support/index.js";
 
 const tempRoots: string[] = [];
 const TEST_OPENROUTER_MODEL_ID =
   getModels("openrouter").find((model) => model.id === "anthropic/claude-3.7-sonnet")?.id ??
   "anthropic/claude-3.7-sonnet";
-
-class FakeRuntime {
-  readonly descriptor: AgentDescriptor;
-  private readonly sessionManager: SessionManager;
-
-  constructor(descriptor: AgentDescriptor) {
-    this.descriptor = descriptor;
-    this.sessionManager = SessionManager.open(descriptor.sessionFile);
-  }
-
-  getStatus(): AgentDescriptor["status"] {
-    return this.descriptor.status;
-  }
-
-  getPendingCount(): number {
-    return 0;
-  }
-
-  getContextUsage(): AgentContextUsage | undefined {
-    return undefined;
-  }
-
-  async sendMessage(_message: string, _delivery: RequestedDeliveryMode = "auto"): Promise<SendMessageReceipt> {
-    this.sessionManager.appendMessage({
-      role: "assistant",
-      content: [{ type: "text", text: "ack" }],
-    } as any);
-
-    return {
-      targetAgentId: this.descriptor.agentId,
-      deliveryId: "fake-delivery",
-      acceptedMode: "prompt",
-    };
-  }
-
-  async terminate(): Promise<void> {}
-
-  async recycle(): Promise<void> {}
-
-  async stopInFlight(): Promise<void> {
-    this.descriptor.status = "idle";
-  }
-
-  async compact(customInstructions?: string): Promise<unknown> {
-    return {
-      status: "ok",
-      customInstructions: customInstructions ?? null,
-    };
-  }
-}
-
-class TestSwarmManager extends SwarmManager {
-  protected override async createRuntimeForDescriptor(
-    descriptor: AgentDescriptor,
-    _systemPrompt?: string,
-    _runtimeToken?: number,
-  ): Promise<SwarmAgentRuntime> {
-    return new FakeRuntime(descriptor) as unknown as SwarmAgentRuntime;
-  }
-}
 
 afterEach(async () => {
   resetLiveOpenRouterModelsCacheForTests();
@@ -215,25 +147,6 @@ async function makeTempConfig(port: number): Promise<SwarmConfig> {
   };
 }
 
-async function bootWithDefaultManager(manager: TestSwarmManager, config: SwarmConfig): Promise<void> {
-  await manager.boot();
-
-  const managerId = config.managerId ?? "manager";
-  const managerName = config.managerDisplayName ?? managerId;
-  const existingManager = manager.listAgents().find(
-    (descriptor) => descriptor.agentId === managerId && descriptor.role === "manager",
-  );
-  if (existingManager) {
-    return;
-  }
-
-  const callerAgentId = manager.listAgents().find((descriptor) => descriptor.role === "manager")?.agentId ?? managerId;
-  await manager.createManager(callerAgentId, {
-    name: managerName,
-    cwd: config.defaultCwd,
-  });
-}
-
 async function startServer(): Promise<{
   config: SwarmConfig;
   manager: TestSwarmManager;
@@ -242,7 +155,7 @@ async function startServer(): Promise<{
   const port = await getAvailablePort();
   const config = await makeTempConfig(port);
   const manager = new TestSwarmManager(config);
-  await bootWithDefaultManager(manager, config);
+  await bootWithDefaultManager(manager, config, { clearBootstrapSendCalls: false });
 
   const server = new SwarmWebSocketServer({
     swarmManager: manager,

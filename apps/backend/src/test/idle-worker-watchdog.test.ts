@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { getScheduleFilePath } from '../scheduler/schedule-storage.js'
 import { getProfileMemoryPath } from '../swarm/data-paths.js'
 import { SwarmManager } from '../swarm/swarm-manager.js'
+import { bootWithDefaultManager as bootWithDefaultManagerFromSupport } from '../test-support/index.js'
 import type {
   AgentContextUsage,
   AgentDescriptor,
@@ -213,34 +214,12 @@ async function makeTempConfig(port = 8796): Promise<SwarmConfig> {
 }
 
 async function bootWithDefaultManager(manager: TestSwarmManager, config: SwarmConfig): Promise<AgentDescriptor> {
-  await manager.boot()
-  const managerId = config.managerId ?? 'manager'
-  const managerName = config.managerDisplayName ?? managerId
-
-  const existingManager = manager.listAgents().find(
-    (descriptor) => descriptor.agentId === managerId && descriptor.role === 'manager',
-  )
-  if (existingManager) {
-    return existingManager
-  }
-
-  const callerAgentId =
-    manager
-      .listAgents()
-      .find((descriptor) => descriptor.role === 'manager')
-      ?.agentId ?? managerId
-
-  const createdManager = await manager.createManager(callerAgentId, {
-    name: managerName,
-    cwd: config.defaultCwd,
-  })
-
-  const createdRuntime = manager.runtimeByAgentId.get(createdManager.agentId)
+  const created = await bootWithDefaultManagerFromSupport(manager, config, { clearBootstrapSendCalls: false })
+  const createdRuntime = manager.runtimeByAgentId.get(created.agentId)
   if (createdRuntime) {
     createdRuntime.sendCalls = []
   }
-
-  return createdManager
+  return created
 }
 
 function getBatchedWatchdogMessages(runtime: FakeRuntime | undefined): string[] {

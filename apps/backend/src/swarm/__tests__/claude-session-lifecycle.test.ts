@@ -8,6 +8,7 @@ import { getProfileMemoryPath } from "../data-paths.js";
 import { readSessionMeta } from "../session-manifest.js";
 import { SwarmManager } from "../swarm-manager.js";
 import type { RuntimeUserMessage, SmartCompactResult, SwarmAgentRuntime } from "../runtime-contracts.js";
+import { bootWithDefaultManager as bootWithDefaultManagerFromSupport } from "../../test-support/index.js";
 import type {
   AgentContextUsage,
   AgentDescriptor,
@@ -230,18 +231,9 @@ async function makeTempConfig(port = 8901): Promise<SwarmConfig> {
 }
 
 async function bootWithDefaultManager(manager: TestSwarmManager, config: SwarmConfig): Promise<AgentDescriptor> {
-  await manager.boot();
-
-  const existingManager = manager.listAgents().find(
-    (descriptor) => descriptor.agentId === config.managerId && descriptor.role === "manager"
-  );
-  if (existingManager) {
-    return existingManager;
-  }
-
-  return manager.createManager("bootstrap", {
-    name: config.managerDisplayName ?? config.managerId ?? "manager",
-    cwd: config.defaultCwd
+  return bootWithDefaultManagerFromSupport(manager, config, {
+    callerAgentId: "bootstrap",
+    clearBootstrapSendCalls: false
   });
 }
 

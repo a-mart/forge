@@ -13,6 +13,7 @@ import { readProjectAgentRecord } from "../project-agent-storage.js";
 import { SwarmManager } from "../swarm-manager.js";
 import type { RuntimeUserMessage, SwarmAgentRuntime } from "../runtime-contracts.js";
 import type { AgentContextUsage, AgentDescriptor, RequestedDeliveryMode, SendMessageReceipt, SwarmConfig } from "../types.js";
+import { bootWithDefaultManager as bootWithDefaultManagerFromSupport } from "../../test-support/index.js";
 
 class FakeRuntime {
   sendCalls: Array<{ message: string | RuntimeUserMessage; delivery: RequestedDeliveryMode }> = [];
@@ -177,18 +178,9 @@ async function makeTempConfig(port = 8898): Promise<SwarmConfig> {
 }
 
 async function bootWithDefaultManager(manager: TestSwarmManager, config: SwarmConfig): Promise<AgentDescriptor> {
-  await manager.boot();
-
-  const existingManager = manager.listAgents().find(
-    (descriptor) => descriptor.agentId === config.managerId && descriptor.role === "manager"
-  );
-  if (existingManager) {
-    return existingManager;
-  }
-
-  return manager.createManager("bootstrap", {
-    name: config.managerDisplayName ?? config.managerId ?? "manager",
-    cwd: config.defaultCwd
+  return bootWithDefaultManagerFromSupport(manager, config, {
+    callerAgentId: "bootstrap",
+    clearBootstrapSendCalls: false
   });
 }
 
