@@ -373,6 +373,68 @@ describe("SwarmRuntimeController", () => {
     );
   });
 
+  it("suppresses abort errors during context recovery without emitting a system notice", async () => {
+    const config = await makeTempConfig();
+    await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");
+    const {
+      host,
+      descriptors,
+      emitConversationMessage,
+      captureConversationEventFromRuntime,
+      stripManagerAbortErrorFromEvent
+    } = createRuntimeControllerHarness(config);
+    const controller = new SwarmRuntimeController(host);
+
+    const manager = baseDescriptor({
+      agentId: "mgr-compact",
+      role: "manager",
+      managerId: "mgr-compact",
+      status: "streaming"
+    });
+    descriptors.set(manager.agentId, { ...manager });
+
+    // Simulate context recovery (smart compaction) in progress
+    (host.isRuntimeInContextRecovery as ReturnType<typeof vi.fn>).mockReturnValue(true);
+    stripManagerAbortErrorFromEvent.mockImplementation((event: RuntimeSessionEvent) => ({
+      ...event,
+      message: {
+        ...(event as { message: Record<string, unknown> }).message,
+        stopReason: "stop",
+        errorMessage: undefined
+      }
+    }));
+
+    const event: RuntimeSessionEvent = {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "partial response" }],
+        stopReason: "error",
+        errorMessage: "Request was aborted."
+      }
+    };
+
+    const token = controller.allocateRuntimeToken(manager.agentId);
+    await controller.handleRuntimeSessionEvent(token, manager.agentId, event);
+
+    // The abort error should be stripped
+    expect(stripManagerAbortErrorFromEvent).toHaveBeenCalled();
+    expect(captureConversationEventFromRuntime).toHaveBeenCalledWith(
+      manager.agentId,
+      expect.objectContaining({
+        type: "message_end",
+        message: expect.objectContaining({ stopReason: "stop" })
+      })
+    );
+    // No "Session stopped." system notice should be emitted — compaction handles its own messaging
+    expect(emitConversationMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        role: "system",
+        text: "Session stopped."
+      })
+    );
+  });
+
   it("stores extension snapshots for the current runtime token and lists defensive copies sorted", async () => {
     const config = await makeTempConfig();
     await writeFile(join(config.paths.sharedCacheDir, "pi-models.json"), "{}", "utf8");

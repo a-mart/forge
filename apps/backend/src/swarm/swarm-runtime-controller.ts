@@ -569,7 +569,18 @@ export class SwarmRuntimeController {
 
     const shouldSurfaceManualStopNotice =
       descriptor?.role === "manager" && this.host.consumePendingManualManagerStopNoticeIfApplicable(agentId, event);
-    const effectiveEvent = shouldSurfaceManualStopNotice ? this.host.stripManagerAbortErrorFromEvent(event) : event;
+
+    // Also suppress abort errors during context recovery (smart compaction) — the abort is intentional
+    const isContextRecoveryAbort =
+      !shouldSurfaceManualStopNotice &&
+      descriptor?.role === "manager" &&
+      this.host.isRuntimeInContextRecovery(agentId) &&
+      event.type === "message_end" &&
+      extractMessageStopReason(event.message) === "error";
+
+    const effectiveEvent = (shouldSurfaceManualStopNotice || isContextRecoveryAbort)
+      ? this.host.stripManagerAbortErrorFromEvent(event)
+      : event;
 
     this.host.conversationProjector.captureConversationEventFromRuntime(agentId, effectiveEvent);
     if (shouldSurfaceManualStopNotice) {
