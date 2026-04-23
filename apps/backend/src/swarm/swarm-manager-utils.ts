@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { open } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
-import { getModel, type Api, type Model } from "@mariozechner/pi-ai";
+import { getModel, getModels, type Api, type Model } from "@mariozechner/pi-ai";
 import { ModelRegistry } from "@mariozechner/pi-coding-agent";
 import {
   PROJECT_AGENT_CAPABILITIES,
@@ -9,6 +9,7 @@ import {
   type SessionMemoryMergeFailureStage
 } from "@forge/protocol";
 import { sanitizePathSegment as sanitizePersistedPathSegment } from "./data-paths.js";
+import { modelCatalogService } from "./model-catalog-service.js";
 import {
   isConversationBinaryAttachment,
   isConversationImageAttachment,
@@ -38,6 +39,13 @@ import type {
 } from "./types.js";
 
 const VALID_PERSISTED_AGENT_ROLES = new Set(["manager", "worker"]);
+
+const SYNTHETIC_PI_MODEL_BLUEPRINTS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  "openai-codex": {
+    "gpt-5.5": "gpt-5.4",
+    "gpt-5.5-mini": "gpt-5.4-mini"
+  }
+};
 const VALID_PERSISTED_PROJECT_AGENT_CAPABILITIES = new Set<string>(PROJECT_AGENT_CAPABILITIES);
 const VALID_PERSISTED_AGENT_STATUSES = new Set([
   "idle",
@@ -47,7 +55,7 @@ const VALID_PERSISTED_AGENT_STATUSES = new Set([
   "error",
   "stopped_on_restart"
 ]);
-const OPENAI_CODEX_CAPACITY_FALLBACK_CHAIN = ["gpt-5.3-codex-spark", "gpt-5.3-codex", "gpt-5.4"];
+const OPENAI_CODEX_CAPACITY_FALLBACK_CHAIN = ["gpt-5.3-codex-spark", "gpt-5.3-codex", "gpt-5.4", "gpt-5.5"];
 const MAX_WORKER_COMPLETION_REPORT_CHARS = 4_000;
 const WORKER_COMPLETION_TRUNCATION_SUFFIX = "\n\n[truncated]";
 const SESSION_ID_SUFFIX_SEPARATOR = "--s";
@@ -586,7 +594,7 @@ export function isPostApplyFailureStage(stage: SessionMemoryMergeFailureStage): 
   );
 }
 
-export function resolveModel(
+export function resolveExactModel(
   modelRegistry: ModelRegistry,
   descriptor: AgentModelDescriptor
 ): Model<Api> | undefined {
@@ -600,7 +608,45 @@ export function resolveModel(
     return fromCatalog as Model<Api>;
   }
 
-  return modelRegistry.getAll()[0];
+  return synthesizeCatalogBackedPiModel(descriptor);
+}
+
+export function resolveModel(
+  modelRegistry: ModelRegistry,
+  descriptor: AgentModelDescriptor
+): Model<Api> | undefined {
+  return resolveExactModel(modelRegistry, descriptor) ?? modelRegistry.getAll()[0];
+}
+
+function synthesizeCatalogBackedPiModel(descriptor: AgentModelDescriptor): Model<Api> | undefined {
+  const blueprintModelId = SYNTHETIC_PI_MODEL_BLUEPRINTS[descriptor.provider]?.[descriptor.modelId];
+  if (!blueprintModelId) {
+    return undefined;
+  }
+
+  const catalogModel = modelCatalogService.getModel(descriptor.modelId, descriptor.provider);
+  if (!catalogModel) {
+    return undefined;
+  }
+
+  const blueprint =
+    (getModel(descriptor.provider as any, blueprintModelId as any) as Model<Api> | undefined) ??
+    (getModels(descriptor.provider as any) as Model<Api>[]).find((model) => model.id === blueprintModelId);
+  if (!blueprint) {
+    return undefined;
+  }
+
+  return {
+    ...blueprint,
+    id: catalogModel.modelId,
+    name: catalogModel.displayName,
+    reasoning: catalogModel.supportsReasoning,
+    input: [...catalogModel.inputModes],
+    contextWindow:
+      modelCatalogService.getEffectiveContextWindow(catalogModel.modelId, catalogModel.provider) ??
+      catalogModel.contextWindow,
+    maxTokens: catalogModel.maxOutputTokens
+  };
 }
 
 export function buildWorkerCompletionReport(

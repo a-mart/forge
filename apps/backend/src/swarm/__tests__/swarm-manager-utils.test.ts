@@ -56,6 +56,7 @@ import {
   readFileHead,
   readPositiveIntegerDetail,
   readStringDetail,
+  resolveExactModel,
   resolveModel,
   resolveNextCapacityFallbackModelId,
   safeJson,
@@ -176,7 +177,8 @@ describe("buildModelCapacityBlockKey / resolveNextCapacityFallbackModelId", () =
   it.each([
     ["openai-codex", "gpt-5.3-codex-spark", "gpt-5.3-codex"],
     ["openai-codex", "gpt-5.3-codex", "gpt-5.4"],
-    ["openai-codex", "gpt-5.4", undefined],
+    ["openai-codex", "gpt-5.4", "gpt-5.5"],
+    ["openai-codex", "gpt-5.5", undefined],
     ["anthropic", "gpt-5.3-codex", undefined],
     ["openai-codex", "unknown-model", undefined]
   ])("resolveNextCapacityFallbackModelId(%s, %s) -> %j", (provider, modelId, expected) => {
@@ -388,6 +390,37 @@ describe("resolveModel", () => {
       thinkingLevel: "low"
     });
     expect(model).toBe(fallback);
+  });
+
+  it("synthesizes catalog-backed Pi models that are missing from the bundled Pi registry", () => {
+    const fallback = { id: "fb" };
+    const registry = {
+      find: vi.fn(() => undefined),
+      getAll: vi.fn(() => [fallback])
+    } as unknown as ModelRegistry;
+
+    const exact = resolveExactModel(registry, {
+      provider: "openai-codex",
+      modelId: "gpt-5.5",
+      thinkingLevel: "xhigh"
+    });
+    expect(exact).toMatchObject({
+      provider: "openai-codex",
+      id: "gpt-5.5",
+      name: "GPT-5.5",
+      api: "openai-codex-responses",
+      baseUrl: "https://chatgpt.com/backend-api",
+      contextWindow: 272_000,
+      maxTokens: 128_000
+    });
+
+    const model = resolveModel(registry, {
+      provider: "openai-codex",
+      modelId: "gpt-5.5",
+      thinkingLevel: "xhigh"
+    });
+    expect(model).toMatchObject({ id: "gpt-5.5" });
+    expect(model).not.toBe(fallback);
   });
 
   it("falls back to getAll()[0] when find and catalog miss", () => {

@@ -68,7 +68,7 @@ function buildLegacyModelRoutingGuidance(): string {
   const anthropicQuickModelId =
     selectVariantModelId("pi-opus", (model) => model.displayName.toLowerCase().includes("haiku")) ??
     "claude-haiku-4-5-20251001";
-  const complexCodingPreset = getCatalogFamily("pi-5.4")?.familyId ?? "pi-5.4";
+  const complexCodingPreset = getCatalogFamily("pi-5.5")?.familyId ?? "pi-5.5";
   const complexReviewPreset = getCatalogFamily("pi-opus")?.familyId ?? "pi-opus";
 
   return `Model and reasoning selection for workers:

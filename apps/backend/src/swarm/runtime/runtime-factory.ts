@@ -6,7 +6,7 @@ import {
   type RuntimeExtensionMetadata,
   type RuntimeExtensionSource
 } from "@forge/protocol";
-import { getModel, type Model } from "@mariozechner/pi-ai";
+import type { Model } from "@mariozechner/pi-ai";
 import {
   AuthStorage,
   DefaultResourceLoader,
@@ -46,6 +46,7 @@ import { normalizeArchetypeId } from "../prompt-registry.js";
 import { combineCompactionCustomInstructions, loadPins } from "../message-pins.js";
 import { createCatalogRequestBehaviorExtensionFactory } from "../model-catalog-request-behaviors.js";
 import { modelCatalogService } from "../model-catalog-service.js";
+import { resolveExactModel } from "../swarm-manager-utils.js";
 import {
   getProfilePiExtensionsDir,
   getProfilePiPromptsDir,
@@ -877,21 +878,16 @@ export class RuntimeFactory {
   }
 
   private resolveModel(modelRegistry: ModelRegistry, descriptor: AgentModelDescriptor): Model<any> {
-    const direct = modelRegistry.find(descriptor.provider, descriptor.modelId);
-    if (direct) {
-      return direct;
+    const resolved = resolveExactModel(modelRegistry, descriptor);
+    if (resolved) {
+      return resolved;
     }
 
     this.deps.logDebug("runtime:model:projection_miss", {
       provider: descriptor.provider,
       modelId: descriptor.modelId,
-      message: "Model not found in Forge projection — falling back to Pi built-in catalog"
+      message: "Model not found in Forge projection or Pi built-in catalog"
     });
-
-    const fromCatalog = getModel(descriptor.provider as any, descriptor.modelId as any);
-    if (fromCatalog) {
-      return fromCatalog;
-    }
 
     throw new Error(`Model "${descriptor.modelId}" not found for provider "${descriptor.provider}".`);
   }

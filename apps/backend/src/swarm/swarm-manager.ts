@@ -5590,7 +5590,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     const candidates = [
       { provider: "anthropic", modelId: "claude-opus-4-6" },
-      { provider: "openai-codex", modelId: "gpt-5.4" }
+      { provider: "openai-codex", modelId: "gpt-5.4" },
+      { provider: "openai-codex", modelId: "gpt-5.5" },
     ] as const;
     const failureMessages: string[] = [];
 
@@ -5620,7 +5621,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     throw new Error(
       [
         "No configured model is available for project agent analysis.",
-        "Tried anthropic/claude-opus-4-6 first, then openai-codex/gpt-5.4.",
+        "Tried anthropic/claude-opus-4-6 first, then openai-codex/gpt-5.5.",
         failureMessages.join(" ")
       ]
         .filter((part) => part.trim().length > 0)

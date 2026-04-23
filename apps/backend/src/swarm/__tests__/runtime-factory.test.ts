@@ -503,6 +503,82 @@ describe("RuntimeFactory", () => {
     expect(piCodingAgentMockState.createAgentSession).not.toHaveBeenCalled();
   });
 
+  it("synthesizes catalog-backed GPT-5.5 models when the bundled Pi registry is behind", async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
+    await mkdir(rootDir, { recursive: true });
+
+    await seedProjectionFile(rootDir);
+
+    piCodingAgentMockState.modelRegistryFind.mockReturnValue(undefined);
+    piAiMockState.getModel.mockImplementation((provider: unknown, modelId: unknown) => {
+      if (provider === "openai-codex" && modelId === "gpt-5.4") {
+        return {
+          id: "gpt-5.4",
+          name: "GPT-5.4",
+          api: "openai-codex-responses",
+          provider: "openai-codex",
+          baseUrl: "https://chatgpt.com/backend-api",
+          reasoning: true,
+          input: ["text", "image"],
+          cost: { input: 2.5, output: 15, cacheRead: 0.25, cacheWrite: 0 },
+          contextWindow: 272_000,
+          maxTokens: 128_000,
+        };
+      }
+
+      return undefined;
+    });
+    piAiMockState.getModels.mockImplementation((provider: unknown) =>
+      provider === "openai-codex"
+        ? [
+            {
+              id: "gpt-5.4",
+              name: "GPT-5.4",
+              api: "openai-codex-responses",
+              provider: "openai-codex",
+              baseUrl: "https://chatgpt.com/backend-api",
+              reasoning: true,
+              input: ["text", "image"],
+              cost: { input: 2.5, output: 15, cacheRead: 0.25, cacheWrite: 0 },
+              contextWindow: 272_000,
+              maxTokens: 128_000,
+            },
+          ]
+        : [],
+    );
+    piCodingAgentMockState.createAgentSession.mockResolvedValue({
+      session: createMockPiSession(),
+      extensionsResult: { extensions: [], errors: [] },
+    });
+
+    const factory = createFactory(rootDir);
+
+    await factory.createRuntimeForDescriptor(
+      createDescriptor(rootDir, {
+        model: {
+          provider: "openai-codex",
+          modelId: "gpt-5.5",
+          thinkingLevel: "xhigh",
+        },
+      }),
+      "system prompt",
+    );
+
+    expect(piCodingAgentMockState.createAgentSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: expect.objectContaining({
+          id: "gpt-5.5",
+          name: "GPT-5.5",
+          provider: "openai-codex",
+          api: "openai-codex-responses",
+          baseUrl: "https://chatgpt.com/backend-api",
+          contextWindow: 272_000,
+          maxTokens: 128_000,
+        }),
+      }),
+    );
+  });
+
   it("fails fast when the generated Pi projection file is missing", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
     await mkdir(rootDir, { recursive: true });

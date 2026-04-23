@@ -2,13 +2,15 @@ import { describe, expect, it } from 'vitest'
 import { getBuiltInModelSpecificInstructions } from '../model-prompt-instructions.js'
 
 describe('model-prompt-instructions', () => {
-  it('returns GPT-5 instructions for pi-codex and pi-5.4 families', () => {
+  it('returns GPT-5 instructions for pi-codex, pi-5.4, and pi-5.5 families', () => {
     const codexInstructions = getBuiltInModelSpecificInstructions('pi-codex')
     const gpt54Instructions = getBuiltInModelSpecificInstructions('pi-5.4-mini')
+    const gpt55Instructions = getBuiltInModelSpecificInstructions('pi-5.5-mini')
 
     expect(codexInstructions).toContain('Return the requested sections only, in the requested order.')
     expect(codexInstructions).toContain('Do not use em dashes unless the user explicitly asks for them')
     expect(gpt54Instructions).toBe(codexInstructions)
+    expect(gpt55Instructions).toBe(codexInstructions)
   })
 
   it('returns Claude instructions for pi-opus and Claude SDK families', () => {

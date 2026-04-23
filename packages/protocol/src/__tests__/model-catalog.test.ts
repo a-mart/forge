@@ -35,6 +35,14 @@ const EXPECTED_FAMILIES = {
     visibleInSpawnPreset: true,
     visibleInSpecialists: true,
   },
+  'pi-5.5': {
+    provider: 'openai-codex',
+    defaultModelId: 'gpt-5.5',
+    visibleInCreateManager: true,
+    visibleInChangeManager: true,
+    visibleInSpawnPreset: true,
+    visibleInSpecialists: true,
+  },
   'pi-opus': {
     provider: 'anthropic',
     defaultModelId: 'claude-opus-4-6',
@@ -113,6 +121,22 @@ const EXPECTED_MODELS = {
   'gpt-5.4-mini': {
     provider: 'openai-codex',
     familyId: 'pi-5.4',
+    contextWindow: 272_000,
+    maxOutputTokens: 128_000,
+    supportsReasoning: true,
+    inputModes: ['text', 'image'],
+  },
+  'gpt-5.5': {
+    provider: 'openai-codex',
+    familyId: 'pi-5.5',
+    contextWindow: 272_000,
+    maxOutputTokens: 128_000,
+    supportsReasoning: true,
+    inputModes: ['text', 'image'],
+  },
+  'gpt-5.5-mini': {
+    provider: 'openai-codex',
+    familyId: 'pi-5.5',
     contextWindow: 272_000,
     maxOutputTokens: 128_000,
     supportsReasoning: true,
@@ -245,7 +269,7 @@ describe('model-catalog', () => {
     ])
     expect(Object.keys(FORGE_MODEL_CATALOG.families)).toEqual(Object.keys(EXPECTED_FAMILIES))
     expect(Object.keys(FORGE_MODEL_CATALOG.models)).toEqual(Object.keys(EXPECTED_MODELS))
-    expect(Object.keys(FORGE_MODEL_CATALOG.models)).toHaveLength(18)
+    expect(Object.keys(FORGE_MODEL_CATALOG.models)).toHaveLength(20)
     expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('gpt-5.4-nano')
   })
 
@@ -395,8 +419,10 @@ describe('model-catalog', () => {
     expect(getCatalogModel('claude-sdk/claude-sonnet-4-5-20250929')?.provider).toBe('claude-sdk')
     expect(getCatalogContextWindow('grok-4-fast')).toBe(2_000_000)
     expect(inferCatalogProvider('gpt-5.4')).toBe('openai-codex')
+    expect(inferCatalogProvider('gpt-5.5')).toBe('openai-codex')
     expect(inferCatalogProvider('gpt-5.4-nano')).toBeNull()
     expect(inferCatalogFamily('openai-codex', 'gpt-5.4-mini')).toBe('pi-5.4')
+    expect(inferCatalogFamily('openai-codex', 'gpt-5.5-mini')).toBe('pi-5.5')
     expect(inferCatalogFamily('claude-sdk', 'claude-sonnet-4-5-20250929')).toBe('sdk-sonnet')
     expect(inferCatalogFamily('claude-sdk', 'claude-opus-4-6')).toBe('sdk-opus')
     expect(inferCatalogFamily('xai', 'grok-3')).toBe('pi-grok')
@@ -409,6 +435,7 @@ describe('model-catalog', () => {
     expect(getCreateManagerFamilies().map((family) => family.familyId)).toEqual([
       'pi-codex',
       'pi-5.4',
+      'pi-5.5',
       'pi-opus',
       'sdk-opus',
       'sdk-sonnet',
@@ -417,6 +444,7 @@ describe('model-catalog', () => {
     expect(getChangeManagerFamilies().map((family) => family.familyId)).toEqual([
       'pi-codex',
       'pi-5.4',
+      'pi-5.5',
       'pi-opus',
       'sdk-opus',
       'sdk-sonnet',
@@ -425,6 +453,7 @@ describe('model-catalog', () => {
     expect(getSpawnPresetFamilies().map((family) => family.familyId)).toEqual([
       'pi-codex',
       'pi-5.4',
+      'pi-5.5',
       'pi-opus',
       'sdk-opus',
       'sdk-sonnet',
@@ -435,6 +464,7 @@ describe('model-catalog', () => {
     expect(getSpecialistFamilies().map((family) => family.familyId)).toEqual([
       'pi-codex',
       'pi-5.4',
+      'pi-5.5',
       'pi-opus',
       'sdk-opus',
       'sdk-sonnet',

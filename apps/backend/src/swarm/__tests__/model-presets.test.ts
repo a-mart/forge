@@ -102,7 +102,7 @@ describe("model-presets", () => {
 
   it("does not expose webSearch capability metadata for other presets", () => {
     const presets = getModelPresetInfoList();
-    for (const presetId of ["pi-codex", "pi-5.4", "pi-opus", "sdk-opus", "sdk-sonnet", "codex-app", "cursor-acp"] as const) {
+    for (const presetId of ["pi-codex", "pi-5.4", "pi-5.5", "pi-opus", "sdk-opus", "sdk-sonnet", "codex-app", "cursor-acp"] as const) {
       expect(presets.find((preset) => preset.presetId === presetId)?.webSearch).toBeUndefined();
     }
   });
@@ -146,6 +146,9 @@ describe("model-presets", () => {
 
   it("omits deprecated variants that are not present in the catalog", () => {
     const fiveFourPreset = getModelPresetInfoList().find((preset) => preset.presetId === "pi-5.4");
+    const fiveFivePreset = getModelPresetInfoList().find((preset) => preset.presetId === "pi-5.5");
+
     expect(fiveFourPreset?.variants?.map((variant) => variant.modelId)).toEqual(["gpt-5.4-mini"]);
+    expect(fiveFivePreset?.variants?.map((variant) => variant.modelId)).toEqual(["gpt-5.5-mini"]);
   });
 });
