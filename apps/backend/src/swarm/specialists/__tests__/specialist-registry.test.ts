@@ -522,6 +522,7 @@ describe("specialist-registry", () => {
 
     expect(byId.get("architect")).toMatchObject({
       provider: "openai-codex",
+      modelId: "gpt-5.5",
       fallbackProvider: "anthropic",
       fallbackModelId: "claude-opus-4-6",
       fallbackReasoningLevel: "high",
@@ -569,9 +570,10 @@ describe("specialist-registry", () => {
       fallbackReasoningLevel: "high",
     });
     expect(byId.get("planner")).toMatchObject({
-      provider: "anthropic",
-      fallbackProvider: "openai-codex",
-      fallbackModelId: "gpt-5.4",
+      provider: "openai-codex",
+      modelId: "gpt-5.5",
+      fallbackProvider: "anthropic",
+      fallbackModelId: "claude-opus-4-6",
       fallbackReasoningLevel: "high",
     });
 

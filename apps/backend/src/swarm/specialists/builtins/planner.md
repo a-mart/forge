@@ -3,9 +3,9 @@ displayName: Planner
 color: "#7c3aed"
 enabled: true
 whenToUse: Task breakdown, implementation planning, design docs, sequencing, risk analysis, discovery investigations. Not for implementation or code changes — output is plans and analysis only.
-modelId: claude-opus-4-6
+modelId: gpt-5.5
 reasoningLevel: high
-fallbackModelId: gpt-5.4
+fallbackModelId: claude-opus-4-6
 fallbackReasoningLevel: high
 builtin: true
 ---
