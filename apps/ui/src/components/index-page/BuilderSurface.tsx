@@ -1089,60 +1089,59 @@ export function BuilderSurface({
   }, [])
 
   return (
-    <main className="h-dvh bg-background text-foreground">
-      <div className="flex h-dvh w-full min-w-0 overflow-hidden bg-background">
-        <AgentSidebar
-          connected={state.connected}
-          wsUrl={wsUrl}
-          agents={state.agents}
-          profiles={state.profiles}
-          statuses={state.statuses}
-          unreadCounts={state.unreadCounts}
-          collaborationModeSwitch={collaborationModeSwitch}
-          terminalScopeId={state.terminalSessionScopeId}
-          terminalCount={state.terminals.length}
-          selectedAgentId={activeAgentId}
-          isSettingsActive={activeView === 'settings'}
-          isPlaywrightActive={activeView === 'playwright'}
-          isStatsActive={activeView === 'stats'}
-          showPlaywrightNav={showPlaywrightNav}
-          isMobileOpen={isMobileSidebarOpen}
-          onMobileClose={() => setIsMobileSidebarOpen(false)}
-          onAddManager={handleOpenCreateManagerDialog}
-          onSelectAgent={handleSelectAgent}
-          onDeleteAgent={handleDeleteAgent}
-          onDeleteManager={handleRequestDeleteManager}
-          onOpenSettings={handleOpenSettingsPanel}
-          onOpenCortexReview={handleOpenCortexReview}
-          onOpenPlaywright={handleOpenPlaywright}
-          onOpenStats={handleOpenStats}
-          onCreateSession={handleCreateSession}
-          onStopSession={handleStopSession}
-          onResumeSession={handleResumeSession}
-          onDeleteSession={handleDeleteSession}
-          onRenameSession={handleRenameSession}
-          onPinSession={handlePinSession}
-          onRenameProfile={handleRenameProfile}
-          onForkSession={handleForkSession}
-          onMarkUnread={handleMarkUnread}
-          onMarkAllRead={handleMarkAllRead}
-          onUpdateManagerModel={handleUpdateManagerModel}
-          onUpdateManagerCwd={handleUpdateManagerCwd}
-          onBrowseDirectory={handleBrowseDirectoryForCwd}
-          onValidateDirectory={handleValidateDirectoryForCwd}
-          onRequestSessionWorkers={handleRequestSessionWorkers}
-          onReorderProfiles={handleReorderProfiles}
-          onSetSessionProjectAgent={handleSetSessionProjectAgent}
-          onGetProjectAgentConfig={handleGetProjectAgentConfig}
-          onListProjectAgentReferences={handleListProjectAgentReferences}
-          onGetProjectAgentReference={handleGetProjectAgentReference}
-          onSetProjectAgentReference={handleSetProjectAgentReference}
-          onDeleteProjectAgentReference={handleDeleteProjectAgentReference}
-          onRequestProjectAgentRecommendations={handleRequestProjectAgentRecommendations}
-          onCreateAgentCreator={handleCreateAgentCreator}
-        />
+    <>
+      <AgentSidebar
+        connected={state.connected}
+        wsUrl={wsUrl}
+        agents={state.agents}
+        profiles={state.profiles}
+        statuses={state.statuses}
+        unreadCounts={state.unreadCounts}
+        collaborationModeSwitch={collaborationModeSwitch}
+        terminalScopeId={state.terminalSessionScopeId}
+        terminalCount={state.terminals.length}
+        selectedAgentId={activeAgentId}
+        isSettingsActive={activeView === 'settings'}
+        isPlaywrightActive={activeView === 'playwright'}
+        isStatsActive={activeView === 'stats'}
+        showPlaywrightNav={showPlaywrightNav}
+        isMobileOpen={isMobileSidebarOpen}
+        onMobileClose={() => setIsMobileSidebarOpen(false)}
+        onAddManager={handleOpenCreateManagerDialog}
+        onSelectAgent={handleSelectAgent}
+        onDeleteAgent={handleDeleteAgent}
+        onDeleteManager={handleRequestDeleteManager}
+        onOpenSettings={handleOpenSettingsPanel}
+        onOpenCortexReview={handleOpenCortexReview}
+        onOpenPlaywright={handleOpenPlaywright}
+        onOpenStats={handleOpenStats}
+        onCreateSession={handleCreateSession}
+        onStopSession={handleStopSession}
+        onResumeSession={handleResumeSession}
+        onDeleteSession={handleDeleteSession}
+        onRenameSession={handleRenameSession}
+        onPinSession={handlePinSession}
+        onRenameProfile={handleRenameProfile}
+        onForkSession={handleForkSession}
+        onMarkUnread={handleMarkUnread}
+        onMarkAllRead={handleMarkAllRead}
+        onUpdateManagerModel={handleUpdateManagerModel}
+        onUpdateManagerCwd={handleUpdateManagerCwd}
+        onBrowseDirectory={handleBrowseDirectoryForCwd}
+        onValidateDirectory={handleValidateDirectoryForCwd}
+        onRequestSessionWorkers={handleRequestSessionWorkers}
+        onReorderProfiles={handleReorderProfiles}
+        onSetSessionProjectAgent={handleSetSessionProjectAgent}
+        onGetProjectAgentConfig={handleGetProjectAgentConfig}
+        onListProjectAgentReferences={handleListProjectAgentReferences}
+        onGetProjectAgentReference={handleGetProjectAgentReference}
+        onSetProjectAgentReference={handleSetProjectAgentReference}
+        onDeleteProjectAgentReference={handleDeleteProjectAgentReference}
+        onRequestProjectAgentRecommendations={handleRequestProjectAgentRecommendations}
+        onCreateAgentCreator={handleCreateAgentCreator}
+      />
 
-        <div
+      <div
           className="relative flex min-w-0 flex-1"
           onDragEnter={handleDragEnter}
           onDragOver={handleDragOver}
@@ -1419,7 +1418,6 @@ export function BuilderSurface({
               }}
             />
           ) : null}
-        </div>
       </div>
 
       <GlobalDialogs
@@ -1485,7 +1483,7 @@ export function BuilderSurface({
           initialQuickFilter: diffViewerInitialState?.initialQuickFilter,
         }}
       />
-    </main>
+    </>
   )
 }
 
