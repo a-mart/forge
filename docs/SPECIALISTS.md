@@ -83,7 +83,7 @@ displayName: Planner
 color: "#7c3aed"
 enabled: true
 whenToUse: Architecture planning, design docs, implementation sequencing, risk analysis
-modelId: gpt-5.4
+modelId: gpt-5.5
 reasoningLevel: high
 fallbackModelId: claude-opus-4-6
 ---

@@ -124,7 +124,7 @@ When the manager spawns a worker, it picks a specialist based on the task. Each 
 - An optional **fallback model** — used when the primary model is unavailable or rate-limited.
 - A **"when to use" description** — tells the manager which tasks to send to this specialist.
 
-For example, the builtin Backend Engineer uses GPT-5.4 at high reasoning. The Frontend Engineer uses Claude Opus 4.6 at high reasoning. The Scout uses GPT-5.4 Mini at low reasoning for quick exploration.
+For example, the builtin Backend Engineer uses GPT-5.4 at high reasoning. The Frontend Engineer uses Claude Opus 4.6 at high reasoning. The Architect uses GPT-5.5 with Claude Opus 4.6 as fallback. The Planner uses GPT-5.5 with Claude Opus 4.6 as fallback. The Scout uses GPT-5.4 Mini at low reasoning for quick exploration.
 
 ## Fallback behavior
 
@@ -169,8 +169,8 @@ These work well for everyday development tasks.
 
 Reserve these for work where quality matters most.
 
-- **GPT-5.4** — OpenAI's strongest. Best for complex backend work, architecture, and multi-file refactors. The Backend Engineer and Architect specialists default to this.
-- **Claude Opus 4.6** — Anthropic's strongest. Best for frontend work, nuanced code review, and tasks that need careful judgment. The Frontend Engineer and Planner specialists default to this.
+- **GPT-5.4** — OpenAI's strongest. Best for complex backend work and multi-file refactors. The Backend Engineer specialist defaults to this; Architect now defaults to GPT-5.5.
+- **Claude Opus 4.6** — Anthropic's strongest. Best for frontend work, nuanced code review, and tasks that need careful judgment. The Frontend Engineer specialist defaults to this; Planner now defaults to GPT-5.5 with Opus 4.6 as fallback.
 - **Grok 4** — xAI's flagship for specialist use.
 
 ## Reasoning level adds cost too
