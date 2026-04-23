@@ -210,7 +210,7 @@ async function createCortexTestServer(options?: { profileIds?: string[] }): Prom
 
   const swarmManager = {
     getConfig: () => ({ paths: { dataDir } }),
-    listProfiles: () => (options?.profileIds ?? []).map((profileId) => ({ profileId }))
+    listUserProfiles: () => (options?.profileIds ?? []).map((profileId) => ({ profileId }))
   } as unknown as SwarmManager;
 
   const routes = createCortexRoutes({ swarmManager });

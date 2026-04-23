@@ -25,28 +25,9 @@ import { isSessionRunning } from '@/lib/agent-hierarchy'
 import { cn } from '@/lib/utils'
 import { SessionStatusDot, HighlightedText } from './shared'
 import { WorkerRow } from './WorkerRow'
+import { getAgentLiveStatus } from './utils'
 import { MAX_VISIBLE_WORKERS } from './constants'
-import type { AgentStatus } from '@forge/protocol'
 import type { SessionRowItemProps } from './types'
-
-/**
- * Shallow-compare two worker-status records by value.
- * Returns true when both are structurally identical so the memo can bail out
- * even though the parent derives a fresh object on each render.
- */
-function workerStatusRecordEqual(
-  a: Record<string, AgentStatus> | undefined,
-  b: Record<string, AgentStatus> | undefined,
-): boolean {
-  if (a === b) return true
-  if (a == null || b == null) return false
-  const aKeys = Object.keys(a)
-  if (aKeys.length !== Object.keys(b).length) return false
-  for (const key of aKeys) {
-    if (a[key] !== b[key]) return false
-  }
-  return true
-}
 
 /**
  * Exhaustive prop list for the memo comparator. Typed against
@@ -56,9 +37,7 @@ function workerStatusRecordEqual(
  */
 const SESSION_ROW_REF_EQUAL_KEYS: (keyof SessionRowItemProps)[] = [
   'session',
-  'managerStreaming',
-  'streamingWorkerCount',
-  // workerStatuses handled separately via shallow-value comparison
+  'statuses',
   'unreadCount',
   'selectedAgentId',
   'isSettingsActive',
@@ -68,11 +47,11 @@ const SESSION_ROW_REF_EQUAL_KEYS: (keyof SessionRowItemProps)[] = [
   'onToggleWorkerListExpanded',
   'onSelect',
   'onDeleteAgent',
-  'onStopSession',
-  'onResumeSession',
-  'onDeleteSession',
-  'onRenameSession',
-  'onForkSession',
+  'onStop',
+  'onResume',
+  'onDelete',
+  'onRename',
+  'onFork',
   'onMarkUnread',
   'onStopWorker',
   'onResumeWorker',
@@ -81,7 +60,7 @@ const SESSION_ROW_REF_EQUAL_KEYS: (keyof SessionRowItemProps)[] = [
   'onPromoteToProjectAgent',
   'onOpenProjectAgentSettings',
   'onDemoteProjectAgent',
-  'canViewCreationHistory',
+  'onViewCreationHistory',
   'isMutedSession',
   'onToggleMute',
   'getCreatorAttribution',
@@ -89,9 +68,7 @@ const SESSION_ROW_REF_EQUAL_KEYS: (keyof SessionRowItemProps)[] = [
 
 /**
  * Custom React.memo comparison for SessionRowItem.
- * Uses reference equality for all props in the explicit list above,
- * plus a shallow-value comparison for `workerStatuses` (parents derive
- * a fresh Record object on every render even when values are unchanged).
+ * Uses reference equality for all props in the explicit list above.
  */
 function areSessionRowItemPropsEqual(
   prev: SessionRowItemProps,
@@ -100,14 +77,12 @@ function areSessionRowItemPropsEqual(
   for (const key of SESSION_ROW_REF_EQUAL_KEYS) {
     if (prev[key] !== next[key]) return false
   }
-  return workerStatusRecordEqual(prev.workerStatuses, next.workerStatuses)
+  return true
 }
 
 export const SessionRowItem = React.memo(function SessionRowItem({
   session,
-  managerStreaming,
-  streamingWorkerCount,
-  workerStatuses,
+  statuses,
   unreadCount,
   selectedAgentId,
   isSettingsActive,
@@ -117,11 +92,11 @@ export const SessionRowItem = React.memo(function SessionRowItem({
   onToggleWorkerListExpanded,
   onSelect,
   onDeleteAgent,
-  onStopSession,
-  onResumeSession,
-  onDeleteSession,
-  onRenameSession,
-  onForkSession,
+  onStop,
+  onResume,
+  onDelete,
+  onRename,
+  onFork,
   onMarkUnread,
   onStopWorker,
   onResumeWorker,
@@ -130,7 +105,7 @@ export const SessionRowItem = React.memo(function SessionRowItem({
   onPromoteToProjectAgent,
   onOpenProjectAgentSettings,
   onDemoteProjectAgent,
-  canViewCreationHistory,
+  onViewCreationHistory,
   isMutedSession,
   onToggleMute,
   getCreatorAttribution,
@@ -150,6 +125,12 @@ export const SessionRowItem = React.memo(function SessionRowItem({
     ? getCreatorAttribution(sessionAgent.creatorAgentId)
     : null
 
+  // Compute streaming state from statuses map
+  const managerStreaming = getAgentLiveStatus(sessionAgent, statuses).status === 'streaming'
+  const streamingWorkerCount = workers.filter(
+    (w) => getAgentLiveStatus(w, statuses).status === 'streaming',
+  ).length || sessionAgent.activeWorkerCount || 0
+
   return (
     <li>
       <ContextMenu>
@@ -166,7 +147,7 @@ export const SessionRowItem = React.memo(function SessionRowItem({
             {hasWorkers ? (
               <button
                 type="button"
-                onClick={() => onToggleCollapse(sessionAgent.agentId)}
+                onClick={() => onToggleCollapse()}
                 aria-label={`${isCollapsed ? 'Expand' : 'Collapse'} session workers`}
                 aria-expanded={!isCollapsed}
                 className={cn(
@@ -283,37 +264,37 @@ export const SessionRowItem = React.memo(function SessionRowItem({
             </ContextMenuItem>
           ) : null}
           {onToggleMute ? (
-            <ContextMenuItem onClick={() => onToggleMute(sessionAgent.agentId)}>
+            <ContextMenuItem onClick={() => onToggleMute()}>
               <BellOff className="mr-2 size-3.5" />
               {isMutedSession ? 'Unmute' : 'Mute'}
             </ContextMenuItem>
           ) : null}
-          {onRenameSession ? (
-            <ContextMenuItem onClick={() => onRenameSession(sessionAgent.agentId)}>
+          {onRename ? (
+            <ContextMenuItem onClick={() => onRename()}>
               <Edit3 className="mr-2 size-3.5" />
               Rename
             </ContextMenuItem>
           ) : null}
-          {onForkSession && sessionAgent.sessionPurpose !== 'agent_creator' ? (
-            <ContextMenuItem onClick={() => onForkSession(sessionAgent.agentId)}>
+          {onFork && sessionAgent.sessionPurpose !== 'agent_creator' ? (
+            <ContextMenuItem onClick={() => onFork()}>
               <GitFork className="mr-2 size-3.5" />
               Fork
             </ContextMenuItem>
           ) : null}
-          {running && onStopSession ? (
-            <ContextMenuItem onClick={() => onStopSession(sessionAgent.agentId)}>
+          {running && onStop ? (
+            <ContextMenuItem onClick={() => onStop()}>
               <Pause className="mr-2 size-3.5" />
               Stop
             </ContextMenuItem>
           ) : null}
-          {!running && onResumeSession ? (
-            <ContextMenuItem onClick={() => onResumeSession(sessionAgent.agentId)}>
+          {!running && onResume ? (
+            <ContextMenuItem onClick={() => onResume()}>
               <Play className="mr-2 size-3.5" />
               Resume
             </ContextMenuItem>
           ) : null}
           {onMarkUnread ? (
-            <ContextMenuItem onClick={() => onMarkUnread(sessionAgent.agentId)}>
+            <ContextMenuItem onClick={() => onMarkUnread()}>
               <EyeOff className="mr-2 size-3.5" />
               Mark as unread
             </ContextMenuItem>
@@ -321,7 +302,7 @@ export const SessionRowItem = React.memo(function SessionRowItem({
           {onPromoteToProjectAgent && !isProjectAgent && sessionAgent.sessionPurpose !== 'cortex_review' && sessionAgent.sessionPurpose !== 'agent_creator' ? (
             <>
               <ContextMenuSeparator />
-              <ContextMenuItem onClick={() => onPromoteToProjectAgent(sessionAgent.agentId)}>
+              <ContextMenuItem onClick={() => onPromoteToProjectAgent()}>
                 <ArrowUpFromLine className="mr-2 size-3.5" />
                 Promote to Project Agent
               </ContextMenuItem>
@@ -330,14 +311,14 @@ export const SessionRowItem = React.memo(function SessionRowItem({
           {isProjectAgent && onOpenProjectAgentSettings ? (
             <>
               <ContextMenuSeparator />
-              <ContextMenuItem onClick={() => onOpenProjectAgentSettings(sessionAgent.agentId)}>
+              <ContextMenuItem onClick={() => onOpenProjectAgentSettings()}>
                 <Settings className="mr-2 size-3.5" />
                 Project Agent Settings
               </ContextMenuItem>
             </>
           ) : null}
-          {isProjectAgent && canViewCreationHistory ? (
-            <ContextMenuItem onClick={() => onSelect(sessionAgent.projectAgent!.creatorSessionId!)}>
+          {isProjectAgent && onViewCreationHistory ? (
+            <ContextMenuItem onClick={() => onViewCreationHistory()}>
               <History className="mr-2 size-3.5" />
               View Creation History
             </ContextMenuItem>
@@ -345,7 +326,7 @@ export const SessionRowItem = React.memo(function SessionRowItem({
           {isProjectAgent && onDemoteProjectAgent ? (
             <ContextMenuItem onClick={() => {
               try {
-                void Promise.resolve(onDemoteProjectAgent(sessionAgent.agentId)).catch((err) => {
+                void Promise.resolve(onDemoteProjectAgent()).catch((err) => {
                   console.error('Failed to demote project agent:', err)
                 })
               } catch (err) {
@@ -356,10 +337,10 @@ export const SessionRowItem = React.memo(function SessionRowItem({
               Demote to Session
             </ContextMenuItem>
           ) : null}
-          {!isDefault && onDeleteSession ? (
+          {!isDefault && onDelete ? (
             <>
               <ContextMenuSeparator />
-              <ContextMenuItem variant="destructive" onClick={() => onDeleteSession(sessionAgent.agentId)}>
+              <ContextMenuItem variant="destructive" onClick={() => onDelete()}>
                 <Trash2 className="mr-2 size-3.5" />
                 Delete
               </ContextMenuItem>
@@ -407,12 +388,12 @@ export const SessionRowItem = React.memo(function SessionRowItem({
                       <li key={worker.agentId}>
                         <WorkerRow
                           agent={worker}
-                          statusValue={workerStatuses?.[worker.agentId] ?? worker.status}
+                          liveStatus={getAgentLiveStatus(worker, statuses)}
                           isSelected={workerIsSelected}
-                          onSelect={onSelect}
-                          onDelete={onDeleteAgent}
-                          onStop={onStopWorker}
-                          onResume={onResumeWorker}
+                          onSelect={() => onSelect(worker.agentId)}
+                          onDelete={() => onDeleteAgent(worker.agentId)}
+                          onStop={onStopWorker ? () => onStopWorker(worker.agentId) : undefined}
+                          onResume={onResumeWorker ? () => onResumeWorker(worker.agentId) : undefined}
                           highlightQuery={highlightQuery}
                         />
                       </li>
@@ -422,7 +403,7 @@ export const SessionRowItem = React.memo(function SessionRowItem({
                 {needsWorkerTruncation ? (
                   <button
                     type="button"
-                    onClick={() => onToggleWorkerListExpanded(sessionAgent.agentId)}
+                    onClick={() => onToggleWorkerListExpanded()}
                     className={cn(
                       'relative z-10 mt-0.5 flex w-full items-center gap-1 rounded-md py-1 pl-12 pr-1.5 text-left text-[11px] text-muted-foreground/70 transition-colors',
                       'hover:text-muted-foreground hover:bg-sidebar-accent/30',

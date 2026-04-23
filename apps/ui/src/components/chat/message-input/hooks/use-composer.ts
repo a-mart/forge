@@ -3,6 +3,11 @@ import type { PendingAttachment } from '@/lib/file-attachments'
 import { loadFormatMode, persistFormatMode } from '../draft-storage'
 import { TEXTAREA_MAX_HEIGHT } from '../types'
 
+interface LastSubmission {
+  text: string
+  attachments: PendingAttachment[]
+}
+
 interface UseComposerOptions {
   input: string
   attachedFiles: PendingAttachment[]
@@ -10,7 +15,7 @@ interface UseComposerOptions {
   blockedByLoading: boolean
   isRecording: boolean
   isTranscribingVoice: boolean
-  onSend: (message: string, attachments?: import('@forge/protocol').ConversationAttachment[]) => void
+  onSend: (message: string, attachments?: import('@forge/protocol').ConversationAttachment[]) => void | boolean | Promise<boolean>
   onSubmitted?: () => void
   setInputWithDraft: (value: string) => void
   setAttachedFilesWithDraft: (files: PendingAttachment[]) => void
@@ -29,6 +34,8 @@ interface UseComposerReturn {
   resizeTextarea: () => void
   canSubmit: boolean
   hasContent: boolean
+  /** Restore the last successfully cleared submission. Returns true if restoration happened. */
+  restoreLastSubmission: () => boolean
 }
 
 export function useComposer({
@@ -46,6 +53,7 @@ export function useComposer({
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
   const overlayRef = useRef<HTMLDivElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const lastSubmissionRef = useRef<LastSubmission | null>(null)
   const [formatMode, setFormatMode] = useState(loadFormatMode)
 
   const resizeTextarea = useCallback(() => {
@@ -101,54 +109,69 @@ export function useComposer({
     const hasMsg = trimmed.length > 0 || attachedFiles.length > 0
     if (!hasMsg || disabled || blockedByLoading || isRecording || isTranscribingVoice) return
 
-    onSend(
-      trimmed,
-      attachedFiles.length > 0
-        ? attachedFiles.map((attachment) => {
-            if (attachment.type === 'terminal') {
-              const label = attachment.lineRange
-                ? `${attachment.terminalName} (${attachment.lineRange})`
-                : attachment.terminalName
-              return {
-                type: 'text' as const,
-                mimeType: 'text/plain' as const,
-                text: `Terminal: ${label}\n\n\`\`\`\n${attachment.content}\n\`\`\``,
-                fileName: `${label}.txt`,
-              }
-            }
-
-            if (attachment.type === 'text') {
-              return {
-                type: 'text' as const,
-                mimeType: attachment.mimeType,
-                text: attachment.text,
-                fileName: attachment.fileName,
-              }
-            }
-
-            if (attachment.type === 'binary') {
-              return {
-                type: 'binary' as const,
-                mimeType: attachment.mimeType,
-                data: attachment.data,
-                fileName: attachment.fileName,
-              }
-            }
-
+    const convertedAttachments = attachedFiles.length > 0
+      ? attachedFiles.map((attachment) => {
+          if (attachment.type === 'terminal') {
+            const label = attachment.lineRange
+              ? `${attachment.terminalName} (${attachment.lineRange})`
+              : attachment.terminalName
             return {
+              type: 'text' as const,
+              mimeType: 'text/plain' as const,
+              text: `Terminal: ${label}\n\n\`\`\`\n${attachment.content}\n\`\`\``,
+              fileName: `${label}.txt`,
+            }
+          }
+
+          if (attachment.type === 'text') {
+            return {
+              type: 'text' as const,
+              mimeType: attachment.mimeType,
+              text: attachment.text,
+              fileName: attachment.fileName,
+            }
+          }
+
+          if (attachment.type === 'binary') {
+            return {
+              type: 'binary' as const,
               mimeType: attachment.mimeType,
               data: attachment.data,
               fileName: attachment.fileName,
             }
-          })
-        : undefined,
-    )
+          }
 
-    setInputWithDraft('')
-    setAttachedFilesWithDraft([])
-    requestAnimationFrame(() => {
-      onSubmitted?.()
-    })
+          return {
+            mimeType: attachment.mimeType,
+            data: attachment.data,
+            fileName: attachment.fileName,
+          }
+        })
+      : undefined
+
+    const result = onSend(trimmed, convertedAttachments) as boolean | Promise<boolean> | undefined
+
+    // Accept send and clear draft, saving the submission for potential restoration
+    const acceptSend = () => {
+      lastSubmissionRef.current = { text: input, attachments: [...attachedFiles] }
+      setInputWithDraft('')
+      setAttachedFilesWithDraft([])
+      requestAnimationFrame(() => {
+        onSubmitted?.()
+      })
+    }
+
+    // Handle sync or async result: false = rejected (keep draft), true/void = accepted (clear)
+    if (result instanceof Promise) {
+      void result.then((accepted) => {
+        if (accepted !== false) acceptSend()
+      })
+    } else if (result === false) {
+      // Send rejected — keep draft intact
+    } else {
+      // true, undefined (void), or any other truthy value — accepted
+      acceptSend()
+    }
   }, [
     attachedFiles,
     blockedByLoading,
@@ -161,6 +184,15 @@ export function useComposer({
     setInputWithDraft,
     setAttachedFilesWithDraft,
   ])
+
+  const restoreLastSubmission = useCallback(() => {
+    const last = lastSubmissionRef.current
+    if (!last) return false
+    setInputWithDraft(last.text)
+    setAttachedFilesWithDraft(last.attachments)
+    lastSubmissionRef.current = null
+    return true
+  }, [setInputWithDraft, setAttachedFilesWithDraft])
 
   const handleSubmit = useCallback(
     (event: React.FormEvent<HTMLFormElement>) => {
@@ -189,5 +221,6 @@ export function useComposer({
     resizeTextarea,
     canSubmit,
     hasContent,
+    restoreLastSubmission,
   }
 }

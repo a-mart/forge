@@ -1,4 +1,5 @@
 import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { readPromptFile, writePromptFile } from "./asset-root-storage.js";
 import { basename, dirname, join } from "node:path";
 import {
   PROJECT_AGENT_CAPABILITIES,
@@ -42,7 +43,7 @@ export async function writeProjectAgentRecord(
   if (systemPrompt === null) {
     await rm(promptPath, { force: true });
   } else {
-    await writeFile(promptPath, systemPrompt, "utf8");
+    await writePromptFile(promptPath, systemPrompt);
   }
 
   const normalizedCapabilities = normalizeProjectAgentCapabilities(config.capabilities);
@@ -115,11 +116,9 @@ export async function readProjectAgentRecord(
 
   let systemPrompt: string | null = null;
   try {
-    systemPrompt = await readFile(promptPath, "utf8");
+    systemPrompt = await readPromptFile(promptPath);
   } catch (error) {
-    if (!isEnoentError(error)) {
-      console.warn(`[swarm] project-agent-storage:failed_to_read_prompt path=${promptPath} error=${errorToMessage(error)}`);
-    }
+    console.warn(`[swarm] project-agent-storage:failed_to_read_prompt path=${promptPath} error=${errorToMessage(error)}`);
   }
 
   return {

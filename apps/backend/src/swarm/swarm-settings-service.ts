@@ -52,6 +52,7 @@ export interface SwarmSettingsServiceOptions {
   skillFileService: SkillFileService;
   secretsEnvService: SecretsEnvService;
   getSessionsForProfile: (profileId: string) => SessionDescriptor[];
+  getSessionById: (agentId: string) => SessionDescriptor | undefined;
   resolveAndValidateCwd: (cwd: string) => Promise<string>;
   assertCanChangeManagerCwd: (profileId: string, sessions: SessionDescriptor[]) => void;
   applyManagerRuntimeRecyclePolicy: (
@@ -73,8 +74,9 @@ export class SwarmSettingsService {
     reasoningLevel?: SwarmReasoningLevel
   ): Promise<void> {
     const profile = this.options.profiles.get(managerId);
-    if (!profile) {
-      throw new Error(`Unknown manager profile: ${managerId}`);
+    const session = profile ? undefined : this.options.getSessionById(managerId);
+    if (!profile && !session) {
+      throw new Error(`Unknown manager profile or session: ${managerId}`);
     }
 
     const modelDescriptor = resolveModelDescriptorFromPreset(modelPreset);
@@ -82,7 +84,7 @@ export class SwarmSettingsService {
       modelDescriptor.thinkingLevel = reasoningLevel;
     }
 
-    const sessions = this.options.getSessionsForProfile(profile.profileId);
+    const sessions = profile ? this.options.getSessionsForProfile(profile.profileId) : [session!];
     const affectedSessions = sessions.filter((session) => !sameModelDescriptor(session.model, modelDescriptor));
 
     if (affectedSessions.length === 0) {

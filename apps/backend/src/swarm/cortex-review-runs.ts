@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 import type {
@@ -12,6 +12,7 @@ import type {
 } from "@forge/protocol";
 import { getCortexReviewRunsPath } from "./data-paths.js";
 import type { ConversationEntryEvent } from "./types.js";
+import { readJsonFileIfExists, writeJsonFileAtomic } from "../utils/atomic-files.js";
 
 const CORTEX_REVIEW_RUNS_FILE_VERSION = 1;
 const MAX_STORED_CORTEX_REVIEW_RUNS = 60;
@@ -86,7 +87,7 @@ export async function appendCortexReviewRun(
     runs: [run, ...deduped].slice(0, MAX_STORED_CORTEX_REVIEW_RUNS)
   };
 
-  await writeFile(path, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+  await writeJsonFileAtomic(path, next);
 }
 
 export async function readStoredCortexReviewRuns(dataDir: string): Promise<StoredCortexReviewRun[]> {
@@ -179,23 +180,15 @@ export function buildLiveCortexReviewRunRecord(options: {
 
 async function readCortexReviewRunsFile(dataDir: string): Promise<StoredCortexReviewRunsFile> {
   const path = getCortexReviewRunsPath(dataDir);
-  try {
-    const raw = await readFile(path, "utf8");
-    const parsed = JSON.parse(raw) as Partial<StoredCortexReviewRunsFile>;
-    if (!parsed || !Array.isArray(parsed.runs)) {
-      return { version: CORTEX_REVIEW_RUNS_FILE_VERSION, runs: [] };
-    }
-
-    return {
-      version: typeof parsed.version === "number" ? parsed.version : CORTEX_REVIEW_RUNS_FILE_VERSION,
-      runs: parsed.runs.filter(isStoredCortexReviewRun)
-    };
-  } catch (error) {
-    if (isEnoentError(error)) {
-      return { version: CORTEX_REVIEW_RUNS_FILE_VERSION, runs: [] };
-    }
-    throw error;
+  const parsed = await readJsonFileIfExists<Partial<StoredCortexReviewRunsFile>>(path);
+  if (!parsed || !Array.isArray(parsed.runs)) {
+    return { version: CORTEX_REVIEW_RUNS_FILE_VERSION, runs: [] };
   }
+
+  return {
+    version: typeof parsed.version === "number" ? parsed.version : CORTEX_REVIEW_RUNS_FILE_VERSION,
+    runs: parsed.runs.filter(isStoredCortexReviewRun)
+  };
 }
 
 export function deriveLiveStatus(
@@ -336,6 +329,3 @@ function isMessageSourceContext(value: unknown): value is MessageSourceContext {
   return candidate.channel === "web" || candidate.channel === "telegram";
 }
 
-function isEnoentError(error: unknown): boolean {
-  return typeof error === "object" && error !== null && "code" in error && (error as { code?: string }).code === "ENOENT";
-}

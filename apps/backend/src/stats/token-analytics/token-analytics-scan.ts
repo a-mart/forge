@@ -37,7 +37,7 @@ import type { TokenAnalyticsAttributionKind, TokenCostTotals } from "@forge/prot
 
 export async function scanTokenAnalyticsProfiles(swarmManager: SwarmManager): Promise<TokenAnalyticsScanResult> {
   const dataDir = swarmManager.getConfig().paths.dataDir;
-  const profiles = swarmManager.listProfiles();
+  const profiles = swarmManager.listUserProfiles();
   const events: TokenAnalyticsEventRecord[] = [];
   const workers: TokenAnalyticsWorkerRecord[] = [];
   const specialistMetadataByProfile = new Map<string, Map<string, SpecialistDisplayMeta>>();

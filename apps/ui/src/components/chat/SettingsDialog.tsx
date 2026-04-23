@@ -11,6 +11,7 @@ import { SettingsSpecialists } from '@/components/settings/SettingsSpecialists'
 import { SettingsSlashCommands } from '@/components/settings/SettingsSlashCommands'
 import { SettingsExtensions } from '@/components/settings/SettingsExtensions'
 import { SettingsAbout } from '@/components/settings/SettingsAbout'
+import { SettingsCollaboration } from '@/components/settings/SettingsCollaboration'
 import type { AgentDescriptor, ManagerProfile, PlaywrightDiscoverySettings, PlaywrightDiscoverySnapshot, TelegramStatusEvent } from '@forge/protocol'
 
 interface SettingsPanelProps {
@@ -80,6 +81,7 @@ export function SettingsPanel({
         />
       )}
       {activeTab === 'extensions' && <SettingsExtensions wsUrl={wsUrl} />}
+      {activeTab === 'collaboration' && <SettingsCollaboration wsUrl={wsUrl} />}
       {activeTab === 'about' && <SettingsAbout wsUrl={wsUrl} />}
     </SettingsLayout>
   )

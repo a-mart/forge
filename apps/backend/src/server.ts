@@ -1,5 +1,6 @@
 import { formatIntegrationContext } from "./integrations/integration-context.js";
 import { IntegrationRegistryService } from "./integrations/registry.js";
+
 import { PlaywrightDiscoveryService } from "./playwright/playwright-discovery-service.js";
 import { PlaywrightLivePreviewService } from "./playwright/playwright-live-preview-service.js";
 import { PlaywrightSettingsService } from "./playwright/playwright-settings-service.js";
@@ -83,6 +84,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
   });
 
   await seedBuiltins(config.paths.dataDir);
+
 
   swarmManager = new SwarmManager(config, {
     versioningService,
@@ -198,7 +200,11 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
       getSessionAgentIds: (profileId) =>
         swarmManager
           .listAgents()
-          .filter((descriptor) => descriptor.role === "manager" && (descriptor.profileId ?? descriptor.agentId) === profileId)
+          .filter(
+            (descriptor) =>
+              descriptor.role === "manager" &&
+              (descriptor.profileId ?? descriptor.agentId) === profileId,
+          )
           .map((descriptor) => descriptor.agentId),
     });
 
@@ -337,6 +343,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Sta
       unreadTracker,
       statsService,
       telemetryService,
+
     });
 
     server = new BackendServer({

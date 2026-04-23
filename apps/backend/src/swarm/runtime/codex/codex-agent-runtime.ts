@@ -1277,7 +1277,6 @@ function isToolLikeThreadItem(type: string): boolean {
     type === "commandExecution" ||
     type === "fileChange" ||
     type === "mcpToolCall" ||
-    type === "collabAgentToolCall" ||
     type === "webSearch" ||
     type === "imageView"
   );
@@ -1295,11 +1294,6 @@ function toolNameForThreadItem(item: { type: string; [key: string]: unknown }): 
       const server = typeof item.server === "string" ? item.server : "unknown";
       const tool = typeof item.tool === "string" ? item.tool : "unknown";
       return `mcp:${server}/${tool}`;
-    }
-
-    case "collabAgentToolCall": {
-      const tool = typeof item.tool === "string" ? item.tool : "unknown";
-      return `collab:${tool}`;
     }
 
     case "webSearch":
@@ -1321,8 +1315,7 @@ function threadItemRepresentsError(item: { type: string; [key: string]: unknown 
       return status === "failed" || status === "declined";
     }
 
-    case "mcpToolCall":
-    case "collabAgentToolCall": {
+    case "mcpToolCall": {
       const status = typeof item.status === "string" ? item.status : "";
       return status === "failed";
     }

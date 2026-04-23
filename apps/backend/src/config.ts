@@ -55,7 +55,6 @@ export function createConfig(): SwarmConfig {
   const sharedAuthFile = getSharedAuthFilePath(dataDir);
   const sharedSecretsFile = getSharedSecretsFilePath(dataDir);
   const sharedIntegrationsDir = getSharedIntegrationsDir(dataDir);
-
   // Legacy flat-layout paths retained for backward compatibility.
   const sessionsDir = getLegacySessionsDirPath(dataDir);
   const authDir = getLegacyAuthDirPath(dataDir);
@@ -217,6 +216,7 @@ function parseBooleanEnv(value: string | undefined): boolean {
   const normalized = value?.trim().toLowerCase();
   return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
 }
+
 
 function parseOptionalBooleanEnv(
   value: string | undefined,

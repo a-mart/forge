@@ -1,4 +1,9 @@
-import type { ChoiceAnswer, ChoiceQuestion, ClientCommand, ServerEvent } from "@forge/protocol";
+import type {
+  ChoiceAnswer,
+  ChoiceQuestion,
+  ClientCommand,
+  ServerEvent,
+} from "@forge/protocol";
 import type { WebSocket } from "ws";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
 
@@ -46,7 +51,7 @@ export async function handleConversationCommand(context: ConversationCommandRout
     allowNonManagerSubscriptions,
     send,
     logDebug,
-    resolveConfiguredManagerId
+    resolveConfiguredManagerId,
   } = context;
 
   if (command.type === "choice_response" || command.type === "choice_cancel") {

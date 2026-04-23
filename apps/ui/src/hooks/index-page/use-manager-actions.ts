@@ -264,7 +264,7 @@ export function useManagerActions({
         model: newManagerModel,
       })
 
-      navigateToRoute({ view: 'chat', agentId: manager.agentId })
+      navigateToRoute({ view: 'chat', agentId: manager.agentId, surface: 'builder' })
       client.subscribeToAgent(manager.agentId)
 
       setIsCreateManagerDialogOpen(false)
@@ -321,7 +321,7 @@ export function useManagerActions({
         )
         const fallbackAgentId = chooseFallbackAgentId(remainingAgents)
         if (fallbackAgentId) {
-          navigateToRoute({ view: 'chat', agentId: fallbackAgentId })
+          navigateToRoute({ view: 'chat', agentId: fallbackAgentId, surface: 'builder' })
           client.subscribeToAgent(fallbackAgentId)
         }
       }

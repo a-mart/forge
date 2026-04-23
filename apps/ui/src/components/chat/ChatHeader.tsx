@@ -19,7 +19,7 @@ import { cn } from '@/lib/utils'
 import { formatElapsed } from '@/lib/format-utils'
 import type { AgentStatus, AgentSessionPurpose } from '@forge/protocol'
 
-export type ChannelView = 'web' | 'all'
+export type MessageSourceView = 'web' | 'all'
 
 interface ChatHeaderProps {
   connected: boolean
@@ -35,8 +35,8 @@ interface ChatHeaderProps {
   activeAgentRole?: 'manager' | 'worker' | null
   activeAgentCreatedAt?: string | null
   activeAgentUpdatedAt?: string | null
-  channelView: ChannelView
-  onChannelViewChange: (view: ChannelView) => void
+  channelView: MessageSourceView
+  onChannelViewChange: (view: MessageSourceView) => void
   contextWindowUsage: { usedTokens: number; contextWindow: number } | null
   compactionCount?: number
   showCompact: boolean

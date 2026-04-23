@@ -1,4 +1,4 @@
-import { chooseFallbackAgentId } from '../agent-hierarchy'
+import { chooseFallbackAgentId, filterBuilderVisibleAgents } from '../agent-hierarchy'
 import type { ManagerWsState } from '../ws-state'
 import { isManagerAgent, isWorkerAgent } from './runtime-types'
 import {
@@ -49,7 +49,8 @@ export function reduceAgentsSnapshot(input: {
   agents: AgentDescriptor[]
 }): AgentsSnapshotReduction {
   const { state, desiredAgentId, explicitAgentSelectionAgentId, agents } = input
-  const incomingAgentIds = new Set(agents.map((agent) => agent.agentId))
+  const visibleAgents = filterBuilderVisibleAgents(agents)
+  const incomingAgentIds = new Set(visibleAgents.map((agent) => agent.agentId))
   const preservedWorkers = state.agents.filter(
     (agent) =>
       isWorkerAgent(agent) &&
@@ -57,12 +58,12 @@ export function reduceAgentsSnapshot(input: {
       state.loadedSessionIds.has(agent.managerId),
   )
 
-  const mergedAgents = [...agents, ...preservedWorkers]
+  const mergedAgents = [...visibleAgents, ...preservedWorkers]
   const mergedAgentIds = new Set(mergedAgents.map((agent) => agent.agentId))
   const nextLoadedSessionIds = new Set(state.loadedSessionIds)
   const queueSessionWorkersRefetchIds: string[] = []
 
-  for (const manager of agents) {
+  for (const manager of visibleAgents) {
     if (!isManagerAgent(manager) || manager.workerCount === undefined) {
       continue
     }
@@ -108,7 +109,7 @@ export function reduceAgentsSnapshot(input: {
   const currentTargetIsIntentionalWorkerSubscription = Boolean(
     currentTarget &&
       currentTarget === state.subscribedAgentId &&
-      !agents.some((agent) => agent.agentId === currentTarget && isManagerAgent(agent)),
+      !visibleAgents.some((agent) => agent.agentId === currentTarget && isManagerAgent(agent)),
   )
   const fallbackTarget = currentTargetStillExists
     ? currentTarget

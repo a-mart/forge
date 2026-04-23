@@ -31,6 +31,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
     allowWhileLoading = false,
     wsUrl,
     agentId,
+    draftKey,
     slashCommands,
     projectAgents,
   },
@@ -46,7 +47,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
     setAttachedFilesWithDraft,
     inputRef,
     attachedFilesRef,
-  } = useDraft({ agentId })
+  } = useDraft({ draftKey: draftKey ?? agentId })
 
   // --- Voice input ---
   const appendTranscription = useCallback(
@@ -91,6 +92,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
     handleSubmit,
     syncOverlayScroll,
     canSubmit,
+    restoreLastSubmission,
   } = useComposer({
     input,
     attachedFiles,
@@ -141,8 +143,9 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
       },
       addFiles: attachments.addFiles,
       addTerminalContext: attachments.addTerminalContext,
+      restoreLastSubmission,
     }),
-    [attachments.addFiles, attachments.addTerminalContext, setInputWithDraft, textareaRef],
+    [attachments.addFiles, attachments.addTerminalContext, restoreLastSubmission, setInputWithDraft, textareaRef],
   )
 
   // --- Mention cursor snap ---

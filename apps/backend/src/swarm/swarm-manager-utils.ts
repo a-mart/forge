@@ -97,6 +97,11 @@ function cloneProjectAgentInfo(descriptor: AgentDescriptor): AgentDescriptor["pr
   return cloneProjectAgentInfoValue(descriptor.projectAgent) ?? undefined;
 }
 
+export function assertBuilderSession(
+  _descriptor: Pick<AgentDescriptor, "agentId"> | null | undefined,
+  _action = "perform this Builder operation"
+): void {}
+
 export function cloneDescriptor(descriptor: AgentDescriptor): AgentDescriptor {
   return {
     ...descriptor,
@@ -1169,15 +1174,18 @@ export function extractRuntimeMessageText(message: string | RuntimeUserMessage):
   return message.text;
 }
 
-export function formatInboundUserMessageForManager(text: string, sourceContext: MessageSourceContext): string {
-  const sourceMetadataLine = `[sourceContext] ${JSON.stringify(sourceContext)}`;
+export function formatInboundUserMessageForManager(
+  text: string,
+  sourceContext: MessageSourceContext,
+): string {
+  const metadataBlock = `[sourceContext] ${JSON.stringify(sourceContext)}`;
   const trimmed = text.trim();
 
   if (trimmed.length === 0) {
-    return sourceMetadataLine;
+    return metadataBlock;
   }
 
-  return `${sourceMetadataLine}\n\n${trimmed}`;
+  return `${metadataBlock}\n\n${trimmed}`;
 }
 
 export function parseCompactSlashCommand(text: string): { customInstructions?: string } | undefined {

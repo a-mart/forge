@@ -11,6 +11,7 @@ import type {
 } from '@forge/protocol'
 import type { DirectoryValidationResult } from '@/lib/ws-client'
 import type { ProfileTreeRow, SessionRow } from '@/lib/agent-hierarchy'
+import type { ActiveSurface } from '@/hooks/index-page/use-route-state'
 
 export type AgentLiveStatus = {
   status: AgentStatus
@@ -34,6 +35,12 @@ export interface AgentSidebarProps {
   profiles: ManagerProfile[]
   statuses: StatusMap
   unreadCounts: Record<string, number>
+  collaborationModeSwitch?: {
+    activeSurface: ActiveSurface
+    onSelectSurface: (surface: ActiveSurface) => void
+  }
+  terminalScopeId?: string | null
+  terminalCount?: number
   selectedAgentId: string | null
   isSettingsActive: boolean
   isPlaywrightActive?: boolean
@@ -77,45 +84,43 @@ export interface AgentSidebarProps {
 
 export interface WorkerRowProps {
   agent: AgentDescriptor
-  statusValue: AgentStatus
+  liveStatus: AgentLiveStatus
   isSelected: boolean
-  onSelect: (agentId: string) => void
-  onDelete: (agentId: string) => void
-  onStop?: (agentId: string) => void
-  onResume?: (agentId: string) => void
+  onSelect: () => void
+  onDelete: () => void
+  onStop?: () => void
+  onResume?: () => void
   highlightQuery?: string
 }
 
 export interface SessionRowItemProps {
   session: SessionRow
-  managerStreaming: boolean
-  streamingWorkerCount: number
-  workerStatuses?: Record<string, AgentStatus>
+  statuses: StatusMap
   unreadCount: number
   selectedAgentId: string | null
   isSettingsActive: boolean
   isCollapsed: boolean
   isWorkerListExpanded: boolean
-  onToggleCollapse: (sessionId: string) => void
-  onToggleWorkerListExpanded: (sessionId: string) => void
+  onToggleCollapse: () => void
+  onToggleWorkerListExpanded: () => void
   onSelect: (agentId: string) => void
   onDeleteAgent: (agentId: string) => void
-  onStopSession?: (agentId: string) => void
-  onResumeSession?: (agentId: string) => void
-  onDeleteSession?: (agentId: string) => void
-  onRenameSession?: (agentId: string) => void
-  onForkSession?: (agentId: string) => void
-  onMarkUnread?: (agentId: string) => void
+  onStop?: () => void
+  onResume?: () => void
+  onDelete?: () => void
+  onRename?: () => void
+  onFork?: () => void
+  onMarkUnread?: () => void
   onStopWorker?: (agentId: string) => void
   onResumeWorker?: (agentId: string) => void
   highlightQuery?: string
   onPinSession?: (agentId: string, pinned: boolean) => void
-  onPromoteToProjectAgent?: (agentId: string) => void
-  onOpenProjectAgentSettings?: (agentId: string) => void
-  onDemoteProjectAgent?: (agentId: string) => void | Promise<void>
-  canViewCreationHistory?: boolean
+  onPromoteToProjectAgent?: () => void
+  onOpenProjectAgentSettings?: () => void
+  onDemoteProjectAgent?: () => void
+  onViewCreationHistory?: () => void
   isMutedSession?: boolean
-  onToggleMute?: (agentId: string) => void
+  onToggleMute?: () => void
   getCreatorAttribution?: (creatorAgentId: string) => string | null
 }
 
@@ -129,10 +134,10 @@ export interface ProfileGroupProps {
   collapsedSessionIds: Set<string>
   visibleSessionLimit: number
   expandedWorkerListSessionIds: Set<string>
-  onToggleProfileCollapsed: (profileId: string) => void
+  onToggleProfileCollapsed: () => void
   onToggleSessionCollapsed: (sessionId: string) => void
-  onShowMoreSessions: (profileId: string) => void
-  onShowLessSessions: (profileId: string) => void
+  onShowMoreSessions: () => void
+  onShowLessSessions: () => void
   onToggleWorkerListExpanded: (sessionId: string) => void
   onSelect: (agentId: string) => void
   onDeleteAgent: (agentId: string) => void
@@ -174,17 +179,17 @@ export interface CortexSectionProps {
   collapsedSessionIds: Set<string>
   visibleSessionLimit: number
   expandedWorkerListSessionIds: Set<string>
-  onToggleCollapsed: (profileId: string) => void
+  onToggleCollapsed: () => void
   onToggleSessionCollapsed: (sessionId: string) => void
-  onShowMoreSessions: (profileId: string) => void
-  onShowLessSessions: (profileId: string) => void
+  onShowMoreSessions: () => void
+  onShowLessSessions: () => void
   onToggleWorkerListExpanded: (sessionId: string) => void
   onSelect: (agentId: string) => void
   onDeleteAgent: (agentId: string) => void
   onOpenSettings: () => void
   onOpenCortexReview?: (agentId: string) => void
   outstandingReviewCount?: number | null
-  onCreateSession?: (profileId: string) => void
+  onCreateSession?: (profileId: string, name?: string) => void
   onStopSession?: (agentId: string) => void
   onResumeSession?: (agentId: string) => void
   onDeleteSession?: (agentId: string) => void

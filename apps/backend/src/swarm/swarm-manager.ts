@@ -4,6 +4,7 @@ import { appendFile, copyFile, mkdir, open, readdir, readFile, writeFile } from 
 import { dirname, join } from "node:path";
 import { getModel, type Api, type Model } from "@mariozechner/pi-ai";
 import { AuthStorage, type AuthCredential } from "@mariozechner/pi-coding-agent";
+import { isSystemProfile } from "@forge/protocol";
 import type {
   AgentRuntimeExtensionSnapshot,
   ChoiceRequestEvent,
@@ -25,6 +26,7 @@ import type {
   SkillInventoryEntry
 } from "@forge/protocol";
 import { persistConversationAttachments } from "../ws/attachment-parser.js";
+
 import type { VersioningMutation, VersioningMutationSink } from "../versioning/versioning-types.js";
 import {
   FileBackedPromptRegistry,
@@ -212,6 +214,7 @@ import type {
   SwarmReasoningLevel
 } from "./types.js";
 import {
+  assertBuilderSession,
   buildModelCapacityBlockKey,
   clampModelCapacityBlockDurationMs,
   cloneDescriptor,
@@ -233,8 +236,8 @@ import {
   normalizeOptionalAttachmentPath,
   normalizeOptionalModelId,
   nowIso,
-  parseCompactSlashCommand,
   normalizeThinkingLevelForProvider,
+  parseCompactSlashCommand,
   parseSessionNumberFromAgentId,
   previewForLog,
   readFileHead,
@@ -252,6 +255,31 @@ export {
   buildSessionMemoryRuntimeView,
   normalizeCortexUserVisiblePaths
 } from "./swarm-manager-utils.js";
+
+export interface AppendConversationUserMessageOptions {
+  targetAgentId?: string;
+  attachments?: ConversationAttachment[];
+  sourceContext?: MessageSourceContext;
+}
+
+export interface AppendConversationUserMessageResult {
+  target: AgentDescriptor;
+  text: string;
+  sourceContext: MessageSourceContext;
+  receivedAt: string;
+  event: ConversationMessageEvent;
+  persistedAttachments: ConversationAttachment[];
+  runtimeAttachments: ConversationAttachment[];
+}
+
+export interface DispatchRuntimeUserMessageOptions {
+  targetAgentId: string;
+  text: string;
+  sourceContext: MessageSourceContext;
+  runtimeAttachments?: ConversationAttachment[];
+  persistedAttachmentCount?: number;
+  delivery?: RequestedDeliveryMode;
+}
 
 interface ResolvedSpecialistDefinitionLike {
   specialistId: string;
@@ -1190,7 +1218,15 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       skillMetadataService: this.skillMetadataService,
       skillFileService: this.skillFileService,
       secretsEnvService: this.secretsEnvService,
-      getSessionsForProfile: (profileId) => this.getSessionsForProfile(profileId) as Array<AgentDescriptor & { role: "manager"; profileId: string }>,
+      getSessionsForProfile: (profileId) => this.getBuilderSessionsForProfile(profileId) as Array<AgentDescriptor & { role: "manager"; profileId: string }>,
+      getSessionById: (agentId) => {
+        const descriptor = this.descriptors.get(agentId);
+        if (!descriptor || descriptor.role !== "manager" || !descriptor.profileId) {
+          return undefined;
+        }
+
+        return descriptor as AgentDescriptor & { role: "manager"; profileId: string };
+      },
       resolveAndValidateCwd: (cwd) => this.resolveAndValidateCwd(cwd),
       assertCanChangeManagerCwd: (profileId, sessions) => this.assertCanChangeManagerCwd(profileId, sessions),
       applyManagerRuntimeRecyclePolicy: (agentId, reason) => this.applyManagerRuntimeRecyclePolicy(agentId, reason),
@@ -1227,7 +1263,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       refreshSessionMetaStats: (descriptor) => this.refreshSessionMetaStats(descriptor),
       refreshSessionMetaStatsBySessionId: (sessionAgentId) =>
         this.refreshSessionMetaStatsBySessionId(sessionAgentId),
-      getSessionsForProfile: (profileId) => this.getSessionsForProfile(profileId),
+      getSessionsForProfile: (profileId) => this.getBuilderSessionsForProfile(profileId),
       loadSpecialistRegistryModule: () => this.loadSpecialistRegistryModule(),
       getIntegrationContext: (profileId) => this.integrationContextProvider?.(profileId),
       logDebug: (message, details) => this.logDebug(message, details)
@@ -1484,7 +1520,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     await this.preloadPinnedMessageIndexes();
 
     this.reconcileProfilesOnBoot();
-    if (cortexPruneResult.pruned) {
+    const normalizedSystemProfileTypes = this.normalizeSystemProfileTypes();
+    if (cortexPruneResult.pruned || normalizedSystemProfileTypes) {
       await this.saveStore();
     }
     await this.ensureCortexProfile();
@@ -1615,6 +1652,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   listProfiles(): ManagerProfile[] {
     return this.sortedProfiles().map((profile) => ({ ...profile }));
+  }
+
+  listUserProfiles(): ManagerProfile[] {
+    return this.listProfiles().filter((profile) => !isSystemProfile(profile));
   }
 
   getAgentsSnapshotVersion(): number {
@@ -1784,6 +1825,27 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return createdSession;
   }
 
+  async createSessionWithOverrides(
+    profileId: string,
+    options: { label?: string; name?: string; sessionPurpose?: AgentDescriptor["sessionPurpose"] } = {},
+    overrides: {
+      model?: AgentModelDescriptor;
+      cwd?: string;
+      sessionSystemPrompt?: string;
+    } = {}
+  ): Promise<{ profile: ManagerProfile; sessionAgent: AgentDescriptor }> {
+    const createdSession = await this.sessionService.createSessionWithOverrides(
+      profileId,
+      options,
+      overrides,
+    );
+    await this.forgeExtensionHost.dispatchSessionLifecycle({
+      action: "created",
+      sessionDescriptor: createdSession.sessionAgent
+    });
+    return createdSession;
+  }
+
   async createSessionFromAgent(
     creatorAgentId: string,
     params: {
@@ -1914,15 +1976,19 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   async stopSession(agentId: string): Promise<{ terminatedWorkerIds: string[] }> {
+    this.getRequiredBuilderSessionDescriptor(agentId, "stop Builder sessions");
     return this.lifecycleService.stopSession(agentId);
   }
 
   async resumeSession(agentId: string): Promise<void> {
+    this.getRequiredBuilderSessionDescriptor(agentId, "resume Builder sessions");
     await this.lifecycleService.resumeSession(agentId);
   }
 
   async deleteSession(agentId: string): Promise<{ terminatedWorkerIds: string[] }> {
-    const deletedSessionDescriptor = cloneDescriptor(this.getRequiredSessionDescriptor(agentId));
+    const deletedSessionDescriptor = cloneDescriptor(
+      this.getRequiredBuilderSessionDescriptor(agentId, "delete Builder sessions")
+    );
     const result = await this.sessionService.deleteSession(agentId);
     await this.forgeExtensionHost.dispatchSessionLifecycle({
       action: "deleted",
@@ -1987,7 +2053,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   async clearAllPins(agentId: string): Promise<void> {
-    const descriptor = this.getRequiredSessionDescriptor(agentId);
+    const descriptor = this.getRequiredBuilderSessionDescriptor(agentId, "clear Builder pins");
     const sessionDir = this.getSessionDirForDescriptor(descriptor);
     const previouslyPinnedMessageIds = await clearAllSessionPins(sessionDir);
 
@@ -2015,11 +2081,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   async clearSessionConversation(agentId: string): Promise<void> {
+    this.getRequiredBuilderSessionDescriptor(agentId, "clear Builder conversations");
     await this.sessionService.clearSessionConversation(agentId);
   }
 
   async pinSession(agentId: string, pinned: boolean): Promise<{ pinnedAt: string | null }> {
-    const descriptor = this.getRequiredSessionDescriptor(agentId);
+    const descriptor = this.getRequiredBuilderSessionDescriptor(agentId, "pin Builder sessions");
 
     if (pinned) {
       descriptor.pinnedAt = descriptor.pinnedAt ?? this.now();
@@ -2047,11 +2114,16 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         }
       | null
   ): Promise<{ profileId: string; projectAgent: NonNullable<AgentDescriptor["projectAgent"]> | null }> {
+    const descriptor = this.getRequiredBuilderSessionDescriptor(agentId, "promote Builder sessions to project agents");
+    this.assertSessionSupportsProjectAgent(descriptor);
     return this.projectAgentService.setSessionProjectAgent(agentId, projectAgent);
   }
 
   async requestProjectAgentRecommendations(agentId: string): Promise<ProjectAgentRecommendations> {
-    const descriptor = this.getRequiredSessionDescriptor(agentId);
+    const descriptor = this.getRequiredBuilderSessionDescriptor(
+      agentId,
+      "request project-agent recommendations for Builder sessions"
+    );
     this.assertSessionSupportsProjectAgent(descriptor);
 
     const [conversationHistory, currentSystemPrompt, analysisModel] = await Promise.all([
@@ -2074,6 +2146,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   async renameSession(agentId: string, label: string): Promise<void> {
+    this.getRequiredBuilderSessionDescriptor(agentId, "rename Builder sessions");
     await this.sessionService.renameSession(agentId, label);
     await this.forgeExtensionHost.dispatchSessionLifecycle({
       action: "renamed",
@@ -2099,6 +2172,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   async mergeSessionMemory(agentId: string): Promise<SessionMemoryMergeResult> {
+    this.getRequiredBuilderSessionDescriptor(agentId, "merge Builder session memory");
     return this.memoryMergeService.mergeSessionMemory(agentId);
   }
 
@@ -2106,7 +2180,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     sourceAgentId: string,
     options?: { label?: string; fromMessageId?: string }
   ): Promise<{ profile: ManagerProfile; sessionAgent: AgentDescriptor }> {
-    const sourceDescriptor = cloneDescriptor(this.getRequiredSessionDescriptor(sourceAgentId));
+    const sourceDescriptor = cloneDescriptor(
+      this.getRequiredBuilderSessionDescriptor(sourceAgentId, "fork Builder sessions")
+    );
     const forkedSession = await this.sessionService.forkSession(sourceAgentId, options);
     await this.forgeExtensionHost.dispatchSessionLifecycle({
       action: "forked",
@@ -2282,22 +2358,27 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     systemPrompt: string | null;
     references: string[];
   }> {
+    this.getRequiredBuilderSessionDescriptor(agentId, "inspect Builder project-agent settings");
     return this.projectAgentService.getProjectAgentConfig(agentId);
   }
 
   async listProjectAgentReferences(agentId: string): Promise<string[]> {
+    this.getRequiredBuilderSessionDescriptor(agentId, "list Builder project-agent references");
     return this.projectAgentService.listProjectAgentReferences(agentId);
   }
 
   async getProjectAgentReference(agentId: string, fileName: string): Promise<string> {
+    this.getRequiredBuilderSessionDescriptor(agentId, "read Builder project-agent references");
     return this.projectAgentService.getProjectAgentReference(agentId, fileName);
   }
 
   async setProjectAgentReference(agentId: string, fileName: string, content: string): Promise<void> {
+    this.getRequiredBuilderSessionDescriptor(agentId, "edit Builder project-agent references");
     await this.projectAgentService.setProjectAgentReference(agentId, fileName, content);
   }
 
   async deleteProjectAgentReference(agentId: string, fileName: string): Promise<void> {
+    this.getRequiredBuilderSessionDescriptor(agentId, "delete Builder project-agent references");
     await this.projectAgentService.deleteProjectAgentReference(agentId, fileName);
   }
 
@@ -2335,9 +2416,20 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return descriptor;
   }
 
+  private getRequiredBuilderSessionDescriptor(
+    agentId: string,
+    action: string
+  ): AgentDescriptor & { role: "manager"; profileId: string } {
+    const descriptor = this.getRequiredSessionDescriptor(agentId);
+    assertBuilderSession(descriptor, action);
+    return descriptor;
+  }
+
   private assertSessionSupportsProjectAgent(
     descriptor: AgentDescriptor & { role: "manager"; profileId: string }
   ): void {
+    assertBuilderSession(descriptor, "promote Builder sessions to project agents");
+
     if (descriptor.agentId === CORTEX_PROFILE_ID && descriptor.profileId === CORTEX_PROFILE_ID) {
       throw new Error("Cortex root cannot be promoted to a project agent");
     }
@@ -2399,6 +2491,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     );
   }
 
+  private getBuilderSessionsForProfile(profileId: string): AgentDescriptor[] {
+    return this.getSessionsForProfile(profileId);
+  }
+
   private getWorkersForManager(managerId: string): AgentDescriptor[] {
     return Array.from(this.descriptors.values()).filter(
       (descriptor) => descriptor.role === "worker" && descriptor.managerId === managerId
@@ -2439,7 +2535,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   private generateSessionAgentIdentity(profileId: string): { agentId: string; sessionNumber: number } {
-    const existingSessions = this.getSessionsForProfile(profileId);
+    const existingSessions = this.getBuilderSessionsForProfile(profileId);
     let highestSessionNumber = existingSessions.some((descriptor) => descriptor.agentId === profileId)
       ? ROOT_SESSION_NUMBER
       : 0;
@@ -3183,6 +3279,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       throw new Error(`Compaction is only supported for manager agents: ${agentId}`);
     }
 
+    assertBuilderSession(descriptor, "compact Builder sessions");
+
     const managerDescriptor = descriptor as AgentDescriptor & { role: "manager" };
     const runtime = await this.getOrCreateRuntimeForDescriptor(managerDescriptor);
 
@@ -3282,6 +3380,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       throw new Error(`Smart compaction is only supported for manager agents: ${agentId}`);
     }
 
+    assertBuilderSession(descriptor, "smart-compact Builder sessions");
+
     const managerDescriptor = descriptor as AgentDescriptor & { role: "manager" };
     const runtime = await this.getOrCreateRuntimeForDescriptor(managerDescriptor);
 
@@ -3378,6 +3478,35 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
   }
 
+  async appendConversationUserMessage(
+    text: string,
+    options?: AppendConversationUserMessageOptions
+  ): Promise<AppendConversationUserMessageResult> {
+    const trimmed = text.trim();
+    const attachments = normalizeConversationAttachments(options?.attachments);
+    if (!trimmed && attachments.length === 0) {
+      throw new Error("Cannot append an empty user message.");
+    }
+
+    const sourceContext = normalizeMessageSourceContext(options?.sourceContext ?? { channel: "web" });
+    const target = this.resolveUserMessageTarget(options?.targetAgentId);
+    return this.appendConversationUserMessageInternal(target, trimmed, attachments, sourceContext);
+  }
+
+  async dispatchRuntimeUserMessage(options: DispatchRuntimeUserMessageOptions): Promise<void> {
+    const target = this.resolveUserMessageTarget(options.targetAgentId);
+    const sourceContext = normalizeMessageSourceContext(options.sourceContext);
+    const runtimeAttachments = normalizeConversationAttachments(options.runtimeAttachments);
+    await this.dispatchRuntimeUserMessageInternal(
+      target,
+      options.text.trim(),
+      sourceContext,
+      runtimeAttachments,
+      Math.max(0, Math.trunc(options.persistedAttachmentCount ?? runtimeAttachments.length)),
+      options.delivery,
+    );
+  }
+
   async handleUserMessage(
     text: string,
     options?: {
@@ -3392,18 +3521,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     if (!trimmed && attachments.length === 0) return;
 
     const sourceContext = normalizeMessageSourceContext(options?.sourceContext ?? { channel: "web" });
-
-    const targetAgentId = options?.targetAgentId ?? this.resolvePreferredManagerId();
-    if (!targetAgentId) {
-      throw new Error("No manager is available. Create a manager first.");
-    }
-    const target = this.descriptors.get(targetAgentId);
-    if (!target) {
-      throw new Error(`Unknown target agent: ${targetAgentId}`);
-    }
-    if (isNonRunningAgentStatus(target.status)) {
-      throw new Error(`Target agent is not running: ${targetAgentId}`);
-    }
+    const target = this.resolveUserMessageTarget(options?.targetAgentId);
 
     if (target.role === "manager" && attachments.length === 0) {
       const routedReviewRun = await this.maybeStartCortexReviewRunFromIncomingMessage(trimmed, target, sourceContext);
@@ -3412,18 +3530,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       }
     }
 
-    const persistedAttachments = await this.persistConversationAttachmentsIfNeeded(attachments);
-    const attachmentMetadata = toConversationAttachmentMetadata(
-      persistedAttachments,
-      this.config.paths.uploadsDir
-    );
-    const runtimeAttachments = toRuntimeDispatchAttachments(attachments, persistedAttachments);
-
-    const receivedAt = this.now();
     const compactCommand =
-      target.role === "manager" && persistedAttachments.length === 0 ? parseCompactSlashCommand(trimmed) : undefined;
+      target.role === "manager" && attachments.length === 0
+        ? parseCompactSlashCommand(trimmed)
+        : undefined;
     if (compactCommand) {
-      this.markSessionActivity(targetAgentId, receivedAt);
+      this.markSessionActivity(target.agentId, this.now());
       this.logDebug("manager:user_message_compact_command", {
         targetAgentId: target.agentId,
         sourceContext,
@@ -3437,47 +3549,115 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return;
     }
 
+    const appendedMessage = await this.appendConversationUserMessageInternal(
+      target,
+      trimmed,
+      attachments,
+      sourceContext
+    );
+
+    await this.dispatchRuntimeUserMessageInternal(
+      target,
+      trimmed,
+      sourceContext,
+      appendedMessage.runtimeAttachments,
+      appendedMessage.persistedAttachments.length,
+      options?.delivery
+    );
+  }
+
+  private resolveUserMessageTarget(targetAgentId?: string): AgentDescriptor {
+    const resolvedTargetAgentId = targetAgentId ?? this.resolvePreferredManagerId();
+    if (!resolvedTargetAgentId) {
+      throw new Error("No manager is available. Create a manager first.");
+    }
+
+    const target = this.descriptors.get(resolvedTargetAgentId);
+    if (!target) {
+      throw new Error(`Unknown target agent: ${resolvedTargetAgentId}`);
+    }
+
+    if (isNonRunningAgentStatus(target.status)) {
+      throw new Error(`Target agent is not running: ${resolvedTargetAgentId}`);
+    }
+
+    return target;
+  }
+
+  private async appendConversationUserMessageInternal(
+    target: AgentDescriptor,
+    text: string,
+    attachments: ConversationAttachment[],
+    sourceContext: MessageSourceContext,
+  ): Promise<AppendConversationUserMessageResult> {
+    const persistedAttachments = await this.persistConversationAttachmentsIfNeeded(attachments);
+    const attachmentMetadata = toConversationAttachmentMetadata(
+      persistedAttachments,
+      this.config.paths.uploadsDir
+    );
+    const runtimeAttachments = toRuntimeDispatchAttachments(attachments, persistedAttachments);
+    const receivedAt = this.now();
     const managerContextId = target.role === "manager" ? target.agentId : target.managerId;
 
     this.logDebug("manager:user_message_received", {
-      targetAgentId,
+      targetAgentId: target.agentId,
       managerContextId,
       sourceContext,
-      textPreview: previewForLog(trimmed),
-      attachmentCount: persistedAttachments.length
+      textPreview: previewForLog(text),
+      attachmentCount: persistedAttachments.length,
     });
 
     const userEvent: ConversationMessageEvent = {
       type: "conversation_message",
-      agentId: targetAgentId,
+      agentId: target.agentId,
       role: "user",
-      text: trimmed,
+      text,
       attachments: attachmentMetadata.length > 0 ? attachmentMetadata : undefined,
       timestamp: receivedAt,
       source: "user_input",
-      sourceContext
+      sourceContext,
     };
     this.emitConversationMessage(userEvent);
-    this.markSessionActivity(targetAgentId, receivedAt);
+    this.markSessionActivity(target.agentId, receivedAt);
 
+    return {
+      target,
+      text,
+      sourceContext,
+      receivedAt,
+      event: userEvent,
+      persistedAttachments,
+      runtimeAttachments
+    };
+  }
+
+  private async dispatchRuntimeUserMessageInternal(
+    target: AgentDescriptor,
+    text: string,
+    sourceContext: MessageSourceContext,
+    runtimeAttachments: ConversationAttachment[],
+    persistedAttachmentCount: number,
+    delivery?: RequestedDeliveryMode,
+  ): Promise<void> {
+    const managerContextId = target.role === "manager" ? target.agentId : target.managerId;
 
     if (target.role !== "manager") {
-      const requestedDelivery = options?.delivery ?? "auto";
+      const requestedDelivery = delivery ?? "auto";
       let receipt: SendMessageReceipt;
       try {
-        receipt = await this.sendMessage(managerContextId, targetAgentId, trimmed, requestedDelivery, {
+        receipt = await this.sendMessage(managerContextId, target.agentId, text, requestedDelivery, {
           origin: "user",
           attachments: runtimeAttachments
         });
       } catch (error) {
         this.logDebug("manager:user_message_dispatch_error", {
           managerContextId,
-          targetAgentId,
+          targetAgentId: target.agentId,
           targetRole: target.role,
           requestedDelivery,
           sourceContext,
-          textPreview: previewForLog(trimmed),
-          attachmentCount: persistedAttachments.length,
+          textPreview: previewForLog(text),
+          attachmentCount: persistedAttachmentCount,
           message: error instanceof Error ? error.message : String(error),
           stack: error instanceof Error ? error.stack : undefined
         });
@@ -3486,12 +3666,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
       this.logDebug("manager:user_message_dispatch_complete", {
         managerContextId,
-        targetAgentId,
+        targetAgentId: target.agentId,
         targetRole: target.role,
         requestedDelivery,
         acceptedMode: receipt.acceptedMode,
         sourceContext,
-        attachmentCount: persistedAttachments.length
+        attachmentCount: persistedAttachmentCount
       });
 
       this.emitAgentMessage({
@@ -3499,12 +3679,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         agentId: managerContextId,
         timestamp: this.now(),
         source: "user_to_agent",
-        toAgentId: targetAgentId,
-        text: trimmed,
+        toAgentId: target.agentId,
+        text,
         sourceContext,
         requestedDelivery,
         acceptedMode: receipt.acceptedMode,
-        attachmentCount: persistedAttachments.length > 0 ? persistedAttachments.length : undefined
+        attachmentCount: persistedAttachmentCount > 0 ? persistedAttachmentCount : undefined
       });
       return;
     }
@@ -3527,17 +3707,16 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         targetRole: target.role,
         requestedDelivery: "steer",
         sourceContext,
-        textPreview: previewForLog(trimmed),
-        attachmentCount: persistedAttachments.length,
+        textPreview: previewForLog(text),
+        attachmentCount: persistedAttachmentCount,
         message: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined
       });
       throw error;
     }
 
-    const managerVisibleMessage = formatInboundUserMessageForManager(trimmed, sourceContext);
+    const managerVisibleMessage = formatInboundUserMessageForManager(text, sourceContext);
 
-    // User messages to managers should always steer in-flight work.
     const runtimeMessage = await this.prepareModelInboundMessage(
       managerContextId,
       {
@@ -3553,8 +3732,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       targetRole: target.role,
       requestedDelivery: "steer",
       sourceContext,
-      textPreview: previewForLog(trimmed),
-      attachmentCount: persistedAttachments.length,
+      textPreview: previewForLog(text),
+      attachmentCount: persistedAttachmentCount,
       runtimeTextPreview: previewForLog(extractRuntimeMessageText(runtimeMessage)),
       runtimeImageCount: typeof runtimeMessage === "string" ? 0 : (runtimeMessage.images?.length ?? 0)
     });
@@ -3568,9 +3747,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         requestedDelivery: "steer",
         acceptedMode: receipt.acceptedMode,
         sourceContext,
-        attachmentCount: persistedAttachments.length
+        attachmentCount: persistedAttachmentCount
       });
-
     } catch (error) {
       this.logDebug("manager:user_message_dispatch_error", {
         managerContextId,
@@ -3578,8 +3756,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         targetRole: target.role,
         requestedDelivery: "steer",
         sourceContext,
-        textPreview: previewForLog(trimmed),
-        attachmentCount: persistedAttachments.length,
+        textPreview: previewForLog(text),
+        attachmentCount: persistedAttachmentCount,
         runtimeTextPreview: previewForLog(extractRuntimeMessageText(runtimeMessage)),
         runtimeImageCount: typeof runtimeMessage === "string" ? 0 : (runtimeMessage.images?.length ?? 0),
         message: error instanceof Error ? error.message : String(error),
@@ -3604,7 +3782,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const parsed = this.parseResetManagerSessionArgs(managerIdOrReason, maybeReason);
     const managerId = parsed.managerId;
     const reason = parsed.reason;
-    const managerDescriptor = this.getRequiredManagerDescriptor(managerId);
+    const managerDescriptor = this.getRequiredBuilderManagerDescriptor(managerId, "reset Builder conversations");
     const profileId = managerDescriptor.profileId ?? managerDescriptor.agentId;
 
     this.logDebug("manager:reset:start", {
@@ -3904,8 +4082,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     const reorderableIds = new Set(
       currentProfiles
-        .filter((p) => p.profileId !== CORTEX_PROFILE_ID)
-        .map((p) => p.profileId)
+        .filter((profile) => profile.profileId !== CORTEX_PROFILE_ID && !isSystemProfile(profile))
+        .map((profile) => profile.profileId)
     );
 
     const incomingIds = new Set(profileIds);
@@ -4092,7 +4270,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         profile.defaultSessionAgentId = rootSessionDescriptor.agentId;
       }
 
-      const profileSessions = this.getSessionsForProfile(profileId);
+      const profileSessions = this.getBuilderSessionsForProfile(profileId);
       if (profileSessions.length === 0) {
         const rootSessionDescriptor = managerDescriptorsById.get(profileId);
         if (!rootSessionDescriptor || rootSessionDescriptor.role !== "manager") {
@@ -4155,6 +4333,20 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     };
   }
 
+  private normalizeSystemProfileTypes(): boolean {
+    let changed = false;
+    const cortexProfile = this.profiles.get(CORTEX_PROFILE_ID);
+    if (cortexProfile && cortexProfile.profileType !== "system") {
+      this.profiles.set(CORTEX_PROFILE_ID, {
+        ...cortexProfile,
+        profileType: "system",
+      });
+      changed = true;
+    }
+
+    return changed;
+  }
+
   private async ensureCortexProfile(): Promise<void> {
     if (!this.config.cortexEnabled) {
       await this.ensureCommonKnowledgeFile();
@@ -4162,6 +4354,13 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     if (this.hasCortexDescriptor()) {
+      const existingProfile = this.profiles.get(CORTEX_PROFILE_ID);
+      if (existingProfile && existingProfile.profileType !== "system") {
+        this.profiles.set(CORTEX_PROFILE_ID, {
+          ...existingProfile,
+          profileType: "system",
+        });
+      }
       await this.ensureCommonKnowledgeFile();
       await this.ensureCortexWorkerPromptsFile();
       await this.ensureCortexOperationalFiles();
@@ -4196,7 +4395,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       displayName: CORTEX_DISPLAY_NAME,
       defaultSessionAgentId: CORTEX_PROFILE_ID,
       createdAt,
-      updatedAt: createdAt
+      updatedAt: createdAt,
+      profileType: "system"
     };
 
     this.descriptors.set(descriptor.agentId, descriptor);
@@ -4582,6 +4782,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       throw new Error(`Unknown manager: ${managerId}`);
     }
 
+    return descriptor;
+  }
+
+  private getRequiredBuilderManagerDescriptor(managerId: string, action: string): AgentDescriptor {
+    const descriptor = this.getRequiredManagerDescriptor(managerId);
+    assertBuilderSession(descriptor, action);
     return descriptor;
   }
 
@@ -5064,7 +5270,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private emitProfilesSnapshot(): void {
     const payload = {
       type: "profiles_snapshot",
-      profiles: this.listProfiles()
+      profiles: this.listUserProfiles()
     } satisfies ServerEvent;
 
     this.profilesSnapshotVersion += 1;

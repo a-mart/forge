@@ -14,6 +14,29 @@ import type {
   SpecialistRosterChangedEvent,
 } from './config-events.js'
 import type {
+  CollaborationBootstrapEvent,
+  CollaborationCategoryCreatedEvent,
+  CollaborationCategoryDeletedEvent,
+  CollaborationCategoryReorderedEvent,
+  CollaborationCategoryUpdatedEvent,
+  CollaborationChannelActivityUpdatedEvent,
+  CollaborationChannelArchivedEvent,
+  CollaborationChannelCreatedEvent,
+  CollaborationChannelHistoryEvent,
+  CollaborationChannelMessageEvent,
+  CollaborationChannelReadyEvent,
+  CollaborationChannelReorderedEvent,
+  CollaborationChannelStatusEvent,
+  CollaborationChannelUpdatedEvent,
+  CollaborationChoiceRequestEvent,
+  CollaborationMessagePinnedEvent,
+  CollaborationReadStateUpdatedEvent,
+  CollaborationSessionActivityEvent,
+  CollaborationSessionActivitySnapshotEvent,
+  CollaborationSessionAgentStatusEvent,
+  CollaborationSessionWorkersSnapshotEvent,
+} from './collaboration.js'
+import type {
   DirectoriesListedEvent,
   DirectoryPickedEvent,
   DirectoryValidatedEvent,
@@ -91,6 +114,27 @@ export * from './transport-events.js'
 
 export type ServerEvent =
   | ReadyEvent
+  | CollaborationBootstrapEvent
+  | CollaborationChannelReadyEvent
+  | CollaborationChannelHistoryEvent
+  | CollaborationChannelMessageEvent
+  | CollaborationChannelStatusEvent
+  | CollaborationSessionWorkersSnapshotEvent
+  | CollaborationSessionActivitySnapshotEvent
+  | CollaborationSessionActivityEvent
+  | CollaborationSessionAgentStatusEvent
+  | CollaborationChannelActivityUpdatedEvent
+  | CollaborationReadStateUpdatedEvent
+  | CollaborationChoiceRequestEvent
+  | CollaborationMessagePinnedEvent
+  | CollaborationChannelCreatedEvent
+  | CollaborationChannelUpdatedEvent
+  | CollaborationChannelArchivedEvent
+  | CollaborationChannelReorderedEvent
+  | CollaborationCategoryCreatedEvent
+  | CollaborationCategoryUpdatedEvent
+  | CollaborationCategoryDeletedEvent
+  | CollaborationCategoryReorderedEvent
   | ConversationResetEvent
   | ConversationHistoryEvent
   | PendingChoicesSnapshotEvent

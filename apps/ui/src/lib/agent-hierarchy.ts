@@ -18,6 +18,22 @@ function isActiveAgent(agent: AgentDescriptor): boolean {
   return ACTIVE_STATUSES.has(agent.status)
 }
 
+export function filterBuilderVisibleAgents(agents: AgentDescriptor[]): AgentDescriptor[] {
+  const collabManagerIds = new Set(
+    agents
+      .filter((agent) => agent.role === 'manager' && agent.sessionSurface === 'collab')
+      .map((agent) => agent.agentId),
+  )
+
+  return agents.filter((agent) => {
+    if (agent.role === 'manager') {
+      return agent.sessionSurface !== 'collab'
+    }
+
+    return !collabManagerIds.has(agent.managerId)
+  })
+}
+
 export function isCortexProfile(row: ProfileTreeRow): boolean {
   // Check if the default session (or any session) has archetypeId === 'cortex'
   const defaultSession = row.sessions.find((s) => s.isDefault)
@@ -26,7 +42,9 @@ export function isCortexProfile(row: ProfileTreeRow): boolean {
 }
 
 export function getPrimaryManagerId(agents: AgentDescriptor[]): string | null {
-  const managers = agents.filter((agent) => agent.role === 'manager' && isActiveAgent(agent))
+  const managers = filterBuilderVisibleAgents(agents).filter(
+    (agent) => agent.role === 'manager' && isActiveAgent(agent),
+  )
   if (managers.length === 0) return null
 
   return [...managers].sort(byCreatedAtThenId)[0]?.agentId ?? null
@@ -41,7 +59,7 @@ export function buildManagerTreeRows(agents: AgentDescriptor[]): {
   managerRows: ManagerTreeRow[]
   orphanWorkers: AgentDescriptor[]
 } {
-  const activeAgents = agents.filter(isActiveAgent)
+  const activeAgents = filterBuilderVisibleAgents(agents).filter(isActiveAgent)
   const managers = activeAgents.filter((agent) => agent.role === 'manager').sort(byCreatedAtThenId)
   const workers = activeAgents.filter((agent) => agent.role === 'worker').sort(byCreatedAtDescThenId)
 
@@ -101,6 +119,8 @@ export function buildProfileTreeRows(
   agents: AgentDescriptor[],
   profiles: ManagerProfile[],
 ): ProfileTreeRow[] {
+  const visibleAgents = filterBuilderVisibleAgents(agents)
+
   // Index profiles by profileId
   const profileMap = new Map<string, ManagerProfile>()
   for (const profile of profiles) {
@@ -112,7 +132,7 @@ export function buildProfileTreeRows(
   const workers: AgentDescriptor[] = []
   const legacyManagers: AgentDescriptor[] = []
 
-  for (const agent of agents) {
+  for (const agent of visibleAgents) {
     if (agent.role === 'worker') {
       workers.push(agent)
     } else if (isSessionAgent(agent)) {
@@ -204,7 +224,7 @@ export function buildProfileTreeRows(
 }
 
 export function chooseFallbackAgentId(agents: AgentDescriptor[], preferredAgentId?: string | null): string | null {
-  const activeAgents = agents.filter(isActiveAgent)
+  const activeAgents = filterBuilderVisibleAgents(agents).filter(isActiveAgent)
   if (activeAgents.length === 0) {
     return null
   }

@@ -5,6 +5,9 @@ import type {
   ConversationEntry,
 } from '@forge/protocol'
 
+/** Which surface the message list is rendering in. */
+export type MessageListSurface = 'builder' | 'collab'
+
 export type ConversationMessageEntry = Extract<
   ConversationEntry,
   { type: 'conversation_message' }

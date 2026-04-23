@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { VersioningMutationSink } from "../versioning/versioning-types.js";
 import {
@@ -7,6 +7,12 @@ import {
   getProjectAgentReferenceDir,
   sanitizePathSegment
 } from "./data-paths.js";
+import {
+  deleteReferenceDoc,
+  listReferenceDocs,
+  readReferenceDoc,
+  writeReferenceDoc
+} from "./storage/asset-root-storage.js";
 
 export const PROFILE_REFERENCE_INDEX_FILE = "index.md";
 export const LEGACY_PROFILE_KNOWLEDGE_REFERENCE_FILE = "legacy-profile-knowledge.md";
@@ -254,20 +260,8 @@ export async function listProjectAgentReferenceDocs(
   handle: string
 ): Promise<string[]> {
   const referenceDir = getProjectAgentReferenceDir(dataDir, profileId, handle);
-
-  try {
-    const entries = await readdir(referenceDir, { withFileTypes: true });
-    return entries
-      .filter((entry) => entry.isFile())
-      .map((entry) => entry.name)
-      .sort((left, right) => left.localeCompare(right));
-  } catch (error) {
-    if (isEnoentError(error)) {
-      return [];
-    }
-
-    throw error;
-  }
+  const docs = await listReferenceDocs(referenceDir);
+  return docs.map((doc) => doc.fileName);
 }
 
 export async function readProjectAgentReferenceDoc(
@@ -276,17 +270,8 @@ export async function readProjectAgentReferenceDoc(
   handle: string,
   fileName: string
 ): Promise<string | null> {
-  const targetPath = getProjectAgentReferencePath(dataDir, profileId, handle, fileName);
-
-  try {
-    return await readFile(targetPath, "utf8");
-  } catch (error) {
-    if (isEnoentError(error)) {
-      return null;
-    }
-
-    throw error;
-  }
+  const referenceDir = getProjectAgentReferenceDir(dataDir, profileId, handle);
+  return readReferenceDoc(referenceDir, fileName);
 }
 
 export async function writeProjectAgentReferenceDoc(
@@ -304,7 +289,8 @@ export async function writeProjectAgentReferenceDoc(
   if (!ensured.created) {
     const existingContent = await readFile(ensured.path, "utf8");
     if (existingContent !== normalizedContent) {
-      await writeFile(ensured.path, normalizedContent, "utf8");
+      const referenceDir = getProjectAgentReferenceDir(dataDir, profileId, handle);
+      await writeReferenceDoc(referenceDir, fileName, content);
       updated = true;
       queueReferenceVersioningMutation(options?.versioning, {
         path: ensured.path,
@@ -329,23 +315,20 @@ export async function deleteProjectAgentReferenceDoc(
   fileName: string,
   options?: ReferenceDocWriteOptions
 ): Promise<void> {
+  const referenceDir = getProjectAgentReferenceDir(dataDir, profileId, handle);
   const targetPath = getProjectAgentReferencePath(dataDir, profileId, handle, fileName);
-
-  try {
-    await rm(targetPath, { force: false });
-    queueReferenceVersioningMutation(options?.versioning, {
-      path: targetPath,
-      action: "delete",
-      source: "reference-doc",
-      profileId
-    });
-  } catch (error) {
-    if (isEnoentError(error)) {
-      return;
-    }
-
-    throw error;
+  const existingContent = await readReferenceDoc(referenceDir, fileName);
+  if (existingContent === null) {
+    return;
   }
+
+  await deleteReferenceDoc(referenceDir, fileName);
+  queueReferenceVersioningMutation(options?.versioning, {
+    path: targetPath,
+    action: "delete",
+    source: "reference-doc",
+    profileId
+  });
 }
 
 export function buildProfileReferenceIndexTemplate(profileId: string): string {

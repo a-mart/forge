@@ -1,5 +1,5 @@
 import { performance } from "node:perf_hooks";
-import type { ServerEvent, TerminalDescriptor } from "@forge/protocol";
+import { isSystemProfile, type ServerEvent, type TerminalDescriptor } from "@forge/protocol";
 import type { IntegrationRegistryService } from "../integrations/registry.js";
 import type { PlaywrightDiscoveryService } from "../playwright/playwright-discovery-service.js";
 import {
@@ -11,6 +11,7 @@ import type { SidebarPerfRecorder } from "../stats/sidebar-perf-types.js";
 import type { TerminalService } from "../terminal/terminal-service.js";
 import type { UnreadTracker } from "../swarm/unread-tracker.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
+import { filterBuilderVisibleAgents, filterBuilderVisibleProfiles } from "./builder-visibility.js";
 import { MAX_WS_EVENT_BYTES } from "./ws-send.js";
 import { WebSocket } from "ws";
 
@@ -92,6 +93,11 @@ export function sendSubscriptionBootstrap(options: {
   };
   let payloadBytesTotal = 0;
 
+  const allProfiles = swarmManager.listProfiles();
+  const systemProfileIds = new Set(
+    allProfiles.filter((profile) => isSystemProfile(profile)).map((profile) => profile.profileId),
+  );
+
   const sendMeasured = (fieldPrefix: string, event: ServerEvent): number | null => {
     const sendStartedAtMs = performance.now();
     const payloadBytes = send(socket, event);
@@ -114,10 +120,11 @@ export function sendSubscriptionBootstrap(options: {
   let agentsSnapshotSent = false;
   if (includeAgentsSnapshot) {
     const agentsSnapshotBuildStartedAtMs = performance.now();
-    const agents = swarmManager.listBootstrapAgents();
+    const allAgents = swarmManager.listBootstrapAgents();
+    const agents = filterBuilderVisibleAgents(allAgents, systemProfileIds);
     const agentsSnapshotBuildMs = performance.now() - agentsSnapshotBuildStartedAtMs;
     metricFields.agentsSnapshotBuildMs = agentsSnapshotBuildMs;
-    metricFields.agentsCount = agents.length;
+    metricFields.agentsCount = allAgents.length;
     metricFields.agentsReturned = agents.length;
     perf.recordDuration(SIDEBAR_SNAPSHOT_BUILD_METRIC, agentsSnapshotBuildMs, {
       labels: {
@@ -126,7 +133,7 @@ export function sendSubscriptionBootstrap(options: {
       },
       fields: {
         managerCountReturned: agents.filter((descriptor) => descriptor.role === "manager").length,
-        totalDescriptorCount: agents.length
+        totalDescriptorCount: allAgents.length
       }
     });
     agentsSnapshotSent =
@@ -145,7 +152,7 @@ export function sendSubscriptionBootstrap(options: {
   let profilesSnapshotSent = false;
   if (includeProfilesSnapshot) {
     const profilesSnapshotBuildStartedAtMs = performance.now();
-    const profiles = swarmManager.listProfiles();
+    const profiles = filterBuilderVisibleProfiles(allProfiles);
     const profilesSnapshotBuildMs = performance.now() - profilesSnapshotBuildStartedAtMs;
     metricFields.profilesSnapshotBuildMs = profilesSnapshotBuildMs;
     metricFields.profilesReturned = profiles.length;

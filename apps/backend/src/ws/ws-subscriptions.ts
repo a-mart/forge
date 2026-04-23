@@ -1,10 +1,11 @@
-import type { ServerEvent, TerminalDescriptor } from "@forge/protocol";
+import { isSystemProfile, type ServerEvent, type TerminalDescriptor } from "@forge/protocol";
 import type { IntegrationRegistryService } from "../integrations/registry.js";
 import type { PlaywrightDiscoveryService } from "../playwright/playwright-discovery-service.js";
 import type { SidebarPerfRecorder } from "../stats/sidebar-perf-types.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import type { TerminalService } from "../terminal/terminal-service.js";
 import type { UnreadTracker } from "../swarm/unread-tracker.js";
+import { filterBuilderVisibleAgents, filterBuilderVisibleProfiles } from "./builder-visibility.js";
 import { resolveSessionAgentIdForUnread } from "./unread-utils.js";
 import {
   DEFAULT_SUBSCRIBE_MESSAGE_COUNT,
@@ -80,6 +81,8 @@ export class WsSubscriptions {
       return;
     }
 
+    const outboundEvent = this.filterBuilderSnapshotEvent(event);
+
     for (const client of wss.clients) {
       if (client.readyState !== WebSocket.OPEN) {
         continue;
@@ -91,31 +94,31 @@ export class WsSubscriptions {
       }
 
       if (
-        event.type === "conversation_message" ||
-        event.type === "conversation_log" ||
-        event.type === "agent_message" ||
-        event.type === "agent_tool_call" ||
-        event.type === "conversation_reset" ||
-        event.type === "choice_request" ||
-        event.type === "message_pinned"
+        outboundEvent.type === "conversation_message" ||
+        outboundEvent.type === "conversation_log" ||
+        outboundEvent.type === "agent_message" ||
+        outboundEvent.type === "agent_tool_call" ||
+        outboundEvent.type === "conversation_reset" ||
+        outboundEvent.type === "choice_request" ||
+        outboundEvent.type === "message_pinned"
       ) {
-        if (subscribedAgent !== event.agentId) {
+        if (subscribedAgent !== outboundEvent.agentId) {
           continue;
         }
       }
 
-      if (event.type === "telegram_status") {
-        if (event.managerId) {
+      if (outboundEvent.type === "telegram_status") {
+        if (outboundEvent.managerId) {
           const subscribedProfileId = this.resolveProfileIdForAgent(subscribedAgent);
-          if (subscribedProfileId !== event.managerId) {
+          if (subscribedProfileId !== outboundEvent.managerId) {
             continue;
           }
         }
       }
 
-      const payloadBytes = this.send(client, event);
+      const payloadBytes = this.send(client, outboundEvent);
       if (payloadBytes !== null) {
-        this.recordDeliveredSnapshotForEvent(client, event);
+        this.recordDeliveredSnapshotForEvent(client, outboundEvent);
       }
     }
   }
@@ -420,19 +423,53 @@ export class WsSubscriptions {
       : descriptor.agentId;
   }
 
+  private filterBuilderSnapshotEvent(event: ServerEvent): ServerEvent {
+    if (event.type === "profiles_snapshot") {
+      return {
+        ...event,
+        profiles: filterBuilderVisibleProfiles(event.profiles),
+      };
+    }
+
+    if (event.type === "agents_snapshot") {
+      const systemProfileIds = new Set(
+        this.swarmManager
+          .listProfiles()
+          .filter((profile) => isSystemProfile(profile))
+          .map((profile) => profile.profileId),
+      );
+
+      return {
+        ...event,
+        agents: filterBuilderVisibleAgents(event.agents, systemProfileIds),
+      };
+    }
+
+    return event;
+  }
+
   resolveDefaultSubscriptionAgentId(): string {
-    return (
-      this.resolvePreferredManagerSubscriptionId() ??
-      this.resolveConfiguredManagerId() ??
-      BOOTSTRAP_SUBSCRIPTION_AGENT_ID
-    );
+    const preferredManagerId = this.resolvePreferredManagerSubscriptionId();
+    if (preferredManagerId) {
+      return preferredManagerId;
+    }
+
+    const configuredManagerId = this.resolveConfiguredManagerId();
+    if (configuredManagerId) {
+      const configuredManager = this.swarmManager.getAgent(configuredManagerId);
+      if (!configuredManager || configuredManager.role === "manager") {
+        return configuredManagerId;
+      }
+    }
+
+    return BOOTSTRAP_SUBSCRIPTION_AGENT_ID;
   }
 
   private resolvePreferredManagerSubscriptionId(): string | undefined {
     const managerId = this.resolveConfiguredManagerId();
     if (managerId) {
       const configuredManager = this.swarmManager.getAgent(managerId);
-      if (configuredManager && this.isSubscribable(configuredManager.status)) {
+      if (configuredManager && configuredManager.role === "manager" && this.isSubscribable(configuredManager.status)) {
         return managerId;
       }
     }
@@ -464,3 +501,4 @@ export class WsSubscriptions {
     return status === "idle" || status === "streaming";
   }
 }
+

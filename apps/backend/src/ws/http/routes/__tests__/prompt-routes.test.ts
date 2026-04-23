@@ -182,7 +182,20 @@ describe("prompt routes", () => {
     const save = vi.fn(async () => undefined);
     const broadcastEvent = vi.fn<(event: ServerEvent) => void>();
     const promptRegistry = createPromptRegistryStub({ save });
-    const server = await createPromptRouteTestServer({ promptRegistry, broadcastEvent });
+    const server = await createPromptRouteTestServer({
+      promptRegistry,
+      broadcastEvent,
+      listProfiles: () => [
+        {
+          profileId: "alpha",
+          displayName: "Alpha",
+          defaultSessionAgentId: "alpha",
+          createdAt: "2026-04-14T00:00:00.000Z",
+          updatedAt: "2026-04-14T00:00:00.000Z",
+          profileType: "user",
+        },
+      ],
+    });
 
     const response = await fetch(`${server.baseUrl}/api/prompts/archetype/manager`, {
       method: "PUT",
@@ -202,12 +215,61 @@ describe("prompt routes", () => {
     });
   });
 
+  it("rejects prompt override writes for system-managed profiles", async () => {
+    const save = vi.fn(async () => undefined);
+    const promptRegistry = createPromptRegistryStub({ save });
+    const server = await createPromptRouteTestServer({
+      promptRegistry,
+      listProfiles: () => [
+        {
+          profileId: "_collaboration",
+          displayName: "Collaboration",
+          defaultSessionAgentId: "_collaboration",
+          createdAt: "2026-04-14T00:00:00.000Z",
+          updatedAt: "2026-04-14T00:00:00.000Z",
+          profileType: "system",
+        },
+      ],
+    });
+
+    const response = await fetch(`${server.baseUrl}/api/prompts/archetype/manager`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ profileId: "_collaboration", content: "Blocked" }),
+    });
+
+    expect(response.status).toBe(403);
+    expect(save).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toEqual({ error: "Cannot modify system-managed profile" });
+  });
+
   it("deletes prompt overrides, requires profileId, and returns 404 when no override exists", async () => {
     const deleteOverride = vi.fn(async () => undefined);
     const hasOverride = vi.fn(async (_category: string, _promptId: string, profileId: string) => profileId === "alpha");
     const broadcastEvent = vi.fn<(event: ServerEvent) => void>();
     const promptRegistry = createPromptRegistryStub({ hasOverride, deleteOverride });
-    const server = await createPromptRouteTestServer({ promptRegistry, broadcastEvent });
+    const server = await createPromptRouteTestServer({
+      promptRegistry,
+      broadcastEvent,
+      listProfiles: () => [
+        {
+          profileId: "alpha",
+          displayName: "Alpha",
+          defaultSessionAgentId: "alpha",
+          createdAt: "2026-04-14T00:00:00.000Z",
+          updatedAt: "2026-04-14T00:00:00.000Z",
+          profileType: "user",
+        },
+        {
+          profileId: "_collaboration",
+          displayName: "Collaboration",
+          defaultSessionAgentId: "_collaboration",
+          createdAt: "2026-04-14T00:00:00.000Z",
+          updatedAt: "2026-04-14T00:00:00.000Z",
+          profileType: "system",
+        },
+      ],
+    });
 
     const missingProfile = await fetch(`${server.baseUrl}/api/prompts/archetype/manager`, { method: "DELETE" });
     expect(missingProfile.status).toBe(400);
@@ -234,6 +296,13 @@ describe("prompt routes", () => {
       action: "deleted",
     });
     await expect(response.json()).resolves.toEqual({ deleted: true });
+
+    const blockedDelete = await fetch(`${server.baseUrl}/api/prompts/archetype/manager?profileId=_collaboration`, {
+      method: "DELETE",
+    });
+    expect(blockedDelete.status).toBe(403);
+    expect(deleteOverride).not.toHaveBeenCalledWith("archetype", "manager", "_collaboration");
+    await expect(blockedDelete.json()).resolves.toEqual({ error: "Cannot modify system-managed profile" });
   });
 
   it("handles cortex surface list/get/save/reset routes and disabled-mode behavior", async () => {
@@ -318,6 +387,14 @@ async function createPromptRouteTestServer(options: {
   promptRegistry: PromptRegistryForRoutes;
   broadcastEvent?: (event: ServerEvent) => void;
   promptPreviewProvider?: { previewManagerSystemPrompt: (profileId: string) => Promise<unknown> };
+  listProfiles?: () => Array<{
+    profileId: string;
+    displayName: string;
+    defaultSessionAgentId: string;
+    createdAt: string;
+    updatedAt: string;
+    profileType?: "user" | "system";
+  }>;
   cortexEnabled?: boolean;
 }): Promise<TestServer> {
   const routes = createPromptRoutes({
@@ -325,6 +402,7 @@ async function createPromptRouteTestServer(options: {
     dataDir: "/tmp/data",
     broadcastEvent: options.broadcastEvent ?? vi.fn(),
     promptPreviewProvider: options.promptPreviewProvider,
+    listProfiles: options.listProfiles,
     cortexEnabled: options.cortexEnabled,
   });
 

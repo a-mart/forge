@@ -1,4 +1,5 @@
 import { writeFile } from "node:fs/promises";
+import { assertBuilderSession } from "./swarm-manager-utils.js";
 import { savePins, type PinRegistry } from "./message-pins.js";
 import { SessionProvisioner, type ProvisionedSessionDescriptor } from "./session-provisioner.js";
 import type { SwarmAgentRuntime } from "./runtime-contracts.js";
@@ -85,8 +86,13 @@ export class SwarmSessionService {
   createSessionWithOverrides(
     profileId: string,
     options: { label?: string; name?: string; sessionPurpose?: AgentDescriptor["sessionPurpose"] } = {},
-    overrides: { model?: AgentModelDescriptor; cwd?: string; sessionSystemPrompt?: string } = {}
+    overrides: {
+      model?: AgentModelDescriptor;
+      cwd?: string;
+      sessionSystemPrompt?: string;
+    } = {}
   ): Promise<{ profile: ManagerProfile; sessionAgent: AgentDescriptor }> {
+
     const prepared = this.options.prepareSessionCreation(profileId, options);
     const sessionDescriptor = prepared.sessionDescriptor as ProvisionedSessionDescriptor;
 
@@ -139,6 +145,7 @@ export class SwarmSessionService {
 
   async deleteSession(agentId: string): Promise<{ terminatedWorkerIds: string[] }> {
     const descriptor = this.options.getRequiredSessionDescriptor(agentId);
+    assertBuilderSession(descriptor, "delete Builder sessions");
     this.options.assertSessionIsDeletable(descriptor);
     const wasProjectAgent = Boolean(descriptor.projectAgent);
     const projectAgentHandle = descriptor.projectAgent?.handle;
@@ -173,9 +180,9 @@ export class SwarmSessionService {
   }
 
   async clearSessionConversation(agentId: string): Promise<void> {
-    this.options.cancelAllPendingChoicesForAgent(agentId);
-
     const descriptor = this.options.getRequiredSessionDescriptor(agentId);
+    assertBuilderSession(descriptor, "clear Builder conversations");
+    this.options.cancelAllPendingChoicesForAgent(agentId);
 
     if (descriptor.sessionFile) {
       try {
@@ -215,6 +222,7 @@ export class SwarmSessionService {
 
   async renameSession(agentId: string, label: string): Promise<void> {
     const descriptor = this.options.getRequiredSessionDescriptor(agentId);
+    assertBuilderSession(descriptor, "rename Builder sessions");
     const normalizedLabel = label.trim();
     if (!normalizedLabel) {
       throw new Error("Session label must be non-empty");
@@ -251,6 +259,7 @@ export class SwarmSessionService {
     options?: { label?: string; fromMessageId?: string }
   ): Promise<{ profile: ManagerProfile; sessionAgent: AgentDescriptor }> {
     const sourceDescriptor = this.options.getRequiredSessionDescriptor(sourceAgentId);
+    assertBuilderSession(sourceDescriptor, "fork Builder sessions");
     const profile = this.options.profiles.get(sourceDescriptor.profileId);
     const normalizedFromMessageId = options?.fromMessageId?.trim() || undefined;
     if (!profile) {
@@ -312,7 +321,10 @@ function cloneDescriptor<T extends AgentDescriptor>(descriptor: T): T {
     ...(descriptor.projectAgent
       ? {
           projectAgent: {
-            ...descriptor.projectAgent
+            ...descriptor.projectAgent,
+            ...(descriptor.projectAgent.capabilities
+              ? { capabilities: [...descriptor.projectAgent.capabilities] }
+              : {})
           }
         }
       : {})

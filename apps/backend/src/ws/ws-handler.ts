@@ -27,7 +27,6 @@ export class WsHandler {
   private readonly unreadTracker: UnreadTracker | null;
   private readonly subscriptionManager: WsSubscriptions;
   private readonly apiProxy: WsApiProxy;
-
   private wss: WebSocketServer | null = null;
 
   constructor(options: {
@@ -69,6 +68,7 @@ export class WsHandler {
       terminalService,
       unreadTracker: this.unreadTracker,
     });
+
   }
 
   attach(server: WebSocketServer): void {
@@ -113,6 +113,7 @@ export class WsHandler {
   hasActiveSubscriptionForSession(sessionAgentId: string): boolean {
     return this.subscriptionManager.hasActiveSubscriptionForSession(sessionAgentId);
   }
+
 
   private async handleSocketMessage(socket: WebSocket, raw: RawData): Promise<void> {
     const parsed = parseClientCommand(raw);
@@ -313,7 +314,7 @@ export class WsHandler {
       allowNonManagerSubscriptions: this.allowNonManagerSubscriptions,
       send: (targetSocket, event) => this.send(targetSocket, event),
       logDebug: (message, details) => this.logDebug(message, details),
-      resolveConfiguredManagerId: () => this.resolveConfiguredManagerId()
+      resolveConfiguredManagerId: () => this.resolveConfiguredManagerId(),
     });
     if (conversationHandled) {
       return;
@@ -375,6 +376,7 @@ export class WsHandler {
     const normalized = managerId.trim();
     return normalized.length > 0 ? normalized : undefined;
   }
+
 
   private logDebug(message: string, details?: unknown): void {
     if (!this.swarmManager.getConfig().debug) {

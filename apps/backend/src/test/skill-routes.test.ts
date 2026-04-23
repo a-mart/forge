@@ -66,7 +66,7 @@ describe("skill routes", () => {
 
   it("passes profileId through and returns only profile-scoped inventory rows", async () => {
     const swarmManager = {
-      listProfiles: vi.fn(() => [{ profileId: "profile-a", displayName: "Profile A" }]),
+      listUserProfiles: vi.fn(() => [{ profileId: "profile-a", displayName: "Profile A" }]),
       listSkillMetadata: vi.fn(async (profileId?: string) => {
         expect(profileId).toBe("profile-a");
         return [
@@ -92,7 +92,7 @@ describe("skill routes", () => {
     const response = await fetch(`${server.baseUrl}/api/settings/skills?profileId=profile-a`);
 
     expect(response.status).toBe(200);
-    expect(swarmManager.listProfiles).toHaveBeenCalledTimes(1);
+    expect(swarmManager.listUserProfiles).toHaveBeenCalledTimes(1);
     expect(swarmManager.listSkillMetadata).toHaveBeenCalledWith("profile-a");
     await expect(response.json()).resolves.toEqual({
       skills: [
@@ -116,7 +116,7 @@ describe("skill routes", () => {
 
   it("returns 404 for unknown profile-scoped inventory requests", async () => {
     const swarmManager = {
-      listProfiles: vi.fn(() => [{ profileId: "profile-a", displayName: "Profile A" }]),
+      listUserProfiles: vi.fn(() => [{ profileId: "profile-a", displayName: "Profile A" }]),
       listSkillMetadata: vi.fn(async () => []),
     };
 
@@ -131,7 +131,7 @@ describe("skill routes", () => {
   it("returns 404 instead of crashing on malformed encoded skill ids", async () => {
     const swarmManager = {
       listSkillMetadata: vi.fn(async () => []),
-      listProfiles: vi.fn(() => []),
+      listUserProfiles: vi.fn(() => []),
     };
 
     const server = await createSkillRouteTestServer(swarmManager as never);
@@ -263,14 +263,14 @@ async function createServiceBackedSkillManager(config: SwarmConfig): Promise<{
   }>>;
   listSkillFiles: (skillId: string, relativePath?: string) => Promise<unknown>;
   getSkillFileContent: (skillId: string, relativePath: string) => Promise<unknown>;
-  listProfiles: () => Array<{ profileId: string; displayName: string }>;
+  listUserProfiles: () => Array<{ profileId: string; displayName: string }>;
 }> {
   const skillMetadataService = new SkillMetadataService({ config });
   const skillFileService = new SkillFileService();
   await skillMetadataService.ensureSkillMetadataLoaded();
 
   return {
-    listProfiles() {
+    listUserProfiles() {
       return [];
     },
     async listSkillMetadata(profileId?: string) {

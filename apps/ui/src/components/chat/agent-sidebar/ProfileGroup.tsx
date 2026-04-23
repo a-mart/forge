@@ -19,7 +19,6 @@ import type { SessionRow } from '@/lib/agent-hierarchy'
 import { cn } from '@/lib/utils'
 import { SidebarModelIcon } from './shared'
 import { SessionRowItem } from './SessionRowItem'
-import { getAgentLiveStatus } from './utils'
 import { MAX_VISIBLE_SESSIONS } from './constants'
 import type { ProfileGroupProps } from './types'
 
@@ -92,7 +91,7 @@ export const ProfileGroup = React.memo(function ProfileGroup({
           <div className="relative flex items-center rounded-lg border border-white/[0.04] bg-white/[0.03]">
             <button
               type="button"
-              onClick={() => onToggleProfileCollapsed(profile.profileId)}
+              onClick={() => onToggleProfileCollapsed()}
               aria-label={`${isCollapsed ? 'Expand' : 'Collapse'} ${profile.displayName}`}
               aria-expanded={!isCollapsed}
               className={cn(
@@ -303,53 +302,44 @@ export const ProfileGroup = React.memo(function ProfileGroup({
             const isCortex = sessions.some((s) => s.sessionAgent.archetypeId === 'cortex')
 
             const renderSession = (session: SessionRow) => {
-              const sessionCollapsed = !collapsedSessionIds.has(session.sessionAgent.agentId)
-              const sessionManagerStreaming = getAgentLiveStatus(session.sessionAgent, statuses).status === 'streaming'
-              const sessionStreamingWorkerCount = session.workers.filter(
-                (w) => getAgentLiveStatus(w, statuses).status === 'streaming',
-              ).length || session.sessionAgent.activeWorkerCount || 0
-              // Build per-worker status lookup only if workers are loaded
-              const sessionWorkerStatuses = session.workers.length > 0
-                ? Object.fromEntries(
-                    session.workers.map((w) => [w.agentId, getAgentLiveStatus(w, statuses).status]),
-                  )
-                : undefined
+              const sid = session.sessionAgent.agentId
+              const sessionCollapsed = !collapsedSessionIds.has(sid)
 
               return (
                 <SessionRowItem
-                  key={session.sessionAgent.agentId}
+                  key={sid}
                   session={session}
-                  managerStreaming={sessionManagerStreaming}
-                  streamingWorkerCount={sessionStreamingWorkerCount}
-                  workerStatuses={sessionWorkerStatuses}
-                  unreadCount={unreadCounts[session.sessionAgent.agentId] ?? 0}
+                  statuses={statuses}
+                  unreadCount={unreadCounts[sid] ?? 0}
                   selectedAgentId={selectedAgentId}
                   isSettingsActive={isSettingsActive}
                   isCollapsed={sessionCollapsed}
-                  isWorkerListExpanded={expandedWorkerListSessionIds.has(session.sessionAgent.agentId)}
-                  onToggleCollapse={onToggleSessionCollapsed}
-                  onToggleWorkerListExpanded={onToggleWorkerListExpanded}
+                  isWorkerListExpanded={expandedWorkerListSessionIds.has(sid)}
+                  onToggleCollapse={() => onToggleSessionCollapsed(sid)}
+                  onToggleWorkerListExpanded={() => onToggleWorkerListExpanded(sid)}
                   onSelect={onSelect}
                   onDeleteAgent={onDeleteAgent}
-                  onStopSession={onStopSession}
-                  onResumeSession={onResumeSession}
-                  onDeleteSession={onDeleteSession}
-                  onRenameSession={onRequestRenameSession}
-                  onForkSession={onForkSession}
-                  onMarkUnread={onMarkUnread}
+                  onStop={onStopSession ? () => onStopSession(sid) : undefined}
+                  onResume={onResumeSession ? () => onResumeSession(sid) : undefined}
+                  onDelete={onDeleteSession ? () => onDeleteSession(sid) : undefined}
+                  onRename={onRequestRenameSession ? () => onRequestRenameSession(sid) : undefined}
+                  onFork={onForkSession ? () => onForkSession(sid) : undefined}
+                  onMarkUnread={onMarkUnread ? () => onMarkUnread(sid) : undefined}
                   onStopWorker={onStopSession}
                   onResumeWorker={onResumeSession}
                   highlightQuery={highlightQuery}
                   onPinSession={onPinSession}
-                  onPromoteToProjectAgent={!isCortex ? onPromoteToProjectAgent : undefined}
-                  onOpenProjectAgentSettings={onOpenProjectAgentSettings}
-                  onDemoteProjectAgent={onDemoteProjectAgent}
-                  canViewCreationHistory={
+                  onPromoteToProjectAgent={!isCortex && onPromoteToProjectAgent ? () => onPromoteToProjectAgent(sid) : undefined}
+                  onOpenProjectAgentSettings={onOpenProjectAgentSettings ? () => onOpenProjectAgentSettings(sid) : undefined}
+                  onDemoteProjectAgent={onDemoteProjectAgent ? () => { void onDemoteProjectAgent(sid) } : undefined}
+                  onViewCreationHistory={
                     Boolean(session.sessionAgent.projectAgent?.creatorSessionId) &&
                     sessionAgentIds.has(session.sessionAgent.projectAgent!.creatorSessionId!)
+                      ? () => onSelect(session.sessionAgent.projectAgent!.creatorSessionId!)
+                      : undefined
                   }
-                  isMutedSession={mutedAgents?.has(session.sessionAgent.agentId)}
-                  onToggleMute={onToggleMute}
+                  isMutedSession={mutedAgents?.has(sid)}
+                  onToggleMute={onToggleMute ? () => onToggleMute(sid) : undefined}
                   getCreatorAttribution={getCreatorAttribution}
                 />
               )
@@ -370,7 +360,7 @@ export const ProfileGroup = React.memo(function ProfileGroup({
                     {hasMore ? (
                       <button
                         type="button"
-                        onClick={() => onShowMoreSessions(profile.profileId)}
+                        onClick={() => onShowMoreSessions()}
                         className={cn(
                           'flex items-center gap-1 rounded-md py-1 text-left text-[11px] text-muted-foreground/70 transition-colors',
                           'hover:text-muted-foreground',
@@ -384,7 +374,7 @@ export const ProfileGroup = React.memo(function ProfileGroup({
                     {isExpanded ? (
                       <button
                         type="button"
-                        onClick={() => onShowLessSessions(profile.profileId)}
+                        onClick={() => onShowLessSessions()}
                         className={cn(
                           'flex items-center gap-1 rounded-md py-1 text-left text-[11px] text-muted-foreground/70 transition-colors',
                           'hover:text-muted-foreground',

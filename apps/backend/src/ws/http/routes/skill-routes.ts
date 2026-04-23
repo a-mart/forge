@@ -54,7 +54,7 @@ async function handleSkillHttpRequest(
 
   if (request.method === "GET" && requestUrl.pathname === SETTINGS_SKILLS_ENDPOINT_PATH) {
     const profileId = requestUrl.searchParams.get("profileId")?.trim() || undefined;
-    if (profileId && !swarmManager.listProfiles().some((profile) => profile.profileId === profileId)) {
+    if (profileId && !swarmManager.listUserProfiles().some((profile) => profile.profileId === profileId)) {
       sendJson(response, 404, { error: `Unknown profile: ${profileId}` });
       return;
     }

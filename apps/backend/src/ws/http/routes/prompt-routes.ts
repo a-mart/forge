@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 // Compatibility re-exports — these types were extracted to prompt-contracts.ts
 export type { PromptEntry, PromptRegistryForRoutes, PromptPreviewProvider, PromptPreviewResponse, PromptPreviewSection } from "../../../swarm/prompt-contracts.js";
 import type {
+  ManagerProfile,
   PromptCategory,
   PromptSourceLayer,
   PromptListEntry,
@@ -27,6 +28,10 @@ import type {
   PromptRegistryForRoutes,
 } from "../../../swarm/prompt-contracts.js";
 import type { VersioningMutationSink } from "../../../versioning/versioning-types.js";
+import {
+  SYSTEM_PROFILE_MUTATION_ERROR,
+  requireNonSystemProfile,
+} from "../../../swarm/system-profile-guards.js";
 import {
   applyCorsHeaders,
   readJsonBody,
@@ -56,6 +61,7 @@ export function createPromptRoutes(options: {
   broadcastEvent: (event: ServerEvent) => void;
   promptPreviewProvider?: PromptPreviewProvider;
   versioning?: VersioningMutationSink;
+  listProfiles?: () => ManagerProfile[];
   cortexEnabled?: boolean;
 }): HttpRoute[] {
   const { promptRegistry, dataDir, broadcastEvent, promptPreviewProvider, versioning } = options;
@@ -411,6 +417,7 @@ export function createPromptRoutes(options: {
           await handleSavePrompt(
             promptRegistry,
             broadcastEvent,
+            options.listProfiles,
             request,
             response,
             category,
@@ -424,6 +431,7 @@ export function createPromptRoutes(options: {
           await handleDeletePrompt(
             promptRegistry,
             broadcastEvent,
+            options.listProfiles,
             request,
             response,
             requestUrl,
@@ -526,6 +534,7 @@ async function handleGetPrompt(
 async function handleSavePrompt(
   registry: PromptRegistryForRoutes,
   broadcastEvent: (event: ServerEvent) => void,
+  listProfiles: (() => ManagerProfile[]) | undefined,
   request: IncomingMessage,
   response: ServerResponse,
   category: PromptCategory,
@@ -534,6 +543,10 @@ async function handleSavePrompt(
   try {
     const body = await readJsonBody(request);
     const { content, profileId } = parseSaveBody(body);
+
+    if (listProfiles) {
+      requireNonSystemProfile(profileId, listProfiles());
+    }
 
     await registry.save(category, promptId, content, profileId);
 
@@ -548,7 +561,11 @@ async function handleSavePrompt(
     sendJson(response, 200, { saved: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const statusCode = isBadRequestMessage(message) ? 400 : 500;
+    const statusCode = isBadRequestMessage(message)
+      ? 400
+      : message === SYSTEM_PROFILE_MUTATION_ERROR
+        ? 403
+        : 500;
     sendJson(response, statusCode, { error: message });
   }
 }
@@ -560,6 +577,7 @@ async function handleSavePrompt(
 async function handleDeletePrompt(
   registry: PromptRegistryForRoutes,
   broadcastEvent: (event: ServerEvent) => void,
+  listProfiles: (() => ManagerProfile[]) | undefined,
   _request: IncomingMessage,
   response: ServerResponse,
   requestUrl: URL,
@@ -574,6 +592,10 @@ async function handleDeletePrompt(
   }
 
   try {
+    if (listProfiles) {
+      requireNonSystemProfile(profileId, listProfiles());
+    }
+
     const hasOverride = await registry.hasOverride(category, promptId, profileId);
     if (!hasOverride) {
       sendJson(response, 404, {
@@ -595,7 +617,7 @@ async function handleDeletePrompt(
     sendJson(response, 200, { deleted: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    sendJson(response, 500, { error: message });
+    sendJson(response, message === SYSTEM_PROFILE_MUTATION_ERROR ? 403 : 500, { error: message });
   }
 }
 

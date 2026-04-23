@@ -1,5 +1,15 @@
 import type { ConversationAttachment } from './attachments.js'
 import type { ProjectAgentCapability } from './agents.js'
+import type {
+  CollaborationBootstrapCommand,
+  CollaborationChoiceCancelCommand,
+  CollaborationChoiceResponseCommand,
+  CollaborationMarkChannelReadCommand,
+  CollaborationPinMessageCommand,
+  CollaborationSubscribeChannelCommand,
+  CollaborationUnsubscribeChannelCommand,
+  CollaborationUserMessageCommand,
+} from './collaboration.js'
 import type { AgentSessionPurpose, ChoiceAnswer, DeliveryMode, ManagerModelPreset, ManagerReasoningLevel } from './shared-types.js'
 
 export interface ApiProxyCommand {
@@ -19,6 +29,14 @@ export type ClientCommand =
       agentId?: string
       delivery?: DeliveryMode
     }
+  | CollaborationBootstrapCommand
+  | CollaborationSubscribeChannelCommand
+  | CollaborationUnsubscribeChannelCommand
+  | CollaborationUserMessageCommand
+  | CollaborationMarkChannelReadCommand
+  | CollaborationChoiceResponseCommand
+  | CollaborationChoiceCancelCommand
+  | CollaborationPinMessageCommand
   | ApiProxyCommand
   | { type: 'kill_agent'; agentId: string }
   | { type: 'stop_all_agents'; managerId: string; requestId?: string }

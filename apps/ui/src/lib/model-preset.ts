@@ -11,6 +11,7 @@ import {
   MANAGER_REASONING_LEVELS,
   getCatalogModel,
   getCatalogModelsByFamily,
+  getChangeManagerFamilies,
   getSpecialistFamilies,
   inferCatalogFamily,
 } from '@forge/protocol'
@@ -221,6 +222,25 @@ export interface SelectableModel {
  * Build a flat list of all selectable model IDs from preset info,
  * including the default model and each variant for every preset.
  */
+export function getAvailableChangeManagerFamilies(
+  modelPresets: ModelPresetInfo[],
+): Array<{ familyId: string; displayName: string }> {
+  const presetInfoById = new Map(modelPresets.map((preset) => [preset.presetId, preset]))
+  const hasServerFilteredFamilies = modelPresets.length > 0
+
+  return getChangeManagerFamilies().flatMap((family) => {
+    const preset = presetInfoById.get(family.familyId)
+    if (!preset && hasServerFilteredFamilies) {
+      return []
+    }
+
+    return [{
+      familyId: family.familyId,
+      displayName: preset?.displayName ?? family.displayName,
+    }]
+  })
+}
+
 export function getAllSelectableModels(presets: ModelPresetInfo[]): SelectableModel[] {
   const models: SelectableModel[] = []
   const seen = new Set<string>()

@@ -59,6 +59,10 @@ class FakeSwarmManager extends EventEmitter {
     return [...this.profiles]
   }
 
+  listUserProfiles(): ManagerProfile[] {
+    return [...this.profiles]
+  }
+
   getConversationHistory(): [] {
     return []
   }

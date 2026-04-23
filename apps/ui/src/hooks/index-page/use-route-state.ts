@@ -5,10 +5,11 @@ import { useCallback, useMemo } from 'react'
 export const DEFAULT_MANAGER_AGENT_ID = '__default__'
 
 export type ActiveView = 'chat' | 'settings' | 'playwright' | 'stats'
+export type ActiveSurface = 'builder' | 'collab'
 export type PlaywrightViewMode = 'split' | 'focus' | 'tiles'
 export type StatsTab = 'overview' | 'tokens'
 export type AppRouteState =
-  | { view: 'chat'; agentId: string }
+  | { view: 'chat'; agentId: string; surface: ActiveSurface; channel?: string }
   | { view: 'settings' }
   | { view: 'playwright'; playwrightSession?: string; playwrightMode?: PlaywrightViewMode }
   | { view: 'stats'; statsTab?: StatsTab }
@@ -16,6 +17,8 @@ export type AppRouteState =
 type AppRouteSearch = {
   view?: string
   agent?: string
+  surface?: string
+  channel?: string
   playwrightSession?: string
   playwrightMode?: string
   statsTab?: string
@@ -34,6 +37,11 @@ function decodePathSegment(segment: string): string {
   }
 }
 
+function parseSurface(raw?: string): ActiveSurface {
+  if (raw === 'collab') return 'collab'
+  return 'builder'
+}
+
 function parseRouteStateFromPathname(pathname: string): AppRouteState {
   const normalizedPath = pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname
 
@@ -46,12 +54,14 @@ function parseRouteStateFromPathname(pathname: string): AppRouteState {
     return {
       view: 'chat',
       agentId: normalizeAgentId(decodePathSegment(agentMatch[1])),
+      surface: 'builder',
     }
   }
 
   return {
     view: 'chat',
     agentId: DEFAULT_MANAGER_AGENT_ID,
+    surface: 'builder',
   }
 }
 
@@ -59,6 +69,8 @@ function parseRouteStateFromLocation(pathname: string, search: unknown): AppRout
   const routeSearch = search && typeof search === 'object' ? (search as AppRouteSearch) : {}
   const view = typeof routeSearch.view === 'string' ? routeSearch.view : undefined
   const agentId = typeof routeSearch.agent === 'string' ? routeSearch.agent : undefined
+  const surface = typeof routeSearch.surface === 'string' ? routeSearch.surface : undefined
+  const channel = typeof routeSearch.channel === 'string' ? routeSearch.channel : undefined
 
   if (view === 'settings') {
     return { view: 'settings' }
@@ -79,16 +91,33 @@ function parseRouteStateFromLocation(pathname: string, search: unknown): AppRout
     return { view: 'playwright', playwrightSession, playwrightMode }
   }
 
-  if (view === 'chat' || agentId !== undefined) {
+  if (view === 'chat' || agentId !== undefined || surface !== undefined) {
+    const parsedSurface = parseSurface(surface)
     return {
       view: 'chat',
       agentId: normalizeAgentId(agentId),
+      surface: parsedSurface,
+      channel: channel || undefined,
     }
   }
 
-  return parseRouteStateFromPathname(pathname)
+  // Fall back to pathname parsing, but still pick up surface/channel from search params
+  const pathState = parseRouteStateFromPathname(pathname)
+  if (pathState.view === 'chat') {
+    return {
+      ...pathState,
+      surface: parseSurface(surface),
+      channel: channel || undefined,
+    }
+  }
+  return pathState
 }
 
+/**
+ * Normalize route state. Builder-only views (settings, stats, playwright)
+ * always resolve to builder surface but preserve `channel` so it's sticky
+ * when the user returns to collab.
+ */
 function normalizeRouteState(routeState: AppRouteState): AppRouteState {
   if (routeState.view === 'settings') {
     return { view: 'settings' }
@@ -105,17 +134,25 @@ function normalizeRouteState(routeState: AppRouteState): AppRouteState {
   return {
     view: 'chat',
     agentId: normalizeAgentId(routeState.agentId),
+    surface: routeState.surface,
+    channel: routeState.channel,
   }
 }
 
-function toRouteSearch(routeState: AppRouteState): AppRouteSearch {
+function toRouteSearch(routeState: AppRouteState, stickyParams?: { agent?: string; channel?: string }): AppRouteSearch {
   if (routeState.view === 'settings') {
-    return { view: 'settings' }
+    // Preserve sticky agent and channel through non-chat views
+    const search: AppRouteSearch = { view: 'settings' }
+    if (stickyParams?.agent && stickyParams.agent !== DEFAULT_MANAGER_AGENT_ID) search.agent = stickyParams.agent
+    if (stickyParams?.channel) search.channel = stickyParams.channel
+    return search
   }
 
   if (routeState.view === 'stats') {
     const search: AppRouteSearch = { view: 'stats' }
     if (routeState.statsTab && routeState.statsTab !== 'overview') search.statsTab = routeState.statsTab
+    if (stickyParams?.agent && stickyParams.agent !== DEFAULT_MANAGER_AGENT_ID) search.agent = stickyParams.agent
+    if (stickyParams?.channel) search.channel = stickyParams.channel
     return search
   }
 
@@ -123,15 +160,26 @@ function toRouteSearch(routeState: AppRouteState): AppRouteSearch {
     const search: AppRouteSearch = { view: 'playwright' }
     if (routeState.playwrightSession) search.playwrightSession = routeState.playwrightSession
     if (routeState.playwrightMode && routeState.playwrightMode !== 'tiles') search.playwrightMode = routeState.playwrightMode
+    if (stickyParams?.agent && stickyParams.agent !== DEFAULT_MANAGER_AGENT_ID) search.agent = stickyParams.agent
+    if (stickyParams?.channel) search.channel = stickyParams.channel
     return search
   }
 
+  const search: AppRouteSearch = {}
   const agentId = normalizeAgentId(routeState.agentId)
-  if (agentId === DEFAULT_MANAGER_AGENT_ID) {
-    return {}
+  if (agentId !== DEFAULT_MANAGER_AGENT_ID) {
+    search.agent = agentId
   }
 
-  return { agent: agentId }
+  if (routeState.surface === 'collab') {
+    search.surface = 'collab'
+  }
+
+  if (routeState.channel) {
+    search.channel = routeState.channel
+  }
+
+  return search
 }
 
 function routeStatesEqual(left: AppRouteState, right: AppRouteState): boolean {
@@ -148,7 +196,7 @@ function routeStatesEqual(left: AppRouteState, right: AppRouteState): boolean {
   }
 
   if (left.view === 'chat' && right.view === 'chat') {
-    return left.agentId === right.agentId
+    return left.agentId === right.agentId && left.surface === right.surface && left.channel === right.channel
   }
 
   return false
@@ -172,6 +220,7 @@ export function useRouteState({
 }: UseRouteStateOptions): {
   routeState: AppRouteState
   activeView: ActiveView
+  activeSurface: ActiveSurface
   navigateToRoute: (nextRouteState: AppRouteState, replace?: boolean) => void
 } {
   const routeState = useMemo(
@@ -181,6 +230,13 @@ export function useRouteState({
 
   const activeView: ActiveView = routeState.view
 
+  // surface defaults to builder for non-chat views
+  const activeSurface: ActiveSurface = routeState.view === 'chat' ? routeState.surface : 'builder'
+
+  // Extract sticky params from the current route state
+  const stickyAgent = routeState.view === 'chat' ? routeState.agentId : undefined
+  const stickyChannel = routeState.view === 'chat' ? routeState.channel : undefined
+
   const navigateToRoute = useCallback(
     (nextRouteState: AppRouteState, replace = false) => {
       const normalizedRouteState = normalizeRouteState(nextRouteState)
@@ -188,19 +244,33 @@ export function useRouteState({
         return
       }
 
+      // Compute sticky params: use current agent/channel as fallbacks when
+      // navigating to non-chat views so they survive the round-trip
+      const currentSearch = (typeof search === 'object' && search !== null ? search : {}) as AppRouteSearch
+      const effectiveStickyAgent = normalizedRouteState.view === 'chat'
+        ? undefined
+        : stickyAgent ?? currentSearch.agent
+      const effectiveStickyChannel = normalizedRouteState.view === 'chat'
+        ? undefined
+        : stickyChannel ?? currentSearch.channel
+
       void navigate({
         to: '/',
-        search: toRouteSearch(normalizedRouteState),
+        search: toRouteSearch(normalizedRouteState, {
+          agent: effectiveStickyAgent && effectiveStickyAgent !== DEFAULT_MANAGER_AGENT_ID ? effectiveStickyAgent : undefined,
+          channel: effectiveStickyChannel,
+        }),
         replace,
         resetScroll: false,
       })
     },
-    [navigate, routeState],
+    [navigate, routeState, search, stickyAgent, stickyChannel],
   )
 
   return {
     routeState,
     activeView,
+    activeSurface,
     navigateToRoute,
   }
 }

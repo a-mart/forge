@@ -118,6 +118,7 @@ function createService(options: {
     skillFileService: {} as any,
     secretsEnvService: {} as any,
     getSessionsForProfile: () => options.sessions,
+    getSessionById: (agentId) => options.sessions.find((session) => session.agentId === agentId),
     resolveAndValidateCwd: async (cwd) => cwd,
     assertCanChangeManagerCwd: () => {},
     applyManagerRuntimeRecyclePolicy: options.applyManagerRuntimeRecyclePolicy ?? vi.fn(async () => "none"),
@@ -240,6 +241,27 @@ describe("SwarmSettingsService.updateManagerModel", () => {
         targetModel: firstSession.model
       })
     ).toBeUndefined();
+  });
+
+  it("updates only the targeted session when called with a session agent id", async () => {
+    const root = await createTempRoot();
+    const firstSession = createSession(root, "manager");
+    const secondSession = createSession(root, "manager--s2");
+    const applyManagerRuntimeRecyclePolicy = vi.fn(async () => "recycled");
+    const service = createService({
+      rootDir: root,
+      sessions: [firstSession, secondSession],
+      applyManagerRuntimeRecyclePolicy,
+      now: () => "2026-01-02T00:00:00.000Z"
+    });
+
+    await service.updateManagerModel(secondSession.agentId, "pi-5.4");
+
+    expect(firstSession.model).toEqual(resolveModelDescriptorFromPreset("pi-codex"));
+    expect(secondSession.model).toEqual(resolveModelDescriptorFromPreset("pi-5.4"));
+    expect(applyManagerRuntimeRecyclePolicy.mock.calls).toEqual([
+      [secondSession.agentId, "model_change"]
+    ]);
   });
 
   it("uses the original pending source model when a busy session is changed twice before replacement attaches", async () => {

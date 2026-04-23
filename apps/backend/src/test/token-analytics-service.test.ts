@@ -454,8 +454,8 @@ function createService(dataDir: string): TokenAnalyticsService {
         dataDir,
       },
     }),
-    listProfiles: () => createProfiles(),
-  } as Pick<SwarmManager, "getConfig" | "listProfiles"> as SwarmManager;
+    listUserProfiles: () => createProfiles(),
+  } as Pick<SwarmManager, "getConfig" | "listUserProfiles"> as SwarmManager;
 
   return new TokenAnalyticsService(swarmManager);
 }

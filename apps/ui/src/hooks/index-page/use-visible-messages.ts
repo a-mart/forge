@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import type { ChannelView } from '@/components/chat/ChatHeader'
+import type { MessageSourceView } from '@/components/chat/ChatHeader'
 import type { AgentDescriptor, ConversationEntry } from '@forge/protocol'
 
 function toEpochMillis(timestamp: string): number {
@@ -86,7 +86,7 @@ export interface VisibleMessagesOptions {
   activityMessages: ConversationEntry[]
   agents: AgentDescriptor[]
   activeAgent: AgentDescriptor | null
-  channelView: ChannelView
+  channelView: MessageSourceView
 }
 
 export function deriveVisibleMessages({

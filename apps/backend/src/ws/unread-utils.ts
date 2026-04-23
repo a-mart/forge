@@ -9,5 +9,14 @@ export function resolveSessionAgentIdForUnread(
     return undefined;
   }
 
-  return descriptor.role === "manager" ? descriptor.agentId : descriptor.managerId;
+  if (descriptor.role === "manager") {
+    return descriptor.agentId;
+  }
+
+  const managerDescriptor = swarmManager.getAgent(descriptor.managerId);
+  if (!managerDescriptor) {
+    return undefined;
+  }
+
+  return descriptor.managerId;
 }

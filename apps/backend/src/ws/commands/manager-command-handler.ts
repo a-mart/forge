@@ -1,6 +1,10 @@
 import { MANAGER_MODEL_PRESETS, type ClientCommand, type ServerEvent } from "@forge/protocol";
 import type { WebSocket } from "ws";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
+import {
+  filterSystemProfileIds,
+  requireNonSystemProfile,
+} from "../../swarm/system-profile-guards.js";
 import type { UnreadTracker } from "../../swarm/unread-tracker.js";
 import type { SwarmModelPreset, SwarmReasoningLevel } from "../../swarm/types.js";
 
@@ -78,6 +82,8 @@ export async function handleManagerCommand(context: ManagerCommandRouteContext):
     }
 
     try {
+      requireNonSystemProfile(command.managerId, swarmManager.listProfiles());
+
       const deleted = await swarmManager.deleteManager(managerContextId, command.managerId);
       handleDeletedAgentSubscriptions(new Set([deleted.managerId, ...deleted.terminatedWorkerIds]));
       unreadTracker?.clearProfile(deleted.managerId);
@@ -113,6 +119,8 @@ export async function handleManagerCommand(context: ManagerCommandRouteContext):
     }
 
     try {
+      requireNonSystemProfile(command.managerId, swarmManager.listProfiles());
+
       if (!MANAGER_MODEL_PRESETS.includes(command.model)) {
         throw new Error(`Invalid model preset: ${command.model}`);
       }
@@ -155,6 +163,8 @@ export async function handleManagerCommand(context: ManagerCommandRouteContext):
     }
 
     try {
+      requireNonSystemProfile(command.managerId, swarmManager.listProfiles());
+
       const resolvedCwd = await swarmManager.updateManagerCwd(
         command.managerId,
         command.cwd
@@ -180,6 +190,7 @@ export async function handleManagerCommand(context: ManagerCommandRouteContext):
 
   if (command.type === "rename_profile") {
     try {
+      requireNonSystemProfile(command.profileId, swarmManager.listProfiles());
       await swarmManager.renameProfile(command.profileId, command.displayName);
 
       broadcastToSubscribed({
@@ -213,7 +224,9 @@ export async function handleManagerCommand(context: ManagerCommandRouteContext):
     }
 
     try {
-      await swarmManager.reorderProfiles(command.profileIds);
+      await swarmManager.reorderProfiles(
+        filterSystemProfileIds(command.profileIds, swarmManager.listProfiles()),
+      );
     } catch (error) {
       send(socket, {
         type: "error",

@@ -2,6 +2,17 @@ import { describe, expect, it, vi } from "vitest";
 import type { ServerEvent } from "@forge/protocol";
 import { handleSessionCommand } from "../ws/routes/session-routes.js";
 
+const USER_PROFILES = [
+  {
+    profileId: "profile-a",
+    displayName: "Profile A",
+    defaultSessionAgentId: "profile-a",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    profileType: "user" as const,
+  },
+];
+
 describe("session routes", () => {
   it("returns false for non-session commands", async () => {
     const send = vi.fn();
@@ -52,6 +63,7 @@ describe("session routes", () => {
       sessionAgent: { agentId: "session-1", role: "manager", label: "Session 1" },
     };
     const swarmManager = {
+      listProfiles: vi.fn(() => USER_PROFILES),
       createSession: vi.fn(async () => created),
     };
 
@@ -85,6 +97,47 @@ describe("session routes", () => {
         profile: created.profile,
         sessionAgent: created.sessionAgent,
         requestId: "req-2",
+      }),
+    );
+  });
+
+  it("rejects create_session for system-managed profiles", async () => {
+    const send = vi.fn();
+    const swarmManager = {
+      listProfiles: vi.fn(() => [
+        ...USER_PROFILES,
+        {
+          profileId: "_collaboration",
+          displayName: "Collaboration",
+          defaultSessionAgentId: "_collaboration",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          profileType: "system" as const,
+        },
+      ]),
+      createSession: vi.fn(async () => {
+        throw new Error("should not be called");
+      }),
+    };
+
+    await handleSessionCommand({
+      command: { type: "create_session", profileId: "_collaboration", requestId: "req-system-create" } as never,
+      socket: {} as never,
+      subscribedAgentId: "manager-1",
+      swarmManager: swarmManager as never,
+      resolveManagerContextAgentId: vi.fn(() => "manager-1"),
+      send,
+      handleDeletedAgentSubscriptions: vi.fn(),
+    });
+
+    expect(swarmManager.createSession).not.toHaveBeenCalled();
+    expect(send).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        type: "error",
+        code: "CREATE_SESSION_FAILED",
+        message: "Cannot modify system-managed profile",
+        requestId: "req-system-create",
       }),
     );
   });
@@ -133,6 +186,7 @@ describe("session routes", () => {
     const broadcastUnreadCountUpdate = vi.fn();
     const handleDeletedAgentSubscriptions = vi.fn();
     const swarmManager = {
+      listProfiles: vi.fn(() => USER_PROFILES),
       getAgent: vi.fn((agentId: string) => {
         if (agentId === "session-1") {
           return { agentId: "session-1", role: "manager", profileId: "profile-a" };
@@ -170,9 +224,201 @@ describe("session routes", () => {
     );
   });
 
+  it("rejects delete_session for system-managed profiles", async () => {
+    const send = vi.fn();
+    const swarmManager = {
+      listProfiles: vi.fn(() => [
+        ...USER_PROFILES,
+        {
+          profileId: "_collaboration",
+          displayName: "Collaboration",
+          defaultSessionAgentId: "_collaboration",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          profileType: "system" as const,
+        },
+      ]),
+      getAgent: vi.fn(() => ({ agentId: "collab-session", role: "manager", profileId: "_collaboration" })),
+      deleteSession: vi.fn(async () => ({ terminatedWorkerIds: [] })),
+    };
+
+    await handleSessionCommand({
+      command: { type: "delete_session", agentId: "collab-session", requestId: "req-system-delete" } as never,
+      socket: {} as never,
+      subscribedAgentId: "manager-1",
+      swarmManager: swarmManager as never,
+      resolveManagerContextAgentId: vi.fn(() => "manager-1"),
+      send,
+      handleDeletedAgentSubscriptions: vi.fn(),
+    });
+
+    expect(swarmManager.deleteSession).not.toHaveBeenCalled();
+    expect(send).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        type: "error",
+        code: "DELETE_SESSION_FAILED",
+        message: "Cannot modify sessions in system-managed profiles",
+        requestId: "req-system-delete",
+      }),
+    );
+  });
+
+  it("clears Builder sessions and resets unread state", async () => {
+    const send = vi.fn();
+    const clearSession = vi.fn();
+    const broadcastUnreadCountUpdate = vi.fn();
+    const swarmManager = {
+      listProfiles: vi.fn(() => USER_PROFILES),
+      getAgent: vi.fn(() => ({ agentId: "session-1", role: "manager", profileId: "profile-a" })),
+      clearSessionConversation: vi.fn(async () => undefined),
+    };
+
+    await handleSessionCommand({
+      command: { type: "clear_session", agentId: "session-1", requestId: "req-clear" } as never,
+      socket: {} as never,
+      subscribedAgentId: "manager-1",
+      swarmManager: swarmManager as never,
+      resolveManagerContextAgentId: vi.fn(() => "manager-1"),
+      send,
+      handleDeletedAgentSubscriptions: vi.fn(),
+      unreadTracker: { clearSession } as never,
+      broadcastUnreadCountUpdate,
+    });
+
+    expect(swarmManager.clearSessionConversation).toHaveBeenCalledWith("session-1");
+    expect(clearSession).toHaveBeenCalledWith("profile-a", "session-1");
+    expect(broadcastUnreadCountUpdate).toHaveBeenCalledWith("session-1", 0);
+    expect(send).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        type: "session_cleared",
+        agentId: "session-1",
+        requestId: "req-clear",
+      }),
+    );
+  });
+
+  it("rejects clear_session for system-managed profiles", async () => {
+    const send = vi.fn();
+    const swarmManager = {
+      listProfiles: vi.fn(() => [
+        ...USER_PROFILES,
+        {
+          profileId: "_collaboration",
+          displayName: "Collaboration",
+          defaultSessionAgentId: "_collaboration",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          profileType: "system" as const,
+        },
+      ]),
+      getAgent: vi.fn(() => ({ agentId: "collab-session", role: "manager", profileId: "_collaboration" })),
+      clearSessionConversation: vi.fn(async () => undefined),
+    };
+
+    await handleSessionCommand({
+      command: { type: "clear_session", agentId: "collab-session", requestId: "req-system-clear" } as never,
+      socket: {} as never,
+      subscribedAgentId: "manager-1",
+      swarmManager: swarmManager as never,
+      resolveManagerContextAgentId: vi.fn(() => "manager-1"),
+      send,
+      handleDeletedAgentSubscriptions: vi.fn(),
+    });
+
+    expect(swarmManager.clearSessionConversation).not.toHaveBeenCalled();
+    expect(send).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        type: "error",
+        code: "CLEAR_SESSION_FAILED",
+        message: "Cannot modify sessions in system-managed profiles",
+        requestId: "req-system-clear",
+      }),
+    );
+  });
+
+  it("renames Builder sessions", async () => {
+    const send = vi.fn();
+    const swarmManager = {
+      listProfiles: vi.fn(() => USER_PROFILES),
+      getAgent: vi.fn(() => ({ agentId: "session-1", role: "manager", profileId: "profile-a" })),
+      renameSession: vi.fn(async () => undefined),
+    };
+
+    await handleSessionCommand({
+      command: { type: "rename_session", agentId: "session-1", label: "Renamed", requestId: "req-rename-ok" } as never,
+      socket: {} as never,
+      subscribedAgentId: "manager-1",
+      swarmManager: swarmManager as never,
+      resolveManagerContextAgentId: vi.fn(() => "manager-1"),
+      send,
+      handleDeletedAgentSubscriptions: vi.fn(),
+    });
+
+    expect(swarmManager.renameSession).toHaveBeenCalledWith("session-1", "Renamed");
+    expect(send).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        type: "session_renamed",
+        agentId: "session-1",
+        label: "Renamed",
+        requestId: "req-rename-ok",
+      }),
+    );
+  });
+
+  it("rejects rename_session for system-managed profiles", async () => {
+    const send = vi.fn();
+    const swarmManager = {
+      listProfiles: vi.fn(() => [
+        ...USER_PROFILES,
+        {
+          profileId: "_collaboration",
+          displayName: "Collaboration",
+          defaultSessionAgentId: "_collaboration",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          profileType: "system" as const,
+        },
+      ]),
+      getAgent: vi.fn(() => ({ agentId: "collab-session", role: "manager", profileId: "_collaboration" })),
+      renameSession: vi.fn(async () => undefined),
+    };
+
+    await handleSessionCommand({
+      command: { type: "rename_session", agentId: "collab-session", label: "Renamed", requestId: "req-system-rename" } as never,
+      socket: {} as never,
+      subscribedAgentId: "manager-1",
+      swarmManager: swarmManager as never,
+      resolveManagerContextAgentId: vi.fn(() => "manager-1"),
+      send,
+      handleDeletedAgentSubscriptions: vi.fn(),
+    });
+
+    expect(swarmManager.renameSession).not.toHaveBeenCalled();
+    expect(send).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        type: "error",
+        code: "RENAME_SESSION_FAILED",
+        message: "Cannot modify sessions in system-managed profiles",
+        requestId: "req-system-rename",
+      }),
+    );
+  });
+
   it("returns rename failures with the RENAME_SESSION_FAILED error code", async () => {
     const send = vi.fn();
     const swarmManager = {
+      listProfiles: vi.fn(() => USER_PROFILES),
+      getAgent: vi.fn((agentId: string) => {
+        if (agentId === "session-1") {
+          return { agentId: "session-1", role: "manager", profileId: "profile-a" };
+        }
+        return undefined;
+      }),
       renameSession: vi.fn(async () => {
         throw new Error("rename exploded");
       }),
@@ -202,6 +448,8 @@ describe("session routes", () => {
   it("pins sessions and returns pinnedAt metadata", async () => {
     const send = vi.fn();
     const swarmManager = {
+      listProfiles: vi.fn(() => USER_PROFILES),
+      getAgent: vi.fn(() => ({ agentId: "session-1", role: "manager", profileId: "profile-a" })),
       pinSession: vi.fn(async () => ({ pinnedAt: "2026-04-08T12:00:00.000Z" })),
     };
 
@@ -228,9 +476,56 @@ describe("session routes", () => {
     );
   });
 
+  it("rejects pin_session for system-managed profiles", async () => {
+    const send = vi.fn();
+    const swarmManager = {
+      listProfiles: vi.fn(() => [
+        ...USER_PROFILES,
+        {
+          profileId: "_collaboration",
+          displayName: "Collaboration",
+          defaultSessionAgentId: "_collaboration",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          profileType: "system" as const,
+        },
+      ]),
+      getAgent: vi.fn(() => ({ agentId: "collab-session", role: "manager", profileId: "_collaboration" })),
+      pinSession: vi.fn(async () => ({ pinnedAt: "2026-04-08T12:00:00.000Z" })),
+    };
+
+    await handleSessionCommand({
+      command: { type: "pin_session", agentId: "collab-session", pinned: true, requestId: "req-system-pin" } as never,
+      socket: {} as never,
+      subscribedAgentId: "manager-1",
+      swarmManager: swarmManager as never,
+      resolveManagerContextAgentId: vi.fn(() => "manager-1"),
+      send,
+      handleDeletedAgentSubscriptions: vi.fn(),
+    });
+
+    expect(swarmManager.pinSession).not.toHaveBeenCalled();
+    expect(send).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        type: "error",
+        code: "PIN_SESSION_FAILED",
+        message: "Cannot modify sessions in system-managed profiles",
+        requestId: "req-system-pin",
+      }),
+    );
+  });
+
   it("forks sessions and preserves the optional fromMessageId in the response", async () => {
     const send = vi.fn();
     const swarmManager = {
+      listProfiles: vi.fn(() => USER_PROFILES),
+      getAgent: vi.fn((agentId: string) => {
+        if (agentId === "session-1") {
+          return { agentId: "session-1", role: "manager", profileId: "profile-a" };
+        }
+        return undefined;
+      }),
       forkSession: vi.fn(async () => ({
         sessionAgent: { agentId: "session-2", role: "manager", label: "Fork" },
         profile: { profileId: "profile-a", displayName: "Profile A" },
@@ -266,6 +561,53 @@ describe("session routes", () => {
         profile: expect.objectContaining({ profileId: "profile-a" }),
         fromMessageId: "message-42",
         requestId: "req-7",
+      }),
+    );
+  });
+
+  it("rejects fork_session for system-managed profiles", async () => {
+    const send = vi.fn();
+    const swarmManager = {
+      listProfiles: vi.fn(() => [
+        ...USER_PROFILES,
+        {
+          profileId: "_collaboration",
+          displayName: "Collaboration",
+          defaultSessionAgentId: "_collaboration",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          profileType: "system" as const,
+        },
+      ]),
+      getAgent: vi.fn(() => ({ agentId: "collab-session", role: "manager", profileId: "_collaboration" })),
+      forkSession: vi.fn(async () => ({
+        sessionAgent: { agentId: "forked", role: "manager", label: "Forked" },
+        profile: { profileId: "_collaboration", displayName: "Collaboration" },
+      })),
+    };
+
+    await handleSessionCommand({
+      command: {
+        type: "fork_session",
+        sourceAgentId: "collab-session",
+        requestId: "req-system-fork",
+      } as never,
+      socket: {} as never,
+      subscribedAgentId: "manager-1",
+      swarmManager: swarmManager as never,
+      resolveManagerContextAgentId: vi.fn(() => "manager-1"),
+      send,
+      handleDeletedAgentSubscriptions: vi.fn(),
+    });
+
+    expect(swarmManager.forkSession).not.toHaveBeenCalled();
+    expect(send).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        type: "error",
+        code: "FORK_SESSION_FAILED",
+        message: "Cannot modify sessions in system-managed profiles",
+        requestId: "req-system-fork",
       }),
     );
   });

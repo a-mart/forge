@@ -4,9 +4,13 @@ import type { ServerEvent } from "@forge/protocol";
 import { applyCorsHeaders, sendJson } from "../ws/http-utils.js";
 
 vi.mock("@forge/protocol", async () => {
-  const actual = await vi.importActual<object>("@forge/protocol").catch(() => ({}));
+  const actual = await vi.importActual<Record<string, unknown>>("@forge/protocol").catch(() => ({}));
   return {
     ...actual,
+    isSystemProfile:
+      typeof actual.isSystemProfile === "function"
+        ? actual.isSystemProfile
+        : (profile: { profileType?: string }) => profile.profileType === "system",
     MANAGER_REASONING_LEVELS: ["none", "low", "medium", "high"],
   };
 });
@@ -197,6 +201,62 @@ describe("specialist routes", () => {
     );
   });
 
+  it("saves profile-scoped specialists and only notifies the targeted profile", async () => {
+    specialistRegistryState.resolveRoster.mockResolvedValueOnce([
+      { specialistId: "backend-specialist", handle: "backend", sourcePath: "/tmp/alpha/backend.md" },
+    ]);
+
+    const notifySpecialistRosterChanged = vi.fn(async () => undefined);
+    const broadcastEvent = vi.fn<(event: ServerEvent) => void>();
+    const server = await createSpecialistRouteTestServer({
+      profiles: [{ profileId: "alpha", displayName: "Alpha" }],
+      notifySpecialistRosterChanged,
+      broadcastEvent,
+    });
+
+    const response = await fetch(`${server.baseUrl}/api/settings/specialists/backend?profileId=alpha`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(validSpecialistPayload()),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ ok: true });
+    expect(specialistRegistryState.saveProfileSpecialist).toHaveBeenCalledWith(
+      "/tmp/data",
+      "alpha",
+      "backend",
+      expect.objectContaining({ displayName: "Releases" }),
+    );
+    expect(notifySpecialistRosterChanged).toHaveBeenCalledWith("alpha");
+    expect(broadcastEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "specialist_roster_changed",
+        profileId: "alpha",
+        specialistIds: ["backend-specialist"],
+      }),
+    );
+  });
+
+  it("rejects profile-scoped specialist saves for system-managed profiles", async () => {
+    const server = await createSpecialistRouteTestServer({
+      profiles: [
+        { profileId: "alpha", displayName: "Alpha" },
+        { profileId: "_collaboration", displayName: "Collaboration", profileType: "system" },
+      ],
+    });
+
+    const response = await fetch(`${server.baseUrl}/api/settings/specialists/backend?profileId=_collaboration`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(validSpecialistPayload()),
+    });
+
+    expect(response.status).toBe(403);
+    expect(specialistRegistryState.saveProfileSpecialist).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toEqual({ error: "Cannot modify system-managed profile" });
+  });
+
   it("deletes profile-scoped specialists and only notifies the targeted profile", async () => {
     specialistRegistryState.resolveRoster.mockResolvedValueOnce([
       { specialistId: "backend-specialist", handle: "backend", sourcePath: "/tmp/alpha/backend.md" },
@@ -225,6 +285,23 @@ describe("specialist routes", () => {
         specialistIds: ["backend-specialist"],
       }),
     );
+  });
+
+  it("rejects profile-scoped specialist deletes for system-managed profiles", async () => {
+    const server = await createSpecialistRouteTestServer({
+      profiles: [
+        { profileId: "alpha", displayName: "Alpha" },
+        { profileId: "_collaboration", displayName: "Collaboration", profileType: "system" },
+      ],
+    });
+
+    const response = await fetch(`${server.baseUrl}/api/settings/specialists/backend?profileId=_collaboration`, {
+      method: "DELETE",
+    });
+
+    expect(response.status).toBe(403);
+    expect(specialistRegistryState.deleteProfileSpecialist).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toEqual({ error: "Cannot modify system-managed profile" });
   });
 
   it("returns the enabled flag for the current installation", async () => {
@@ -313,13 +390,15 @@ function validSpecialistPayload(): Record<string, unknown> {
 }
 
 async function createSpecialistRouteTestServer(options?: {
-  profiles?: Array<{ profileId: string; displayName: string }>;
+  profiles?: Array<{ profileId: string; displayName: string; profileType?: "user" | "system" }>;
   notifySpecialistRosterChanged?: (profileId: string) => Promise<void>;
   broadcastEvent?: (event: ServerEvent) => void;
 }): Promise<TestServer> {
+  const profiles = options?.profiles ?? [];
   const swarmManager = {
     getConfig: () => ({ paths: { dataDir: "/tmp/data" } }),
-    listProfiles: () => options?.profiles ?? [],
+    listProfiles: () => profiles,
+    listUserProfiles: () => profiles.filter((profile) => profile.profileType !== "system"),
     notifySpecialistRosterChanged: options?.notifySpecialistRosterChanged ?? vi.fn(async () => undefined),
   };
 

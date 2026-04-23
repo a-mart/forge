@@ -10,6 +10,7 @@ import type {
 import { WebSocketServer } from "ws";
 import type { IntegrationRegistryService } from "../integrations/registry.js";
 import { MobilePushService } from "../mobile/mobile-push-service.js";
+
 import type { PlaywrightDiscoveryService } from "../playwright/playwright-discovery-service.js";
 import { PlaywrightLivePreviewProxy } from "../playwright/playwright-live-preview-proxy.js";
 import { PlaywrightLivePreviewService } from "../playwright/playwright-live-preview-service.js";
@@ -25,9 +26,11 @@ import {
 import { isPidAlive } from "../swarm/platform.js";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import { UnreadTracker } from "../swarm/unread-tracker.js";
+
 import { applyCorsHeaders, resolveRequestUrl, sendJson } from "./http-utils.js";
 import { createAgentHttpRoutes } from "./http/routes/agent-http-routes.js";
 import { createChromeCdpRoutes } from "./http/routes/chrome-cdp-routes.js";
+
 import { createCortexAutoReviewRoutes } from "./http/routes/cortex-auto-review-routes.js";
 import { createCortexRoutes } from "./http/routes/cortex-routes.js";
 import { createDebugRoutes } from "./http/routes/debug-routes.js";
@@ -115,6 +118,10 @@ export class SwarmWebSocketServer {
 
     if (shouldBroadcastUnread) {
       const sessionAgentId = resolveSessionAgentIdForUnread(this.swarmManager, event.agentId);
+      if (!sessionAgentId) {
+        return;
+      }
+
       this.wsHandler.broadcastToSubscribed({
         type: "unread_notification",
         agentId: event.agentId,
@@ -122,10 +129,7 @@ export class SwarmWebSocketServer {
         sessionAgentId,
       });
 
-      if (
-        sessionAgentId &&
-        !this.wsHandler.hasActiveSubscriptionForSession(sessionAgentId)
-      ) {
+      if (!this.wsHandler.hasActiveSubscriptionForSession(sessionAgentId)) {
         const { profileId } = this.resolveUnreadContext(sessionAgentId);
         if (profileId) {
           const newCount = this.unreadTracker.increment(profileId, sessionAgentId);
@@ -152,10 +156,15 @@ export class SwarmWebSocketServer {
 
   private readonly onChoiceRequest = (event: ServerEvent): void => {
     if (event.type !== "choice_request") return;
+
     this.wsHandler.broadcastToSubscribed(event);
 
     if (event.status === "pending") {
       const sessionAgentId = resolveSessionAgentIdForUnread(this.swarmManager, event.agentId);
+      if (!sessionAgentId) {
+        return;
+      }
+
       this.wsHandler.broadcastToSubscribed({
         type: "unread_notification",
         agentId: event.agentId,
@@ -163,10 +172,7 @@ export class SwarmWebSocketServer {
         sessionAgentId,
       });
 
-      if (
-        sessionAgentId &&
-        !this.wsHandler.hasActiveSubscriptionForSession(sessionAgentId)
-      ) {
+      if (!this.wsHandler.hasActiveSubscriptionForSession(sessionAgentId)) {
         const { profileId } = this.resolveUnreadContext(sessionAgentId);
         if (profileId) {
           const newCount = this.unreadTracker.increment(profileId, sessionAgentId);
@@ -188,6 +194,11 @@ export class SwarmWebSocketServer {
 
   private readonly onAgentStatus = (event: ServerEvent): void => {
     if (event.type !== "agent_status") return;
+    this.wsHandler.broadcastToSubscribed(event);
+  };
+
+  private readonly onSessionWorkersSnapshot = (event: ServerEvent): void => {
+    if (event.type !== "session_workers_snapshot") return;
     this.wsHandler.broadcastToSubscribed(event);
   };
 
@@ -247,6 +258,7 @@ export class SwarmWebSocketServer {
     return { profileId: descriptor.profileId ?? descriptor.agentId };
   }
 
+
   constructor(options: {
     swarmManager: SwarmManager;
     host: string;
@@ -305,7 +317,11 @@ export class SwarmWebSocketServer {
         getSessionAgentIds: (profileId) =>
           this.swarmManager
             .listAgents?.()
-            .filter((descriptor) => descriptor.role === "manager" && (descriptor.profileId ?? descriptor.agentId) === profileId)
+            .filter(
+              (descriptor) =>
+                descriptor.role === "manager" &&
+                (descriptor.profileId ?? descriptor.agentId) === profileId,
+            )
             .map((descriptor) => descriptor.agentId) ?? [],
       });
 
@@ -349,6 +365,7 @@ export class SwarmWebSocketServer {
       statsService: this.statsService,
     });
     this.tokenAnalyticsService = new TokenAnalyticsService(this.swarmManager);
+
     this.httpRoutes = [
       ...createHealthRoutes({
         resolveControlPidFile: () => this.controlPidFile,
@@ -415,6 +432,7 @@ export class SwarmWebSocketServer {
             broadcastEvent: (event) => this.wsHandler.broadcastToSubscribed(event),
             promptPreviewProvider: this.swarmManager,
             versioning: this.swarmManager.getVersioningService(),
+            listProfiles: () => this.swarmManager.listProfiles(),
             cortexEnabled,
           })
         : []),
@@ -439,7 +457,7 @@ export class SwarmWebSocketServer {
 
     this.wsHandler.attach(wss);
     httpServer.on("upgrade", (request, socket, head) => {
-      this.handleUpgrade(request, socket, head);
+      void this.handleUpgrade(request, socket, head);
     });
 
     await new Promise<void>((resolve, reject) => {
@@ -476,6 +494,7 @@ export class SwarmWebSocketServer {
     this.swarmManager.on("conversation_reset", this.onConversationReset);
     this.swarmManager.on("message_pinned", this.onMessagePinned);
     this.swarmManager.on("agent_status", this.onAgentStatus);
+    this.swarmManager.on("session_workers_snapshot", this.onSessionWorkersSnapshot);
     this.swarmManager.on("agents_snapshot", this.onAgentsSnapshot);
     this.swarmManager.on("profiles_snapshot", this.onProfilesSnapshot);
     this.integrationRegistry?.on("telegram_status", this.onTelegramStatus);
@@ -533,6 +552,7 @@ export class SwarmWebSocketServer {
     this.swarmManager.off("conversation_reset", this.onConversationReset);
     this.swarmManager.off("message_pinned", this.onMessagePinned);
     this.swarmManager.off("agent_status", this.onAgentStatus);
+    this.swarmManager.off("session_workers_snapshot", this.onSessionWorkersSnapshot);
     this.swarmManager.off("agents_snapshot", this.onAgentsSnapshot);
     this.swarmManager.off("profiles_snapshot", this.onProfilesSnapshot);
     this.integrationRegistry?.off("telegram_status", this.onTelegramStatus);
@@ -569,8 +589,9 @@ export class SwarmWebSocketServer {
     }
   }
 
-  private handleUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer): void {
+  private async handleUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer): Promise<void> {
     if (!this.httpServer || !this.wss) {
+      ignoreSocketErrors(socket);
       socket.destroy();
       return;
     }
@@ -590,22 +611,32 @@ export class SwarmWebSocketServer {
       }
     }
 
-    this.wss.handleUpgrade(request, socket, head, (client) => {
-      this.wss?.emit("connection", client, request);
+    const wss = this.wss;
+    if (!wss) {
+      ignoreSocketErrors(socket);
+      socket.destroy();
+      return;
+    }
+
+    wss.handleUpgrade(request, socket, head, (client) => {
+      wss.emit("connection", client, request);
     });
   }
 
   private async handleHttpRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const requestUrl = resolveRequestUrl(request, `${this.host}:${this.getPort()}`);
-    const route = this.httpRoutes.find((candidate) => candidate.matches(requestUrl.pathname));
-
-    if (!route) {
-      response.statusCode = 404;
-      response.end("Not Found");
-      return;
-    }
+    let route: HttpRoute | undefined;
 
     try {
+      route = this.httpRoutes.find((candidate) => candidate.matches(requestUrl.pathname));
+
+      if (!route) {
+        applyCorsHeaders(request, response, "GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS");
+        response.statusCode = 404;
+        response.end("Not Found");
+        return;
+      }
+
       await route.handle(request, response, requestUrl);
     } catch (error) {
       if (response.writableEnded || response.headersSent) {
@@ -621,11 +652,16 @@ export class SwarmWebSocketServer {
           ? 400
           : 500;
 
-      applyCorsHeaders(request, response, route.methods);
+      applyCorsHeaders(request, response, route?.methods ?? "GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS");
       sendJson(response, statusCode, { error: message });
     }
   }
 }
+
+function ignoreSocketErrors(socket: Duplex): void {
+  socket.once("error", () => {});
+}
+
 
 async function tryWriteOwnedControlPidFile(pidFile: string): Promise<boolean> {
   const existingPid = await readControlPidFromFile(pidFile);

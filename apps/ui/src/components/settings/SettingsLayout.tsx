@@ -1,9 +1,9 @@
-import { ArrowLeft, Bell, Settings, KeyRound, Blocks, Wrench, FileText, Terminal, Puzzle, UserCog, Info, Cpu } from 'lucide-react'
+import { ArrowLeft, Bell, Settings, KeyRound, Blocks, Wrench, FileText, Terminal, Puzzle, UserCog, Info, Cpu, Users } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { HelpTrigger } from '@/components/help/HelpTrigger'
 import { cn } from '@/lib/utils'
 
-export type SettingsTab = 'general' | 'notifications' | 'auth' | 'models' | 'integrations' | 'skills' | 'prompts' | 'specialists' | 'slash-commands' | 'extensions' | 'about'
+export type SettingsTab = 'general' | 'notifications' | 'auth' | 'models' | 'integrations' | 'skills' | 'prompts' | 'specialists' | 'slash-commands' | 'extensions' | 'collaboration' | 'about'
 
 interface NavItem {
   id: SettingsTab
@@ -22,6 +22,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'specialists', label: 'Specialists', icon: <UserCog className="size-4" /> },
   { id: 'slash-commands', label: 'Slash Commands', icon: <Terminal className="size-4" /> },
   { id: 'extensions', label: 'Extensions', icon: <Puzzle className="size-4" /> },
+  { id: 'collaboration', label: 'Collaboration', icon: <Users className="size-4" /> },
   { id: 'about', label: 'About', icon: <Info className="size-4" /> },
 ]
 

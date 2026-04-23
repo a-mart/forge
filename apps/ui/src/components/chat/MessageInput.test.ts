@@ -1,11 +1,11 @@
 /** @vitest-environment jsdom */
 
 import { fireEvent, getByLabelText } from '@testing-library/dom'
-import { createElement } from 'react'
+import { createElement, createRef } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { MessageInput, type ProjectAgentSuggestion } from './MessageInput'
+import { MessageInput, type MessageInputHandle, type ProjectAgentSuggestion } from './MessageInput'
 import type { SlashCommand } from '@/components/settings/slash-commands-api'
 import type { ConversationAttachment } from '@forge/protocol'
 
@@ -136,14 +136,16 @@ async function flush(): Promise<void> {
 
 function renderMessageInput(
   overrides: Partial<{
-    onSend: (msg: string, attachments?: ConversationAttachment[]) => void
+    onSend: (msg: string, attachments?: ConversationAttachment[]) => void | boolean | Promise<boolean>
     isLoading: boolean
     disabled: boolean
     agentId: string
+    draftKey: string
     slashCommands: SlashCommand[]
     projectAgents: ProjectAgentSuggestion[]
     wsUrl: string
   }> = {},
+  inputRef?: React.RefObject<MessageInputHandle | null>,
 ): void {
   const defaultProps = {
     onSend: vi.fn(),
@@ -155,7 +157,7 @@ function renderMessageInput(
   }
   root = createRoot(container)
   flushSync(() => {
-    root?.render(createElement(MessageInput, defaultProps))
+    root?.render(createElement(MessageInput, { ...defaultProps, ref: inputRef ?? null }))
   })
 }
 
@@ -480,6 +482,233 @@ describe('MessageInput', () => {
       await flush()
 
       expect(onSend).not.toHaveBeenCalled()
+    })
+  })
+
+  /* ---- Accepted-send semantics ---- */
+
+  describe('accepted-send semantics', () => {
+    it('clears draft when onSend returns true', async () => {
+      const onSend = vi.fn(() => true)
+      renderMessageInput({ onSend })
+      await flush()
+
+      typeInTextarea('hello')
+      await flush()
+
+      const form = container.querySelector('form')!
+      flushSync(() => {
+        fireEvent.submit(form)
+      })
+      await flush()
+
+      expect(onSend).toHaveBeenCalledWith('hello', undefined)
+      expect(getTextarea().value).toBe('')
+    })
+
+    it('preserves draft when onSend returns false', async () => {
+      const onSend = vi.fn(() => false)
+      renderMessageInput({ onSend })
+      await flush()
+
+      typeInTextarea('rejected message')
+      await flush()
+
+      const form = container.querySelector('form')!
+      flushSync(() => {
+        fireEvent.submit(form)
+      })
+      await flush()
+
+      expect(onSend).toHaveBeenCalledWith('rejected message', undefined)
+      expect(getTextarea().value).toBe('rejected message')
+    })
+
+    it('clears draft when onSend returns void (backward compat)', async () => {
+      const onSend = vi.fn() // returns undefined (void)
+      renderMessageInput({ onSend })
+      await flush()
+
+      typeInTextarea('legacy send')
+      await flush()
+
+      const form = container.querySelector('form')!
+      flushSync(() => {
+        fireEvent.submit(form)
+      })
+      await flush()
+
+      expect(onSend).toHaveBeenCalledWith('legacy send', undefined)
+      expect(getTextarea().value).toBe('')
+    })
+
+    it('clears draft when onSend returns a resolved true Promise', async () => {
+      const onSend = vi.fn(() => Promise.resolve(true))
+      renderMessageInput({ onSend })
+      await flush()
+
+      typeInTextarea('async accepted')
+      await flush()
+
+      const form = container.querySelector('form')!
+      flushSync(() => {
+        fireEvent.submit(form)
+      })
+      // Wait for the promise to resolve
+      await flush()
+
+      expect(getTextarea().value).toBe('')
+    })
+
+    it('preserves draft when onSend returns a resolved false Promise', async () => {
+      const onSend = vi.fn(() => Promise.resolve(false))
+      renderMessageInput({ onSend })
+      await flush()
+
+      typeInTextarea('async rejected')
+      await flush()
+
+      const form = container.querySelector('form')!
+      flushSync(() => {
+        fireEvent.submit(form)
+      })
+      // Wait for the promise to resolve
+      await flush()
+
+      expect(getTextarea().value).toBe('async rejected')
+    })
+  })
+
+  /* ---- Draft restoration ---- */
+
+  describe('restoreLastSubmission', () => {
+    it('restores text after a successful send', async () => {
+      const inputRef = createRef<MessageInputHandle>()
+      const onSend = vi.fn(() => true)
+      renderMessageInput({ onSend }, inputRef)
+      await flush()
+
+      typeInTextarea('important message')
+      await flush()
+
+      const form = container.querySelector('form')!
+      flushSync(() => {
+        fireEvent.submit(form)
+      })
+      await flush()
+
+      // Draft should be cleared
+      expect(getTextarea().value).toBe('')
+
+      // Restore the last submission
+      let restored = false
+      flushSync(() => {
+        restored = inputRef.current!.restoreLastSubmission()
+      })
+      await flush()
+
+      expect(restored).toBe(true)
+      expect(getTextarea().value).toBe('important message')
+    })
+
+    it('returns false when there is nothing to restore', async () => {
+      const inputRef = createRef<MessageInputHandle>()
+      renderMessageInput({}, inputRef)
+      await flush()
+
+      const restored = inputRef.current!.restoreLastSubmission()
+      expect(restored).toBe(false)
+      expect(getTextarea().value).toBe('')
+    })
+
+    it('clears saved submission after restore', async () => {
+      const inputRef = createRef<MessageInputHandle>()
+      const onSend = vi.fn(() => true)
+      renderMessageInput({ onSend }, inputRef)
+      await flush()
+
+      typeInTextarea('once only')
+      await flush()
+
+      const form = container.querySelector('form')!
+      flushSync(() => {
+        fireEvent.submit(form)
+      })
+      await flush()
+
+      // First restore succeeds
+      flushSync(() => {
+        inputRef.current!.restoreLastSubmission()
+      })
+      await flush()
+      expect(getTextarea().value).toBe('once only')
+
+      // Clear again manually
+      flushSync(() => {
+        inputRef.current!.setInput('')
+      })
+      await flush()
+
+      // Second restore returns false — already consumed
+      const restored = inputRef.current!.restoreLastSubmission()
+      expect(restored).toBe(false)
+    })
+
+    it('does not save submission when onSend returns false', async () => {
+      const inputRef = createRef<MessageInputHandle>()
+      const onSend = vi.fn(() => false)
+      renderMessageInput({ onSend }, inputRef)
+      await flush()
+
+      typeInTextarea('rejected')
+      await flush()
+
+      const form = container.querySelector('form')!
+      flushSync(() => {
+        fireEvent.submit(form)
+      })
+      await flush()
+
+      // Draft kept — nothing was cleared, so nothing to restore
+      expect(getTextarea().value).toBe('rejected')
+      const restored = inputRef.current!.restoreLastSubmission()
+      expect(restored).toBe(false)
+    })
+  })
+
+  /* ---- draftKey prop ---- */
+
+  describe('draftKey prop', () => {
+    it('uses draftKey instead of agentId for draft storage', async () => {
+      renderMessageInput({ agentId: 'agent-1', draftKey: 'collab:channel:ch1' })
+      await flush()
+
+      typeInTextarea('channel draft')
+      await flush()
+
+      const drafts = JSON.parse(localStorageMock.getItem(DRAFTS_KEY) ?? '{}')
+      expect(drafts['collab:channel:ch1']).toBe('channel draft')
+      expect(drafts['agent-1']).toBeUndefined()
+    })
+
+    it('restores draft from draftKey on mount', async () => {
+      localStorageMock.setItem(DRAFTS_KEY, JSON.stringify({ 'collab:channel:ch1': 'saved channel draft' }))
+
+      renderMessageInput({ agentId: 'agent-1', draftKey: 'collab:channel:ch1' })
+      await flush()
+
+      expect(getTextarea().value).toBe('saved channel draft')
+    })
+
+    it('falls back to agentId when draftKey is not provided', async () => {
+      renderMessageInput({ agentId: 'agent-1' })
+      await flush()
+
+      typeInTextarea('agent draft')
+      await flush()
+
+      const drafts = JSON.parse(localStorageMock.getItem(DRAFTS_KEY) ?? '{}')
+      expect(drafts['agent-1']).toBe('agent draft')
     })
   })
 

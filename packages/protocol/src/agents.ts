@@ -71,10 +71,17 @@ export interface ManagerProfile {
   defaultSessionAgentId: string
   createdAt: string
   updatedAt: string
+  profileType?: 'user' | 'system'
   sortOrder?: number
 }
 
 export type AgentSessionPurpose = 'cortex_review' | 'agent_creator'
+export type AgentSessionSurface = 'builder' | 'collab'
+
+export interface AgentCollaborationLink {
+  workspaceId: string
+  channelId: string
+}
 
 export interface AgentDescriptor {
   agentId: string
@@ -93,6 +100,8 @@ export interface AgentDescriptor {
   profileId?: string
   sessionLabel?: string
   sessionPurpose?: AgentSessionPurpose
+  sessionSurface?: AgentSessionSurface
+  collab?: AgentCollaborationLink
   pinnedAt?: string
   mergedAt?: string
   compactionCount?: number

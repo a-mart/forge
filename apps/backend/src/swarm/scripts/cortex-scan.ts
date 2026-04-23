@@ -48,7 +48,8 @@ export interface ScanResult {
 export async function scanCortexReviewStatus(dataDir: string): Promise<ScanResult> {
   const sessions: ScanSession[] = [];
 
-  const profilesDir = join(resolve(dataDir), "profiles");
+  const resolvedDataDir = resolve(dataDir);
+  const profilesDir = join(resolvedDataDir, "profiles");
   let profileEntries: Array<{ name: string; isDirectory: () => boolean }> = [];
 
   try {
@@ -117,6 +118,7 @@ export async function scanCortexReviewStatus(dataDir: string): Promise<ScanResul
       }
 
       const sessionId = typeof parsed?.sessionId === "string" ? parsed.sessionId : sessionEntry.name;
+
       const [actualSessionBytes, actualMemoryBytes, actualFeedbackBytes] = await Promise.all([
         readExistingFileSize(join(sessionDir, "session.jsonl")),
         readExistingFileSize(join(sessionDir, "memory.md")),

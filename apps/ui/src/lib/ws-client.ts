@@ -39,6 +39,7 @@ import {
   isSocketOpen,
   RECONNECTING_SOCKET_ERROR,
 } from './ws-client/request-definitions'
+import { WebSocketTransport } from './ws-client/websocket-transport'
 import {
   INITIAL_CONNECT_DELAY_MS,
   RECONNECT_MS,
@@ -113,10 +114,8 @@ export type {
   ProjectAgentReferenceSavedResult,
 } from './ws-client/types'
 
-/** Safety timeout (ms) for flushing bootstrap buffer if the terminal signal never arrives */
 const BOOTSTRAP_FLUSH_TIMEOUT_MS = 100
 
-/** Buffer for coalescing subscribe bootstrap events into a single state update */
 interface BootstrapBuffer {
   targetAgentId: string
   pendingPatch: Partial<ManagerWsState>
@@ -124,13 +123,14 @@ interface BootstrapBuffer {
 }
 
 export class ManagerWsClient {
-  private readonly url: string
+  private readonly transport: WebSocketTransport
   private desiredAgentId: string | null
 
-  private socket: WebSocket | null = null
-  private connectTimer: ReturnType<typeof setTimeout> | undefined
-  private started = false
-  private destroyed = false
+  /** Convenience accessor — delegates to transport so existing guards work unchanged. */
+  private get socket(): WebSocket | null {
+    return this.transport.getSocket()
+  }
+
   private hasConnectedOnce = false
   private shouldReloadOnReconnect = false
   private hasExplicitAgentSelection = false
@@ -150,9 +150,17 @@ export class ManagerWsClient {
 
   constructor(url: string, initialAgentId?: string | null) {
     const normalizedInitialAgentId = normalizeAgentId(initialAgentId)
-    this.url = url
     this.desiredAgentId = normalizedInitialAgentId
     this.state = createInitialManagerWsState(normalizedInitialAgentId)
+
+    this.transport = new WebSocketTransport({
+      url,
+      reconnectDelayMs: RECONNECT_MS,
+      onOpen: () => this.handleTransportOpen(),
+      onClose: () => this.handleTransportClose(),
+      onMessage: (data) => this.handleServerEvent(data),
+      onError: () => this.handleTransportError(),
+    })
   }
 
   getState(): ManagerWsState {
@@ -209,32 +217,17 @@ export class ManagerWsClient {
   }
 
   start(): void {
-    if (this.started || this.destroyed || typeof window === 'undefined') {
-      return
-    }
+    if (typeof window === 'undefined') return
 
-    this.started = true
-    this.scheduleConnect(INITIAL_CONNECT_DELAY_MS)
+    this.transport.connect(INITIAL_CONNECT_DELAY_MS)
   }
 
   destroy(): void {
-    this.destroyed = true
-    this.started = false
-
-    if (this.connectTimer) {
-      clearTimeout(this.connectTimer)
-      this.connectTimer = undefined
-    }
-
     this.rejectAllPendingRequests('Client destroyed before request completed.')
     this.pendingWorkerFetches.clear()
     this.clearQueuedSessionWorkerRefetches()
-    this.clearBootstrapBuffer()
 
-    if (this.socket) {
-      this.socket.close()
-      this.socket = null
-    }
+    this.transport.disconnect()
   }
 
   subscribeToAgent(agentId: string, options?: { explicit?: boolean }): void {
@@ -630,90 +623,61 @@ export class ManagerWsClient {
     }
   }
 
-  private connect(): void {
-    if (this.destroyed) return
+  // -----------------------------------------------------------------------
+  // Transport callbacks
+  // -----------------------------------------------------------------------
 
-    const socket = new WebSocket(this.url)
-    this.socket = socket
+  private handleTransportOpen(): void {
+    const shouldReload = this.shouldReloadOnReconnect
+    this.hasConnectedOnce = true
+    this.shouldReloadOnReconnect = false
+    this.hasExplicitAgentSelection = false
+    this.explicitAgentSelectionAgentId = null
 
-    socket.addEventListener('open', () => {
-      const shouldReload = this.shouldReloadOnReconnect
-      this.hasConnectedOnce = true
-      this.shouldReloadOnReconnect = false
-      this.hasExplicitAgentSelection = false
-      this.explicitAgentSelectionAgentId = null
-
-      this.updateState({
-        connected: true,
-        hasReceivedAgentsSnapshot: false,
-        loadedSessionIds: new Set(),
-        lastError: null,
-      })
-
-      this.send(buildSubscribeCommand(this.desiredAgentId))
-
-      if (shouldReload && typeof window !== 'undefined' && typeof window.location?.reload === 'function') {
-        window.location.reload()
-      }
+    this.updateState({
+      connected: true,
+      hasReceivedAgentsSnapshot: false,
+      loadedSessionIds: new Set(),
+      lastError: null,
     })
 
-    socket.addEventListener('message', (event) => {
-      this.handleServerEvent(event.data)
+    this.send(buildSubscribeCommand(this.desiredAgentId))
+
+    if (shouldReload && typeof window !== 'undefined' && typeof window.location?.reload === 'function') {
+      window.location.reload()
+    }
+  }
+
+  private handleTransportClose(): void {
+    if (this.hasConnectedOnce) {
+      this.shouldReloadOnReconnect = true
+    }
+
+    this.hasExplicitAgentSelection = false
+    this.explicitAgentSelectionAgentId = null
+    this.clearBootstrapBuffer()
+
+    this.updateState({
+      connected: false,
+      hasReceivedAgentsSnapshot: false,
+      loadedSessionIds: new Set(),
+      subscribedAgentId: null,
     })
 
-    socket.addEventListener('close', () => {
-      if (!this.destroyed && this.hasConnectedOnce) {
-        this.shouldReloadOnReconnect = true
-      }
+    this.clearQueuedSessionWorkerRefetches()
+    this.rejectAllPendingRequests('WebSocket disconnected before request completed.')
+  }
 
-      this.hasExplicitAgentSelection = false
-      this.explicitAgentSelectionAgentId = null
-      this.clearBootstrapBuffer()
-
-      this.updateState({
-        connected: false,
-        hasReceivedAgentsSnapshot: false,
-        loadedSessionIds: new Set(),
-        subscribedAgentId: null,
-      })
-
-      this.clearQueuedSessionWorkerRefetches()
-      this.rejectAllPendingRequests('WebSocket disconnected before request completed.')
-      this.scheduleConnect(RECONNECT_MS)
-    })
-
-    socket.addEventListener('error', () => {
-      this.updateState({
-        connected: false,
-        lastError: 'WebSocket connection error',
-      })
+  private handleTransportError(): void {
+    this.updateState({
+      connected: false,
+      lastError: 'WebSocket connection error',
     })
   }
 
-  private scheduleConnect(delayMs: number): void {
-    if (this.destroyed || !this.started || this.connectTimer) {
-      return
-    }
+  private handleServerEvent(parsed: unknown): void {
+    const event = parsed as ServerEvent
 
-    this.connectTimer = setTimeout(() => {
-      this.connectTimer = undefined
-      if (!this.destroyed && this.started) {
-        this.connect()
-      }
-    }, delayMs)
-  }
-
-  private handleServerEvent(raw: unknown): void {
-    let event: ServerEvent
-    try {
-      event = JSON.parse(String(raw)) as ServerEvent
-    } catch {
-      this.pushSystemMessage('Received invalid JSON event from backend.')
-      return
-    }
-
-    // Bootstrap batching: coalesce bootstrap events into a single state update,
-    // force-flush if a same-target live event arrives during bootstrap.
     if (this.bootstrapBuffer) {
       if (BOOTSTRAP_COALESCIBLE_EVENT_TYPES.has(event.type)) {
         this.handleBootstrapCoalescibleEvent(event)
@@ -795,12 +759,7 @@ export class ManagerWsClient {
     event: Extract<ServerEvent, { type: 'agent_status' }>,
   ): void {
     const result = reduceAgentStatus({ state: this.state, event })
-
-    // Skip state update (and the React re-render it triggers) when nothing changed
-    const hasChanges = Object.keys(result.patch).length > 0
-    if (hasChanges) {
-      this.updateState(result.patch)
-    }
+    this.updateState(result.patch)
 
     if (result.queueSessionWorkersRefetchId) {
       this.queueSessionWorkersRefetch(result.queueSessionWorkersRefetchId)
@@ -960,18 +919,6 @@ export class ManagerWsClient {
     this.pendingSessionWorkerRefetchTimers.clear()
   }
 
-  // ── Bootstrap batching ────────────────────────────────────────────
-
-  /**
-   * Start buffering bootstrap events for the given target agent.
-   * The buffer accumulates state patches from coalescible events and flushes
-   * them as a single updateState call when the terminal signal arrives
-   * (`unread_counts_snapshot`) or an inactivity timeout expires.
-   *
-   * The timeout is not started here — it begins on the first buffered event
-   * and resets on each subsequent one, so large-session history loads don't
-   * race against a fixed wall-clock deadline.
-   */
   private startBootstrapBuffer(targetAgentId: string): void {
     this.clearBootstrapBuffer()
 
@@ -982,11 +929,6 @@ export class ManagerWsClient {
     }
   }
 
-  /**
-   * Flush the bootstrap buffer, applying all accumulated patches as a single
-   * state update. Called when the terminal bootstrap event arrives, on force-flush
-   * from a live event, or from the safety timeout.
-   */
   private flushBootstrapBuffer(): void {
     const buffer = this.bootstrapBuffer
     if (!buffer) return
@@ -1002,7 +944,6 @@ export class ManagerWsClient {
     }
   }
 
-  /** Discard the bootstrap buffer without applying patches. */
   private clearBootstrapBuffer(): void {
     if (this.bootstrapBuffer?.timeoutId !== undefined) {
       clearTimeout(this.bootstrapBuffer.timeoutId)
@@ -1010,7 +951,6 @@ export class ManagerWsClient {
     this.bootstrapBuffer = null
   }
 
-  /** Reset (or start) the inactivity timeout on the bootstrap buffer. */
   private resetBootstrapTimeout(buffer: BootstrapBuffer): void {
     if (buffer.timeoutId !== undefined) {
       clearTimeout(buffer.timeoutId)
@@ -1023,28 +963,16 @@ export class ManagerWsClient {
     }, BOOTSTRAP_FLUSH_TIMEOUT_MS)
   }
 
-  /**
-   * Process a coalescible bootstrap event by running it through the normal
-   * conversation event handler with a buffering updateState, then checking
-   * whether the bootstrap is complete.
-   */
   private handleBootstrapCoalescibleEvent(event: ServerEvent): void {
     const buffer = this.bootstrapBuffer
     if (!buffer) return
 
-    // Guard: stale events from a prior subscribe for a different agent
-    // (e.g., rapid A→B switch where A's bootstrap events arrive after B's
-    // subscribe). Drop them — forwarding would rewrite targetAgentId/history.
     if (!this.isBootstrapEventForTarget(event, buffer.targetAgentId)) {
       return
     }
 
-    // Reset the inactivity timeout on every buffered event so that slow
-    // history loads (large sessions) don't race against a fixed deadline.
     this.resetBootstrapTimeout(buffer)
 
-    // Build effective state that includes already-buffered patches so handlers
-    // see consistent state (e.g., conversation_history sees targetAgentId from ready)
     const effectiveState: ManagerWsState = { ...this.state, ...buffer.pendingPatch }
 
     handleConversationEvent(event, {
@@ -1054,13 +982,11 @@ export class ManagerWsClient {
       },
     })
 
-    // unread_counts_snapshot is the terminal bootstrap event — flush
     if (event.type === 'unread_counts_snapshot') {
       this.flushBootstrapBuffer()
     }
   }
 
-  /** Check whether a coalescible event targets the bootstrap agent. */
   private isBootstrapEventForTarget(event: ServerEvent, targetAgentId: string): boolean {
     if (event.type === 'ready') {
       return event.subscribedAgentId === targetAgentId
@@ -1068,16 +994,9 @@ export class ManagerWsClient {
     if (event.type === 'conversation_history' || event.type === 'pending_choices_snapshot') {
       return event.agentId === targetAgentId
     }
-    // unread_counts_snapshot is global (no agent-specific field) — always treat as on-target
     return true
   }
 
-  /**
-   * Check whether a non-coalescible event should trigger a force-flush of the
-   * bootstrap buffer. Returns true for live conversation/activity events targeting
-   * the bootstrapping session, and for agent_status events for the target session
-   * or its workers.
-   */
   private shouldForceFlushBootstrap(event: ServerEvent): boolean {
     const targetAgentId = this.bootstrapBuffer?.targetAgentId
     if (!targetAgentId) return false
@@ -1105,9 +1024,7 @@ export class ManagerWsClient {
   }
 
   private send(command: ClientCommand): boolean {
-    if (!isSocketOpen(this.socket)) return false
-    this.socket.send(JSON.stringify(command))
-    return true
+    return this.transport.send(command)
   }
 
   private updateState(patch: Partial<ManagerWsState>): void {

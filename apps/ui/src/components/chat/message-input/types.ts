@@ -9,7 +9,7 @@ export interface ProjectAgentSuggestion {
 }
 
 export interface MessageInputProps {
-  onSend: (message: string, attachments?: ConversationAttachment[]) => void
+  onSend: (message: string, attachments?: ConversationAttachment[]) => void | boolean | Promise<boolean>
   onSubmitted?: () => void
   isLoading: boolean
   disabled?: boolean
@@ -18,6 +18,8 @@ export interface MessageInputProps {
   allowWhileLoading?: boolean
   wsUrl?: string
   agentId?: string
+  /** Override draft storage key. Defaults to `agentId`. Builder uses agentId; collab uses channel-based keys. */
+  draftKey?: string
   slashCommands?: SlashCommand[]
   projectAgents?: ProjectAgentSuggestion[]
 }
@@ -27,6 +29,8 @@ export interface MessageInputHandle {
   focus: () => void
   addFiles: (files: File[]) => Promise<void>
   addTerminalContext: (context: import('@/components/terminal/TerminalViewport').TerminalSelectionContext) => void
+  /** Restore the last successfully cleared submission (text + attachments). Returns true if restoration happened. */
+  restoreLastSubmission: () => boolean
 }
 
 export const TEXTAREA_MAX_HEIGHT = 186

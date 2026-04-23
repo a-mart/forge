@@ -6,6 +6,11 @@ import type {
 } from "@forge/protocol";
 import type { WebSocket } from "ws";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
+import {
+  requireNonSystemProfile,
+  requireNonSystemSessionProfile,
+  resolveProfileIdForSessionAgent,
+} from "../../swarm/system-profile-guards.js";
 import type { UnreadTracker } from "../../swarm/unread-tracker.js";
 
 export interface SessionCommandRouteContext {
@@ -67,6 +72,8 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
 
   if (command.type === "create_session") {
     try {
+      requireNonSystemProfile(command.profileId, swarmManager.listProfiles());
+
       const created = await swarmManager.createSession(command.profileId, {
         label: command.label,
         name: command.name,
@@ -174,6 +181,8 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
     const profileId = resolveSessionProfileId(swarmManager, command.agentId);
 
     try {
+      requireNonSystemSessionProfile(command.agentId, swarmManager.listProfiles(), (agentId) => swarmManager.getAgent(agentId));
+
       const { terminatedWorkerIds } = await swarmManager.deleteSession(command.agentId);
       handleDeletedAgentSubscriptions(new Set([command.agentId, ...terminatedWorkerIds]));
       unreadTracker?.clearSession(profileId, command.agentId);
@@ -200,6 +209,7 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
 
   if (command.type === "clear_session") {
     try {
+      requireNonSystemSessionProfile(command.agentId, swarmManager.listProfiles(), (agentId) => swarmManager.getAgent(agentId));
       await swarmManager.clearSessionConversation(command.agentId);
       const profileId = resolveSessionProfileId(swarmManager, command.agentId);
       unreadTracker?.clearSession(profileId, command.agentId);
@@ -224,6 +234,7 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
 
   if (command.type === "rename_session") {
     try {
+      requireNonSystemSessionProfile(command.agentId, swarmManager.listProfiles(), (agentId) => swarmManager.getAgent(agentId));
       await swarmManager.renameSession(command.agentId, command.label);
 
       send(socket, {
@@ -246,6 +257,12 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
 
   if (command.type === "pin_session") {
     try {
+      requireNonSystemSessionProfile(
+        command.agentId,
+        swarmManager.listProfiles(),
+        (agentId) => swarmManager.getAgent(agentId),
+      );
+
       const result = await swarmManager.pinSession(command.agentId, command.pinned);
 
       send(socket, {
@@ -440,6 +457,12 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
 
   if (command.type === "fork_session") {
     try {
+      requireNonSystemSessionProfile(
+        command.sourceAgentId,
+        swarmManager.listProfiles(),
+        (agentId) => swarmManager.getAgent(agentId),
+      );
+
       const forked = await swarmManager.forkSession(command.sourceAgentId, {
         label: command.label,
         fromMessageId: command.fromMessageId
@@ -525,10 +548,5 @@ function getSessionMemoryMergeFailureDiagnostics(error: unknown): {
 }
 
 function resolveSessionProfileId(swarmManager: SwarmManager, sessionAgentId: string): string {
-  const descriptor = swarmManager.getAgent(sessionAgentId);
-  if (!descriptor || descriptor.role !== "manager") {
-    return sessionAgentId;
-  }
-
-  return descriptor.profileId ?? descriptor.agentId;
+  return resolveProfileIdForSessionAgent(sessionAgentId, (agentId) => swarmManager.getAgent(agentId));
 }

@@ -28,8 +28,11 @@ import { ToolLogRow } from './message-list/ToolLogRow'
 import type {
   ChoiceRequestDisplayEntry,
   ConversationLogEntry,
+  MessageListSurface,
   ToolExecutionDisplayEntry,
 } from './message-list/types'
+
+export type { MessageListSurface } from './message-list/types'
 
 interface MessageListProps {
   messages: ConversationEntry[]
@@ -37,6 +40,10 @@ interface MessageListProps {
   wsUrl?: string
   activeAgentId?: string | null
   projectAgent?: ProjectAgentInfo | null
+  /** Render surface — controls user-message styling for collab vs builder. */
+  surface?: MessageListSurface
+  /** When surface='collab', the local user's ID for local/remote message distinction. */
+  currentCollabUserId?: string
   onSuggestionClick?: (suggestion: string) => void
   onArtifactClick?: (artifact: ArtifactReference) => void
   onForkFromMessage?: (messageId: string) => void
@@ -288,6 +295,8 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
   wsUrl,
   activeAgentId,
   projectAgent,
+  surface = 'builder',
+  currentCollabUserId,
   onSuggestionClick,
   onArtifactClick,
   onForkFromMessage,
@@ -556,6 +565,8 @@ export const MessageList = forwardRef<MessageListHandle, MessageListProps>(funct
                   <ConversationMessageRow
                     message={entry.message}
                     wsUrl={wsUrl}
+                    surface={surface}
+                    currentCollabUserId={currentCollabUserId}
                     feedbackTargetId={feedbackTargetId}
                     feedbackLegacyTargetId={feedbackLegacyTargetId}
                     onArtifactClick={onArtifactClick}

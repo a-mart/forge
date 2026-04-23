@@ -2733,10 +2733,7 @@ describe('SwarmWebSocketServer', () => {
 
     const postDeleteSnapshot = await waitForEvent(
       events,
-      (event) =>
-        event.type === 'agents_snapshot' &&
-        event.agents.length === 1 &&
-        event.agents[0]?.agentId === 'cortex',
+      (event) => event.type === 'agents_snapshot' && event.agents.length === 0,
     )
     expect(postDeleteSnapshot.type).toBe('agents_snapshot')
 
@@ -2995,6 +2992,7 @@ describe('SwarmWebSocketServer', () => {
     expect(profilesEvent.type).toBe('profiles_snapshot')
     if (profilesEvent.type === 'profiles_snapshot') {
       expect(profilesEvent.profiles.some((profile) => profile.profileId === 'manager')).toBe(true)
+      expect(profilesEvent.profiles.some((profile) => profile.profileId === 'cortex')).toBe(false)
     }
 
     client.close()

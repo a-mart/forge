@@ -78,7 +78,7 @@ export class TokenAnalyticsService {
     input: TokenAnalyticsQuery,
     options: { forceRefresh?: boolean } = {}
   ): Promise<TokenAnalyticsSnapshot> {
-    const profiles = this.swarmManager.listProfiles();
+    const profiles = this.swarmManager.listUserProfiles();
     const [scanResult, resolved] = await Promise.all([
       this.getScanResult(options.forceRefresh === true),
       Promise.resolve(resolveTokenAnalyticsQuery(input, profiles)),
@@ -117,7 +117,7 @@ export class TokenAnalyticsService {
     input: TokenAnalyticsWorkerPageQuery,
     options: { forceRefresh?: boolean } = {}
   ): Promise<TokenAnalyticsWorkerPage> {
-    const profiles = this.swarmManager.listProfiles();
+    const profiles = this.swarmManager.listUserProfiles();
     const [scanResult, resolved] = await Promise.all([
       this.getScanResult(options.forceRefresh === true),
       Promise.resolve(resolveTokenAnalyticsQuery(input, profiles)),

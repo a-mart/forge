@@ -18,6 +18,10 @@ import { modelCatalogService } from "../../../swarm/model-catalog-service.js";
 import { getManagedModelProviderCredentialAvailability } from "../../../swarm/secrets-env-service.js";
 import type { SwarmManager } from "../../../swarm/swarm-manager.js";
 import {
+  SYSTEM_PROFILE_MUTATION_ERROR,
+  requireNonSystemProfile,
+} from "../../../swarm/system-profile-guards.js";
+import {
   applyCorsHeaders,
   readJsonBody,
   sendJson,
@@ -173,8 +177,8 @@ async function handleSpecialistsEnabledRequest(
       await setSpecialistsEnabled(dataDir, obj.enabled);
       invalidateSpecialistCache();
 
-      // Broadcast change to all profiles and recycle managers
-      const profiles = swarmManager.listProfiles();
+      // Broadcast change to all user profiles and recycle managers
+      const profiles = swarmManager.listUserProfiles();
       for (const profile of profiles) {
         await notifySpecialistRosterMutation({
           swarmManager,
@@ -228,8 +232,13 @@ async function handleSpecialistRequest(
     return;
   }
 
+  const profiles = swarmManager.listProfiles();
+  const targetProfile = profileId
+    ? profiles.find((profile) => profile.profileId === profileId)
+    : undefined;
+
   // If profileId is provided, validate it exists
-  if (profileId && !swarmManager.listProfiles().some((profile) => profile.profileId === profileId)) {
+  if (profileId && !targetProfile) {
     sendJson(response, 404, { error: `Unknown profile: ${profileId}` });
     return;
   }
@@ -343,6 +352,7 @@ async function handleSpecialistRequest(
   // PUT /api/settings/specialists/<handle>?profileId=X
   if (request.method === "PUT") {
     try {
+      requireNonSystemProfile(profileId, profiles);
       const body = await readJsonBody(request);
       const data = parseSaveSpecialistBody(body);
       await saveProfileSpecialist(dataDir, profileId, handle, data);
@@ -363,6 +373,7 @@ async function handleSpecialistRequest(
   // DELETE /api/settings/specialists/<handle>?profileId=X
   if (request.method === "DELETE") {
     try {
+      requireNonSystemProfile(profileId, profiles);
       await deleteProfileSpecialist(dataDir, profileId, handle);
       await notifySpecialistRosterMutation({
         swarmManager,
@@ -408,7 +419,7 @@ async function notifyGlobalSpecialistMutation(options: {
   dataDir: string;
 }): Promise<void> {
   const { swarmManager, broadcastEvent, dataDir } = options;
-  const profiles = swarmManager.listProfiles();
+  const profiles = swarmManager.listUserProfiles();
 
   for (const profile of profiles) {
     await notifySpecialistRosterMutation({
@@ -520,6 +531,10 @@ function getErrorStatusCode(message: string): number {
 
   if (message.startsWith("Cannot delete builtin specialist:")) {
     return 409;
+  }
+
+  if (message === SYSTEM_PROFILE_MUTATION_ERROR) {
+    return 403;
   }
 
   if (

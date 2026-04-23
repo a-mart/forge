@@ -374,9 +374,8 @@ export function createCortexRoutes(options: { swarmManager: SwarmManager; cortex
             new Set([
               ...scan.sessions.map((session) => session.profileId),
               ...swarmManager
-                .listProfiles()
+                .listUserProfiles()
                 .map((profile) => profile.profileId)
-                .filter((profileId) => profileId !== "cortex")
             ])
           ).sort((a, b) => a.localeCompare(b));
           const [profileMemory, profileKnowledge, profileReference, profileMergeAudit, cortexReviewLog, cortexReviewLock, cortexReviewRuns, cortexPromotionManifests, documents] = await Promise.all([

@@ -1,4 +1,4 @@
-import type { ServerEvent } from "@forge/protocol";
+import type { CollaborationServerEvent, ServerEvent } from "@forge/protocol";
 import { WebSocket } from "ws";
 
 export const MAX_WS_EVENT_BYTES = 1 * 1024 * 1024;
@@ -17,7 +17,7 @@ export type SocketSendPathValidationResult =
 
 export function sendWsEvent(options: {
   socket: WebSocket;
-  event: ServerEvent;
+  event: ServerEvent | CollaborationServerEvent;
   onDropSocket: (socket: WebSocket) => void;
 }): number | null {
   const { socket, event, onDropSocket } = options;

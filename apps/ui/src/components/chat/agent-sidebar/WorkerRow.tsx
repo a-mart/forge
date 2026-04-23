@@ -9,7 +9,7 @@ import type { WorkerRowProps } from './types'
 
 export const WorkerRow = React.memo(function WorkerRow({
   agent,
-  statusValue,
+  liveStatus,
   isSelected,
   onSelect,
   onDelete,
@@ -23,6 +23,7 @@ export const WorkerRow = React.memo(function WorkerRow({
     `${agent.model.provider}/${agent.model.modelId}`,
     ...(agent.model.thinkingLevel ? [`reasoning: ${agent.model.thinkingLevel}`] : []),
   ]
+  const statusValue = liveStatus.status
   const isActive = statusValue === 'streaming'
   const isRunning = statusValue === 'streaming' || statusValue === 'idle'
   const isStopped = statusValue === 'terminated' || statusValue === 'stopped'
@@ -43,7 +44,7 @@ export const WorkerRow = React.memo(function WorkerRow({
               <TooltipTrigger asChild>
                 <button
                   type="button"
-                  onClick={() => onSelect(agent.agentId)}
+                  onClick={() => onSelect()}
                   className="flex min-w-0 flex-1 items-center gap-1.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60"
                 >
                   <span
@@ -76,19 +77,19 @@ export const WorkerRow = React.memo(function WorkerRow({
       </ContextMenuTrigger>
       <ContextMenuContent>
         {isRunning && onStop ? (
-          <ContextMenuItem onClick={() => onStop(agent.agentId)}>
+          <ContextMenuItem onClick={() => onStop()}>
             <Pause className="mr-2 size-3.5" />
             Stop
           </ContextMenuItem>
         ) : null}
         {isStopped && onResume ? (
-          <ContextMenuItem onClick={() => onResume(agent.agentId)}>
+          <ContextMenuItem onClick={() => onResume()}>
             <Play className="mr-2 size-3.5" />
             Resume
           </ContextMenuItem>
         ) : null}
         <ContextMenuSeparator />
-        <ContextMenuItem variant="destructive" onClick={() => onDelete(agent.agentId)}>
+        <ContextMenuItem variant="destructive" onClick={() => onDelete()}>
           <Trash2 className="mr-2 size-3.5" />
           Delete
         </ContextMenuItem>

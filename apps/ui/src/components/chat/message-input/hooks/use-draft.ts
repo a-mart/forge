@@ -9,7 +9,7 @@ import {
 } from '../draft-storage'
 
 interface UseDraftOptions {
-  agentId?: string
+  draftKey?: string
 }
 
 interface UseDraftReturn {
@@ -24,102 +24,104 @@ interface UseDraftReturn {
   attachedFilesRef: React.RefObject<PendingAttachment[]>
 }
 
-export function useDraft({ agentId }: UseDraftOptions): UseDraftReturn {
+export function useDraft({ draftKey }: UseDraftOptions): UseDraftReturn {
   const [input, setInput] = useState('')
   const [attachedFiles, setAttachedFiles] = useState<PendingAttachment[]>([])
 
   const draftsRef = useRef<Record<string, string>>(loadDrafts())
-  const prevAgentIdRef = useRef<string | undefined>(undefined)
+  const prevDraftKeyRef = useRef<string | undefined>(undefined)
   const inputRef = useLatestRef(input)
 
   const attachedFilesRef = useLatestRef(attachedFiles)
   const attachmentDraftsRef = useRef<Record<string, PendingAttachment[]>>(loadAttachmentDrafts())
 
-  // Save current draft and restore new agent's draft on agent/session switch
+  // Save current draft and restore the next draft whenever the storage key changes.
   useEffect(() => {
-    const prevId = prevAgentIdRef.current
-    if (prevId === agentId) return
+    const prevKey = prevDraftKeyRef.current
+    if (prevKey === draftKey) return
 
-    // Save draft for previous agent
-    if (prevId) {
+    if (prevKey) {
       if (inputRef.current.trim()) {
-        draftsRef.current[prevId] = inputRef.current
+        draftsRef.current[prevKey] = inputRef.current
       } else {
-        delete draftsRef.current[prevId]
+        delete draftsRef.current[prevKey]
       }
       if (attachedFilesRef.current.length > 0) {
-        attachmentDraftsRef.current[prevId] = attachedFilesRef.current
+        attachmentDraftsRef.current[prevKey] = attachedFilesRef.current
       } else {
-        delete attachmentDraftsRef.current[prevId]
+        delete attachmentDraftsRef.current[prevKey]
       }
     }
 
-    // Restore draft for new agent
-    const restoredDraft = agentId ? (draftsRef.current[agentId] ?? '') : ''
+    const restoredDraft = draftKey ? (draftsRef.current[draftKey] ?? '') : ''
     setInput(restoredDraft)
 
-    // Restore attachments for new agent
-    const restoredAttachments = agentId ? (attachmentDraftsRef.current[agentId] ?? []) : []
+    const restoredAttachments = draftKey ? (attachmentDraftsRef.current[draftKey] ?? []) : []
     setAttachedFiles(restoredAttachments)
 
     persistDrafts(draftsRef.current)
     persistAttachmentDrafts(attachmentDraftsRef.current)
-    prevAgentIdRef.current = agentId
-  }, [agentId, inputRef, attachedFilesRef])
+    prevDraftKeyRef.current = draftKey
+  }, [attachedFilesRef, draftKey, inputRef])
 
-  // Flush current draft on page unload so it survives refresh
+  // Flush current draft on page unload so it survives refresh.
   useEffect(() => {
     const handleBeforeUnload = () => {
-      if (agentId) {
-        if (inputRef.current.trim()) {
-          draftsRef.current[agentId] = inputRef.current
-        } else {
-          delete draftsRef.current[agentId]
-        }
-        persistDrafts(draftsRef.current)
-
-        if (attachedFilesRef.current.length > 0) {
-          attachmentDraftsRef.current[agentId] = attachedFilesRef.current
-        } else {
-          delete attachmentDraftsRef.current[agentId]
-        }
-        persistAttachmentDrafts(attachmentDraftsRef.current)
+      if (!draftKey) {
+        return
       }
+
+      if (inputRef.current.trim()) {
+        draftsRef.current[draftKey] = inputRef.current
+      } else {
+        delete draftsRef.current[draftKey]
+      }
+      persistDrafts(draftsRef.current)
+
+      if (attachedFilesRef.current.length > 0) {
+        attachmentDraftsRef.current[draftKey] = attachedFilesRef.current
+      } else {
+        delete attachmentDraftsRef.current[draftKey]
+      }
+      persistAttachmentDrafts(attachmentDraftsRef.current)
     }
+
     window.addEventListener('beforeunload', handleBeforeUnload)
     return () => window.removeEventListener('beforeunload', handleBeforeUnload)
-  }, [agentId, inputRef, attachedFilesRef])
+  }, [attachedFilesRef, draftKey, inputRef])
 
-  // Helper: update input state and sync draft to localStorage
   const setInputWithDraft = useCallback(
     (value: string) => {
       setInput(value)
-      if (agentId) {
-        if (value.trim()) {
-          draftsRef.current[agentId] = value
-        } else {
-          delete draftsRef.current[agentId]
-        }
-        persistDrafts(draftsRef.current)
+      if (!draftKey) {
+        return
       }
+
+      if (value.trim()) {
+        draftsRef.current[draftKey] = value
+      } else {
+        delete draftsRef.current[draftKey]
+      }
+      persistDrafts(draftsRef.current)
     },
-    [agentId],
+    [draftKey],
   )
 
-  // Helper: update attached files state and sync attachment draft to localStorage
   const setAttachedFilesWithDraft = useCallback(
     (files: PendingAttachment[]) => {
       setAttachedFiles(files)
-      if (agentId) {
-        if (files.length > 0) {
-          attachmentDraftsRef.current[agentId] = files
-        } else {
-          delete attachmentDraftsRef.current[agentId]
-        }
-        persistAttachmentDrafts(attachmentDraftsRef.current)
+      if (!draftKey) {
+        return
       }
+
+      if (files.length > 0) {
+        attachmentDraftsRef.current[draftKey] = files
+      } else {
+        delete attachmentDraftsRef.current[draftKey]
+      }
+      persistAttachmentDrafts(attachmentDraftsRef.current)
     },
-    [agentId],
+    [draftKey],
   )
 
   return {

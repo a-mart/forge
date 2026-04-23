@@ -140,4 +140,29 @@ describe('agent-hierarchy', () => {
       'manager',
     ])
   })
+
+  it('filters collab-backed sessions out of Builder tree and fallback selection', () => {
+    const profileId = 'manager'
+    const builderSession = {
+      ...manager(profileId),
+      profileId,
+      sessionLabel: 'Builder',
+    }
+    const collabSession = {
+      ...manager('manager--collab'),
+      profileId,
+      sessionLabel: 'Collab',
+      sessionSurface: 'collab' as const,
+      collab: {
+        workspaceId: 'workspace-1',
+        channelId: 'channel-1',
+      },
+    }
+
+    const rows = buildProfileTreeRows([builderSession, collabSession], [profile(profileId)])
+
+    expect(rows[0]?.sessions.map((entry) => entry.sessionAgent.agentId)).toEqual(['manager'])
+    expect(getPrimaryManagerId([collabSession, builderSession])).toBe('manager')
+    expect(chooseFallbackAgentId([collabSession, builderSession], collabSession.agentId)).toBe('manager')
+  })
 })

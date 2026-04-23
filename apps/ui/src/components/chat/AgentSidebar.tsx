@@ -33,6 +33,7 @@ import type {
 // Extracted sub-components
 import { SidebarSearch } from './agent-sidebar/SidebarSearch'
 import { SidebarFooter } from './agent-sidebar/SidebarFooter'
+import { ModeSwitch } from './collab-sidebar/ModeSwitch'
 import { ProfileGroup } from './agent-sidebar/ProfileGroup'
 import { CortexSection } from './agent-sidebar/CortexSection'
 import { SortableProfileGroup } from './agent-sidebar/SortableProfileGroup'
@@ -58,6 +59,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
   profiles,
   statuses,
   unreadCounts,
+  collaborationModeSwitch,
   selectedAgentId,
   isSettingsActive,
   isPlaywrightActive = false,
@@ -371,10 +373,10 @@ export const AgentSidebar = React.memo(function AgentSidebar({
       collapsedSessionIds={expandedSessionIds}
       visibleSessionLimit={getVisibleSessionLimit(treeRow.profile.profileId)}
       expandedWorkerListSessionIds={expandedWorkerListSessionIds}
-      onToggleProfileCollapsed={toggleProfileCollapsed}
+      onToggleProfileCollapsed={() => toggleProfileCollapsed(treeRow.profile.profileId)}
       onToggleSessionCollapsed={toggleSessionCollapsed}
-      onShowMoreSessions={showMoreSessions}
-      onShowLessSessions={showLessSessions}
+      onShowMoreSessions={() => showMoreSessions(treeRow.profile.profileId)}
+      onShowLessSessions={() => showLessSessions(treeRow.profile.profileId)}
       onToggleWorkerListExpanded={toggleWorkerListExpanded}
       onSelect={handleSelectAgent}
       onDeleteAgent={onDeleteAgent}
@@ -461,6 +463,13 @@ export const AgentSidebar = React.memo(function AgentSidebar({
         ) : null}
       </div>
 
+      {collaborationModeSwitch ? (
+        <ModeSwitch
+          activeSurface={collaborationModeSwitch.activeSurface}
+          onSelectSurface={collaborationModeSwitch.onSelectSurface}
+        />
+      ) : null}
+
       <div
         className="flex-1 overflow-y-auto px-2 pb-2 [color-scheme:light] dark:[color-scheme:dark] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-sidebar-border [&::-webkit-scrollbar-thumb:hover]:bg-sidebar-border/80"
         style={{
@@ -480,10 +489,10 @@ export const AgentSidebar = React.memo(function AgentSidebar({
               collapsedSessionIds={expandedSessionIds}
               visibleSessionLimit={getVisibleSessionLimit('cortex')}
               expandedWorkerListSessionIds={expandedWorkerListSessionIds}
-              onToggleCollapsed={toggleProfileCollapsed}
+              onToggleCollapsed={() => toggleProfileCollapsed(cortexRow.profile.profileId)}
               onToggleSessionCollapsed={toggleSessionCollapsed}
-              onShowMoreSessions={showMoreSessions}
-              onShowLessSessions={showLessSessions}
+              onShowMoreSessions={() => showMoreSessions(cortexRow.profile.profileId)}
+              onShowLessSessions={() => showLessSessions(cortexRow.profile.profileId)}
               onToggleWorkerListExpanded={toggleWorkerListExpanded}
               onSelect={handleSelectAgent}
               onDeleteAgent={onDeleteAgent}

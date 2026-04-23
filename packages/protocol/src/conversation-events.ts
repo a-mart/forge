@@ -1,4 +1,5 @@
 import type { ConversationMessageAttachment } from './attachments.js'
+import type { CollaborationAuthor } from './collaboration.js'
 import type {
   AcceptedDeliveryMode,
   ChoiceAnswer,
@@ -23,6 +24,7 @@ export interface ConversationMessageEvent {
   timestamp: string
   source: 'user_input' | 'speak_to_user' | 'system' | 'project_agent_input'
   sourceContext?: MessageSourceContext
+  collaborationAuthor?: CollaborationAuthor
   projectAgentContext?: ProjectAgentMessageContext
   pinned?: boolean
 }

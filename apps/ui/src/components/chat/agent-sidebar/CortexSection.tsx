@@ -104,7 +104,7 @@ export function CortexSection({
             {hasAnySessions ? (
               <button
                 type="button"
-                onClick={() => onToggleCollapsed(profile.profileId)}
+                onClick={() => onToggleCollapsed()}
                 aria-label={`${isCollapsed ? 'Expand' : 'Collapse'} Cortex`}
                 aria-expanded={!isCollapsed}
                 className={cn(
@@ -292,44 +292,34 @@ export function CortexSection({
               <>
                 <ul className="space-y-0.5">
                   {renderedSessions.map((session) => {
-                    const sessionCollapsed = !collapsedSessionIds.has(session.sessionAgent.agentId)
-                    const sessionManagerStreaming = getAgentLiveStatus(session.sessionAgent, statuses).status === 'streaming'
-                    const sessionStreamingWorkerCount = session.workers.filter(
-                      (w) => getAgentLiveStatus(w, statuses).status === 'streaming',
-                    ).length || session.sessionAgent.activeWorkerCount || 0
-                    const sessionWorkerStatuses = session.workers.length > 0
-                      ? Object.fromEntries(
-                          session.workers.map((w) => [w.agentId, getAgentLiveStatus(w, statuses).status]),
-                        )
-                      : undefined
+                    const sid = session.sessionAgent.agentId
+                    const sessionCollapsed = !collapsedSessionIds.has(sid)
 
                     return (
                       <SessionRowItem
-                        key={session.sessionAgent.agentId}
+                        key={sid}
                         session={session}
-                        managerStreaming={sessionManagerStreaming}
-                        streamingWorkerCount={sessionStreamingWorkerCount}
-                        workerStatuses={sessionWorkerStatuses}
-                        unreadCount={unreadCounts[session.sessionAgent.agentId] ?? 0}
+                        statuses={statuses}
+                        unreadCount={unreadCounts[sid] ?? 0}
                         selectedAgentId={selectedAgentId}
                         isSettingsActive={isSettingsActive}
                         isCollapsed={sessionCollapsed}
-                        isWorkerListExpanded={expandedWorkerListSessionIds.has(session.sessionAgent.agentId)}
-                        onToggleCollapse={onToggleSessionCollapsed}
-                        onToggleWorkerListExpanded={onToggleWorkerListExpanded}
+                        isWorkerListExpanded={expandedWorkerListSessionIds.has(sid)}
+                        onToggleCollapse={() => onToggleSessionCollapsed(sid)}
+                        onToggleWorkerListExpanded={() => onToggleWorkerListExpanded(sid)}
                         onSelect={onSelect}
                         onDeleteAgent={onDeleteAgent}
-                        onStopSession={onStopSession}
-                        onResumeSession={onResumeSession}
-                        onDeleteSession={onDeleteSession}
-                        onRenameSession={onRequestRenameSession}
-                        onForkSession={onForkSession}
-                        onMarkUnread={onMarkUnread}
+                        onStop={onStopSession ? () => onStopSession(sid) : undefined}
+                        onResume={onResumeSession ? () => onResumeSession(sid) : undefined}
+                        onDelete={onDeleteSession ? () => onDeleteSession(sid) : undefined}
+                        onRename={onRequestRenameSession ? () => onRequestRenameSession(sid) : undefined}
+                        onFork={onForkSession ? () => onForkSession(sid) : undefined}
+                        onMarkUnread={onMarkUnread ? () => onMarkUnread(sid) : undefined}
                         onStopWorker={onStopSession}
                         onResumeWorker={onResumeSession}
                         highlightQuery={highlightQuery}
-                        isMutedSession={mutedAgents?.has(session.sessionAgent.agentId)}
-                        onToggleMute={onToggleMute}
+                        isMutedSession={mutedAgents?.has(sid)}
+                        onToggleMute={onToggleMute ? () => onToggleMute(sid) : undefined}
                       />
                     )
                   })}
@@ -339,7 +329,7 @@ export function CortexSection({
                     {hasMore ? (
                       <button
                         type="button"
-                        onClick={() => onShowMoreSessions(profile.profileId)}
+                        onClick={() => onShowMoreSessions()}
                         className={cn(
                           'flex items-center gap-1 rounded-md py-1 text-left text-[11px] text-muted-foreground/70 transition-colors',
                           'hover:text-muted-foreground',
@@ -353,7 +343,7 @@ export function CortexSection({
                     {isExpanded ? (
                       <button
                         type="button"
-                        onClick={() => onShowLessSessions(profile.profileId)}
+                        onClick={() => onShowLessSessions()}
                         className={cn(
                           'flex items-center gap-1 rounded-md py-1 text-left text-[11px] text-muted-foreground/70 transition-colors',
                           'hover:text-muted-foreground',
