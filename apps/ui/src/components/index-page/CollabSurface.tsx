@@ -1,8 +1,7 @@
-import { ShieldAlert, LogIn } from 'lucide-react'
+import { Settings, ShieldAlert, LogIn } from 'lucide-react'
 import type { ActiveSurface, ActiveView } from '@/hooks/index-page/use-route-state'
 import { CollabSidebar } from '@/components/chat/collab-sidebar/CollabSidebar'
 import { useCollabWsConnection, CollabWsProvider } from '@/hooks/index-page/use-collab-ws-connection'
-import { SettingsPanel } from '@/components/chat/SettingsDialog'
 import { createCollabSettingsTarget } from '@/components/settings/settings-target'
 import { useSettingsBackendState } from '@/components/settings/use-settings-backend-state'
 import { Button } from '@/components/ui/button'
@@ -103,22 +102,39 @@ function CollabSettingsContent({
     return <CollabSettingsBlockedState reason={backendState.blockedReason} onBack={onBack} />
   }
 
-  // Admin: render settings shell with target-scoped state
-  const managers = backendState.wsState?.agents ?? []
-  const profiles = backendState.wsState?.profiles ?? []
+  // Admin: render safe placeholder until target-aware panel migration (Package 3).
+  // The secondary WS foundation from useSettingsBackendState is preserved above,
+  // but no target-unaware settings panels are mounted to avoid wrong-backend
+  // requests (terminal, playwright, cortex, onboarding, etc.).
+  return <CollabSettingsPlaceholder onBack={onBack} />
+}
 
+/**
+ * Safe placeholder for admin Collab Settings before target-aware panel migration.
+ *
+ * Renders an informational shell instead of mounting any settings panels,
+ * preventing wrong-backend HTTP requests (terminal, playwright, cortex, etc.)
+ * that the target-unaware SettingsGeneral and other tabs would fire.
+ */
+function CollabSettingsPlaceholder({ onBack }: { onBack: () => void }) {
   return (
-    <SettingsPanel
-      wsUrl={wsUrl}
-      managers={managers}
-      profiles={profiles}
-      telegramStatus={backendState.wsState?.telegramStatus}
-      promptChangeKey={backendState.wsState?.promptChangeKey ?? 0}
-      specialistChangeKey={backendState.wsState?.specialistChangeKey ?? 0}
-      modelConfigChangeKey={backendState.wsState?.modelConfigChangeKey ?? 0}
-      onBack={onBack}
-      target={target}
-    />
+    <div className="flex flex-1 flex-col items-center justify-center gap-4 p-8 text-center">
+      <Settings className="size-10 text-muted-foreground/60" />
+      <div>
+        <h2 className="text-base font-semibold text-foreground">Collab backend settings</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Remote settings panels are being enabled and will be available soon.
+        </p>
+      </div>
+      <Button
+        variant="default"
+        size="sm"
+        className="mt-2"
+        onClick={onBack}
+      >
+        Back to chat
+      </Button>
+    </div>
   )
 }
 
