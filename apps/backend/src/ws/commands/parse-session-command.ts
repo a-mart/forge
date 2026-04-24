@@ -7,6 +7,7 @@ import {
 import {
   fail,
   ok,
+  parseManagerExactModelSelection,
   type ClientCommandCandidate,
   type ParsedClientCommand
 } from "./command-parse-helpers.js";
@@ -170,6 +171,7 @@ export function parseSessionCommand(maybe: ClientCommandCandidate): ParsedClient
     const sessionAgentId = (maybe as { sessionAgentId?: unknown }).sessionAgentId;
     const mode = (maybe as { mode?: unknown }).mode;
     const model = (maybe as { model?: unknown }).model;
+    const modelSelection = (maybe as { modelSelection?: unknown }).modelSelection;
     const reasoningLevel = (maybe as { reasoningLevel?: unknown }).reasoningLevel;
     const requestId = (maybe as { requestId?: unknown }).requestId;
 
@@ -179,11 +181,23 @@ export function parseSessionCommand(maybe: ClientCommandCandidate): ParsedClient
     if (mode !== "inherit" && mode !== "override") {
       return fail('update_session_model.mode must be "inherit" or "override"');
     }
-    if (mode === "override" && !isSwarmModelPreset(model)) {
+    if (model !== undefined && modelSelection !== undefined) {
+      return fail("update_session_model.model and update_session_model.modelSelection are mutually exclusive");
+    }
+    if (mode === "override" && modelSelection === undefined && !isSwarmModelPreset(model)) {
       return fail(`update_session_model.model must be one of ${describeSwarmModelPresets()}`);
+    }
+    const parsedModelSelection = modelSelection === undefined
+      ? undefined
+      : parseManagerExactModelSelection(modelSelection, "update_session_model.modelSelection");
+    if (typeof parsedModelSelection === "string") {
+      return fail(parsedModelSelection);
     }
     if (mode === "inherit" && model !== undefined) {
       return fail("update_session_model.model must be omitted in inherit mode");
+    }
+    if (mode === "inherit" && parsedModelSelection !== undefined) {
+      return fail("update_session_model.modelSelection must be omitted in inherit mode");
     }
     if (reasoningLevel !== undefined && !isSwarmReasoningLevel(reasoningLevel)) {
       return fail(`update_session_model.reasoningLevel must be one of ${describeSwarmReasoningLevels()}`);
@@ -195,13 +209,15 @@ export function parseSessionCommand(maybe: ClientCommandCandidate): ParsedClient
       return fail("update_session_model.requestId must be a string when provided");
     }
 
-    const overrideModel = mode === "override" ? (model as string) : undefined;
-
     return ok({
       type: "update_session_model",
       sessionAgentId: sessionAgentId.trim(),
       mode,
-      ...(overrideModel ? { model: overrideModel, reasoningLevel } : {}),
+      ...(mode === "override"
+        ? parsedModelSelection
+          ? { modelSelection: parsedModelSelection, reasoningLevel }
+          : { model: model as string, reasoningLevel }
+        : {}),
       requestId
     });
   }

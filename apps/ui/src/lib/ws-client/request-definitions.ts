@@ -6,6 +6,7 @@ import {
   type ClientCommand,
   type ConversationAttachment,
   type DeliveryMode,
+  type ManagerExactModelSelection,
   type ManagerModelPreset,
   type ManagerReasoningLevel,
   type ProjectAgentCapability,
@@ -140,13 +141,26 @@ export function buildStopAllAgentsCommand(managerId: string, requestId: string):
 }
 
 export function buildCreateManagerCommand(
-  input: { name: string; cwd: string; model: ManagerModelPreset },
+  input: { name: string; cwd: string; model?: ManagerModelPreset; modelSelection?: ManagerExactModelSelection },
   requestId: string,
 ): ClientCommand {
   const name = requireTrimmedValue(input.name, 'Manager name is required.')
   const cwd = requireTrimmedValue(input.cwd, 'Manager working directory is required.')
 
-  if (!MANAGER_MODEL_PRESETS.includes(input.model)) {
+  if (input.modelSelection) {
+    if (!input.modelSelection.provider.trim() || !input.modelSelection.modelId.trim()) {
+      throw new Error('Model selection requires both provider and modelId.')
+    }
+    return {
+      type: 'create_manager',
+      name,
+      cwd,
+      modelSelection: input.modelSelection,
+      requestId,
+    }
+  }
+
+  if (!input.model || !MANAGER_MODEL_PRESETS.includes(input.model)) {
     throw new Error('Manager model is required.')
   }
 
@@ -169,18 +183,32 @@ export function buildDeleteManagerCommand(managerId: string, requestId: string):
 
 export function buildUpdateProfileDefaultModelCommand(
   profileId: string,
-  model: ManagerModelPreset,
+  model: ManagerModelPreset | undefined,
   reasoningLevel: ManagerReasoningLevel | undefined,
   requestId: string,
+  modelSelection?: ManagerExactModelSelection,
 ): ClientCommand {
   const trimmed = requireTrimmedValue(profileId, 'Profile id is required.')
 
-  if (!MANAGER_MODEL_PRESETS.includes(model)) {
-    throw new Error('Invalid model preset.')
-  }
-
   if (reasoningLevel && !MANAGER_REASONING_LEVELS.includes(reasoningLevel)) {
     throw new Error('Invalid reasoning level.')
+  }
+
+  if (modelSelection) {
+    if (!modelSelection.provider.trim() || !modelSelection.modelId.trim()) {
+      throw new Error('Model selection requires both provider and modelId.')
+    }
+    return {
+      type: 'update_profile_default_model',
+      profileId: trimmed,
+      modelSelection,
+      reasoningLevel,
+      requestId,
+    }
+  }
+
+  if (!model || !MANAGER_MODEL_PRESETS.includes(model)) {
+    throw new Error('Invalid model preset.')
   }
 
   return {
@@ -194,18 +222,32 @@ export function buildUpdateProfileDefaultModelCommand(
 
 export function buildUpdateManagerModelCommand(
   managerId: string,
-  model: ManagerModelPreset,
+  model: ManagerModelPreset | undefined,
   reasoningLevel: ManagerReasoningLevel | undefined,
   requestId: string,
+  modelSelection?: ManagerExactModelSelection,
 ): ClientCommand {
   const trimmed = requireTrimmedValue(managerId, 'Manager id is required.')
 
-  if (!MANAGER_MODEL_PRESETS.includes(model)) {
-    throw new Error('Invalid model preset.')
-  }
-
   if (reasoningLevel && !MANAGER_REASONING_LEVELS.includes(reasoningLevel)) {
     throw new Error('Invalid reasoning level.')
+  }
+
+  if (modelSelection) {
+    if (!modelSelection.provider.trim() || !modelSelection.modelId.trim()) {
+      throw new Error('Model selection requires both provider and modelId.')
+    }
+    return {
+      type: 'update_manager_model',
+      managerId: trimmed,
+      modelSelection,
+      reasoningLevel,
+      requestId,
+    }
+  }
+
+  if (!model || !MANAGER_MODEL_PRESETS.includes(model)) {
+    throw new Error('Invalid model preset.')
   }
 
   return {
@@ -276,15 +318,31 @@ export function buildUpdateSessionModelCommand(
   model: ManagerModelPreset | undefined,
   reasoningLevel: ManagerReasoningLevel | undefined,
   requestId: string,
+  modelSelection?: ManagerExactModelSelection,
 ): ClientCommand {
   const trimmed = requireTrimmedValue(sessionAgentId, 'Session agent id is required.')
 
   if (mode === 'override') {
-    if (!model || !MANAGER_MODEL_PRESETS.includes(model)) {
-      throw new Error('Invalid model preset.')
-    }
     if (reasoningLevel && !MANAGER_REASONING_LEVELS.includes(reasoningLevel)) {
       throw new Error('Invalid reasoning level.')
+    }
+
+    if (modelSelection) {
+      if (!modelSelection.provider.trim() || !modelSelection.modelId.trim()) {
+        throw new Error('Model selection requires both provider and modelId.')
+      }
+      return {
+        type: 'update_session_model',
+        sessionAgentId: trimmed,
+        mode,
+        modelSelection,
+        reasoningLevel,
+        requestId,
+      }
+    }
+
+    if (!model || !MANAGER_MODEL_PRESETS.includes(model)) {
+      throw new Error('Invalid model preset.')
     }
 
     return {

@@ -611,6 +611,27 @@ describe('SwarmManager', () => {
     })
   })
 
+  it('creates managers with exact manager model selections using the selected model default reasoning', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const created = await manager.createManager('manager', {
+      name: 'SDK Opus 4.7 Manager',
+      cwd: config.defaultCwd,
+      modelSelection: {
+        provider: 'claude-sdk',
+        modelId: 'claude-opus-4-7',
+      },
+    })
+
+    expect(created.model).toEqual({
+      provider: 'claude-sdk',
+      modelId: 'claude-opus-4-7',
+      thinkingLevel: 'high',
+    })
+  })
+
   it('defaults create_manager to pi-codex mapping when model is omitted', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)

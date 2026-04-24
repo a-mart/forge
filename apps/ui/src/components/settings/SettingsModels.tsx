@@ -4,6 +4,8 @@ import {
   FORGE_MODEL_CATALOG,
   getBuiltInModelSpecificInstructions,
   getCatalogModelKey,
+  getDefaultManagerEnabled,
+  isCatalogModelManagerSupported,
   type ForgeModelDefinition,
   type ModelOverrideEntry,
 } from '@forge/protocol'
@@ -112,6 +114,8 @@ function ModelCard({
   expanded,
   onToggle,
   onRefresh,
+  onCardSaveStart,
+  onCardSaveEnd,
 }: {
   clientOrWsUrl: SettingsApiClient | string
   model: ForgeModelDefinition
@@ -120,10 +124,13 @@ function ModelCard({
   expanded: boolean
   onToggle: () => void
   onRefresh: () => Promise<void>
+  onCardSaveStart?: (modelKey: string) => void
+  onCardSaveEnd?: (modelKey: string) => void
 }) {
   const [contextCapDraft, setContextCapDraft] = useState(override?.contextWindowCap?.toString() ?? '')
   const [instructionsDraft, setInstructionsDraft] = useState(getActiveModelSpecificInstructions(model, override))
   const [isSavingEnabled, setIsSavingEnabled] = useState(false)
+  const [isSavingManagerEnabled, setIsSavingManagerEnabled] = useState(false)
   const [isSavingCap, setIsSavingCap] = useState(false)
   const [isSavingInstructions, setIsSavingInstructions] = useState(false)
   const [isResettingAll, setIsResettingAll] = useState(false)
@@ -133,6 +140,11 @@ function ModelCard({
   const effectiveContextWindow = getEffectiveContextWindow(model, override)
   const builtInInstructions = getBuiltInInstructionsForModel(model)
   const hasAnyOverride = Boolean(override && Object.keys(override).length > 0)
+
+  // Manager availability
+  const managerSupported = isCatalogModelManagerSupported(model, 'create') || isCatalogModelManagerSupported(model, 'change')
+  const defaultManagerEnabledValue = getDefaultManagerEnabled(model, 'change') || getDefaultManagerEnabled(model, 'create')
+  const effectiveManagerEnabled = enabled && managerSupported && (override?.managerEnabled ?? defaultManagerEnabledValue)
   const instructionsStatusText = hasOverrideField(override, 'modelSpecificInstructions')
     ? 'Custom override active'
     : builtInInstructions
@@ -153,6 +165,7 @@ function ModelCard({
     async (checked: boolean) => {
       setError(null)
       setIsSavingEnabled(true)
+      onCardSaveStart?.(modelKey)
       try {
         await updateModelOverride(clientOrWsUrl, modelKey, {
           enabled: checked === model.enabledByDefault ? null : checked,
@@ -162,9 +175,30 @@ function ModelCard({
         setError(saveError instanceof Error ? saveError.message : String(saveError))
       } finally {
         setIsSavingEnabled(false)
+        onCardSaveEnd?.(modelKey)
       }
     },
-    [model.enabledByDefault, modelKey, onRefresh, clientOrWsUrl],
+    [clientOrWsUrl, model.enabledByDefault, modelKey, onCardSaveEnd, onCardSaveStart, onRefresh],
+  )
+
+  const saveManagerEnabled = useCallback(
+    async (checked: boolean) => {
+      setError(null)
+      setIsSavingManagerEnabled(true)
+      onCardSaveStart?.(modelKey)
+      try {
+        await updateModelOverride(clientOrWsUrl, modelKey, {
+          managerEnabled: checked === defaultManagerEnabledValue ? null : checked,
+        })
+        await onRefresh()
+      } catch (saveError) {
+        setError(saveError instanceof Error ? saveError.message : String(saveError))
+      } finally {
+        setIsSavingManagerEnabled(false)
+        onCardSaveEnd?.(modelKey)
+      }
+    },
+    [clientOrWsUrl, defaultManagerEnabledValue, modelKey, onCardSaveEnd, onCardSaveStart, onRefresh],
   )
 
   const applyContextCap = useCallback(async () => {
@@ -182,6 +216,7 @@ function ModelCard({
     }
 
     setIsSavingCap(true)
+    onCardSaveStart?.(modelKey)
     try {
       await updateModelOverride(clientOrWsUrl, modelKey, { contextWindowCap: nextCap })
       await onRefresh()
@@ -189,8 +224,9 @@ function ModelCard({
       setError(saveError instanceof Error ? saveError.message : String(saveError))
     } finally {
       setIsSavingCap(false)
+      onCardSaveEnd?.(modelKey)
     }
-  }, [contextCapDraft, model.contextWindow, modelKey, onRefresh, clientOrWsUrl])
+  }, [clientOrWsUrl, contextCapDraft, model.contextWindow, modelKey, onCardSaveEnd, onCardSaveStart, onRefresh])
 
   const applyModelSpecificInstructions = useCallback(async () => {
     setError(null)
@@ -203,6 +239,7 @@ function ModelCard({
         : normalizedDraft
 
     setIsSavingInstructions(true)
+    onCardSaveStart?.(modelKey)
     try {
       await updateModelOverride(clientOrWsUrl, modelKey, { modelSpecificInstructions: nextInstructions })
       await onRefresh()
@@ -210,14 +247,16 @@ function ModelCard({
       setError(saveError instanceof Error ? saveError.message : String(saveError))
     } finally {
       setIsSavingInstructions(false)
+      onCardSaveEnd?.(modelKey)
     }
-  }, [builtInInstructions, instructionsDraft, modelKey, onRefresh, clientOrWsUrl])
+  }, [builtInInstructions, clientOrWsUrl, instructionsDraft, modelKey, onCardSaveEnd, onCardSaveStart, onRefresh])
 
   const resetModelSpecificInstructions = useCallback(async () => {
     setError(null)
     setInstructionsDraft(builtInInstructions ?? '')
 
     setIsSavingInstructions(true)
+    onCardSaveStart?.(modelKey)
     try {
       await updateModelOverride(clientOrWsUrl, modelKey, { modelSpecificInstructions: null })
       await onRefresh()
@@ -225,12 +264,60 @@ function ModelCard({
       setError(saveError instanceof Error ? saveError.message : String(saveError))
     } finally {
       setIsSavingInstructions(false)
+      onCardSaveEnd?.(modelKey)
     }
-  }, [builtInInstructions, modelKey, onRefresh, clientOrWsUrl])
+  }, [builtInInstructions, clientOrWsUrl, modelKey, onCardSaveEnd, onCardSaveStart, onRefresh])
+
+  const resetEnabled = useCallback(async () => {
+    setError(null)
+    setIsSavingEnabled(true)
+    onCardSaveStart?.(modelKey)
+    try {
+      await updateModelOverride(clientOrWsUrl, modelKey, { enabled: null })
+      await onRefresh()
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : String(saveError))
+    } finally {
+      setIsSavingEnabled(false)
+      onCardSaveEnd?.(modelKey)
+    }
+  }, [clientOrWsUrl, modelKey, onCardSaveEnd, onCardSaveStart, onRefresh])
+
+  const resetManagerEnabled = useCallback(async () => {
+    setError(null)
+    setIsSavingManagerEnabled(true)
+    onCardSaveStart?.(modelKey)
+    try {
+      await updateModelOverride(clientOrWsUrl, modelKey, { managerEnabled: null })
+      await onRefresh()
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : String(saveError))
+    } finally {
+      setIsSavingManagerEnabled(false)
+      onCardSaveEnd?.(modelKey)
+    }
+  }, [clientOrWsUrl, modelKey, onCardSaveEnd, onCardSaveStart, onRefresh])
+
+  const resetContextCap = useCallback(async () => {
+    setError(null)
+    setContextCapDraft('')
+    setIsSavingCap(true)
+    onCardSaveStart?.(modelKey)
+    try {
+      await updateModelOverride(clientOrWsUrl, modelKey, { contextWindowCap: null })
+      await onRefresh()
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : String(saveError))
+    } finally {
+      setIsSavingCap(false)
+      onCardSaveEnd?.(modelKey)
+    }
+  }, [clientOrWsUrl, modelKey, onCardSaveEnd, onCardSaveStart, onRefresh])
 
   const resetModel = useCallback(async () => {
     setError(null)
     setIsResettingAll(true)
+    onCardSaveStart?.(modelKey)
     try {
       await deleteModelOverride(clientOrWsUrl, modelKey)
       await onRefresh()
@@ -238,8 +325,9 @@ function ModelCard({
       setError(saveError instanceof Error ? saveError.message : String(saveError))
     } finally {
       setIsResettingAll(false)
+      onCardSaveEnd?.(modelKey)
     }
-  }, [modelKey, onRefresh, clientOrWsUrl])
+  }, [clientOrWsUrl, modelKey, onCardSaveEnd, onCardSaveStart, onRefresh])
 
   return (
     <div className="rounded-lg border border-border/70 bg-card/40">
@@ -293,7 +381,7 @@ function ModelCard({
                   variant="ghost"
                   size="sm"
                   className="h-8 px-2"
-                  onClick={() => void updateModelOverride(clientOrWsUrl, modelKey, { enabled: null }).then(onRefresh).catch((saveError) => setError(saveError instanceof Error ? saveError.message : String(saveError)))}
+                  onClick={() => void resetEnabled()}
                   disabled={!hasOverrideField(override, 'enabled') || isSavingEnabled || isResettingAll}
                 >
                   Reset
@@ -301,6 +389,44 @@ function ModelCard({
               </div>
             </div>
 
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <span>Manager agents</span>
+                {managerSupported ? <OverrideBadge active={hasOverrideField(override, 'managerEnabled')} /> : null}
+              </div>
+              {managerSupported ? (
+                <>
+                  <p className="text-xs text-muted-foreground">
+                    Show this model in manager create/change selectors.
+                  </p>
+                  <div className="flex items-center gap-3 pt-1">
+                    <Switch
+                      checked={effectiveManagerEnabled}
+                      onCheckedChange={saveManagerEnabled}
+                      disabled={!enabled || isSavingManagerEnabled || isResettingAll}
+                      aria-label={`Enable ${model.displayName} for manager agents`}
+                    />
+                    <span className="text-sm text-muted-foreground">{effectiveManagerEnabled ? 'Enabled' : 'Disabled'}</span>
+                    {isSavingManagerEnabled ? <Loader2 className="size-4 animate-spin text-muted-foreground" /> : null}
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 px-2"
+                      onClick={() => void resetManagerEnabled()}
+                      disabled={!hasOverrideField(override, 'managerEnabled') || isSavingManagerEnabled || isResettingAll}
+                    >
+                      Reset
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <p className="text-xs text-muted-foreground">Not supported for manager agents</p>
+              )}
+            </div>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-1.5">
               <div className="flex items-center gap-2 text-sm font-medium">
                 <span>Context window cap</span>
@@ -332,12 +458,7 @@ function ModelCard({
                   type="button"
                   variant="ghost"
                   size="sm"
-                  onClick={() => {
-                    setContextCapDraft('')
-                    void updateModelOverride(clientOrWsUrl, modelKey, { contextWindowCap: null })
-                      .then(onRefresh)
-                      .catch((saveError) => setError(saveError instanceof Error ? saveError.message : String(saveError)))
-                  }}
+                  onClick={() => void resetContextCap()}
                   disabled={!hasOverrideField(override, 'contextWindowCap') || isSavingCap || isResettingAll}
                 >
                   Reset
@@ -400,7 +521,7 @@ function ModelCard({
               variant="outline"
               size="sm"
               onClick={() => void resetModel()}
-              disabled={!hasAnyOverride || isResettingAll || isSavingEnabled || isSavingCap || isSavingInstructions}
+              disabled={!hasAnyOverride || isResettingAll || isSavingEnabled || isSavingCap || isSavingInstructions || isSavingManagerEnabled}
             >
               {isResettingAll ? <Loader2 className="size-4 animate-spin" /> : <RotateCcw className="size-4" />}
               Reset model
@@ -424,6 +545,20 @@ export function SettingsModels({ wsUrl, apiClient, modelConfigChangeKey }: Setti
   const [collapsedProviderIds, setCollapsedProviderIds] = useState<Record<string, boolean>>({})
   const [resettingAll, setResettingAll] = useState(false)
   const [isResetAllDialogOpen, setIsResetAllDialogOpen] = useState(false)
+  const [cardSaveCount, setCardSaveCount] = useState<Record<string, number>>({})
+
+  const handleCardSaveStart = useCallback((modelKey: string) => {
+    setCardSaveCount((prev) => ({ ...prev, [modelKey]: (prev[modelKey] ?? 0) + 1 }))
+  }, [])
+
+  const handleCardSaveEnd = useCallback((modelKey: string) => {
+    setCardSaveCount((prev) => {
+      const next = (prev[modelKey] ?? 1) - 1
+      return { ...prev, [modelKey]: Math.max(0, next) }
+    })
+  }, [])
+
+  const isAnyCardSaving = Object.values(cardSaveCount).some((c) => c > 0)
 
   const loadOverrides = useCallback(async () => {
     setError(null)
@@ -486,7 +621,7 @@ export function SettingsModels({ wsUrl, apiClient, modelConfigChangeKey }: Setti
           variant="outline"
           size="sm"
           onClick={() => setIsResetAllDialogOpen(true)}
-          disabled={!hasAnyOverrides || resettingAll}
+          disabled={!hasAnyOverrides || resettingAll || isAnyCardSaving}
         >
           {resettingAll ? <Loader2 className="size-4 animate-spin" /> : <RotateCcw className="size-4" />}
           Reset all
@@ -498,7 +633,7 @@ export function SettingsModels({ wsUrl, apiClient, modelConfigChangeKey }: Setti
           <AlertDialogHeader>
             <AlertDialogTitle>Reset All Model Overrides</AlertDialogTitle>
             <AlertDialogDescription>
-              This will remove all custom context window caps, re-enable any disabled models, and clear all model-specific prompt instructions. This cannot be undone.
+              This will remove all custom context window caps, re-enable any disabled models, reset manager availability overrides, and clear all model-specific prompt instructions. This cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -582,6 +717,8 @@ export function SettingsModels({ wsUrl, apiClient, modelConfigChangeKey }: Setti
                           }))
                         }
                         onRefresh={loadOverrides}
+                        onCardSaveStart={handleCardSaveStart}
+                        onCardSaveEnd={handleCardSaveEnd}
                       />
                     )
                   })}

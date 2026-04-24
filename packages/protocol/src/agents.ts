@@ -8,6 +8,11 @@ export type ManagerModelPreset = string
 export const MANAGER_REASONING_LEVELS = ['none', 'low', 'medium', 'high', 'xhigh'] as const
 export type ManagerReasoningLevel = (typeof MANAGER_REASONING_LEVELS)[number]
 
+export interface ManagerExactModelSelection {
+  provider: string
+  modelId: string
+}
+
 export interface ModelVariantInfo {
   modelId: string
   label: string

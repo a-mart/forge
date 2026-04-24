@@ -162,6 +162,265 @@ describe('SettingsModels', () => {
     expect(textarea.placeholder).toBe('No built-in instructions for this model.')
   })
 
+  it('disables Reset all button while a card-level save is in flight', async () => {
+    // Use a deferred promise so the save stays in-flight
+    let resolveSave!: () => void
+    const savePromise = new Promise<void>((resolve) => { resolveSave = resolve })
+    modelsApiMock.updateModelOverride.mockReturnValueOnce(savePromise)
+
+    await renderSettingsModels({
+      'gpt-5.3-codex': { enabled: false },
+    })
+
+    await expandProvider('OpenAI Codex')
+    await expandModel('GPT-5.3 Codex')
+
+    // Find and click the Enabled switch to trigger a save
+    const enabledSwitch = container.querySelector('button[role="switch"]') as HTMLButtonElement
+    expect(enabledSwitch).toBeTruthy()
+    flushSync(() => {
+      fireEvent.click(enabledSwitch)
+    })
+    await flushPromises()
+
+    // While save is in flight, Reset all should be disabled
+    const resetAllButton = Array.from(container.querySelectorAll('button')).find(
+      (b) => b.textContent?.includes('Reset all'),
+    )
+    expect(resetAllButton).toBeTruthy()
+    expect(resetAllButton!.disabled).toBe(true)
+
+    // Complete the save
+    resolveSave()
+    // Re-fetch resolves with overrides so the button state updates
+    modelsApiMock.fetchModelOverrides.mockResolvedValueOnce({
+      version: 1,
+      overrides: { 'gpt-5.3-codex': { enabled: true } },
+      providerAvailability: { 'openai-codex': true, anthropic: true, xai: true },
+    })
+    await flushPromises()
+    await flushPromises()
+
+    // Now Reset all should be enabled again (has overrides, no saves in flight)
+    const resetAllAfter = Array.from(container.querySelectorAll('button')).find(
+      (b) => b.textContent?.includes('Reset all'),
+    )
+    expect(resetAllAfter).toBeTruthy()
+    expect(resetAllAfter!.disabled).toBe(false)
+  })
+
+  it('keeps Reset all disabled when provider section is collapsed during a card save', async () => {
+    // Deferred save — stays in-flight until we resolve it
+    let resolveSave!: () => void
+    const savePromise = new Promise<void>((resolve) => { resolveSave = resolve })
+    modelsApiMock.updateModelOverride.mockReturnValueOnce(savePromise)
+
+    await renderSettingsModels({
+      'gpt-5.3-codex': { enabled: false },
+    })
+
+    await expandProvider('OpenAI Codex')
+    await expandModel('GPT-5.3 Codex')
+
+    // Trigger an in-flight save
+    const enabledSwitch = container.querySelector('button[role="switch"]') as HTMLButtonElement
+    expect(enabledSwitch).toBeTruthy()
+    flushSync(() => {
+      fireEvent.click(enabledSwitch)
+    })
+    await flushPromises()
+
+    // Reset all should be disabled while save is in flight
+    let resetAllButton = Array.from(container.querySelectorAll('button')).find(
+      (b) => b.textContent?.includes('Reset all'),
+    )
+    expect(resetAllButton!.disabled).toBe(true)
+
+    // Collapse the provider section — this unmounts the ModelCard
+    const providerToggle = Array.from(container.querySelectorAll('button')).find(
+      (b) => b.getAttribute('aria-expanded') === 'true' && b.textContent?.includes('OpenAI Codex'),
+    )
+    expect(providerToggle).toBeTruthy()
+    flushSync(() => {
+      fireEvent.click(providerToggle!)
+    })
+    await flushPromises()
+
+    // After unmount, Reset all should STILL be disabled — the request is still in flight
+    resetAllButton = Array.from(container.querySelectorAll('button')).find(
+      (b) => b.textContent?.includes('Reset all'),
+    )
+    expect(resetAllButton).toBeTruthy()
+    expect(resetAllButton!.disabled).toBe(true)
+
+    // Now resolve the save — Reset all should re-enable
+    resolveSave()
+    modelsApiMock.fetchModelOverrides.mockResolvedValueOnce({
+      version: 1,
+      overrides: { 'gpt-5.3-codex': { enabled: true } },
+      providerAvailability: { 'openai-codex': true, anthropic: true, xai: true },
+    })
+    await flushPromises()
+    await flushPromises()
+
+    resetAllButton = Array.from(container.querySelectorAll('button')).find(
+      (b) => b.textContent?.includes('Reset all'),
+    )
+    expect(resetAllButton).toBeTruthy()
+    expect(resetAllButton!.disabled).toBe(false)
+  })
+
+  it('disables Reset all during an inline Enabled reset', async () => {
+    // Deferred save that stays in-flight
+    let resolveSave!: () => void
+    const savePromise = new Promise<void>((resolve) => { resolveSave = resolve })
+    modelsApiMock.updateModelOverride.mockReturnValueOnce(savePromise)
+
+    await renderSettingsModels({
+      'gpt-5.3-codex': { enabled: false },
+    })
+
+    await expandProvider('OpenAI Codex')
+    await expandModel('GPT-5.3 Codex')
+
+    // Find the "Reset" button inside the Enabled section — it's the first Reset in the card
+    const resetButtons = Array.from(container.querySelectorAll('button')).filter(
+      (b) => b.textContent?.trim() === 'Reset' && !b.textContent?.includes('Reset all') && !b.textContent?.includes('Reset model'),
+    )
+    // Click the first card-level Reset (Enabled)
+    expect(resetButtons.length).toBeGreaterThan(0)
+    flushSync(() => {
+      fireEvent.click(resetButtons[0])
+    })
+    await flushPromises()
+
+    // Reset all should be disabled while inline reset is in flight
+    const resetAllButton = Array.from(container.querySelectorAll('button')).find(
+      (b) => b.textContent?.includes('Reset all'),
+    )
+    expect(resetAllButton).toBeTruthy()
+    expect(resetAllButton!.disabled).toBe(true)
+
+    // Complete the save
+    resolveSave()
+    modelsApiMock.fetchModelOverrides.mockResolvedValueOnce({
+      version: 1,
+      overrides: {},
+      providerAvailability: { 'openai-codex': true, anthropic: true, xai: true },
+    })
+    await flushPromises()
+    await flushPromises()
+
+    // Reset all should be disabled now (no overrides remain)
+    const resetAllAfter = Array.from(container.querySelectorAll('button')).find(
+      (b) => b.textContent?.includes('Reset all'),
+    )
+    expect(resetAllAfter!.disabled).toBe(true)
+  })
+
+  it('disables Reset all during an inline Manager agents reset', async () => {
+    let resolveSave!: () => void
+    const savePromise = new Promise<void>((resolve) => { resolveSave = resolve })
+    modelsApiMock.updateModelOverride.mockReturnValueOnce(savePromise)
+
+    await renderSettingsModels({
+      'gpt-5.3-codex': { managerEnabled: false },
+    })
+
+    await expandProvider('OpenAI Codex')
+    await expandModel('GPT-5.3 Codex')
+
+    // Find the "Reset" button in the Manager agents section
+    // The Manager agents section contains the text "Manager agents" — find the enclosing div,
+    // then look for a Reset button within it.
+    const allButtons = Array.from(container.querySelectorAll('button'))
+    const managerResetButton = allButtons.find((b) => {
+      if (b.textContent?.trim() !== 'Reset') return false
+      // Walk up to find an ancestor that has "Manager agents" in its text
+      const parent = b.closest('.space-y-1\\.5')
+      return parent?.textContent?.includes('Manager agents')
+    })
+    expect(managerResetButton).toBeTruthy()
+
+    flushSync(() => {
+      fireEvent.click(managerResetButton!)
+    })
+    await flushPromises()
+
+    // Reset all should be disabled while Manager agents reset is in flight
+    const resetAllButton = Array.from(container.querySelectorAll('button')).find(
+      (b) => b.textContent?.includes('Reset all'),
+    )
+    expect(resetAllButton).toBeTruthy()
+    expect(resetAllButton!.disabled).toBe(true)
+
+    // Complete the save
+    resolveSave()
+    modelsApiMock.fetchModelOverrides.mockResolvedValueOnce({
+      version: 1,
+      overrides: {},
+      providerAvailability: { 'openai-codex': true, anthropic: true, xai: true },
+    })
+    await flushPromises()
+    await flushPromises()
+
+    // No overrides remain, so Reset all should be disabled (no overrides to reset)
+    const resetAllAfter = Array.from(container.querySelectorAll('button')).find(
+      (b) => b.textContent?.includes('Reset all'),
+    )
+    expect(resetAllAfter!.disabled).toBe(true)
+  })
+
+  it('disables Reset all during an inline Context cap reset', async () => {
+    let resolveSave!: () => void
+    const savePromise = new Promise<void>((resolve) => { resolveSave = resolve })
+    modelsApiMock.updateModelOverride.mockReturnValueOnce(savePromise)
+
+    await renderSettingsModels({
+      'gpt-5.3-codex': { contextWindowCap: 50000 },
+    })
+
+    await expandProvider('OpenAI Codex')
+    await expandModel('GPT-5.3 Codex')
+
+    // Find the "Reset" button in the Context window cap section
+    const allButtons = Array.from(container.querySelectorAll('button'))
+    const capResetButton = allButtons.find((b) => {
+      if (b.textContent?.trim() !== 'Reset') return false
+      const parent = b.closest('.space-y-1\\.5')
+      return parent?.textContent?.includes('Context window cap')
+    })
+    expect(capResetButton).toBeTruthy()
+
+    flushSync(() => {
+      fireEvent.click(capResetButton!)
+    })
+    await flushPromises()
+
+    // Reset all should be disabled while Context cap reset is in flight
+    const resetAllButton = Array.from(container.querySelectorAll('button')).find(
+      (b) => b.textContent?.includes('Reset all'),
+    )
+    expect(resetAllButton).toBeTruthy()
+    expect(resetAllButton!.disabled).toBe(true)
+
+    // Complete the save
+    resolveSave()
+    modelsApiMock.fetchModelOverrides.mockResolvedValueOnce({
+      version: 1,
+      overrides: {},
+      providerAvailability: { 'openai-codex': true, anthropic: true, xai: true },
+    })
+    await flushPromises()
+    await flushPromises()
+
+    // No overrides remain, so Reset all should be disabled
+    const resetAllAfter = Array.from(container.querySelectorAll('button')).find(
+      (b) => b.textContent?.includes('Reset all'),
+    )
+    expect(resetAllAfter!.disabled).toBe(true)
+  })
+
   it('resets back to the built-in default view', async () => {
     modelsApiMock.fetchModelOverrides
       .mockResolvedValueOnce({

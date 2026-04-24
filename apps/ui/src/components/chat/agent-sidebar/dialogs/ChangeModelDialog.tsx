@@ -1,22 +1,29 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { useModelPresets } from '@/lib/model-preset'
+import { fetchModelOverrides, type ModelOverridesResponse } from '@/components/settings/models-api'
 import {
   MANAGER_REASONING_LEVELS,
-  getChangeManagerFamilies,
-  type ManagerModelPreset,
+  type AgentModelDescriptor,
+  type ManagerExactModelSelection,
   type ManagerReasoningLevel,
 } from '@forge/protocol'
-
-const STATIC_CHANGE_MODEL_FAMILIES = getChangeManagerFamilies()
+import {
+  buildCurrentModelFallbackRow,
+  buildManagerModelRows,
+  decodeManagerModelValue,
+  encodeManagerModelValue,
+  groupManagerModelRows,
+} from '@/lib/manager-model-selection'
 
 const REASONING_LEVEL_LABELS: Record<ManagerReasoningLevel, string> = {
   none: 'None',
@@ -30,7 +37,7 @@ export function ChangeModelDialog({
   wsUrl,
   profileId,
   profileLabel,
-  currentPreset,
+  currentModel,
   currentReasoningLevel,
   onConfirm,
   onClose,
@@ -38,48 +45,108 @@ export function ChangeModelDialog({
   wsUrl?: string
   profileId: string
   profileLabel: string
-  currentPreset: ManagerModelPreset | undefined
+  currentModel: AgentModelDescriptor | undefined
   currentReasoningLevel: ManagerReasoningLevel | undefined
-  onConfirm: (profileId: string, model: ManagerModelPreset, reasoningLevel?: ManagerReasoningLevel) => void
+  onConfirm: (profileId: string, modelSelection: ManagerExactModelSelection, reasoningLevel?: ManagerReasoningLevel) => void
   onClose: () => void
 }) {
-  const modelPresets = useModelPresets(wsUrl, 1)
-  const changeModelFamilies = useMemo(() => {
-    const presetInfoById = new Map(modelPresets.map((preset) => [preset.presetId, preset]))
-    const hasServerFilteredFamilies = modelPresets.length > 0
+  const [overridesData, setOverridesData] = useState<ModelOverridesResponse | null>(null)
+  const [availabilityLoading, setAvailabilityLoading] = useState(true)
+  const [availabilityError, setAvailabilityError] = useState<string | null>(null)
 
-    return STATIC_CHANGE_MODEL_FAMILIES.flatMap((family) => {
-      const preset = presetInfoById.get(family.familyId)
-      if (!preset && hasServerFilteredFamilies) {
-        return []
-      }
-
-      return [{
-        familyId: family.familyId,
-        displayName: preset?.displayName ?? family.displayName,
-      }]
+  const loadAvailability = useCallback(() => {
+    setAvailabilityLoading(true)
+    setAvailabilityError(null)
+    void fetchModelOverrides(wsUrl).then((data) => {
+      setOverridesData(data)
+      setAvailabilityLoading(false)
+    }).catch((err) => {
+      setAvailabilityError(err instanceof Error ? err.message : 'Failed to load model availability')
+      setAvailabilityLoading(false)
     })
-  }, [modelPresets])
-
-  const [model, setModel] = useState<ManagerModelPreset>(currentPreset ?? 'pi-codex')
-  const [reasoning, setReasoning] = useState<ManagerReasoningLevel>(currentReasoningLevel ?? 'xhigh')
+  }, [wsUrl])
 
   useEffect(() => {
-    if (changeModelFamilies.some((family) => family.familyId === model)) {
-      return
+    loadAvailability()
+  }, [loadAvailability])
+
+  const currentKey = currentModel
+    ? encodeManagerModelValue(currentModel.provider, currentModel.modelId)
+    : undefined
+
+  const { selectableRows, groups } = useMemo(() => {
+    if (!overridesData) {
+      return { selectableRows: [], groups: [] }
     }
 
-    const fallbackFamilyId = changeModelFamilies[0]?.familyId
-    if (fallbackFamilyId) {
-      setModel(fallbackFamilyId as ManagerModelPreset)
-    }
-  }, [changeModelFamilies, model])
+    const rows = buildManagerModelRows(
+      'change',
+      overridesData.overrides,
+      overridesData.providerAvailability,
+    )
 
-  const hasChanges = model !== currentPreset || reasoning !== (currentReasoningLevel ?? 'xhigh')
+    const availableRows = rows.filter((r) => !r.unavailableReason)
+
+    // If the current model is not in the list, inject a fallback row
+    const isCurrentInList = !currentKey || availableRows.some((r) => r.key === currentKey)
+    const selectableRows = isCurrentInList
+      ? availableRows
+      : [
+          ...(currentModel
+            ? [buildCurrentModelFallbackRow(currentModel.provider, currentModel.modelId, currentModel.thinkingLevel)]
+            : []),
+          ...availableRows,
+        ]
+
+    return {
+      selectableRows,
+      groups: groupManagerModelRows(selectableRows),
+    }
+  }, [overridesData, currentKey, currentModel])
+
+  const [selectedKey, setSelectedKey] = useState<string>(currentKey ?? '')
+  const [reasoning, setReasoning] = useState<ManagerReasoningLevel>(currentReasoningLevel ?? 'xhigh')
+
+  // Update selected key when data loads and current is initially empty
+  useEffect(() => {
+    if (currentKey && selectableRows.some((r) => r.key === currentKey)) {
+      setSelectedKey(currentKey)
+    }
+  }, [currentKey, selectableRows])
+
+  // Get reasoning levels for selected model
+  const selectedRow = selectableRows.find((r) => r.key === selectedKey)
+  const availableReasoningLevels = useMemo(
+    () => selectedRow?.supportedReasoningLevels ?? [...MANAGER_REASONING_LEVELS],
+    [selectedRow?.supportedReasoningLevels],
+  )
+
+  // Reset reasoning level if not supported by newly selected model
+  useEffect(() => {
+    if (!availableReasoningLevels.includes(reasoning)) {
+      setReasoning(selectedRow?.defaultReasoningLevel ?? 'high')
+    }
+  }, [availableReasoningLevels, reasoning, selectedRow?.defaultReasoningLevel])
+
+  const isSelectedUnavailable = !!selectedRow?.unavailableReason
+  const hasChanges = selectedKey !== currentKey || reasoning !== (currentReasoningLevel ?? 'xhigh')
+  const isSelectorsDisabled = availabilityLoading || !!availabilityError
+
+  const handleModelChange = useCallback((value: string) => {
+    setSelectedKey(value)
+    // When switching models, set reasoning to the new model's default
+    const row = selectableRows.find((r) => r.key === value)
+    if (row) {
+      setReasoning(row.defaultReasoningLevel)
+    }
+  }, [selectableRows])
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    onConfirm(profileId, model, reasoning)
+    const decoded = decodeManagerModelValue(selectedKey)
+    if (decoded) {
+      onConfirm(profileId, decoded, reasoning)
+    }
   }
 
   return (
@@ -95,17 +162,27 @@ export function ChangeModelDialog({
           <div className="space-y-2">
             <label id="change-model-model-label" className="text-sm font-medium">Model</label>
             <Select
-              value={model}
-              onValueChange={(value) => setModel(value as ManagerModelPreset)}
+              value={selectedKey}
+              onValueChange={handleModelChange}
+              disabled={isSelectorsDisabled}
             >
               <SelectTrigger className="w-full" aria-labelledby="change-model-model-label">
-                <SelectValue placeholder="Select model preset" />
+                <SelectValue placeholder={availabilityLoading ? 'Loading models...' : 'Select model'} />
               </SelectTrigger>
               <SelectContent>
-                {changeModelFamilies.map((family) => (
-                  <SelectItem key={family.familyId} value={family.familyId}>
-                    {family.displayName}
-                  </SelectItem>
+                {groups.map((group) => (
+                  <SelectGroup key={group.provider}>
+                    <SelectLabel className="text-xs text-muted-foreground">{group.providerDisplayName}</SelectLabel>
+                    {group.rows.map((row) => (
+                      <SelectItem
+                        key={row.key}
+                        value={row.key}
+                        disabled={!!row.unavailableReason}
+                      >
+                        {row.displayName}{row.unavailableReason ? ' (current)' : ''}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
                 ))}
               </SelectContent>
             </Select>
@@ -116,12 +193,13 @@ export function ChangeModelDialog({
             <Select
               value={reasoning}
               onValueChange={(value) => setReasoning(value as ManagerReasoningLevel)}
+              disabled={isSelectedUnavailable || isSelectorsDisabled}
             >
               <SelectTrigger className="w-full" aria-labelledby="change-model-reasoning-label">
                 <SelectValue placeholder="Select reasoning level" />
               </SelectTrigger>
               <SelectContent>
-                {MANAGER_REASONING_LEVELS.map((level) => (
+                {availableReasoningLevels.map((level) => (
                   <SelectItem key={level} value={level}>
                     {REASONING_LEVEL_LABELS[level]}
                   </SelectItem>
@@ -133,11 +211,20 @@ export function ChangeModelDialog({
             </p>
           </div>
 
+          {availabilityError ? (
+            <div className="flex items-center gap-2">
+              <p className="text-xs text-destructive">Failed to load models.</p>
+              <Button type="button" variant="ghost" size="sm" className="h-auto p-0 text-xs text-primary underline-offset-4 hover:underline" onClick={loadAvailability}>
+                Retry
+              </Button>
+            </div>
+          ) : null}
+
           <div className="flex items-center justify-end gap-2">
             <Button type="button" variant="outline" onClick={onClose}>
               Cancel
             </Button>
-            <Button type="submit" disabled={!hasChanges}>
+            <Button type="submit" disabled={!hasChanges || isSelectedUnavailable || isSelectorsDisabled}>
               Update
             </Button>
           </div>

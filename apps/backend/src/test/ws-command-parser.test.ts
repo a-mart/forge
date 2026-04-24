@@ -46,6 +46,40 @@ describe('ws command parser session commands', () => {
     })
   })
 
+  it('rejects manager model commands that send both legacy and exact selections', () => {
+    expect(parseJsonCommand({
+      type: 'create_manager',
+      name: 'Dual Mode Manager',
+      cwd: '/tmp/project',
+      model: 'pi-opus',
+      modelSelection: { provider: 'anthropic', modelId: 'claude-opus-4-7' },
+    })).toEqual({
+      ok: false,
+      error: 'create_manager.model and create_manager.modelSelection are mutually exclusive',
+    })
+
+    expect(parseJsonCommand({
+      type: 'update_profile_default_model',
+      profileId: 'manager',
+      model: 'pi-opus',
+      modelSelection: { provider: 'anthropic', modelId: 'claude-opus-4-7' },
+    })).toEqual({
+      ok: false,
+      error: 'update_profile_default_model.model and update_profile_default_model.modelSelection are mutually exclusive',
+    })
+
+    expect(parseJsonCommand({
+      type: 'update_session_model',
+      sessionAgentId: 'manager--s2',
+      mode: 'override',
+      model: 'pi-opus',
+      modelSelection: { provider: 'anthropic', modelId: 'claude-opus-4-7' },
+    })).toEqual({
+      ok: false,
+      error: 'update_session_model.model and update_session_model.modelSelection are mutually exclusive',
+    })
+  })
+
   it('parses all session lifecycle commands', () => {
     const commands = [
       { type: 'stop_session', agentId: 'session-a', requestId: 'req-stop' },

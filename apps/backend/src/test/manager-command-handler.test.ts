@@ -258,6 +258,47 @@ describe("manager command handler", () => {
     );
   });
 
+  it("updates profile default models with exact manager model selections while keeping legacy event fields stable", async () => {
+    const broadcastToSubscribed = vi.fn();
+    const swarmManager = {
+      listProfiles: vi.fn(() => ALL_PROFILES),
+      updateProfileDefaultExactModel: vi.fn(async () => ({
+        provider: "anthropic",
+        modelId: "claude-opus-4-7",
+        thinkingLevel: "high",
+      })),
+    };
+
+    await handleManagerCommand({
+      command: {
+        type: "update_profile_default_model",
+        profileId: "alpha",
+        modelSelection: { provider: "anthropic", modelId: "claude-opus-4-7" },
+        requestId: "req-default-model-exact",
+      } as never,
+      socket: {} as never,
+      subscribedAgentId: "manager",
+      swarmManager: swarmManager as never,
+      resolveManagerContextAgentId: vi.fn(() => "manager"),
+      send: vi.fn(),
+      broadcastToSubscribed,
+      handleDeletedAgentSubscriptions: vi.fn(),
+    });
+
+    expect(swarmManager.updateProfileDefaultExactModel).toHaveBeenCalledWith(
+      "alpha",
+      { provider: "anthropic", modelId: "claude-opus-4-7" },
+      undefined,
+    );
+    expect(broadcastToSubscribed).toHaveBeenCalledWith({
+      type: "profile_default_model_updated",
+      profileId: "alpha",
+      model: "pi-opus",
+      reasoningLevel: undefined,
+      requestId: "req-default-model-exact",
+    });
+  });
+
   it("updates profile default models with the new explicit command", async () => {
     const broadcastToSubscribed = vi.fn();
     const swarmManager = {

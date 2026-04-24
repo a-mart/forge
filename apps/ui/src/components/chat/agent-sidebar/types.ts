@@ -2,7 +2,7 @@ import type {
   AgentContextUsage,
   AgentDescriptor,
   AgentStatus,
-  ManagerModelPreset,
+  ManagerExactModelSelection,
   ManagerReasoningLevel,
   ManagerProfile,
   ProjectAgentCapability,
@@ -67,8 +67,8 @@ export interface AgentSidebarProps {
   onForkSession?: (sourceAgentId: string, name?: string) => void
   onMarkUnread?: (agentId: string) => void
   onMarkAllRead?: (profileId: string) => void
-  onUpdateManagerModel?: (managerId: string, model: ManagerModelPreset, reasoningLevel?: ManagerReasoningLevel) => void
-  onUpdateSessionModel?: (sessionAgentId: string, mode: SessionModelUpdateMode, model?: ManagerModelPreset, reasoningLevel?: ManagerReasoningLevel) => void
+  onUpdateManagerModel?: (profileId: string, modelSelection: ManagerExactModelSelection, reasoningLevel?: ManagerReasoningLevel) => void
+  onUpdateSessionModel?: (sessionAgentId: string, mode: SessionModelUpdateMode, modelSelection?: ManagerExactModelSelection, reasoningLevel?: ManagerReasoningLevel) => void
   onUpdateManagerCwd?: (managerId: string, cwd: string) => Promise<void>
   onBrowseDirectory?: (defaultPath: string) => Promise<string | null>
   onValidateDirectory?: (path: string) => Promise<DirectoryValidationResult>

@@ -9,11 +9,14 @@ import {
   getCatalogProvider,
   getChangeManagerFamilies,
   getCreateManagerFamilies,
+  getDefaultManagerEnabled,
+  getEffectiveManagerEnabled,
   getSpawnPresetFamilies,
   getSpecialistFamilies,
   inferCatalogFamily,
   inferCatalogProvider,
   isCatalogModelId,
+  isCatalogModelManagerSupported,
 } from '../model-catalog.js'
 
 const VALID_REASONING_LEVELS = new Set(['none', 'low', 'medium', 'high', 'xhigh'])
@@ -421,6 +424,32 @@ describe('model-catalog', () => {
     expect(inferCatalogFamily('anthropic', 'grok-4')).toBeUndefined()
     expect(isCatalogModelId('default')).toBe(true)
     expect(isCatalogModelId('gpt-5.4-nano')).toBe(false)
+  })
+
+  it('derives manager-selectable exact model availability from family support, global enabled, and managerEnabled overrides', () => {
+    const anthropicOpus47 = getCatalogModel('claude-opus-4-7', 'anthropic')
+    const sdkOpus47 = getCatalogModel('claude-opus-4-7', 'claude-sdk')
+    const grok = getCatalogModel('grok-4', 'xai')
+
+    expect(anthropicOpus47).toBeDefined()
+    expect(sdkOpus47).toBeDefined()
+    expect(grok).toBeDefined()
+
+    if (!anthropicOpus47 || !sdkOpus47 || !grok) {
+      throw new Error('Expected manager model helper fixtures to exist in the catalog')
+    }
+
+    expect(isCatalogModelManagerSupported(anthropicOpus47, 'create')).toBe(true)
+    expect(isCatalogModelManagerSupported(sdkOpus47, 'change')).toBe(true)
+    expect(getDefaultManagerEnabled(anthropicOpus47, 'create')).toBe(true)
+    expect(getDefaultManagerEnabled(sdkOpus47, 'change')).toBe(true)
+    expect(getEffectiveManagerEnabled(anthropicOpus47, undefined, 'create')).toBe(true)
+    expect(getEffectiveManagerEnabled(sdkOpus47, undefined, 'change')).toBe(true)
+    expect(getEffectiveManagerEnabled(anthropicOpus47, { managerEnabled: false }, 'create')).toBe(false)
+    expect(getEffectiveManagerEnabled(sdkOpus47, { enabled: false }, 'change')).toBe(false)
+    expect(isCatalogModelManagerSupported(grok, 'create')).toBe(false)
+    expect(getDefaultManagerEnabled(grok, 'create')).toBe(false)
+    expect(getEffectiveManagerEnabled(grok, { managerEnabled: true }, 'create')).toBe(false)
   })
 
   it('returns the expected visibility subsets', () => {

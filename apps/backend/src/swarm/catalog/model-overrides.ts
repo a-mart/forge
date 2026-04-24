@@ -26,6 +26,13 @@ function sanitizeOverrideEntry(value: unknown): ModelOverrideEntry | null {
     next.enabled = candidate.enabled;
   }
 
+  if (candidate.managerEnabled !== undefined) {
+    if (typeof candidate.managerEnabled !== "boolean") {
+      return null;
+    }
+    next.managerEnabled = candidate.managerEnabled;
+  }
+
   if (candidate.contextWindowCap !== undefined) {
     if (
       typeof candidate.contextWindowCap !== "number" ||

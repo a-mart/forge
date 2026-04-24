@@ -55,11 +55,9 @@ import type {
   AgentDescriptor,
   ChoiceAnswer,
   ConversationAttachment,
-  ManagerModelPreset,
+  ManagerExactModelSelection,
   ManagerReasoningLevel,
 } from '@forge/protocol'
-
-const DEFAULT_MANAGER_MODEL: ManagerModelPreset = 'pi-codex'
 
 function isCortexDiffViewerSession(agent: AgentDescriptor | null | undefined): boolean {
   return Boolean(
@@ -473,7 +471,7 @@ export function BuilderSurface({
     isCreateManagerDialogOpen,
     newManagerName,
     newManagerCwd,
-    newManagerModel,
+    newManagerModelSelection,
     createManagerError,
     browseError,
     isCreatingManager,
@@ -481,7 +479,7 @@ export function BuilderSurface({
     isPickingDirectory,
     handleNewManagerNameChange,
     handleNewManagerCwdChange,
-    handleNewManagerModelChange,
+    handleNewManagerModelSelectionChange,
     handleOpenCreateManagerDialog,
     handleCreateManagerDialogOpenChange,
     handleBrowseDirectory,
@@ -505,7 +503,6 @@ export function BuilderSurface({
     activeAgent,
     activeAgentId,
     isActiveManager,
-    defaultManagerModel: DEFAULT_MANAGER_MODEL,
     navigateToRoute,
     setState,
     clearPendingResponseForAgent,
@@ -903,12 +900,12 @@ export function BuilderSurface({
     clientRef.current?.markAllRead(profileId)
   }, [clientRef])
 
-  const handleUpdateManagerModel = useCallback(async (profileId: string, model: ManagerModelPreset, reasoningLevel?: ManagerReasoningLevel) => {
+  const handleUpdateManagerModel = useCallback(async (profileId: string, modelSelection: ManagerExactModelSelection, reasoningLevel?: ManagerReasoningLevel) => {
     const client = clientRef.current
     if (!client) return
 
     try {
-      await client.updateProfileDefaultModel(profileId, model, reasoningLevel)
+      await client.updateProfileDefaultModel(profileId, undefined, reasoningLevel, modelSelection)
     } catch (error) {
       setState((previous) => ({
         ...previous,
@@ -920,14 +917,14 @@ export function BuilderSurface({
   const handleUpdateSessionModel = useCallback(async (
     sessionAgentId: string,
     mode: 'inherit' | 'override',
-    model?: ManagerModelPreset,
+    modelSelection?: ManagerExactModelSelection,
     reasoningLevel?: ManagerReasoningLevel,
   ) => {
     const client = clientRef.current
     if (!client) return
 
     try {
-      await client.updateSessionModel(sessionAgentId, mode, model, reasoningLevel)
+      await client.updateSessionModel(sessionAgentId, mode, undefined, reasoningLevel, modelSelection)
     } catch (error) {
       setState((previous) => ({
         ...previous,
@@ -1456,13 +1453,13 @@ export function BuilderSurface({
           isPickingDirectory,
           newManagerName,
           newManagerCwd,
-          newManagerModel,
+          newManagerModelSelection,
           createManagerError,
           browseError,
           onOpenChange: handleCreateManagerDialogOpenChange,
           onNameChange: handleNewManagerNameChange,
           onCwdChange: handleNewManagerCwdChange,
-          onModelChange: handleNewManagerModelChange,
+          onModelSelectionChange: handleNewManagerModelSelectionChange,
           onBrowseDirectory: () => {
             void handleBrowseDirectory()
           },

@@ -4,6 +4,7 @@ import { createBuilderSettingsApiClient } from './settings-api-client'
 
 export interface ModelOverridePatch {
   enabled?: boolean | null
+  managerEnabled?: boolean | null
   contextWindowCap?: number | null
   modelSpecificInstructions?: string | null
 }

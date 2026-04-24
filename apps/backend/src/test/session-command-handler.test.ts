@@ -30,6 +30,51 @@ const ALL_PROFILES: ManagerProfile[] = [
 ];
 
 describe("session command handler", () => {
+  it("updates session model overrides with exact manager model selections while keeping legacy event fields stable", async () => {
+    const send = vi.fn();
+    const swarmManager = {
+      listProfiles: vi.fn(() => ALL_PROFILES),
+      getAgent: vi.fn((agentId: string) => ({ agentId, role: "manager", profileId: "manager" })),
+      updateSessionExactModel: vi.fn(async () => ({
+        provider: "claude-sdk",
+        modelId: "claude-opus-4-7",
+        thinkingLevel: "high",
+      })),
+    };
+
+    await handleSessionCommand({
+      command: {
+        type: "update_session_model",
+        sessionAgentId: "manager--s2",
+        mode: "override",
+        modelSelection: { provider: "claude-sdk", modelId: "claude-opus-4-7" },
+        requestId: "req-session-model-exact",
+      } as never,
+      socket: {} as never,
+      subscribedAgentId: "manager",
+      swarmManager: swarmManager as never,
+      resolveManagerContextAgentId: vi.fn(() => "manager"),
+      send,
+      handleDeletedAgentSubscriptions: vi.fn(),
+    });
+
+    expect(swarmManager.updateSessionExactModel).toHaveBeenCalledWith(
+      "manager--s2",
+      { provider: "claude-sdk", modelId: "claude-opus-4-7" },
+      undefined,
+    );
+    expect(send).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        type: "session_model_updated",
+        sessionAgentId: "manager--s2",
+        mode: "override",
+        model: "sdk-opus",
+        requestId: "req-session-model-exact",
+      }),
+    );
+  });
+
   it("updates session model overrides with the explicit session command", async () => {
     const send = vi.fn();
     const swarmManager = {

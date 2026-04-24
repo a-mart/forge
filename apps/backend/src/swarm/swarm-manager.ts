@@ -15,6 +15,7 @@ import type {
   CortexReviewRunScope,
   CortexReviewRunTrigger,
   PromptPreviewResponse,
+  ManagerExactModelSelection,
   ServerEvent,
   SessionMemoryMergeAttemptStatus,
   SessionMemoryMergeFailureStage,
@@ -116,7 +117,7 @@ import {
   type WorkerWatchdogState
 } from "./swarm-worker-health-service.js";
 import { createPiModelRegistry } from "./pi-model-registry.js";
-import { SecretsEnvService } from "./secrets-env-service.js";
+import { getManagedModelProviderCredentialAvailability, SecretsEnvService } from "./secrets-env-service.js";
 import { SwarmMemoryMergeService, type SessionMemoryMergeAuditEntry } from "./swarm-memory-merge-service.js";
 import { SwarmSessionMetaService, type SessionMemoryMergeAttemptMetaUpdate } from "./swarm-session-meta-service.js";
 import { SkillFileService } from "./skill-file-service.js";
@@ -1289,6 +1290,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       generateUniqueManagerId: (source) => this.generateUniqueManagerId(source),
       resolveAndValidateCwd: (cwd) => this.resolveAndValidateCwd(cwd),
       resolveDefaultModelDescriptor: () => this.resolveDefaultModelDescriptor(),
+      getManagedModelProviderAvailability: () => getManagedModelProviderCredentialAvailability(this.config),
       resolveSpawnWorkerArchetypeId: (input, normalizedAgentId, profileId) =>
         this.resolveSpawnWorkerArchetypeId(input, normalizedAgentId, profileId),
       resolveSpecialistRosterForProfile: (profileId) => this.resolveSpecialistRosterForProfile(profileId),
@@ -2229,7 +2231,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   async createManager(
     callerAgentId: string,
-    input: { name: string; cwd: string; model?: SwarmModelPreset }
+    input: { name: string; cwd: string; model?: SwarmModelPreset; modelSelection?: ManagerExactModelSelection }
   ): Promise<AgentDescriptor> {
     const createdManager = await this.lifecycleService.createManager(callerAgentId, input);
     await this.forgeExtensionHost.dispatchSessionLifecycle({
@@ -2274,12 +2276,28 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     await this.settingsService.updateManagerModel(managerId, modelPreset, reasoningLevel);
   }
 
+  async updateManagerExactModel(
+    managerId: string,
+    modelSelection: ManagerExactModelSelection,
+    reasoningLevel?: SwarmReasoningLevel
+  ): Promise<AgentDescriptor["model"]> {
+    return this.settingsService.updateManagerExactModel(managerId, modelSelection, reasoningLevel);
+  }
+
   async updateProfileDefaultModel(
     profileId: string,
     modelPreset: SwarmModelPreset,
     reasoningLevel?: SwarmReasoningLevel
   ): Promise<void> {
     await this.settingsService.updateProfileDefaultModel(profileId, modelPreset, reasoningLevel);
+  }
+
+  async updateProfileDefaultExactModel(
+    profileId: string,
+    modelSelection: ManagerExactModelSelection,
+    reasoningLevel?: SwarmReasoningLevel
+  ): Promise<AgentDescriptor["model"]> {
+    return this.settingsService.updateProfileDefaultExactModel(profileId, modelSelection, reasoningLevel);
   }
 
   async updateSessionModel(
@@ -2289,6 +2307,14 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     reasoningLevel?: SwarmReasoningLevel
   ): Promise<void> {
     await this.settingsService.updateSessionModel(sessionAgentId, mode, modelPreset, reasoningLevel);
+  }
+
+  async updateSessionExactModel(
+    sessionAgentId: string,
+    modelSelection: ManagerExactModelSelection,
+    reasoningLevel?: SwarmReasoningLevel
+  ): Promise<AgentDescriptor["model"]> {
+    return this.settingsService.updateSessionExactModel(sessionAgentId, modelSelection, reasoningLevel);
   }
 
   async updateManagerCwd(managerId: string, newCwd: string): Promise<string> {

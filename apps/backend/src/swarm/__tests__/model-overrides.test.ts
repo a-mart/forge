@@ -75,6 +75,34 @@ describe("model-overrides", () => {
     });
   });
 
+  it("preserves managerEnabled alongside other override fields", async () => {
+    const dataDir = await makeTempDataDir();
+    await writeModelOverrides(dataDir, {
+      version: 1,
+      overrides: {
+        "claude-opus-4-7": {
+          enabled: true,
+          managerEnabled: false,
+          contextWindowCap: 500_000,
+        },
+        invalid: {
+          managerEnabled: "nope" as never,
+        },
+      },
+    });
+
+    await expect(readModelOverrides(dataDir)).resolves.toEqual({
+      version: 1,
+      overrides: {
+        "claude-opus-4-7": {
+          enabled: true,
+          managerEnabled: false,
+          contextWindowCap: 500_000,
+        },
+      },
+    });
+  });
+
   it("preserves empty and non-empty model-specific instruction overrides", async () => {
     const dataDir = await makeTempDataDir();
     await writeModelOverrides(dataDir, {

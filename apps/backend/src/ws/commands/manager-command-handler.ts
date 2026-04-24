@@ -7,6 +7,7 @@ import {
   requireNonSystemSessionProfile,
 } from "../../swarm/system-profile-guards.js";
 import type { UnreadTracker } from "../../swarm/unread-tracker.js";
+import { inferSwarmModelPresetFromDescriptor } from "../../swarm/model-presets.js";
 import type { SwarmModelPreset, SwarmReasoningLevel } from "../../swarm/types.js";
 
 export interface ManagerCommandRouteContext {
@@ -50,7 +51,8 @@ export async function handleManagerCommand(context: ManagerCommandRouteContext):
       const manager = await swarmManager.createManager(managerContextId, {
         name: command.name,
         cwd: command.cwd,
-        model: command.model
+        ...(command.model !== undefined ? { model: command.model } : {}),
+        ...(command.modelSelection ? { modelSelection: command.modelSelection } : {})
       });
 
       broadcastToSubscribed({
@@ -122,20 +124,29 @@ export async function handleManagerCommand(context: ManagerCommandRouteContext):
     try {
       requireNonSystemProfile(command.profileId, swarmManager.listProfiles());
 
-      if (!MANAGER_MODEL_PRESETS.includes(command.model)) {
-        throw new Error(`Invalid model preset: ${command.model}`);
+      let eventModel: SwarmModelPreset;
+      if (command.modelSelection) {
+        eventModel = inferEventModelPreset(
+          await swarmManager.updateProfileDefaultExactModel(
+            command.profileId,
+            command.modelSelection,
+            command.reasoningLevel as SwarmReasoningLevel | undefined
+          )
+        );
+      } else {
+        const legacyModel = requireManagerModelPreset(command.model);
+        await swarmManager.updateProfileDefaultModel(
+          command.profileId,
+          legacyModel,
+          command.reasoningLevel as SwarmReasoningLevel | undefined
+        );
+        eventModel = legacyModel;
       }
-
-      await swarmManager.updateProfileDefaultModel(
-        command.profileId,
-        command.model as SwarmModelPreset,
-        command.reasoningLevel as SwarmReasoningLevel | undefined
-      );
 
       broadcastToSubscribed({
         type: "profile_default_model_updated",
         profileId: command.profileId,
-        model: command.model,
+        model: eventModel,
         reasoningLevel: command.reasoningLevel,
         requestId: command.requestId
       });
@@ -170,20 +181,29 @@ export async function handleManagerCommand(context: ManagerCommandRouteContext):
         requireNonSystemProfile(command.managerId, swarmManager.listProfiles());
       }
 
-      if (!MANAGER_MODEL_PRESETS.includes(command.model)) {
-        throw new Error(`Invalid model preset: ${command.model}`);
+      let eventModel: SwarmModelPreset;
+      if (command.modelSelection) {
+        eventModel = inferEventModelPreset(
+          await swarmManager.updateManagerExactModel(
+            command.managerId,
+            command.modelSelection,
+            command.reasoningLevel as SwarmReasoningLevel | undefined
+          )
+        );
+      } else {
+        const legacyModel = requireManagerModelPreset(command.model);
+        await swarmManager.updateManagerModel(
+          command.managerId,
+          legacyModel,
+          command.reasoningLevel as SwarmReasoningLevel | undefined
+        );
+        eventModel = legacyModel;
       }
-
-      await swarmManager.updateManagerModel(
-        command.managerId,
-        command.model as SwarmModelPreset,
-        command.reasoningLevel as SwarmReasoningLevel | undefined
-      );
 
       broadcastToSubscribed({
         type: "manager_model_updated",
         managerId: command.managerId,
-        model: command.model,
+        model: eventModel,
         reasoningLevel: command.reasoningLevel,
         requestId: command.requestId
       });
@@ -289,4 +309,21 @@ export async function handleManagerCommand(context: ManagerCommandRouteContext):
   }
 
   return false;
+}
+
+function requireManagerModelPreset(value: string | undefined): SwarmModelPreset {
+  if (!value || !MANAGER_MODEL_PRESETS.includes(value)) {
+    throw new Error(`Invalid model preset: ${value}`);
+  }
+
+  return value as SwarmModelPreset;
+}
+
+function inferEventModelPreset(descriptor: { provider: string; modelId: string }): SwarmModelPreset {
+  const preset = inferSwarmModelPresetFromDescriptor(descriptor);
+  if (!preset) {
+    throw new Error(`Could not infer manager model preset for ${descriptor.provider}/${descriptor.modelId}`);
+  }
+
+  return preset;
 }

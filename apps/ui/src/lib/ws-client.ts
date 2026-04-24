@@ -99,6 +99,7 @@ import type {
   ClientCommand,
   ConversationAttachment,
   DeliveryMode,
+  ManagerExactModelSelection,
   ManagerModelPreset,
   ManagerReasoningLevel,
   ServerEvent,
@@ -371,7 +372,8 @@ export class ManagerWsClient {
   async createManager(input: {
     name: string
     cwd: string
-    model: ManagerModelPreset
+    model?: ManagerModelPreset
+    modelSelection?: ManagerExactModelSelection
   }): Promise<AgentDescriptor> {
     assertReconnectableSocket(this.socket)
     return this.enqueueRequest('create_manager', (requestId) =>
@@ -388,23 +390,25 @@ export class ManagerWsClient {
 
   async updateProfileDefaultModel(
     profileId: string,
-    model: ManagerModelPreset,
+    model?: ManagerModelPreset,
     reasoningLevel?: ManagerReasoningLevel,
+    modelSelection?: ManagerExactModelSelection,
   ): Promise<{ profileId: string }> {
     assertReconnectableSocket(this.socket)
     return this.enqueueRequest('update_profile_default_model', (requestId) =>
-      buildUpdateProfileDefaultModelCommand(profileId, model, reasoningLevel, requestId),
+      buildUpdateProfileDefaultModelCommand(profileId, model, reasoningLevel, requestId, modelSelection),
     )
   }
 
   async updateManagerModel(
     managerId: string,
-    model: ManagerModelPreset,
+    model?: ManagerModelPreset,
     reasoningLevel?: ManagerReasoningLevel,
+    modelSelection?: ManagerExactModelSelection,
   ): Promise<{ managerId: string }> {
     assertReconnectableSocket(this.socket)
     return this.enqueueRequest('update_manager_model', (requestId) =>
-      buildUpdateManagerModelCommand(managerId, model, reasoningLevel, requestId),
+      buildUpdateManagerModelCommand(managerId, model, reasoningLevel, requestId, modelSelection),
     )
   }
 
@@ -467,10 +471,11 @@ export class ManagerWsClient {
     mode: 'inherit' | 'override',
     model?: ManagerModelPreset,
     reasoningLevel?: ManagerReasoningLevel,
+    modelSelection?: ManagerExactModelSelection,
   ): Promise<{ sessionAgentId: string; mode: 'inherit' | 'override' }> {
     assertReconnectableSocket(this.socket)
     return this.enqueueRequest('update_session_model', (requestId) =>
-      buildUpdateSessionModelCommand(sessionAgentId, mode, model, reasoningLevel, requestId),
+      buildUpdateSessionModelCommand(sessionAgentId, mode, model, reasoningLevel, requestId, modelSelection),
     )
   }
 
