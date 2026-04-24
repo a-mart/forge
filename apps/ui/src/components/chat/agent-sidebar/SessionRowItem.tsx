@@ -256,6 +256,12 @@ export const SessionRowItem = React.memo(function SessionRowItem({
         </ContextMenuTrigger>
 
         <ContextMenuContent>
+          {onMarkUnread ? (
+            <ContextMenuItem onClick={() => onMarkUnread()}>
+              <EyeOff className="mr-2 size-3.5" />
+              Mark as unread
+            </ContextMenuItem>
+          ) : null}
           <ContextMenuItem
             onClick={() => {
               const sessionDir = sessionAgent.sessionFile.replace(/\/[^/]+$/, '')
@@ -311,12 +317,6 @@ export const SessionRowItem = React.memo(function SessionRowItem({
             <ContextMenuItem onClick={() => onResume()}>
               <Play className="mr-2 size-3.5" />
               Resume
-            </ContextMenuItem>
-          ) : null}
-          {onMarkUnread ? (
-            <ContextMenuItem onClick={() => onMarkUnread()}>
-              <EyeOff className="mr-2 size-3.5" />
-              Mark as unread
             </ContextMenuItem>
           ) : null}
           {onPromoteToProjectAgent && !isProjectAgent && sessionAgent.sessionPurpose !== 'cortex_review' && sessionAgent.sessionPurpose !== 'agent_creator' ? (
