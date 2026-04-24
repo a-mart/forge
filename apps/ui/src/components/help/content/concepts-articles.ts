@@ -194,7 +194,7 @@ A profile holds:
 - **Reference docs** — files the agent can access for context
 - **Sessions** — all conversations that share this config
 
-When you create a new session in a profile, it inherits the profile's settings. Two sessions in the same profile use the same model config, the same specialists, and the same profile memory.
+When you create a new session in a profile, it inherits the profile's settings. By default, that means it uses the profile's default manager model, the same specialists, and the same profile memory. You can later override the model for an individual session without changing the profile default.
 
 ## Sessions
 
@@ -205,7 +205,7 @@ A session is a single conversation thread. Each session has:
 - Its own **workers** that run during the conversation
 - Its own **pinned messages** (up to 10)
 
-Sessions within a profile are independent. You can have one session debugging a backend issue and another working on a UI feature — both using the same profile config but tracking separate context. Pinned sessions in the sidebar are just navigation favorites; they are separate from pinned messages inside a conversation.
+Sessions within a profile are independent. You can have one session debugging a backend issue and another working on a UI feature — both starting from the same profile config but tracking separate context. If you change the profile default model later, only sessions that still inherit it are updated; sessions with an explicit override keep their own model. Pinned sessions in the sidebar are just navigation favorites; they are separate from pinned messages inside a conversation.
 
 ## Lifecycle
 
@@ -215,7 +215,9 @@ Sessions are either **running** (actively connected) or **idle** (saved but not 
 
 You can fork a session to branch off from a specific point in the conversation. The fork copies history up to that message and creates a fresh session memory with a note about where it branched. This is useful when you want to try an alternative approach without losing the original thread.
 
-New sessions and forks inherit all config from the parent profile.`,
+Forks preserve the source session's model state too: if the source was inheriting the profile default, the fork inherits that state; if the source had an explicit session override, the fork keeps that override.
+
+New sessions and forks inherit all config from the parent profile unless you explicitly override the session model.`,
   keywords: [
     'session',
     'profile',
@@ -250,7 +252,7 @@ A project agent is a regular session with special properties:
 - Optional **per-agent reference documents** that are injected into the agent's prompt context
 - Appears **pinned at the top** of the profile section in the sidebar with a badge
 
-Project agents persist across restarts and appear in the agent directory that manager sessions can query. Handles are immutable after promotion, so renaming the underlying session does not change the project agent handle. Some project agents can also be granted the ability to create new manager sessions in the same profile, and those created sessions keep creator attribution in the sidebar.
+Project agents persist across restarts and appear in the agent directory that manager sessions can query. Handles are immutable after promotion, so renaming the underlying session does not change the project agent handle. Sessions created by a project agent inherit the profile default model unless the creator explicitly sets a model or reasoning override for the new session. Some project agents can also be granted the ability to create new manager sessions in the same profile, and those created sessions keep creator attribution in the sidebar.
 
 ## How discovery works
 
