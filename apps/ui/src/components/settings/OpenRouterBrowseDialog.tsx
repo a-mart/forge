@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { OpenRouterBrowseRow } from './OpenRouterBrowseRow'
+import type { SettingsApiClient } from './settings-api-client'
 import { addOpenRouterModel, fetchAvailableOpenRouterModels, type AvailableOpenRouterModel } from './openrouter-api'
 
 
@@ -24,6 +25,7 @@ interface OpenRouterBrowseDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   wsUrl: string | undefined
+  apiClient?: SettingsApiClient
   addedModelIds: Set<string>
   onModelAdded: () => void
 }
@@ -32,9 +34,11 @@ export function OpenRouterBrowseDialog({
   open,
   onOpenChange,
   wsUrl,
+  apiClient,
   addedModelIds,
   onModelAdded,
 }: OpenRouterBrowseDialogProps) {
+  const clientOrWsUrl: SettingsApiClient | string | undefined = apiClient ?? wsUrl
   const [allModels, setAllModels] = useState<AvailableOpenRouterModel[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -71,7 +75,7 @@ export function OpenRouterBrowseDialog({
       setError(null)
       setActionError(null)
       try {
-        const models = await fetchAvailableOpenRouterModels(wsUrl)
+        const models = await fetchAvailableOpenRouterModels(clientOrWsUrl)
         if (!cancelled) {
           setAllModels(models)
         }
@@ -86,7 +90,7 @@ export function OpenRouterBrowseDialog({
 
     void load()
     return () => { cancelled = true }
-  }, [open, wsUrl])
+  }, [open, clientOrWsUrl])
 
   // Autofocus search on open
   useEffect(() => {
@@ -147,7 +151,7 @@ export function OpenRouterBrowseDialog({
     setActionError(null)
     setAddingModelId(model.modelId)
     try {
-      await addOpenRouterModel(wsUrl, model)
+      await addOpenRouterModel(clientOrWsUrl, model)
       setLocalAddedIds((prev) => new Set(prev).add(model.modelId))
       onModelAdded()
     } catch (addError) {
@@ -155,7 +159,7 @@ export function OpenRouterBrowseDialog({
     } finally {
       setAddingModelId(null)
     }
-  }, [wsUrl, onModelAdded])
+  }, [clientOrWsUrl, onModelAdded])
 
   const toggleFilter = useCallback((filter: CapabilityFilter) => {
     setActiveFilters((prev) => {
@@ -178,14 +182,14 @@ export function OpenRouterBrowseDialog({
     setError(null)
     setActionError(null)
     try {
-      const models = await fetchAvailableOpenRouterModels(wsUrl)
+      const models = await fetchAvailableOpenRouterModels(clientOrWsUrl)
       setAllModels(models)
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : String(loadError))
     } finally {
       setLoading(false)
     }
-  }, [wsUrl])
+  }, [clientOrWsUrl])
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

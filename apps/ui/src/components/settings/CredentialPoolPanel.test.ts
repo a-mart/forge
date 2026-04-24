@@ -8,6 +8,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CredentialPoolPanel } from './CredentialPoolPanel'
 import { OpenAICredentialPool } from './OpenAICredentialPool'
 import type { CredentialPoolState, PooledCredentialInfo, SettingsAuthProviderAuthType } from '@forge/protocol'
+import type { SettingsApiClient } from './settings-api-client'
+import type { SettingsBackendTarget } from './settings-target'
 
 /* ------------------------------------------------------------------ */
 /*  Mocks                                                             */
@@ -96,6 +98,25 @@ function makePool(
   }
 }
 
+const mockTarget: SettingsBackendTarget = {
+  kind: 'builder',
+  label: 'Builder',
+  description: 'Local builder backend',
+  wsUrl: 'ws://127.0.0.1:47187',
+  apiBaseUrl: 'http://127.0.0.1:47187/',
+  fetchCredentials: 'same-origin',
+  requiresAdmin: false,
+  availableTabs: ['general', 'auth'],
+}
+
+const mockApiClient: SettingsApiClient = {
+  target: mockTarget,
+  endpoint: (path: string) => `http://127.0.0.1:47187${path}`,
+  fetch: vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 })),
+  fetchJson: vi.fn(),
+  readApiError: vi.fn(),
+}
+
 let container: HTMLDivElement
 let root: Root | null = null
 
@@ -145,7 +166,8 @@ function renderPanel(
         provider,
         providerLabel,
         authType,
-        wsUrl: 'ws://127.0.0.1:47187',
+        apiClient: mockApiClient,
+        target: mockTarget,
         onError,
         onSuccess,
         onAuthReload,
@@ -161,7 +183,8 @@ function renderOpenAIWrapper(pool?: CredentialPoolState): void {
   flushSync(() => {
     root?.render(
       createElement(OpenAICredentialPool, {
-        wsUrl: 'ws://127.0.0.1:47187',
+        apiClient: mockApiClient,
+        target: mockTarget,
         onError,
         onSuccess,
         onAuthReload,
@@ -193,7 +216,7 @@ describe('CredentialPoolPanel', () => {
       await flush()
 
       expect(settingsApiMock.fetchCredentialPool).toHaveBeenCalledWith(
-        'ws://127.0.0.1:47187',
+        mockApiClient,
         'openai-codex',
       )
     })
@@ -217,7 +240,7 @@ describe('CredentialPoolPanel', () => {
       await flush()
 
       expect(settingsApiMock.fetchCredentialPool).toHaveBeenCalledWith(
-        'ws://127.0.0.1:47187',
+        mockApiClient,
         'anthropic',
       )
     })
@@ -416,7 +439,7 @@ describe('CredentialPoolPanel', () => {
       await flush()
 
       expect(settingsApiMock.renamePooledCredential).toHaveBeenCalledWith(
-        'ws://127.0.0.1:47187',
+        mockApiClient,
         'anthropic',
         'cred-1',
         'Renamed Account',
@@ -446,7 +469,7 @@ describe('CredentialPoolPanel', () => {
       await flush()
 
       expect(settingsApiMock.setPrimaryPooledCredential).toHaveBeenCalledWith(
-        'ws://127.0.0.1:47187',
+        mockApiClient,
         'anthropic',
         'cred-2',
       )
@@ -470,7 +493,7 @@ describe('CredentialPoolPanel', () => {
       await flush()
 
       expect(settingsApiMock.startPoolAddAccountOAuthStream).toHaveBeenCalledWith(
-        'ws://127.0.0.1:47187',
+        mockApiClient,
         'anthropic',
         expect.any(Object),
         expect.any(Object),
@@ -552,7 +575,8 @@ describe('CredentialPoolPanel', () => {
           createElement(CredentialPoolPanel, {
             provider: 'openai-codex',
             providerLabel: 'OpenAI',
-            wsUrl: 'ws://127.0.0.1:47187',
+            apiClient: mockApiClient,
+            target: mockTarget,
             onError,
             onSuccess,
             onAuthReload,
@@ -587,7 +611,7 @@ describe('OpenAICredentialPool', () => {
     await flush()
 
     expect(settingsApiMock.fetchCredentialPool).toHaveBeenCalledWith(
-      'ws://127.0.0.1:47187',
+      mockApiClient,
       'openai-codex',
     )
   })

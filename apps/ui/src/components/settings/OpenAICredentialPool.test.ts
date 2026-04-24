@@ -7,6 +7,8 @@ import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { OpenAICredentialPool } from './OpenAICredentialPool'
 import type { CredentialPoolState, PooledCredentialInfo } from '@forge/protocol'
+import type { SettingsApiClient } from './settings-api-client'
+import type { SettingsBackendTarget } from './settings-target'
 
 /* ------------------------------------------------------------------ */
 /*  Mocks                                                             */
@@ -86,6 +88,25 @@ function makePool(
   }
 }
 
+const mockTarget: SettingsBackendTarget = {
+  kind: 'builder',
+  label: 'Builder',
+  description: 'Local builder backend',
+  wsUrl: 'ws://127.0.0.1:47187',
+  apiBaseUrl: 'http://127.0.0.1:47187/',
+  fetchCredentials: 'same-origin',
+  requiresAdmin: false,
+  availableTabs: ['general', 'auth'],
+}
+
+const mockApiClient: SettingsApiClient = {
+  target: mockTarget,
+  endpoint: (path: string) => `http://127.0.0.1:47187${path}`,
+  fetch: vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 })),
+  fetchJson: vi.fn(),
+  readApiError: vi.fn(),
+}
+
 let container: HTMLDivElement
 let root: Root | null = null
 
@@ -127,7 +148,8 @@ function renderPool(pool?: CredentialPoolState): void {
   flushSync(() => {
     root?.render(
       createElement(OpenAICredentialPool, {
-        wsUrl: 'ws://127.0.0.1:47187',
+        apiClient: mockApiClient,
+        target: mockTarget,
         onError,
         onSuccess,
         onAuthReload,
@@ -362,7 +384,8 @@ describe('OpenAICredentialPool', () => {
       flushSync(() => {
         root?.render(
           createElement(OpenAICredentialPool, {
-            wsUrl: 'ws://127.0.0.1:47187',
+            apiClient: mockApiClient,
+            target: mockTarget,
             onError,
             onSuccess,
             onAuthReload,

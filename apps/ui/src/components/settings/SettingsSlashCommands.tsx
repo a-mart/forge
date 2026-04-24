@@ -14,6 +14,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { SettingsSection } from './settings-row'
+import type { SettingsApiClient } from './settings-api-client'
 import {
   fetchSlashCommands,
   createSlashCommand,
@@ -180,9 +181,11 @@ function CommandForm({
 
 interface SettingsSlashCommandsProps {
   wsUrl: string
+  apiClient?: SettingsApiClient
 }
 
-export function SettingsSlashCommands({ wsUrl }: SettingsSlashCommandsProps) {
+export function SettingsSlashCommands({ wsUrl, apiClient }: SettingsSlashCommandsProps) {
+  const clientOrWsUrl: SettingsApiClient | string = apiClient ?? wsUrl
   const [commands, setCommands] = useState<SlashCommand[]>([])
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
@@ -196,14 +199,14 @@ export function SettingsSlashCommands({ wsUrl }: SettingsSlashCommandsProps) {
     setIsLoading(true)
     setError(null)
     try {
-      const result = await fetchSlashCommands(wsUrl)
+      const result = await fetchSlashCommands(clientOrWsUrl)
       setCommands(result)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load slash commands')
     } finally {
       setIsLoading(false)
     }
-  }, [wsUrl])
+  }, [clientOrWsUrl])
 
   useEffect(() => {
     void loadCommands()
@@ -214,7 +217,7 @@ export function SettingsSlashCommands({ wsUrl }: SettingsSlashCommandsProps) {
     setSuccess(null)
     setIsSaving(true)
     try {
-      await createSlashCommand(wsUrl, { name, prompt })
+      await createSlashCommand(clientOrWsUrl, { name, prompt })
       setSuccess(`/${name} created.`)
       setShowForm(false)
       await loadCommands()
@@ -231,7 +234,7 @@ export function SettingsSlashCommands({ wsUrl }: SettingsSlashCommandsProps) {
     setSuccess(null)
     setIsSaving(true)
     try {
-      await updateSlashCommand(wsUrl, editingCommand.id, { name, prompt })
+      await updateSlashCommand(clientOrWsUrl, editingCommand.id, { name, prompt })
       setSuccess(`/${name} updated.`)
       setEditingCommand(null)
       await loadCommands()
@@ -247,7 +250,7 @@ export function SettingsSlashCommands({ wsUrl }: SettingsSlashCommandsProps) {
     setSuccess(null)
     setDeletingId(command.id)
     try {
-      await deleteSlashCommand(wsUrl, command.id)
+      await deleteSlashCommand(clientOrWsUrl, command.id)
       setSuccess(`/${command.name} deleted.`)
       await loadCommands()
     } catch (err) {

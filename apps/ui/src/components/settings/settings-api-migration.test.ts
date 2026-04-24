@@ -396,6 +396,125 @@ describe('extensions-api via client', () => {
 })
 
 /* ================================================================== */
+/*  Onboarding                                                        */
+/* ================================================================== */
+
+describe('onboarding-api via client', () => {
+  it('fetches onboarding state through collab client with credentials include', async () => {
+    fetchSpy.mockResolvedValueOnce(mockJsonResponse({
+      state: { status: 'completed', completedAt: '2024-01-01', preferences: { preferredName: 'Test', technicalLevel: 'developer' } },
+    }))
+    const { fetchOnboardingStateViaClient } = await import('../../lib/onboarding-api')
+    const client = createSettingsApiClient(createCollabSettingsTarget('wss://collab.example.com'))
+
+    const result = await fetchOnboardingStateViaClient(client)
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'https://collab.example.com/api/onboarding/state',
+      expect.objectContaining({ credentials: 'include' }),
+    )
+    expect(result.status).toBe('completed')
+    expect(result.preferences?.preferredName).toBe('Test')
+  })
+
+  it('saves onboarding preferences through collab client with credentials include', async () => {
+    fetchSpy.mockResolvedValueOnce(mockJsonResponse({
+      state: { status: 'completed', completedAt: '2024-01-01', preferences: { preferredName: 'Adam', technicalLevel: 'developer' } },
+    }))
+    const { saveOnboardingPreferencesViaClient } = await import('../../lib/onboarding-api')
+    const client = createSettingsApiClient(createCollabSettingsTarget('wss://collab.example.com'))
+
+    const result = await saveOnboardingPreferencesViaClient(client, {
+      preferredName: 'Adam',
+      technicalLevel: 'developer',
+    })
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'https://collab.example.com/api/onboarding/preferences',
+      expect.objectContaining({
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'content-type': 'application/json' },
+      }),
+    )
+    expect(result.status).toBe('completed')
+  })
+
+  it('skips onboarding through collab client with credentials include', async () => {
+    fetchSpy.mockResolvedValueOnce(mockJsonResponse({
+      state: { status: 'skipped', skippedAt: '2024-01-01', preferences: null },
+    }))
+    const { skipOnboardingViaClient } = await import('../../lib/onboarding-api')
+    const client = createSettingsApiClient(createCollabSettingsTarget('wss://collab.example.com'))
+
+    const result = await skipOnboardingViaClient(client)
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'https://collab.example.com/api/onboarding/preferences',
+      expect.objectContaining({
+        method: 'POST',
+        credentials: 'include',
+      }),
+    )
+    expect(result.status).toBe('skipped')
+  })
+
+  it('fetches onboarding state through builder client with same-origin credentials', async () => {
+    fetchSpy.mockResolvedValueOnce(mockJsonResponse({
+      state: { status: 'completed', completedAt: '2024-01-01', preferences: { preferredName: 'Test', technicalLevel: 'developer' } },
+    }))
+    const { fetchOnboardingStateViaClient } = await import('../../lib/onboarding-api')
+    const client = createBuilderSettingsApiClient('ws://127.0.0.1:47187')
+
+    await fetchOnboardingStateViaClient(client)
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'http://127.0.0.1:47187/api/onboarding/state',
+      expect.objectContaining({ credentials: 'same-origin' }),
+    )
+  })
+
+  it('saves onboarding preferences through builder client', async () => {
+    fetchSpy.mockResolvedValueOnce(mockJsonResponse({
+      state: { status: 'completed', completedAt: '2024-01-01', preferences: { preferredName: 'Test', technicalLevel: 'developer' } },
+    }))
+    const { saveOnboardingPreferencesViaClient } = await import('../../lib/onboarding-api')
+    const client = createBuilderSettingsApiClient('ws://127.0.0.1:47187')
+
+    await saveOnboardingPreferencesViaClient(client, {
+      preferredName: 'Test',
+      technicalLevel: 'developer',
+    })
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'http://127.0.0.1:47187/api/onboarding/preferences',
+      expect.objectContaining({
+        method: 'POST',
+        credentials: 'same-origin',
+      }),
+    )
+  })
+
+  it('throws on missing state in onboarding response', async () => {
+    fetchSpy.mockResolvedValueOnce(mockJsonResponse({}))
+    const { fetchOnboardingStateViaClient } = await import('../../lib/onboarding-api')
+    const client = createSettingsApiClient(createCollabSettingsTarget('wss://collab.example.com'))
+
+    await expect(fetchOnboardingStateViaClient(client)).rejects.toThrow('missing state')
+  })
+
+  it('throws on non-ok response from onboarding save', async () => {
+    fetchSpy.mockResolvedValueOnce(mockJsonResponse({ error: 'Forbidden' }, 403))
+    const { saveOnboardingPreferencesViaClient } = await import('../../lib/onboarding-api')
+    const client = createSettingsApiClient(createCollabSettingsTarget('wss://collab.example.com'))
+
+    await expect(
+      saveOnboardingPreferencesViaClient(client, { preferredName: 'Test', technicalLevel: 'developer' }),
+    ).rejects.toThrow('Forbidden')
+  })
+})
+
+/* ================================================================== */
 /*  Backward compatibility: wsUrl string still works                  */
 /* ================================================================== */
 

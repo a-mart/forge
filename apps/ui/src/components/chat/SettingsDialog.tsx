@@ -81,8 +81,8 @@ export function SettingsPanel({
     >
       {activeTab === 'general' && <SettingsGeneral wsUrl={wsUrl} target={target} apiClient={apiClient} onPlaywrightSnapshotUpdate={onPlaywrightSnapshotUpdate} onPlaywrightSettingsLoaded={onPlaywrightSettingsLoaded} />}
       {activeTab === 'notifications' && <SettingsNotifications managers={managers} />}
-      {activeTab === 'auth' && <SettingsAuth wsUrl={wsUrl} />}
-      {activeTab === 'models' && <SettingsModels wsUrl={wsUrl} modelConfigChangeKey={modelConfigChangeKey} />}
+      {activeTab === 'auth' && <SettingsAuth wsUrl={wsUrl} target={target} apiClient={apiClient} />}
+      {activeTab === 'models' && <SettingsModels wsUrl={wsUrl} apiClient={apiClient} modelConfigChangeKey={modelConfigChangeKey} />}
       {activeTab === 'integrations' && (
         <SettingsIntegrations
           wsUrl={wsUrl}
@@ -109,6 +109,7 @@ export function SettingsPanel({
       {activeTab === 'slash-commands' && (
         <SettingsSlashCommands
           wsUrl={wsUrl}
+          apiClient={apiClient}
         />
       )}
       {activeTab === 'extensions' && <SettingsExtensions wsUrl={wsUrl} />}

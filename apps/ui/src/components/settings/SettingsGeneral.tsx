@@ -19,6 +19,16 @@ import {
   storeSidebarModelIconsPref,
   storeSidebarProviderUsagePref,
 } from '@/lib/sidebar-prefs'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { SettingsSection, SettingsWithCTA } from './settings-row'
 import { isElectron, type SleepBlockerStatus } from '@/lib/electron-bridge'
 import {
@@ -311,8 +321,11 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
     }
   }, [savePreferences])
 
+  // Reboot confirmation state — collab targets require explicit confirmation
+  const [showRebootConfirm, setShowRebootConfirm] = useState(false)
+
   // Reboot handler — uses apiClient for target-aware routing
-  const handleReboot = useCallback(() => {
+  const executeReboot = useCallback(() => {
     if (apiClient) {
       void apiClient.fetch('/api/reboot', { method: 'POST' }).catch(() => {})
     } else {
@@ -320,6 +333,14 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
       void fetch(endpoint, { method: 'POST' }).catch(() => {})
     }
   }, [apiClient, wsUrl])
+
+  const handleReboot = useCallback(() => {
+    if (isCollab) {
+      setShowRebootConfirm(true)
+    } else {
+      executeReboot()
+    }
+  }, [isCollab, executeReboot])
 
   return (
     <div className="flex flex-col gap-8">
@@ -783,6 +804,22 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
           </Button>
         </SettingsWithCTA>
       </SettingsSection>
+
+      {/* Confirmation dialog for collab-targeted reboot */}
+      <AlertDialog open={showRebootConfirm} onOpenChange={setShowRebootConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Reboot remote backend?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will restart the connected Collab backend and all its agents. Any active sessions on the remote server will be interrupted.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={executeReboot}>Reboot</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

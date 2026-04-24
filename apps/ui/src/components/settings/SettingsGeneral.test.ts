@@ -451,4 +451,143 @@ describe('SettingsGeneral — collab target', () => {
     // useOnboardingState should have been called with the apiClient, not wsUrl
     expect(onboardingMock.useOnboardingState).toHaveBeenCalledWith(mockClient)
   })
+
+  /* ---- Collab reboot confirmation ---- */
+
+  function makeCollabClient() {
+    return {
+      target: {
+        kind: 'collab' as const,
+        label: 'Collab',
+        description: 'Remote',
+        wsUrl: 'wss://collab.example.com',
+        apiBaseUrl: 'https://collab.example.com/',
+        fetchCredentials: 'include' as const,
+        requiresAdmin: true,
+        availableTabs: ['general' as const, 'auth' as const, 'models' as const, 'about' as const],
+      },
+      endpoint: (path: string) => `https://collab.example.com${path}`,
+      fetch: vi.fn().mockResolvedValue({ ok: true }),
+      fetchJson: vi.fn(),
+      readApiError: vi.fn(),
+    }
+  }
+
+  function renderCollabWithClient(client: ReturnType<typeof makeCollabClient>): void {
+    root = createRoot(container)
+    flushSync(() => {
+      root?.render(
+        createElement(SettingsGeneral, {
+          wsUrl: 'wss://collab.example.com',
+          target: client.target,
+          apiClient: client,
+        }),
+      )
+    })
+  }
+
+  it('shows confirmation dialog before collab reboot (does not fire immediately)', async () => {
+    const client = makeCollabClient()
+    renderCollabWithClient(client)
+    await flush()
+
+    // Click the Reboot button
+    const rebootBtn = Array.from(container.querySelectorAll('button')).find(
+      (btn) => btn.textContent?.includes('Reboot'),
+    )
+    expect(rebootBtn).toBeTruthy()
+
+    flushSync(() => {
+      fireEvent.click(rebootBtn!)
+    })
+    await flush()
+
+    // Confirmation dialog should appear in the document (portal)
+    expect(document.body.textContent).toContain('Reboot remote backend?')
+
+    // No fetch yet — waiting for confirmation
+    expect(client.fetch).not.toHaveBeenCalled()
+  })
+
+  it('executes reboot after confirming the collab confirmation dialog', async () => {
+    const client = makeCollabClient()
+    renderCollabWithClient(client)
+    await flush()
+
+    // Open confirmation dialog
+    const rebootBtn = Array.from(container.querySelectorAll('button')).find(
+      (btn) => btn.textContent?.includes('Reboot'),
+    )
+    flushSync(() => {
+      fireEvent.click(rebootBtn!)
+    })
+    await flush()
+
+    // Find and click the confirm action in the dialog (second "Reboot" button)
+    const allButtons = Array.from(document.body.querySelectorAll('button'))
+    const confirmBtn = allButtons.find(
+      (btn) => btn.textContent === 'Reboot' && btn !== rebootBtn,
+    )
+    expect(confirmBtn).toBeTruthy()
+
+    flushSync(() => {
+      fireEvent.click(confirmBtn!)
+    })
+    await flush()
+
+    expect(client.fetch).toHaveBeenCalledWith('/api/reboot', { method: 'POST' })
+  })
+
+  it('does not reboot when collab confirmation is cancelled', async () => {
+    const client = makeCollabClient()
+    renderCollabWithClient(client)
+    await flush()
+
+    // Open confirmation dialog
+    const rebootBtn = Array.from(container.querySelectorAll('button')).find(
+      (btn) => btn.textContent?.includes('Reboot'),
+    )
+    flushSync(() => {
+      fireEvent.click(rebootBtn!)
+    })
+    await flush()
+
+    // Find and click the Cancel button
+    const cancelBtn = Array.from(document.body.querySelectorAll('button')).find(
+      (btn) => btn.textContent === 'Cancel',
+    )
+    expect(cancelBtn).toBeTruthy()
+
+    flushSync(() => {
+      fireEvent.click(cancelBtn!)
+    })
+    await flush()
+
+    expect(client.fetch).not.toHaveBeenCalled()
+  })
+
+  it('Builder reboot fires immediately without confirmation', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true })
+    vi.stubGlobal('fetch', fetchSpy)
+
+    renderGeneral()
+    await flush()
+
+    const rebootBtn = Array.from(container.querySelectorAll('button')).find(
+      (btn) => btn.textContent?.includes('Reboot'),
+    )
+    flushSync(() => {
+      fireEvent.click(rebootBtn!)
+    })
+    await flush()
+
+    // Builder fires immediately — no confirmation dialog
+    expect(document.body.textContent).not.toContain('Reboot remote backend?')
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'http://127.0.0.1:47187/api/reboot',
+      expect.objectContaining({ method: 'POST' }),
+    )
+
+    vi.unstubAllGlobals()
+  })
 })
