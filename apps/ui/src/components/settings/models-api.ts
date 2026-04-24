@@ -1,5 +1,6 @@
-import { resolveApiEndpoint } from '@/lib/api-endpoint'
 import type { ModelOverrideEntry } from '@forge/protocol'
+import type { SettingsApiClient } from './settings-api-client'
+import { createBuilderSettingsApiClient } from './settings-api-client'
 
 export interface ModelOverridePatch {
   enabled?: boolean | null
@@ -13,29 +14,12 @@ export interface ModelOverridesResponse {
   providerAvailability: Record<string, boolean>
 }
 
-async function readApiError(response: Response): Promise<string> {
-  try {
-    const payload = (await response.json()) as { error?: unknown; message?: unknown }
-    if (typeof payload.error === 'string' && payload.error.trim()) return payload.error
-    if (typeof payload.message === 'string' && payload.message.trim()) return payload.message
-  } catch {
-    // ignore
-  }
-
-  try {
-    const text = await response.text()
-    if (text.trim().length > 0) return text
-  } catch {
-    // ignore
-  }
-
-  return `Request failed (${response.status})`
-}
-
-export async function fetchModelOverrides(wsUrl: string | undefined): Promise<ModelOverridesResponse> {
-  const endpoint = resolveApiEndpoint(wsUrl, '/api/settings/model-overrides')
-  const response = await fetch(endpoint, { cache: 'no-store' })
-  if (!response.ok) throw new Error(await readApiError(response))
+export async function fetchModelOverrides(clientOrWsUrl: SettingsApiClient | string | undefined): Promise<ModelOverridesResponse> {
+  const client = typeof clientOrWsUrl === 'string' || clientOrWsUrl === undefined
+    ? createBuilderSettingsApiClient(clientOrWsUrl ?? '')
+    : clientOrWsUrl
+  const response = await client.fetch('/api/settings/model-overrides', { cache: 'no-store' })
+  if (!response.ok) throw new Error(await client.readApiError(response))
 
   const data = (await response.json()) as Partial<ModelOverridesResponse>
   return {
@@ -49,27 +33,33 @@ export async function fetchModelOverrides(wsUrl: string | undefined): Promise<Mo
 }
 
 export async function updateModelOverride(
-  wsUrl: string | undefined,
+  clientOrWsUrl: SettingsApiClient | string | undefined,
   modelId: string,
   patch: ModelOverridePatch,
 ): Promise<void> {
-  const endpoint = resolveApiEndpoint(wsUrl, `/api/settings/model-overrides/${encodeURIComponent(modelId)}`)
-  const response = await fetch(endpoint, {
+  const client = typeof clientOrWsUrl === 'string' || clientOrWsUrl === undefined
+    ? createBuilderSettingsApiClient(clientOrWsUrl ?? '')
+    : clientOrWsUrl
+  const response = await client.fetch(`/api/settings/model-overrides/${encodeURIComponent(modelId)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(patch),
   })
-  if (!response.ok) throw new Error(await readApiError(response))
+  if (!response.ok) throw new Error(await client.readApiError(response))
 }
 
-export async function deleteModelOverride(wsUrl: string | undefined, modelId: string): Promise<void> {
-  const endpoint = resolveApiEndpoint(wsUrl, `/api/settings/model-overrides/${encodeURIComponent(modelId)}`)
-  const response = await fetch(endpoint, { method: 'DELETE' })
-  if (!response.ok) throw new Error(await readApiError(response))
+export async function deleteModelOverride(clientOrWsUrl: SettingsApiClient | string | undefined, modelId: string): Promise<void> {
+  const client = typeof clientOrWsUrl === 'string' || clientOrWsUrl === undefined
+    ? createBuilderSettingsApiClient(clientOrWsUrl ?? '')
+    : clientOrWsUrl
+  const response = await client.fetch(`/api/settings/model-overrides/${encodeURIComponent(modelId)}`, { method: 'DELETE' })
+  if (!response.ok) throw new Error(await client.readApiError(response))
 }
 
-export async function resetAllModelOverrides(wsUrl: string | undefined): Promise<void> {
-  const endpoint = resolveApiEndpoint(wsUrl, '/api/settings/model-overrides')
-  const response = await fetch(endpoint, { method: 'DELETE' })
-  if (!response.ok) throw new Error(await readApiError(response))
+export async function resetAllModelOverrides(clientOrWsUrl: SettingsApiClient | string | undefined): Promise<void> {
+  const client = typeof clientOrWsUrl === 'string' || clientOrWsUrl === undefined
+    ? createBuilderSettingsApiClient(clientOrWsUrl ?? '')
+    : clientOrWsUrl
+  const response = await client.fetch('/api/settings/model-overrides', { method: 'DELETE' })
+  if (!response.ok) throw new Error(await client.readApiError(response))
 }

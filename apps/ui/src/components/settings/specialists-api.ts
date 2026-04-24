@@ -1,8 +1,9 @@
-import { resolveApiEndpoint } from '@/lib/api-endpoint'
 import type {
   ManagerReasoningLevel,
   ResolvedSpecialistDefinition,
 } from '@forge/protocol'
+import type { SettingsApiClient } from './settings-api-client'
+import { createBuilderSettingsApiClient } from './settings-api-client'
 
 export interface SaveSpecialistPayload {
   displayName: string
@@ -20,49 +21,16 @@ export interface SaveSpecialistPayload {
   promptBody: string
 }
 
-function buildSpecialistEndpoint(
-  wsUrl: string | undefined,
-  profileId?: string,
-  pathSuffix = '',
-): string {
+function resolveClient(clientOrWsUrl: SettingsApiClient | string | undefined): SettingsApiClient {
+  return typeof clientOrWsUrl === 'string' || clientOrWsUrl === undefined
+    ? createBuilderSettingsApiClient(clientOrWsUrl ?? '')
+    : clientOrWsUrl
+}
+
+function buildSpecialistPath(profileId?: string, pathSuffix = ''): string {
   const params = profileId ? new URLSearchParams({ profileId }) : undefined
   const query = params ? `?${params}` : ''
-  return resolveApiEndpoint(wsUrl, `/api/settings/specialists${pathSuffix}${query}`)
-}
-
-async function readApiError(response: Response): Promise<string> {
-  try {
-    const payload = (await response.json()) as { error?: unknown; message?: unknown }
-    if (typeof payload.error === 'string' && payload.error.trim()) return payload.error
-    if (typeof payload.message === 'string' && payload.message.trim()) return payload.message
-  } catch {
-    // Ignore and fall back to plain text.
-  }
-
-  try {
-    const text = await response.text()
-    if (text.trim().length > 0) return text
-  } catch {
-    // Ignore and fall back to status code.
-  }
-
-  return `Request failed (${response.status})`
-}
-
-async function requestJson<T>(input: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(input, init)
-  if (!response.ok) {
-    throw new Error(await readApiError(response))
-  }
-
-  return (await response.json()) as T
-}
-
-async function requestOk(input: string, init?: RequestInit): Promise<void> {
-  const response = await fetch(input, init)
-  if (!response.ok) {
-    throw new Error(await readApiError(response))
-  }
+  return `/api/settings/specialists${pathSuffix}${query}`
 }
 
 function parseSpecialistList(payload: { specialists?: unknown } | null | undefined): ResolvedSpecialistDefinition[] {
@@ -106,95 +74,120 @@ function isResolvedSpecialistDefinition(value: unknown): value is ResolvedSpecia
 }
 
 export async function fetchSpecialists(
-  wsUrl: string | undefined,
+  clientOrWsUrl: SettingsApiClient | string | undefined,
   profileId: string,
 ): Promise<ResolvedSpecialistDefinition[]> {
-  const endpoint = buildSpecialistEndpoint(wsUrl, profileId)
-  const payload = await requestJson<{ specialists?: unknown }>(endpoint, { cache: 'no-store' })
+  const client = resolveClient(clientOrWsUrl)
+  const path = buildSpecialistPath(profileId)
+  const response = await client.fetch(path, { cache: 'no-store' })
+  if (!response.ok) throw new Error(await client.readApiError(response))
+  const payload = (await response.json()) as { specialists?: unknown }
   return parseSpecialistList(payload)
 }
 
 export async function saveSpecialist(
-  wsUrl: string | undefined,
+  clientOrWsUrl: SettingsApiClient | string | undefined,
   profileId: string,
   handle: string,
   data: SaveSpecialistPayload,
 ): Promise<void> {
-  const endpoint = buildSpecialistEndpoint(wsUrl, profileId, `/${encodeURIComponent(handle)}`)
-  await requestOk(endpoint, {
+  const client = resolveClient(clientOrWsUrl)
+  const path = buildSpecialistPath(profileId, `/${encodeURIComponent(handle)}`)
+  const response = await client.fetch(path, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   })
+  if (!response.ok) throw new Error(await client.readApiError(response))
 }
 
 export async function deleteSpecialist(
-  wsUrl: string | undefined,
+  clientOrWsUrl: SettingsApiClient | string | undefined,
   profileId: string,
   handle: string,
 ): Promise<void> {
-  const endpoint = buildSpecialistEndpoint(wsUrl, profileId, `/${encodeURIComponent(handle)}`)
-  await requestOk(endpoint, { method: 'DELETE' })
+  const client = resolveClient(clientOrWsUrl)
+  const path = buildSpecialistPath(profileId, `/${encodeURIComponent(handle)}`)
+  const response = await client.fetch(path, { method: 'DELETE' })
+  if (!response.ok) throw new Error(await client.readApiError(response))
 }
 
 export async function fetchRosterPrompt(
-  wsUrl: string | undefined,
+  clientOrWsUrl: SettingsApiClient | string | undefined,
   profileId: string,
 ): Promise<string> {
-  const endpoint = buildSpecialistEndpoint(wsUrl, profileId, '/roster-prompt')
-  const payload = await requestJson<{ markdown?: unknown }>(endpoint, { cache: 'no-store' })
+  const client = resolveClient(clientOrWsUrl)
+  const path = buildSpecialistPath(profileId, '/roster-prompt')
+  const response = await client.fetch(path, { cache: 'no-store' })
+  if (!response.ok) throw new Error(await client.readApiError(response))
+  const payload = (await response.json()) as { markdown?: unknown }
   return typeof payload.markdown === 'string' ? payload.markdown : ''
 }
 
 export async function fetchSharedSpecialists(
-  wsUrl: string | undefined,
+  clientOrWsUrl: SettingsApiClient | string | undefined,
 ): Promise<ResolvedSpecialistDefinition[]> {
-  const endpoint = buildSpecialistEndpoint(wsUrl)
-  const payload = await requestJson<{ specialists?: unknown }>(endpoint, { cache: 'no-store' })
+  const client = resolveClient(clientOrWsUrl)
+  const path = buildSpecialistPath()
+  const response = await client.fetch(path, { cache: 'no-store' })
+  if (!response.ok) throw new Error(await client.readApiError(response))
+  const payload = (await response.json()) as { specialists?: unknown }
   return parseSpecialistList(payload)
 }
 
 export async function saveSharedSpecialist(
-  wsUrl: string | undefined,
+  clientOrWsUrl: SettingsApiClient | string | undefined,
   handle: string,
   data: SaveSpecialistPayload,
 ): Promise<void> {
-  const endpoint = buildSpecialistEndpoint(wsUrl, undefined, `/${encodeURIComponent(handle)}`)
-  await requestOk(endpoint, {
+  const client = resolveClient(clientOrWsUrl)
+  const path = buildSpecialistPath(undefined, `/${encodeURIComponent(handle)}`)
+  const response = await client.fetch(path, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   })
+  if (!response.ok) throw new Error(await client.readApiError(response))
 }
 
 export async function deleteSharedSpecialist(
-  wsUrl: string | undefined,
+  clientOrWsUrl: SettingsApiClient | string | undefined,
   handle: string,
 ): Promise<void> {
-  const endpoint = buildSpecialistEndpoint(wsUrl, undefined, `/${encodeURIComponent(handle)}`)
-  await requestOk(endpoint, { method: 'DELETE' })
+  const client = resolveClient(clientOrWsUrl)
+  const path = buildSpecialistPath(undefined, `/${encodeURIComponent(handle)}`)
+  const response = await client.fetch(path, { method: 'DELETE' })
+  if (!response.ok) throw new Error(await client.readApiError(response))
 }
 
-export async function fetchSpecialistsEnabled(wsUrl: string | undefined): Promise<boolean> {
-  const endpoint = buildSpecialistEndpoint(wsUrl, undefined, '/enabled')
-  const payload = await requestJson<{ enabled?: unknown }>(endpoint, { cache: 'no-store' })
+export async function fetchSpecialistsEnabled(clientOrWsUrl: SettingsApiClient | string | undefined): Promise<boolean> {
+  const client = resolveClient(clientOrWsUrl)
+  const path = buildSpecialistPath(undefined, '/enabled')
+  const response = await client.fetch(path, { cache: 'no-store' })
+  if (!response.ok) throw new Error(await client.readApiError(response))
+  const payload = (await response.json()) as { enabled?: unknown }
   return typeof payload.enabled === 'boolean' ? payload.enabled : true
 }
 
 export async function setSpecialistsEnabledApi(
-  wsUrl: string | undefined,
+  clientOrWsUrl: SettingsApiClient | string | undefined,
   enabled: boolean,
 ): Promise<void> {
-  const endpoint = buildSpecialistEndpoint(wsUrl, undefined, '/enabled')
-  await requestOk(endpoint, {
+  const client = resolveClient(clientOrWsUrl)
+  const path = buildSpecialistPath(undefined, '/enabled')
+  const response = await client.fetch(path, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ enabled }),
   })
+  if (!response.ok) throw new Error(await client.readApiError(response))
 }
 
-export async function fetchWorkerTemplate(wsUrl: string | undefined): Promise<string> {
-  const endpoint = buildSpecialistEndpoint(wsUrl, undefined, '/template')
-  const payload = await requestJson<{ template?: unknown }>(endpoint, { cache: 'no-store' })
+export async function fetchWorkerTemplate(clientOrWsUrl: SettingsApiClient | string | undefined): Promise<string> {
+  const client = resolveClient(clientOrWsUrl)
+  const path = buildSpecialistPath(undefined, '/template')
+  const response = await client.fetch(path, { cache: 'no-store' })
+  if (!response.ok) throw new Error(await client.readApiError(response))
+  const payload = (await response.json()) as { template?: unknown }
   return typeof payload.template === 'string' ? payload.template : ''
 }

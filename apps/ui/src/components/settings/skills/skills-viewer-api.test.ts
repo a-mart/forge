@@ -28,7 +28,7 @@ describe('skills-viewer-api', () => {
 
     expect(fetchMock).toHaveBeenCalledWith(
       'http://127.0.0.1:47187/api/settings/skills?profileId=profile-a',
-      { cache: 'no-store' },
+      expect.objectContaining({ cache: 'no-store', credentials: 'same-origin' }),
     )
   })
 
@@ -40,7 +40,7 @@ describe('skills-viewer-api', () => {
 
     expect(fetchMock).toHaveBeenCalledWith(
       'http://127.0.0.1:47187/api/settings/skills/skill-1/files?path=docs',
-      { cache: 'no-store' },
+      expect.objectContaining({ cache: 'no-store', credentials: 'same-origin' }),
     )
   })
 
@@ -52,7 +52,7 @@ describe('skills-viewer-api', () => {
 
     expect(fetchMock).toHaveBeenCalledWith(
       'http://127.0.0.1:47187/api/settings/skills/skill-1/content?path=SKILL.md',
-      { cache: 'no-store' },
+      expect.objectContaining({ cache: 'no-store', credentials: 'same-origin' }),
     )
   })
 })

@@ -32,7 +32,6 @@ import {
   storeEditorPreference,
   type EditorPreference,
 } from '@/lib/editor-preference'
-import { resolveApiEndpoint } from '@/lib/api-endpoint'
 import {
   fetchPlaywrightSettings,
   updatePlaywrightSettings,
@@ -51,22 +50,34 @@ import type {
   CortexAutoReviewSettings,
   PlaywrightDiscoverySettings,
 } from '@forge/protocol'
+import { resolveApiEndpoint } from '@/lib/api-endpoint'
+import type { SettingsBackendTarget } from './settings-target'
+import type { SettingsApiClient } from './settings-api-client'
 
 interface SettingsGeneralProps {
   wsUrl: string
   onPlaywrightSnapshotUpdate?: (snapshot: import('@forge/protocol').PlaywrightDiscoverySnapshot) => void
   onPlaywrightSettingsLoaded?: (settings: PlaywrightDiscoverySettings) => void
+  /** When provided, the component uses target-aware API routing. */
+  target?: SettingsBackendTarget
+  /** When provided, used for all backend requests instead of raw wsUrl. */
+  apiClient?: SettingsApiClient
 }
 
-export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrightSettingsLoaded }: SettingsGeneralProps) {
+export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrightSettingsLoaded, target, apiClient }: SettingsGeneralProps) {
   useHelpContext('settings.general')
 
+  const isCollab = target?.kind === 'collab'
+  const isBuilder = !isCollab
+
+  // Use apiClient for onboarding when available, fall back to wsUrl
+  const onboardingSource = apiClient ?? wsUrl
   const {
     onboardingState,
     isMutating: isSavingOnboarding,
     error: onboardingError,
     savePreferences,
-  } = useOnboardingState(wsUrl)
+  } = useOnboardingState(onboardingSource)
   const [onboardingSuccess, setOnboardingSuccess] = useState<string | null>(null)
   const [sidebarModelIcons, setSidebarModelIcons] = useState(() => readSidebarModelIconsPref())
   const [sidebarProviderUsage, setSidebarProviderUsage] = useState(() => readSidebarProviderUsagePref())
@@ -86,7 +97,7 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
   const [cortexLoadFailed, setCortexLoadFailed] = useState(false)
   const [cortexDisabled, setCortexDisabled] = useState(false)
 
-  // Terminal shell settings
+  // Terminal shell settings — Builder-only
   const [terminalShells, setTerminalShells] = useState<AvailableShellsResponse | null>(null)
   const [terminalSettings, setTerminalSettings] = useState<TerminalShellSettings | null>(null)
   const [terminalError, setTerminalError] = useState<string | null>(null)
@@ -145,10 +156,13 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
 
   const [playwrightLoadFailed, setPlaywrightLoadFailed] = useState(false)
 
+  // Use apiClient or wsUrl for Playwright settings
+  const playwrightSource = apiClient ?? wsUrl
+
   // Fetch Playwright settings on mount
   useEffect(() => {
     setPlaywrightLoadFailed(false)
-    void fetchPlaywrightSettings(wsUrl)
+    void fetchPlaywrightSettings(playwrightSource)
       .then((settings) => {
         setPlaywrightSettings(settings)
         setPlaywrightLoadFailed(false)
@@ -158,10 +172,11 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
         setPlaywrightLoadFailed(true)
         setPlaywrightError(err instanceof Error ? err.message : 'Could not load Playwright settings')
       })
-  }, [wsUrl, onPlaywrightSettingsLoaded])
+  }, [playwrightSource, onPlaywrightSettingsLoaded])
 
-  // Fetch terminal shell settings on mount
+  // Fetch terminal shell settings on mount — Builder-only
   useEffect(() => {
+    if (isCollab) return // Terminal settings are not available in Collab target
     setTerminalLoadFailed(false)
     void fetchAvailableShells(wsUrl)
       .then((data) => {
@@ -173,7 +188,7 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
         setTerminalLoadFailed(true)
         setTerminalError(err instanceof Error ? err.message : 'Could not load terminal settings')
       })
-  }, [wsUrl])
+  }, [wsUrl, isCollab])
 
   const handleTerminalShellChange = useCallback(
     (value: string) => {
@@ -199,11 +214,14 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
     [wsUrl, terminalUpdating],
   )
 
+  // Use apiClient or wsUrl for Cortex auto-review settings
+  const cortexSource = apiClient ?? wsUrl
+
   // Fetch Cortex auto-review settings on mount
   useEffect(() => {
     setCortexLoadFailed(false)
     setCortexDisabled(false)
-    void fetchCortexAutoReviewSettings(wsUrl)
+    void fetchCortexAutoReviewSettings(cortexSource)
       .then((response) => {
         setCortexSettings(response.settings)
         setCortexDisabled(response.cortexDisabled === true)
@@ -213,7 +231,7 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
         setCortexLoadFailed(true)
         setCortexError(err instanceof Error ? err.message : 'Could not load Cortex settings')
       })
-  }, [wsUrl])
+  }, [cortexSource])
 
   const handlePlaywrightToggle = useCallback(
     (enabled: boolean) => {
@@ -221,7 +239,7 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
       setPlaywrightUpdating(true)
       setPlaywrightError(null)
 
-      void updatePlaywrightSettings(wsUrl, { enabled })
+      void updatePlaywrightSettings(playwrightSource, { enabled })
         .then(({ settings, snapshot }) => {
           setPlaywrightSettings(settings)
           onPlaywrightSnapshotUpdate?.(snapshot)
@@ -233,7 +251,7 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
           setPlaywrightUpdating(false)
         })
     },
-    [wsUrl, playwrightUpdating, onPlaywrightSnapshotUpdate],
+    [playwrightSource, playwrightUpdating, onPlaywrightSnapshotUpdate],
   )
 
   const handleCortexToggle = useCallback(
@@ -242,7 +260,7 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
       setCortexUpdating(true)
       setCortexError(null)
 
-      void updateCortexAutoReviewSettings(wsUrl, { enabled })
+      void updateCortexAutoReviewSettings(cortexSource, { enabled })
         .then((settings) => {
           setCortexSettings(settings)
         })
@@ -253,7 +271,7 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
           setCortexUpdating(false)
         })
     },
-    [wsUrl, cortexUpdating],
+    [cortexSource, cortexUpdating],
   )
 
   const handleCortexIntervalChange = useCallback(
@@ -262,7 +280,7 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
       setCortexUpdating(true)
       setCortexError(null)
 
-      void updateCortexAutoReviewSettings(wsUrl, { intervalMinutes })
+      void updateCortexAutoReviewSettings(cortexSource, { intervalMinutes })
         .then((settings) => {
           setCortexSettings(settings)
         })
@@ -273,7 +291,7 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
           setCortexUpdating(false)
         })
     },
-    [wsUrl, cortexUpdating],
+    [cortexSource, cortexUpdating],
   )
 
   const handleThemePreferenceChange = useCallback((nextPreference: ThemePreference) => {
@@ -293,80 +311,93 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
     }
   }, [savePreferences])
 
+  // Reboot handler — uses apiClient for target-aware routing
+  const handleReboot = useCallback(() => {
+    if (apiClient) {
+      void apiClient.fetch('/api/reboot', { method: 'POST' }).catch(() => {})
+    } else {
+      const endpoint = resolveApiEndpoint(wsUrl, '/api/reboot')
+      void fetch(endpoint, { method: 'POST' }).catch(() => {})
+    }
+  }, [apiClient, wsUrl])
+
   return (
     <div className="flex flex-col gap-8">
-      <SettingsSection
-        label="Appearance"
-        description="Customize how the app looks"
-      >
-        <SettingsWithCTA
-          label="Theme"
-          description="Choose between light, dark, or system theme"
+      {/* Appearance — local-only (Builder) */}
+      {isBuilder && (
+        <SettingsSection
+          label="Appearance"
+          description="Customize how the app looks"
         >
-          <HelpTooltip id="settings.theme" side="left">
-          <Select
-            value={themePreference}
-            onValueChange={(value) => {
-              if (value === 'light' || value === 'dark' || value === 'auto') {
-                handleThemePreferenceChange(value)
-              }
-            }}
+          <SettingsWithCTA
+            label="Theme"
+            description="Choose between light, dark, or system theme"
           >
-            <SelectTrigger className="w-full sm:w-48">
-              <SelectValue placeholder="Select theme" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="light">
-                <span className="inline-flex items-center gap-2">
-                  <Sun className="size-3.5" />
-                  Light
-                </span>
-              </SelectItem>
-              <SelectItem value="dark">
-                <span className="inline-flex items-center gap-2">
-                  <Moon className="size-3.5" />
-                  Dark
-                </span>
-              </SelectItem>
-              <SelectItem value="auto">
-                <span className="inline-flex items-center gap-2">
-                  <Monitor className="size-3.5" />
-                  System
-                </span>
-              </SelectItem>
-            </SelectContent>
-          </Select>
-          </HelpTooltip>
-        </SettingsWithCTA>
-
-        <SettingsWithCTA
-          label="Preferred Editor"
-          description="Choose which editor to open artifact files in"
-        >
-          <Select
-            value={editorPreference}
-            onValueChange={(value) => {
-              if (value === 'vscode-insiders' || value === 'vscode' || value === 'cursor') {
-                handleEditorPreferenceChange(value)
-              }
-            }}
-          >
-            <SelectTrigger className="w-full sm:w-48">
-              <SelectValue placeholder="Select editor" />
-            </SelectTrigger>
-            <SelectContent>
-              {(Object.entries(EDITOR_LABELS) as [EditorPreference, string][]).map(([value, label]) => (
-                <SelectItem key={value} value={value}>
+            <HelpTooltip id="settings.theme" side="left">
+            <Select
+              value={themePreference}
+              onValueChange={(value) => {
+                if (value === 'light' || value === 'dark' || value === 'auto') {
+                  handleThemePreferenceChange(value)
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-48">
+                <SelectValue placeholder="Select theme" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="light">
                   <span className="inline-flex items-center gap-2">
-                    <Code className="size-3.5" />
-                    {label}
+                    <Sun className="size-3.5" />
+                    Light
                   </span>
                 </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </SettingsWithCTA>
-      </SettingsSection>
+                <SelectItem value="dark">
+                  <span className="inline-flex items-center gap-2">
+                    <Moon className="size-3.5" />
+                    Dark
+                  </span>
+                </SelectItem>
+                <SelectItem value="auto">
+                  <span className="inline-flex items-center gap-2">
+                    <Monitor className="size-3.5" />
+                    System
+                  </span>
+                </SelectItem>
+              </SelectContent>
+            </Select>
+            </HelpTooltip>
+          </SettingsWithCTA>
+
+          <SettingsWithCTA
+            label="Preferred Editor"
+            description="Choose which editor to open artifact files in"
+          >
+            <Select
+              value={editorPreference}
+              onValueChange={(value) => {
+                if (value === 'vscode-insiders' || value === 'vscode' || value === 'cursor') {
+                  handleEditorPreferenceChange(value)
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-48">
+                <SelectValue placeholder="Select editor" />
+              </SelectTrigger>
+              <SelectContent>
+                {(Object.entries(EDITOR_LABELS) as [EditorPreference, string][]).map(([value, label]) => (
+                  <SelectItem key={value} value={value}>
+                    <span className="inline-flex items-center gap-2">
+                      <Code className="size-3.5" />
+                      {label}
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </SettingsWithCTA>
+        </SettingsSection>
+      )}
 
       <SettingsSection
         label="Experimental Features"
@@ -408,7 +439,7 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
                     onClick={() => {
                       setPlaywrightError(null)
                       setPlaywrightLoadFailed(false)
-                      void fetchPlaywrightSettings(wsUrl)
+                      void fetchPlaywrightSettings(playwrightSource)
                         .then((s) => {
                           setPlaywrightSettings(s)
                           setPlaywrightLoadFailed(false)
@@ -430,7 +461,8 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
         </SettingsWithCTA>
       </SettingsSection>
 
-      {inElectron && (
+      {/* Sleep Prevention — Electron-only, Builder-only */}
+      {isBuilder && inElectron && (
         <SettingsSection
           label="Sleep Prevention"
           description="Keep the system awake while agents are active"
@@ -511,7 +543,7 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
                       onClick={() => {
                         setCortexError(null)
                         setCortexLoadFailed(false)
-                        void fetchCortexAutoReviewSettings(wsUrl)
+                        void fetchCortexAutoReviewSettings(cortexSource)
                           .then((response) => {
                             setCortexSettings(response.settings)
                             setCortexDisabled(response.cortexDisabled === true)
@@ -578,154 +610,160 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
         />
       </SettingsSection>
 
-      <SettingsSection
-        label="Sidebar"
-        description="Customize sidebar appearance"
-      >
-        <SettingsWithCTA
-          label="Show model icons"
-          description="Display model provider icons next to manager profiles in the sidebar"
+      {/* Sidebar — local-only (Builder) */}
+      {isBuilder && (
+        <SettingsSection
+          label="Sidebar"
+          description="Customize sidebar appearance"
         >
-          <Switch
-            checked={sidebarModelIcons}
-            onCheckedChange={(checked) => {
-              setSidebarModelIcons(checked)
-              storeSidebarModelIconsPref(checked)
-            }}
-          />
-        </SettingsWithCTA>
+          <SettingsWithCTA
+            label="Show model icons"
+            description="Display model provider icons next to manager profiles in the sidebar"
+          >
+            <Switch
+              checked={sidebarModelIcons}
+              onCheckedChange={(checked) => {
+                setSidebarModelIcons(checked)
+                storeSidebarModelIconsPref(checked)
+              }}
+            />
+          </SettingsWithCTA>
 
-        <SettingsWithCTA
-          label="Show provider usage"
-          description="Display provider usage limits above the sidebar footer"
-        >
-          <Switch
-            checked={sidebarProviderUsage}
-            onCheckedChange={(checked) => {
-              setSidebarProviderUsage(checked)
-              storeSidebarProviderUsagePref(checked)
-            }}
-          />
-        </SettingsWithCTA>
-      </SettingsSection>
+          <SettingsWithCTA
+            label="Show provider usage"
+            description="Display provider usage limits above the sidebar footer"
+          >
+            <Switch
+              checked={sidebarProviderUsage}
+              onCheckedChange={(checked) => {
+                setSidebarProviderUsage(checked)
+                storeSidebarProviderUsagePref(checked)
+              }}
+            />
+          </SettingsWithCTA>
+        </SettingsSection>
+      )}
 
-      <SettingsSection
-        label="Terminal"
-        description="Configure the integrated terminal"
-      >
-        <SettingsWithCTA
-          label="Default Shell"
-          description={
-            terminalSettings?.source === 'env' ? (
-              <>
-                <span>Shell used when opening new terminals.</span>
-                <br />
-                <span className="text-amber-600 dark:text-amber-400">
-                  Currently set via <code className="text-[10px]">FORGE_TERMINAL_DEFAULT_SHELL</code> environment variable.
-                </span>
-              </>
-            ) : (
-              'Shell used when opening new terminals'
-            )
-          }
+      {/* Terminal — Builder-only; hidden entirely for Collab target */}
+      {isBuilder && (
+        <SettingsSection
+          label="Terminal"
+          description="Configure the integrated terminal"
         >
-          <div className="flex flex-col items-end gap-1.5">
-            <div className="flex items-center gap-2">
-              {terminalSuccess && (
-                <span className="text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
-                  <Check className="size-3" />
-                  Saved
-                </span>
-              )}
-              <Select
-                value={terminalSettings?.persistedDefaultShell ?? '__system_default__'}
-                onValueChange={handleTerminalShellChange}
-                disabled={
-                  !terminalShells ||
-                  terminalSettings?.source === 'env' ||
-                  terminalUpdating
-                }
-              >
-                <SelectTrigger className="w-full sm:w-64">
-                  <SelectValue placeholder="Loading shells…">
-                    {terminalSettings?.persistedDefaultShell
-                      ? (() => {
-                          const shell = terminalShells?.shells.find(
-                            (s) => s.path === terminalSettings.persistedDefaultShell,
-                          )
-                          return shell ? (
-                            <span className="inline-flex items-center gap-2">
-                              <Terminal className="size-3.5" />
-                              {shell.name}
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-2">
-                              <Terminal className="size-3.5" />
-                              {terminalSettings.persistedDefaultShell}
-                            </span>
-                          )
-                        })()
-                      : (
-                        <span className="inline-flex items-center gap-2">
-                          <Terminal className="size-3.5" />
-                          System Default
-                        </span>
-                      )}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__system_default__">
-                    <span className="inline-flex items-center gap-2">
-                      <Terminal className="size-3.5" />
-                      System Default
-                    </span>
-                  </SelectItem>
-                  {terminalShells?.shells
-                    .filter((s) => s.available)
-                    .map((shell) => (
-                      <SelectItem key={shell.path} value={shell.path}>
-                        <span className="inline-flex items-center gap-2">
-                          <Terminal className="size-3.5" />
-                          {shell.name}
-                          <span className="text-muted-foreground text-[10px]">— {shell.path}</span>
-                        </span>
-                      </SelectItem>
-                    ))}
-                </SelectContent>
-              </Select>
-            </div>
-            {terminalError ? (
-              <div className="flex items-center gap-1.5">
-                <span className="text-[10px] text-destructive">{terminalError}</span>
-                {terminalLoadFailed ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setTerminalError(null)
-                      setTerminalLoadFailed(false)
-                      void fetchAvailableShells(wsUrl)
-                        .then((data) => {
-                          setTerminalShells(data)
-                          setTerminalSettings(data.settings)
-                          setTerminalLoadFailed(false)
-                        })
-                        .catch((err) => {
-                          setTerminalLoadFailed(true)
-                          setTerminalError(
-                            err instanceof Error ? err.message : 'Could not load terminal settings',
-                          )
-                        })
-                    }}
-                    className="text-[10px] text-primary underline hover:no-underline"
-                  >
-                    Retry
-                  </button>
-                ) : null}
+          <SettingsWithCTA
+            label="Default Shell"
+            description={
+              terminalSettings?.source === 'env' ? (
+                <>
+                  <span>Shell used when opening new terminals.</span>
+                  <br />
+                  <span className="text-amber-600 dark:text-amber-400">
+                    Currently set via <code className="text-[10px]">FORGE_TERMINAL_DEFAULT_SHELL</code> environment variable.
+                  </span>
+                </>
+              ) : (
+                'Shell used when opening new terminals'
+              )
+            }
+          >
+            <div className="flex flex-col items-end gap-1.5">
+              <div className="flex items-center gap-2">
+                {terminalSuccess && (
+                  <span className="text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                    <Check className="size-3" />
+                    Saved
+                  </span>
+                )}
+                <Select
+                  value={terminalSettings?.persistedDefaultShell ?? '__system_default__'}
+                  onValueChange={handleTerminalShellChange}
+                  disabled={
+                    !terminalShells ||
+                    terminalSettings?.source === 'env' ||
+                    terminalUpdating
+                  }
+                >
+                  <SelectTrigger className="w-full sm:w-64">
+                    <SelectValue placeholder="Loading shells…">
+                      {terminalSettings?.persistedDefaultShell
+                        ? (() => {
+                            const shell = terminalShells?.shells.find(
+                              (s) => s.path === terminalSettings.persistedDefaultShell,
+                            )
+                            return shell ? (
+                              <span className="inline-flex items-center gap-2">
+                                <Terminal className="size-3.5" />
+                                {shell.name}
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-2">
+                                <Terminal className="size-3.5" />
+                                {terminalSettings.persistedDefaultShell}
+                              </span>
+                            )
+                          })()
+                        : (
+                          <span className="inline-flex items-center gap-2">
+                            <Terminal className="size-3.5" />
+                            System Default
+                          </span>
+                        )}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__system_default__">
+                      <span className="inline-flex items-center gap-2">
+                        <Terminal className="size-3.5" />
+                        System Default
+                      </span>
+                    </SelectItem>
+                    {terminalShells?.shells
+                      .filter((s) => s.available)
+                      .map((shell) => (
+                        <SelectItem key={shell.path} value={shell.path}>
+                          <span className="inline-flex items-center gap-2">
+                            <Terminal className="size-3.5" />
+                            {shell.name}
+                            <span className="text-muted-foreground text-[10px]">— {shell.path}</span>
+                          </span>
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
               </div>
-            ) : null}
-          </div>
-        </SettingsWithCTA>
-      </SettingsSection>
+              {terminalError ? (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] text-destructive">{terminalError}</span>
+                  {terminalLoadFailed ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTerminalError(null)
+                        setTerminalLoadFailed(false)
+                        void fetchAvailableShells(wsUrl)
+                          .then((data) => {
+                            setTerminalShells(data)
+                            setTerminalSettings(data.settings)
+                            setTerminalLoadFailed(false)
+                          })
+                          .catch((err) => {
+                            setTerminalLoadFailed(true)
+                            setTerminalError(
+                              err instanceof Error ? err.message : 'Could not load terminal settings',
+                            )
+                          })
+                      }}
+                      className="text-[10px] text-primary underline hover:no-underline"
+                    >
+                      Retry
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          </SettingsWithCTA>
+        </SettingsSection>
+      )}
 
       <SettingsSection
         label="System"
@@ -738,10 +776,7 @@ export function SettingsGeneral({ wsUrl, onPlaywrightSnapshotUpdate, onPlaywrigh
           <Button
             variant="outline"
             size="sm"
-            onClick={() => {
-              const endpoint = resolveApiEndpoint(wsUrl, '/api/reboot')
-              void fetch(endpoint, { method: 'POST' }).catch(() => {})
-            }}
+            onClick={handleReboot}
           >
             <RotateCcw className="size-3.5 mr-1.5" />
             Reboot

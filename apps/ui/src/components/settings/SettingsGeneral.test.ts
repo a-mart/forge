@@ -350,3 +350,105 @@ describe('SettingsGeneral', () => {
     })
   })
 })
+
+/* ================================================================== */
+/*  Collab target — Builder-only sections hidden                      */
+/* ================================================================== */
+
+describe('SettingsGeneral — collab target', () => {
+  function renderCollab(): void {
+    root = createRoot(container)
+    flushSync(() => {
+      root?.render(
+        createElement(SettingsGeneral, {
+          wsUrl: 'wss://collab.example.com',
+          target: {
+            kind: 'collab',
+            label: 'Collab backend',
+            description: 'Remote collab.',
+            wsUrl: 'wss://collab.example.com',
+            apiBaseUrl: 'https://collab.example.com/',
+            fetchCredentials: 'include',
+            requiresAdmin: true,
+            availableTabs: ['general', 'auth', 'models', 'about'],
+          },
+        }),
+      )
+    })
+  }
+
+  it('hides the Terminal section in collab mode', async () => {
+    renderCollab()
+    await flush()
+    await flush()
+
+    expect(container.textContent).not.toContain('Default Shell')
+    expect(container.textContent).not.toContain('Terminal')
+  })
+
+  it('does NOT call fetchAvailableShells in collab mode', async () => {
+    renderCollab()
+    await flush()
+    await flush()
+
+    expect(terminalApiMock.fetchAvailableShells).not.toHaveBeenCalled()
+  })
+
+  it('hides the Appearance section in collab mode', async () => {
+    renderCollab()
+    await flush()
+
+    expect(container.textContent).not.toContain('Appearance')
+    expect(container.textContent).not.toContain('Theme')
+  })
+
+  it('hides the Sidebar section in collab mode', async () => {
+    renderCollab()
+    await flush()
+
+    expect(container.textContent).not.toContain('Sidebar')
+    expect(container.textContent).not.toContain('Show model icons')
+  })
+
+  it('still renders Playwright and Cortex sections in collab mode', async () => {
+    renderCollab()
+    await flush()
+    await flush()
+
+    expect(container.textContent).toContain('Playwright Dashboard')
+    expect(container.textContent).toContain('Automatic Reviews')
+  })
+
+  it('passes apiClient to onboarding hook when provided', async () => {
+    const mockClient = {
+      target: {
+        kind: 'collab' as const,
+        label: 'Collab',
+        description: 'Remote',
+        wsUrl: 'wss://collab.example.com',
+        apiBaseUrl: 'https://collab.example.com/',
+        fetchCredentials: 'include' as const,
+        requiresAdmin: true,
+        availableTabs: ['general' as const],
+      },
+      endpoint: (path: string) => `https://collab.example.com${path}`,
+      fetch: vi.fn(),
+      fetchJson: vi.fn(),
+      readApiError: vi.fn(),
+    }
+    root = createRoot(container)
+    flushSync(() => {
+      root?.render(
+        createElement(SettingsGeneral, {
+          wsUrl: 'wss://collab.example.com',
+          target: mockClient.target,
+          apiClient: mockClient,
+        }),
+      )
+    })
+    await flush()
+
+    // useOnboardingState should have been called with the apiClient, not wsUrl
+    expect(onboardingMock.useOnboardingState).toHaveBeenCalledWith(mockClient)
+  })
+})

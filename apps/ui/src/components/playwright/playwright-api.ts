@@ -6,18 +6,11 @@ import type {
   UpdatePlaywrightSettingsRequest,
 } from '@forge/protocol'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
+import type { SettingsApiClient } from '@/components/settings/settings-api-client'
+import { createBuilderSettingsApiClient } from '@/components/settings/settings-api-client'
 
-async function readApiError(response: Response): Promise<string> {
-  try {
-    const payload = (await response.json()) as { error?: unknown; message?: unknown }
-    if (typeof payload.error === 'string' && payload.error.trim()) return payload.error
-    if (typeof payload.message === 'string' && payload.message.trim()) return payload.message
-  } catch { /* ignore */ }
-  try {
-    const text = await response.text()
-    if (text.trim().length > 0) return text
-  } catch { /* ignore */ }
-  return `Request failed (${response.status})`
+function resolveClient(clientOrWsUrl: SettingsApiClient | string): SettingsApiClient {
+  return typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
 }
 
 export async function fetchPlaywrightSnapshot(
@@ -25,7 +18,10 @@ export async function fetchPlaywrightSnapshot(
 ): Promise<PlaywrightDiscoverySnapshot> {
   const endpoint = resolveApiEndpoint(wsUrl, '/api/playwright/sessions')
   const response = await fetch(endpoint)
-  if (!response.ok) throw new Error(await readApiError(response))
+  if (!response.ok) {
+    const client = createBuilderSettingsApiClient(wsUrl)
+    throw new Error(await client.readApiError(response))
+  }
   const payload = (await response.json()) as { snapshot?: PlaywrightDiscoverySnapshot }
   if (!payload?.snapshot) throw new Error('Invalid snapshot response from backend.')
   return payload.snapshot
@@ -36,7 +32,10 @@ export async function triggerPlaywrightRescan(
 ): Promise<PlaywrightDiscoverySnapshot> {
   const endpoint = resolveApiEndpoint(wsUrl, '/api/playwright/rescan')
   const response = await fetch(endpoint, { method: 'POST' })
-  if (!response.ok) throw new Error(await readApiError(response))
+  if (!response.ok) {
+    const client = createBuilderSettingsApiClient(wsUrl)
+    throw new Error(await client.readApiError(response))
+  }
   const payload = (await response.json()) as { ok?: boolean; snapshot?: PlaywrightDiscoverySnapshot }
   if (!payload?.snapshot) throw new Error('Invalid rescan response from backend.')
   return payload.snapshot
@@ -52,18 +51,21 @@ export async function closePlaywrightSession(
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ sessionId }),
   })
-  if (!response.ok) throw new Error(await readApiError(response))
+  if (!response.ok) {
+    const client = createBuilderSettingsApiClient(wsUrl)
+    throw new Error(await client.readApiError(response))
+  }
   const payload = (await response.json()) as ClosePlaywrightSessionResponse
   if (!payload?.ok) throw new Error('Invalid close session response from backend.')
   return payload
 }
 
 export async function fetchPlaywrightSettings(
-  wsUrl: string,
+  clientOrWsUrl: SettingsApiClient | string,
 ): Promise<PlaywrightDiscoverySettings> {
-  const endpoint = resolveApiEndpoint(wsUrl, '/api/settings/playwright')
-  const response = await fetch(endpoint)
-  if (!response.ok) throw new Error(await readApiError(response))
+  const client = resolveClient(clientOrWsUrl)
+  const response = await client.fetch('/api/settings/playwright')
+  if (!response.ok) throw new Error(await client.readApiError(response))
   const payload = (await response.json()) as { settings?: PlaywrightDiscoverySettings }
   if (!payload?.settings) throw new Error('Invalid Playwright settings response from backend.')
   return payload.settings
@@ -85,7 +87,10 @@ export async function startPlaywrightLivePreview(
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   })
-  if (!response.ok) throw new Error(await readApiError(response))
+  if (!response.ok) {
+    const client = createBuilderSettingsApiClient(wsUrl)
+    throw new Error(await client.readApiError(response))
+  }
   const payload = (await response.json()) as { ok?: boolean; preview?: PlaywrightLivePreviewHandle }
   if (!payload?.preview) throw new Error('Invalid live preview start response from backend.')
   return payload.preview
@@ -106,16 +111,16 @@ export async function releasePlaywrightLivePreview(
 // --- Settings APIs ---
 
 export async function updatePlaywrightSettings(
-  wsUrl: string,
+  clientOrWsUrl: SettingsApiClient | string,
   patch: UpdatePlaywrightSettingsRequest,
 ): Promise<{ settings: PlaywrightDiscoverySettings; snapshot: PlaywrightDiscoverySnapshot }> {
-  const endpoint = resolveApiEndpoint(wsUrl, '/api/settings/playwright')
-  const response = await fetch(endpoint, {
+  const client = resolveClient(clientOrWsUrl)
+  const response = await client.fetch('/api/settings/playwright', {
     method: 'PUT',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(patch),
   })
-  if (!response.ok) throw new Error(await readApiError(response))
+  if (!response.ok) throw new Error(await client.readApiError(response))
   const payload = (await response.json()) as {
     ok?: boolean
     settings?: PlaywrightDiscoverySettings

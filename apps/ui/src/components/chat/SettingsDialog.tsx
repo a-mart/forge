@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { SettingsLayout } from '@/components/settings/SettingsLayout'
 import type { SettingsTab } from '@/components/settings/settings-target'
 import type { SettingsBackendTarget } from '@/components/settings/settings-target'
+import { createBuilderSettingsTarget } from '@/components/settings/settings-target'
+import { createSettingsApiClient, type SettingsApiClient } from '@/components/settings/settings-api-client'
 import { SettingsGeneral } from '@/components/settings/SettingsGeneral'
 import { SettingsNotifications } from '@/components/settings/SettingsNotifications'
 import { SettingsAuth } from '@/components/settings/SettingsAuth'
@@ -27,7 +29,7 @@ interface SettingsPanelProps {
   onBack?: () => void
   onPlaywrightSnapshotUpdate?: (snapshot: PlaywrightDiscoverySnapshot) => void
   onPlaywrightSettingsLoaded?: (settings: PlaywrightDiscoverySettings) => void
-  /** Optional target for target-aware Settings shell. When omitted, all tabs are shown. */
+  /** Optional target for target-aware Settings shell. When omitted, Builder target is created from wsUrl. */
   target?: SettingsBackendTarget
 }
 
@@ -42,12 +44,24 @@ export function SettingsPanel({
   onBack,
   onPlaywrightSnapshotUpdate,
   onPlaywrightSettingsLoaded,
-  target,
+  target: externalTarget,
 }: SettingsPanelProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>('general')
 
-  const availableTabs = target?.availableTabs
-  const targetLabel = target?.label
+  // Resolve target: external (from collab) or auto-create Builder target from wsUrl
+  const target = useMemo<SettingsBackendTarget>(
+    () => externalTarget ?? createBuilderSettingsTarget(wsUrl),
+    [externalTarget, wsUrl],
+  )
+
+  // Create API client from resolved target
+  const apiClient = useMemo<SettingsApiClient>(
+    () => createSettingsApiClient(target),
+    [target],
+  )
+
+  const availableTabs = target.availableTabs
+  const targetLabel = target.label
 
   // Reset active tab when it becomes unavailable after target change
   useEffect(() => {
@@ -65,7 +79,7 @@ export function SettingsPanel({
       availableTabs={availableTabs}
       targetLabel={targetLabel}
     >
-      {activeTab === 'general' && <SettingsGeneral wsUrl={wsUrl} onPlaywrightSnapshotUpdate={onPlaywrightSnapshotUpdate} onPlaywrightSettingsLoaded={onPlaywrightSettingsLoaded} />}
+      {activeTab === 'general' && <SettingsGeneral wsUrl={wsUrl} target={target} apiClient={apiClient} onPlaywrightSnapshotUpdate={onPlaywrightSnapshotUpdate} onPlaywrightSettingsLoaded={onPlaywrightSettingsLoaded} />}
       {activeTab === 'notifications' && <SettingsNotifications managers={managers} />}
       {activeTab === 'auth' && <SettingsAuth wsUrl={wsUrl} />}
       {activeTab === 'models' && <SettingsModels wsUrl={wsUrl} modelConfigChangeKey={modelConfigChangeKey} />}

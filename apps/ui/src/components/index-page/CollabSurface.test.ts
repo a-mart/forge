@@ -133,8 +133,8 @@ afterEach(() => {
 /*  Tests                                                              */
 /* ------------------------------------------------------------------ */
 
-describe('CollabSurface — admin settings safety (pre-Package 3)', () => {
-  it('does NOT mount SettingsPanel for admin collab settings', () => {
+describe('CollabSurface — admin settings with target-aware panel', () => {
+  it('mounts SettingsPanel with collab target for admin', () => {
     backendStateMock.value = {
       ready: true,
       blockedReason: null,
@@ -143,41 +143,31 @@ describe('CollabSurface — admin settings safety (pre-Package 3)', () => {
 
     renderCollabSurface({ activeView: 'settings', isAdmin: true })
 
-    // SettingsPanel must never be mounted — it would fire target-unaware requests
-    expect(settingsPanelMountSpy).not.toHaveBeenCalled()
-    expect(container.querySelector('[data-testid="settings-panel"]')).toBeNull()
+    // Package 3: SettingsPanel IS mounted with collab target
+    expect(settingsPanelMountSpy).toHaveBeenCalledTimes(1)
+    const props = settingsPanelMountSpy.mock.calls[0][0]
+    expect(props.target.kind).toBe('collab')
+    expect(props.target.apiBaseUrl).toBe('https://collab.example.com/')
+    expect(container.querySelector('[data-testid="settings-panel"]')).not.toBeNull()
   })
 
-  it('renders placeholder with informational message for admin', () => {
+  it('passes remote managers and profiles from wsState to SettingsPanel', () => {
     backendStateMock.value = {
       ready: true,
       blockedReason: null,
-      wsState: { agents: [], profiles: [] },
+      wsState: { agents: [{ id: 'mgr-1' }], profiles: [{ id: 'prof-1' }] },
     }
 
     renderCollabSurface({ activeView: 'settings', isAdmin: true })
 
-    expect(container.textContent).toContain('Collab backend settings')
-    expect(container.textContent).toContain('Remote settings panels are being enabled')
-    expect(container.querySelector('[data-testid="back-button"]')).not.toBeNull()
+    const props = settingsPanelMountSpy.mock.calls[0][0]
+    expect(props.managers).toEqual([{ id: 'mgr-1' }])
+    expect(props.profiles).toEqual([{ id: 'prof-1' }])
   })
+})
 
-  it('does not fire any fetch/HTTP requests from admin collab settings', () => {
-    const fetchSpy = vi.spyOn(globalThis, 'fetch')
-    backendStateMock.value = {
-      ready: true,
-      blockedReason: null,
-      wsState: { agents: [], profiles: [] },
-    }
-
-    renderCollabSurface({ activeView: 'settings', isAdmin: true })
-
-    // No fetch calls should be made — no terminal, playwright, cortex, or onboarding requests
-    expect(fetchSpy).not.toHaveBeenCalled()
-    fetchSpy.mockRestore()
-  })
-
-  it('renders blocked state for members (not placeholder or panels)', () => {
+describe('CollabSurface — blocked states', () => {
+  it('renders blocked state for members (not settings panels)', () => {
     backendStateMock.value = {
       ready: false,
       blockedReason: 'admin_required',
