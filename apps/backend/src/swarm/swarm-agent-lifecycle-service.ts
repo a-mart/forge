@@ -1,3 +1,4 @@
+import type { ManagerExactModelSelection } from "@forge/protocol";
 import { getSessionFilePath, getWorkerSessionFilePath } from "./data-paths.js";
 import { resolveModelDescriptorFromPreset, inferProviderFromModelId, parseSwarmModelPreset, parseSwarmReasoningLevel } from "./model-presets.js";
 import { normalizeArchetypeId } from "./prompt-registry.js";
@@ -33,6 +34,7 @@ import {
   resolveNextCapacityFallbackModelId,
   shouldRetrySpecialistSpawnWithFallback
 } from "./swarm-manager-utils.js";
+import { resolveExactManagerModelSelection } from "./catalog/manager-model-selection.js";
 
 const MANAGER_ARCHETYPE_ID = "manager";
 const CORTEX_ARCHETYPE_ID = "cortex";
@@ -96,6 +98,7 @@ export interface SwarmAgentLifecycleServiceOptions {
   generateUniqueManagerId: (source: string) => string;
   resolveAndValidateCwd: (cwd: string) => Promise<string>;
   resolveDefaultModelDescriptor: () => AgentModelDescriptor;
+  getManagedModelProviderAvailability: () => Promise<Map<string, boolean>>;
   resolveSpawnWorkerArchetypeId: (
     input: SpawnAgentInput,
     normalizedAgentId: string,
@@ -703,7 +706,7 @@ export class SwarmAgentLifecycleService {
 
   async createManager(
     callerAgentId: string,
-    input: { name: string; cwd: string; model?: SwarmModelPreset }
+    input: { name: string; cwd: string; model?: SwarmModelPreset; modelSelection?: ManagerExactModelSelection }
   ): Promise<AgentDescriptor> {
     const callerDescriptor = this.options.descriptors.get(callerAgentId);
     if (!callerDescriptor || callerDescriptor.role !== "manager") {
@@ -725,6 +728,10 @@ export class SwarmAgentLifecycleService {
       throw new Error('The manager name "cortex" is reserved');
     }
 
+    if (input.model !== undefined && input.modelSelection !== undefined) {
+      throw new Error("create_manager.model and create_manager.modelSelection are mutually exclusive");
+    }
+
     const requestedModelPreset = parseSwarmModelPreset(input.model, "create_manager.model");
     const managerId = this.options.generateUniqueManagerId(requestedName);
     const createdAt = this.options.now();
@@ -732,7 +739,12 @@ export class SwarmAgentLifecycleService {
 
     const initialModel = requestedModelPreset
       ? resolveModelDescriptorFromPreset(requestedModelPreset)
-      : this.options.resolveDefaultModelDescriptor();
+      : input.modelSelection
+        ? resolveExactManagerModelSelection(input.modelSelection, {
+            surface: "create",
+            providerAvailability: await this.options.getManagedModelProviderAvailability(),
+          })
+        : this.options.resolveDefaultModelDescriptor();
 
     const descriptor: AgentDescriptor = {
       agentId: managerId,

@@ -132,6 +132,19 @@ export const SessionRowItem = React.memo(function SessionRowItem({
     ? getCreatorAttribution(sessionAgent.creatorAgentId)
     : null
 
+  // Pre-compute whether each context-menu group has visible items so
+  // separators are only rendered between non-empty groups.
+  const hasGroup2 = Boolean(onRename)
+    || (Boolean(onFork) && sessionAgent.sessionPurpose !== 'agent_creator')
+    || (running && Boolean(onStop))
+    || (!running && Boolean(onResume))
+  const hasGroup3 = Boolean(onChangeSessionModel)
+    || (isModelOverridden && Boolean(onUseProjectDefault))
+    || (Boolean(onPromoteToProjectAgent) && !isProjectAgent && sessionAgent.sessionPurpose !== 'cortex_review' && sessionAgent.sessionPurpose !== 'agent_creator')
+    || (isProjectAgent && Boolean(onOpenProjectAgentSettings))
+    || (isProjectAgent && Boolean(onViewCreationHistory))
+    || (isProjectAgent && Boolean(onDemoteProjectAgent))
+
   // Compute streaming state from statuses map
   const managerStreaming = getAgentLiveStatus(sessionAgent, statuses).status === 'streaming'
   const streamingWorkerCount = workers.filter(
@@ -256,6 +269,7 @@ export const SessionRowItem = React.memo(function SessionRowItem({
         </ContextMenuTrigger>
 
         <ContextMenuContent>
+          {/* ── Group 1: Quick state / visibility ── */}
           <ContextMenuItem
             onClick={() => {
               const sessionDir = sessionAgent.sessionFile.replace(/\/[^/]+$/, '')
@@ -277,6 +291,15 @@ export const SessionRowItem = React.memo(function SessionRowItem({
               {isMutedSession ? 'Unmute' : 'Mute'}
             </ContextMenuItem>
           ) : null}
+          {onMarkUnread ? (
+            <ContextMenuItem onClick={() => onMarkUnread()}>
+              <EyeOff className="mr-2 size-3.5" />
+              Mark as unread
+            </ContextMenuItem>
+          ) : null}
+
+          {/* ── Group 2: Session operations ── */}
+          {hasGroup2 ? <ContextMenuSeparator /> : null}
           {onRename ? (
             <ContextMenuItem onClick={() => onRename()}>
               <Edit3 className="mr-2 size-3.5" />
@@ -287,18 +310,6 @@ export const SessionRowItem = React.memo(function SessionRowItem({
             <ContextMenuItem onClick={() => onFork()}>
               <GitFork className="mr-2 size-3.5" />
               Fork
-            </ContextMenuItem>
-          ) : null}
-          {onChangeSessionModel ? (
-            <ContextMenuItem onClick={() => onChangeSessionModel()}>
-              <RefreshCw className="mr-2 size-3.5" />
-              {isModelOverridden ? 'Change Session Model' : 'Override Session Model'}
-            </ContextMenuItem>
-          ) : null}
-          {isModelOverridden && onUseProjectDefault ? (
-            <ContextMenuItem onClick={() => onUseProjectDefault()}>
-              <RotateCcw className="mr-2 size-3.5" />
-              Use Project Default
             </ContextMenuItem>
           ) : null}
           {running && onStop ? (
@@ -313,29 +324,32 @@ export const SessionRowItem = React.memo(function SessionRowItem({
               Resume
             </ContextMenuItem>
           ) : null}
-          {onMarkUnread ? (
-            <ContextMenuItem onClick={() => onMarkUnread()}>
-              <EyeOff className="mr-2 size-3.5" />
-              Mark as unread
+
+          {/* ── Group 3: Configuration & agent lifecycle ── */}
+          {hasGroup3 ? <ContextMenuSeparator /> : null}
+          {onChangeSessionModel ? (
+            <ContextMenuItem onClick={() => onChangeSessionModel()}>
+              <RefreshCw className="mr-2 size-3.5" />
+              {isModelOverridden ? 'Change Session Model' : 'Override Session Model'}
+            </ContextMenuItem>
+          ) : null}
+          {isModelOverridden && onUseProjectDefault ? (
+            <ContextMenuItem onClick={() => onUseProjectDefault()}>
+              <RotateCcw className="mr-2 size-3.5" />
+              Use Project Default
             </ContextMenuItem>
           ) : null}
           {onPromoteToProjectAgent && !isProjectAgent && sessionAgent.sessionPurpose !== 'cortex_review' && sessionAgent.sessionPurpose !== 'agent_creator' ? (
-            <>
-              <ContextMenuSeparator />
-              <ContextMenuItem onClick={() => onPromoteToProjectAgent()}>
-                <ArrowUpFromLine className="mr-2 size-3.5" />
-                Promote to Project Agent
-              </ContextMenuItem>
-            </>
+            <ContextMenuItem onClick={() => onPromoteToProjectAgent()}>
+              <ArrowUpFromLine className="mr-2 size-3.5" />
+              Promote to Project Agent
+            </ContextMenuItem>
           ) : null}
           {isProjectAgent && onOpenProjectAgentSettings ? (
-            <>
-              <ContextMenuSeparator />
-              <ContextMenuItem onClick={() => onOpenProjectAgentSettings()}>
-                <Settings className="mr-2 size-3.5" />
-                Project Agent Settings
-              </ContextMenuItem>
-            </>
+            <ContextMenuItem onClick={() => onOpenProjectAgentSettings()}>
+              <Settings className="mr-2 size-3.5" />
+              Project Agent Settings
+            </ContextMenuItem>
           ) : null}
           {isProjectAgent && onViewCreationHistory ? (
             <ContextMenuItem onClick={() => onViewCreationHistory()}>
@@ -357,6 +371,8 @@ export const SessionRowItem = React.memo(function SessionRowItem({
               Demote to Session
             </ContextMenuItem>
           ) : null}
+
+          {/* ── Group 4: Destructive ── */}
           {!isDefault && onDelete ? (
             <>
               <ContextMenuSeparator />

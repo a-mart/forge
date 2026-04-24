@@ -3,6 +3,7 @@ import type { ModelOverrideEntry } from '@forge/protocol'
 
 export interface ModelOverridePatch {
   enabled?: boolean | null
+  managerEnabled?: boolean | null
   contextWindowCap?: number | null
   modelSpecificInstructions?: string | null
 }

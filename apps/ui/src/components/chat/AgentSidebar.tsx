@@ -20,15 +20,13 @@ import {
 } from '@dnd-kit/sortable'
 import { buildProfileTreeRows } from '@/lib/agent-hierarchy'
 import type { ProfileTreeRow } from '@/lib/agent-hierarchy'
-import { inferModelPreset } from '@/lib/model-preset'
-import { inferCatalogFamily } from '@forge/protocol'
 import { useProviderUsage } from '@/hooks/use-provider-usage'
 import { toggleMute, getMutedAgents, setMutedAgents, MUTE_CHANGE_EVENT } from '@/lib/notification-service'
 import { cn } from '@/lib/utils'
 import type {
   AgentModelDescriptor,
   AgentModelOrigin,
-  ManagerModelPreset,
+  ManagerExactModelSelection,
   ManagerReasoningLevel,
   ProjectAgentInfo,
   SessionModelUpdateMode,
@@ -169,13 +167,13 @@ export const AgentSidebar = React.memo(function AgentSidebar({
   const [changeModelTarget, setChangeModelTarget] = useState<{
     profileId: string
     profileLabel: string
-    currentPreset: ManagerModelPreset | undefined
+    currentModel: AgentModelDescriptor | undefined
     currentReasoningLevel: ManagerReasoningLevel | undefined
   } | null>(null)
   const [sessionModelTarget, setSessionModelTarget] = useState<{
     sessionAgentId: string
     sessionLabel: string
-    currentPreset: ManagerModelPreset | undefined
+    currentModel: AgentModelDescriptor | undefined
     currentReasoningLevel: ManagerReasoningLevel | undefined
     modelOrigin: AgentModelOrigin | undefined
     profileDefaultModel: AgentModelDescriptor | undefined
@@ -284,20 +282,17 @@ export const AgentSidebar = React.memo(function AgentSidebar({
     const profile = profiles.find((p) => p.profileId === profileId)
     if (!profile) return
     const defaultModel = profile.defaultModel
-    const currentPreset = defaultModel
-      ? inferCatalogFamily(defaultModel.provider.trim().toLowerCase(), defaultModel.modelId.trim().toLowerCase()) as ManagerModelPreset | undefined
-      : undefined
     const currentReasoningLevel = defaultModel?.thinkingLevel as ManagerReasoningLevel | undefined
     setChangeModelTarget({
       profileId,
       profileLabel: profile.displayName || profileId,
-      currentPreset,
+      currentModel: defaultModel,
       currentReasoningLevel,
     })
   }, [profiles])
 
-  const handleConfirmChangeModel = useCallback((profileId: string, model: ManagerModelPreset, reasoningLevel?: ManagerReasoningLevel) => {
-    onUpdateManagerModel?.(profileId, model, reasoningLevel)
+  const handleConfirmChangeModel = useCallback((profileId: string, modelSelection: ManagerExactModelSelection, reasoningLevel?: ManagerReasoningLevel) => {
+    onUpdateManagerModel?.(profileId, modelSelection, reasoningLevel)
     setChangeModelTarget(null)
   }, [onUpdateManagerModel])
 
@@ -305,12 +300,11 @@ export const AgentSidebar = React.memo(function AgentSidebar({
     const agent = agents.find((a) => a.agentId === sessionAgentId)
     if (!agent) return
     const profile = profiles.find((p) => p.profileId === agent.profileId)
-    const currentPreset = inferModelPreset(agent)
     const currentReasoningLevel = agent.model.thinkingLevel as ManagerReasoningLevel | undefined
     setSessionModelTarget({
       sessionAgentId,
       sessionLabel: agent.sessionLabel || agent.displayName || agent.agentId,
-      currentPreset,
+      currentModel: agent.model,
       currentReasoningLevel,
       modelOrigin: agent.modelOrigin,
       profileDefaultModel: profile?.defaultModel,
@@ -320,10 +314,10 @@ export const AgentSidebar = React.memo(function AgentSidebar({
   const handleConfirmSessionModelChange = useCallback((
     sessionAgentId: string,
     mode: SessionModelUpdateMode,
-    model?: ManagerModelPreset,
+    modelSelection?: ManagerExactModelSelection,
     reasoningLevel?: ManagerReasoningLevel,
   ) => {
-    onUpdateSessionModel?.(sessionAgentId, mode, model, reasoningLevel)
+    onUpdateSessionModel?.(sessionAgentId, mode, modelSelection, reasoningLevel)
     setSessionModelTarget(null)
   }, [onUpdateSessionModel])
 
@@ -737,7 +731,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
           wsUrl={wsUrl}
           profileId={changeModelTarget.profileId}
           profileLabel={changeModelTarget.profileLabel}
-          currentPreset={changeModelTarget.currentPreset}
+          currentModel={changeModelTarget.currentModel}
           currentReasoningLevel={changeModelTarget.currentReasoningLevel}
           onConfirm={handleConfirmChangeModel}
           onClose={() => setChangeModelTarget(null)}
@@ -750,7 +744,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
           wsUrl={wsUrl}
           sessionAgentId={sessionModelTarget.sessionAgentId}
           sessionLabel={sessionModelTarget.sessionLabel}
-          currentPreset={sessionModelTarget.currentPreset}
+          currentModel={sessionModelTarget.currentModel}
           currentReasoningLevel={sessionModelTarget.currentReasoningLevel}
           modelOrigin={sessionModelTarget.modelOrigin}
           profileDefaultModel={sessionModelTarget.profileDefaultModel}

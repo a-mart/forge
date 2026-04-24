@@ -3,6 +3,7 @@ import type { AuthCredential } from "@mariozechner/pi-coding-agent";
 import {
   getCatalogModelKey,
   type CredentialPoolState,
+  type ManagerExactModelSelection,
   type CredentialPoolStrategy,
   type PooledCredentialInfo,
   type SkillFileContentResponse,
@@ -26,10 +27,11 @@ import {
   findLatestUnappliedModelChangeContinuityRequestForSession,
   loadModelChangeContinuityState
 } from "./runtime/model-change-continuity.js";
-import type { SecretsEnvService } from "./secrets-env-service.js";
+import { getManagedModelProviderCredentialAvailability, type SecretsEnvService } from "./secrets-env-service.js";
 import type { SkillFileService } from "./skill-file-service.js";
 import type { SkillMetadataService } from "./skill-metadata-service.js";
 import { modelCatalogService } from "./model-catalog-service.js";
+import { resolveExactManagerModelSelection } from "./catalog/manager-model-selection.js";
 import type {
   AgentDescriptor,
   ManagerProfile,
@@ -91,91 +93,52 @@ export class SwarmSettingsService {
     });
   }
 
+  async updateManagerExactModel(
+    managerId: string,
+    modelSelection: ManagerExactModelSelection,
+    reasoningLevel?: SwarmReasoningLevel
+  ): Promise<AgentDescriptor["model"]> {
+    const profile = this.options.profiles.get(managerId);
+    if (profile) {
+      return this.updateProfileDefaultExactModel(profile.profileId, modelSelection, reasoningLevel);
+    }
+
+    const session = this.options.getSessionById(managerId);
+    if (!session) {
+      throw new Error(`Unknown manager profile or session: ${managerId}`);
+    }
+
+    return this.setSessionExactModelOverride(session.agentId, modelSelection, reasoningLevel, {
+      allowMetadataOnlyOriginChange: true,
+      logContext: "manager:update_model:compat_session"
+    });
+  }
+
   async updateProfileDefaultModel(
     profileId: string,
     modelPreset: SwarmModelPreset,
     reasoningLevel?: SwarmReasoningLevel
   ): Promise<void> {
-    const profile = this.options.profiles.get(profileId);
-    if (!profile) {
-      throw new Error(`Unknown manager profile: ${profileId}`);
-    }
-
     const targetModel = resolveModelDescriptor(modelPreset, reasoningLevel);
-    const profileDefaultChanged = !sameModelDescriptor(profile.defaultModel, targetModel);
-    const mutations = this.options
-      .getSessionsForProfile(profile.profileId)
-      .filter((session) => session.modelOrigin !== "session_override")
-      .map((session) => ({
-        session,
-        targetModel,
-        targetModelOrigin: "profile_default" as const
-      }))
-      .filter(
-        (mutation) =>
-          !sameModelDescriptor(mutation.session.model, mutation.targetModel) ||
-          mutation.session.modelOrigin !== mutation.targetModelOrigin
-      );
-
-    if (!profileDefaultChanged && mutations.length === 0) {
-      this.options.logDebug("manager:update_profile_default_model:noop", {
-        profileId,
-        modelPreset,
-        reasoningLevel,
-        updatedSessions: []
-      });
-      return;
-    }
-
-    const stagedUpdatedAt = profileDefaultChanged ? getNow(this.options.now)() : profile.updatedAt;
-    const previousDefaultModel = { ...profile.defaultModel };
-    const previousUpdatedAt = profile.updatedAt;
-    const applyProfileDefaultMutation = (): void => {
-      profile.defaultModel = { ...targetModel };
-      profile.updatedAt = stagedUpdatedAt;
-    };
-
-    if (mutations.length === 0) {
-      applyProfileDefaultMutation();
-      try {
-        await this.options.saveStore();
-      } catch (error) {
-        profile.defaultModel = previousDefaultModel;
-        profile.updatedAt = previousUpdatedAt;
-        throw error;
-      }
-      this.options.emitProfilesSnapshot();
-      this.options.emitAgentsSnapshot();
-      this.options.logDebug("manager:update_profile_default_model", {
-        profileId,
-        modelPreset,
-        reasoningLevel,
-        updatedSessions: [],
-        effectiveModelChangedSessions: [],
-        recycledSessions: [],
-        deferredSessions: []
-      });
-      return;
-    }
-
-    const result = await this.applySessionModelMutations(mutations, {
-      emitProfilesSnapshot: true,
-      beforeSave: applyProfileDefaultMutation,
-      rollbackBeforeSave: () => {
-        profile.defaultModel = previousDefaultModel;
-        profile.updatedAt = previousUpdatedAt;
-      }
-    });
-
-    this.options.logDebug("manager:update_profile_default_model", {
-      profileId,
+    await this.applyProfileDefaultModel(profileId, targetModel, {
       modelPreset,
       reasoningLevel,
-      updatedSessions: result.updatedSessions,
-      effectiveModelChangedSessions: result.effectiveModelChangedSessions,
-      recycledSessions: result.recycledSessions,
-      deferredSessions: result.deferredSessions
+      logContext: "manager:update_profile_default_model"
     });
+  }
+
+  async updateProfileDefaultExactModel(
+    profileId: string,
+    modelSelection: ManagerExactModelSelection,
+    reasoningLevel?: SwarmReasoningLevel
+  ): Promise<AgentDescriptor["model"]> {
+    const targetModel = await this.resolveExactManagerModel(modelSelection, "change", reasoningLevel);
+    await this.applyProfileDefaultModel(profileId, targetModel, {
+      modelSelection,
+      reasoningLevel,
+      logContext: "manager:update_profile_default_model"
+    });
+    return { ...targetModel };
   }
 
   async updateSessionModel(
@@ -190,6 +153,17 @@ export class SwarmSettingsService {
     }
 
     await this.setSessionModelOverride(sessionAgentId, modelPreset, reasoningLevel, {
+      allowMetadataOnlyOriginChange: true,
+      logContext: "session:update_model"
+    });
+  }
+
+  async updateSessionExactModel(
+    sessionAgentId: string,
+    modelSelection: ManagerExactModelSelection,
+    reasoningLevel?: SwarmReasoningLevel
+  ): Promise<AgentDescriptor["model"]> {
+    return this.setSessionExactModelOverride(sessionAgentId, modelSelection, reasoningLevel, {
       allowMetadataOnlyOriginChange: true,
       logContext: "session:update_model"
     });
@@ -444,6 +418,128 @@ export class SwarmSettingsService {
     return this.getCredentialPoolService().addCredential(provider, oauthCredential, identity);
   }
 
+  private async applyProfileDefaultModel(
+    profileId: string,
+    targetModel: AgentDescriptor["model"],
+    details: {
+      logContext: string;
+      reasoningLevel?: SwarmReasoningLevel;
+      modelPreset?: SwarmModelPreset;
+      modelSelection?: ManagerExactModelSelection;
+    }
+  ): Promise<void> {
+    const profile = this.options.profiles.get(profileId);
+    if (!profile) {
+      throw new Error(`Unknown manager profile: ${profileId}`);
+    }
+
+    const profileDefaultChanged = !sameModelDescriptor(profile.defaultModel, targetModel);
+    const mutations = this.options
+      .getSessionsForProfile(profile.profileId)
+      .filter((session) => session.modelOrigin !== "session_override")
+      .map((session) => ({
+        session,
+        targetModel,
+        targetModelOrigin: "profile_default" as const
+      }))
+      .filter(
+        (mutation) =>
+          !sameModelDescriptor(mutation.session.model, mutation.targetModel) ||
+          mutation.session.modelOrigin !== mutation.targetModelOrigin
+      );
+
+    if (!profileDefaultChanged && mutations.length === 0) {
+      this.options.logDebug(`${details.logContext}:noop`, {
+        profileId,
+        modelPreset: details.modelPreset,
+        modelSelection: details.modelSelection,
+        reasoningLevel: details.reasoningLevel,
+        updatedSessions: []
+      });
+      return;
+    }
+
+    const stagedUpdatedAt = profileDefaultChanged ? getNow(this.options.now)() : profile.updatedAt;
+    const previousDefaultModel = { ...profile.defaultModel };
+    const previousUpdatedAt = profile.updatedAt;
+    const applyProfileDefaultMutation = (): void => {
+      profile.defaultModel = { ...targetModel };
+      profile.updatedAt = stagedUpdatedAt;
+    };
+
+    if (mutations.length === 0) {
+      applyProfileDefaultMutation();
+      try {
+        await this.options.saveStore();
+      } catch (error) {
+        profile.defaultModel = previousDefaultModel;
+        profile.updatedAt = previousUpdatedAt;
+        throw error;
+      }
+      this.options.emitProfilesSnapshot();
+      this.options.emitAgentsSnapshot();
+      this.options.logDebug(details.logContext, {
+        profileId,
+        modelPreset: details.modelPreset,
+        modelSelection: details.modelSelection,
+        reasoningLevel: details.reasoningLevel,
+        updatedSessions: [],
+        effectiveModelChangedSessions: [],
+        recycledSessions: [],
+        deferredSessions: []
+      });
+      return;
+    }
+
+    const result = await this.applySessionModelMutations(mutations, {
+      emitProfilesSnapshot: true,
+      beforeSave: applyProfileDefaultMutation,
+      rollbackBeforeSave: () => {
+        profile.defaultModel = previousDefaultModel;
+        profile.updatedAt = previousUpdatedAt;
+      }
+    });
+
+    this.options.logDebug(details.logContext, {
+      profileId,
+      modelPreset: details.modelPreset,
+      modelSelection: details.modelSelection,
+      reasoningLevel: details.reasoningLevel,
+      updatedSessions: result.updatedSessions,
+      effectiveModelChangedSessions: result.effectiveModelChangedSessions,
+      recycledSessions: result.recycledSessions,
+      deferredSessions: result.deferredSessions
+    });
+  }
+
+  private async resolveExactManagerModel(
+    modelSelection: ManagerExactModelSelection,
+    surface: "create" | "change",
+    reasoningLevel?: SwarmReasoningLevel
+  ): Promise<AgentDescriptor["model"]> {
+    return resolveExactManagerModelSelection(modelSelection, {
+      surface,
+      providerAvailability: await getManagedModelProviderCredentialAvailability(this.options.config),
+      reasoningLevel,
+    });
+  }
+
+  private async setSessionExactModelOverride(
+    sessionAgentId: string,
+    modelSelection: ManagerExactModelSelection,
+    reasoningLevel: SwarmReasoningLevel | undefined,
+    options: { allowMetadataOnlyOriginChange: boolean; logContext: string }
+  ): Promise<AgentDescriptor["model"]> {
+    const targetModel = await this.resolveExactManagerModel(modelSelection, "change", reasoningLevel);
+    await this.setSessionModelOverrideTarget(sessionAgentId, targetModel, {
+      allowMetadataOnlyOriginChange: options.allowMetadataOnlyOriginChange,
+      logContext: options.logContext,
+      modelSelection,
+      reasoningLevel,
+    });
+    return { ...targetModel };
+  }
+
   private async setSessionModelOverride(
     sessionAgentId: string,
     modelPreset: SwarmModelPreset | undefined,
@@ -454,22 +550,42 @@ export class SwarmSettingsService {
       throw new Error("Session model override requires a model preset");
     }
 
+    const targetModel = resolveModelDescriptor(modelPreset, reasoningLevel);
+    await this.setSessionModelOverrideTarget(sessionAgentId, targetModel, {
+      allowMetadataOnlyOriginChange: options.allowMetadataOnlyOriginChange,
+      logContext: options.logContext,
+      modelPreset,
+      reasoningLevel,
+    });
+  }
+
+  private async setSessionModelOverrideTarget(
+    sessionAgentId: string,
+    targetModel: AgentDescriptor["model"],
+    details: {
+      allowMetadataOnlyOriginChange: boolean;
+      logContext: string;
+      reasoningLevel?: SwarmReasoningLevel;
+      modelPreset?: SwarmModelPreset;
+      modelSelection?: ManagerExactModelSelection;
+    }
+  ): Promise<void> {
     const session = this.options.getSessionById(sessionAgentId);
     if (!session) {
       throw new Error(`Unknown session: ${sessionAgentId}`);
     }
 
-    const targetModel = resolveModelDescriptor(modelPreset, reasoningLevel);
     const shouldUpdate =
       !sameModelDescriptor(session.model, targetModel) ||
-      (options.allowMetadataOnlyOriginChange && session.modelOrigin !== "session_override");
+      (details.allowMetadataOnlyOriginChange && session.modelOrigin !== "session_override");
 
     if (!shouldUpdate) {
-      this.options.logDebug(`${options.logContext}:noop`, {
+      this.options.logDebug(`${details.logContext}:noop`, {
         sessionAgentId,
         mode: "override",
-        modelPreset,
-        reasoningLevel,
+        modelPreset: details.modelPreset,
+        modelSelection: details.modelSelection,
+        reasoningLevel: details.reasoningLevel,
         updatedSessions: []
       });
       return;
@@ -480,11 +596,12 @@ export class SwarmSettingsService {
       { emitProfilesSnapshot: false }
     );
 
-    this.options.logDebug(options.logContext, {
+    this.options.logDebug(details.logContext, {
       sessionAgentId,
       mode: "override",
-      modelPreset,
-      reasoningLevel,
+      modelPreset: details.modelPreset,
+      modelSelection: details.modelSelection,
+      reasoningLevel: details.reasoningLevel,
       updatedSessions: result.updatedSessions,
       effectiveModelChangedSessions: result.effectiveModelChangedSessions,
       recycledSessions: result.recycledSessions,

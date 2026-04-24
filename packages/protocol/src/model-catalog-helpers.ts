@@ -3,6 +3,7 @@ import type {
   ForgeFamilyDefinition,
   ForgeModelDefinition,
   ForgeProviderDefinition,
+  ModelOverrideEntry,
 } from './model-catalog-types.js'
 
 const CATALOG_PROVIDERS = FORGE_MODEL_CATALOG.providers as Record<string, ForgeProviderDefinition>
@@ -109,6 +110,54 @@ export function inferCatalogFamily(provider: string, modelId: string): string | 
 /** Get context window for a specific model ID. Returns undefined if unknown. */
 export function getCatalogContextWindow(modelId: string): number | undefined {
   return getCatalogModel(modelId)?.contextWindow
+}
+
+export type ManagerModelSurface = 'create' | 'change'
+
+function isCatalogModelGloballyEnabled(
+  model: ForgeModelDefinition,
+  override: ModelOverrideEntry | undefined,
+): boolean {
+  return override?.enabled ?? model.enabledByDefault
+}
+
+/** Check whether a catalog model's family supports the requested manager selector surface. */
+export function isCatalogModelManagerSupported(
+  model: ForgeModelDefinition,
+  surface: ManagerModelSurface,
+): boolean {
+  const family = getCatalogFamily(model.familyId)
+  if (!family) {
+    return false
+  }
+
+  return surface === 'create' ? family.visibleInCreateManager : family.visibleInChangeManager
+}
+
+/** Compute the default manager-enabled state for a catalog model on the requested surface. */
+export function getDefaultManagerEnabled(
+  model: ForgeModelDefinition,
+  surface: ManagerModelSurface,
+): boolean {
+  return isCatalogModelManagerSupported(model, surface) && model.enabledByDefault
+}
+
+/** Compute the effective manager-enabled state for a catalog model on the requested surface. */
+export function getEffectiveManagerEnabled(
+  model: ForgeModelDefinition,
+  override: ModelOverrideEntry | undefined,
+  surface: ManagerModelSurface,
+): boolean {
+  const globallyEnabled = isCatalogModelGloballyEnabled(model, override)
+  if (!globallyEnabled) {
+    return false
+  }
+
+  if (!isCatalogModelManagerSupported(model, surface)) {
+    return false
+  }
+
+  return override?.managerEnabled ?? getDefaultManagerEnabled(model, surface)
 }
 
 /** Get families visible in manager create selector. */

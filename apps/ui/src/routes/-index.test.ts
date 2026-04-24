@@ -5,11 +5,9 @@ import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { getCreateManagerFamilies } from '@forge/protocol'
 import { getProjectAgentSuggestions, IndexPage, isCortexDiffViewerSession } from './index'
 import { HelpProvider } from '@/components/help/HelpProvider'
-
-const CREATE_MANAGER_FAMILIES = getCreateManagerFamilies()
+import { buildManagerModelRows } from '@/lib/manager-model-selection'
 
 type ListenerMap = Record<string, Array<(event?: any) => void>>
 
@@ -113,12 +111,32 @@ let root: Root | null = null
 const originalWebSocket = globalThis.WebSocket
 const originalScrollIntoView = HTMLElement.prototype.scrollIntoView
 const originalMatchMedia = window.matchMedia
+const originalFetch = globalThis.fetch
 
 beforeEach(() => {
   FakeWebSocket.instances = []
   vi.useFakeTimers()
   window.history.replaceState(null, '', '/')
   ;(globalThis as any).WebSocket = FakeWebSocket
+  // Mock fetch for model-overrides endpoint used by CreateManagerDialog
+  globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+    if (typeof url === 'string' && url.includes('model-overrides')) {
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({
+          version: 1,
+          overrides: {},
+          providerAvailability: {
+            'openai-codex': true,
+            'anthropic': true,
+            'claude-sdk': true,
+            'xai': true,
+          },
+        }),
+      })
+    }
+    return Promise.resolve({ ok: false, status: 404, text: () => Promise.resolve('Not found') })
+  }) as any
   Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
     configurable: true,
     writable: true,
@@ -165,6 +183,7 @@ afterEach(() => {
     writable: true,
     value: originalMatchMedia,
   })
+  globalThis.fetch = originalFetch
 })
 
 async function renderPage(): Promise<FakeWebSocket> {
@@ -210,21 +229,38 @@ describe('IndexPage create project model selection', () => {
 
     click(getAllByRole(container, 'button', { name: 'Add project' })[0])
 
+    // Let the fetch mock for model-overrides resolve and React state update
+    await vi.advanceTimersByTimeAsync(0)
+    await vi.advanceTimersByTimeAsync(0)
+
     const modelSelect = getByRole(document.body, 'combobox', { name: 'Default Model' })
     expect(modelSelect.textContent).toContain('GPT-5.3 Codex')
 
     click(modelSelect as HTMLElement)
 
     const optionValues = getAllByRole(document.body, 'option').map((option) => option.textContent?.trim() ?? '')
+
+    // Exact model names from the catalog (not family display names)
+    const allProvidersAvailable = { 'openai-codex': true, 'anthropic': true, 'claude-sdk': true, 'xai': true }
+    const expectedRows = buildManagerModelRows('create', {}, allProvidersAvailable)
+      .filter((r) => !r.unavailableReason)
+      .map((r) => r.displayName)
+
     expect(optionValues).toContain('GPT-5.4')
+    expect(optionValues).toContain('Claude Opus 4.7')
+    expect(optionValues).toContain('Claude Opus 4.6')
     expect(optionValues).not.toContain('Codex App Runtime')
-    expect(optionValues).toEqual(CREATE_MANAGER_FAMILIES.map((family) => family.displayName))
+    expect(optionValues).toEqual(expectedRows)
   })
 
   it('sends selected model in create_manager payload', async () => {
     const socket = await renderPage()
 
     click(getAllByRole(container, 'button', { name: 'Add project' })[0])
+
+    // Let the fetch mock for model-overrides resolve and React state update
+    await vi.advanceTimersByTimeAsync(0)
+    await vi.advanceTimersByTimeAsync(0)
 
     changeValue(getByLabelText(document.body, 'Name') as HTMLInputElement, 'release-manager')
     changeValue(getByLabelText(document.body, 'Working directory') as HTMLInputElement, '/tmp/release')
@@ -255,8 +291,9 @@ describe('IndexPage create project model selection', () => {
       type: 'create_manager',
       name: 'release-manager',
       cwd: '/tmp/release',
-      model: 'pi-opus',
+      modelSelection: { provider: 'anthropic', modelId: 'claude-opus-4-6' },
     })
+    expect(createPayload).not.toHaveProperty('model')
     expect(typeof createPayload?.requestId).toBe('string')
 
     emitServerEvent(socket, {

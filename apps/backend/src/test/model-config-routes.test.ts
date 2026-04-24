@@ -67,6 +67,31 @@ describe("model config routes", () => {
     });
   });
 
+  it("accepts managerEnabled patches without triggering prompt-specific recycling", async () => {
+    const harness = await createModelConfigRouteHarness();
+
+    const response = await fetch(`${harness.server.baseUrl}/api/settings/model-overrides/claude-opus-4-7`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ managerEnabled: false }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(harness.swarmManager.reloadModelCatalogOverridesAndProjection).toHaveBeenCalledTimes(1);
+    expect(harness.swarmManager.notifyModelSpecificInstructionsChanged).not.toHaveBeenCalled();
+    expect(harness.broadcastEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "model_config_changed" }),
+    );
+
+    await expect(readModelOverrides(harness.dataDir)).resolves.toMatchObject({
+      overrides: {
+        "claude-opus-4-7": {
+          managerEnabled: false,
+        },
+      },
+    });
+  });
+
   it("does not recycle managers when only non-prompt model override fields change", async () => {
     const harness = await createModelConfigRouteHarness();
 

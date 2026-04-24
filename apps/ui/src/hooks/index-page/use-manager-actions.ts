@@ -12,7 +12,7 @@ import { ManagerWsClient } from '@/lib/ws-client'
 import type { ManagerWsState } from '@/lib/ws-state'
 import type {
   AgentDescriptor,
-  ManagerModelPreset,
+  ManagerExactModelSelection,
 } from '@forge/protocol'
 import type { AppRouteState } from './use-route-state'
 
@@ -23,7 +23,6 @@ interface UseManagerActionsOptions {
   activeAgent: AgentDescriptor | null
   activeAgentId: string | null
   isActiveManager: boolean
-  defaultManagerModel: ManagerModelPreset
   navigateToRoute: (nextRouteState: AppRouteState, replace?: boolean) => void
   setState: Dispatch<SetStateAction<ManagerWsState>>
   clearPendingResponseForAgent: (agentId: string) => void
@@ -36,7 +35,6 @@ export function useManagerActions({
   activeAgent,
   activeAgentId,
   isActiveManager,
-  defaultManagerModel,
   navigateToRoute,
   setState,
   clearPendingResponseForAgent,
@@ -44,7 +42,7 @@ export function useManagerActions({
   isCreateManagerDialogOpen: boolean
   newManagerName: string
   newManagerCwd: string
-  newManagerModel: ManagerModelPreset
+  newManagerModelSelection: ManagerExactModelSelection | undefined
   createManagerError: string | null
   browseError: string | null
   isCreatingManager: boolean
@@ -52,7 +50,7 @@ export function useManagerActions({
   isPickingDirectory: boolean
   handleNewManagerNameChange: (value: string) => void
   handleNewManagerCwdChange: (value: string) => void
-  handleNewManagerModelChange: (value: ManagerModelPreset) => void
+  handleNewManagerModelSelectionChange: (value: ManagerExactModelSelection) => void
   handleOpenCreateManagerDialog: () => void
   handleCreateManagerDialogOpenChange: (open: boolean) => void
   handleBrowseDirectory: () => Promise<void>
@@ -73,7 +71,7 @@ export function useManagerActions({
   const [isCreateManagerDialogOpen, setIsCreateManagerDialogOpen] = useState(false)
   const [newManagerName, setNewManagerName] = useState('')
   const [newManagerCwd, setNewManagerCwd] = useState('')
-  const [newManagerModel, setNewManagerModel] = useState<ManagerModelPreset>(defaultManagerModel)
+  const [newManagerModelSelection, setNewManagerModelSelection] = useState<ManagerExactModelSelection | undefined>(undefined)
   const [createManagerError, setCreateManagerError] = useState<string | null>(null)
   const [isCreatingManager, setIsCreatingManager] = useState(false)
   const [isValidatingDirectory, setIsValidatingDirectory] = useState(false)
@@ -102,8 +100,8 @@ export function useManagerActions({
     setCreateManagerError(null)
   }, [])
 
-  const handleNewManagerModelChange = useCallback((value: ManagerModelPreset) => {
-    setNewManagerModel(value)
+  const handleNewManagerModelSelectionChange = useCallback((value: ManagerExactModelSelection) => {
+    setNewManagerModelSelection(value)
     setCreateManagerError(null)
   }, [])
 
@@ -186,11 +184,11 @@ export function useManagerActions({
 
     setNewManagerName('')
     setNewManagerCwd(defaultCwd)
-    setNewManagerModel(defaultManagerModel)
+    setNewManagerModelSelection(undefined)
     setBrowseError(null)
     setCreateManagerError(null)
     setIsCreateManagerDialogOpen(true)
-  }, [activeAgent, agents, defaultManagerModel])
+  }, [activeAgent, agents])
 
   const handleCreateManagerDialogOpenChange = useCallback((open: boolean) => {
     if (!open && isCreatingManager) {
@@ -245,6 +243,11 @@ export function useManagerActions({
       return
     }
 
+    if (!newManagerModelSelection) {
+      setCreateManagerError('A model must be selected.')
+      return
+    }
+
     setCreateManagerError(null)
     setIsCreatingManager(true)
 
@@ -261,7 +264,7 @@ export function useManagerActions({
       const manager = await client.createManager({
         name,
         cwd: validation.path || cwd,
-        model: newManagerModel,
+        modelSelection: newManagerModelSelection,
       })
 
       navigateToRoute({ view: 'chat', agentId: manager.agentId, surface: 'builder' })
@@ -270,7 +273,7 @@ export function useManagerActions({
       setIsCreateManagerDialogOpen(false)
       setNewManagerName('')
       setNewManagerCwd('')
-      setNewManagerModel(defaultManagerModel)
+      setNewManagerModelSelection(undefined)
       setBrowseError(null)
       setCreateManagerError(null)
     } catch (error) {
@@ -281,10 +284,9 @@ export function useManagerActions({
     }
   }, [
     clientRef,
-    defaultManagerModel,
     navigateToRoute,
     newManagerCwd,
-    newManagerModel,
+    newManagerModelSelection,
     newManagerName,
   ])
 
@@ -348,7 +350,7 @@ export function useManagerActions({
     isCreateManagerDialogOpen,
     newManagerName,
     newManagerCwd,
-    newManagerModel,
+    newManagerModelSelection,
     createManagerError,
     browseError,
     isCreatingManager,
@@ -356,7 +358,7 @@ export function useManagerActions({
     isPickingDirectory,
     handleNewManagerNameChange,
     handleNewManagerCwdChange,
-    handleNewManagerModelChange,
+    handleNewManagerModelSelectionChange,
     handleOpenCreateManagerDialog,
     handleCreateManagerDialogOpenChange,
     handleBrowseDirectory,

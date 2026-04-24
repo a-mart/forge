@@ -177,10 +177,11 @@ async function mergeModelOverridePatch(
   patch: Record<string, unknown>,
 ): Promise<ModelOverrideEntry | null> {
   const hasEnabled = Object.prototype.hasOwnProperty.call(patch, "enabled");
+  const hasManagerEnabled = Object.prototype.hasOwnProperty.call(patch, "managerEnabled");
   const hasContextWindowCap = Object.prototype.hasOwnProperty.call(patch, "contextWindowCap");
   const hasModelSpecificInstructions = Object.prototype.hasOwnProperty.call(patch, "modelSpecificInstructions");
 
-  if (!hasEnabled && !hasContextWindowCap && !hasModelSpecificInstructions) {
+  if (!hasEnabled && !hasManagerEnabled && !hasContextWindowCap && !hasModelSpecificInstructions) {
     throw new Error("At least one override field is required");
   }
 
@@ -196,6 +197,17 @@ async function mergeModelOverridePatch(
       next.enabled = enabled;
     } else {
       throw new Error("enabled must be a boolean or null");
+    }
+  }
+
+  if (hasManagerEnabled) {
+    const managerEnabled = patch.managerEnabled;
+    if (managerEnabled === null) {
+      delete next.managerEnabled;
+    } else if (typeof managerEnabled === "boolean") {
+      next.managerEnabled = managerEnabled;
+    } else {
+      throw new Error("managerEnabled must be a boolean or null");
     }
   }
 

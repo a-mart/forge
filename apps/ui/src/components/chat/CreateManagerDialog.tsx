@@ -1,4 +1,4 @@
-import { useEffect, useMemo, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -12,18 +12,20 @@ import { Label } from '@/components/ui/label'
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { useModelPresets } from '@/lib/model-preset'
-import { type ManagerModelPreset } from '@forge/protocol'
-import { getCreateManagerFamilies } from '@forge/protocol'
-
-const STATIC_CREATE_MANAGER_FAMILIES = getCreateManagerFamilies()
-const STATIC_CREATE_MANAGER_FAMILY_IDS = new Set(
-  STATIC_CREATE_MANAGER_FAMILIES.map((family) => family.familyId),
-)
+import { fetchModelOverrides, type ModelOverridesResponse } from '@/components/settings/models-api'
+import type { ManagerExactModelSelection } from '@forge/protocol'
+import {
+  buildManagerModelRows,
+  decodeManagerModelValue,
+  encodeManagerModelValue,
+  groupManagerModelRows,
+} from '@/lib/manager-model-selection'
 
 interface CreateManagerDialogProps {
   open: boolean
@@ -33,13 +35,13 @@ interface CreateManagerDialogProps {
   isPickingDirectory: boolean
   newManagerName: string
   newManagerCwd: string
-  newManagerModel: ManagerModelPreset
+  newManagerModelSelection: ManagerExactModelSelection | undefined
   createManagerError: string | null
   browseError: string | null
   onOpenChange: (open: boolean) => void
   onNameChange: (value: string) => void
   onCwdChange: (value: string) => void
-  onModelChange: (value: ManagerModelPreset) => void
+  onModelSelectionChange: (value: ManagerExactModelSelection) => void
   onBrowseDirectory: () => void
   onSubmit: (event: FormEvent<HTMLFormElement>) => void
 }
@@ -52,53 +54,73 @@ export function CreateManagerDialog({
   isPickingDirectory,
   newManagerName,
   newManagerCwd,
-  newManagerModel,
+  newManagerModelSelection,
   createManagerError,
   browseError,
   onOpenChange,
   onNameChange,
   onCwdChange,
-  onModelChange,
+  onModelSelectionChange,
   onBrowseDirectory,
   onSubmit,
 }: CreateManagerDialogProps) {
-  const modelPresets = useModelPresets(wsUrl, open ? 1 : 0)
+  const [overridesData, setOverridesData] = useState<ModelOverridesResponse | null>(null)
+  const [availabilityLoading, setAvailabilityLoading] = useState(false)
+  const [availabilityError, setAvailabilityError] = useState<string | null>(null)
 
-  const createManagerFamilies = useMemo(() => {
-    const presetInfoById = new Map(modelPresets.map((preset) => [preset.presetId, preset]))
-    const hasServerFilteredFamilies = modelPresets.length > 0
-
-    return STATIC_CREATE_MANAGER_FAMILIES.flatMap((family) => {
-      const preset = presetInfoById.get(family.familyId)
-      if (!preset && hasServerFilteredFamilies) {
-        return []
-      }
-
-      return [{
-        familyId: family.familyId,
-        displayName: preset?.displayName ?? family.displayName,
-      }]
+  const loadAvailability = useCallback(() => {
+    setAvailabilityLoading(true)
+    setAvailabilityError(null)
+    void fetchModelOverrides(wsUrl).then((data) => {
+      setOverridesData(data)
+      setAvailabilityLoading(false)
+    }).catch((err) => {
+      setAvailabilityError(err instanceof Error ? err.message : 'Failed to load model availability')
+      setAvailabilityLoading(false)
     })
-  }, [modelPresets])
+  }, [wsUrl])
 
   useEffect(() => {
-    if (!open) {
-      return
-    }
+    if (!open) return
+    loadAvailability()
+  }, [open, loadAvailability])
 
-    if (!STATIC_CREATE_MANAGER_FAMILY_IDS.has(newManagerModel)) {
-      return
-    }
+  const rows = useMemo(() => {
+    if (!overridesData) return []
+    return buildManagerModelRows(
+      'create',
+      overridesData.overrides,
+      overridesData.providerAvailability,
+    )
+  }, [overridesData])
 
-    if (createManagerFamilies.some((family) => family.familyId === newManagerModel)) {
-      return
-    }
+  const availableRows = useMemo(() => rows.filter((r) => !r.unavailableReason), [rows])
+  const groups = useMemo(() => groupManagerModelRows(availableRows), [availableRows])
 
-    const fallbackFamilyId = createManagerFamilies[0]?.familyId
-    if (fallbackFamilyId) {
-      onModelChange(fallbackFamilyId as ManagerModelPreset)
+  const selectedValue = newManagerModelSelection
+    ? encodeManagerModelValue(newManagerModelSelection.provider, newManagerModelSelection.modelId)
+    : undefined
+
+  // Auto-select first available row when availability loads (not before)
+  useEffect(() => {
+    if (!open || availableRows.length === 0 || availabilityLoading) return
+
+    if (selectedValue && availableRows.some((r) => r.key === selectedValue)) return
+
+    const first = availableRows[0]
+    onModelSelectionChange({ provider: first.provider, modelId: first.modelId })
+  }, [availableRows, selectedValue, onModelSelectionChange, open, availabilityLoading])
+
+  const handleModelChange = useCallback((value: string) => {
+    const decoded = decodeManagerModelValue(value)
+    if (decoded) {
+      onModelSelectionChange(decoded)
     }
-  }, [createManagerFamilies, newManagerModel, onModelChange, open])
+  }, [onModelSelectionChange])
+
+  const availabilityLoaded = !!overridesData && !availabilityLoading
+  const noModelsAvailable = availabilityLoaded && availableRows.length === 0
+  const isModelSelectorDisabled = isCreatingManager || isPickingDirectory || availabilityLoading || !!availabilityError || noModelsAvailable
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -159,21 +181,39 @@ export function CreateManagerDialog({
               Default Model
             </Label>
             <Select
-              value={newManagerModel}
-              onValueChange={(value) => onModelChange(value as ManagerModelPreset)}
-              disabled={isCreatingManager || isPickingDirectory}
+              value={selectedValue ?? ''}
+              onValueChange={handleModelChange}
+              disabled={isModelSelectorDisabled}
             >
               <SelectTrigger id="manager-model" className="w-full">
-                <SelectValue placeholder="Select model preset" />
+                <SelectValue placeholder={availabilityLoading ? 'Loading models...' : 'Select model'} />
               </SelectTrigger>
               <SelectContent>
-                {createManagerFamilies.map((family) => (
-                  <SelectItem key={family.familyId} value={family.familyId}>
-                    {family.displayName}
-                  </SelectItem>
+                {groups.map((group) => (
+                  <SelectGroup key={group.provider}>
+                    <SelectLabel className="text-xs text-muted-foreground">{group.providerDisplayName}</SelectLabel>
+                    {group.rows.map((row) => (
+                      <SelectItem key={row.key} value={row.key}>
+                        {row.displayName}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
                 ))}
               </SelectContent>
             </Select>
+            {availabilityError ? (
+              <div className="flex items-center gap-2">
+                <p className="text-xs text-destructive">Failed to load models.</p>
+                <Button type="button" variant="ghost" size="sm" className="h-auto p-0 text-xs text-primary underline-offset-4 hover:underline" onClick={loadAvailability}>
+                  Retry
+                </Button>
+              </div>
+            ) : null}
+            {noModelsAvailable ? (
+              <p className="text-xs text-muted-foreground">
+                No manager models are currently available. Re-enable one in Settings &gt; Models.
+              </p>
+            ) : null}
           </div>
 
           {createManagerError ? (
@@ -189,7 +229,7 @@ export function CreateManagerDialog({
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={isCreatingManager || isPickingDirectory}>
+            <Button type="submit" disabled={isCreatingManager || isPickingDirectory || availabilityLoading || !!availabilityError || noModelsAvailable}>
               {isCreatingManager
                 ? isValidatingDirectory
                   ? 'Validating...'

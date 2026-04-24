@@ -70,6 +70,7 @@ export interface ForgeModelCatalog {
 
 export interface ModelOverrideEntry {
   enabled?: boolean
+  managerEnabled?: boolean
   contextWindowCap?: number
   modelSpecificInstructions?: string
 }

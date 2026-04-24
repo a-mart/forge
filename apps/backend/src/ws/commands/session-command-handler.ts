@@ -5,6 +5,7 @@ import type {
   SessionMemoryMergeStrategy
 } from "@forge/protocol";
 import type { WebSocket } from "ws";
+import { inferSwarmModelPresetFromDescriptor } from "../../swarm/model-presets.js";
 import type { SwarmManager } from "../../swarm/swarm-manager.js";
 import {
   requireNonSystemProfile,
@@ -293,18 +294,41 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
         (agentId) => swarmManager.getAgent(agentId),
       );
 
-      await swarmManager.updateSessionModel(
-        command.sessionAgentId,
-        command.mode,
-        command.model,
-        command.reasoningLevel,
-      );
+      const eventModel = command.mode === "inherit"
+        ? undefined
+        : command.modelSelection
+          ? inferEventModelPreset(
+              await swarmManager.updateSessionExactModel(
+                command.sessionAgentId,
+                command.modelSelection,
+                command.reasoningLevel,
+              )
+            )
+          : command.model;
+
+      if (command.mode === "override" && !command.modelSelection) {
+        await swarmManager.updateSessionModel(
+          command.sessionAgentId,
+          command.mode,
+          command.model,
+          command.reasoningLevel,
+        );
+      }
+
+      if (command.mode === "inherit") {
+        await swarmManager.updateSessionModel(
+          command.sessionAgentId,
+          command.mode,
+          undefined,
+          undefined,
+        );
+      }
 
       send(socket, {
         type: "session_model_updated",
         sessionAgentId: command.sessionAgentId,
         mode: command.mode,
-        model: command.model,
+        model: eventModel,
         reasoningLevel: command.reasoningLevel,
         requestId: command.requestId,
       });
@@ -585,4 +609,13 @@ function getSessionMemoryMergeFailureDiagnostics(error: unknown): {
 
 function resolveSessionProfileId(swarmManager: SwarmManager, sessionAgentId: string): string {
   return resolveProfileIdForSessionAgent(sessionAgentId, (agentId) => swarmManager.getAgent(agentId));
+}
+
+function inferEventModelPreset(descriptor: { provider: string; modelId: string }): string {
+  const preset = inferSwarmModelPresetFromDescriptor(descriptor);
+  if (!preset) {
+    throw new Error(`Could not infer manager model preset for ${descriptor.provider}/${descriptor.modelId}`);
+  }
+
+  return preset;
 }

@@ -134,7 +134,13 @@ describe('CortexRestoreVersionDialog', () => {
 
   it('writes the selected content after explicit confirmation', async () => {
     const props = renderDialog()
-    await flushPromises()
+
+    // Wait for the preview to fully load before clicking — the confirm handler
+    // early-returns when preview is null, so clicking before load is a silent no-op.
+    await waitFor(() => {
+      const diffPane = getByTestId(document.body, 'mock-restore-diff-pane')
+      expect(diffPane.getAttribute('data-new')).toBe('# Restored\nSelected version\n')
+    })
 
     fireEvent.click(getByTestId(document.body, 'cortex-confirm-restore'))
 
