@@ -478,27 +478,40 @@ export const AgentSidebar = React.memo(function AgentSidebar({
         'max-md:w-full md:w-[20rem] md:min-w-[20rem] md:shrink-0',
       )}
     >
-      <div className="mb-2 flex h-[62px] shrink-0 items-center gap-2 border-b border-sidebar-border px-2">
-        <button
-          type="button"
-          onClick={onAddManager}
-          className="flex min-h-[44px] flex-1 items-center gap-2 rounded-md p-2 text-sm transition-colors hover:bg-sidebar-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60"
-          title="Create project"
-          aria-label="Add project"
-        >
-          <SquarePen aria-hidden="true" className="h-4 w-4" />
-          <span>New Project</span>
-        </button>
-        <div className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[10px] font-medium text-muted-foreground">
-          <span
-            className={cn(
-              'inline-block size-1.5 rounded-full',
-              connected ? 'bg-emerald-500' : 'bg-amber-500',
-            )}
-            title={connected ? 'Connected' : 'Reconnecting'}
+      <div className="flex shrink-0 items-center gap-2 border-b border-sidebar-border px-2 py-2">
+        {collaborationModeSwitch ? (
+          /* Collab-enabled: mode toggle fills the header row */
+          <ModeSwitch
+            activeSurface={collaborationModeSwitch.activeSurface}
+            onSelectSurface={collaborationModeSwitch.onSelectSurface}
+            connected={connected}
+            className="flex-1"
           />
-          <span className="hidden xl:inline">{connected ? 'Live' : 'Retrying'}</span>
-        </div>
+        ) : (
+          /* Default: "New Project" button + status dot */
+          <>
+            <button
+              type="button"
+              onClick={onAddManager}
+              className="flex min-h-[44px] flex-1 items-center gap-2 rounded-md p-2 text-sm transition-colors hover:bg-sidebar-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60"
+              title="Create project"
+              aria-label="Add project"
+            >
+              <SquarePen aria-hidden="true" className="h-4 w-4" />
+              <span>New Project</span>
+            </button>
+            <div className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[10px] font-medium text-muted-foreground">
+              <span
+                className={cn(
+                  'inline-block size-1.5 rounded-full',
+                  connected ? 'bg-emerald-500' : 'bg-amber-500',
+                )}
+                title={connected ? 'Connected' : 'Reconnecting'}
+              />
+              <span className="hidden xl:inline">{connected ? 'Live' : 'Retrying'}</span>
+            </div>
+          </>
+        )}
         {onMobileClose ? (
           <button
             type="button"
@@ -510,13 +523,6 @@ export const AgentSidebar = React.memo(function AgentSidebar({
           </button>
         ) : null}
       </div>
-
-      {collaborationModeSwitch ? (
-        <ModeSwitch
-          activeSurface={collaborationModeSwitch.activeSurface}
-          onSelectSurface={collaborationModeSwitch.onSelectSurface}
-        />
-      ) : null}
 
       <div
         className="flex-1 overflow-y-auto px-2 pb-2 [color-scheme:light] dark:[color-scheme:dark] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-sidebar-border [&::-webkit-scrollbar-thumb:hover]:bg-sidebar-border/80"
@@ -563,6 +569,17 @@ export const AgentSidebar = React.memo(function AgentSidebar({
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
           searchInputRef={searchInputRef}
+          rightAction={collaborationModeSwitch ? (
+            <button
+              type="button"
+              onClick={onAddManager}
+              className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-sidebar-accent/50 hover:text-sidebar-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60"
+              title="Create project"
+              aria-label="Add project"
+            >
+              <SquarePen aria-hidden="true" className="size-3.5" />
+            </button>
+          ) : undefined}
         />
 
         {isSearchActive ? (

@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { Search, X } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 
@@ -5,12 +6,14 @@ interface SidebarSearchProps {
   searchQuery: string
   onSearchChange: (query: string) => void
   searchInputRef: React.RefObject<HTMLInputElement | null>
+  /** Optional element rendered to the right of the search input (e.g. "New Project" icon). */
+  rightAction?: ReactNode
 }
 
-export function SidebarSearch({ searchQuery, onSearchChange, searchInputRef }: SidebarSearchProps) {
+export function SidebarSearch({ searchQuery, onSearchChange, searchInputRef, rightAction }: SidebarSearchProps) {
   return (
-    <div className="px-2 py-1.5">
-      <div className="relative">
+    <div className="flex items-center gap-1.5 px-2 py-1.5">
+      <div className="relative flex-1">
         <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground/60" aria-hidden="true" />
         <Input
           ref={searchInputRef}
@@ -33,6 +36,7 @@ export function SidebarSearch({ searchQuery, onSearchChange, searchInputRef }: S
           </button>
         ) : null}
       </div>
+      {rightAction}
     </div>
   )
 }
