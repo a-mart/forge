@@ -24,6 +24,7 @@ import {
   deleteSettingsEnvVariable,
   toErrorMessage,
 } from '../settings-api'
+import type { SettingsApiClient } from '../settings-api-client'
 import { SettingsChromeCdp } from '../SettingsChromeCdp'
 import { SkillEnvVariables } from './SkillEnvVariables'
 
@@ -48,11 +49,13 @@ const RICH_CONFIG_SKILLS: Record<
 
 interface SkillsViewerProps {
   wsUrl: string
+  apiClient?: SettingsApiClient
   profiles: ManagerProfile[]
 }
 
-export function SkillsViewer({ wsUrl, profiles }: SkillsViewerProps) {
+export function SkillsViewer({ wsUrl, apiClient, profiles }: SkillsViewerProps) {
   useHelpContext('settings.skills')
+  const clientOrWsUrl: SettingsApiClient | string = apiClient ?? wsUrl
 
   /* ---------- Scope ---------- */
   const [selectedScope, setSelectedScope] = useState<string>(SCOPE_GLOBAL)
@@ -100,7 +103,7 @@ export function SkillsViewer({ wsUrl, profiles }: SkillsViewerProps) {
     setSkillsLoading(true)
     try {
       const profileId = scope !== SCOPE_GLOBAL ? scope : undefined
-      const result = await fetchSkillInventory(wsUrl, profileId)
+      const result = await fetchSkillInventory(clientOrWsUrl, profileId)
       if (requestId !== loadSkillsRequestIdRef.current) {
         return
       }
@@ -127,20 +130,20 @@ export function SkillsViewer({ wsUrl, profiles }: SkillsViewerProps) {
         setSkillsLoading(false)
       }
     }
-  }, [wsUrl])
+  }, [clientOrWsUrl])
 
   const loadVariables = useCallback(async () => {
     setEnvLoading(true)
     setEnvError(null)
     try {
-      const result = await fetchSettingsEnvVariables(wsUrl)
+      const result = await fetchSettingsEnvVariables(clientOrWsUrl)
       setEnvVariables(result)
     } catch (err) {
       setEnvError(toErrorMessage(err))
     } finally {
       setEnvLoading(false)
     }
-  }, [wsUrl])
+  }, [clientOrWsUrl])
 
   useEffect(() => {
     void loadSkills(selectedScope)
@@ -194,7 +197,7 @@ export function SkillsViewer({ wsUrl, profiles }: SkillsViewerProps) {
     setEnvSuccess(null)
     setSavingVar(variableName)
     try {
-      await updateSettingsEnvVariables(wsUrl, { [variableName]: value })
+      await updateSettingsEnvVariables(clientOrWsUrl, { [variableName]: value })
       setDraftByName((prev) => ({ ...prev, [variableName]: '' }))
       setEnvSuccess(`${variableName} saved successfully.`)
       await loadVariables()
@@ -210,7 +213,7 @@ export function SkillsViewer({ wsUrl, profiles }: SkillsViewerProps) {
     setEnvSuccess(null)
     setDeletingVar(variableName)
     try {
-      await deleteSettingsEnvVariable(wsUrl, variableName)
+      await deleteSettingsEnvVariable(clientOrWsUrl, variableName)
       setDraftByName((prev) => ({ ...prev, [variableName]: '' }))
       setEnvSuccess(`${variableName} removed.`)
       await loadVariables()
@@ -294,7 +297,7 @@ export function SkillsViewer({ wsUrl, profiles }: SkillsViewerProps) {
           {/* Desktop: side-by-side layout */}
           <div className="hidden md:block">
             <SkillExplorerDesktop
-              wsUrl={wsUrl}
+              clientOrWsUrl={clientOrWsUrl}
               skills={skills}
               selectedSkillId={selectedSkillId}
               selectedSkill={selectedSkill}
@@ -310,7 +313,7 @@ export function SkillsViewer({ wsUrl, profiles }: SkillsViewerProps) {
           {/* Mobile: stacked layout */}
           <div className="md:hidden">
             <SkillExplorerMobile
-              wsUrl={wsUrl}
+              clientOrWsUrl={clientOrWsUrl}
               skills={skills}
               selectedSkillId={selectedSkillId}
               selectedSkill={selectedSkill}
@@ -366,7 +369,7 @@ export function SkillsViewer({ wsUrl, profiles }: SkillsViewerProps) {
 /* ------------------------------------------------------------------ */
 
 function SkillExplorerDesktop({
-  wsUrl,
+  clientOrWsUrl,
   skills,
   selectedSkillId,
   selectedSkill,
@@ -377,7 +380,7 @@ function SkillExplorerDesktop({
   onSelectSkill,
   onSelectFile,
 }: {
-  wsUrl: string
+  clientOrWsUrl: SettingsApiClient | string
   skills: SkillInventoryEntry[]
   selectedSkillId: string | null
   selectedSkill: SkillInventoryEntry | null
@@ -433,7 +436,7 @@ function SkillExplorerDesktop({
               {/* File tree */}
               <div className="flex-1 overflow-hidden">
                 <SkillFileTree
-                  wsUrl={wsUrl}
+                  clientOrWsUrl={clientOrWsUrl}
                   skillId={selectedSkill.skillId}
                   selectedFilePath={selectedFilePath}
                   onSelectFile={onSelectFile}
@@ -444,7 +447,7 @@ function SkillExplorerDesktop({
             {/* Right: File viewer */}
             <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
               <SkillFileViewer
-                wsUrl={wsUrl}
+                clientOrWsUrl={clientOrWsUrl}
                 skillId={selectedSkill.skillId}
                 filePath={selectedFilePath}
                 rootPath={selectedSkill.rootPath}
@@ -466,7 +469,7 @@ function SkillExplorerDesktop({
 /* ------------------------------------------------------------------ */
 
 function SkillExplorerMobile({
-  wsUrl,
+  clientOrWsUrl,
   skills,
   selectedSkillId,
   selectedSkill,
@@ -477,7 +480,7 @@ function SkillExplorerMobile({
   onSelectSkill,
   onSelectFile,
 }: {
-  wsUrl: string
+  clientOrWsUrl: SettingsApiClient | string
   skills: SkillInventoryEntry[]
   selectedSkillId: string | null
   selectedSkill: SkillInventoryEntry | null
@@ -518,7 +521,7 @@ function SkillExplorerMobile({
             style={{ maxHeight: '200px' }}
           >
             <SkillFileTree
-              wsUrl={wsUrl}
+              clientOrWsUrl={clientOrWsUrl}
               skillId={selectedSkill.skillId}
               selectedFilePath={selectedFilePath}
               onSelectFile={onSelectFile}
@@ -531,7 +534,7 @@ function SkillExplorerMobile({
             style={{ minHeight: '300px' }}
           >
             <SkillFileViewer
-              wsUrl={wsUrl}
+              clientOrWsUrl={clientOrWsUrl}
               skillId={selectedSkill.skillId}
               filePath={selectedFilePath}
               rootPath={selectedSkill.rootPath}

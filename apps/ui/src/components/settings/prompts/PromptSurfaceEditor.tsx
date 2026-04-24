@@ -10,6 +10,7 @@ import {
   saveCortexPromptSurface,
 } from './prompt-api'
 import { PromptEditor } from './PromptEditor'
+import type { SettingsApiClient } from '../settings-api-client'
 import type {
   CortexPromptSurfaceContentResponse,
   CortexPromptSurfaceListEntry,
@@ -37,14 +38,14 @@ const GROUP_BADGE_CLASSES: Record<CortexPromptSurfaceListEntry['group'], string>
 }
 
 interface PromptSurfaceEditorProps {
-  wsUrl: string
+  clientOrWsUrl: SettingsApiClient | string
   profileId: string
   surface: CortexPromptSurfaceListEntry
   refreshKey: number
 }
 
 export function PromptSurfaceEditor({
-  wsUrl,
+  clientOrWsUrl,
   profileId,
   surface,
   refreshKey,
@@ -55,7 +56,7 @@ export function PromptSurfaceEditor({
         <SurfaceHeader surface={surface} />
         <PromptEditor
           key={`${surface.surfaceId}:${profileId}:${refreshKey}`}
-          wsUrl={wsUrl}
+          clientOrWsUrl={clientOrWsUrl}
           category={surface.category}
           promptId={surface.promptId}
           profileId={profileId}
@@ -70,7 +71,7 @@ export function PromptSurfaceEditor({
 
   return (
     <FilePromptSurfaceEditor
-      wsUrl={wsUrl}
+      clientOrWsUrl={clientOrWsUrl}
       profileId={profileId}
       surface={surface}
       refreshKey={refreshKey}
@@ -116,7 +117,7 @@ function SurfaceHeader({ surface }: { surface: CortexPromptSurfaceListEntry }) {
 }
 
 function FilePromptSurfaceEditor({
-  wsUrl,
+  clientOrWsUrl,
   profileId,
   surface,
   refreshKey,
@@ -156,7 +157,7 @@ function FilePromptSurfaceEditor({
     setLoading(true)
     setError(null)
     try {
-      const data = await fetchCortexPromptSurfaceContent(wsUrl, surface.surfaceId, profileId)
+      const data = await fetchCortexPromptSurfaceContent(clientOrWsUrl, surface.surfaceId, profileId)
       if (options?.preserveDirty && contentRef.current !== originalContentRef.current) {
         if (data.content !== originalContentRef.current) {
           setEntry((current) => current ? { ...current, ...data } : data)
@@ -173,7 +174,7 @@ function FilePromptSurfaceEditor({
     } finally {
       setLoading(false)
     }
-  }, [wsUrl, surface.surfaceId, profileId, applyLoadedEntry])
+  }, [clientOrWsUrl, surface.surfaceId, profileId, applyLoadedEntry])
 
   useEffect(() => {
     void loadContent()
@@ -213,8 +214,8 @@ function FilePromptSurfaceEditor({
     setSaving(true)
     setError(null)
     try {
-      await saveCortexPromptSurface(wsUrl, surface.surfaceId, content, profileId)
-      const data = await fetchCortexPromptSurfaceContent(wsUrl, surface.surfaceId, profileId)
+      await saveCortexPromptSurface(clientOrWsUrl, surface.surfaceId, content, profileId)
+      const data = await fetchCortexPromptSurfaceContent(clientOrWsUrl, surface.surfaceId, profileId)
       applyLoadedEntry(data)
       showSuccess('Surface saved.')
     } catch (err) {
@@ -228,8 +229,8 @@ function FilePromptSurfaceEditor({
     setResetting(true)
     setError(null)
     try {
-      await resetCortexPromptSurface(wsUrl, surface.surfaceId, profileId)
-      const data = await fetchCortexPromptSurfaceContent(wsUrl, surface.surfaceId, profileId)
+      await resetCortexPromptSurface(clientOrWsUrl, surface.surfaceId, profileId)
+      const data = await fetchCortexPromptSurfaceContent(clientOrWsUrl, surface.surfaceId, profileId)
       applyLoadedEntry(data)
       showSuccess('Live file reseeded from template.')
     } catch (err) {

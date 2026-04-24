@@ -34,6 +34,7 @@ import {
   toErrorMessage,
 } from './settings-api'
 import type { AgentDescriptor, TelegramStatusEvent } from '@forge/protocol'
+import type { SettingsApiClient } from './settings-api-client'
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                           */
@@ -164,15 +165,18 @@ function FeedbackBanner({ error, success }: { error: string | null; success: str
 
 interface SettingsIntegrationsProps {
   wsUrl: string
+  apiClient?: SettingsApiClient
   managers: AgentDescriptor[]
   telegramStatus?: TelegramStatusEvent | null
 }
 
 export function SettingsIntegrations({
   wsUrl,
+  apiClient,
   managers,
   telegramStatus,
 }: SettingsIntegrationsProps) {
+  const clientOrWsUrl: SettingsApiClient | string = apiClient ?? wsUrl
   const managerOptions = useMemo(() => {
     const seenProfileIds = new Set<string>()
     const options: AgentDescriptor[] = []
@@ -234,7 +238,7 @@ export function SettingsIntegrations({
     setIsLoadingTelegram(true)
     setTelegramError(null)
     try {
-      const result = await fetchTelegramSettings(wsUrl, selectedIntegrationManagerId)
+      const result = await fetchTelegramSettings(clientOrWsUrl, selectedIntegrationManagerId)
       setTelegramConfig(result.config)
       setTelegramDraft(toTelegramDraft(result.config))
       setTelegramStatusFromApi(result.status)
@@ -243,7 +247,7 @@ export function SettingsIntegrations({
     } finally {
       setIsLoadingTelegram(false)
     }
-  }, [hasSelectedIntegrationManager, wsUrl, selectedIntegrationManagerId])
+  }, [hasSelectedIntegrationManager, clientOrWsUrl, selectedIntegrationManagerId])
 
   useEffect(() => {
     void loadTelegram()
@@ -253,7 +257,7 @@ export function SettingsIntegrations({
     if (!telegramDraft || !hasSelectedIntegrationManager) return
     setTelegramError(null); setTelegramSuccess(null); setIsSavingTelegram(true)
     try {
-      const updated = await updateTelegramSettings(wsUrl, selectedIntegrationManagerId, buildTelegramPatch(telegramDraft))
+      const updated = await updateTelegramSettings(clientOrWsUrl, selectedIntegrationManagerId, buildTelegramPatch(telegramDraft))
       setTelegramConfig(updated.config); setTelegramDraft(toTelegramDraft(updated.config)); setTelegramStatusFromApi(updated.status)
       setTelegramSuccess('Telegram settings saved.')
     } catch (error) { setTelegramError(toErrorMessage(error)) } finally { setIsSavingTelegram(false) }
@@ -265,7 +269,7 @@ export function SettingsIntegrations({
     const patch: Record<string, unknown> = {}
     if (telegramDraft.botToken.trim()) patch.botToken = telegramDraft.botToken.trim()
     try {
-      const result = await testTelegramConnection(wsUrl, selectedIntegrationManagerId, Object.keys(patch).length > 0 ? patch : undefined)
+      const result = await testTelegramConnection(clientOrWsUrl, selectedIntegrationManagerId, Object.keys(patch).length > 0 ? patch : undefined)
       const identity = result.botUsername ?? result.botDisplayName ?? result.botId ?? 'Telegram bot'
       setTelegramSuccess(`Connected to ${identity}.`)
       await loadTelegram()
@@ -276,7 +280,7 @@ export function SettingsIntegrations({
     if (!hasSelectedIntegrationManager) return
     setTelegramError(null); setTelegramSuccess(null); setIsDisablingTelegram(true)
     try {
-      const disabled = await disableTelegramSettings(wsUrl, selectedIntegrationManagerId)
+      const disabled = await disableTelegramSettings(clientOrWsUrl, selectedIntegrationManagerId)
       setTelegramConfig(disabled.config); setTelegramDraft(toTelegramDraft(disabled.config)); setTelegramStatusFromApi(disabled.status)
       setTelegramSuccess('Telegram integration disabled.')
     } catch (error) { setTelegramError(toErrorMessage(error)) } finally { setIsDisablingTelegram(false) }

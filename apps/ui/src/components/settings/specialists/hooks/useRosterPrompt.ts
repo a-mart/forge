@@ -1,10 +1,11 @@
 import { useCallback, useRef, useState } from 'react'
+import type { SettingsApiClient } from '../../settings-api-client'
 import { fetchRosterPrompt } from '../../specialists-api'
 
 /**
  * Manages the roster prompt dialog state and fetching.
  */
-export function useRosterPrompt(wsUrl: string, selectedScope: string, isGlobal: boolean) {
+export function useRosterPrompt(clientOrWsUrl: SettingsApiClient | string, selectedScope: string, isGlobal: boolean) {
   const rosterRequestIdRef = useRef(0)
   const [rosterOpen, setRosterOpen] = useState(false)
   const [rosterMarkdown, setRosterMarkdown] = useState('')
@@ -20,7 +21,7 @@ export function useRosterPrompt(wsUrl: string, selectedScope: string, isGlobal: 
     setRosterError(null)
 
     try {
-      const markdown = await fetchRosterPrompt(wsUrl, selectedScope)
+      const markdown = await fetchRosterPrompt(clientOrWsUrl, selectedScope)
       if (requestId === rosterRequestIdRef.current) {
         setRosterMarkdown(markdown)
       }
@@ -34,7 +35,7 @@ export function useRosterPrompt(wsUrl: string, selectedScope: string, isGlobal: 
         setRosterLoading(false)
       }
     }
-  }, [wsUrl, selectedScope, isGlobal])
+  }, [clientOrWsUrl, selectedScope, isGlobal])
 
   /** Reset roster state (used on scope change). */
   const resetRoster = useCallback(() => {

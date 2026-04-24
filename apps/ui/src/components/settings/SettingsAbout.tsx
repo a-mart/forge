@@ -5,11 +5,18 @@ import { Badge } from '@/components/ui/badge'
 import { Switch } from '@/components/ui/switch'
 import { SettingsSection } from './settings-row'
 import { fetchServerVersion } from './settings-api'
+import type { SettingsApiClient } from './settings-api-client'
 import { isElectron, type UpdateStatus } from '@/lib/electron-bridge'
 
-export function SettingsAbout({ wsUrl }: { wsUrl: string }) {
+interface SettingsAboutProps {
+  wsUrl: string
+  apiClient?: SettingsApiClient
+}
+
+export function SettingsAbout({ wsUrl, apiClient }: SettingsAboutProps) {
   const bridge = window.electronBridge
   const inElectron = isElectron()
+  const clientOrWsUrl: SettingsApiClient | string = apiClient ?? wsUrl
   const [webVersion, setWebVersion] = useState<string | null>(null)
   const version = inElectron ? (bridge?.getVersion?.() ?? null) : webVersion
   const [status, setStatus] = useState<UpdateStatus | null>(null)
@@ -51,7 +58,7 @@ export function SettingsAbout({ wsUrl }: { wsUrl: string }) {
     }
 
     let cancelled = false
-    fetchServerVersion(wsUrl).then((resolvedVersion) => {
+    fetchServerVersion(clientOrWsUrl).then((resolvedVersion) => {
       if (!cancelled) {
         setWebVersion(resolvedVersion)
       }
@@ -64,7 +71,7 @@ export function SettingsAbout({ wsUrl }: { wsUrl: string }) {
     return () => {
       cancelled = true
     }
-  }, [inElectron, wsUrl])
+  }, [inElectron, clientOrWsUrl])
 
   const handleCheckForUpdates = useCallback(() => {
     bridge?.checkForUpdates?.()

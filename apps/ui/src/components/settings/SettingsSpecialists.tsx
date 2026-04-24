@@ -37,11 +37,13 @@ export { type SettingsSpecialistsProps } from './specialists/types'
 
 export function SettingsSpecialists({
   wsUrl,
+  apiClient,
   profiles,
   specialistChangeKey,
   modelConfigChangeKey,
 }: SettingsSpecialistsProps) {
   useHelpContext('settings.specialists')
+  const clientOrWsUrl: import('./settings-api-client').SettingsApiClient | string = apiClient ?? wsUrl
 
   const [selectedScope, setSelectedScope] = useState<string>(SCOPE_GLOBAL)
   const isGlobal = selectedScope === SCOPE_GLOBAL
@@ -60,7 +62,7 @@ export function SettingsSpecialists({
     enabledLoading,
     enabledToggling,
     handleToggleEnabled,
-  } = useSpecialistsData(wsUrl, selectedScope, isGlobal, specialistChangeKey)
+  } = useSpecialistsData(clientOrWsUrl, selectedScope, isGlobal, specialistChangeKey)
 
   const {
     editStates,
@@ -89,7 +91,7 @@ export function SettingsSpecialists({
     toggleFallbackExpand,
     expandPromptForId,
     resetEditing,
-  } = useCardEditing(wsUrl, selectedScope, isGlobal, specialists, loadSpecialists, modelPresets)
+  } = useCardEditing(clientOrWsUrl, selectedScope, isGlobal, specialists, loadSpecialists, modelPresets)
 
   const {
     rosterOpen,
@@ -99,7 +101,7 @@ export function SettingsSpecialists({
     rosterError,
     handleViewRoster,
     resetRoster,
-  } = useRosterPrompt(wsUrl, selectedScope, isGlobal)
+  } = useRosterPrompt(clientOrWsUrl, selectedScope, isGlobal)
 
   const {
     showNewForm,
@@ -117,7 +119,7 @@ export function SettingsSpecialists({
     handleCreateNew,
     resetForm: resetNewForm,
   } = useNewSpecialistForm(
-    wsUrl,
+    clientOrWsUrl,
     selectedScope,
     isGlobal,
     specialists,

@@ -36,6 +36,7 @@ import {
   fetchPromptPreview,
   type PromptPreviewSection,
 } from './prompts/prompt-api'
+import type { SettingsApiClient } from './settings-api-client'
 import type {
   CortexPromptSurfaceGroup,
   CortexPromptSurfaceListEntry,
@@ -62,13 +63,15 @@ type SurfaceCategory = PromptCategory | 'cortex'
 
 interface SettingsPromptsProps {
   wsUrl: string
+  apiClient?: SettingsApiClient
   profiles: ManagerProfile[]
   /** Bumped when a prompt_changed or cortex_prompt_surface_changed WS event fires */
   promptChangeKey: number
 }
 
-export function SettingsPrompts({ wsUrl, profiles, promptChangeKey }: SettingsPromptsProps) {
+export function SettingsPrompts({ wsUrl, apiClient, profiles, promptChangeKey }: SettingsPromptsProps) {
   useHelpContext('settings.prompts')
+  const clientOrWsUrl: SettingsApiClient | string = apiClient ?? wsUrl
 
   const defaultProfileId = profiles.length > 0 ? profiles[0].profileId : ''
   const [selectedProfileId, setSelectedProfileId] = useState(defaultProfileId)
@@ -93,8 +96,8 @@ export function SettingsPrompts({ wsUrl, profiles, promptChangeKey }: SettingsPr
     setListError(null)
     try {
       const [list, cortexResponse] = await Promise.all([
-        fetchPromptList(wsUrl, selectedProfileId),
-        fetchCortexPromptSurfaceList(wsUrl, selectedProfileId),
+        fetchPromptList(clientOrWsUrl, selectedProfileId),
+        fetchCortexPromptSurfaceList(clientOrWsUrl, selectedProfileId),
       ])
       setPromptList(list)
       setCortexEnabled(cortexResponse.enabled)
@@ -104,7 +107,7 @@ export function SettingsPrompts({ wsUrl, profiles, promptChangeKey }: SettingsPr
     } finally {
       setListLoading(false)
     }
-  }, [wsUrl, selectedProfileId])
+  }, [clientOrWsUrl, selectedProfileId])
 
   useEffect(() => {
     void loadPromptData()
@@ -234,14 +237,14 @@ export function SettingsPrompts({ wsUrl, profiles, promptChangeKey }: SettingsPr
     setPreviewLoading(true)
     setPreviewError(null)
     try {
-      const result = await fetchPromptPreview(wsUrl, selectedProfileId)
+      const result = await fetchPromptPreview(clientOrWsUrl, selectedProfileId)
       setPreviewSections(result.sections)
     } catch (err) {
       setPreviewError(err instanceof Error ? err.message : 'Failed to load preview')
     } finally {
       setPreviewLoading(false)
     }
-  }, [wsUrl, selectedProfileId])
+  }, [clientOrWsUrl, selectedProfileId])
 
   return (
     <div className="flex flex-col gap-6">
@@ -395,7 +398,7 @@ export function SettingsPrompts({ wsUrl, profiles, promptChangeKey }: SettingsPr
           <Separator />
           <PromptSurfaceEditor
             key={`cortex:${selectedCortexSurface.surfaceId}:${selectedProfileId}:${promptChangeKey}`}
-            wsUrl={wsUrl}
+            clientOrWsUrl={clientOrWsUrl}
             profileId={selectedProfileId}
             surface={selectedCortexSurface}
             refreshKey={promptChangeKey}
@@ -408,7 +411,7 @@ export function SettingsPrompts({ wsUrl, profiles, promptChangeKey }: SettingsPr
           <Separator />
           <PromptEditor
             key={`${selectedCategory}:${selectedItemId}:${selectedProfileId}`}
-            wsUrl={wsUrl}
+            clientOrWsUrl={clientOrWsUrl}
             category={selectedCategory}
             promptId={selectedItemId}
             profileId={selectedProfileId}

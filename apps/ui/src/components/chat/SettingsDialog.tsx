@@ -86,14 +86,16 @@ export function SettingsPanel({
       {activeTab === 'integrations' && (
         <SettingsIntegrations
           wsUrl={wsUrl}
+          apiClient={apiClient}
           managers={managers}
           telegramStatus={telegramStatus}
         />
       )}
-      {activeTab === 'skills' && <SettingsSkills wsUrl={wsUrl} profiles={profiles} />}
+      {activeTab === 'skills' && <SettingsSkills wsUrl={wsUrl} apiClient={apiClient} profiles={profiles} />}
       {activeTab === 'prompts' && (
         <SettingsPrompts
           wsUrl={wsUrl}
+          apiClient={apiClient}
           profiles={profiles}
           promptChangeKey={promptChangeKey}
         />
@@ -101,6 +103,7 @@ export function SettingsPanel({
       {activeTab === 'specialists' && (
         <SettingsSpecialists
           wsUrl={wsUrl}
+          apiClient={apiClient}
           profiles={profiles}
           specialistChangeKey={specialistChangeKey}
           modelConfigChangeKey={modelConfigChangeKey}
@@ -112,9 +115,9 @@ export function SettingsPanel({
           apiClient={apiClient}
         />
       )}
-      {activeTab === 'extensions' && <SettingsExtensions wsUrl={wsUrl} />}
+      {activeTab === 'extensions' && <SettingsExtensions wsUrl={wsUrl} apiClient={apiClient} />}
       {activeTab === 'collaboration' && <SettingsCollaboration wsUrl={wsUrl} />}
-      {activeTab === 'about' && <SettingsAbout wsUrl={wsUrl} />}
+      {activeTab === 'about' && <SettingsAbout wsUrl={wsUrl} apiClient={apiClient} />}
     </SettingsLayout>
   )
 }
