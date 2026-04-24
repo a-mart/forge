@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 
 vi.mock('@/lib/api-endpoint', () => ({
   resolveApiEndpoint: (wsUrl: string, path: string) => {
@@ -22,7 +22,7 @@ const { createSettingsApiClient, createBuilderSettingsApiClient } = await import
 const { createBuilderSettingsTarget, createCollabSettingsTarget } = await import('./settings-target')
 
 describe('SettingsApiClient', () => {
-  let fetchSpy: ReturnType<typeof vi.spyOn<typeof globalThis, 'fetch'>>
+  let fetchSpy: MockInstance
 
   beforeEach(() => {
     fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
