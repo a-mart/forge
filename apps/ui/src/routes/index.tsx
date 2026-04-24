@@ -7,7 +7,6 @@ import {
 } from '@tanstack/react-router'
 import { BuilderSurface } from '@/components/index-page/BuilderSurface'
 import { CollabSurface } from '@/components/index-page/CollabSurface'
-import { LoginScreen } from '@/components/auth/LoginScreen'
 import {
   DEFAULT_MANAGER_AGENT_ID,
   useRouteState,
@@ -66,12 +65,14 @@ export function IndexPage() {
   const shouldBlockOnCollabBootstrap = shouldLoadCollabSession && !collabSession.hasLoaded
 
   const effectiveSurface = useMemo<ActiveSurface>(() => {
-    // In Electron, only show collab if a remote server URL is configured
+    // In Electron, only show collab if a remote server URL is configured.
+    // Keep Builder accessible when the remote collab server is configured but the user is not signed in.
     if (inElectron && !hasConfiguredCollabServer) return 'builder'
     if (activeSurface !== 'collab') return 'builder'
     if (shouldBlockOnCollabBootstrap) return 'collab'
+    if (isCollabUnauthenticated) return 'builder'
     return collabSession.isCollabEnabled ? 'collab' : 'builder'
-  }, [activeSurface, collabSession.isCollabEnabled, hasConfiguredCollabServer, inElectron, shouldBlockOnCollabBootstrap])
+  }, [activeSurface, collabSession.isCollabEnabled, hasConfiguredCollabServer, inElectron, isCollabUnauthenticated, shouldBlockOnCollabBootstrap])
 
   useEffect(() => {
     if (shouldBlockOnCollabBootstrap) {
@@ -153,14 +154,6 @@ export function IndexPage() {
         <div className="flex h-dvh w-full items-center justify-center bg-background text-sm text-muted-foreground">
           Loading…
         </div>
-      </main>
-    )
-  }
-
-  if (isCollabUnauthenticated) {
-    return (
-      <main className="h-dvh bg-background text-foreground">
-        <LoginScreen onAuthenticated={collabSession.refresh} />
       </main>
     )
   }

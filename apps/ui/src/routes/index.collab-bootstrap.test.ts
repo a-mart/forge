@@ -34,10 +34,6 @@ vi.mock('@/components/index-page/CollabSurface', () => ({
   CollabSurface: () => createElement('div', { 'data-testid': 'collab-surface' }, 'Collab surface'),
 }))
 
-vi.mock('@/components/auth/LoginScreen', () => ({
-  LoginScreen: () => createElement('div', { 'data-testid': 'login-screen' }, 'Sign in to continue'),
-}))
-
 vi.mock('@/hooks/index-page/use-route-state', () => ({
   DEFAULT_MANAGER_AGENT_ID: '__default__',
   useRouteState: () => routeStateMock.value,
@@ -175,7 +171,18 @@ describe('IndexPage collab bootstrap gating', () => {
     }, true)
   })
 
-  it('shows the login screen when collab is enabled but user is not authenticated', () => {
+  it('keeps Builder accessible when collab is enabled but user is not authenticated', () => {
+    const navigateToRoute = vi.fn()
+    routeStateMock.value = {
+      routeState: {
+        view: 'chat',
+        agentId: '__default__',
+        surface: 'collab',
+      },
+      activeView: 'chat',
+      activeSurface: 'collab',
+      navigateToRoute,
+    }
     collabSessionHookMock.mockReturnValue({
       isCollabEnabled: true,
       isAdmin: false,
@@ -187,8 +194,12 @@ describe('IndexPage collab bootstrap gating', () => {
 
     renderPage()
 
-    expect(container.textContent).toContain('Sign in to continue')
-    expect(container.querySelector('[data-testid="builder-surface"]')).toBeNull()
+    expect(container.querySelector('[data-testid="builder-surface"]')?.textContent).toContain('Builder surface')
     expect(container.querySelector('[data-testid="collab-surface"]')).toBeNull()
+    expect(navigateToRoute).toHaveBeenCalledWith({
+      view: 'chat',
+      agentId: '__default__',
+      surface: 'builder',
+    }, true)
   })
 })
