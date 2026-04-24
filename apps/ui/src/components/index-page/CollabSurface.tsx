@@ -2,6 +2,10 @@ import { ShieldAlert, LogIn } from 'lucide-react'
 import type { ActiveSurface, ActiveView } from '@/hooks/index-page/use-route-state'
 import { CollabSidebar } from '@/components/chat/collab-sidebar/CollabSidebar'
 import { useCollabWsConnection, CollabWsProvider } from '@/hooks/index-page/use-collab-ws-connection'
+import { SettingsPanel } from '@/components/chat/SettingsDialog'
+import { createCollabSettingsTarget } from '@/components/settings/settings-target'
+import { useSettingsBackendState } from '@/components/settings/use-settings-backend-state'
+import { Button } from '@/components/ui/button'
 import { CollabWorkspace } from './CollabWorkspace'
 
 interface CollabSurfaceProps {
@@ -33,14 +37,7 @@ export function CollabSurface({
 }: CollabSurfaceProps) {
   const collab = useCollabWsConnection(wsUrl)
 
-  // Determine blocked reason for non-admin collab settings access
   const isSettingsView = activeView === 'settings'
-  const blockedReason: 'admin_required' | 'auth_required' | null =
-    isSettingsView && hasLoaded && !isAdmin
-      ? isMember
-        ? 'admin_required'
-        : 'auth_required'
-      : null
 
   return (
     <CollabWsProvider value={collab}>
@@ -54,14 +51,13 @@ export function CollabSurface({
       />
 
       {isSettingsView ? (
-        blockedReason ? (
-          <CollabSettingsBlockedState reason={blockedReason} onBack={onBackToChat} />
-        ) : (
-          // Admin collab settings shell placeholder — Package 2 renders the full SettingsPanel here
-          <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
-            Collab Settings loading…
-          </div>
-        )
+        <CollabSettingsContent
+          wsUrl={wsUrl}
+          isAdmin={isAdmin}
+          isMember={isMember}
+          hasLoaded={hasLoaded}
+          onBack={onBackToChat}
+        />
       ) : (
         <CollabWorkspace
           wsUrl={wsUrl}
@@ -70,6 +66,59 @@ export function CollabSurface({
         />
       )}
     </CollabWsProvider>
+  )
+}
+
+/**
+ * Hooks-safe child component for collab settings content.
+ *
+ * Rendered only when `activeView === 'settings'`.
+ * Calls useSettingsBackendState unconditionally, so hooks are always
+ * invoked in the same order regardless of admin/member state.
+ */
+function CollabSettingsContent({
+  wsUrl,
+  isAdmin,
+  isMember,
+  hasLoaded,
+  onBack,
+}: {
+  wsUrl: string
+  isAdmin: boolean
+  isMember: boolean
+  hasLoaded: boolean
+  onBack: () => void
+}) {
+  const target = createCollabSettingsTarget(wsUrl)
+  const backendState = useSettingsBackendState({
+    target,
+    enabled: true,
+    isAdmin,
+    isMember,
+    hasLoaded,
+  })
+
+  // Blocked: member or unauthenticated — no panels, no WS
+  if (backendState.blockedReason) {
+    return <CollabSettingsBlockedState reason={backendState.blockedReason} onBack={onBack} />
+  }
+
+  // Admin: render settings shell with target-scoped state
+  const managers = backendState.wsState?.agents ?? []
+  const profiles = backendState.wsState?.profiles ?? []
+
+  return (
+    <SettingsPanel
+      wsUrl={wsUrl}
+      managers={managers}
+      profiles={profiles}
+      telegramStatus={backendState.wsState?.telegramStatus}
+      promptChangeKey={backendState.wsState?.promptChangeKey ?? 0}
+      specialistChangeKey={backendState.wsState?.specialistChangeKey ?? 0}
+      modelConfigChangeKey={backendState.wsState?.modelConfigChangeKey ?? 0}
+      onBack={onBack}
+      target={target}
+    />
   )
 }
 
@@ -103,13 +152,14 @@ function CollabSettingsBlockedState({
           </div>
         </>
       )}
-      <button
-        type="button"
-        className="mt-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+      <Button
+        variant="default"
+        size="sm"
+        className="mt-2"
         onClick={onBack}
       >
         Back to chat
-      </button>
+      </Button>
     </div>
   )
 }

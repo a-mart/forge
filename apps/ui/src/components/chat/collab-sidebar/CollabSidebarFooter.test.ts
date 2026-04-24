@@ -75,4 +75,67 @@ describe('CollabSidebarFooter', () => {
       expect(reloadSpy).toHaveBeenCalledOnce()
     })
   })
+
+  it('shows Settings button when onOpenSettings is provided (admin)', async () => {
+    const onOpenSettings = vi.fn()
+
+    flushSync(() => {
+      root.render(
+        createElement(CollabSidebarFooter, {
+          wsUrl: 'ws://127.0.0.1:47387',
+          currentUser: {
+            userId: 'user-1',
+            email: 'admin@test.com',
+            name: 'Admin',
+            role: 'admin',
+            disabled: false,
+          },
+          onOpenSettings,
+        }),
+      )
+    })
+
+    // Open the user popover
+    const trigger = getByText(container, 'Admin')
+    fireEvent.click(trigger.closest('button')!)
+
+    await waitFor(() => {
+      expect(getByRole(document.body, 'button', { name: 'Collab Settings' })).toBeTruthy()
+    })
+
+    fireEvent.click(getByRole(document.body, 'button', { name: 'Collab Settings' }))
+
+    expect(onOpenSettings).toHaveBeenCalledOnce()
+  })
+
+  it('does not show Settings button when onOpenSettings is not provided (member)', async () => {
+    flushSync(() => {
+      root.render(
+        createElement(CollabSidebarFooter, {
+          wsUrl: 'ws://127.0.0.1:47387',
+          currentUser: {
+            userId: 'user-2',
+            email: 'member@test.com',
+            name: 'Member',
+            role: 'member',
+            disabled: false,
+          },
+          // no onOpenSettings — member should not see it
+        }),
+      )
+    })
+
+    // Open the user popover
+    const trigger = getByText(container, 'Member')
+    fireEvent.click(trigger.closest('button')!)
+
+    await waitFor(() => {
+      expect(getByRole(document.body, 'button', { name: 'Sign out' })).toBeTruthy()
+    })
+
+    // Settings button should not be present
+    const allButtons = document.body.querySelectorAll('button')
+    const settingsButton = Array.from(allButtons).find(btn => btn.getAttribute('aria-label') === 'Collab Settings')
+    expect(settingsButton).toBeUndefined()
+  })
 })

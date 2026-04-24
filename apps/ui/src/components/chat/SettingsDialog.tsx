@@ -1,5 +1,7 @@
-import { useState } from 'react'
-import { SettingsLayout, type SettingsTab } from '@/components/settings/SettingsLayout'
+import { useEffect, useState } from 'react'
+import { SettingsLayout } from '@/components/settings/SettingsLayout'
+import type { SettingsTab } from '@/components/settings/settings-target'
+import type { SettingsBackendTarget } from '@/components/settings/settings-target'
 import { SettingsGeneral } from '@/components/settings/SettingsGeneral'
 import { SettingsNotifications } from '@/components/settings/SettingsNotifications'
 import { SettingsAuth } from '@/components/settings/SettingsAuth'
@@ -25,6 +27,8 @@ interface SettingsPanelProps {
   onBack?: () => void
   onPlaywrightSnapshotUpdate?: (snapshot: PlaywrightDiscoverySnapshot) => void
   onPlaywrightSettingsLoaded?: (settings: PlaywrightDiscoverySettings) => void
+  /** Optional target for target-aware Settings shell. When omitted, all tabs are shown. */
+  target?: SettingsBackendTarget
 }
 
 export function SettingsPanel({
@@ -38,8 +42,19 @@ export function SettingsPanel({
   onBack,
   onPlaywrightSnapshotUpdate,
   onPlaywrightSettingsLoaded,
+  target,
 }: SettingsPanelProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>('general')
+
+  const availableTabs = target?.availableTabs
+  const targetLabel = target?.label
+
+  // Reset active tab when it becomes unavailable after target change
+  useEffect(() => {
+    if (availableTabs && !availableTabs.includes(activeTab)) {
+      setActiveTab(availableTabs[0] ?? 'general')
+    }
+  }, [availableTabs, activeTab])
 
   return (
     <SettingsLayout
@@ -47,6 +62,8 @@ export function SettingsPanel({
       onTabChange={setActiveTab}
       onBack={onBack}
       contentWidthClassName={activeTab === 'skills' ? 'max-w-full' : undefined}
+      availableTabs={availableTabs}
+      targetLabel={targetLabel}
     >
       {activeTab === 'general' && <SettingsGeneral wsUrl={wsUrl} onPlaywrightSnapshotUpdate={onPlaywrightSnapshotUpdate} onPlaywrightSettingsLoaded={onPlaywrightSettingsLoaded} />}
       {activeTab === 'notifications' && <SettingsNotifications managers={managers} />}
