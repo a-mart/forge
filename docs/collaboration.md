@@ -16,6 +16,8 @@ The collaboration profile is system-managed. Builder snapshots and profile lists
 
 Fresh collaboration backend deployments should start from an empty `FORGE_DATA_DIR` or volume. Do not copy a local Builder `~/.forge` directory into the collaboration server.
 
+Settings are contextual: Builder mode Settings configure the local backend, while Collab mode Settings connect to and configure the remote collaboration backend. Collab Settings are admin-only. Provider auth entered there writes directly to the remote collaboration backend; it does not copy or share the local Builder auth file. Terminal settings are hidden in remote Collab Settings v1 and remain local-only.
+
 ## Authentication
 
 Collaboration auth uses local accounts only. OAuth is deferred.
@@ -48,6 +50,10 @@ This is the only supported deployment shape for the public Forge repository. The
 5. After sign-in succeeds, the Builder/Collab toggle becomes available in the UI.
 
 The collaboration status panel reports the configured remote server, not the local Builder backend. It reflects the enabled state and auth status of the connected collaboration service.
+
+Once connected, the main Settings surface switches context with the mode: Builder Settings continue to target the local backend, while Collab Settings target the remote collaboration backend. Only collaboration admins can access Collab Settings.
+
+The Builder/Collab toggle lives in the sidebar header. When collaboration is enabled, the New Project action moves next to session search for quicker access.
 
 Hosted deployment uses:
 
