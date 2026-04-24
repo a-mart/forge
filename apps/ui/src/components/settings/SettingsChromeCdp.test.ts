@@ -7,6 +7,7 @@ import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SettingsChromeCdp } from './SettingsChromeCdp'
 import type { ChromeCdpConfig, ChromeCdpStatus } from './settings-types'
+import type { SettingsApiClient } from './settings-api-client'
 
 /* ------------------------------------------------------------------ */
 /*  Mocks                                                             */
@@ -22,12 +23,12 @@ const settingsApiMock = vi.hoisted(() => ({
 }))
 
 vi.mock('./settings-api', () => ({
-  fetchChromeCdpSettings: (wsUrl: string) => settingsApiMock.fetchChromeCdpSettings(wsUrl),
-  updateChromeCdpSettings: (wsUrl: string, config: unknown) => settingsApiMock.updateChromeCdpSettings(wsUrl, config),
-  testChromeCdpConnection: (wsUrl: string) => settingsApiMock.testChromeCdpConnection(wsUrl),
-  fetchChromeCdpProfiles: (wsUrl: string) => settingsApiMock.fetchChromeCdpProfiles(wsUrl),
-  fetchChromeCdpPreview: (wsUrl: string, config: unknown, signal?: AbortSignal) =>
-    settingsApiMock.fetchChromeCdpPreview(wsUrl, config, signal),
+  fetchChromeCdpSettings: (clientOrWsUrl: SettingsApiClient | string) => settingsApiMock.fetchChromeCdpSettings(clientOrWsUrl),
+  updateChromeCdpSettings: (clientOrWsUrl: SettingsApiClient | string, config: unknown) => settingsApiMock.updateChromeCdpSettings(clientOrWsUrl, config),
+  testChromeCdpConnection: (clientOrWsUrl: SettingsApiClient | string) => settingsApiMock.testChromeCdpConnection(clientOrWsUrl),
+  fetchChromeCdpProfiles: (clientOrWsUrl: SettingsApiClient | string) => settingsApiMock.fetchChromeCdpProfiles(clientOrWsUrl),
+  fetchChromeCdpPreview: (clientOrWsUrl: SettingsApiClient | string, config: unknown, signal?: AbortSignal) =>
+    settingsApiMock.fetchChromeCdpPreview(clientOrWsUrl, config, signal),
   toErrorMessage: (err: unknown) => settingsApiMock.toErrorMessage(err),
 }))
 
@@ -88,7 +89,7 @@ function renderComponent(config = DEFAULT_CONFIG, status: ChromeCdpStatus = CONN
 
   root = createRoot(container)
   flushSync(() => {
-    root?.render(createElement(SettingsChromeCdp, { wsUrl: 'ws://127.0.0.1:47187' }))
+    root?.render(createElement(SettingsChromeCdp, { clientOrWsUrl: 'ws://127.0.0.1:47187' }))
   })
 }
 
@@ -311,7 +312,7 @@ describe('SettingsChromeCdp', () => {
 
       root = createRoot(container)
       flushSync(() => {
-        root?.render(createElement(SettingsChromeCdp, { wsUrl: 'ws://127.0.0.1:47187' }))
+        root?.render(createElement(SettingsChromeCdp, { clientOrWsUrl: 'ws://127.0.0.1:47187' }))
       })
       await flush()
       await flush()
@@ -363,6 +364,74 @@ describe('SettingsChromeCdp', () => {
       await flush()
 
       expect(container.textContent).toContain('No filters configured')
+    })
+  })
+
+  /* ---- Collab-target support ---- */
+
+  describe('collab target support', () => {
+    it('passes SettingsApiClient through to settings-api helpers when provided', async () => {
+      const mockClient: SettingsApiClient = {
+        target: {
+          kind: 'collab',
+          label: 'Collab backend',
+          description: 'Remote',
+          wsUrl: 'wss://collab.example.com',
+          apiBaseUrl: 'https://collab.example.com/',
+          fetchCredentials: 'include',
+          requiresAdmin: true,
+          availableTabs: [],
+        },
+        endpoint: (path: string) => `https://collab.example.com${path}`,
+        fetch: vi.fn(),
+        fetchJson: vi.fn(),
+        readApiError: vi.fn(),
+      }
+
+      settingsApiMock.fetchChromeCdpSettings.mockResolvedValue({
+        config: DEFAULT_CONFIG,
+        status: CONNECTED_STATUS,
+      })
+      settingsApiMock.fetchChromeCdpPreview.mockResolvedValue({
+        tabs: [],
+        totalFiltered: 0,
+        totalUnfiltered: 3,
+      })
+
+      root = createRoot(container)
+      flushSync(() => {
+        root?.render(createElement(SettingsChromeCdp, {
+          clientOrWsUrl: mockClient,
+        }))
+      })
+      await flush()
+      await flush()
+
+      // fetchChromeCdpSettings should have been called with the client object, not a raw wsUrl
+      expect(settingsApiMock.fetchChromeCdpSettings).toHaveBeenCalledWith(mockClient)
+    })
+
+    it('passes raw wsUrl in builder mode', async () => {
+      settingsApiMock.fetchChromeCdpSettings.mockResolvedValue({
+        config: DEFAULT_CONFIG,
+        status: CONNECTED_STATUS,
+      })
+      settingsApiMock.fetchChromeCdpPreview.mockResolvedValue({
+        tabs: [],
+        totalFiltered: 0,
+        totalUnfiltered: 3,
+      })
+
+      root = createRoot(container)
+      flushSync(() => {
+        root?.render(createElement(SettingsChromeCdp, {
+          clientOrWsUrl: 'ws://127.0.0.1:47187',
+        }))
+      })
+      await flush()
+      await flush()
+
+      expect(settingsApiMock.fetchChromeCdpSettings).toHaveBeenCalledWith('ws://127.0.0.1:47187')
     })
   })
 })

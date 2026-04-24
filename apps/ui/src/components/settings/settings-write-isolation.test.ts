@@ -425,6 +425,106 @@ describe('server version fetch isolation', () => {
       expect.objectContaining({ credentials: 'same-origin' }),
     )
   })
+
+  it('fetchServerVersion routes through collab with credentials: include', async () => {
+    fetchSpy.mockResolvedValueOnce(mockJsonResponse({ system: { serverVersion: '3.0.0' } }))
+    const { fetchServerVersion } = await import('./settings-api')
+
+    const version = await fetchServerVersion(collabClient())
+
+    expect(version).toBe('3.0.0')
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'https://collab.example.com/api/stats?range=7d',
+      expect.objectContaining({ credentials: 'include' }),
+    )
+  })
+})
+
+/* ================================================================== */
+/*  Chrome CDP fetch/write isolation                                   */
+/* ================================================================== */
+
+describe('chrome cdp target isolation', () => {
+  it('fetchChromeCdpSettings routes through collab with credentials: include', async () => {
+    fetchSpy.mockResolvedValueOnce(mockJsonResponse({
+      config: { contextId: null, urlAllow: [], urlBlock: [] },
+      status: { connected: false },
+    }))
+    const { fetchChromeCdpSettings } = await import('./settings-api')
+
+    await fetchChromeCdpSettings(collabClient())
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'https://collab.example.com/api/settings/chrome-cdp',
+      expect.objectContaining({ credentials: 'include' }),
+    )
+  })
+
+  it('updateChromeCdpSettings routes through collab with credentials: include', async () => {
+    fetchSpy.mockResolvedValueOnce(mockJsonResponse({ ok: true }))
+    const { updateChromeCdpSettings } = await import('./settings-api')
+
+    await updateChromeCdpSettings(collabClient(), { contextId: null, urlAllow: [], urlBlock: [] })
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'https://collab.example.com/api/settings/chrome-cdp',
+      expect.objectContaining({ method: 'PUT', credentials: 'include' }),
+    )
+  })
+
+  it('testChromeCdpConnection routes through builder with same-origin', async () => {
+    fetchSpy.mockResolvedValueOnce(mockJsonResponse({ connected: true, port: 9222 }))
+    const { testChromeCdpConnection } = await import('./settings-api')
+
+    await testChromeCdpConnection(builderClient())
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'http://127.0.0.1:47187/api/settings/chrome-cdp/test',
+      expect.objectContaining({ method: 'POST', credentials: 'same-origin' }),
+    )
+  })
+})
+
+/* ================================================================== */
+/*  Model preset fetch isolation (Specialists)                        */
+/* ================================================================== */
+
+describe('model preset fetch isolation', () => {
+  it('fetchModelPresets routes through collab with credentials: include', async () => {
+    fetchSpy.mockResolvedValueOnce(mockJsonResponse({ models: [] }))
+    const { fetchModelPresets } = await import('../../lib/model-preset')
+
+    await fetchModelPresets(collabClient())
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'https://collab.example.com/api/settings/models',
+      expect.objectContaining({ credentials: 'include' }),
+    )
+  })
+
+  it('fetchModelPresets routes through builder with same-origin', async () => {
+    fetchSpy.mockResolvedValueOnce(mockJsonResponse({ models: [] }))
+    const { fetchModelPresets } = await import('../../lib/model-preset')
+
+    await fetchModelPresets(builderClient())
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'http://127.0.0.1:47187/api/settings/models',
+      expect.objectContaining({ credentials: 'same-origin' }),
+    )
+  })
+
+  it('fetchModelPresets with raw wsUrl string uses bare fetch (backward compatible)', async () => {
+    fetchSpy.mockResolvedValueOnce(mockJsonResponse({ models: [] }))
+    const { fetchModelPresets } = await import('../../lib/model-preset')
+
+    await fetchModelPresets('ws://127.0.0.1:47187')
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'http://127.0.0.1:47187/api/settings/models',
+      expect.objectContaining({ cache: 'no-store' }),
+    )
+  })
 })
 
 /* ================================================================== */

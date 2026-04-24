@@ -48,7 +48,7 @@ export function SettingsSpecialists({
   const [selectedScope, setSelectedScope] = useState<string>(SCOPE_GLOBAL)
   const isGlobal = selectedScope === SCOPE_GLOBAL
 
-  const modelPresets = useModelPresets(wsUrl, modelConfigChangeKey, { allowDynamicPresetIds: true })
+  const modelPresets = useModelPresets(clientOrWsUrl, modelConfigChangeKey, { allowDynamicPresetIds: true })
   const selectableModels = useMemo(() => getAllSelectableModels(modelPresets), [modelPresets])
 
   /* ---- Hooks ---- */

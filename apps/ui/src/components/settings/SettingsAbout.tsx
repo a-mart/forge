@@ -17,8 +17,8 @@ export function SettingsAbout({ wsUrl, apiClient }: SettingsAboutProps) {
   const bridge = window.electronBridge
   const inElectron = isElectron()
   const clientOrWsUrl: SettingsApiClient | string = apiClient ?? wsUrl
-  const [webVersion, setWebVersion] = useState<string | null>(null)
-  const version = inElectron ? (bridge?.getVersion?.() ?? null) : webVersion
+  const appVersion = inElectron ? (bridge?.getVersion?.() ?? null) : null
+  const [backendVersion, setBackendVersion] = useState<string | null>(null)
   const [status, setStatus] = useState<UpdateStatus | null>(null)
   const [betaChannel, setBetaChannel] = useState(false)
   const [betaLoaded, setBetaLoaded] = useState(false)
@@ -52,26 +52,23 @@ export function SettingsAbout({ wsUrl, apiClient }: SettingsAboutProps) {
     })
   }, [inElectron, bridge])
 
+  // Always fetch target backend version — works for both web and Electron/Collab
   useEffect(() => {
-    if (inElectron) {
-      return
-    }
-
     let cancelled = false
     fetchServerVersion(clientOrWsUrl).then((resolvedVersion) => {
       if (!cancelled) {
-        setWebVersion(resolvedVersion)
+        setBackendVersion(resolvedVersion)
       }
     }).catch(() => {
       if (!cancelled) {
-        setWebVersion(null)
+        setBackendVersion(null)
       }
     })
 
     return () => {
       cancelled = true
     }
-  }, [inElectron, clientOrWsUrl])
+  }, [clientOrWsUrl])
 
   const handleCheckForUpdates = useCallback(() => {
     bridge?.checkForUpdates?.()
@@ -94,11 +91,23 @@ export function SettingsAbout({ wsUrl, apiClient }: SettingsAboutProps) {
     <div className="flex flex-col gap-8">
       <SettingsSection label="About Forge">
         <div className="flex flex-col gap-6">
-          {/* Version */}
+          {/* App version (Electron only) */}
+          {inElectron && (
+            <div className="flex items-center gap-3">
+              <span className="text-sm text-muted-foreground">App version</span>
+              <Badge variant="secondary" className="font-mono text-xs">
+                {appVersion ? `v${appVersion}` : 'Unknown'}
+              </Badge>
+            </div>
+          )}
+
+          {/* Backend version */}
           <div className="flex items-center gap-3">
-            <span className="text-sm text-muted-foreground">Version</span>
+            <span className="text-sm text-muted-foreground">
+              {inElectron ? 'Backend version' : 'Version'}
+            </span>
             <Badge variant="secondary" className="font-mono text-xs">
-              {version ? `v${version}` : 'Unknown'}
+              {backendVersion ? `v${backendVersion}` : 'Unknown'}
             </Badge>
           </div>
 

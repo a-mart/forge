@@ -38,7 +38,7 @@ const SCOPE_GLOBAL = '__global__'
 /** Skills that have a dedicated rich configuration panel. */
 const RICH_CONFIG_SKILLS: Record<
   string,
-  React.ComponentType<{ wsUrl: string; onConfigChanged?: () => void }>
+  React.ComponentType<{ clientOrWsUrl: SettingsApiClient | string; onConfigChanged?: () => void }>
 > = {
   'chrome-cdp': SettingsChromeCdp,
 }
@@ -333,7 +333,7 @@ export function SkillsViewer({ wsUrl, apiClient, profiles }: SkillsViewerProps) 
               {RichConfigPanel && (
                 <div className="rounded-lg border border-border bg-card/30 p-5">
                   <RichConfigPanel
-                    wsUrl={wsUrl}
+                    clientOrWsUrl={clientOrWsUrl}
                     onConfigChanged={handleConfigChanged}
                   />
                 </div>
