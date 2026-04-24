@@ -38,7 +38,7 @@ Local overrides are intentionally narrow and safe.
 
 Supported fields:
 
-- `enabled`: hide a model from new selector-driven configuration flows
+- `enabled`: control whether a model can appear in manager-facing selectors, including create-session, change-default, and per-session override flows
 - `contextWindowCap`: cap the effective context window
 
 ### Context window cap semantics

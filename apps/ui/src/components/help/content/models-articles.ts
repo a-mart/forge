@@ -18,6 +18,7 @@ Three things affect the quality and speed of what you get back:
 ## Where models get configured
 
 - **Manager model:** Set when you create a session or change it in Settings. This controls the main orchestration agent.
+- **Manager selectors:** The create-session flow, change-default flow, and per-session override dialog can choose concrete models side by side. Family presets still work as a compatibility layer, but the selectors are model-aware first.
 - **Specialist models:** Each specialist worker has its own model and reasoning level. Configure these in Settings > Specialists. Specialists can use either the Pi-proxied Anthropic provider or the native Claude SDK provider independently.
 - **Fallback models:** Specialists can define a fallback model that kicks in if the primary is unavailable or rate-limited.
 
@@ -70,7 +71,7 @@ xAI provides the Grok model family. Grok models are available for specialist wor
 - **Grok 4 Fast** — Optimized for speed at some quality tradeoff.
 - **Grok 4.20** — A newer variant with expanded capabilities.
 
-You need provider credentials for each provider configured in Settings > Auth before its models appear in selectors. Claude SDK uses Claude Code CLI OAuth, and SDK models can be disabled in Settings > Models if you do not want to see them.`,
+You need provider credentials for each provider configured in Settings > Auth before its models appear in selectors. Claude SDK uses Claude Code CLI OAuth, and SDK models can be disabled in Settings > Models if you do not want to see them. Manager-facing availability is also controlled there, so only enabled models show up in manager create/change/override selectors.`,
   keywords: ['provider', 'OpenAI', 'Codex', 'Anthropic', 'Claude', 'Grok', 'xAI', 'GPT', 'Opus', 'Sonnet', 'Haiku'],
   relatedIds: ['models-overview', 'models-cost', 'models-reasoning'],
   contextKeys: ['settings.general', 'settings.auth', 'settings.specialists'],
@@ -116,7 +117,7 @@ const modelsRouting: HelpArticle = {
 
 The manager model handles orchestration: reading your messages, deciding what to do, breaking work into tasks, and coordinating specialist workers. The manager does not write code directly. Pick a capable model here — it affects the quality of task planning and delegation.
 
-You can set the profile default from the profile header with **Change Default Model**, override a single session with **Override Session Model**, or switch a session back to inherited state with **Use Project Default**.
+You can set the profile default from the profile header with **Change Default Model**, override a single session with **Override Session Model**, or switch a session back to inherited state with **Use Project Default**. The session override dialog is one screen now, and choosing Use Project Default clears the session override back to the project default.
 
 ## Specialist routing
 

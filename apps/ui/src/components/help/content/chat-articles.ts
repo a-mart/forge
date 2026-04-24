@@ -142,7 +142,7 @@ You can also drag profiles to reorder them. The **+** button on a profile header
 
 ## Session actions
 
-Right-click any session to access: Copy Path, Rename, Fork, Override Session Model, Use Project Default, Stop, Resume, Mark as Unread, Mute/Unmute, or Delete. The Main (default) session in each profile cannot be deleted. Muting a session suppresses notification sounds while keeping the unread badge visible. Use Project Default returns a session to inherited model state, and every session, including the root session, can override the project default model or revert to inheriting it.
+Right-click any session to access: Copy Path, Rename, Fork, Override Session Model, Use Project Default, Stop, Resume, Mark as Unread, Mute/Unmute, or Delete. The Main (default) session in each profile cannot be deleted. Muting a session suppresses notification sounds while keeping the unread badge visible. Override Session Model opens a one-screen dialog for picking a concrete model, and Use Project Default clears the override so the session inherits the project default again. Every session, including the root session, can override the project default model or revert to inheriting it.
 
 ## Workers
 
@@ -212,7 +212,7 @@ To start fresh without creating a new session, open the **⋮ menu** in the chat
 
 Each profile can have multiple sessions. Sessions inherit all config from the profile but maintain their own conversation history and session memory. Think of it as: the profile is the "who," and sessions are individual conversations.
 
-By default, sessions use the profile's default model. You can override the model for any individual session — including the root session — without affecting other sessions. Sessions that still inherit the profile default pick up future default changes automatically. Use "Use Project Default" on a session to revert it to inherited state.
+By default, sessions use the profile's default model. You can override the model for any individual session — including the root session — without affecting other sessions. Sessions that still inherit the profile default pick up future default changes automatically. Use "Use Project Default" on a session to revert it to inherited state, and the override action is available from the session context menu alongside the other session-management actions.
 
 ## Rename a profile
 
