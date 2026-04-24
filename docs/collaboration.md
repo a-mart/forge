@@ -1,6 +1,6 @@
 # Collaboration
 
-Forge collaboration mode adds multi-user access on top of the existing backend. It uses one shared backend, a dedicated auth database, and a hidden system profile for channel-backed sessions.
+Forge collaboration mode adds multi-user access on top of the existing Builder backend and client UI. The public Forge repo includes the collaboration client UI and protocol types only; the collaboration server/backend is closed-source, lives in the private `a-mart/forge-collab` repo, and cannot be self-hosted from this repo. Collaboration uses a dedicated auth database and a hidden system profile for channel-backed sessions.
 
 ## Storage model
 
@@ -13,6 +13,8 @@ Forge collaboration mode adds multi-user access on top of the existing backend. 
 | Prompt overlays | `~/.forge/profiles/_collaboration/sessions/<sessionId>/context/prompt.md` | Channel prompt overlays live in the backing session context directory. |
 
 The collaboration profile is system-managed. Builder snapshots and profile lists exclude it, but the backing sessions still live in the normal session tree under `_collaboration`.
+
+Fresh collaboration backend deployments should start from an empty `FORGE_DATA_DIR` or volume. Do not copy a local Builder `~/.forge` directory into the collaboration server.
 
 ## Authentication
 
@@ -31,21 +33,19 @@ If `FORGE_COLLABORATION_AUTH_SECRET` is not set, Forge generates a 32-byte secre
 
 Forge supports two deployment shapes:
 
-### Same-origin
+### Hosted collaboration server
 
-Builder and Collaboration share one backend. This is the simplest setup and works with local development defaults.
+Settings → Collaboration connects the Builder client to a separately hosted collaboration server. Builder stays local, for example in Electron, while the collaboration service runs from the private `a-mart/forge-collab` deployment.
 
-### Split deployment
+This is the only supported deployment shape for the public Forge repository. The public repo does not contain the collaboration backend implementation.
 
-Builder stays local, for example in Electron, while Collaboration runs on a remote origin.
+Hosted deployment uses:
 
-Split deployment requires:
-
-- `FORGE_COLLABORATION_BASE_URL` to use `https://`
+- `FORGE_COLLABORATION_BASE_URL` for the collaboration origin
 - `FORGE_COLLABORATION_TRUSTED_ORIGINS` to list the Builder origins that may talk to the collaboration backend
-- collaboration auth cookies to use `SameSite=None; Secure`
+- collaboration auth cookies with `SameSite=None; Secure`
 
-The collaboration auth routes are still served by the same backend. The base URL only changes the canonical browser origin used for redirects, invite links, and cookie handling.
+The base URL changes the canonical browser origin used for redirects, invite links, and cookie handling.
 
 ## Architecture
 
@@ -53,7 +53,7 @@ The collaboration auth routes are still served by the same backend. The base URL
 - Collaboration uses a single workspace model.
 - The collab surface reuses the Builder `MessageList` and `MessageInput` components.
 - Worker visibility uses the shared `WorkerPillBar` and `WorkerQuickLook` pattern.
-- Collaboration uses the same WebSocket transport layer as Builder, but the collab client connects separately and can point at a configured collaboration origin.
+- Collaboration uses the same WebSocket transport layer as Builder, but the collab client connects separately to the configured collaboration origin.
 
 ## Environment variables
 
