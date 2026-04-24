@@ -42,8 +42,7 @@ const VALID_PERSISTED_AGENT_ROLES = new Set(["manager", "worker"]);
 
 const SYNTHETIC_PI_MODEL_BLUEPRINTS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
   "openai-codex": {
-    "gpt-5.5": "gpt-5.4",
-    "gpt-5.5-mini": "gpt-5.4-mini"
+    "gpt-5.5": "gpt-5.4"
   }
 };
 const VALID_PERSISTED_PROJECT_AGENT_CAPABILITIES = new Set<string>(PROJECT_AGENT_CAPABILITIES);

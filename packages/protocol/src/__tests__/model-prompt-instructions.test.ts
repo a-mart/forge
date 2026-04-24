@@ -5,7 +5,7 @@ describe('model-prompt-instructions', () => {
   it('returns GPT-5 instructions for pi-codex, pi-5.4, and pi-5.5 families', () => {
     const codexInstructions = getBuiltInModelSpecificInstructions('pi-codex')
     const gpt54Instructions = getBuiltInModelSpecificInstructions('pi-5.4-mini')
-    const gpt55Instructions = getBuiltInModelSpecificInstructions('pi-5.5-mini')
+    const gpt55Instructions = getBuiltInModelSpecificInstructions('pi-5.5')
 
     expect(codexInstructions).toContain('Return the requested sections only, in the requested order.')
     expect(codexInstructions).toContain('Do not use em dashes unless the user explicitly asks for them')

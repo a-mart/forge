@@ -134,14 +134,6 @@ const EXPECTED_MODELS = {
     supportsReasoning: true,
     inputModes: ['text', 'image'],
   },
-  'gpt-5.5-mini': {
-    provider: 'openai-codex',
-    familyId: 'pi-5.5',
-    contextWindow: 272_000,
-    maxOutputTokens: 128_000,
-    supportsReasoning: true,
-    inputModes: ['text', 'image'],
-  },
   'claude-opus-4-7': {
     provider: 'anthropic',
     familyId: 'pi-opus',
@@ -269,7 +261,7 @@ describe('model-catalog', () => {
     ])
     expect(Object.keys(FORGE_MODEL_CATALOG.families)).toEqual(Object.keys(EXPECTED_FAMILIES))
     expect(Object.keys(FORGE_MODEL_CATALOG.models)).toEqual(Object.keys(EXPECTED_MODELS))
-    expect(Object.keys(FORGE_MODEL_CATALOG.models)).toHaveLength(20)
+    expect(Object.keys(FORGE_MODEL_CATALOG.models)).toHaveLength(19)
     expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('gpt-5.4-nano')
   })
 
@@ -422,7 +414,7 @@ describe('model-catalog', () => {
     expect(inferCatalogProvider('gpt-5.5')).toBe('openai-codex')
     expect(inferCatalogProvider('gpt-5.4-nano')).toBeNull()
     expect(inferCatalogFamily('openai-codex', 'gpt-5.4-mini')).toBe('pi-5.4')
-    expect(inferCatalogFamily('openai-codex', 'gpt-5.5-mini')).toBe('pi-5.5')
+    expect(inferCatalogFamily('openai-codex', 'gpt-5.5')).toBe('pi-5.5')
     expect(inferCatalogFamily('claude-sdk', 'claude-sonnet-4-5-20250929')).toBe('sdk-sonnet')
     expect(inferCatalogFamily('claude-sdk', 'claude-opus-4-6')).toBe('sdk-opus')
     expect(inferCatalogFamily('xai', 'grok-3')).toBe('pi-grok')

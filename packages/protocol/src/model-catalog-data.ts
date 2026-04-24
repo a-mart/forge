@@ -263,23 +263,6 @@ export const FORGE_MODEL_CATALOG = {
       piUpstreamId: 'gpt-5.5',
       intentionalDivergenceNotes: null,
     },
-    'gpt-5.5-mini': {
-      modelId: 'gpt-5.5-mini',
-      provider: 'openai-codex',
-      familyId: 'pi-5.5',
-      displayName: 'GPT-5.5 Mini',
-      isFamilyDefault: false,
-      supportsReasoning: true,
-      supportedReasoningLevels: ['none', 'low', 'medium', 'high', 'xhigh'],
-      defaultReasoningLevel: 'high',
-      contextWindow: 272_000,
-      maxOutputTokens: 128_000,
-      inputModes: ['text', 'image'],
-      webSearchCapability: 'none',
-      enabledByDefault: true,
-      piUpstreamId: 'gpt-5.5-mini',
-      intentionalDivergenceNotes: null,
-    },
 
     // ── Anthropic models ────────────────────────────────
     'claude-opus-4-7': {

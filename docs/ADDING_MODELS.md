@@ -26,7 +26,7 @@ For GPT-5.5, the family is:
 },
 ```
 
-Then add model entries such as:
+Then add the model entry:
 
 ```ts
 'gpt-5.5': {
@@ -46,29 +46,13 @@ Then add model entries such as:
   piUpstreamId: 'gpt-5.5',
   intentionalDivergenceNotes: null,
 },
-'gpt-5.5-mini': {
-  modelId: 'gpt-5.5-mini',
-  provider: 'openai-codex',
-  familyId: 'pi-5.5',
-  displayName: 'GPT-5.5 Mini',
-  isFamilyDefault: false,
-  supportsReasoning: true,
-  supportedReasoningLevels: ['none', 'low', 'medium', 'high', 'xhigh'],
-  defaultReasoningLevel: 'high',
-  contextWindow: 272_000,
-  maxOutputTokens: 128_000,
-  inputModes: ['text', 'image'],
-  webSearchCapability: 'none',
-  enabledByDefault: true,
-  piUpstreamId: 'gpt-5.5-mini',
-  intentionalDivergenceNotes: null,
-},
 ```
 
 A few practical notes:
 
 - The family entry controls UI visibility and defaults. That is what makes the model family show up in create/change manager flows, spawn presets, and specialist selection.
 - The model entries define the actual spec shape: context window, max output tokens, supported reasoning levels, input modes, and `piUpstreamId`.
+- Only add extra variants when they are real upstream models that Pi or Forge should expose. Do not invent `-mini` or other suffix variants unless they are actually valid.
 - Mirror an existing same-provider model when you are unsure about shape or defaults. For GPT-5.5, GPT-5.4 is the closest template.
 - Keep the catalog entry consistent with the rest of the provider family. If the upstream model is a new top-tier Codex option, the default reasoning level usually stays `xhigh`.
 

@@ -149,6 +149,6 @@ describe("model-presets", () => {
     const fiveFivePreset = getModelPresetInfoList().find((preset) => preset.presetId === "pi-5.5");
 
     expect(fiveFourPreset?.variants?.map((variant) => variant.modelId)).toEqual(["gpt-5.4-mini"]);
-    expect(fiveFivePreset?.variants?.map((variant) => variant.modelId)).toEqual(["gpt-5.5-mini"]);
+    expect(fiveFivePreset?.variants).toBeUndefined();
   });
 });
