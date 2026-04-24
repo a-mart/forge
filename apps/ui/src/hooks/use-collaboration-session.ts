@@ -97,6 +97,23 @@ export function useCollaborationSession(
     return () => controller.abort()
   }, [enabled, isTestMode, load, refreshCounter])
 
+  useEffect(() => {
+    if (isTestMode || !enabled) {
+      return
+    }
+
+    const handleServerUrlChange = () => {
+      refresh()
+    }
+
+    window.addEventListener('forge-collab-server-url-change', handleServerUrlChange)
+    window.addEventListener('storage', handleServerUrlChange)
+    return () => {
+      window.removeEventListener('forge-collab-server-url-change', handleServerUrlChange)
+      window.removeEventListener('storage', handleServerUrlChange)
+    }
+  }, [enabled, isTestMode, refresh])
+
   return {
     isCollabEnabled,
     isAdmin: role === 'admin',

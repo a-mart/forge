@@ -1,12 +1,16 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { SettingsSection, SettingsWithCTA } from './settings-row'
 import { fetchCollaborationStatus } from './collaboration-settings-api'
-import { getCollabServerUrl, setCollabServerUrl } from '@/lib/collaboration-endpoints'
-import type { CollaborationStatus } from '@forge/protocol'
+import {
+  getCollabServerUrl,
+  setCollabServerUrl,
+  resolveCollaborationApiBaseUrl,
+} from '@/lib/collaboration-endpoints'
+import type { CollaborationSessionInfo, CollaborationStatus } from '@forge/protocol'
 
 interface SettingsCollaborationProps {
   wsUrl: string
@@ -23,7 +27,7 @@ function isValidUrl(value: string): boolean {
   }
 }
 
-export function SettingsCollaboration({ wsUrl }: SettingsCollaborationProps) {
+export function SettingsCollaboration({ wsUrl: _wsUrl }: SettingsCollaborationProps) {
   const [status, setStatus] = useState<CollaborationStatus | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -34,23 +38,64 @@ export function SettingsCollaboration({ wsUrl }: SettingsCollaborationProps) {
   const [testError, setTestError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
 
+  // Auth state
+  const [session, setSession] = useState<CollaborationSessionInfo | null>(null)
+  const [sessionLoading, setSessionLoading] = useState(false)
+  const [signInEmail, setSignInEmail] = useState('')
+  const [signInPassword, setSignInPassword] = useState('')
+  const [signInError, setSignInError] = useState<string | null>(null)
+  const [isSigningIn, setIsSigningIn] = useState(false)
+  const [isSigningOut, setIsSigningOut] = useState(false)
+
   const currentConfiguredUrl = getCollabServerUrl()
   const hasUnsavedChanges = serverUrl.trim() !== (currentConfiguredUrl ?? '')
 
-  useEffect(() => {
+  // Fetch session info from the collab server
+  const fetchSession = useCallback(async () => {
+    const baseUrl = resolveCollaborationApiBaseUrl()
+    setSessionLoading(true)
+    try {
+      const endpoint = new URL('/api/collaboration/me', baseUrl).toString()
+      const response = await fetch(endpoint, {
+        credentials: 'include',
+        signal: AbortSignal.timeout(10_000),
+      })
+      if (!response.ok) {
+        setSession(null)
+        return
+      }
+      const data = (await response.json()) as CollaborationSessionInfo
+      setSession(data)
+    } catch {
+      setSession(null)
+    } finally {
+      setSessionLoading(false)
+    }
+  }, [])
+
+  const refreshStatus = useCallback(async () => {
     setLoading(true)
     setError(null)
-    void fetchCollaborationStatus(wsUrl)
-      .then((data) => {
-        setStatus(data)
-      })
-      .catch((err) => {
-        setError(err instanceof Error ? err.message : 'Could not load collaboration status')
-      })
-      .finally(() => {
-        setLoading(false)
-      })
-  }, [wsUrl])
+    try {
+      const data = await fetchCollaborationStatus()
+      setStatus(data)
+      if (data.enabled && getCollabServerUrl()) {
+        await fetchSession()
+      } else {
+        setSession(null)
+      }
+    } catch (err) {
+      setStatus(null)
+      setSession(null)
+      setError(err instanceof Error ? err.message : 'Could not load collaboration status')
+    } finally {
+      setLoading(false)
+    }
+  }, [fetchSession])
+
+  useEffect(() => {
+    void refreshStatus()
+  }, [currentConfiguredUrl, refreshStatus])
 
   const handleTestConnection = useCallback(async () => {
     const trimmed = serverUrl.trim()
@@ -109,18 +154,90 @@ export function SettingsCollaboration({ wsUrl }: SettingsCollaborationProps) {
     }
 
     setCollabServerUrl(trimmed || null)
+    window.dispatchEvent(new Event('forge-collab-server-url-change'))
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
-  }, [serverUrl])
+    void refreshStatus()
+  }, [refreshStatus, serverUrl])
 
   const handleDisconnect = useCallback(() => {
     setCollabServerUrl(null)
+    window.dispatchEvent(new Event('forge-collab-server-url-change'))
     setServerUrl('')
     setTestStatus('idle')
     setTestError(null)
+    setSession(null)
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
-  }, [])
+    void refreshStatus()
+  }, [refreshStatus])
+
+  const handleSignIn = useCallback(
+    async (event: FormEvent) => {
+      event.preventDefault()
+      setSignInError(null)
+      setIsSigningIn(true)
+
+      const baseUrl = resolveCollaborationApiBaseUrl()
+
+      try {
+        const signInUrl = new URL('/api/auth/sign-in/email', baseUrl).toString()
+        const response = await fetch(signInUrl, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: signInEmail.trim(), password: signInPassword }),
+        })
+
+        if (!response.ok) {
+          let message = 'Invalid email or password'
+          try {
+            const body = (await response.json()) as { message?: string }
+            if (body.message) {
+              message = body.message
+            }
+          } catch {
+            // use default message
+          }
+          throw new Error(message)
+        }
+
+        // Clear form and refresh session state.
+        setSignInEmail('')
+        setSignInPassword('')
+        await fetchSession()
+        window.dispatchEvent(new Event('forge-collab-server-url-change'))
+      } catch (err) {
+        setSignInError(err instanceof Error ? err.message : 'Sign-in failed')
+      } finally {
+        setIsSigningIn(false)
+      }
+    },
+    [signInEmail, signInPassword, fetchSession],
+  )
+
+  const handleSignOut = useCallback(async () => {
+    if (isSigningOut) return
+    setIsSigningOut(true)
+
+    const baseUrl = resolveCollaborationApiBaseUrl()
+
+    try {
+      const signOutUrl = new URL('/api/auth/sign-out', baseUrl).toString()
+      await fetch(signOutUrl, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      })
+    } catch {
+      // Best-effort sign out
+    } finally {
+      setSession(null)
+      window.dispatchEvent(new Event('forge-collab-server-url-change'))
+      setIsSigningOut(false)
+    }
+  }, [isSigningOut])
 
   return (
     <div className="flex flex-col gap-8">
@@ -219,16 +336,7 @@ export function SettingsCollaboration({ wsUrl }: SettingsCollaborationProps) {
               onClick={() => {
                 setError(null)
                 setLoading(true)
-                void fetchCollaborationStatus(wsUrl)
-                  .then((data) => {
-                    setStatus(data)
-                  })
-                  .catch((err) => {
-                    setError(err instanceof Error ? err.message : 'Could not load collaboration status')
-                  })
-                  .finally(() => {
-                    setLoading(false)
-                  })
+                void refreshStatus()
               }}
               className="text-xs text-primary underline hover:no-underline"
             >
@@ -279,6 +387,89 @@ export function SettingsCollaboration({ wsUrl }: SettingsCollaborationProps) {
           </>
         ) : null}
       </SettingsSection>
+
+      {/* Authentication — only shown when collab is enabled and a remote server is configured */}
+      {currentConfiguredUrl && status?.enabled && (
+        <SettingsSection
+          label="Authentication"
+          description="Sign in to the remote collaboration server"
+        >
+          {sessionLoading ? (
+            <div className="flex items-center gap-2 px-2 py-3">
+              <span className="text-sm text-muted-foreground">Checking session…</span>
+            </div>
+          ) : session?.authenticated && session.user ? (
+            <div className="flex flex-col gap-4 px-2 py-3">
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex flex-col gap-1">
+                  <span className="text-sm font-medium">
+                    {session.user.name || session.user.email}
+                  </span>
+                  {session.user.name && (
+                    <span className="text-xs text-muted-foreground">{session.user.email}</span>
+                  )}
+                  <Badge variant="secondary" className="mt-1 w-fit px-2 py-0 text-[10px] uppercase">
+                    {session.user.role}
+                  </Badge>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => void handleSignOut()}
+                  disabled={isSigningOut}
+                  aria-label="Sign out of collaboration server"
+                >
+                  {isSigningOut ? 'Signing out…' : 'Sign out'}
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-4 px-2 py-3">
+              <form onSubmit={(e) => void handleSignIn(e)} className="flex flex-col gap-3" autoComplete="on">
+                {signInError && (
+                  <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                    {signInError}
+                  </div>
+                )}
+
+                <div className="flex flex-col gap-2">
+                  <Label htmlFor="collab-sign-in-email">Email</Label>
+                  <Input
+                    id="collab-sign-in-email"
+                    name="email"
+                    type="email"
+                    autoComplete="email"
+                    required
+                    placeholder="you@example.com"
+                    value={signInEmail}
+                    onChange={(e) => setSignInEmail(e.target.value)}
+                    disabled={isSigningIn}
+                  />
+                </div>
+
+                <div className="flex flex-col gap-2">
+                  <Label htmlFor="collab-sign-in-password">Password</Label>
+                  <Input
+                    id="collab-sign-in-password"
+                    name="password"
+                    type="password"
+                    autoComplete="current-password"
+                    required
+                    placeholder="Password"
+                    value={signInPassword}
+                    onChange={(e) => setSignInPassword(e.target.value)}
+                    disabled={isSigningIn}
+                  />
+                </div>
+
+                <Button type="submit" size="sm" className="w-fit" disabled={isSigningIn}>
+                  {isSigningIn ? 'Signing in…' : 'Sign in'}
+                </Button>
+              </form>
+            </div>
+          )}
+        </SettingsSection>
+      )}
     </div>
   )
 }

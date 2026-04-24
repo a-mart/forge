@@ -3,10 +3,10 @@
 /* ------------------------------------------------------------------ */
 
 import type { CollaborationStatus } from '@forge/protocol'
-import { resolveApiEndpoint } from '@/lib/api-endpoint'
+import { resolveCollaborationApiBaseUrl } from '@/lib/collaboration-endpoints'
 
-export async function fetchCollaborationStatus(wsUrl: string): Promise<CollaborationStatus> {
-  const endpoint = resolveApiEndpoint(wsUrl, '/api/collaboration/status')
+export async function fetchCollaborationStatus(): Promise<CollaborationStatus> {
+  const endpoint = new URL('/api/collaboration/status', resolveCollaborationApiBaseUrl()).toString()
   const response = await fetch(endpoint, { credentials: 'include' })
 
   if (!response.ok) {
