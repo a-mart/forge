@@ -98,6 +98,7 @@ export class SwarmSessionService {
 
     if (overrides.model) {
       sessionDescriptor.model = overrides.model;
+      sessionDescriptor.modelOrigin = "session_override";
     }
 
     if (overrides.cwd) {
@@ -271,6 +272,8 @@ export class SwarmSessionService {
       name: options?.label
     });
     const forkedDescriptor = prepared.sessionDescriptor as ProvisionedSessionDescriptor;
+    forkedDescriptor.model = { ...sourceDescriptor.model };
+    forkedDescriptor.modelOrigin = sourceDescriptor.modelOrigin;
 
     await this.options.provisioner.provisionSession({
       descriptor: forkedDescriptor,

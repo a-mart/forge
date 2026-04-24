@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ManagerProfile } from "@forge/protocol";
 import type { SwarmManager } from "../swarm/swarm-manager.js";
 import { TokenAnalyticsService } from "../stats/token-analytics-service.js";
+import { hydratePersistedScanResult } from "../stats/token-analytics/token-analytics-serialize.js";
 import { getSharedTokenAnalyticsCachePath } from "../swarm/data-paths.js";
 import { getProfileSpecialistsDir, getSharedSpecialistsDir } from "../swarm/specialists/specialist-paths.js";
 
@@ -32,6 +33,35 @@ describe("TokenAnalyticsService", () => {
   afterEach(async () => {
     context.service.clearCache();
     vi.restoreAllMocks();
+  });
+
+  it("hydrates legacy cached profiles even when defaultModel is missing", () => {
+    const result = hydratePersistedScanResult({
+      scannedAt: "2026-01-01T00:00:00.000Z",
+      events: [],
+      workers: [],
+      profiles: [
+        {
+          profileId: "manager",
+          displayName: "Manager",
+          defaultSessionAgentId: "manager",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      specialistMetadataByProfile: {},
+    });
+
+    expect(result?.profiles).toEqual([
+      expect.objectContaining({
+        profileId: "manager",
+        defaultModel: {
+          provider: "unknown",
+          modelId: "unknown",
+          thinkingLevel: "unknown",
+        },
+      }),
+    ]);
   });
 
   it("builds token analytics snapshots with attribution, filters, specialist metadata, and cost coverage", async () => {
@@ -323,6 +353,7 @@ describe("TokenAnalyticsService", () => {
     const reloadedService = createService(context.dataDir);
     const cached = await reloadedService.getSnapshot({ rangePreset: "all", timezone: "UTC" });
     expect(cached.totals.usage.total).toBe(55);
+    expect(cached.availableFilters.profiles.map((entry) => entry.displayName)).toEqual(["Alpha", "Beta"]);
 
     const refreshed = await reloadedService.getSnapshot(
       { rangePreset: "all", timezone: "UTC" },
@@ -484,6 +515,11 @@ function createProfiles(): ManagerProfile[] {
       profileId: "alpha",
       displayName: "Alpha",
       defaultSessionAgentId: "alpha",
+      defaultModel: {
+        provider: "openai-codex",
+        modelId: "gpt-5.4",
+        thinkingLevel: "medium",
+      },
       createdAt: "2026-04-01T00:00:00.000Z",
       updatedAt: "2026-04-01T00:00:00.000Z",
     },
@@ -491,6 +527,11 @@ function createProfiles(): ManagerProfile[] {
       profileId: "beta",
       displayName: "Beta",
       defaultSessionAgentId: "beta",
+      defaultModel: {
+        provider: "openai-codex",
+        modelId: "gpt-5.4",
+        thinkingLevel: "medium",
+      },
       createdAt: "2026-04-01T00:00:00.000Z",
       updatedAt: "2026-04-01T00:00:00.000Z",
     },

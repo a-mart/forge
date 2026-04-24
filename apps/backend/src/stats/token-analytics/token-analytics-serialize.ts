@@ -1,9 +1,16 @@
 import type {
+  AgentModelDescriptor,
   ManagerProfile,
   TokenAnalyticsAttributionKind,
   TokenCostTotals,
   TokenUsageTotals,
 } from "@forge/protocol";
+
+const LEGACY_CACHE_DEFAULT_MODEL_FALLBACK: AgentModelDescriptor = {
+  provider: "unknown",
+  modelId: "unknown",
+  thinkingLevel: "unknown",
+};
 import { isRecord } from "../stats-shared.js";
 import { toFiniteNumber } from "./token-analytics-math.js";
 import type {
@@ -191,6 +198,8 @@ function hydratePersistedManagerProfile(value: unknown, fallbackTimestamp: strin
   }
 
   const defaultSessionAgentId = normalizeOptionalString(value.defaultSessionAgentId) ?? profileId;
+  const defaultModel = hydratePersistedModelDescriptor(value.defaultModel) ?? LEGACY_CACHE_DEFAULT_MODEL_FALLBACK;
+
   const createdAt = typeof value.createdAt === "string" ? value.createdAt : fallbackTimestamp;
   const updatedAt = typeof value.updatedAt === "string" ? value.updatedAt : fallbackTimestamp;
   const sortOrder = toFiniteNumber(value.sortOrder);
@@ -199,9 +208,29 @@ function hydratePersistedManagerProfile(value: unknown, fallbackTimestamp: strin
     profileId,
     displayName,
     defaultSessionAgentId,
+    defaultModel,
     createdAt,
     updatedAt,
     ...(sortOrder !== null ? { sortOrder } : {}),
+  };
+}
+
+function hydratePersistedModelDescriptor(value: unknown): AgentModelDescriptor | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const provider = normalizeOptionalString(value.provider);
+  const modelId = normalizeOptionalString(value.modelId);
+  const thinkingLevel = normalizeOptionalString(value.thinkingLevel);
+  if (!provider || !modelId || !thinkingLevel) {
+    return null;
+  }
+
+  return {
+    provider,
+    modelId,
+    thinkingLevel,
   };
 }
 

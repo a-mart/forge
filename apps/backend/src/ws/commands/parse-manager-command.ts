@@ -87,6 +87,34 @@ export function parseManagerCommand(maybe: ClientCommandCandidate): ParsedClient
     });
   }
 
+  if (maybe.type === "update_profile_default_model") {
+    const profileId = (maybe as { profileId?: unknown }).profileId;
+    const model = (maybe as { model?: unknown }).model;
+    const reasoningLevel = (maybe as { reasoningLevel?: unknown }).reasoningLevel;
+    const requestId = (maybe as { requestId?: unknown }).requestId;
+
+    if (typeof profileId !== "string" || profileId.trim().length === 0) {
+      return fail("update_profile_default_model.profileId must be a non-empty string");
+    }
+    if (!isSwarmModelPreset(model)) {
+      return fail(`update_profile_default_model.model must be one of ${describeSwarmModelPresets()}`);
+    }
+    if (reasoningLevel !== undefined && !isSwarmReasoningLevel(reasoningLevel)) {
+      return fail(`update_profile_default_model.reasoningLevel must be one of ${describeSwarmReasoningLevels()}`);
+    }
+    if (requestId !== undefined && typeof requestId !== "string") {
+      return fail("update_profile_default_model.requestId must be a string when provided");
+    }
+
+    return ok({
+      type: "update_profile_default_model",
+      profileId: profileId.trim(),
+      model,
+      reasoningLevel,
+      requestId
+    });
+  }
+
   if (maybe.type === "update_manager_model") {
     const managerId = (maybe as { managerId?: unknown }).managerId;
     const model = (maybe as { model?: unknown }).model;

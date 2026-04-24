@@ -9,6 +9,7 @@ import {
   type ManagerModelPreset,
   type ManagerReasoningLevel,
   type ProjectAgentCapability,
+  type SessionModelUpdateMode,
 } from '@forge/protocol'
 
 export const RECONNECTING_SOCKET_ERROR = 'WebSocket is disconnected. Reconnecting...'
@@ -166,6 +167,31 @@ export function buildDeleteManagerCommand(managerId: string, requestId: string):
   }
 }
 
+export function buildUpdateProfileDefaultModelCommand(
+  profileId: string,
+  model: ManagerModelPreset,
+  reasoningLevel: ManagerReasoningLevel | undefined,
+  requestId: string,
+): ClientCommand {
+  const trimmed = requireTrimmedValue(profileId, 'Profile id is required.')
+
+  if (!MANAGER_MODEL_PRESETS.includes(model)) {
+    throw new Error('Invalid model preset.')
+  }
+
+  if (reasoningLevel && !MANAGER_REASONING_LEVELS.includes(reasoningLevel)) {
+    throw new Error('Invalid reasoning level.')
+  }
+
+  return {
+    type: 'update_profile_default_model',
+    profileId: trimmed,
+    model,
+    reasoningLevel,
+    requestId,
+  }
+}
+
 export function buildUpdateManagerModelCommand(
   managerId: string,
   model: ManagerModelPreset,
@@ -240,6 +266,45 @@ export function buildCreateSessionCommand(
     name: name?.trim() || undefined,
     label: opts?.label,
     sessionPurpose: opts?.sessionPurpose,
+    requestId,
+  }
+}
+
+export function buildUpdateSessionModelCommand(
+  sessionAgentId: string,
+  mode: SessionModelUpdateMode,
+  model: ManagerModelPreset | undefined,
+  reasoningLevel: ManagerReasoningLevel | undefined,
+  requestId: string,
+): ClientCommand {
+  const trimmed = requireTrimmedValue(sessionAgentId, 'Session agent id is required.')
+
+  if (mode === 'override') {
+    if (!model || !MANAGER_MODEL_PRESETS.includes(model)) {
+      throw new Error('Invalid model preset.')
+    }
+    if (reasoningLevel && !MANAGER_REASONING_LEVELS.includes(reasoningLevel)) {
+      throw new Error('Invalid reasoning level.')
+    }
+
+    return {
+      type: 'update_session_model',
+      sessionAgentId: trimmed,
+      mode,
+      model,
+      reasoningLevel,
+      requestId,
+    }
+  }
+
+  if (mode !== 'inherit') {
+    throw new Error('Invalid session model mode.')
+  }
+
+  return {
+    type: 'update_session_model',
+    sessionAgentId: trimmed,
+    mode,
     requestId,
   }
 }

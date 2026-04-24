@@ -206,6 +206,7 @@ export function buildProfileTreeRows(
       profileId: manager.agentId,
       displayName: manager.displayName || manager.agentId,
       defaultSessionAgentId: manager.agentId,
+      defaultModel: { ...manager.model },
       createdAt: manager.createdAt,
       updatedAt: manager.updatedAt,
     }

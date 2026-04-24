@@ -62,6 +62,7 @@ export interface SwarmSettingsServiceOptions {
   now?: () => string;
   saveStore: () => Promise<void>;
   emitAgentsSnapshot: () => void;
+  emitProfilesSnapshot: () => void;
   logDebug: (message: string, details?: Record<string, unknown>) => void;
 }
 
@@ -74,22 +75,51 @@ export class SwarmSettingsService {
     reasoningLevel?: SwarmReasoningLevel
   ): Promise<void> {
     const profile = this.options.profiles.get(managerId);
-    const session = profile ? undefined : this.options.getSessionById(managerId);
-    if (!profile && !session) {
+    if (profile) {
+      await this.updateProfileDefaultModel(profile.profileId, modelPreset, reasoningLevel);
+      return;
+    }
+
+    const session = this.options.getSessionById(managerId);
+    if (!session) {
       throw new Error(`Unknown manager profile or session: ${managerId}`);
     }
 
-    const modelDescriptor = resolveModelDescriptorFromPreset(modelPreset);
-    if (reasoningLevel) {
-      modelDescriptor.thinkingLevel = reasoningLevel;
+    await this.setSessionModelOverride(session.agentId, modelPreset, reasoningLevel, {
+      allowMetadataOnlyOriginChange: true,
+      logContext: "manager:update_model:compat_session"
+    });
+  }
+
+  async updateProfileDefaultModel(
+    profileId: string,
+    modelPreset: SwarmModelPreset,
+    reasoningLevel?: SwarmReasoningLevel
+  ): Promise<void> {
+    const profile = this.options.profiles.get(profileId);
+    if (!profile) {
+      throw new Error(`Unknown manager profile: ${profileId}`);
     }
 
-    const sessions = profile ? this.options.getSessionsForProfile(profile.profileId) : [session!];
-    const affectedSessions = sessions.filter((session) => !sameModelDescriptor(session.model, modelDescriptor));
+    const targetModel = resolveModelDescriptor(modelPreset, reasoningLevel);
+    const profileDefaultChanged = !sameModelDescriptor(profile.defaultModel, targetModel);
+    const mutations = this.options
+      .getSessionsForProfile(profile.profileId)
+      .filter((session) => session.modelOrigin !== "session_override")
+      .map((session) => ({
+        session,
+        targetModel,
+        targetModelOrigin: "profile_default" as const
+      }))
+      .filter(
+        (mutation) =>
+          !sameModelDescriptor(mutation.session.model, mutation.targetModel) ||
+          mutation.session.modelOrigin !== mutation.targetModelOrigin
+      );
 
-    if (affectedSessions.length === 0) {
-      this.options.logDebug("manager:update_model:noop", {
-        managerId,
+    if (!profileDefaultChanged && mutations.length === 0) {
+      this.options.logDebug("manager:update_profile_default_model:noop", {
+        profileId,
         modelPreset,
         reasoningLevel,
         updatedSessions: []
@@ -97,68 +127,71 @@ export class SwarmSettingsService {
       return;
     }
 
-    const now = this.options.now ?? (() => new Date().toISOString());
-    const continuityWrites = await Promise.all(
-      affectedSessions.map(async (session) => {
-        const continuityState = await loadModelChangeContinuityState(session.sessionFile);
-        const latestPendingRequest = findLatestUnappliedModelChangeContinuityRequestForSession({
-          sessionAgentId: session.agentId,
-          requests: continuityState.requests,
-          applied: continuityState.applied
-        });
-        const createdAt = now();
-        return {
-          session,
-          targetModel: { ...modelDescriptor },
-          request: createModelChangeContinuityRequest({
-            requestId: randomUUID(),
-            createdAt,
-            sessionAgentId: session.agentId,
-            sourceModel: latestPendingRequest?.sourceModel ?? session.model,
-            targetModel: modelDescriptor
-          })
-        };
-      })
-    );
+    const stagedUpdatedAt = profileDefaultChanged ? getNow(this.options.now)() : profile.updatedAt;
+    const previousDefaultModel = { ...profile.defaultModel };
+    const previousUpdatedAt = profile.updatedAt;
+    const applyProfileDefaultMutation = (): void => {
+      profile.defaultModel = { ...targetModel };
+      profile.updatedAt = stagedUpdatedAt;
+    };
 
-    for (const pendingWrite of continuityWrites) {
-      await appendModelChangeContinuityRequest({
-        sessionFile: pendingWrite.session.sessionFile,
-        cwd: pendingWrite.session.cwd,
-        request: pendingWrite.request,
-        now: this.options.now
-      });
-    }
-
-    const recycledSessions: string[] = [];
-    const deferredSessions: string[] = [];
-
-    for (const pendingWrite of continuityWrites) {
-      pendingWrite.session.model = { ...pendingWrite.targetModel };
-    }
-
-    for (const pendingWrite of continuityWrites) {
-      const recycleDisposition = await this.options.applyManagerRuntimeRecyclePolicy(
-        pendingWrite.session.agentId,
-        "model_change"
-      );
-      if (recycleDisposition === "recycled") {
-        recycledSessions.push(pendingWrite.session.agentId);
-      } else if (recycleDisposition === "deferred") {
-        deferredSessions.push(pendingWrite.session.agentId);
+    if (mutations.length === 0) {
+      applyProfileDefaultMutation();
+      try {
+        await this.options.saveStore();
+      } catch (error) {
+        profile.defaultModel = previousDefaultModel;
+        profile.updatedAt = previousUpdatedAt;
+        throw error;
       }
+      this.options.emitProfilesSnapshot();
+      this.options.emitAgentsSnapshot();
+      this.options.logDebug("manager:update_profile_default_model", {
+        profileId,
+        modelPreset,
+        reasoningLevel,
+        updatedSessions: [],
+        effectiveModelChangedSessions: [],
+        recycledSessions: [],
+        deferredSessions: []
+      });
+      return;
     }
 
-    await this.options.saveStore();
-    this.options.emitAgentsSnapshot();
+    const result = await this.applySessionModelMutations(mutations, {
+      emitProfilesSnapshot: true,
+      beforeSave: applyProfileDefaultMutation,
+      rollbackBeforeSave: () => {
+        profile.defaultModel = previousDefaultModel;
+        profile.updatedAt = previousUpdatedAt;
+      }
+    });
 
-    this.options.logDebug("manager:update_model", {
-      managerId,
+    this.options.logDebug("manager:update_profile_default_model", {
+      profileId,
       modelPreset,
       reasoningLevel,
-      updatedSessions: affectedSessions.map((session) => session.agentId),
-      recycledSessions,
-      deferredSessions
+      updatedSessions: result.updatedSessions,
+      effectiveModelChangedSessions: result.effectiveModelChangedSessions,
+      recycledSessions: result.recycledSessions,
+      deferredSessions: result.deferredSessions
+    });
+  }
+
+  async updateSessionModel(
+    sessionAgentId: string,
+    mode: "inherit" | "override",
+    modelPreset?: SwarmModelPreset,
+    reasoningLevel?: SwarmReasoningLevel
+  ): Promise<void> {
+    if (mode === "inherit") {
+      await this.setSessionModelInheritance(sessionAgentId);
+      return;
+    }
+
+    await this.setSessionModelOverride(sessionAgentId, modelPreset, reasoningLevel, {
+      allowMetadataOnlyOriginChange: true,
+      logContext: "session:update_model"
     });
   }
 
@@ -411,6 +444,220 @@ export class SwarmSettingsService {
     return this.getCredentialPoolService().addCredential(provider, oauthCredential, identity);
   }
 
+  private async setSessionModelOverride(
+    sessionAgentId: string,
+    modelPreset: SwarmModelPreset | undefined,
+    reasoningLevel: SwarmReasoningLevel | undefined,
+    options: { allowMetadataOnlyOriginChange: boolean; logContext: string }
+  ): Promise<void> {
+    if (!modelPreset) {
+      throw new Error("Session model override requires a model preset");
+    }
+
+    const session = this.options.getSessionById(sessionAgentId);
+    if (!session) {
+      throw new Error(`Unknown session: ${sessionAgentId}`);
+    }
+
+    const targetModel = resolveModelDescriptor(modelPreset, reasoningLevel);
+    const shouldUpdate =
+      !sameModelDescriptor(session.model, targetModel) ||
+      (options.allowMetadataOnlyOriginChange && session.modelOrigin !== "session_override");
+
+    if (!shouldUpdate) {
+      this.options.logDebug(`${options.logContext}:noop`, {
+        sessionAgentId,
+        mode: "override",
+        modelPreset,
+        reasoningLevel,
+        updatedSessions: []
+      });
+      return;
+    }
+
+    const result = await this.applySessionModelMutations(
+      [{ session, targetModel, targetModelOrigin: "session_override" }],
+      { emitProfilesSnapshot: false }
+    );
+
+    this.options.logDebug(options.logContext, {
+      sessionAgentId,
+      mode: "override",
+      modelPreset,
+      reasoningLevel,
+      updatedSessions: result.updatedSessions,
+      effectiveModelChangedSessions: result.effectiveModelChangedSessions,
+      recycledSessions: result.recycledSessions,
+      deferredSessions: result.deferredSessions
+    });
+  }
+
+  private async setSessionModelInheritance(sessionAgentId: string): Promise<void> {
+    const session = this.options.getSessionById(sessionAgentId);
+    if (!session) {
+      throw new Error(`Unknown session: ${sessionAgentId}`);
+    }
+
+    const profile = this.options.profiles.get(session.profileId);
+    if (!profile) {
+      throw new Error(`Unknown manager profile: ${session.profileId}`);
+    }
+
+    const targetModel = { ...profile.defaultModel };
+    if (sameModelDescriptor(session.model, targetModel) && session.modelOrigin === "profile_default") {
+      this.options.logDebug("session:update_model:noop", {
+        sessionAgentId,
+        mode: "inherit",
+        updatedSessions: []
+      });
+      return;
+    }
+
+    const result = await this.applySessionModelMutations(
+      [{ session, targetModel, targetModelOrigin: "profile_default" }],
+      { emitProfilesSnapshot: false }
+    );
+
+    this.options.logDebug("session:update_model", {
+      sessionAgentId,
+      mode: "inherit",
+      updatedSessions: result.updatedSessions,
+      effectiveModelChangedSessions: result.effectiveModelChangedSessions,
+      recycledSessions: result.recycledSessions,
+      deferredSessions: result.deferredSessions
+    });
+  }
+
+  private async applySessionModelMutations(
+    mutations: Array<{
+      session: SessionDescriptor;
+      targetModel: AgentDescriptor["model"];
+      targetModelOrigin: "profile_default" | "session_override";
+    }>,
+    options: {
+      emitProfilesSnapshot: boolean;
+      beforeSave?: () => void;
+      rollbackBeforeSave?: () => void;
+    }
+  ): Promise<{
+    updatedSessions: string[];
+    effectiveModelChangedSessions: string[];
+    recycledSessions: string[];
+    deferredSessions: string[];
+    recycleFailures: Array<{ agentId: string; error: string }>;
+  }> {
+    if (mutations.length === 0) {
+      return {
+        updatedSessions: [],
+        effectiveModelChangedSessions: [],
+        recycledSessions: [],
+        deferredSessions: [],
+        recycleFailures: []
+      };
+    }
+
+    const effectiveModelMutations = mutations.filter(
+      (mutation) => !sameModelDescriptor(mutation.session.model, mutation.targetModel)
+    );
+    const originalSessionStates = mutations.map((mutation) => ({
+      session: mutation.session,
+      model: { ...mutation.session.model },
+      modelOrigin: mutation.session.modelOrigin
+    }));
+    const now = getNow(this.options.now);
+    const continuityWrites = await Promise.all(
+      effectiveModelMutations.map(async (mutation) => {
+        const continuityState = await loadModelChangeContinuityState(mutation.session.sessionFile);
+        const latestPendingRequest = findLatestUnappliedModelChangeContinuityRequestForSession({
+          sessionAgentId: mutation.session.agentId,
+          requests: continuityState.requests,
+          applied: continuityState.applied
+        });
+        const createdAt = now();
+        return {
+          session: mutation.session,
+          request: createModelChangeContinuityRequest({
+            requestId: randomUUID(),
+            createdAt,
+            sessionAgentId: mutation.session.agentId,
+            sourceModel: latestPendingRequest?.sourceModel ?? mutation.session.model,
+            targetModel: mutation.targetModel
+          })
+        };
+      })
+    );
+
+    for (const pendingWrite of continuityWrites) {
+      await appendModelChangeContinuityRequest({
+        sessionFile: pendingWrite.session.sessionFile,
+        cwd: pendingWrite.session.cwd,
+        request: pendingWrite.request,
+        now: this.options.now
+      });
+    }
+
+    const recycledSessions: string[] = [];
+    const deferredSessions: string[] = [];
+    const recycleFailures: Array<{ agentId: string; error: string }> = [];
+
+    try {
+      for (const mutation of mutations) {
+        mutation.session.model = { ...mutation.targetModel };
+        mutation.session.modelOrigin = mutation.targetModelOrigin;
+      }
+
+      options.beforeSave?.();
+      await this.options.saveStore();
+    } catch (error) {
+      for (const originalState of originalSessionStates) {
+        originalState.session.model = originalState.model;
+        originalState.session.modelOrigin = originalState.modelOrigin;
+      }
+      options.rollbackBeforeSave?.();
+      throw error;
+    }
+
+    for (const pendingWrite of continuityWrites) {
+      try {
+        const recycleDisposition = await this.options.applyManagerRuntimeRecyclePolicy(
+          pendingWrite.session.agentId,
+          "model_change"
+        );
+        if (recycleDisposition === "recycled") {
+          recycledSessions.push(pendingWrite.session.agentId);
+        } else if (recycleDisposition === "deferred") {
+          deferredSessions.push(pendingWrite.session.agentId);
+        }
+      } catch (error) {
+        deferredSessions.push(pendingWrite.session.agentId);
+        recycleFailures.push({
+          agentId: pendingWrite.session.agentId,
+          error: errorToMessage(error)
+        });
+      }
+    }
+
+    if (recycleFailures.length > 0) {
+      this.options.logDebug("manager:model_change:recycle_failed", {
+        updatedSessions: mutations.map((mutation) => mutation.session.agentId),
+        recycleFailures
+      });
+    }
+
+    this.options.emitAgentsSnapshot();
+    if (options.emitProfilesSnapshot) {
+      this.options.emitProfilesSnapshot();
+    }
+
+    return {
+      updatedSessions: mutations.map((mutation) => mutation.session.agentId),
+      effectiveModelChangedSessions: effectiveModelMutations.map((mutation) => mutation.session.agentId),
+      recycledSessions,
+      deferredSessions,
+      recycleFailures
+    };
+  }
+
   private getCwdPolicy(): { rootDir: string; allowlistRoots: string[] } {
     return {
       rootDir: this.options.config.paths.rootDir,
@@ -433,4 +680,19 @@ function sameModelDescriptor(left: AgentDescriptor["model"], right: AgentDescrip
 
 function normalizeThinkingLevel(level: string): string {
   return level === "x-high" ? "xhigh" : level;
+}
+
+function resolveModelDescriptor(
+  modelPreset: SwarmModelPreset,
+  reasoningLevel?: SwarmReasoningLevel
+): AgentDescriptor["model"] {
+  const modelDescriptor = resolveModelDescriptorFromPreset(modelPreset);
+  if (reasoningLevel) {
+    modelDescriptor.thinkingLevel = reasoningLevel;
+  }
+  return modelDescriptor;
+}
+
+function getNow(now: (() => string) | undefined): () => string {
+  return now ?? (() => new Date().toISOString());
 }

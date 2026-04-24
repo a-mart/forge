@@ -17,6 +17,14 @@ export interface ManagerDeletedEvent {
   requestId?: string
 }
 
+export interface ProfileDefaultModelUpdatedEvent {
+  type: 'profile_default_model_updated'
+  profileId: string
+  model: ManagerModelPreset
+  reasoningLevel?: ManagerReasoningLevel
+  requestId?: string
+}
+
 export interface ManagerModelUpdatedEvent {
   type: 'manager_model_updated'
   managerId: string

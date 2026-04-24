@@ -46,6 +46,7 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
     command.type !== "clear_session" &&
     command.type !== "rename_session" &&
     command.type !== "pin_session" &&
+    command.type !== "update_session_model" &&
     command.type !== "set_session_project_agent" &&
     command.type !== "get_project_agent_config" &&
     command.type !== "list_project_agent_references" &&
@@ -278,6 +279,41 @@ export async function handleSessionCommand(context: SessionCommandRouteContext):
         code: "PIN_SESSION_FAILED",
         message: error instanceof Error ? error.message : String(error),
         requestId: command.requestId
+      });
+    }
+
+    return true;
+  }
+
+  if (command.type === "update_session_model") {
+    try {
+      requireNonSystemSessionProfile(
+        command.sessionAgentId,
+        swarmManager.listProfiles(),
+        (agentId) => swarmManager.getAgent(agentId),
+      );
+
+      await swarmManager.updateSessionModel(
+        command.sessionAgentId,
+        command.mode,
+        command.model,
+        command.reasoningLevel,
+      );
+
+      send(socket, {
+        type: "session_model_updated",
+        sessionAgentId: command.sessionAgentId,
+        mode: command.mode,
+        model: command.model,
+        reasoningLevel: command.reasoningLevel,
+        requestId: command.requestId,
+      });
+    } catch (error) {
+      send(socket, {
+        type: "error",
+        code: "UPDATE_SESSION_MODEL_FAILED",
+        message: error instanceof Error ? error.message : String(error),
+        requestId: command.requestId,
       });
     }
 

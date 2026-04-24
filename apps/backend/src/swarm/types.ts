@@ -1,6 +1,7 @@
 import {
   MANAGER_MODEL_PRESETS,
   type AgentCreatorResult,
+  type AgentModelOrigin,
   type ChoiceRequestEvent,
   type ManagerProfile,
   type ProjectAgentInfo,
@@ -13,7 +14,7 @@ export type AgentRole = "manager" | "worker";
 export type AgentArchetypeId = string;
 
 export type { AgentStatus };
-export type { ManagerProfile };
+export type { AgentModelOrigin, ManagerProfile };
 export type { ProjectAgentMessageContext };
 export type {
   ChoiceAnswer,
@@ -56,6 +57,7 @@ export interface AgentDescriptor {
   updatedAt: string;
   cwd: string;
   model: AgentModelDescriptor;
+  modelOrigin?: AgentModelOrigin;
   sessionFile: string;
   contextUsage?: AgentContextUsage;
   profileId?: string;

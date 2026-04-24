@@ -4,6 +4,7 @@ import type { SwarmManager } from "../../swarm/swarm-manager.js";
 import {
   filterSystemProfileIds,
   requireNonSystemProfile,
+  requireNonSystemSessionProfile,
 } from "../../swarm/system-profile-guards.js";
 import type { UnreadTracker } from "../../swarm/unread-tracker.js";
 import type { SwarmModelPreset, SwarmReasoningLevel } from "../../swarm/types.js";
@@ -106,6 +107,50 @@ export async function handleManagerCommand(context: ManagerCommandRouteContext):
     return true;
   }
 
+  if (command.type === "update_profile_default_model") {
+    const managerContextId = resolveManagerContextAgentId(subscribedAgentId);
+    if (!managerContextId) {
+      send(socket, {
+        type: "error",
+        code: "UNKNOWN_AGENT",
+        message: `Agent ${subscribedAgentId} does not exist.`,
+        requestId: command.requestId
+      });
+      return true;
+    }
+
+    try {
+      requireNonSystemProfile(command.profileId, swarmManager.listProfiles());
+
+      if (!MANAGER_MODEL_PRESETS.includes(command.model)) {
+        throw new Error(`Invalid model preset: ${command.model}`);
+      }
+
+      await swarmManager.updateProfileDefaultModel(
+        command.profileId,
+        command.model as SwarmModelPreset,
+        command.reasoningLevel as SwarmReasoningLevel | undefined
+      );
+
+      broadcastToSubscribed({
+        type: "profile_default_model_updated",
+        profileId: command.profileId,
+        model: command.model,
+        reasoningLevel: command.reasoningLevel,
+        requestId: command.requestId
+      });
+    } catch (error) {
+      send(socket, {
+        type: "error",
+        code: "UPDATE_PROFILE_DEFAULT_MODEL_FAILED",
+        message: error instanceof Error ? error.message : String(error),
+        requestId: command.requestId
+      });
+    }
+
+    return true;
+  }
+
   if (command.type === "update_manager_model") {
     const managerContextId = resolveManagerContextAgentId(subscribedAgentId);
     if (!managerContextId) {
@@ -119,7 +164,11 @@ export async function handleManagerCommand(context: ManagerCommandRouteContext):
     }
 
     try {
-      requireNonSystemProfile(command.managerId, swarmManager.listProfiles());
+      if (swarmManager.getAgent(command.managerId)?.role === "manager") {
+        requireNonSystemSessionProfile(command.managerId, swarmManager.listProfiles(), (agentId) => swarmManager.getAgent(agentId));
+      } else {
+        requireNonSystemProfile(command.managerId, swarmManager.listProfiles());
+      }
 
       if (!MANAGER_MODEL_PRESETS.includes(command.model)) {
         throw new Error(`Invalid model preset: ${command.model}`);

@@ -21,13 +21,17 @@ import {
 import { buildProfileTreeRows } from '@/lib/agent-hierarchy'
 import type { ProfileTreeRow } from '@/lib/agent-hierarchy'
 import { inferModelPreset } from '@/lib/model-preset'
+import { inferCatalogFamily } from '@forge/protocol'
 import { useProviderUsage } from '@/hooks/use-provider-usage'
 import { toggleMute, getMutedAgents, setMutedAgents, MUTE_CHANGE_EVENT } from '@/lib/notification-service'
 import { cn } from '@/lib/utils'
 import type {
+  AgentModelDescriptor,
+  AgentModelOrigin,
   ManagerModelPreset,
   ManagerReasoningLevel,
   ProjectAgentInfo,
+  SessionModelUpdateMode,
 } from '@forge/protocol'
 
 // Extracted sub-components
@@ -43,6 +47,7 @@ import {
   RenameProfileDialog,
   DeleteSessionDialog,
   ChangeModelDialog,
+  SessionModelDialog,
 } from './agent-sidebar/dialogs'
 import { ProjectAgentSettingsSheet } from './project-agent/ProjectAgentSettingsSheet'
 import { injectGlowPulseStyle } from './agent-sidebar'
@@ -86,6 +91,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
   onMarkUnread,
   onMarkAllRead,
   onUpdateManagerModel,
+  onUpdateSessionModel,
   onUpdateManagerCwd,
   onBrowseDirectory,
   onValidateDirectory,
@@ -165,6 +171,14 @@ export const AgentSidebar = React.memo(function AgentSidebar({
     profileLabel: string
     currentPreset: ManagerModelPreset | undefined
     currentReasoningLevel: ManagerReasoningLevel | undefined
+  } | null>(null)
+  const [sessionModelTarget, setSessionModelTarget] = useState<{
+    sessionAgentId: string
+    sessionLabel: string
+    currentPreset: ManagerModelPreset | undefined
+    currentReasoningLevel: ManagerReasoningLevel | undefined
+    modelOrigin: AgentModelOrigin | undefined
+    profileDefaultModel: AgentModelDescriptor | undefined
   } | null>(null)
   const [changeCwdTarget, setChangeCwdTarget] = useState<{
     profileId: string
@@ -268,23 +282,54 @@ export const AgentSidebar = React.memo(function AgentSidebar({
 
   const handleRequestChangeModel = useCallback((profileId: string) => {
     const profile = profiles.find((p) => p.profileId === profileId)
-    const defaultSession = agents.find(
-      (a) => a.role === 'manager' && (a.profileId === profileId || a.agentId === profileId),
-    )
-    const currentPreset = defaultSession ? inferModelPreset(defaultSession) : undefined
-    const currentReasoningLevel = defaultSession?.model.thinkingLevel as ManagerReasoningLevel | undefined
+    if (!profile) return
+    const defaultModel = profile.defaultModel
+    const currentPreset = defaultModel
+      ? inferCatalogFamily(defaultModel.provider.trim().toLowerCase(), defaultModel.modelId.trim().toLowerCase()) as ManagerModelPreset | undefined
+      : undefined
+    const currentReasoningLevel = defaultModel?.thinkingLevel as ManagerReasoningLevel | undefined
     setChangeModelTarget({
       profileId,
-      profileLabel: profile?.displayName || profileId,
+      profileLabel: profile.displayName || profileId,
       currentPreset,
       currentReasoningLevel,
     })
-  }, [agents, profiles])
+  }, [profiles])
 
   const handleConfirmChangeModel = useCallback((profileId: string, model: ManagerModelPreset, reasoningLevel?: ManagerReasoningLevel) => {
     onUpdateManagerModel?.(profileId, model, reasoningLevel)
     setChangeModelTarget(null)
   }, [onUpdateManagerModel])
+
+  const handleRequestSessionModelChange = useCallback((sessionAgentId: string) => {
+    const agent = agents.find((a) => a.agentId === sessionAgentId)
+    if (!agent) return
+    const profile = profiles.find((p) => p.profileId === agent.profileId)
+    const currentPreset = inferModelPreset(agent)
+    const currentReasoningLevel = agent.model.thinkingLevel as ManagerReasoningLevel | undefined
+    setSessionModelTarget({
+      sessionAgentId,
+      sessionLabel: agent.sessionLabel || agent.displayName || agent.agentId,
+      currentPreset,
+      currentReasoningLevel,
+      modelOrigin: agent.modelOrigin,
+      profileDefaultModel: profile?.defaultModel,
+    })
+  }, [agents, profiles])
+
+  const handleConfirmSessionModelChange = useCallback((
+    sessionAgentId: string,
+    mode: SessionModelUpdateMode,
+    model?: ManagerModelPreset,
+    reasoningLevel?: ManagerReasoningLevel,
+  ) => {
+    onUpdateSessionModel?.(sessionAgentId, mode, model, reasoningLevel)
+    setSessionModelTarget(null)
+  }, [onUpdateSessionModel])
+
+  const handleUseProjectDefault = useCallback((sessionAgentId: string) => {
+    onUpdateSessionModel?.(sessionAgentId, 'inherit')
+  }, [onUpdateSessionModel])
 
   const handleRequestChangeCwd = useCallback((profileId: string) => {
     const profile = profiles.find((p) => p.profileId === profileId)
@@ -392,6 +437,8 @@ export const AgentSidebar = React.memo(function AgentSidebar({
       onMarkUnread={onMarkUnread}
       onMarkAllRead={onMarkAllRead}
       onChangeModel={onUpdateManagerModel ? handleRequestChangeModel : undefined}
+      onChangeSessionModel={onUpdateSessionModel ? handleRequestSessionModelChange : undefined}
+      onUseProjectDefault={onUpdateSessionModel ? handleUseProjectDefault : undefined}
       onChangeCwd={onUpdateManagerCwd ? handleRequestChangeCwd : undefined}
       showModelIcons={showModelIcons}
       highlightQuery={isSearchActive ? parsedSearch.term : undefined}
@@ -415,6 +462,7 @@ export const AgentSidebar = React.memo(function AgentSidebar({
     onCreateSession, handleRequestCreateSession, onStopSession, onResumeSession, handleRequestDelete,
     handleRequestRename, onRenameProfile, handleRequestRenameProfile, onForkSession, handleForkSetTarget,
     onMarkUnread, onMarkAllRead, onUpdateManagerModel, handleRequestChangeModel,
+    onUpdateSessionModel, handleRequestSessionModelChange, handleUseProjectDefault,
     onUpdateManagerCwd, handleRequestChangeCwd, showModelIcons, parsedSearch.term,
     getVisibleSessionLimit,
     onSetSessionProjectAgent, handlePromoteToProjectAgent, handleOpenProjectAgentSettings,
@@ -499,16 +547,10 @@ export const AgentSidebar = React.memo(function AgentSidebar({
               onOpenSettings={handleOpenSettings}
               onOpenCortexReview={handleOpenCortexReview}
               outstandingReviewCount={cortexOutstandingReviewCount}
-              onCreateSession={onCreateSession ? handleRequestCreateSession : undefined}
               onStopSession={onStopSession}
               onResumeSession={onResumeSession}
-              onDeleteSession={handleRequestDelete}
-              onRequestRenameSession={handleRequestRename}
-              onRequestRenameProfile={onRenameProfile ? handleRequestRenameProfile : undefined}
-              onForkSession={onForkSession ? handleForkSetTarget : undefined}
               onMarkUnread={onMarkUnread}
               onMarkAllRead={onMarkAllRead}
-              onChangeModel={onUpdateManagerModel ? handleRequestChangeModel : undefined}
               highlightQuery={isSearchActive ? parsedSearch.term : undefined}
               mutedAgents={mutedAgentsState}
               onToggleMute={handleToggleMute}
@@ -699,6 +741,21 @@ export const AgentSidebar = React.memo(function AgentSidebar({
           currentReasoningLevel={changeModelTarget.currentReasoningLevel}
           onConfirm={handleConfirmChangeModel}
           onClose={() => setChangeModelTarget(null)}
+        />
+      ) : null}
+
+      {/* Session model dialog */}
+      {sessionModelTarget && onUpdateSessionModel ? (
+        <SessionModelDialog
+          wsUrl={wsUrl}
+          sessionAgentId={sessionModelTarget.sessionAgentId}
+          sessionLabel={sessionModelTarget.sessionLabel}
+          currentPreset={sessionModelTarget.currentPreset}
+          currentReasoningLevel={sessionModelTarget.currentReasoningLevel}
+          modelOrigin={sessionModelTarget.modelOrigin}
+          profileDefaultModel={sessionModelTarget.profileDefaultModel}
+          onConfirm={handleConfirmSessionModelChange}
+          onClose={() => setSessionModelTarget(null)}
         />
       ) : null}
 

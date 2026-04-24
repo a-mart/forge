@@ -6,13 +6,9 @@ import {
   ChevronRight,
   ChevronUp,
   CircleDashed,
-  Edit3,
   Pause,
-  Plus,
-  RefreshCw,
 } from 'lucide-react'
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@/components/ui/context-menu'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { isSessionRunning } from '@/lib/agent-hierarchy'
 import { cn } from '@/lib/utils'
 import { SessionRowItem } from './SessionRowItem'
@@ -40,16 +36,10 @@ export function CortexSection({
   onDeleteAgent,
   onOpenCortexReview,
   outstandingReviewCount,
-  onCreateSession,
   onStopSession,
   onResumeSession,
-  onDeleteSession,
-  onRequestRenameSession,
-  onRequestRenameProfile,
-  onForkSession,
   onMarkUnread,
   onMarkAllRead,
-  onChangeModel,
   highlightQuery,
   mutedAgents,
   onToggleMute,
@@ -178,55 +168,10 @@ export function CortexSection({
               ) : null}
             </button>
 
-            {/* New session button */}
-            {onCreateSession ? (
-              <TooltipProvider delayDuration={300}>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        onCreateSession(profile.profileId)
-                      }}
-                      className={cn(
-                        'mr-1 inline-flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground/60 transition',
-                        'hover:bg-sidebar-accent/60 hover:text-sidebar-foreground',
-                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring/60',
-                      )}
-                      aria-label="New Cortex session"
-                    >
-                      <Plus className="size-3" aria-hidden="true" />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="top" sideOffset={6} className="px-2 py-1 text-[10px]">
-                    New session
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            ) : null}
           </div>
         </ContextMenuTrigger>
 
         <ContextMenuContent>
-          {onCreateSession ? (
-            <ContextMenuItem onClick={() => onCreateSession(profile.profileId)}>
-              <Plus className="mr-2 size-3.5" />
-              New Session
-            </ContextMenuItem>
-          ) : null}
-          {onRequestRenameProfile ? (
-            <ContextMenuItem onClick={() => onRequestRenameProfile(profile.profileId)}>
-              <Edit3 className="mr-2 size-3.5" />
-              Rename
-            </ContextMenuItem>
-          ) : null}
-          {onChangeModel ? (
-            <ContextMenuItem onClick={() => onChangeModel(profile.profileId)}>
-              <RefreshCw className="mr-2 size-3.5" />
-              Change Model
-            </ContextMenuItem>
-          ) : null}
           {cortexRunning && onStopSession && targetId ? (
             <ContextMenuItem onClick={() => onStopSession(targetId)}>
               <Pause className="mr-2 size-3.5" />
@@ -311,9 +256,6 @@ export function CortexSection({
                         onDeleteAgent={onDeleteAgent}
                         onStop={onStopSession ? () => onStopSession(sid) : undefined}
                         onResume={onResumeSession ? () => onResumeSession(sid) : undefined}
-                        onDelete={onDeleteSession ? () => onDeleteSession(sid) : undefined}
-                        onRename={onRequestRenameSession ? () => onRequestRenameSession(sid) : undefined}
-                        onFork={onForkSession ? () => onForkSession(sid) : undefined}
                         onMarkUnread={onMarkUnread ? () => onMarkUnread(sid) : undefined}
                         onStopWorker={onStopSession}
                         onResumeWorker={onResumeSession}

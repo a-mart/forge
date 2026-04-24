@@ -13,6 +13,8 @@ import {
   Pause,
   Pin,
   Play,
+  RefreshCw,
+  RotateCcw,
   Settings,
   Sparkles,
   Trash2,
@@ -61,6 +63,8 @@ const SESSION_ROW_REF_EQUAL_KEYS: (keyof SessionRowItemProps)[] = [
   'onOpenProjectAgentSettings',
   'onDemoteProjectAgent',
   'onViewCreationHistory',
+  'onChangeSessionModel',
+  'onUseProjectDefault',
   'isMutedSession',
   'onToggleMute',
   'getCreatorAttribution',
@@ -106,6 +110,8 @@ export const SessionRowItem = React.memo(function SessionRowItem({
   onOpenProjectAgentSettings,
   onDemoteProjectAgent,
   onViewCreationHistory,
+  onChangeSessionModel,
+  onUseProjectDefault,
   isMutedSession,
   onToggleMute,
   getCreatorAttribution,
@@ -121,6 +127,7 @@ export const SessionRowItem = React.memo(function SessionRowItem({
   const isProjectAgent = Boolean(sessionAgent.projectAgent)
   const isAgentCreator = sessionAgent.sessionPurpose === 'agent_creator'
   const isPinned = Boolean(sessionAgent.pinnedAt)
+  const isModelOverridden = sessionAgent.modelOrigin === 'session_override'
   const creatorLabel = sessionAgent.creatorAgentId && getCreatorAttribution
     ? getCreatorAttribution(sessionAgent.creatorAgentId)
     : null
@@ -241,6 +248,7 @@ export const SessionRowItem = React.memo(function SessionRowItem({
                   {sessionAgent.model.thinkingLevel ? (
                     <p className="opacity-80">reasoning: {sessionAgent.model.thinkingLevel}</p>
                   ) : null}
+                  <p className="opacity-60">{isModelOverridden ? 'session override' : 'project default'}</p>
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
@@ -279,6 +287,18 @@ export const SessionRowItem = React.memo(function SessionRowItem({
             <ContextMenuItem onClick={() => onFork()}>
               <GitFork className="mr-2 size-3.5" />
               Fork
+            </ContextMenuItem>
+          ) : null}
+          {onChangeSessionModel ? (
+            <ContextMenuItem onClick={() => onChangeSessionModel()}>
+              <RefreshCw className="mr-2 size-3.5" />
+              {isModelOverridden ? 'Change Session Model' : 'Override Session Model'}
+            </ContextMenuItem>
+          ) : null}
+          {isModelOverridden && onUseProjectDefault ? (
+            <ContextMenuItem onClick={() => onUseProjectDefault()}>
+              <RotateCcw className="mr-2 size-3.5" />
+              Use Project Default
             </ContextMenuItem>
           ) : null}
           {running && onStop ? (

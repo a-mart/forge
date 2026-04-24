@@ -50,6 +50,13 @@ export function handleSessionEvent(
       })
       return true
 
+    case 'session_model_updated':
+      context.requestTracker.resolve('update_session_model', event.requestId, {
+        sessionAgentId: event.sessionAgentId,
+        mode: event.mode,
+      })
+      return true
+
     case 'profile_renamed':
       context.requestTracker.resolve('rename_profile', event.requestId, {
         profileId: event.profileId,

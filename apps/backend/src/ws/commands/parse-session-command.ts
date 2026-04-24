@@ -1,4 +1,10 @@
 import {
+  describeSwarmModelPresets,
+  describeSwarmReasoningLevels,
+  isSwarmModelPreset,
+  isSwarmReasoningLevel
+} from "../../swarm/model-presets.js";
+import {
   fail,
   ok,
   type ClientCommandCandidate,
@@ -156,6 +162,46 @@ export function parseSessionCommand(maybe: ClientCommandCandidate): ParsedClient
       type: "pin_session",
       agentId: agentId.trim(),
       pinned,
+      requestId
+    });
+  }
+
+  if (maybe.type === "update_session_model") {
+    const sessionAgentId = (maybe as { sessionAgentId?: unknown }).sessionAgentId;
+    const mode = (maybe as { mode?: unknown }).mode;
+    const model = (maybe as { model?: unknown }).model;
+    const reasoningLevel = (maybe as { reasoningLevel?: unknown }).reasoningLevel;
+    const requestId = (maybe as { requestId?: unknown }).requestId;
+
+    if (typeof sessionAgentId !== "string" || sessionAgentId.trim().length === 0) {
+      return fail("update_session_model.sessionAgentId must be a non-empty string");
+    }
+    if (mode !== "inherit" && mode !== "override") {
+      return fail('update_session_model.mode must be "inherit" or "override"');
+    }
+    if (mode === "override" && !isSwarmModelPreset(model)) {
+      return fail(`update_session_model.model must be one of ${describeSwarmModelPresets()}`);
+    }
+    if (mode === "inherit" && model !== undefined) {
+      return fail("update_session_model.model must be omitted in inherit mode");
+    }
+    if (reasoningLevel !== undefined && !isSwarmReasoningLevel(reasoningLevel)) {
+      return fail(`update_session_model.reasoningLevel must be one of ${describeSwarmReasoningLevels()}`);
+    }
+    if (mode === "inherit" && reasoningLevel !== undefined) {
+      return fail("update_session_model.reasoningLevel must be omitted in inherit mode");
+    }
+    if (requestId !== undefined && typeof requestId !== "string") {
+      return fail("update_session_model.requestId must be a string when provided");
+    }
+
+    const overrideModel = mode === "override" ? (model as string) : undefined;
+
+    return ok({
+      type: "update_session_model",
+      sessionAgentId: sessionAgentId.trim(),
+      mode,
+      ...(overrideModel ? { model: overrideModel, reasoningLevel } : {}),
       requestId
     });
   }

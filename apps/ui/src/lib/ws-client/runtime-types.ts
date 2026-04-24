@@ -12,6 +12,7 @@ export const MAX_CLIENT_CONVERSATION_HISTORY = 2000
 export const WS_REQUEST_TYPES: WsRequestType[] = [
   'create_manager',
   'delete_manager',
+  'update_profile_default_model',
   'update_manager_model',
   'update_manager_cwd',
   'stop_all_agents',
@@ -22,6 +23,7 @@ export const WS_REQUEST_TYPES: WsRequestType[] = [
   'clear_session',
   'rename_session',
   'pin_session',
+  'update_session_model',
   'rename_profile',
   'fork_session',
   'merge_session_memory',
@@ -41,6 +43,7 @@ export const WS_REQUEST_TYPES: WsRequestType[] = [
 export const WS_REQUEST_ERROR_HINTS: WsRequestErrorHint[] = [
   { requestType: 'create_manager', codeFragment: 'create_manager' },
   { requestType: 'delete_manager', codeFragment: 'delete_manager' },
+  { requestType: 'update_profile_default_model', codeFragment: 'update_profile_default_model' },
   { requestType: 'update_manager_model', codeFragment: 'update_manager_model' },
   { requestType: 'update_manager_cwd', codeFragment: 'update_manager_cwd' },
   { requestType: 'stop_all_agents', codeFragment: 'stop_all_agents' },
@@ -51,6 +54,7 @@ export const WS_REQUEST_ERROR_HINTS: WsRequestErrorHint[] = [
   { requestType: 'clear_session', codeFragment: 'clear_session' },
   { requestType: 'rename_session', codeFragment: 'rename_session' },
   { requestType: 'pin_session', codeFragment: 'pin_session' },
+  { requestType: 'update_session_model', codeFragment: 'update_session_model' },
   { requestType: 'rename_profile', codeFragment: 'rename_profile' },
   { requestType: 'fork_session', codeFragment: 'fork_session' },
   { requestType: 'merge_session_memory', codeFragment: 'merge_session_memory' },

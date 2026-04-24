@@ -86,19 +86,19 @@ export function ChangeModelDialog({
     <Dialog open onOpenChange={(open) => { if (!open) onClose() }}>
       <DialogContent className="max-w-sm p-4">
         <DialogHeader className="mb-3">
-          <DialogTitle>Change Model</DialogTitle>
+          <DialogTitle>Change Default Model</DialogTitle>
           <DialogDescription>
-            Update the model and reasoning level for {profileLabel}. Changes take effect on the next session resume or new message.
+            Update the default model and reasoning level for {profileLabel}. Sessions using the project default will be updated. Sessions with a model override are not affected.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
-            <label className="text-sm font-medium">Model</label>
+            <label id="change-model-model-label" className="text-sm font-medium">Model</label>
             <Select
               value={model}
               onValueChange={(value) => setModel(value as ManagerModelPreset)}
             >
-              <SelectTrigger className="w-full">
+              <SelectTrigger className="w-full" aria-labelledby="change-model-model-label">
                 <SelectValue placeholder="Select model preset" />
               </SelectTrigger>
               <SelectContent>
@@ -112,12 +112,12 @@ export function ChangeModelDialog({
           </div>
 
           <div className="space-y-2">
-            <label className="text-sm font-medium">Reasoning Level</label>
+            <label id="change-model-reasoning-label" className="text-sm font-medium">Reasoning Level</label>
             <Select
               value={reasoning}
               onValueChange={(value) => setReasoning(value as ManagerReasoningLevel)}
             >
-              <SelectTrigger className="w-full">
+              <SelectTrigger className="w-full" aria-labelledby="change-model-reasoning-label">
                 <SelectValue placeholder="Select reasoning level" />
               </SelectTrigger>
               <SelectContent>

@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { SessionManager } from '@mariozechner/pi-coding-agent'
 import { getCatalogModelKey } from '@forge/protocol'
 import { getSessionDir } from '../data-paths.js'
+import { resolveModelDescriptorFromPreset } from '../model-presets.js'
 import { readSessionMeta } from '../session-manifest.js'
 import { modelCatalogService } from '../model-catalog-service.js'
 import { loadModelChangeContinuityState } from '../runtime/model-change-continuity.js'
@@ -425,6 +426,138 @@ describe('SwarmManager', () => {
         }),
       ]),
     )
+  })
+
+  it('creates new sessions from the profile default model even when the root session overrides its own model', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const initialRootModel = manager.getAgent('manager')?.model
+
+    await manager.updateSessionModel('manager', 'override', 'pi-5.4')
+
+    const created = await manager.createSession('manager', { label: 'Inherited Child' })
+
+    expect(manager.getAgent('manager')).toMatchObject({
+      model: resolveModelDescriptorFromPreset('pi-5.4'),
+      modelOrigin: 'session_override',
+    })
+    expect(created.sessionAgent).toMatchObject({
+      model: initialRootModel,
+      modelOrigin: 'profile_default',
+    })
+  })
+
+  it('preserves the source session model state when forking', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const { sessionAgent } = await manager.createSession('manager', { label: 'Source Session' })
+    await manager.updateSessionModel(sessionAgent.agentId, 'override', 'pi-opus')
+
+    const forked = await manager.forkSession(sessionAgent.agentId, { label: 'Forked Session' })
+
+    expect(manager.getAgent(sessionAgent.agentId)).toMatchObject({
+      model: resolveModelDescriptorFromPreset('pi-opus'),
+      modelOrigin: 'session_override',
+    })
+    expect(forked.sessionAgent).toMatchObject({
+      model: resolveModelDescriptorFromPreset('pi-opus'),
+      modelOrigin: 'session_override',
+    })
+  })
+
+  it('createSessionFromAgent inherits the profile default when model and reasoning are omitted', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const initialRootModel = manager.getAgent('manager')?.model
+
+    await manager.setSessionProjectAgent('manager', {
+      handle: 'session-maker',
+      whenToUse: 'Create child sessions.',
+      capabilities: ['create_session'],
+    })
+
+    const created = await manager.createSessionFromAgent('manager', {
+      sessionName: 'Inherited Child',
+    })
+
+    expect(manager.getAgent(created.sessionAgentId)).toMatchObject({
+      model: initialRootModel,
+      modelOrigin: 'profile_default',
+    })
+  })
+
+  it('createSessionFromAgent creates a session override when an explicit model is provided', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await manager.setSessionProjectAgent('manager', {
+      handle: 'session-maker',
+      whenToUse: 'Create child sessions.',
+      capabilities: ['create_session'],
+    })
+
+    const created = await manager.createSessionFromAgent('manager', {
+      sessionName: 'Explicit Model Child',
+      model: 'pi-opus',
+    })
+
+    expect(manager.getAgent(created.sessionAgentId)).toMatchObject({
+      model: resolveModelDescriptorFromPreset('pi-opus'),
+      modelOrigin: 'session_override',
+    })
+  })
+
+  it('createSessionFromAgent creates a session override when only reasoning is provided', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const initialRootModel = manager.getAgent('manager')?.model
+
+    await manager.setSessionProjectAgent('manager', {
+      handle: 'session-maker',
+      whenToUse: 'Create child sessions.',
+      capabilities: ['create_session'],
+    })
+
+    const created = await manager.createSessionFromAgent('manager', {
+      sessionName: 'Reasoning Override Child',
+      reasoningLevel: 'high',
+    })
+
+    expect(manager.getAgent(created.sessionAgentId)).toMatchObject({
+      model: {
+        ...initialRootModel,
+        thinkingLevel: 'high',
+      },
+      modelOrigin: 'session_override',
+    })
+  })
+
+  it('createSessionFromAgent preserves an overridden creator model when no explicit model is provided', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await manager.setSessionProjectAgent('manager', {
+      handle: 'session-maker',
+      whenToUse: 'Create child sessions.',
+      capabilities: ['create_session'],
+    })
+    await manager.updateSessionModel('manager', 'override', 'pi-opus')
+
+    const created = await manager.createSessionFromAgent('manager', {
+      sessionName: 'Inherited Override Child',
+    })
+
+    expect(manager.getAgent(created.sessionAgentId)).toMatchObject({
+      model: resolveModelDescriptorFromPreset('pi-opus'),
+      modelOrigin: 'session_override',
+    })
   })
 
   it('maps create_manager model presets to canonical runtime models with highest reasoning', async () => {

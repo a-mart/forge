@@ -10,7 +10,14 @@ import type {
   CollaborationUnsubscribeChannelCommand,
   CollaborationUserMessageCommand,
 } from './collaboration.js'
-import type { AgentSessionPurpose, ChoiceAnswer, DeliveryMode, ManagerModelPreset, ManagerReasoningLevel } from './shared-types.js'
+import type {
+  AgentSessionPurpose,
+  ChoiceAnswer,
+  DeliveryMode,
+  ManagerModelPreset,
+  ManagerReasoningLevel,
+  SessionModelUpdateMode,
+} from './shared-types.js'
 
 export interface ApiProxyCommand {
   type: 'api_proxy'
@@ -42,8 +49,23 @@ export type ClientCommand =
   | { type: 'stop_all_agents'; managerId: string; requestId?: string }
   | { type: 'create_manager'; name: string; cwd: string; model?: ManagerModelPreset; requestId?: string }
   | { type: 'delete_manager'; managerId: string; requestId?: string }
+  | {
+      type: 'update_profile_default_model'
+      profileId: string
+      model: ManagerModelPreset
+      reasoningLevel?: ManagerReasoningLevel
+      requestId?: string
+    }
   | { type: 'update_manager_model'; managerId: string; model: ManagerModelPreset; reasoningLevel?: ManagerReasoningLevel; requestId?: string }
   | { type: 'update_manager_cwd'; managerId: string; cwd: string; requestId?: string }
+  | {
+      type: 'update_session_model'
+      sessionAgentId: string
+      mode: SessionModelUpdateMode
+      model?: ManagerModelPreset
+      reasoningLevel?: ManagerReasoningLevel
+      requestId?: string
+    }
   | { type: 'create_session'; profileId: string; label?: string; name?: string; sessionPurpose?: AgentSessionPurpose; requestId?: string }
   | { type: 'stop_session'; agentId: string; requestId?: string }
   | { type: 'resume_session'; agentId: string; requestId?: string }

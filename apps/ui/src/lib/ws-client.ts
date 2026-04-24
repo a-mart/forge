@@ -34,6 +34,8 @@ import {
   buildSubscribeCommand,
   buildUpdateManagerCwdCommand,
   buildUpdateManagerModelCommand,
+  buildUpdateProfileDefaultModelCommand,
+  buildUpdateSessionModelCommand,
   buildUserMessageCommand,
   buildValidateDirectoryCommand,
   isSocketOpen,
@@ -384,6 +386,17 @@ export class ManagerWsClient {
     )
   }
 
+  async updateProfileDefaultModel(
+    profileId: string,
+    model: ManagerModelPreset,
+    reasoningLevel?: ManagerReasoningLevel,
+  ): Promise<{ profileId: string }> {
+    assertReconnectableSocket(this.socket)
+    return this.enqueueRequest('update_profile_default_model', (requestId) =>
+      buildUpdateProfileDefaultModelCommand(profileId, model, reasoningLevel, requestId),
+    )
+  }
+
   async updateManagerModel(
     managerId: string,
     model: ManagerModelPreset,
@@ -446,6 +459,18 @@ export class ManagerWsClient {
     assertReconnectableSocket(this.socket)
     return this.enqueueRequest('create_session', (requestId) =>
       buildCreateSessionCommand(profileId, name, opts, requestId),
+    )
+  }
+
+  async updateSessionModel(
+    sessionAgentId: string,
+    mode: 'inherit' | 'override',
+    model?: ManagerModelPreset,
+    reasoningLevel?: ManagerReasoningLevel,
+  ): Promise<{ sessionAgentId: string; mode: 'inherit' | 'override' }> {
+    assertReconnectableSocket(this.socket)
+    return this.enqueueRequest('update_session_model', (requestId) =>
+      buildUpdateSessionModelCommand(sessionAgentId, mode, model, reasoningLevel, requestId),
     )
   }
 

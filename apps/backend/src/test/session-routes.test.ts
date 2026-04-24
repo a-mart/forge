@@ -2,11 +2,18 @@ import { describe, expect, it, vi } from "vitest";
 import type { ServerEvent } from "@forge/protocol";
 import { handleSessionCommand } from "../ws/routes/session-routes.js";
 
+const DEFAULT_MODEL = {
+  provider: "openai-codex",
+  modelId: "gpt-5.3-codex",
+  thinkingLevel: "medium",
+} as const;
+
 const USER_PROFILES = [
   {
     profileId: "profile-a",
     displayName: "Profile A",
     defaultSessionAgentId: "profile-a",
+    defaultModel: { ...DEFAULT_MODEL },
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
     profileType: "user" as const,
@@ -110,6 +117,7 @@ describe("session routes", () => {
           profileId: "_collaboration",
           displayName: "Collaboration",
           defaultSessionAgentId: "_collaboration",
+          defaultModel: { ...DEFAULT_MODEL },
           createdAt: "2026-01-01T00:00:00.000Z",
           updatedAt: "2026-01-01T00:00:00.000Z",
           profileType: "system" as const,
@@ -233,6 +241,7 @@ describe("session routes", () => {
           profileId: "_collaboration",
           displayName: "Collaboration",
           defaultSessionAgentId: "_collaboration",
+          defaultModel: { ...DEFAULT_MODEL },
           createdAt: "2026-01-01T00:00:00.000Z",
           updatedAt: "2026-01-01T00:00:00.000Z",
           profileType: "system" as const,
@@ -308,6 +317,7 @@ describe("session routes", () => {
           profileId: "_collaboration",
           displayName: "Collaboration",
           defaultSessionAgentId: "_collaboration",
+          defaultModel: { ...DEFAULT_MODEL },
           createdAt: "2026-01-01T00:00:00.000Z",
           updatedAt: "2026-01-01T00:00:00.000Z",
           profileType: "system" as const,
@@ -378,6 +388,7 @@ describe("session routes", () => {
           profileId: "_collaboration",
           displayName: "Collaboration",
           defaultSessionAgentId: "_collaboration",
+          defaultModel: { ...DEFAULT_MODEL },
           createdAt: "2026-01-01T00:00:00.000Z",
           updatedAt: "2026-01-01T00:00:00.000Z",
           profileType: "system" as const,
@@ -485,6 +496,7 @@ describe("session routes", () => {
           profileId: "_collaboration",
           displayName: "Collaboration",
           defaultSessionAgentId: "_collaboration",
+          defaultModel: { ...DEFAULT_MODEL },
           createdAt: "2026-01-01T00:00:00.000Z",
           updatedAt: "2026-01-01T00:00:00.000Z",
           profileType: "system" as const,
@@ -574,6 +586,7 @@ describe("session routes", () => {
           profileId: "_collaboration",
           displayName: "Collaboration",
           defaultSessionAgentId: "_collaboration",
+          defaultModel: { ...DEFAULT_MODEL },
           createdAt: "2026-01-01T00:00:00.000Z",
           updatedAt: "2026-01-01T00:00:00.000Z",
           profileType: "system" as const,

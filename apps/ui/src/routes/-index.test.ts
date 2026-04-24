@@ -210,7 +210,7 @@ describe('IndexPage create project model selection', () => {
 
     click(getAllByRole(container, 'button', { name: 'Add project' })[0])
 
-    const modelSelect = getByRole(document.body, 'combobox', { name: 'Model' })
+    const modelSelect = getByRole(document.body, 'combobox', { name: 'Default Model' })
     expect(modelSelect.textContent).toContain('GPT-5.3 Codex')
 
     click(modelSelect as HTMLElement)
@@ -229,7 +229,7 @@ describe('IndexPage create project model selection', () => {
     changeValue(getByLabelText(document.body, 'Name') as HTMLInputElement, 'release-manager')
     changeValue(getByLabelText(document.body, 'Working directory') as HTMLInputElement, '/tmp/release')
 
-    const modelSelect = getByRole(document.body, 'combobox', { name: 'Model' })
+    const modelSelect = getByRole(document.body, 'combobox', { name: 'Default Model' })
     click(modelSelect as HTMLElement)
     click(getByRole(document.body, 'option', { name: 'Claude Opus 4.6' }))
 

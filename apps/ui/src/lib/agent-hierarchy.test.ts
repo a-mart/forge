@@ -50,6 +50,11 @@ function profile(profileId: string): ManagerProfile {
     profileId,
     displayName: profileId,
     defaultSessionAgentId: profileId,
+    defaultModel: {
+      provider: 'openai-codex',
+      modelId: 'gpt-5.3-codex',
+      thinkingLevel: 'medium',
+    },
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
   }

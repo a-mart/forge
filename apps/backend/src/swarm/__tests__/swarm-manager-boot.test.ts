@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { AuthStorage, SessionManager } from '@mariozechner/pi-coding-agent'
 import { getCatalogModelKey } from '@forge/protocol'
 import { getConversationHistoryCacheFilePath } from '../conversation-history-cache.js'
+import { resolveModelDescriptorFromPreset } from '../model-presets.js'
 import {
   getCommonKnowledgePath,
   getCortexPromotionManifestsDir,
@@ -1979,6 +1980,161 @@ describe('SwarmManager', () => {
     expect(
       restoredHistory.some((entry) => entry.type === 'agent_message' && entry.text === 'internal-message-2199'),
     ).toBe(true)
+  })
+
+  it('normalizes legacy profile default models and session model origins on boot', async () => {
+    const config = await makeTempConfig()
+    const legacyOverrideModel = resolveModelDescriptorFromPreset('pi-opus')
+
+    await writeFile(
+      config.paths.agentsStoreFile,
+      `${JSON.stringify(
+        {
+          agents: [
+            {
+              agentId: 'manager',
+              displayName: 'Manager',
+              role: 'manager',
+              managerId: 'manager',
+              profileId: 'manager',
+              status: 'idle',
+              createdAt: '2026-03-27T00:00:00.000Z',
+              updatedAt: '2026-03-27T00:00:00.000Z',
+              cwd: config.defaultCwd,
+              model: config.defaultModel,
+              sessionFile: join(config.paths.sessionsDir, 'manager.jsonl'),
+            },
+            {
+              agentId: 'manager--s2',
+              displayName: 'Inherited Session',
+              role: 'manager',
+              managerId: 'manager--s2',
+              profileId: 'manager',
+              status: 'idle',
+              createdAt: '2026-03-27T00:01:00.000Z',
+              updatedAt: '2026-03-27T00:01:00.000Z',
+              cwd: config.defaultCwd,
+              model: config.defaultModel,
+              sessionFile: join(config.paths.sessionsDir, 'manager--s2.jsonl'),
+            },
+            {
+              agentId: 'manager--s3',
+              displayName: 'Override Session',
+              role: 'manager',
+              managerId: 'manager--s3',
+              profileId: 'manager',
+              status: 'idle',
+              createdAt: '2026-03-27T00:02:00.000Z',
+              updatedAt: '2026-03-27T00:02:00.000Z',
+              cwd: config.defaultCwd,
+              model: legacyOverrideModel,
+              sessionFile: join(config.paths.sessionsDir, 'manager--s3.jsonl'),
+            },
+          ],
+          profiles: [
+            {
+              profileId: 'manager',
+              displayName: 'Manager',
+              defaultSessionAgentId: 'manager',
+              createdAt: '2026-03-27T00:00:00.000Z',
+              updatedAt: '2026-03-27T00:00:00.000Z',
+            },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+      'utf8',
+    )
+
+    const manager = new TestSwarmManager(config)
+    await manager.boot()
+
+    const normalizedProfile = manager.listProfiles().find((profile) => profile.profileId === 'manager')
+    expect(normalizedProfile?.defaultModel).toEqual(config.defaultModel)
+    expect(manager.getAgent('manager')).toMatchObject({ modelOrigin: 'profile_default' })
+    expect(manager.getAgent('manager--s2')).toMatchObject({ modelOrigin: 'profile_default' })
+    expect(manager.getAgent('manager--s3')).toMatchObject({ modelOrigin: 'session_override' })
+
+    const persistedStore = JSON.parse(await readFile(config.paths.agentsStoreFile, 'utf8')) as {
+      agents: Array<{ agentId: string; modelOrigin?: string }>
+      profiles: Array<{ profileId: string; defaultModel?: unknown }>
+    }
+    expect(persistedStore.profiles.find((profile) => profile.profileId === 'manager')).toEqual(
+      expect.objectContaining({ defaultModel: config.defaultModel }),
+    )
+    expect(persistedStore.agents.find((agent) => agent.agentId === 'manager--s2')).toEqual(
+      expect.objectContaining({ modelOrigin: 'profile_default' }),
+    )
+    expect(persistedStore.agents.find((agent) => agent.agentId === 'manager--s3')).toEqual(
+      expect.objectContaining({ modelOrigin: 'session_override' }),
+    )
+  })
+
+  it('does not force the default session to inherited when an explicit profile default model differs', async () => {
+    const config = await makeTempConfig()
+    const explicitDefaultModel = resolveModelDescriptorFromPreset('pi-5.4')
+
+    await writeFile(
+      config.paths.agentsStoreFile,
+      `${JSON.stringify(
+        {
+          agents: [
+            {
+              agentId: 'manager',
+              displayName: 'Manager',
+              role: 'manager',
+              managerId: 'manager',
+              profileId: 'manager',
+              status: 'idle',
+              createdAt: '2026-03-27T00:00:00.000Z',
+              updatedAt: '2026-03-27T00:00:00.000Z',
+              cwd: config.defaultCwd,
+              model: resolveModelDescriptorFromPreset('pi-opus'),
+              sessionFile: join(config.paths.sessionsDir, 'manager.jsonl'),
+            },
+            {
+              agentId: 'manager--s2',
+              displayName: 'Inherited Session',
+              role: 'manager',
+              managerId: 'manager--s2',
+              profileId: 'manager',
+              status: 'idle',
+              createdAt: '2026-03-27T00:01:00.000Z',
+              updatedAt: '2026-03-27T00:01:00.000Z',
+              cwd: config.defaultCwd,
+              model: explicitDefaultModel,
+              sessionFile: join(config.paths.sessionsDir, 'manager--s2.jsonl'),
+            },
+          ],
+          profiles: [
+            {
+              profileId: 'manager',
+              displayName: 'Manager',
+              defaultSessionAgentId: 'manager',
+              defaultModel: explicitDefaultModel,
+              createdAt: '2026-03-27T00:00:00.000Z',
+              updatedAt: '2026-03-27T00:00:00.000Z',
+            },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+      'utf8',
+    )
+
+    const manager = new TestSwarmManager(config)
+    await manager.boot()
+
+    expect(manager.getAgent('manager')).toMatchObject({
+      model: resolveModelDescriptorFromPreset('pi-opus'),
+      modelOrigin: 'session_override',
+    })
+    expect(manager.getAgent('manager--s2')).toMatchObject({
+      model: explicitDefaultModel,
+      modelOrigin: 'profile_default',
+    })
   })
 
 })

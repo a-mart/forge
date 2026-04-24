@@ -85,6 +85,7 @@ function profileFor(agent: AgentDescriptor): ManagerProfile {
     profileId: agent.agentId,
     displayName: agent.displayName || agent.agentId,
     defaultSessionAgentId: agent.agentId,
+    defaultModel: { ...agent.model },
     createdAt: agent.createdAt,
     updatedAt: agent.updatedAt,
   }
@@ -280,6 +281,7 @@ describe('AgentSidebar', () => {
       profileId: 'alpha-mgr',
       displayName: 'alpha-mgr',
       defaultSessionAgentId: 'alpha-mgr',
+      defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-01-01T00:00:00.000Z',
     }
@@ -287,6 +289,7 @@ describe('AgentSidebar', () => {
       profileId: 'beta-mgr',
       displayName: 'beta-mgr',
       defaultSessionAgentId: 'beta-mgr',
+      defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
       createdAt: '2026-02-01T00:00:00.000Z',
       updatedAt: '2026-02-01T00:00:00.000Z',
     }
@@ -333,6 +336,7 @@ describe('AgentSidebar', () => {
       profileId: 'cortex',
       displayName: 'Cortex',
       defaultSessionAgentId: 'cortex',
+      defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
       createdAt,
       updatedAt,
     }
@@ -370,6 +374,7 @@ describe('AgentSidebar', () => {
       profileId: 'cortex',
       displayName: 'Cortex',
       defaultSessionAgentId: 'cortex',
+      defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
       createdAt,
       updatedAt,
     }
@@ -410,6 +415,7 @@ describe('AgentSidebar', () => {
       profileId: 'cortex',
       displayName: 'Cortex',
       defaultSessionAgentId: 'cortex',
+      defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
       createdAt,
       updatedAt,
     }
@@ -450,6 +456,7 @@ describe('AgentSidebar', () => {
       profileId: 'cortex',
       displayName: 'Cortex',
       defaultSessionAgentId: 'cortex',
+      defaultModel: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
       createdAt,
       updatedAt,
     }

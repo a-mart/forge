@@ -6,6 +6,11 @@ function createProfile(overrides: Partial<ManagerProfile> = {}): ManagerProfile 
     profileId: overrides.profileId ?? 'alpha',
     displayName: overrides.displayName ?? 'Alpha',
     defaultSessionAgentId: overrides.defaultSessionAgentId ?? 'alpha',
+    defaultModel: overrides.defaultModel ?? {
+      provider: 'openai-codex',
+      modelId: 'gpt-5.3-codex',
+      thinkingLevel: 'medium',
+    },
     createdAt: overrides.createdAt ?? '2026-04-14T00:00:00.000Z',
     updatedAt: overrides.updatedAt ?? '2026-04-14T00:00:00.000Z',
     ...(overrides.profileType ? { profileType: overrides.profileType } : {}),

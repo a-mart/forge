@@ -71,17 +71,25 @@ function createConfig(rootDir: string): SwarmConfig {
   };
 }
 
-function createProfile(): ManagerProfile {
+function createProfile(
+  defaultModel = resolveModelDescriptorFromPreset("pi-codex")
+): ManagerProfile {
   return {
     profileId: "manager",
     displayName: "Manager",
     defaultSessionAgentId: "manager",
+    defaultModel: { ...defaultModel },
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z"
   };
 }
 
-function createSession(rootDir: string, agentId: string, model = resolveModelDescriptorFromPreset("pi-codex")): AgentDescriptor & {
+function createSession(
+  rootDir: string,
+  agentId: string,
+  model = resolveModelDescriptorFromPreset("pi-codex"),
+  modelOrigin: AgentDescriptor["modelOrigin"] = "profile_default"
+): AgentDescriptor & {
   role: "manager";
   profileId: string;
 } {
@@ -96,6 +104,7 @@ function createSession(rootDir: string, agentId: string, model = resolveModelDes
     updatedAt: "2026-01-01T00:00:00.000Z",
     cwd: rootDir,
     model: { ...model },
+    modelOrigin,
     sessionFile: join(rootDir, "data", "profiles", "manager", "sessions", agentId, "session.jsonl")
   };
 }
@@ -103,13 +112,16 @@ function createSession(rootDir: string, agentId: string, model = resolveModelDes
 function createService(options: {
   rootDir: string;
   sessions: Array<AgentDescriptor & { role: "manager"; profileId: string }>;
+  profileDefaultModel?: AgentDescriptor["model"];
+  profiles?: Map<string, ManagerProfile>;
   applyManagerRuntimeRecyclePolicy?: ReturnType<typeof vi.fn>;
   saveStore?: ReturnType<typeof vi.fn>;
   emitAgentsSnapshot?: ReturnType<typeof vi.fn>;
+  emitProfilesSnapshot?: ReturnType<typeof vi.fn>;
   logDebug?: ReturnType<typeof vi.fn>;
   now?: () => string;
 }): SwarmSettingsService {
-  const profiles = new Map<string, ManagerProfile>([["manager", createProfile()]]);
+  const profiles = options.profiles ?? new Map<string, ManagerProfile>([["manager", createProfile(options.profileDefaultModel)]]);
 
   return new SwarmSettingsService({
     config: createConfig(options.rootDir),
@@ -125,6 +137,7 @@ function createService(options: {
     now: options.now,
     saveStore: options.saveStore ?? vi.fn(async () => {}),
     emitAgentsSnapshot: options.emitAgentsSnapshot ?? vi.fn(),
+    emitProfilesSnapshot: options.emitProfilesSnapshot ?? vi.fn(),
     logDebug: options.logDebug ?? vi.fn()
   });
 }
@@ -176,12 +189,10 @@ describe("SwarmSettingsService.updateManagerModel", () => {
     });
   });
 
-  it("treats no-op model changes as a true no-op without writing requests or recycling, including x-high normalization", async () => {
+  it("legacy session-targeted updateManagerModel creates sticky same-as-default overrides without recycling", async () => {
     const root = await createTempRoot();
-    const session = createSession(root, "manager", {
-      ...resolveModelDescriptorFromPreset("pi-5.4"),
-      thinkingLevel: "x-high"
-    });
+    const defaultModel = resolveModelDescriptorFromPreset("pi-5.4");
+    const session = createSession(root, "manager--s2", defaultModel, "profile_default");
     const applyManagerRuntimeRecyclePolicy = vi.fn(async () => "recycled");
     const saveStore = vi.fn(async () => {});
     const emitAgentsSnapshot = vi.fn();
@@ -189,17 +200,20 @@ describe("SwarmSettingsService.updateManagerModel", () => {
     const service = createService({
       rootDir: root,
       sessions: [session],
+      profileDefaultModel: defaultModel,
       applyManagerRuntimeRecyclePolicy,
       saveStore,
       emitAgentsSnapshot
     });
 
-    await service.updateManagerModel("manager", "pi-5.4");
+    await service.updateManagerModel(session.agentId, "pi-5.4");
 
-    await expect(readFile(session.sessionFile, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    expect(session.model).toEqual(defaultModel);
+    expect(session.modelOrigin).toBe("session_override");
     expect(applyManagerRuntimeRecyclePolicy).not.toHaveBeenCalled();
-    expect(saveStore).not.toHaveBeenCalled();
-    expect(emitAgentsSnapshot).not.toHaveBeenCalled();
+    expect(saveStore).toHaveBeenCalledTimes(1);
+    expect(emitAgentsSnapshot).toHaveBeenCalledTimes(1);
+    await expect(readFile(session.sessionFile, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("aborts before any model mutation or recycle when any request write fails, leaving partial writes inert", async () => {
@@ -303,5 +317,203 @@ describe("SwarmSettingsService.updateManagerModel", () => {
       sourceModel: resolveModelDescriptorFromPreset("pi-codex"),
       targetModel: resolveModelDescriptorFromPreset("pi-opus")
     });
+  });
+
+  it("rolls back the profile default model when profile updates fail before session mutations apply", async () => {
+    const root = await createTempRoot();
+    const profiles = new Map<string, ManagerProfile>([["manager", createProfile()]]);
+    const firstSession = createSession(root, "manager");
+    const secondSession = createSession(root, "manager--s2");
+    await mkdir(join(root, "data", "profiles", "manager", "sessions", secondSession.agentId), { recursive: true });
+    await writeFile(secondSession.sessionFile, '{"type":"not-session","id":"broken"}\n', "utf8");
+
+    const service = createService({
+      rootDir: root,
+      sessions: [firstSession, secondSession],
+      profiles,
+      now: () => "2026-01-02T00:00:00.000Z"
+    });
+
+    await expect(service.updateProfileDefaultModel("manager", "pi-5.4")).rejects.toThrow(/invalid session header/i);
+
+    expect(profiles.get("manager")).toMatchObject({
+      defaultModel: resolveModelDescriptorFromPreset("pi-codex"),
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    });
+    expect(firstSession.model).toEqual(resolveModelDescriptorFromPreset("pi-codex"));
+    expect(secondSession.model).toEqual(resolveModelDescriptorFromPreset("pi-codex"));
+  });
+
+  it("rolls back session state and skips recycle when saveStore fails during a session model update", async () => {
+    const root = await createTempRoot();
+    const session = createSession(root, "manager--s2", resolveModelDescriptorFromPreset("pi-codex"), "profile_default");
+    const applyManagerRuntimeRecyclePolicy = vi.fn(async () => "recycled");
+    const saveStore = vi.fn(async () => {
+      throw new Error("save failed");
+    });
+    const service = createService({
+      rootDir: root,
+      sessions: [session],
+      applyManagerRuntimeRecyclePolicy,
+      saveStore,
+      now: () => "2026-01-02T00:00:00.000Z"
+    });
+
+    await expect(service.updateSessionModel(session.agentId, "override", "pi-5.4")).rejects.toThrow("save failed");
+
+    expect(session.model).toEqual(resolveModelDescriptorFromPreset("pi-codex"));
+    expect(session.modelOrigin).toBe("profile_default");
+    expect(applyManagerRuntimeRecyclePolicy).not.toHaveBeenCalled();
+  });
+
+  it("rolls back profile and session state and skips recycle when saveStore fails during a profile default update", async () => {
+    const root = await createTempRoot();
+    const profiles = new Map<string, ManagerProfile>([["manager", createProfile()]]);
+    const firstSession = createSession(root, "manager", resolveModelDescriptorFromPreset("pi-codex"), "profile_default");
+    const secondSession = createSession(root, "manager--s2", resolveModelDescriptorFromPreset("pi-codex"), "profile_default");
+    const applyManagerRuntimeRecyclePolicy = vi.fn(async () => "recycled");
+    const saveStore = vi.fn(async () => {
+      throw new Error("save failed");
+    });
+    const service = createService({
+      rootDir: root,
+      sessions: [firstSession, secondSession],
+      profiles,
+      applyManagerRuntimeRecyclePolicy,
+      saveStore,
+      now: () => "2026-01-02T00:00:00.000Z"
+    });
+
+    await expect(service.updateProfileDefaultModel("manager", "pi-5.4")).rejects.toThrow("save failed");
+
+    expect(profiles.get("manager")).toMatchObject({
+      defaultModel: resolveModelDescriptorFromPreset("pi-codex"),
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    });
+    expect(firstSession.model).toEqual(resolveModelDescriptorFromPreset("pi-codex"));
+    expect(secondSession.model).toEqual(resolveModelDescriptorFromPreset("pi-codex"));
+    expect(applyManagerRuntimeRecyclePolicy).not.toHaveBeenCalled();
+  });
+
+  it("treats session recycle failures after save as deferred and still completes the update", async () => {
+    const root = await createTempRoot();
+    const session = createSession(root, "manager--s2", resolveModelDescriptorFromPreset("pi-codex"), "profile_default");
+    let saved = false;
+    const applyManagerRuntimeRecyclePolicy = vi.fn(async () => {
+      expect(saved).toBe(true);
+      throw new Error("recycle failed");
+    });
+    const saveStore = vi.fn(async () => {
+      saved = true;
+    });
+    const emitAgentsSnapshot = vi.fn();
+    const service = createService({
+      rootDir: root,
+      sessions: [session],
+      applyManagerRuntimeRecyclePolicy,
+      saveStore,
+      emitAgentsSnapshot,
+      now: () => "2026-01-02T00:00:00.000Z"
+    });
+
+    await expect(service.updateSessionModel(session.agentId, "override", "pi-5.4")).resolves.toBeUndefined();
+
+    expect(session.model).toEqual(resolveModelDescriptorFromPreset("pi-5.4"));
+    expect(session.modelOrigin).toBe("session_override");
+    expect(saveStore).toHaveBeenCalledTimes(1);
+    expect(applyManagerRuntimeRecyclePolicy).toHaveBeenCalledTimes(1);
+    expect(emitAgentsSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it("treats profile-default recycle failures after save as deferred and still completes the update", async () => {
+    const root = await createTempRoot();
+    const profiles = new Map<string, ManagerProfile>([["manager", createProfile()]]);
+    const firstSession = createSession(root, "manager", resolveModelDescriptorFromPreset("pi-codex"), "profile_default");
+    const secondSession = createSession(root, "manager--s2", resolveModelDescriptorFromPreset("pi-codex"), "profile_default");
+    let saved = false;
+    const applyManagerRuntimeRecyclePolicy = vi.fn(async () => {
+      expect(saved).toBe(true);
+      throw new Error("recycle failed");
+    });
+    const saveStore = vi.fn(async () => {
+      saved = true;
+    });
+    const emitAgentsSnapshot = vi.fn();
+    const emitProfilesSnapshot = vi.fn();
+    const service = createService({
+      rootDir: root,
+      sessions: [firstSession, secondSession],
+      profiles,
+      applyManagerRuntimeRecyclePolicy,
+      saveStore,
+      emitAgentsSnapshot,
+      emitProfilesSnapshot,
+      now: () => "2026-01-02T00:00:00.000Z"
+    });
+
+    await expect(service.updateProfileDefaultModel("manager", "pi-5.4")).resolves.toBeUndefined();
+
+    expect(profiles.get("manager")).toMatchObject({
+      defaultModel: resolveModelDescriptorFromPreset("pi-5.4"),
+      updatedAt: "2026-01-02T00:00:00.000Z"
+    });
+    expect(firstSession.model).toEqual(resolveModelDescriptorFromPreset("pi-5.4"));
+    expect(secondSession.model).toEqual(resolveModelDescriptorFromPreset("pi-5.4"));
+    expect(saveStore).toHaveBeenCalledTimes(1);
+    expect(applyManagerRuntimeRecyclePolicy).toHaveBeenCalledTimes(2);
+    expect(emitAgentsSnapshot).toHaveBeenCalledTimes(1);
+    expect(emitProfilesSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it("updates only inherited sessions when the profile default model changes", async () => {
+    const root = await createTempRoot();
+    const inheritedRoot = createSession(root, "manager", resolveModelDescriptorFromPreset("pi-codex"), "profile_default");
+    const inheritedSession = createSession(root, "manager--s2", resolveModelDescriptorFromPreset("pi-codex"), "profile_default");
+    const overriddenSession = createSession(root, "manager--s3", resolveModelDescriptorFromPreset("pi-opus"), "session_override");
+    const applyManagerRuntimeRecyclePolicy = vi.fn(async () => "recycled");
+    const emitProfilesSnapshot = vi.fn();
+    const service = createService({
+      rootDir: root,
+      sessions: [inheritedRoot, inheritedSession, overriddenSession],
+      applyManagerRuntimeRecyclePolicy,
+      emitProfilesSnapshot,
+      now: () => "2026-01-02T00:00:00.000Z"
+    });
+
+    await service.updateProfileDefaultModel("manager", "pi-5.4");
+
+    expect(inheritedRoot.model).toEqual(resolveModelDescriptorFromPreset("pi-5.4"));
+    expect(inheritedSession.model).toEqual(resolveModelDescriptorFromPreset("pi-5.4"));
+    expect(overriddenSession.model).toEqual(resolveModelDescriptorFromPreset("pi-opus"));
+    expect(overriddenSession.modelOrigin).toBe("session_override");
+    expect(applyManagerRuntimeRecyclePolicy.mock.calls).toEqual([
+      ["manager", "model_change"],
+      ["manager--s2", "model_change"]
+    ]);
+    expect(emitProfilesSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it("persists metadata-only session override transitions without recycling when the effective model stays the same", async () => {
+    const root = await createTempRoot();
+    const session = createSession(root, "manager--s2", resolveModelDescriptorFromPreset("pi-codex"), "profile_default");
+    const applyManagerRuntimeRecyclePolicy = vi.fn(async () => "recycled");
+    const saveStore = vi.fn(async () => {});
+    const emitAgentsSnapshot = vi.fn();
+    const service = createService({
+      rootDir: root,
+      sessions: [session],
+      applyManagerRuntimeRecyclePolicy,
+      saveStore,
+      emitAgentsSnapshot
+    });
+
+    await service.updateSessionModel(session.agentId, "override", "pi-codex");
+
+    expect(session.model).toEqual(resolveModelDescriptorFromPreset("pi-codex"));
+    expect(session.modelOrigin).toBe("session_override");
+    expect(applyManagerRuntimeRecyclePolicy).not.toHaveBeenCalled();
+    expect(saveStore).toHaveBeenCalledTimes(1);
+    expect(emitAgentsSnapshot).toHaveBeenCalledTimes(1);
+    await expect(readFile(session.sessionFile, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 });

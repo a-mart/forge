@@ -283,6 +283,14 @@ export function validateAgentDescriptor(value: unknown): AgentDescriptor | strin
     return "sessionSystemPrompt must be a string when provided";
   }
 
+  if (
+    value.modelOrigin !== undefined &&
+    value.modelOrigin !== "profile_default" &&
+    value.modelOrigin !== "session_override"
+  ) {
+    return 'modelOrigin must be "profile_default" or "session_override" when provided';
+  }
+
   if (value.pinnedAt !== undefined && typeof value.pinnedAt !== "string") {
     return "pinnedAt must be a string when provided";
   }

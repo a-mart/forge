@@ -50,6 +50,8 @@ export const ProfileGroup = React.memo(function ProfileGroup({
   onMarkUnread,
   onMarkAllRead,
   onChangeModel,
+  onChangeSessionModel,
+  onUseProjectDefault,
   onChangeCwd,
   showModelIcons,
   highlightQuery,
@@ -76,7 +78,13 @@ export const ProfileGroup = React.memo(function ProfileGroup({
   if (sessions.length > 0) {
     profileTooltipLines.push(`${sessions.length} session${sessions.length !== 1 ? 's' : ''}`)
   }
-  if (representativeAgent) {
+  const defaultModel = profile.defaultModel
+  if (defaultModel) {
+    profileTooltipLines.push(`default: ${defaultModel.provider}/${defaultModel.modelId}`)
+    if (defaultModel.thinkingLevel) {
+      profileTooltipLines.push(`reasoning: ${defaultModel.thinkingLevel}`)
+    }
+  } else if (representativeAgent) {
     profileTooltipLines.push(`${representativeAgent.model.provider}/${representativeAgent.model.modelId}`)
     if (representativeAgent.model.thinkingLevel) {
       profileTooltipLines.push(`reasoning: ${representativeAgent.model.thinkingLevel}`)
@@ -193,7 +201,7 @@ export const ProfileGroup = React.memo(function ProfileGroup({
           {onChangeModel ? (
             <ContextMenuItem onClick={() => onChangeModel(profile.profileId)}>
               <RefreshCw className="mr-2 size-3.5" />
-              Change Model
+              Change Default Model
             </ContextMenuItem>
           ) : null}
           {onChangeCwd && !isCortexProfile(treeRow) ? (
@@ -338,6 +346,8 @@ export const ProfileGroup = React.memo(function ProfileGroup({
                       ? () => onSelect(session.sessionAgent.projectAgent!.creatorSessionId!)
                       : undefined
                   }
+                  onChangeSessionModel={onChangeSessionModel ? () => onChangeSessionModel(sid) : undefined}
+                  onUseProjectDefault={onUseProjectDefault ? () => onUseProjectDefault(sid) : undefined}
                   isMutedSession={mutedAgents?.has(sid)}
                   onToggleMute={onToggleMute ? () => onToggleMute(sid) : undefined}
                   getCreatorAttribution={getCreatorAttribution}

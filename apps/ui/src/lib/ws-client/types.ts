@@ -48,6 +48,7 @@ export type ProjectAgentRecommendationsResult = {
 export type WsRequestResultMap = {
   create_manager: AgentDescriptor
   delete_manager: { managerId: string }
+  update_profile_default_model: { profileId: string }
   update_manager_model: { managerId: string }
   update_manager_cwd: { managerId: string; cwd: string }
   stop_all_agents: { managerId: string; stoppedWorkerIds: string[]; managerStopped: boolean }
@@ -58,6 +59,7 @@ export type WsRequestResultMap = {
   clear_session: SessionActionResult
   rename_session: SessionActionResult
   pin_session: { pinnedAt: string | null }
+  update_session_model: { sessionAgentId: string; mode: 'inherit' | 'override' }
   rename_profile: { profileId: string }
   fork_session: SessionForkedResult
   merge_session_memory: SessionMemoryMergeResult

@@ -1237,6 +1237,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       emitAgentsSnapshot: () => {
         this.emitAgentsSnapshot();
       },
+      emitProfilesSnapshot: () => {
+        this.emitProfilesSnapshot();
+      },
       logDebug: (message, details) => this.logDebug(message, details)
     });
     this.choiceService = new SwarmChoiceService({
@@ -1519,9 +1522,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     await this.preloadPinnedMessageIndexes();
 
-    this.reconcileProfilesOnBoot();
+    const normalizedSessionModelState = this.reconcileProfilesOnBoot();
     const normalizedSystemProfileTypes = this.normalizeSystemProfileTypes();
-    if (cortexPruneResult.pruned || normalizedSystemProfileTypes) {
+    if (cortexPruneResult.pruned || normalizedSessionModelState || normalizedSystemProfileTypes) {
       await this.saveStore();
     }
     await this.ensureCortexProfile();
@@ -1651,7 +1654,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   listProfiles(): ManagerProfile[] {
-    return this.sortedProfiles().map((profile) => ({ ...profile }));
+    return this.sortedProfiles().map((profile) => ({
+      ...profile,
+      defaultModel: { ...profile.defaultModel }
+    }));
   }
 
   listUserProfiles(): ManagerProfile[] {
@@ -1874,24 +1880,32 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     const preset = parseSwarmModelPreset(params.model, "create_session.model");
-    const resolvedModel = preset
-      ? resolveModelDescriptorFromPreset(preset)
-      : { ...creatorDescriptor.model };
-
     const parsedReasoningLevel = parseSwarmReasoningLevel(params.reasoningLevel, "create_session.reasoningLevel");
-    if (parsedReasoningLevel) {
-      resolvedModel.thinkingLevel = parsedReasoningLevel;
-    }
+    const shouldOverrideModel = Boolean(
+      preset || parsedReasoningLevel || creatorDescriptor.modelOrigin === "session_override"
+    );
 
-    const normalizedModel = {
-      ...resolvedModel,
-      provider: normalizeOptionalAgentId(resolvedModel.provider)?.toLowerCase() ?? resolvedModel.provider,
-      modelId: normalizeOptionalModelId(resolvedModel.modelId)?.toLowerCase() ?? resolvedModel.modelId,
-      thinkingLevel: normalizeThinkingLevelForProvider(
-        resolvedModel.provider,
-        resolvedModel.thinkingLevel
-      )
-    };
+    const normalizedModel = shouldOverrideModel
+      ? (() => {
+          const resolvedModel = preset
+            ? resolveModelDescriptorFromPreset(preset)
+            : { ...creatorDescriptor.model };
+
+          if (parsedReasoningLevel) {
+            resolvedModel.thinkingLevel = parsedReasoningLevel;
+          }
+
+          return {
+            ...resolvedModel,
+            provider: normalizeOptionalAgentId(resolvedModel.provider)?.toLowerCase() ?? resolvedModel.provider,
+            modelId: normalizeOptionalModelId(resolvedModel.modelId)?.toLowerCase() ?? resolvedModel.modelId,
+            thinkingLevel: normalizeThinkingLevelForProvider(
+              resolvedModel.provider,
+              resolvedModel.thinkingLevel
+            )
+          };
+        })()
+      : undefined;
 
     const normalizedSystemPrompt = params.systemPrompt?.trim();
     const normalizedCwd = params.cwd?.trim();
@@ -1903,15 +1917,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         sessionPurpose: undefined,
       },
       {
-        model: {
-          ...normalizedModel,
-          provider: normalizeOptionalAgentId(normalizedModel.provider)?.toLowerCase() ?? normalizedModel.provider,
-          modelId: normalizeOptionalModelId(normalizedModel.modelId)?.toLowerCase() ?? normalizedModel.modelId,
-          thinkingLevel: normalizeThinkingLevelForProvider(
-            normalizedModel.provider,
-            normalizedModel.thinkingLevel
-          )
-        },
+        ...(normalizedModel ? { model: normalizedModel } : {}),
         ...(normalizedCwd ? { cwd: await this.resolveAndValidateCwd(normalizedCwd) } : {}),
         ...(normalizedSystemPrompt !== undefined ? { sessionSystemPrompt: normalizedSystemPrompt } : {})
       }
@@ -2238,7 +2244,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     targetManagerId: string
   ): Promise<{ managerId: string; terminatedWorkerIds: string[] }> {
     const profile = this.profiles.get(targetManagerId);
-    const sessionDescriptors = profile ? this.getSessionsForProfile(profile.profileId) : [];
+    const sessionDescriptors: AgentDescriptor[] = profile ? this.getSessionsForProfile(profile.profileId) : [];
 
     if (sessionDescriptors.length === 0) {
       const target = this.descriptors.get(targetManagerId);
@@ -2266,6 +2272,23 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     reasoningLevel?: SwarmReasoningLevel
   ): Promise<void> {
     await this.settingsService.updateManagerModel(managerId, modelPreset, reasoningLevel);
+  }
+
+  async updateProfileDefaultModel(
+    profileId: string,
+    modelPreset: SwarmModelPreset,
+    reasoningLevel?: SwarmReasoningLevel
+  ): Promise<void> {
+    await this.settingsService.updateProfileDefaultModel(profileId, modelPreset, reasoningLevel);
+  }
+
+  async updateSessionModel(
+    sessionAgentId: string,
+    mode: "inherit" | "override",
+    modelPreset?: SwarmModelPreset,
+    reasoningLevel?: SwarmReasoningLevel
+  ): Promise<void> {
+    await this.settingsService.updateSessionModel(sessionAgentId, mode, modelPreset, reasoningLevel);
   }
 
   async updateManagerCwd(managerId: string, newCwd: string): Promise<string> {
@@ -2485,13 +2508,14 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     };
   }
 
-  private getSessionsForProfile(profileId: string): AgentDescriptor[] {
+  private getSessionsForProfile(profileId: string): Array<AgentDescriptor & { role: "manager"; profileId: string }> {
     return Array.from(this.descriptors.values()).filter(
-      (descriptor) => descriptor.role === "manager" && descriptor.profileId === profileId
+      (descriptor): descriptor is AgentDescriptor & { role: "manager"; profileId: string } =>
+        descriptor.role === "manager" && descriptor.profileId === profileId
     );
   }
 
-  private getBuilderSessionsForProfile(profileId: string): AgentDescriptor[] {
+  private getBuilderSessionsForProfile(profileId: string): Array<AgentDescriptor & { role: "manager"; profileId: string }> {
     return this.getSessionsForProfile(profileId);
   }
 
@@ -2627,7 +2651,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       createdAt,
       updatedAt: createdAt,
       cwd: templateDescriptor.cwd,
-      model: { ...templateDescriptor.model },
+      model: { ...profile.defaultModel },
+      modelOrigin: "profile_default",
       sessionFile: getSessionFilePath(this.config.paths.dataDir, profile.profileId, sessionAgentId)
     };
 
@@ -4229,7 +4254,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
   }
 
-  private reconcileProfilesOnBoot(): void {
+  private reconcileProfilesOnBoot(): boolean {
+    let changed = false;
     const managerDescriptorsById = new Map<string, AgentDescriptor>();
 
     for (const descriptor of this.descriptors.values()) {
@@ -4241,6 +4267,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       if (descriptor.profileId !== reconciledProfileId) {
         descriptor.profileId = reconciledProfileId;
         this.descriptors.set(descriptor.agentId, descriptor);
+        changed = true;
       }
 
       managerDescriptorsById.set(descriptor.agentId, descriptor);
@@ -4253,21 +4280,26 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         profileId: reconciledProfileId,
         displayName: descriptor.displayName,
         defaultSessionAgentId: reconciledProfileId,
+        defaultModel: { ...descriptor.model },
         createdAt: descriptor.createdAt,
         updatedAt: descriptor.createdAt
       });
+      changed = true;
     }
 
     for (const [profileId, profile] of Array.from(this.profiles.entries())) {
-      const defaultSessionDescriptor = managerDescriptorsById.get(profile.defaultSessionAgentId);
+      let defaultSessionDescriptor = managerDescriptorsById.get(profile.defaultSessionAgentId);
       if (!defaultSessionDescriptor || defaultSessionDescriptor.role !== "manager") {
         const rootSessionDescriptor = managerDescriptorsById.get(profileId);
         if (!rootSessionDescriptor || rootSessionDescriptor.role !== "manager") {
           this.profiles.delete(profileId);
+          changed = true;
           continue;
         }
 
         profile.defaultSessionAgentId = rootSessionDescriptor.agentId;
+        defaultSessionDescriptor = rootSessionDescriptor;
+        changed = true;
       }
 
       const profileSessions = this.getBuilderSessionsForProfile(profileId);
@@ -4275,15 +4307,45 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         const rootSessionDescriptor = managerDescriptorsById.get(profileId);
         if (!rootSessionDescriptor || rootSessionDescriptor.role !== "manager") {
           this.profiles.delete(profileId);
+          changed = true;
           continue;
         }
 
-        rootSessionDescriptor.profileId = profileId;
-        this.descriptors.set(rootSessionDescriptor.agentId, rootSessionDescriptor);
+        if (rootSessionDescriptor.profileId !== profileId) {
+          rootSessionDescriptor.profileId = profileId;
+          this.descriptors.set(rootSessionDescriptor.agentId, rootSessionDescriptor);
+          changed = true;
+        }
+      }
+
+      const defaultModelWasSynthesized = !isValidPersistedModelDescriptor(profile.defaultModel);
+      const normalizedDefaultModel = defaultModelWasSynthesized
+        ? cloneModelDescriptor(defaultSessionDescriptor?.model ?? this.config.defaultModel)
+        : cloneModelDescriptor(profile.defaultModel);
+      if (
+        defaultModelWasSynthesized ||
+        !sameModelDescriptor(profile.defaultModel, normalizedDefaultModel)
+      ) {
+        profile.defaultModel = normalizedDefaultModel;
+        changed = true;
+      }
+
+      for (const session of this.getBuilderSessionsForProfile(profileId)) {
+        if (session.modelOrigin !== undefined) {
+          continue;
+        }
+
+        session.modelOrigin = inferLegacySessionModelOrigin(session, profile, {
+          forceDefaultSessionInherited: defaultModelWasSynthesized
+        });
+        this.descriptors.set(session.agentId, session);
+        changed = true;
       }
 
       this.profiles.set(profileId, profile);
     }
+
+    return changed;
   }
 
   private prunePersistedCortexStateForBoot(store: AgentsStoreFile): {
@@ -4375,6 +4437,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     const createdAt = this.now();
 
+    const defaultModel = resolveModelDescriptorFromPreset(this.defaultModelPreset);
+
     const descriptor: AgentDescriptor = {
       agentId: CORTEX_PROFILE_ID,
       displayName: CORTEX_DISPLAY_NAME,
@@ -4386,7 +4450,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       createdAt,
       updatedAt: createdAt,
       cwd: this.config.defaultCwd,
-      model: resolveModelDescriptorFromPreset(this.defaultModelPreset),
+      model: { ...defaultModel },
+      modelOrigin: "profile_default",
       sessionFile: getSessionFilePath(this.config.paths.dataDir, CORTEX_PROFILE_ID, CORTEX_PROFILE_ID)
     };
 
@@ -4394,6 +4459,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       profileId: CORTEX_PROFILE_ID,
       displayName: CORTEX_DISPLAY_NAME,
       defaultSessionAgentId: CORTEX_PROFILE_ID,
+      defaultModel: { ...defaultModel },
       createdAt,
       updatedAt: createdAt,
       profileType: "system"
@@ -5721,5 +5787,49 @@ function isSessionRenameHistoryEntry(value: unknown): value is SessionRenameHist
     typeof value.to === "string" &&
     typeof value.renamedAt === "string"
   );
+}
+
+function inferLegacySessionModelOrigin(
+  descriptor: AgentDescriptor & { role: "manager"; profileId?: string },
+  profile: ManagerProfile,
+  options?: { forceDefaultSessionInherited?: boolean }
+): "profile_default" | "session_override" {
+  if (options?.forceDefaultSessionInherited && descriptor.agentId === profile.defaultSessionAgentId) {
+    return "profile_default";
+  }
+
+  return sameModelDescriptor(descriptor.model, profile.defaultModel)
+    ? "profile_default"
+    : "session_override";
+}
+
+function isValidPersistedModelDescriptor(value: unknown): value is AgentDescriptor["model"] {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { provider?: unknown }).provider === "string" &&
+    typeof (value as { modelId?: unknown }).modelId === "string" &&
+    typeof (value as { thinkingLevel?: unknown }).thinkingLevel === "string"
+  );
+}
+
+function cloneModelDescriptor(model: AgentDescriptor["model"]): AgentDescriptor["model"] {
+  return {
+    provider: model.provider,
+    modelId: model.modelId,
+    thinkingLevel: model.thinkingLevel
+  };
+}
+
+function sameModelDescriptor(left: AgentDescriptor["model"], right: AgentDescriptor["model"]): boolean {
+  return (
+    left.provider === right.provider &&
+    left.modelId === right.modelId &&
+    normalizeModelThinkingLevel(left.thinkingLevel) === normalizeModelThinkingLevel(right.thinkingLevel)
+  );
+}
+
+function normalizeModelThinkingLevel(level: string): string {
+  return level === "x-high" ? "xhigh" : level;
 }
 

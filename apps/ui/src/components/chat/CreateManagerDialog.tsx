@@ -156,7 +156,7 @@ export function CreateManagerDialog({
 
           <div className="space-y-2">
             <Label htmlFor="manager-model" className="text-xs font-medium text-muted-foreground">
-              Model
+              Default Model
             </Label>
             <Select
               value={newManagerModel}

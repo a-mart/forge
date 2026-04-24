@@ -8,6 +8,7 @@ import type {
   ProjectAgentCapability,
   ProjectAgentInfo,
   PersistedProjectAgentConfig,
+  SessionModelUpdateMode,
 } from '@forge/protocol'
 import type { DirectoryValidationResult } from '@/lib/ws-client'
 import type { ProfileTreeRow, SessionRow } from '@/lib/agent-hierarchy'
@@ -67,6 +68,7 @@ export interface AgentSidebarProps {
   onMarkUnread?: (agentId: string) => void
   onMarkAllRead?: (profileId: string) => void
   onUpdateManagerModel?: (managerId: string, model: ManagerModelPreset, reasoningLevel?: ManagerReasoningLevel) => void
+  onUpdateSessionModel?: (sessionAgentId: string, mode: SessionModelUpdateMode, model?: ManagerModelPreset, reasoningLevel?: ManagerReasoningLevel) => void
   onUpdateManagerCwd?: (managerId: string, cwd: string) => Promise<void>
   onBrowseDirectory?: (defaultPath: string) => Promise<string | null>
   onValidateDirectory?: (path: string) => Promise<DirectoryValidationResult>
@@ -119,6 +121,8 @@ export interface SessionRowItemProps {
   onOpenProjectAgentSettings?: () => void
   onDemoteProjectAgent?: () => void
   onViewCreationHistory?: () => void
+  onChangeSessionModel?: () => void
+  onUseProjectDefault?: () => void
   isMutedSession?: boolean
   onToggleMute?: () => void
   getCreatorAttribution?: (creatorAgentId: string) => string | null
@@ -153,6 +157,8 @@ export interface ProfileGroupProps {
   onMarkUnread?: (agentId: string) => void
   onMarkAllRead?: (profileId: string) => void
   onChangeModel?: (profileId: string) => void
+  onChangeSessionModel?: (sessionAgentId: string) => void
+  onUseProjectDefault?: (sessionAgentId: string) => void
   onChangeCwd?: (profileId: string) => void
   showModelIcons?: boolean
   highlightQuery?: string
@@ -189,16 +195,10 @@ export interface CortexSectionProps {
   onOpenSettings: () => void
   onOpenCortexReview?: (agentId: string) => void
   outstandingReviewCount?: number | null
-  onCreateSession?: (profileId: string, name?: string) => void
   onStopSession?: (agentId: string) => void
   onResumeSession?: (agentId: string) => void
-  onDeleteSession?: (agentId: string) => void
-  onRequestRenameSession?: (agentId: string) => void
-  onRequestRenameProfile?: (profileId: string) => void
-  onForkSession?: (sourceAgentId: string) => void
   onMarkUnread?: (agentId: string) => void
   onMarkAllRead?: (profileId: string) => void
-  onChangeModel?: (profileId: string) => void
   highlightQuery?: string
   mutedAgents?: Set<string>
   onToggleMute?: (agentId: string) => void

@@ -27,6 +27,12 @@ export function handleAgentEvent(event: ServerEvent, context: ManagerWsAgentEven
       })
       return true
 
+    case 'profile_default_model_updated':
+      context.requestTracker.resolve('update_profile_default_model', event.requestId, {
+        profileId: event.profileId,
+      })
+      return true
+
     case 'manager_model_updated':
       context.requestTracker.resolve('update_manager_model', event.requestId, {
         managerId: event.managerId,

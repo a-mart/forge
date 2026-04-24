@@ -903,16 +903,35 @@ export function BuilderSurface({
     clientRef.current?.markAllRead(profileId)
   }, [clientRef])
 
-  const handleUpdateManagerModel = useCallback(async (managerId: string, model: ManagerModelPreset, reasoningLevel?: ManagerReasoningLevel) => {
+  const handleUpdateManagerModel = useCallback(async (profileId: string, model: ManagerModelPreset, reasoningLevel?: ManagerReasoningLevel) => {
     const client = clientRef.current
     if (!client) return
 
     try {
-      await client.updateManagerModel(managerId, model, reasoningLevel)
+      await client.updateProfileDefaultModel(profileId, model, reasoningLevel)
     } catch (error) {
       setState((previous) => ({
         ...previous,
-        lastError: `Failed to update model: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        lastError: `Failed to update default model: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      }))
+    }
+  }, [clientRef, setState])
+
+  const handleUpdateSessionModel = useCallback(async (
+    sessionAgentId: string,
+    mode: 'inherit' | 'override',
+    model?: ManagerModelPreset,
+    reasoningLevel?: ManagerReasoningLevel,
+  ) => {
+    const client = clientRef.current
+    if (!client) return
+
+    try {
+      await client.updateSessionModel(sessionAgentId, mode, model, reasoningLevel)
+    } catch (error) {
+      setState((previous) => ({
+        ...previous,
+        lastError: `Failed to update session model: ${error instanceof Error ? error.message : 'Unknown error'}`,
       }))
     }
   }, [clientRef, setState])
@@ -1126,6 +1145,7 @@ export function BuilderSurface({
         onMarkUnread={handleMarkUnread}
         onMarkAllRead={handleMarkAllRead}
         onUpdateManagerModel={handleUpdateManagerModel}
+        onUpdateSessionModel={handleUpdateSessionModel}
         onUpdateManagerCwd={handleUpdateManagerCwd}
         onBrowseDirectory={handleBrowseDirectoryForCwd}
         onValidateDirectory={handleValidateDirectoryForCwd}

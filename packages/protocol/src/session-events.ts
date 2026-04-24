@@ -1,9 +1,12 @@
 import type {
   AgentDescriptor,
+  ManagerModelPreset,
   ManagerProfile,
+  ManagerReasoningLevel,
   SessionMemoryMergeFailureStage,
   SessionMemoryMergeResult,
   SessionMemoryMergeStrategy,
+  SessionModelUpdateMode,
 } from './shared-types.js'
 
 export interface SessionCreatedEvent {
@@ -54,6 +57,15 @@ export interface SessionPinnedEvent {
   agentId: string
   pinned: boolean
   pinnedAt: string | null
+  requestId?: string
+}
+
+export interface SessionModelUpdatedEvent {
+  type: 'session_model_updated'
+  sessionAgentId: string
+  mode: SessionModelUpdateMode
+  model?: ManagerModelPreset
+  reasoningLevel?: ManagerReasoningLevel
   requestId?: string
 }
 

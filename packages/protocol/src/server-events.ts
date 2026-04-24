@@ -47,6 +47,7 @@ import type {
   ManagerCwdUpdatedEvent,
   ManagerDeletedEvent,
   ManagerModelUpdatedEvent,
+  ProfileDefaultModelUpdatedEvent,
   StopAllAgentsResultEvent,
 } from './manager-events.js'
 import type {
@@ -78,6 +79,7 @@ import type {
   SessionMemoryMergeFailedEvent,
   SessionMemoryMergedEvent,
   SessionMemoryMergeStartedEvent,
+  SessionModelUpdatedEvent,
   SessionPinnedEvent,
   SessionRenamedEvent,
   SessionResumedEvent,
@@ -148,6 +150,7 @@ export type ServerEvent =
   | UnreadCountUpdateEvent
   | ManagerCreatedEvent
   | ManagerDeletedEvent
+  | ProfileDefaultModelUpdatedEvent
   | ManagerModelUpdatedEvent
   | ManagerCwdUpdatedEvent
   | SessionCreatedEvent
@@ -157,6 +160,7 @@ export type ServerEvent =
   | SessionClearedEvent
   | SessionRenamedEvent
   | SessionPinnedEvent
+  | SessionModelUpdatedEvent
   | SessionProjectAgentUpdatedEvent
   | ProjectAgentRecommendationsEvent
   | ProjectAgentRecommendationsErrorEvent

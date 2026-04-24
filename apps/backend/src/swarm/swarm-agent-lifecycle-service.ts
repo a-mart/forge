@@ -730,6 +730,10 @@ export class SwarmAgentLifecycleService {
     const createdAt = this.options.now();
     const cwd = await this.options.resolveAndValidateCwd(input.cwd);
 
+    const initialModel = requestedModelPreset
+      ? resolveModelDescriptorFromPreset(requestedModelPreset)
+      : this.options.resolveDefaultModelDescriptor();
+
     const descriptor: AgentDescriptor = {
       agentId: managerId,
       displayName: managerId,
@@ -741,9 +745,8 @@ export class SwarmAgentLifecycleService {
       createdAt,
       updatedAt: createdAt,
       cwd,
-      model: requestedModelPreset
-        ? resolveModelDescriptorFromPreset(requestedModelPreset)
-        : this.options.resolveDefaultModelDescriptor(),
+      model: { ...initialModel },
+      modelOrigin: "profile_default",
       sessionFile: getSessionFilePath(this.options.dataDir, managerId, managerId)
     };
 
@@ -758,6 +761,7 @@ export class SwarmAgentLifecycleService {
       profileId: descriptor.agentId,
       displayName: descriptor.displayName,
       defaultSessionAgentId: descriptor.agentId,
+      defaultModel: { ...initialModel },
       createdAt: descriptor.createdAt,
       updatedAt: descriptor.createdAt,
       sortOrder: maxSortOrder + 1

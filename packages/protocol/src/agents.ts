@@ -65,10 +65,17 @@ export interface AgentModelDescriptor {
   thinkingLevel: string
 }
 
+export const AGENT_MODEL_ORIGINS = ['profile_default', 'session_override'] as const
+export type AgentModelOrigin = (typeof AGENT_MODEL_ORIGINS)[number]
+
+export const SESSION_MODEL_UPDATE_MODES = ['inherit', 'override'] as const
+export type SessionModelUpdateMode = (typeof SESSION_MODEL_UPDATE_MODES)[number]
+
 export interface ManagerProfile {
   profileId: string
   displayName: string
   defaultSessionAgentId: string
+  defaultModel: AgentModelDescriptor
   createdAt: string
   updatedAt: string
   profileType?: 'user' | 'system'
@@ -95,6 +102,7 @@ export interface AgentDescriptor {
   updatedAt: string
   cwd: string
   model: AgentModelDescriptor
+  modelOrigin?: AgentModelOrigin
   sessionFile: string
   contextUsage?: AgentContextUsage
   profileId?: string
