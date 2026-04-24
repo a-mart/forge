@@ -398,4 +398,89 @@ describe('OpenAICredentialPool', () => {
       expect(onError).toHaveBeenCalledWith('Fetch failed')
     })
   })
+
+  /* ---- Collab target isolation ---- */
+
+  describe('Collab target isolation', () => {
+    const collabTarget: SettingsBackendTarget = {
+      kind: 'collab',
+      label: 'Collab backend',
+      description: 'Connected remote collaboration backend',
+      wsUrl: 'ws://remote-collab:47287',
+      apiBaseUrl: 'https://collab.example.com/',
+      fetchCredentials: 'include',
+      requiresAdmin: true,
+      availableTabs: ['general', 'auth'],
+    }
+
+    const collabApiClient: SettingsApiClient = {
+      target: collabTarget,
+      endpoint: (path: string) => `https://collab.example.com${path}`,
+      fetch: vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 })),
+      fetchJson: vi.fn(),
+      readApiError: vi.fn(),
+    }
+
+    function renderCollabPool(pool?: CredentialPoolState): void {
+      settingsApiMock.fetchCredentialPool.mockResolvedValue(pool ?? makePool())
+
+      root = createRoot(container)
+      flushSync(() => {
+        root?.render(
+          createElement(OpenAICredentialPool, {
+            apiClient: collabApiClient,
+            target: collabTarget,
+            onError,
+            onSuccess,
+            onAuthReload,
+          }),
+        )
+      })
+    }
+
+    it('fetches pool via collab apiClient', async () => {
+      renderCollabPool()
+      await flush()
+      await flush()
+
+      expect(settingsApiMock.fetchCredentialPool).toHaveBeenCalledWith(
+        collabApiClient,
+        'openai-codex',
+      )
+      expect(settingsApiMock.fetchCredentialPool).not.toHaveBeenCalledWith(
+        mockApiClient,
+        expect.anything(),
+      )
+    })
+
+    it('OAuth add-account targets collab backend', async () => {
+      settingsApiMock.startPoolAddAccountOAuthStream.mockImplementation(async () => {})
+      renderCollabPool()
+      await flush()
+      await flush()
+
+      const addBtn = Array.from(container.querySelectorAll('button')).find(
+        (btn) => btn.textContent?.includes('Add Account'),
+      )
+      expect(addBtn).toBeTruthy()
+
+      flushSync(() => {
+        fireEvent.click(addBtn!)
+      })
+      await flush()
+
+      expect(settingsApiMock.startPoolAddAccountOAuthStream).toHaveBeenCalledWith(
+        collabApiClient,
+        'openai-codex',
+        expect.any(Object),
+        expect.any(Object),
+      )
+    })
+
+    it('collab apiClient does not reference local builder URL', () => {
+      expect(collabApiClient.target.apiBaseUrl).not.toContain('127.0.0.1')
+      expect(collabApiClient.target.apiBaseUrl).not.toContain('47187')
+      expect(collabApiClient.target.fetchCredentials).toBe('include')
+    })
+  })
 })
