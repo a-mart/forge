@@ -116,6 +116,8 @@ const modelsRouting: HelpArticle = {
 
 The manager model handles orchestration: reading your messages, deciding what to do, breaking work into tasks, and coordinating specialist workers. The manager does not write code directly. Pick a capable model here — it affects the quality of task planning and delegation.
 
+You can set the profile default from the profile header with **Change Default Model**, override a single session with **Override Session Model**, or switch a session back to inherited state with **Use Project Default**.
+
 ## Specialist routing
 
 When the manager spawns a worker, it picks a specialist based on the task. Each specialist has:

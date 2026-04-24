@@ -136,13 +136,13 @@ The search bar at the top filters sessions and workers by name. Prefix shortcuts
 
 ## Profile actions
 
-Right-click a profile header to access: New Session, Create Project Agent, Rename, Change Default Model, Change Working Directory, Mark All as Read, Mute/Unmute All Sessions, or Delete Manager. Changing the default model updates sessions that still inherit the project default; sessions with a model override are not affected. Changing the working directory updates the CWD for all sessions in the profile — active workers keep their old CWD, but new spawns inherit the new path.
+Right-click a profile header to access: New Session, Create Project Agent, Rename, Change Default Model, Change Working Directory, Mark All as Read, Mute/Unmute All Sessions, or Delete Manager. Changing the default model updates only sessions that still inherit the project default; sessions with an explicit session override are not affected. Changing the working directory updates the CWD for all sessions in the profile — active workers keep their old CWD, but new spawns inherit the new path.
 
 You can also drag profiles to reorder them. The **+** button on a profile header creates a new session.
 
 ## Session actions
 
-Right-click any session to access: Copy Path, Rename, Fork, Override Session Model, Use Project Default, Stop, Resume, Mark as Unread, Mute/Unmute, or Delete. The Main (default) session in each profile cannot be deleted. Muting a session suppresses notification sounds while keeping the unread badge visible. Every session, including the root session, can override the project default model or revert to inheriting it.
+Right-click any session to access: Copy Path, Rename, Fork, Override Session Model, Use Project Default, Stop, Resume, Mark as Unread, Mute/Unmute, or Delete. The Main (default) session in each profile cannot be deleted. Muting a session suppresses notification sounds while keeping the unread badge visible. Use Project Default returns a session to inherited model state, and every session, including the root session, can override the project default model or revert to inheriting it.
 
 ## Workers
 
@@ -212,7 +212,7 @@ To start fresh without creating a new session, open the **⋮ menu** in the chat
 
 Each profile can have multiple sessions. Sessions inherit all config from the profile but maintain their own conversation history and session memory. Think of it as: the profile is the "who," and sessions are individual conversations.
 
-By default, sessions use the profile's default model. You can override the model for any individual session — including the root session — without affecting other sessions. Overridden sessions keep their model when the profile default changes. Use "Use Project Default" on a session to revert it to inheriting the default.
+By default, sessions use the profile's default model. You can override the model for any individual session — including the root session — without affecting other sessions. Sessions that still inherit the profile default pick up future default changes automatically. Use "Use Project Default" on a session to revert it to inherited state.
 
 ## Rename a profile
 
@@ -320,7 +320,7 @@ Right-click a session in the sidebar and choose **Fork**. A dialog opens where y
 
 ## Full fork
 
-By default, forking copies the entire conversation history into a new session.
+By default, forking copies the entire conversation history into a new session and preserves the source session's model state, including whether it was inheriting the profile default or using an explicit override.
 
 ## Partial fork
 

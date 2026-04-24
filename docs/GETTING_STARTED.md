@@ -71,7 +71,7 @@ You're the executive. The manager is your team lead. The workers are the ICs doi
 
 ### What Is a Session?
 
-A session is a conversation thread within a manager. Your first session is created automatically when you create the manager. You can create additional sessions for different workstreams: one for a feature, one for bug fixes, one for documentation. Each session has its own conversation history, its own memory, and can run workers independently.
+A session is a conversation thread within a manager. Your first session is created automatically when you create the manager. You can create additional sessions for different workstreams: one for a feature, one for bug fixes, one for documentation. Each session has its own conversation history, its own memory, and can run workers independently. Sessions inherit the profile's default manager model unless you override the session explicitly.
 
 Sessions are where work actually happens. The manager is just the container.
 
@@ -196,7 +196,7 @@ Sessions are how you organize parallel workstreams. Each one holds a different c
 
 ### Creating New Sessions
 
-Click the **+** button in the session sidebar and give it a descriptive name. The new session inherits your manager's configuration (model settings, system prompt, skills) but starts with a fresh conversation.
+Click the **+** button in the session sidebar and give it a descriptive name. The new session inherits your manager's configuration (including the profile default manager model, system prompt, and skills) but starts with a fresh conversation. If you later change the profile default model, only sessions that still inherit it will update.
 
 Name your sessions meaningfully. Forge forces you to enter a name when creating one for a reason. "fix-pagination-bug" is infinitely more useful than "test" when you're bouncing between six active workstreams.
 
@@ -208,7 +208,7 @@ Forking is one of the most useful features for daily workflow. Say you've had a 
 
 **Fork the full conversation:** Use the fork option at the session level to copy the entire conversation into a new session. Same context, fresh workspace.
 
-Either way, the forked session has full context of everything that came before. Pinned messages are preserved through forks, but only those present in the forked history (if you fork from message #5 and had a pin on message #8, that pin won't carry over). You can take each fork in a completely different direction without them interfering with each other.
+Either way, the forked session keeps the source session's model state, including whether it was inheriting the profile default or using an explicit override. Pinned messages are preserved through forks, but only those present in the forked history (if you fork from message #5 and had a pin on message #8, that pin won't carry over). You can take each fork in a completely different direction without them interfering with each other.
 
 ### Switching Between Sessions
 
@@ -684,7 +684,7 @@ Once you're comfortable with the basics:
 3. **Try forking** — Next time you finish a discovery conversation, fork it into parallel workstreams and dispatch different tasks.
 4. **Experiment with parallel execution** — Give your manager multiple tasks and watch it coordinate workers.
 5. **Adjust review frequency** — Check **Settings → General** to configure how often automatic Cortex reviews run or turn them off if you prefer manual control.
-6. **Explore multi-model routing** — If you have OpenAI, Anthropic, or Claude SDK configured, teach your manager which providers and models to use for which kinds of work. `claude-sdk` is a separate provider option from `anthropic`, so specialists can be configured with either independently.
+6. **Explore multi-model routing** — If you have OpenAI, Anthropic, or Claude SDK configured, teach your manager which providers and models to use for which kinds of work. Use **Change Default Model** for the profile default, **Override Session Model** for a one-off session, and **Use Project Default** to return a session to inherited state. `claude-sdk` is a separate provider option from `anthropic`, so specialists can be configured with either independently.
 7. **Try extensions** — Use `~/.forge/extensions/` for Forge-native hooks or `~/.forge/agent/extensions/` for Pi-native runtime extensions. See [FORGE_EXTENSIONS.md](FORGE_EXTENSIONS.md) and [PI_EXTENSIONS.md](PI_EXTENSIONS.md).
 
 > "Forge builds Forge. When I'm working on other projects, as soon as I run into something that's either a bug or a little feature I want, I just pop down, click the conversation with Forge, tell it, and then it chews on it, plans it, whatever."
