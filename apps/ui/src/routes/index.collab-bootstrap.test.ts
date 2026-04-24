@@ -8,11 +8,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const routeStateMock = vi.hoisted(() => ({
   value: {
     routeState: {
-      view: 'chat' as const,
-      agentId: '__default__',
+      view: 'chat' as string,
+      agentId: '__default__' as string | undefined,
       surface: 'builder' as 'builder' | 'collab',
     },
-    activeView: 'chat' as const,
+    activeView: 'chat' as string,
     activeSurface: 'builder' as 'builder' | 'collab',
     navigateToRoute: vi.fn(),
   },
@@ -201,5 +201,90 @@ describe('IndexPage collab bootstrap gating', () => {
       agentId: '__default__',
       surface: 'builder',
     }, true)
+  })
+
+  it('does not redirect a member away from forced collab settings route', () => {
+    const navigateToRoute = vi.fn()
+    routeStateMock.value = {
+      routeState: {
+        view: 'settings',
+        agentId: undefined,
+        surface: 'collab',
+      },
+      activeView: 'settings',
+      activeSurface: 'collab',
+      navigateToRoute,
+    }
+    collabSessionHookMock.mockReturnValue({
+      isCollabEnabled: true,
+      isAdmin: false,
+      isMember: true,
+      isLoading: false,
+      hasLoaded: true,
+      refresh: vi.fn(),
+    })
+
+    renderPage()
+
+    // Member at forced collab settings should NOT be redirected to chat
+    expect(navigateToRoute).not.toHaveBeenCalled()
+    // Should render collab surface (which shows admin-required state)
+    expect(container.querySelector('[data-testid="collab-surface"]')?.textContent).toContain('Collab surface')
+  })
+
+  it('renders collab surface for forced collab settings when unauthenticated', () => {
+    const navigateToRoute = vi.fn()
+    routeStateMock.value = {
+      routeState: {
+        view: 'settings',
+        agentId: undefined,
+        surface: 'collab',
+      },
+      activeView: 'settings',
+      activeSurface: 'collab',
+      navigateToRoute,
+    }
+    collabSessionHookMock.mockReturnValue({
+      isCollabEnabled: true,
+      isAdmin: false,
+      isMember: false,
+      isLoading: false,
+      hasLoaded: true,
+      refresh: vi.fn(),
+    })
+
+    renderPage()
+
+    // Should render collab surface (which shows auth-required state), NOT builder
+    expect(container.querySelector('[data-testid="collab-surface"]')?.textContent).toContain('Collab surface')
+    expect(container.querySelector('[data-testid="builder-surface"]')).toBeNull()
+  })
+
+  it('renders collab surface for admin at collab settings', () => {
+    const navigateToRoute = vi.fn()
+    routeStateMock.value = {
+      routeState: {
+        view: 'settings',
+        agentId: undefined,
+        surface: 'collab',
+      },
+      activeView: 'settings',
+      activeSurface: 'collab',
+      navigateToRoute,
+    }
+    collabSessionHookMock.mockReturnValue({
+      isCollabEnabled: true,
+      isAdmin: true,
+      isMember: false,
+      isLoading: false,
+      hasLoaded: true,
+      refresh: vi.fn(),
+    })
+
+    renderPage()
+
+    // Admin should see collab surface with settings
+    expect(container.querySelector('[data-testid="collab-surface"]')?.textContent).toContain('Collab surface')
+    expect(container.querySelector('[data-testid="builder-surface"]')).toBeNull()
   })
 })
