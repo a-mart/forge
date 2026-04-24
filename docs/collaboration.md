@@ -1,6 +1,6 @@
 # Collaboration
 
-Forge collaboration mode adds multi-user access on top of the existing Builder backend and client UI. The public Forge repo includes the collaboration client UI and protocol types only; the collaboration server/backend is closed-source, lives in the private `a-mart/forge-collab` repo, and cannot be self-hosted from this repo. Collaboration uses a dedicated auth database and a hidden system profile for channel-backed sessions.
+Forge collaboration mode adds multi-user access on top of the existing Builder UI. The public Forge repo includes the collaboration client UI and protocol types only; the collaboration server/backend is closed-source, lives in the private `a-mart/forge-collab` repo, and cannot be self-hosted from this repo. Collaboration uses a dedicated auth database and a hidden system profile for channel-backed sessions.
 
 ## Storage model
 
@@ -38,6 +38,16 @@ Forge supports two deployment shapes:
 Settings → Collaboration connects the Builder client to a separately hosted collaboration server. Builder stays local, for example in Electron, while the collaboration service runs from the private `a-mart/forge-collab` deployment.
 
 This is the only supported deployment shape for the public Forge repository. The public repo does not contain the collaboration backend implementation.
+
+## Remote sign-in flow
+
+1. Open **Settings → Collaboration**.
+2. Enter the remote collaboration server URL.
+3. Click **Save** and **Test** to confirm the server is reachable.
+4. Sign in with the remote collaboration server admin or member email and password.
+5. After sign-in succeeds, the Builder/Collab toggle becomes available in the UI.
+
+The collaboration status panel reports the configured remote server, not the local Builder backend. It reflects the enabled state and auth status of the connected collaboration service.
 
 Hosted deployment uses:
 

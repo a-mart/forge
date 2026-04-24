@@ -38,6 +38,12 @@ The Playwright Dashboard toggle controls whether Forge discovers and displays Pl
 
 Edit the default preferences Forge shares with new manager sessions. These are the onboarding choices you made on first launch (name, technical level, workflow style). Changes here apply to future sessions.
 
+## Collaboration
+
+Open **Settings > Collaboration** to connect Forge to a remote collaboration server. Enter the remote server URL, click **Save** and **Test** to confirm it is reachable, then sign in with the remote collaboration server admin or member email and password. After sign-in succeeds, the Builder/Collab toggle becomes available.
+
+The Collaboration status panel reflects the configured remote collaboration server, not the local Builder backend.
+
 ## System
 
 The Reboot button restarts the Forge daemon and all active agents. Use it after configuration changes that require a full restart, or when the backend is in a bad state.`,
