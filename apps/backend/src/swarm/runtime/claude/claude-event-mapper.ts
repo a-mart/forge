@@ -21,11 +21,19 @@ export interface ClaudeEventMapperLike {
   reset(): void;
 }
 
+interface PendingToolUseBlock {
+  toolCallId: string;
+  toolName: string;
+  input: unknown;
+  partialJson: string[];
+}
+
 export class ClaudeEventMapper implements ClaudeEventMapperLike {
   private readonly streamedAssistantMessageIds = new Set<string>();
   private readonly completedAssistantMessageIds = new Set<string>();
   private readonly startedToolCallIds = new Set<string>();
   private readonly toolNameByCallId = new Map<string, string>();
+  private readonly pendingToolUseBlocks = new Map<number, PendingToolUseBlock>();
 
   private activeAssistantMessageId: string | undefined;
   private activeAssistantText = "";
@@ -70,6 +78,7 @@ export class ClaudeEventMapper implements ClaudeEventMapperLike {
     this.completedAssistantMessageIds.clear();
     this.startedToolCallIds.clear();
     this.toolNameByCallId.clear();
+    this.pendingToolUseBlocks.clear();
     this.activeAssistantMessageId = undefined;
     this.activeAssistantText = "";
     this.contextUsage = undefined;
@@ -85,6 +94,8 @@ export class ClaudeEventMapper implements ClaudeEventMapperLike {
     const type = readString(event.type);
     switch (type) {
       case "message_start": {
+        this.pendingToolUseBlocks.clear();
+
         const message = readObject(event.message);
         const messageId = readString(message?.id) ?? `claude-stream-${this.streamedAssistantMessageIds.size + 1}`;
         this.activeAssistantMessageId = messageId;
@@ -101,34 +112,18 @@ export class ClaudeEventMapper implements ClaudeEventMapperLike {
         ];
       }
 
-      case "content_block_delta": {
-        if (!this.activeAssistantMessageId) {
-          return [];
-        }
+      case "content_block_start":
+        return this.mapStreamContentBlockStart(event);
 
-        const delta = readObject(event.delta);
-        if (readString(delta?.type) !== "text_delta") {
-          return [];
-        }
+      case "content_block_delta":
+        return this.mapStreamContentBlockDelta(event);
 
-        const deltaText = readString(delta?.text) ?? "";
-        if (!deltaText) {
-          return [];
-        }
-
-        this.activeAssistantText += deltaText;
-        return [
-          {
-            type: "message_update",
-            message: {
-              role: "assistant",
-              content: [{ type: "text", text: this.activeAssistantText }]
-            }
-          }
-        ];
-      }
+      case "content_block_stop":
+        return this.mapStreamContentBlockStop(event);
 
       case "message_stop": {
+        this.pendingToolUseBlocks.clear();
+
         if (!this.activeAssistantMessageId) {
           return [];
         }
@@ -154,6 +149,86 @@ export class ClaudeEventMapper implements ClaudeEventMapperLike {
       default:
         return [];
     }
+  }
+
+  private mapStreamContentBlockStart(event: Record<string, unknown>): RuntimeSessionEvent[] {
+    const block = readObject(event.content_block);
+    const index = readFiniteNumber(event.index);
+    if (!block || index === undefined || readString(block.type) !== "tool_use") {
+      return [];
+    }
+
+    const toolCallId = readString(block.id);
+    const toolName = readString(block.name);
+    if (!toolCallId || !toolName) {
+      return [];
+    }
+
+    this.pendingToolUseBlocks.set(index, {
+      toolCallId,
+      toolName,
+      input: block.input ?? {},
+      partialJson: []
+    });
+
+    return [];
+  }
+
+  private mapStreamContentBlockDelta(event: Record<string, unknown>): RuntimeSessionEvent[] {
+    const delta = readObject(event.delta);
+    const deltaType = readString(delta?.type);
+
+    if (deltaType === "input_json_delta") {
+      const index = readFiniteNumber(event.index);
+      const partialJson = readString(delta?.partial_json);
+      if (index === undefined || partialJson === undefined) {
+        return [];
+      }
+
+      const pendingBlock = this.pendingToolUseBlocks.get(index);
+      if (!pendingBlock) {
+        return [];
+      }
+
+      pendingBlock.partialJson.push(partialJson);
+      return [];
+    }
+
+    if (!this.activeAssistantMessageId || deltaType !== "text_delta") {
+      return [];
+    }
+
+    const deltaText = readString(delta?.text) ?? "";
+    if (!deltaText) {
+      return [];
+    }
+
+    this.activeAssistantText += deltaText;
+    return [
+      {
+        type: "message_update",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: this.activeAssistantText }]
+        }
+      }
+    ];
+  }
+
+  private mapStreamContentBlockStop(event: Record<string, unknown>): RuntimeSessionEvent[] {
+    const index = readFiniteNumber(event.index);
+    if (index === undefined) {
+      return [];
+    }
+
+    const pendingBlock = this.pendingToolUseBlocks.get(index);
+    if (!pendingBlock) {
+      return [];
+    }
+
+    this.pendingToolUseBlocks.delete(index);
+    const args = parseToolUseInput(pendingBlock.partialJson, pendingBlock.input);
+    return this.startToolCall(pendingBlock.toolName, pendingBlock.toolCallId, args);
   }
 
   private mapAssistantEvent(event: Record<string, unknown>): RuntimeSessionEvent[] {
@@ -195,24 +270,44 @@ export class ClaudeEventMapper implements ClaudeEventMapperLike {
   }
 
   private mapUserEvent(event: Record<string, unknown>): RuntimeSessionEvent[] {
-    const parentToolUseId = readString(event.parent_tool_use_id);
-    if (!parentToolUseId || !("tool_use_result" in event)) {
+    const nestedToolResults = this.mapNestedToolResults(event);
+    if (nestedToolResults.length > 0) {
+      return nestedToolResults;
+    }
+
+    const toolCallId = readString(event.parent_tool_use_id) ?? readString(event.tool_use_id);
+    if (!toolCallId || !("tool_use_result" in event)) {
       return [];
     }
 
-    const toolName = this.toolNameByCallId.get(parentToolUseId) ?? parentToolUseId;
-    this.toolNameByCallId.delete(parentToolUseId);
-    this.startedToolCallIds.delete(parentToolUseId);
+    return [this.completeToolCall(toolCallId, event.tool_use_result, event)];
+  }
 
-    return [
-      {
-        type: "tool_execution_end",
-        toolName,
-        toolCallId: parentToolUseId,
-        result: event.tool_use_result,
-        isError: readBoolean(event.is_error) ?? readBoolean(event.isError) ?? false
+  private mapNestedToolResults(event: Record<string, unknown>): RuntimeSessionEvent[] {
+    const message = readObject(event.message);
+    const content = Array.isArray(message?.content) ? message.content : [];
+    const mappedEvents: RuntimeSessionEvent[] = [];
+
+    for (const item of content) {
+      const block = readObject(item);
+      if (!block || readString(block.type) !== "tool_result") {
+        continue;
       }
-    ];
+
+      const toolCallId = readString(block.tool_use_id) ?? readString(event.parent_tool_use_id) ?? readString(event.tool_use_id);
+      if (!toolCallId) {
+        continue;
+      }
+
+      const result = "content" in block ? block.content : event.tool_use_result;
+      if (result === undefined) {
+        continue;
+      }
+
+      mappedEvents.push(this.completeToolCall(toolCallId, result, block, event));
+    }
+
+    return mappedEvents;
   }
 
   private mapContentBlockStart(event: Record<string, unknown>): RuntimeSessionEvent[] {
@@ -223,41 +318,21 @@ export class ClaudeEventMapper implements ClaudeEventMapperLike {
 
     const toolCallId = readString(block.id);
     const toolName = readString(block.name);
-    if (!toolCallId || !toolName || this.startedToolCallIds.has(toolCallId)) {
+    if (!toolCallId || !toolName) {
       return [];
     }
 
-    this.startedToolCallIds.add(toolCallId);
-    this.toolNameByCallId.set(toolCallId, toolName);
-
-    return [
-      {
-        type: "tool_execution_start",
-        toolName,
-        toolCallId,
-        args: block.input ?? {}
-      }
-    ];
+    return this.startToolCall(toolName, toolCallId, block.input ?? {});
   }
 
   private mapTaskStarted(event: Record<string, unknown>): RuntimeSessionEvent[] {
     const toolCallId = readString(event.tool_use_id) ?? readString(event.task_id);
     const toolName = readString(event.tool_name) ?? readString(event.last_tool_name);
-    if (!toolCallId || !toolName || this.startedToolCallIds.has(toolCallId)) {
+    if (!toolCallId || !toolName) {
       return [];
     }
 
-    this.startedToolCallIds.add(toolCallId);
-    this.toolNameByCallId.set(toolCallId, toolName);
-
-    return [
-      {
-        type: "tool_execution_start",
-        toolName,
-        toolCallId,
-        args: event.arguments ?? {}
-      }
-    ];
+    return this.startToolCall(toolName, toolCallId, event.arguments ?? {});
   }
 
   private mapSystemEvent(event: Record<string, unknown>): RuntimeSessionEvent[] {
@@ -324,6 +399,47 @@ export class ClaudeEventMapper implements ClaudeEventMapperLike {
     return [];
   }
 
+  private startToolCall(toolName: string, toolCallId: string, args: unknown): RuntimeSessionEvent[] {
+    if (this.startedToolCallIds.has(toolCallId)) {
+      return [];
+    }
+
+    this.startedToolCallIds.add(toolCallId);
+    this.toolNameByCallId.set(toolCallId, toolName);
+
+    return [
+      {
+        type: "tool_execution_start",
+        toolName,
+        toolCallId,
+        args
+      }
+    ];
+  }
+
+  private completeToolCall(
+    toolCallId: string,
+    result: unknown,
+    source: Record<string, unknown>,
+    fallbackSource?: Record<string, unknown>
+  ): RuntimeSessionEvent {
+    const toolName = this.toolNameByCallId.get(toolCallId) ?? toolCallId;
+    this.toolNameByCallId.delete(toolCallId);
+    this.startedToolCallIds.delete(toolCallId);
+
+    return {
+      type: "tool_execution_end",
+      toolName,
+      toolCallId,
+      result,
+      isError: readBoolean(source.is_error)
+        ?? readBoolean(source.isError)
+        ?? readBoolean(fallbackSource?.is_error)
+        ?? readBoolean(fallbackSource?.isError)
+        ?? false
+    };
+  }
+
   private captureContextUsage(event: ClaudeSdkMessage): void {
     const usage = extractClaudeContextUsage(event);
     if (!usage) {
@@ -351,3 +467,15 @@ function extractAssistantContent(content: unknown): string | Array<Record<string
   return textBlocks.length > 0 ? textBlocks : undefined;
 }
 
+function parseToolUseInput(partialJson: string[], fallbackInput: unknown): unknown {
+  const json = partialJson.join("").trim();
+  if (!json) {
+    return fallbackInput ?? {};
+  }
+
+  try {
+    return JSON.parse(json);
+  } catch {
+    return fallbackInput ?? {};
+  }
+}

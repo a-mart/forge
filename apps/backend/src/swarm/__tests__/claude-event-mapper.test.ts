@@ -225,8 +225,211 @@ describe("ClaudeEventMapper", () => {
     ]);
   });
 
-  it("deduplicates repeated task start events for the same tool call", () => {
+  it("maps streamed tool_use blocks into tool starts once args are complete", () => {
     const mapper = new ClaudeEventMapper();
+
+    expect(
+      mapper.mapEvent({
+        type: "stream_event",
+        event: {
+          type: "content_block_start",
+          index: 1,
+          content_block: {
+            type: "tool_use",
+            id: "tool-stream-1",
+            name: "mcp__trace_harness__slow_echo",
+            input: {},
+            caller: {
+              type: "direct"
+            }
+          }
+        }
+      })
+    ).toEqual([]);
+
+    expect(
+      mapper.mapEvent({
+        type: "stream_event",
+        event: {
+          type: "content_block_delta",
+          index: 1,
+          delta: {
+            type: "input_json_delta",
+            partial_json: '{"note":"be'
+          }
+        }
+      })
+    ).toEqual([]);
+
+    expect(
+      mapper.mapEvent({
+        type: "stream_event",
+        event: {
+          type: "content_block_delta",
+          index: 1,
+          delta: {
+            type: "input_json_delta",
+            partial_json: 'ta","durationSeconds":10}'
+          }
+        }
+      })
+    ).toEqual([]);
+
+    expect(
+      mapper.mapEvent({
+        type: "stream_event",
+        event: {
+          type: "content_block_stop",
+          index: 1
+        }
+      })
+    ).toEqual([
+      {
+        type: "tool_execution_start",
+        toolName: "mcp__trace_harness__slow_echo",
+        toolCallId: "tool-stream-1",
+        args: {
+          note: "beta",
+          durationSeconds: 10
+        }
+      }
+    ]);
+  });
+
+  it("maps nested user tool_result blocks into tool completion events", () => {
+    const mapper = new ClaudeEventMapper();
+
+    mapper.mapEvent({
+      type: "stream_event",
+      event: {
+        type: "content_block_start",
+        index: 0,
+        content_block: {
+          type: "tool_use",
+          id: "tool-stream-2",
+          name: "mcp__trace_harness__fast_echo",
+          input: {}
+        }
+      }
+    });
+    mapper.mapEvent({
+      type: "stream_event",
+      event: {
+        type: "content_block_delta",
+        index: 0,
+        delta: {
+          type: "input_json_delta",
+          partial_json: '{"note":"alpha"}'
+        }
+      }
+    });
+    mapper.mapEvent({
+      type: "stream_event",
+      event: {
+        type: "content_block_stop",
+        index: 0
+      }
+    });
+
+    expect(
+      mapper.mapEvent({
+        type: "user",
+        parent_tool_use_id: null,
+        tool_use_result: [
+          {
+            type: "text",
+            text: '{"ok":true}'
+          }
+        ],
+        message: {
+          role: "user",
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "tool-stream-2",
+              content: [
+                {
+                  type: "text",
+                  text: '{"ok":true}'
+                }
+              ]
+            }
+          ]
+        }
+      })
+    ).toEqual([
+      {
+        type: "tool_execution_end",
+        toolName: "mcp__trace_harness__fast_echo",
+        toolCallId: "tool-stream-2",
+        result: [
+          {
+            type: "text",
+            text: '{"ok":true}'
+          }
+        ],
+        isError: false
+      }
+    ]);
+  });
+
+  it("clears incomplete streamed tool blocks at message boundaries without emitting synthetic starts", () => {
+    const mapper = new ClaudeEventMapper();
+
+    expect(
+      mapper.mapEvent({
+        type: "stream_event",
+        event: {
+          type: "content_block_start",
+          index: 0,
+          content_block: {
+            type: "tool_use",
+            id: "tool-pending",
+            name: "read"
+          }
+        }
+      })
+    ).toEqual([]);
+
+    expect(
+      mapper.mapEvent({
+        type: "stream_event",
+        event: {
+          type: "content_block_delta",
+          index: 0,
+          delta: {
+            type: "input_json_delta",
+            partial_json: '{"path":"README'
+          }
+        }
+      })
+    ).toEqual([]);
+
+    expect(
+      mapper.mapEvent({
+        type: "stream_event",
+        event: {
+          type: "message_stop"
+        }
+      })
+    ).toEqual([]);
+
+    expect(
+      mapper.mapEvent({
+        type: "stream_event",
+        event: {
+          type: "content_block_stop",
+          index: 0
+        }
+      })
+    ).toEqual([]);
+  });
+
+  it("deduplicates repeated legacy bridge task_started events for the same tool call", () => {
+    const mapper = new ClaudeEventMapper();
+
+    // Current Claude SDK traces use streamed tool_use blocks. This covers the older
+    // bridge-style task_started shape that the mapper still accepts for compatibility.
 
     expect(
       mapper.mapEvent({
