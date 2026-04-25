@@ -472,7 +472,7 @@ The wizard session shows a violet Sparkles icon in the sidebar. Once the agent i
 
 ### Manual promotion
 
-Right-click any existing session and choose **Promote to Project Agent**. A dialog opens where you fill in:
+Right-click any existing session and choose **Promote to Project Agent**. A settings drawer opens where you fill in:
 
 - **Handle** — A unique identifier like \`@releases\` or \`@docs\`. Must be unique within the profile and cannot change after promotion.
 - **When to use** — A description that tells other sessions when to message this agent.
@@ -493,7 +493,7 @@ Messages to project agents are fire-and-forget — there's no reply threading. I
 
 Right-click a project agent to access:
 
-- **Settings** — Edit the "when to use" text and system prompt contents, add reference docs, and manage the agent's files. You can regenerate recommendations here too.
+- **Settings** — Edit the "when to use" text and system prompt contents, add reference docs, and manage the agent's files. You can regenerate recommendations here too. The settings drawer is resizable from its left edge and confirms before discarding unsaved changes.
 - **View Creation History** — Opens the Agent Architect session that created this agent (if it was created via the wizard).
 - **Demote to Regular Session** — Converts the project agent back to a normal session. The handle and discovery metadata are removed, but the conversation history is preserved.
 - Other standard session actions like Rename, Fork, Stop, Delete.
