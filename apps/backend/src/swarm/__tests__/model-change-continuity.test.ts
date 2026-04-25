@@ -35,7 +35,7 @@ async function createTempDir(prefix: string): Promise<string> {
 describe("model-change-continuity", () => {
   it("infers runtime kind from provider", () => {
     expect(inferModelChangeContinuityRuntimeKind({ provider: "claude-sdk" })).toBe("claude");
-    expect(inferModelChangeContinuityRuntimeKind({ provider: "openai-codex-app-server" })).toBe("codex");
+    expect(inferModelChangeContinuityRuntimeKind({ provider: "openai-codex-app-server" })).toBe("pi");
     expect(inferModelChangeContinuityRuntimeKind({ provider: "openai-codex" })).toBe("pi");
   });
 

@@ -163,7 +163,6 @@ function createRuntimeControllerHarness(config: SwarmConfig): {
     },
     promptService: {
       buildClaudeRuntimeSystemPrompt: vi.fn(async (_d, sp) => sp),
-      buildCodexRuntimeSystemPrompt: vi.fn(async (_d, sp) => sp),
       buildAcpRuntimeSystemPrompt: vi.fn(async (_d, sp) => sp)
     },
     secretsEnvService: {

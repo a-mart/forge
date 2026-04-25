@@ -158,6 +158,7 @@ import { classifyRuntimeCapacityError } from "./runtime-utils.js";
 import {
   DEFAULT_SWARM_MODEL_PRESET,
   inferSwarmModelPresetFromDescriptor,
+  normalizePersistedSwarmModelDescriptor,
   parseSwarmModelPreset,
   parseSwarmReasoningLevel,
   resolveModelDescriptorFromPreset
@@ -4285,6 +4286,13 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const managerDescriptorsById = new Map<string, AgentDescriptor>();
 
     for (const descriptor of this.descriptors.values()) {
+      const normalizedDescriptorModel = cloneModelDescriptor(descriptor.model);
+      if (!sameModelDescriptor(descriptor.model, normalizedDescriptorModel)) {
+        descriptor.model = normalizedDescriptorModel;
+        this.descriptors.set(descriptor.agentId, descriptor);
+        changed = true;
+      }
+
       if (descriptor.role !== "manager") {
         continue;
       }
@@ -5840,7 +5848,7 @@ function isValidPersistedModelDescriptor(value: unknown): value is AgentDescript
 }
 
 function cloneModelDescriptor(model: AgentDescriptor["model"]): AgentDescriptor["model"] {
-  return {
+  return normalizePersistedSwarmModelDescriptor(model) ?? {
     provider: model.provider,
     modelId: model.modelId,
     thinkingLevel: model.thinkingLevel

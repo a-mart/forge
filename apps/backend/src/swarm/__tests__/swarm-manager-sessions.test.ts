@@ -583,12 +583,6 @@ describe('SwarmManager', () => {
       model: 'pi-opus',
     })
 
-    const codexAppManager = await manager.createManager('manager', {
-      name: 'Codex App Manager',
-      cwd: config.defaultCwd,
-      model: 'codex-app',
-    })
-
     expect(codexManager.model).toEqual({
       provider: 'openai-codex',
       modelId: 'gpt-5.3-codex',
@@ -603,11 +597,6 @@ describe('SwarmManager', () => {
       provider: 'anthropic',
       modelId: 'claude-opus-4-6',
       thinkingLevel: 'high',
-    })
-    expect(codexAppManager.model).toEqual({
-      provider: 'openai-codex-app-server',
-      modelId: 'default',
-      thinkingLevel: 'xhigh',
     })
   })
 
@@ -660,7 +649,7 @@ describe('SwarmManager', () => {
         cwd: config.defaultCwd,
         model: 'invalid-model' as any,
       }),
-     ).rejects.toThrow('create_manager.model must be one of pi-codex|pi-5.4|pi-5.5|pi-opus|sdk-opus|sdk-sonnet|pi-grok|codex-app|cursor-acp')
+     ).rejects.toThrow('create_manager.model must be one of pi-codex|pi-5.4|pi-5.5|pi-opus|sdk-opus|sdk-sonnet|pi-grok|cursor-acp')
   })
 
   it('replacement-shuts down idle manager session runtimes after a profile model change and recreates them on the next prompt', async () => {

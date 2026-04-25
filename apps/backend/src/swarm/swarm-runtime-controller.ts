@@ -99,7 +99,6 @@ export interface SwarmRuntimeControllerHost extends SwarmToolHost {
   };
   promptService: {
     buildClaudeRuntimeSystemPrompt(descriptor: AgentDescriptor, systemPrompt: string): Promise<string>;
-    buildCodexRuntimeSystemPrompt(descriptor: AgentDescriptor, systemPrompt: string): Promise<string>;
     buildAcpRuntimeSystemPrompt(descriptor: AgentDescriptor, systemPrompt: string): Promise<string>;
   };
   secretsEnvService: {
@@ -209,10 +208,7 @@ export class SwarmRuntimeController {
       getMemoryRuntimeResources: async (descriptor) => this.host.getMemoryRuntimeResources(descriptor),
       getSwarmContextFiles: async (cwd) => this.host.getSwarmContextFiles(cwd),
       buildClaudeRuntimeSystemPrompt: async (descriptor, systemPrompt) =>
-        this.host.promptService.buildClaudeRuntimeSystemPrompt(descriptor, systemPrompt),
-      buildCodexRuntimeSystemPrompt: async (descriptor, systemPrompt) =>
-        this.host.promptService.buildCodexRuntimeSystemPrompt(descriptor, systemPrompt),
-      buildAcpRuntimeSystemPrompt: async (descriptor, systemPrompt) =>
+        this.host.promptService.buildClaudeRuntimeSystemPrompt(descriptor, systemPrompt),      buildAcpRuntimeSystemPrompt: async (descriptor, systemPrompt) =>
         this.host.promptService.buildAcpRuntimeSystemPrompt(descriptor, systemPrompt),
       mergeRuntimeContextFiles: (baseAgentsFiles, options) =>
         this.mergeRuntimeContextFiles(baseAgentsFiles, options),
@@ -712,10 +708,10 @@ export class SwarmRuntimeController {
     this.logDebug("runtime:error", {
       agentId,
       runtime:
-        descriptor.model.provider.includes("codex-app")
-          ? "codex-app-server"
-          : descriptor.model.provider.includes("cursor-acp")
-            ? "cursor-acp"
+        descriptor.model.provider.includes("cursor-acp")
+          ? "cursor-acp"
+          : descriptor.model.provider.includes("claude-sdk")
+            ? "claude-sdk"
             : "pi",
       phase: error.phase,
       message,

@@ -22,8 +22,8 @@ vi.mock('node:child_process', async () => {
   }
 })
 
-vi.mock('../codex-jsonrpc-client.js', () => ({
-  CodexJsonRpcClient: class MockCodexJsonRpcClient {
+vi.mock('../stdio-jsonrpc-client.js', () => ({
+  StdioJsonRpcClient: class MockStdioJsonRpcClient {
     readonly options: {
       command?: string
       args?: string[]

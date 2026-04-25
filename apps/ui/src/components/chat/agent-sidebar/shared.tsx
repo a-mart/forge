@@ -22,7 +22,7 @@ export function SidebarModelIcon({ agent }: { agent: AgentDescriptor }) {
     return <img src="/agents/claude-logo.svg" alt="" aria-hidden="true" className="size-3 shrink-0 object-contain opacity-70" />
   }
 
-  if (preset === 'pi-codex' || preset === 'pi-5.4' || preset === 'codex-app' || provider.includes('openai')) {
+  if (preset === 'pi-codex' || preset === 'pi-5.4' || provider.includes('openai')) {
     return <img src="/agents/codex-logo.svg" alt="" aria-hidden="true" className="size-3 shrink-0 object-contain opacity-70 dark:invert" />
   }
 

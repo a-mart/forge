@@ -37,7 +37,16 @@ export function getCatalogModel(modelId: string, provider?: string): ForgeModelD
     return matches.find((model) => model.provider === normalizedProvider)
   }
 
-  return exactMatch ?? matches[0]
+  if (exactMatch) {
+    return exactMatch
+  }
+
+  const providerScopedMatches = matches.filter((model) => model.catalogId && model.catalogId !== model.modelId)
+  if (providerScopedMatches.length > 0) {
+    return undefined
+  }
+
+  return matches[0]
 }
 
 /** Lookup a family by familyId. */

@@ -529,7 +529,7 @@ If a project agent has the **Can create sessions** toggle enabled in its setting
 
 ## Model and fallback
 
-Each specialist has a primary model and reasoning level. You can also set a fallback model that takes over if the primary is unavailable or rate-limited. Recoverable failures are retried silently inside worker/runtime fallback replay or handoff before the manager sees an error, and successful fallback is invisible to the manager and user. Only exhausted fallback failures bubble up. Built-in specialists generally use cross-vendor fallbacks when practical, with exceptions like \`researcher\` already complying, plus \`app-runtime\` and \`web-researcher\`. Expand the fallback section to configure it.
+Each specialist has a primary model and reasoning level. You can also set a fallback model that takes over if the primary is unavailable or rate-limited. Recoverable failures are retried silently inside worker/runtime fallback replay or handoff before the manager sees an error, and successful fallback is invisible to the manager and user. Only exhausted fallback failures bubble up. Built-in specialists generally use cross-vendor fallbacks when practical, while specialists with defining provider-native capabilities like \`web-researcher\` may intentionally stay on the same provider. Expand the fallback section to configure it.
 
 ## Native search (web + X) (Grok models only)
 

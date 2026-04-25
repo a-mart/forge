@@ -47,7 +47,6 @@ builtin: true                        # Internal — marks Forge-shipped speciali
 | `grok-4-fast` | Grok 4 Fast | xAI | none, low, medium, high, xhigh |
 | `grok-4.20-0309-reasoning` | Grok 4.20 Reasoning | xAI | none, low, medium, high, xhigh |
 | `grok-4.20-0309-non-reasoning` | Grok 4.20 Non-Reasoning | xAI | none, low, medium, high, xhigh |
-| `default` | Codex App Runtime | Codex App | none, low, medium, high, xhigh |
 
 **Notes:**
 - The table above shows models currently available in the Forge catalog. Some models listed in upstream Pi releases may not yet be curated into Forge.
@@ -119,7 +118,7 @@ Each specialist can optionally define a fallback model. If the primary model is 
 
 Only exhausted fallback failures surface upward.
 
-**Built-in specialists intentionally pair across vendors when practical** for resilience: OpenAI-primary builtins generally fall back to Anthropic, and Anthropic-primary builtins generally fall back to OpenAI. Exceptions: `researcher` already complies, `app-runtime` still uses the app-server-specific `default` pseudo-model on `openai-codex-app-server`, and `web-researcher` keeps xAI-native web/X search as its defining capability.
+**Built-in specialists intentionally pair across vendors when practical** for resilience: OpenAI-primary builtins generally fall back to Anthropic, and Anthropic-primary builtins generally fall back to OpenAI. Specialists with defining provider-native capabilities, like `web-researcher`, may intentionally stay on the same provider.
 
 **Cross-provider fallback is fully supported**: You can use a model from a different provider as your fallback (e.g., primary `grok-4`, fallback `claude-sonnet-4-5-20250929`). This is exercised silently inside runtime recovery and is useful for provider outages or rate limit mitigation.
 

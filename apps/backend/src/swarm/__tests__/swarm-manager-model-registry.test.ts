@@ -188,11 +188,6 @@ describe("SwarmManager spawn_agent preset routing", () => {
       model: 'pi-opus',
     })
 
-    const codexAppWorker = await manager.spawnAgent('manager', {
-      agentId: 'Codex App Worker',
-      model: 'codex-app',
-    })
-
     expect(codexWorker.model).toEqual({
       provider: 'openai-codex',
       modelId: 'gpt-5.3-codex',
@@ -207,11 +202,6 @@ describe("SwarmManager spawn_agent preset routing", () => {
       provider: 'anthropic',
       modelId: 'claude-opus-4-6',
       thinkingLevel: 'high',
-    })
-    expect(codexAppWorker.model).toEqual({
-      provider: 'openai-codex-app-server',
-      modelId: 'default',
-      thinkingLevel: 'xhigh',
     })
   })
 
@@ -429,7 +419,7 @@ describe("SwarmManager spawn_agent preset routing", () => {
         agentId: 'Invalid Worker',
         model: 'invalid-model' as any,
       }),
-     ).rejects.toThrow('spawn_agent.model must be one of pi-codex|pi-5.4|pi-5.5|pi-opus|sdk-opus|sdk-sonnet|pi-grok|codex-app|cursor-acp')
+     ).rejects.toThrow('spawn_agent.model must be one of pi-codex|pi-5.4|pi-5.5|pi-opus|sdk-opus|sdk-sonnet|pi-grok|cursor-acp')
   })
 
   it('rejects invalid spawn_agent reasoning levels with a clear error', async () => {

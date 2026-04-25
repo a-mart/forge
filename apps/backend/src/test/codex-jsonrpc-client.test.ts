@@ -1,14 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { CodexJsonRpcClient, type JsonRpcRequestMessage } from '../swarm/codex-jsonrpc-client.js'
+import { StdioJsonRpcClient, type JsonRpcRequestMessage } from '../swarm/stdio-jsonrpc-client.js'
 
-const activeClients = new Set<CodexJsonRpcClient>()
+const activeClients = new Set<StdioJsonRpcClient>()
 
 function createClient(options: {
   script: string
   onRequest?: (request: JsonRpcRequestMessage) => Promise<unknown>
   onExit?: (error: Error) => void
-}): CodexJsonRpcClient {
-  const client = new CodexJsonRpcClient({
+}): StdioJsonRpcClient {
+  const client = new StdioJsonRpcClient({
     command: process.execPath,
     args: ['-e', options.script],
     onRequest: options.onRequest,
@@ -26,7 +26,7 @@ afterEach(() => {
   activeClients.clear()
 })
 
-describe('CodexJsonRpcClient', () => {
+describe('StdioJsonRpcClient', () => {
   it('resolves request/response happy-path results', async () => {
     const client = createClient({
       script: String.raw`
@@ -259,7 +259,7 @@ rl.on('line', (line) => {
 `,
     })
 
-    await expect(client.request('hang', undefined, 5_000)).rejects.toThrow('Codex app-server exited')
+    await expect(client.request('hang', undefined, 5_000)).rejects.toThrow('JSON-RPC subprocess exited')
     expect(onExit).toHaveBeenCalledTimes(1)
   })
 

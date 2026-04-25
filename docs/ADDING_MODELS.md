@@ -114,7 +114,6 @@ Do not add or edit specialist `.md` files just to expose the model. Specialist c
 
 Do not touch UI code for model selectors. The selectors read from the catalog.
 
-Do not change the Codex app-server SDK path. That is a separate runtime path.
 
 Do not widen protocol types for `familyId`. `packages/protocol/src/model-catalog-types.ts` already uses `string`, not a union.
 

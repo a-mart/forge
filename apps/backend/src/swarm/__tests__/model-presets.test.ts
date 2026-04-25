@@ -102,7 +102,7 @@ describe("model-presets", () => {
 
   it("does not expose webSearch capability metadata for other presets", () => {
     const presets = getModelPresetInfoList();
-    for (const presetId of ["pi-codex", "pi-5.4", "pi-5.5", "pi-opus", "sdk-opus", "sdk-sonnet", "codex-app", "cursor-acp"] as const) {
+    for (const presetId of ["pi-codex", "pi-5.4", "pi-5.5", "pi-opus", "sdk-opus", "sdk-sonnet", "cursor-acp"] as const) {
       expect(presets.find((preset) => preset.presetId === presetId)?.webSearch).toBeUndefined();
     }
   });
