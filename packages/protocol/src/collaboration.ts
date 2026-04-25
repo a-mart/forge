@@ -8,7 +8,7 @@ export type CollaborationRole = 'admin' | 'member'
 export type CollaborationInviteRole = 'member'
 export type CollaborationAuthMethod = 'password'
 export type CollaborationInviteStatus = 'pending' | 'revoked' | 'expired' | 'consumed'
-export type CollaborationInviteLookupError = 'not_found' | 'expired' | 'revoked' | 'consumed'
+export type CollaborationInviteLookupError = 'not_found' | 'expired' | 'revoked' | 'consumed' | 'unsupported'
 
 export interface CollaborationStatus {
   enabled: boolean
@@ -70,6 +70,7 @@ export interface CollaborationInviteRedeemedUser {
 export interface CollaborationSessionInfo {
   authenticated: boolean
   user?: CollaborationUser
+  passwordChangeRequired?: boolean
 }
 
 export interface CollaborationWorkspaceBaseAi {
