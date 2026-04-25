@@ -31,7 +31,6 @@ import type { ForgeExtensionHost } from "../forge-extension-host.js";
 import { wrapForgeToolsWithExtensionHooks } from "../forge-instrumented-tools.js";
 import { buildForgePiToolBridgeExtensionFactory } from "../forge-pi-tool-bridge.js";
 import { isClaudeSdkUnavailableError } from "../claude-sdk-loader.js";
-import { CodexAgentRuntime } from "../codex-agent-runtime.js";
 import { createAcpMcpToolBridge } from "./acp/acp-mcp-tool-bridge.js";
 import type {
   RuntimeCreationOptions,
@@ -79,7 +78,6 @@ interface RuntimeFactoryDependencies {
   }>;
   getSwarmContextFiles: (cwd: string) => Promise<Array<{ path: string; content: string }>>;
   buildClaudeRuntimeSystemPrompt: (descriptor: AgentDescriptor, systemPrompt: string) => Promise<string>;
-  buildCodexRuntimeSystemPrompt: (descriptor: AgentDescriptor, systemPrompt: string) => Promise<string>;
   buildAcpRuntimeSystemPrompt: (descriptor: AgentDescriptor, systemPrompt: string) => Promise<string>;
   mergeRuntimeContextFiles: (
     baseAgentsFiles: Array<{ path: string; content: string }>,
@@ -140,11 +138,6 @@ export class RuntimeFactory {
     if (isAcpModelDescriptor(descriptor.model)) {
       return this.createAcpRuntimeForDescriptor(descriptor, systemPrompt, runtimeToken, options);
     }
-
-    if (isCodexAppServerModelDescriptor(descriptor.model)) {
-      return this.createCodexRuntimeForDescriptor(descriptor, systemPrompt, runtimeToken, options);
-    }
-
     return this.createPiRuntimeForDescriptor(descriptor, systemPrompt, runtimeToken, options);
   }
 
@@ -618,88 +611,6 @@ export class RuntimeFactory {
     return runtime;
   }
 
-  private async createCodexRuntimeForDescriptor(
-    descriptor: AgentDescriptor,
-    systemPrompt: string,
-    runtimeToken: number,
-    options?: RuntimeCreationOptions
-  ): Promise<SwarmAgentRuntime> {
-    const preparedForgeBindings = await this.deps.forgeExtensionHost.prepareRuntimeBindings({
-      descriptor,
-      sessionDescriptor: this.getForgeSessionDescriptor(descriptor),
-      runtimeType: "codex",
-      runtimeToken
-    });
-    const baseSwarmTools = this.buildRuntimeTools(descriptor);
-    const swarmTools = preparedForgeBindings
-      ? wrapForgeToolsWithExtensionHooks({
-          tools: baseSwarmTools,
-          forgeExtensionHost: this.deps.forgeExtensionHost,
-          bindingToken: preparedForgeBindings.bindingToken
-        })
-      : baseSwarmTools;
-    const memoryResources = await this.deps.getMemoryRuntimeResources(descriptor);
-    const codexSystemPrompt = await this.deps.buildCodexRuntimeSystemPrompt(descriptor, systemPrompt);
-    const startupSystemPromptOverride = appendStartupRecoveryContext(
-      codexSystemPrompt,
-      options?.startupRecoveryContext
-    );
-    const skipInitialThreadResume = Boolean(options?.startupRecoveryContext);
-
-    this.deps.logDebug("runtime:create:start", {
-      runtime: "codex-app-server",
-      agentId: descriptor.agentId,
-      role: descriptor.role,
-      model: descriptor.model,
-      archetypeId: descriptor.archetypeId,
-      cwd: descriptor.cwd
-    });
-
-    const runtime = await CodexAgentRuntime.create({
-      descriptor: cloneRuntimeDescriptor(descriptor),
-      callbacks: {
-        onStatusChange: async (agentId, status, pendingCount, contextUsage) => {
-          await this.deps.callbacks.onStatusChange(runtimeToken, agentId, status, pendingCount, contextUsage);
-        },
-        onSessionEvent: async (agentId, event) => {
-          await this.deps.callbacks.onSessionEvent(runtimeToken, agentId, event);
-        },
-        onAgentEnd: async (agentId) => {
-          await this.deps.callbacks.onAgentEnd(runtimeToken, agentId);
-        },
-        onRuntimeError: async (agentId, error) => {
-          await this.deps.callbacks.onRuntimeError(runtimeToken, agentId, error);
-        }
-      },
-      now: this.deps.now,
-      systemPrompt: codexSystemPrompt,
-      tools: swarmTools,
-      runtimeEnv: {
-        SWARM_DATA_DIR: this.deps.config.paths.dataDir,
-        SWARM_MEMORY_FILE: memoryResources.memoryContextFile.path
-      },
-      onSessionFileRotated: async (sessionFile) => {
-        await this.deps.onSessionFileRotated?.(descriptor, sessionFile);
-      },
-      startupSystemPromptOverride:
-        startupSystemPromptOverride !== codexSystemPrompt ? startupSystemPromptOverride : undefined,
-      skipInitialThreadResume
-    });
-
-    this.deps.logDebug("runtime:create:ready", {
-      runtime: "codex-app-server",
-      agentId: descriptor.agentId,
-      activeTools: swarmTools.map((tool) => tool.name),
-      systemPromptPreview: previewForLog(codexSystemPrompt, 240)
-    });
-
-    if (preparedForgeBindings) {
-      this.deps.forgeExtensionHost.activateRuntimeBindings(preparedForgeBindings);
-    }
-
-    return runtime;
-  }
-
   private buildRuntimeTools(descriptor: AgentDescriptor) {
     const swarmTools = buildSwarmTools(this.deps.host, descriptor);
 
@@ -1089,11 +1000,6 @@ function isClaudeSdkModelDescriptor(
 function isAcpModelDescriptor(descriptor: Pick<AgentModelDescriptor, "provider">): boolean {
   return descriptor.provider.trim().toLowerCase() === "cursor-acp";
 }
-
-function isCodexAppServerModelDescriptor(descriptor: Pick<AgentModelDescriptor, "provider">): boolean {
-  return descriptor.provider.trim().toLowerCase() === "openai-codex-app-server";
-}
-
 function normalizeThinkingLevel(level: string): string {
   return level === "x-high" ? "xhigh" : level;
 }

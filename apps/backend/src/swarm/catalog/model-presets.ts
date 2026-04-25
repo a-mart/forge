@@ -5,6 +5,14 @@ import { modelCatalogService } from "./model-catalog-service.js";
 
 export const DEFAULT_SWARM_MODEL_PRESET: SwarmModelPreset = "pi-codex";
 
+const REMOVED_PRESET_REPLACEMENTS: Record<string, SwarmModelPreset> = {
+  "codex-app": "pi-codex",
+};
+
+const REMOVED_PROVIDER_REPLACEMENTS: Record<string, SwarmModelPreset> = {
+  "openai-codex-app-server": "pi-codex",
+};
+
 const VALID_SWARM_MODEL_PRESET_VALUES = new Set<string>(SWARM_MODEL_PRESETS);
 const VALID_SWARM_REASONING_LEVEL_VALUES = new Set<string>(SWARM_REASONING_LEVELS);
 
@@ -62,10 +70,6 @@ export function inferProviderFromModelId(modelId: string): string | null {
     return null;
   }
 
-  if (normalizedModelId === "default") {
-    return "openai-codex-app-server";
-  }
-
   if (normalizedModelId.startsWith("claude-sdk/")) {
     return "claude-sdk";
   }
@@ -118,4 +122,37 @@ export function normalizeSwarmModelDescriptor(
 ): AgentModelDescriptor {
   const preset = inferSwarmModelPresetFromDescriptor(descriptor) ?? fallbackPreset;
   return resolveModelDescriptorFromPreset(preset);
+}
+
+export function resolveRemovedSwarmModelPresetAlias(preset: string): SwarmModelPreset | undefined {
+  const normalizedPreset = preset.trim().toLowerCase();
+  return REMOVED_PRESET_REPLACEMENTS[normalizedPreset];
+}
+
+export function normalizePersistedSwarmModelDescriptor(
+  descriptor: (Pick<AgentModelDescriptor, "provider" | "modelId"> & { thinkingLevel?: string }) | undefined,
+): AgentModelDescriptor | undefined {
+  if (!descriptor) {
+    return undefined;
+  }
+
+  const provider = descriptor.provider.trim().toLowerCase();
+  const replacementPreset = REMOVED_PROVIDER_REPLACEMENTS[provider];
+  if (!replacementPreset) {
+    return {
+      provider: descriptor.provider,
+      modelId: descriptor.modelId,
+      thinkingLevel: normalizeDescriptorThinkingLevel(descriptor.thinkingLevel),
+    };
+  }
+
+  const replacement = resolveModelDescriptorFromPreset(replacementPreset);
+  return {
+    ...replacement,
+    thinkingLevel: normalizeDescriptorThinkingLevel(descriptor.thinkingLevel) ?? replacement.thinkingLevel,
+  };
+}
+
+function normalizeDescriptorThinkingLevel(level: string | undefined): string {
+  return typeof level === "string" && level === "x-high" ? "xhigh" : (level ?? "xhigh");
 }

@@ -212,7 +212,7 @@ describe('AgentSidebar', () => {
   it('renders profile and worker rows for mixed model providers without relying on runtime icons', () => {
     const mgr = sessionManager('manager-pi', 'manager-pi', { provider: 'openai-codex', modelId: 'gpt-5.3-codex' })
     const wrkOpus = worker('worker-opus', 'manager-pi', { provider: 'anthropic', modelId: 'claude-opus-4-6' })
-    const wrkCodex = worker('worker-codex', 'manager-pi', { provider: 'openai-codex-app-server', modelId: 'default' })
+    const wrkCodex = worker('worker-codex', 'manager-pi', { provider: 'openai-codex', modelId: 'gpt-5.4' })
 
     renderSidebar({ agents: [mgr, wrkOpus, wrkCodex] })
 

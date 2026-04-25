@@ -45,7 +45,6 @@ export const PROVIDER_LABELS: Record<string, string> = {
   'anthropic': 'Anthropic',
   'claude-sdk': 'Claude SDK',
   xai: 'xAI',
-  'openai-codex-app-server': 'Codex App',
 }
 
 export const HIDE_DISABLED_KEY = 'forge-specialists-hide-disabled'

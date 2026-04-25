@@ -56,14 +56,6 @@ export const FORGE_MODEL_CATALOG = {
       piApiKeyEnvVar: 'OPENROUTER_API_KEY',
       piApiProtocol: 'openai-completions',
     },
-    'openai-codex-app-server': {
-      providerId: 'openai-codex-app-server',
-      displayName: 'Codex App Runtime',
-      availabilityMode: 'external',
-      piProjectionMode: 'none',
-      projectionScope: 'catalog-only',
-      requestBehaviorId: null,
-    },
     'cursor-acp': {
       providerId: 'cursor-acp',
       displayName: 'Cursor ACP',
@@ -151,17 +143,6 @@ export const FORGE_MODEL_CATALOG = {
       visibleInChangeManager: false,
       visibleInSpawnPreset: true,
       visibleInSpecialists: true,
-    },
-    'codex-app': {
-      familyId: 'codex-app',
-      displayName: 'Codex App Runtime',
-      provider: 'openai-codex-app-server',
-      defaultModelId: 'default',
-      defaultReasoningLevel: 'xhigh',
-      visibleInCreateManager: false,
-      visibleInChangeManager: false,
-      visibleInSpawnPreset: true,
-      visibleInSpecialists: false,
     },
     'cursor-acp': {
       familyId: 'cursor-acp',
@@ -482,25 +463,6 @@ export const FORGE_MODEL_CATALOG = {
         'API overridden to openai-responses; reasoning: false per Pi upstream; Forge keeps this model text-only even though Pi upstream currently advertises image input',
     },
 
-    // ── Codex App Runtime (synthetic, no Pi upstream) ────────────────────────────────
-    default: {
-      modelId: 'default',
-      provider: 'openai-codex-app-server',
-      familyId: 'codex-app',
-      displayName: 'Codex App Runtime',
-      isFamilyDefault: true,
-      supportsReasoning: true,
-      supportedReasoningLevels: ['none', 'low', 'medium', 'high', 'xhigh'],
-      defaultReasoningLevel: 'xhigh',
-      contextWindow: 1_048_576,
-      maxOutputTokens: 128_000,
-      inputModes: ['text'],
-      webSearchCapability: 'none',
-      enabledByDefault: true,
-      piUpstreamId: null,
-      intentionalDivergenceNotes:
-        'Synthetic entry — Codex App Server is not a Pi-managed runtime',
-    },
     'cursor-acp/default': {
       catalogId: 'cursor-acp/default',
       modelId: 'default',

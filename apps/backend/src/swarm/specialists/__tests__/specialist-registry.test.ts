@@ -577,11 +577,7 @@ describe("specialist-registry", () => {
       fallbackReasoningLevel: "high",
     });
 
-    expect(byId.get("app-runtime")).toMatchObject({
-      provider: "openai-codex-app-server",
-      modelId: "default",
-      fallbackModelId: undefined,
-    });
+    expect(byId.get("app-runtime")).toBeUndefined();
     expect(byId.get("cursor-builder")).toMatchObject({
       provider: "cursor-acp",
       modelId: "default",

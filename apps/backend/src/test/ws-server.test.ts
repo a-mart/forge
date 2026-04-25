@@ -2546,56 +2546,6 @@ describe('SwarmWebSocketServer', () => {
     await server.stop()
   })
 
-  it('creates codex-app managers over websocket', async () => {
-    const port = await getAvailablePort()
-    const config = await makeTempConfig(port, true)
-
-    const manager = new TestSwarmManager(config)
-    await bootWithDefaultManager(manager, config)
-
-    const server = new SwarmWebSocketServer({
-      swarmManager: manager,
-      host: config.host,
-      port: config.port,
-      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
-    })
-
-    await server.start()
-
-    const client = new WebSocket(`ws://${config.host}:${config.port}`)
-    const events: ServerEvent[] = []
-    client.on('message', (raw) => {
-      events.push(JSON.parse(raw.toString()) as ServerEvent)
-    })
-
-    await once(client, 'open')
-    client.send(JSON.stringify({ type: 'subscribe' }))
-    await waitForEvent(events, (event) => event.type === 'ready')
-
-    client.send(
-      JSON.stringify({
-        type: 'create_manager',
-        name: 'Codex App Manager',
-        cwd: config.defaultCwd,
-        model: 'codex-app',
-      }),
-    )
-
-    const createdEvent = await waitForEvent(events, (event) => event.type === 'manager_created')
-    expect(createdEvent.type).toBe('manager_created')
-    if (createdEvent.type === 'manager_created') {
-      expect(createdEvent.manager.model).toEqual({
-        provider: 'openai-codex-app-server',
-        modelId: 'default',
-        thinkingLevel: 'xhigh',
-      })
-    }
-
-    client.close()
-    await once(client, 'close')
-    await server.stop()
-  })
-
   it('rejects invalid create_manager model presets at websocket protocol validation time', async () => {
     const port = await getAvailablePort()
     const config = await makeTempConfig(port, true)
@@ -2636,7 +2586,7 @@ describe('SwarmWebSocketServer', () => {
       (event) =>
         event.type === 'error' &&
         event.code === 'INVALID_COMMAND' &&
-        event.message.includes('create_manager.model must be one of pi-codex|pi-5.4|pi-5.5|pi-opus|sdk-opus|sdk-sonnet|pi-grok|codex-app|cursor-acp'),
+        event.message.includes('create_manager.model must be one of pi-codex|pi-5.4|pi-5.5|pi-opus|sdk-opus|sdk-sonnet|pi-grok|cursor-acp'),
     )
 
     expect(errorEvent.type).toBe('error')

@@ -1,6 +1,7 @@
+import { mkdirSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getPiModelsProjectionPath } from "../model-catalog-projection.js";
 
@@ -41,10 +42,6 @@ const claudeRuntimeMockState = vi.hoisted(() => ({
   constructorArgs: [] as unknown[],
   createMcpBridge: vi.fn(),
   constructImpl: undefined as ((options: unknown) => unknown) | undefined,
-}));
-
-const codexRuntimeMockState = vi.hoisted(() => ({
-  create: vi.fn(),
 }));
 
 const acpRuntimeMockState = vi.hoisted(() => ({
@@ -116,12 +113,6 @@ vi.mock("../claude-agent-runtime.js", () => ({
       claudeRuntimeMockState.constructorArgs.push(options)
       return claudeRuntimeMockState.constructImpl?.(options) as object | undefined
     }
-  },
-}));
-
-vi.mock("../codex-agent-runtime.js", () => ({
-  CodexAgentRuntime: {
-    create: (...args: unknown[]) => codexRuntimeMockState.create(...args),
   },
 }));
 
@@ -258,8 +249,15 @@ function createFactory(
     getAgentDescriptor?: (agentId: string) => AgentDescriptor | undefined;
     getCredentialPoolService?: () => any;
     buildAcpRuntimeSystemPrompt?: (descriptor: AgentDescriptor, systemPrompt: string) => Promise<string>;
+    skipProjectionBootstrap?: boolean;
   } = {},
 ): RuntimeFactory {
+  const projectionPath = getPiModelsProjectionPath(join(rootDir, "data"));
+  if (!overrides.skipProjectionBootstrap) {
+    mkdirSync(dirname(projectionPath), { recursive: true });
+    writeFileSync(projectionPath, "{}", "utf8");
+  }
+
   const host = {
     listAgents: () => [],
     getWorkerActivity: () => undefined,
@@ -288,7 +286,7 @@ function createFactory(
     config: createConfig(rootDir),
     now: () => "2026-01-01T00:00:00.000Z",
     logDebug: overrides.logDebug ?? (() => {}),
-    getPiModelsJsonPath: () => getPiModelsProjectionPath(join(rootDir, "data")),
+    getPiModelsJsonPath: () => projectionPath,
     getAgentDescriptor: overrides.getAgentDescriptor,
     getCredentialPoolService: overrides.getCredentialPoolService,
     getMemoryRuntimeResources: async () => ({
@@ -300,7 +298,6 @@ function createFactory(
     }),
     getSwarmContextFiles: async () => [],
     buildClaudeRuntimeSystemPrompt: async (_descriptor, systemPrompt) => systemPrompt,
-    buildCodexRuntimeSystemPrompt: async (_descriptor, systemPrompt) => systemPrompt,
     buildAcpRuntimeSystemPrompt:
       overrides.buildAcpRuntimeSystemPrompt ?? (async (_descriptor, systemPrompt) => systemPrompt),
     mergeRuntimeContextFiles: (base) => base,
@@ -331,7 +328,7 @@ function createMockPiSession() {
 
 function createMockRuntime(options: {
   descriptor?: AgentDescriptor;
-  runtimeType?: "pi" | "claude" | "codex" | "acp";
+  runtimeType?: "pi" | "claude" | "acp";
   systemPrompt?: string;
 }) {
   return {
@@ -386,7 +383,6 @@ describe("RuntimeFactory", () => {
       server: {},
       allowedTools: [],
     });
-    codexRuntimeMockState.create.mockReset();
     acpRuntimeMockState.create.mockReset();
     acpRuntimeMockState.createMcpBridge.mockReset();
     acpRuntimeMockState.createMcpBridge.mockResolvedValue({
@@ -583,7 +579,7 @@ describe("RuntimeFactory", () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
     await mkdir(rootDir, { recursive: true });
 
-    const factory = createFactory(rootDir);
+    const factory = createFactory(rootDir, { skipProjectionBootstrap: true });
 
     await expect(factory.createRuntimeForDescriptor(createDescriptor(rootDir), "system prompt")).rejects.toThrow(
       `Pi model projection file is missing: ${getPiModelsProjectionPath(join(rootDir, "data"))}. Regenerate it before creating a ModelRegistry.`,
@@ -1049,7 +1045,7 @@ describe("RuntimeFactory", () => {
     expect(runtime.getSystemPrompt?.()).toBe("Base system prompt");
   });
 
-  it("passes startup-only recovery overrides to Claude and Codex runtimes while preserving the base prompt", async () => {
+  it("passes startup-only recovery overrides to the Claude runtime while preserving the base prompt", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
     await mkdir(rootDir, { recursive: true });
 
@@ -1058,7 +1054,6 @@ describe("RuntimeFactory", () => {
       server: {},
       allowedTools: [],
     });
-    codexRuntimeMockState.create.mockResolvedValue({} as any);
 
     const factory = createFactory(rootDir);
     const startupRecoveryContext = {
@@ -1087,28 +1082,6 @@ describe("RuntimeFactory", () => {
     expect(claudeOptions.systemPrompt).toBe("Base Claude prompt");
     expect(claudeOptions.startupSystemPromptOverride).toContain("# Recovered Forge Conversation Context");
     expect(claudeOptions.skipInitialSessionResume).toBe(true);
-
-    await factory.createRuntimeForDescriptor(
-      createDescriptor(rootDir, {
-        model: {
-          provider: "openai-codex-app-server",
-          modelId: "gpt-5-codex",
-          thinkingLevel: "high",
-        },
-      }),
-      "Base Codex prompt",
-      2,
-      { startupRecoveryContext }
-    );
-
-    const codexOptions = codexRuntimeMockState.create.mock.calls.at(-1)?.[0] as {
-      systemPrompt: string;
-      startupSystemPromptOverride?: string;
-      skipInitialThreadResume?: boolean;
-    };
-    expect(codexOptions.systemPrompt).toBe("Base Codex prompt");
-    expect(codexOptions.startupSystemPromptOverride).toContain("# Recovered Forge Conversation Context");
-    expect(codexOptions.skipInitialThreadResume).toBe(true);
   });
 
   it("selects the ACP runtime and invokes the ACP prompt builder for cursor-acp providers", async () => {
@@ -1147,7 +1120,6 @@ describe("RuntimeFactory", () => {
     );
     expect(runtime.runtimeType).toBe("acp");
     expect(claudeRuntimeMockState.constructorArgs).toHaveLength(0);
-    expect(codexRuntimeMockState.create).not.toHaveBeenCalled();
 
     const acpOptions = acpRuntimeMockState.create.mock.calls.at(-1)?.[0] as {
       systemPrompt: string;
@@ -1284,7 +1256,7 @@ describe("RuntimeFactory", () => {
     );
   });
 
-  it("wraps Forge-owned tools for Claude, Codex, and ACP runtimes", async () => {
+  it("wraps Forge-owned tools for Claude and ACP runtimes", async () => {
     const rootDir = await mkdtemp(join(tmpdir(), "forge-runtime-factory-"));
     await mkdir(rootDir, { recursive: true });
 
@@ -1312,7 +1284,6 @@ describe("RuntimeFactory", () => {
       allowedTools: tools.map((tool) => tool.name),
       tools,
     }));
-    codexRuntimeMockState.create.mockImplementation(async (options: { tools: Array<{ name: string; execute: (...args: any[]) => Promise<unknown> }> }) => options as unknown);
     acpRuntimeMockState.createMcpBridge.mockImplementation(async (tools: Array<{ name: string; execute: (...args: any[]) => Promise<unknown> }>) => ({
       mcpDescriptor: {
         type: "http",
@@ -1351,30 +1322,13 @@ describe("RuntimeFactory", () => {
     await factory.createRuntimeForDescriptor(
       createDescriptor(rootDir, {
         model: {
-          provider: "openai-codex-app-server",
-          modelId: "gpt-5-codex",
-          thinkingLevel: "high",
-        },
-      }),
-      "system prompt",
-      2
-    );
-    const codexOptions = codexRuntimeMockState.create.mock.calls.at(-1)?.[0] as { tools: Array<{ name: string; execute: (...args: any[]) => Promise<unknown> }> };
-    await codexOptions.tools.find((tool) => tool.name === "send_message_to_agent")?.execute("tool-codex", {
-      targetAgentId: "worker-original",
-      message: "hello",
-    });
-
-    await factory.createRuntimeForDescriptor(
-      createDescriptor(rootDir, {
-        model: {
           provider: "cursor-acp",
           modelId: "default",
           thinkingLevel: "high",
         },
       }),
       "system prompt",
-      3
+      2
     );
     const acpTools = acpRuntimeMockState.createMcpBridge.mock.calls.at(-1)?.[0] as Array<{ name: string; execute: (...args: any[]) => Promise<unknown> }>;
     await acpTools.find((tool) => tool.name === "send_message_to_agent")?.execute("tool-acp", {
@@ -1383,7 +1337,6 @@ describe("RuntimeFactory", () => {
     });
 
     expect(sendMessage.mock.calls.map((call) => call[1])).toEqual([
-      "worker-rewritten",
       "worker-rewritten",
       "worker-rewritten",
     ]);

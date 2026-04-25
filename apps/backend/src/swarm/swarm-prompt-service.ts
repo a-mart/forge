@@ -477,52 +477,6 @@ export class SwarmPromptService {
     return contextFiles;
   }
 
-  async buildCodexRuntimeSystemPrompt(
-    descriptor: AgentDescriptor,
-    baseSystemPrompt: string,
-  ): Promise<string> {
-    const [memoryResources, swarmContextFiles] = await Promise.all([
-      this.getMemoryRuntimeResources(descriptor),
-      this.getSwarmContextFiles(descriptor.cwd),
-    ]);
-
-    const sections: string[] = [];
-    const trimmedBase = baseSystemPrompt.trim();
-    if (trimmedBase.length > 0) {
-      sections.push(trimmedBase);
-    }
-
-    for (const contextFile of swarmContextFiles) {
-      const content = contextFile.content.trim();
-      if (!content) {
-        continue;
-      }
-
-      sections.push(
-        [
-          `Repository swarm policy (${contextFile.path}):`,
-          "----- BEGIN SWARM CONTEXT -----",
-          content,
-          "----- END SWARM CONTEXT -----",
-        ].join("\n"),
-      );
-    }
-
-    const memoryContent = memoryResources.memoryContextFile.content.trim();
-    if (memoryContent) {
-      sections.push(
-        [
-          `Persistent swarm memory (${memoryResources.memoryContextFile.path}):`,
-          "----- BEGIN SWARM MEMORY -----",
-          memoryContent,
-          "----- END SWARM MEMORY -----",
-        ].join("\n"),
-      );
-    }
-
-    return sections.join("\n\n");
-  }
-
   async buildClaudeRuntimeSystemPrompt(
     descriptor: AgentDescriptor,
     systemPrompt: string,

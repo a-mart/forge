@@ -75,14 +75,6 @@ const EXPECTED_FAMILIES = {
     visibleInSpawnPreset: true,
     visibleInSpecialists: true,
   },
-  'codex-app': {
-    provider: 'openai-codex-app-server',
-    defaultModelId: 'default',
-    visibleInCreateManager: false,
-    visibleInChangeManager: false,
-    visibleInSpawnPreset: true,
-    visibleInSpecialists: false,
-  },
   'cursor-acp': {
     provider: 'cursor-acp',
     defaultModelId: 'default',
@@ -230,14 +222,6 @@ const EXPECTED_MODELS = {
     supportsReasoning: false,
     inputModes: ['text'],
   },
-  default: {
-    provider: 'openai-codex-app-server',
-    familyId: 'codex-app',
-    contextWindow: 1_048_576,
-    maxOutputTokens: 128_000,
-    supportsReasoning: true,
-    inputModes: ['text'],
-  },
   'cursor-acp/default': {
     provider: 'cursor-acp',
     familyId: 'cursor-acp',
@@ -256,12 +240,11 @@ describe('model-catalog', () => {
       'claude-sdk',
       'xai',
       'openrouter',
-      'openai-codex-app-server',
       'cursor-acp',
     ])
     expect(Object.keys(FORGE_MODEL_CATALOG.families)).toEqual(Object.keys(EXPECTED_FAMILIES))
     expect(Object.keys(FORGE_MODEL_CATALOG.models)).toEqual(Object.keys(EXPECTED_MODELS))
-    expect(Object.keys(FORGE_MODEL_CATALOG.models)).toHaveLength(19)
+    expect(Object.keys(FORGE_MODEL_CATALOG.models)).toHaveLength(18)
     expect(FORGE_MODEL_CATALOG.models).not.toHaveProperty('gpt-5.4-nano')
   })
 
@@ -309,7 +292,7 @@ describe('model-catalog', () => {
     }
   })
 
-  it('adds cursor-acp as a distinct synthetic provider/model without colliding with codex default', () => {
+  it('requires provider qualification for synthetic default models while keeping cursor-acp addressable', () => {
     expect(getCatalogProvider('cursor-acp')).toMatchObject({
       providerId: 'cursor-acp',
       availabilityMode: 'external',
@@ -317,10 +300,8 @@ describe('model-catalog', () => {
       projectionScope: 'catalog-only',
     })
 
-    expect(getCatalogModel('default')).toMatchObject({
-      provider: 'openai-codex-app-server',
-      familyId: 'codex-app',
-    })
+    expect(getCatalogModel('default')).toBeUndefined()
+    expect(inferCatalogProvider('default')).toBeNull()
 
     expect(getCatalogModel('cursor-acp/default')).toMatchObject({
       catalogId: 'cursor-acp/default',
@@ -419,7 +400,7 @@ describe('model-catalog', () => {
     expect(inferCatalogFamily('claude-sdk', 'claude-opus-4-6')).toBe('sdk-opus')
     expect(inferCatalogFamily('xai', 'grok-3')).toBe('pi-grok')
     expect(inferCatalogFamily('anthropic', 'grok-4')).toBeUndefined()
-    expect(isCatalogModelId('default')).toBe(true)
+    expect(isCatalogModelId('default')).toBe(false)
     expect(isCatalogModelId('gpt-5.4-nano')).toBe(false)
   })
 
@@ -450,7 +431,6 @@ describe('model-catalog', () => {
       'sdk-opus',
       'sdk-sonnet',
       'pi-grok',
-      'codex-app',
     ])
 
     expect(getSpecialistFamilies().map((family) => family.familyId)).toEqual([

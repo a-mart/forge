@@ -26,7 +26,7 @@ Forge is configured through environment variables, a `.env` file, and the dashbo
 |----------|---------|-------------|
 | `BRAVE_API_KEY` | — | API key for the [Brave Search](https://brave.com/search/api/) web search skill. |
 | `GEMINI_API_KEY` | — | API key for the Google Gemini image generation skill. |
-| `OPENAI_API_KEY` | — | Codex runtime API key fallback (used when `CODEX_API_KEY` is not set). |
+| `OPENAI_API_KEY` | — | API key for OpenAI Codex models when using external API-key auth. |
 
 Skill API keys can also be configured in the dashboard under **Settings → Environment Variables**. `.env` values remain supported as fallback.
 
@@ -34,8 +34,6 @@ Skill API keys can also be configured in the dashboard under **Settings → Envi
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CODEX_BIN` | — | Path to a custom Codex binary. |
-| `CODEX_API_KEY` | — | API key for the Codex agent runtime (deprecated; prefer managed auth in Settings). |
 | `XAI_API_KEY` | — | API key for xAI/Grok models (when using external API key mode). |
 
 ### Playwright Dashboard

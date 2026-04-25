@@ -36,7 +36,7 @@ interface PendingRequest {
   timeout: ReturnType<typeof setTimeout> | undefined;
 }
 
-interface CodexJsonRpcClientOptions {
+interface StdioJsonRpcClientOptions {
   command: string;
   args: string[];
   processLabel?: string;
@@ -47,17 +47,17 @@ interface CodexJsonRpcClientOptions {
   onStderr?: (line: string) => void;
 }
 
-export class CodexJsonRpcClient {
+export class StdioJsonRpcClient {
   private readonly child: ChildProcessWithoutNullStreams;
   private readonly stdoutReader: ReadLineInterface;
   private readonly stderrReader: ReadLineInterface;
-  private readonly options: CodexJsonRpcClientOptions;
+  private readonly options: StdioJsonRpcClientOptions;
 
   private disposed = false;
   private nextRequestId = 0;
   private readonly pendingById = new Map<string, PendingRequest>();
 
-  constructor(options: CodexJsonRpcClientOptions) {
+  constructor(options: StdioJsonRpcClientOptions) {
     this.options = options;
 
     this.child = spawn(options.command, options.args, {
@@ -92,7 +92,7 @@ export class CodexJsonRpcClient {
         return;
       }
 
-      const processLabel = this.options.processLabel ?? "Codex app-server";
+      const processLabel = this.options.processLabel ?? "JSON-RPC subprocess";
       const error = new Error(`${processLabel} exited (code=${code ?? "null"}, signal=${signal ?? "null"})`);
       this.handleProcessExit(error);
     });

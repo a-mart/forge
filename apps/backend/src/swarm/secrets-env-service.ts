@@ -95,19 +95,6 @@ export class SecretsEnvService {
       }
     }
 
-    if (!requirements.some((requirement) => requirement.name === "CODEX_API_KEY")) {
-      const codexApiKey = this.resolveEnvValue("CODEX_API_KEY");
-      requirements.push({
-        name: "CODEX_API_KEY",
-        description: "API key used by the codex-app runtime when no existing Codex login session is available.",
-        required: false,
-        helpUrl: "https://platform.openai.com/api-keys",
-        skillName: "codex-app-runtime",
-        isSet: typeof codexApiKey === "string" && codexApiKey.trim().length > 0,
-        maskedValue: codexApiKey ? SETTINGS_ENV_MASK : undefined
-      });
-    }
-
     requirements.sort((left, right) => {
       const byName = left.name.localeCompare(right.name);
       if (byName !== 0) return byName;

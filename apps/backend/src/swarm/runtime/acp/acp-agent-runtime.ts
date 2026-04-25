@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
-import { CodexJsonRpcClient, type JsonRpcNotificationMessage, type JsonRpcRequestMessage } from "../../codex-jsonrpc-client.js";
+import { StdioJsonRpcClient, type JsonRpcNotificationMessage, type JsonRpcRequestMessage } from "../../stdio-jsonrpc-client.js";
 import { openSessionManagerWithSizeGuard } from "../../session-file-guard.js";
 import { transitionAgentStatus } from "../../agent-state-machine.js";
 import {
@@ -76,7 +76,7 @@ export class AcpAgentRuntime implements SwarmAgentRuntime {
   private readonly callbacks: SwarmRuntimeCallbacks;
   private readonly now: () => string;
   private readonly systemPrompt: string;
-  private readonly rpc: CodexJsonRpcClient;
+  private readonly rpc: StdioJsonRpcClient;
   private readonly eventMapper: AcpEventMapper;
   private readonly customEntries = new Map<string, Array<{ id: string; data: unknown }>>();
   private readonly queuedPrompts: QueuedPrompt[] = [];
@@ -150,7 +150,7 @@ export class AcpAgentRuntime implements SwarmAgentRuntime {
       logDebug: (message, details) => this.logDebug(`event_mapper:${message}`, details)
     });
 
-    this.rpc = new CodexJsonRpcClient({
+    this.rpc = new StdioJsonRpcClient({
       command: options.command,
       args: ["acp"],
       processLabel: "Cursor ACP",

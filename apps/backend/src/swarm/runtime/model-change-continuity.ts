@@ -8,7 +8,7 @@ import {
 const MODEL_CHANGE_CONTINUITY_REQUEST_ENTRY_TYPE = "swarm_model_change_continuity_request";
 const MODEL_CHANGE_CONTINUITY_APPLIED_ENTRY_TYPE = "swarm_model_change_continuity_applied";
 
-export type ModelChangeContinuityRuntimeKind = "pi" | "claude" | "codex";
+export type ModelChangeContinuityRuntimeKind = "pi" | "claude";
 
 export interface ModelChangeContinuityModel {
   provider: string;
@@ -49,10 +49,6 @@ export function inferModelChangeContinuityRuntimeKind(
   const provider = model.provider.trim().toLowerCase();
   if (provider === "claude-sdk") {
     return "claude";
-  }
-
-  if (provider === "openai-codex-app-server") {
-    return "codex";
   }
 
   return "pi";
@@ -313,7 +309,7 @@ function parseModelChangeContinuityApplied(data: unknown): ModelChangeContinuity
     Array.isArray(value.attachedRuntime) ||
     !isNonEmptyString(value.attachedRuntime.provider) ||
     !isNonEmptyString(value.attachedRuntime.modelId) ||
-    !isRuntimeKind(value.attachedRuntime.runtimeKind)
+    !isPersistedRuntimeKind(value.attachedRuntime.runtimeKind)
   ) {
     return undefined;
   }
@@ -326,7 +322,7 @@ function parseModelChangeContinuityApplied(data: unknown): ModelChangeContinuity
     attachedRuntime: {
       provider: value.attachedRuntime.provider,
       modelId: value.attachedRuntime.modelId,
-      runtimeKind: value.attachedRuntime.runtimeKind
+      runtimeKind: normalizeRuntimeKind(value.attachedRuntime.runtimeKind)
     }
   };
 }
@@ -336,7 +332,7 @@ function normalizeModelChangeContinuityModel(model: ModelChangeContinuityModel):
     provider: model.provider,
     modelId: model.modelId,
     thinkingLevel: normalizeThinkingLevel(model.thinkingLevel),
-    runtimeKind: model.runtimeKind
+    runtimeKind: normalizeRuntimeKind(model.runtimeKind)
   };
 }
 
@@ -349,13 +345,17 @@ function isValidModelChangeContinuityModel(value: unknown): value is ModelChange
   return (
     isNonEmptyString(candidate.provider) &&
     isNonEmptyString(candidate.modelId) &&
-    isRuntimeKind(candidate.runtimeKind) &&
+    isPersistedRuntimeKind(candidate.runtimeKind) &&
     (candidate.thinkingLevel === undefined || typeof candidate.thinkingLevel === "string")
   );
 }
 
-function isRuntimeKind(value: unknown): value is ModelChangeContinuityRuntimeKind {
+function isPersistedRuntimeKind(value: unknown): value is ModelChangeContinuityRuntimeKind | "codex" {
   return value === "pi" || value === "claude" || value === "codex";
+}
+
+function normalizeRuntimeKind(value: ModelChangeContinuityRuntimeKind | "codex"): ModelChangeContinuityRuntimeKind {
+  return value === "codex" ? "pi" : value;
 }
 
 function normalizeThinkingLevel(level: string | undefined): string | undefined {

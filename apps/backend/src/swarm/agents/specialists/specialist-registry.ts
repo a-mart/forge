@@ -11,6 +11,8 @@ import {
 import {
   inferProviderFromModelId,
   isSwarmReasoningLevel,
+  resolveModelDescriptorFromPreset,
+  resolveRemovedSwarmModelPresetAlias,
 } from "../../model-presets.js";
 import { modelCatalogService } from "../../model-catalog-service.js";
 import { sanitizePathSegment } from "../../data-paths.js";
@@ -24,6 +26,7 @@ const FRONTMATTER_BLOCK_PATTERN = /^---\s*\r?\n([\s\S]*?)\r?\n---\s*(?:\r?\n|$)/
 const HEX_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
 const CACHE_KEY_SEPARATOR = "\u0000";
 const SPECIALISTS_ENABLED_FILENAME = "specialists-enabled.json";
+const REMOVED_BUILTIN_SPECIALIST_FILES = new Set(["app-runtime.md"]);
 
 function formatPresetList(entries: string[]): string {
   if (entries.length === 0) {
@@ -53,13 +56,7 @@ function buildLegacyModelRoutingGuidance(): string {
   const presetList = formatPresetList(
     Object.values(FORGE_MODEL_CATALOG.families)
       .filter((family) => family.visibleInSpawnPreset)
-      .map((family) => {
-        const providerSuffix =
-          family.provider === "openai-codex-app-server"
-            ? ` on ${family.provider}`
-            : "";
-        return `\`${family.familyId}\` (\`${family.defaultModelId}\`${providerSuffix})`;
-      }),
+      .map((family) => `\`${family.familyId}\` (\`${family.defaultModelId}\`)`),
   );
 
   const codexQuickModelId =
@@ -183,7 +180,9 @@ async function resolveDirectorySpecialists(
   directoryPath: string,
   scope: "shared" | "profile",
 ): Promise<Map<string, ResolvedSpecialistDefinition>> {
-  const files = await listMarkdownFiles(directoryPath);
+  const files = (await listMarkdownFiles(directoryPath)).filter(
+    (file) => !REMOVED_BUILTIN_SPECIALIST_FILES.has(file.name)
+  );
   const handles = files
     .map((file) => ({
       file,
@@ -284,7 +283,18 @@ export async function seedBuiltins(dataDir: string): Promise<void> {
 
   const builtinFiles = await listMarkdownFiles(builtinDir);
 
+  for (const removedFile of REMOVED_BUILTIN_SPECIALIST_FILES) {
+    await unlink(join(sharedDir, removedFile)).catch((error) => {
+      if (!isEnoentError(error)) {
+        throw error;
+      }
+    });
+  }
+
   for (const file of builtinFiles) {
+    if (REMOVED_BUILTIN_SPECIALIST_FILES.has(file.name)) {
+      continue;
+    }
     const sourcePath = join(builtinDir, file.name);
     const destinationPath = join(sharedDir, file.name);
     const source = await parseSpecialistFile(sourcePath);
@@ -509,7 +519,12 @@ function parseSpecialistMarkdown(markdown: string): ParsedSpecialistFile | null 
   // Backward compatibility: migrate legacy preset-based frontmatter (`model`) to `modelId`.
   const legacyModelPreset = parseOptionalString(frontmatterValues.model);
   if (legacyModelPreset && !frontmatterValues.modelId) {
-    const effectiveDescriptor = modelCatalogService.resolveModelDescriptorFromFamily(legacyModelPreset);
+    const effectiveDescriptor =
+      modelCatalogService.resolveModelDescriptorFromFamily(legacyModelPreset) ??
+      (() => {
+        const replacementPreset = resolveRemovedSwarmModelPresetAlias(legacyModelPreset);
+        return replacementPreset ? resolveModelDescriptorFromPreset(replacementPreset) : undefined;
+      })();
     if (effectiveDescriptor) {
       frontmatterValues.modelId = effectiveDescriptor.modelId;
       if (!frontmatterValues.provider) {

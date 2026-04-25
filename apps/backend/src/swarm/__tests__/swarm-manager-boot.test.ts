@@ -2071,6 +2071,92 @@ describe('SwarmManager', () => {
     )
   })
 
+  it('migrates removed codex app-server descriptors to pi-codex on boot', async () => {
+    const config = await makeTempConfig()
+    const legacyCodexModel = {
+      provider: 'openai-codex-app-server',
+      modelId: 'default',
+      thinkingLevel: 'xhigh',
+    }
+
+    await writeFile(
+      config.paths.agentsStoreFile,
+      `${JSON.stringify(
+        {
+          agents: [
+            {
+              agentId: 'manager',
+              displayName: 'Manager',
+              role: 'manager',
+              managerId: 'manager',
+              profileId: 'manager',
+              status: 'idle',
+              createdAt: '2026-03-27T00:00:00.000Z',
+              updatedAt: '2026-03-27T00:00:00.000Z',
+              cwd: config.defaultCwd,
+              model: legacyCodexModel,
+              sessionFile: join(config.paths.sessionsDir, 'manager.jsonl'),
+            },
+            {
+              agentId: 'worker',
+              displayName: 'Worker',
+              role: 'worker',
+              managerId: 'manager',
+              status: 'idle',
+              createdAt: '2026-03-27T00:01:00.000Z',
+              updatedAt: '2026-03-27T00:01:00.000Z',
+              cwd: config.defaultCwd,
+              model: legacyCodexModel,
+              sessionFile: join(config.paths.sessionsDir, 'worker.jsonl'),
+            },
+          ],
+          profiles: [
+            {
+              profileId: 'manager',
+              displayName: 'Manager',
+              defaultSessionAgentId: 'manager',
+              defaultModel: legacyCodexModel,
+              createdAt: '2026-03-27T00:00:00.000Z',
+              updatedAt: '2026-03-27T00:00:00.000Z',
+            },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+      'utf8',
+    )
+
+    const manager = new TestSwarmManager(config)
+    await manager.boot()
+
+    const expectedMigratedModel = {
+      provider: 'openai-codex',
+      modelId: 'gpt-5.3-codex',
+      thinkingLevel: 'xhigh',
+    }
+
+    expect(manager.getAgent('manager')).toMatchObject({ model: expectedMigratedModel })
+    expect(manager.getAgent('worker')).toMatchObject({ model: expectedMigratedModel })
+    expect(manager.listProfiles().find((profile) => profile.profileId === 'manager')?.defaultModel).toEqual(
+      expectedMigratedModel,
+    )
+
+    const persistedStore = JSON.parse(await readFile(config.paths.agentsStoreFile, 'utf8')) as {
+      agents: Array<{ agentId: string; model: unknown }>
+      profiles: Array<{ profileId: string; defaultModel?: unknown }>
+    }
+    expect(persistedStore.agents.find((agent) => agent.agentId === 'manager')).toEqual(
+      expect.objectContaining({ model: expectedMigratedModel }),
+    )
+    expect(persistedStore.agents.find((agent) => agent.agentId === 'worker')).toEqual(
+      expect.objectContaining({ model: expectedMigratedModel }),
+    )
+    expect(persistedStore.profiles.find((profile) => profile.profileId === 'manager')).toEqual(
+      expect.objectContaining({ defaultModel: expectedMigratedModel }),
+    )
+  })
+
   it('does not force the default session to inherited when an explicit profile default model differs', async () => {
     const config = await makeTempConfig()
     const explicitDefaultModel = resolveModelDescriptorFromPreset('pi-5.4')
