@@ -38,6 +38,11 @@ import {
 } from "./prompt-registry.js";
 import { ConversationProjector } from "./conversation-projector.js";
 import {
+  getWorkerIdFromCanonicalTranscriptFileName,
+  isWorkerTranscriptSidecarAgentId,
+  isWorkerTranscriptSidecarSessionFile
+} from "./session/worker-transcript-files.js";
+import {
   getCommonKnowledgePath,
   getCortexPromotionManifestsDir,
   getCortexReviewLogPath,
@@ -988,6 +993,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly pendingManualManagerStopNoticeTimersByAgentId = new Map<string, NodeJS.Timeout>();
   private readonly conversationEntriesByAgentId = new Map<string, ConversationEntryEvent[]>();
   private readonly pinnedMessageIdsBySessionAgentId = new Map<string, Set<string>>();
+  private pendingAgentsSnapshotEmit = false;
   private agentsSnapshotVersion = 0;
   private profilesSnapshotVersion = 0;
   private readonly workerHealthService: SwarmWorkerHealthService;
@@ -1515,6 +1521,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     };
     const cortexPruneResult = this.prunePersistedCortexStateForBoot(loaded);
     loaded = cortexPruneResult.store;
+    const workerSidecarPruneResult = this.prunePersistedWorkerSidecarDescriptorsForBoot(loaded);
+    loaded = workerSidecarPruneResult.store;
 
     for (const descriptor of loaded.agents) {
       this.descriptors.set(descriptor.agentId, descriptor);
@@ -1527,7 +1535,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     const normalizedSessionModelState = this.reconcileProfilesOnBoot();
     const normalizedSystemProfileTypes = this.normalizeSystemProfileTypes();
-    if (cortexPruneResult.pruned || normalizedSessionModelState || normalizedSystemProfileTypes) {
+    if (
+      cortexPruneResult.pruned ||
+      workerSidecarPruneResult.pruned ||
+      normalizedSessionModelState ||
+      normalizedSystemProfileTypes
+    ) {
       await this.saveStore();
     }
     await this.ensureCortexProfile();
@@ -1647,13 +1660,15 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   listManagerAgents(): AgentDescriptor[] {
-    return this.buildManagerSnapshotDescriptors({ includeStreamingWorkers: false });
+    const grouped = this.buildWorkerVisibilityGroups();
+    return grouped.managers.map((descriptor) =>
+      this.cloneManagerDescriptorWithWorkerCounts(descriptor, grouped.workersByManagerId.get(descriptor.agentId) ?? [])
+    );
   }
 
   listWorkersForSession(sessionAgentId: string): AgentDescriptor[] {
-    return this.sortedDescriptors()
-      .filter((descriptor) => descriptor.role === "worker" && descriptor.managerId === sessionAgentId)
-      .map((descriptor) => cloneDescriptor(descriptor));
+    const grouped = this.buildWorkerVisibilityGroups();
+    return (grouped.workersByManagerId.get(sessionAgentId) ?? []).map((descriptor) => cloneDescriptor(descriptor));
   }
 
   listProfiles(): ManagerProfile[] {
@@ -2547,30 +2562,38 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   private getWorkersForManager(managerId: string): AgentDescriptor[] {
-    return Array.from(this.descriptors.values()).filter(
-      (descriptor) => descriptor.role === "worker" && descriptor.managerId === managerId
-    );
+    return this.buildWorkerVisibilityGroups().workersByManagerId.get(managerId) ?? [];
   }
 
-  private buildManagerSnapshotDescriptors(options: { includeStreamingWorkers: boolean }): AgentDescriptor[] {
-    const managers = this.sortedDescriptors()
-      .filter((descriptor) => descriptor.role === "manager")
-      .map((descriptor) => this.cloneManagerDescriptorWithWorkerCounts(descriptor));
+  private buildWorkerVisibilityGroups(): {
+    managers: AgentDescriptor[];
+    workersByManagerId: Map<string, AgentDescriptor[]>;
+  } {
+    const managers: AgentDescriptor[] = [];
+    const workersByManagerId = new Map<string, AgentDescriptor[]>();
 
-    if (!options.includeStreamingWorkers) {
-      return managers;
+    for (const descriptor of this.sortedDescriptors()) {
+      if (descriptor.role === "manager") {
+        managers.push(descriptor);
+        continue;
+      }
+
+      const workers = workersByManagerId.get(descriptor.managerId);
+      if (workers) {
+        workers.push(descriptor);
+      } else {
+        workersByManagerId.set(descriptor.managerId, [descriptor]);
+      }
     }
 
-    const hotWorkers = this.sortedDescriptors()
-      .filter((descriptor) => descriptor.role === "worker" && descriptor.status === "streaming")
-      .map((descriptor) => cloneDescriptor(descriptor));
-
-    return [...managers, ...hotWorkers];
+    return {
+      managers,
+      workersByManagerId
+    };
   }
 
-  private cloneManagerDescriptorWithWorkerCounts(descriptor: AgentDescriptor): AgentDescriptor {
+  private cloneManagerDescriptorWithWorkerCounts(descriptor: AgentDescriptor, workers: AgentDescriptor[]): AgentDescriptor {
     const clone = cloneDescriptor(descriptor);
-    const workers = this.getWorkersForManager(clone.agentId);
     clone.workerCount = workers.length;
     clone.activeWorkerCount = workers.filter((worker) => worker.status === "streaming").length;
     clone.pendingChoiceCount = this.getPendingChoiceIdsForSession(clone.agentId).length;
@@ -4429,6 +4452,39 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     };
   }
 
+  private prunePersistedWorkerSidecarDescriptorsForBoot(store: AgentsStoreFile): {
+    store: AgentsStoreFile;
+    pruned: boolean;
+  } {
+    const agents = Array.isArray(store.agents) ? store.agents : [];
+    const filteredAgents = agents.filter((descriptor) => {
+      if (descriptor.role !== "worker") {
+        return true;
+      }
+
+      const agentIdLooksLikeSidecar = isWorkerTranscriptSidecarAgentId(descriptor.agentId);
+      const sessionFileLooksLikeSidecar = typeof descriptor.sessionFile === "string"
+        && isWorkerTranscriptSidecarSessionFile(descriptor.sessionFile);
+
+      return !(agentIdLooksLikeSidecar || sessionFileLooksLikeSidecar);
+    });
+    const pruned = filteredAgents.length !== agents.length;
+
+    if (pruned) {
+      this.logDebug("boot:worker_sidecar_descriptors:pruned", {
+        removedAgents: agents.length - filteredAgents.length
+      });
+    }
+
+    return {
+      store: {
+        ...store,
+        agents: filteredAgents
+      },
+      pruned
+    };
+  }
+
   private normalizeSystemProfileTypes(): boolean {
     let changed = false;
     const cortexProfile = this.profiles.get(CORTEX_PROFILE_ID);
@@ -4696,12 +4752,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       }
 
       for (const filename of workerFiles) {
-        if (!filename.endsWith(".jsonl")) {
-          continue;
-        }
-
-        const workerId = filename.slice(0, -".jsonl".length);
-        if (knownWorkerIds.has(workerId)) {
+        const workerId = getWorkerIdFromCanonicalTranscriptFileName(filename);
+        if (!workerId || knownWorkerIds.has(workerId)) {
           continue;
         }
 
@@ -5358,13 +5410,25 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   private emitAgentsSnapshot(): void {
-    const payload: AgentsSnapshotEvent = {
-      type: "agents_snapshot",
-      agents: this.listManagerAgents()
-    };
+    if (this.pendingAgentsSnapshotEmit) {
+      return;
+    }
 
-    this.agentsSnapshotVersion += 1;
-    this.emit("agents_snapshot", payload satisfies ServerEvent);
+    this.pendingAgentsSnapshotEmit = true;
+    queueMicrotask(() => {
+      if (!this.pendingAgentsSnapshotEmit) {
+        return;
+      }
+
+      this.pendingAgentsSnapshotEmit = false;
+      const payload: AgentsSnapshotEvent = {
+        type: "agents_snapshot",
+        agents: this.listManagerAgents()
+      };
+
+      this.agentsSnapshotVersion += 1;
+      this.emit("agents_snapshot", payload satisfies ServerEvent);
+    });
   }
 
   private emitProfilesSnapshot(): void {

@@ -18,7 +18,7 @@ import { GlobalDialogs } from '@/components/index-page/GlobalDialogs'
 import { StatsPage } from '@/components/index-page/StatsPage'
 import { PlaywrightDashboardView } from '@/components/playwright/PlaywrightDashboardView'
 import type { TerminalSelectionContext } from '@/components/terminal/TerminalViewport'
-import { chooseFallbackAgentId } from '@/lib/agent-hierarchy'
+import { chooseFallbackAgentId, resolveWorkerFetchManagerId } from '@/lib/agent-hierarchy'
 import { collectArtifactsFromMessages } from '@/lib/collect-artifacts'
 import { hasProjectManagers } from '@/lib/onboarding-ui'
 import { useFeedback } from '@/lib/use-feedback'
@@ -283,11 +283,18 @@ export function BuilderSurface({
     return manager?.workerCount ?? 0
   }, [activeManagerId, state.agents])
 
-  // Proactively load workers when viewing a manager session or when workerCount changes
+  // Resolve worker-fetch target from actual active agent context only — no fallback to
+  // first-manager or DEFAULT_MANAGER_AGENT_ID to avoid fetching the wrong manager's workers
+  // during cold boot, reconnect, or when a worker descriptor hasn't loaded yet.
+  const workerFetchManagerId = useMemo(
+    () => resolveWorkerFetchManagerId(activeAgent),
+    [activeAgent],
+  )
+
   useEffect(() => {
-    if (!isActiveManager || !activeManagerId || !clientRef.current) return
-    void clientRef.current.getSessionWorkers(activeManagerId).catch(() => {})
-  }, [isActiveManager, activeManagerId, clientRef, activeManagerWorkerCount])
+    if (!workerFetchManagerId || !clientRef.current) return
+    void clientRef.current.getSessionWorkers(workerFetchManagerId).catch(() => {})
+  }, [workerFetchManagerId, clientRef, activeManagerWorkerCount])
 
   // Resolve parent manager label for the worker back-bar
   const parentManagerLabel = useMemo(() => {

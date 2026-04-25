@@ -224,6 +224,23 @@ export function buildProfileTreeRows(
   return treeRows
 }
 
+/**
+ * Resolve the manager ID whose workers should be fetched for the current view.
+ *
+ * Returns the manager's own agentId when viewing a manager, or the parent
+ * managerId when viewing a worker.  Returns `null` when the active agent is
+ * not yet loaded (cold-boot / reconnect) — callers must skip the fetch rather
+ * than falling back to an arbitrary manager.
+ */
+export function resolveWorkerFetchManagerId(
+  activeAgent: AgentDescriptor | null | undefined,
+): string | null {
+  if (!activeAgent) return null
+  if (activeAgent.role === 'manager') return activeAgent.agentId
+  if (activeAgent.role === 'worker' && activeAgent.managerId) return activeAgent.managerId
+  return null
+}
+
 export function chooseFallbackAgentId(agents: AgentDescriptor[], preferredAgentId?: string | null): string | null {
   const activeAgents = filterBuilderVisibleAgents(agents).filter(isActiveAgent)
   if (activeAgents.length === 0) {

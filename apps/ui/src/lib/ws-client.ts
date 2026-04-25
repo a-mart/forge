@@ -844,13 +844,6 @@ export class ManagerWsClient {
         workers,
       })
     }
-
-    if (result.shouldQueueSessionWorkersRefetch) {
-      const staleFixupIds = new Set(this.state.loadedSessionIds)
-      staleFixupIds.delete(sessionAgentId)
-      this.updateState({ loadedSessionIds: staleFixupIds })
-      this.queueSessionWorkersRefetch(sessionAgentId)
-    }
   }
 
   private applyManagerCreated(manager: AgentDescriptor): void {
