@@ -30,7 +30,8 @@ import type {
   SkillInventoryResponse,
 } from '@forge/protocol'
 import { SHARED_INTEGRATION_MANAGER_ID } from '@forge/protocol'
-import { resolveApiEndpoint } from '@/lib/api-endpoint'
+import type { SettingsApiClient } from './settings-api-client'
+import { createBuilderSettingsApiClient } from './settings-api-client'
 
 /* ------------------------------------------------------------------ */
 /*  Constants                                                         */
@@ -185,31 +186,31 @@ function parseSettingsAuthEventName(value: string): SettingsAuthLoginEventName |
 /*  Env variables API                                                 */
 /* ------------------------------------------------------------------ */
 
-export async function fetchSettingsEnvVariables(wsUrl: string): Promise<SettingsEnvVariable[]> {
-  const endpoint = resolveApiEndpoint(wsUrl, '/api/settings/env')
-  const response = await fetch(endpoint)
-  if (!response.ok) throw new Error(await readApiError(response))
+export async function fetchSettingsEnvVariables(clientOrWsUrl: SettingsApiClient | string): Promise<SettingsEnvVariable[]> {
+  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+  const response = await client.fetch('/api/settings/env')
+  if (!response.ok) throw new Error(await client.readApiError(response))
   const payload = (await response.json()) as Partial<SettingsEnvResponse>
   if (!payload || !Array.isArray(payload.variables)) return []
   return payload.variables.filter(isSettingsEnvVariable)
 }
 
-export async function updateSettingsEnvVariables(wsUrl: string, values: Record<string, string>): Promise<void> {
-  const endpoint = resolveApiEndpoint(wsUrl, '/api/settings/env')
-  const response = await fetch(endpoint, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ values }) })
-  if (!response.ok) throw new Error(await readApiError(response))
+export async function updateSettingsEnvVariables(clientOrWsUrl: SettingsApiClient | string, values: Record<string, string>): Promise<void> {
+  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+  const response = await client.fetch('/api/settings/env', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ values }) })
+  if (!response.ok) throw new Error(await client.readApiError(response))
 }
 
-export async function deleteSettingsEnvVariable(wsUrl: string, variableName: string): Promise<void> {
-  const endpoint = resolveApiEndpoint(wsUrl, `/api/settings/env/${encodeURIComponent(variableName)}`)
-  const response = await fetch(endpoint, { method: 'DELETE' })
-  if (!response.ok) throw new Error(await readApiError(response))
+export async function deleteSettingsEnvVariable(clientOrWsUrl: SettingsApiClient | string, variableName: string): Promise<void> {
+  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+  const response = await client.fetch(`/api/settings/env/${encodeURIComponent(variableName)}`, { method: 'DELETE' })
+  if (!response.ok) throw new Error(await client.readApiError(response))
 }
 
-export async function fetchServerVersion(wsUrl: string): Promise<string | null> {
-  const endpoint = resolveApiEndpoint(wsUrl, '/api/stats?range=7d')
-  const response = await fetch(endpoint)
-  if (!response.ok) throw new Error(await readApiError(response))
+export async function fetchServerVersion(clientOrWsUrl: SettingsApiClient | string): Promise<string | null> {
+  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+  const response = await client.fetch('/api/stats?range=7d')
+  if (!response.ok) throw new Error(await client.readApiError(response))
   const payload = (await response.json()) as { system?: { serverVersion?: unknown } }
   const version = payload.system?.serverVersion
   return typeof version === 'string' && version.trim().length > 0 ? version.trim() : null
@@ -219,10 +220,10 @@ export async function fetchServerVersion(wsUrl: string): Promise<string | null> 
 /*  Auth providers API                                                */
 /* ------------------------------------------------------------------ */
 
-export async function fetchSettingsAuthProviders(wsUrl: string): Promise<SettingsAuthProvider[]> {
-  const endpoint = resolveApiEndpoint(wsUrl, '/api/settings/auth')
-  const response = await fetch(endpoint)
-  if (!response.ok) throw new Error(await readApiError(response))
+export async function fetchSettingsAuthProviders(clientOrWsUrl: SettingsApiClient | string): Promise<SettingsAuthProvider[]> {
+  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+  const response = await client.fetch('/api/settings/auth')
+  if (!response.ok) throw new Error(await client.readApiError(response))
   const payload = (await response.json()) as Partial<SettingsAuthResponse>
   if (!payload || !Array.isArray(payload.providers)) return []
   const parsed = payload.providers.map((v) => parseSettingsAuthProvider(v)).filter((v): v is SettingsAuthProvider => v !== null)
@@ -230,26 +231,26 @@ export async function fetchSettingsAuthProviders(wsUrl: string): Promise<Setting
   return SETTINGS_AUTH_PROVIDER_ORDER.map((provider) => configuredByProvider.get(provider) ?? { provider, configured: false })
 }
 
-export async function updateSettingsAuthProviders(wsUrl: string, values: Partial<Record<SettingsAuthProviderId, string>>): Promise<void> {
-  const endpoint = resolveApiEndpoint(wsUrl, '/api/settings/auth')
-  const response = await fetch(endpoint, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(values) })
-  if (!response.ok) throw new Error(await readApiError(response))
+export async function updateSettingsAuthProviders(clientOrWsUrl: SettingsApiClient | string, values: Partial<Record<SettingsAuthProviderId, string>>): Promise<void> {
+  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+  const response = await client.fetch('/api/settings/auth', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(values) })
+  if (!response.ok) throw new Error(await client.readApiError(response))
 }
 
-export async function deleteSettingsAuthProvider(wsUrl: string, provider: SettingsAuthProviderId): Promise<void> {
-  const endpoint = resolveApiEndpoint(wsUrl, `/api/settings/auth/${encodeURIComponent(provider)}`)
-  const response = await fetch(endpoint, { method: 'DELETE' })
-  if (!response.ok) throw new Error(await readApiError(response))
+export async function deleteSettingsAuthProvider(clientOrWsUrl: SettingsApiClient | string, provider: SettingsAuthProviderId): Promise<void> {
+  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+  const response = await client.fetch(`/api/settings/auth/${encodeURIComponent(provider)}`, { method: 'DELETE' })
+  if (!response.ok) throw new Error(await client.readApiError(response))
 }
 
 export async function startSettingsAuthOAuthLoginStream(
-  wsUrl: string,
+  clientOrWsUrl: SettingsApiClient | string,
   provider: SettingsAuthProviderId,
   handlers: SettingsAuthOAuthStreamHandlers,
   signal: AbortSignal,
 ): Promise<void> {
-  const endpoint = resolveApiEndpoint(wsUrl, `/api/settings/auth/login/${encodeURIComponent(provider)}`)
-  const response = await fetch(endpoint, { method: 'POST', signal })
+  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+  const response = await client.fetch(`/api/settings/auth/login/${encodeURIComponent(provider)}`, { method: 'POST', signal })
   if (!response.ok) throw new Error(await readApiError(response))
   if (!response.body) throw new Error('OAuth login stream is unavailable.')
 
@@ -307,59 +308,63 @@ export async function startSettingsAuthOAuthLoginStream(
   flushEvent()
 }
 
-export async function submitSettingsAuthOAuthPrompt(wsUrl: string, provider: SettingsAuthProviderId, value: string): Promise<void> {
-  const endpoint = resolveApiEndpoint(wsUrl, `/api/settings/auth/login/${encodeURIComponent(provider)}/respond`)
-  const response = await fetch(endpoint, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ value }) })
-  if (!response.ok) throw new Error(await readApiError(response))
+export async function submitSettingsAuthOAuthPrompt(clientOrWsUrl: SettingsApiClient | string, provider: SettingsAuthProviderId, value: string): Promise<void> {
+  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+  const response = await client.fetch(`/api/settings/auth/login/${encodeURIComponent(provider)}/respond`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ value }) })
+  if (!response.ok) throw new Error(await client.readApiError(response))
 }
 
 /* ------------------------------------------------------------------ */
 /*  Integrations API                                                  */
 /* ------------------------------------------------------------------ */
 
-function resolveManagerIntegrationEndpoint(wsUrl: string, managerId: string, provider: 'telegram', suffix = ''): string {
+function resolveManagerIntegrationPath(managerId: string, provider: 'telegram', suffix = ''): string {
   const normalizedManagerId = managerId.trim()
   if (!normalizedManagerId) {
     throw new Error('managerId is required.')
   }
-  return resolveApiEndpoint(wsUrl, `/api/managers/${encodeURIComponent(normalizedManagerId)}/integrations/${provider}${suffix}`)
+  return `/api/managers/${encodeURIComponent(normalizedManagerId)}/integrations/${provider}${suffix}`
 }
 
 /* ------------------------------------------------------------------ */
 /*  Telegram API                                                      */
 /* ------------------------------------------------------------------ */
 
-export async function fetchTelegramSettings(wsUrl: string, managerId: string): Promise<{ config: TelegramSettingsConfig; status: TelegramStatusEvent | null }> {
-  const endpoint = resolveManagerIntegrationEndpoint(wsUrl, managerId, 'telegram')
-  const response = await fetch(endpoint)
-  if (!response.ok) throw new Error(await readApiError(response))
+export async function fetchTelegramSettings(clientOrWsUrl: SettingsApiClient | string, managerId: string): Promise<{ config: TelegramSettingsConfig; status: TelegramStatusEvent | null }> {
+  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+  const path = resolveManagerIntegrationPath(managerId, 'telegram')
+  const response = await client.fetch(path)
+  if (!response.ok) throw new Error(await client.readApiError(response))
   const payload = (await response.json()) as { config?: unknown; status?: TelegramStatusEvent }
   if (!isTelegramSettingsConfig(payload.config)) throw new Error('Invalid Telegram settings response from backend.')
   return { config: payload.config, status: payload.status ?? null }
 }
 
-export async function updateTelegramSettings(wsUrl: string, managerId: string, patch: Record<string, unknown>): Promise<{ config: TelegramSettingsConfig; status: TelegramStatusEvent | null }> {
-  const endpoint = resolveManagerIntegrationEndpoint(wsUrl, managerId, 'telegram')
-  const response = await fetch(endpoint, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(patch) })
-  if (!response.ok) throw new Error(await readApiError(response))
+export async function updateTelegramSettings(clientOrWsUrl: SettingsApiClient | string, managerId: string, patch: Record<string, unknown>): Promise<{ config: TelegramSettingsConfig; status: TelegramStatusEvent | null }> {
+  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+  const path = resolveManagerIntegrationPath(managerId, 'telegram')
+  const response = await client.fetch(path, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(patch) })
+  if (!response.ok) throw new Error(await client.readApiError(response))
   const payload = (await response.json()) as { config?: unknown; status?: TelegramStatusEvent }
   if (!isTelegramSettingsConfig(payload.config)) throw new Error('Invalid Telegram settings response from backend.')
   return { config: payload.config, status: payload.status ?? null }
 }
 
-export async function disableTelegramSettings(wsUrl: string, managerId: string): Promise<{ config: TelegramSettingsConfig; status: TelegramStatusEvent | null }> {
-  const endpoint = resolveManagerIntegrationEndpoint(wsUrl, managerId, 'telegram')
-  const response = await fetch(endpoint, { method: 'DELETE' })
-  if (!response.ok) throw new Error(await readApiError(response))
+export async function disableTelegramSettings(clientOrWsUrl: SettingsApiClient | string, managerId: string): Promise<{ config: TelegramSettingsConfig; status: TelegramStatusEvent | null }> {
+  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+  const path = resolveManagerIntegrationPath(managerId, 'telegram')
+  const response = await client.fetch(path, { method: 'DELETE' })
+  if (!response.ok) throw new Error(await client.readApiError(response))
   const payload = (await response.json()) as { config?: unknown; status?: TelegramStatusEvent }
   if (!isTelegramSettingsConfig(payload.config)) throw new Error('Invalid Telegram settings response from backend.')
   return { config: payload.config, status: payload.status ?? null }
 }
 
-export async function testTelegramConnection(wsUrl: string, managerId: string, patch?: Record<string, unknown>): Promise<{ botId?: string; botUsername?: string; botDisplayName?: string }> {
-  const endpoint = resolveManagerIntegrationEndpoint(wsUrl, managerId, 'telegram', '/test')
-  const response = await fetch(endpoint, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(patch ?? {}) })
-  if (!response.ok) throw new Error(await readApiError(response))
+export async function testTelegramConnection(clientOrWsUrl: SettingsApiClient | string, managerId: string, patch?: Record<string, unknown>): Promise<{ botId?: string; botUsername?: string; botDisplayName?: string }> {
+  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+  const path = resolveManagerIntegrationPath(managerId, 'telegram', '/test')
+  const response = await client.fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(patch ?? {}) })
+  if (!response.ok) throw new Error(await client.readApiError(response))
   const payload = (await response.json()) as { result?: { botId?: string; botUsername?: string; botDisplayName?: string } }
   return payload.result ?? {}
 }
@@ -379,13 +384,13 @@ function isSkillInfo(value: unknown): value is SkillInfo {
   )
 }
 
-export async function fetchSkillsList(wsUrl: string, profileId?: string): Promise<SkillInfo[]> {
-  let endpoint = resolveApiEndpoint(wsUrl, '/api/settings/skills')
-  if (profileId) {
-    endpoint += `${endpoint.includes('?') ? '&' : '?'}profileId=${encodeURIComponent(profileId)}`
-  }
-  const response = await fetch(endpoint)
-  if (!response.ok) throw new Error(await readApiError(response))
+export async function fetchSkillsList(clientOrWsUrl: SettingsApiClient | string, profileId?: string): Promise<SkillInfo[]> {
+  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+  const path = profileId
+    ? `/api/settings/skills?profileId=${encodeURIComponent(profileId)}`
+    : '/api/settings/skills'
+  const response = await client.fetch(path)
+  if (!response.ok) throw new Error(await client.readApiError(response))
   const payload = (await response.json()) as Partial<SkillInventoryResponse>
   if (!payload || !Array.isArray(payload.skills)) return []
   return payload.skills.filter(isSkillInfo)
@@ -432,53 +437,53 @@ function isChromeCdpPreviewTab(value: unknown): value is ChromeCdpPreviewTab {
   )
 }
 
-export async function fetchChromeCdpSettings(wsUrl: string): Promise<{ config: ChromeCdpConfig; status: ChromeCdpStatus }> {
-  const endpoint = resolveApiEndpoint(wsUrl, '/api/settings/chrome-cdp')
-  const response = await fetch(endpoint)
-  if (!response.ok) throw new Error(await readApiError(response))
+export async function fetchChromeCdpSettings(clientOrWsUrl: SettingsApiClient | string): Promise<{ config: ChromeCdpConfig; status: ChromeCdpStatus }> {
+  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+  const response = await client.fetch('/api/settings/chrome-cdp')
+  if (!response.ok) throw new Error(await client.readApiError(response))
   const payload = (await response.json()) as { config?: unknown; status?: unknown }
   if (!isChromeCdpConfig(payload.config)) throw new Error('Invalid Chrome CDP config response from backend.')
   if (!isChromeCdpStatus(payload.status)) throw new Error('Invalid Chrome CDP status response from backend.')
   return { config: payload.config, status: payload.status }
 }
 
-export async function updateChromeCdpSettings(wsUrl: string, config: Partial<ChromeCdpConfig>): Promise<void> {
-  const endpoint = resolveApiEndpoint(wsUrl, '/api/settings/chrome-cdp')
-  const response = await fetch(endpoint, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(config) })
-  if (!response.ok) throw new Error(await readApiError(response))
+export async function updateChromeCdpSettings(clientOrWsUrl: SettingsApiClient | string, config: Partial<ChromeCdpConfig>): Promise<void> {
+  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+  const response = await client.fetch('/api/settings/chrome-cdp', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(config) })
+  if (!response.ok) throw new Error(await client.readApiError(response))
 }
 
-export async function testChromeCdpConnection(wsUrl: string): Promise<ChromeCdpStatus> {
-  const endpoint = resolveApiEndpoint(wsUrl, '/api/settings/chrome-cdp/test')
-  const response = await fetch(endpoint, { method: 'POST' })
-  if (!response.ok) throw new Error(await readApiError(response))
+export async function testChromeCdpConnection(clientOrWsUrl: SettingsApiClient | string): Promise<ChromeCdpStatus> {
+  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+  const response = await client.fetch('/api/settings/chrome-cdp/test', { method: 'POST' })
+  if (!response.ok) throw new Error(await client.readApiError(response))
   const payload = (await response.json()) as unknown
   if (!isChromeCdpStatus(payload)) throw new Error('Invalid Chrome CDP test response from backend.')
   return payload
 }
 
-export async function fetchChromeCdpProfiles(wsUrl: string): Promise<ChromeCdpProfile[]> {
-  const endpoint = resolveApiEndpoint(wsUrl, '/api/settings/chrome-cdp/profiles')
-  const response = await fetch(endpoint, { method: 'POST' })
-  if (!response.ok) throw new Error(await readApiError(response))
+export async function fetchChromeCdpProfiles(clientOrWsUrl: SettingsApiClient | string): Promise<ChromeCdpProfile[]> {
+  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+  const response = await client.fetch('/api/settings/chrome-cdp/profiles', { method: 'POST' })
+  if (!response.ok) throw new Error(await client.readApiError(response))
   const payload = (await response.json()) as { profiles?: unknown }
   if (!payload || !Array.isArray(payload.profiles)) return []
   return payload.profiles.filter(isChromeCdpProfile)
 }
 
 export async function fetchChromeCdpPreview(
-  wsUrl: string,
+  clientOrWsUrl: SettingsApiClient | string,
   config: Partial<ChromeCdpConfig>,
   signal?: AbortSignal,
 ): Promise<{ tabs: ChromeCdpPreviewTab[]; totalFiltered: number; totalUnfiltered: number }> {
-  const endpoint = resolveApiEndpoint(wsUrl, '/api/settings/chrome-cdp/preview')
-  const response = await fetch(endpoint, {
+  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+  const response = await client.fetch('/api/settings/chrome-cdp/preview', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(config),
     signal,
   })
-  if (!response.ok) throw new Error(await readApiError(response))
+  if (!response.ok) throw new Error(await client.readApiError(response))
   const payload = (await response.json()) as { tabs?: unknown; totalFiltered?: unknown; totalUnfiltered?: unknown }
   const tabs = Array.isArray(payload.tabs) ? payload.tabs.filter(isChromeCdpPreviewTab) : []
   const totalFiltered = typeof payload.totalFiltered === 'number' ? payload.totalFiltered : 0
@@ -490,10 +495,10 @@ export async function fetchChromeCdpPreview(
 /*  Extensions API                                                    */
 /* ------------------------------------------------------------------ */
 
-export async function fetchSettingsExtensions(wsUrl: string): Promise<SettingsExtensionsResponse> {
-  const endpoint = resolveApiEndpoint(wsUrl, '/api/settings/extensions')
-  const response = await fetch(endpoint)
-  if (!response.ok) throw new Error(await readApiError(response))
+export async function fetchSettingsExtensions(clientOrWsUrl: SettingsApiClient | string): Promise<SettingsExtensionsResponse> {
+  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+  const response = await client.fetch('/api/settings/extensions')
+  if (!response.ok) throw new Error(await client.readApiError(response))
   const payload = (await response.json()) as SettingsExtensionsResponse
   return payload
 }
@@ -502,49 +507,49 @@ export async function fetchSettingsExtensions(wsUrl: string): Promise<SettingsEx
 /*  Credential Pool API                                               */
 /* ------------------------------------------------------------------ */
 
-export async function fetchCredentialPool(wsUrl: string, provider: string): Promise<CredentialPoolState> {
-  const endpoint = resolveApiEndpoint(wsUrl, `/api/settings/auth/${encodeURIComponent(provider)}/accounts`)
-  const response = await fetch(endpoint)
-  if (!response.ok) throw new Error(await readApiError(response))
+export async function fetchCredentialPool(clientOrWsUrl: SettingsApiClient | string, provider: string): Promise<CredentialPoolState> {
+  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+  const response = await client.fetch(`/api/settings/auth/${encodeURIComponent(provider)}/accounts`)
+  if (!response.ok) throw new Error(await client.readApiError(response))
   return ((await response.json()) as { pool: CredentialPoolState }).pool
 }
 
-export async function setCredentialPoolStrategy(wsUrl: string, provider: string, strategy: CredentialPoolStrategy): Promise<void> {
-  const endpoint = resolveApiEndpoint(wsUrl, `/api/settings/auth/${encodeURIComponent(provider)}/strategy`)
-  const response = await fetch(endpoint, {
+export async function setCredentialPoolStrategy(clientOrWsUrl: SettingsApiClient | string, provider: string, strategy: CredentialPoolStrategy): Promise<void> {
+  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+  const response = await client.fetch(`/api/settings/auth/${encodeURIComponent(provider)}/strategy`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ strategy }),
   })
-  if (!response.ok) throw new Error(await readApiError(response))
+  if (!response.ok) throw new Error(await client.readApiError(response))
 }
 
-export async function renamePooledCredential(wsUrl: string, provider: string, id: string, label: string): Promise<void> {
-  const endpoint = resolveApiEndpoint(wsUrl, `/api/settings/auth/${encodeURIComponent(provider)}/accounts/${encodeURIComponent(id)}/label`)
-  const response = await fetch(endpoint, {
+export async function renamePooledCredential(clientOrWsUrl: SettingsApiClient | string, provider: string, id: string, label: string): Promise<void> {
+  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+  const response = await client.fetch(`/api/settings/auth/${encodeURIComponent(provider)}/accounts/${encodeURIComponent(id)}/label`, {
     method: 'PATCH',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ label }),
   })
-  if (!response.ok) throw new Error(await readApiError(response))
+  if (!response.ok) throw new Error(await client.readApiError(response))
 }
 
-export async function setPrimaryPooledCredential(wsUrl: string, provider: string, id: string): Promise<void> {
-  const endpoint = resolveApiEndpoint(wsUrl, `/api/settings/auth/${encodeURIComponent(provider)}/accounts/${encodeURIComponent(id)}/primary`)
-  const response = await fetch(endpoint, { method: 'POST' })
-  if (!response.ok) throw new Error(await readApiError(response))
+export async function setPrimaryPooledCredential(clientOrWsUrl: SettingsApiClient | string, provider: string, id: string): Promise<void> {
+  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+  const response = await client.fetch(`/api/settings/auth/${encodeURIComponent(provider)}/accounts/${encodeURIComponent(id)}/primary`, { method: 'POST' })
+  if (!response.ok) throw new Error(await client.readApiError(response))
 }
 
-export async function resetPooledCredentialCooldown(wsUrl: string, provider: string, id: string): Promise<void> {
-  const endpoint = resolveApiEndpoint(wsUrl, `/api/settings/auth/${encodeURIComponent(provider)}/accounts/${encodeURIComponent(id)}/cooldown`)
-  const response = await fetch(endpoint, { method: 'DELETE' })
-  if (!response.ok) throw new Error(await readApiError(response))
+export async function resetPooledCredentialCooldown(clientOrWsUrl: SettingsApiClient | string, provider: string, id: string): Promise<void> {
+  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+  const response = await client.fetch(`/api/settings/auth/${encodeURIComponent(provider)}/accounts/${encodeURIComponent(id)}/cooldown`, { method: 'DELETE' })
+  if (!response.ok) throw new Error(await client.readApiError(response))
 }
 
-export async function removePooledCredential(wsUrl: string, provider: string, id: string): Promise<void> {
-  const endpoint = resolveApiEndpoint(wsUrl, `/api/settings/auth/${encodeURIComponent(provider)}/accounts/${encodeURIComponent(id)}`)
-  const response = await fetch(endpoint, { method: 'DELETE' })
-  if (!response.ok) throw new Error(await readApiError(response))
+export async function removePooledCredential(clientOrWsUrl: SettingsApiClient | string, provider: string, id: string): Promise<void> {
+  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+  const response = await client.fetch(`/api/settings/auth/${encodeURIComponent(provider)}/accounts/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  if (!response.ok) throw new Error(await client.readApiError(response))
 }
 
 /**
@@ -552,13 +557,13 @@ export async function removePooledCredential(wsUrl: string, provider: string, id
  * POSTs to the pool-specific login endpoint, NOT the legacy per-provider login.
  */
 export async function startPoolAddAccountOAuthStream(
-  wsUrl: string,
+  clientOrWsUrl: SettingsApiClient | string,
   provider: string,
   handlers: SettingsAuthOAuthStreamHandlers,
   signal: AbortSignal,
 ): Promise<void> {
-  const endpoint = resolveApiEndpoint(wsUrl, `/api/settings/auth/${encodeURIComponent(provider)}/accounts/login`)
-  const response = await fetch(endpoint, { method: 'POST', signal })
+  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+  const response = await client.fetch(`/api/settings/auth/${encodeURIComponent(provider)}/accounts/login`, { method: 'POST', signal })
   if (!response.ok) throw new Error(await readApiError(response))
   if (!response.body) throw new Error('OAuth login stream is unavailable.')
 
@@ -619,8 +624,8 @@ export async function startPoolAddAccountOAuthStream(
 /**
  * Submit a prompt response (e.g. authorization code) for the pool add-account OAuth flow.
  */
-export async function submitPoolAddAccountOAuthPrompt(wsUrl: string, provider: string, value: string): Promise<void> {
-  const endpoint = resolveApiEndpoint(wsUrl, `/api/settings/auth/${encodeURIComponent(provider)}/accounts/login/respond`)
-  const response = await fetch(endpoint, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ value }) })
-  if (!response.ok) throw new Error(await readApiError(response))
+export async function submitPoolAddAccountOAuthPrompt(clientOrWsUrl: SettingsApiClient | string, provider: string, value: string): Promise<void> {
+  const client = typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
+  const response = await client.fetch(`/api/settings/auth/${encodeURIComponent(provider)}/accounts/login/respond`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ value }) })
+  if (!response.ok) throw new Error(await client.readApiError(response))
 }

@@ -10,7 +10,7 @@ export type PlaywrightViewMode = 'split' | 'focus' | 'tiles'
 export type StatsTab = 'overview' | 'tokens'
 export type AppRouteState =
   | { view: 'chat'; agentId: string; surface: ActiveSurface; channel?: string }
-  | { view: 'settings' }
+  | { view: 'settings'; surface: ActiveSurface }
   | { view: 'playwright'; playwrightSession?: string; playwrightMode?: PlaywrightViewMode }
   | { view: 'stats'; statsTab?: StatsTab }
 
@@ -46,7 +46,7 @@ function parseRouteStateFromPathname(pathname: string): AppRouteState {
   const normalizedPath = pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname
 
   if (normalizedPath === '/settings') {
-    return { view: 'settings' }
+    return { view: 'settings', surface: 'builder' }
   }
 
   const agentMatch = normalizedPath.match(/^\/agent\/([^/]+)$/)
@@ -73,7 +73,7 @@ function parseRouteStateFromLocation(pathname: string, search: unknown): AppRout
   const channel = typeof routeSearch.channel === 'string' ? routeSearch.channel : undefined
 
   if (view === 'settings') {
-    return { view: 'settings' }
+    return { view: 'settings', surface: parseSurface(surface) }
   }
 
   if (view === 'stats') {
@@ -114,13 +114,13 @@ function parseRouteStateFromLocation(pathname: string, search: unknown): AppRout
 }
 
 /**
- * Normalize route state. Builder-only views (settings, stats, playwright)
+ * Normalize route state. Builder-only views (stats, playwright)
  * always resolve to builder surface but preserve `channel` so it's sticky
- * when the user returns to collab.
+ * when the user returns to collab. Settings preserves its own surface.
  */
 function normalizeRouteState(routeState: AppRouteState): AppRouteState {
   if (routeState.view === 'settings') {
-    return { view: 'settings' }
+    return { view: 'settings', surface: routeState.surface }
   }
 
   if (routeState.view === 'stats') {
@@ -143,6 +143,7 @@ function toRouteSearch(routeState: AppRouteState, stickyParams?: { agent?: strin
   if (routeState.view === 'settings') {
     // Preserve sticky agent and channel through non-chat views
     const search: AppRouteSearch = { view: 'settings' }
+    if (routeState.surface === 'collab') search.surface = 'collab'
     if (stickyParams?.agent && stickyParams.agent !== DEFAULT_MANAGER_AGENT_ID) search.agent = stickyParams.agent
     if (stickyParams?.channel) search.channel = stickyParams.channel
     return search
@@ -184,7 +185,7 @@ function toRouteSearch(routeState: AppRouteState, stickyParams?: { agent?: strin
 
 function routeStatesEqual(left: AppRouteState, right: AppRouteState): boolean {
   if (left.view === 'settings' && right.view === 'settings') {
-    return true
+    return left.surface === right.surface
   }
 
   if (left.view === 'stats' && right.view === 'stats') {
@@ -230,8 +231,11 @@ export function useRouteState({
 
   const activeView: ActiveView = routeState.view
 
-  // surface defaults to builder for non-chat views
-  const activeSurface: ActiveSurface = routeState.view === 'chat' ? routeState.surface : 'builder'
+  // surface defaults to builder for non-chat/non-settings views
+  const activeSurface: ActiveSurface =
+    routeState.view === 'chat' || routeState.view === 'settings'
+      ? routeState.surface
+      : 'builder'
 
   // Extract sticky params from the current route state
   const stickyAgent = routeState.view === 'chat' ? routeState.agentId : undefined

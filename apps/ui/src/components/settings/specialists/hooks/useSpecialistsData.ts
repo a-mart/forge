@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ResolvedSpecialistDefinition } from '@forge/protocol'
+import type { SettingsApiClient } from '../../settings-api-client'
 import {
   fetchSpecialists,
   fetchSharedSpecialists,
@@ -11,7 +12,7 @@ import {
  * Manages loading of specialist definitions and the global enabled toggle.
  */
 export function useSpecialistsData(
-  wsUrl: string,
+  clientOrWsUrl: SettingsApiClient | string,
   selectedScope: string,
   isGlobal: boolean,
   specialistChangeKey: number,
@@ -43,8 +44,8 @@ export function useSpecialistsData(
 
     try {
       const data = isGlobal
-        ? await fetchSharedSpecialists(wsUrl)
-        : await fetchSpecialists(wsUrl, selectedScope)
+        ? await fetchSharedSpecialists(clientOrWsUrl)
+        : await fetchSpecialists(clientOrWsUrl, selectedScope)
       if (requestId === loadRequestIdRef.current) {
         setSpecialists(data)
       }
@@ -60,7 +61,7 @@ export function useSpecialistsData(
         setLoading(false)
       }
     }
-  }, [wsUrl, selectedScope, isGlobal])
+  }, [clientOrWsUrl, selectedScope, isGlobal])
 
   useEffect(() => {
     void loadSpecialists()
@@ -70,25 +71,25 @@ export function useSpecialistsData(
   useEffect(() => {
     let cancelled = false
     setEnabledLoading(true)
-    fetchSpecialistsEnabled(wsUrl)
+    fetchSpecialistsEnabled(clientOrWsUrl)
       .then((enabled) => { if (!cancelled) setSpecialistsEnabled(enabled) })
       .catch(() => { /* default to true on error */ })
       .finally(() => { if (!cancelled) setEnabledLoading(false) })
     return () => { cancelled = true }
-  }, [wsUrl, specialistChangeKey])
+  }, [clientOrWsUrl, specialistChangeKey])
 
   const handleToggleEnabled = useCallback(async () => {
     const next = !specialistsEnabled
     setEnabledToggling(true)
     try {
-      await setSpecialistsEnabledApi(wsUrl, next)
+      await setSpecialistsEnabledApi(clientOrWsUrl, next)
       setSpecialistsEnabled(next)
     } catch {
       // Revert on failure — the WS event will correct if needed
     } finally {
       setEnabledToggling(false)
     }
-  }, [wsUrl, specialistsEnabled])
+  }, [clientOrWsUrl, specialistsEnabled])
 
   return {
     specialists,

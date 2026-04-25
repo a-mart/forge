@@ -64,15 +64,20 @@ export function IndexPage() {
   const isCollabUnauthenticated = shouldLoadCollabSession && collabSession.hasLoaded && collabSession.isCollabEnabled && !collabSession.isAdmin && !collabSession.isMember
   const shouldBlockOnCollabBootstrap = shouldLoadCollabSession && !collabSession.hasLoaded
 
+  // Detect forced collab settings route — do not fall back to builder for these
+  const isForcedCollabSettings = activeView === 'settings' && routeState.view === 'settings' && routeState.surface === 'collab'
+
   const effectiveSurface = useMemo<ActiveSurface>(() => {
     // In Electron, only show collab if a remote server URL is configured.
     // Keep Builder accessible when the remote collab server is configured but the user is not signed in.
     if (inElectron && !hasConfiguredCollabServer) return 'builder'
     if (activeSurface !== 'collab') return 'builder'
     if (shouldBlockOnCollabBootstrap) return 'collab'
+    // Forced collab settings must stay on collab even when unauthenticated — renders blocked state
+    if (isForcedCollabSettings) return 'collab'
     if (isCollabUnauthenticated) return 'builder'
     return collabSession.isCollabEnabled ? 'collab' : 'builder'
-  }, [activeSurface, collabSession.isCollabEnabled, hasConfiguredCollabServer, inElectron, isCollabUnauthenticated, shouldBlockOnCollabBootstrap])
+  }, [activeSurface, collabSession.isCollabEnabled, hasConfiguredCollabServer, inElectron, isForcedCollabSettings, isCollabUnauthenticated, shouldBlockOnCollabBootstrap])
 
   useEffect(() => {
     if (shouldBlockOnCollabBootstrap) {
@@ -84,6 +89,12 @@ export function IndexPage() {
     const isMemberOnly = !inElectron && collabSession.hasLoaded && collabSession.isMember && !collabSession.isAdmin
 
     if (isMemberOnly) {
+      // Allow forced collab settings route for members — they see admin-required state
+      const isForcedCollabSettings = routeState.view === 'settings' && routeState.surface === 'collab'
+      if (isForcedCollabSettings) {
+        return
+      }
+
       if (
         activeView !== 'chat' ||
         routeState.view !== 'chat' ||
@@ -165,7 +176,11 @@ export function IndexPage() {
           <CollabSurface
             wsUrl={collabWsUrl}
             channel={collabChannel}
+            activeView={activeView}
             activeSurface={effectiveSurface}
+            isAdmin={collabSession.isAdmin}
+            isMember={collabSession.isMember}
+            hasLoaded={collabSession.hasLoaded}
             onSelectChannel={handleSelectCollabChannel}
             onSelectSurface={(surface) => {
               if (routeState.view !== 'chat') {
@@ -175,6 +190,17 @@ export function IndexPage() {
               navigateToRoute({
                 ...routeState,
                 surface,
+              })
+            }}
+            onOpenSettings={() => {
+              navigateToRoute({ view: 'settings', surface: 'collab' })
+            }}
+            onBackToChat={() => {
+              navigateToRoute({
+                view: 'chat',
+                agentId: normalizeStickyAgentId(routeSearch.agent),
+                surface: 'collab',
+                channel: stickyChannel,
               })
             }}
           />

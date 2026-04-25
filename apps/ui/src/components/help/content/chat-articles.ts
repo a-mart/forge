@@ -119,7 +119,7 @@ Forge categorizes files automatically. Common image formats are recognized and s
     title: 'Sidebar Navigation',
     category: 'chat',
     summary: 'How to use the sidebar to navigate managers, sessions, and workers.',
-    content: `The sidebar on the left is your main navigation for everything in Forge. It shows your managers (profiles) and their sessions in a tree structure.
+    content: `The sidebar on the left is your main navigation for everything in Forge. It shows your managers (profiles) and their sessions in a tree structure. The Builder/Collab toggle lives in the sidebar header, and when collaboration is enabled the New Project action moves next to session search.
 
 ## Structure
 

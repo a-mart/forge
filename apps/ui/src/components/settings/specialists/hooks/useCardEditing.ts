@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react'
 import type { ManagerReasoningLevel, ModelPresetInfo, ResolvedSpecialistDefinition } from '@forge/protocol'
 import { getSupportedReasoningLevelsForModelId } from '@/lib/model-preset'
+import type { SettingsApiClient } from '../../settings-api-client'
 import type { CardEditState } from '../types'
 import {
   specialistToEditState,
@@ -23,7 +24,7 @@ import {
  * and prompt/fallback expansion toggles.
  */
 export function useCardEditing(
-  wsUrl: string,
+  clientOrWsUrl: SettingsApiClient | string,
   selectedScope: string,
   isGlobal: boolean,
   specialists: ResolvedSpecialistDefinition[],
@@ -145,18 +146,18 @@ export function useCardEditing(
       const saveHandle = handleChanged ? newHandle : id
 
       if (isGlobal) {
-        await saveSharedSpecialist(wsUrl, saveHandle, payload)
+        await saveSharedSpecialist(clientOrWsUrl, saveHandle, payload)
       } else {
-        await saveSpecialist(wsUrl, selectedScope, saveHandle, payload)
+        await saveSpecialist(clientOrWsUrl, selectedScope, saveHandle, payload)
       }
 
       // If handle changed, delete the old file
       if (handleChanged) {
         try {
           if (isGlobal) {
-            await deleteSharedSpecialistApi(wsUrl, id)
+            await deleteSharedSpecialistApi(clientOrWsUrl, id)
           } else {
-            await deleteSpecialist(wsUrl, selectedScope, id)
+            await deleteSpecialist(clientOrWsUrl, selectedScope, id)
           }
         } catch {
           // Best effort — new file already saved
@@ -167,7 +168,7 @@ export function useCardEditing(
       cancelEditing(id)
       await loadSpecialists()
     }, 'Save failed')
-  }, [editStates, wsUrl, selectedScope, isGlobal, specialists, cancelEditing, loadSpecialists, withCardAction])
+  }, [editStates, clientOrWsUrl, selectedScope, isGlobal, specialists, cancelEditing, loadSpecialists, withCardAction])
 
   const requestSave = useCallback((id: string, isBuiltin: boolean) => {
     const state = editStates[id]
@@ -195,13 +196,13 @@ export function useCardEditing(
   const handleCreateOverride = useCallback(async (s: ResolvedSpecialistDefinition) => {
     await withCardAction(s.specialistId, async () => {
       const payload = toSaveSpecialistPayload(specialistToEditState(s))
-      await saveSpecialist(wsUrl, selectedScope, s.specialistId, payload)
+      await saveSpecialist(clientOrWsUrl, selectedScope, s.specialistId, payload)
       setCustomizeInitiatedIds((prev) => new Set(prev).add(s.specialistId))
       const updatedSpecialists = await loadSpecialists()
       const updated = updatedSpecialists.find((sp) => sp.specialistId === s.specialistId)
       if (updated) startEditing(updated)
     }, 'Failed to create override')
-  }, [wsUrl, selectedScope, loadSpecialists, startEditing, withCardAction])
+  }, [clientOrWsUrl, selectedScope, loadSpecialists, startEditing, withCardAction])
 
   const handleInheritedToggleEnabled = useCallback(async (s: ResolvedSpecialistDefinition) => {
     await withCardAction(s.specialistId, async () => {
@@ -209,10 +210,10 @@ export function useCardEditing(
         ...specialistToEditState(s),
         enabled: !s.enabled,
       })
-      await saveSpecialist(wsUrl, selectedScope, s.specialistId, payload)
+      await saveSpecialist(clientOrWsUrl, selectedScope, s.specialistId, payload)
       await loadSpecialists()
     }, 'Failed to toggle')
-  }, [wsUrl, selectedScope, loadSpecialists, withCardAction])
+  }, [clientOrWsUrl, selectedScope, loadSpecialists, withCardAction])
 
   const handleGlobalToggleEnabled = useCallback(async (s: ResolvedSpecialistDefinition) => {
     await withCardAction(s.specialistId, async () => {
@@ -220,10 +221,10 @@ export function useCardEditing(
         ...specialistToEditState(s),
         enabled: !s.enabled,
       })
-      await saveSharedSpecialist(wsUrl, s.specialistId, payload)
+      await saveSharedSpecialist(clientOrWsUrl, s.specialistId, payload)
       await loadSpecialists()
     }, 'Failed to toggle')
-  }, [wsUrl, loadSpecialists, withCardAction])
+  }, [clientOrWsUrl, loadSpecialists, withCardAction])
 
   const handleProfileToggleEnabled = useCallback(async (s: ResolvedSpecialistDefinition) => {
     await withCardAction(s.specialistId, async () => {
@@ -231,10 +232,10 @@ export function useCardEditing(
         ...specialistToEditState(s),
         enabled: !s.enabled,
       })
-      await saveSpecialist(wsUrl, selectedScope, s.specialistId, payload)
+      await saveSpecialist(clientOrWsUrl, selectedScope, s.specialistId, payload)
       await loadSpecialists()
     }, 'Failed to toggle')
-  }, [wsUrl, selectedScope, loadSpecialists, withCardAction])
+  }, [clientOrWsUrl, selectedScope, loadSpecialists, withCardAction])
 
   const handleCancelProfileEditing = useCallback(async (id: string) => {
     const wasCustomizeInitiated = customizeInitiatedIds.has(id)
@@ -243,33 +244,33 @@ export function useCardEditing(
     if (wasCustomizeInitiated) {
       setCustomizeInitiatedIds((prev) => { const next = new Set(prev); next.delete(id); return next })
       try {
-        await deleteSpecialist(wsUrl, selectedScope, id)
+        await deleteSpecialist(clientOrWsUrl, selectedScope, id)
       } catch {
         // Best effort
       }
       await loadSpecialists()
     }
-  }, [customizeInitiatedIds, cancelEditing, wsUrl, selectedScope, loadSpecialists])
+  }, [customizeInitiatedIds, cancelEditing, clientOrWsUrl, selectedScope, loadSpecialists])
 
   const handleRevert = useCallback(async (id: string) => {
     await withCardAction(id, async () => {
-      await deleteSpecialist(wsUrl, selectedScope, id)
+      await deleteSpecialist(clientOrWsUrl, selectedScope, id)
       cancelEditing(id)
       await loadSpecialists()
     }, 'Revert failed')
-  }, [wsUrl, selectedScope, cancelEditing, loadSpecialists, withCardAction])
+  }, [clientOrWsUrl, selectedScope, cancelEditing, loadSpecialists, withCardAction])
 
   const handleDelete = useCallback(async (id: string) => {
     await withCardAction(id, async () => {
       if (isGlobal) {
-        await deleteSharedSpecialistApi(wsUrl, id)
+        await deleteSharedSpecialistApi(clientOrWsUrl, id)
       } else {
-        await deleteSpecialist(wsUrl, selectedScope, id)
+        await deleteSpecialist(clientOrWsUrl, selectedScope, id)
       }
       cancelEditing(id)
       await loadSpecialists()
     }, 'Delete failed')
-  }, [wsUrl, selectedScope, isGlobal, cancelEditing, loadSpecialists, withCardAction])
+  }, [clientOrWsUrl, selectedScope, isGlobal, cancelEditing, loadSpecialists, withCardAction])
 
   const handleClone = useCallback(async (source: ResolvedSpecialistDefinition) => {
     const sourceId = source.specialistId
@@ -296,9 +297,9 @@ export function useCardEditing(
       }
 
       if (isGlobal) {
-        await saveSharedSpecialist(wsUrl, newHandle, payload)
+        await saveSharedSpecialist(clientOrWsUrl, newHandle, payload)
       } else {
-        await saveSpecialist(wsUrl, selectedScope, newHandle, payload)
+        await saveSpecialist(clientOrWsUrl, selectedScope, newHandle, payload)
       }
 
       const updatedSpecialists = await loadSpecialists()
@@ -315,7 +316,7 @@ export function useCardEditing(
     } finally {
       setCloningIds((prev) => { const next = new Set(prev); next.delete(sourceId); return next })
     }
-  }, [wsUrl, selectedScope, isGlobal, specialists, loadSpecialists, startEditing])
+  }, [clientOrWsUrl, selectedScope, isGlobal, specialists, loadSpecialists, startEditing])
 
   const togglePromptExpand = useCallback((id: string) => {
     setExpandedPromptIds((prev) => {

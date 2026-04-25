@@ -33,6 +33,7 @@ import {
 } from '@/lib/editor-preference'
 import { toEditorHref } from '@/lib/artifacts'
 import { fetchSkillFileContent } from './skills-viewer-api'
+import type { SettingsApiClient } from '../settings-api-client'
 import type { SkillFileContentResponse } from './skills-viewer-types'
 import '@/styles/syntax-highlight.css'
 import '@/styles/file-browser.css'
@@ -64,7 +65,7 @@ function storeBoolPref(key: string, value: boolean): void {
 /* ------------------------------------------------------------------ */
 
 interface SkillFileViewerProps {
-  wsUrl: string
+  clientOrWsUrl: SettingsApiClient | string
   skillId: string
   filePath: string | null
   /** Root path of the skill for constructing absolute paths */
@@ -77,7 +78,7 @@ interface SkillFileViewerProps {
 /* ------------------------------------------------------------------ */
 
 export function SkillFileViewer({
-  wsUrl,
+  clientOrWsUrl,
   skillId,
   filePath,
   rootPath,
@@ -103,7 +104,7 @@ export function SkillFileViewer({
     setIsLoading(true)
     setError(null)
 
-    fetchSkillFileContent(wsUrl, skillId, filePath)
+    fetchSkillFileContent(clientOrWsUrl, skillId, filePath)
       .then((result) => {
         if (!cancelled) setContent(result)
       })
@@ -115,7 +116,7 @@ export function SkillFileViewer({
       })
 
     return () => { cancelled = true }
-  }, [wsUrl, skillId, filePath])
+  }, [clientOrWsUrl, skillId, filePath])
 
   const isMarkdown = useMemo(
     () => (filePath ? isMarkdownFile(filePath) : false),

@@ -55,6 +55,7 @@ export const HIDE_DISABLED_KEY = 'forge-specialists-hide-disabled'
 
 export interface SettingsSpecialistsProps {
   wsUrl: string
+  apiClient?: import('../settings-api-client').SettingsApiClient
   profiles: import('@forge/protocol').ManagerProfile[]
   specialistChangeKey: number
   modelConfigChangeKey: number

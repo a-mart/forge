@@ -3,6 +3,7 @@ import { ChevronRight, Loader2, AlertTriangle, FolderOpen } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { FileIcon } from '@/components/file-browser/FileIcon'
 import { fetchSkillFiles } from './skills-viewer-api'
+import type { SettingsApiClient } from '../settings-api-client'
 import type { SkillFileEntry } from './skills-viewer-types'
 
 /* ------------------------------------------------------------------ */
@@ -17,7 +18,7 @@ interface TreeNode {
 }
 
 interface SkillFileTreeProps {
-  wsUrl: string
+  clientOrWsUrl: SettingsApiClient | string
   skillId: string
   selectedFilePath: string | null
   onSelectFile: (path: string) => void
@@ -28,7 +29,7 @@ interface SkillFileTreeProps {
 /* ------------------------------------------------------------------ */
 
 export function SkillFileTree({
-  wsUrl,
+  clientOrWsUrl,
   skillId,
   selectedFilePath,
   onSelectFile,
@@ -55,7 +56,7 @@ export function SkillFileTree({
     setExpandedDirs({})
     setLoadingDirs(new Set())
 
-    fetchSkillFiles(wsUrl, skillId)
+    fetchSkillFiles(clientOrWsUrl, skillId)
       .then((result) => {
         if (cancelled) return
         const nodes = entriesToNodes(result.entries)
@@ -70,7 +71,7 @@ export function SkillFileTree({
       })
 
     return () => { cancelled = true }
-  }, [wsUrl, skillId])
+  }, [clientOrWsUrl, skillId])
 
   const handleToggleDirectory = useCallback(
     async (dirPath: string) => {
@@ -88,7 +89,7 @@ export function SkillFileTree({
       const requestedSkillId = skillId
       setLoadingDirs((prev) => new Set(prev).add(dirPath))
       try {
-        const result = await fetchSkillFiles(wsUrl, requestedSkillId, dirPath)
+        const result = await fetchSkillFiles(clientOrWsUrl, requestedSkillId, dirPath)
         if (currentSkillIdRef.current !== requestedSkillId) {
           return
         }
@@ -107,7 +108,7 @@ export function SkillFileTree({
         })
       }
     },
-    [wsUrl, skillId, expandedDirs],
+    [clientOrWsUrl, skillId, expandedDirs],
   )
 
   const handleClick = useCallback(

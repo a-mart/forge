@@ -42,7 +42,9 @@ Edit the default preferences Forge shares with new manager sessions. These are t
 
 Open **Settings > Collaboration** to connect Forge to a remote collaboration server. Enter the remote server URL, click **Save** and **Test** to confirm it is reachable, then sign in with the remote collaboration server admin or member email and password. After sign-in succeeds, the Builder/Collab toggle becomes available.
 
-The Collaboration status panel reflects the configured remote collaboration server, not the local Builder backend.
+Settings are contextual: Builder mode Settings continue to configure the local backend, while Collab mode Settings configure the remote collaboration backend. Collab Settings are admin-only, and provider auth entered there writes directly to the remote collaboration backend instead of copying or sharing the local Builder auth file.
+
+The Collaboration status panel reflects the configured remote collaboration server, not the local Builder backend. Terminal settings stay hidden in remote Collab Settings v1 and remain local-only.
 
 ## System
 

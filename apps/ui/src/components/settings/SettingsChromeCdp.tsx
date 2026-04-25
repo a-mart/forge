@@ -32,13 +32,14 @@ import {
   fetchChromeCdpPreview,
   toErrorMessage,
 } from './settings-api'
+import type { SettingsApiClient } from './settings-api-client'
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                             */
 /* ------------------------------------------------------------------ */
 
 interface SettingsChromeCdpProps {
-  wsUrl: string
+  clientOrWsUrl: SettingsApiClient | string
   onConfigChanged?: () => void
 }
 
@@ -273,7 +274,7 @@ function ProfileCard({
 /*  Main component                                                    */
 /* ------------------------------------------------------------------ */
 
-export function SettingsChromeCdp({ wsUrl, onConfigChanged }: SettingsChromeCdpProps) {
+export function SettingsChromeCdp({ clientOrWsUrl, onConfigChanged }: SettingsChromeCdpProps) {
   /* ---------- State ---------- */
 
   // Connection & config
@@ -332,7 +333,7 @@ export function SettingsChromeCdp({ wsUrl, onConfigChanged }: SettingsChromeCdpP
   const loadSettings = useCallback(async () => {
     setIsLoadingInit(true)
     try {
-      const result = await fetchChromeCdpSettings(wsUrl)
+      const result = await fetchChromeCdpSettings(clientOrWsUrl)
       setStatus(result.status)
       setSavedConfig(result.config)
       setDraft({
@@ -345,7 +346,7 @@ export function SettingsChromeCdp({ wsUrl, onConfigChanged }: SettingsChromeCdpP
     } finally {
       setIsLoadingInit(false)
     }
-  }, [wsUrl, showError])
+  }, [clientOrWsUrl, showError])
 
   useEffect(() => {
     void loadSettings()
@@ -364,7 +365,7 @@ export function SettingsChromeCdp({ wsUrl, onConfigChanged }: SettingsChromeCdpP
 
       try {
         const result = await fetchChromeCdpPreview(
-          wsUrl,
+          clientOrWsUrl,
           draftToPartialConfig(config),
           controller.signal,
         )
@@ -383,7 +384,7 @@ export function SettingsChromeCdp({ wsUrl, onConfigChanged }: SettingsChromeCdpP
         }
       }
     },
-    [wsUrl],
+    [clientOrWsUrl],
   )
 
   // Debounced preview on draft changes (only when connected)
@@ -415,7 +416,7 @@ export function SettingsChromeCdp({ wsUrl, onConfigChanged }: SettingsChromeCdpP
     setError(null)
     setSuccess(null)
     try {
-      const result = await testChromeCdpConnection(wsUrl)
+      const result = await testChromeCdpConnection(clientOrWsUrl)
       setStatus(result)
       if (result.connected) {
         const parts: string[] = ['Connected']
@@ -436,7 +437,7 @@ export function SettingsChromeCdp({ wsUrl, onConfigChanged }: SettingsChromeCdpP
     setIsDiscoveringProfiles(true)
     setError(null)
     try {
-      const result = await fetchChromeCdpProfiles(wsUrl)
+      const result = await fetchChromeCdpProfiles(clientOrWsUrl)
       setProfiles(result)
       setProfilesDiscovered(true)
       if (result.length === 0) {
@@ -458,7 +459,7 @@ export function SettingsChromeCdp({ wsUrl, onConfigChanged }: SettingsChromeCdpP
     setError(null)
     setSuccess(null)
     try {
-      await updateChromeCdpSettings(wsUrl, draftToPartialConfig(draft))
+      await updateChromeCdpSettings(clientOrWsUrl, draftToPartialConfig(draft))
       setSavedConfig({
         contextId: draft.contextId,
         urlAllow: [...draft.urlAllow],
@@ -478,7 +479,7 @@ export function SettingsChromeCdp({ wsUrl, onConfigChanged }: SettingsChromeCdpP
     setError(null)
     setSuccess(null)
     try {
-      await updateChromeCdpSettings(wsUrl, {
+      await updateChromeCdpSettings(clientOrWsUrl, {
         contextId: null,
         urlAllow: [],
         urlBlock: [],

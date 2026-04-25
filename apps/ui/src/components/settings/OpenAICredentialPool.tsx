@@ -1,4 +1,6 @@
 import type { SettingsAuthProviderAuthType } from '@forge/protocol'
+import type { SettingsApiClient } from './settings-api-client'
+import type { SettingsBackendTarget } from './settings-target'
 import { CredentialPoolPanel } from './CredentialPoolPanel'
 
 /* ------------------------------------------------------------------ */
@@ -6,20 +8,22 @@ import { CredentialPoolPanel } from './CredentialPoolPanel'
 /* ------------------------------------------------------------------ */
 
 interface OpenAICredentialPoolProps {
-  wsUrl: string
+  apiClient: SettingsApiClient
+  target: SettingsBackendTarget
   authType?: SettingsAuthProviderAuthType
   onError: (message: string) => void
   onSuccess: (message: string) => void
   onAuthReload: () => void
 }
 
-export function OpenAICredentialPool({ wsUrl, authType, onError, onSuccess, onAuthReload }: OpenAICredentialPoolProps) {
+export function OpenAICredentialPool({ apiClient, target, authType, onError, onSuccess, onAuthReload }: OpenAICredentialPoolProps) {
   return (
     <CredentialPoolPanel
       provider="openai-codex"
       providerLabel="OpenAI"
       authType={authType}
-      wsUrl={wsUrl}
+      apiClient={apiClient}
+      target={target}
       onError={onError}
       onSuccess={onSuccess}
       onAuthReload={onAuthReload}

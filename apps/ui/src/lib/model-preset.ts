@@ -16,6 +16,7 @@ import {
   inferCatalogFamily,
 } from '@forge/protocol'
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
+import type { SettingsApiClient } from '@/components/settings/settings-api-client'
 
 // Generate fallback from the checked-in catalog so the UI works offline
 const FALLBACK_MODEL_PRESET_INFO: ModelPresetInfo[] = getSpecialistFamilies().map((family) => {
@@ -45,11 +46,18 @@ export function inferModelPreset(agent: AgentDescriptor): ManagerModelPreset | u
 }
 
 export async function fetchModelPresets(
-  wsUrl: string | undefined,
+  clientOrWsUrl: SettingsApiClient | string | undefined,
   options?: { allowDynamicPresetIds?: boolean },
 ): Promise<ModelPresetInfo[]> {
-  const endpoint = resolveApiEndpoint(wsUrl, '/api/settings/models')
-  const response = await fetch(endpoint, { cache: 'no-store' })
+  let response: Response
+
+  if (clientOrWsUrl && typeof clientOrWsUrl === 'object') {
+    // Use target-aware client (preserves Collab credentials)
+    response = await clientOrWsUrl.fetch('/api/settings/models', { cache: 'no-store' })
+  } else {
+    const endpoint = resolveApiEndpoint(clientOrWsUrl, '/api/settings/models')
+    response = await fetch(endpoint, { cache: 'no-store' })
+  }
 
   if (!response.ok) {
     throw new Error(`Failed to load model presets (${response.status})`)
@@ -66,7 +74,7 @@ export async function fetchModelPresets(
 }
 
 export function useModelPresets(
-  wsUrl: string | undefined,
+  clientOrWsUrl: SettingsApiClient | string | undefined,
   refreshKey = 0,
   options?: { allowDynamicPresetIds?: boolean },
 ): ModelPresetInfo[] {
@@ -78,7 +86,7 @@ export function useModelPresets(
 
     const loadModelPresets = async () => {
       try {
-        const models = await fetchModelPresets(wsUrl, { allowDynamicPresetIds })
+        const models = await fetchModelPresets(clientOrWsUrl, { allowDynamicPresetIds })
         if (!cancelled) {
           setModelPresets(models)
         }
@@ -97,7 +105,7 @@ export function useModelPresets(
     return () => {
       cancelled = true
     }
-  }, [allowDynamicPresetIds, refreshKey, wsUrl])
+  }, [allowDynamicPresetIds, refreshKey, clientOrWsUrl])
 
   return modelPresets
 }

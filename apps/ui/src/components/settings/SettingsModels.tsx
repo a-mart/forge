@@ -30,6 +30,7 @@ import {
   resetAllModelOverrides,
   updateModelOverride,
 } from './models-api'
+import type { SettingsApiClient } from './settings-api-client'
 import { cn } from '@/lib/utils'
 import { SettingsOpenRouter } from './SettingsOpenRouter'
 
@@ -37,6 +38,7 @@ const numberFormatter = new Intl.NumberFormat()
 
 interface SettingsModelsProps {
   wsUrl: string
+  apiClient?: SettingsApiClient
   modelConfigChangeKey: number
 }
 
@@ -103,7 +105,7 @@ function OverrideBadge({ active }: { active: boolean }) {
 }
 
 function ModelCard({
-  wsUrl,
+  clientOrWsUrl,
   model,
   modelKey,
   override,
@@ -111,7 +113,7 @@ function ModelCard({
   onToggle,
   onRefresh,
 }: {
-  wsUrl: string
+  clientOrWsUrl: SettingsApiClient | string
   model: ForgeModelDefinition
   modelKey: string
   override?: ModelOverrideEntry
@@ -152,7 +154,7 @@ function ModelCard({
       setError(null)
       setIsSavingEnabled(true)
       try {
-        await updateModelOverride(wsUrl, modelKey, {
+        await updateModelOverride(clientOrWsUrl, modelKey, {
           enabled: checked === model.enabledByDefault ? null : checked,
         })
         await onRefresh()
@@ -162,7 +164,7 @@ function ModelCard({
         setIsSavingEnabled(false)
       }
     },
-    [model.enabledByDefault, modelKey, onRefresh, wsUrl],
+    [model.enabledByDefault, modelKey, onRefresh, clientOrWsUrl],
   )
 
   const applyContextCap = useCallback(async () => {
@@ -181,14 +183,14 @@ function ModelCard({
 
     setIsSavingCap(true)
     try {
-      await updateModelOverride(wsUrl, modelKey, { contextWindowCap: nextCap })
+      await updateModelOverride(clientOrWsUrl, modelKey, { contextWindowCap: nextCap })
       await onRefresh()
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : String(saveError))
     } finally {
       setIsSavingCap(false)
     }
-  }, [contextCapDraft, model.contextWindow, modelKey, onRefresh, wsUrl])
+  }, [contextCapDraft, model.contextWindow, modelKey, onRefresh, clientOrWsUrl])
 
   const applyModelSpecificInstructions = useCallback(async () => {
     setError(null)
@@ -202,14 +204,14 @@ function ModelCard({
 
     setIsSavingInstructions(true)
     try {
-      await updateModelOverride(wsUrl, modelKey, { modelSpecificInstructions: nextInstructions })
+      await updateModelOverride(clientOrWsUrl, modelKey, { modelSpecificInstructions: nextInstructions })
       await onRefresh()
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : String(saveError))
     } finally {
       setIsSavingInstructions(false)
     }
-  }, [builtInInstructions, instructionsDraft, modelKey, onRefresh, wsUrl])
+  }, [builtInInstructions, instructionsDraft, modelKey, onRefresh, clientOrWsUrl])
 
   const resetModelSpecificInstructions = useCallback(async () => {
     setError(null)
@@ -217,27 +219,27 @@ function ModelCard({
 
     setIsSavingInstructions(true)
     try {
-      await updateModelOverride(wsUrl, modelKey, { modelSpecificInstructions: null })
+      await updateModelOverride(clientOrWsUrl, modelKey, { modelSpecificInstructions: null })
       await onRefresh()
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : String(saveError))
     } finally {
       setIsSavingInstructions(false)
     }
-  }, [builtInInstructions, modelKey, onRefresh, wsUrl])
+  }, [builtInInstructions, modelKey, onRefresh, clientOrWsUrl])
 
   const resetModel = useCallback(async () => {
     setError(null)
     setIsResettingAll(true)
     try {
-      await deleteModelOverride(wsUrl, modelKey)
+      await deleteModelOverride(clientOrWsUrl, modelKey)
       await onRefresh()
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : String(saveError))
     } finally {
       setIsResettingAll(false)
     }
-  }, [modelKey, onRefresh, wsUrl])
+  }, [modelKey, onRefresh, clientOrWsUrl])
 
   return (
     <div className="rounded-lg border border-border/70 bg-card/40">
@@ -291,7 +293,7 @@ function ModelCard({
                   variant="ghost"
                   size="sm"
                   className="h-8 px-2"
-                  onClick={() => void updateModelOverride(wsUrl, modelKey, { enabled: null }).then(onRefresh).catch((saveError) => setError(saveError instanceof Error ? saveError.message : String(saveError)))}
+                  onClick={() => void updateModelOverride(clientOrWsUrl, modelKey, { enabled: null }).then(onRefresh).catch((saveError) => setError(saveError instanceof Error ? saveError.message : String(saveError)))}
                   disabled={!hasOverrideField(override, 'enabled') || isSavingEnabled || isResettingAll}
                 >
                   Reset
@@ -332,7 +334,7 @@ function ModelCard({
                   size="sm"
                   onClick={() => {
                     setContextCapDraft('')
-                    void updateModelOverride(wsUrl, modelKey, { contextWindowCap: null })
+                    void updateModelOverride(clientOrWsUrl, modelKey, { contextWindowCap: null })
                       .then(onRefresh)
                       .catch((saveError) => setError(saveError instanceof Error ? saveError.message : String(saveError)))
                   }}
@@ -412,7 +414,8 @@ function ModelCard({
   )
 }
 
-export function SettingsModels({ wsUrl, modelConfigChangeKey }: SettingsModelsProps) {
+export function SettingsModels({ wsUrl, apiClient, modelConfigChangeKey }: SettingsModelsProps) {
+  const clientOrWsUrl: SettingsApiClient | string = apiClient ?? wsUrl
   const [overrides, setOverrides] = useState<Record<string, ModelOverrideEntry>>({})
   const [providerAvailability, setProviderAvailability] = useState<Record<string, boolean>>({})
   const [loading, setLoading] = useState(true)
@@ -426,7 +429,7 @@ export function SettingsModels({ wsUrl, modelConfigChangeKey }: SettingsModelsPr
     setError(null)
     setLoading(true)
     try {
-      const response = await fetchModelOverrides(wsUrl)
+      const response = await fetchModelOverrides(clientOrWsUrl)
       setOverrides(response.overrides)
       setProviderAvailability(response.providerAvailability)
     } catch (loadError) {
@@ -434,7 +437,7 @@ export function SettingsModels({ wsUrl, modelConfigChangeKey }: SettingsModelsPr
     } finally {
       setLoading(false)
     }
-  }, [wsUrl])
+  }, [clientOrWsUrl])
 
   useEffect(() => {
     void loadOverrides()
@@ -463,7 +466,7 @@ export function SettingsModels({ wsUrl, modelConfigChangeKey }: SettingsModelsPr
     setError(null)
     setResettingAll(true)
     try {
-      await resetAllModelOverrides(wsUrl)
+      await resetAllModelOverrides(clientOrWsUrl)
       await loadOverrides()
     } catch (resetError) {
       setError(resetError instanceof Error ? resetError.message : String(resetError))
@@ -471,7 +474,7 @@ export function SettingsModels({ wsUrl, modelConfigChangeKey }: SettingsModelsPr
       setResettingAll(false)
       setIsResetAllDialogOpen(false)
     }
-  }, [hasAnyOverrides, loadOverrides, wsUrl])
+  }, [hasAnyOverrides, loadOverrides, clientOrWsUrl])
 
   return (
     <SettingsSection
@@ -567,7 +570,7 @@ export function SettingsModels({ wsUrl, modelConfigChangeKey }: SettingsModelsPr
                     return (
                       <ModelCard
                         key={modelKey}
-                        wsUrl={wsUrl}
+                        clientOrWsUrl={clientOrWsUrl}
                         model={model}
                         modelKey={modelKey}
                         override={override}
@@ -593,7 +596,7 @@ export function SettingsModels({ wsUrl, modelConfigChangeKey }: SettingsModelsPr
         <div className={cn('text-sm text-muted-foreground')}>No models available.</div>
       ) : null}
 
-      <SettingsOpenRouter wsUrl={wsUrl} modelConfigChangeKey={modelConfigChangeKey} />
+      <SettingsOpenRouter wsUrl={wsUrl} apiClient={apiClient} modelConfigChangeKey={modelConfigChangeKey} />
     </SettingsSection>
   )
 }

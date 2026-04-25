@@ -1,9 +1,12 @@
 import { ArrowLeft, Bell, Settings, KeyRound, Blocks, Wrench, FileText, Terminal, Puzzle, UserCog, Info, Cpu, Users } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { HelpTrigger } from '@/components/help/HelpTrigger'
 import { cn } from '@/lib/utils'
+import type { SettingsTab } from './settings-target'
 
-export type SettingsTab = 'general' | 'notifications' | 'auth' | 'models' | 'integrations' | 'skills' | 'prompts' | 'specialists' | 'slash-commands' | 'extensions' | 'collaboration' | 'about'
+// Re-export for callers that previously imported from this module
+export type { SettingsTab } from './settings-target'
 
 interface NavItem {
   id: SettingsTab
@@ -33,9 +36,17 @@ interface SettingsLayoutProps {
   children: React.ReactNode
   /** Override the max-width class on the content area. Defaults to 'max-w-3xl'. */
   contentWidthClassName?: string
+  /** Filter nav items to only these tabs. When omitted, all tabs are shown. */
+  availableTabs?: SettingsTab[]
+  /** Non-interactive target badge label (e.g. "Builder backend" or "Collab backend"). */
+  targetLabel?: string
 }
 
-export function SettingsLayout({ activeTab, onTabChange, onBack, children, contentWidthClassName }: SettingsLayoutProps) {
+export function SettingsLayout({ activeTab, onTabChange, onBack, children, contentWidthClassName, availableTabs, targetLabel }: SettingsLayoutProps) {
+  const visibleItems = availableTabs
+    ? NAV_ITEMS.filter((item) => availableTabs.includes(item.id))
+    : NAV_ITEMS
+
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
       <header className="flex h-[62px] shrink-0 items-center border-b border-border/80 bg-card/80 px-2 backdrop-blur md:px-4">
@@ -53,13 +64,18 @@ export function SettingsLayout({ activeTab, onTabChange, onBack, children, conte
             </Button>
           ) : null}
           <h1 className="truncate text-sm font-semibold text-foreground">Settings</h1>
+          {targetLabel ? (
+            <Badge variant="outline" className="shrink-0 text-[10px] font-normal text-muted-foreground">
+              {targetLabel}
+            </Badge>
+          ) : null}
         </div>
         <HelpTrigger contextKey={`settings.${activeTab}`} size="sm" variant="ghost" />
       </header>
 
       {/* Mobile: horizontal scrolling tab bar */}
       <nav className="flex shrink-0 gap-1 overflow-x-auto border-b border-border/60 bg-card/30 px-2 py-1.5 md:hidden">
-        {NAV_ITEMS.map((item) => {
+        {visibleItems.map((item) => {
           const isActive = activeTab === item.id
           return (
             <button
@@ -85,7 +101,7 @@ export function SettingsLayout({ activeTab, onTabChange, onBack, children, conte
         {/* Desktop: left nav */}
         <nav className="hidden w-48 shrink-0 border-r border-border/60 bg-card/30 md:block">
           <div className="flex flex-col gap-0.5 p-2 pt-3">
-            {NAV_ITEMS.map((item) => {
+            {visibleItems.map((item) => {
               const isActive = activeTab === item.id
               return (
                 <button

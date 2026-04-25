@@ -4,14 +4,17 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { OpenRouterModelCard } from './OpenRouterModelCard'
 import { OpenRouterBrowseDialog } from './OpenRouterBrowseDialog'
+import type { SettingsApiClient } from './settings-api-client'
 import { fetchOpenRouterModels, removeOpenRouterModel, type OpenRouterModelsResponse } from './openrouter-api'
 
 interface SettingsOpenRouterProps {
   wsUrl: string | undefined
+  apiClient?: SettingsApiClient
   modelConfigChangeKey: number
 }
 
-export function SettingsOpenRouter({ wsUrl, modelConfigChangeKey }: SettingsOpenRouterProps) {
+export function SettingsOpenRouter({ wsUrl, apiClient, modelConfigChangeKey }: SettingsOpenRouterProps) {
+  const clientOrWsUrl: SettingsApiClient | string | undefined = apiClient ?? wsUrl
   const [data, setData] = useState<OpenRouterModelsResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -24,14 +27,14 @@ export function SettingsOpenRouter({ wsUrl, modelConfigChangeKey }: SettingsOpen
     setError(null)
     setLoading(true)
     try {
-      const response = await fetchOpenRouterModels(wsUrl)
+      const response = await fetchOpenRouterModels(clientOrWsUrl)
       setData(response)
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : String(loadError))
     } finally {
       setLoading(false)
     }
-  }, [wsUrl])
+  }, [clientOrWsUrl])
 
   useEffect(() => {
     if (!dialogOpen) {
@@ -51,14 +54,14 @@ export function SettingsOpenRouter({ wsUrl, modelConfigChangeKey }: SettingsOpen
     setData((prev) => prev ? { ...prev, models: prev.models.filter((m) => m.modelId !== modelId) } : prev)
 
     try {
-      await removeOpenRouterModel(wsUrl, modelId)
+      await removeOpenRouterModel(clientOrWsUrl, modelId)
     } catch (removeError) {
       setActionError(removeError instanceof Error ? removeError.message : String(removeError))
       await loadModels()
     } finally {
       setRemovingModelId(null)
     }
-  }, [data, loadModels, wsUrl])
+  }, [data, loadModels, clientOrWsUrl])
 
   const models = data?.models ?? []
   const isConfigured = data?.isConfigured ?? false
@@ -191,6 +194,7 @@ export function SettingsOpenRouter({ wsUrl, modelConfigChangeKey }: SettingsOpen
         open={dialogOpen}
         onOpenChange={setDialogOpen}
         wsUrl={wsUrl}
+        apiClient={apiClient}
         addedModelIds={addedModelIds}
         onModelAdded={() => void loadModels()}
       />

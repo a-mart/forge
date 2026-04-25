@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react'
 import type { ResolvedSpecialistDefinition } from '@forge/protocol'
+import type { SettingsApiClient } from '../../settings-api-client'
 import {
   fetchWorkerTemplate,
   saveSpecialist,
@@ -21,7 +22,7 @@ import {
  * Manages the new specialist creation form state and submission.
  */
 export function useNewSpecialistForm(
-  wsUrl: string,
+  clientOrWsUrl: SettingsApiClient | string,
   selectedScope: string,
   isGlobal: boolean,
   specialists: ResolvedSpecialistDefinition[],
@@ -78,7 +79,7 @@ export function useNewSpecialistForm(
       // Fetch worker template for system prompt
       let template: string
       try {
-        template = await fetchWorkerTemplate(wsUrl)
+        template = await fetchWorkerTemplate(clientOrWsUrl)
       } catch {
         template = [
           'You are a worker agent in a swarm.',
@@ -104,9 +105,9 @@ export function useNewSpecialistForm(
       }
 
       if (isGlobal) {
-        await saveSharedSpecialist(wsUrl, normalizedNewHandle, payload)
+        await saveSharedSpecialist(clientOrWsUrl, normalizedNewHandle, payload)
       } else {
-        await saveSpecialist(wsUrl, selectedScope, normalizedNewHandle, payload)
+        await saveSpecialist(clientOrWsUrl, selectedScope, normalizedNewHandle, payload)
       }
 
       const updatedSpecialists = await loadSpecialists()
@@ -125,7 +126,7 @@ export function useNewSpecialistForm(
       setNewCreating(false)
     }
   }, [
-    wsUrl,
+    clientOrWsUrl,
     selectedScope,
     isGlobal,
     normalizedNewHandle,

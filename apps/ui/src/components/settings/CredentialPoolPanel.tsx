@@ -48,6 +48,8 @@ import {
 } from './settings-api'
 import type { SettingsAuthOAuthFlowState, SettingsAuthProviderId } from './settings-types'
 import type { SettingsAuthProviderAuthType } from '@forge/protocol'
+import type { SettingsApiClient } from './settings-api-client'
+import type { SettingsBackendTarget } from './settings-target'
 
 /* ------------------------------------------------------------------ */
 /*  Health badge                                                      */
@@ -347,7 +349,10 @@ export interface CredentialPoolPanelProps {
   description?: string
   /** Auth type reported by the backend for the primary credential (e.g. 'oauth', 'api_key'). */
   authType?: SettingsAuthProviderAuthType
-  wsUrl: string
+  /** Settings API client for target-aware backend calls. */
+  apiClient: SettingsApiClient
+  /** Settings backend target (builder or collab). */
+  target: SettingsBackendTarget
   onError: (message: string) => void
   onSuccess: (message: string) => void
   onAuthReload: () => void
@@ -358,7 +363,8 @@ export function CredentialPoolPanel({
   providerLabel,
   description,
   authType,
-  wsUrl,
+  apiClient,
+  target,
   onError,
   onSuccess,
   onAuthReload,
@@ -383,14 +389,14 @@ export function CredentialPoolPanel({
 
   const loadPool = useCallback(async () => {
     try {
-      const state = await fetchCredentialPool(wsUrl, provider)
+      const state = await fetchCredentialPool(apiClient, provider)
       setPool(state)
     } catch (err) {
       onError(toErrorMessage(err))
     } finally {
       setIsLoading(false)
     }
-  }, [wsUrl, provider, onError])
+  }, [apiClient, provider, onError])
 
   useEffect(() => {
     void loadPool()
@@ -407,7 +413,7 @@ export function CredentialPoolPanel({
     const strategy = value as CredentialPoolStrategy
     setIsBusy(true)
     try {
-      await setCredentialPoolStrategy(wsUrl, provider, strategy)
+      await setCredentialPoolStrategy(apiClient, provider, strategy)
       setPool((prev) => (prev ? { ...prev, strategy } : prev))
       onSuccess(`Strategy updated to ${strategy === 'fill_first' ? 'Fill First' : 'Spread Load'}.`)
     } catch (err) {
@@ -420,7 +426,7 @@ export function CredentialPoolPanel({
   const handleRename = async (id: string, label: string) => {
     setIsBusy(true)
     try {
-      await renamePooledCredential(wsUrl, provider, id, label)
+      await renamePooledCredential(apiClient, provider, id, label)
       await loadPool()
       onSuccess('Account renamed.')
     } catch (err) {
@@ -433,7 +439,7 @@ export function CredentialPoolPanel({
   const handleSetPrimary = async (id: string) => {
     setIsBusy(true)
     try {
-      await setPrimaryPooledCredential(wsUrl, provider, id)
+      await setPrimaryPooledCredential(apiClient, provider, id)
       await loadPool()
       onSuccess('Primary account updated.')
     } catch (err) {
@@ -446,7 +452,7 @@ export function CredentialPoolPanel({
   const handleResetCooldown = async (id: string) => {
     setIsBusy(true)
     try {
-      await resetPooledCredentialCooldown(wsUrl, provider, id)
+      await resetPooledCredentialCooldown(apiClient, provider, id)
       await loadPool()
       onSuccess('Cooldown reset.')
     } catch (err) {
@@ -459,7 +465,7 @@ export function CredentialPoolPanel({
   const handleRemove = async (id: string) => {
     setIsBusy(true)
     try {
-      await removePooledCredential(wsUrl, provider, id)
+      await removePooledCredential(apiClient, provider, id)
       await loadPool()
       onAuthReload()
       onSuccess('Account removed.')
@@ -485,7 +491,7 @@ export function CredentialPoolPanel({
     let completed = false
     try {
       await startPoolAddAccountOAuthStream(
-        wsUrl,
+        apiClient,
         provider,
         {
           onAuthUrl: (event) => {
@@ -559,7 +565,7 @@ export function CredentialPoolPanel({
     if (!value) return
     setOauthFlow((prev) => ({ ...prev, isSubmittingCode: true, errorMessage: undefined }))
     try {
-      await submitPoolAddAccountOAuthPrompt(wsUrl, provider, value)
+      await submitPoolAddAccountOAuthPrompt(apiClient, provider, value)
       setOauthFlow((prev) => ({
         ...prev,
         status: 'waiting_for_auth',
@@ -727,6 +733,12 @@ export function CredentialPoolPanel({
 
             {oauthFlow.progressMessage && (
               <p className="text-[11px] text-muted-foreground">{oauthFlow.progressMessage}</p>
+            )}
+
+            {target.kind === 'collab' && (oauthFlow.status === 'waiting_for_code' || oauthFlow.status === 'waiting_for_auth') && (
+              <p className="text-[11px] text-amber-600 dark:text-amber-400">
+                This authorizes the Collab backend. If the browser ends on a localhost callback URL, paste that full URL/code below.
+              </p>
             )}
 
             {oauthFlow.status === 'waiting_for_code' && (

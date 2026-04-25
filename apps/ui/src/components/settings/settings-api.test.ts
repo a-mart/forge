@@ -32,7 +32,10 @@ describe('settings-api skills list', () => {
 
     const skills = await fetchSkillsList('ws://127.0.0.1:47187')
 
-    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:47187/api/settings/skills')
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://127.0.0.1:47187/api/settings/skills',
+      expect.objectContaining({ credentials: 'same-origin' }),
+    )
     expect(skills).toEqual([
       {
         name: 'custom-skill',
@@ -55,6 +58,9 @@ describe('settings-api server version', () => {
     )
 
     await expect(fetchServerVersion('ws://127.0.0.1:47187')).resolves.toBe('0.13.0')
-    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:47187/api/stats?range=7d')
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://127.0.0.1:47187/api/stats?range=7d',
+      expect.objectContaining({ credentials: 'same-origin' }),
+    )
   })
 })

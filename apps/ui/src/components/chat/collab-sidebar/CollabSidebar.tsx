@@ -56,6 +56,7 @@ interface CollabSidebarProps {
   activeSurface: ActiveSurface
   onSelectChannel: (channelId?: string) => void
   onSelectSurface: (surface: ActiveSurface) => void
+  onOpenSettings?: () => void
 }
 
 export function CollabSidebar({
@@ -64,6 +65,7 @@ export function CollabSidebar({
   activeSurface,
   onSelectChannel,
   onSelectSurface,
+  onOpenSettings,
 }: CollabSidebarProps) {
   const { clientRef, state } = useCollabWsContext()
   const sensors = useSensors(
@@ -434,7 +436,7 @@ export function CollabSidebar({
           </DragOverlay>
         </DndContext>
 
-        <CollabSidebarFooter wsUrl={wsUrl} currentUser={state.currentUser} />
+        <CollabSidebarFooter wsUrl={wsUrl} currentUser={state.currentUser} onOpenSettings={onOpenSettings} />
       </aside>
 
       {workspace ? (

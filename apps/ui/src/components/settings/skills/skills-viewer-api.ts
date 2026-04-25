@@ -2,27 +2,19 @@
 /*  API helpers for the Skills Viewer                                 */
 /* ------------------------------------------------------------------ */
 
-import { resolveApiEndpoint } from '@/lib/api-endpoint'
 import type {
   SkillFileContentResponse,
   SkillFilesResponse,
   SkillInventoryEntry,
   SkillInventoryResponse,
 } from '@forge/protocol'
+import type { SettingsApiClient } from '../settings-api-client'
+import { createBuilderSettingsApiClient } from '../settings-api-client'
 
 const SKILLS_FETCH_OPTIONS = { cache: 'no-store' } as const
 
-async function readApiError(response: Response): Promise<string> {
-  try {
-    const payload = (await response.json()) as { error?: unknown; message?: unknown }
-    if (typeof payload.error === 'string' && payload.error.trim()) return payload.error
-    if (typeof payload.message === 'string' && payload.message.trim()) return payload.message
-  } catch { /* ignore */ }
-  try {
-    const text = await response.text()
-    if (text.trim().length > 0) return text
-  } catch { /* ignore */ }
-  return `Request failed (${response.status})`
+function resolveClient(clientOrWsUrl: SettingsApiClient | string): SettingsApiClient {
+  return typeof clientOrWsUrl === 'string' ? createBuilderSettingsApiClient(clientOrWsUrl) : clientOrWsUrl
 }
 
 /* ------------------------------------------------------------------ */
@@ -30,15 +22,15 @@ async function readApiError(response: Response): Promise<string> {
 /* ------------------------------------------------------------------ */
 
 export async function fetchSkillInventory(
-  wsUrl: string,
+  clientOrWsUrl: SettingsApiClient | string,
   profileId?: string,
 ): Promise<SkillInventoryEntry[]> {
-  let endpoint = resolveApiEndpoint(wsUrl, '/api/settings/skills')
-  if (profileId) {
-    endpoint += `${endpoint.includes('?') ? '&' : '?'}profileId=${encodeURIComponent(profileId)}`
-  }
-  const response = await fetch(endpoint, SKILLS_FETCH_OPTIONS)
-  if (!response.ok) throw new Error(await readApiError(response))
+  const client = resolveClient(clientOrWsUrl)
+  const path = profileId
+    ? `/api/settings/skills?profileId=${encodeURIComponent(profileId)}`
+    : '/api/settings/skills'
+  const response = await client.fetch(path, SKILLS_FETCH_OPTIONS)
+  if (!response.ok) throw new Error(await client.readApiError(response))
   const payload = (await response.json()) as Partial<SkillInventoryResponse>
   if (!payload || !Array.isArray(payload.skills)) return []
   return payload.skills as SkillInventoryEntry[]
@@ -49,19 +41,17 @@ export async function fetchSkillInventory(
 /* ------------------------------------------------------------------ */
 
 export async function fetchSkillFiles(
-  wsUrl: string,
+  clientOrWsUrl: SettingsApiClient | string,
   skillId: string,
   relativePath = '',
 ): Promise<SkillFilesResponse> {
-  const base = resolveApiEndpoint(
-    wsUrl,
-    `/api/settings/skills/${encodeURIComponent(skillId)}/files`,
-  )
-  const url = relativePath
-    ? `${base}?path=${encodeURIComponent(relativePath)}`
-    : base
-  const response = await fetch(url, SKILLS_FETCH_OPTIONS)
-  if (!response.ok) throw new Error(await readApiError(response))
+  const client = resolveClient(clientOrWsUrl)
+  const basePath = `/api/settings/skills/${encodeURIComponent(skillId)}/files`
+  const path = relativePath
+    ? `${basePath}?path=${encodeURIComponent(relativePath)}`
+    : basePath
+  const response = await client.fetch(path, SKILLS_FETCH_OPTIONS)
+  if (!response.ok) throw new Error(await client.readApiError(response))
   return (await response.json()) as SkillFilesResponse
 }
 
@@ -70,16 +60,14 @@ export async function fetchSkillFiles(
 /* ------------------------------------------------------------------ */
 
 export async function fetchSkillFileContent(
-  wsUrl: string,
+  clientOrWsUrl: SettingsApiClient | string,
   skillId: string,
   relativePath: string,
 ): Promise<SkillFileContentResponse> {
-  const base = resolveApiEndpoint(
-    wsUrl,
-    `/api/settings/skills/${encodeURIComponent(skillId)}/content`,
-  )
-  const url = `${base}?path=${encodeURIComponent(relativePath)}`
-  const response = await fetch(url, SKILLS_FETCH_OPTIONS)
-  if (!response.ok) throw new Error(await readApiError(response))
+  const client = resolveClient(clientOrWsUrl)
+  const basePath = `/api/settings/skills/${encodeURIComponent(skillId)}/content`
+  const path = `${basePath}?path=${encodeURIComponent(relativePath)}`
+  const response = await client.fetch(path, SKILLS_FETCH_OPTIONS)
+  if (!response.ok) throw new Error(await client.readApiError(response))
   return (await response.json()) as SkillFileContentResponse
 }

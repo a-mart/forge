@@ -67,7 +67,7 @@ describe('PromptSurfaceEditor', () => {
     flushSync(() => {
       root?.render(
         createElement(PromptSurfaceEditor, {
-          wsUrl: 'ws://127.0.0.1:47187',
+          clientOrWsUrl: 'ws://127.0.0.1:47187',
           profileId: 'cortex',
           surface,
           refreshKey: 0,
@@ -118,7 +118,7 @@ describe('PromptSurfaceEditor', () => {
     flushSync(() => {
       root?.render(
         createElement(PromptSurfaceEditor, {
-          wsUrl: 'ws://127.0.0.1:47187',
+          clientOrWsUrl: 'ws://127.0.0.1:47187',
           profileId: 'cortex',
           surface,
           refreshKey: 0,
@@ -165,7 +165,7 @@ describe('PromptSurfaceEditor', () => {
     flushSync(() => {
       root?.render(
         createElement(PromptSurfaceEditor, {
-          wsUrl: 'ws://127.0.0.1:47187',
+          clientOrWsUrl: 'ws://127.0.0.1:47187',
           profileId: 'cortex',
           surface,
           refreshKey: 0,

@@ -72,7 +72,7 @@ function isCortexDiffViewerSession(agent: AgentDescriptor | null | undefined): b
 
 type BuilderNavigationState =
   | { view: 'chat'; agentId: string }
-  | { view: 'settings' }
+  | { view: 'settings'; surface: ActiveSurface }
   | { view: 'playwright'; playwrightSession?: string; playwrightMode?: PlaywrightViewMode }
   | { view: 'stats'; statsTab?: StatsTab }
 
@@ -1030,7 +1030,7 @@ export function BuilderSurface({
   }
 
   const handleOpenSettingsPanel = () => {
-    navigateToRoute({ view: 'settings' })
+    navigateToRoute({ view: 'settings', surface: 'builder' })
   }
 
   const handleOpenPlaywright = () => {
