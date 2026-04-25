@@ -4,6 +4,7 @@ import {
   buildProfileTreeRows,
   chooseFallbackAgentId,
   getPrimaryManagerId,
+  resolveWorkerFetchManagerId,
 } from './agent-hierarchy'
 import type { AgentDescriptor, ManagerProfile } from '@forge/protocol'
 
@@ -144,6 +145,26 @@ describe('agent-hierarchy', () => {
       'manager--s2',
       'manager',
     ])
+  })
+
+  describe('resolveWorkerFetchManagerId', () => {
+    it('returns null when activeAgent is null or undefined', () => {
+      expect(resolveWorkerFetchManagerId(null)).toBeNull()
+      expect(resolveWorkerFetchManagerId(undefined)).toBeNull()
+    })
+
+    it('returns manager agentId when viewing a manager', () => {
+      expect(resolveWorkerFetchManagerId(manager('mgr-1'))).toBe('mgr-1')
+    })
+
+    it('returns parent managerId when viewing a worker', () => {
+      expect(resolveWorkerFetchManagerId(worker('w-1', 'mgr-1'))).toBe('mgr-1')
+    })
+
+    it('does not fall back to first manager or DEFAULT_MANAGER_AGENT_ID', () => {
+      // When activeAgent is null (cold boot), must return null — not any fallback
+      expect(resolveWorkerFetchManagerId(null)).toBeNull()
+    })
   })
 
   it('filters collab-backed sessions out of Builder tree and fallback selection', () => {

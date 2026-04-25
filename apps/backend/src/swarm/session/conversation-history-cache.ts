@@ -1,4 +1,8 @@
-const CONVERSATION_HISTORY_CACHE_SUFFIX = ".conversation.jsonl";
+export const CONVERSATION_HISTORY_CACHE_SUFFIX = ".conversation.jsonl";
+
+export function isConversationHistoryCacheFilePath(path: string): boolean {
+  return path.endsWith(CONVERSATION_HISTORY_CACHE_SUFFIX);
+}
 
 export function getConversationHistoryCacheFilePath(sessionFile: string): string {
   return sessionFile.endsWith(".jsonl")

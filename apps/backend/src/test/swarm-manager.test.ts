@@ -820,6 +820,31 @@ describe('SwarmManager', () => {
     expect(snapshots).toHaveLength(0)
   })
 
+  it('coalesces duplicate agents_snapshot emissions within the same turn', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const snapshots: Array<{ type: string; agents: AgentDescriptor[] }> = []
+    manager.on('agents_snapshot', (event) => {
+      if (event.type === 'agents_snapshot') {
+        snapshots.push(event)
+      }
+    })
+
+    const initialVersion = manager.getAgentsSnapshotVersion()
+    ;(manager as any).emitAgentsSnapshot()
+    ;(manager as any).emitAgentsSnapshot()
+    ;(manager as any).emitAgentsSnapshot()
+
+    expect(snapshots).toHaveLength(0)
+
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(snapshots).toHaveLength(1)
+    expect(manager.getAgentsSnapshotVersion()).toBe(initialVersion + 1)
+  })
+
   it('does not SYSTEM-prefix direct user messages routed to a worker', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
