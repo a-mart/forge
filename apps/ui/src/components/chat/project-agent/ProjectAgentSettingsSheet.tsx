@@ -6,10 +6,17 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
+import { useDrawerResize } from '@/hooks/use-drawer-resize'
 import { slugifySessionName } from '../agent-sidebar/utils'
 import { PROJECT_AGENT_WHEN_TO_USE_MAX } from '../agent-sidebar/constants'
 import { ProjectAgentReferenceDocsEditor } from './ProjectAgentReferenceDocsEditor'
+import { DiscardChangesDialog } from './DiscardChangesDialog'
 import type { ProjectAgentSettingsSheetProps } from '../agent-sidebar/types'
+
+const SHEET_STORAGE_KEY = 'forge-project-agent-sheet-width'
+const DEFAULT_WIDTH = 720
+const MIN_WIDTH = 500
+const MAX_WIDTH = 1200
 
 export function ProjectAgentSettingsSheet({
   agentId,
@@ -51,9 +58,17 @@ export function ProjectAgentSettingsSheet({
   const [analysisError, setAnalysisError] = useState<string | null>(null)
   const [referenceError, setReferenceError] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [showDiscardDialog, setShowDiscardDialog] = useState(false)
 
   const whenToUseDirtyRef = useRef(false)
   const systemPromptDirtyRef = useRef(false)
+
+  const { width: drawerWidth, isResizing, handleResizeStart } = useDrawerResize({
+    storageKey: SHEET_STORAGE_KEY,
+    defaultWidth: DEFAULT_WIDTH,
+    minWidth: MIN_WIDTH,
+    maxWidth: MAX_WIDTH,
+  })
 
   const refreshReferenceDocs = useCallback(async () => {
     if (!onListReferences) return
@@ -98,6 +113,30 @@ export function ProjectAgentSettingsSheet({
     || trimmedWhenToUse !== (currentProjectAgent?.whenToUse ?? '')
     || trimmedSystemPrompt !== fetchedSystemPromptRef.current.trim()
     || canCreateSessions !== storedCanCreateSessions
+
+  // Dirty state: would closing lose user-entered data?
+  const isDirty = isPromoting
+    ? (trimmedWhenToUse.length > 0 || trimmedSystemPrompt.length > 0)
+    : (hasChanges || dirtyReferenceFiles.size > 0)
+
+  // ── Close flow: confirm if dirty, otherwise close immediately ──
+
+  const handleRequestClose = useCallback(() => {
+    if (isDirty) {
+      setShowDiscardDialog(true)
+    } else {
+      onClose()
+    }
+  }, [isDirty, onClose])
+
+  const handleConfirmDiscard = useCallback(() => {
+    setShowDiscardDialog(false)
+    onClose()
+  }, [onClose])
+
+  const handleCancelDiscard = useCallback(() => {
+    setShowDiscardDialog(false)
+  }, [])
 
   const requestRecommendations = useCallback(async (replaceExisting: boolean) => {
     if (!onRequestRecommendations) return
@@ -201,7 +240,7 @@ export function ProjectAgentSettingsSheet({
 
   const handleDeleteReference = useCallback(async (fileName: string) => {
     if (!onDeleteReference) return
-    if (typeof window !== 'undefined' && !window.confirm(`Delete reference document \"${fileName}\"?`)) {
+    if (typeof window !== 'undefined' && !window.confirm(`Delete reference document "${fileName}"?`)) {
       return
     }
 
@@ -295,203 +334,237 @@ export function ProjectAgentSettingsSheet({
   const referenceEditingAvailable = !isPromoting && !!onGetReference && !!onSetReference && !!onDeleteReference
 
   return (
-    <Sheet open onOpenChange={(open) => { if (!open) onClose() }}>
-      <SheetContent
-        side="right"
-        className={cn(
-          'max-w-[90vw] overflow-y-auto',
-          '[color-scheme:light] dark:[color-scheme:dark]',
-          '[&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent',
-          '[&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border',
-          '[&::-webkit-scrollbar-thumb:hover]:bg-border/80',
-        )}
-        style={{ width: 600, maxWidth: '90vw', scrollbarWidth: 'thin', scrollbarColor: 'hsl(var(--border)) transparent' }}
-      >
-        <SheetHeader>
-          <SheetTitle>{isPromoting ? 'Promote to Project Agent' : 'Project Agent Settings'}</SheetTitle>
-          <SheetDescription>
-            {isPromoting
-              ? 'Make this session discoverable by other sessions in the same profile.'
-              : 'Configure how other sessions discover and interact with this project agent.'}
-          </SheetDescription>
-        </SheetHeader>
-        <div className="space-y-4 px-4">
-          <div className="space-y-1">
-            <label className="text-sm font-medium text-foreground">Session</label>
-            <p className="text-sm text-muted-foreground">{sessionLabel}</p>
-          </div>
-
-          {isPromoting ? (
-            <div className="space-y-1.5">
-              <label htmlFor="agentHandle" className="text-sm font-medium text-foreground">Handle</label>
-              <div className="flex items-center gap-2">
-                <span className="font-mono text-sm text-muted-foreground">@</span>
-                <Input
-                  id="agentHandle"
-                  value={handleInput}
-                  onChange={(e) => setHandleInput(e.target.value)}
-                  placeholder="agent-handle"
-                  className="font-mono text-sm"
-                />
-              </div>
-              {handleInput && normalizedHandle !== handleInput ? (
-                <p className="font-mono text-[11px] text-muted-foreground">
-                  Normalized: @{normalizedHandle || <span className="text-amber-500">(empty)</span>}
-                </p>
-              ) : null}
-              {handleInput && !normalizedHandle ? (
-                <p className="text-[11px] text-amber-500">
-                  Handle must contain at least one letter, number, or dash.
-                </p>
-              ) : null}
-            </div>
-          ) : (
-            <div className="space-y-1">
-              <label className="text-sm font-medium text-foreground">Handle</label>
-              <p className="font-mono text-sm text-muted-foreground">
-                @{currentProjectAgent?.handle}
-              </p>
-            </div>
+    <>
+      <Sheet open onOpenChange={(open) => { if (!open) handleRequestClose() }}>
+        <SheetContent
+          side="right"
+          className={cn(
+            'overflow-y-auto',
+            '[color-scheme:light] dark:[color-scheme:dark]',
+            '[&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent',
+            '[&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border',
+            '[&::-webkit-scrollbar-thumb:hover]:bg-border/80',
           )}
-
-          {configLoading ? (
-            <div className="flex items-center gap-2 rounded-md border border-border/50 bg-muted/30 px-3 py-2.5 text-sm text-muted-foreground">
-              <Loader2 className="size-4 shrink-0 animate-spin" />
-              <span>Loading configuration…</span>
-            </div>
-          ) : null}
-
-          {configError ? (
-            <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-600 dark:text-amber-400">
-              {configError}
-            </p>
-          ) : null}
-
-          {analyzing ? (
-            <div className="flex items-center gap-2 rounded-md border border-border/50 bg-muted/30 px-3 py-2.5 text-sm text-muted-foreground">
-              <Loader2 className="size-4 shrink-0 animate-spin" />
-              <span>Analyzing session to generate recommendations…</span>
-            </div>
-          ) : null}
-
-          {analysisError ? (
-            <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-600 dark:text-amber-400">
-              {analysisError}
-            </p>
-          ) : null}
-
-          <div className="space-y-1.5">
-            <label htmlFor="whenToUse" className="text-sm font-medium text-foreground">When to use</label>
-            <Textarea
-              id="whenToUse"
-              value={whenToUse}
-              onChange={handleWhenToUseChange}
-              placeholder={analyzing ? 'Generating recommendation…' : 'Describe when other sessions should send messages to this agent…'}
-              rows={3}
-              maxLength={PROJECT_AGENT_WHEN_TO_USE_MAX}
-              className="resize-none"
-              autoFocus={!analyzing}
-            />
-            <p className="text-[11px] text-muted-foreground">
-              {trimmedWhenToUse.length}/{PROJECT_AGENT_WHEN_TO_USE_MAX}
-            </p>
-          </div>
-
-          <div className="space-y-1.5">
-            <label htmlFor="systemPrompt" className="text-sm font-medium text-foreground">
-              System Prompt
-              <span className="ml-1 text-xs font-normal text-muted-foreground">(optional)</span>
-            </label>
-            <Textarea
-              id="systemPrompt"
-              value={systemPrompt}
-              onChange={handleSystemPromptChange}
-              placeholder={configLoading ? 'Loading…' : analyzing ? 'Generating recommendation…' : 'Custom system prompt for this project agent…'}
-              rows={8}
-              className="resize-y font-mono text-xs"
-              disabled={configLoading}
-            />
-            <p className="text-[11px] text-muted-foreground">
-              When set, this replaces the standard manager prompt for this session.
-            </p>
-          </div>
-
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-foreground">Capabilities</label>
-            <div className="flex items-start gap-3">
-              <Switch
-                id="canCreateSessions"
-                checked={canCreateSessions}
-                onCheckedChange={setCanCreateSessions}
-                className="mt-0.5"
-                size="sm"
-              />
-              <div className="space-y-0.5">
-                <label htmlFor="canCreateSessions" className="text-sm text-foreground">
-                  Can create sessions
-                </label>
-                <p className="text-[11px] text-muted-foreground">
-                  Allow this agent to create new manager sessions in the same profile.
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <ProjectAgentReferenceDocsEditor
-            isPromoting={isPromoting}
-            referenceDocs={referenceDocs}
-            expandedReferenceFile={expandedReferenceFile}
-            referenceContents={referenceContents}
-            loadingReferenceFiles={loadingReferenceFiles}
-            savingReferenceFiles={savingReferenceFiles}
-            dirtyReferenceFiles={dirtyReferenceFiles}
-            referenceError={referenceError}
-            saving={saving}
-            configLoading={configLoading}
-            onToggleReference={handleToggleReference}
-            onReferenceContentChange={handleReferenceContentChange}
-            onSaveReference={handleSaveReference}
-            onDeleteReference={handleDeleteReference}
-            onAddReference={handleAddReference}
-            referenceEditingAvailable={referenceEditingAvailable}
+          style={{
+            width: drawerWidth,
+            maxWidth: drawerWidth,
+            scrollbarWidth: 'thin',
+            scrollbarColor: 'hsl(var(--border)) transparent',
+          }}
+          onInteractOutside={(e) => e.preventDefault()}
+          onEscapeKeyDown={(e) => {
+            e.preventDefault()
+            handleRequestClose()
+          }}
+        >
+          {/* Resize handle on left edge (desktop only) */}
+          <div
+            className={cn(
+              'absolute left-0 top-0 bottom-0 z-10 hidden w-1.5 cursor-col-resize select-none sm:block',
+              'hover:bg-primary/20',
+              isResizing && 'bg-primary/30',
+            )}
+            onMouseDown={handleResizeStart}
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize panel"
+            aria-valuenow={drawerWidth}
+            aria-valuemin={MIN_WIDTH}
+            aria-valuemax={MAX_WIDTH}
           />
 
-          {!isPromoting && onRequestRecommendations ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => void requestRecommendations(true)}
-              disabled={analyzing || configLoading}
-              className="gap-1.5"
-            >
-              {analyzing
-                ? <Loader2 className="size-3.5 animate-spin" />
-                : <Sparkles className="size-3.5" />
-              }
-              Regenerate recommendations
-            </Button>
-          ) : null}
+          <SheetHeader>
+            <SheetTitle>{isPromoting ? 'Promote to Project Agent' : 'Project Agent Settings'}</SheetTitle>
+            <SheetDescription>
+              {isPromoting
+                ? 'Make this session discoverable by other sessions in the same profile.'
+                : 'Configure how other sessions discover and interact with this project agent.'}
+            </SheetDescription>
+          </SheetHeader>
+          <div className="space-y-4 px-4">
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-foreground">Session</label>
+              <p className="text-sm text-muted-foreground">{sessionLabel}</p>
+            </div>
 
-          {error ? (
-            <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-              {error}
-            </p>
-          ) : null}
-          <div className="flex items-center gap-2">
-            <Button onClick={handleSave} disabled={!canSave || !hasChanges || saving || configLoading}>
-              {saving ? 'Saving…' : isPromoting ? 'Promote' : 'Save'}
-            </Button>
-            {!isPromoting ? (
-              <Button variant="outline" onClick={handleDemote} disabled={saving} className="text-destructive hover:text-destructive">
-                Demote
+            {isPromoting ? (
+              <div className="space-y-1.5">
+                <label htmlFor="agentHandle" className="text-sm font-medium text-foreground">Handle</label>
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-sm text-muted-foreground">@</span>
+                  <Input
+                    id="agentHandle"
+                    value={handleInput}
+                    onChange={(e) => setHandleInput(e.target.value)}
+                    placeholder="agent-handle"
+                    className="font-mono text-sm"
+                  />
+                </div>
+                {handleInput && normalizedHandle !== handleInput ? (
+                  <p className="font-mono text-[11px] text-muted-foreground">
+                    Normalized: @{normalizedHandle || <span className="text-amber-500">(empty)</span>}
+                  </p>
+                ) : null}
+                {handleInput && !normalizedHandle ? (
+                  <p className="text-[11px] text-amber-500">
+                    Handle must contain at least one letter, number, or dash.
+                  </p>
+                ) : null}
+              </div>
+            ) : (
+              <div className="space-y-1">
+                <label className="text-sm font-medium text-foreground">Handle</label>
+                <p className="font-mono text-sm text-muted-foreground">
+                  @{currentProjectAgent?.handle}
+                </p>
+              </div>
+            )}
+
+            {configLoading ? (
+              <div className="flex items-center gap-2 rounded-md border border-border/50 bg-muted/30 px-3 py-2.5 text-sm text-muted-foreground">
+                <Loader2 className="size-4 shrink-0 animate-spin" />
+                <span>Loading configuration…</span>
+              </div>
+            ) : null}
+
+            {configError ? (
+              <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-600 dark:text-amber-400">
+                {configError}
+              </p>
+            ) : null}
+
+            {analyzing ? (
+              <div className="flex items-center gap-2 rounded-md border border-border/50 bg-muted/30 px-3 py-2.5 text-sm text-muted-foreground">
+                <Loader2 className="size-4 shrink-0 animate-spin" />
+                <span>Analyzing session to generate recommendations…</span>
+              </div>
+            ) : null}
+
+            {analysisError ? (
+              <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-600 dark:text-amber-400">
+                {analysisError}
+              </p>
+            ) : null}
+
+            <div className="space-y-1.5">
+              <label htmlFor="whenToUse" className="text-sm font-medium text-foreground">When to use</label>
+              <Textarea
+                id="whenToUse"
+                value={whenToUse}
+                onChange={handleWhenToUseChange}
+                placeholder={analyzing ? 'Generating recommendation…' : 'Describe when other sessions should send messages to this agent…'}
+                rows={3}
+                maxLength={PROJECT_AGENT_WHEN_TO_USE_MAX}
+                className="resize-none"
+                autoFocus={!analyzing}
+              />
+              <p className="text-[11px] text-muted-foreground">
+                {trimmedWhenToUse.length}/{PROJECT_AGENT_WHEN_TO_USE_MAX}
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
+              <label htmlFor="systemPrompt" className="text-sm font-medium text-foreground">
+                System Prompt
+                <span className="ml-1 text-xs font-normal text-muted-foreground">(optional)</span>
+              </label>
+              <Textarea
+                id="systemPrompt"
+                value={systemPrompt}
+                onChange={handleSystemPromptChange}
+                placeholder={configLoading ? 'Loading…' : analyzing ? 'Generating recommendation…' : 'Custom system prompt for this project agent…'}
+                rows={8}
+                className="resize-y font-mono text-xs"
+                disabled={configLoading}
+              />
+              <p className="text-[11px] text-muted-foreground">
+                When set, this replaces the standard manager prompt for this session.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-foreground">Capabilities</label>
+              <div className="flex items-start gap-3">
+                <Switch
+                  id="canCreateSessions"
+                  checked={canCreateSessions}
+                  onCheckedChange={setCanCreateSessions}
+                  className="mt-0.5"
+                  size="sm"
+                />
+                <div className="space-y-0.5">
+                  <label htmlFor="canCreateSessions" className="text-sm text-foreground">
+                    Can create sessions
+                  </label>
+                  <p className="text-[11px] text-muted-foreground">
+                    Allow this agent to create new manager sessions in the same profile.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <ProjectAgentReferenceDocsEditor
+              isPromoting={isPromoting}
+              referenceDocs={referenceDocs}
+              expandedReferenceFile={expandedReferenceFile}
+              referenceContents={referenceContents}
+              loadingReferenceFiles={loadingReferenceFiles}
+              savingReferenceFiles={savingReferenceFiles}
+              dirtyReferenceFiles={dirtyReferenceFiles}
+              referenceError={referenceError}
+              saving={saving}
+              configLoading={configLoading}
+              onToggleReference={handleToggleReference}
+              onReferenceContentChange={handleReferenceContentChange}
+              onSaveReference={handleSaveReference}
+              onDeleteReference={handleDeleteReference}
+              onAddReference={handleAddReference}
+              referenceEditingAvailable={referenceEditingAvailable}
+            />
+
+            {!isPromoting && onRequestRecommendations ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => void requestRecommendations(true)}
+                disabled={analyzing || configLoading}
+                className="gap-1.5"
+              >
+                {analyzing
+                  ? <Loader2 className="size-3.5 animate-spin" />
+                  : <Sparkles className="size-3.5" />
+                }
+                Regenerate recommendations
               </Button>
             ) : null}
-            <Button variant="ghost" onClick={onClose} disabled={saving}>
-              Cancel
-            </Button>
+
+            {error ? (
+              <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                {error}
+              </p>
+            ) : null}
+            <div className="flex items-center gap-2">
+              <Button onClick={handleSave} disabled={!canSave || !hasChanges || saving || configLoading}>
+                {saving ? 'Saving…' : isPromoting ? 'Promote' : 'Save'}
+              </Button>
+              {!isPromoting ? (
+                <Button variant="outline" onClick={handleDemote} disabled={saving} className="text-destructive hover:text-destructive">
+                  Demote
+                </Button>
+              ) : null}
+              <Button variant="ghost" onClick={handleRequestClose} disabled={saving}>
+                Cancel
+              </Button>
+            </div>
           </div>
-        </div>
-      </SheetContent>
-    </Sheet>
+        </SheetContent>
+      </Sheet>
+
+      <DiscardChangesDialog
+        open={showDiscardDialog}
+        onDiscard={handleConfirmDiscard}
+        onCancel={handleCancelDiscard}
+      />
+    </>
   )
 }

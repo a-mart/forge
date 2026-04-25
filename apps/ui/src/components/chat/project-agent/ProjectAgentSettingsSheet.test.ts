@@ -80,6 +80,86 @@ function renderSheet(overrides: {
 }
 
 describe('ProjectAgentSettingsSheet', () => {
+  it('shows discard confirmation when closing with dirty state in promotion mode', async () => {
+    const { onClose } = renderSheet({ currentProjectAgent: null })
+    await flushEffects()
+
+    // Type into "when to use" field to make it dirty
+    const whenToUseField = document.body.querySelector('#whenToUse') as HTMLTextAreaElement
+    expect(whenToUseField).not.toBeNull()
+    flushSync(() => {
+      // Simulate typing
+      const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+        window.HTMLTextAreaElement.prototype,
+        'value',
+      )?.set
+      nativeInputValueSetter?.call(whenToUseField, 'Some description')
+      whenToUseField.dispatchEvent(new Event('input', { bubbles: true }))
+      whenToUseField.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+
+    await flushEffects()
+
+    // Click the Cancel button to request close
+    const cancelButton = Array.from(document.body.querySelectorAll('button')).find(
+      (btn) => btn.textContent === 'Cancel',
+    )
+    expect(cancelButton).not.toBeNull()
+    flushSync(() => {
+      cancelButton!.click()
+    })
+
+    await flushEffects()
+
+    // Discard dialog should be visible
+    const discardButton = Array.from(document.body.querySelectorAll('button')).find(
+      (btn) => btn.textContent === 'Discard',
+    )
+    expect(discardButton).not.toBeNull()
+
+    // onClose should NOT have been called yet
+    expect(onClose).not.toHaveBeenCalled()
+
+    // Click Discard to confirm
+    flushSync(() => {
+      discardButton!.click()
+    })
+
+    await flushEffects()
+
+    expect(onClose).toHaveBeenCalled()
+  })
+
+  it('closes immediately when clean (no dirty state) in settings mode', async () => {
+    const { onClose } = renderSheet()
+    await flushEffects()
+
+    const cancelButton = Array.from(document.body.querySelectorAll('button')).find(
+      (btn) => btn.textContent === 'Cancel',
+    )
+    expect(cancelButton).not.toBeNull()
+    flushSync(() => {
+      cancelButton!.click()
+    })
+
+    await flushEffects()
+
+    // Should close immediately without discard dialog
+    expect(onClose).toHaveBeenCalled()
+    const discardButton = Array.from(document.body.querySelectorAll('button')).find(
+      (btn) => btn.textContent === 'Discard',
+    )
+    expect(discardButton).toBeUndefined()
+  })
+
+  it('renders resize handle on the sheet', async () => {
+    renderSheet()
+    await flushEffects()
+
+    const resizeHandle = document.body.querySelector('[role="separator"][aria-label="Resize panel"]')
+    expect(resizeHandle).not.toBeNull()
+  })
+
   it('renders capability toggle reflecting initial state with create_session', async () => {
     renderSheet({
       currentProjectAgent: {
