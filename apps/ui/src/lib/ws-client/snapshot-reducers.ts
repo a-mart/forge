@@ -18,7 +18,6 @@ export interface AgentsSnapshotReduction {
 
 export interface SessionWorkersSnapshotReduction {
   patch: Partial<ManagerWsState>
-  shouldQueueSessionWorkersRefetch: boolean
 }
 
 export interface AgentStatusReduction {
@@ -171,18 +170,28 @@ export function reduceSessionWorkersSnapshot(input: {
   nextLoadedSessionIds.add(sessionAgentId)
 
   const incomingWorkerIds = new Set(workers.map((worker) => worker.agentId))
-  const preserved = state.agents.filter(
-    (agent) => !(isWorkerAgent(agent) && agent.managerId === sessionAgentId && !incomingWorkerIds.has(agent.agentId)),
-  )
-  const nextAgents = [
-    ...preserved.filter((agent) => !(isWorkerAgent(agent) && agent.managerId === sessionAgentId)),
-    ...workers,
-  ]
 
+  // Build next agents list: keep non-session agents, replace session workers with snapshot,
+  // and sync the manager's workerCount/activeWorkerCount from the authoritative list.
+  const activeWorkerCount = workers.filter((w) => w.status === 'streaming').length
+  const nextAgents: AgentDescriptor[] = []
+  for (const agent of state.agents) {
+    if (isWorkerAgent(agent) && agent.managerId === sessionAgentId) {
+      continue // drop old workers for this session; snapshot replaces them
+    }
+    if (isManagerAgent(agent) && agent.agentId === sessionAgentId) {
+      nextAgents.push({ ...agent, workerCount: workers.length, activeWorkerCount })
+    } else {
+      nextAgents.push(agent)
+    }
+  }
+  nextAgents.push(...workers)
+
+  // Clean up statuses for removed workers, then upsert snapshot workers
   const nextStatuses = { ...state.statuses }
-  for (const worker of state.agents) {
-    if (isWorkerAgent(worker) && worker.managerId === sessionAgentId && !incomingWorkerIds.has(worker.agentId)) {
-      delete nextStatuses[worker.agentId]
+  for (const agent of state.agents) {
+    if (isWorkerAgent(agent) && agent.managerId === sessionAgentId && !incomingWorkerIds.has(agent.agentId)) {
+      delete nextStatuses[agent.agentId]
     }
   }
 
@@ -197,21 +206,12 @@ export function reduceSessionWorkersSnapshot(input: {
     }
   }
 
-  const patch: Partial<ManagerWsState> = {
-    agents: nextAgents,
-    statuses: nextStatuses,
-    loadedSessionIds: nextLoadedSessionIds,
-  }
-
-  const managerDescriptor = nextAgents.find(
-    (agent) => isManagerAgent(agent) && agent.agentId === sessionAgentId,
-  )
-  const shouldQueueSessionWorkersRefetch =
-    managerDescriptor?.workerCount !== undefined && workers.length !== managerDescriptor.workerCount
-
   return {
-    patch,
-    shouldQueueSessionWorkersRefetch,
+    patch: {
+      agents: nextAgents,
+      statuses: nextStatuses,
+      loadedSessionIds: nextLoadedSessionIds,
+    },
   }
 }
 

@@ -24,6 +24,7 @@ import {
   getRootSessionMemoryPath,
   getSessionDir,
   getSessionMemoryPath,
+  getWorkersDir,
 } from '../data-paths.js'
 import { makeTempConfig as buildTempConfig } from '../../test-support/index.js'
 const memoryMergeMockState = vi.hoisted(() => ({
@@ -1858,6 +1859,108 @@ describe('SwarmManager', () => {
 
     const history = secondBoot.getConversationHistory('manager')
     expect(history).toEqual([])
+  })
+
+  it('prunes persisted worker sidecar descriptors without deleting cache sidecars and rebuilds worker counts', async () => {
+    const config = await makeTempConfig()
+    const firstBoot = new TestSwarmManager(config)
+    await bootWithDefaultManager(firstBoot, config)
+
+    const workersDir = getWorkersDir(config.paths.dataDir, 'manager', 'manager')
+    await mkdir(workersDir, { recursive: true })
+
+    const sidecarFile = join(workersDir, 'ghost.conversation.jsonl')
+    const sidecarText = '{"type":"swarm_conversation_cache_meta","version":2}\n'
+    await writeFile(sidecarFile, sidecarText, 'utf8')
+
+    const store = JSON.parse(await readFile(config.paths.agentsStoreFile, 'utf8')) as {
+      agents: AgentDescriptor[]
+      profiles?: unknown[]
+    }
+    store.agents.push({
+      agentId: 'ghost.conversation',
+      displayName: 'ghost.conversation',
+      role: 'worker',
+      managerId: 'manager',
+      profileId: 'manager',
+      status: 'terminated',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      cwd: config.defaultCwd,
+      model: config.defaultModel,
+      sessionFile: sidecarFile,
+    })
+    await writeFile(config.paths.agentsStoreFile, `${JSON.stringify(store, null, 2)}\n`, 'utf8')
+
+    const secondBoot = new TestSwarmManager(config)
+    await bootWithDefaultManager(secondBoot, config)
+
+    expect(secondBoot.getAgent('ghost.conversation')).toBeUndefined()
+    expect(secondBoot.listWorkersForSession('manager')).toEqual([])
+    expect(secondBoot.listManagerAgents().find((agent) => agent.agentId === 'manager')).toMatchObject({
+      workerCount: 0,
+      activeWorkerCount: 0,
+    })
+
+    const sessionMeta = await readSessionMeta(config.paths.dataDir, 'manager', 'manager')
+    expect(sessionMeta?.workers).toEqual([])
+    expect(sessionMeta?.stats.totalWorkers).toBe(0)
+    expect(sessionMeta?.stats.activeWorkers).toBe(0)
+
+    expect(await readFile(sidecarFile, 'utf8')).toBe(sidecarText)
+
+    const persistedStore = JSON.parse(await readFile(config.paths.agentsStoreFile, 'utf8')) as {
+      agents: Array<Pick<AgentDescriptor, 'agentId' | 'role'>>
+    }
+    expect(
+      persistedStore.agents.some((descriptor) => descriptor.role === 'worker' && descriptor.agentId === 'ghost.conversation'),
+    ).toBe(false)
+
+    const thirdBoot = new TestSwarmManager(config)
+    await bootWithDefaultManager(thirdBoot, config)
+    expect(thirdBoot.getAgent('ghost.conversation')).toBeUndefined()
+  })
+
+  it('recovers canonical worker transcripts while ignoring worker cache sidecars', async () => {
+    const config = await makeTempConfig()
+    const firstBoot = new TestSwarmManager(config)
+    await bootWithDefaultManager(firstBoot, config)
+
+    const workersDir = getWorkersDir(config.paths.dataDir, 'manager', 'manager')
+    await mkdir(workersDir, { recursive: true })
+
+    const workerId = 'recovered-worker'
+    await writeFile(
+      join(workersDir, `${workerId}.jsonl`),
+      `${JSON.stringify({ type: 'session', timestamp: '2026-01-01T00:00:00.000Z', cwd: config.defaultCwd })}\n${JSON.stringify({ type: 'model_change', timestamp: '2026-01-01T00:00:01.000Z', provider: config.defaultModel.provider, modelId: config.defaultModel.modelId })}\n`,
+      'utf8',
+    )
+
+    const sidecarFile = join(workersDir, `${workerId}.conversation.jsonl`)
+    const sidecarText = '{"type":"swarm_conversation_cache_meta","version":2}\n'
+    await writeFile(sidecarFile, sidecarText, 'utf8')
+
+    const secondBoot = new TestSwarmManager(config)
+    await bootWithDefaultManager(secondBoot, config)
+
+    expect(secondBoot.getAgent(`${workerId}.conversation`)).toBeUndefined()
+    expect(secondBoot.getAgent(workerId)).toMatchObject({
+      agentId: workerId,
+      role: 'worker',
+      managerId: 'manager',
+      status: 'terminated',
+    })
+    expect(secondBoot.listWorkersForSession('manager').map((worker) => worker.agentId)).toEqual([workerId])
+    expect(secondBoot.listManagerAgents().find((agent) => agent.agentId === 'manager')).toMatchObject({
+      workerCount: 1,
+      activeWorkerCount: 0,
+    })
+
+    const sessionMeta = await readSessionMeta(config.paths.dataDir, 'manager', 'manager')
+    expect(sessionMeta?.workers.map((worker) => worker.id)).toEqual([workerId])
+    expect(sessionMeta?.stats.totalWorkers).toBe(1)
+    expect(sessionMeta?.stats.activeWorkers).toBe(0)
+    expect(await readFile(sidecarFile, 'utf8')).toBe(sidecarText)
   })
 
   it('preserves web user and speak_to_user history when internal activity overflows history limits', async () => {
