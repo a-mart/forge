@@ -21,12 +21,17 @@ function collabUrl(path: string): string {
 }
 
 async function collabFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  // Only set Content-Type: application/json when there is a request body.
+  // GET/DELETE-without-body requests should not send a content-type header.
+  const hasBody = init?.body != null
+  const headers: Record<string, string> = {
+    ...(hasBody ? { 'Content-Type': 'application/json' } : {}),
+    ...(init?.headers as Record<string, string> | undefined),
+  }
+
   const response = await fetch(collabUrl(path), {
     credentials: 'include',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(init?.headers as Record<string, string> | undefined),
-    },
+    headers,
     ...init,
   })
 

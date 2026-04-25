@@ -244,4 +244,61 @@ describe('collaboration-settings-api', () => {
       expect(lastFetchCall().init?.credentials).toBe('include')
     })
   })
+
+  /* ---- Content-Type header only on requests with body ---- */
+
+  describe('Content-Type header', () => {
+    it('does not set Content-Type on GET requests (no body)', async () => {
+      const mod = await import('./collaboration-settings-api')
+
+      fetchSpy.mockResolvedValueOnce(jsonResponse({ enabled: true }))
+      await mod.fetchCollaborationStatus()
+      const headers = lastFetchCall().init?.headers as Record<string, string> | undefined
+      expect(headers?.['Content-Type']).toBeUndefined()
+
+      fetchSpy.mockResolvedValueOnce(jsonResponse({ users: [] }))
+      await mod.fetchCollaborationUsers()
+      const usersHeaders = lastFetchCall().init?.headers as Record<string, string> | undefined
+      expect(usersHeaders?.['Content-Type']).toBeUndefined()
+
+      fetchSpy.mockResolvedValueOnce(jsonResponse({ invites: [] }))
+      await mod.fetchCollaborationInvites()
+      const invitesHeaders = lastFetchCall().init?.headers as Record<string, string> | undefined
+      expect(invitesHeaders?.['Content-Type']).toBeUndefined()
+    })
+
+    it('does not set Content-Type on DELETE requests without body', async () => {
+      const mod = await import('./collaboration-settings-api')
+
+      fetchSpy.mockResolvedValueOnce(noContentResponse())
+      await mod.revokeCollaborationInvite('inv-1')
+      const headers = lastFetchCall().init?.headers as Record<string, string> | undefined
+      expect(headers?.['Content-Type']).toBeUndefined()
+    })
+
+    it('sets Content-Type: application/json on requests with body', async () => {
+      const mod = await import('./collaboration-settings-api')
+
+      fetchSpy.mockResolvedValueOnce(noContentResponse())
+      await mod.changeMyPassword('old', 'new')
+      const headers = lastFetchCall().init?.headers as Record<string, string> | undefined
+      expect(headers?.['Content-Type']).toBe('application/json')
+
+      fetchSpy.mockResolvedValueOnce(
+        jsonResponse({
+          ok: true,
+          invite: {
+            inviteId: 'x',
+            role: 'member',
+            createdAt: '',
+            expiresAt: '',
+            inviteUrl: 'url',
+          },
+        }),
+      )
+      await mod.createCollaborationInvite('a@b.com')
+      const createHeaders = lastFetchCall().init?.headers as Record<string, string> | undefined
+      expect(createHeaders?.['Content-Type']).toBe('application/json')
+    })
+  })
 })
