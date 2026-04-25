@@ -44,6 +44,8 @@ Open **Settings > Collaboration** to connect Forge to a remote collaboration ser
 
 Settings are contextual: Builder mode Settings continue to configure the local backend, while Collab mode Settings configure the remote collaboration backend. Collab Settings are admin-only, and provider auth entered there writes directly to the remote collaboration backend instead of copying or sharing the local Builder auth file.
 
+Collab Settings also includes members and invites, plus password management. Admins can manage members and invites, issue temporary-password resets that require a password change, and users can change their own password. If a collaboration session or socket gets invalidated by a lifecycle change, the public UI shows sign-in recovery instead of looping on reconnect or staying stuck on loading.
+
 The Collaboration status panel reflects the configured remote collaboration server, not the local Builder backend. Terminal settings stay hidden in remote Collab Settings v1 and remain local-only.
 
 ## System
