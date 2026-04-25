@@ -667,4 +667,113 @@ describe('CollabWsClient (transport-backed)', () => {
 
     client.destroy()
   })
+
+  describe('session invalidation (close code 4001)', () => {
+    it('stops reconnecting when the server closes with code 4001', () => {
+      const client = new CollabWsClient('ws://127.0.0.1:8787/collab')
+
+      client.start()
+      vi.advanceTimersByTime(60)
+
+      const socket = FakeWebSocket.instances[0]
+      socket.emit('open')
+
+      // Simulate bootstrap so we're in a normal state
+      emitServerEvent(socket, {
+        type: 'collab_bootstrap',
+        workspace: { workspaceId: 'ws-1', displayName: 'Test', memberCount: 3 },
+        categories: [],
+        channels: [],
+        currentUser: { userId: 'user-1', username: 'test', role: 'admin' },
+      })
+
+      expect(client.getState().connected).toBe(true)
+      expect(client.getState().hasBootstrapped).toBe(true)
+
+      // Server closes with 4001 (session invalidated)
+      socket.readyState = FakeWebSocket.CLOSED
+      socket.emit('close', { code: 4001, reason: 'collaboration_session_invalidated' })
+
+      expect(client.getState().connected).toBe(false)
+      expect(client.getState().hasBootstrapped).toBe(false)
+      expect(client.getState().lastError).toBe(
+        'Your session has been invalidated. Please sign in again.',
+      )
+      expect(client.getState().lastErrorCode).toBe('COLLAB_SESSION_INVALIDATED')
+
+      // Advance past multiple reconnect intervals — no new socket should be created
+      vi.advanceTimersByTime(5_000)
+      expect(FakeWebSocket.instances).toHaveLength(1)
+
+      client.destroy()
+    })
+
+    it('still reconnects for normal (non-4001) close codes', () => {
+      const client = new CollabWsClient('ws://127.0.0.1:8787/collab')
+
+      client.start()
+      vi.advanceTimersByTime(60)
+
+      const socket = FakeWebSocket.instances[0]
+      socket.emit('open')
+
+      // Normal close (no code)
+      socket.readyState = FakeWebSocket.CLOSED
+      socket.emit('close', new Event('close'))
+
+      expect(client.getState().connected).toBe(false)
+      expect(client.getState().lastError).toBeNull()
+      expect(client.getState().lastErrorCode).toBeNull()
+
+      // Should reconnect
+      vi.advanceTimersByTime(1_300)
+      expect(FakeWebSocket.instances).toHaveLength(2)
+
+      client.destroy()
+    })
+
+    it('clears worker state when session is invalidated', () => {
+      const client = new CollabWsClient('ws://127.0.0.1:8787/collab')
+
+      client.start()
+      vi.advanceTimersByTime(60)
+
+      const socket = FakeWebSocket.instances[0]
+      socket.emit('open')
+      client.setActiveChannel('channel-1')
+
+      // Populate worker state
+      emitServerEvent(socket, {
+        type: 'collab_session_workers_snapshot',
+        channelId: 'channel-1',
+        sessionAgentId: 'session-1',
+        workers: [
+          {
+            agentId: 'worker-1',
+            managerId: 'session-1',
+            displayName: 'Worker One',
+            role: 'worker',
+            status: 'streaming',
+            createdAt: '2026-04-14T12:00:00.000Z',
+            updatedAt: '2026-04-14T12:00:00.000Z',
+            cwd: '/tmp',
+            model: { provider: 'openai-codex', modelId: 'gpt-5.3-codex', thinkingLevel: 'medium' },
+            sessionFile: '/tmp/worker-1.jsonl',
+          },
+        ],
+      })
+
+      expect(client.getState().sessionWorkers).toHaveLength(1)
+
+      // Session invalidated
+      socket.readyState = FakeWebSocket.CLOSED
+      socket.emit('close', { code: 4001, reason: 'collaboration_session_invalidated' })
+
+      expect(client.getState().sessionWorkers).toEqual([])
+      expect(client.getState().sessionActivity).toEqual([])
+      expect(client.getState().sessionAgentStatuses).toEqual({})
+
+      client.destroy()
+    })
+  })
 })

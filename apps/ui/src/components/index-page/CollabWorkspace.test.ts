@@ -92,6 +92,15 @@ vi.mock('@/lib/collaboration-api', () => ({
   archiveChannel: vi.fn(),
 }))
 
+vi.mock('@/components/settings/collaboration/CollaborationAuthError', () => ({
+  CollaborationAuthError: ({ message }: { message?: string }) =>
+    createElement('div', { 'data-testid': 'collab-auth-error' }, message ?? 'Session ended'),
+}))
+
+vi.mock('@/lib/collaboration-endpoints', () => ({
+  resolveCollaborationApiBaseUrl: () => 'http://localhost:47187',
+}))
+
 const { CollabWorkspace } = await import('./CollabWorkspace')
 
 let container: HTMLDivElement
@@ -448,5 +457,51 @@ describe('CollabWorkspace WorkerPillBar', () => {
     renderWorkspace({ channelId: 'channel-1' })
 
     expect(typeof workerPillBarCapture.lastProps?.onNavigateToWorker).toBe('function')
+  })
+})
+
+describe('CollabWorkspace session invalidation (4001)', () => {
+  it('shows auth error recovery UI instead of loading spinner when session is invalidated', () => {
+    collabContextMock.value = {
+      clientRef: { current: null },
+      state: buildState({
+        hasBootstrapped: false,
+        lastError: 'Your session has been invalidated. Please sign in again.',
+        lastErrorCode: 'COLLAB_SESSION_INVALIDATED',
+      }),
+    }
+
+    renderWorkspace({})
+
+    // Should NOT show loading spinner
+    const spinner = container.querySelector('.animate-spin')
+    expect(spinner).toBeNull()
+
+    // Should show auth error with sign-in recovery
+    const authError = container.querySelector('[data-testid="collab-auth-error"]')
+    expect(authError).not.toBeNull()
+    expect(authError!.textContent).toContain('sign in again')
+  })
+
+  it('still shows loading spinner for normal pre-bootstrap state (no invalidation)', () => {
+    collabContextMock.value = {
+      clientRef: { current: null },
+      state: buildState({
+        hasBootstrapped: false,
+        lastError: null,
+        lastErrorCode: null,
+      }),
+    }
+
+    renderWorkspace({})
+
+    // Should show loading spinner
+    const spinner = container.querySelector('.animate-spin')
+    expect(spinner).not.toBeNull()
+    expect(container.textContent).toContain('Loading workspace')
+
+    // Should NOT show auth error
+    const authError = container.querySelector('[data-testid="collab-auth-error"]')
+    expect(authError).toBeNull()
   })
 })

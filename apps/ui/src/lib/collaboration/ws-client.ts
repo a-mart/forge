@@ -51,6 +51,14 @@ const INITIAL_CONNECT_DELAY_MS = 50
 const RECONNECT_MS = 1_200
 const RECONNECTING_SOCKET_ERROR = 'Collab WebSocket is disconnected. Reconnecting...'
 
+/**
+ * Close code sent by the backend when a user's collaboration session is
+ * invalidated (role change, disable, password reset, session revocation).
+ * When received, the client must NOT reconnect — the session is permanently
+ * invalid until the user re-authenticates.
+ */
+const SESSION_INVALIDATED_CLOSE_CODE = 4001
+
 // ---------------------------------------------------------------------------
 // Listener type
 // ---------------------------------------------------------------------------
@@ -128,7 +136,24 @@ export class CollabWsClient {
         // Bootstrap on every connect/reconnect
         this.transport.send({ type: 'collab_bootstrap' })
       },
-      onClose: () => {
+      onClose: (event) => {
+        // Backend sends 4001 when the user's collab session is invalidated
+        // (role change, disable, password reset, session revocation).
+        // Stop reconnecting — the session is permanently invalid.
+        if (event?.code === SESSION_INVALIDATED_CLOSE_CODE) {
+          this.transport.disconnect()
+          this.updateState({
+            connected: false,
+            hasBootstrapped: false,
+            sessionWorkers: [],
+            sessionActivity: [],
+            sessionAgentStatuses: {},
+            lastError: 'Your session has been invalidated. Please sign in again.',
+            lastErrorCode: 'COLLAB_SESSION_INVALIDATED',
+          })
+          return
+        }
+
         this.updateState({
           connected: false,
           hasBootstrapped: false,
