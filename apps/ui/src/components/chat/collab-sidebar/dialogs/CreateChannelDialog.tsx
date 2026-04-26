@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -17,6 +17,8 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
+import { AI_ROLE_OPTIONS, DEFAULT_AI_ROLE } from '@/lib/collaboration-ai-roles'
+import type { CollaborationAiRole } from '@/lib/collaboration-ai-roles'
 import { createChannel } from '@/lib/collaboration-api'
 import type { CollaborationCategory, CollaborationChannel } from '@forge/protocol'
 
@@ -39,21 +41,49 @@ export function CreateChannelDialog({
 }: CreateChannelDialogProps) {
   const [name, setName] = useState('')
   const [categoryValue, setCategoryValue] = useState(defaultCategoryId ?? NO_CATEGORY_VALUE)
+  const [aiRole, setAiRole] = useState<CollaborationAiRole>(DEFAULT_AI_ROLE)
   const [description, setDescription] = useState('')
   const [isSaving, setIsSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // Track whether the user has manually picked a role so category changes
+  // stop auto-syncing once the user has made an explicit choice.
+  const userOverrodeRole = useRef(false)
+
+  /** Resolve the defaultAiRole for a category value. */
+  function roleForCategory(catValue: string): CollaborationAiRole {
+    if (catValue === NO_CATEGORY_VALUE) return DEFAULT_AI_ROLE
+    const cat = categories.find((c) => c.categoryId === catValue)
+    return cat?.defaultAiRole ?? DEFAULT_AI_ROLE
+  }
+
   // Sync category selection when the dialog opens with a pre-selected category
   useEffect(() => {
     if (open) {
-      setCategoryValue(defaultCategoryId ?? NO_CATEGORY_VALUE)
+      const nextCat = defaultCategoryId ?? NO_CATEGORY_VALUE
+      setCategoryValue(nextCat)
+      setAiRole(roleForCategory(nextCat))
+      userOverrodeRole.current = false
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- categories identity is stable within a single open
   }, [open, defaultCategoryId])
 
   const sortedCategories = useMemo(
     () => [...categories].sort((left, right) => left.position - right.position || left.name.localeCompare(right.name)),
     [categories],
   )
+
+  function handleCategoryChange(nextCat: string) {
+    setCategoryValue(nextCat)
+    if (!userOverrodeRole.current) {
+      setAiRole(roleForCategory(nextCat))
+    }
+  }
+
+  function handleAiRoleChange(value: string) {
+    setAiRole(value as CollaborationAiRole)
+    userOverrodeRole.current = true
+  }
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault()
@@ -69,10 +99,13 @@ export function CreateChannelDialog({
         name: trimmedName,
         categoryId: categoryValue === NO_CATEGORY_VALUE ? undefined : categoryValue,
         description: description.trim() || undefined,
+        aiRole,
       })
       onCreated?.(channel)
       setName('')
       setCategoryValue(NO_CATEGORY_VALUE)
+      setAiRole(DEFAULT_AI_ROLE)
+      userOverrodeRole.current = false
       setDescription('')
       onClose()
     } catch (err) {
@@ -103,7 +136,7 @@ export function CreateChannelDialog({
 
           <div className="space-y-2">
             <Label htmlFor="collab-create-channel-category">Category</Label>
-            <Select value={categoryValue} onValueChange={setCategoryValue}>
+            <Select value={categoryValue} onValueChange={handleCategoryChange}>
               <SelectTrigger id="collab-create-channel-category" className="w-full">
                 <SelectValue placeholder="No category" />
               </SelectTrigger>
@@ -116,6 +149,23 @@ export function CreateChannelDialog({
                 ))}
               </SelectContent>
             </Select>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="collab-create-channel-ai-role">AI Role</Label>
+            <Select value={aiRole} onValueChange={handleAiRoleChange} disabled={isSaving}>
+              <SelectTrigger id="collab-create-channel-ai-role" className="w-full">
+                <SelectValue placeholder="Select role" />
+              </SelectTrigger>
+              <SelectContent>
+                {AI_ROLE_OPTIONS.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              {AI_ROLE_OPTIONS.find((option) => option.value === aiRole)?.description ?? ''}
+            </p>
           </div>
 
           <div className="space-y-2">

@@ -87,6 +87,9 @@ export interface ManagerProfile {
   sortOrder?: number
 }
 
+export const COLLABORATION_AI_ROLES = ['channel_assistant', 'work_coordinator', 'facilitator_scribe'] as const
+export type CollaborationAiRole = (typeof COLLABORATION_AI_ROLES)[number]
+
 export type AgentSessionPurpose = 'cortex_review' | 'agent_creator'
 export type AgentSessionSurface = 'builder' | 'collab'
 
