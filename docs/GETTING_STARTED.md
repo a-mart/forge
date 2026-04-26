@@ -311,13 +311,13 @@ Cortex is what makes Forge a self-improving system rather than just an agent orc
 
 ### What Cortex Is
 
-Cortex is architecturally just another manager agent. There's no special technical machinery. But its job is unique: it reviews your sessions, analyzes your feedback, identifies patterns, and updates knowledge files that get injected into every session's system prompt.
+Cortex is architecturally just another manager agent. There's no special technical machinery. But its job is unique: it reviews your sessions, analyzes your feedback, identifies patterns, and updates knowledge files that get injected into every session's system prompt. It is surfaced in the Builder sidebar as a pinned entry, while other system profiles and collaboration-surface sessions stay hidden from Builder lists.
 
 It's the institutional memory of your Forge instance.
 
 ### Opening Cortex
 
-Click the brain icon (🧠) in the sidebar to expand Cortex's interface. You'll see a special sidebar with several tabs.
+Click the brain icon (🧠) in the sidebar to open Cortex from its pinned Builder sidebar entry. That opens the Cortex dashboard/interface, with several tabs in the special sidebar.
 
 ### Common Knowledge
 

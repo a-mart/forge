@@ -7,7 +7,7 @@ export const cortexArticles: HelpArticle[] = [
     category: 'cortex',
     summary:
       'Cortex is Forge\'s self-improvement system. It reviews sessions, manages knowledge, and keeps your preferences current.',
-    content: `Cortex is a background system that watches your sessions and learns from them. It reviews conversation transcripts, tracks feedback you give, and updates shared knowledge so future sessions start with better context.
+    content: `Cortex is a background system that watches your sessions and learns from them. It reviews conversation transcripts, tracks feedback you give, and updates shared knowledge so future sessions start with better context. It is shown as a pinned Builder sidebar entry.
 
 ## What Cortex does
 

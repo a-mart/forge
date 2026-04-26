@@ -119,7 +119,7 @@ Session forking lets you run discovery in one conversation, gather context, narr
 
 ### Cortex
 
-Cortex is a dedicated subsystem that reviews your sessions and improves Forge's behavior over time. It maintains two layers of persistent knowledge:
+Cortex is a dedicated subsystem that reviews your sessions and improves Forge's behavior over time. It is surfaced in the Builder sidebar as a pinned entry, while other system profiles and collaboration-surface sessions remain hidden. It maintains two layers of persistent knowledge:
 
 - **Common knowledge** — cross-project preferences and habits that apply everywhere. How you like code reviewed, your naming conventions, your communication style. Injected into every session's context.
 - **Project knowledge** — per-project learned guidance. Architecture patterns, testing conventions, deployment quirks specific to each codebase. Updated more frequently.
