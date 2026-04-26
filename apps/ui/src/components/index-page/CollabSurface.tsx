@@ -1,8 +1,9 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
 import { ShieldAlert, LogIn } from 'lucide-react'
 import type { ActiveSurface, ActiveView } from '@/hooks/index-page/use-route-state'
 import { CollabSidebar } from '@/components/chat/collab-sidebar/CollabSidebar'
 import { useCollabWsConnection, CollabWsProvider } from '@/hooks/index-page/use-collab-ws-connection'
+import { reportCollabConnected, markCollabInactive } from '@/lib/connection-health-store'
 import { createCollabSettingsTarget } from '@/components/settings/settings-target'
 import { useSettingsBackendState } from '@/components/settings/use-settings-backend-state'
 import { SettingsPanel } from '@/components/chat/SettingsDialog'
@@ -37,6 +38,17 @@ export function CollabSurface({
   onBackToChat,
 }: CollabSurfaceProps) {
   const collab = useCollabWsConnection(wsUrl)
+
+  // Sync collab WS health to the module-level store so ModeSwitch can
+  // display the collab connection dot even from the builder surface.
+  // Split into two effects: one tracks live connected state, the other
+  // marks inactive on unmount so the store doesn't retain stale green.
+  useEffect(() => {
+    reportCollabConnected(collab.state.connected)
+  }, [collab.state.connected])
+  useEffect(() => {
+    return () => markCollabInactive()
+  }, [])
 
   const isSettingsView = activeView === 'settings'
 

@@ -17,6 +17,7 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
 import { FolderPlus, MoreHorizontal, Plus } from 'lucide-react'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import { useCollabWsContext } from '@/hooks/index-page/use-collab-ws-connection'
 import type { ActiveSurface } from '@/hooks/index-page/use-route-state'
 import { reorderCategories, reorderChannels, updateChannel } from '@/lib/collaboration-api'
@@ -34,8 +35,8 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import type { CollaborationCategory, CollaborationChannel } from '@forge/protocol'
-import { CollabSidebarFooter } from './CollabSidebarFooter'
 import { ModeSwitch } from './ModeSwitch'
+import { UserAvatarPopover } from './UserAvatarPopover'
 import { CategoryGroup } from './CategoryGroup'
 import { ChannelRowItem } from './ChannelRowItem'
 import { useCollabSidebarPrefs } from './hooks/use-collab-sidebar-prefs'
@@ -275,15 +276,16 @@ export function CollabSidebar({
   return (
     <>
       <aside className="flex h-full w-[320px] shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground">
-        {/* Header: mode switch + actions menu */}
-        <div className="flex items-center gap-2 px-2 pt-2 pb-3">
-          {canManage ? (
-            <>
-              <ModeSwitch
-                activeSurface={activeSurface}
-                onSelectSurface={onSelectSurface}
-                className="flex-1"
-              />
+        {/* Header: mode switch + user avatar + actions menu */}
+        <TooltipProvider delayDuration={200}>
+          <div className="flex items-center gap-1.5 px-2 pt-2 pb-3">
+            <ModeSwitch
+              activeSurface={activeSurface}
+              onSelectSurface={onSelectSurface}
+              className="flex-1"
+            />
+            <UserAvatarPopover wsUrl={wsUrl} currentUser={state.currentUser} onOpenSettings={onOpenSettings} />
+            {canManage ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button
@@ -307,15 +309,9 @@ export function CollabSidebar({
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
-            </>
-          ) : (
-            <ModeSwitch
-              activeSurface={activeSurface}
-              onSelectSurface={onSelectSurface}
-              className="flex-1"
-            />
-          )}
-        </div>
+            ) : null}
+          </div>
+        </TooltipProvider>
 
         {mutationError ? (
           <div className="px-3 pb-2">
@@ -436,7 +432,6 @@ export function CollabSidebar({
           </DragOverlay>
         </DndContext>
 
-        <CollabSidebarFooter wsUrl={wsUrl} currentUser={state.currentUser} onOpenSettings={onOpenSettings} />
       </aside>
 
       {workspace ? (

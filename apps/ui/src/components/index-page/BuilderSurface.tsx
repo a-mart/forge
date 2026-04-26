@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
 } from 'react'
+import { reportBuilderConnected, markBuilderInactive } from '@/lib/connection-health-store'
 import { AgentSidebar } from '@/components/chat/AgentSidebar'
 import { type MessageSourceView } from '@/components/chat/ChatHeader'
 import { SettingsPanel } from '@/components/chat/SettingsDialog'
@@ -108,6 +109,18 @@ export function BuilderSurface({
   const previousAgentsByIdRef = useRef<Map<string, AgentDescriptor>>(new Map())
 
   const { clientRef, state, setState } = useWsConnection(wsUrl)
+
+  // Sync builder WS health to the module-level store so ModeSwitch can
+  // display the builder connection dot even from the collab surface.
+  // Split into two effects: one tracks live connected state, the other
+  // marks inactive on unmount so the store doesn't retain stale green.
+  useEffect(() => {
+    reportBuilderConnected(state.connected)
+  }, [state.connected])
+  useEffect(() => {
+    return () => markBuilderInactive()
+  }, [])
+
   const {
     onboardingState,
     isMutating: isMutatingOnboardingState,
