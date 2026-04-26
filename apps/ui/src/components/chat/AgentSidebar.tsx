@@ -478,7 +478,6 @@ export const AgentSidebar = React.memo(function AgentSidebar({
           <ModeSwitch
             activeSurface={collaborationModeSwitch.activeSurface}
             onSelectSurface={collaborationModeSwitch.onSelectSurface}
-            connected={connected}
             className="flex-1"
           />
         ) : (
