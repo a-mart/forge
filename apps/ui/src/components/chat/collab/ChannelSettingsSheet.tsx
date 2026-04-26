@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
-import type { CollaborationCategory, CollaborationChannel } from '@forge/protocol'
+import type { CollaborationAiRole, CollaborationCategory, CollaborationChannel } from '@forge/protocol'
+import { AI_ROLE_OPTIONS, DEFAULT_AI_ROLE } from '@/lib/collaboration-ai-roles'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -30,6 +31,7 @@ interface ChannelSettingsBaseline {
   description: string | null
   categoryId: string | null
   aiEnabled: boolean
+  aiRole: CollaborationAiRole
   modelId: string | null
   promptOverlay: string | null
 }
@@ -62,6 +64,7 @@ export function ChannelSettingsSheet({
   const channelDescription = channel.description ?? ''
   const channelCategoryId = channel.categoryId ?? null
   const channelAiEnabled = channel.aiEnabled
+  const channelAiRole = channel.aiRole ?? DEFAULT_AI_ROLE
   const channelPromptOverlay = channel.promptOverlay ?? ''
   const channelModelId = channel.modelId ?? null
 
@@ -70,6 +73,7 @@ export function ChannelSettingsSheet({
     description: channelDescription,
     categoryId: channelCategoryId,
     aiEnabled: channelAiEnabled,
+    aiRole: channelAiRole,
     modelId: channelModelId,
     promptOverlay: channelPromptOverlay,
   }))
@@ -77,6 +81,7 @@ export function ChannelSettingsSheet({
   const [description, setDescription] = useState(channelDescription)
   const [categoryValue, setCategoryValue] = useState(channelCategoryId ?? NO_CATEGORY_VALUE)
   const [aiEnabled, setAiEnabled] = useState(channelAiEnabled)
+  const [aiRole, setAiRole] = useState<CollaborationAiRole>(channelAiRole)
   const [modelId, setModelId] = useState(channelModelId ?? '')
   const [promptOverlay, setPromptOverlay] = useState(channelPromptOverlay)
   const [isSaving, setIsSaving] = useState(false)
@@ -88,6 +93,7 @@ export function ChannelSettingsSheet({
       description: channelDescription,
       categoryId: channelCategoryId,
       aiEnabled: channelAiEnabled,
+      aiRole: channelAiRole,
       modelId: channelModelId,
       promptOverlay: channelPromptOverlay,
     })
@@ -96,12 +102,14 @@ export function ChannelSettingsSheet({
     setDescription(channelDescription)
     setCategoryValue(channelCategoryId ?? NO_CATEGORY_VALUE)
     setAiEnabled(nextBaseline.aiEnabled)
+    setAiRole(nextBaseline.aiRole)
     setModelId(nextBaseline.modelId ?? '')
     setPromptOverlay(channelPromptOverlay)
     setError(null)
     setIsSaving(false)
   }, [
     channelAiEnabled,
+    channelAiRole,
     channelCategoryId,
     channel.channelId,
     channelDescription,
@@ -129,6 +137,7 @@ export function ChannelSettingsSheet({
           description: freshChannel.description ?? '',
           categoryId: freshChannel.categoryId ?? null,
           aiEnabled: freshChannel.aiEnabled,
+          aiRole: freshChannel.aiRole ?? DEFAULT_AI_ROLE,
           modelId: freshChannel.modelId ?? null,
           promptOverlay: freshChannel.promptOverlay ?? '',
         })
@@ -137,6 +146,7 @@ export function ChannelSettingsSheet({
         setDescription(freshChannel.description ?? '')
         setCategoryValue(freshChannel.categoryId ?? NO_CATEGORY_VALUE)
         setAiEnabled(nextBaseline.aiEnabled)
+        setAiRole(nextBaseline.aiRole)
         setModelId(nextBaseline.modelId ?? '')
         setPromptOverlay(freshChannel.promptOverlay ?? '')
       })
@@ -164,6 +174,7 @@ export function ChannelSettingsSheet({
     normalizedDescription !== baseline.description ||
     normalizedCategoryId !== baseline.categoryId ||
     aiEnabled !== baseline.aiEnabled ||
+    aiRole !== baseline.aiRole ||
     normalizedModelId !== baseline.modelId ||
     normalizedPromptOverlay !== baseline.promptOverlay
 
@@ -184,6 +195,7 @@ export function ChannelSettingsSheet({
         description: normalizedDescription,
         categoryId: normalizedCategoryId,
         aiEnabled,
+        aiRole,
         ...(normalizedModelId ? { modelId: normalizedModelId } : {}),
         promptOverlay: normalizedPromptOverlay,
       })
@@ -258,6 +270,29 @@ export function ChannelSettingsSheet({
             </div>
 
             <div className="space-y-2">
+              <Label htmlFor="collab-channel-settings-ai-role">AI Role</Label>
+              <Select
+                value={aiRole}
+                onValueChange={(value) => setAiRole(value as CollaborationAiRole)}
+                disabled={!isAdmin || isSaving}
+              >
+                <SelectTrigger id="collab-channel-settings-ai-role" className="w-full">
+                  <SelectValue placeholder="Select role" />
+                </SelectTrigger>
+                <SelectContent>
+                  {AI_ROLE_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                {AI_ROLE_OPTIONS.find((option) => option.value === aiRole)?.description ?? ''}
+              </p>
+            </div>
+
+            <div className="space-y-2">
               <Label htmlFor="collab-channel-settings-model">Model</Label>
               <Select
                 value={modelId}
@@ -276,7 +311,7 @@ export function ChannelSettingsSheet({
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">
-                Changes apply to this channel’s AI configuration.
+                Changes apply to this channel's AI configuration.
               </p>
             </div>
 
@@ -298,7 +333,7 @@ export function ChannelSettingsSheet({
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="collab-channel-settings-prompt-overlay">Prompt overlay</Label>
+              <Label htmlFor="collab-channel-settings-prompt-overlay">Additional instructions</Label>
               <Textarea
                 id="collab-channel-settings-prompt-overlay"
                 value={promptOverlay}
@@ -341,6 +376,7 @@ function buildBaseline(values: {
   description: string
   categoryId: string | null
   aiEnabled: boolean
+  aiRole: CollaborationAiRole
   modelId: string | null
   promptOverlay: string
 }): ChannelSettingsBaseline {
@@ -349,6 +385,7 @@ function buildBaseline(values: {
     description: normalizeOptionalText(values.description),
     categoryId: values.categoryId,
     aiEnabled: values.aiEnabled,
+    aiRole: values.aiRole,
     modelId: values.modelId,
     promptOverlay: normalizeOptionalText(values.promptOverlay),
   }
