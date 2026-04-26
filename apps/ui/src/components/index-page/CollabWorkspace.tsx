@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2 } from 'lucide-react'
+import { CollaborationAuthError } from '@/components/settings/collaboration/CollaborationAuthError'
 import { CollabEmptyState } from '@/components/chat/collab/CollabEmptyState'
 import { CollabHeader } from '@/components/chat/collab/CollabHeader'
 import type { CollabMessageSourceView } from '@/components/chat/collab/CollabHeader'
@@ -321,6 +322,15 @@ export function CollabWorkspace({
   }, [state.lastErrorCode])
 
   if (!state.hasBootstrapped) {
+    // Session invalidated (4001 close) — show sign-in recovery instead of spinner
+    if (state.lastErrorCode === 'COLLAB_SESSION_INVALIDATED') {
+      return (
+        <div className="flex min-h-0 flex-1 items-center justify-center px-6 py-10">
+          <CollaborationAuthError message={state.lastError ?? undefined} />
+        </div>
+      )
+    }
+
     return (
       <div className="flex min-h-0 flex-1 items-center justify-center px-6 py-10 text-sm text-muted-foreground">
         <div className="flex items-center gap-2">

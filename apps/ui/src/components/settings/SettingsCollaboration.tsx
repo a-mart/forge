@@ -4,7 +4,15 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { SettingsSection, SettingsWithCTA } from './settings-row'
-import { fetchCollaborationStatus } from './collaboration-settings-api'
+import {
+  fetchCollaborationStatus,
+  fetchCollaborationMe,
+  isAuthError,
+} from './collaboration-settings-api'
+import { CollaborationPasswordChange } from './collaboration/CollaborationPasswordChange'
+import { CollaborationMembers } from './collaboration/CollaborationMembers'
+import { CollaborationInvites } from './collaboration/CollaborationInvites'
+import { CollaborationAuthError } from './collaboration/CollaborationAuthError'
 import {
   getCollabServerUrl,
   setCollabServerUrl,
@@ -38,7 +46,7 @@ export function SettingsCollaboration({ wsUrl: _wsUrl }: SettingsCollaborationPr
   const [testError, setTestError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
 
-  // Auth state
+  // Auth state (sign-in form for remote server)
   const [session, setSession] = useState<CollaborationSessionInfo | null>(null)
   const [sessionLoading, setSessionLoading] = useState(false)
   const [signInEmail, setSignInEmail] = useState('')
@@ -47,26 +55,30 @@ export function SettingsCollaboration({ wsUrl: _wsUrl }: SettingsCollaborationPr
   const [isSigningIn, setIsSigningIn] = useState(false)
   const [isSigningOut, setIsSigningOut] = useState(false)
 
+  // Auth error state for management panels (401/403 or unauthenticated response)
+  const [authError, setAuthError] = useState(false)
+
   const currentConfiguredUrl = getCollabServerUrl()
   const hasUnsavedChanges = serverUrl.trim() !== (currentConfiguredUrl ?? '')
 
-  // Fetch session info from the collab server
+  // Fetch session info from the collab server via the shared API helper
   const fetchSession = useCallback(async () => {
-    const baseUrl = resolveCollaborationApiBaseUrl()
     setSessionLoading(true)
     try {
-      const endpoint = new URL('/api/collaboration/me', baseUrl).toString()
-      const response = await fetch(endpoint, {
-        credentials: 'include',
-        signal: AbortSignal.timeout(10_000),
-      })
-      if (!response.ok) {
+      const data = await fetchCollaborationMe()
+      if (!data.authenticated) {
         setSession(null)
+        setAuthError(true)
         return
       }
-      const data = (await response.json()) as CollaborationSessionInfo
       setSession(data)
-    } catch {
+      setAuthError(false)
+    } catch (err) {
+      if (isAuthError(err)) {
+        setSession(null)
+        setAuthError(true)
+        return
+      }
       setSession(null)
     } finally {
       setSessionLoading(false)
@@ -167,6 +179,7 @@ export function SettingsCollaboration({ wsUrl: _wsUrl }: SettingsCollaborationPr
     setTestStatus('idle')
     setTestError(null)
     setSession(null)
+    setAuthError(false)
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
     void refreshStatus()
@@ -234,10 +247,24 @@ export function SettingsCollaboration({ wsUrl: _wsUrl }: SettingsCollaborationPr
       // Best-effort sign out
     } finally {
       setSession(null)
+      setAuthError(false)
       window.dispatchEvent(new Event('forge-collab-server-url-change'))
       setIsSigningOut(false)
     }
   }, [isSigningOut])
+
+  const handleAuthError = useCallback(() => {
+    setAuthError(true)
+    setSession(null)
+  }, [])
+
+  const handlePasswordChanged = useCallback(() => {
+    // After password change, refresh session so passwordChangeRequired clears
+    void fetchSession()
+  }, [fetchSession])
+
+  const isAdmin = session?.authenticated && session.user?.role === 'admin'
+  const passwordChangeRequired = session?.authenticated && session.passwordChangeRequired
 
   return (
     <div className="flex flex-col gap-8">
@@ -384,6 +411,21 @@ export function SettingsCollaboration({ wsUrl: _wsUrl }: SettingsCollaborationPr
                 <code className="text-xs text-muted-foreground">{status.baseUrl}</code>
               </SettingsWithCTA>
             )}
+
+            {/* Current user info (when authenticated) */}
+            {session?.authenticated && session.user && (
+              <SettingsWithCTA
+                label="Signed in as"
+                description={session.user.email}
+              >
+                <Badge
+                  variant="secondary"
+                  className="px-2 py-0 text-[10px] uppercase"
+                >
+                  {session.user.role}
+                </Badge>
+              </SettingsWithCTA>
+            )}
           </>
         ) : null}
       </SettingsSection>
@@ -469,6 +511,30 @@ export function SettingsCollaboration({ wsUrl: _wsUrl }: SettingsCollaborationPr
             </div>
           )}
         </SettingsSection>
+      )}
+
+      {/* Auth error banner */}
+      {authError && !sessionLoading && <CollaborationAuthError />}
+
+      {/* Password change required — blocks other panels */}
+      {passwordChangeRequired && !authError && (
+        <CollaborationPasswordChange required onChanged={handlePasswordChanged} />
+      )}
+
+      {/* Non-required password change (always available for authenticated users) */}
+      {session?.authenticated && !passwordChangeRequired && !authError && (
+        <CollaborationPasswordChange onChanged={handlePasswordChanged} />
+      )}
+
+      {/* Admin-only panels */}
+      {isAdmin && !passwordChangeRequired && !authError && (
+        <>
+          <CollaborationMembers
+            currentUserId={session.user!.userId}
+            onAuthError={handleAuthError}
+          />
+          <CollaborationInvites onAuthError={handleAuthError} />
+        </>
       )}
     </div>
   )

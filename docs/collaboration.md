@@ -18,6 +18,8 @@ Fresh collaboration backend deployments should start from an empty `FORGE_DATA_D
 
 Settings are contextual: Builder mode Settings configure the local backend, while Collab mode Settings connect to and configure the remote collaboration backend. Collab Settings are admin-only. Provider auth entered there writes directly to the remote collaboration backend; it does not copy or share the local Builder auth file. Terminal settings are hidden in remote Collab Settings v1 and remain local-only.
 
+Remote Collab Settings also includes member and invite management, plus password controls. Admins can manage members and invites, issue temporary-password resets that require a password change on next sign-in, and users can change their own password from the collaboration UI.
+
 ## Authentication
 
 Collaboration auth uses local accounts only. OAuth is deferred.
@@ -49,7 +51,7 @@ This is the only supported deployment shape for the public Forge repository. The
 4. Sign in with the remote collaboration server admin or member email and password.
 5. After sign-in succeeds, the Builder/Collab toggle becomes available in the UI.
 
-The collaboration status panel reports the configured remote server, not the local Builder backend. It reflects the enabled state and auth status of the connected collaboration service.
+The collaboration status panel reports the configured remote server, not the local Builder backend. It reflects the enabled state and auth status of the connected collaboration service. If a collaboration session or socket is invalidated by a lifecycle change, the public UI shows sign-in recovery instead of retrying forever or leaving the screen stuck loading.
 
 Once connected, the main Settings surface switches context with the mode: Builder Settings continue to target the local backend, while Collab Settings target the remote collaboration backend. Only collaboration admins can access Collab Settings.
 
