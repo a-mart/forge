@@ -1,11 +1,12 @@
 /** @vitest-environment jsdom */
 
-import { fireEvent, getByRole, getByText, waitFor } from '@testing-library/dom'
+import { fireEvent, getByRole, waitFor } from '@testing-library/dom'
 import { createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { CollabSidebarFooter } from './CollabSidebarFooter'
+import { TooltipProvider } from '@/components/ui/tooltip'
+import { UserAvatarPopover } from './UserAvatarPopover'
 
 let root: Root
 let container: HTMLDivElement
@@ -22,7 +23,7 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-describe('CollabSidebarFooter', () => {
+describe('UserAvatarPopover', () => {
   it('posts JSON sign-out requests so Better Auth clears the session cookie', async () => {
     const fetchSpy = vi.fn(async () => ({ ok: true }))
     vi.stubGlobal('fetch', fetchSpy)
@@ -37,22 +38,26 @@ describe('CollabSidebarFooter', () => {
 
     flushSync(() => {
       root.render(
-        createElement(CollabSidebarFooter, {
-          wsUrl: 'ws://127.0.0.1:47387',
-          currentUser: {
-            userId: 'user-1',
-            email: 'admin@test.com',
-            name: 'Administrator',
-            role: 'admin',
-            disabled: false,
-          },
-        }),
+        createElement(
+          TooltipProvider,
+          null,
+          createElement(UserAvatarPopover, {
+            wsUrl: 'ws://127.0.0.1:47387',
+            currentUser: {
+              userId: 'user-1',
+              email: 'admin@test.com',
+              name: 'Administrator',
+              role: 'admin',
+              disabled: false,
+            },
+          }),
+        ),
       )
     })
 
-    // Open the user popover by clicking the avatar/name trigger
-    const trigger = getByText(container, 'Administrator')
-    fireEvent.click(trigger.closest('button')!)
+    // Open the user popover by clicking the avatar trigger
+    const trigger = getByRole(container, 'button', { name: 'Administrator' })
+    fireEvent.click(trigger)
 
     // The popover renders in a portal — search the whole document for the sign-out button
     await waitFor(() => {
@@ -81,23 +86,27 @@ describe('CollabSidebarFooter', () => {
 
     flushSync(() => {
       root.render(
-        createElement(CollabSidebarFooter, {
-          wsUrl: 'ws://127.0.0.1:47387',
-          currentUser: {
-            userId: 'user-1',
-            email: 'admin@test.com',
-            name: 'Admin',
-            role: 'admin',
-            disabled: false,
-          },
-          onOpenSettings,
-        }),
+        createElement(
+          TooltipProvider,
+          null,
+          createElement(UserAvatarPopover, {
+            wsUrl: 'ws://127.0.0.1:47387',
+            currentUser: {
+              userId: 'user-1',
+              email: 'admin@test.com',
+              name: 'Admin',
+              role: 'admin',
+              disabled: false,
+            },
+            onOpenSettings,
+          }),
+        ),
       )
     })
 
-    // Open the user popover
-    const trigger = getByText(container, 'Admin')
-    fireEvent.click(trigger.closest('button')!)
+    // Open the user popover by clicking the avatar trigger
+    const trigger = getByRole(container, 'button', { name: 'Admin' })
+    fireEvent.click(trigger)
 
     await waitFor(() => {
       expect(getByRole(document.body, 'button', { name: 'Collab Settings' })).toBeTruthy()
@@ -111,23 +120,27 @@ describe('CollabSidebarFooter', () => {
   it('does not show Settings button when onOpenSettings is not provided (member)', async () => {
     flushSync(() => {
       root.render(
-        createElement(CollabSidebarFooter, {
-          wsUrl: 'ws://127.0.0.1:47387',
-          currentUser: {
-            userId: 'user-2',
-            email: 'member@test.com',
-            name: 'Member',
-            role: 'member',
-            disabled: false,
-          },
-          // no onOpenSettings — member should not see it
-        }),
+        createElement(
+          TooltipProvider,
+          null,
+          createElement(UserAvatarPopover, {
+            wsUrl: 'ws://127.0.0.1:47387',
+            currentUser: {
+              userId: 'user-2',
+              email: 'member@test.com',
+              name: 'Member',
+              role: 'member',
+              disabled: false,
+            },
+            // no onOpenSettings — member should not see it
+          }),
+        ),
       )
     })
 
-    // Open the user popover
-    const trigger = getByText(container, 'Member')
-    fireEvent.click(trigger.closest('button')!)
+    // Open the user popover by clicking the avatar trigger
+    const trigger = getByRole(container, 'button', { name: 'Member' })
+    fireEvent.click(trigger)
 
     await waitFor(() => {
       expect(getByRole(document.body, 'button', { name: 'Sign out' })).toBeTruthy()
