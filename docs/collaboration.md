@@ -10,7 +10,7 @@ Forge collaboration mode adds multi-user access on top of the existing Builder U
 | Channel sessions | `~/.forge/profiles/_collaboration/sessions/` | Each channel is backed by one manager session under the `_collaboration` profile. |
 | Auth database | `~/.forge/shared/config/collaboration/auth.db` | SQLite store for users, sessions, workspaces, channels, categories, and per-user read state. |
 | Auth secret | `~/.forge/shared/config/collaboration/auth-secret.key` | Used when `FORGE_COLLABORATION_AUTH_SECRET` is not set. |
-| Prompt overlays | `~/.forge/profiles/_collaboration/sessions/<sessionId>/context/prompt.md` | Channel prompt overlays live in the backing session context directory. |
+| Additional instructions | `~/.forge/profiles/_collaboration/sessions/<sessionId>/context/prompt.md` | Channel-level additional instructions live in the backing session context directory. |
 
 The collaboration profile is system-managed. Builder snapshots and profile lists exclude it, but the backing sessions still live in the normal session tree under `_collaboration`.
 
@@ -19,6 +19,8 @@ Fresh collaboration backend deployments should start from an empty `FORGE_DATA_D
 Settings are contextual: Builder mode Settings configure the local backend, while Collab mode Settings connect to and configure the remote collaboration backend. Collab Settings are admin-only. Provider auth entered there writes directly to the remote collaboration backend; it does not copy or share the local Builder auth file. Terminal settings are hidden in remote Collab Settings v1 and remain local-only.
 
 Remote Collab Settings also includes member and invite management, plus password controls. Admins can manage members and invites, issue temporary-password resets that require a password change on next sign-in, and users can change their own password from the collaboration UI.
+
+Channel and category settings include **AI Role** selectors. Categories define a default AI role, and channels inherit that default when created unless a channel-specific role is selected. The former "prompt overlay" label is now **Additional instructions** for channel-level guidance.
 
 ## Authentication
 

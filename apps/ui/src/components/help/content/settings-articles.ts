@@ -46,6 +46,8 @@ Settings are contextual: Builder mode Settings continue to configure the local b
 
 Collab Settings also includes members and invites, plus password management. Admins can manage members and invites, issue temporary-password resets that require a password change, and users can change their own password. If a collaboration session or socket gets invalidated by a lifecycle change, the public UI shows sign-in recovery instead of looping on reconnect or staying stuck on loading.
 
+Channel and category settings include **AI Role** selectors. Categories define the default AI role for new channels, and channels can choose their own role when needed. Channel-specific guidance is labeled **Additional instructions**.
+
 The Collaboration status panel reflects the configured remote collaboration server, not the local Builder backend. Terminal settings stay hidden in remote Collab Settings v1 and remain local-only.
 
 ## System
