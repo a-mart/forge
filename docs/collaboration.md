@@ -63,7 +63,7 @@ Hosted deployment uses:
 - `FORGE_COLLABORATION_TRUSTED_ORIGINS` to list the Builder origins that may talk to the collaboration backend
 - collaboration auth cookies with `SameSite=None; Secure`
 
-The base URL changes the canonical browser origin used for redirects, invite links, and cookie handling.
+The base URL changes the canonical browser origin used for invite links and cookie handling. In split deployments, collaboration auth pages redirect back to a trusted Builder/UI origin after login, invite redemption, password changes, and member flows. Untrusted browser origins are ignored.
 
 ## Architecture
 
