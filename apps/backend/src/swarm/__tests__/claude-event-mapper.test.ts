@@ -556,7 +556,7 @@ describe("ClaudeEventMapper", () => {
     ]);
   });
 
-  it("extracts context usage from usage metadata", () => {
+  it("does not expose streamed usage metadata as active context occupancy", () => {
     const mapper = new ClaudeEventMapper();
 
     expect(
@@ -572,11 +572,7 @@ describe("ClaudeEventMapper", () => {
       })
     ).toEqual([]);
 
-    expect(mapper.getContextUsage()).toEqual({
-      tokens: 160,
-      contextWindow: 500,
-      percent: 32
-    });
+    expect(mapper.getContextUsage()).toBeUndefined();
   });
 
   it("clears mapper state on reset", () => {

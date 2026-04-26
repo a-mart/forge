@@ -117,8 +117,8 @@ export function inferCatalogFamily(provider: string, modelId: string): string | 
 }
 
 /** Get context window for a specific model ID. Returns undefined if unknown. */
-export function getCatalogContextWindow(modelId: string): number | undefined {
-  return getCatalogModel(modelId)?.contextWindow
+export function getCatalogContextWindow(modelId: string, provider?: string): number | undefined {
+  return getCatalogModel(modelId, provider)?.contextWindow
 }
 
 export type ManagerModelSurface = 'create' | 'change'

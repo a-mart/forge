@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import {
-  extractClaudeContextUsage,
   isPlausibleContextUsage,
   normalizeOptionalString,
   readBoolean,
@@ -125,6 +124,7 @@ type EmittedStatusSnapshot = {
 const MAX_CLAUDE_STDERR_LINES = 20;
 const MAX_CLAUDE_STDERR_SUMMARY_LINES = 3;
 const DEFAULT_CLAUDE_STARTUP_TIMEOUT_MS = 30_000;
+const DEFAULT_CLAUDE_CONTEXT_USAGE_REFRESH_TIMEOUT_MS = 500;
 const CLAUDE_SDK_STRIPPED_INHERITED_ENV_KEYS = new Set(["ANTHROPIC_API_KEY"]);
 const CLAUDE_SDK_IGNORED_OVERRIDE_ENV_KEYS = new Set(["ANTHROPIC_API_KEY", "CLAUDE_CONFIG_DIR"]);
 
@@ -151,7 +151,6 @@ export class ClaudeQuerySession {
   private sdkSessionId: string | undefined;
   private sdkCompactionInProgress = false;
   private lastContextUsage: AgentContextUsage | undefined;
-  private sawPlausibleContextUsageThisTurn = false;
   private lastEmittedStatus: EmittedStatusSnapshot | undefined;
   private recentStderrLines: string[] = [];
   private pendingStderr = "";
@@ -185,34 +184,29 @@ export class ClaudeQuerySession {
   }
 
   async getSdkContextUsage(): Promise<unknown> {
-    await this.start();
-    return await this.queryHandle?.getContextUsage?.();
+    return await this.requestSdkContextUsage();
   }
 
   async refreshContextUsageFromSdk(): Promise<AgentContextUsage | undefined> {
-    await this.start();
-
-    if (!this.queryHandle?.getContextUsage) {
-      return this.lastContextUsage;
-    }
-
-    try {
-      const response = readObject(await this.queryHandle.getContextUsage());
-      const nextUsage = deriveSdkContextUsage(response);
-      if (!nextUsage) {
-        return this.lastContextUsage;
+    const response = readObject(await this.requestSdkContextUsage());
+    const nextUsage = deriveSdkContextUsage(response);
+    if (!nextUsage) {
+      if (!this.lastContextUsage) {
+        return undefined;
       }
 
-      if (areContextUsagesEqual(this.lastContextUsage, nextUsage)) {
-        return this.lastContextUsage;
-      }
-
-      this.lastContextUsage = nextUsage;
+      this.lastContextUsage = undefined;
       await this.emitStatus();
-      return this.lastContextUsage;
-    } catch {
+      return undefined;
+    }
+
+    if (areContextUsagesEqual(this.lastContextUsage, nextUsage)) {
       return this.lastContextUsage;
     }
+
+    this.lastContextUsage = nextUsage;
+    await this.emitStatus();
+    return this.lastContextUsage;
   }
 
   async applyFlagSettings(settings: Record<string, unknown>): Promise<void> {
@@ -458,7 +452,6 @@ export class ClaudeQuerySession {
     try {
       for await (const event of queryHandle) {
         await this.captureSessionId(event);
-        await this.captureContextUsage(event);
         await this.captureRawCompactionStatus(event);
 
         if (isClaudeInitEvent(event)) {
@@ -481,21 +474,12 @@ export class ClaudeQuerySession {
           await this.forwardMappedEvent(mappedEvent);
         }
 
-        if (this.activeTurn && isPlausibleContextUsage(this.mapper.getContextUsage())) {
-          this.sawPlausibleContextUsageThisTurn = true;
-        }
-
         if (isClaudeCompactBoundaryEvent(event)) {
-          const refreshedUsage = await this.refreshContextUsageFromSdk();
-          if (isPlausibleContextUsage(refreshedUsage)) {
-            this.sawPlausibleContextUsageThisTurn = true;
-          }
+          await this.refreshContextUsageFromSdk();
         }
 
         if (isClaudeResultEvent(event)) {
-          if (!this.sawPlausibleContextUsageThisTurn || !isPlausibleContextUsage(this.getContextUsage())) {
-            await this.refreshContextUsageFromSdk();
-          }
+          await this.refreshContextUsageFromSdk();
           await this.handleTurnCompleted();
         }
       }
@@ -548,7 +532,6 @@ export class ClaudeQuerySession {
     }
 
     this.activeTurn = undefined;
-    this.sawPlausibleContextUsageThisTurn = false;
     completedTurn.completion.resolve();
 
     const toolResults = [...this.currentTurnToolResults];
@@ -589,7 +572,6 @@ export class ClaudeQuerySession {
 
     try {
       this.currentTurnToolResults = [];
-      this.sawPlausibleContextUsageThisTurn = false;
       this.activeTurn = {
         deliveryId: input.deliveryId,
         completion: createDeferred<void>()
@@ -1004,18 +986,24 @@ export class ClaudeQuerySession {
     }
   }
 
-  private async captureContextUsage(event: ClaudeSdkMessage): Promise<void> {
-    const nextUsage = extractClaudeContextUsage(
-      event,
-      this.options.config.model,
-      this.options.config.contextWindow
-    );
-    if (!nextUsage || areContextUsagesEqual(this.lastContextUsage, nextUsage)) {
-      return;
+  private async requestSdkContextUsage(): Promise<unknown> {
+    await this.start();
+
+    const queryHandle = this.queryHandle;
+    const getContextUsage = queryHandle?.getContextUsage;
+    if (!queryHandle || !getContextUsage) {
+      return undefined;
     }
 
-    this.lastContextUsage = nextUsage;
-    await this.emitStatus();
+    try {
+      return await withTimeout(
+        Promise.resolve().then(() => getContextUsage.call(queryHandle)),
+        DEFAULT_CLAUDE_CONTEXT_USAGE_REFRESH_TIMEOUT_MS,
+        `claude_context_usage:${this.options.callbacks.agentId}`
+      );
+    } catch {
+      return undefined;
+    }
   }
 
   private async captureRawCompactionStatus(event: ClaudeSdkMessage): Promise<void> {

@@ -12,12 +12,12 @@ import { getCatalogContextWindow } from '@forge/protocol'
 const CHARS_PER_TOKEN_ESTIMATE = 4
 const MAX_REASONABLE_CONTEXT_USAGE_MULTIPLIER = 5
 
-function contextWindowForAgent(agent: AgentDescriptor | null): number | null {
+export function contextWindowForAgent(agent: AgentDescriptor | null): number | null {
   if (!agent) {
     return null
   }
 
-  return getCatalogContextWindow(agent.model.modelId) ?? null
+  return getCatalogContextWindow(agent.model.modelId, agent.model.provider) ?? null
 }
 
 function isTextAttachmentWithContent(

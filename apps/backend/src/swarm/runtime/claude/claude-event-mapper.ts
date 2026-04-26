@@ -1,5 +1,4 @@
 import {
-  extractClaudeContextUsage,
   readBoolean,
   readFiniteNumber,
   readObject,
@@ -37,12 +36,9 @@ export class ClaudeEventMapper implements ClaudeEventMapperLike {
 
   private activeAssistantMessageId: string | undefined;
   private activeAssistantText = "";
-  private contextUsage: AgentContextUsage | undefined;
   private compactionState: "idle" | "active" | "fallback_ended" = "idle";
 
   mapEvent(event: ClaudeSdkMessage, _context?: ClaudeEventMapperContext): RuntimeSessionEvent[] {
-    this.captureContextUsage(event);
-
     const type = readString((event as { type?: unknown }).type);
     switch (type) {
       case "stream_event":
@@ -70,7 +66,9 @@ export class ClaudeEventMapper implements ClaudeEventMapperLike {
   }
 
   getContextUsage(): AgentContextUsage | undefined {
-    return this.contextUsage;
+    // Compatibility seam: streamed Claude SDK usage/modelUsage is request/billing data,
+    // not authoritative active context-window occupancy.
+    return undefined;
   }
 
   reset(): void {
@@ -81,7 +79,6 @@ export class ClaudeEventMapper implements ClaudeEventMapperLike {
     this.pendingToolUseBlocks.clear();
     this.activeAssistantMessageId = undefined;
     this.activeAssistantText = "";
-    this.contextUsage = undefined;
     this.compactionState = "idle";
   }
 
@@ -440,14 +437,6 @@ export class ClaudeEventMapper implements ClaudeEventMapperLike {
     };
   }
 
-  private captureContextUsage(event: ClaudeSdkMessage): void {
-    const usage = extractClaudeContextUsage(event);
-    if (!usage) {
-      return;
-    }
-
-    this.contextUsage = usage;
-  }
 }
 
 function extractAssistantContent(content: unknown): string | Array<Record<string, unknown>> | undefined {

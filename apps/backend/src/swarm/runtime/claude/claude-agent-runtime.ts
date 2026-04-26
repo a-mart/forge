@@ -173,7 +173,11 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
     this.allowedTools = [...(options.allowedTools ?? [])];
     this.runtimeEnvOverrides = { ...(options.runtimeEnv ?? {}) };
     this.modelContextWindow =
-      options.modelContextWindow ?? modelCatalogService.getEffectiveContextWindow(options.descriptor.model.modelId);
+      options.modelContextWindow
+      ?? modelCatalogService.getEffectiveContextWindow(
+        options.descriptor.model.modelId,
+        options.descriptor.model.provider
+      );
     this.autoCompactWindow =
       typeof this.modelContextWindow === "number" && Number.isFinite(this.modelContextWindow) && this.modelContextWindow > 0
         ? Math.floor(this.modelContextWindow * 0.8)

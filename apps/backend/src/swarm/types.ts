@@ -37,6 +37,7 @@ export interface AgentModelDescriptor {
   thinkingLevel: string;
 }
 
+/** Active context-window occupancy, not per-request or billing usage. */
 export interface AgentContextUsage {
   tokens: number;
   contextWindow: number;

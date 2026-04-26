@@ -292,7 +292,7 @@ describe("ClaudeQuerySession", () => {
     await session.sendInput("hello");
     await session.waitForIdle();
 
-    expect(getContextUsage).toHaveBeenCalledTimes(1);
+    expect(getContextUsage).toHaveBeenCalledTimes(2);
     expect(session.getContextUsage()).toEqual({
       tokens: 4_321,
       contextWindow: 200_000,
@@ -311,9 +311,13 @@ describe("ClaudeQuerySession", () => {
     await session.stop();
   });
 
-  it("falls back gracefully when SDK context usage refresh fails after compaction", async () => {
+  it("refreshes authoritative SDK context usage even when streamed billing usage looks plausible", async () => {
     const callbacks = createCallbacks();
-    const getContextUsage = vi.fn().mockRejectedValue(new Error("control request failed"));
+    const getContextUsage = vi.fn().mockResolvedValue({
+      totalTokens: 12_000,
+      maxTokens: 200_000,
+      percentage: 6
+    });
     const sdk: ClaudeSdkModule = {
       query: vi.fn((args: { prompt: AsyncIterable<ClaudeSdkUserMessage>; options: ClaudeSdkQueryOptions }) => {
         return createPromptAwareMockQueryHandle(
@@ -325,11 +329,265 @@ describe("ClaudeQuerySession", () => {
           {
             onPrompt: async (_message, pushEvent) => {
               pushEvent({
-                type: "message_delta",
-                usage: {
-                  input_tokens: 100,
-                  output_tokens: 50,
-                  context_window: 200_000
+                type: "assistant",
+                message: {
+                  id: "assistant-1",
+                  content: [{ type: "text", text: "done" }]
+                },
+                modelUsage: {
+                  inputTokens: 20_000,
+                  cacheReadInputTokens: 150_000,
+                  outputTokens: 1_000,
+                  contextWindow: 200_000
+                }
+              });
+              pushEvent({ type: "result", subtype: "result" });
+            }
+          }
+        );
+      }) as unknown as ClaudeSdkModule["query"]
+    };
+
+    const session = new ClaudeQuerySession({
+      sdk,
+      config: {
+        model: "claude-test",
+        systemPrompt: "system",
+        cwd: process.cwd()
+      },
+      callbacks
+    });
+
+    await session.start();
+    await session.sendInput("hello");
+    await session.waitForIdle();
+
+    expect(getContextUsage).toHaveBeenCalledTimes(1);
+    expect(session.getContextUsage()).toEqual({
+      tokens: 12_000,
+      contextWindow: 200_000,
+      percent: 6
+    });
+    expect(session.getStatus()).toBe("idle");
+
+    await session.stop();
+  });
+
+  it("does not fall back to streamed billing usage when SDK context usage is unavailable", async () => {
+    const callbacks = createCallbacks();
+    const sdk: ClaudeSdkModule = {
+      query: vi.fn((args: { prompt: AsyncIterable<ClaudeSdkUserMessage>; options: ClaudeSdkQueryOptions }) => {
+        return createPromptAwareMockQueryHandle(
+          args.prompt,
+          { type: "system:init" },
+          {
+            getContextUsage: undefined as unknown as ClaudeSdkQueryHandle["getContextUsage"]
+          },
+          {
+            onPrompt: async (_message, pushEvent) => {
+              pushEvent({
+                type: "assistant",
+                message: {
+                  id: "assistant-1",
+                  content: [{ type: "text", text: "done" }]
+                },
+                modelUsage: {
+                  inputTokens: 20_000,
+                  cacheReadInputTokens: 150_000,
+                  outputTokens: 1_000,
+                  contextWindow: 200_000
+                }
+              });
+              pushEvent({ type: "result", subtype: "result" });
+            }
+          }
+        );
+      }) as unknown as ClaudeSdkModule["query"]
+    };
+
+    const session = new ClaudeQuerySession({
+      sdk,
+      config: {
+        model: "claude-test",
+        systemPrompt: "system",
+        cwd: process.cwd()
+      },
+      callbacks
+    });
+
+    await session.start();
+    await session.sendInput("hello");
+    await session.waitForIdle();
+
+    expect(session.getContextUsage()).toBeUndefined();
+    expect(callbacks.onRuntimeError).not.toHaveBeenCalled();
+    expect(session.getStatus()).toBe("idle");
+
+    await session.stop();
+  });
+
+  it("clears stale cached context usage when a later SDK refresh fails", async () => {
+    const callbacks = createCallbacks();
+    const getContextUsage = vi.fn()
+      .mockResolvedValueOnce({
+        totalTokens: 190_000,
+        maxTokens: 200_000,
+        percentage: 95
+      })
+      .mockImplementationOnce(async () => await new Promise<unknown>(() => {}));
+    const sdk: ClaudeSdkModule = {
+      query: vi.fn((args: { prompt: AsyncIterable<ClaudeSdkUserMessage>; options: ClaudeSdkQueryOptions }) => {
+        return createPromptAwareMockQueryHandle(
+          args.prompt,
+          { type: "system:init" },
+          {
+            getContextUsage
+          },
+          {
+            onPrompt: async (_message, pushEvent) => {
+              pushEvent({
+                type: "assistant",
+                message: {
+                  id: `assistant-${getContextUsage.mock.calls.length + 1}`,
+                  content: [{ type: "text", text: "done" }]
+                },
+                modelUsage: {
+                  inputTokens: 20_000,
+                  cacheReadInputTokens: 150_000,
+                  outputTokens: 1_000,
+                  contextWindow: 200_000
+                }
+              });
+              pushEvent({ type: "result", subtype: "result" });
+            }
+          }
+        );
+      }) as unknown as ClaudeSdkModule["query"]
+    };
+
+    const session = new ClaudeQuerySession({
+      sdk,
+      config: {
+        model: "claude-test",
+        systemPrompt: "system",
+        cwd: process.cwd()
+      },
+      callbacks
+    });
+
+    await session.start();
+    await session.sendInput("first");
+    await session.waitForIdle();
+
+    expect(session.getContextUsage()).toEqual({
+      tokens: 190_000,
+      contextWindow: 200_000,
+      percent: 95
+    });
+
+    await session.sendInput("second");
+    await session.waitForIdle();
+
+    expect(getContextUsage).toHaveBeenCalledTimes(2);
+    expect(session.getContextUsage()).toBeUndefined();
+    expect(callbacks.onRuntimeError).not.toHaveBeenCalled();
+    expect(callbacks.onStatusChange.mock.calls.at(-1)).toEqual(["agent-1", "idle", 0, undefined]);
+
+    await session.stop();
+  });
+
+  it("bounds result-boundary SDK context refreshes so turn completion still finishes when control hangs", async () => {
+    const callbacks = createCallbacks();
+    const getContextUsage = vi.fn().mockImplementation(async () => await new Promise<unknown>(() => {}));
+    const sdk: ClaudeSdkModule = {
+      query: vi.fn((args: { prompt: AsyncIterable<ClaudeSdkUserMessage>; options: ClaudeSdkQueryOptions }) => {
+        return createPromptAwareMockQueryHandle(
+          args.prompt,
+          { type: "system:init" },
+          {
+            getContextUsage
+          },
+          {
+            onPrompt: async (_message, pushEvent) => {
+              pushEvent({
+                type: "assistant",
+                message: {
+                  id: "assistant-1",
+                  content: [{ type: "text", text: "done" }]
+                },
+                modelUsage: {
+                  inputTokens: 20_000,
+                  cacheReadInputTokens: 150_000,
+                  outputTokens: 1_000,
+                  contextWindow: 200_000
+                }
+              });
+              pushEvent({ type: "result", subtype: "result" });
+            }
+          }
+        );
+      }) as unknown as ClaudeSdkModule["query"]
+    };
+
+    const session = new ClaudeQuerySession({
+      sdk,
+      config: {
+        model: "claude-test",
+        systemPrompt: "system",
+        cwd: process.cwd()
+      },
+      callbacks
+    });
+
+    await session.start();
+    await session.sendInput("hello");
+
+    const idleResult = await Promise.race([
+      session.waitForIdle().then(() => "idle"),
+      new Promise<string>((resolve) => {
+        setTimeout(() => resolve("timeout"), 1_000);
+      })
+    ]);
+
+    expect(idleResult).toBe("idle");
+    expect(getContextUsage).toHaveBeenCalledTimes(1);
+    expect(session.getContextUsage()).toBeUndefined();
+    expect(callbacks.onRuntimeError).not.toHaveBeenCalled();
+    expect(session.getStatus()).toBe("idle");
+
+    await session.stop();
+  });
+
+  it("bounds compact-boundary SDK context refreshes so later events still complete the turn", async () => {
+    const callbacks = createCallbacks();
+    const getContextUsage = vi.fn()
+      .mockImplementationOnce(async () => await new Promise<unknown>(() => {}))
+      .mockResolvedValue({
+        totalTokens: 4_321,
+        maxTokens: 200_000,
+        percentage: 2.1605
+      });
+    const sdk: ClaudeSdkModule = {
+      query: vi.fn((args: { prompt: AsyncIterable<ClaudeSdkUserMessage>; options: ClaudeSdkQueryOptions }) => {
+        return createPromptAwareMockQueryHandle(
+          args.prompt,
+          { type: "system:init" },
+          {
+            getContextUsage
+          },
+          {
+            onPrompt: async (_message, pushEvent) => {
+              pushEvent({
+                type: "assistant",
+                message: {
+                  id: "assistant-1",
+                  content: [{ type: "text", text: "done" }]
+                },
+                modelUsage: {
+                  inputTokens: 20_000,
+                  cacheReadInputTokens: 150_000,
+                  outputTokens: 1_000,
+                  contextWindow: 200_000
                 }
               });
               pushEvent({
@@ -366,75 +624,13 @@ describe("ClaudeQuerySession", () => {
     await session.sendInput("hello");
     await session.waitForIdle();
 
-    expect(getContextUsage).toHaveBeenCalledTimes(1);
+    expect(getContextUsage).toHaveBeenCalledTimes(2);
     expect(session.getContextUsage()).toEqual({
-      tokens: 150,
+      tokens: 4_321,
       contextWindow: 200_000,
-      percent: 0.075
+      percent: 2.1605
     });
     expect(callbacks.onRuntimeError).not.toHaveBeenCalled();
-    expect(session.getStatus()).toBe("idle");
-
-    await session.stop();
-  });
-
-  it("recovers sane context usage from the SDK when streamed usage data is implausible", async () => {
-    const callbacks = createCallbacks();
-    const getContextUsage = vi.fn().mockResolvedValue({
-      totalTokens: 10_649_236,
-      maxTokens: 200_000,
-      percentage: 8.724
-    });
-    const sdk: ClaudeSdkModule = {
-      query: vi.fn((args: { prompt: AsyncIterable<ClaudeSdkUserMessage>; options: ClaudeSdkQueryOptions }) => {
-        return createPromptAwareMockQueryHandle(
-          args.prompt,
-          { type: "system:init" },
-          {
-            getContextUsage
-          },
-          {
-            onPrompt: async (_message, pushEvent) => {
-              pushEvent({
-                type: "assistant",
-                message: {
-                  id: "assistant-1",
-                  content: [{ type: "text", text: "done" }]
-                },
-                modelUsage: {
-                  inputTokens: 17_448,
-                  cacheReadInputTokens: 10_631_688,
-                  outputTokens: 100,
-                  contextWindow: 200_000
-                }
-              });
-              pushEvent({ type: "result", subtype: "result" });
-            }
-          }
-        );
-      }) as unknown as ClaudeSdkModule["query"]
-    };
-
-    const session = new ClaudeQuerySession({
-      sdk,
-      config: {
-        model: "claude-test",
-        systemPrompt: "system",
-        cwd: process.cwd()
-      },
-      callbacks
-    });
-
-    await session.start();
-    await session.sendInput("hello");
-    await session.waitForIdle();
-
-    expect(getContextUsage).toHaveBeenCalledTimes(1);
-    expect(session.getContextUsage()).toEqual({
-      tokens: 17_448,
-      contextWindow: 200_000,
-      percent: 8.724
-    });
     expect(session.getStatus()).toBe("idle");
 
     await session.stop();

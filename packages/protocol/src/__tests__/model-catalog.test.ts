@@ -394,6 +394,8 @@ describe('model-catalog', () => {
     expect(getCatalogModel('claude-sonnet-4-5-20250929', 'claude-sdk')?.displayName).toBe('Claude Sonnet 4.5 (SDK)')
     expect(getCatalogModel('claude-sdk/claude-sonnet-4-5-20250929')?.provider).toBe('claude-sdk')
     expect(getCatalogContextWindow('grok-4-fast')).toBe(2_000_000)
+    expect(getCatalogContextWindow('default')).toBeUndefined()
+    expect(getCatalogContextWindow('default', 'cursor-acp')).toBe(200_000)
     expect(inferCatalogProvider('gpt-5.4')).toBe('openai-codex')
     expect(inferCatalogProvider('gpt-5.5')).toBe('openai-codex')
     expect(inferCatalogProvider('gpt-5.4-nano')).toBeNull()
