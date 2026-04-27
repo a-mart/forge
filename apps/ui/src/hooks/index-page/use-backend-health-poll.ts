@@ -18,18 +18,25 @@ import {
 const POLL_INTERVAL_MS = 5_000
 
 /**
- * Ping a backend by attempting a lightweight HEAD request to its root.
- * Returns `true` if the backend responds (any status), `false` on network error.
+ * Ping a backend via GET /api/health.
+ *
+ * Uses GET (not HEAD) because cross-origin requests require CORS headers
+ * on the response — GET is the most reliable method for this.  The health
+ * endpoint returns a small JSON body (~100 bytes), so bandwidth is negligible.
+ *
+ * Returns `true` if the backend responds with any status, `false` on
+ * network / CORS / timeout error.
  */
 async function pingBackend(wsUrl: string): Promise<boolean> {
   try {
     const httpUrl = resolveApiEndpoint(wsUrl, '/api/health')
     const response = await fetch(httpUrl, {
-      method: 'HEAD',
+      method: 'GET',
+      mode: 'cors',
       // Abort if the server doesn't respond quickly
       signal: AbortSignal.timeout(3_000),
     })
-    // Any HTTP response (even 404) means the server is up
+    // Any HTTP response means the server is up
     return response.ok || response.status > 0
   } catch {
     return false

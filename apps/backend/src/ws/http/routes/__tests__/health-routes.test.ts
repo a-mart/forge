@@ -9,6 +9,123 @@ import {
 } from '../../../../test-support/ws-integration-harness.js'
 import { SwarmWebSocketServer } from '../../../server.js'
 
+// ---------------------------------------------------------------------------
+// Health endpoint CORS + method support
+// ---------------------------------------------------------------------------
+
+describe('/api/health CORS and method support', () => {
+  async function startServer() {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port)
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+    await server.start()
+
+    const baseUrl = `http://${config.host}:${config.port}`
+    return { server, baseUrl }
+  }
+
+  it('GET /api/health returns 200 with CORS headers', async () => {
+    const { server, baseUrl } = await startServer()
+    try {
+      const response = await fetch(`${baseUrl}/api/health`, {
+        method: 'GET',
+        headers: { Origin: 'http://localhost:47188' },
+      })
+      expect(response.status).toBe(200)
+
+      // CORS headers present
+      expect(response.headers.get('access-control-allow-origin')).toBe('http://localhost:47188')
+      expect(response.headers.get('access-control-allow-methods')).toContain('GET')
+
+      // Body is valid JSON
+      const body = await response.json()
+      expect(body.ok).toBe(true)
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('HEAD /api/health returns 200 with CORS headers and no body', async () => {
+    const { server, baseUrl } = await startServer()
+    try {
+      const response = await fetch(`${baseUrl}/api/health`, {
+        method: 'HEAD',
+        headers: { Origin: 'http://localhost:47188' },
+      })
+      expect(response.status).toBe(200)
+
+      // CORS headers present
+      expect(response.headers.get('access-control-allow-origin')).toBe('http://localhost:47188')
+
+      // HEAD should have no body (Node strips it automatically)
+      const text = await response.text()
+      expect(text).toBe('')
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('OPTIONS /api/health returns 204 preflight with CORS headers', async () => {
+    const { server, baseUrl } = await startServer()
+    try {
+      const response = await fetch(`${baseUrl}/api/health`, {
+        method: 'OPTIONS',
+        headers: {
+          Origin: 'http://localhost:47188',
+          'Access-Control-Request-Method': 'GET',
+        },
+      })
+      expect(response.status).toBe(204)
+
+      // CORS headers present for preflight
+      expect(response.headers.get('access-control-allow-origin')).toBe('http://localhost:47188')
+      expect(response.headers.get('access-control-allow-methods')).toContain('GET')
+      expect(response.headers.get('access-control-allow-methods')).toContain('HEAD')
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('unsupported method returns 405 with Allow header', async () => {
+    const { server, baseUrl } = await startServer()
+    try {
+      const response = await fetch(`${baseUrl}/api/health`, {
+        method: 'DELETE',
+      })
+      expect(response.status).toBe(405)
+      expect(response.headers.get('allow')).toContain('GET')
+      expect(response.headers.get('allow')).toContain('HEAD')
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('GET without Origin header uses wildcard CORS origin', async () => {
+    const { server, baseUrl } = await startServer()
+    try {
+      const response = await fetch(`${baseUrl}/api/health`, {
+        method: 'GET',
+      })
+      expect(response.status).toBe(200)
+      expect(response.headers.get('access-control-allow-origin')).toBe('*')
+    } finally {
+      await server.stop()
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Reboot endpoint
+// ---------------------------------------------------------------------------
+
 describe('SwarmWebSocketServer', () => {
   it('accepts POST /api/reboot and signals the daemon pid asynchronously', async () => {
     const port = await getAvailablePort()

@@ -24,21 +24,32 @@ export function createHealthRoutes(options: {
 
   return [
     {
-      methods: "GET",
+      methods: "GET, HEAD, OPTIONS",
       matches: (pathname) => pathname === HEALTH_ENDPOINT_PATH,
       handle: async (request, response) => {
-        if (request.method !== "GET") {
-          response.setHeader("Allow", "GET");
+        applyCorsHeaders(request, response, "GET, HEAD, OPTIONS");
+
+        if (request.method === "OPTIONS") {
+          response.statusCode = 204;
+          response.end();
+          return;
+        }
+
+        if (request.method !== "GET" && request.method !== "HEAD") {
+          response.setHeader("Allow", "GET, HEAD, OPTIONS");
           sendJson(response, 405, { error: "Method Not Allowed" });
           return;
         }
 
-        sendJson(response, 200, {
+        const body = {
           ok: true,
           version: "1.0.0",
           timestamp: Date.now(),
           swarm: swarmManager ? summarizeSwarmActivity(swarmManager) : undefined
-        });
+        };
+
+        // Node's http server auto-strips the body for HEAD responses
+        sendJson(response, 200, body);
       }
     },
     {
