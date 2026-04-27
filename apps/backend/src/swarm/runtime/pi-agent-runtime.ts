@@ -24,6 +24,7 @@ import type {
   RuntimeSessionEvent,
   RuntimeUserMessage,
   RuntimeUserMessageInput,
+  SmartCompactOptions,
   SmartCompactResult,
   SpecialistFallbackReplaySnapshot,
   SwarmAgentRuntime,
@@ -358,12 +359,15 @@ export class AgentRuntime implements SwarmAgentRuntime {
     this.inFlightPrompts.clear();
   }
 
-  async smartCompact(customInstructions?: string): Promise<SmartCompactResult> {
+  async smartCompact(customInstructions?: string, options?: SmartCompactOptions): Promise<SmartCompactResult> {
     this.ensureNotTerminated();
 
     if (this.isContextRecoveryActive()) {
       throw new Error("Context recovery is already in progress");
     }
+
+    const resumeAfterCompaction =
+      options?.resumeAfterCompaction ?? (options?.skipResumeIfIdle ? this.shouldResumeAfterManualSmartCompact() : true);
 
     this.beginContextRecovery();
     this.guardAbortController = new AbortController();
@@ -373,7 +377,8 @@ export class AgentRuntime implements SwarmAgentRuntime {
 
     this.logContextGuard("smart_compact_started", {
       handoffFilePath,
-      wasStreaming: this.session.isStreaming
+      wasStreaming: this.session.isStreaming,
+      resumeAfterCompaction
     });
 
     let handoffContent: string | undefined;
@@ -416,17 +421,18 @@ export class AgentRuntime implements SwarmAgentRuntime {
             handoffWritten: handoffContent !== undefined
           });
         }
-        // Continue to resume prompt even if compaction failed/skipped
+        // Continue through cleanup even if compaction failed or was skipped.
       }
 
       if (signal.aborted) return { compacted: false, reason: "Aborted" };
 
-      // Resume prompt
-      try {
-        const resumePrompt = buildResumePrompt(handoffContent);
-        await this.session.prompt(resumePrompt);
-      } catch (error) {
-        await this.reportContextGuardError(error, { stage: "smart_compact_resume_failed" });
+      if (resumeAfterCompaction) {
+        try {
+          const resumePrompt = buildResumePrompt(handoffContent);
+          await this.session.prompt(resumePrompt);
+        } catch (error) {
+          await this.reportContextGuardError(error, { stage: "smart_compact_resume_failed" });
+        }
       }
 
       completed = true;
@@ -456,6 +462,17 @@ export class AgentRuntime implements SwarmAgentRuntime {
       });
       throw error;
     }
+  }
+
+  private shouldResumeAfterManualSmartCompact(): boolean {
+    return (
+      this.session.isStreaming ||
+      this.promptDispatchPending ||
+      this.status === "streaming" ||
+      this.pendingDeliveries.length > 0 ||
+      this.recoveryBufferedMessages.length > 0 ||
+      this.currentTurnReplayMessages.length > 0
+    );
   }
 
   private abortCompactionSafely(stage: string): void {

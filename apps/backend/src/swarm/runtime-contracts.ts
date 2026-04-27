@@ -129,6 +129,11 @@ export type SmartCompactResult =
       reason: string;
     };
 
+export interface SmartCompactOptions {
+  resumeAfterCompaction?: boolean;
+  skipResumeIfIdle?: boolean;
+}
+
 export interface RuntimeShutdownOptions {
   abort?: boolean;
   shutdownTimeoutMs?: number;
@@ -159,7 +164,7 @@ export interface SwarmAgentRuntime {
 
   compact(customInstructions?: string): Promise<unknown>;
 
-  smartCompact(customInstructions?: string): Promise<SmartCompactResult>;
+  smartCompact(customInstructions?: string, options?: SmartCompactOptions): Promise<SmartCompactResult>;
 
   stopInFlight(options?: RuntimeShutdownOptions): Promise<void>;
 

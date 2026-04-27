@@ -15,6 +15,7 @@ import type {
   RuntimeShutdownOptions,
   RuntimeUserMessage,
   RuntimeUserMessageInput,
+  SmartCompactOptions,
   SmartCompactResult,
   SpecialistFallbackReplaySnapshot,
   SwarmAgentRuntime,
@@ -283,7 +284,7 @@ export class AcpAgentRuntime implements SwarmAgentRuntime {
     throw new Error(`Agent ${this.descriptor.agentId} does not support manual compaction`);
   }
 
-  async smartCompact(_customInstructions?: string): Promise<SmartCompactResult> {
+  async smartCompact(_customInstructions?: string, _options?: SmartCompactOptions): Promise<SmartCompactResult> {
     this.ensureNotTerminated();
     throw new Error(`Agent ${this.descriptor.agentId} does not support smart compaction`);
   }

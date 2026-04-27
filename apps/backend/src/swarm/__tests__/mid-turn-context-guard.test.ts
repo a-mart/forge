@@ -589,6 +589,60 @@ describe("mid-turn context guard", () => {
     expect(runtime.getPendingCount()).toBe(3);
   });
 
+  it("smartCompact skips the resume prompt for idle/manual compaction when requested", async () => {
+    const { runtime, session } = createRuntime();
+    session.isStreaming = false;
+
+    await expect(runtime.smartCompact("trim older turns", { resumeAfterCompaction: false })).resolves.toEqual({
+      compacted: true
+    });
+
+    const handoffPath = buildHandoffFilePath(runtime.descriptor);
+    expect(session.abortCalls).toBe(0);
+    expect(session.compactCalls).toBe(1);
+    expect(session.promptCalls).toEqual([buildHandoffPrompt(handoffPath)]);
+    expect((runtime as any).contextRecoveryInProgress).toBe(false);
+  });
+
+  it("smartCompact still resumes after active compaction by default", async () => {
+    const { runtime, session } = createRuntime();
+
+    await expect(runtime.smartCompact("trim older turns")).resolves.toEqual({
+      compacted: true
+    });
+
+    const handoffPath = buildHandoffFilePath(runtime.descriptor);
+    expect(session.abortCalls).toBe(1);
+    expect(session.compactCalls).toBe(1);
+    expect(session.promptCalls[0]).toBe(buildHandoffPrompt(handoffPath));
+    expect(session.promptCalls[1]).toBe(buildResumePrompt("## Current Task\nKeep going"));
+  });
+
+  it("smartCompact still resumes for manual compaction when prompt dispatch is pending", async () => {
+    const { runtime, session } = createRuntime();
+    session.isStreaming = false;
+
+    const dispatchDeferred = createDeferred<void>();
+    session.promptImpl = async (message: string) => {
+      if (message === "primary prompt") {
+        await dispatchDeferred.promise;
+      }
+    };
+
+    const receipt = await runtime.sendMessage("primary prompt");
+
+    await expect(runtime.smartCompact("trim older turns", { skipResumeIfIdle: true })).resolves.toEqual({
+      compacted: true
+    });
+
+    dispatchDeferred.resolve(undefined);
+    await flushPromptDispatch();
+
+    expect(receipt.acceptedMode).toBe("prompt");
+    expect((runtime as any).promptDispatchPending).toBe(false);
+    expect(session.promptCalls).toContain(buildResumePrompt("## Current Task\nKeep going"));
+  });
+
   it("runContextGuard happy path runs abort -> handoff -> compact -> resume -> cleanup", async () => {
     const { runtime, session } = createRuntime();
     session.contextUsage = {

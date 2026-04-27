@@ -27,6 +27,7 @@ import type {
   RuntimeUserMessage,
   RuntimeUserMessageInput,
   SetPinnedContentOptions,
+  SmartCompactOptions,
   SmartCompactResult,
   SpecialistFallbackReplaySnapshot,
   SwarmAgentRuntime,
@@ -326,7 +327,7 @@ export class ClaudeAgentRuntime implements SwarmAgentRuntime {
     });
   }
 
-  async smartCompact(customInstructions?: string): Promise<SmartCompactResult> {
+  async smartCompact(customInstructions?: string, _options?: SmartCompactOptions): Promise<SmartCompactResult> {
     this.ensureNotTerminated();
 
     const usage = await this.refreshContextUsageFromSdk();

@@ -3,6 +3,7 @@ import type {
   RuntimeCreationOptions,
   RuntimeShutdownOptions,
   RuntimeUserMessage,
+  SmartCompactOptions,
   SmartCompactResult,
   SpecialistFallbackReplaySnapshot,
   SwarmAgentRuntime,
@@ -29,7 +30,7 @@ export class FakeRuntime implements SwarmAgentRuntime {
   stopInFlightCalls: Array<RuntimeShutdownOptions | undefined> = []
   sendCalls: Array<{ message: string | RuntimeUserMessage; delivery: RequestedDeliveryMode }> = []
   compactCalls: Array<string | undefined> = []
-  smartCompactCalls: Array<string | undefined> = []
+  smartCompactCalls: Array<{ customInstructions?: string; options?: SmartCompactOptions }> = []
   recycleCalls = 0
   nextDeliveryId = 0
   busy = false
@@ -129,8 +130,8 @@ export class FakeRuntime implements SwarmAgentRuntime {
     }
   }
 
-  async smartCompact(customInstructions?: string): Promise<SmartCompactResult> {
-    this.smartCompactCalls.push(customInstructions)
+  async smartCompact(customInstructions?: string, options?: SmartCompactOptions): Promise<SmartCompactResult> {
+    this.smartCompactCalls.push({ customInstructions, options })
     return this.smartCompactResult
   }
 

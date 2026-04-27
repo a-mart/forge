@@ -3477,14 +3477,14 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       type: "conversation_message",
       agentId,
       role: "system",
-      text: "Running smart compaction (handoff → compact → resume)…",
+      text: "Running smart compaction…",
       timestamp: this.now(),
       source: "system",
       sourceContext
     });
 
     try {
-      const result = await runtime.smartCompact(customInstructions);
+      const result = await runtime.smartCompact(customInstructions, { skipResumeIfIdle: true });
 
       if (result.compacted) {
         // Track successful smart compaction
@@ -3512,7 +3512,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         const text =
           runtime.runtimeType === "claude" && result.reason === "claude_runtime_below_compaction_threshold"
             ? "Smart compaction skipped because context is already below the Claude compaction threshold."
-            : `Smart compaction finished but context was not reduced (${result.reason}). The handoff note was written and a resume prompt was sent, but compaction did not succeed.`;
+            : `Smart compaction finished but context was not reduced (${result.reason}).`;
         this.emitConversationMessage({
           type: "conversation_message",
           agentId,
