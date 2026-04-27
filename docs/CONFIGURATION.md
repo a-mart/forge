@@ -148,7 +148,7 @@ Skills are loaded from the machine-local directory first, and then from Forge's 
 
 Discovered skills are injected into all agent/runtime sessions the same way other loaded skills are.
 
-Use this for station-specific workflows that should stay outside a shared repository. The built-in `create-skill` helper can scaffold skills for machine-local, profile-local, or project-local placement and validate the resulting structure. A local skill should live at:
+Use this for station-specific workflows that should stay outside a shared repository. The built-in `create-skill` helper can scaffold reusable global skills or project skills and validate the resulting structure. A local skill should live at:
 
 ```text
 ${FORGE_DATA_DIR}/skills/<skillName>/SKILL.md

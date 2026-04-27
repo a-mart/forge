@@ -477,7 +477,7 @@ Go to **Settings → Skills** to configure agent capabilities:
 
 - **Brave Search** — Paste your Brave API key here. Gives all agents web search. You don't have to tell agents to use Brave; they'll search automatically when they need external information.
 - **Chrome CDP** — If you're running Chrome 146+, you can enable Chrome DevTools Protocol access. This lets agents connect to tabs you have open in your browser, with access to your authenticated sessions.
-- **Custom skills** — Reusable custom skills can be scaffolded and validated with the built-in `create-skill` helper, which can place them machine-locally, per profile, or project-locally as needed.
+- **Custom skills** — Reusable custom skills can be scaffolded and validated with the built-in `create-skill` helper, which can create global skills or project skills as needed.
 
 > **Chrome CDP tip:** Always set an allowlist of URLs. Without it, agents see every open tab (all 168 of them) and things get slow. And they will comment on your tab count.
 
