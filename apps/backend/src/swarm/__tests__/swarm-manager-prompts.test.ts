@@ -758,7 +758,7 @@ describe('SwarmManager', () => {
     expect(workerPrompt).toContain('Follow the memory skill workflow before editing the memory file')
   })
 
-    it('auto-loads per-runtime memory context and wires built-in memory + brave-search + cron-scheduling + agent-browser + image-generation + slash-commands + chrome-cdp skills', async () => {
+    it('auto-loads per-runtime memory context and wires built-in memory + brave-search + cron-scheduling + agent-browser + image-generation + slash-commands + chrome-cdp + create-skill skills', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -771,7 +771,7 @@ describe('SwarmManager', () => {
     expect(resources.memoryContextFile.path).toBe(rootSessionMemoryPath)
     expect(resources.memoryContextFile.content).toContain(persistedMemory.trim())
     expect(resources.memoryContextFile.content).toContain('# Common Knowledge (maintained by Cortex — read-only reference)')
-    expect(resources.additionalSkillPaths.length).toBeGreaterThanOrEqual(7)
+    expect(resources.additionalSkillPaths.length).toBeGreaterThanOrEqual(8)
 
     const memorySkillPath = resources.additionalSkillPaths.find((path) => path.endsWith(join('memory', 'SKILL.md')))
     expect(memorySkillPath).toBeDefined()
@@ -815,6 +815,14 @@ describe('SwarmManager', () => {
     const chromeCdpSkill = await readFile(chromeCdpSkillPath!, 'utf8')
     expect(chromeCdpSkill).toContain('name: chrome-cdp')
     expect(chromeCdpSkill).toContain('scripts/cdp.mjs')
+
+    const createSkillPath = resources.additionalSkillPaths.find((path) => path.endsWith(join('create-skill', 'SKILL.md')))
+    expect(createSkillPath).toBeDefined()
+    const createSkill = await readFile(createSkillPath!, 'utf8')
+    expect(createSkill).toContain('name: create-skill')
+    expect(createSkill).toContain('scripts/scaffold-skill.mjs')
+    // eslint-disable-next-line no-template-curly-in-string
+    expect(createSkill).toContain('${SWARM_DATA_DIR}/skills/<name>')
   })
 
   it('lists only profile-scoped skill metadata when a profile is selected', async () => {

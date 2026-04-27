@@ -1,0 +1,23 @@
+#!/usr/bin/env node
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
+
+const scriptDir = dirname(fileURLToPath(import.meta.url));
+const skillRoot = resolve(scriptDir, "..");
+const args = process.argv.slice(2);
+
+if (args.includes("--help")) {
+  console.log(JSON.stringify({
+    ok: true,
+    usage: "node ./scripts/main.mjs [args...]",
+    skillRoot,
+  }, null, 2));
+  process.exit(0);
+}
+
+console.log(JSON.stringify({
+  ok: true,
+  message: "Replace this helper with the deterministic logic your skill needs.",
+  skillRoot,
+  args,
+}, null, 2));
