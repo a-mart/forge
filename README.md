@@ -188,7 +188,7 @@ Managers and workers have access to built-in skills:
 
 Skill API keys can be configured in the dashboard under Settings → Environment Variables, or via `.env` / shell environment.
 
-Forge also supports custom skills. Place them in `${FORGE_DATA_DIR}/skills` (default: `~/.forge/skills`) using the standard `SKILL.md` frontmatter format and they'll be available to all agents. You can even have agents create new skills for you. See [docs/CONFIGURATION.md](docs/CONFIGURATION.md#machine-local-skills).
+Forge also supports custom skills. Place them in `${FORGE_DATA_DIR}/skills` (default: `~/.forge/skills`) using the standard `SKILL.md` frontmatter format and they'll be available to all agents. For reusable custom skills, use the built-in `create-skill` helper to scaffold, place, and validate the skill structure. See [docs/CONFIGURATION.md](docs/CONFIGURATION.md#machine-local-skills).
 
 ### Extensions
 
