@@ -3,7 +3,10 @@ import { Loader2 } from 'lucide-react'
 import { CollaborationAuthError } from '@/components/settings/collaboration/CollaborationAuthError'
 import { CollabEmptyState } from '@/components/chat/collab/CollabEmptyState'
 import { CollabHeader } from '@/components/chat/collab/CollabHeader'
+import { ChannelPromptPreviewDialog } from '@/components/chat/collab/ChannelPromptPreviewDialog'
 import type { CollabMessageSourceView } from '@/components/chat/collab/CollabHeader'
+import { UserAvatarPopover } from '@/components/chat/collab-sidebar/UserAvatarPopover'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import { WorkerHistoryPanel } from '@/components/chat/collab/WorkerHistoryPanel'
 import { adaptCollabToConversationEntries } from '@/components/chat/collab/collab-conversation-adapter'
 import { MessageInput } from '@/components/chat/MessageInput'
@@ -20,6 +23,7 @@ interface CollabWorkspaceProps {
   wsUrl: string
   channelId?: string
   onSelectChannel?: (channelId?: string) => void
+  onOpenSettings?: () => void
 }
 
 /**
@@ -52,6 +56,7 @@ export function CollabWorkspace({
   wsUrl,
   channelId,
   onSelectChannel,
+  onOpenSettings,
 }: CollabWorkspaceProps) {
   const { clientRef, state } = useCollabWsContext()
   const previousChannelIdRef = useRef<string | undefined>(undefined)
@@ -63,6 +68,7 @@ export function CollabWorkspace({
   const [smartCompactInProgress, setSmartCompactInProgress] = useState(false)
   const [clearInProgress, setClearInProgress] = useState(false)
   const [workerPanelOpen, setWorkerPanelOpen] = useState(false)
+  const [promptPreviewOpen, setPromptPreviewOpen] = useState(false)
 
   const selectedChannel = useMemo(
     () => state.channels.find((channel) => channel.channelId === channelId),
@@ -353,6 +359,7 @@ export function CollabWorkspace({
           memberCount={memberCount}
           channelView={messageSourceView}
           onChannelViewChange={setMessageSourceView}
+          onViewPrompt={() => setPromptPreviewOpen(true)}
           onCompact={hasAiSession ? handleCompact : undefined}
           compactInProgress={compactInProgress}
           onSmartCompact={hasAiSession ? handleSmartCompact : undefined}
@@ -362,6 +369,9 @@ export function CollabWorkspace({
           workerCount={state.sessionWorkers.length}
           isWorkerPanelOpen={workerPanelOpen}
           onToggleWorkerPanel={state.sessionWorkers.length > 0 ? handleToggleWorkerPanel : undefined}
+          wsUrl={wsUrl}
+          currentUser={state.currentUser}
+          onOpenSettings={onOpenSettings}
         />
       ) : null}
 
@@ -386,6 +396,19 @@ export function CollabWorkspace({
       {actionError || state.lastError ? (
         <div className="border-b border-destructive/20 bg-destructive/10 px-4 py-2 text-xs text-destructive">
           {actionError ?? state.lastError}
+        </div>
+      ) : null}
+
+      {/* Top-right avatar when no channel is selected (replaces CollabHeader) */}
+      {!selectedChannel ? (
+        <div className="flex shrink-0 items-center justify-end border-b border-border/80 bg-card/80 px-4 py-2 backdrop-blur md:px-5">
+          <TooltipProvider delayDuration={200}>
+            <UserAvatarPopover
+              wsUrl={wsUrl}
+              currentUser={state.currentUser}
+              onOpenSettings={onOpenSettings}
+            />
+          </TooltipProvider>
         </div>
       ) : null}
 
@@ -433,6 +456,15 @@ export function CollabWorkspace({
         draftKey={composerDraftKey}
         wsUrl={wsUrl}
       />
+
+      {selectedChannel ? (
+        <ChannelPromptPreviewDialog
+          open={promptPreviewOpen}
+          onOpenChange={setPromptPreviewOpen}
+          channelId={selectedChannel.channelId}
+          channelName={selectedChannel.name}
+        />
+      ) : null}
     </div>
   )
 }

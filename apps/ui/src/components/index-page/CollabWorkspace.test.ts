@@ -43,8 +43,30 @@ vi.mock('@/components/chat/collab/CollabEmptyState', () => ({
   CollabEmptyState: ({ variant }: { variant: string }) => createElement('div', { 'data-testid': 'collab-empty' }, variant),
 }))
 
+const collabHeaderCapture = vi.hoisted(() => ({
+  lastPropsRef: { current: null as Record<string, unknown> | null },
+}))
+
 vi.mock('@/components/chat/collab/CollabHeader', () => ({
-  CollabHeader: () => createElement('div', { 'data-testid': 'collab-header' }),
+  CollabHeader: (props: Record<string, unknown>) => {
+    collabHeaderCapture.lastPropsRef.current = props
+    return createElement('div', { 'data-testid': 'collab-header' })
+  },
+}))
+
+const promptPreviewDialogCapture = vi.hoisted(() => ({
+  lastPropsRef: { current: null as Record<string, unknown> | null },
+}))
+
+vi.mock('@/components/chat/collab/ChannelPromptPreviewDialog', () => ({
+  ChannelPromptPreviewDialog: (props: Record<string, unknown>) => {
+    promptPreviewDialogCapture.lastPropsRef.current = props
+    return createElement('div', {
+      'data-testid': 'channel-prompt-preview-dialog',
+      'data-open': String(Boolean(props.open)),
+      'data-channel-id': String(props.channelId ?? ''),
+    })
+  },
 }))
 
 const workerPillBarCapture = vi.hoisted(() => ({
@@ -165,6 +187,8 @@ beforeEach(() => {
   messageInputCapture.lastPropsRef.current = null
   messageInputCapture.restoreLastSubmission.mockClear()
   messageListCapture.lastPropsRef.current = null
+  collabHeaderCapture.lastPropsRef.current = null
+  promptPreviewDialogCapture.lastPropsRef.current = null
   workerPillBarCapture.rendered = false
   collabAdapterCapture.entries = []
   workerPillBarCapture.lastProps = null
@@ -283,6 +307,45 @@ describe('CollabWorkspace channel recovery', () => {
     await Promise.resolve()
 
     expect(onSelectChannel).toHaveBeenCalledWith(undefined)
+  })
+})
+
+describe('CollabWorkspace prompt preview integration', () => {
+  it('wires View AI prompt for signed-in members even when the channel AI toggle is off', () => {
+    collabContextMock.value = {
+      clientRef: { current: null },
+      state: buildStateWithChannel({
+        channels: [
+          {
+            channelId: 'channel-1',
+            workspaceId: 'workspace-1',
+            categoryId: undefined,
+            sessionAgentId: 'session-1',
+            name: 'general',
+            slug: 'general',
+            aiEnabled: false,
+            aiRole: 'channel_assistant',
+            position: 1,
+            archived: false,
+            lastMessageSeq: 0,
+            createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+          },
+        ],
+      }),
+    }
+
+    renderWorkspace({ channelId: 'channel-1' })
+
+    const onViewPrompt = collabHeaderCapture.lastPropsRef.current?.onViewPrompt as (() => void) | undefined
+    expect(onViewPrompt).toBeDefined()
+    expect(promptPreviewDialogCapture.lastPropsRef.current?.open).toBe(false)
+
+    onViewPrompt?.()
+    rerenderWorkspace({ channelId: 'channel-1' })
+
+    expect(promptPreviewDialogCapture.lastPropsRef.current?.open).toBe(true)
+    expect(promptPreviewDialogCapture.lastPropsRef.current?.channelId).toBe('channel-1')
   })
 })
 

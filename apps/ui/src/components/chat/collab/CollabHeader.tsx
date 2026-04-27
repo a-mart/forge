@@ -6,6 +6,7 @@ import {
   Loader2,
   Minimize2,
   MoreHorizontal,
+  ScrollText,
   Sparkles,
   Trash2,
   Users,
@@ -25,6 +26,8 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
+import { UserAvatarPopover } from '@/components/chat/collab-sidebar/UserAvatarPopover'
+import type { CollaborationBootstrapCurrentUser } from '@forge/protocol'
 
 export type CollabMessageSourceView = 'web' | 'all'
 
@@ -36,6 +39,8 @@ interface CollabHeaderProps {
   /** Current message source view filter */
   channelView: CollabMessageSourceView
   onChannelViewChange: (view: CollabMessageSourceView) => void
+  /** Read-only AI prompt preview action */
+  onViewPrompt?: () => void
   /** Compact context action */
   onCompact?: () => void
   compactInProgress?: boolean
@@ -49,6 +54,10 @@ interface CollabHeaderProps {
   workerCount?: number
   isWorkerPanelOpen?: boolean
   onToggleWorkerPanel?: () => void
+  /** User profile popover (top-right) */
+  wsUrl?: string
+  currentUser?: CollaborationBootstrapCurrentUser | null
+  onOpenSettings?: () => void
 }
 
 function ChannelToggleButton({
@@ -84,6 +93,7 @@ export function CollabHeader({
   memberCount,
   channelView,
   onChannelViewChange,
+  onViewPrompt,
   onCompact,
   compactInProgress = false,
   onSmartCompact,
@@ -93,6 +103,9 @@ export function CollabHeader({
   workerCount = 0,
   isWorkerPanelOpen = false,
   onToggleWorkerPanel,
+  wsUrl,
+  currentUser,
+  onOpenSettings,
 }: CollabHeaderProps) {
   const breadcrumb = useMemo(() => {
     if (!categoryName) {
@@ -103,7 +116,7 @@ export function CollabHeader({
   }, [categoryName, workspaceDisplayName])
 
   const anyCompactionInProgress = compactInProgress || smartCompactInProgress
-  const hasConversationActions = Boolean(onCompact || onSmartCompact || onClearConversation)
+  const hasConversationActions = Boolean(onViewPrompt || onCompact || onSmartCompact || onClearConversation)
 
   return (
     <>
@@ -211,6 +224,15 @@ export function CollabHeader({
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" sideOffset={6} className="min-w-44">
+                  {onViewPrompt ? (
+                    <DropdownMenuItem
+                      onSelect={onViewPrompt}
+                      className="gap-2 text-xs"
+                    >
+                      <ScrollText className="size-3.5" />
+                      View AI prompt
+                    </DropdownMenuItem>
+                  ) : null}
                   {onCompact ? (
                     <DropdownMenuItem
                       onSelect={onCompact}
@@ -255,6 +277,20 @@ export function CollabHeader({
                   ) : null}
                 </DropdownMenuContent>
               </DropdownMenu>
+            </>
+          ) : null}
+
+          {/* ── User profile avatar (top-right) ── */}
+          {wsUrl ? (
+            <>
+              <Separator orientation="vertical" className="hidden sm:block mx-0.5 h-4 bg-border/60" />
+              <TooltipProvider delayDuration={200}>
+                <UserAvatarPopover
+                  wsUrl={wsUrl}
+                  currentUser={currentUser ?? null}
+                  onOpenSettings={onOpenSettings}
+                />
+              </TooltipProvider>
             </>
           ) : null}
 

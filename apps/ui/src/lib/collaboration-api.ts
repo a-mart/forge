@@ -9,6 +9,7 @@ import type {
   CollaborationAiRole,
   CollaborationCategory,
   CollaborationChannel,
+  CollaborationChannelPromptPreviewResponse,
 } from '@forge/protocol'
 import { resolveCollaborationApiBaseUrl } from './collaboration-endpoints'
 
@@ -47,6 +48,12 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
 export async function getChannel(channelId: string): Promise<CollaborationChannel> {
   const response = await apiFetch<{ channel: CollaborationChannel }>(`/api/collaboration/channels/${encodeURIComponent(channelId)}`)
   return response.channel
+}
+
+export function fetchChannelPromptPreview(channelId: string): Promise<CollaborationChannelPromptPreviewResponse> {
+  return apiFetch<CollaborationChannelPromptPreviewResponse>(
+    `/api/collaboration/channels/${encodeURIComponent(channelId)}/prompt-preview`,
+  )
 }
 
 export async function createChannel(

@@ -127,6 +127,17 @@ export interface CollaborationChannel {
   updatedAt: string
 }
 
+export interface CollaborationPromptPreviewSection {
+  label: string
+  content: string
+}
+
+export interface CollaborationChannelPromptPreviewResponse {
+  channelId: string
+  sections: CollaborationPromptPreviewSection[]
+  redacted: true
+}
+
 export interface CollaborationAuthor {
   userId: string
   displayName: string
