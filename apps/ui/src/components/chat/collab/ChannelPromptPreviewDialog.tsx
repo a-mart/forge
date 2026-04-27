@@ -37,7 +37,12 @@ export function ChannelPromptPreviewDialog({
       const result = await fetchChannelPromptPreview(channelId)
       setData(result)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch AI prompt preview')
+      const raw = err instanceof Error ? err.message : String(err)
+      // The backend route may not exist on public/non-collab backends — show
+      // a deliberate message instead of the raw "404: Not Found" error.
+      setError(raw.startsWith('404:')
+        ? 'Prompt preview isn\u2019t available on this backend yet.'
+        : raw || 'Failed to fetch AI prompt preview')
     } finally {
       setLoading(false)
     }

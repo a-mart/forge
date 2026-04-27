@@ -116,4 +116,24 @@ describe('ChannelPromptPreviewDialog', () => {
     expect(document.body.textContent).toContain('Prompt body')
     expect(document.body.textContent).not.toContain('403: Authentication required')
   })
+
+  it('shows a friendly message when the backend route is missing (404)', async () => {
+    apiMocks.fetchChannelPromptPreview.mockRejectedValueOnce(new Error('404: Not Found'))
+
+    renderDialog(true)
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+
+    // Should show deliberate copy, not the raw "404: Not Found"
+    expect(document.body.textContent).toContain('Prompt preview isn\u2019t available on this backend yet.')
+    expect(document.body.textContent).not.toContain('404')
+
+    // Retry button should still be present
+    const retryButton = Array.from(document.body.querySelectorAll('button')).find(
+      (el) => el.textContent?.includes('Retry'),
+    )
+    expect(retryButton).toBeTruthy()
+  })
 })
