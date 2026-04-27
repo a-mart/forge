@@ -7,6 +7,8 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
   reportBuilderConnected,
   reportCollabConnected,
+  reportBuilderPoll,
+  reportCollabPoll,
   markBuilderInactive,
   markCollabInactive,
   useConnectionHealth,
@@ -135,49 +137,46 @@ describe('reconnecting (amber) state', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Blocker 2: inactive surface shows disconnected, not stale green
+// markInactive — clears WS signal but poll keeps availability accurate
 // ---------------------------------------------------------------------------
 
 describe('mark inactive on unmount', () => {
-  it('shows disconnected after markBuilderInactive even if last report was connected', () => {
+  it('shows reconnecting (not stale green) after markBuilderInactive when no poll', () => {
     const hook = renderHook()
 
     flushSync(() => reportBuilderConnected(true))
     expect(hook.value.builder).toBe('connected')
 
+    // Unmount clears WS; wasEverConnected preserved → reconnecting
     flushSync(() => markBuilderInactive())
-    expect(hook.value.builder).toBe('disconnected')
+    expect(hook.value.builder).toBe('reconnecting')
 
     hook.cleanup()
   })
 
-  it('shows disconnected after markCollabInactive even if last report was connected', () => {
+  it('stays green after markCollabInactive when poll says available', () => {
     const hook = renderHook()
 
-    flushSync(() => reportCollabConnected(true))
+    flushSync(() => {
+      reportCollabConnected(true)
+      reportCollabPoll(true)
+    })
     expect(hook.value.collab).toBe('connected')
 
+    // Unmount clears WS but poll keeps it green
     flushSync(() => markCollabInactive())
-    expect(hook.value.collab).toBe('disconnected')
+    expect(hook.value.collab).toBe('connected')
 
     hook.cleanup()
   })
 
-  it('resets wasEverConnected so remount starts fresh', () => {
+  it('preserves wasEverConnected across markInactive', () => {
     flushSync(() => reportBuilderConnected(true))
     flushSync(() => markBuilderInactive())
 
-    // After marking inactive, the tracker is fully reset
     const trackers = _getTrackers()
-    expect(trackers.builder.wasEverConnected).toBe(false)
-    expect(trackers.builder.active).toBe(false)
-
-    // Fresh mount reports false — should be 'disconnected' not 'reconnecting'
-    const hook = renderHook()
-    flushSync(() => reportBuilderConnected(false))
-    expect(hook.value.builder).toBe('disconnected')
-
-    hook.cleanup()
+    expect(trackers.builder.wasEverConnected).toBe(true)
+    expect(trackers.builder.wsConnected).toBe(false)
   })
 
   it('does not affect the other surface', () => {
@@ -190,7 +189,97 @@ describe('mark inactive on unmount', () => {
     expect(hook.value).toEqual({ builder: 'connected', collab: 'connected' })
 
     flushSync(() => markBuilderInactive())
-    expect(hook.value).toEqual({ builder: 'disconnected', collab: 'connected' })
+    // Builder: WS cleared, was ever connected → reconnecting
+    // Collab: still connected
+    expect(hook.value).toEqual({ builder: 'reconnecting', collab: 'connected' })
+
+    hook.cleanup()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Health poll — backend availability without active WS
+// ---------------------------------------------------------------------------
+
+describe('health poll', () => {
+  it('shows green from poll even without WS connection', () => {
+    const hook = renderHook()
+    flushSync(() => reportBuilderPoll(true))
+    expect(hook.value.builder).toBe('connected')
+    hook.cleanup()
+  })
+
+  it('shows reconnecting when poll goes unavailable after prior connection', () => {
+    const hook = renderHook()
+    flushSync(() => {
+      reportCollabConnected(true)
+      reportCollabConnected(false)
+      reportCollabPoll(false)
+    })
+    expect(hook.value.collab).toBe('reconnecting')
+    hook.cleanup()
+  })
+
+  it('poll keeps dot green even after surface unmount', () => {
+    const hook = renderHook()
+    flushSync(() => {
+      reportBuilderConnected(true)
+      reportBuilderPoll(true)
+    })
+    expect(hook.value.builder).toBe('connected')
+
+    // Surface unmounts: WS signal clears, but poll stays
+    flushSync(() => markBuilderInactive())
+    expect(hook.value.builder).toBe('connected')
+
+    hook.cleanup()
+  })
+
+  it('poll going false after unmount shows reconnecting', () => {
+    const hook = renderHook()
+    flushSync(() => {
+      reportBuilderConnected(true)
+      reportBuilderPoll(true)
+    })
+    flushSync(() => markBuilderInactive())
+    // Poll fails → both signals false, wasEverConnected true → reconnecting
+    flushSync(() => reportBuilderPoll(false))
+    expect(hook.value.builder).toBe('reconnecting')
+    hook.cleanup()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Screenshot scenario: collab active + both backends available
+// ---------------------------------------------------------------------------
+
+describe('screenshot scenario', () => {
+  it('collab active + builder poll available + collab WS connected => both green', () => {
+    const hook = renderHook()
+
+    flushSync(() => {
+      // Builder surface not mounted but poll says it's up
+      reportBuilderPoll(true)
+      // Collab has active WS connection
+      reportCollabConnected(true)
+    })
+
+    expect(hook.value.builder).toBe('connected')
+    expect(hook.value.collab).toBe('connected')
+
+    hook.cleanup()
+  })
+
+  it('builder active + collab poll available + builder WS connected => both green', () => {
+    const hook = renderHook()
+
+    flushSync(() => {
+      reportBuilderConnected(true)
+      reportCollabPoll(true)
+    })
+
+    expect(hook.value.builder).toBe('connected')
+    expect(hook.value.collab).toBe('connected')
 
     hook.cleanup()
   })
@@ -215,7 +304,7 @@ describe('dedup', () => {
 
     flushSync(() => root.render(createElement(TestComponent)))
 
-    // Report false (already disconnected, but active changes) — one render expected
+    // Report false (already disconnected) — no state change
     flushSync(() => reportBuilderConnected(false))
     const afterFirstReport = renderCount
 
@@ -233,7 +322,7 @@ describe('dedup', () => {
 // ---------------------------------------------------------------------------
 
 describe('full surface lifecycle', () => {
-  it('builder: mount -> connect -> drop -> reconnect -> unmount -> remount', () => {
+  it('builder: mount -> connect -> drop -> reconnect -> unmount -> poll -> remount', () => {
     const hook = renderHook()
 
     // Mount: initial report
@@ -252,15 +341,15 @@ describe('full surface lifecycle', () => {
     flushSync(() => reportBuilderConnected(true))
     expect(hook.value.builder).toBe('connected')
 
-    // Unmount
+    // Unmount — WS clears, but wasEverConnected preserved
     flushSync(() => markBuilderInactive())
-    expect(hook.value.builder).toBe('disconnected')
+    expect(hook.value.builder).toBe('reconnecting')
 
-    // Remount (fresh client, starts disconnected)
-    flushSync(() => reportBuilderConnected(false))
-    expect(hook.value.builder).toBe('disconnected')
+    // Poll says backend is still up
+    flushSync(() => reportBuilderPoll(true))
+    expect(hook.value.builder).toBe('connected')
 
-    // New client connects
+    // Remount (fresh client reports connected)
     flushSync(() => reportBuilderConnected(true))
     expect(hook.value.builder).toBe('connected')
 

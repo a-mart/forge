@@ -36,7 +36,6 @@ import {
 } from '@/components/ui/dropdown-menu'
 import type { CollaborationCategory, CollaborationChannel } from '@forge/protocol'
 import { ModeSwitch } from './ModeSwitch'
-import { UserAvatarPopover } from './UserAvatarPopover'
 import { CategoryGroup } from './CategoryGroup'
 import { ChannelRowItem } from './ChannelRowItem'
 import { useCollabSidebarPrefs } from './hooks/use-collab-sidebar-prefs'
@@ -57,7 +56,6 @@ interface CollabSidebarProps {
   activeSurface: ActiveSurface
   onSelectChannel: (channelId?: string) => void
   onSelectSurface: (surface: ActiveSurface) => void
-  onOpenSettings?: () => void
 }
 
 export function CollabSidebar({
@@ -66,7 +64,6 @@ export function CollabSidebar({
   activeSurface,
   onSelectChannel,
   onSelectSurface,
-  onOpenSettings,
 }: CollabSidebarProps) {
   const { clientRef, state } = useCollabWsContext()
   const sensors = useSensors(
@@ -276,7 +273,7 @@ export function CollabSidebar({
   return (
     <>
       <aside className="flex h-full w-[320px] shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground">
-        {/* Header: mode switch + user avatar + actions menu */}
+        {/* Header: mode switch + actions menu (avatar moved to top-right header area) */}
         <TooltipProvider delayDuration={200}>
           <div className="flex items-center gap-1.5 px-2 pt-2 pb-3">
             <ModeSwitch
@@ -284,7 +281,6 @@ export function CollabSidebar({
               onSelectSurface={onSelectSurface}
               className="flex-1"
             />
-            <UserAvatarPopover wsUrl={wsUrl} currentUser={state.currentUser} onOpenSettings={onOpenSettings} />
             {canManage ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>

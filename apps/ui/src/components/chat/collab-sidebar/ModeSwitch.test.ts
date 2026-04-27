@@ -7,6 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   reportBuilderConnected,
   reportCollabConnected,
+  reportBuilderPoll,
+  reportCollabPoll,
   markCollabInactive,
   _resetForTesting,
 } from '@/lib/connection-health-store'
@@ -77,7 +79,7 @@ describe('ModeSwitch', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // Health dot colors
+  // Health dot colors — WS-based reporting
   // ---------------------------------------------------------------------------
 
   it('shows gray dots when both are disconnected (default)', () => {
@@ -114,22 +116,93 @@ describe('ModeSwitch', () => {
     expect(dots[0].className).toContain('bg-amber-500')
   })
 
-  it('shows gray after markInactive, not stale green', () => {
-    flushSync(() => {
-      reportCollabConnected(true)
-      markCollabInactive()
-    })
-    render()
-    const dots = getDots()
-    expect(dots[1].className).toContain('bg-muted-foreground/40')
-  })
-
   it('shows correct dots when builder connected + collab connected', () => {
     flushSync(() => {
       reportBuilderConnected(true)
       reportCollabConnected(true)
     })
     render()
+    const dots = getDots()
+    expect(dots[0].className).toContain('bg-emerald-500')
+    expect(dots[1].className).toContain('bg-emerald-500')
+  })
+
+  // ---------------------------------------------------------------------------
+  // Health poll — backend availability without active WS
+  // ---------------------------------------------------------------------------
+
+  it('shows green dot from poll when surface is not mounted (backend available)', () => {
+    // Simulate: builder was connected, surface unmounted, but poll says it's still up
+    flushSync(() => {
+      reportBuilderConnected(true)
+      // WS disconnects when surface unmounts
+      reportBuilderConnected(false)
+      // Health poll reports backend is still available
+      reportBuilderPoll(true)
+    })
+    render()
+    const dots = getDots()
+    expect(dots[0].className).toContain('bg-emerald-500')
+  })
+
+  it('shows green for inactive surface with poll available (no prior WS)', () => {
+    // Simulate: never had a WS connection, but poll says backend is up
+    flushSync(() => {
+      reportCollabPoll(true)
+    })
+    render()
+    const dots = getDots()
+    expect(dots[1].className).toContain('bg-emerald-500')
+  })
+
+  it('shows amber when poll goes unavailable after prior connection', () => {
+    flushSync(() => {
+      reportCollabConnected(true)
+      reportCollabConnected(false)
+      reportCollabPoll(false)
+    })
+    render()
+    const dots = getDots()
+    expect(dots[1].className).toContain('bg-amber-500')
+  })
+
+  it('markCollabInactive clears WS signal but poll keeps it green', () => {
+    flushSync(() => {
+      reportCollabConnected(true)
+      reportCollabPoll(true)
+      markCollabInactive()
+    })
+    render()
+    const dots = getDots()
+    // Poll still says available, so dot stays green
+    expect(dots[1].className).toContain('bg-emerald-500')
+  })
+
+  // ---------------------------------------------------------------------------
+  // Screenshot scenario: collab active + both backends available
+  // ---------------------------------------------------------------------------
+
+  it('collab active + builder poll available + collab WS connected => both green', () => {
+    flushSync(() => {
+      // Builder not mounted (on collab view) but poll says it's up
+      reportBuilderPoll(true)
+      // Collab has active WS connection
+      reportCollabConnected(true)
+    })
+    render('collab')
+    const dots = getDots()
+    expect(dots[0].className).toContain('bg-emerald-500')
+    expect(dots[1].className).toContain('bg-emerald-500')
+  })
+
+  it('builder active + collab poll available + builder WS connected => both green', () => {
+    flushSync(() => {
+      // Builder has active WS connection
+      reportBuilderConnected(true)
+      // Collab not mounted (on builder view) but poll says it's up
+      reportCollabPoll(true)
+    })
+    render('builder')
     const dots = getDots()
     expect(dots[0].className).toContain('bg-emerald-500')
     expect(dots[1].className).toContain('bg-emerald-500')
@@ -202,5 +275,15 @@ describe('ModeSwitch', () => {
     flushSync(() => reportBuilderConnected(true))
     dots = getDots()
     expect(dots[0].className).toContain('bg-emerald-500')
+  })
+
+  it('updates dots in response to poll changes after mount', () => {
+    render()
+    let dots = getDots()
+    expect(dots[1].className).toContain('bg-muted-foreground/40')
+
+    flushSync(() => reportCollabPoll(true))
+    dots = getDots()
+    expect(dots[1].className).toContain('bg-emerald-500')
   })
 })

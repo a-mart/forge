@@ -17,6 +17,7 @@ import type { AgentDescriptor } from '@forge/protocol'
 import { resolveBackendWsUrl } from '@/lib/backend-url'
 import { resolveCollaborationWsUrl, getCollabServerUrl } from '@/lib/collaboration-endpoints'
 import { isElectron } from '@/lib/electron-bridge'
+import { useBackendHealthPoll } from '@/hooks/index-page/use-backend-health-poll'
 
 export const Route = createFileRoute('/')({
   component: IndexPage,
@@ -54,6 +55,9 @@ export function IndexPage() {
     search: routeSearch,
     navigate,
   })
+  // Keep connection-health-store accurate regardless of which surface is mounted
+  useBackendHealthPoll(wsUrl, collabWsUrl)
+
   const inElectron = isElectron()
   const hasConfiguredCollabServer = Boolean(getCollabServerUrl())
   // Allow Electron to participate in collab if a remote server URL is configured

@@ -5,8 +5,10 @@
  * `wasEverConnected` across reconnect cycles (the WS clients clear their
  * own bootstrap flags on disconnect, so we track it here instead).
  *
- * When a surface unmounts it calls `mark*Inactive()` — the store honestly
- * shows 'disconnected' rather than retaining a stale green.
+ * Health dots reflect **backend availability**, not whether the surface
+ * component is currently mounted.  A route-level health poll keeps the
+ * inactive surface's dot accurate so switching away from a surface does
+ * not immediately turn its dot gray.
  */
 
 import { useSyncExternalStore } from 'react'
@@ -17,9 +19,9 @@ import { useSyncExternalStore } from 'react'
 
 /**
  * Connection health for a backend WebSocket:
- * - `'connected'`    — WS is open  (green dot)
- * - `'reconnecting'` — WS dropped after a prior successful connection  (amber dot)
- * - `'disconnected'` — WS never connected, surface unmounted, or feature unconfigured  (gray dot)
+ * - `'connected'`    — backend is reachable  (green dot)
+ * - `'reconnecting'` — backend was reachable before but is currently down  (amber dot)
+ * - `'disconnected'` — backend has never been reachable, or feature unconfigured  (gray dot)
  */
 export type ConnectionHealth = 'connected' | 'reconnecting' | 'disconnected'
 
@@ -28,23 +30,22 @@ export type ConnectionHealth = 'connected' | 'reconnecting' | 'disconnected'
 // ---------------------------------------------------------------------------
 
 interface SurfaceTracker {
-  /** Latest reported WS connected flag */
-  reported: boolean
-  /** Whether this surface has ever been connected (survives reconnect cycles while active) */
+  /** Latest reported WS connected flag (real-time, from active surface) */
+  wsConnected: boolean
+  /** Latest health-poll result (periodic, from route-level poll) */
+  pollAvailable: boolean
+  /** Whether this backend has ever been reachable (survives reconnect cycles) */
   wasEverConnected: boolean
-  /** Whether the monitoring surface component is currently mounted */
-  active: boolean
 }
 
 const INITIAL_TRACKER: SurfaceTracker = {
-  reported: false,
+  wsConnected: false,
+  pollAvailable: false,
   wasEverConnected: false,
-  active: false,
 }
 
 function deriveFromTracker(t: SurfaceTracker): ConnectionHealth {
-  if (!t.active) return 'disconnected'
-  if (t.reported) return 'connected'
+  if (t.wsConnected || t.pollAvailable) return 'connected'
   if (t.wasEverConnected) return 'reconnecting'
   return 'disconnected'
 }
@@ -74,7 +75,7 @@ function recalc(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Writers — called from surface components
+// Writers — surface WS reports (from mounted surface components)
 // ---------------------------------------------------------------------------
 
 /**
@@ -84,19 +85,10 @@ function recalc(): void {
  */
 export function reportBuilderConnected(connected: boolean): void {
   builderTracker = {
-    reported: connected,
+    ...builderTracker,
+    wsConnected: connected,
     wasEverConnected: connected || builderTracker.wasEverConnected,
-    active: true,
   }
-  recalc()
-}
-
-/**
- * Mark the builder surface as inactive (unmounted).  Call from a cleanup-only
- * `useEffect(() => () => markBuilderInactive(), [])`.
- */
-export function markBuilderInactive(): void {
-  builderTracker = { ...INITIAL_TRACKER }
   recalc()
 }
 
@@ -105,18 +97,56 @@ export function markBuilderInactive(): void {
  */
 export function reportCollabConnected(connected: boolean): void {
   collabTracker = {
-    reported: connected,
+    ...collabTracker,
+    wsConnected: connected,
     wasEverConnected: connected || collabTracker.wasEverConnected,
-    active: true,
+  }
+  recalc()
+}
+
+// ---------------------------------------------------------------------------
+// Writers — route-level health poll (always running, regardless of surface)
+// ---------------------------------------------------------------------------
+
+/**
+ * Report builder backend availability from the route-level health poll.
+ */
+export function reportBuilderPoll(available: boolean): void {
+  builderTracker = {
+    ...builderTracker,
+    pollAvailable: available,
+    wasEverConnected: available || builderTracker.wasEverConnected,
   }
   recalc()
 }
 
 /**
- * Mark the collab surface as inactive (unmounted).  Mirror of `markBuilderInactive`.
+ * Report collab backend availability from the route-level health poll.
  */
+export function reportCollabPoll(available: boolean): void {
+  collabTracker = {
+    ...collabTracker,
+    pollAvailable: available,
+    wasEverConnected: available || collabTracker.wasEverConnected,
+  }
+  recalc()
+}
+
+// ---------------------------------------------------------------------------
+// Deprecated — kept as no-ops for backward compatibility
+// ---------------------------------------------------------------------------
+
+/** @deprecated No longer needed — health poll tracks availability */
+export function markBuilderInactive(): void {
+  // Clear WS signal only; poll keeps availability accurate
+  builderTracker = { ...builderTracker, wsConnected: false }
+  recalc()
+}
+
+/** @deprecated No longer needed — health poll tracks availability */
 export function markCollabInactive(): void {
-  collabTracker = { ...INITIAL_TRACKER }
+  // Clear WS signal only; poll keeps availability accurate
+  collabTracker = { ...collabTracker, wsConnected: false }
   recalc()
 }
 
