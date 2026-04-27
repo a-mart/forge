@@ -6,11 +6,10 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const SCOPE_ALIASES = new Map([
-  ["global", "machine-local"],
-  ["machine-local", "machine-local"],
-  ["profile", "profile"],
-  ["project", "project-local"],
-  ["project-local", "project-local"],
+  ["global", "global"],
+  ["machine-local", "global"],
+  ["project", "project"],
+  ["profile", "project"],
 ]);
 const TEMPLATE_ALIASES = new Map([
   ["minimal", "minimal"],
@@ -32,10 +31,9 @@ async function main() {
       usage: {
         command: "node ./scripts/scaffold-skill.mjs --name <skill-name> [options]",
         options: {
-          "--scope": "machine-local | profile | project-local",
-          "--profile-id": "required for profile scope",
+          "--scope": "global | project",
+          "--project-id": "required for project scope",
           "--data-dir": "defaults to SWARM_DATA_DIR, FORGE_DATA_DIR, or ~/.forge",
-          "--cwd": "project root for project-local scope; defaults to process.cwd()",
           "--description": "skill description for frontmatter",
           "--template": "minimal | scripted",
           "--force": "overwrite scaffold-managed files inside an existing skill root",
@@ -46,12 +44,16 @@ async function main() {
   }
 
   const name = requireSkillName(parsedArgs.name);
-  const scope = normalizeScope(parsedArgs.scope ?? "machine-local");
+  const scope = normalizeScope(parsedArgs.scope ?? "global");
   const description = normalizeDescription(parsedArgs.description);
   const template = normalizeTemplate(parsedArgs.template ?? "minimal");
   const dataDir = resolve(parsedArgs["data-dir"] ?? process.env.SWARM_DATA_DIR ?? process.env.FORGE_DATA_DIR ?? join(homedir(), ".forge"));
-  const cwd = resolve(parsedArgs.cwd ?? process.cwd());
-  const targetInfo = resolveSkillTargetInfo({ scope, name, dataDir, cwd, profileId: parsedArgs["profile-id"] });
+  const targetInfo = resolveSkillTargetInfo({
+    scope,
+    name,
+    dataDir,
+    projectId: parsedArgs["project-id"] ?? parsedArgs["profile-id"],
+  });
   const templateFiles = await loadTemplateFiles(template);
   const filesToWrite = buildFiles({ name, description, template, templateFiles });
 
@@ -61,9 +63,6 @@ async function main() {
   const warnings = [];
   if (description === TODO_DESCRIPTION) {
     warnings.push("Description was omitted. Replace the TODO description before shipping the skill.");
-  }
-  if (scope === "project-local") {
-    warnings.push("Project-local skills live under <cwd>/.pi/skills and may be visible to git unless ignored.");
   }
 
   printJson({
@@ -155,8 +154,8 @@ function normalizeDescription(value) {
   return value.trim();
 }
 
-function resolveSkillTargetInfo({ scope, name, dataDir, cwd, profileId }) {
-  if (scope === "machine-local") {
+function resolveSkillTargetInfo({ scope, name, dataDir, projectId }) {
+  if (scope === "global") {
     const scopeBase = join(dataDir, "skills");
     return {
       scopeAnchor: dataDir,
@@ -165,12 +164,12 @@ function resolveSkillTargetInfo({ scope, name, dataDir, cwd, profileId }) {
     };
   }
 
-  if (scope === "profile") {
-    if (typeof profileId !== "string" || !PROFILE_ID_PATTERN.test(profileId.trim())) {
-      fail("Profile scope requires a valid --profile-id.");
+  if (scope === "project") {
+    if (typeof projectId !== "string" || !PROFILE_ID_PATTERN.test(projectId.trim())) {
+      fail("Project scope requires a valid --project-id.");
     }
 
-    const scopeBase = join(dataDir, "profiles", profileId.trim(), "pi", "skills");
+    const scopeBase = join(dataDir, "profiles", projectId.trim(), "pi", "skills");
     return {
       scopeAnchor: dataDir,
       scopeBase,
@@ -178,12 +177,7 @@ function resolveSkillTargetInfo({ scope, name, dataDir, cwd, profileId }) {
     };
   }
 
-  const scopeBase = join(cwd, ".pi", "skills");
-  return {
-    scopeAnchor: cwd,
-    scopeBase,
-    targetRoot: join(scopeBase, name),
-  };
+  fail("Unsupported scope.", { received: scope, allowed: ["global", "project"] });
 }
 
 async function loadTemplateFiles(template) {

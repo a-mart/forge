@@ -1,6 +1,6 @@
 ---
 name: create-skill
-description: Design, scaffold, and validate reusable Forge/Pi skills with safe defaults, progressive disclosure, and built-in guardrails.
+description: Use when creating, refining, or validating reusable global or project skills, including trigger wording, templates, helper scripts, and validation checks.
 ---
 
 # Create Skill
@@ -10,17 +10,18 @@ Use this skill when the user wants a **reusable agent skill** instead of a one-o
 ## Trigger check
 
 Use this skill when the request is about one or more of these:
-- creating a new skill from scratch,
-- turning a recurring workflow into a reusable skill,
-- improving an existing `SKILL.md`, helper script, template, or validation flow,
-- deciding **machine-local vs profile vs project-local** skill placement,
+- creating a new custom skill from scratch,
+- turning a recurring workflow into a reusable custom skill,
+- improving an existing custom `SKILL.md`, helper script, template, or validation flow,
+- deciding **global vs project** skill placement,
 - scaffolding a skill directory with safe defaults.
 
 ## Do not use this skill when
 - direct task execution with existing tools is enough,
 - a Forge/Pi extension with custom hooks or tools is the better abstraction,
 - a slash command is sufficient,
-- a one-off shell script does not need agent-facing instructions.
+- a one-off shell script does not need agent-facing instructions,
+- the request is to change a built-in Forge skill. Built-in skills are product/code changes, not normal user-facing create-skill output.
 
 ## Eval-first workflow
 
@@ -38,10 +39,9 @@ Use this skill when the request is about one or more of these:
      - validation expectations.
    - If a detail is non-essential, choose a safe default instead of over-interviewing.
 3. **Choose scope before writing files**
-   - Default machine-local target: `${SWARM_DATA_DIR}/skills/<name>`
-   - Profile target: `${SWARM_DATA_DIR}/profiles/<profileId>/pi/skills/<name>`
-   - Project-local target: `<cwd>/.pi/skills/<name>`
-   - Project-local skills may be visible to git unless ignored. Warn about that explicitly.
+   - **Global skills** are available across all Forge projects.
+   - **Project skills** are scoped to one Forge project.
+   - Normal user-facing options are only **global** and **project**.
 4. **Draft the contract before the implementation**
    - Start with concise frontmatter and a precise trigger section.
    - Add scripts only when they reduce ambiguity or repeated deterministic work.
@@ -52,7 +52,7 @@ Use this skill when the request is about one or more of these:
 ## Progressive disclosure
 
 Read only what you need:
-- `references/locations.md` — scope selection, storage paths, and the small legacy `.swarm/skills` note.
+- `references/locations.md` — scope selection, storage paths, and the Forge project terminology note.
 - `references/design-checklist.md` — frontmatter, trigger, checklist, guardrail, and report rubric.
 - `references/scripts-vs-instructions.md` — when to keep logic in markdown vs helper scripts.
 - `templates/minimal-SKILL.md.tmpl` — lightweight instruction-only starting point.
@@ -104,9 +104,8 @@ Read only what you need:
 Run from this skill directory, or resolve the absolute paths from the skill root:
 
 ```bash
-node ./scripts/scaffold-skill.mjs --name my-skill --scope machine-local --data-dir "${SWARM_DATA_DIR}"
-node ./scripts/scaffold-skill.mjs --name my-skill --scope profile --profile-id my-profile --data-dir "${SWARM_DATA_DIR}" --template scripted
-node ./scripts/scaffold-skill.mjs --name my-skill --scope project-local --cwd <project-root> --template scripted
+node ./scripts/scaffold-skill.mjs --name my-skill --scope global --data-dir "${SWARM_DATA_DIR}"
+node ./scripts/scaffold-skill.mjs --name my-skill --scope project --project-id my-project --data-dir "${SWARM_DATA_DIR}" --template scripted
 node ./scripts/validate-skill.mjs <skill-root>
 ```
 
@@ -114,9 +113,9 @@ node ./scripts/validate-skill.mjs <skill-root>
 
 When you finish, report with this shape:
 - `skill:` skill name
-- `scope:` machine-local | profile | project-local
+- `scope:` global | project
 - `location:` absolute skill root path
 - `files:` created/updated files
 - `validation:` commands run and results
-- `guardrails:` approvals, overwrite decisions, or git-visibility warnings
+- `guardrails:` approvals, overwrite decisions, or built-in-skill redirects
 - `open questions:` only if something remains unresolved

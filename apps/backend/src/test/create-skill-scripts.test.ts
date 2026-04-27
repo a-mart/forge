@@ -20,7 +20,7 @@ afterEach(async () => {
 });
 
 describe("create-skill helper scripts", () => {
-  it("scaffolds a machine-local skill and validates the result", async () => {
+  it("scaffolds a global skill and validates the result", async () => {
     const tempRoot = await makeTempDir("create-skill-machine-local-");
     const dataDir = join(tempRoot, "data");
 
@@ -38,7 +38,7 @@ describe("create-skill helper scripts", () => {
     expect(scaffold.exitCode).toBe(0);
     expect(scaffold.json).toMatchObject({
       ok: true,
-      scope: "machine-local",
+      scope: "global",
       template: "minimal",
       skillName: "release-triage",
       location: join(dataDir, "skills", "release-triage"),
@@ -63,30 +63,30 @@ describe("create-skill helper scripts", () => {
     );
   });
 
-  it("scaffolds a profile-scoped skill under the profile pi skills directory", async () => {
-    const tempRoot = await makeTempDir("create-skill-profile-");
+  it("scaffolds a project-scoped skill under the project skills directory", async () => {
+    const tempRoot = await makeTempDir("create-skill-project-");
     const dataDir = join(tempRoot, "data");
 
     const scaffold = await runJsonScript(scaffoldScriptPath, [
       "--name",
-      "profile-review",
+      "project-review",
       "--description",
-      "Coordinate profile-specific review workflows.",
+      "Coordinate project-specific review workflows.",
       "--scope",
-      "profile",
-      "--profile-id",
-      "product-profile",
+      "project",
+      "--project-id",
+      "product-project",
       "--data-dir",
       dataDir,
     ]);
 
-    const expectedRoot = join(dataDir, "profiles", "product-profile", "pi", "skills", "profile-review");
+    const expectedRoot = join(dataDir, "profiles", "product-project", "pi", "skills", "project-review");
     expect(scaffold.exitCode).toBe(0);
     expect(scaffold.json).toMatchObject({
       ok: true,
-      scope: "profile",
+      scope: "project",
       template: "minimal",
-      skillName: "profile-review",
+      skillName: "project-review",
       location: expectedRoot,
       created: ["SKILL.md"],
       warnings: [],
@@ -102,10 +102,61 @@ describe("create-skill helper scripts", () => {
     );
   });
 
-  it("scaffolds a project-local scripted skill and warns about git visibility", async () => {
+  it("still accepts the hidden profile alias for backward compatibility", async () => {
+    const tempRoot = await makeTempDir("create-skill-project-alias-");
+    const dataDir = join(tempRoot, "data");
+
+    const scaffold = await runJsonScript(scaffoldScriptPath, [
+      "--name",
+      "project-review-alias",
+      "--description",
+      "Coordinate a Forge project-specific review workflow.",
+      "--scope",
+      "profile",
+      "--profile-id",
+      "product-project",
+      "--data-dir",
+      dataDir,
+    ]);
+
+    const expectedRoot = join(dataDir, "profiles", "product-project", "pi", "skills", "project-review-alias");
+    expect(scaffold.exitCode).toBe(0);
+    expect(scaffold.json).toMatchObject({
+      ok: true,
+      scope: "project",
+      template: "minimal",
+      skillName: "project-review-alias",
+      location: expectedRoot,
+      created: ["SKILL.md"],
+      warnings: [],
+    });
+  });
+
+  it("shows only global and project in scaffold help output", async () => {
+    const help = await runJsonScript(scaffoldScriptPath, ["--help"]);
+    const helpText = JSON.stringify(help.json);
+
+    expect(help.exitCode).toBe(0);
+    expect(help.json).toMatchObject({
+      ok: true,
+      usage: {
+        options: {
+          "--scope": "global | project",
+          "--project-id": "required for project scope",
+        },
+      },
+    });
+    expect(help.json.usage.options).not.toHaveProperty("--cwd");
+    expect(helpText).not.toContain("machine-local");
+    expect(helpText).not.toContain("profile");
+    expect(helpText).not.toContain("project-local");
+    expect(helpText).not.toContain(".pi/skills");
+    expect(helpText).not.toContain("repo-local");
+  });
+
+  it("rejects the removed project-local scope", async () => {
     const tempRoot = await makeTempDir("create-skill-project-local-");
-    const projectRoot = join(tempRoot, "project");
-    await mkdir(projectRoot, { recursive: true });
+    const dataDir = join(tempRoot, "data");
 
     const scaffold = await runJsonScript(scaffoldScriptPath, [
       "--name",
@@ -114,44 +165,53 @@ describe("create-skill helper scripts", () => {
       "Run repeatable repo safety checks before risky changes.",
       "--scope",
       "project-local",
-      "--cwd",
-      projectRoot,
+      "--data-dir",
+      dataDir,
       "--template",
       "scripted",
     ]);
 
-    const expectedRoot = join(projectRoot, ".pi", "skills", "repo-safety-check");
-    expect(scaffold.exitCode).toBe(0);
+    expect(scaffold.exitCode).toBe(1);
     expect(scaffold.json).toMatchObject({
-      ok: true,
-      scope: "project-local",
-      template: "scripted",
-      skillName: "repo-safety-check",
-      location: expectedRoot,
-      created: ["SKILL.md", join("scripts", "main.mjs")],
+      ok: false,
+      error: "Unsupported scope.",
+      details: {
+        received: "project-local",
+        allowed: ["global", "project"],
+      },
     });
-    expect(scaffold.json.warnings).toEqual(
-      expect.arrayContaining([
-        "Project-local skills live under <cwd>/.pi/skills and may be visible to git unless ignored.",
-      ]),
-    );
+  });
 
-    const helperScript = await readFile(join(expectedRoot, "scripts", "main.mjs"), "utf8");
-    expect(helperScript).toContain("Replace this helper with the deterministic logic your skill needs.");
+  it("keeps user-facing create-skill docs free of repo-local scope terminology", async () => {
+    const [skillDoc, locationsDoc] = await Promise.all([
+      readFile(join(skillRoot, "SKILL.md"), "utf8"),
+      readFile(join(skillRoot, "references", "locations.md"), "utf8"),
+    ]);
 
-    const validation = await runJsonScript(validateScriptPath, [expectedRoot]);
-    expect(validation.exitCode).toBe(0);
-    expect(validation.json.ok).toBe(true);
-    expect(validation.json.warnings).toEqual(
-      expect.arrayContaining([
-        expect.stringContaining("TODO placeholder"),
-      ]),
-    );
-    expect(validation.json.references).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ path: "./scripts/main.mjs" }),
-      ]),
-    );
+    const frontmatter = extractFrontmatter(skillDoc);
+    expect(frontmatter).toContain("description: Use when creating, refining, or validating reusable global or project skills, including trigger wording, templates, helper scripts, and validation checks.");
+
+    for (const doc of [skillDoc, locationsDoc, frontmatter]) {
+      expect(doc).not.toContain(".pi/skills");
+      expect(doc).not.toContain(".swarm/skills");
+      expect(doc).not.toContain("repo-local");
+      expect(doc).not.toContain("repo-level");
+      expect(doc).not.toContain("project-local");
+      expect(doc).not.toContain("profiles/");
+      expect(doc).not.toContain("pi/skills");
+    }
+  });
+
+  it("keeps built-in skill changes out of scope in the user-facing skill doc", async () => {
+    const skillDoc = await readFile(join(skillRoot, "SKILL.md"), "utf8");
+    const triggerSection = extractMarkdownSection(skillDoc, "## Trigger check");
+    const doNotUseSection = extractMarkdownSection(skillDoc, "## Do not use this skill when");
+    const workflowSection = extractMarkdownSection(skillDoc, "## Eval-first workflow");
+
+    expect(doNotUseSection).toContain("the request is to change a built-in Forge skill");
+    expect(doNotUseSection).toContain("not normal user-facing create-skill output");
+    expect(triggerSection).not.toContain("built-in Forge skill");
+    expect(workflowSection).not.toContain("built-in Forge skill");
   });
 
   it("accepts benign macOS /var or /tmp lexical aliases for --data-dir", async () => {
@@ -178,37 +238,9 @@ describe("create-skill helper scripts", () => {
     );
   });
 
-  it("rejects project-local scope when .pi is a symlinked scope ancestor", async () => {
-    const tempRoot = await makeTempDir("create-skill-project-scope-symlink-");
-    const projectRoot = join(tempRoot, "project");
-    const outsideDir = join(tempRoot, "outside");
 
-    await mkdir(projectRoot, { recursive: true });
-    await mkdir(outsideDir, { recursive: true });
-    await symlink(outsideDir, join(projectRoot, ".pi"));
 
-    const scaffold = await runJsonScript(scaffoldScriptPath, [
-      "--name",
-      "scope-escape",
-      "--description",
-      "Attempt to escape via a symlinked scope ancestor.",
-      "--scope",
-      "project-local",
-      "--cwd",
-      projectRoot,
-      "--template",
-      "scripted",
-    ]);
-
-    expect(scaffold.exitCode).toBe(1);
-    expect(scaffold.json).toMatchObject({
-      ok: false,
-      error: "Scope path component must not be a symlink.",
-    });
-    await expect(readFile(join(outsideDir, "skills", "scope-escape", "SKILL.md"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
-  });
-
-  it("rejects machine-local scope when --data-dir itself is a symlink", async () => {
+  it("rejects the global scope when --data-dir itself is a symlink", async () => {
     const tempRoot = await makeTempDir("create-skill-machine-data-dir-symlink-");
     const dataDirLink = join(tempRoot, "data-link");
     const outsideDir = join(tempRoot, "outside-data");
@@ -235,7 +267,7 @@ describe("create-skill helper scripts", () => {
     await expect(readFile(join(outsideDir, "skills", "machine-symlink-anchor", "SKILL.md"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("rejects machine-local scope when a parent component of --data-dir is a symlink", async () => {
+  it("rejects the global scope when a parent component of --data-dir is a symlink", async () => {
     const tempRoot = await makeTempDir("create-skill-machine-parent-symlink-");
     const linkedParent = join(tempRoot, "linked-parent");
     const outsideParent = join(tempRoot, "outside-parent");
@@ -263,7 +295,7 @@ describe("create-skill helper scripts", () => {
     await expect(readFile(join(outsideParent, "data-root", "skills", "machine-parent-symlink", "SKILL.md"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("rejects profile scope when --data-dir itself is a symlink", async () => {
+  it("rejects the project scope when --data-dir itself is a symlink", async () => {
     const tempRoot = await makeTempDir("create-skill-profile-data-dir-symlink-");
     const dataDirLink = join(tempRoot, "data-link");
     const outsideDir = join(tempRoot, "outside-data");
@@ -273,13 +305,13 @@ describe("create-skill helper scripts", () => {
 
     const scaffold = await runJsonScript(scaffoldScriptPath, [
       "--name",
-      "profile-symlink-anchor",
+      "project-symlink-anchor",
       "--description",
-      "Attempt to escape profile scope through a symlinked data dir.",
+      "Attempt to escape project scope through a symlinked data dir.",
       "--scope",
-      "profile",
-      "--profile-id",
-      "profile-a",
+      "project",
+      "--project-id",
+      "project-a",
       "--data-dir",
       dataDirLink,
     ]);
@@ -289,7 +321,7 @@ describe("create-skill helper scripts", () => {
       ok: false,
       error: "Scope anchor path component must not be a symlink.",
     });
-    await expect(readFile(join(outsideDir, "profiles", "profile-a", "pi", "skills", "profile-symlink-anchor", "SKILL.md"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(join(outsideDir, "profiles", "project-a", "pi", "skills", "project-symlink-anchor", "SKILL.md"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("refuses to overwrite a non-empty skill root without --force", async () => {
@@ -639,4 +671,23 @@ function toDarwinAmbientAliasPath(canonicalPath: string): string | null {
   }
 
   return null;
+}
+
+function extractFrontmatter(document: string): string {
+  const match = document.match(/^---\n([\s\S]*?)\n---\n/);
+  if (!match) {
+    throw new Error("Could not find frontmatter block.");
+  }
+
+  return match[1];
+}
+
+function extractMarkdownSection(document: string, heading: string): string {
+  const escapedHeading = heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = document.match(new RegExp(`${escapedHeading}\\n([\\s\\S]*?)(?=\\n## |$)`));
+  if (!match) {
+    throw new Error(`Could not find markdown section: ${heading}`);
+  }
+
+  return match[1];
 }

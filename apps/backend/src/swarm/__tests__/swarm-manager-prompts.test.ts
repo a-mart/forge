@@ -820,9 +820,10 @@ describe('SwarmManager', () => {
     expect(createSkillPath).toBeDefined()
     const createSkill = await readFile(createSkillPath!, 'utf8')
     expect(createSkill).toContain('name: create-skill')
+    expect(createSkill).toContain('description: Use when creating, refining, or validating reusable global or project skills, including trigger wording, templates, helper scripts, and validation checks.')
     expect(createSkill).toContain('scripts/scaffold-skill.mjs')
-    // eslint-disable-next-line no-template-curly-in-string
-    expect(createSkill).toContain('${SWARM_DATA_DIR}/skills/<name>')
+    expect(createSkill).toContain('**Global skills** are available across all Forge projects.')
+    expect(createSkill).toContain('**Project skills** are scoped to one Forge project.')
   })
 
   it('lists only profile-scoped skill metadata when a profile is selected', async () => {
