@@ -38,7 +38,7 @@ There are plenty of good coding agents. Forge isn't trying to replace them. It o
 
 **It remembers things.** Most AI tools reset every session. Forge's Cortex reviews your conversations, learns your preferences, and builds persistent knowledge over time. After a few weeks, it knows your review process, your naming conventions, your code style.
 
-**Context doesn't die.** When Claude Code compacts, you get amnesia. Forge's smart compaction writes structured handoff files, retains the most recent context, and summarizes the rest. Pin critical messages and they'll survive every compaction. The pin navigator in the chat header lets you jump directly to any pinned message. Conversations that have compacted 50+ times still maintain coherence.
+**Context doesn't die.** When Claude Code compacts, you get amnesia. Forge's smart compaction writes structured handoff files, retains the most recent context, and summarizes the rest. Manual Smart compact on an already-idle manager keeps it idle on Pi-backed managers, while active or interrupted work resumes after compaction. Pin critical messages and they'll survive every compaction. The pin navigator in the chat header lets you jump directly to any pinned message. Conversations that have compacted 50+ times still maintain coherence.
 
 **Forge builds Forge.** Every feature you see was built using Forge itself. It's been the primary development tool for this project since day one.
 
@@ -132,7 +132,7 @@ You can trigger reviews manually, queue up batch reviews, or schedule them on a 
 
 Every AI tool hits context limits. Most just truncate and hope for the best.
 
-When a session reaches ~85% context capacity, Forge pauses and writes a structured markdown handoff file capturing the current operational state, then compacts. The compacted context retains the most recent ~20,000 tokens verbatim and summarizes everything older. The handoff file ensures no critical context is lost.
+When a session reaches ~85% context capacity, Forge pauses and writes a structured markdown handoff file capturing the current operational state, then compacts. The compacted context retains the most recent ~20,000 tokens verbatim and summarizes everything older. The handoff file ensures no critical context is lost. If you trigger Smart compact manually on an already-idle Pi-backed manager, it stays idle afterward; if the manager is active, interrupted, or dispatch-pending, it resumes after compaction.
 
 You can pin up to 10 messages per session (user or assistant) by clicking the pin icon. Pinned messages are preserved verbatim through all compaction types — their full content is injected into the summary under a dedicated section.
 

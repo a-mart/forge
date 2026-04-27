@@ -17,19 +17,45 @@ index dd760dcd7b9cccf454dbdb96e8ceb3428b11c4bd..b85debc32443b54f1af6f30b002cfc72
              // Some providers require "either content or tool_calls, but not none".
              // Other providers also don't accept empty assistant messages.
 diff --git a/dist/providers/openai-responses-shared.js b/dist/providers/openai-responses-shared.js
-index ab14b5f60bc9ee9ad57548ce9fc6ec15f3038f99..cee1e5ddc71ee5ff2354008d1f85d00ea14d3efd 100644
+index ab14b5f60bc9ee9ad57548ce9fc6ec15f3038f99..bfb675c4212f20bd7b2eac56284b4fdc388efc7c 100644
 --- a/dist/providers/openai-responses-shared.js
 +++ b/dist/providers/openai-responses-shared.js
-@@ -109,6 +109,8 @@ export function convertResponsesMessages(model, context, allowedToolCallProvider
+@@ -109,15 +109,27 @@ export function convertResponsesMessages(model, context, allowedToolCallProvider
              const isDifferentModel = assistantMsg.model !== model.id &&
                  assistantMsg.provider === model.provider &&
                  assistantMsg.api === model.api;
 +            let hasAssistantMessage = false;
 +            let hasToolCalls = false;
++            const isXaiResponsesModel = model.provider === "xai" || String(model.baseUrl ?? "").includes("api.x.ai");
++            const shouldReplayHistoricalReasoning = !isXaiResponsesModel;
++            const assistantTurnHasToolCalls = msg.content.some((block) => block.type === "toolCall");
              for (const block of msg.content) {
                  if (block.type === "thinking") {
-                     if (block.thinkingSignature) {
-@@ -135,6 +137,7 @@ export function convertResponsesMessages(model, context, allowedToolCallProvider
+-                    if (block.thinkingSignature) {
++                    // xAI's Responses-compatible endpoint rejects historical reasoning items even
++                    // when the rest of the assistant/tool-call turn is valid. Keep replaying them
++                    // for providers that accept OpenAI Responses reasoning history.
++                    if (block.thinkingSignature && shouldReplayHistoricalReasoning) {
+                         const reasoningItem = JSON.parse(block.thinkingSignature);
+                         output.push(reasoningItem);
+                     }
+                 }
+                 else if (block.type === "text") {
+                     const textBlock = block;
++                    const assistantText = sanitizeSurrogates(textBlock.text);
++                    if (isXaiResponsesModel && assistantTurnHasToolCalls && assistantText.trim().length === 0) {
++                        continue;
++                    }
+                     const parsedSignature = parseTextSignature(textBlock.textSignature);
+                     // OpenAI requires id to be max 64 characters
+                     let msgId = parsedSignature?.id;
+@@ -130,11 +142,12 @@ export function convertResponsesMessages(model, context, allowedToolCallProvider
+                     output.push({
+                         type: "message",
+                         role: "assistant",
+-                        content: [{ type: "output_text", text: sanitizeSurrogates(textBlock.text), annotations: [] }],
++                        content: [{ type: "output_text", text: assistantText, annotations: [] }],
+                         status: "completed",
                          id: msgId,
                          phase: parsedSignature?.phase,
                      });
@@ -37,7 +63,7 @@ index ab14b5f60bc9ee9ad57548ce9fc6ec15f3038f99..cee1e5ddc71ee5ff2354008d1f85d00e
                  }
                  else if (block.type === "toolCall") {
                      const toolCall = block;
-@@ -153,8 +156,23 @@ export function convertResponsesMessages(model, context, allowedToolCallProvider
+@@ -153,8 +166,23 @@ export function convertResponsesMessages(model, context, allowedToolCallProvider
                          name: toolCall.name,
                          arguments: JSON.stringify(toolCall.arguments),
                      });

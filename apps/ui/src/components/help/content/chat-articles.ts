@@ -398,6 +398,8 @@ Open the **⋮ menu** in the chat header. You'll see two options:
 - **Compact context** — a fast, mechanical summary that trims older messages.
 - **Smart compact** — uses an AI pass to produce a more intelligent summary that preserves important context and nuance. Takes longer but keeps more useful information.
 
+If you run Smart compact manually while a Pi-backed manager is already idle, it stays idle afterward. If the manager is active, interrupted, or waiting on dispatch, it resumes after compaction.
+
 ## Auto-compaction
 
 When the context window fills up during an active conversation, Forge triggers compaction automatically. You'll see a spinning indicator on the ⋮ menu button while it runs. This prevents the agent from failing mid-response due to context limits.
