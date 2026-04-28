@@ -24,6 +24,14 @@ async function createTempRoot(prefix: string): Promise<string> {
 }
 
 describe("collaboration auth secret service", () => {
+  async function readPermissions(path: string): Promise<number | null> {
+    if (process.platform === "win32") {
+      return null;
+    }
+
+    return (await stat(path)).mode & 0o777;
+  }
+
   it("returns the configured env-backed secret when FORGE_COLLABORATION_AUTH_SECRET is set", async () => {
     const root = await createTempRoot("forge-collaboration-auth-secret-env-");
     const dataDir = resolve(root, "data");
@@ -57,10 +65,14 @@ describe("collaboration auth secret service", () => {
 
     await mkdir(resolve(secretPath, ".."), { recursive: true });
     await writeFile(secretPath, "persisted-secret-value\n", { encoding: "utf8", mode: 0o644 });
-    await chmod(secretPath, 0o644);
+
+    if (process.platform !== "win32") {
+      await chmod(secretPath, 0o644);
+      await expect(readPermissions(secretPath)).resolves.toBe(0o644);
+    }
 
     await expect(getCollaborationAuthSecret(handle.config)).resolves.toBe("persisted-secret-value");
-    expect((await stat(secretPath)).mode & 0o777).toBe(0o600);
+    await expect(readPermissions(secretPath)).resolves.toBe(process.platform === "win32" ? null : 0o600);
   });
 
   it("generates and persists a new secret when no env or file-backed secret exists", async () => {
@@ -75,7 +87,7 @@ describe("collaboration auth secret service", () => {
 
     expect(existsSync(secretPath)).toBe(true);
     expect(secret).toBe(persistedSecret.trim());
-    expect((await stat(secretPath)).mode & 0o777).toBe(0o600);
+    await expect(readPermissions(secretPath)).resolves.toBe(process.platform === "win32" ? null : 0o600);
   });
 
   it("rejects builder runtime configs", async () => {
