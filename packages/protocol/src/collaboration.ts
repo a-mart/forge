@@ -14,12 +14,18 @@ export type CollaborationInviteLookupError = 'not_found' | 'expired' | 'revoked'
 export interface CollaborationStatus {
   enabled: boolean
   adminExists: boolean
-  ready: boolean
-  bootstrapState: 'disabled' | 'initializing' | 'ready' | 'degraded'
-  workspaceExists: boolean
-  workspaceDefaultsInitialized: boolean
-  storageProfileExists: boolean
-  storageRootSessionExists: boolean
+  /** Present when the backend reports full readiness state. */
+  ready?: boolean
+  /** Present when the backend reports bootstrap lifecycle state. */
+  bootstrapState?: 'disabled' | 'initializing' | 'ready' | 'degraded'
+  /** Present when the backend reports workspace existence. */
+  workspaceExists?: boolean
+  /** Present when the backend reports workspace defaults initialization. */
+  workspaceDefaultsInitialized?: boolean
+  /** Present when the backend reports storage profile existence. */
+  storageProfileExists?: boolean
+  /** Present when the backend reports storage root session existence. */
+  storageRootSessionExists?: boolean
   baseUrl?: string
 }
 
@@ -83,26 +89,27 @@ export interface CollaborationSessionInfo {
 export interface CollaborationWorkspaceBaseAi {
   model: AgentModelDescriptor
   archetypeId?: string
-  cwd: string
+  cwd?: string
   sessionSystemPrompt?: string
-  contextMode: 'prompt_and_memory'
+  contextMode?: 'prompt_and_memory'
 }
 
 export interface CollaborationWorkspace {
   workspaceId: string
-  /** @deprecated Compatibility-only field; not the canonical source of collaboration defaults. */
-  backingProfileId: string
+  /** @deprecated Compatibility-only field; not the canonical source of collaboration defaults. Optional in public protocol. */
+  backingProfileId?: string
   displayName: string
   description?: string
   aiDisplayName?: string
   createdByUserId?: string
   createdAt: string
   updatedAt: string
-  /** @deprecated Compatibility-only field; not the canonical source of collaboration defaults. */
-  profileDisplayName: string
-  /** @deprecated Compatibility-only field; not the canonical source of collaboration defaults. */
-  defaultSessionAgentId: string
-  baseAi: CollaborationWorkspaceBaseAi
+  /** @deprecated Compatibility-only field; not the canonical source of collaboration defaults. Optional in public protocol. */
+  profileDisplayName?: string
+  /** @deprecated Compatibility-only field; not the canonical source of collaboration defaults. Optional in public protocol. */
+  defaultSessionAgentId?: string
+  /** Workspace-level AI configuration. Optional — older backends may not emit this. */
+  baseAi?: CollaborationWorkspaceBaseAi
   memberCount?: number
 }
 
