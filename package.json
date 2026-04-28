@@ -25,6 +25,7 @@
     "lint:fix": "eslint . --fix",
     "typecheck": "cd apps/backend && pnpm exec tsc -p tsconfig.build.json --noEmit && cd ../ui && pnpm exec tsc --noEmit && cd ../../packages/protocol && pnpm exec tsc -p tsconfig.build.json --noEmit && cd ../../apps/electron && pnpm exec tsc --noEmit",
     "model-catalog:audit": "node scripts/model-catalog-audit.mjs",
+    "verify:dockerignore": "node scripts/verify-dockerignore-sensitive-context.mjs",
     "package:electron": "pnpm --filter @forge/electron run package",
     "release:electron": "node -e \"console.error('Deprecated: official desktop releases must use the build-first, draft-first flow in apps/electron/README.md. This shortcut is intentionally disabled.'); process.exit(1)\"",
     "prod": "pnpm build && pnpm prod:start",
