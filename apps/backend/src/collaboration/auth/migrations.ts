@@ -1,6 +1,9 @@
+import type Database from "better-sqlite3";
+
 export interface CollaborationAuthMigration {
   name: string;
-  sql: string;
+  sql?: string;
+  apply?: (database: Database.Database) => void;
 }
 
 export const COLLABORATION_AUTH_MIGRATIONS: CollaborationAuthMigration[] = [
@@ -201,4 +204,36 @@ CREATE INDEX IF NOT EXISTS collaboration_audit_log_target_user_id_idx ON collabo
 CREATE INDEX IF NOT EXISTS collaboration_audit_log_target_invite_id_idx ON collaboration_audit_log(target_invite_id);
 `,
   },
+  {
+    name: "0006-collaboration-category-defaults.sql",
+    apply: (database) => {
+      addColumnIfMissing(database, "collab_category", "default_model_provider", "TEXT");
+      addColumnIfMissing(database, "collab_category", "default_model_thinking_level", "TEXT");
+      addColumnIfMissing(database, "collab_category", "default_cwd", "TEXT");
+    },
+  },
 ];
+
+function addColumnIfMissing(
+  database: Database.Database,
+  tableName: string,
+  columnName: string,
+  columnDefinitionSql: string,
+): void {
+  const existingColumn = database
+    .prepare<[], { name: string }>(`PRAGMA table_info(${quoteSqliteIdentifier(tableName)})`)
+    .all()
+    .some((row) => row.name === columnName);
+
+  if (existingColumn) {
+    return;
+  }
+
+  database.exec(
+    `ALTER TABLE ${quoteSqliteIdentifier(tableName)} ADD COLUMN ${quoteSqliteIdentifier(columnName)} ${columnDefinitionSql}`,
+  );
+}
+
+function quoteSqliteIdentifier(identifier: string): string {
+  return `"${identifier.replaceAll('"', '""')}"`;
+}

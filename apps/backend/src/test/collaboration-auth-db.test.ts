@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { closeCollaborationAuthDb, getOrCreateCollaborationAuthDb } from "../collaboration/auth/collaboration-db.js";
+import { COLLABORATION_AUTH_MIGRATIONS } from "../collaboration/auth/migrations.js";
 import { runCollaborationAuthMigrations } from "../collaboration/auth/migration-runner.js";
 import { createTempConfig } from "../test-support/temp-config.js";
 import type { SwarmConfig } from "../swarm/types.js";
@@ -29,7 +30,84 @@ const EXPECTED_MIGRATIONS = [
   "0003-collaboration-invite.sql",
   "0004-collaboration-workspace.sql",
   "0005-collaboration-audit-log.sql",
+  "0006-collaboration-category-defaults.sql",
 ] as const;
+
+const LEGACY_0004_COLLABORATION_WORKSPACE_SQL = `CREATE TABLE IF NOT EXISTS collab_workspace (
+  workspace_id TEXT PRIMARY KEY,
+  backing_profile_id TEXT NOT NULL UNIQUE,
+  display_name TEXT NOT NULL,
+  description TEXT,
+  ai_display_name TEXT,
+  created_by_user_id TEXT,
+  default_model_provider TEXT NOT NULL,
+  default_model_id TEXT NOT NULL,
+  default_model_thinking_level TEXT NOT NULL,
+  default_cwd TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (created_by_user_id) REFERENCES "user"(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS collab_category (
+  category_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  default_model_id TEXT,
+  position INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (workspace_id) REFERENCES collab_workspace(workspace_id) ON DELETE CASCADE,
+  UNIQUE (workspace_id, name)
+);
+
+CREATE INDEX IF NOT EXISTS collab_category_workspace_position_idx ON collab_category(workspace_id, position, category_id);
+
+CREATE TABLE IF NOT EXISTS collab_channel (
+  channel_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  category_id TEXT,
+  backing_session_agent_id TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  slug TEXT NOT NULL,
+  description TEXT,
+  ai_enabled INTEGER NOT NULL DEFAULT 1 CHECK (ai_enabled IN (0, 1)),
+  model_id TEXT,
+  position INTEGER NOT NULL,
+  archived INTEGER NOT NULL DEFAULT 0,
+  archived_at TEXT,
+  archived_by_user_id TEXT,
+  created_by_user_id TEXT,
+  last_message_seq INTEGER NOT NULL DEFAULT 0,
+  last_message_id TEXT,
+  last_message_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (workspace_id) REFERENCES collab_workspace(workspace_id) ON DELETE CASCADE,
+  FOREIGN KEY (category_id) REFERENCES collab_category(category_id) ON DELETE SET NULL,
+  FOREIGN KEY (archived_by_user_id) REFERENCES "user"(id) ON DELETE SET NULL,
+  FOREIGN KEY (created_by_user_id) REFERENCES "user"(id) ON DELETE SET NULL,
+  UNIQUE (workspace_id, slug)
+);
+
+CREATE INDEX IF NOT EXISTS collab_channel_workspace_listing_idx ON collab_channel(workspace_id, archived, category_id, position, channel_id);
+CREATE INDEX IF NOT EXISTS collab_channel_backing_session_idx ON collab_channel(backing_session_agent_id);
+
+CREATE TABLE IF NOT EXISTS collab_channel_user_state (
+  channel_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  last_read_message_id TEXT,
+  last_read_message_seq INTEGER NOT NULL DEFAULT 0,
+  last_read_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (channel_id, user_id),
+  FOREIGN KEY (channel_id) REFERENCES collab_channel(channel_id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES "user"(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS collab_channel_user_state_user_idx ON collab_channel_user_state(user_id, channel_id);
+`;
 
 const tempRoots: string[] = [];
 const activeConfigs: SwarmConfig[] = [];
@@ -56,6 +134,22 @@ async function createFreshTestConfig(runtimeTarget: "builder" | "collaboration-s
 async function openMigratedDatabase(config: SwarmConfig) {
   await runCollaborationAuthMigrations(config);
   return getOrCreateCollaborationAuthDb(config);
+}
+
+function requireMigrationSql(name: string): string {
+  const migration = COLLABORATION_AUTH_MIGRATIONS.find((entry) => entry.name === name);
+  if (!migration?.sql) {
+    throw new Error(`Missing SQL migration fixture: ${name}`);
+  }
+
+  return migration.sql;
+}
+
+function listTableColumns(database: Awaited<ReturnType<typeof getOrCreateCollaborationAuthDb>>, tableName: string): string[] {
+  return database
+    .prepare<[], { name: string }>(`PRAGMA table_info("${tableName.replaceAll('"', '""')}")`)
+    .all()
+    .map((row) => row.name);
 }
 
 describe("collaboration auth DB", () => {
@@ -100,6 +194,117 @@ describe("collaboration auth DB", () => {
       .map((row) => row.name);
 
     expect(tableNames).toEqual([...EXPECTED_TABLES].sort((left, right) => left.localeCompare(right)));
+
+    const appliedMigrations = database
+      .prepare<[], { name: string }>("SELECT name FROM _forge_collaboration_migrations ORDER BY name ASC")
+      .all()
+      .map((row) => row.name);
+
+    expect(appliedMigrations).toEqual([...EXPECTED_MIGRATIONS]);
+  });
+
+  it("upgrades legacy 0004 databases by adding missing category default columns", async () => {
+    const config = await createFreshTestConfig();
+    const database = await getOrCreateCollaborationAuthDb(config);
+
+    database.exec(requireMigrationSql("0001-better-auth-base.sql"));
+    database.exec(requireMigrationSql("0002-collaboration-user.sql"));
+    database.exec(requireMigrationSql("0003-collaboration-invite.sql"));
+    database.exec(LEGACY_0004_COLLABORATION_WORKSPACE_SQL);
+    database.exec(requireMigrationSql("0005-collaboration-audit-log.sql"));
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS _forge_collaboration_migrations (
+        name TEXT PRIMARY KEY,
+        applied_at TEXT NOT NULL
+      );
+    `);
+
+    const insertAppliedMigration = database.prepare(
+      `INSERT INTO _forge_collaboration_migrations (name, applied_at) VALUES (?, ?)`,
+    );
+    for (const migrationName of EXPECTED_MIGRATIONS.slice(0, -1)) {
+      insertAppliedMigration.run(migrationName, "2026-04-28T00:00:00.000Z");
+    }
+
+    database.prepare(
+      `INSERT INTO collab_workspace (
+         workspace_id,
+         backing_profile_id,
+         display_name,
+         description,
+         ai_display_name,
+         created_by_user_id,
+         default_model_provider,
+         default_model_id,
+         default_model_thinking_level,
+         default_cwd,
+         created_at,
+         updated_at
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "workspace-legacy",
+      "_collaboration",
+      "Legacy Workspace",
+      null,
+      null,
+      null,
+      "openai-codex",
+      "gpt-5.3-codex",
+      "xhigh",
+      "/repo",
+      "2026-04-28T00:00:00.000Z",
+      "2026-04-28T00:00:00.000Z",
+    );
+
+    database.prepare(
+      `INSERT INTO collab_category (
+         category_id,
+         workspace_id,
+         name,
+         default_model_id,
+         position,
+         created_at,
+         updated_at
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "category-legacy",
+      "workspace-legacy",
+      "Legacy Category",
+      "claude-opus-4-6",
+      0,
+      "2026-04-28T00:00:00.000Z",
+      "2026-04-28T00:00:00.000Z",
+    );
+
+    expect(listTableColumns(database, "collab_category")).not.toContain("default_model_provider");
+    expect(listTableColumns(database, "collab_category")).not.toContain("default_model_thinking_level");
+    expect(listTableColumns(database, "collab_category")).not.toContain("default_cwd");
+
+    await runCollaborationAuthMigrations(config);
+
+    expect(listTableColumns(database, "collab_category")).toContain("default_model_provider");
+    expect(listTableColumns(database, "collab_category")).toContain("default_model_thinking_level");
+    expect(listTableColumns(database, "collab_category")).toContain("default_cwd");
+
+    const upgradedCategory = database.prepare<[], {
+      default_model_id: string | null;
+      default_model_provider: string | null;
+      default_model_thinking_level: string | null;
+      default_cwd: string | null;
+    }>(
+      `SELECT default_model_id, default_model_provider, default_model_thinking_level, default_cwd
+       FROM collab_category
+       WHERE category_id = 'category-legacy'`,
+    ).get();
+
+    expect(upgradedCategory).toEqual({
+      default_model_id: "claude-opus-4-6",
+      default_model_provider: null,
+      default_model_thinking_level: null,
+      default_cwd: null,
+    });
 
     const appliedMigrations = database
       .prepare<[], { name: string }>("SELECT name FROM _forge_collaboration_migrations ORDER BY name ASC")

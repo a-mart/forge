@@ -2,7 +2,7 @@ import type Database from "better-sqlite3";
 import { isCollaborationServerRuntimeTarget } from "../../runtime-target.js";
 import type { SwarmConfig } from "../../swarm/types.js";
 import { getOrCreateCollaborationAuthDb } from "./collaboration-db.js";
-import { COLLABORATION_AUTH_MIGRATIONS } from "./migrations.js";
+import { COLLABORATION_AUTH_MIGRATIONS, type CollaborationAuthMigration } from "./migrations.js";
 
 const MIGRATIONS_TABLE_NAME = "_forge_collaboration_migrations";
 
@@ -24,7 +24,7 @@ export async function runCollaborationAuthMigrations(config: SwarmConfig): Promi
       continue;
     }
 
-    applyMigration(database, migration.name, migration.sql);
+    applyMigration(database, migration);
     appliedMigrationNames.add(migration.name);
   }
 }
@@ -45,12 +45,19 @@ function loadAppliedMigrationNames(database: Database.Database): Set<string> {
   return new Set(rows.map((row) => row.name));
 }
 
-function applyMigration(database: Database.Database, migrationFile: string, migrationSql: string): void {
+function applyMigration(database: Database.Database, migration: CollaborationAuthMigration): void {
   const apply = database.transaction(() => {
-    database.exec(migrationSql);
+    if (migration.apply) {
+      migration.apply(database);
+    } else if (migration.sql) {
+      database.exec(migration.sql);
+    } else {
+      throw new Error(`Invalid collaboration auth migration: ${migration.name}`);
+    }
+
     database
       .prepare(`INSERT INTO ${MIGRATIONS_TABLE_NAME} (name, applied_at) VALUES (?, ?)`)
-      .run(migrationFile, new Date().toISOString());
+      .run(migration.name, new Date().toISOString());
   });
 
   apply();
