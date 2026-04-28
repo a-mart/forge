@@ -30,7 +30,7 @@ const EXPECTED_MIGRATIONS = [
   "0003-collaboration-invite.sql",
   "0004-collaboration-workspace.sql",
   "0005-collaboration-audit-log.sql",
-  "0006-collaboration-category-defaults.sql",
+  "0006-collab-category-defaults-upgrade.sql",
 ] as const;
 
 const LEGACY_0004_COLLABORATION_WORKSPACE_SQL = `CREATE TABLE IF NOT EXISTS collab_workspace (
@@ -211,7 +211,6 @@ describe("collaboration auth DB", () => {
     database.exec(requireMigrationSql("0002-collaboration-user.sql"));
     database.exec(requireMigrationSql("0003-collaboration-invite.sql"));
     database.exec(LEGACY_0004_COLLABORATION_WORKSPACE_SQL);
-    database.exec(requireMigrationSql("0005-collaboration-audit-log.sql"));
     database.exec(`
       CREATE TABLE IF NOT EXISTS _forge_collaboration_migrations (
         name TEXT PRIMARY KEY,
@@ -222,7 +221,7 @@ describe("collaboration auth DB", () => {
     const insertAppliedMigration = database.prepare(
       `INSERT INTO _forge_collaboration_migrations (name, applied_at) VALUES (?, ?)`,
     );
-    for (const migrationName of EXPECTED_MIGRATIONS.slice(0, -1)) {
+    for (const migrationName of EXPECTED_MIGRATIONS.slice(0, 4)) {
       insertAppliedMigration.run(migrationName, "2026-04-28T00:00:00.000Z");
     }
 
@@ -304,6 +303,51 @@ describe("collaboration auth DB", () => {
       default_model_provider: null,
       default_model_thinking_level: null,
       default_cwd: null,
+    });
+
+    database.prepare(
+      `INSERT INTO collab_category (
+         category_id,
+         workspace_id,
+         name,
+         default_model_provider,
+         default_model_id,
+         default_model_thinking_level,
+         default_cwd,
+         position,
+         created_at,
+         updated_at
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      "category-upgraded",
+      "workspace-legacy",
+      "Upgraded Category",
+      "anthropic",
+      "claude-opus-4-6",
+      "high",
+      "/repo/reviews",
+      1,
+      "2026-04-28T00:00:00.000Z",
+      "2026-04-28T00:00:00.000Z",
+    );
+
+    const insertedCategory = database.prepare<[], {
+      default_model_provider: string | null;
+      default_model_id: string | null;
+      default_model_thinking_level: string | null;
+      default_cwd: string | null;
+    }>(
+      `SELECT default_model_provider, default_model_id, default_model_thinking_level, default_cwd
+       FROM collab_category
+       WHERE category_id = 'category-upgraded'`,
+    ).get();
+
+    expect(insertedCategory).toEqual({
+      default_model_provider: "anthropic",
+      default_model_id: "claude-opus-4-6",
+      default_model_thinking_level: "high",
+      default_cwd: "/repo/reviews",
     });
 
     const appliedMigrations = database

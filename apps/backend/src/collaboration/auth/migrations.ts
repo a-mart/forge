@@ -205,7 +205,7 @@ CREATE INDEX IF NOT EXISTS collaboration_audit_log_target_invite_id_idx ON colla
 `,
   },
   {
-    name: "0006-collaboration-category-defaults.sql",
+    name: "0006-collab-category-defaults-upgrade.sql",
     apply: (database) => {
       addColumnIfMissing(database, "collab_category", "default_model_provider", "TEXT");
       addColumnIfMissing(database, "collab_category", "default_model_thinking_level", "TEXT");
