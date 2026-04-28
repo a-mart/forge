@@ -73,6 +73,7 @@ import { createSkillRoutes } from "./http/routes/skill-routes.js";
 import { createSlashCommandRoutes } from "./http/routes/slash-command-routes.js";
 import { createSpecialistRoutes } from "./http/routes/specialist-routes.js";
 import { createStatsRoutes } from "./http/routes/stats-routes.js";
+import { createStaticUiRoutes } from "./http/routes/static-ui-routes.js";
 import { createTelemetryRoutes } from "./http/routes/telemetry-routes.js";
 import { createTerminalRoutes } from "./http/routes/terminal-routes.js";
 import { createTranscriptionRoutes } from "./http/routes/transcription-routes.js";
@@ -508,6 +509,12 @@ export class SwarmWebSocketServer {
             cortexEnabled,
           })
         : []),
+      ...createStaticUiRoutes({
+        rootDir: this.swarmManager.getConfig().paths.rootDir,
+        resourcesDir: this.swarmManager.getConfig().paths.resourcesDir,
+        runtimeTarget: this.swarmManager.getConfig().runtimeTarget,
+        nodeEnv: process.env.NODE_ENV,
+      }),
     ];
   }
 

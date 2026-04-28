@@ -1,0 +1,27 @@
+services:
+  forge-collaboration-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VITE_FORGE_WEB_BASE: same-origin
+        VITE_FORGE_DEFAULT_SURFACE: collab
+        VITE_FORGE_DISABLE_TANSTACK_DEVTOOLS: 'true'
+    environment:
+      NODE_ENV: production
+      FORGE_HOST: 0.0.0.0
+      FORGE_PORT: 47287
+      FORGE_RUNTIME_TARGET: collaboration-server
+      FORGE_DATA_DIR: /var/lib/forge
+      FORGE_ADMIN_EMAIL: ${FORGE_ADMIN_EMAIL:?set FORGE_ADMIN_EMAIL in your shell or .env}
+      FORGE_ADMIN_PASSWORD: ${FORGE_ADMIN_PASSWORD:?set FORGE_ADMIN_PASSWORD in your shell or .env}
+      FORGE_COLLABORATION_BASE_URL: ${FORGE_COLLABORATION_BASE_URL:-}
+      FORGE_COLLABORATION_TRUSTED_ORIGINS: ${FORGE_COLLABORATION_TRUSTED_ORIGINS:-}
+    ports:
+      - '${FORGE_PUBLIC_PORT:-47287}:47287'
+    volumes:
+      - forge-collaboration-data:/var/lib/forge
+    restart: unless-stopped
+
+volumes:
+  forge-collaboration-data:

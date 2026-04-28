@@ -1,0 +1,15 @@
+.git
+.gitignore
+.githooks
+.internal
+node_modules
+**/node_modules
+apps/backend/dist
+apps/ui/.output
+apps/electron/dist
+apps/electron/release
+coverage
+.tmp
+.DS_Store
+pnpm-debug.log*
+*.tsbuildinfo

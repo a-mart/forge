@@ -153,6 +153,10 @@ export function classifyCollaborationHttpRequest(
     return "public";
   }
 
+  if (!pathname.startsWith("/api/") && (normalizedMethod === "GET" || normalizedMethod === "HEAD")) {
+    return "public";
+  }
+
   return "admin";
 }
 
@@ -294,7 +298,8 @@ function isPasswordChangeExemptPath(pathname: string, method: string | undefined
     pathname === COLLABORATION_ME_PASSWORD_PATH ||
     pathname === "/api/auth" ||
     pathname.startsWith("/api/auth/") ||
-    pathname === "/api/health"
+    pathname === "/api/health" ||
+    (!pathname.startsWith("/api/") && (normalizedMethod === "GET" || normalizedMethod === "HEAD"))
   );
 }
 

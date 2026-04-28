@@ -17,6 +17,7 @@ import type { AgentDescriptor } from '@forge/protocol'
 import { resolveBackendWsUrl } from '@/lib/backend-url'
 import { resolveCollaborationWsUrl, getCollabServerUrl } from '@/lib/collaboration-endpoints'
 import { isElectron } from '@/lib/electron-bridge'
+import { getConfiguredDefaultSurface } from '@/lib/web-runtime-flags'
 import { useBackendHealthPoll } from '@/hooks/index-page/use-backend-health-poll'
 
 export const Route = createFileRoute('/')({
@@ -59,6 +60,7 @@ export function IndexPage() {
   useBackendHealthPoll(wsUrl, collabWsUrl)
 
   const inElectron = isElectron()
+  const defaultSurface = getConfiguredDefaultSurface()
   const hasConfiguredCollabServer = Boolean(getCollabServerUrl())
   // Allow Electron to participate in collab if a remote server URL is configured
   const shouldLoadCollabSession = !inElectron || hasConfiguredCollabServer
@@ -79,9 +81,9 @@ export function IndexPage() {
     if (shouldBlockOnCollabBootstrap) return 'collab'
     // Forced collab settings must stay on collab even when unauthenticated — renders blocked state
     if (isForcedCollabSettings) return 'collab'
-    if (isCollabUnauthenticated) return 'builder'
+    if (isCollabUnauthenticated && defaultSurface !== 'collab') return 'builder'
     return collabSession.isCollabEnabled ? 'collab' : 'builder'
-  }, [activeSurface, collabSession.isCollabEnabled, hasConfiguredCollabServer, inElectron, isForcedCollabSettings, isCollabUnauthenticated, shouldBlockOnCollabBootstrap])
+  }, [activeSurface, collabSession.isCollabEnabled, defaultSurface, hasConfiguredCollabServer, inElectron, isForcedCollabSettings, isCollabUnauthenticated, shouldBlockOnCollabBootstrap])
 
   useEffect(() => {
     if (shouldBlockOnCollabBootstrap) {

@@ -111,6 +111,8 @@ describe("collaboration HTTP auth middleware", () => {
     expect(classifyCollaborationHttpRequest("/api/collaboration/categories/category-1", "PATCH")).toBe("admin");
     expect(classifyCollaborationHttpRequest("/api/settings/auth", "GET")).toBe("admin");
     expect(classifyCollaborationHttpRequest("/api/settings/auth", "OPTIONS")).toBe("public");
+    expect(classifyCollaborationHttpRequest("/", "GET")).toBe("public");
+    expect(classifyCollaborationHttpRequest("/settings", "HEAD")).toBe("public");
   });
 
   it("enforces admin-only access for admin routes and member access for prompt preview", () => {
@@ -157,6 +159,8 @@ describe("collaboration HTTP auth middleware", () => {
     expect(evaluateCollaborationPasswordChangeAccess(user, "/api/collaboration/me", "GET")).toEqual({ ok: true });
     expect(evaluateCollaborationPasswordChangeAccess(user, "/api/collaboration/me/password", "POST")).toEqual({ ok: true });
     expect(evaluateCollaborationPasswordChangeAccess(user, "/api/auth/sign-in/email", "POST")).toEqual({ ok: true });
+    expect(evaluateCollaborationPasswordChangeAccess(user, "/settings", "GET")).toEqual({ ok: true });
+    expect(evaluateCollaborationPasswordChangeAccess(user, "/", "HEAD")).toEqual({ ok: true });
     expect(evaluateCollaborationPasswordChangeAccess(user, "/api/settings/auth", "GET")).toEqual({
       ok: false,
       statusCode: 403,

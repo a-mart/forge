@@ -1,4 +1,5 @@
 import { useCallback, useMemo } from 'react'
+import { getConfiguredDefaultSurface, type DefaultSurface } from '@/lib/web-runtime-flags'
 
 // Placeholder used when no agent is specified in the URL.
 // The WS client will resolve this to the actual primary manager on connect.
@@ -37,16 +38,20 @@ function decodePathSegment(segment: string): string {
   }
 }
 
-function parseSurface(raw?: string): ActiveSurface {
+function parseSurface(raw: string | undefined, defaultSurface: DefaultSurface = getConfiguredDefaultSurface()): ActiveSurface {
   if (raw === 'collab') return 'collab'
-  return 'builder'
+  if (raw === 'builder') return 'builder'
+  return defaultSurface
 }
 
-function parseRouteStateFromPathname(pathname: string): AppRouteState {
+export function parseRouteStateFromPathname(
+  pathname: string,
+  defaultSurface: DefaultSurface = getConfiguredDefaultSurface(),
+): AppRouteState {
   const normalizedPath = pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname
 
   if (normalizedPath === '/settings') {
-    return { view: 'settings', surface: 'builder' }
+    return { view: 'settings', surface: defaultSurface }
   }
 
   const agentMatch = normalizedPath.match(/^\/agent\/([^/]+)$/)
@@ -54,18 +59,22 @@ function parseRouteStateFromPathname(pathname: string): AppRouteState {
     return {
       view: 'chat',
       agentId: normalizeAgentId(decodePathSegment(agentMatch[1])),
-      surface: 'builder',
+      surface: defaultSurface,
     }
   }
 
   return {
     view: 'chat',
     agentId: DEFAULT_MANAGER_AGENT_ID,
-    surface: 'builder',
+    surface: defaultSurface,
   }
 }
 
-function parseRouteStateFromLocation(pathname: string, search: unknown): AppRouteState {
+export function parseRouteStateFromLocation(
+  pathname: string,
+  search: unknown,
+  defaultSurface: DefaultSurface = getConfiguredDefaultSurface(),
+): AppRouteState {
   const routeSearch = search && typeof search === 'object' ? (search as AppRouteSearch) : {}
   const view = typeof routeSearch.view === 'string' ? routeSearch.view : undefined
   const agentId = typeof routeSearch.agent === 'string' ? routeSearch.agent : undefined
@@ -73,7 +82,7 @@ function parseRouteStateFromLocation(pathname: string, search: unknown): AppRout
   const channel = typeof routeSearch.channel === 'string' ? routeSearch.channel : undefined
 
   if (view === 'settings') {
-    return { view: 'settings', surface: parseSurface(surface) }
+    return { view: 'settings', surface: parseSurface(surface, defaultSurface) }
   }
 
   if (view === 'stats') {
@@ -92,7 +101,7 @@ function parseRouteStateFromLocation(pathname: string, search: unknown): AppRout
   }
 
   if (view === 'chat' || agentId !== undefined || surface !== undefined) {
-    const parsedSurface = parseSurface(surface)
+    const parsedSurface = parseSurface(surface, defaultSurface)
     return {
       view: 'chat',
       agentId: normalizeAgentId(agentId),
@@ -102,11 +111,11 @@ function parseRouteStateFromLocation(pathname: string, search: unknown): AppRout
   }
 
   // Fall back to pathname parsing, but still pick up surface/channel from search params
-  const pathState = parseRouteStateFromPathname(pathname)
+  const pathState = parseRouteStateFromPathname(pathname, defaultSurface)
   if (pathState.view === 'chat') {
     return {
       ...pathState,
-      surface: parseSurface(surface),
+      surface: parseSurface(surface, defaultSurface),
       channel: channel || undefined,
     }
   }
@@ -139,11 +148,15 @@ function normalizeRouteState(routeState: AppRouteState): AppRouteState {
   }
 }
 
-function toRouteSearch(routeState: AppRouteState, stickyParams?: { agent?: string; channel?: string }): AppRouteSearch {
+export function toRouteSearch(
+  routeState: AppRouteState,
+  stickyParams?: { agent?: string; channel?: string },
+  defaultSurface: DefaultSurface = getConfiguredDefaultSurface(),
+): AppRouteSearch {
   if (routeState.view === 'settings') {
     // Preserve sticky agent and channel through non-chat views
     const search: AppRouteSearch = { view: 'settings' }
-    if (routeState.surface === 'collab') search.surface = 'collab'
+    if (routeState.surface !== defaultSurface) search.surface = routeState.surface
     if (stickyParams?.agent && stickyParams.agent !== DEFAULT_MANAGER_AGENT_ID) search.agent = stickyParams.agent
     if (stickyParams?.channel) search.channel = stickyParams.channel
     return search
@@ -172,8 +185,8 @@ function toRouteSearch(routeState: AppRouteState, stickyParams?: { agent?: strin
     search.agent = agentId
   }
 
-  if (routeState.surface === 'collab') {
-    search.surface = 'collab'
+  if (routeState.surface !== defaultSurface) {
+    search.surface = routeState.surface
   }
 
   if (routeState.channel) {
@@ -224,9 +237,10 @@ export function useRouteState({
   activeSurface: ActiveSurface
   navigateToRoute: (nextRouteState: AppRouteState, replace?: boolean) => void
 } {
+  const defaultSurface = getConfiguredDefaultSurface()
   const routeState = useMemo(
-    () => parseRouteStateFromLocation(pathname, search),
-    [pathname, search],
+    () => parseRouteStateFromLocation(pathname, search, defaultSurface),
+    [defaultSurface, pathname, search],
   )
 
   const activeView: ActiveView = routeState.view
@@ -260,15 +274,19 @@ export function useRouteState({
 
       void navigate({
         to: '/',
-        search: toRouteSearch(normalizedRouteState, {
-          agent: effectiveStickyAgent && effectiveStickyAgent !== DEFAULT_MANAGER_AGENT_ID ? effectiveStickyAgent : undefined,
-          channel: effectiveStickyChannel,
-        }),
+        search: toRouteSearch(
+          normalizedRouteState,
+          {
+            agent: effectiveStickyAgent && effectiveStickyAgent !== DEFAULT_MANAGER_AGENT_ID ? effectiveStickyAgent : undefined,
+            channel: effectiveStickyChannel,
+          },
+          defaultSurface,
+        ),
         replace,
         resetScroll: false,
       })
     },
-    [navigate, routeState, search, stickyAgent, stickyChannel],
+    [defaultSurface, navigate, routeState, search, stickyAgent, stickyChannel],
   )
 
   return {

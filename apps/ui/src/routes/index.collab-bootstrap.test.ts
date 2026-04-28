@@ -19,6 +19,9 @@ const routeStateMock = vi.hoisted(() => ({
 }))
 
 const collabSessionHookMock = vi.hoisted(() => vi.fn())
+const defaultSurfaceMock = vi.hoisted(() => ({
+  value: 'builder' as 'builder' | 'collab',
+}))
 const builderSurfacePropsMock = vi.hoisted(() => ({
   value: null as null | Record<string, unknown>,
 }))
@@ -51,6 +54,10 @@ vi.mock('@/lib/electron-bridge', () => ({
   isElectron: () => false,
 }))
 
+vi.mock('@/lib/web-runtime-flags', () => ({
+  getConfiguredDefaultSurface: () => defaultSurfaceMock.value,
+}))
+
 const { IndexPage } = await import('./index')
 
 let container: HTMLDivElement
@@ -78,6 +85,7 @@ beforeEach(() => {
   }
   collabSessionHookMock.mockReset()
   builderSurfacePropsMock.value = null
+  defaultSurfaceMock.value = 'builder'
   collabSessionHookMock.mockReturnValue({
     isCollabEnabled: false,
     isAdmin: false,
@@ -258,6 +266,35 @@ describe('IndexPage collab bootstrap gating', () => {
     // Should render collab surface (which shows auth-required state), NOT builder
     expect(container.querySelector('[data-testid="collab-surface"]')?.textContent).toContain('Collab surface')
     expect(container.querySelector('[data-testid="builder-surface"]')).toBeNull()
+  })
+
+  it('keeps unauthenticated users on the collab surface when collab is the configured default', () => {
+    const navigateToRoute = vi.fn()
+    defaultSurfaceMock.value = 'collab'
+    routeStateMock.value = {
+      routeState: {
+        view: 'chat',
+        agentId: '__default__',
+        surface: 'collab',
+      },
+      activeView: 'chat',
+      activeSurface: 'collab',
+      navigateToRoute,
+    }
+    collabSessionHookMock.mockReturnValue({
+      isCollabEnabled: true,
+      isAdmin: false,
+      isMember: false,
+      isLoading: false,
+      hasLoaded: true,
+      refresh: vi.fn(),
+    })
+
+    renderPage()
+
+    expect(container.querySelector('[data-testid="collab-surface"]')?.textContent).toContain('Collab surface')
+    expect(container.querySelector('[data-testid="builder-surface"]')).toBeNull()
+    expect(navigateToRoute).not.toHaveBeenCalled()
   })
 
   it('renders collab surface for admin at collab settings', () => {

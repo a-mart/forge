@@ -4,7 +4,15 @@ import { createElement, useEffect } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { useRouteState, type AppRouteState, type ActiveSurface, type ActiveView } from './use-route-state'
+import {
+  parseRouteStateFromLocation,
+  parseRouteStateFromPathname,
+  toRouteSearch,
+  useRouteState,
+  type AppRouteState,
+  type ActiveSurface,
+  type ActiveView,
+} from './use-route-state'
 
 let container: HTMLDivElement
 let root: Root | null = null
@@ -167,5 +175,29 @@ describe('useRouteState — settings surface', () => {
 
     renderWith({ pathname: '/', search: { view: 'playwright' }, navigate })
     expect(captured.current?.activeSurface).toBe('builder')
+  })
+})
+
+describe('default surface helpers', () => {
+  it('parses chat and settings routes against a collab default surface', () => {
+    expect(parseRouteStateFromLocation('/', {}, 'collab')).toEqual({
+      view: 'chat',
+      agentId: '__default__',
+      surface: 'collab',
+    })
+
+    expect(parseRouteStateFromPathname('/settings', 'collab')).toEqual({
+      view: 'settings',
+      surface: 'collab',
+    })
+  })
+
+  it('omits the surface search param when the route uses the configured default surface', () => {
+    expect(toRouteSearch({ view: 'chat', agentId: '__default__', surface: 'collab' }, undefined, 'collab')).toEqual({})
+
+    expect(toRouteSearch({ view: 'settings', surface: 'builder' }, undefined, 'collab')).toEqual({
+      view: 'settings',
+      surface: 'builder',
+    })
   })
 })
